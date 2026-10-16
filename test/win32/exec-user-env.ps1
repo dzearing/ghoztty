@@ -116,7 +116,7 @@ function Has-Entry($pathValue, $entry) {
 # One hermetic launch with a stripped PATH; returns the pane's Path.
 function Run-Case($tag, $overlay) {
     $tmp = Join-Path $root $tag
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $savedPath = $env:Path
     $env:LOCALAPPDATA = $tmp
     # THE CONDITION: an app whose own environment carries no user PATH at all.

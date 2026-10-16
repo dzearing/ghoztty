@@ -160,7 +160,7 @@ function Probe-PaneEnv($tmp, $target, $var, $valueRe, $tag, $timeoutSec = 25) {
 # persistence: on (default) - the restore IS the subject, and each call runs in
 # its own $env:LOCALAPPDATA, so nothing outside this script can be restored.
 function Launch($tmp, $title, $restore) {
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     $launchArgs = @('--session-relaunch=rerun')
@@ -324,7 +324,7 @@ Assert 'D3 the re-attached split shell still exports that window name' (
 # one, or `+close --target=$GHOZTTY_WINDOW_NAME` inside it closes the other.
 # Raw-text edit on purpose: the manifest carries a u64 gradient seed (T1832)
 # that a ConvertFrom-Json/ConvertTo-Json round trip in PS5.1 would mangle.
-$mPath = Join-Path $tmpA 'ghoztty\session-layout-debug.json'
+$mPath = Get-GhozttySessionLayoutPath -Root $tmpA
 $mObj = $null
 try { $mObj = [IO.File]::ReadAllText($mPath) | ConvertFrom-Json } catch { }
 function Manifest-FirstPaneId($m, $ipcName) {

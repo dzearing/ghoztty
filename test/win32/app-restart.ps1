@@ -96,7 +96,8 @@ function Wait-PidGone([int]$procId, [int]$timeoutSec = 20) {
 }
 
 function Agent-Pid {
-    $p = Join-Path $root 'ghoztty\local-agent-debug\port.json'
+    # The app's agent runs under the ambient lineage (the runner's, or none).
+    $p = Join-Path (Get-GhozttyAgentStateDir -Root $root) 'port.json'
     if (-not (Test-Path $p)) { return 0 }
     try { return [int]((Get-Content $p -Raw | ConvertFrom-Json).pid) } catch { return 0 }
 }
@@ -205,7 +206,7 @@ $td = New-TestDesktop -Interactive:$Interactive
 $relaunched = New-Object System.Collections.ArrayList
 
 try {
-    New-Item -ItemType Directory -Force (Join-Path $root 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $root) | Out-Null
     $env:LOCALAPPDATA = $root
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 
@@ -214,12 +215,15 @@ try {
     New-Item -ItemType Directory -Force $standinDir | Out-Null
     $standinExe = Join-Path $standinDir 'ghoztty-agent.exe'
     Copy-Item -LiteralPath $AgentExe -Destination $standinExe -Force
+    # T2005: hand the runner's lineage back afterwards rather than dropping it -
+    # the app launched next must come up on it, not on the box's default one.
+    $runnerLineage = Get-GhozttyAgentLineage
     $env:GHOZTTY_AGENT_INSTANCE = "standin$PID"
     $sa = Start-OnTestDesktop -Exe $standinExe -Arguments @(
         "--listen-pipe=\\.\pipe\ghoztty-agent-standin$PID",
         "--port-file=$standinDir\port.json",
         "--sessions-file=$standinDir\sessions.json") -StdErr (Join-Path $root 'standin.err.txt')
-    Remove-Item Env:\GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
+    Restore-GhozttyAgentLineage -Saved $runnerLineage
     $standinPid = [int]$sa.Pid
     Start-Sleep -Seconds 2
     Assert ($null -ne (Get-Process -Id $standinPid -ErrorAction SilentlyContinue)) 'setup: the stand-in agent is running'

@@ -82,7 +82,7 @@ function Kill-RepoInstances {
 }
 
 Kill-RepoInstances
-Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
 
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive

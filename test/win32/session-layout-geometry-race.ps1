@@ -51,7 +51,7 @@ function Assert([bool]$cond, [string]$label) {
 $fakeLocal = Join-Path $env:TEMP ("ghoztty-t220-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $fakeLocal | Out-Null
 $memFile = Join-Path $fakeLocal 'ghoztty\window_placement-debug'
-$manifest = Join-Path $fakeLocal 'ghoztty\session-layout-debug.json'
+$manifest = Get-GhozttySessionLayoutPath -Root $fakeLocal
 
 # The first three tokens: `<w> <h> <0|1>`. Since T1971 the file carries a
 # fourth, the DPI the size was measured at; restore-dpi-frame.ps1 is the

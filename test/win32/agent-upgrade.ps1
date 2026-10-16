@@ -169,6 +169,7 @@ $root = Join-Path $env:TEMP "ghoztty-agent-upgrade-$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 # -Release retargets the two DEFAULT paths only; an explicit -Exe/-AgentExe is
 # always obeyed. The staging tree is not built here - the delivery scripts own
@@ -574,7 +575,9 @@ if ($Release) {
 # plus the T167 instance suffix, which is why this is derived AFTER the sandbox
 # is set rather than spelled out. Arm C's pre-started agent publishes its
 # port.json here, so a name read wrong shows up as an app that never finds it.
-$stateDirName = if ($Release) { "local-agent-$($env:GHOZTTY_AGENT_INSTANCE)" } else { 'local-agent-debug' }
+# T2005: the DEBUG run follows the ambient lineage too - a second loop lane's
+# runner sets one, and the app then publishes into `local-agent-debug-<inst>`.
+$stateDirName = Get-GhozttyAgentStateDirLeaf -Instance (Get-GhozttyAgentLineage) -ReleaseLineage:$Release
 New-Item -ItemType Directory -Force (Join-Path $tmp "ghoztty\$stateDirName") | Out-Null
 
 # T1033: this script launches the app itself (Start-Process, not the test

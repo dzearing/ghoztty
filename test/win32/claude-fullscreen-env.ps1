@@ -114,7 +114,7 @@ function Probe-Var($tmp, $pane, $tag, $timeoutSec = 30) {
 
 # One hermetic launch: own LOCALAPPDATA, own fixture profile, given args.
 function Launch($tmp, [string[]]$extraArgs) {
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     # persistence: on (default) - the persistence pane IS a subject (A1, B1);

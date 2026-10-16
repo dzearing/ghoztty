@@ -62,6 +62,7 @@ function AssertEq($name, $expected, $actual) {
     else { "  FAIL $name (expected '$expected', got '$actual')"; $script:failures++ }
 }
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 . (Join-Path $Repo 'scripts\delivery-version.ps1')
 . (Join-Path $Repo 'scripts\delivery-manifest.ps1')   # Get-PeSubsystem (T1569)
@@ -943,7 +944,7 @@ if (-not $haveAgent) {
     $gInstall = Join-Path $gRoot 'install'
     New-Item -ItemType Directory -Force (Join-Path $gStaging 'bin') | Out-Null
     New-Item -ItemType Directory -Force $gInstall | Out-Null
-    New-Item -ItemType Directory -Force (Join-Path $gRoot 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $gRoot) | Out-Null
     Copy-Item -LiteralPath $Exe (Join-Path $gStaging 'bin\ghoztty.exe') -Force
     Copy-Item -LiteralPath $AgentExe (Join-Path $gStaging 'bin\ghoztty-agent.exe') -Force
     $gLog = Join-Path $gRoot 'ghoztty-upgrade.log'

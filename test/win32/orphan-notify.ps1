@@ -92,7 +92,7 @@ function Stop-RepoProcesses([string[]]$Names) {
 }
 
 function Reset-AgentState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json', 'layouts.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }
@@ -172,7 +172,7 @@ Write-Host 'T534 long-unattached session notification'
 Stop-RepoProcesses @('ghoztty', 'ghoztty-agent', 'remote-test-client')
 Reset-AgentState
 Remove-Item $stampFile -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json') -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -ErrorAction SilentlyContinue
 New-TestDesktop | Out-Null
 
 $errlog = Join-Path $env:TEMP "ghoztty-t534-stderr-$PID.log"

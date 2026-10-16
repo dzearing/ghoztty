@@ -136,7 +136,7 @@ function Get-StubParentName {
 # One section: launch, let the stub draw, resize N times, read the oracle.
 function Invoke-Section([string]$tag, [bool]$persist, [string]$expectParent) {
     $state = Join-Path $root "state-$tag"
-    New-Item -ItemType Directory -Force (Join-Path $state 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $state) | Out-Null
     $env:LOCALAPPDATA = $state
     $errlog = Join-Path $root "$tag-stderr.log"
 

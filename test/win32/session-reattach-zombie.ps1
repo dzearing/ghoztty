@@ -270,7 +270,7 @@ Assert "agent binary exists in zig-out" (Test-Path $AgentExe)
 Assert "ghoztty exe exists in zig-out" (Test-Path $Exe)
 
 $tmp = Join-Path $root 'app'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $logA = Join-Path $root 'app-a.err'
 $logB = Join-Path $root 'app-b.err'
 $logC = Join-Path $root 'app-c.err'

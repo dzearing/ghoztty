@@ -159,7 +159,7 @@ function Start-Gui([string]$label, [string[]]$extraArgs) {
     Kill-RepoInstances
     # A stale debug layout manifest would restore a previous run's windows
     # over the one under test (the T131 lesson).
-    Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
     # A black background makes the strip's three surfaces unmistakable in a
     # capture - content-black chiclet, lifted inactive tab, bar-gray strip -
     # which is what Strip-Geometry measures the tab run against (T256). On a

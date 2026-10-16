@@ -18,8 +18,10 @@
 
 # Where the manifest lives under a given state dir. The `-debug` name is the
 # debug build's; a release build writes `session-layout.json` beside it, and no
-# acceptance script may ever touch that one.
-function Manifest-Path($tmp) { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+# acceptance script may ever touch that one. T2005: and THIS lineage's file -
+# under GHOZTTY_AGENT_INSTANCE the app writes `session-layout-debug-<inst>.json`.
+. (Join-Path $PSScriptRoot 'AgentLineage.ps1')
+function Manifest-Path($tmp) { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 
 # The parsed manifest, or $null when it does not exist yet or is mid-replace.
 # A torn read of the atomic replace is transient by construction, so a failed

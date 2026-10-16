@@ -41,6 +41,8 @@
 #   powershell -NoProfile -File test\win32\agent-lineage-suites.ps1
 #   powershell -NoProfile -File test\win32\agent-lineage-suites.ps1 -TeethCheck
 #   powershell -NoProfile -File test\win32\agent-lineage-suites.ps1 -SkipSuites
+#
+# @lineage-safe - every `local-agent-debug` match is fixture text for arm A's pure naming checks; the lineage is cleared only (B1) to exercise a refusal that throws before any process is enumerated, and (after B, after C) so that C and each of D's two suites mint a PRIVATE lineage - the C bystander agent is launched under its own explicit `t691by<pid>` lineage, and session-open.ps1 / session-close.ps1 call Set-GhozttyTestAgentLineage at their top before launching anything
 # suite-timeout-sec 900
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
@@ -93,7 +95,7 @@ Register-RepoBuildTeardown -Exe $Exe | Out-Null
 
 New-Item -ItemType Directory -Force $root | Out-Null
 $savedLad = $env:LOCALAPPDATA
-$savedInst = $env:GHOZTTY_AGENT_INSTANCE
+$savedInst = Get-GhozttyAgentLineage
 
 try {
     # ============================================================================
@@ -142,7 +144,9 @@ try {
         try { & $block | Out-Null; return $false } catch { return $true }
     }
 
-    $env:GHOZTTY_AGENT_INSTANCE = $null
+    # Deliberately lineage-less: B1's refusal throws before Stop-RepoGhoztty
+    # enumerates or touches a single process (lib\CleanSlate.ps1), and nothing
+    # is launched while it is unset.
     Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
     Assert "B1 -ScopeToLineage with no lineage minted throws" `
         (Test-Throws { Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 0 -TimeoutMs 500 })
@@ -157,25 +161,38 @@ try {
     . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
     Assert "B3 -AgentOnly needs no launch records (nothing of ours to spare)" `
         (-not (Test-Throws { Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -AgentOnly -SettleMs 0 -TimeoutMs 2000 }))
+    # Cleared (not handed back to the runner's) so C's Set-GhozttyTestAgentLineage
+    # mints a private one rather than adopting B's throwaway name. The bystander
+    # below carries its own explicit lineage, so nothing launches lineage-less.
     Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
 
     # ============================================================================
     "== C: the bystander agent survives a scoped reset"
     # ============================================================================
 
-    # The stand-in for the agent holding the loop's own panes: a debug-lineage agent
-    # this script started, with NO instance suffix - i.e. exactly the lineage every
-    # unconverted suite used to kill on sight.
+    # The stand-in for the agent holding the loop's own panes: a debug agent this
+    # script started whose COMMAND LINE names no instance suffix (its state files
+    # sit in the unsuffixed `local-agent-debug\`) - i.e. exactly what every
+    # unconverted suite used to kill on sight, and exactly what the scoped kill
+    # reads to decide "not ours".
+    #
+    # T2005: its single-instance GUARD is a private lineage, though, not the
+    # box's default one. The guard is keyed off the environment, not the command
+    # line, so the scoped kill cannot tell the difference - but an agent started
+    # with the lineage dropped takes the default debug guard, which in a second
+    # loop lane is the OTHER lane's agent: refused there (183, a false C1), or
+    # holding the guard that lane's own agent needs.
     $byRoot = Join-Path $root 'bystander'
-    $byDir = Join-Path $byRoot 'ghoztty\local-agent-debug'
+    $byDir = Get-GhozttyAgentStateDir -Root $byRoot -NoLineage
     New-Item -ItemType Directory -Force $byDir | Out-Null
     $byPort = Join-Path $byDir 'port.json'
     $bySess = Join-Path $byDir 'sessions.json'
     $byPipe = "\\.\pipe\ghoztty-t691-bystander-$PID"
+    $byLine = "t691by$PID"
 
-    $prevInst = $env:GHOZTTY_AGENT_INSTANCE
+    $prevInst = Get-GhozttyAgentLineage
     $prevLad = $env:LOCALAPPDATA
-    Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
+    $env:GHOZTTY_AGENT_INSTANCE = $byLine
     $env:LOCALAPPDATA = $byRoot
     # persistence: not applicable - a headless agent, started by path, opens no window.
     $by = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
@@ -183,8 +200,7 @@ try {
     # Cache the handle BEFORE the child can exit, or ExitCode reads back empty and a
     # refused agent scores as a running one (the box's Start-Process trap).
     $null = $by.Handle
-    if ($null -eq $prevInst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $prevInst }
+    Restore-GhozttyAgentLineage -Saved $prevInst
     $env:LOCALAPPDATA = $prevLad
     $script:mine.Add([int]$by.Id)
 
@@ -213,6 +229,10 @@ try {
         # Still HOLDING, not merely alive: its state files are the sessions it owns,
         # and a reset that deleted them would have taken its panes without taking it.
         Assert "C3 the bystander's own state is untouched" ((Test-Path $byPort) -and (Test-Path $byDir))
+        # Cleared on purpose, not restored: D's two suites must each mint their
+        # OWN lineage (Set-GhozttyTestAgentLineage leaves an inherited one alone),
+        # or they would share one and the concurrency claim would be void. Both
+        # mint at their top, before they launch anything.
         Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
     }
 
@@ -233,7 +253,7 @@ try {
             # LOCALAPPDATA and, since T691, its own agent lineage. That is precisely
             # what is under test here, so they are deliberately started together.
             $p = Start-Process -FilePath 'powershell.exe' -PassThru -WindowStyle Hidden `
-                -ArgumentList '-NoProfile', '-File', $path `
+                -ArgumentList '-NoProfile', '-File', $path, '-Exe', $Exe, '-AgentExe', $AgentExe `
                 -RedirectStandardOutput $log -RedirectStandardError "$log.err"
             $null = $p.Handle
             $jobs += [pscustomobject]@{ Name = $s; Proc = $p; Log = $log }
@@ -278,8 +298,7 @@ try {
     # take the loop's own agent with it, which is the rudeness this whole task
     # exists to end.
     foreach ($id in $script:mine) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
-    if ($null -eq $savedInst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $savedInst }
+    Restore-GhozttyAgentLineage -Saved $savedInst
     $env:LOCALAPPDATA = $savedLad
     Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 }

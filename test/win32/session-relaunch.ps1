@@ -187,7 +187,7 @@ function Wait-IdTombstone($tmp, $tag, $id, $timeoutSec = 25) {
 }
 
 # ---- Manifest helpers (debug lineage writes the -debug filename) ------------
-function Manifest-Path($tmp) { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+function Manifest-Path($tmp) { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 function Read-Manifest($tmp) {
     $p = Manifest-Path $tmp
     if (-not (Test-Path $p)) { return $null }
@@ -217,7 +217,7 @@ function Sid-ByName($m, $name) {
 }
 
 # ---- Ring-snapshot helpers -------------------------------------------------
-function Ring-Path($tmp, $sid) { return (Join-Path $tmp "ghoztty\local-agent-debug\rings\$sid.ring") }
+function Ring-Path($tmp, $sid) { return (Join-Path (Get-GhozttyAgentStateDir -Root $tmp) "rings\$sid.ring") }
 # Wait until session $sid's on-disk ring snapshot is refreshed AFTER $afterTime,
 # i.e. a periodic flush has captured everything in the ring up to now (incl. the
 # marker we already confirmed is in the pane). The reaper flushes dirty rings
@@ -238,7 +238,7 @@ function Wait-RingFresh($tmp, $sid, $afterTime, $timeoutSec = 45) {
 # One hermetic GUI launch with an explicit session-relaunch policy. On $restore
 # we pass NO --title (restore rebuilds the layout and suppresses the blank window).
 function Launch($tmp, $title, $relaunch, $restore) {
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     $launchArgs = @("--session-relaunch=$relaunch")
@@ -438,7 +438,7 @@ Assert "A5 relp's ring snapshot was flushed to disk (captures the marker)" $ring
 # The agent's children die with it; only sessions.json + rings/ survive on disk.
 $idsA = @(Alive-Ids (Wait-AliveCount $tmpA 'a-before' 2 15))
 Assert "A6 two sessions are alive before the agent is killed" ($idsA.Count -eq 2)
-$sessJson = Join-Path $tmpA 'ghoztty\local-agent-debug\sessions.json'
+$sessJson = Join-Path (Get-GhozttyAgentStateDir -Root $tmpA) 'sessions.json'
 Assert "A7 sessions.json persisted the sessions to disk" (Test-Path $sessJson)
 Stop-TestProcs
 

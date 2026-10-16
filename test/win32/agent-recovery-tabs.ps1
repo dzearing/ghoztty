@@ -236,7 +236,7 @@ if (-not (Test-Path $AgentExe)) { throw "agent exe not found: $AgentExe" }
 
 $root = Join-Path $env:TEMP "ghoztty-recovery-tabs-$PID"
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe

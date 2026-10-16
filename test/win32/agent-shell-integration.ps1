@@ -153,7 +153,7 @@ Assert "ghostty.ps1 is in the build's resources" `
 if ($script:failures -gt 0) { "$($script:failures) FAILURE(S)"; exit 1 }
 
 $state = Join-Path $root 'state'
-New-Item -ItemType Directory -Force (Join-Path $state 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $state) | Out-Null
 $env:LOCALAPPDATA = $state
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 

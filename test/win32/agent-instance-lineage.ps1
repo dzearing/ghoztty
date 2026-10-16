@@ -60,6 +60,8 @@
 #
 #   powershell -NoProfile -File test\win32\agent-instance-lineage.ps1
 #   powershell -NoProfile -File test\win32\agent-instance-lineage.ps1 -Release
+#
+# @lineage-safe - the only launch made with the lineage dropped is arm C's bare `+sessions` CLI probe, run under this run's PRIVATE LOCALAPPDATA ($root\cli): it only reads the unsuffixed port.json under THAT root, which nothing writes, so it dials nothing (src\cli\sessions.zig runArgs); every agent (Start-Agent throws without one) and every app arm carries an explicit per-run lineage
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
@@ -87,6 +89,7 @@ $root = Join-Path $env:TEMP "ghoztty-t167-$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 # -Release retargets the two DEFAULT paths only; an explicit -Exe/-AgentExe is
 # always obeyed (that is how a delivered install or a second staging tree gets
@@ -131,10 +134,13 @@ function Say($m) { Write-Host $m }
 $script:mine = New-Object System.Collections.Generic.List[int]
 
 function Start-Agent($tag, $instance, $lad, $pipe, $portFile) {
-    $savedInst = $env:GHOZTTY_AGENT_INSTANCE
+    # T2005: every agent this script starts names its lineage. An agent with the
+    # lineage dropped takes the box's default guard - in a second loop lane,
+    # the OTHER lane's - which is what this file's @lineage-safe claim rests on.
+    if (-not $instance) { throw "Start-Agent '$tag': an explicit lineage is required" }
+    $savedInst = Get-GhozttyAgentLineage
     $savedLad = $env:LOCALAPPDATA
-    if ($null -eq $instance) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $instance }
+    $env:GHOZTTY_AGENT_INSTANCE = $instance
     $env:LOCALAPPDATA = $lad
     $sess = [System.IO.Path]::ChangeExtension($portFile, '.sessions.json')
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
@@ -142,8 +148,7 @@ function Start-Agent($tag, $instance, $lad, $pipe, $portFile) {
     # Cache the handle BEFORE the child can exit, or ExitCode reads back empty
     # and a refused agent scores as a running one.
     $null = $p.Handle
-    if ($null -eq $savedInst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $savedInst }
+    Restore-GhozttyAgentLineage -Saved $savedInst
     $env:LOCALAPPDATA = $savedLad
     $script:mine.Add([int]$p.Id)
     return $p
@@ -168,7 +173,10 @@ function Wait-Exit($proc, $timeoutSec = 10) {
 # code (null on timeout); output lands in $out.
 # persistence: a CLI invocation - it opens no window, so there is nothing to restore.
 function Run-Cli($argv, $out, $instance, $lad, $timeoutSec = 20) {
-    $savedInst = $env:GHOZTTY_AGENT_INSTANCE
+    # A null -Instance is arm C's deliberate no-suffix probe, and it is only
+    # ever made under a PRIVATE -Lad (see the @lineage-safe note at the top).
+    if ($null -eq $instance -and $null -eq $lad) { throw 'Run-Cli: a lineage-less call needs a private LOCALAPPDATA' }
+    $savedInst = Get-GhozttyAgentLineage
     $savedLad = $env:LOCALAPPDATA
     if ($null -eq $instance) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
     else { $env:GHOZTTY_AGENT_INSTANCE = $instance }
@@ -176,8 +184,7 @@ function Run-Cli($argv, $out, $instance, $lad, $timeoutSec = 20) {
     $p = Start-Process -FilePath $CliExe -WindowStyle Hidden -PassThru `
         -ArgumentList $argv -RedirectStandardOutput $out -RedirectStandardError "$out.err"
     $null = $p.Handle
-    if ($null -eq $savedInst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $savedInst }
+    Restore-GhozttyAgentLineage -Saved $savedInst
     $env:LOCALAPPDATA = $savedLad
     $code = $null
     if ($p.WaitForExit($timeoutSec * 1000)) { $p.WaitForExit(); $code = $p.ExitCode }
@@ -226,7 +233,7 @@ if ($Release) {
 # the same `build_config.is_debug` split the pipe name and the guard key use.
 # Arms C and D derive the app's state dir from it, so a mode read wrong shows up
 # as a missing port.json rather than as a silent pass.
-$stateBase = if (Test-GhozttyIsolatedBuildMode -Mode $buildMode) { 'local-agent-debug' } else { 'local-agent' }
+$stateRelease = -not (Test-GhozttyIsolatedBuildMode -Mode $buildMode)
 
 # BYSTANDERS (T269). Everything on the box that this run must leave exactly as it
 # found it: the agents it did not start (in release mode that is the user's own,
@@ -328,7 +335,7 @@ Say "== C: +sessions reads the SUFFIXED state dir"
 # Put agent D's info file exactly where that derivation points and ask the real
 # CLI to find it - then ask again with the suffix cleared, which must NOT.
 $ladD = Join-Path $root 'cli'
-$dirD = Join-Path $ladD "ghoztty\$stateBase-$lineD"
+$dirD = Join-Path $ladD ('ghoztty\' + (Get-GhozttyAgentStateDirLeaf -Instance $lineD -ReleaseLineage:$stateRelease))
 New-Item -ItemType Directory -Force $dirD | Out-Null
 $dPort = Join-Path $dirD 'port.json'
 $d = Start-Agent 'd' $lineD $ladD "\\.\pipe\ghoztty-t167-d-$PID" $dPort
@@ -355,9 +362,9 @@ $td = New-TestDesktop -Interactive:$Interactive
 function Invoke-AppArm($tag, $instance) {
     $lad = Join-Path $root "app-$tag"
     New-Item -ItemType Directory -Force $lad | Out-Null
-    $agentDir = Join-Path $lad "ghoztty\$stateBase-$instance"
+    $agentDir = Join-Path $lad ('ghoztty\' + (Get-GhozttyAgentStateDirLeaf -Instance $instance -ReleaseLineage:$stateRelease))
 
-    $savedInst = $env:GHOZTTY_AGENT_INSTANCE
+    $savedInst = Get-GhozttyAgentLineage
     $savedLad = $env:LOCALAPPDATA
     $env:GHOZTTY_AGENT_INSTANCE = $instance
     $env:LOCALAPPDATA = $lad
@@ -368,7 +375,7 @@ function Invoke-AppArm($tag, $instance) {
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=true') `
             -StdErr (Join-Path $root "applog-$tag.txt")
     } catch { Write-Host "  (launch failed: $_)" }
-    $env:GHOZTTY_AGENT_INSTANCE = $savedInst
+    Restore-GhozttyAgentLineage -Saved $savedInst
     $env:LOCALAPPDATA = $savedLad
     if ($null -eq $app) { return @{ port = $false; alive = 0; pid = 0 } }
     $script:mine.Add([int]$app.Pid)
@@ -476,8 +483,7 @@ Complete-TestBody  # T1039: the run reached the end of its body
     $env:LOCALAPPDATA = $saved.lad
     $env:GHOSTTY_LOCAL_AGENT_BIN = $saved.bin
     $env:GHOZTTY_PIPE_SUFFIX = $saved.pipe
-    if ($null -eq $saved.inst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $saved.inst }
+    Restore-GhozttyAgentLineage -Saved $saved.inst
     if ($null -eq $saved.scheme) { Remove-Item env:GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue }
     else { $env:GHOZTTY_URL_SCHEME = $saved.scheme }
     if ($null -eq $saved.selfheal) { Remove-Item env:GHOZTTY_PATH_SELFHEAL -ErrorAction SilentlyContinue }

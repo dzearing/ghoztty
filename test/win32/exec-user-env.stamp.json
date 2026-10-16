@@ -1,14 +1,13 @@
 {
     "guard":  "exec-user-env",
     "script":  "test/win32/exec-user-env.ps1",
-    "generated":  "2026-10-15T13:01:17-07:00",
-    "commit":  "b4b5d81d9",
+    "generated":  "2026-10-16T12:34:02-07:00",
+    "commit":  "161784011",
     "uncommitted":  [
-                        "src/os/user_env.zig",
                         "test/win32/exec-user-env.ps1"
                     ],
     "files":  {
                   "src/os/user_env.zig":  "627c53a9b88c647cbaa50bfcb01d98833174895ac5914cdc6476b512734de1bd",
-                  "test/win32/exec-user-env.ps1":  "21020cafdd3adb6a91e3f62d8a36604b49be50aa42f138f160365c9e7c38ccfc"
+                  "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1"
               }
 }

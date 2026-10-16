@@ -108,7 +108,7 @@ function Get-ContentTop([IntPtr]$top) {
 $md = Join-Path $env:TEMP 'ghoztty-rearrange-mode-action.md'
 
 Stop-RepoInstances
-Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
 Remove-Item $errlog -ErrorAction SilentlyContinue
 Set-Content -Path $md -Encoding ascii -Value @'
 # Rearrange fixture

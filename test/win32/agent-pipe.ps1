@@ -46,7 +46,7 @@ New-Item -ItemType Directory -Force $tmp | Out-Null
 # touches a real local agent) and the agent's --port-file lands where the CLI looks.
 $savedLocalAppData = $env:LOCALAPPDATA
 $env:LOCALAPPDATA = $tmp
-$stateDir = Join-Path $tmp 'ghoztty\local-agent-debug'
+$stateDir = Get-GhozttyAgentStateDir -Root $tmp
 New-Item -ItemType Directory -Force $stateDir | Out-Null
 $portFile = Join-Path $stateDir 'port.json'
 $sessFile = Join-Path $stateDir 'sessions.json'

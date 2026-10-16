@@ -156,7 +156,7 @@ function Probe-TipText($top, $m, $errlog, $tries = 6) {
 
 Kill-RepoInstances
 $saved = @{ lad = $env:LOCALAPPDATA; bin = $env:GHOSTTY_LOCAL_AGENT_BIN; pipe = $env:GHOZTTY_PIPE_SUFFIX }
-New-Item -ItemType Directory -Force (Join-Path $root 'state\ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root (Join-Path $root 'state')) | Out-Null
 $env:LOCALAPPDATA = Join-Path $root 'state'
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 $env:GHOZTTY_PIPE_SUFFIX = "-tabtip$PID"

@@ -197,6 +197,48 @@ function Get-GhozttyAgentStateDir {
     return (Join-Path $Root (Join-Path 'ghoztty' $leaf))
 }
 
+function Get-GhozttySessionLayoutPath {
+    <#
+    .SYNOPSIS
+    The DEBUG session-layout manifest under -Root, for THIS run's lineage.
+
+    .DESCRIPTION
+    T2005: the manifest's twin of Get-GhozttyAgentStateDir, and the one-line
+    replacement for the `Join-Path $tmp 'ghoztty\session-layout-debug.json'`
+    that forty scripts spelled by hand. It follows GHOZTTY_AGENT_INSTANCE the
+    way the app does (src\apprt\win32\session_layout.zig `layoutPath`:
+    `session-layout-debug[-<lineage>].json`), so under a lineage the unsuffixed
+    file describes somebody else's windows - and a script that clears or reads
+    that one is scoring another run's restore. Only ever the -debug name: the
+    release one is the user's installed Ghoztty's. Pure.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [string]$Instance,
+        [switch]$NoLineage
+    )
+    $inst = if ($NoLineage) { $null } elseif ($PSBoundParameters.ContainsKey('Instance')) { $Instance } else { Get-GhozttyAgentLineage }
+    $stem = if ($inst) { "session-layout-debug-$inst" } else { 'session-layout-debug' }
+    return (Join-Path $Root (Join-Path 'ghoztty' "$stem.json"))
+}
+
+function Restore-GhozttyAgentLineage {
+    <#
+    .SYNOPSIS
+    Put back the lineage a script saved with Get-GhozttyAgentLineage.
+
+    .DESCRIPTION
+    T2005: a script that sets a private lineage for one section must hand the
+    RUNNER's back afterwards, not remove it - in a second loop lane the runner's
+    lineage is what keeps the rest of the run off the other lane's agent, and a
+    bare removal leaves the remainder on the box's default one. $null (nothing
+    was set when it was saved) removes the variable, which is the same state.
+    #>
+    param([AllowNull()][AllowEmptyString()][string]$Saved)
+    if ($Saved) { $env:GHOZTTY_AGENT_INSTANCE = $Saved }
+    else { [Environment]::SetEnvironmentVariable('GHOZTTY_AGENT_INSTANCE', $null, 'Process') }
+}
+
 function Get-GhozttyAgentLineageMarker {
     <#
     .SYNOPSIS

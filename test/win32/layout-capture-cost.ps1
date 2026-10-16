@@ -150,7 +150,7 @@ function Get-LogEnd { if (Test-Path $appLog) { (Get-Item $appLog).Length } else 
 # Isolation + launch
 # ---------------------------------------------------------------------------
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 
 $savedLocalAppData = $env:LOCALAPPDATA
 $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
@@ -358,7 +358,7 @@ try {
     # Hold the panes flooded past the ceiling and read the refresh's own
     # samples. A refresh sample is a sync that re-dumped screens
     # (`fresh_screens=true`) with no gesture anywhere near it.
-    $manifest = Join-Path $tmp 'ghoztty\session-layout-debug.json'
+    $manifest = Get-GhozttySessionLayoutPath -Root $tmp
     function Get-PaneOffsets {
         if (-not (Test-Path $manifest)) { return @{} }
         try { $j = Get-Content $manifest -Raw -ErrorAction Stop | ConvertFrom-Json } catch { return @{} }

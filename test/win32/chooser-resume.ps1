@@ -105,7 +105,7 @@ function Stop-RepoProcesses([string[]]$Names) {
 }
 
 function Reset-AgentState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }
@@ -119,7 +119,7 @@ function Reset-AgentState {
 # relaunch also sets GHOZTTY_RESTORE_SKIP — the deletion stays because it keeps
 # the fixture honest about what a crash-regressed manifest looks like.
 function Remove-LayoutManifest {
-    Remove-Item (Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json') -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -ErrorAction SilentlyContinue
 }
 
 # `ghoztty +verb > file` writes zero bytes from PowerShell (T245) - capture

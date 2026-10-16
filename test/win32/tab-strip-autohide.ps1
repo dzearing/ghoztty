@@ -54,6 +54,7 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-autohidetest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -75,7 +76,7 @@ function HitAt($h, [int]$sx, [int]$sy) {
 # A window, sized, with its first pane found. Both launches go through this so
 # the two measurements in section 2 cannot differ by anything but the flag.
 function Start-Win([string[]]$extra) {
-    Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
     # --confirm-close-surface=false: section 3 has to CLOSE a tab, and the
     # default puts a modal dialog in front of that (confirm-dialogs.ps1 owns
     # that behavior). Driving the dialog here would be testing the dialog.

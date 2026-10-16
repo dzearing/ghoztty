@@ -119,7 +119,7 @@ function Stop-RepoProcesses([string[]]$Names) {
     Start-Sleep -Milliseconds 700
 }
 
-$agentDir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+$agentDir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
 $portFile = Join-Path $agentDir 'port.json'
 $portSaved = Join-Path $env:TEMP "ghoztty-t331-port-$PID.json"
 # Debug builds keep the per-host defaults store beside the release one under a
@@ -136,7 +136,7 @@ function Reset-AgentState {
 }
 
 function Remove-LayoutManifest {
-    Remove-Item (Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json') -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -ErrorAction SilentlyContinue
 }
 
 # Write the store by hand rather than through ConvertTo-Json + Set-Content: PS

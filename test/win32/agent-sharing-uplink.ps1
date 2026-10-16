@@ -26,6 +26,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 $script:passes = 0
 $script:failures = 0
 
@@ -138,6 +139,8 @@ $relayPort = (Get-Content $portOut | Select-Object -First 1).Trim()
 # http:// maps to plaintext ws:// - the loopback-test rule shared with ws_client.
 Set-Content -Path $relayEnv -Value "RELAY_BASE=http://127.0.0.1:$relayPort`nDEVICE_TOKEN=$token" -Encoding ascii
 
+# T2005: the runner's lineage is saved so the teardown hands it back.
+$savedInst = Get-GhozttyAgentLineage
 $env:GHOZTTY_AGENT_INSTANCE = "t546$PID"
 $env:GHOSTTY_RELAY_ENV = $relayEnv
 try {
@@ -231,7 +234,7 @@ try {
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Stop-TestAgents
-    Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
+    Restore-GhozttyAgentLineage -Saved $savedInst
     Remove-Item env:GHOSTTY_RELAY_ENV -ErrorAction SilentlyContinue
     Stop-Job $listener -ErrorAction SilentlyContinue
     Remove-Job $listener -Force -ErrorAction SilentlyContinue

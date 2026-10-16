@@ -88,7 +88,7 @@ function Stop-RepoProcesses {
 # deterministic: a previous run's sessions rematerialize as relaunchable
 # tombstones, which are legitimately connectable and would show up as rows.
 function Reset-AgentState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }

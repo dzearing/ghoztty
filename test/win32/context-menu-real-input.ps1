@@ -204,7 +204,7 @@ $launched = @()
 
 function Start-Gui([string]$label, [string[]]$extraArgs) {
     Kill-RepoInstances
-    Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
     # Start-Process does NOT quote the elements of -ArgumentList, so a
     # multi-word argument (--command=powershell -NoProfile ...) is re-tokenized
     # into positional arguments and the fixture silently comes up as a plain

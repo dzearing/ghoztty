@@ -39,6 +39,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 # T359: remote-test-client is an on-demand build target, so a tree that only
 # ever ran the normal build does not have it. Resolve (and build it if needed)
@@ -100,7 +101,7 @@ if ($null -eq $marker) {
 function Invoke-Scenario($tag, $overlay) {
     $dir = Join-Path $tmp $tag
     New-Item -ItemType Directory -Force $dir | Out-Null
-    $stateDir = Join-Path $dir 'ghoztty\local-agent-debug'
+    $stateDir = Get-GhozttyAgentStateDir -Root $dir
     New-Item -ItemType Directory -Force $stateDir | Out-Null
     $envFile = Join-Path $dir 'env.txt'
     $pipe = "\\.\pipe\ghoztty-agent-t42-$PID-$tag"

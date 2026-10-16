@@ -186,7 +186,7 @@ function Close-Session($s) {
 }
 
 Stop-RepoInstances
-Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
 Remove-Item $errlog -ErrorAction SilentlyContinue
 
 $docDir = Join-Path $env:TEMP "ghoztty-pane-grab-handle-$PID"

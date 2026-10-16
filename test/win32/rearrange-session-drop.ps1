@@ -152,7 +152,7 @@ function Wait-AliveCount($tmp, $tag, $target, $timeoutSec = 15) {
 # @{ Tmp; PaneId; SessId; SibId; SibSess; Ok }.
 function Start-TwoPane($label) {
     $tmp = Join-Path $root $label
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     # persistence: on (default) - the dropped pane's SESSION is what this script asserts about.

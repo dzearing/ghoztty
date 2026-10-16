@@ -129,7 +129,7 @@ function Stop-RepoProcesses {
 }
 
 function Reset-AgentState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }

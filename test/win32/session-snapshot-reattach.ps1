@@ -128,7 +128,7 @@ function Wait-AliveCount($tmp, $tag, $target, $timeoutSec = 18) {
 }
 
 # Debug builds write the -debug filename (session_layout.layoutPath).
-function Manifest-Path($tmp) { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+function Manifest-Path($tmp) { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 function Read-Manifest($tmp) {
     $p = Manifest-Path $tmp
     if (-not (Test-Path $p)) { return $null }
@@ -261,7 +261,7 @@ Assert "agent binary exists in zig-out" (Test-Path $AgentExe)
 Assert "ghoztty exe exists in zig-out" (Test-Path $Exe)
 
 $tmp = Join-Path $root 'app'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $logA = Join-Path $root 'app-a.err'
 $logB = Join-Path $root 'app-b.err'
 $env:LOCALAPPDATA = $tmp

@@ -1,8 +1,8 @@
 {
     "guard":  "window-composite",
     "script":  "test/win32/window-composite.ps1",
-    "generated":  "2026-10-11T11:52:40-07:00",
-    "commit":  "ef3adf9cb",
+    "generated":  "2026-10-16T13:34:18-07:00",
+    "commit":  "161784011",
     "uncommitted":  [
                         "test/win32/window-composite.ps1"
                     ],
@@ -10,6 +10,6 @@
                   "src/apprt/win32/ipc_capture.zig":  "4d6c1c356c844d38fde23941fbe670ea16680d4d4d2ee5db08934434a217d26e",
                   "test/win32/lib/PaneCapture.ps1":  "9086543a9bb1c1013d0c5cd987b5f22c55cdd0e918b524fdbcabc746066a61d5",
                   "test/win32/lib/WindowComposite.ps1":  "d008709aee808b1e3d02f6da34d0bf910168df10bd5ab284e9037e706d9a74fa",
-                  "test/win32/window-composite.ps1":  "6c0d5db49768df61f631b24c83a47d55e1781b372bb23e74c5a68c613aa747d7"
+                  "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d"
               }
 }

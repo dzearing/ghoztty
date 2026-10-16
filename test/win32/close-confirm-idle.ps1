@@ -132,13 +132,13 @@ function Stop-RepoProcesses([string[]]$Names) {
 }
 
 function Reset-AgentState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }
     Remove-Item (Join-Path $dir 'rings') -Recurse -Force -ErrorAction SilentlyContinue
     # A restored layout would hand this run the previous run's panes.
-    Remove-Item (Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json') -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -ErrorAction SilentlyContinue
 }
 
 # Every live descendant pid of $Root, from the OS process table.

@@ -218,7 +218,7 @@ function Wait-AnyPaneText($tmp, $tag, $needle, $timeoutSec = 60) {
 # trap that made an early T104 repro look like a parser bug is now the harness's
 # job rather than each call site's.
 function Launch($tmp, $launchArgs) {
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     # persistence: on (default), into a throwaway $env:LOCALAPPDATA - section D asserts a launch command and a RESTORE both happen.

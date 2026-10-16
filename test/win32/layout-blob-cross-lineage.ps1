@@ -143,7 +143,7 @@ function Wait-AliveCount($tmp, $tag, $target, $timeoutSec = 30) {
 
 # --- the agent's layout blob store ------------------------------------------
 
-function Layouts-Path($tmp) { return (Join-Path $tmp 'ghoztty\local-agent-debug\layouts.json') }
+function Layouts-Path($tmp) { return (Join-Path (Get-GhozttyAgentStateDir -Root $tmp) 'layouts.json') }
 function Get-Layouts($tmp) {
     $path = Layouts-Path $tmp
     if (-not (Test-Path $path)) { return @() }
@@ -163,7 +163,7 @@ function Wait-Records($tmp, $n, $timeoutSec = 30) {
     return @($recs)
 }
 
-function Manifest-Path($tmp) { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+function Manifest-Path($tmp) { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 
 # --- the Mac blobs we transplant --------------------------------------------
 
@@ -259,7 +259,7 @@ $savedLocalAppData = $env:LOCALAPPDATA
 $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
 
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 

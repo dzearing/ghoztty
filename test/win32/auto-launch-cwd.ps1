@@ -201,7 +201,7 @@ function Shell-Cwd($tmp, $tag, $target, $timeoutSec = 25) {
 # One hermetic GUI launch FROM $fromDir (section C relaunches the app itself
 # from the launcher directory, which is where the old bug's cwd came from).
 function Launch-From($tmp, $fromDir) {
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     # persistence: on (default), into a throwaway $env:LOCALAPPDATA - the agent under test is spawned from there, and there is no shared manifest to restore.
@@ -220,7 +220,7 @@ Assert "agent binary exists in zig-out" (Test-Path $AgentExe)
 Assert "ghoztty exe exists in zig-out" (Test-Path $Exe)
 
 $tmp = Join-Path $root 'state'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 
@@ -302,7 +302,7 @@ Assert "C5 the RELAUNCHed shell did NOT land in the relaunching process's direct
 
 # The reboot floor on disk is what carried it across: sessions.json must record
 # the cwd, or the next restart repeats the bug.
-$sessionsJson = Join-Path $tmp 'ghoztty\local-agent-debug\sessions.json'
+$sessionsJson = Join-Path (Get-GhozttyAgentStateDir -Root $tmp) 'sessions.json'
 $recorded = @()
 if (Test-Path $sessionsJson) {
     try {

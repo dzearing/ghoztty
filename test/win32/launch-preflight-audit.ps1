@@ -48,6 +48,8 @@
 # isolation: none - every CLI verb in this file is prose or fixture text, and
 # the only exe ever run is a stub .cmd in $env:TEMP that echoes a banner. There
 # is no endpoint to make private.
+#
+# @lineage-safe - the lineage is cleared only for B5z/B5y, whose one call is Start-OnTestDesktop on a stub path under this run's %TEMP% dir that the build-mode gate refuses (REFUSING TO RUN, asserted) before anything is launched; the caller's lineage is put back right after B5
 param([string]$Repo)
 
 $ErrorActionPreference = 'Continue'
@@ -203,6 +205,7 @@ Assert 'A8 a launch that is not the app needs nothing' `
 # standing in for the exe. The refusal has to come BEFORE the desktop is
 # resolved, which is also why these cases need no test desktop to run.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 $stubDir = Join-Path $tmp 'stub'
 New-Item -ItemType Directory -Force $stubDir | Out-Null
@@ -237,7 +240,7 @@ Assert 'B4 and a readable release build is refused too' `
 # smuggle a PARTLY isolated release run past the tightened gate, which is the
 # state soak.ps1 was in when it seeded the user's agent with pinned sessions.
 $savedB5Suffix = $env:GHOZTTY_PIPE_SUFFIX
-$savedB5Inst = $env:GHOZTTY_AGENT_INSTANCE
+$savedB5Inst = Get-GhozttyAgentLineage
 $savedB5Lad = $env:LOCALAPPDATA
 
 $env:GHOZTTY_PIPE_SUFFIX = "-lpa$PID"
@@ -259,8 +262,7 @@ Assert 'B5 -AllowReleaseBuild reaches the gate and passes through once isolated'
 
 if ($null -eq $savedB5Suffix) { Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }
 else { $env:GHOZTTY_PIPE_SUFFIX = $savedB5Suffix }
-if ($null -eq $savedB5Inst) { Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-else { $env:GHOZTTY_AGENT_INSTANCE = $savedB5Inst }
+Restore-GhozttyAgentLineage -Saved $savedB5Inst
 $env:LOCALAPPDATA = $savedB5Lad
 
 $msgAgent = Get-Throw { Start-OnTestDesktop -Exe (Join-Path $stubDir 'ghoztty-agent.exe') }

@@ -68,6 +68,7 @@ function AssertEq($name, $expected, $actual) {
 # the teardown for both roots up front so a run that dies mid-way - which is
 # exactly when a leak happens - still takes its ghoztty processes with it.
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 Register-HarnessGhozttyRoot -Root $root | Out-Null
 Register-HarnessGhozttyRoot -Root (Join-Path $env:TEMP "ghoztty-launch-t200-$PID") | Out-Null
 
@@ -568,22 +569,35 @@ $upgradeLog = Join-Path $tempDir 'ghoztty-upgrade.log'
 # agent exit 183 - "another instance is already running" - and the sandbox
 # silently runs WITHOUT session persistence, which no amount of private state
 # can fix. Clear the debug lineage first, exactly as the other suites do.
-# Matched on `local-agent-debug` in the command line, so the user's RELEASE
+# Matched on the debug state dir in the command line, so the user's RELEASE
 # agent (`local-agent`, holding their real panes) is never a candidate.
+#
+# T2005: and only the ONE lineage this run's sandbox agent will take - the
+# ambient one (a second loop lane's runner sets GHOZTTY_AGENT_INSTANCE, and the
+# sandbox app inherits it), or the box's default when none is set. That is the
+# only guard that can refuse our agent. The match is anchored on the leaf AND
+# its separators (`\local-agent-debug\`), so a default-lineage run no longer
+# takes every suffixed-lineage agent with it - those are other runs' sandboxes
+# (another loop lane's included), and none of them holds our guard. For the same
+# reason the app half is this checkout's own build dir plus the sandbox, not
+# every `*zig-out*` on the box.
 function Stop-DebugLineage {
+    $exeDir = Split-Path -Parent $Exe
     # cleanslate-exempt: also takes this run's SANDBOX copy under $root, which the
     # shared kill (exact-exe on the repo zig-out) cannot see
     Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe'" -ErrorAction SilentlyContinue |
         Where-Object {
             $_.ExecutablePath -and (
-                $_.ExecutablePath -like '*zig-out*' -or
+                $_.ExecutablePath.StartsWith($exeDir + '\', [StringComparison]::OrdinalIgnoreCase) -or
                 $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase))
         } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    # cleanslate-exempt: matched on the debug STATE dir, so the user's release
-    # agent - same image name, holding their real panes - is never a candidate
+    $leafMarker = '\' + (Get-GhozttyAgentStateDirLeaf -Instance (Get-GhozttyAgentLineage)) + '\'
+    # cleanslate-exempt: matched on THIS run's debug STATE dir leaf, so the user's
+    # release agent - same image name, holding their real panes - and every other
+    # lineage's agent are never candidates
     Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -like '*local-agent-debug*' } |
+        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($leafMarker, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 900
 }
@@ -683,7 +697,7 @@ function Invoke-Upgrade($tag, $extraArgs, $timeoutSec = 300) {
 Stop-DebugLineage
 Stop-SandboxProcs
 foreach ($d in @($installDir, (Join-Path $stagingDir 'bin'), $workDir, $tempDir,
-                 (Join-Path $stateDir 'ghoztty\local-agent-debug'))) {
+                 (Get-GhozttyAgentStateDir -Root $stateDir))) {
     New-Item -ItemType Directory -Force $d | Out-Null
 }
 Assert "B0a the built exe exists" (Test-Path $Exe)
@@ -747,7 +761,8 @@ try {
     # Guard against a silently non-persistent sandbox: without an agent the
     # pane dies with the app, "no fork" would pass for the wrong reason, and
     # this whole section would be theatre.
-    $portFile = Join-Path $stateDir 'ghoztty\local-agent-debug\port.json'
+    # The sandbox app inherits the ambient lineage, so its agent publishes there.
+    $portFile = Join-Path (Get-GhozttyAgentStateDir -Root $stateDir) 'port.json'
     $agentUp = $false
     for ($i = 0; $i -lt 20; $i++) {
         if (Test-Path $portFile) { $agentUp = $true; break }

@@ -105,7 +105,7 @@ function Stop-RepoProcesses([string[]]$Names) {
 }
 
 function Reset-AgentState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json', 'layouts.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }
@@ -116,7 +116,7 @@ function Reset-AgentState {
 # relaunched app re-attaches the very windows this test needs to be missing, and
 # the rebuild would have nothing left to prove.
 function Remove-LayoutManifest {
-    Remove-Item (Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json') -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -ErrorAction SilentlyContinue
 }
 
 # `ghoztty +verb > file` writes zero bytes from PowerShell (T245) - capture
@@ -174,7 +174,7 @@ function Get-WindowShapes {
 }
 
 function Layouts-Store {
-    $path = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug\layouts.json'
+    $path = Join-Path (Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA) 'layouts.json'
     if (-not (Test-Path $path)) { return @() }
     try { $doc = (Get-Content $path -Raw) | ConvertFrom-Json } catch { return @() }
     if ($null -eq $doc -or $null -eq $doc.layouts) { return @() }

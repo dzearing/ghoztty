@@ -110,7 +110,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-stashdrag$PID"
 Stop-RepoInstances
 New-Item -ItemType Directory -Force $root | Out-Null
 $tmp = Join-Path $root 'app'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
 

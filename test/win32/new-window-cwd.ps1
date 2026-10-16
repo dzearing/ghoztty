@@ -315,7 +315,7 @@ $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
 # contents to write to %LOCALAPPDATA%\ghostty\config.ghostty before launching.
 function New-State($name, $configBody) {
     $tmp = Join-Path $root $name
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     New-Item -ItemType Directory -Force (Join-Path $tmp 'ghostty') | Out-Null
     if ($null -ne $configBody) {
         Set-Content -Path (Join-Path $tmp 'ghostty\config.ghostty') -Value $configBody -Encoding ascii

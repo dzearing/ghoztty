@@ -1,10 +1,10 @@
 {
     "guard":  "agent-upgrade",
     "script":  "test/win32/agent-upgrade.ps1",
-    "generated":  "2026-10-16T07:32:53-07:00",
-    "commit":  "99ebd53f9",
+    "generated":  "2026-10-16T12:19:59-07:00",
+    "commit":  "161784011",
     "uncommitted":  [
-                        "src/apprt/win32/LocalAgent.zig"
+                        "test/win32/agent-upgrade.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/agent_upgrade.zig":  "32238c442c66a6ee5885c31c751f9fbf23f174c36bf852905eda7cd1ad3ea603",
@@ -12,6 +12,6 @@
                   "src/apprt/win32/LocalAgent.zig":  "89d1ec89bdef75ccdb64035a24ab81084761acde22ee7fcbc36abb5607a95340",
                   "src/apprt/win32/tray_notify.zig":  "74c7ddecf7646b2b866af6e5effc88d95652f858439f50958367b29fee887cbf",
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
-                  "test/win32/agent-upgrade.ps1":  "60b6470fa573d45807e7861e0d3ce74cd969502abd9a7c0de4a820a06bc0c480"
+                  "test/win32/agent-upgrade.ps1":  "193a33f2dada5bea1b74382b72bcbefd4fb4eb6df61c3e40aa978bea9d2a6800"
               }
 }

@@ -127,14 +127,14 @@ function Stop-RepoProcesses([string[]]$Names) {
 }
 
 function Reset-AgentState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json', 'layouts.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }
     Remove-Item (Join-Path $dir 'rings') -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$ManifestPath = Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json'
+$ManifestPath = Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA
 function Remove-LayoutManifest {
     Remove-Item $ManifestPath -ErrorAction SilentlyContinue
 }
@@ -210,7 +210,7 @@ function Wait-WindowCount($n, $timeoutSec = 20) {
 }
 
 function Layouts-Store {
-    $path = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug\layouts.json'
+    $path = Join-Path (Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA) 'layouts.json'
     if (-not (Test-Path $path)) { return @() }
     try { $doc = (Get-Content $path -Raw) | ConvertFrom-Json } catch { return @() }
     if ($null -eq $doc -or $null -eq $doc.layouts) { return @() }

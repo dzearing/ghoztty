@@ -89,7 +89,7 @@ function Out-Text($f) { if (Test-Path $f) { Get-Content $f -Raw } else { '' } }
 
 # --- the store under test ----------------------------------------------------
 
-function Layouts-Path($tmp) { Join-Path $tmp 'ghoztty\local-agent-debug\layouts.json' }
+function Layouts-Path($tmp) { Join-Path (Get-GhozttyAgentStateDir -Root $tmp) 'layouts.json' }
 
 # The blob key shape since T338: a window's stable uuid (8-4-4-4-12 hex), the
 # same textual form as a pane id. NOT the manifest `id` (`window-N` / `win-N`),
@@ -193,7 +193,7 @@ Assert "agent binary exists in zig-out" (Test-Path $AgentExe)
 Assert "ghoztty exe exists in zig-out" (Test-Path $Exe)
 
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 
@@ -329,9 +329,9 @@ Assert "E2 it still names the sessions the agent is keeping alive" (
 # it. session-crash-recover.ps1 is the oracle for the recovery itself; this
 # section stays the oracle for the KEY. F6-F8 keep the "a later window takes a
 # fresh key" half under test with a window opened after the recovery.
-Remove-Item (Join-Path $tmp 'ghoztty\session-layout-debug.json') -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $tmp) -Force -ErrorAction SilentlyContinue
 Assert "F1 the local manifest really is gone before the relaunch" (
-    -not (Test-Path (Join-Path $tmp 'ghoztty\session-layout-debug.json')))
+    -not (Test-Path (Get-GhozttySessionLayoutPath -Root $tmp)))
 
 # persistence: on (default) - the agent under test only owns sessions when persistence is on.
 [void](Start-OnTestDesktop -Exe $Exe -Arguments @(

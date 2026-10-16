@@ -399,7 +399,7 @@ if ($preflight.ExitCode -eq 0) {
 
 # Hermetic state root for the whole run (one agent lineage across sections).
 $script:tmp = Join-Path $root 'state'
-New-Item -ItemType Directory -Force (Join-Path $script:tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $script:tmp) | Out-Null
 $env:LOCALAPPDATA = $script:tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 
@@ -544,7 +544,7 @@ Assert "C3 live resize reached the ConPTY (cols $preCols -> $refCols)" ($refCols
 # benign title mutation -- captureFrame reads the LIVE window rect at capture
 # time, persisting the 1000x640 frames.
 Run-Cli '+rename --target=winB --title=wsPin' "$($script:tmp)\ws-pin.txt" 12 | Out-Null
-$manifest = Join-Path $script:tmp 'ghoztty\session-layout-debug.json'
+$manifest = Get-GhozttySessionLayoutPath -Root $script:tmp
 $frameOk = $false
 $deadline = (Get-Date).AddSeconds(12)
 while ((Get-Date) -lt $deadline) {

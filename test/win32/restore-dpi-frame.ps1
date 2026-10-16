@@ -56,7 +56,7 @@ function Assert([bool]$cond, [string]$label) {
 $fakeLocal = Join-Path $env:TEMP ("ghoztty-t1971-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $fakeLocal | Out-Null
 $memFile = Join-Path $fakeLocal 'ghoztty\window_placement-debug'
-$manifest = Join-Path $fakeLocal 'ghoztty\session-layout-debug.json'
+$manifest = Get-GhozttySessionLayoutPath -Root $fakeLocal
 
 function Read-Text([string]$p) { if (Test-Path $p) { (Get-Content $p -Raw) } else { '' } }
 

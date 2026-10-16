@@ -222,7 +222,7 @@ function Walk-Strip([IntPtr]$top, [int]$n) {
 # ---------------------------------------------------------------------------
 
 Stop-RepoInstances
-Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
 
 $viewFile = Join-Path $env:TEMP 'ghoztty-hero-nav-view.md'
 Set-Content -Path $viewFile -Encoding UTF8 -Value @'

@@ -47,6 +47,7 @@
 #   powershell -NoProfile -File test\win32\isolation-meta.ps1
 #
 # preflight: none - every Start-Process in this file is fixture text written to $env:TEMP and scanned; nothing is launched.
+# @lineage-safe - the only GHOZTTY_AGENT_INSTANCE assignments here are fixture lines (A11-A13) written to %TEMP% and scanned as text; this script never sets or clears the variable and launches no ghoztty process or agent (its one child is the scripts\guard-due.ps1 stamp)
 param([string]$Repo)
 
 $ErrorActionPreference = 'Stop'

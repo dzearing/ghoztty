@@ -67,7 +67,11 @@ $script:failures = 0
 $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-agent-autostart-$PID"
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# T2005: every app here inherits this process's agent lineage (a second loop
+# lane's runner sets one), and the app suffixes the value name with it
+# (LocalAgent.autostartValueName) - so the name the run looks for does too.
 $valueName = 'GhozttyAgent-debug'
+if (Get-GhozttyAgentLineage) { $valueName = "GhozttyAgent-debug-$(Get-GhozttyAgentLineage)" }
 
 function Assert($name, $cond) {
     if ($cond) { $script:passes++; "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
@@ -140,7 +144,7 @@ function Get-RunValue {
 
 function Start-Gui($label) {
     $tmp = Join-Path $root $label
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     # persistence: on (default) - a launch with persistence off never autostarts an agent, which is the subject.
     $p = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t89h-agent-autostart')
@@ -190,8 +194,11 @@ Assert "A2 Run value '$valueName' written" ($null -ne $runCmd)
 "  run command: $runCmd"
 Assert "A3 command starts with the quoted agent exe" ($runCmd -like "`"$AgentExe`"*")
 Assert "A4 command pins the debug-lineage pipe" ($runCmd -like '*--listen-pipe=\\.\pipe\ghoztty-agent-debug-*')
-Assert "A5 command carries port-file under the engaging LOCALAPPDATA" ($runCmd -like "*--port-file=$($a.Tmp)\ghoztty\local-agent-debug\port.json*")
-Assert "A6 command carries sessions-file under the engaging LOCALAPPDATA" ($runCmd -like "*--sessions-file=$($a.Tmp)\ghoztty\local-agent-debug\sessions.json*")
+# The app's agent runs under the ambient lineage (inherited from this process),
+# so its state dir is the lineage's: `local-agent-debug[-<inst>]`.
+$aStateDir = Get-GhozttyAgentStateDir -Root $a.Tmp
+Assert "A5 command carries port-file under the engaging LOCALAPPDATA" ($runCmd -like "*--port-file=$aStateDir\port.json*")
+Assert "A6 command carries sessions-file under the engaging LOCALAPPDATA" ($runCmd -like "*--sessions-file=$aStateDir\sessions.json*")
 
 # A live session exists (what section B expects to come back as a tombstone).
 $code = Run-Cli '+sessions --json' "$($a.Tmp)\sess.json"
@@ -206,7 +213,7 @@ Assert "A7 one live agent session before the reboot proxy" ($null -ne $rows -and
 # Reboot analog: everything dies. Kill the GUI first (no CLOSE is sent — app
 # death never ends sessions), then the agent itself.
 Stop-GuiOnly
-$portFile = Join-Path $a.Tmp 'ghoztty\local-agent-debug\port.json'
+$portFile = Join-Path $aStateDir 'port.json'
 $oldAgentPid = 0
 try { $oldAgentPid = [int]((Get-Content $portFile -Raw | ConvertFrom-Json).pid) } catch {}
 Assert "B1 agent alive before the proxy kill" ($oldAgentPid -gt 0 -and $null -ne (Get-Process -Id $oldAgentPid -ErrorAction SilentlyContinue))
@@ -354,7 +361,7 @@ Stop-OutsideProcs
 $env:GHOSTTY_LOCAL_AGENT_BIN = $outsideAgent
 $env:GHOZTTY_AGENT_AUTOSTART = 'gate'
 $tmpE = Join-Path $root 'e'
-New-Item -ItemType Directory -Force (Join-Path $tmpE 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmpE) | Out-Null
 $env:LOCALAPPDATA = $tmpE
 # persistence: on (default) - section E gets its own empty $env:LOCALAPPDATA
 # ($tmpE) three lines up, so this copy has no manifest to restore from.

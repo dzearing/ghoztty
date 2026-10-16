@@ -186,7 +186,7 @@ function Start-Gui([string]$label, [string[]]$extraArgs) {
     # force-kills and leave the pane's shell dead/blank (paste has no live
     # pty to echo into; launch restore replaces the -e window). Also drop
     # any stale debug layout manifest so no prior test's layout restores.
-    Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
     $argList = @('--config-default-files=false', '--session-persistence=false') + $extraArgs
     $app = Start-OnTestDesktop -Exe $exe -Arguments $argList
     Start-Sleep -Seconds 3

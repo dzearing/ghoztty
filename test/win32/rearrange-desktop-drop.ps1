@@ -210,7 +210,7 @@ function Enter-RearrangeMode([IntPtr]$top) {
 }
 
 Stop-RepoInstances
-Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
 Remove-Item $errlog -ErrorAction SilentlyContinue
 
 Reset-TestBody  # T1039: an early exit must not read as a pass

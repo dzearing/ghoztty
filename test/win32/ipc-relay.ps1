@@ -232,7 +232,7 @@ if ($null -eq $dev) { Stop-TestProcs; "$($script:failures) FAILURE(S)"; exit 1 }
 # of those is not the same machine coming back, it is a different one, and the
 # reconnect claim would be measuring the wrong thing.
 function Start-HarnessAgent($tag) {
-    $savedAgentInstance = $env:GHOZTTY_AGENT_INSTANCE
+    $savedAgentInstance = Get-GhozttyAgentLineage
     $env:GHOZTTY_AGENT_INSTANCE = "ipcrelay$PID"
     $env:GHOSTTY_DEVICE_TOKEN = $dev.token
     $env:GHOSTTY_AGENT_HEARTBEAT = "$tmp\agent.heartbeat"
@@ -240,8 +240,7 @@ function Start-HarnessAgent($tag) {
         -RedirectStandardOutput "$tmp\$tag.out" -RedirectStandardError "$tmp\$tag.err" `
         -ArgumentList "--relay=$RelayBase", "--headless"
     $null = $p.Handle   # before any HasExited/ExitCode read (lib\ExitCodeAudit.ps1)
-    if ($null -eq $savedAgentInstance) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $savedAgentInstance }
+    Restore-GhozttyAgentLineage -Saved $savedAgentInstance
     Remove-Item env:GHOSTTY_DEVICE_TOKEN -ErrorAction SilentlyContinue
     Remove-Item env:GHOSTTY_AGENT_HEARTBEAT -ErrorAction SilentlyContinue
     return $p

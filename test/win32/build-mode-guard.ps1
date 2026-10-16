@@ -9,6 +9,8 @@
 # That is deliberate - the alternative is a ten-minute ReleaseFast build whose
 # only contribution is one line of text, and a stub can also play the exe this
 # gate must refuse for OTHER reasons (a mode it cannot read at all).
+#
+# @lineage-safe - the lineage is dropped only in sections D and E, where every call is a pure predicate or the gate run against stub-*.cmd files under this run's %TEMP% dir (Get-GhozttyBuildMode runs the stub, never a ghoztty binary), and each Reset-GhozttyTestState / Assert-GhozttyPrivateEndpoint there throws at the build-mode gate or at Stop-RepoGhoztty's not-under-the-repo refusal before anything is launched or killed; the caller's lineage is restored before section F runs the real exe
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
 )
@@ -107,7 +109,7 @@ Assert "C8 an unreadable exe is refused too" `
 # build" AND has to show the isolation, or declare that reaching the user's
 # endpoints is the point.
 $savedSuffix = $env:GHOZTTY_PIPE_SUFFIX
-$savedInst = $env:GHOZTTY_AGENT_INSTANCE
+$savedInst = Get-GhozttyAgentLineage
 $savedLad = $env:LOCALAPPDATA
 $realLad = [Environment]::GetFolderPath('LocalApplicationData')
 
@@ -194,9 +196,11 @@ Assert "D10d an over-long tag is trimmed rather than pushed past the cap" `
 
 # Hand section E the partial state it is written against: a release exe with a
 # private suffix and nothing else, which is what -AllowReleaseBuild has to be
-# able to opt out of.
-if ($null -eq $savedInst) { Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-else { $env:GHOZTTY_AGENT_INSTANCE = $savedInst }
+# able to opt out of. T2005: "nothing else" means the lineage is UNSET here, not
+# the caller's put back - a second loop lane's runner sets one, and E3z/E3y
+# (which need it missing) used to fail there. The caller's lineage is restored
+# after section E, before F launches the real exe.
+Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
 $env:LOCALAPPDATA = $savedLad
 $env:GHOZTTY_PIPE_SUFFIX = "-bmguard$PID"
 
@@ -225,15 +229,14 @@ Assert "E3z -AllowReleaseBuild does NOT excuse a partly-isolated release run" `
 Assert "E3y and the wrapper's refusal names the knob that is missing" `
     ($msgPartial -match 'GHOZTTY_AGENT_INSTANCE is unset')
 
-$savedEInst = $env:GHOZTTY_AGENT_INSTANCE
+$savedEInst = Get-GhozttyAgentLineage
 $savedELad = $env:LOCALAPPDATA
 $env:GHOZTTY_AGENT_INSTANCE = "bmguardE$PID"
 $env:LOCALAPPDATA = Join-Path $tmp 'sandbox-lad-e'
 $msgAllow = Get-Throw { Reset-GhozttyTestState -Exe $stubFast -SettleMs 0 -AllowReleaseBuild }
 Assert "E3 -AllowReleaseBuild passes through to it once the run is isolated" ($msgAllow -notmatch 'REFUSING TO RUN')
 Assert "E3b and the run continues to the next pre-flight" ($msgAllow -match 'not under the repo')
-if ($null -eq $savedEInst) { Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-else { $env:GHOZTTY_AGENT_INSTANCE = $savedEInst }
+Restore-GhozttyAgentLineage -Saved $savedEInst
 $env:LOCALAPPDATA = $savedELad
 
 $msgIso = Get-Throw { Assert-GhozttyPrivateEndpoint -Exe $stubFast }
@@ -242,6 +245,8 @@ Assert "E5 and it is the same gate" ($msgIso -match 'REFUSING TO RUN')
 
 if ($savedSuffix) { $env:GHOZTTY_PIPE_SUFFIX = $savedSuffix }
 else { Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }
+# The caller's lineage back before F runs the real exe's `+version`.
+Restore-GhozttyAgentLineage -Saved $savedInst
 
 # ============================================================================
 "== F: positive control - the real build under test is unaffected"

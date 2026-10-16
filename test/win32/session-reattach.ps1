@@ -204,7 +204,7 @@ function Alive-Ids($rows) {
 # ---- Manifest helpers (the T89f artifact under test) -----------------------
 
 # Debug builds write the -debug filename (session_layout.layoutPath).
-function Manifest-Path($tmp) { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+function Manifest-Path($tmp) { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 
 function Read-Manifest($tmp) {
     $p = Manifest-Path $tmp
@@ -346,7 +346,7 @@ function Measure-FocusFlips($wins, $totalMs, $stepMs) {
 # override, both inherited through CreateProcessW).
 function Start-Backed($label, $title) {
     $tmp = Join-Path $root $label
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     # persistence: on (default) - the relaunch below has to RESTORE what this launch left.

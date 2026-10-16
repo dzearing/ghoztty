@@ -178,7 +178,7 @@ function Measure-Tile($shot, [IntPtr]$top, $tile) {
 }
 
 Stop-RepoInstances
-Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
 Remove-Item $errlog -ErrorAction SilentlyContinue
 
 Start-TestForegroundWatch

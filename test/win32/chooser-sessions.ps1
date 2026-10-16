@@ -85,7 +85,7 @@ function Stop-RepoProcesses {
 # rows and the count under test becomes "however many times this script has
 # ever run".
 function Reset-AgentState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }

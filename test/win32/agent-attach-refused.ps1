@@ -142,7 +142,7 @@ function Read-Pane($id, $tag, $lines = 60) {
     return ((Out-Text "$tmp\read-$tag.txt") -replace "`0", '')
 }
 
-function Manifest-Path { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+function Manifest-Path { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 
 # Poll until the manifest records at least one leaf with a real session id -
 # i.e. the app has captured an agent-backed pane worth restoring.
@@ -235,7 +235,7 @@ $null = Assert-GhozttyIsolatedBuild -Exe $Exe
 
 Stop-TestProcs
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $saved = @{
     lad  = $env:LOCALAPPDATA
     bin  = $env:GHOSTTY_LOCAL_AGENT_BIN

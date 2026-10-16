@@ -228,7 +228,7 @@ $sw = [System.IO.StreamWriter]::new($streamFile, $false)
 $sw.Close()
 
 function Wait-Manifest($tmp, $predicate, $timeoutSec = 30) {
-    $path = Join-Path $tmp 'ghoztty\session-layout-debug.json'
+    $path = Get-GhozttySessionLayoutPath -Root $tmp
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $deadline) {
         if (Test-Path $path) {

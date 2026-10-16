@@ -150,7 +150,7 @@ function Start-App($title, $extraArgs = @()) {
 # N+1 restores arm N's windows before its own setup runs.
 function Reset-State($arm) {
     $script:tmp = Join-Path $root "run-$arm"
-    $script:agentDir = Join-Path $script:tmp 'ghoztty\local-agent-debug'
+    $script:agentDir = Get-GhozttyAgentStateDir -Root $script:tmp
     New-Item -ItemType Directory -Force $script:agentDir | Out-Null
     $env:LOCALAPPDATA = $script:tmp
 }
@@ -238,7 +238,7 @@ function Invoke-Arm($arm, $seed, $prefix) {
 
 Stop-TestProcs
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $saved = @{ lad = $env:LOCALAPPDATA; bin = $env:GHOSTTY_LOCAL_AGENT_BIN; pipe = $env:GHOZTTY_PIPE_SUFFIX }
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe

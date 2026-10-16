@@ -453,7 +453,7 @@ if ($scope.Scoped) {
 
     Stop-RepoInstances
     $tmp = Join-Path $root 'app'
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
 

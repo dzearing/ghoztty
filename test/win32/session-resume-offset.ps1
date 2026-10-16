@@ -246,7 +246,7 @@ function Provoke-ManifestWrite($pane, $tag) {
         $prev = $cur
     }
 }
-function Manifest-Path { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+function Manifest-Path { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 function Manifest-Offsets {
     $p = Manifest-Path
     if (-not (Test-Path $p)) { return @() }
@@ -301,7 +301,7 @@ function Invoke-MidBurstArm($arm) {
     }
     Stop-TestProcs
     Remove-Item -Recurse -Force (Join-Path $tmp 'ghoztty') -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 
     $log0 = Join-Path $tmp "app-$arm-0.err.txt"
     # persistence: on (default) - the manifest this launch writes is the subject.
@@ -429,7 +429,7 @@ Assert "ghoztty exe exists in zig-out" (Test-Path $Exe)
 Assert "agent binary exists in zig-out" (Test-Path $AgentExe)
 
 $tmp = Join-Path $root 'app'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 
@@ -468,7 +468,7 @@ foreach ($arm in $Arms) {
     }
     Stop-TestProcs
     Remove-Item -Recurse -Force (Join-Path $tmp 'ghoztty') -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 
     # Launch 0: an ordinary OPEN. Nothing is injected on an open, so this
     # launch's offset accounting is exact on any build - it is the baseline the

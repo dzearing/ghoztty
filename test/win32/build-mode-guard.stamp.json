@@ -1,13 +1,13 @@
 {
     "guard":  "build-mode",
     "script":  "test/win32/build-mode-guard.ps1",
-    "generated":  "2026-10-16T08:46:21-07:00",
-    "commit":  "c954fe9ea",
+    "generated":  "2026-10-16T11:19:06-07:00",
+    "commit":  "161784011",
     "uncommitted":  [
-                        "test/win32/lib/BuildMode.ps1"
+                        "test/win32/build-mode-guard.ps1"
                     ],
     "files":  {
-                  "test/win32/build-mode-guard.ps1":  "aafbc4694d3ff39714a34cc9554e02e47e601ef0e9148a67453269257bba9d1f",
+                  "test/win32/build-mode-guard.ps1":  "2511d7ad94e369954524f82c1cd47ea1d70cb1c016846726234cf235cb3280ee",
                   "test/win32/lib/BuildMode.ps1":  "e05ad9a4e94ee30fd639feae22ec7b961548df9c08a25aa2dc3a8ee5c0d1bf3e",
                   "test/win32/lib/Isolation.ps1":  "93b2efed0772d8debdd7ccbda2ca5b51d63bee517d2a1fd1fe6b33da89024464"
               }

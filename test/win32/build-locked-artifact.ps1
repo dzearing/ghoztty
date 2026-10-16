@@ -100,7 +100,7 @@ function Stop-RepoAgents {
 # write a real agent's state.
 # persistence: starts ghoztty-agent.exe directly - no app, no window, nothing to restore.
 function Start-HeldAgent {
-    $stateDir = Join-Path $tmp 'ghoztty\local-agent-debug'
+    $stateDir = Get-GhozttyAgentStateDir -Root $tmp
     New-Item -ItemType Directory -Force $stateDir | Out-Null
     $saved = $env:LOCALAPPDATA
     $env:LOCALAPPDATA = $tmp

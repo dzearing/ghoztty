@@ -68,6 +68,7 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-mergedrowtest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -109,7 +110,7 @@ try {
     # two states). Black background so a chiclet reads against the strip.
     # --session-persistence=false: a stale layout manifest would restore a
     # previous run's window over the one under test (T131/T248).
-    Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
     # ...and the WINDOW PLACEMENT memory (T85), which is a separate file and a
     # separate trap. Section 8 maximizes the window, `savePlacement` records
     # "maximized" on the way out, and the NEXT debug window - this script's or

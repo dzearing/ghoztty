@@ -82,12 +82,12 @@ function Stop-RepoProcesses([string[]]$Names) {
 # manifest. `layouts.json` is only safe to delete with the agent DEAD - it owns
 # the file and would rewrite it - which is why this runs after the kill.
 function Reset-GhozttyState {
-    $dir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+    $dir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
     foreach ($f in @('sessions.json', 'port.json', 'layouts.json')) {
         Remove-Item (Join-Path $dir $f) -ErrorAction SilentlyContinue
     }
     Remove-Item (Join-Path $dir 'rings') -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item (Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json') -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -ErrorAction SilentlyContinue
 }
 
 # `ghoztty +verb > file` writes zero bytes from PowerShell (T245) - capture

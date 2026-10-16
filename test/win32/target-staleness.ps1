@@ -159,7 +159,7 @@ try {
     Assert "Stop-RepoGhoztty refuses an installed exe" $guarded
 
     "== 4: after a reset the manifest is gone, so a cold launch restores nothing"
-    $manifest = Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json'
+    $manifest = Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA
     Reset-GhozttyTestState -Exe $Exe -SettleMs 1200 | Out-Null
     Assert "debug session-layout manifest removed" (-not (Test-Path $manifest))
 } finally {

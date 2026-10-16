@@ -384,7 +384,7 @@ function Get-DirNames($d) { return @(Get-ChildItem -LiteralPath $d -Force -Error
 
 Stop-TestProcs
 $tmp = Join-Path $root 'state'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $saved = @{ lad = $env:LOCALAPPDATA; bin = $env:GHOSTTY_LOCAL_AGENT_BIN; pipe = $env:GHOZTTY_PIPE_SUFFIX }
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
@@ -448,7 +448,7 @@ Assert "B7 that size is the real window, not the 49x17 placeholder" (
 
 # Wait for the manifest to have PERSISTED both TUI screens: what a restored pane
 # can show is decided before the kill, by that file.
-$layout = Join-Path $tmp 'ghoztty\session-layout-debug.json'
+$layout = Get-GhozttySessionLayoutPath -Root $tmp
 function Get-SnapshotTexts {
     $out = @()
     try {

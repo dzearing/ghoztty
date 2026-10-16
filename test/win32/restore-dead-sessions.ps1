@@ -55,7 +55,7 @@ function Assert([bool]$cond, [string]$label) {
 $fakeLocal = Join-Path $env:TEMP ("ghoztty-t1978-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $fakeLocal | Out-Null
 # The manifest name carries the agent lineage (session_layout.layoutPath).
-$manifest = Join-Path $fakeLocal "ghoztty\session-layout-debug-$($env:GHOZTTY_AGENT_INSTANCE).json"
+$manifest = Get-GhozttySessionLayoutPath -Root $fakeLocal
 $agentDir = Get-GhozttyAgentStateDir -Root $fakeLocal -Exe $exe
 $sessionsFile = Join-Path $agentDir 'sessions.json'
 

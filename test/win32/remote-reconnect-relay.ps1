@@ -90,6 +90,7 @@ $AgentPort = Resolve-TestPort -Name 'agent' -Port $AgentPort
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
 # guard-stamping child below reads the same state and refuses to write.
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
 Register-RepoBuildTeardown -Exe $Exe | Out-Null
 
@@ -158,15 +159,14 @@ function Count-Dials() {
 }
 
 function Start-FarAgent() {
-    $saved = $env:GHOZTTY_AGENT_INSTANCE
+    $saved = Get-GhozttyAgentLineage
     $env:GHOZTTY_AGENT_INSTANCE = "t1276relrecon$PID"
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -ArgumentList '--listen', "127.0.0.1:$AgentPort", '--headless' `
         -RedirectStandardOutput (Join-Path $tmp "agent-$([guid]::NewGuid().ToString('N').Substring(0,6)).out") `
         -RedirectStandardError (Join-Path $tmp "agent-$([guid]::NewGuid().ToString('N').Substring(0,6)).err")
     $null = $p.Handle   # before any HasExited read (lib\ExitCodeAudit.ps1)
-    if ($null -eq $saved) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $saved }
+    Restore-GhozttyAgentLineage -Saved $saved
     return $p
 }
 

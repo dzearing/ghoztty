@@ -78,7 +78,7 @@ $sandbox = Join-Path $env:TEMP "ghoztty-t1684-$PID"
 [void](Set-GhozttyTestIsolation -Tag 'dupsess' -ReleaseSandbox -SandboxRoot $sandbox)
 Assert-GhozttyPrivateEndpoint -Exe $Exe
 
-$manifest = Join-Path $sandbox ("ghoztty\session-layout-debug-" + $env:GHOZTTY_AGENT_INSTANCE + ".json")
+$manifest = Get-GhozttySessionLayoutPath -Root $sandbox
 $td = New-TestDesktop
 
 function Ghoz([string[]]$GhozArgs) {

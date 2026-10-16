@@ -388,7 +388,7 @@ function Assert-ShotHasContent($content, [string]$label) {
 # ---------------------------------------------------------------------------
 
 Kill-RepoInstances
-Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
 
 # Watch the user's desktop for the whole run: nothing we launch may ever take
 # foreground there. That is the complaint the test desktop exists to fix.

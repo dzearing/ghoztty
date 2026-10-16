@@ -153,7 +153,7 @@ function Stop-RepoProcesses([string[]]$Names) {
     Start-Sleep -Milliseconds 700
 }
 
-$agentDir = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+$agentDir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA
 $portFile = Join-Path $agentDir 'port.json'
 $portSaved = Join-Path $env:TEMP "ghoztty-t336-port-$PID.json"
 
@@ -165,7 +165,7 @@ function Reset-AgentState {
 }
 
 function Remove-LayoutManifest {
-    Remove-Item (Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json') -ErrorAction SilentlyContinue
+    Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -ErrorAction SilentlyContinue
 }
 
 # `ghoztty +verb > file` writes zero bytes from PowerShell (T245) - capture

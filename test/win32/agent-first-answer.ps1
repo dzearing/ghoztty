@@ -91,7 +91,7 @@ if (Test-Path $laSrc) {
 Say "== the app gives a spawning agent ${deadlineMs}ms to become dialable"
 
 $savedLocalAppData = $env:LOCALAPPDATA
-$savedInstance = $env:GHOZTTY_AGENT_INSTANCE
+$savedInstance = Get-GhozttyAgentLineage
 $inst = 't1593' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
 $root = Join-Path $env:TEMP "ghoztty-t1593-$inst"
 $servers = New-Object System.Collections.ArrayList
@@ -228,8 +228,8 @@ try {
     foreach ($c in $clients) { try { $c.Dispose() } catch {} }
     foreach ($s in $servers) { try { $s.Dispose() } catch {} }
     $env:LOCALAPPDATA = $savedLocalAppData
-    if ($null -ne $savedInstance) { $env:GHOZTTY_AGENT_INSTANCE = $savedInstance }
-    else { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
+    # T2005: hand the runner's lineage back rather than dropping it.
+    Restore-GhozttyAgentLineage -Saved $savedInstance
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 

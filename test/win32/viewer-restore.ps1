@@ -166,7 +166,7 @@ function Viewer-IdsByUrl {
     return $map
 }
 
-function Manifest-Path($tmp) { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+function Manifest-Path($tmp) { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 
 function Read-Manifest($tmp) {
     $p = Manifest-Path $tmp
@@ -262,7 +262,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-vrestore$PID"
 Stop-RepoInstances
 New-Item -ItemType Directory -Force $root | Out-Null
 $tmp = Join-Path $root 'app'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
 

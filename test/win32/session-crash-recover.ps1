@@ -130,7 +130,7 @@ function Pid-Map($rows) {
 # --- the agent's layout blob store ------------------------------------------
 
 function Get-Layouts($tmp) {
-    $path = Join-Path $tmp 'ghoztty\local-agent-debug\layouts.json'
+    $path = Join-Path (Get-GhozttyAgentStateDir -Root $tmp) 'layouts.json'
     if (-not (Test-Path $path)) { return @() }
     $doc = $null
     try { $doc = (Get-Content $path -Raw) | ConvertFrom-Json } catch { return @() }
@@ -150,7 +150,7 @@ function Wait-Records($tmp, $n, $timeoutSec = 30) {
 
 # --- the app-local manifest (the thing we DELETE) ----------------------------
 
-function Manifest-Path($tmp) { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
+function Manifest-Path($tmp) { return (Get-GhozttySessionLayoutPath -Root $tmp) }
 function Read-Manifest($tmp) {
     $p = Manifest-Path $tmp
     if (-not (Test-Path $p)) { return $null }
@@ -226,7 +226,7 @@ $savedLocalAppData = $env:LOCALAPPDATA
 $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
 
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 

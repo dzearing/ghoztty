@@ -399,7 +399,7 @@ function Wait-PaneTextTight($id, $tag, $needle, $want = 1, $timeoutSec = 30) {
 # screen a couple of seconds after its output goes quiet, and any sleep short
 # enough to keep this script fast is long enough to be a coin flip.
 function Wait-LayoutSnapshotHas($needle, $timeoutSec = 40) {
-    $path = Join-Path $env:LOCALAPPDATA 'ghoztty\session-layout-debug.json'
+    $path = Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $deadline) {
         if (Test-Path $path) {
@@ -610,13 +610,13 @@ function Build-AndKill($cwdA, $withBanners = $false) {
 # the first green-ish run.)
 function Reset-State($arm) {
     $script:tmp = Join-Path $root "run-$arm"
-    New-Item -ItemType Directory -Force (Join-Path $script:tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $script:tmp) | Out-Null
     $env:LOCALAPPDATA = $script:tmp
 }
 
 Stop-TestProcs
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $saved = @{ lad = $env:LOCALAPPDATA; bin = $env:GHOSTTY_LOCAL_AGENT_BIN; pipe = $env:GHOZTTY_PIPE_SUFFIX }
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
@@ -836,7 +836,7 @@ Assert "A19 every restored pane's resume point belongs to the NEW stream, below 
 # still lists the fresh live sessions - so an empty or missing file cannot
 # trivially satisfy the check. A5-A8 above are the positive control that the
 # tombstones existed at restore time (the notices were built from them).
-$metaA = Join-Path $tmp 'ghoztty\local-agent-debug\sessions.json'
+$metaA = Join-Path (Get-GhozttyAgentStateDir -Root $tmp) 'sessions.json'
 $tombGone = $false; $liveA14 = 0
 $deadlineA14 = (Get-Date).AddSeconds(25)
 while ((Get-Date) -lt $deadlineA14) {
@@ -926,7 +926,7 @@ Assert "D4 the shell actually moved to the deeper directory" `
 # thing a restart has to work from, so asserting on it is asserting on exactly
 # what was broken - and it cannot say `deeper-cwd` unless the shell really moved
 # AND the refresh really ran. The refresh rides a 10s reaper tick.
-$metaD = Join-Path $tmp 'ghoztty\local-agent-debug\sessions.json'
+$metaD = Join-Path (Get-GhozttyAgentStateDir -Root $tmp) 'sessions.json'
 $sawDeep = $false
 $deadlineD = (Get-Date).AddSeconds(45)
 while ((Get-Date) -lt $deadlineD) {
@@ -1082,7 +1082,7 @@ Assert "F4 the typed command is actually running" (Wait-MarkerPings $MARK_F 1 30
 # naming the typed command. That file is all a restart has to work from, and it
 # cannot say this unless the ping is really running AND the sampler really saw
 # it. The sample rides the same 10s tick as the cwd refresh (arm D).
-$metaF = Join-Path $tmp 'ghoztty\local-agent-debug\sessions.json'
+$metaF = Join-Path (Get-GhozttyAgentStateDir -Root $tmp) 'sessions.json'
 $sawFg = $false
 $deadlineF = (Get-Date).AddSeconds(45)
 while ((Get-Date) -lt $deadlineF) {
@@ -1282,7 +1282,7 @@ foreach ($lf in $leavesH1) { $sidH[[string]$lf.id] = [string]$lf.session_id }
 # each session's `holder_pid`. Waited for, since the record is persisted after
 # the OPEN rather than with it.
 $holderH = @()
-$sessionsFileH = Join-Path $tmp 'ghoztty\local-agent-debug\sessions.json'
+$sessionsFileH = Join-Path (Get-GhozttyAgentStateDir -Root $tmp) 'sessions.json'
 $deadlineH4 = (Get-Date).AddSeconds(20)
 while ((Get-Date) -lt $deadlineH4 -and $holderH.Count -eq 0) {
     try {

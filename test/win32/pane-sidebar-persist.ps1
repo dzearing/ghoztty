@@ -51,7 +51,7 @@ function Assert($name, $cond) {
 $fakeLocal = Join-Path $env:TEMP ("ghoztty-t1847-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path (Join-Path $fakeLocal 'ghoztty') | Out-Null
 $prefFile = Join-Path $fakeLocal 'ghoztty\pane_sidebar-debug'
-$manifest = Join-Path $fakeLocal 'ghoztty\session-layout-debug.json'
+$manifest = Get-GhozttySessionLayoutPath -Root $fakeLocal
 $errlog = Join-Path $fakeLocal 'app-stderr.log'
 
 function Read-Pref { if (Test-Path $prefFile) { (Get-Content $prefFile -Raw).Trim() } else { '<absent>' } }

@@ -76,7 +76,8 @@ if (-not $ClientExe) {
 # whole run would drive their live sessions (lib\BuildMode.ps1's subject).
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 $buildMode = Assert-GhozttyIsolatedBuild -Exe $Exe
-$stateBase = if (Test-GhozttyIsolatedBuildMode -Mode $buildMode) { 'local-agent-debug' } else { 'local-agent' }
+$stateRelease = -not (Test-GhozttyIsolatedBuildMode -Mode $buildMode)
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 # T1127: the finally below stops the agents this run started, and a
 # `--pty-host` holder survives that by design - it owns the ConPTY, escapes the
@@ -95,7 +96,7 @@ Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $root | Out-Null
 $lad = Join-Path $root 'lad'
 $lineage = "t887$PID"                       # <= agent_lineage.max_len (24)
-$agentDir = Join-Path $lad "ghoztty\$stateBase-$lineage"
+$agentDir = Join-Path $lad ('ghoztty\' + (Get-GhozttyAgentStateDirLeaf -Instance $lineage -ReleaseLineage:$stateRelease))
 New-Item -ItemType Directory -Force $agentDir | Out-Null
 $portFile = Join-Path $agentDir 'port.json'
 $sessFile = Join-Path $agentDir 'sessions.json'
@@ -106,7 +107,7 @@ $relayPorts = Join-Path $root 'relay-ports.txt'
 $pipe = "\\.\pipe\ghoztty-agent-t887-$PID"
 $token = "tok-t887-$PID"
 
-$savedInst = $env:GHOZTTY_AGENT_INSTANCE
+$savedInst = Get-GhozttyAgentLineage
 $savedRelayEnv = $env:GHOSTTY_RELAY_ENV
 $savedLad = $env:LOCALAPPDATA
 $savedPipeSuffix = $env:GHOZTTY_PIPE_SUFFIX
@@ -272,8 +273,7 @@ try {
     }
     Stop-TestAgents
     Stop-FakeAgentRelay $relayJob
-    if ($null -eq $savedInst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $savedInst }
+    Restore-GhozttyAgentLineage -Saved $savedInst
     if ($null -eq $savedRelayEnv) { Remove-Item env:GHOSTTY_RELAY_ENV -ErrorAction SilentlyContinue }
     else { $env:GHOSTTY_RELAY_ENV = $savedRelayEnv }
     if ($null -eq $savedPipeSuffix) { Remove-Item env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }

@@ -29,6 +29,8 @@
 # launch, the 8MB asset build, the end-of-run probes and teardown.
 #
 # suite-timeout-sec: 2400
+#
+# @lineage-safe - the lineage is dropped only inside Get-UserSessionIds, around a read-only `+sessions` roster query (src\cli\sessions.zig: reads port.json and dials, never spawns an agent), and only when $exe is a release-lineage build, whose default lineage is the user's installed agent and never a debug loop lane's; for a debug exe the caller's lineage is kept, and the caller's env is restored right after each read
 param(
     [int]$Minutes = 30,
     [string]$ExePath = 'D:\git\ghoztty\zig-out-release\bin\ghoztty.exe',
@@ -211,11 +213,36 @@ $exe = $ExePath
 # it dials exactly the agent that owns the user's live panes. This is the
 # measurement the fix is judged by, and it is taken by the harness itself so
 # every future run re-proves it instead of trusting the env vars below.
-$userSessionsBefore = @(
-    (& $exe +sessions 2>&1 | ForEach-Object { $_.ToString() }) |
-        Where-Object { $_ -match '^[0-9a-f]{32}' } |
-        ForEach-Object { ($_ -split '\s+')[0] }
-)
+#
+# T2005: and read in the SAME env both times - no lineage, the real
+# LOCALAPPDATA - whatever the caller handed this process. A second loop lane's
+# runner sets GHOZTTY_AGENT_INSTANCE, and the baseline used to be read under it
+# (some other roster) while the after-read below dropped it (the user's), so
+# every session the user owned scored as a stray. The lineage is dropped only
+# for a release-lineage exe, whose default lineage is the user's installed
+# agent; a debug exe's default lineage is a loop lane's own agent, so it keeps
+# the caller's. Either way the env is handed back afterwards.
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
+$soakModeExe = [System.IO.Path]::ChangeExtension($exe, '.com')
+if (-not (Test-Path $soakModeExe)) { $soakModeExe = $exe }
+$soakIsDebugLineage = Test-GhozttyIsolatedBuildMode -Mode (Get-GhozttyBuildMode -Exe $soakModeExe)
+function Get-UserSessionIds {
+    $savedInst = Get-GhozttyAgentLineage
+    $savedLad = $env:LOCALAPPDATA
+    try {
+        if (-not $soakIsDebugLineage) { Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
+        $env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
+        return @(
+            (& $exe +sessions 2>&1 | ForEach-Object { $_.ToString() }) |
+                Where-Object { $_ -match '^[0-9a-f]{32}' } |
+                ForEach-Object { ($_ -split '\s+')[0] }
+        )
+    } finally {
+        Restore-GhozttyAgentLineage -Saved $savedInst
+        $env:LOCALAPPDATA = $savedLad
+    }
+}
+$userSessionsBefore = @(Get-UserSessionIds)
 
 # T1158: ALL THREE isolating knobs, not just the app pipe. This harness's
 # subject is a RELEASE build, so its endpoints are the user's by default, and
@@ -617,14 +644,7 @@ Remove-TestDesktop | Out-Null
 # sessions, which are immortal by design (that is what lets a pane outlive its
 # window), so nothing reaped them and the 5am refresh restarted the user's
 # terminal into the accumulated pile.
-$env:GHOZTTY_AGENT_INSTANCE = $null
-Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
-$env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
-$userSessionsAfter = @(
-    (& $exe +sessions 2>&1 | ForEach-Object { $_.ToString() }) |
-        Where-Object { $_ -match '^[0-9a-f]{32}' } |
-        ForEach-Object { ($_ -split '\s+')[0] }
-)
+$userSessionsAfter = @(Get-UserSessionIds)
 $strays = @($userSessionsAfter | Where-Object { $userSessionsBefore -notcontains $_ })
 Rep "bystander: user agent held $($userSessionsBefore.Count) session(s) before, $($userSessionsAfter.Count) after"
 Assert ($strays.Count -eq 0) "no session leaked into the user's agent (strays: $($strays -join ' '))"

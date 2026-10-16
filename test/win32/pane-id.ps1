@@ -196,7 +196,7 @@ function Marker-LandsIn($tmp, $target, $expectPane, $tag, $timeoutSec = 20) {
 # One hermetic GUI launch. On $restore we pass NO --title so restore rebuilds
 # the recorded layout instead of opening a blank window.
 function Launch($tmp, $title, $restore) {
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     $launchArgs = @('--session-relaunch=rerun')
@@ -215,7 +215,7 @@ function Launch-NoPersist($tmp, $title) {
 
 # ---- manifest helpers (debug lineage writes the -debug filename) -----------
 function Read-Manifest($tmp) {
-    $p = Join-Path $tmp 'ghoztty\session-layout-debug.json'
+    $p = Get-GhozttySessionLayoutPath -Root $tmp
     if (-not (Test-Path $p)) { return $null }
     try { return (Get-Content $p -Raw | ConvertFrom-Json) } catch { return $null }
 }

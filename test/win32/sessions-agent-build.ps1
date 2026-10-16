@@ -47,6 +47,7 @@ $root = Join-Path $env:TEMP "ghoztty-t662-$PID"
 # endpoint is never dialed at all. Build mode is still asserted below (T680).
 
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 function Assert($name, $cond) {
     if ($cond) { Write-Host "  PASS $name"; $script:passes++ }
@@ -59,7 +60,7 @@ function Say($m) { Write-Host $m }
 $script:mine = New-Object System.Collections.Generic.List[int]
 
 function Start-Agent($instance, $lad, $pipe, $portFile) {
-    $savedInst = $env:GHOZTTY_AGENT_INSTANCE
+    $savedInst = Get-GhozttyAgentLineage
     $savedLad = $env:LOCALAPPDATA
     $env:GHOZTTY_AGENT_INSTANCE = $instance
     $env:LOCALAPPDATA = $lad
@@ -69,8 +70,7 @@ function Start-Agent($instance, $lad, $pipe, $portFile) {
     # Cache the handle BEFORE the child can exit, or ExitCode reads back empty
     # and a refused agent scores as a running one.
     $null = $p.Handle
-    if ($null -eq $savedInst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $savedInst }
+    Restore-GhozttyAgentLineage -Saved $savedInst
     $env:LOCALAPPDATA = $savedLad
     $script:mine.Add([int]$p.Id)
     return $p
@@ -89,7 +89,7 @@ function Wait-PortFile($path, $timeoutSec = 12) {
 # fabricated bundled stamp. Returns the exit code; stdout lands in $out.
 # persistence: a CLI invocation - it opens no window, so there is nothing to restore.
 function Run-Cli($argv, $out, $instance, $lad, $bundled, $timeoutSec = 30) {
-    $savedInst = $env:GHOZTTY_AGENT_INSTANCE
+    $savedInst = Get-GhozttyAgentLineage
     $savedLad = $env:LOCALAPPDATA
     $savedBundled = $env:GHOZTTY_AGENT_BUNDLED_VERSION
     $env:GHOZTTY_AGENT_INSTANCE = $instance
@@ -102,8 +102,7 @@ function Run-Cli($argv, $out, $instance, $lad, $bundled, $timeoutSec = 30) {
     # Nothing here can open a window (`+sessions` never auto-launches), but the
     # rule is the launch site, not the verb that happens to be passed today.
     $r = Invoke-OnTestDesktop -Exe $Exe -Arguments $argv -TimeoutSec $timeoutSec
-    if ($null -eq $savedInst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue }
-    else { $env:GHOZTTY_AGENT_INSTANCE = $savedInst }
+    Restore-GhozttyAgentLineage -Saved $savedInst
     $env:LOCALAPPDATA = $savedLad
     if ($null -eq $savedBundled) { Remove-Item env:GHOZTTY_AGENT_BUNDLED_VERSION -ErrorAction SilentlyContinue }
     else { $env:GHOZTTY_AGENT_BUNDLED_VERSION = $savedBundled }
@@ -177,7 +176,7 @@ Say "== B: the agent we just started reads as current"
 # --port-file of its own), so the agent has to publish exactly where the CLI
 # will look. Pointing the agent somewhere convenient instead is how arm B first
 # scored "not_running" against a healthy agent.
-$agentDir = Join-Path $state "ghoztty\local-agent-debug-$line"
+$agentDir = Get-GhozttyAgentStateDir -Root $state -Instance $line
 New-Item -ItemType Directory -Force $agentDir | Out-Null
 $portFile = Join-Path $agentDir 'port.json'
 $pipe = "\\.\pipe\ghoztty-t662-$PID"
@@ -269,7 +268,7 @@ if ($null -ne $json) {
     Remove-TestDesktop | Out-Null
     if ($null -eq $saved.lad) { Remove-Item env:LOCALAPPDATA -ErrorAction SilentlyContinue } else { $env:LOCALAPPDATA = $saved.lad }
     if ($null -eq $saved.bin) { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue } else { $env:GHOSTTY_LOCAL_AGENT_BIN = $saved.bin }
-    if ($null -eq $saved.inst) { Remove-Item env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue } else { $env:GHOZTTY_AGENT_INSTANCE = $saved.inst }
+    Restore-GhozttyAgentLineage -Saved $saved.inst
     if ($null -eq $saved.bundled) { Remove-Item env:GHOZTTY_AGENT_BUNDLED_VERSION -ErrorAction SilentlyContinue } else { $env:GHOZTTY_AGENT_BUNDLED_VERSION = $saved.bundled }
     Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 }

@@ -250,7 +250,7 @@ $app = $null
 try {
 
 Kill-RepoInstances
-Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorAction SilentlyContinue
+Remove-Item (Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA) -Force -ErrorAction SilentlyContinue
 
 Write-Host '== setup: two windows, the notification raised from the first'
 # --session-persistence=false: a restored layout would decide the window count

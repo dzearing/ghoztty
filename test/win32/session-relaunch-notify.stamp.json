@@ -1,10 +1,11 @@
 {
     "guard":  "session-relaunch",
     "script":  "test/win32/session-relaunch-notify.ps1",
-    "generated":  "2026-10-16T03:30:47-07:00",
-    "commit":  "945ca9f93",
+    "generated":  "2026-10-16T13:06:34-07:00",
+    "commit":  "161784011",
     "uncommitted":  [
-                        "src/termio/Remote.zig"
+                        "test/win32/lib/SessionManifest.ps1",
+                        "test/win32/session-relaunch-notify.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/layout_refresh.zig":  "aa275cb7cdaeb39821a60fed42c57ea2928e5b024db5a523ef0e9aed24131f94",
@@ -13,7 +14,7 @@
                   "src/remote/pipe_stream.zig":  "6e75c5df447ba72acc87d0ae4110b86b9a1a782e382e10afb93ef44bb6c196f0",
                   "src/termio/Remote.zig":  "909cc8154ce5ea97b899a050f92973b9d39079a04d37597572ad54daffe34d8b",
                   "src/termio/session_notice.zig":  "3e45dd25c959c1b10ec5d004d1f555293b481ecb7e0a89ff7e3667ee75776f3f",
-                  "test/win32/lib/SessionManifest.ps1":  "036a06be7a96044c6a5185dfa8e18f68ad0fdd22db8b8ee79db64a0d3cba635b",
-                  "test/win32/session-relaunch-notify.ps1":  "ab1eacf70edb669d71ce7c6a11686e9903a0ad60d3adc6cda0e688d36cd68e85"
+                  "test/win32/lib/SessionManifest.ps1":  "6c89aebbdf5840b59b638e2f7b1895bc6d67e475dc35cccc083bb28b0b864260",
+                  "test/win32/session-relaunch-notify.ps1":  "8016593b25622923c50be4f7cc1aea6ecf0061edb01337b9f47d8a97f005c94a"
               }
 }

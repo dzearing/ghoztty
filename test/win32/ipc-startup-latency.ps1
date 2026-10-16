@@ -216,13 +216,13 @@ function Measure-Startup($tag, $extraArgs = @(), $windowTimeoutSec = 60) {
 function Reset-State($arm) {
     Stop-TestProcs
     $script:tmp = Join-Path $root "run-$arm"
-    New-Item -ItemType Directory -Force (Join-Path $script:tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $script:tmp) | Out-Null
     $env:LOCALAPPDATA = $script:tmp
 }
 
 Stop-TestProcs
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 $saved = @{ lad = $env:LOCALAPPDATA; bin = $env:GHOSTTY_LOCAL_AGENT_BIN; pipe = $env:GHOZTTY_PIPE_SUFFIX }
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe

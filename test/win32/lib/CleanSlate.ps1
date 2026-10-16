@@ -292,9 +292,7 @@ function Get-DebugSessionLayoutPath {
     # GHOZTTY_AGENT_INSTANCE the way the agent's state dir does
     # (src\apprt\win32\session_layout.zig `layoutPath`), so under a lineage the
     # unsuffixed one describes somebody else's windows.
-    $inst = Get-GhozttyAgentLineage
-    $stem = if ($inst) { "session-layout-debug-$inst" } else { 'session-layout-debug' }
-    return (Join-Path $local (Join-Path 'ghoztty' "$stem.json"))
+    return (Get-GhozttySessionLayoutPath -Root $local)
 }
 
 function Clear-DebugSessionLayout {
