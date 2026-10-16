@@ -596,6 +596,12 @@ nav: ?*ViewerNavBar = null,
 /// test that drives a bare pane.
 worktree: ?ViewerWorktreeProbe = null,
 
+/// The worktree resolution `pushWorktree` last logged, hashed (T1956). The
+/// loopback poll re-pushes the same answer every fifteen seconds for the life
+/// of a dev-server pane, and on the Cloud PC that one line was the largest
+/// thing in the log; only a change is worth a line.
+worktree_logged: ?u64 = null,
+
 /// Everything a `git-status:` / `git-diff:<revspec>` pane asks git for, and the
 /// worker that asks off the UI thread (T463). Null on the same terms as
 /// `worktree` — a pane with no allocator and no host window runs no git.
@@ -1253,15 +1259,19 @@ fn syncWorktreePoll(self: *ViewerPane) void {
 /// The log line is the acceptance script's only oracle: the bar is native
 /// owner-painted chrome inside a background test desktop, where nothing can
 /// screenshot it, so "the button is there and points at this worktree" has to
-/// be readable in the GUI's own stderr.
+/// be readable in the GUI's own stderr. It is written when the answer CHANGES
+/// (T1956), which keeps the oracle whole: the scripts read the last line for a
+/// pane, and the last line is still the current answer.
 fn pushWorktree(self: *ViewerPane) void {
     const probe = if (self.worktree) |*p| p else return;
     const root = probe.worktreePath();
-    log.info("viewer worktree pane={s} feedback={s} worktree={s}", .{
-        self.paneId(),
-        if (root != null) "shown" else "hidden",
-        root orelse "<none>",
-    });
+    if (worktreeLogChanged(&self.worktree_logged, root)) {
+        log.info("viewer worktree pane={s} feedback={s} worktree={s}", .{
+            self.paneId(),
+            if (root != null) "shown" else "hidden",
+            root orelse "<none>",
+        });
+    }
     // A pane that navigated out of every working tree has nowhere left to
     // file, so an open composer closes with the button that opened it. The
     // TEXT survives — the user may navigate straight back — and closing is
@@ -1269,6 +1279,35 @@ fn pushWorktree(self: *ViewerPane) void {
     if (root == null and self.feedback_open) self.setFeedbackOpen(false);
     const nav = self.nav orelse return;
     if (nav.setWorktree(root)) self.syncBounds();
+}
+
+/// Whether a worktree answer differs from the last one logged, recording it
+/// when it does (T1956). "No worktree" and every path hash differently, so a
+/// pane moving into, out of, or between working trees always gets its line.
+fn worktreeLogChanged(last: *?u64, root: ?[]const u8) bool {
+    var h = std.hash.Wyhash.init(0);
+    h.update(if (root != null) "1" else "0");
+    if (root) |r| h.update(r);
+    const key = h.final();
+    if (last.* == key) return false;
+    last.* = key;
+    return true;
+}
+
+test "worktreeLogChanged: logs the first answer and each change, never a repeat" {
+    var last: ?u64 = null;
+    try std.testing.expect(worktreeLogChanged(&last, "D:\\git\\a"));
+    try std.testing.expect(!worktreeLogChanged(&last, "D:\\git\\a"));
+    try std.testing.expect(!worktreeLogChanged(&last, "D:\\git\\a"));
+    try std.testing.expect(worktreeLogChanged(&last, "D:\\git\\b"));
+    try std.testing.expect(worktreeLogChanged(&last, null));
+    try std.testing.expect(!worktreeLogChanged(&last, null));
+    try std.testing.expect(worktreeLogChanged(&last, "D:\\git\\b"));
+    // A pane that starts with no worktree still gets its first line.
+    var fresh: ?u64 = null;
+    try std.testing.expect(worktreeLogChanged(&fresh, null));
+    // The empty path is an answer of its own, not "none".
+    try std.testing.expect(worktreeLogChanged(&fresh, ""));
 }
 
 /// The worktree the composer would file into, or null when this pane's

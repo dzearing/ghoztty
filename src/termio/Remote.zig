@@ -256,6 +256,11 @@ restore_snapshot: ?[]const u8 = null,
 attach_offset: u64 = 0,
 applied_bytes: std.atomic.Value(u64) = .init(0),
 
+/// How many times `adoptStreamPos` has corrected the counted offset (T1956).
+/// Only the IO thread touches it. It decides which corrections reach the log
+/// at info: see `logCorrection`.
+offset_corrections: u32 = 0,
+
 /// T422: the app restored this pane's own sticky banner before bring-up, so the
 /// session-interrupted notice keeps only its in-stream copy. See
 /// `Config.pane_banner_restored`.
@@ -2528,18 +2533,56 @@ fn adoptStreamPos(rd: *ThreadData, pos: u64) void {
     if (countBytesSeam()) return;
     const remote = &rd.io.backend.remote;
     if (pos < remote.attach_offset) return;
-    // Rare and interesting: the only thing that makes these differ is bytes we
-    // were fed that are not the session's stream, so a line here names the
-    // repaint the agent injected and the size of the error it would have been.
+    // The only thing that makes these differ is bytes we were fed that are not
+    // the session's stream, so a line here names the repaint the agent injected
+    // and the size of the error it would have been. Not rare, though: a busy
+    // pane corrects in +/- pairs, and on the Cloud PC that was the second
+    // chattiest line in the log (T1956). So the 1st, 2nd, 4th, 8th... per pane
+    // stay at info, with the running count; the rest go to debug.
     const before = remote.appliedOffset();
-    if (before != pos) log.info(
-        "resume offset corrected: counted={d} stream={d} (delta {d})",
-        .{ before, pos, @as(i64, @intCast(before)) - @as(i64, @intCast(pos)) },
-    );
+    if (before != pos) {
+        remote.offset_corrections +|= 1;
+        const n = remote.offset_corrections;
+        const delta = @as(i64, @intCast(before)) - @as(i64, @intCast(pos));
+        if (logCorrection(n)) log.info(
+            "resume offset corrected: counted={d} stream={d} (delta {d}) n={d}",
+            .{ before, pos, delta, n },
+        ) else log.debug(
+            "resume offset corrected: counted={d} stream={d} (delta {d}) n={d}",
+            .{ before, pos, delta, n },
+        );
+    }
     rd.io.renderer_state.mutex.lock();
     defer rd.io.renderer_state.mutex.unlock();
     remote.applied_bytes.store(pos - remote.attach_offset, .monotonic);
 }
+
+/// Whether the `n`th (1-based) offset correction on a pane is logged at info
+/// (T1956): powers of two, so the first one is always there, a pane that keeps
+/// correcting still says so, and a million corrections cost twenty lines.
+fn logCorrection(n: u32) bool {
+    return n != 0 and std.math.isPowerOfTwo(n);
+}
+
+test "logCorrection: first, then powers of two only" {
+    try std.testing.expect(!logCorrection(0));
+    try std.testing.expect(logCorrection(1));
+    try std.testing.expect(logCorrection(2));
+    try std.testing.expect(!logCorrection(3));
+    try std.testing.expect(logCorrection(4));
+    try std.testing.expect(!logCorrection(5));
+    try std.testing.expect(!logCorrection(1000));
+    try std.testing.expect(logCorrection(1024));
+    var info: u32 = 0;
+    var i: u32 = 1;
+    while (i <= 1_000_000) : (i += 1) {
+        if (logCorrection(i)) info += 1;
+    }
+    try std.testing.expectEqual(@as(u32, 20), info);
+    // Saturated, the counter stays quiet rather than wrapping back to 1.
+    try std.testing.expect(!logCorrection(std.math.maxInt(u32)));
+}
+
 /// How much `drainRing` parses between mailbox-pressure checks. Small enough
 /// that one slice of real program output cannot fill half the 64-slot mailbox
 /// (Claude Code emits at most a handful of messages per KiB); the per-slice cost
