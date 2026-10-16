@@ -467,3 +467,12 @@ as the digest that showed them.
 - Twenty idle panes, one line (the sidebar folds idle panes into one "N idle" row)
 - Your machines in the new-tab menu (new angle on picking the shell from the new-tab button: online signed-in machines listed there)
 - Send only what changed over Remote Desktop (new angle on a usable window over RDP: redraw only changed rows so the link carries less)
+
+## 2026-10-16
+
+- Where new output began (a scrollback line marks where unseen output starts when you return to a pane; one key jumps there)
+- Not really waiting? One click clears it (a false question ring is cleared from its sidebar row and logged)
+- A restart you can trust before you click it (before Restart to update, say which sessions will come back)
+- Which panes came back (new angle on marking panes that will not come back: after a restart each pane shows reconnected or new shell)
+- Busy but silent (a busy pane with no output for ten minutes gets a "stuck?" mark in the sidebar)
+- Restart in place (an update restarts only the window process; panes keep live sessions and redraw where they were)
