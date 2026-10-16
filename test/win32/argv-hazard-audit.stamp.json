@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-16T08:21:20-07:00",
-    "commit":  "d9575acaa",
+    "generated":  "2026-10-16T08:48:07-07:00",
+    "commit":  "c954fe9ea",
     "uncommitted":  [
-                        "scripts/lib/AcceptanceParallel.ps1"
+                        "scripts/guard-due.ps1",
+                        "scripts/suite-run.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
@@ -36,7 +37,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "84a223af995b00dfdf1d70164321c320e39df45ab1f45539372de0ad72cba33e",
-                  "scripts/guard-due.ps1":  "874ea55cd9d26f551209cd846e3305e1f025f835c7ee0e667c54fa52ece2a238",
+                  "scripts/guard-due.ps1":  "70ef2f81c7c6bd9b35f135101d937caa633388de6a23caf46bea5364bde99162",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -78,7 +79,7 @@
                   "scripts/ship-feature.ps1":  "5fcde228d19c43b887fe4ae42202a1c84c0f7e0a464fbe3caec600c39796663e",
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",
-                  "scripts/suite-run.ps1":  "b6fe9818f6f2dc59843671cad67f4a068496ab35646982cb1eb56a0f3a846932",
+                  "scripts/suite-run.ps1":  "ee5a4567661699753c722e74248ac5471f63cb3544b54fa2b6a7f9502303248b",
                   "scripts/t470-ring-measure.ps1":  "427dc0cada150aadb214a007e32238f1d75d3751ad40a02260b325157672f143",
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
                   "scripts/task-dashboard.ps1":  "616fa636356bdfa1dc07aafe573f5aaf3b9a421ee6bbdc4c4404367845564fd7",

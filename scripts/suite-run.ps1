@@ -301,6 +301,24 @@ function Sort-SuiteOrder {
 # exactly the way this one does.
 . (Join-Path $PSScriptRoot 'lib\RunVerdict.ps1')
 
+# T1996: from a checkout other than the literal D:\git\ghoztty (lane B), a
+# script's `-Exe`/`-Repo` default names LANE A's build. The parallel runner
+# re-roots those parameters for every job it starts; a sweep from here does the
+# same, with the same classifier, so the two can never disagree about which
+# parameters those are. In the literal checkout nothing is added.
+. (Join-Path $PSScriptRoot 'lib\AcceptanceParallel.ps1')
+function Get-SuiteRerootArgs {
+    param([string]$ScriptPath, [string]$Root)
+    if (Test-ApSamePath $Root $script:ApRepoLiteral) { return @() }
+    $out = @()
+    try { $cls = Get-AcceptanceScriptClass -Path $ScriptPath } catch { return @() }
+    foreach ($k in $cls.Inject.Keys) {
+        $out += "-$k"
+        $out += $(if ($cls.Inject[$k]) { Join-Path $Root $cls.Inject[$k] } else { $Root })
+    }
+    return $out
+}
+
 # -------------------------------------------------------------- leak sweeping
 
 <#
@@ -387,6 +405,7 @@ function Invoke-SuiteScript {
     # NOT `$args` - that is an automatic variable, and assigning it inside a
     # function is the kind of quiet breakage PS 5.1 does not report.
     $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Script.Path)
+    $psArgs += @(Get-SuiteRerootArgs -ScriptPath $Script.Path -Root $Repo)
     $p = $null
     try {
         $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs `

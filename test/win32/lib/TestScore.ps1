@@ -113,6 +113,9 @@
 # Deliberately sets no StrictMode: this file is dot-sourced INTO suite scripts,
 # and a mode set here would silently change how every one of them evaluates.
 
+# T1996: the scripts that load TestScore but not BuildMode are guarded here.
+. (Join-Path $PSScriptRoot 'CheckoutGuard.ps1')
+
 function Reset-TestBody {
     <#
       Arm the run: its body has not reached its end yet. Called once by

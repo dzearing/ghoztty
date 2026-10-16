@@ -127,8 +127,11 @@ try {
     Check 'A3 with no stamp the guard is DUE' ($r.Text -match 'GUARD DUE go-loop') $r.Text
     Check 'A4 and says the harness has never recorded a run' ($r.Text -match 'never recorded') $r.Text
     Check 'A5 DUE exits 1' ($r.Exit -eq 1) "exit=$($r.Exit)"
-    Check 'A6 and names the command that fixes it' `
-        ($r.Text -match 'run: powershell -NoProfile -File test\\win32\\go-loop-guard\.ps1') $r.Text
+    # T1996: the fixture is a checkout other than the literal D:\git\ghoztty,
+    # and there a bare run would take lane A's defaults - so the command named
+    # is the runner, which re-roots them.
+    Check 'A6 and names the command that fixes it (the runner, outside the literal checkout)' `
+        ($r.Text -match 'run: powershell -NoProfile -File scripts\\acceptance-parallel\.ps1 run -Scripts go-loop-guard\.ps1') $r.Text
 
     # --- B. stamping, and what a stamp does and does not survive -----------
     Write-Host "`n-- B. the stamp --"

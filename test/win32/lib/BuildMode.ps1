@@ -90,6 +90,11 @@ Set-StrictMode -Off
 # (test\win32\job-escape-startup.ps1).
 $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 
+# T1996: refuse a script run from one checkout that would grade another's
+# build (lane B taking lane A's `D:\git\ghoztty` default). Rides this file for
+# the same reason the seam above does: every acceptance script loads it.
+. (Join-Path $PSScriptRoot 'CheckoutGuard.ps1')
+
 # One `+version` per exe per process: three libraries may ask, and the answer
 # cannot change while a run is in flight.
 if (-not (Get-Variable -Name GhozttyBuildModeCache -Scope Script -ErrorAction SilentlyContinue)) {

@@ -2315,6 +2315,23 @@ $GuardTable = @(
             'test\win32\focus-pull-scan.ps1'
         )
     },
+    # T1996: a script run by hand from lane B's checkout must not grade lane A's
+    # build. The guard is a refusal that only fires outside the literal
+    # checkout, so lane A never sees it work - this row is the only thing that
+    # does.
+    [pscustomobject]@{
+        Name   = 'checkout-guard'
+        Script = 'test\win32\checkout-guard.ps1'
+        Stamp  = 'test\win32\checkout-guard.stamp.json'
+        Covers = @(
+            'test\win32\lib\CheckoutGuard.ps1',
+            'test\win32\lib\BuildMode.ps1',
+            'test\win32\lib\TestScore.ps1',
+            'scripts\suite-run.ps1',
+            'scripts\guard-due.ps1',
+            'test\win32\checkout-guard.ps1'
+        )
+    },
     # T1901: the gate in front of the PowerShell tool that keeps a .sh launch
     # (the banner hook line) from popping that same picker in the first place.
     # The scan above only reports a picker after the fact; this is the refusal.
@@ -6328,8 +6345,18 @@ switch ($Action) {
             # name to clear ME" - the packaging row wants -RequireDocker, which
             # turns the Docker skips into failures so a run that cannot clear it
             # says so instead of reporting ALL PASS and leaving it due.
-            "  run: powershell -NoProfile -File {0}{1}" -f $s.Script,
-                $(if ($s.RunArgs) { " $($s.RunArgs)" } else { '' })
+            # T1996: outside the literal checkout (lane B) a bare run takes the
+            # script's D:\git\ghoztty defaults - lane A's build - and
+            # lib\CheckoutGuard.ps1 refuses it, so name the runner, which
+            # re-roots them. A row with RunArgs keeps the bare form: the runner's
+            # -Scripts carries no per-script arguments.
+            if (-not $s.RunArgs -and -not [string]::Equals(
+                    [IO.Path]::GetFullPath($Repo).TrimEnd('\'), 'D:\git\ghoztty', [StringComparison]::OrdinalIgnoreCase)) {
+                "  run: powershell -NoProfile -File scripts\acceptance-parallel.ps1 run -Scripts {0}" -f (Split-Path -Leaf $s.Script)
+            } else {
+                "  run: powershell -NoProfile -File {0}{1}" -f $s.Script,
+                    $(if ($s.RunArgs) { " $($s.RunArgs)" } else { '' })
+            }
             # The second remedy, for a row whose evidence CI can produce and this
             # box cannot: name it, or the only route a reader knows about is the
             # one that does not work here.
