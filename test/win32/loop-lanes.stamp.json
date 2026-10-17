@@ -1,28 +1,17 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-10-15T22:48:47-07:00",
-    "commit":  "55b5670dc",
+    "generated":  "2026-10-16T22:16:09-07:00",
+    "commit":  "654e0f114",
     "uncommitted":  [
-                        "scripts/daily-publish.ps1",
-                        "scripts/deliver-windows-build.ps1",
-                        "scripts/go-loop-boot.ps1",
-                        "scripts/go-loop-exec.ps1",
-                        "scripts/go-loop-health.ps1",
-                        "scripts/go-loop-watchdog.ps1",
-                        "scripts/launch-upgrade.ps1",
-                        "scripts/lib/LoopLane.ps1",
-                        "scripts/publish-windows-tag.ps1",
-                        "scripts/task-dashboard.js",
-                        "scripts/upgrade-ghoztty-windows.ps1",
-                        "test/win32/loop-lanes.ps1"
+                        "scripts/go-loop-health.ps1"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "52503d6690861c95c2746908801d9b30514c59c7d7247db4262f07d93830957c",
                   "scripts/deliver-windows-build.ps1":  "177c6421716f590b0b3a89ec32990512482a977657161155aa773db266b99aac",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "e65ddcb0f8d3c875848b955cacc1a7d019423281995c77537e1a35d5f98970f1",
-                  "scripts/go-loop-health.ps1":  "6cf687bd809ddb017a4559e49b394740c8d6379272a2f0f3160e542d8e050cd8",
+                  "scripts/go-loop-health.ps1":  "14d62dfa33d78bbed90170260637b8e111d85416284d1ecc7777f45533b6145f",
                   "scripts/go-loop-watchdog.ps1":  "84a223af995b00dfdf1d70164321c320e39df45ab1f45539372de0ad72cba33e",
                   "scripts/launch-upgrade.ps1":  "b40fbe903eface94ada0064617d4371c35459af628fa8c26e894fb2df12bff92",
                   "scripts/lib/LoopLane.ps1":  "5a323edad01338d2719fcb162c838a68f80b66a01616d9abf8d44daf9e1b51a8",

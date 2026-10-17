@@ -1045,11 +1045,23 @@ switch ($Command) {
         # it - so it is reported and never resumed, and the same goes for a
         # todo the other lane has already claimed but not yet pushed.
         $heldElsewhere = @{}
-        if ($LedgerOn) { $heldElsewhere = Get-LedgerOtherLaneClaims -Lane (Get-ThisLane) }
+        if ($LedgerOn) {
+            # T2033: end the reservations whose close has reached this lane (or
+            # was pushed a TTL ago) before reading what is held. Warn, never
+            # fail: a stale reservation only costs a skipped task.
+            try {
+                foreach ($line in @(Update-LedgerReservations -Lane (Get-ThisLane) -ViewDir $TaskDir)) { Write-Host ("ledger: {0}" -f $line) }
+            }
+            catch { Write-Host ("      WARNING: ledger reservations not updated: {0}" -f $_.Exception.Message) }
+            $heldElsewhere = Get-LedgerOtherLaneClaims -Lane (Get-ThisLane)
+        }
         $heldNames = @()
         $sayHeld = {
             param([string]$HeldId, $HeldClaim)
-            Write-Host ("HELD BY OTHER LANE: {0} (lane {1})" -f $HeldId, $HeldClaim.lane)
+            if ($HeldClaim.closed) {
+                Write-Host ("FINISHED IN OTHER LANE: {0} (lane {1}, {2}; not in this worktree yet - pull)" -f $HeldId, $HeldClaim.lane, $HeldClaim.closed)
+            }
+            else { Write-Host ("HELD BY OTHER LANE: {0} (lane {1})" -f $HeldId, $HeldClaim.lane) }
         }
         $inflight = @()
         foreach ($t in @($ordered | Where-Object { $_.Status -match '^in-progress' -and (Test-SeatMatch $_.Seat $wantSeat) })) {
@@ -1251,6 +1263,16 @@ switch ($Command) {
                     if (-not $r.Claimed) {
                         Write-Host ("      WARNING: HELD BY OTHER LANE: {0} (lane {1}) - the status is written, but the ledger still gives it to that lane until its claim is released or expires." -f $tid, $r.Holder.lane)
                     }
+                }
+                # GHOZTTY_LOOP_LEDGER_NO_RESERVE=1 restores the T1981
+                # release-at-close, for the harness's negative control only.
+                elseif ((Test-LedgerClosedStatus $Status) -and $env:GHOZTTY_LOOP_LEDGER_NO_RESERVE -ne '1') {
+                    # T2033: done/skipped/blocked is NOT a release. The other
+                    # worktree reads this task as todo until the close is
+                    # pushed and pulled, so the ledger keeps it reserved until
+                    # then (Update-LedgerReservations ends it).
+                    $r = Set-LedgerReservation -Id $tid -Lane (Get-ThisLane) -Root $RepoRoot -Status $Status -Path $path
+                    if ($r.Result -eq 'reserved') { Write-Host ("      ledger: {0} stays reserved to this lane until the close reaches the other lane (T2033)" -f $tid) }
                 }
                 else {
                     $r = Clear-LedgerClaim -Id $tid -Lane (Get-ThisLane)
@@ -1652,7 +1674,9 @@ switch ($Command) {
             $age = if ($t) { '{0:N0}m ago' -f ($now - $t).TotalMinutes } else { 'unknown' }
             $state = if (Test-LedgerClaimLive -Claim $c -Now $now) { 'live' } else { 'EXPIRED' }
             $mine = if ($c.lane -eq $me) { ' [this lane]' } else { '' }
-            Write-Host ("  {0,-7} {1,-7} lane={2}{3}  touched {4}  root={5}" -f $k, $state, $c.lane, $mine, $age, $c.root)
+            # T2033: a reservation names the close it is holding the task for.
+            $res = if ($c.closed) { '  reserved({0}{1})' -f $c.closed, $(if ($c.pushedAt) { ', pushed' } else { ', unpushed' }) } else { '' }
+            Write-Host ("  {0,-7} {1,-7} lane={2}{3}{4}  touched {5}  root={6}" -f $k, $state, $c.lane, $mine, $res, $age, $c.root)
         }
     }
 

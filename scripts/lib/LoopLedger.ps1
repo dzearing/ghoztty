@@ -15,7 +15,15 @@
 #                                                 GHOZTTY_LOOP_LEDGER=off disables)
 #   { "version": 1, "maxId": 1986,
 #     "claims": { "T1981": { "lane": "...", "root": "...", "pid": 123,
-#                            "at": "<iso>", "touched": "<iso>" } } }
+#                            "at": "<iso>", "touched": "<iso>" },
+#                 "T2012": { ..., "closed": "done", "path": "<task file>",
+#                            "pushedAt": "<iso>" } } }
+#
+# A claim carrying `closed` is a RESERVATION (T2033): the lane set the task to
+# done/skipped/blocked, and the other lane's worktree still reads it as todo
+# until that status has been pushed AND pulled. Releasing at set-status (the
+# T1981 shape) handed T2012 to lane A one second after lane B finished it, and
+# lane A re-did the whole task. Update-LedgerReservations says how one ends.
 #
 # Rules this file holds:
 #
@@ -176,6 +184,12 @@ function ConvertFrom-LedgerText {
                 at      = [string]$c.at
                 touched = [string]$c.touched
             }
+            # T2033: a reservation - a task this lane closed and has not
+            # pushed yet. Absent on an ordinary claim.
+            foreach ($f in @('closed', 'path', 'pushedAt')) {
+                $v = $c.PSObject.Properties[$f]
+                if ($null -ne $v -and $v.Value) { $l.claims[$p.Name][$f] = [string]$v.Value }
+            }
         }
     }
     return $l
@@ -219,7 +233,9 @@ function Write-LedgerFile {
     $claims = [ordered]@{}
     foreach ($k in @($Ledger.claims.Keys | Sort-Object { [int]([regex]::Match($_, '\d+').Value) }, { $_ })) {
         $c = $Ledger.claims[$k]
-        $claims[$k] = [ordered]@{ lane = $c.lane; root = $c.root; pid = $c.pid; at = $c.at; touched = $c.touched }
+        $o = [ordered]@{ lane = $c.lane; root = $c.root; pid = $c.pid; at = $c.at; touched = $c.touched }
+        foreach ($f in @('closed', 'path', 'pushedAt')) { if ($c[$f]) { $o[$f] = $c[$f] } }
+        $claims[$k] = $o
     }
     $doc = [ordered]@{ version = 1; maxId = [int]$Ledger.maxId; claims = $claims }
     $json = ConvertTo-Json -InputObject $doc -Depth 6
@@ -396,4 +412,134 @@ function Set-LedgerMaxIdAtLeast {
         return [int]$l.maxId
     }.GetNewClosure()
     return [int](Invoke-LedgerUpdate -Update $upd -LedgerPath $LedgerPath)
+}
+
+# --- reservations (T2033) -------------------------------------------------------
+
+# True for a status that takes a task out of the queue: anything but todo and
+# in-progress. `todo` is an abandonment and releases outright.
+function Test-LedgerClosedStatus {
+    param([string]$Status)
+    $s = ([string]$Status).Trim().Trim('"')
+    if (-not $s) { return $false }
+    return ($s -notmatch '^(todo|in-progress)')
+}
+
+# The `status:` value in a task file's text, or $null.
+function Get-LedgerStatusFromText {
+    param([string]$Text)
+    if (-not $Text) { return $null }
+    $m = [regex]::Match($Text, '(?m)^status:\s*"?([^"\r\n]*)"?\s*$')
+    if (-not $m.Success) { return $null }
+    return $m.Groups[1].Value.Trim()
+}
+
+# Turn $Lane's claim on $Id into a reservation that keeps the task away from
+# every other lane until the close has reached them. Result: 'reserved', or
+# 'other' when another live lane holds it (left alone: only the holder closes).
+# A close with no claim at all (expired, or never claimed) still reserves.
+function Set-LedgerReservation {
+    param([string]$Id, [string]$Lane, [string]$Root, [string]$Status, [string]$Path, [string]$LedgerPath)
+    $now = Get-LedgerNowIso
+    $procId = $PID
+    $upd = {
+        param($l)
+        $c = $l.claims[$Id]
+        if ($null -ne $c -and $c.lane -ne $Lane) {
+            return [pscustomobject]@{ Result = 'other'; Holder = $c }
+        }
+        $at = if ($null -ne $c -and $c.at) { $c.at } else { $now }
+        $l.claims[$Id] = @{ lane = $Lane; root = $Root; pid = $procId; at = $at; touched = $now
+            closed = $Status; path = $Path }
+        return [pscustomobject]@{ Result = 'reserved'; Holder = $null }
+    }.GetNewClosure()
+    return (Invoke-LedgerUpdate -Update $upd -LedgerPath $LedgerPath)
+}
+
+# Has the finishing lane's close reached its upstream? Reads the task file at
+# `@{u}` in the worktree that holds it - which that lane's own push advances -
+# and never fetches. 'pushed' (upstream shows a closed status), 'unpushed'
+# (upstream shows it open, or does not have the file yet), or 'unknown' (no
+# such worktree, not a git tree, no upstream configured).
+function Get-LedgerReservationPushState {
+    param($Claim)
+    $path = [string]$Claim.path
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return 'unknown' }
+    $dir = Split-Path -Parent $path
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $top = [string](& git -C $dir rev-parse --show-toplevel 2>$null | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or -not $top) { return 'unknown' }
+        $null = & git -C $top rev-parse --verify --quiet '@{u}' 2>$null
+        if ($LASTEXITCODE -ne 0) { return 'unknown' }
+        $topFull = [System.IO.Path]::GetFullPath($top.Trim()).TrimEnd('\') + '\'
+        $full = [System.IO.Path]::GetFullPath($path)
+        if (-not $full.StartsWith($topFull, [StringComparison]::OrdinalIgnoreCase)) { return 'unknown' }
+        $rel = $full.Substring($topFull.Length).Replace('\', '/')
+        $text = (& git -C $top show ('@{u}:' + $rel) 2>$null) -join "`n"
+        if ($LASTEXITCODE -ne 0) { return 'unpushed' }
+        if (Test-LedgerClosedStatus (Get-LedgerStatusFromText $text)) { return 'pushed' }
+        return 'unpushed'
+    }
+    catch { return 'unknown' }
+    finally { $ErrorActionPreference = $eap }
+}
+
+# The upkeep `next` runs before it reads the claims. For each live reservation:
+#
+# - $Lane is NOT the finisher and its own copy of the task ($ViewDir) already
+#   reads closed -> this lane has caught up; the reservation is removed.
+# - the close is still unpushed -> its heartbeat is refreshed: the work exists
+#   and has not left the box, so the other lane must keep off it however long
+#   that takes (nothing else touches a closed task - the watchdog only touches
+#   in-progress ones).
+# - the close is pushed -> `pushedAt` is stamped once, and the reservation is
+#   removed a TTL later even if no other lane ever reads it, so nothing is left
+#   stuck. A lane that has pulled clears it at once by the first rule.
+# - unknown (the finishing worktree is gone) -> left to age out on its TTL.
+#
+# The git reads happen OUTSIDE the ledger lock; the write re-checks that the
+# entry is the one that was read. Returns one line per notable action.
+function Update-LedgerReservations {
+    param([string]$Lane, [string]$ViewDir, [string]$LedgerPath)
+    $l = Read-Ledger -LedgerPath $LedgerPath
+    $now = (Get-Date).ToUniversalTime()
+    $plan = @()
+    foreach ($k in @($l.claims.Keys)) {
+        $c = $l.claims[$k]
+        if (-not $c.closed -or -not (Test-LedgerClaimLive -Claim $c -Now $now)) { continue }
+        if ($c.lane -ne $Lane -and $ViewDir) {
+            $mine = Join-Path $ViewDir ($k + '.md')
+            if (Test-Path -LiteralPath $mine) {
+                $st = Get-LedgerStatusFromText ([System.IO.File]::ReadAllText($mine))
+                if (Test-LedgerClosedStatus $st) { $plan += @{ Id = $k; Act = 'caught-up'; At = $c.at }; continue }
+            }
+        }
+        $ps = Get-LedgerReservationPushState -Claim $c
+        if ($ps -eq 'unpushed') { $plan += @{ Id = $k; Act = 'refresh'; At = $c.at } }
+        elseif ($ps -eq 'pushed') {
+            $pa = ConvertTo-LedgerTime $c.pushedAt
+            if ($null -eq $pa) { $plan += @{ Id = $k; Act = 'pushed'; At = $c.at } }
+            elseif (($now - $pa).TotalMinutes -ge (Get-LedgerTtlMinutes)) { $plan += @{ Id = $k; Act = 'expired'; At = $c.at } }
+        }
+    }
+    if ($plan.Count -eq 0) { return @() }
+    $stamp = Get-LedgerNowIso
+    $upd = {
+        param($ld)
+        $out = @()
+        foreach ($p in $plan) {
+            $c = $ld.claims[$p.Id]
+            if ($null -eq $c -or -not $c.closed -or $c.at -ne $p.At) { continue }
+            switch ($p.Act) {
+                'caught-up' { $ld.claims.Remove($p.Id); $out += ('{0} reservation cleared: this lane already reads it {1}' -f $p.Id, $c.closed) }
+                'expired'   { $ld.claims.Remove($p.Id); $out += ('{0} reservation cleared: pushed more than a TTL ago' -f $p.Id) }
+                'refresh'   { $c.touched = $stamp }
+                'pushed'    { $c.pushedAt = $stamp; $out += ('{0} reservation: the close is on the upstream; held until the other lane reads it' -f $p.Id) }
+            }
+        }
+        return $out
+    }.GetNewClosure()
+    return @(Invoke-LedgerUpdate -Update $upd -LedgerPath $LedgerPath)
 }

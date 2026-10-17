@@ -205,7 +205,10 @@ try {
         $rootKey = $ln.Root.ToLowerInvariant()
         $tasks = @($claims.Keys | Where-Object {
             $c = $claims[$_]
-            ([string]$c.lane).ToLowerInvariant() -eq $rootKey -or ([string]$c.root).TrimEnd('\').ToLowerInvariant() -eq $rootKey
+            # T2033: a reservation is a task the lane already FINISHED (closed,
+            # not yet pushed/pulled) - not what it is working on.
+            (-not $c.closed) -and
+            (([string]$c.lane).ToLowerInvariant() -eq $rootKey -or ([string]$c.root).TrimEnd('\').ToLowerInvariant() -eq $rootKey)
         } | Sort-Object)
         $lanes += [pscustomobject]@{
             id       = $ln.Id

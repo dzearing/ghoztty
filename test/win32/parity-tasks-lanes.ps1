@@ -25,7 +25,12 @@
 #      in-progress (as after a pull). Lane b's plain `next` reports it HELD and
 #      writes nothing; its `next -Claim` does not RESUME T1 and claims other
 #      work. Once lane a's claim has aged past the TTL, lane b DOES resume it.
-#   E. Bookkeeping: `set-status done` releases the claim; `set-status
+#   F. Finished, not yet arrived (T2033): `set-status done` RESERVES the task
+#      to the finishing lane; the other lane's `next -Claim` (its copy still
+#      todo) skips it and says FINISHED IN OTHER LANE; the reservation ends
+#      when that lane reads the close, or a TTL after the push; unpushed it is
+#      kept alive. Negative control: release-at-done hands the task out.
+#   E. Bookkeeping: `set-status todo` releases the claim; `set-status
 #      in-progress` on another lane's task warns and does not steal it; `note`
 #      is a heartbeat; `ledger` prints it read-only; a corrupt ledger is backed
 #      up and recovered with a warning; a held mutex is a bounded, named wait
@@ -352,8 +357,9 @@ try {
     $null = Task-Run @('next', '-Claim') $dirB 'b'        # b: T2 (T1 held)
     Assert 'E1 setup: a holds T1, b holds T2' ((Get-ClaimLane 'T1') -eq 'a' -and (Get-ClaimLane 'T2') -eq 'b')
 
-    $r = Task-Run @('set-status', 'T1', '-Status', 'done') $dirA 'a'
-    Assert 'E2 set-status done releases the claim' ($r.Out -match "released this lane's claim on T1" -and $null -eq (Get-ClaimLane 'T1'))
+    # T2033: done is a reservation now, not a release (section F proves it).
+    $r = Task-Run @('set-status', 'T1', '-Status', 'todo') $dirA 'a'
+    Assert 'E2 set-status todo (an abandonment) releases the claim' ($r.Out -match "released this lane's claim on T1" -and $null -eq (Get-ClaimLane 'T1'))
 
     $r = Task-Run @('set-status', 'T2', '-Status', 'in-progress') $dirA 'a'
     Assert 'E3 set-status in-progress on another lane''s task warns, exits 0, and does not steal it' (
@@ -405,6 +411,89 @@ try {
     $r = Task-Run @('next', '-Claim') $dirA 'a' @{ GHOZTTY_LOOP_LEDGER = $null; LOCALAPPDATA = $fakeLocal }
     Assert 'E13 a -TaskDir run with no GHOZTTY_LOOP_LEDGER claims without writing the default ledger' (
         $r.Out -match 'CLAIMED: T1\b' -and -not (Test-Path (Join-Path $fakeLocal 'ghoztty\loop-ledger.json')))
+
+    # --- F. finished but not yet pushed (T2033) ------------------------------------
+    # 2026-10-16: lane B set T2012 done at 18:59, its push landed 19:00:31, and
+    # lane A's `next -Claim` at 18:59 got T2012 - the claim had been released at
+    # set-status, and lane A's worktree still read the task as todo.
+    ""
+    'F. a task finished in one lane is not handed to the other before it arrives'
+    Reset-Lanes
+    $null = Task-Run @('next', '-Claim') $dirB 'b'        # b: T1
+    $r = Task-Run @('set-status', 'T1', '-Status', 'done') $dirB 'b'
+    $j = Read-LedgerJson
+    Assert 'F1 set-status done keeps the task reserved to the finishing lane' (
+        $r.Out -match 'T1 stays reserved' -and (Get-ClaimLane 'T1') -eq 'b' -and [string]$j.claims.T1.closed -eq 'done') $r.Out
+    $r = Task-Run @('next', '-Claim') $dirA 'a'           # a's copy still says todo
+    Assert 'F2 the other lane (its copy still todo) does NOT get it, and says why' (
+        $r.Out -notmatch 'NEXT: T1\b' -and $r.Out -match 'FINISHED IN OTHER LANE: T1 \(lane b, done' -and $r.Out -match 'CLAIMED: T2\b') $r.Out
+    $r = Task-Run @('ledger') $dirA 'a'
+    Assert 'F3 `ledger` shows the reservation' ($r.Out -match 'T1\s+live\s+lane=b\s+reserved\(done') $r.Out
+    # Caught up: lane a pulls, so its copy reads done; its next ends the
+    # reservation and nothing is left behind.
+    New-FixtureTask -Dir $dirA -Id 'T1' -Status 'done'
+    $r = Task-Run @('next') $dirA 'a'
+    Assert 'F5 once the other lane reads the close, its next clears the reservation' (
+        $r.Out -match 'T1 reservation cleared: this lane already reads it done' -and $null -eq (Get-ClaimLane 'T1')) $r.Out
+
+    # Reopen: the finishing lane taking it back drops the reservation shape.
+    Reset-Lanes
+    $null = Task-Run @('next', '-Claim') $dirB 'b'
+    $null = Task-Run @('set-status', 'T1', '-Status', 'done') $dirB 'b'
+    $null = Task-Run @('set-status', 'T1', '-Status', 'in-progress') $dirB 'b'
+    $j = Read-LedgerJson
+    Assert 'F6 re-opening a closed task makes it an ordinary claim again' (
+        (Get-ClaimLane 'T1') -eq 'b' -and -not $j.claims.T1.closed)
+
+    # Pushed: lane b's task dir is a git worktree with an upstream. Before the
+    # push the reservation is refreshed (the work has not left the box); after
+    # it, pushedAt is stamped, and a TTL later the reservation ends even though
+    # lane a never pulled - nothing stays stuck.
+    Reset-Lanes
+    $bare = Join-Path $work 'origin.git'
+    $gitOk = $true
+    $eapF = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        & git init -q --bare $bare 2>&1 | Out-Null
+        & git -C $dirB init -q 2>&1 | Out-Null
+        & git -C $dirB -c user.name=t -c user.email=t@t add -A 2>&1 | Out-Null
+        & git -C $dirB -c user.name=t -c user.email=t@t commit -q -m fixture 2>&1 | Out-Null
+        & git -C $dirB remote add origin $bare 2>&1 | Out-Null
+        & git -C $dirB push -q -u origin HEAD 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { $gitOk = $false }
+    }
+    finally { $ErrorActionPreference = $eapF }
+    Assert 'F7 setup: lane b''s fixture is a git tree with an upstream' $gitOk
+    $null = Task-Run @('next', '-Claim') $dirB 'b'
+    $null = Task-Run @('set-status', 'T1', '-Status', 'done') $dirB 'b'
+    $old = Set-ClaimTouchedAgo -Id 'T1' -Minutes 10
+    $r = Task-Run @('next', '-Claim') $dirA 'a'
+    $j = Read-LedgerJson
+    Assert 'F8 unpushed: the other lane skips it and the reservation''s heartbeat is refreshed' (
+        $r.Out -match 'FINISHED IN OTHER LANE: T1\b' -and (ConvertTo-LedgerTime $j.claims.T1.touched) -gt (ConvertTo-LedgerTime $old).AddMinutes(5) -and -not $j.claims.T1.pushedAt) $r.Out
+    $eapF = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        & git -C $dirB -c user.name=t -c user.email=t@t commit -q -am 'T1 done' 2>&1 | Out-Null
+        & git -C $dirB push -q 2>&1 | Out-Null
+    }
+    finally { $ErrorActionPreference = $eapF }
+    $r = Task-Run @('next') $dirA 'a'
+    $j = Read-LedgerJson
+    Assert 'F9 pushed: pushedAt is stamped and the other lane (not yet pulled) still skips it' (
+        $r.Out -match 'T1 reservation: the close is on the upstream' -and $j.claims.T1.pushedAt -and $r.Out -match 'FINISHED IN OTHER LANE: T1\b') $r.Out
+    $j.claims.T1.pushedAt = (Get-Date).ToUniversalTime().AddMinutes(-61).ToString('o')
+    [System.IO.File]::WriteAllText($ledger, ($j | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $false))
+    $r = Task-Run @('next') $dirA 'a'
+    Assert 'F10 a TTL after the push the reservation ends on its own' (
+        $r.Out -match 'T1 reservation cleared: pushed more than a TTL ago' -and $null -eq (Get-ClaimLane 'T1')) $r.Out
+
+    # Negative control: the T1981 release-at-done hands the finished task to
+    # the other lane, so F2 can go red.
+    Reset-Lanes
+    $null = Task-Run @('next', '-Claim') $dirB 'b'
+    $null = Task-Run @('set-status', 'T1', '-Status', 'done') $dirB 'b' @{ GHOZTTY_LOOP_LEDGER_NO_RESERVE = '1' }
+    $r = Task-Run @('next', '-Claim') $dirA 'a'
+    Assert 'F11 negative control: with release-at-done the other lane IS handed the finished task' ($r.Out -match 'NEXT: T1\b') $r.Out
     Complete-TestBody
 }
 finally {

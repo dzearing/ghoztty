@@ -271,8 +271,10 @@ $Registry = @(
     # T1981's cross-lane ledger. Both are reports, never gates: `next` names a
     # task another lane holds and picks other work, and `ledger` says when the
     # ledger is switched off. test\win32\parity-tasks-lanes.ps1 holds them
-    # (A2/D2 for the first, E8 for the second).
+    # (A2/D2 for the first, E8 for the second; F2 for FINISHED IN OTHER LANE,
+    # the T2033 reservation of a task closed in the other lane).
     [pscustomobject]@{ Label = 'HELD BY OTHER LANE'; Kind = 'status' }
+    [pscustomobject]@{ Label = 'FINISHED IN OTHER LANE'; Kind = 'status' }
     [pscustomobject]@{ Label = 'LEDGER OFF'; Kind = 'status' }
     [pscustomobject]@{ Label = 'TODO'; Kind = 'status' }
 )
