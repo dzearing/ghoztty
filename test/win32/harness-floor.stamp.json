@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-16T22:43:41-07:00",
-    "commit":  "654e0f114",
+    "generated":  "2026-10-16T22:51:02-07:00",
+    "commit":  "c269e3c0a",
     "uncommitted":  [
-                        "test/win32/gate-negatives.ps1",
-                        "test/win32/parity-tasks-lanes.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -149,10 +148,10 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "42c2cf7649451430672620c75d7574796370fc7eb2dc7db507ed5ccc13cd98d1",
-                  "test/win32/gate-negatives.ps1":  "8532f64d3beacceb2c8ef5b7be3dfc33b0fb15c42395fac40eb265c33b09da51",
+                  "test/win32/gate-negatives.ps1":  "dea396335f79fcd1081736313bcef35ea2abe3ff861d7b7d4734529e40eb8cf9",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
-                  "test/win32/go-loop-guard.ps1":  "9fe93fb2e4fed69bd0124bb74b37de78f6a03cb34678029fdce8f36a758ee068",
+                  "test/win32/go-loop-guard.ps1":  "b16aa3baca8bee80414fc55d2207266728f78c9a3063ae6c6bca36458b439f68",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "c85573dcf6e581152c9e72dbb43fd71e58b0ef40fe4c5dec08b9d357c22e8827",
@@ -320,7 +319,7 @@
                   "test/win32/pane-sidebar-scroll.ps1":  "5aa2f6aa4e7f30afde28ff9a030d6938b9ab8218497fa37eba0f1c2d47369956",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
-                  "test/win32/parity-tasks-lanes.ps1":  "438b373dc1659658869eac28217f2fdfdc230025c8c752ceb44d0a288090d9cd",
+                  "test/win32/parity-tasks-lanes.ps1":  "7f86b3a5db9b416314fa19a951610ec081848ad9a73ca7899c58991e8043060c",
                   "test/win32/parity-tasks-seat.ps1":  "5d814ef482832a003c873a695bcc87d404e788cf8d7c6554493dbcaf91237deb",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "e37347a9c7c11b2b85bcb7fca1fb80a13fe5984a401f9cadcd81ee245d41781f",
