@@ -36748,3 +36748,11 @@ moved to T1814.
 - **Parity caught by the lanes.** The T370 shape test failed on Mac's new `+list --json` `state` key. The win32 encoder now writes each terminal pane's activity token.
 - **Validated.** floor-lane all PASS, P1-P3 ALL PASS, 17 of 20 due harnesses green. The three reds are tracked: upgrade-no-fork (lane B by design, T2043), drag-perf (T1854), and hook-json (the vendored activity-state script mirror, the hook half of T2001, now unblocked).
 - **Unblocked.** T2001, T1965 and T1967 have their shared-core half now.
+
+## 2026-10-17 — T1035: a test now proves a resizing pane is woken by its new frame, not by a timer
+
+- **The gap.** Since T1476 resize-flicker.ps1 asserts that the resize waits happened (`waits > 0`) and that none came back on an old-size frame (`stale = 0`). A wait whose frame signal had been removed again passes both: the 16 ms clock ends it, and its last look finds the frame drawn in the meantime. And on the hidden test desktop the signal never decided anything. Presents are not vsync-throttled there, so 11 of 11 drag waits and 9 of 9 window passes found the new frame already on screen (`woken=0 timeouts=0`).
+- **What landed.** Every frame wait now reports how it ended (`drag_perf.WaitOutcome`), and `woken=` is on both the divider-drag summary and the per-pass `window resize` line. `GHOZTTY_PRESENT_LAG_MS`, a measurement knob read once per pane and clamped to 8 ms, holds the present signal back the way a throttled compositor does. resize-flicker.ps1 runs with it at 8 and asserts `woken > 0` for the drag and the whole-window passes.
+- **Validated.** Teeth: with `SetEvent` removed and rebuilt, the drag reads `timeouts=9 stale=0 woken=0` and both new assertions fail. Restored, it is ALL PASS (26 assertions) twice, and `-NegativeControl` gives 5 FAILURES. All four zig lanes PASS. drag-perf.ps1 parses the new field and is red only for T1854.
+- **Filed.** T2046: under the lag, switching back to a tab after a resize runs out its frame budget and moves on with 3-4 of 4 panes stale.
+- **Mac.** Nothing owed: the frame-wait handshake is a win32 painting mechanism.

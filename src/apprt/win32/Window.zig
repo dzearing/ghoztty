@@ -722,6 +722,9 @@ frame_wait_last_us: u64 = 0,
 /// property of the code and nothing else.
 frame_wait_count: usize = 0,
 frame_wait_timeouts: usize = 0,
+/// Of those waits, how many a renderer's present actually woke (T1035) — see
+/// `drag_perf.WaitOutcome` for why this is not `count - timeouts`.
+frame_wait_woken: usize = 0,
 /// Where the rest of a motion tick goes, so the breakdown is measured instead
 /// of guessed at: the dim-overlay refresh at the end of every layout pass, and
 /// the sum of the panes' own `sizeCallback` (grid reflow + renderer viewport +
@@ -6370,7 +6373,7 @@ fn reportDragCost(self: *Window) void {
     if (!self.drag_perf_on or st.ticks == 0) return;
     const fmt = "divider drag ticks={d} mean_us={d} max_us={d} mean_wait_us={d} " ++
         "fps={d} panes={d} resizes_max={d} waits_max={d} waits_total={d} timeouts={d} " ++
-        "stale={d} " ++
+        "stale={d} woken={d} " ++
         "mean_layout_us={d} mean_place_us={d} mean_paint_us={d} " ++
         "mean_overlay_us={d} mean_resize_us={d} mean_cards_us={d} " ++
         "chrome_moves={d} chrome_sb={d} chrome_dim={d} " ++
@@ -6388,6 +6391,7 @@ fn reportDragCost(self: *Window) void {
         st.waits_total,
         st.timeouts_total,
         st.stale_total,
+        st.woken_total,
         st.meanLayoutUs(),
         st.meanPlaceUs(),
         st.meanPaintUs(),
@@ -6423,6 +6427,7 @@ fn beginFrameWaitBatch(self: *Window) void {
         self.frame_wait_last_us = 0;
         self.frame_wait_count = 0;
         self.frame_wait_timeouts = 0;
+        self.frame_wait_woken = 0;
         self.frame_wait_resizes = 0;
         self.frame_wait_deferred = 0;
         self.frame_wait_fresh = 0;
@@ -6455,7 +6460,7 @@ pub fn noteResize(self: *Window) void {
 /// relayout the user watched with no anti-flicker guarantee.
 fn reportResizePass(self: *Window, cause: []const u8) void {
     log.debug(
-        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d}",
+        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d} woken={d}",
         .{
             cause,
             self.frame_wait_resizes,
@@ -6464,6 +6469,7 @@ fn reportResizePass(self: *Window, cause: []const u8) void {
             self.frame_wait_count,
             self.frame_wait_timeouts,
             self.frame_wait_stale,
+            self.frame_wait_woken,
         },
     );
 }
@@ -6492,11 +6498,13 @@ pub fn noteStalePresent(self: *Window) void {
 }
 
 /// Record one frame wait against the current pass: how long it blocked, and
-/// whether it was woken by a presented frame or ran out the timeout.
-pub fn addFrameWait(self: *Window, us: u64, timed_out: bool) void {
+/// whether it was woken by a presented frame, ran out the timeout, or both
+/// (woken by one pane's frame, then out of budget waiting for another).
+pub fn addFrameWait(self: *Window, us: u64, outcome: drag_perf.WaitOutcome) void {
     self.frame_wait_last_us +|= us;
     self.frame_wait_count +|= 1;
-    if (timed_out) self.frame_wait_timeouts +|= 1;
+    if (outcome.timed_out) self.frame_wait_timeouts +|= 1;
+    if (outcome.woken) self.frame_wait_woken +|= 1;
 }
 
 /// Take a pane's frame event instead of letting it wait for itself.
@@ -6579,7 +6587,7 @@ fn endFrameWaitBatch(self: *Window) void {
     }
     self.addFrameWait(
         if (timer) |*t| t.read() / std.time.ns_per_us else 0,
-        timed_out,
+        .{ .timed_out = timed_out, .woken = answered },
     );
 }
 
@@ -8196,6 +8204,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
             .panes = panes,
             .waits = self.frame_wait_count,
             .timeouts = self.frame_wait_timeouts,
+            .woken = self.frame_wait_woken,
             .stale = self.frame_wait_stale,
             .resizes = self.frame_wait_resizes,
             .overlay_us = self.frame_overlay_us,
