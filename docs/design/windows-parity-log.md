@@ -36757,3 +36757,12 @@ moved to T1814.
 - **Validated.** Teeth: with `SetEvent` removed and rebuilt, the drag reads `timeouts=9 stale=0 woken=0` and both new assertions fail. Restored, it is ALL PASS (26 assertions) twice, and `-NegativeControl` gives 5 FAILURES. All four zig lanes PASS. drag-perf.ps1 parses the new field and is red only for T1854.
 - **Filed.** T2046: under the lag, switching back to a tab after a resize runs out its frame budget and moves on with 3-4 of 4 panes stale.
 - **Mac.** Nothing owed: the frame-wait handshake is a win32 painting mechanism.
+
+## 2026-10-17 — T2009: +validate-config answers correctly when a script captures its output
+
+- **The defect.** Any `+validate-config` whose stdout was a pipe failed after printing. A good config exited 1, and the log said `CLI action failed error=error.FileTooBig`. Every piped call in the user's own log today carried that line. A console or a `>` file redirect never hit it, and the size of the T1998 report's 31-byte file was a coincidence.
+- **Root cause.** The verb finished with `std.fs.File.Writer.end()` (zig 0.15.2). After flushing, `end()` truncates the stream, and it only forgives `NonResizable`. A Windows pipe passes the positional probe, and its truncate fails as INVALID_PARAMETER, which std maps to `FileTooBig`. That error then replaced the verb's own result.
+- **What landed.** `src/cli/stdio.zig` `finish()` only flushes, because a standard stream never needs truncating. It is used by `+validate-config` (stdout) and `+explain-config`'s two stderr exits, and its unit tests (pipe + regular file) are wired into the none and win32 lanes through `src/cli.zig`.
+- **Validated.** Negative control: the same unit test with `end()` FAILs `(FileTooBig)`. New section 23 of `cli-unknown-flag.ps1` (piped good config exits 0, piped bad config names both lines) is ALL PASS (161), and the old release `.com` fails the same oracle. `log-append.ps1` is ALL PASS (36) on a fixed ReleaseFast build, so section T keeps its failing CLI call. All four zig lanes PASS, and the harness floor PASS (stamped). drag-perf (T1854) and hook-json (T2001) are red as before, and both are tracked.
+- **Filed.** T2048: the scoped harness sweep widened to all 31 members and needed 1920s, which is past floor-lane's 1800s default cap.
+- **Mac.** Nothing owed: the helper is shared code, and on macOS `end()` on a pipe was already forgiven (NonResizable).

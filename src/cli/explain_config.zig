@@ -7,6 +7,7 @@ const Config = @import("../config/Config.zig");
 const ConfigKey = @import("../config/key.zig").Key;
 const KeybindAction = @import("../input/Binding.zig").Action;
 const Pager = @import("Pager.zig");
+const stdio = @import("stdio.zig");
 
 pub const Options = struct {
     /// The config option to explain. For example:
@@ -78,7 +79,7 @@ pub fn run(alloc: Allocator) !u8 {
                 "+explain-config: unknown flag {s}\nrun 'ghoztty +explain-config --help' for usage\n",
                 .{arg},
             );
-            try stderr_writer.end();
+            try stdio.finish(&stderr_writer);
             return 1;
         }
     }
@@ -93,7 +94,7 @@ pub fn run(alloc: Allocator) !u8 {
         try stderr_writer.interface.writeAll("Usage: ghostty +explain-config <option>\n");
         try stderr_writer.interface.writeAll("       ghostty +explain-config --option=<option>\n");
         try stderr_writer.interface.writeAll("       ghostty +explain-config --keybind=<action>\n");
-        try stderr_writer.end();
+        try stdio.finish(&stderr_writer);
         return 1;
     };
 

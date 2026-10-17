@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-17T06:50:57-07:00",
-    "commit":  "0c410303d",
+    "generated":  "2026-10-17T07:29:50-07:00",
+    "commit":  "e9a22e401",
     "uncommitted":  [
-
+                        "test/win32/cli-unknown-flag.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -93,7 +93,7 @@
                   "test/win32/clipboard-paste.ps1":  "b931eeb01938913c1b2d91fdbe7819c2a5b67c7de99db9712bd475226fd8c5fd",
                   "test/win32/clipboard-retry.ps1":  "43b4fe9e1b843df6e073bcec780f8b10a2051e948566c99a6c776d2e13992208",
                   "test/win32/cli-shim-redirect.ps1":  "d9270707fa5daba04008292352c21cfb3aa71a688528a10a3db2319484e5f3bb",
-                  "test/win32/cli-unknown-flag.ps1":  "9f18763e83a09757f74d02464b973914b863578ef233b3d97dee2851fbda0dde",
+                  "test/win32/cli-unknown-flag.ps1":  "113c82da658e4244469714ea10631d50b0f9b08f3c13ec11df628965ff719109",
                   "test/win32/close-confirm-idle.ps1":  "17794a2ecc4a17548b7e6d300f06b53978737802a7da5e0f80769fad360246cb",
                   "test/win32/close-glyph-white.ps1":  "6d6b3cc1c05e01ad16553375b1b4fbaa06ced25c674d0138108c41f692652238",
                   "test/win32/close-overlays.ps1":  "a4c466324bb3fb0aabea45e49625abe8109c6053ea2ac8b58d2e87b09e9a1045",

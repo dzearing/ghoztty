@@ -3341,6 +3341,7 @@ $GuardTable = @(
         Covers = @(
             'src\cli\args.zig',
             'src\cli\verb_flags.zig',
+            'src\cli\stdio.zig',
             'test\win32\cli-unknown-flag.ps1'
         )
     },

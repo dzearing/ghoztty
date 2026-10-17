@@ -21,4 +21,7 @@ test {
     // The forwarding verbs' flag allowlists (T852): pure logic, and the only
     // place that says which flags each of those verbs accepts.
     _ = @import("cli/verb_flags.zig");
+
+    // Finishing a verb's stdout/stderr without truncating it (T2009).
+    _ = @import("cli/stdio.zig");
 }

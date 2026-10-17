@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const args = @import("args.zig");
 const diagnostics = @import("diagnostics.zig");
+const stdio = @import("stdio.zig");
 const Action = @import("ghostty.zig").Action;
 const Config = @import("../config.zig").Config;
 
@@ -50,7 +51,7 @@ pub fn run(alloc: std.mem.Allocator) !u8 {
     var stdout_writer = std.fs.File.stdout().writer(&buffer);
     const stdout = &stdout_writer.interface;
     const result = runInner(alloc, opts, stdout);
-    try stdout_writer.end();
+    try stdio.finish(&stdout_writer);
     return result;
 }
 

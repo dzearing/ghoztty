@@ -305,6 +305,34 @@ Assert "--enter=1 says it takes no value" `
 $r = Invoke-Verb '+send-keys --target=x --press-enter hi'
 Assert "a genuinely unknown flag is still unknown" `
     ($r.exit -ne 0 -and $r.out -match "unknown flag '--press-enter'")
+
+# T2009: a verb whose stdout is a PIPE must not fail after writing it. It
+# used to finish with File.Writer.end(), which truncates the stream and on a
+# Windows pipe fails as FileTooBig, so the error replaced the verb's own
+# answer. That made a GOOD config exit 1, and the log said 'CLI action failed
+# error=error.FileTooBig'. Invoke-Verb above captures through a FILE, which
+# never hit it. A PowerShell assignment reads native stdout through a pipe and
+# leaves $LASTEXITCODE trustworthy, because it is not a pipeline.
+# +validate-config cannot auto-launch, so it may run here and not on the test
+# desktop.
+"== 23: +validate-config answers correctly when its output is piped (T2009)"
+$good = Join-Path $tmp 'good.conf'
+$bad = Join-Path $tmp 'bad.conf'
+[System.IO.File]::WriteAllText($good, "font-size = 13`n")
+[System.IO.File]::WriteAllText($bad, "font-size = banana`nnot-a-key = 1`n")
+# persistence: n/a - a CLI invocation, which opens no window.
+$pipedOut = & $Exe '+validate-config' "--config-file=$good"
+$pipedExit = $LASTEXITCODE
+Assert "a valid config, piped, exits 0 (was 1: FileTooBig)" ($pipedExit -eq 0)
+Assert "a valid config, piped, prints nothing" (-not (($pipedOut | Out-String).Trim()))
+# persistence: n/a - a CLI invocation, which opens no window.
+$pipedOut = @(& $Exe '+validate-config' "--config-file=$bad")
+$pipedExit = $LASTEXITCODE
+$pipedText = $pipedOut | Out-String
+Assert "a bad config, piped, exits 1" ($pipedExit -eq 1)
+Assert "a bad config, piped, names the bad value" `
+    ($pipedText -match 'bad\.conf:1:font-size: invalid value "banana"')
+Assert "a bad config, piped, names the unknown key" ($pipedText -match 'bad\.conf:2:not-a-key: unknown field')
 Complete-TestBody  # T1039: the run reached the end of its body
 
 } finally {
