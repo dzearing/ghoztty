@@ -27,8 +27,13 @@
 # entry is never touched. The "standalone agent" is a copied powershell.exe
 # renamed ghoztty-agent.exe whose cmd child simulates a live session (the
 # busy walk ignores ConPTY plumbing precisely so console stand-ins work).
+#
+# -NegativeControl (T1046) keeps the fake standalone's session alive for the
+# whole run, so the idle-stop can never happen: the run MUST score red, with
+# the one stop failure and its downstream asserts reported as BLOCKED.
 param(
-    [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe'
+    [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
+    [switch]$NegativeControl
 )
 
 $ErrorActionPreference = 'Continue'
@@ -36,9 +41,20 @@ $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')  # T1036: Assert-GhozttyIsolatedAgent
 $script:passes = 0
 $script:failures = 0
+$script:blocked = 0
+$script:blockedBy = $null
 
+# T1046: once a gate step fails, every assert after it describes a step that
+# never happened. Those report as BLOCKED (scored as skipped, never as passes)
+# so one real failure reads as one line instead of ten.
 function Assert($name, $cond) {
+    if ($script:blockedBy) { "  BLOCKED $name (by: $($script:blockedBy))"; $script:blocked++; return }
     if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
+}
+
+function Assert-Gate($name, $cond) {
+    Assert $name $cond
+    if (-not $cond -and -not $script:blockedBy) { $script:blockedBy = $name; $script:blockedRoot = $name }
 }
 
 # --- R: the REAL install on this box, read back (T890) -----------------------
@@ -223,8 +239,10 @@ try {
     "== 2: adoption - sharing marked, idle-stop honored, shielded uninstall, Run value restored"
     # The fake standalone: busy for ~10s (a cmd 'session' pinging), then idle
     # (only its conhost left, which the busy walk must ignore).
+    # -NegativeControl: the session never drains, so the standalone stays busy.
+    $pings = if ($NegativeControl) { 100000 } else { 10 }
     $fake = Start-Process -FilePath (Join-Path $fakeDir 'ghoztty-agent.exe') -PassThru -WindowStyle Hidden `
-        -ArgumentList '-NoProfile', '-Command', "& cmd /d /c 'ping -n 10 127.0.0.1 > nul'; Start-Sleep 600"
+        -ArgumentList '-NoProfile', '-Command', "& cmd /d /c 'ping -n $pings 127.0.0.1 > nul'; Start-Sleep 600"
     $null = $fake.Handle
     Start-Sleep -Seconds 2
     $fakeKids = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($fake.Id)" |
@@ -253,14 +271,21 @@ try {
     Assert 'busy standalone put adoption into waiting' (Wait-ForText "$tmp\a2.err" 'waiting for idle' 20)
     Assert 'standalone NOT stopped while busy' (-not $fake.HasExited)
 
-    # The cmd 'session' drains (~10s), then 3 idle polls at 1s land the stop.
-    $deadline = (Get-Date).AddSeconds(60)
-    while ((Get-Date) -lt $deadline -and -not $fake.HasExited) { Start-Sleep -Milliseconds 500 }
-    Assert 'idle standalone was stopped' $fake.HasExited
-    Assert 'stop was announced' (Wait-ForText "$tmp\a2.err" 'idle; stopped it' 10)
+    # The cmd 'session' drains (~10s), then 3 idle polls at 1s land the stop -
+    # ~13s quiet, far longer on a box running another suite (T1046: a flat 60s
+    # clock read ten failures over an adoption that was merely slow). So wait
+    # for what the agent SAYS it did - stopped, or could not stop - with a
+    # ceiling generous enough for a loaded box. A quiet box still returns in
+    # seconds; only a standalone that never goes idle costs the whole ceiling.
+    $stopCeiling = if ($NegativeControl) { 45 } else { 240 }
+    $stopSaid = Wait-ForText "$tmp\a2.err" 'idle; stopped it|could not stop the standalone' $stopCeiling
+    $exitDeadline = (Get-Date).AddSeconds(15)
+    while ($stopSaid -and (Get-Date) -lt $exitDeadline -and -not $fake.HasExited) { Start-Sleep -Milliseconds 250 }
+    Assert-Gate 'idle standalone was stopped' ($stopSaid -and $fake.HasExited)
+    Assert 'stop was announced' ((Read-Shared "$tmp\a2.err") -match 'idle; stopped it')
 
-    Assert 'uninstall override ran' (Wait-ForText $uninstLog 'ran' 30)
-    Assert 'adoption completed' (Wait-ForText "$tmp\a2.err" 'adoption complete' 30)
+    Assert 'uninstall override ran' (Wait-ForText $uninstLog 'ran' 90)
+    Assert 'adoption completed' (Wait-ForText "$tmp\a2.err" 'adoption complete' 90)
     Assert 'uninstall ran exactly once' (([regex]::Matches((Read-Shared $uninstLog), 'ran')).Count -eq 1)
     Assert 'shield refused the mid-uninstall kill' ((Read-Shared $uninstLog) -match 'kill-denied')
     Assert 'adopting agent survived its own uninstall step' (-not $a2.HasExited)
@@ -280,6 +305,7 @@ try {
     Stop-TestProcs
 
     "== 4: kill switch - GHOSTTY_ADOPT_DISABLE=1 stops everything"
+    $script:blockedBy = $null   # independent of section 2's adoption: a fresh fixture
     Remove-Item $adoptFile -ErrorAction SilentlyContinue
     Remove-Item $portFile -ErrorAction SilentlyContinue
     New-FakeStandalone
@@ -290,6 +316,16 @@ try {
     Assert 'kill switch suppresses adoption' ((Read-Shared "$tmp\a4.err") -notmatch 'adoption|adopting')
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
+    # The fake's cmd/ping 'session' outlives a killed parent - and under
+    # -NegativeControl it would ping for a day. Take this run's children first.
+    if ($fake) {
+        Get-CimInstance Win32_Process -Filter "ParentProcessId=$($fake.Id)" -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                Get-CimInstance Win32_Process -Filter "ParentProcessId=$($_.ProcessId)" -ErrorAction SilentlyContinue |
+                    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+    }
     Stop-TestProcs
     Remove-ItemProperty -Path $runKey -Name $runValueName -ErrorAction SilentlyContinue
     foreach ($n in 'GHOZTTY_AGENT_INSTANCE','GHOSTTY_RELAY_ENV','GHOSTTY_ADOPT_INSTALL_DIR',
@@ -309,7 +345,7 @@ try {
 # And only a run that looked at everything vouches for everything (T981): a run
 # whose section R skipped never read the real retirement back, so it scores but
 # does not stamp. This box adopted on 2026-08-31, so R asserts here.
-if ($script:failures -eq 0 -and $script:realSkipped -eq 0) {
+if ($script:failures -eq 0 -and $script:realSkipped -eq 0 -and -not $NegativeControl) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-adopt -Repo $repo 2>&1 | ForEach-Object { "  $_" }
@@ -321,5 +357,6 @@ if ($script:failures -eq 0 -and $script:realSkipped -eq 0) {
 # truncated run as ALL PASS. 26 fixture assertions + section R's 9, which are
 # owed only on a box that actually adopted (hence the -realSkipped subtraction:
 # a machine that never carried the standalone install still has a floor).
+if ($script:blocked -gt 0) { "  $($script:blocked) assert(s) BLOCKED by: $($script:blockedRoot)" }
 Write-TestVerdict -Label 'T549 AGENT ADOPT' -Pass $script:passes -Fail $script:failures `
-    -Skipped $script:realSkipped -MinPass (35 - (9 * $script:realSkipped))
+    -Skipped ($script:realSkipped + $script:blocked) -MinPass (35 - (9 * $script:realSkipped))

@@ -36836,3 +36836,10 @@ moved to T1814.
 - **Re-verified, not rebuilt.** `next` flagged CHECK FIRST. The harness was rewritten the day after this was filed. 870693615 (T1116) found that the flood, sized in typed bytes, overran the agent's own ring once the ConPTY re-rendered it. That evicted the marker, which is why B4 and C3 went red together. Neither of the task's two candidates was the cause. The echoed-marker one is real but separate (T1143), and the harness no longer waits on that marker.
 - **Validated.** 10/10 ALL PASS (17), each run straight after `holder-durable.ps1`. The marker reached disk 3-4 s after the sync point every time, against a 24 s window. `-NegativeControl` ALL PASS (15) and still loses the marker.
 - **Mac.** Nothing owed: Windows acceptance harness only.
+
+## 2026-10-17 — T1046 (lane b): agent-adopt waits for the agent to say it stopped the standalone, and one real failure reads as one line
+
+- **Still real.** The flat 60 s clock was still at `agent-adopt.ps1:257`. The wait now ends on the agent's own `idle; stopped it` / `could not stop` line, with a 240 s ceiling, so a quiet box still returns in seconds. The two downstream waits went from 30 s to 90 s.
+- **Cascades are named.** The stop is now a gate. Once it fails, the twelve asserts after it print `BLOCKED ... (by: idle standalone was stopped)` and count as skipped, never as passes. Section 4 is an independent fixture, so it clears the gate.
+- **Validated.** A runner run passed: ALL PASS (35). 10/10 runs passed under a 32-job all-core CPU burner, 29-31 s each. That stands in for "another harness first", and it does not reproduce I/O contention. The new `-NegativeControl` keeps the standalone busy and scores 1 FAILURE + 12 SKIPPED with exit 1, and it never stamps. The scoped harness floor passed.
+- **Mac.** Nothing owed: Windows acceptance harness only.
