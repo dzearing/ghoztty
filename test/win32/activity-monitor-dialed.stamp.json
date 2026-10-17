@@ -1,8 +1,8 @@
 {
     "guard":  "activity-monitor-dialed",
     "script":  "test/win32/activity-monitor-dialed.ps1",
-    "generated":  "2026-10-16T11:18:21-07:00",
-    "commit":  "161784011",
+    "generated":  "2026-10-17T09:20:33-07:00",
+    "commit":  "8d1fedf00",
     "uncommitted":  [
                         "test/win32/activity-monitor-dialed.ps1"
                     ],
@@ -10,7 +10,7 @@
                   "src/apprt/win32/activity_dial.zig":  "1dfccc38601a312af59a5ba4a5a728599b1e3895a174a6c4d7252f5859e2206d",
                   "src/apprt/win32/ActivityMonitor.zig":  "89cd92f9b79ca9a44e4aefb9b980e7c608133515437b73e7d6e0eb3aed9f431e",
                   "src/remote/relay_dial.zig":  "f7d24bc69e8063100a4dc5a1b72f417e22265410bd9fb915efb704e7d5c6f137",
-                  "test/win32/activity-monitor-dialed.ps1":  "a02feaf2ff411e1007e602b7c12da583f62594dff8a5d3bf1cd00925287aae2d",
+                  "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
                   "test/win32/lib/FakeRelay.ps1":  "c1d824a5de199369521042d5eadb2ca0c879b55d92104b709c98d17b880eee26"
               }
 }

@@ -39,6 +39,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')  # T1036: Assert-GhozttyIsolatedAgent
 . (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 # T359: remote-test-client is an on-demand build target, so a tree that only
@@ -114,6 +115,8 @@ function Invoke-Scenario($tag, $overlay) {
     $env:GHOSTTY_AGENT_HEARTBEAT = (Join-Path $dir 'agent.heartbeat')
     if ($overlay -eq 'off') { $env:GHOZTTY_USER_ENV = 'off' }
 
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $agent = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -ArgumentList "--listen-pipe=$pipe", "--port-file=$(Join-Path $stateDir 'port.json')", `
         "--sessions-file=$(Join-Path $stateDir 'sessions.json')", "--headless", "--force-replace"

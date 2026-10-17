@@ -252,6 +252,8 @@ try {
     Say '== C: start the agent by hand - the same app must complete its restore'
     $agentOut = Join-Path $root 'late-agent-out.txt'
     $agentErr = Join-Path $root 'late-agent-err.txt'
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $agent | Out-Null
     $script:lateAgent = Start-Process -FilePath $agent -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $agentOut -RedirectStandardError $agentErr `
         -ArgumentList $agentArgs

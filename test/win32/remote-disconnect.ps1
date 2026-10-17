@@ -248,6 +248,8 @@ try {
     Write-Host ""
     Write-Host "== setup: a loopback agent stands in for the other machine =="
     $env:GHOSTTY_AGENT_LOCK = Join-Path $env:TEMP 'ghoztty-t1390-agent.lock'
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $agent = Start-Process -FilePath $AgentExe `
         -ArgumentList '--listen', "127.0.0.1:$Port", '--headless' `
         -PassThru -WindowStyle Hidden

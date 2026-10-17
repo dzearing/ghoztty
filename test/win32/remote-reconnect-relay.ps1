@@ -161,6 +161,8 @@ function Count-Dials() {
 function Start-FarAgent() {
     $saved = Get-GhozttyAgentLineage
     $env:GHOZTTY_AGENT_INSTANCE = "t1276relrecon$PID"
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -ArgumentList '--listen', "127.0.0.1:$AgentPort", '--headless' `
         -RedirectStandardOutput (Join-Path $tmp "agent-$([guid]::NewGuid().ToString('N').Substring(0,6)).out") `

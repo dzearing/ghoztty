@@ -44,6 +44,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')  # T1036: Assert-GhozttyIsolatedAgent
 . (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestClient.ps1')
 $ClientExe = Resolve-RemoteTestClient -ClientExe $ClientExe
@@ -100,6 +101,8 @@ function Start-Agent([string]$tag, [string[]]$agentArgs, [hashtable]$extraEnv) {
         [Environment]::SetEnvironmentVariable($k, [string]$extraEnv[$k], 'Process')
     }
     try {
+        # T1036: the agent answers for its own endpoints before it is launched.
+        Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
         $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
             -ArgumentList $agentArgs `
             -RedirectStandardOutput (Join-Path $root "$tag.out.txt") `

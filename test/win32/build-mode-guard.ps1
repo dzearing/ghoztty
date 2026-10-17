@@ -264,6 +264,64 @@ if (Test-Path $Exe) {
 }
 
 # ============================================================================
+"== H: the agent answers for its own endpoints (T1036)"
+# ============================================================================
+# ghoztty-agent.exe prints a build STAMP on --version, so the app's gate cannot
+# read it. Since T1036 it answers `--build-mode`, and the ENDPOINTS line is what
+# Assert-GhozttyIsolatedAgent trusts - the agent's family follows -Doptimize=Debug
+# only, so a ReleaseSafe agent is on the user's endpoints even though the app's
+# predicate would call the mode isolated (H3 is that case).
+function New-StubAgent($name, $Mode, $Family) {
+    $path = Join-Path $tmp "$name.cmd"
+    $lines = @('@echo off', 'echo ghoztty-agent')
+    if ($Mode) { $lines += "echo   - build mode    : .$Mode" }
+    if ($Family) { $lines += "echo   - endpoints     : $Family" }
+    Set-Content -LiteralPath $path -Value $lines -Encoding ascii
+    return $path
+}
+$agDebug = New-StubAgent 'agent-debug' 'Debug' 'debug'
+$agFast = New-StubAgent 'agent-fast' 'ReleaseFast' 'release'
+$agSafe = New-StubAgent 'agent-safe' 'ReleaseSafe' 'release'
+# An agent older than T1036 answers "unknown argument" and prints neither line.
+$agOld = New-StubAgent 'agent-old' '' ''
+
+Assert "H1 the endpoint family is read off the agent itself" `
+    ((Get-GhozttyAgentEndpoints -Exe $agDebug) -eq 'debug' -and (Get-GhozttyAgentEndpoints -Exe $agFast) -eq 'release')
+Assert "H2 a debug agent passes" ($null -eq (Get-Throw { Assert-GhozttyIsolatedAgent -Exe $agDebug }))
+$msgSafe = Get-Throw { Assert-GhozttyIsolatedAgent -Exe $agSafe }
+Assert "H3 a ReleaseSafe agent is REFUSED - the app predicate would have passed its mode" `
+    ($msgSafe -match 'REFUSING TO RUN' -and (Test-GhozttyIsolatedBuildMode -Mode 'ReleaseSafe')) "(got: $msgSafe)"
+$msgFast = Get-Throw { Assert-GhozttyIsolatedAgent -Exe $agFast }
+Assert "H4 a ReleaseFast agent is refused, and the message names its endpoints" `
+    ($msgFast -match 'REFUSING TO RUN' -and $msgFast -match "'release' endpoints") "(got: $msgFast)"
+$msgOld = Get-Throw { Assert-GhozttyIsolatedAgent -Exe $agOld }
+Assert "H5 an agent that cannot answer is refused, not waved through" `
+    ($msgOld -match 'REFUSING TO RUN' -and $msgOld -match 'no readable endpoints') "(got: $msgOld)"
+
+$savedH = Get-GhozttyAgentLineage
+Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
+Assert "H6 -Allow alone does not excuse a release agent with no private lineage" `
+    ((Get-Throw { Assert-GhozttyIsolatedAgent -Exe $agFast -Allow }) -match 'REFUSING TO RUN')
+$env:GHOZTTY_AGENT_INSTANCE = "bmg$PID"
+Assert "H7 -Allow under GHOZTTY_AGENT_INSTANCE lets a release agent through" `
+    ($null -eq (Get-Throw { Assert-GhozttyIsolatedAgent -Exe $agFast -Allow }))
+Assert "H8 but never an agent that cannot answer, lineage or not" `
+    ((Get-Throw { Assert-GhozttyIsolatedAgent -Exe $agOld -Allow }) -match 'REFUSING TO RUN')
+Restore-GhozttyAgentLineage -Saved $savedH
+Assert "H9 -UserEndpoints needs a reason" `
+    ((Get-Throw { Assert-GhozttyIsolatedAgent -Exe $agFast -Allow -UserEndpoints }) -match 'requires -Reason')
+
+# Positive control on the real agent beside $Exe.
+$realAgent = Join-Path (Split-Path $Exe -Parent) 'ghoztty-agent.exe'
+if (Test-Path $realAgent) {
+    Assert "H10 the zig-out agent reports the debug endpoints" ((Get-GhozttyAgentEndpoints -Exe $realAgent) -eq 'debug')
+    Assert "H11 so the gate lets it through" ($null -eq (Get-Throw { Assert-GhozttyIsolatedAgent -Exe $realAgent }))
+} else {
+    "  SKIP H10-H11: $realAgent not built"
+    $script:skipped++
+}
+
+# ============================================================================
 "== G: the reason -Doptimize=Debug is not optional is written down"
 # ============================================================================
 # The trap is reachable by anyone who builds without that flag, so the note

@@ -159,6 +159,8 @@ try {
     $env:GHOSTTY_AGENT_LOCK = Join-Path $tmp 'agent.lock'
     # The agent's own stderr is the first witness when an RPC dies mid-flight
     # (T328): capture it rather than discarding it with the hidden window.
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $agentExe | Out-Null
     $script:agent = Start-Process -FilePath $agentExe `
         -ArgumentList '--listen', "127.0.0.1:$AgentPort", '--headless' -PassThru -WindowStyle Hidden `
         -RedirectStandardError $agentlog

@@ -246,6 +246,11 @@ pub fn main() !void {
             const line = std.fmt.bufPrint(&buf, "ghoztty-agent {s}\n", .{agent_version}) catch "ghoztty-agent\n";
             std.fs.File.stdout().writeAll(line) catch {};
         },
+        .build_mode => {
+            var buf: [128]u8 = undefined;
+            const text = buildModeText(&buf, @tagName(builtin.mode), @import("agent_build_options").is_debug);
+            std.fs.File.stdout().writeAll(text) catch {};
+        },
         .usage => printUsage(),
         .stdio => try runStdio(alloc, encoding),
         .listen => |l| {
@@ -681,9 +686,42 @@ fn parseMaxSessions(text: []const u8) ?usize {
     return n;
 }
 
+/// The `--build-mode` answer (T1036): the zig build mode, in the same
+/// `- build mode    : .<Mode>` shape `ghoztty +version` prints, plus the
+/// endpoint family this binary actually derives. The second line is the one a
+/// harness should trust: the agent's family follows `agent_build_options.is_debug`
+/// (`-Doptimize=Debug` only), which is NOT the app's `build_config.is_debug`
+/// (Debug or ReleaseSafe), so the mode alone cannot answer it. Pure + tested.
+fn buildModeText(buf: []u8, mode: []const u8, is_debug: bool) []const u8 {
+    return std.fmt.bufPrint(buf, "ghoztty-agent\n  - build mode    : .{s}\n  - endpoints     : {s}\n", .{
+        mode,
+        if (is_debug) "debug" else "release",
+    }) catch "ghoztty-agent\n";
+}
+
+test "buildModeText: mode in the app's shape, endpoint family from is_debug" {
+    var buf: [128]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "ghoztty-agent\n  - build mode    : .Debug\n  - endpoints     : debug\n",
+        buildModeText(&buf, "Debug", true),
+    );
+    // ReleaseSafe is the case the mode cannot answer: the app would call it
+    // isolated, the agent derives the user's endpoints.
+    try std.testing.expectEqualStrings(
+        "ghoztty-agent\n  - build mode    : .ReleaseSafe\n  - endpoints     : release\n",
+        buildModeText(&buf, "ReleaseSafe", false),
+    );
+}
+
 const Mode = union(enum) {
     /// `--version`: print the baked build version and exit.
     version,
+    /// `--build-mode`: print the build mode and which endpoint family it
+    /// derives, then exit (T1036). A separate flag rather than a second
+    /// `--version` line: every `--version` reader in the field (the Mac app's
+    /// `computeBundledAgentVersion` takes the LAST token of the whole output)
+    /// would read the new line as the stamp.
+    build_mode,
     /// No recognized mode (bare invocation): print usage and exit cleanly —
     /// deliberately NOT an unauthenticated listener (see the SECURITY note).
     usage,
@@ -994,6 +1032,8 @@ fn parseArgs(alloc: Allocator) !Mode {
             continue;
         } else if (std.mem.eql(u8, a, "--version")) {
             return .version;
+        } else if (std.mem.eql(u8, a, "--build-mode")) {
+            return .build_mode;
         } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             return .usage;
         } else if (std.mem.eql(u8, a, "--stdio")) {
@@ -1271,6 +1311,9 @@ fn printUsage() void {
         \\                                  credential, instead of redialing with a dead one. For
         \\                                  supervisors that own the credential (the macOS app).
         \\  ghoztty-agent --version         Print the build version.
+        \\  ghoztty-agent --build-mode      Print the build mode and whose endpoints it uses
+        \\                                  (debug: a dev build's own; release: the installed
+        \\                                  Ghoztty's). Test harnesses check this before launch.
         \\
         \\Advanced / development:
         \\  ghoztty-agent --listen-unix=<path>

@@ -25,11 +25,13 @@
 #     (not for a raw launch beside it). That seam is not assumed either:
 #     section B EXERCISES it against stub exes, so a refactor that drops the
 #     assert fails here rather than years later.
-#   * `ghoztty-agent.exe` launches. The agent's endpoints are build-mode
-#     derived too, but its exe prints a build STAMP rather than a mode, so
-#     `Get-GhozttyBuildMode` cannot read it and this assert cannot speak for
-#     it. Tracked separately (T1036); flagging it here would only teach people
-#     to add a claim that checks the wrong binary.
+#   * `ghoztty-agent.exe` launches, by the APP scan. Since T1036 they are a
+#     second scan of their own (Get-AgentPreflightViolation): the agent answers
+#     `--build-mode` and only `Assert-GhozttyIsolatedAgent` (or an explicit
+#     `# agent-preflight: none - <why>`) answers for it. An app-side claim does
+#     NOT - it checks the wrong binary, which is why T1033 left the agent out
+#     rather than accept one. `--version` / `--build-mode` / `--help` queries
+#     are not launches: they print a line and exit.
 #   * `+verb` CLI calls with no process launch - that is isolation-meta.ps1's
 #     property (a private endpoint), which is a different question about the
 #     same run.
@@ -95,16 +97,16 @@ function Get-AstVarKey($VarAst) {
 # assignment or by a param() default. Binding is what makes the variable NAME
 # meaningful: $AgentExe and $ClientExe are launched the same way and are not
 # the app, so the scan reads bindings rather than guessing from names.
-function Get-AppExeVariable($Ast) {
+function Get-AppExeVariable($Ast, [string]$Leaf = 'ghoztty\.exe') {
     $vars = @{}
     $assigns = $Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)
     foreach ($a in $assigns) {
         if ($a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
-            $a.Right.Extent.Text -match '(?i)ghoztty\.exe') { $vars[(Get-AstVarKey $a.Left)] = $true }
+            $a.Right.Extent.Text -match "(?i)$Leaf") { $vars[(Get-AstVarKey $a.Left)] = $true }
     }
     $params = $Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ParameterAst] }, $true)
     foreach ($p in $params) {
-        if ($p.DefaultValue -and $p.DefaultValue.Extent.Text -match '(?i)ghoztty\.exe') {
+        if ($p.DefaultValue -and $p.DefaultValue.Extent.Text -match "(?i)$Leaf") {
             $vars[(Get-AstVarKey $p.Name)] = $true
         }
     }
@@ -131,16 +133,30 @@ function Get-AppExeVariable($Ast) {
 #       with an app var as an argument - a P/Invoke launcher. Restricted to the
 #       script's own types so `[regex]::Escape($exe)` and `[IO.File]::...` are
 #       never read as launches.
-function Get-RawAppLaunch([string]$Text) {
+#
+# T1036: -Leaf 'ghoztty-agent\.exe' asks the same question about the agent. A
+# launch whose only arguments are the agent's own read-only queries
+# (`--version`, `--build-mode`, `--help`) is not counted: it prints a line and
+# exits without touching a pipe, a mutex or a state dir.
+function Get-RawAppLaunch([string]$Text, [string]$Leaf = 'ghoztty\.exe') {
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tok, [ref]$err)
-    $vars = Get-AppExeVariable $ast
+    $vars = Get-AppExeVariable $ast $Leaf
     $isApp = {
         param($n)
         ($n -is [System.Management.Automation.Language.VariableExpressionAst] -and
             $vars.ContainsKey((Get-AstVarKey $n))) -or
         ($n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
-            $n.Value -match '(?i)ghoztty\.exe$')
+            $n.Value -match "(?i)$Leaf`$")
+    }
+    $isQueryOnly = {
+        param($c)
+        $words = @($c.CommandElements | Select-Object -Skip 1 | ForEach-Object {
+            $_.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) |
+                ForEach-Object { $_.Value }
+        } | Where-Object { $_ -match '^--?\w' })
+        $flags = @($words | Where-Object { $_ -notmatch '^-(FilePath|ArgumentList|PassThru|Wait|NoNewWindow|WindowStyle|RedirectStandard\w+)$' })
+        ($flags.Count -gt 0) -and (@($flags | Where-Object { $_ -notmatch '^--(version|build-mode|help)$' }).Count -eq 0)
     }
     $ownTypes = @{}
     foreach ($m in [regex]::Matches($Text, '\b(?:class|struct)\s+(\w+)')) { $ownTypes[$m.Groups[1].Value.ToLower()] = $true }
@@ -150,6 +166,7 @@ function Get-RawAppLaunch([string]$Text) {
     foreach ($c in $cmds) {
         if ($c.GetCommandName() -eq 'Start-Process') {
             if (@($c.FindAll($isApp, $true)).Count -eq 0) { continue }
+            if ($Leaf -ne 'ghoztty\.exe' -and (& $isQueryOnly $c)) { continue }
             # Which element is the -FilePath: the named one, else the first
             # positional. The app AS the file is a direct launch; the app
             # inside a wrapper's arguments (`cmd /c "$Exe" +verb > out`) is the
@@ -177,6 +194,7 @@ function Get-RawAppLaunch([string]$Text) {
             }
         } elseif ($c.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Ampersand -and
                   (& $isApp $c.CommandElements[0])) {
+            if ($Leaf -ne 'ghoztty\.exe' -and (& $isQueryOnly $c)) { continue }
             $hits += "& $($c.CommandElements[0].Extent.Text) (line $($c.Extent.StartLineNumber))"
         }
     }
@@ -207,6 +225,22 @@ function Get-PreflightViolation([string]$Path) {
         if ($hits.Count -eq 0) { return $null }
     }
     return "launches the app ($($hits[0])) with no build-mode pre-flight"
+}
+
+# T1036: the agent half. An agent launch is answered ONLY by the agent's own
+# gate - an app-side claim checks the wrong binary, which is why T1033 left the
+# agent out rather than accept one - or by an explicit
+# `# agent-preflight: none - <why>`.
+$AgentClaimPattern = 'Assert-GhozttyIsolatedAgent|#\s*agent-preflight:\s*none'
+$AgentLeaf = 'ghoztty-agent\.exe'
+
+function Get-AgentPreflightViolation([string]$Path) {
+    $text = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrEmpty($text)) { return $null }
+    $hits = @(Get-RawAppLaunch $text $AgentLeaf)
+    if ($hits.Count -eq 0) { return $null }
+    if ($text -match $AgentClaimPattern) { return $null }
+    return "launches the agent ($($hits[0] -replace '<app>', '<agent>')) with no agent build-mode pre-flight"
 }
 
 $tmp = Join-Path $env:TEMP "ghoztty-launchpre-$PID"
@@ -279,8 +313,51 @@ $agent = New-Fixture 'agent' @(
     '$AgentExe = ''D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe''',
     'Start-Process -FilePath $AgentExe -PassThru | Out-Null'
 )
-Assert 'A6 an agent-only launcher is out of scope (T1036)' `
+Assert 'A6 an agent-only launcher is not the APP scan''s business' `
     ($null -eq (Get-PreflightViolation $agent))
+# T1036: ...it is the agent scan's. A6 used to stop here, by design.
+Assert 'A6a an agent launch with no agent pre-flight is flagged' `
+    ($null -ne (Get-AgentPreflightViolation $agent))
+
+$agentAppClaim = New-Fixture 'agentappclaim' @(
+    '$Exe = ''D:\git\ghoztty\zig-out\bin\ghoztty.exe''',
+    '$AgentExe = ''D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe''',
+    'Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null',
+    'Start-Process -FilePath $AgentExe -PassThru | Out-Null'
+)
+Assert 'A6b an app-side claim does NOT answer for an agent launch (it checks the wrong binary)' `
+    ($null -ne (Get-AgentPreflightViolation $agentAppClaim))
+
+$agentOk = New-Fixture 'agentok' @(
+    '$AgentExe = ''D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe''',
+    'Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null',
+    'Start-Process -FilePath $AgentExe -PassThru | Out-Null'
+)
+Assert 'A6c Assert-GhozttyIsolatedAgent answers it' `
+    ($null -eq (Get-AgentPreflightViolation $agentOk))
+
+$agentQuery = New-Fixture 'agentquery' @(
+    'param([string]$AgentExe = ''D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe'')',
+    '$v = Start-Process -FilePath $AgentExe -ArgumentList @(''--version'') -PassThru -WindowStyle Hidden',
+    '$m = & $AgentExe --build-mode'
+)
+Assert 'A6d a --version / --build-mode query is not a launch (it touches no endpoint)' `
+    ($null -eq (Get-AgentPreflightViolation $agentQuery))
+
+$agentCall = New-Fixture 'agentcall' @(
+    '$agentExe = Join-Path $bin ''ghoztty-agent.exe''',
+    '& $agentExe --listen-pipe=\\.\pipe\x --headless'
+)
+Assert 'A6e the call operator on the agent with real arguments is a launch' `
+    ($null -ne (Get-AgentPreflightViolation $agentCall))
+
+$agentMarked = New-Fixture 'agentmarked' @(
+    '# agent-preflight: none - launches a stub agent under $env:TEMP',
+    '$AgentExe = Join-Path $stub ''ghoztty-agent.exe''',
+    'Start-Process -FilePath $AgentExe | Out-Null'
+)
+Assert 'A6f an explicit agent-preflight: none marker counts as an answer' `
+    ($null -eq (Get-AgentPreflightViolation $agentMarked))
 
 $desk = New-Fixture 'desk' @(
     '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
@@ -437,9 +514,16 @@ else { $env:GHOZTTY_PIPE_SUFFIX = $savedB5Suffix }
 Restore-GhozttyAgentLineage -Saved $savedB5Inst
 $env:LOCALAPPDATA = $savedB5Lad
 
+# T1036: the agent is gated too - by its OWN gate, which is what speaks.
+# persistence: n/a - refused by the agent gate; nothing starts.
 $msgAgent = Get-Throw { Start-OnTestDesktop -Exe (Join-Path $stubDir 'ghoztty-agent.exe') }
-Assert 'B6 a non-app launch is not gated on the app''s build mode' `
-    ($msgAgent -match 'No test desktop') "(got: $msgAgent)"
+Assert 'B6 Start-OnTestDesktop refuses an agent it cannot vouch for, through the agent gate' `
+    ($msgAgent -match 'Assert-GhozttyIsolatedAgent: REFUSING TO RUN') "(got: $msgAgent)"
+
+# persistence: n/a - stops at "No test desktop"; the stub never runs.
+$msgOther = Get-Throw { Start-OnTestDesktop -Exe (Join-Path $stubDir 'helper.exe') }
+Assert 'B6b a launch that is neither the app nor the agent is not gated at all' `
+    ($msgOther -match 'No test desktop') "(got: $msgOther)"
 
 # ---------------------------------------------------------------------------
 "== C: the real tree is clean"
@@ -455,13 +539,18 @@ Assert 'C1 the sweep found a plausible number of scripts' ($scripts.Count -ge 50
     "(got $($scripts.Count))"
 
 $launchers = 0
+$agentLaunchers = 0
 $violations = @()
 foreach ($s in $scripts) {
     $text = Get-Content -LiteralPath $s.FullName -Raw -ErrorAction SilentlyContinue
     if (@(Get-RawAppLaunch $text).Count -gt 0) { $launchers++ }
+    if (@(Get-RawAppLaunch $text $AgentLeaf).Count -gt 0) { $agentLaunchers++ }
     $why = Get-PreflightViolation $s.FullName
     if ($null -ne $why) { $violations += "$($s.Name): $why" }
+    $why = Get-AgentPreflightViolation $s.FullName
+    if ($null -ne $why) { $violations += "$($s.Name): $why" }
 }
+"  ($agentLaunchers script(s) launch the agent themselves)"
 "  ($launchers script(s) launch the app themselves)"
 foreach ($v in $violations) { "  VIOLATION $v" }
 Assert 'C2 every script that launches the app runs the pre-flight first' `
@@ -470,6 +559,8 @@ Assert 'C2 every script that launches the app runs the pre-flight first' `
 # nothing would report a clean tree forever.
 Assert 'C3 the scan still recognises real launches' ($launchers -ge 5) `
     "(found $launchers)"
+Assert 'C4 and real agent launches (T1036: 29 when the agent scan landed)' ($agentLaunchers -ge 20) `
+    "(found $agentLaunchers)"
 
 } catch {
     # T1511: score the throw rather than unwinding past it to a green verdict.

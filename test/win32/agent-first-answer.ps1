@@ -59,6 +59,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')  # T1036: Assert-GhozttyIsolatedAgent
 . (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 $script:passes = 0
@@ -160,6 +161,8 @@ try {
     Say '== B: the agent answers inside the app''s spawn deadline'
     # ========================================================================
     $sw = [Diagnostics.Stopwatch]::StartNew()
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -ArgumentList "--listen-pipe=$agentPipe", "--port-file=$portFile", `
         "--sessions-file=$sessFile", '--headless' `

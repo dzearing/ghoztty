@@ -214,6 +214,8 @@ try {
     # A loopback agent to be remote TO, with its own lock path so it can never
     # fight a real agent's single-instance guard.
     $env:GHOSTTY_AGENT_LOCK = Join-Path $tmp 'agent1.lock'
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $agent = Start-Process -FilePath $AgentExe -ArgumentList '--listen', "127.0.0.1:$Port", '--headless' -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 2
     if ($agent.HasExited) { throw 'SETUP FAIL: loopback agent exited immediately' }

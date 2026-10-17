@@ -65,6 +65,8 @@ function Start-Agent($instance, $lad, $pipe, $portFile) {
     $env:GHOZTTY_AGENT_INSTANCE = $instance
     $env:LOCALAPPDATA = $lad
     $sess = [System.IO.Path]::ChangeExtension($portFile, '.sessions.json')
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -ArgumentList "--listen-pipe=$pipe", "--port-file=$portFile", "--sessions-file=$sess", '--headless'
     # Cache the handle BEFORE the child can exit, or ExitCode reads back empty

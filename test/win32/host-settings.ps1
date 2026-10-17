@@ -489,6 +489,8 @@ try {
 
     $agentKey = "127.0.0.1:$AgentPort"
     $env:GHOSTTY_AGENT_LOCK = Join-Path $tmp 'agent.lock'
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $agent = Start-Process -FilePath $AgentExe -ArgumentList '--listen', "127.0.0.1:$AgentPort", '--headless' -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 2
     Assert (-not $agent.HasExited) 'loopback agent is running'

@@ -211,6 +211,8 @@ try {
     Say '== 1: the agent raises the uplink and the relay UPGRADES it'
     $agentOut = Join-Path $root 'agent.out'
     $agentErr = Join-Path $root 'agent.err'
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $agent = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $agentOut -RedirectStandardError $agentErr `
         -ArgumentList "--listen-pipe=$pipe", "--port-file=$portFile", "--sessions-file=$sessFile", '--headless'

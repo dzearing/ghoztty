@@ -403,6 +403,8 @@ function Invoke-RemoteSection([string]$Label) {
     # A unique lock path so this harness agent never fights a real agent's
     # single-instance guard (the ipc-remote.ps1 precedent).
     $env:GHOSTTY_AGENT_LOCK = Join-Path $env:TEMP 'ghoztty-t356-agent.lock'
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $agent = Start-Process -FilePath $AgentExe `
         -ArgumentList "--listen", "127.0.0.1:$Port", "--headless" `
         -PassThru -WindowStyle Hidden

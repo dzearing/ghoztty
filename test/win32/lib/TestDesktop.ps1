@@ -2612,6 +2612,9 @@ function Start-OnTestDesktop {
     )
     if ((Split-Path -Leaf $Exe) -ieq 'ghoztty.exe') {
         Assert-GhozttyIsolatedBuild -Exe $Exe -Allow:$AllowReleaseBuild | Out-Null
+    } elseif ((Split-Path -Leaf $Exe) -ieq 'ghoztty-agent.exe') {
+        # T1036: the agent answers its own question - see BuildMode.ps1.
+        Assert-GhozttyIsolatedAgent -Exe $Exe -Allow:$AllowReleaseBuild | Out-Null
     }
     $td = Resolve-TestDesktop $Desktop
     if (-not $KeepWindowPlacement -and (Split-Path -Leaf $Exe) -ieq 'ghoztty.exe') {
@@ -2772,6 +2775,9 @@ function Invoke-OnTestDesktop {
     )
     if ((Split-Path -Leaf $Exe) -ieq 'ghoztty.exe') {
         Assert-GhozttyIsolatedBuild -Exe $Exe -Allow:$AllowReleaseBuild | Out-Null
+    } elseif ((Split-Path -Leaf $Exe) -ieq 'ghoztty-agent.exe') {
+        # T1036: the agent answers its own question - see BuildMode.ps1.
+        Assert-GhozttyIsolatedAgent -Exe $Exe -Allow:$AllowReleaseBuild | Out-Null
     }
     $td = Resolve-TestDesktop $Desktop
     if (-not $KeepWindowPlacement -and (Split-Path -Leaf $Exe) -ieq 'ghoztty.exe') {

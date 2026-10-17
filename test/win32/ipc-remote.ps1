@@ -85,6 +85,8 @@ Assert-GhozttyPrivateEndpoint -Exe $Exe
 # GHOSTTY_AGENT_LOCK: unique lock path so this harness agent never fights an
 # installed/real agent's single-instance guard.
 $env:GHOSTTY_AGENT_LOCK = Join-Path $tmp 'agent.lock'
+# T1036: the agent answers for its own endpoints before it is launched.
+Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
 $agent = Start-Process -FilePath $AgentExe -ArgumentList "--listen", "127.0.0.1:$Port", "--headless" -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 2
 Assert "agent is running" (-not $agent.HasExited)

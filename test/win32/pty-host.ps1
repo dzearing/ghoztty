@@ -35,6 +35,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')  # T1036: Assert-GhozttyIsolatedAgent
 
 $script:passes = 0
 $script:failures = 0
@@ -54,6 +55,8 @@ $outLog = Join-Path $env:TEMP "pty-host-smoke-out-$PID.log"
 $errLog = Join-Path $env:TEMP "pty-host-smoke-err-$PID.log"
 Remove-Item $outLog, $errLog -ErrorAction SilentlyContinue
 
+# T1036: the agent answers for its own endpoints before it is launched.
+Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
 $p = Start-Process -FilePath $AgentExe -ArgumentList '--pty-host-smoke' `
     -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
     -NoNewWindow -PassThru

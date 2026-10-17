@@ -28,6 +28,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')  # T1036: Assert-GhozttyIsolatedAgent
 . (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 $script:passes = 0
 $script:failures = 0
@@ -63,6 +64,8 @@ function Stop-TestAgents {
 }
 
 function Start-TestAgent($outFile, $errFile) {
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
         -ArgumentList "--listen-pipe=$pipe", "--port-file=$portFile", "--sessions-file=$sessFile", '--headless'

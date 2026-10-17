@@ -794,6 +794,8 @@ try {
 
                 $env:GHOSTTY_DEVICE_TOKEN = $dev.token
                 $env:GHOSTTY_AGENT_HEARTBEAT = "$tmp\agent.heartbeat"
+                # T1036: the agent answers for its own endpoints before it is launched.
+                Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
                 $agent = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
                     -ArgumentList "--relay=$RelayBase", "--headless"
                 Remove-Item env:GHOSTTY_DEVICE_TOKEN -ErrorAction SilentlyContinue

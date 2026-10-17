@@ -195,6 +195,8 @@ try {
     $env:GHOZTTY_AGENT_INSTANCE = $byLine
     $env:LOCALAPPDATA = $byRoot
     # persistence: not applicable - a headless agent, started by path, opens no window.
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $by = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -ArgumentList "--listen-pipe=$byPipe", "--port-file=$byPort", "--sessions-file=$bySess", '--headless'
     # Cache the handle BEFORE the child can exit, or ExitCode reads back empty and a

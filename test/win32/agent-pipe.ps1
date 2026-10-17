@@ -102,6 +102,8 @@ if ($script:failures -gt 0) { "$($script:failures) FAILURE(S)"; exit 1 }
 # shares the per-user single-instance guard with any relay agent, so force-replace
 # guarantees we win it, and the redirected heartbeat never touches real state.
 $env:GHOSTTY_AGENT_HEARTBEAT = "$tmp\agent.heartbeat"
+# T1036: the agent answers for its own endpoints before it is launched.
+Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
 $agent = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
     -ArgumentList "--listen-pipe=$pipe", "--port-file=$portFile", "--sessions-file=$sessFile", "--headless", "--force-replace"
 Remove-Item env:GHOSTTY_AGENT_HEARTBEAT -ErrorAction SilentlyContinue

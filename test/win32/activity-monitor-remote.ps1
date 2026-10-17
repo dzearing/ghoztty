@@ -287,6 +287,8 @@ $td = New-TestDesktop -Interactive:$Interactive
 try {
     # --- Setup: a loopback agent, then the app on the test desktop -----------
     if (-not (Test-Path $agentExe)) { Write-Host "SETUP FAIL: no agent at $agentExe"; exit 1 }
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $agentExe | Out-Null
     $script:agent = Start-Process -FilePath $agentExe `
         -ArgumentList '--listen', "127.0.0.1:$Port", '--headless' -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 2

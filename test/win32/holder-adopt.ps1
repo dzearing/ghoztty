@@ -471,6 +471,8 @@ try {
     # is still serving on, and "did the foreign holder survive" would then be
     # answering about that one.
     $env:GHOZTTY_AGENT_INSTANCE = "t1594other-$PID"
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $foreign = Start-Process -FilePath $AgentExe `
         -ArgumentList @('--pty-host', '--session-id', $foreignId, '--exit-linger-ms', '120000') `
         -WindowStyle Hidden -PassThru

@@ -1234,6 +1234,16 @@ GREEN is the defect: a change a stale exe still passes exits 0, exiting 0 STAMPS
 the guard, and the one question the stamp exists to answer has then been made to
 lie without anybody acting in bad faith.
 
+**A script that launches `ghoztty-agent.exe` itself asks the agent, not the
+app** (T1036): `Assert-GhozttyIsolatedAgent -Exe $AgentExe` before the first
+launch. It reads `ghoztty-agent --build-mode`, whose `- endpoints : debug|release`
+line is the agent's own answer — and the answer differs from the app's for a
+ReleaseSafe build (the agent's debug family is `-Doptimize=Debug` only; T2051).
+An app-side claim does not count for an agent launch, and
+`launch-preflight-audit.ps1` scans for both; `--version`/`--build-mode` queries
+are not launches. `-Allow` passes a release agent only under a private
+`GHOZTTY_AGENT_INSTANCE`.
+
 `test\win32\lib\BuildFresh.ps1` is the freshness half of the same pre-flight that
 already refuses a wrong-MODE build. It is dot-sourced by `lib\BuildMode.ps1` and
 called from `Assert-GhozttyIsolatedBuild`, so all 49 scripts that ask the first

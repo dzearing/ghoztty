@@ -105,6 +105,8 @@ function Start-HeldAgent {
     $saved = $env:LOCALAPPDATA
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_AGENT_HEARTBEAT = "$tmp\agent.heartbeat"
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden -ArgumentList `
         "--listen-pipe=\\.\pipe\ghoztty-agent-t192-$PID", `
         "--port-file=$stateDir\port.json", `

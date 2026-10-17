@@ -192,6 +192,8 @@ $Port = Resolve-TestPort -Name 'agent' -Port $Port
 $tmpR = Join-Path $root 'r-remote'
 New-Item -ItemType Directory -Force (Join-Path $tmpR 'profile\.claude') | Out-Null
 $env:USERPROFILE = Join-Path $tmpR 'profile'
+# T1036: the agent answers for its own endpoints before it is launched.
+Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
 $agent = Start-Process -FilePath $AgentExe -ArgumentList '--listen', "127.0.0.1:$Port", '--headless' `
     -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 2

@@ -315,3 +315,124 @@ not taken on trust - a release-lineage run that opens panes must hold all three
 isolating knobs, or declare -UserEndpoints -Reason '<why>'.
 "@
 }
+
+# ---------------------------------------------------------------------------
+# T1036: the same question about ghoztty-agent.exe.
+#
+# The agent cannot answer `+version` (it prints a `YYYYMMDD-<hash>` build STAMP
+# on `--version`, and every reader of that line in the field takes its last
+# token), so since T1036 it has its own `--build-mode`:
+#
+#     ghoztty-agent
+#       - build mode    : .Debug
+#       - endpoints     : debug
+#
+# The ENDPOINTS line is what this gate reads, not the mode. The agent's family
+# follows `agent_build_options.is_debug`, which is `-Doptimize=Debug` ONLY - so a
+# ReleaseSafe agent derives the user's pipe, guard mutex and state dir even
+# though Test-GhozttyIsolatedBuildMode would call the mode isolated. Measuring
+# the binary is the point of the flag; re-deriving the answer from the mode
+# would re-introduce exactly the guess the flag exists to replace.
+#
+# An agent too old to know the flag answers "unknown argument" and prints no
+# endpoints line, which is refused like any other run this gate cannot vouch
+# for. In practice that is a zig-out older than T1036: rebuild it.
+# ---------------------------------------------------------------------------
+
+if (-not (Get-Variable -Name GhozttyAgentEndpointsCache -Scope Script -ErrorAction SilentlyContinue)) {
+    Set-Variable -Name GhozttyAgentEndpointsCache -Scope Script -Value @{}
+}
+
+function Get-GhozttyAgentEndpoints {
+    <#
+    .SYNOPSIS
+    The endpoint family ('debug' or 'release') $Exe says it derives, read from
+    its own `--build-mode` output; $null when it prints no such line.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Exe)
+
+    if ($script:GhozttyAgentEndpointsCache.ContainsKey($Exe)) {
+        return $script:GhozttyAgentEndpointsCache[$Exe]
+    }
+    $family = $null
+    try {
+        # Piped capture for the same reasons as Get-GhozttyBuildMode. A debug
+        # build also writes a `debug(os_power)` line to stderr; the match is
+        # anchored on the endpoints line, so it never matters.
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $raw = (& $Exe --build-mode 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
+        } finally { $ErrorActionPreference = $prevEap }
+        if ($raw -match '(?m)^\s*-\s*endpoints\s*:\s*(debug|release)\b') {
+            $family = $matches[1]
+        }
+    } catch {
+        $family = $null
+    }
+    $script:GhozttyAgentEndpointsCache[$Exe] = $family
+    return $family
+}
+
+function Assert-GhozttyIsolatedAgent {
+    <#
+    .SYNOPSIS
+    Throw unless the ghoztty-agent.exe at $Exe derives the debug endpoints - or,
+    under -Allow, unless the run has moved the agent's endpoints itself.
+
+    .DESCRIPTION
+    Call this before a script launches the agent directly. (A script that only
+    launches the APP is covered by Assert-GhozttyIsolatedBuild: the app's agent
+    autostart is the app's own business.) Returns the endpoint family.
+
+    -Allow (or GHOZTTY_TEST_ALLOW_RELEASE=1) is for a script whose subject IS a
+    release agent. It is checked, not trusted, the T1158 way: a release agent is
+    only isolated by GHOZTTY_AGENT_INSTANCE (T167; honored in release builds),
+    which moves its guard mutex, heartbeat, pipe, state dir and Run value. The
+    app's pipe suffix says nothing about the agent, so it is not asked for.
+    -UserEndpoints -Reason '<why>' is the declared opt-out, as for the app.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [switch]$Allow,
+        [switch]$UserEndpoints,
+        [string]$Reason
+    )
+
+    $family = Get-GhozttyAgentEndpoints -Exe $Exe
+    if ($family -eq 'debug') { return $family }
+
+    if ($Allow -or $env:GHOZTTY_TEST_ALLOW_RELEASE -eq '1') {
+        if ($UserEndpoints) {
+            if ([string]::IsNullOrWhiteSpace($Reason)) {
+                throw 'Assert-GhozttyIsolatedAgent: -UserEndpoints requires -Reason "<why this script must reach the user''s agent>".'
+            }
+            Write-Host "  [build-mode] release agent on the USER'S endpoints, declared: $Reason"
+            return $family
+        }
+        if ($family -eq 'release' -and -not [string]::IsNullOrWhiteSpace($env:GHOZTTY_AGENT_INSTANCE)) {
+            return $family
+        }
+    }
+
+    $shown = if ($family) { "'$family' endpoints" } else { 'no readable endpoints (`--build-mode` printed none - an agent older than T1036, or one that does not run)' }
+    throw @"
+Assert-GhozttyIsolatedAgent: REFUSING TO RUN. The agent under test
+    $Exe
+reports $shown, so it is NOT known to use the -debug endpoints. A release
+agent's pipe, guard mutex and state dir are the ones that hold the user's live
+sessions: launching it here would either fight the user's agent for the guard
+or open test sessions inside it, pinned, where nothing reaps them.
+
+Note the agent is NOT the app: it derives the debug endpoints only from
+-Doptimize=Debug, so a ReleaseSafe zig-out is refused here even though the app
+half of the same build would pass Assert-GhozttyIsolatedBuild.
+
+Rebuild zig-out the way CLAUDE.md says, and re-run:
+    zig build -Dapp-runtime=win32 -Doptimize=Debug
+
+If this script's SUBJECT really is a release agent, isolate it with
+GHOZTTY_AGENT_INSTANCE and pass -Allow (checked, not trusted), or declare
+-Allow -UserEndpoints -Reason '<why>'.
+"@
+}

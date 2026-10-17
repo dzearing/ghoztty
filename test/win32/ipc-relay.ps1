@@ -236,6 +236,8 @@ function Start-HarnessAgent($tag) {
     $env:GHOZTTY_AGENT_INSTANCE = "ipcrelay$PID"
     $env:GHOSTTY_DEVICE_TOKEN = $dev.token
     $env:GHOSTTY_AGENT_HEARTBEAT = "$tmp\agent.heartbeat"
+    # T1036: the agent answers for its own endpoints before it is launched.
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput "$tmp\$tag.out" -RedirectStandardError "$tmp\$tag.err" `
         -ArgumentList "--relay=$RelayBase", "--headless"
