@@ -34,8 +34,9 @@
 //! instance KEY of T89d1 (`Global\GhozttyAgentDaemon-local[-debug]-<SID>`,
 //! `agent-local[-debug].heartbeat`), kept byte for byte so an installed agent
 //! of an older build still excludes a newer one. Its role adds no name
-//! segment; it shows up only in the heartbeat's `role=` line. (The per-role
-//! takeover rule is not yet proven on a Windows box — T1967.)
+//! segment; it shows up only in the heartbeat's `role=` line. On a Windows box
+//! the side-by-side guards, the cross-role takeover refusal and the pane-env
+//! scrub are proven by `test\win32\agent-role-guard.ps1` (T1967).
 //!
 //! ## Sandbox lineages (`GHOZTTY_AGENT_INSTANCE`, T167)
 //! The guard identity is otherwise a COMPILE-TIME fact (role, plus `local` /

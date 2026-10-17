@@ -1103,6 +1103,22 @@ $GuardTable = @(
             'src\remote\pipe_stream.zig'
         )
     },
+    # PER-ROLE GUARD + PRIVATE ENV (T1967): the only harness that runs a session
+    # agent and a relay agent side by side on this box, so it is the one that
+    # notices a guard name or takeover rule that lets a relay launch kill the
+    # agent owning the user's panes - and the one that reads a real pane
+    # shell's environment for the device token the agent must not leak.
+    [pscustomobject]@{
+        Name   = 'agent-role-guard'
+        Script = 'test\win32\agent-role-guard.ps1'
+        Stamp  = 'test\win32\agent-role-guard.stamp.json'
+        Covers = @(
+            'test\win32\agent-role-guard.ps1',
+            'src\remote\agent\single_instance.zig',
+            'src\remote\agent\pty_child.zig',
+            'src\remote\ws_client.zig'
+        )
+    },
     # Holder DURABILITY (T911): the only harness that measures the ring snapshot
     # FILE rather than the pane, which is the difference between "the app still
     # has the pixels" and "a fresh viewer can replay it". It owns the meaning of
