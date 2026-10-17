@@ -484,9 +484,25 @@ try {
         # Back to the viewer, then the chord under test, both directions.
         Focus-TestWindow -Window $topB -Child $viewHost | Out-Null
         Start-Sleep -Milliseconds 300
+        $heroBeforeDown = Get-HeroId $topB
         Send-TestViewerChord -Window $topB -Target $chrome -Modifiers ctrl, alt -Key Down | Out-Null
-        Start-Sleep -Milliseconds 1200
-        $onViewer = (Get-TestWindowClass -Window ([IntPtr](Get-TestFocusedWindow -Window $topB)))
+        # The nav lands first (bounded, the 1200ms this used to sleep for)...
+        $navDeadline = [DateTime]::UtcNow.AddMilliseconds(4000)
+        while ((Get-HeroId $topB) -eq $heroBeforeDown -and [DateTime]::UtcNow -lt $navDeadline) {
+            Start-Sleep -Milliseconds 100
+        }
+        # ...then poll for focus to land back in the viewer rather than sleeping and
+        # sampling once (T1047): focus moves on the app's own message loop and
+        # SetFocus is deferred (T48), so a single read after a fixed sleep
+        # reports the previous window whenever the box is busy - T342's flake.
+        $onViewer = ''
+        $focusDeadline = [DateTime]::UtcNow.AddMilliseconds(4000)
+        do {
+            $f = [IntPtr](Get-TestFocusedWindow -Window $topB)
+            $onViewer = Get-TestWindowClass -Window $f
+            if ($f -eq $viewHost -or $onViewer -like 'Chrome_*') { break }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $focusDeadline)
         Write-Host "      (focus class before the toggle: $onViewer)"
 
         Assert (Send-TestViewerChord -Window $topB -Target $chrome -Modifiers ctrl, shift -Key Space) `

@@ -36850,3 +36850,9 @@ moved to T1814.
 - **What landed.** Twelve scripts now count each skip and put the count in the verdict line. Eight do it with `-Skipped` on `Write-TestVerdict` and the rest with the `(n SKIPPED)` suffix. tab-strip only needed one site counted. `SkipAudit.ps1` now treats any `Assert*` helper as an assertion, so daily-publish's assertion on the text `SKIP.*Docker` is no longer read as a skip. New fixture A18 covers that. fail-transcript's fixture line carries a `# skip-audit:` marker.
 - **Validated.** skip-visibility ALL PASS with 0 pending. Each edited script's own harness ran green; ghoztty-cleanup and update-apply now show `1 SKIPPED`. The full harness floor ran ALL PASS (31 audits, asserted-nothing PENDING on T1568) with skip-visibility scored as a real member. The floor-lane wrapper hit its 30-minute cap at 25 of 31 (T1657), so the floor ran directly. Committed under `-NoGuardDue` for two rows: drag-perf, red for an unrelated reason (T2058), and ghoztty-cleanup, which cannot stamp on this box because of a box-state skip (filed T2060).
 - **Mac.** Nothing owed: these are Windows acceptance harnesses.
+## 2026-10-17 — T1047 (lane b): hero-nav polls for the focus it expects instead of sampling once after a sleep
+
+- **Still real.** Section E slept 1200 ms after the ctrl+alt+Down nav and then read focus once. That is the shape T342's flake came from. It now waits for the hero selection to move, then polls for up to 4 s for focus on the viewer host or a `Chrome_*` child. The run saw `Chrome_WidgetWin_1`.
+- **Validated.** `hero-nav.ps1` ALL PASS (48) through `acceptance-parallel.ps1 run`. The scoped harness floor and `unwired-hook-audit` both passed.
+- **Split.** The card's third criterion asked for no instance anywhere in `test\win32`. An awk sweep found about 44 more sites in 20 files, so they moved to **T2061**, which lists them by file.
+- **Mac.** Nothing owed: Windows acceptance harness only.

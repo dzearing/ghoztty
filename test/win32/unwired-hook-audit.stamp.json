@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-17T14:50:48-07:00",
-    "commit":  "919e78d25",
+    "generated":  "2026-10-17T15:25:13-07:00",
+    "commit":  "40ec9aac5",
     "uncommitted":  [
 
                     ],
@@ -1103,7 +1103,7 @@
                   "test/win32/harness-process-leak.ps1":  "b46c6e53003f25b41da789d1b52d215d9864b2ce6020edf9cac7e6ada45f6b53",
                   "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
                   "test/win32/hero-mode.ps1":  "eb2db2edbe2c0cdf46c3df32cf643aebd490e195409b48dbde2fe6f0804f139c",
-                  "test/win32/hero-nav.ps1":  "730406b805999669a6d694b6d1e9ee20ec156dcba0e057d37c7dbf67c629f024",
+                  "test/win32/hero-nav.ps1":  "77fbfdd2679c7db44743b69d3a1b7e961ef56c057ee39933b4e90d5b754010f4",
                   "test/win32/hero-viewer-tile.ps1":  "5adf19a67f7f9abb7a44391f43c23938f02427aa6ea66e5e300dbbcd83f29761",
                   "test/win32/history-guard-flavor.ps1":  "764859c2785f580a4c58e5e8af65e1d4c1fedfc15d81f0281f54d518fb91cf73",
                   "test/win32/holder-adopt.ps1":  "a469a3e70dc374175943fa4eac8c673ed2edbe96ef3a5997bc7bf71e60de9ce6",
