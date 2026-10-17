@@ -385,6 +385,19 @@ fn formatTerminal(stdout: *std.Io.Writer, terminal_val: std.json.Value) !void {
         try stdout.writeAll("  [stashed]");
     }
 
+    // Activity state, only when it is worth a glance. Printed with the same
+    // human label the window title uses (`needs_input` reads as "question");
+    // `--json` carries the machine token.
+    if (term.get("state")) |state| {
+        if (state == .string) {
+            if (std.mem.eql(u8, state.string, "busy")) {
+                try stdout.writeAll("  [busy]");
+            } else if (std.mem.eql(u8, state.string, "needs_input")) {
+                try stdout.writeAll("  [question]");
+            }
+        }
+    }
+
     if (focused) {
         try stdout.writeAll(" *");
     }

@@ -1,14 +1,14 @@
 {
     "guard":  "agent-sharing-uplink",
     "script":  "test/win32/agent-sharing-uplink.ps1",
-    "generated":  "2026-10-16T12:15:05-07:00",
-    "commit":  "161784011",
+    "generated":  "2026-10-17T05:56:11-07:00",
+    "commit":  "cd6593007",
     "uncommitted":  [
-                        "test/win32/agent-sharing-uplink.ps1"
+                        "src/remote/agent/main.zig"
                     ],
     "files":  {
                   "src/remote/agent/link_control.zig":  "e3138c9c1326081092f25b9c090388fe58a3561c17734a83778df474ededd40a",
-                  "src/remote/agent/main.zig":  "e2ae1adbef6d1e0a558ba1f1ce6ab9a021638feb32772ad61208c83caf0568c5",
+                  "src/remote/agent/main.zig":  "5dde1c000813a2b84784ee82561b35f28e68abb45f58351a934473d01441b393",
                   "src/remote/agent/relay_creds.zig":  "906cf1f4bd95c0c1e28f73298abbea8a657c4860e7a215cced15245a13db230d",
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/sharing.zig":  "271eaa812c1282a8bf90d0585a09677a752bfb1e05e9d09f076f4bc8aa81bab3",

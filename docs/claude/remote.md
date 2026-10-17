@@ -204,6 +204,27 @@ token and the rotation is persisted). Sign-out best-effort revokes at the relay
 (`/oauth/signout`, which also destroys the relay-held Google refresh token)
 before deleting the local store.
 
+#### An enrolled Mac hosts
+
+Enrollment is the only opt-in: while `relay.env`
+holds a credential the relay confirms belongs to the signed-in account, the
+app keeps a relay agent running as its own LaunchAgent
+(`com.dzearing.ghoztty[.debug].relay-agent`: `ghoztty-agent --relay=<base>
+--headless --exit-on-revoke`), so the Mac is online in every chooser it is
+listed in. It is separate from the session-persistence agent (a relay client
+must never see local panes; the session agent must never restart under live
+panes), and their single-instance guards are per role so they coexist.
+Sign-out stops it (awaited, before "signed out"), including when the
+revocation is only pending; a dead credential stops it and the agent exits by
+itself after two 401s; an unreachable relay changes nothing; a
+relay-disabled app (`GhosttyRelayDisable`) touches nothing. `RelayHostAgent`
+(`macos/Sources/Features/Remote/RelayHostAgent.swift`), policy
+`MachineHostingVerdict.decide`; design: `docs/design/mac-relay-host.md`;
+tests: `RelayHostAgentTests`. **Windows:** an enrolled Windows machine's
+reachable / not-reachable contract is T1965; the per-role guard and
+`--exit-on-revoke` arrive in the shared agent with the T1902 merge, and
+proving them on Windows is T1967.
+
 #### Signing out revokes THIS machine (T1421)
 
 An account's **user session** and a machine's **device enrollment** are two

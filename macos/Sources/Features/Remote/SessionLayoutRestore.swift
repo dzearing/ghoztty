@@ -312,14 +312,26 @@ extension AppDelegate {
     ) -> TerminalController? {
         guard let app = ghostty.app, let tree = entry.tree else { return nil }
 
+        // Settle the window's name FIRST: every pane is baked with it as
+        // `GHOZTTY_WINDOW_NAME`, and the surfaces are built before the
+        // controller exists. The persisted target when it is still free (a
+        // LOCAL restore only — see the registration below), else a fresh one.
+        let persistedName = Self.restoredWindowName(
+            persisted: entry.ipcName,
+            bindLocal: bindLocal,
+            isTaken: { ipcServer.isWindowNameTaken($0) })
+        let windowName = persistedName ?? BaseTerminalController.mintWindowName()
+
         // Each leaf ATTACHes its recorded session over the connection. Dead
         // sessions attach anyway and show their exited overlay — the tree shape
         // must survive partial death.
-        let root = Self.makeSessionLayoutRoot(tree: tree, connection: connection, app: app)
+        let root = Self.makeSessionLayoutRoot(
+            tree: tree, connection: connection, app: app, windowName: windowName)
 
         let restoredTree = SplitTree<PaneView>(root: root, zoomed: nil, stashed: [])
             .withStash(SessionLayoutManifest.stashedIDs(tree: tree, panes: root.leaves()))
         let controller = TerminalController(ghostty, withSurfaceTree: restoredTree)
+        controller.windowName = windowName
 
         // The pane sidebar's layout flags BEFORE the window first lays out, so
         // the restored terminals are sized for the column they will actually
@@ -395,8 +407,8 @@ extension AppDelegate {
         let leafInfos = SessionLayoutManifest.leaves(of: tree)
         let views = root.leaves()
         if bindLocal {
-            if let name = entry.ipcName, !name.isEmpty {
-                ipcServer.registerRestoredRemoteWindow(name: name, controller: controller)
+            if let persistedName {
+                ipcServer.registerRestoredRemoteWindow(name: persistedName, controller: controller)
             }
             for (leaf, pane) in zip(leafInfos, views) {
                 guard let name = leaf.ipcName, !name.isEmpty else { continue }
@@ -456,7 +468,8 @@ extension AppDelegate {
     static func makeSessionLayoutRoot(
         tree: SessionLayoutManifest.Node,
         connection: RemoteConnection,
-        app: ghostty_app_t
+        app: ghostty_app_t,
+        windowName: String
     ) -> SplitTree<PaneView>.Node {
         SessionLayoutManifest.makeTreeNode(tree) { leaf -> PaneView in
             // Viewer leaves have no agent session: restore by re-opening the
@@ -470,21 +483,10 @@ extension AppDelegate {
                     originDirectory: leaf.viewerOriginDirectory))
             }
 
-            var cfg = Ghostty.SurfaceConfiguration()
+            var cfg = sessionLayoutLeafConfig(leaf: leaf, windowName: windowName)
             cfg.remoteMachine = connection.machine
             cfg.remoteConnection = connection.handle
             cfg.connectionKeepAlive = connection
-            cfg.remoteSessionId = leaf.sessionID
-            // WP-D3: seed the persisted structured screen snapshot + byte offset
-            // so the pane paints instantly at the correct size and the agent
-            // replays only the gap since detach. Both required together — an
-            // undecodable/absent snapshot leaves offset 0 → full-ring replay.
-            if let b64 = leaf.screenSnapshot,
-               let offset = leaf.screenSnapshotOffset,
-               let data = Data(base64Encoded: b64), !data.isEmpty {
-                cfg.remoteRestoreSnapshot = data
-                cfg.remoteRestoreByteOffset = offset
-            }
             // Recreate the pane under its PERSISTED surface uuid (wp3 pane
             // identity) so `+list` ids and the shell's baked GHOZTTY_PANE_ID
             // stay valid across the relaunch. Nil (older manifest) mints fresh.
@@ -501,6 +503,54 @@ extension AppDelegate {
             if let banner = leaf.banner, !banner.isEmpty { view.paneBanner = banner }
             return PaneView(surface: view)
         }
+    }
+
+    /// The connection-independent part of a restored terminal leaf's surface
+    /// config: the session to re-`ATTACH`, its WP-D3 snapshot, and the
+    /// window name. Split out of `makeSessionLayoutRoot` so it is testable
+    /// without a live agent connection.
+    ///
+    /// The window name matters on an agent RESTART (a cold start / reboot):
+    /// the session comes back as a tombstone and the agent RELAUNCHes it
+    /// with the env this config carries (`Remote.zig` sends its live copy —
+    /// the agent's on-disk record has none). Without the name here the
+    /// respawned shell got `GHOZTTY_PANE_ID` (from the persisted surface
+    /// uuid) but no `GHOZTTY_WINDOW_NAME`, unlike every freshly spawned
+    /// pane. On an ALIVE re-attach the child keeps the env it was spawned
+    /// with and this has no effect.
+    static func sessionLayoutLeafConfig(
+        leaf: SessionLayoutManifest.Leaf,
+        windowName: String
+    ) -> Ghostty.SurfaceConfiguration {
+        var cfg = Ghostty.SurfaceConfiguration()
+        cfg.remoteSessionId = leaf.sessionID
+        cfg.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
+        // WP-D3: seed the persisted structured screen snapshot + byte offset
+        // so the pane paints instantly at the correct size and the agent
+        // replays only the gap since detach. Both required together — an
+        // undecodable/absent snapshot leaves offset 0 → full-ring replay.
+        if let b64 = leaf.screenSnapshot,
+           let offset = leaf.screenSnapshotOffset,
+           let data = Data(base64Encoded: b64), !data.isEmpty {
+            cfg.remoteRestoreSnapshot = data
+            cfg.remoteRestoreByteOffset = offset
+        }
+        return cfg
+    }
+
+    /// The persisted window target a restored window may re-adopt, or nil
+    /// when it must take a fresh name: there is none, the restore is a
+    /// cross-machine resume (`bindLocal == false` — the name belongs to the
+    /// other machine's IPC namespace), or a live window already holds it.
+    /// Nil is what keeps a pane from being baked with ANOTHER window's name,
+    /// which `+close --target=$GHOZTTY_WINDOW_NAME` would then close.
+    static func restoredWindowName(
+        persisted: String?,
+        bindLocal: Bool,
+        isTaken: (String) -> Bool
+    ) -> String? {
+        guard bindLocal, let persisted, !persisted.isEmpty, !isTaken(persisted) else { return nil }
+        return persisted
     }
 
     // MARK: In-place recovery (T12e)
@@ -599,7 +649,11 @@ extension AppDelegate {
         connection: RemoteConnection,
         app: ghostty_app_t
     ) {
-        let root = Self.makeSessionLayoutRoot(tree: tree, connection: connection, app: app)
+        // The controller survives the rebuild, so its CURRENT name is the
+        // one to bake into the rebuilt panes.
+        let root = Self.makeSessionLayoutRoot(
+            tree: tree, connection: connection, app: app,
+            windowName: controller.windowName)
 
         // Adopt the fresh connection (didSet rebinds the link observer to it;
         // the entry id is already bound so no duplicate registration) and swap

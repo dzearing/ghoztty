@@ -126,8 +126,11 @@ enum GlassCard {
 /// color no matter which window is focused.
 struct GlassCardBackground: ViewModifier {
     let fill: AnyShapeStyle
+    var cornerRadius: CGFloat = GlassCard.cornerRadius
 
-    private var shape: RoundedRectangle { GlassCard.shape }
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
 
     /// Specular sheen: not a straight linear band but an ellipse of light
     /// centered above the card, so the highlight bulges down into the top in

@@ -162,8 +162,10 @@ struct PaneSidebarRow: View {
             ZStack {
                 SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized)
                 if pane.surfaceView != nil {
-                    PaneSidebarGlyph(isBusy: isBusy, color: onAccent ? .white : Color(nsColor: .labelColor)) {
-                        Text(PaneSidebarText.monogram(for: displayTitle))
+                    let monogram = PaneSidebarText.monogram(for: displayTitle)
+                    PaneSidebarGlyph(isBusy: isBusy, color: onAccent ? .white : Color(nsColor: .labelColor),
+                                     maskKey: monogram) {
+                        Text(monogram)
                             .font(.system(size: 11, weight: .semibold))
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
@@ -319,8 +321,9 @@ struct PaneSidebarIcon: View {
     var size: CGFloat = 14
 
     var body: some View {
-        PaneSidebarGlyph(isBusy: isBusy, color: color) {
-            if let symbol = Self.symbol(for: pane) {
+        let symbol = Self.symbol(for: pane)
+        PaneSidebarGlyph(isBusy: isBusy, color: color, maskKey: "\(String(describing: symbol))@\(size)") {
+            if let symbol {
                 PaneSidebarSymbolView(symbol: symbol, size: size)
             } else {
                 // An image pane: the mock has no glyph for one.

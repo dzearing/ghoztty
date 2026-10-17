@@ -213,7 +213,7 @@ class AppDelegate: NSObject,
     /// instance). Used to skip launch side effects that fight the user's
     /// real running app over shared machine state (IPC socket, remote
     /// session manifest).
-    private static var isTestHost: Bool {
+    static var isTestHost: Bool {
         let env = ProcessInfo.processInfo.environment
         return env["XCTestConfigurationFilePath"] != nil
             || env["XCTestBundlePath"] != nil
@@ -246,6 +246,10 @@ class AppDelegate: NSObject,
             // Manual autofill via the `Edit => AutoFill` menu item still work as expected.
             "NSAutoFillHeuristicControllerEnabled": false,
         ])
+
+        // Before any window reads it: older builds' rearrange mode left
+        // AppKit's "always show the tab bar" preference on.
+        TabBarVisibilityPreference.clearLeakedPreferenceOnce()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -358,13 +362,19 @@ class AppDelegate: NSObject,
             // think to fix that by signing out and in again, so retry it at
             // every launch while signed in. A no-op — two defaults reads, no
             // network — when there is nothing suspended.
+            //
+            // Then serve the enrollment: an enrolled Mac runs its relay agent
+            // (`RelayHostAgent`) so it is reachable from the account's other
+            // machines, and a Mac that isn't enrolled to the signed-in account
+            // runs none. Signed out reconciles too — that is the "stop".
             Task { @MainActor in
                 await RelayAccount.shared.waitForInitialLoad()
-                guard let email = RelayAccount.shared.email,
-                      let token = await RelayAccount.resolveToken()
-                else { return }
-                await LocalMachineEnrollment.shared.restoreEnrollment(
-                    accountEmail: email, sessionToken: token)
+                if let email = RelayAccount.shared.email,
+                   let token = await RelayAccount.resolveToken() {
+                    await LocalMachineEnrollment.shared.restoreEnrollment(
+                        accountEmail: email, sessionToken: token)
+                }
+                RelayHostAgent.shared.start()
             }
 
             // Test seam: exercise the local-agent find-or-spawn path without

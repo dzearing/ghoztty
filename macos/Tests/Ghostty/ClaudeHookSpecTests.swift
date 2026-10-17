@@ -31,6 +31,7 @@ struct ClaudeHookSpecTests {
                               ("Notification", "pause"),
                               ("PermissionRequest", "pause"),
                               ("PostToolUse", "tool-tick"),
+                              ("UserPromptSubmit", "prompt-submit"),
                               ("SubagentStart", "agent-start"),
                               ("SubagentStop", "agent-stop"),
                               ("Stop", "settle")] {
@@ -47,6 +48,41 @@ struct ClaudeHookSpecTests {
         let elements = hooksDict(merged)["PreToolUse"] as? [[String: Any]] ?? []
         #expect(elements.count == 1)
         #expect(elements.first?["matcher"] as? String == "AskUserQuestion|ExitPlanMode")
+    }
+
+    // Claude notifies `idle_prompt` ~60s after every turn ends. An unmatched
+    // Notification hook paused on it, so every idle pane read needs_input a
+    // minute later. Only the notification types that ARE a question may pause.
+    @Test func notificationPausesOnlyForBlockingTypes() {
+        let merged = ClaudeHookSpec.merge(into: [:], bannerScriptPath: scriptPath)
+        let elements = hooksDict(merged)["Notification"] as? [[String: Any]] ?? []
+        #expect(elements.count == 1)
+        let matcher = elements.first?["matcher"] as? String ?? ""
+        #expect(matcher == "permission_prompt|elicitation_dialog")
+        #expect(!matcher.contains("idle_prompt"))
+    }
+
+    // Answering by typing (a dismissed permission prompt, a question answered
+    // in prose) runs no tool, so the pause must also clear on prompt submit —
+    // alongside the banner's own prompt hook, not instead of it.
+    @Test func promptSubmitRunsBothTheBannerAndTheActivityHook() {
+        let merged = ClaudeHookSpec.merge(into: [:], bannerScriptPath: scriptPath)
+        let text = serialize(hooksDict(merged)["UserPromptSubmit"])
+        #expect(text.contains("prompt-hook --runtime=claude"))
+        #expect(text.contains(HookScripts.activityState(bannerScriptPath: scriptPath)))
+        #expect(text.contains("prompt-submit --runtime=claude"))
+    }
+
+    // An install written before the Notification matcher existed must read as
+    // `.outdated`, so the integrations UI offers the fix.
+    @Test func anUnmatchedNotificationHookIsOutdated() {
+        var merged = ClaudeHookSpec.merge(into: [:], bannerScriptPath: scriptPath)
+        var hooks = hooksDict(merged)
+        var notification = hooks["Notification"] as? [[String: Any]] ?? []
+        notification[0].removeValue(forKey: "matcher")
+        hooks["Notification"] = notification
+        merged["hooks"] = hooks
+        #expect(ClaudeHookSpec.fragmentState(in: merged, bannerScriptPath: scriptPath) == .outdated)
     }
 
     // Ownership is keyed on the hooks DIRECTORY, not the banner path, so the

@@ -1,5 +1,5 @@
 //! Single-instance guard for the `ghoztty-agent` DAEMON modes (`--listen`,
-//! `--relay`).
+//! `--listen-unix`, `--listen-pipe`, `--relay`) — one guard per ROLE, per user.
 //!
 //! ## Why
 //! Multiple supervisors can (and did, live) race to keep the agent alive on the
@@ -11,7 +11,42 @@
 //! distinct, documented exit code, so a supervisor's keep-alive loop degrades
 //! into a cheap respawn-and-exit heartbeat instead of a second daemon.
 //!
-//! ## Mechanism (per platform, per user)
+//! ## Roles — the guard is per ROLE, not per binary
+//! Each daemon mode is a `Role` (`relay`, `listen`, `listen-unix`) with its own
+//! guard name. Two daemons of the SAME role exclude each other (the incident
+//! above stays fixed); daemons of DIFFERENT roles coexist, because they
+//! contend for nothing — a `--listen-unix` session agent serves a filesystem
+//! socket, a `--relay` agent dials an outbound WSS. (Before roles, the one
+//! shared name made any daemon exclude every other, so a Mac's
+//! session-persistence agent and its relay agent could not both run.)
+//!
+//! The `relay` role keeps the LEGACY, unsuffixed names (`agent.lock`,
+//! `agent.heartbeat`, `Global\GhozttyAgentDaemon-<SID>`, `Local\GhozttyAgentDaemon`):
+//! every supervisor that ever shipped runs `--relay`, and an older-build relay
+//! agent holding the legacy name must still exclude a newer one across a
+//! version skew. Other roles append `.<role>` (`agent.listen-unix.lock`,
+//! `Global\GhozttyAgentDaemon.listen-<SID>`). A `.` never follows
+//! `GhozttyAgentDaemon` in the legacy name, so no user id can make two roles'
+//! names collide.
+//!
+//! The Windows local session-persistence agent (`--listen-pipe`, role
+//! `listen-pipe`) predates roles: its identity is the `local` / `local-debug`
+//! instance KEY of T89d1 (`Global\GhozttyAgentDaemon-local[-debug]-<SID>`,
+//! `agent-local[-debug].heartbeat`), kept byte for byte so an installed agent
+//! of an older build still excludes a newer one. Its role adds no name
+//! segment; it shows up only in the heartbeat's `role=` line. (The per-role
+//! takeover rule is not yet proven on a Windows box — T1967.)
+//!
+//! ## Sandbox lineages (`GHOZTTY_AGENT_INSTANCE`, T167)
+//! The guard identity is otherwise a COMPILE-TIME fact (role, plus `local` /
+//! `local-debug` on Windows), which means a debug agent already on the box
+//! refuses every test sandbox's agent — silently, since the app just falls
+//! back to non-persistent panes. `instanceWithSuffix` forks the key off the
+//! env var so a sandbox names its own mutex, lock file and heartbeat; unset
+//! (production) reproduces the names byte for byte. See `../agent_lineage.zig`
+//! for the full story and for the other derivations the same suffix moves.
+//!
+//! ## Mechanism (per platform, per user, per role)
 //!   - **Windows**: a named mutex `Global\GhozttyAgentDaemon-<user-SID>` via
 //!     `CreateMutexW`. The GLOBAL namespace is shared across ALL logon
 //!     sessions, and the SID suffix keeps different users from blocking each
@@ -39,8 +74,13 @@
 //!     so abandonment semantics don't apply.
 //!   - **POSIX**: an advisory `flock(LOCK_EX | LOCK_NB)` on a lock file next to
 //!     the agent's other per-user state (`~/.config/ghoztty/agent.lock`, or
-//!     `$XDG_CONFIG_HOME/ghoztty/agent.lock`; `GHOSTTY_AGENT_LOCK` overrides
-//!     the full path — tests use this). The fd is held for the process
+//!     `$XDG_CONFIG_HOME/ghoztty/agent.lock` for the relay role,
+//!     `agent.<role>.lock` for the others). `GHOSTTY_AGENT_LOCK` overrides
+//!     the full path VERBATIM — it names ONE daemon's identity, no role suffix
+//!     is added: running session agents (older builds) hold an overridden
+//!     path, and a newer agent of the same role must contend for that exact
+//!     path or an upgrade could put two of them on one socket. Tests and the
+//!     macOS LocalAgentManager use it. The fd is held for the process
 //!     lifetime; the kernel releases the flock when the fd closes (normal exit
 //!     OR crash), so a stale lock file on disk is harmless — it's the LOCK,
 //!     not the file's existence, that gates. flock is per open-file-
@@ -54,18 +94,19 @@
 //! the value is self-describing in supervisor logs on either OS.
 //!
 //! ## Which modes take the lock
-//! Only the daemon modes (`--listen`, `--relay`, and the bare-invocation
-//! default which is `--listen`). `--stdio` is a per-ssh-connection servant
+//! Only the daemon modes (`--listen`, `--listen-unix`, `--relay`). `--stdio`
+//! is a per-ssh-connection servant
 //! (many may legitimately coexist) and `--enroll` is a one-shot utility that
 //! must work WHILE a daemon runs — neither takes the lock.
 //!
 //! ## Takeover — "there should be only one" (`acquireWithTakeover`)
 //! Losing the guard race no longer means blind deference: the holder might be
 //! SIGSTOP'd, deadlocked, or an anomaly that leaked the lock. The winning
-//! daemon proves liveness by touching a HEARTBEAT file containing its PID
-//! (`agent.heartbeat`, sibling of the other per-user agent state:
-//! `%LOCALAPPDATA%\ghoztty\` on Windows, `$XDG_CONFIG_HOME|~/.config/ghoztty/`
-//! on POSIX; `GHOSTTY_AGENT_HEARTBEAT` overrides — tests) every
+//! daemon proves liveness by touching a HEARTBEAT file containing its PID and
+//! ROLE (`<pid>\nrole=<role>\n`; `agent.heartbeat` / `agent.<role>.heartbeat`,
+//! sibling of the other per-user agent state: `%LOCALAPPDATA%\ghoztty\` on
+//! Windows, `$XDG_CONFIG_HOME|~/.config/ghoztty/` on POSIX;
+//! `GHOSTTY_AGENT_HEARTBEAT` overrides verbatim, like the lock) every
 //! `heartbeat_interval_ms` (10s). A challenger that hits AlreadyRunning:
 //!
 //!   1. Reads the heartbeat. FRESH (mtime age < `heartbeat_stale_after_ms`,
@@ -86,19 +127,29 @@
 //!      and, if the guard is SOMEHOW still held, yields — when in doubt, die:
 //!      never two daemons.
 //!
-//! ## Sandbox lineages (`GHOZTTY_AGENT_INSTANCE`, T167)
-//! The guard identity is otherwise a COMPILE-TIME fact (`local` / `local-debug`
-//! / relay), which means a debug agent already on the box refuses every test
-//! sandbox's agent — silently, since the app just falls back to non-persistent
-//! panes. `instanceWithSuffix` forks the key off the env var so a sandbox names
-//! its own mutex, lock file and heartbeat; unset (production) reproduces the
-//! legacy names byte for byte. See `../agent_lineage.zig` for the full story
-//! and for the other derivations the same suffix moves.
-//!
 //! `--force-replace` (daemon modes) skips the freshness check and kills the
 //! recorded holder unconditionally (still refusing confirmed-other PIDs), for
 //! a human who wants THIS launch to win. The decision matrix is the pure
-//! `takeoverVerdict` (unit-tested); the kill/probe syscalls are thin glue.
+//! `takeoverVerdictForRole` (unit-tested); the kill/probe syscalls are thin
+//! glue.
+//!
+//! ### Takeover never crosses roles
+//! A kill additionally requires the holder's role to be CONFIRMED equal to the
+//! challenger's (`resolveHolderRole`): the heartbeat's `role=` line, else the
+//! holder process's own argv (macOS `KERN_PROCARGS2`, Linux
+//! `/proc/<pid>/cmdline` — this identifies a pre-role holder), else "this is
+//! my role's DEFAULT heartbeat path" (a role-scoped file is that role's by
+//! construction — the only signal on Windows, and what keeps a self-update's
+//! `--force-replace` respawn able to replace a pre-role relay agent there).
+//! A different or unknown role is never killed, not even under
+//! `--force-replace`. This matters because an exact-path override can be
+//! INHERITED: a shell spawned by a session agent used to carry that agent's
+//! `GHOSTTY_AGENT_LOCK`/`GHOSTTY_AGENT_HEARTBEAT`, so a `--relay
+//! --force-replace` run from it read the session agent's heartbeat and would
+//! have SIGKILLed the process that owns the user's live panes. (The agent no
+//! longer leaks those variables — `pty_child.PtySpawner` strips them — but
+//! long-lived shells keep what they inherited, so this rule is the real
+//! safety net.)
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -110,41 +161,6 @@ const utf16_text = @import("../../apprt/win32/utf16_text.zig");
 /// 183 == Windows ERROR_ALREADY_EXISTS, reused verbatim on POSIX so the code
 /// reads the same in any supervisor's log.
 pub const already_running_exit_code: u8 = 183;
-
-/// Which daemon instance a guard is for. The local session-persistence agent
-/// (`--listen-pipe`, T89d) and the relay agent (`--relay`) are SEPARATE daemons
-/// that must coexist on one box (T89a decision 2), so each takes a distinctly
-/// NAMED guard + heartbeat. The relay / TCP-listen singleton keeps the LEGACY
-/// names (empty key) so a running relay agent's guard is byte-for-byte
-/// unchanged across this upgrade; only the local agent gets a distinct key.
-pub const Instance = struct {
-    /// Name segment inserted into the mutex name and the lock/heartbeat
-    /// filenames. Empty ⇒ the legacy singleton names (relay / TCP listen);
-    /// non-empty ⇒ a distinct instance. Sanitized defensively by the composers,
-    /// but keep it filesystem- and mutex-name-safe by construction.
-    key: []const u8 = "",
-
-    /// The relay / TCP-listen daemon: legacy names, unchanged.
-    pub const relay: Instance = .{ .key = "" };
-    /// The local session-persistence agent (release lineage).
-    pub const local: Instance = .{ .key = "local" };
-    /// The local session-persistence agent (debug lineage — its own dir/pipe
-    /// suffix per T89a decision 2, so its own guard too).
-    pub const local_debug: Instance = .{ .key = "local-debug" };
-};
-
-/// Compose a guard key for a SANDBOXED lineage: the build's own key plus the
-/// `GHOZTTY_AGENT_INSTANCE` suffix, into `buf` (T167). An absent suffix
-/// reproduces `base.key` byte for byte, which is every production run — so this
-/// can only ever ADD identities, never move an existing one.
-///
-/// This is what lets a test sandbox run its own agent while the box's agent
-/// keeps holding the user's real panes: without it the sandbox's agent exits
-/// 183 and the sandbox silently tests the non-persistent path. `buf` outlives
-/// the returned `Instance` (its `key` borrows it).
-pub fn instanceWithSuffix(buf: []u8, base: Instance, suffix: ?[]const u8) error{NameTooLong}!Instance {
-    return .{ .key = try agent_lineage.appendSuffix(buf, base.key, suffix) };
-}
 
 pub const AcquireError = error{
     /// Another daemon instance holds the guard in this user session.
@@ -178,9 +194,102 @@ pub const Guard = struct {
     }
 };
 
-/// Acquire the per-user daemon guard. See the module doc for the
-/// platform mechanisms. `alloc` is only used transiently (path resolution on
-/// POSIX); the returned `Guard` owns no heap memory.
+/// Which daemon a guard belongs to. One guard per role per user: same role
+/// excludes, different roles coexist (see the module doc §Roles).
+pub const Role = enum {
+    /// `--relay`: the authenticated relay daemon. Owns the LEGACY names.
+    relay,
+    /// `--listen`: the TCP listen daemon (local/dev harness).
+    listen,
+    /// `--listen-unix`: the AF_UNIX session-persistence daemon (macOS).
+    listen_unix,
+    /// `--listen-pipe`: the named-pipe session-persistence daemon (Windows).
+    /// Its names come from its `Instance` key (`local` / `local-debug`,
+    /// T89d1), not from a role segment — see `segment`.
+    listen_pipe,
+
+    /// The role as it is spelled in names, heartbeats and logs.
+    pub fn label(self: Role) []const u8 {
+        return switch (self) {
+            .relay => "relay",
+            .listen => "listen",
+            .listen_unix => "listen-unix",
+            .listen_pipe => "listen-pipe",
+        };
+    }
+
+    pub fn fromLabel(s: []const u8) ?Role {
+        inline for (std.meta.fields(Role)) |f| {
+            const r: Role = @enumFromInt(f.value);
+            if (std.mem.eql(u8, s, r.label())) return r;
+        }
+        return null;
+    }
+
+    /// The `.<role>` name segment inserted after the base name: empty for
+    /// the relay role (legacy names) and for `listen_pipe` (whose names
+    /// predate roles and are carried by its instance key), `.<label>` else.
+    pub fn segment(self: Role, buf: []u8) []const u8 {
+        return switch (self) {
+            .relay, .listen_pipe => buf[0..0],
+            else => std.fmt.bufPrint(buf, ".{s}", .{self.label()}) catch unreachable,
+        };
+    }
+
+    /// The per-user state-file stem: `agent` for the relay role (legacy, so a
+    /// pre-role relay agent and a new one still share one guard), else
+    /// `agent.<role>`. Callers append `.lock` / `.heartbeat`. (Keyless; see
+    /// `composeInstanceFileName` for the general, keyed form.)
+    pub fn fileName(self: Role, buf: []u8, ext: []const u8) []const u8 {
+        var seg_buf: [32]u8 = undefined;
+        return std.fmt.bufPrint(buf, "agent{s}.{s}", .{ self.segment(&seg_buf), ext }) catch unreachable;
+    }
+};
+
+/// Which daemon instance a guard is for: its `role`, plus an optional name
+/// `key`. The key is how the Windows local session-persistence agent
+/// (`--listen-pipe`, T89d) got a guard distinct from the relay agent's before
+/// roles existed (T89a decision 2) — `local` / `local-debug`, kept verbatim —
+/// and how a sandbox lineage (`instanceWithSuffix`, T167) forks any role's
+/// names. Empty key ⇒ the role's own names. Decl literals (`.relay`,
+/// `.listen_unix`, …) name the keyless per-role instances.
+pub const Instance = struct {
+    role: Role = .relay,
+    /// Name segment inserted (as `-<key>`) into the mutex name and the
+    /// lock/heartbeat filenames, after the role segment. Sanitized
+    /// defensively by the composers, but keep it filesystem- and
+    /// mutex-name-safe by construction.
+    key: []const u8 = "",
+
+    /// The relay daemon: legacy names, unchanged.
+    pub const relay: Instance = .{ .role = .relay };
+    /// The TCP listen daemon.
+    pub const listen: Instance = .{ .role = .listen };
+    /// The AF_UNIX session-persistence daemon (macOS).
+    pub const listen_unix: Instance = .{ .role = .listen_unix };
+    /// The Windows local session-persistence agent (release lineage).
+    pub const local: Instance = .{ .role = .listen_pipe, .key = "local" };
+    /// The Windows local session-persistence agent (debug lineage — its own
+    /// dir/pipe suffix per T89a decision 2, so its own guard too).
+    pub const local_debug: Instance = .{ .role = .listen_pipe, .key = "local-debug" };
+};
+
+/// Compose a guard key for a SANDBOXED lineage: the build's own key plus the
+/// `GHOZTTY_AGENT_INSTANCE` suffix, into `buf` (T167). An absent suffix
+/// reproduces `base.key` byte for byte, which is every production run — so this
+/// can only ever ADD identities, never move an existing one. The role is kept.
+///
+/// This is what lets a test sandbox run its own agent while the box's agent
+/// keeps holding the user's real panes: without it the sandbox's agent exits
+/// 183 and the sandbox silently tests the non-persistent path. `buf` outlives
+/// the returned `Instance` (its `key` borrows it).
+pub fn instanceWithSuffix(buf: []u8, base: Instance, suffix: ?[]const u8) error{NameTooLong}!Instance {
+    return .{ .role = base.role, .key = try agent_lineage.appendSuffix(buf, base.key, suffix) };
+}
+
+/// Acquire the per-user daemon guard for `instance`. See the module doc for
+/// the platform mechanisms. `alloc` is only used transiently (path resolution
+/// on POSIX); the returned `Guard` owns no heap memory.
 pub fn acquire(alloc: Allocator, instance: Instance) AcquireError!Guard {
     if (builtin.os.tag == .windows) return acquireWindows(instance);
     const path = lockFilePath(alloc, instance) catch return error.GuardUnavailable;
@@ -202,67 +311,100 @@ pub const global_mutex_name_prefix = "Global\\GhozttyAgentDaemon-";
 /// UTF-8 prefix of the legacy per-logon-session fallback name (`Local\` =
 /// per-logon-session namespace — see the module doc for why that's too weak
 /// as the primary): sandboxed contexts without Global\ access still get
-/// today's per-session guard rather than none at all. The instance key (if
-/// any) is appended as `-<key>` by `composeLocalMutexName`.
+/// today's per-session guard rather than none at all. The relay role uses it
+/// verbatim; other roles append `.<role>`, and an instance key appends
+/// `-<key>` (`composeInstanceLocalMutexName`).
 pub const local_mutex_name_base = "Local\\GhozttyAgentDaemon";
 
-/// Compose `Global\GhozttyAgentDaemon-[<key>-]<user_id>` into `buf`. Both the
-/// instance key and the id are sanitized: backslashes (illegal in a mutex name
-/// anywhere past the namespace prefix) and control characters become `_`. An
-/// empty key reproduces the LEGACY `Global\GhozttyAgentDaemon-<user_id>` name
-/// verbatim (no double dash). Pure — testable on any host; the Windows path
-/// converts the result to UTF-16 for CreateMutexW.
-pub fn composeGlobalMutexName(buf: []u8, key: []const u8, user_id: []const u8) error{NameTooLong}![]const u8 {
-    const key_len = if (key.len == 0) 0 else key.len + 1; // "<key>-"
-    const total = global_mutex_name_prefix.len + key_len + user_id.len;
-    if (total > buf.len) return error.NameTooLong;
-    @memcpy(buf[0..global_mutex_name_prefix.len], global_mutex_name_prefix);
-    var i = global_mutex_name_prefix.len;
-    if (key.len != 0) {
-        for (key) |c| {
-            buf[i] = if (c == '\\' or c < 0x20) '_' else c;
-            i += 1;
-        }
-        buf[i] = '-';
-        i += 1;
+/// Append `s` to `buf[i.*..]`, sanitizing '\' and control characters to `_`
+/// (a mutex name may not contain '\' past the namespace prefix; neither a
+/// DOMAIN\user-shaped id nor a stray key may smuggle one in).
+fn appendSanitized(buf: []u8, i: *usize, s: []const u8) error{NameTooLong}!void {
+    if (i.* + s.len > buf.len) return error.NameTooLong;
+    for (s) |c| {
+        buf[i.*] = if (c == '\\' or c < 0x20) '_' else c;
+        i.* += 1;
     }
-    for (user_id) |c| {
-        buf[i] = if (c == '\\' or c < 0x20) '_' else c;
-        i += 1;
-    }
-    return buf[0..total];
 }
 
-/// Compose the `Local\` fallback name `Local\GhozttyAgentDaemon[-<key>]` into
-/// `buf`. Empty key reproduces the LEGACY literal exactly. Same sanitization as
-/// the global composer. Pure; unit-tested off-Windows.
-pub fn composeLocalMutexName(buf: []u8, key: []const u8) error{NameTooLong}![]const u8 {
-    const key_len = if (key.len == 0) 0 else key.len + 1; // "-<key>"
-    const total = local_mutex_name_base.len + key_len;
-    if (total > buf.len) return error.NameTooLong;
-    @memcpy(buf[0..local_mutex_name_base.len], local_mutex_name_base);
-    var i = local_mutex_name_base.len;
-    if (key.len != 0) {
-        buf[i] = '-';
-        i += 1;
-        for (key) |c| {
-            buf[i] = if (c == '\\' or c < 0x20) '_' else c;
-            i += 1;
-        }
+fn appendRaw(buf: []u8, i: *usize, s: []const u8) error{NameTooLong}!void {
+    if (i.* + s.len > buf.len) return error.NameTooLong;
+    @memcpy(buf[i.*..][0..s.len], s);
+    i.* += s.len;
+}
+
+/// Compose `instance`'s cross-session mutex name into `buf`:
+/// `Global\GhozttyAgentDaemon[.<role>][-<key>]-<user_id>`. The relay role
+/// with no key is the LEGACY `Global\GhozttyAgentDaemon-<user_id>` verbatim
+/// (no double dash). The key and the id are sanitized: backslashes and
+/// control characters become `_`. Pure — testable on any host; the Windows
+/// path converts the result to UTF-16 for CreateMutexW. Errors instead of
+/// truncating.
+pub fn composeInstanceMutexName(buf: []u8, instance: Instance, user_id: []const u8) error{NameTooLong}![]const u8 {
+    const base = global_mutex_name_prefix[0 .. global_mutex_name_prefix.len - 1]; // drop the '-'
+    var seg_buf: [32]u8 = undefined;
+    var i: usize = 0;
+    try appendRaw(buf, &i, base);
+    try appendRaw(buf, &i, instance.role.segment(&seg_buf));
+    if (instance.key.len != 0) {
+        try appendRaw(buf, &i, "-");
+        try appendSanitized(buf, &i, instance.key);
     }
-    return buf[0..total];
+    try appendRaw(buf, &i, "-");
+    try appendSanitized(buf, &i, user_id);
+    return buf[0..i];
+}
+
+/// Compose `Global\GhozttyAgentDaemon-[<key>-]<user_id>` (the role-less,
+/// T89d1 form: relay and the Windows local agent) into `buf`. An empty key
+/// reproduces the LEGACY name verbatim.
+pub fn composeGlobalMutexName(buf: []u8, key: []const u8, user_id: []const u8) error{NameTooLong}![]const u8 {
+    return composeInstanceMutexName(buf, .{ .role = .relay, .key = key }, user_id);
+}
+
+/// Compose `role`'s keyless cross-session mutex name into `buf`:
+/// `Global\GhozttyAgentDaemon-<user_id>` for the relay role (legacy) and
+/// `Global\GhozttyAgentDaemon.<role>-<user_id>` for the others.
+pub fn composeRoleMutexName(buf: []u8, role: Role, user_id: []const u8) error{NameTooLong}![]const u8 {
+    return composeInstanceMutexName(buf, .{ .role = role }, user_id);
+}
+
+/// Compose `instance`'s per-logon-session fallback name into `buf`:
+/// `Local\GhozttyAgentDaemon[.<role>][-<key>]`. Pure.
+pub fn composeInstanceLocalMutexName(buf: []u8, instance: Instance) error{NameTooLong}![]const u8 {
+    var seg_buf: [32]u8 = undefined;
+    var i: usize = 0;
+    try appendRaw(buf, &i, local_mutex_name_base);
+    try appendRaw(buf, &i, instance.role.segment(&seg_buf));
+    if (instance.key.len != 0) {
+        try appendRaw(buf, &i, "-");
+        try appendSanitized(buf, &i, instance.key);
+    }
+    return buf[0..i];
+}
+
+/// The role-less `Local\GhozttyAgentDaemon[-<key>]` (T89d1 form). Empty key
+/// reproduces the LEGACY literal exactly.
+pub fn composeLocalMutexName(buf: []u8, key: []const u8) error{NameTooLong}![]const u8 {
+    return composeInstanceLocalMutexName(buf, .{ .role = .relay, .key = key });
+}
+
+/// `role`'s keyless fallback name: `Local\GhozttyAgentDaemon` (relay,
+/// legacy) or `Local\GhozttyAgentDaemon.<role>`.
+pub fn composeRoleLocalMutexName(buf: []u8, role: Role) error{NameTooLong}![]const u8 {
+    return composeInstanceLocalMutexName(buf, .{ .role = role });
 }
 
 fn acquireWindows(instance: Instance) AcquireError!Guard {
     if (builtin.os.tag != .windows) unreachable;
 
-    // Preferred: Global\ + [instance key +] per-user id (SID, else username).
-    // Any failure on this path degrades to the legacy Local\ guard — never
-    // below it.
+    // Preferred: Global\ + [role +] [instance key +] per-user id (SID, else
+    // username). Any failure on this path degrades to the Local\ guard —
+    // never below it.
     var id_buf: [768]u8 = undefined; // UNLEN=256 UTF-16 units ≤ 768 UTF-8 bytes
     if (windowsUserId(&id_buf)) |id| global: {
         var name8: [832]u8 = undefined;
-        const name = composeGlobalMutexName(&name8, instance.key, id) catch break :global;
+        const name = composeInstanceMutexName(&name8, instance, id) catch break :global;
         var name16: [833]u16 = undefined;
         const n16 = std.unicode.utf8ToUtf16Le(name16[0..832], name) catch break :global;
         name16[n16] = 0;
@@ -282,10 +424,10 @@ fn acquireWindows(instance: Instance) AcquireError!Guard {
         );
     }
 
-    // Fallback: the legacy per-logon-session guard (today's behavior), keyed to
-    // the instance so local and relay don't share it either.
+    // Fallback: the per-logon-session guard (the legacy behavior), keyed to
+    // the role and instance so local and relay don't share it either.
     var local8: [128]u8 = undefined;
-    const local_name = composeLocalMutexName(&local8, instance.key) catch return error.GuardUnavailable;
+    const local_name = composeInstanceLocalMutexName(&local8, instance) catch return error.GuardUnavailable;
     var local16: [129]u16 = undefined;
     const ln16 = std.unicode.utf8ToUtf16Le(local16[0..128], local_name) catch return error.GuardUnavailable;
     local16[ln16] = 0;
@@ -449,45 +591,71 @@ const win32 = if (builtin.os.tag == .windows) struct {
 // POSIX: flock on a per-user lock file
 // -----------------------------------------------------------------------------
 
-/// Compose the per-instance state filename `agent[-<key>]<ext>` into `buf`:
-/// `agent.lock`/`agent.heartbeat` for the legacy singleton (empty key),
-/// `agent-<key>.lock` etc. otherwise. The key is sanitized ('\'/'/'/control →
-/// '_') so it can never smuggle a path separator into a filename. Pure;
+/// Compose `instance`'s state filename `agent[.<role>][-<key>]<ext>` into
+/// `buf`: `agent.lock` / `agent.heartbeat` for the relay role (legacy),
+/// `agent.<role>.lock` for the other keyless roles, `agent-<key>.lock` for the
+/// Windows local agent (T89d1). The key is sanitized ('\'/'/'/control → '_')
+/// so it can never smuggle a path separator into a filename. Pure;
 /// unit-tested. `ext` includes the dot (e.g. ".lock").
-pub fn composeStateFileName(buf: []u8, key: []const u8, ext: []const u8) error{NameTooLong}![]const u8 {
-    const base = "agent";
-    const key_len = if (key.len == 0) 0 else key.len + 1; // "-<key>"
-    const total = base.len + key_len + ext.len;
-    if (total > buf.len) return error.NameTooLong;
-    @memcpy(buf[0..base.len], base);
-    var i = base.len;
-    if (key.len != 0) {
-        buf[i] = '-';
-        i += 1;
-        for (key) |c| {
+pub fn composeInstanceFileName(buf: []u8, instance: Instance, ext: []const u8) error{NameTooLong}![]const u8 {
+    var seg_buf: [32]u8 = undefined;
+    var i: usize = 0;
+    try appendRaw(buf, &i, "agent");
+    try appendRaw(buf, &i, instance.role.segment(&seg_buf));
+    if (instance.key.len != 0) {
+        try appendRaw(buf, &i, "-");
+        if (i + instance.key.len > buf.len) return error.NameTooLong;
+        for (instance.key) |c| {
             buf[i] = if (c == '\\' or c == '/' or c < 0x20) '_' else c;
             i += 1;
         }
     }
-    @memcpy(buf[i .. i + ext.len], ext);
-    return buf[0..total];
+    try appendRaw(buf, &i, ext);
+    return buf[0..i];
 }
 
-/// Resolve the lock-file path (POSIX only):
-///   1. `GHOSTTY_AGENT_LOCK` (explicit full-path override; tests use this),
-///   2. `$XDG_CONFIG_HOME/ghoztty/agent[-<key>].lock`,
-///   3. `$HOME/.config/ghoztty/agent[-<key>].lock`.
-/// Same directory family as `enroll.relayEnvPath` so all agent state cohabits;
-/// the instance key separates the local persistence agent from the relay agent
-/// (empty key ⇒ the legacy `agent.lock`). Owned by the caller.
-pub fn lockFilePath(alloc: Allocator, instance: Instance) ![]u8 {
-    if (std.process.getEnvVarOwned(alloc, "GHOSTTY_AGENT_LOCK")) |p| {
-        if (p.len > 0) return p;
-        alloc.free(p);
-    } else |_| {}
+/// The role-less `agent[-<key>]<ext>` (T89d1 form; relay and the Windows
+/// local agent). Empty key ⇒ the legacy `agent.lock` / `agent.heartbeat`.
+pub fn composeStateFileName(buf: []u8, key: []const u8, ext: []const u8) error{NameTooLong}![]const u8 {
+    return composeInstanceFileName(buf, .{ .role = .relay, .key = key }, ext);
+}
 
-    var name_buf: [64]u8 = undefined;
-    const name = try composeStateFileName(&name_buf, instance.key, ".lock");
+/// Resolve `instance`'s lock-file path (POSIX only):
+///   1. `GHOSTTY_AGENT_LOCK` — an explicit full path, used VERBATIM for
+///      whichever role reads it (it names one daemon; see the module doc),
+///   2. `$XDG_CONFIG_HOME/ghoztty/<file>`,
+///   3. `$HOME/.config/ghoztty/<file>`,
+/// where `<file>` is `agent.lock` (relay) or `agent.<role>.lock`, with a
+/// `-<key>` before the extension for a keyed instance (`composeInstanceFileName`).
+/// Same directory family as `enroll.relayEnvPath` so all agent state cohabits.
+/// Owned by the caller.
+pub fn lockFilePath(alloc: Allocator, instance: Instance) ![]u8 {
+    if (try envOverride(alloc, "GHOSTTY_AGENT_LOCK")) |p| return p;
+    return defaultStatePath(alloc, instance, ".lock");
+}
+
+/// A non-empty env override, owned by the caller; null when unset or empty.
+fn envOverride(alloc: Allocator, name: []const u8) !?[]u8 {
+    const p = std.process.getEnvVarOwned(alloc, name) catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => return null,
+        else => return err,
+    };
+    if (p.len > 0) return p;
+    alloc.free(p);
+    return null;
+}
+
+/// `instance`'s default per-user state file with extension `ext` (dot
+/// included): `%LOCALAPPDATA%\ghoztty\` on Windows (same dir as relay.env),
+/// else `$XDG_CONFIG_HOME|~/.config` + `/ghoztty/`. Owned by the caller.
+fn defaultStatePath(alloc: Allocator, instance: Instance, ext: []const u8) ![]u8 {
+    var name_buf: [96]u8 = undefined;
+    const name = try composeInstanceFileName(&name_buf, instance, ext);
+    if (builtin.os.tag == .windows) {
+        const local = try std.process.getEnvVarOwned(alloc, "LOCALAPPDATA");
+        defer alloc.free(local);
+        return std.fs.path.join(alloc, &.{ local, "ghoztty", name });
+    }
     if (std.process.getEnvVarOwned(alloc, "XDG_CONFIG_HOME")) |xdg| {
         defer alloc.free(xdg);
         if (xdg.len > 0) return std.fs.path.join(alloc, &.{ xdg, "ghoztty", name });
@@ -557,6 +725,43 @@ pub const Verdict = enum {
     die,
 };
 
+/// The holder's role relative to the challenger's, as far as it can be
+/// established (`resolveHolderRole`). Only `.same` may ever be killed.
+pub const HolderRole = enum { same, different, unknown };
+
+/// Establish the holder's role relative to `ours` — pure, unit-tested. In
+/// order of authority:
+///   1. `heartbeat_role`: the `role=` line the holder wrote itself;
+///   2. `argv_role`: what the holder process was launched as (a pre-role
+///      build writes no `role=` line, but its argv still says `--relay`);
+///   3. `heartbeat_path_is_default`: the heartbeat came from `ours`'s own
+///      DEFAULT (role-scoped) path, not an override — so it is this role's
+///      file by construction. This is the only signal on Windows, where no
+///      argv probe exists.
+/// Anything else is `.unknown`, which is never killed: an override path
+/// proves nothing about who wrote it (it can be inherited from another
+/// daemon's environment — the module doc's §Takeover never crosses roles).
+pub fn resolveHolderRole(
+    ours: Role,
+    heartbeat_role: ?Role,
+    argv_role: ?Role,
+    heartbeat_path_is_default: bool,
+) HolderRole {
+    if (heartbeat_role orelse argv_role) |r| return if (r == ours) .same else .different;
+    return if (heartbeat_path_is_default) .same else .unknown;
+}
+
+/// THE takeover decision matrix for a holder of the SAME role — kept with its
+/// original signature (and tests); see `takeoverVerdictForRole`.
+pub fn takeoverVerdict(
+    force: bool,
+    heartbeat_age_ms: ?i64,
+    image: ImageCheck,
+    stale_after_ms: i64,
+) Verdict {
+    return takeoverVerdictForRole(force, heartbeat_age_ms, image, .same, stale_after_ms);
+}
+
 /// THE takeover decision matrix — pure, unit-tested. Caller contract: only
 /// invoked while the guard is verifiably still held (the caller re-attempts
 /// acquisition immediately before asking), which is what makes killing on an
@@ -567,17 +772,23 @@ pub const Verdict = enum {
 ///     holder or a racing first run — nobody safe to kill. Yield (die under
 ///     `force`, which promised a replacement it can't deliver).
 ///   image == .confirmed_other → PID reuse: never friendly-fire, even forced.
+///   holder != .same           → another role's daemon (or one we can't
+///     place): never killed, even forced or stale. A fresh unforced case is a
+///     plain yield; anything that would otherwise have killed is a `die`, so
+///     the refusal is logged.
 ///   force                     → skip the freshness check, kill the holder.
 ///   fresh (< stale_after_ms)  → responsive primary: yield.
 ///   stale                     → kill and take over.
-pub fn takeoverVerdict(
+pub fn takeoverVerdictForRole(
     force: bool,
     heartbeat_age_ms: ?i64,
     image: ImageCheck,
+    holder: HolderRole,
     stale_after_ms: i64,
 ) Verdict {
     const age = heartbeat_age_ms orelse return if (force) .die else .yield;
     if (image == .confirmed_other) return .die;
+    if (holder != .same) return if (!force and age < stale_after_ms) .yield else .die;
     if (force) return .kill_and_take;
     if (age < stale_after_ms) return .yield;
     return .kill_and_take;
@@ -585,49 +796,103 @@ pub fn takeoverVerdict(
 
 /// `acquire` + the takeover protocol: on AlreadyRunning, probe the holder's
 /// heartbeat and either yield (`error.AlreadyRunning`), or kill a stuck /
-/// force-replaced holder and take the guard. This is what the daemon modes
-/// call; `acquire` remains the raw primitive.
-pub fn acquireWithTakeover(alloc: Allocator, force: bool, instance: Instance) AcquireError!Guard {
-    if (acquire(alloc, instance)) |g| return g else |err| switch (err) {
+/// force-replaced holder OF THE SAME ROLE and take the guard. This is what the
+/// daemon modes call; `acquire` remains the raw primitive.
+pub fn acquireWithTakeover(alloc: Allocator, instance: Instance, force: bool) AcquireError!Guard {
+    const lock_path: ?[]u8 = if (builtin.os.tag == .windows)
+        null
+    else
+        lockFilePath(alloc, instance) catch return error.GuardUnavailable;
+    defer if (lock_path) |p| alloc.free(p);
+    const hb_loc = heartbeatLocation(alloc, instance) catch null;
+    defer if (hb_loc) |l| alloc.free(l.path);
+    return takeoverAt(alloc, instance, force, lock_path, hb_loc, .{});
+}
+
+/// The holder probes `takeoverAt` consults. Real by default; a test swaps the
+/// image check, because no test can launch a process whose image is really
+/// named `ghoztty-agent…` (a copied binary is killed by code signing).
+pub const Probes = struct {
+    checkPidImage: *const fn (i32) ImageCheck = checkPidImage,
+    pidRole: *const fn (Allocator, i32) ?Role = pidRole,
+};
+
+/// Take `role`'s guard (the flock at `lock_path` on POSIX; the role's named
+/// mutex on Windows, where `lock_path` is null), running the takeover
+/// protocol against the heartbeat at `hb_loc` on contention. The resolved-
+/// path core of `acquireWithTakeover`, so tests can aim it at temp files.
+pub fn takeoverAt(
+    alloc: Allocator,
+    instance: Instance,
+    force: bool,
+    lock_path: ?[]const u8,
+    hb_loc: ?HeartbeatLocation,
+    probes: Probes,
+) AcquireError!Guard {
+    const acquireIt = struct {
+        fn f(r: Instance, p: ?[]const u8) AcquireError!Guard {
+            if (builtin.os.tag == .windows) return acquireWindows(r);
+            return acquirePath(p.?);
+        }
+    }.f;
+
+    if (acquireIt(instance, lock_path)) |g| return g else |err| switch (err) {
         error.AlreadyRunning => {},
         error.GuardUnavailable => return error.GuardUnavailable,
     }
 
-    // Probe the holder: heartbeat (PID + age) and what that PID runs today. The
-    // heartbeat is keyed to the SAME instance as the guard, so a local
-    // challenger reads the local holder's beat (never the relay agent's).
-    const hb = readHeartbeatDefault(alloc, instance);
-    const image: ImageCheck = if (hb) |h| checkPidImage(h.pid) else .unavailable;
+    // Probe the holder: heartbeat (PID + role + age), what that PID runs
+    // today, and what it was launched as.
+    const hb: ?HeartbeatInfo = if (hb_loc) |l| readHeartbeat(l.path) else null;
+    const image: ImageCheck = if (hb) |h| probes.checkPidImage(h.pid) else .unavailable;
+    const holder: HolderRole = if (hb) |h| resolveHolderRole(
+        instance.role,
+        h.role,
+        probes.pidRole(alloc, h.pid),
+        hb_loc.?.is_default,
+    ) else .unknown;
 
     // Re-probe the guard right before deciding: (a) the holder may have
     // exited since the first attempt — then we just take over, no kill —
     // and (b) it upholds takeoverVerdict's "guard genuinely still held"
     // contract for the unverifiable-image kill.
-    if (acquire(alloc, instance)) |g| return g else |err| switch (err) {
+    if (acquireIt(instance, lock_path)) |g| return g else |err| switch (err) {
         error.AlreadyRunning => {},
         error.GuardUnavailable => return error.GuardUnavailable,
     }
 
-    switch (takeoverVerdict(force, if (hb) |h| h.age_ms else null, image, heartbeat_stale_after_ms)) {
+    if (hb != null and holder == .different) {
+        // The one way two roles meet on one guard is an exact-path override
+        // shared between them — almost always inherited from the other
+        // daemon's environment. Say so: the bare "already running" sent a
+        // live diagnosis down the wrong road.
+        std.debug.print(
+            "ghoztty-agent: single-instance: the {s} guard is held by a different kind of agent (pid {d}); never replacing it. If GHOSTTY_AGENT_LOCK/GHOSTTY_AGENT_HEARTBEAT are set in this shell they were probably inherited from that agent — unset them.\n",
+            .{ instance.role.label(), hb.?.pid },
+        );
+    }
+
+    switch (takeoverVerdictForRole(force, if (hb) |h| h.age_ms else null, image, holder, heartbeat_stale_after_ms)) {
         .yield => return error.AlreadyRunning,
         .die => {
             std.debug.print(
-                "ghoztty-agent: single-instance anomaly: guard held but the holder can't be safely replaced (heartbeat {s}, pid image {s}); yielding — never two daemons\n",
+                "ghoztty-agent: single-instance anomaly: guard held but the holder can't be safely replaced (heartbeat {s}, pid image {s}, holder role {s}); yielding — never two daemons\n",
                 .{
                     if (hb != null) "present" else "missing",
                     @tagName(image),
+                    @tagName(holder),
                 },
             );
             return error.AlreadyRunning;
         },
         .kill_and_take => {
-            const holder = hb.?; // null heartbeat can never reach kill_and_take
+            const holder_hb = hb.?; // null heartbeat can never reach kill_and_take
             std.debug.print(
-                "ghoztty-agent: single-instance: holder pid {d} is {s} (heartbeat {d}ms old); killing it and taking over\n",
-                .{ holder.pid, if (force) "being force-replaced" else "unresponsive", holder.age_ms },
+                "ghoztty-agent: single-instance: {s} holder pid {d} is {s} (heartbeat {d}ms old); killing it and taking over\n",
+                .{ instance.role.label(), holder_hb.pid, if (force) "being force-replaced" else "unresponsive", holder_hb.age_ms },
             );
-            killPid(holder.pid) catch |err| {
-                std.debug.print("ghoztty-agent: single-instance: kill of pid {d} failed ({s}); yielding\n", .{ holder.pid, @errorName(err) });
+            killPid(holder_hb.pid) catch |err| {
+                std.debug.print("ghoztty-agent: single-instance: kill of pid {d} failed ({s}); yielding\n", .{ holder_hb.pid, @errorName(err) });
                 return error.AlreadyRunning;
             };
             // The OS releases the mutex/flock as the holder dies — give it a
@@ -635,8 +900,8 @@ pub fn acquireWithTakeover(alloc: Allocator, force: bool, instance: Instance) Ac
             var attempt: usize = 0;
             while (attempt < takeover_retry_attempts) : (attempt += 1) {
                 std.Thread.sleep(takeover_retry_delay_ms * std.time.ns_per_ms);
-                if (acquire(alloc, instance)) |g| {
-                    std.debug.print("ghoztty-agent: single-instance: takeover complete (replaced pid {d})\n", .{holder.pid});
+                if (acquireIt(instance, lock_path)) |g| {
+                    std.debug.print("ghoztty-agent: single-instance: takeover complete (replaced pid {d})\n", .{holder_hb.pid});
                     return g;
                 } else |err| switch (err) {
                     error.AlreadyRunning => continue,
@@ -645,7 +910,7 @@ pub fn acquireWithTakeover(alloc: Allocator, force: bool, instance: Instance) Ac
             }
             std.debug.print(
                 "ghoztty-agent: single-instance: guard still held {d}ms after killing pid {d}; yielding — never two daemons\n",
-                .{ takeover_retry_attempts * takeover_retry_delay_ms, holder.pid },
+                .{ takeover_retry_attempts * takeover_retry_delay_ms, holder_hb.pid },
             );
             return error.AlreadyRunning;
         },
@@ -654,72 +919,84 @@ pub fn acquireWithTakeover(alloc: Allocator, force: bool, instance: Instance) Ac
 
 // --- Heartbeat file ----------------------------------------------------------
 
-/// Resolve the heartbeat path: `GHOSTTY_AGENT_HEARTBEAT` override (tests),
-/// else `agent[-<key>].heartbeat` next to the rest of the per-user agent state
-/// (`%LOCALAPPDATA%\ghoztty\` on Windows — same dir as relay.env — and
-/// `$XDG_CONFIG_HOME|~/.config/ghoztty/` on POSIX — same dir as agent.lock).
-/// Keyed to the instance so a local challenger and a relay challenger consult
-/// DISTINCT heartbeats (empty key ⇒ the legacy `agent.heartbeat`). Owned by the
-/// caller.
-pub fn heartbeatPath(alloc: Allocator, instance: Instance) ![]u8 {
-    if (std.process.getEnvVarOwned(alloc, "GHOSTTY_AGENT_HEARTBEAT")) |p| {
-        if (p.len > 0) return p;
-        alloc.free(p);
-    } else |_| {}
+/// Where `role`'s heartbeat lives, and whether that is the role-scoped default
+/// (which proves the file is this role's — see `resolveHolderRole`) rather
+/// than a `GHOSTTY_AGENT_HEARTBEAT` override (which proves nothing).
+pub const HeartbeatLocation = struct { path: []u8, is_default: bool };
 
-    var name_buf: [64]u8 = undefined;
-    const name = try composeStateFileName(&name_buf, instance.key, ".heartbeat");
-    if (builtin.os.tag == .windows) {
-        const local = try std.process.getEnvVarOwned(alloc, "LOCALAPPDATA");
-        defer alloc.free(local);
-        return std.fs.path.join(alloc, &.{ local, "ghoztty", name });
-    }
-    if (std.process.getEnvVarOwned(alloc, "XDG_CONFIG_HOME")) |xdg| {
-        defer alloc.free(xdg);
-        if (xdg.len > 0) return std.fs.path.join(alloc, &.{ xdg, "ghoztty", name });
-    } else |_| {}
-    const home = try std.process.getEnvVarOwned(alloc, "HOME");
-    defer alloc.free(home);
-    return std.fs.path.join(alloc, &.{ home, ".config", "ghoztty", name });
+/// Resolve `role`'s heartbeat path: `GHOSTTY_AGENT_HEARTBEAT` (verbatim, like
+/// the lock override), else `agent.heartbeat` (relay) / `agent.<role>.heartbeat`
+/// next to the rest of the per-user agent state (`%LOCALAPPDATA%\ghoztty\`
+/// on Windows — same dir as relay.env — and `$XDG_CONFIG_HOME|~/.config/ghoztty/`
+/// on POSIX — same dir as the lock). `path` is owned by the caller.
+pub fn heartbeatLocation(alloc: Allocator, instance: Instance) !HeartbeatLocation {
+    if (try envOverride(alloc, "GHOSTTY_AGENT_HEARTBEAT")) |p| return .{ .path = p, .is_default = false };
+    return .{ .path = try defaultStatePath(alloc, instance, ".heartbeat"), .is_default = true };
 }
 
-/// One heartbeat tick: (re)write the file with our PID. The WRITE is the
-/// liveness signal (it bumps mtime); the content identifies who to kill when
-/// it goes stale. Public + path-parameterized so it's testable anywhere.
-pub fn writeHeartbeat(path: []const u8) !void {
+/// `heartbeatLocation`'s path alone. Owned by the caller.
+pub fn heartbeatPath(alloc: Allocator, instance: Instance) ![]u8 {
+    return (try heartbeatLocation(alloc, instance)).path;
+}
+
+/// One heartbeat tick: (re)write the file with our PID and role
+/// (`<pid>\nrole=<role>\n`; a null role writes the pre-role `<pid>\n`). The
+/// WRITE is the liveness signal (it bumps mtime); the content identifies who
+/// to kill when it goes stale, and whether that is ours to kill. Public +
+/// path-parameterized so it's testable anywhere.
+pub fn writeHeartbeat(path: []const u8, role: ?Role) !void {
     if (std.fs.path.dirname(path)) |dir| {
         std.fs.cwd().makePath(dir) catch {};
     }
     const file = try std.fs.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
-    var buf: [32]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, "{d}\n", .{currentPid()}) catch unreachable;
+    var buf: [64]u8 = undefined;
+    const line = if (role) |r|
+        std.fmt.bufPrint(&buf, "{d}\nrole={s}\n", .{ currentPid(), r.label() }) catch unreachable
+    else
+        std.fmt.bufPrint(&buf, "{d}\n", .{currentPid()}) catch unreachable;
     try file.writeAll(line);
 }
 
-pub const HeartbeatInfo = struct { pid: i32, age_ms: i64 };
+pub const HeartbeatInfo = struct {
+    pid: i32,
+    age_ms: i64,
+    /// The holder's self-declared role; null for a pre-role heartbeat (or an
+    /// unrecognized role label, which is treated the same: unproven).
+    role: ?Role = null,
+};
 
-/// Read + parse a heartbeat file: the holder's PID and the file's mtime age.
-/// Null on any problem (missing, unreadable, garbage PID) — callers treat
-/// that as "no heartbeat" (old-binary holder rule). Public for tests.
+/// Parse heartbeat content: a PID on the first line, then optional
+/// `key=value` lines of which only `role=` is read. Null on a missing or
+/// garbage PID. Pure; public for tests.
+pub fn parseHeartbeat(content: []const u8) ?struct { pid: i32, role: ?Role } {
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    const first = std.mem.trim(u8, lines.first(), " \t\r");
+    const pid = std.fmt.parseInt(i32, first, 10) catch return null;
+    if (pid <= 0) return null;
+    var role: ?Role = null;
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (std.mem.startsWith(u8, line, "role=")) role = Role.fromLabel(line["role=".len..]);
+    }
+    return .{ .pid = pid, .role = role };
+}
+
+/// Read + parse a heartbeat file: the holder's PID, role, and the file's
+/// mtime age. Null on any problem (missing, unreadable, garbage PID) —
+/// callers treat that as "no heartbeat" (old-binary holder rule). Public for
+/// tests.
 pub fn readHeartbeat(path: []const u8) ?HeartbeatInfo {
     const file = std.fs.cwd().openFile(path, .{}) catch return null;
     defer file.close();
     const st = file.stat() catch return null;
-    var buf: [64]u8 = undefined;
+    var buf: [128]u8 = undefined;
     const n = file.readAll(&buf) catch return null;
-    const pid = std.fmt.parseInt(i32, std.mem.trim(u8, buf[0..n], " \t\r\n"), 10) catch return null;
-    if (pid <= 0) return null;
+    const parsed = parseHeartbeat(buf[0..n]) orelse return null;
     const age_ns = std.time.nanoTimestamp() - st.mtime;
     const age_ms_wide = @divTrunc(age_ns, std.time.ns_per_ms);
     const age_ms: i64 = std.math.cast(i64, @max(0, age_ms_wide)) orelse std.math.maxInt(i64);
-    return .{ .pid = pid, .age_ms = age_ms };
-}
-
-fn readHeartbeatDefault(alloc: Allocator, instance: Instance) ?HeartbeatInfo {
-    const path = heartbeatPath(alloc, instance) catch return null;
-    defer alloc.free(path);
-    return readHeartbeat(path);
+    return .{ .pid = parsed.pid, .age_ms = age_ms, .role = parsed.role };
 }
 
 /// The holder's heartbeat writer: a daemon-lifetime thread touching the file
@@ -730,6 +1007,8 @@ pub const Heartbeat = struct {
     alloc: Allocator,
     path: []u8,
     interval_ms: u64,
+    /// Written into every beat so a challenger can tell whose file this is.
+    role: ?Role,
     stop_ev: std.Thread.ResetEvent = .{},
     thread: ?std.Thread = null,
 
@@ -741,17 +1020,17 @@ pub const Heartbeat = struct {
             std.debug.print("ghoztty-agent: heartbeat path unavailable ({s}); takeover-by-challenger disabled\n", .{@errorName(err)});
             return null;
         };
-        return startWithPath(alloc, path, heartbeat_interval_ms) orelse {
+        return startWithPath(alloc, path, heartbeat_interval_ms, instance.role) orelse {
             alloc.free(path);
             return null;
         };
     }
 
     /// Test seam: explicit path (takes ownership on success) and interval.
-    pub fn startWithPath(alloc: Allocator, path: []u8, interval_ms: u64) ?*Heartbeat {
+    pub fn startWithPath(alloc: Allocator, path: []u8, interval_ms: u64, role: ?Role) ?*Heartbeat {
         const self = alloc.create(Heartbeat) catch return null;
-        self.* = .{ .alloc = alloc, .path = path, .interval_ms = interval_ms };
-        writeHeartbeat(path) catch |err| {
+        self.* = .{ .alloc = alloc, .path = path, .interval_ms = interval_ms, .role = role };
+        writeHeartbeat(path, role) catch |err| {
             std.debug.print("ghoztty-agent: heartbeat write failed ({s}); takeover-by-challenger disabled\n", .{@errorName(err)});
             alloc.destroy(self);
             return null;
@@ -768,7 +1047,7 @@ pub const Heartbeat = struct {
             if (self.stop_ev.timedWait(self.interval_ms * std.time.ns_per_ms)) |_| {
                 return; // stopped
             } else |_| {}
-            writeHeartbeat(self.path) catch {}; // transient FS hiccup: next tick retries
+            writeHeartbeat(self.path, self.role) catch {}; // transient FS hiccup: next tick retries
         }
     }
 
@@ -793,6 +1072,91 @@ pub fn imageLooksLikeAgent(image_path: []const u8) bool {
     const cut = std.mem.lastIndexOfAny(u8, image_path, "/\\");
     const base = if (cut) |i| image_path[i + 1 ..] else image_path;
     return std.ascii.startsWithIgnoreCase(base, "ghoztty-agent");
+}
+
+/// Which daemon role an agent command line runs as, or null when it is not a
+/// guard-holding daemon (`--stdio`, `--enroll`, usage). `args` EXCLUDES
+/// argv[0]. Mirrors `main.parseArgs`'s mode spellings (`--x <v>` and
+/// `--x=<v>`). Pure; public for tests.
+pub fn roleFromArgv(args: []const []const u8) ?Role {
+    for (args) |a| {
+        // `--enroll --relay=<url>` is the one-shot enrollment, not a daemon.
+        if (std.mem.eql(u8, a, "--enroll")) return null;
+    }
+    for (args) |a| {
+        if (flagIs(a, "--relay")) return .relay;
+        if (flagIs(a, "--listen-unix")) return .listen_unix;
+        if (flagIs(a, "--listen-pipe")) return .listen_pipe;
+        if (flagIs(a, "--listen")) return .listen;
+    }
+    return null;
+}
+
+fn flagIs(arg: []const u8, flag: []const u8) bool {
+    if (!std.mem.startsWith(u8, arg, flag)) return false;
+    return arg.len == flag.len or arg[flag.len] == '=';
+}
+
+/// Split a macOS `KERN_PROCARGS2` buffer into argv (argv[0] included):
+/// `int argc`, the exec path NUL-terminated, NUL padding, then `argc`
+/// NUL-terminated strings (then the environment, which is not read). Fills
+/// `out` and returns the used prefix; null on a malformed buffer. Pure;
+/// public for tests.
+pub fn parseProcArgs2(buf: []const u8, out: [][]const u8) ?[]const []const u8 {
+    if (buf.len < @sizeOf(c_int)) return null;
+    const argc_raw = std.mem.readInt(i32, buf[0..4], builtin.cpu.arch.endian());
+    if (argc_raw < 0) return null;
+    const argc: usize = @intCast(argc_raw);
+    var i: usize = @sizeOf(c_int);
+    // Exec path.
+    i = (std.mem.indexOfScalarPos(u8, buf, i, 0) orelse return null);
+    // NUL padding up to argv[0].
+    while (i < buf.len and buf[i] == 0) i += 1;
+    var n: usize = 0;
+    while (n < argc and n < out.len) : (n += 1) {
+        if (i >= buf.len) return null;
+        const end = std.mem.indexOfScalarPos(u8, buf, i, 0) orelse buf.len;
+        out[n] = buf[i..end];
+        i = end + 1;
+    }
+    return out[0..n];
+}
+
+/// Best-effort: which daemon role is `pid` running as, read from its own
+/// argv? Null when it can't be read (no API, process gone) or names no
+/// daemon role. This identifies a holder whose heartbeat predates the
+/// `role=` line.
+fn pidRole(alloc: Allocator, pid: i32) ?Role {
+    var argv_buf: [64][]const u8 = undefined;
+    switch (builtin.os.tag) {
+        .macos => {
+            const max = 1 << 20; // kern.argmax on macOS
+            const buf = alloc.alloc(u8, max) catch return null;
+            defer alloc.free(buf);
+            var mib = [_]c_int{ 1, 49, pid }; // CTL_KERN, KERN_PROCARGS2
+            var len: usize = buf.len;
+            if (darwin.sysctl(&mib, mib.len, buf.ptr, &len, null, 0) != 0) return null;
+            const argv = parseProcArgs2(buf[0..len], &argv_buf) orelse return null;
+            if (argv.len == 0) return null;
+            return roleFromArgv(argv[1..]);
+        },
+        .linux => {
+            var pbuf: [64]u8 = undefined;
+            const path = std.fmt.bufPrint(&pbuf, "/proc/{d}/cmdline", .{pid}) catch return null;
+            const data = std.fs.cwd().readFileAlloc(alloc, path, 1 << 20) catch return null;
+            defer alloc.free(data);
+            var n: usize = 0;
+            var it = std.mem.splitScalar(u8, std.mem.trimRight(u8, data, "\x00"), 0);
+            while (it.next()) |a| {
+                if (n == argv_buf.len) break;
+                argv_buf[n] = a;
+                n += 1;
+            }
+            if (n == 0) return null;
+            return roleFromArgv(argv_buf[1..n]);
+        },
+        else => return null,
+    }
 }
 
 /// Best-effort: what does `pid` run right now? See `ImageCheck`.
@@ -853,6 +1217,14 @@ fn currentPid() i32 {
 
 const darwin = if (builtin.os.tag == .macos) struct {
     extern "c" fn proc_pidpath(pid: c_int, buffer: [*]u8, buffersize: u32) c_int;
+    extern "c" fn sysctl(
+        name: [*]c_int,
+        namelen: c_uint,
+        oldp: ?*anyopaque,
+        oldlenp: ?*usize,
+        newp: ?*anyopaque,
+        newlen: usize,
+    ) c_int;
 } else struct {};
 
 // -----------------------------------------------------------------------------
@@ -908,7 +1280,7 @@ test "heartbeat: write/read roundtrip reports our pid, fresh" {
     const path = try std.fs.path.join(std.testing.allocator, &.{ dir, "agent.heartbeat" });
     defer std.testing.allocator.free(path);
 
-    try writeHeartbeat(path);
+    try writeHeartbeat(path, .relay);
     const hb = readHeartbeat(path) orelse return error.HeartbeatUnreadable;
     try std.testing.expectEqual(currentPid(), hb.pid);
     try std.testing.expect(hb.age_ms >= 0);
@@ -941,7 +1313,7 @@ test "heartbeat writer: first beat is synchronous, ticker recreates a deleted fi
     const path = try std.fs.path.join(alloc, &.{ dir, "agent.heartbeat" });
     // Ownership of `path` moves into the Heartbeat on success.
 
-    const hb = Heartbeat.startWithPath(alloc, path, 10) orelse {
+    const hb = Heartbeat.startWithPath(alloc, path, 10, .relay) orelse {
         alloc.free(path);
         return error.HeartbeatStartFailed;
     };
@@ -1114,6 +1486,31 @@ test "state filename: legacy vs keyed, separator sanitized" {
     try std.testing.expectError(error.NameTooLong, composeStateFileName(&tiny, "local", ".lock"));
 }
 
+test "instance names: a role and a key compose; the Windows local agent keeps its T89d1 names" {
+    const eqs = std.testing.expectEqualStrings;
+    const sid = "S-1-5-21-1";
+    var m: [256]u8 = undefined;
+    // listen_pipe adds no role segment: byte-identical to the pre-role names
+    // an installed Windows local agent already holds.
+    try eqs("Global\\GhozttyAgentDaemon-local-S-1-5-21-1", try composeInstanceMutexName(&m, Instance.local, sid));
+    try eqs("Global\\GhozttyAgentDaemon-local-debug-S-1-5-21-1", try composeInstanceMutexName(&m, Instance.local_debug, sid));
+    try eqs("Local\\GhozttyAgentDaemon-local", try composeInstanceLocalMutexName(&m, Instance.local));
+    try eqs("agent-local-debug.heartbeat", try composeInstanceFileName(&m, Instance.local_debug, ".heartbeat"));
+    // A sandbox suffix on a role-segmented instance keeps the role segment.
+    var k: [64]u8 = undefined;
+    const sbx = try instanceWithSuffix(&k, .listen_unix, "sbx1");
+    try std.testing.expectEqual(Role.listen_unix, sbx.role);
+    try eqs("Global\\GhozttyAgentDaemon.listen-unix-sbx1-S-1-5-21-1", try composeInstanceMutexName(&m, sbx, sid));
+    try eqs("Local\\GhozttyAgentDaemon.listen-unix-sbx1", try composeInstanceLocalMutexName(&m, sbx));
+    try eqs("agent.listen-unix-sbx1.lock", try composeInstanceFileName(&m, sbx, ".lock"));
+    // Keyless instances are exactly the role names.
+    try eqs("agent.listen-unix.lock", try composeInstanceFileName(&m, .listen_unix, ".lock"));
+    try eqs("agent.lock", try composeInstanceFileName(&m, .relay, ".lock"));
+    // The local agent's heartbeat declares its role.
+    try std.testing.expectEqual(@as(?Role, .listen_pipe), parseHeartbeat("9\nrole=listen-pipe\n").?.role);
+    try std.testing.expectEqual(@as(?Role, .listen_pipe), roleFromArgv(&.{"--listen-pipe=ghoztty-debug-x"}));
+}
+
 test "flock guard: second acquire fails, release frees it" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     var tmp = std.testing.tmpDir(.{});
@@ -1187,4 +1584,396 @@ test "flock guard: two real processes — holder blocks the child, release frees
     // not the file's existence, is what gates.
     g.release();
     try std.testing.expectEqual(@as(u32, 0), try childTryLock(alloc, lock_path));
+}
+
+// --- Roles -------------------------------------------------------------------
+
+test "role names: relay keeps the legacy names, other roles are suffixed" {
+    var buf: [64]u8 = undefined;
+    const eqs = std.testing.expectEqualStrings;
+    try eqs("agent.lock", Role.relay.fileName(&buf, "lock"));
+    try eqs("agent.heartbeat", Role.relay.fileName(&buf, "heartbeat"));
+    try eqs("agent.listen.lock", Role.listen.fileName(&buf, "lock"));
+    try eqs("agent.listen-unix.lock", Role.listen_unix.fileName(&buf, "lock"));
+    try eqs("agent.listen-unix.heartbeat", Role.listen_unix.fileName(&buf, "heartbeat"));
+
+    var m: [128]u8 = undefined;
+    const sid = "S-1-5-21-1-2-3-1013";
+    try eqs("Global\\GhozttyAgentDaemon-S-1-5-21-1-2-3-1013", try composeRoleMutexName(&m, .relay, sid));
+    try eqs("Global\\GhozttyAgentDaemon.listen-S-1-5-21-1-2-3-1013", try composeRoleMutexName(&m, .listen, sid));
+    try eqs("Global\\GhozttyAgentDaemon.listen-unix-S-1-5-21-1-2-3-1013", try composeRoleMutexName(&m, .listen_unix, sid));
+    try eqs("Local\\GhozttyAgentDaemon", try composeRoleLocalMutexName(&m, .relay));
+    try eqs("Local\\GhozttyAgentDaemon.listen", try composeRoleLocalMutexName(&m, .listen));
+
+    // The username fallback is sanitized per role exactly as before.
+    try eqs("Global\\GhozttyAgentDaemon.listen-CORP_x", try composeRoleMutexName(&m, .listen, "CORP\\x"));
+    // No user id can make one role's name another's: the relay name always
+    // has '-' right after the base, every other role a '.'.
+    var r: [128]u8 = undefined;
+    const relay_named_like_listen = try composeRoleMutexName(&r, .relay, ".listen-S-1");
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        relay_named_like_listen,
+        try composeRoleMutexName(&m, .listen, "S-1"),
+    ));
+
+    for (std.meta.tags(Role)) |role| try std.testing.expectEqual(role, Role.fromLabel(role.label()).?);
+    try std.testing.expectEqual(@as(?Role, null), Role.fromLabel("bogus"));
+}
+
+/// The default lock path of `role` under a temp config dir — what `acquire`
+/// resolves when no override is set.
+fn testLockPath(alloc: Allocator, dir: []const u8, role: Role) ![]u8 {
+    var buf: [64]u8 = undefined;
+    return std.fs.path.join(alloc, &.{ dir, "ghoztty", role.fileName(&buf, "lock") });
+}
+
+test "role guard: the same role excludes, different roles coexist" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("ghoztty");
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+
+    const relay_path = try testLockPath(alloc, dir, .relay);
+    defer alloc.free(relay_path);
+    const unix_path = try testLockPath(alloc, dir, .listen_unix);
+    defer alloc.free(unix_path);
+    const listen_path = try testLockPath(alloc, dir, .listen);
+    defer alloc.free(listen_path);
+
+    // The session agent's guard is held — by a SEPARATE process, as it is live.
+    var holder = try HolderProcess.start(alloc, unix_path, &.{"--listen-unix=/tmp/x.sock"});
+    defer holder.stop();
+
+    // A second session agent is refused (the dual-supervisor incident)...
+    try std.testing.expectError(error.AlreadyRunning, acquirePath(unix_path));
+    // ...while a relay agent and a TCP listen agent each get their own guard.
+    var relay = try acquirePath(relay_path);
+    defer relay.release();
+    var listen = try acquirePath(listen_path);
+    defer listen.release();
+    // And a second relay agent is refused in turn.
+    try std.testing.expectError(error.AlreadyRunning, acquirePath(relay_path));
+    try std.testing.expectEqual(@as(u32, 183), try childTryLock(alloc, relay_path));
+}
+
+test "holder role: heartbeat line, then argv, then default path; else unknown" {
+    const R = resolveHolderRole;
+    const eq = std.testing.expectEqual;
+    // The holder's own role= line wins over everything.
+    try eq(HolderRole.same, R(.relay, .relay, .listen_unix, false));
+    try eq(HolderRole.different, R(.relay, .listen_unix, .relay, true));
+    // A pre-role heartbeat: the holder's argv decides.
+    try eq(HolderRole.different, R(.relay, null, .listen_unix, true));
+    try eq(HolderRole.same, R(.listen_unix, null, .listen_unix, false));
+    // No role anywhere: only this role's own DEFAULT file proves it is ours
+    // (Windows; self-update's respawn against a pre-role relay agent).
+    try eq(HolderRole.same, R(.relay, null, null, true));
+    // An override path proves nothing — it may be inherited.
+    try eq(HolderRole.unknown, R(.relay, null, null, false));
+}
+
+test "takeover verdict: never across roles, not even forced or stale" {
+    const V = takeoverVerdictForRole;
+    const stale = heartbeat_stale_after_ms;
+    const eq = std.testing.expectEqual;
+    const old = std.math.maxInt(i64);
+    for ([_]HolderRole{ .different, .unknown }) |h| {
+        try eq(Verdict.die, V(true, 0, .confirmed_agent, h, stale)); // forced
+        try eq(Verdict.die, V(false, old, .confirmed_agent, h, stale)); // stale
+        try eq(Verdict.die, V(true, old, .unavailable, h, stale));
+        try eq(Verdict.yield, V(false, 0, .confirmed_agent, h, stale)); // fresh: plain yield
+    }
+    // The same role behaves exactly as before roles existed.
+    try eq(Verdict.kill_and_take, V(true, 0, .confirmed_agent, .same, stale));
+    try eq(Verdict.kill_and_take, V(false, old, .unavailable, .same, stale));
+    try eq(Verdict.yield, V(false, 0, .confirmed_agent, .same, stale));
+    try eq(Verdict.die, V(true, old, .confirmed_other, .same, stale));
+    try eq(Verdict.die, V(true, null, .unavailable, .same, stale));
+}
+
+test "heartbeat: role line roundtrip; a pre-role heartbeat parses with no role" {
+    const eq = std.testing.expectEqual;
+    const a = parseHeartbeat("123\nrole=listen-unix\n").?;
+    try eq(@as(i32, 123), a.pid);
+    try eq(@as(?Role, .listen_unix), a.role);
+    const b = parseHeartbeat("456\n").?;
+    try eq(@as(i32, 456), b.pid);
+    try eq(@as(?Role, null), b.role);
+    try eq(@as(?Role, null), parseHeartbeat("7\r\nrole=martian\r\n").?.role);
+    try eq(@as(?Role, .relay), parseHeartbeat("7\r\nrole=relay\r\n").?.role);
+    try std.testing.expect(parseHeartbeat("role=relay\n") == null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(dir);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ dir, "hb" });
+    defer std.testing.allocator.free(path);
+    try writeHeartbeat(path, .listen_unix);
+    const hb = readHeartbeat(path).?;
+    try eq(currentPid(), hb.pid);
+    try eq(@as(?Role, .listen_unix), hb.role);
+}
+
+test "argv role: daemon flags in either spelling; enroll and stdio hold no guard" {
+    const eq = std.testing.expectEqual;
+    try eq(@as(?Role, .relay), roleFromArgv(&.{ "--relay=https://r", "--headless" }));
+    try eq(@as(?Role, .relay), roleFromArgv(&.{ "--headless", "--relay", "https://r" }));
+    try eq(@as(?Role, .listen_unix), roleFromArgv(&.{"--listen-unix=/x/agent.sock"}));
+    try eq(@as(?Role, .listen), roleFromArgv(&.{ "--listen", "127.0.0.1:7777" }));
+    try eq(@as(?Role, .listen), roleFromArgv(&.{"--listen=127.0.0.1:7777"}));
+    try eq(@as(?Role, null), roleFromArgv(&.{ "--enroll", "--relay=https://r" }));
+    try eq(@as(?Role, null), roleFromArgv(&.{"--stdio"}));
+    try eq(@as(?Role, null), roleFromArgv(&.{"--relayx"}));
+    try eq(@as(?Role, null), roleFromArgv(&.{}));
+}
+
+test "KERN_PROCARGS2 parse: argc, exec path, padding, argv" {
+    var buf: [128]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var argc: [4]u8 = undefined;
+    std.mem.writeInt(i32, &argc, 3, builtin.cpu.arch.endian());
+    try w.writeAll(&argc);
+    try w.writeAll("/Applications/G.app/ghoztty-agent\x00\x00\x00\x00");
+    try w.writeAll("ghoztty-agent\x00--relay=https://r\x00--headless\x00HOME=/u\x00");
+    var out: [8][]const u8 = undefined;
+    const argv = parseProcArgs2(w.buffered(), &out).?;
+    try std.testing.expectEqual(@as(usize, 3), argv.len);
+    try std.testing.expectEqualStrings("ghoztty-agent", argv[0]);
+    try std.testing.expectEqualStrings("--headless", argv[2]);
+    try std.testing.expectEqual(@as(?Role, .relay), roleFromArgv(argv[1..]));
+    try std.testing.expect(parseProcArgs2("ab", &out) == null);
+}
+
+test "argv role probe: reads a live process's own command line" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+    const lock = try std.fs.path.join(alloc, &.{ dir, "l" });
+    defer alloc.free(lock);
+    var holder = try HolderProcess.start(alloc, lock, &.{ "--relay=https://r", "--headless" });
+    defer holder.stop();
+    try std.testing.expectEqual(@as(?Role, .relay), pidRole(alloc, holder.pid()));
+
+    // A process whose argv names no daemon role. (Not this test binary: the
+    // zig test runner is itself launched with `--listen=-`.)
+    const lock2 = try std.fs.path.join(alloc, &.{ dir, "l2" });
+    defer alloc.free(lock2);
+    var plain = try HolderProcess.start(alloc, lock2, &.{"--verbose"});
+    defer plain.stop();
+    try std.testing.expectEqual(@as(?Role, null), pidRole(alloc, plain.pid()));
+}
+
+// --- Takeover is role-scoped: real processes --------------------------------
+
+/// A separate process (python3) that takes the flock at `lock_path` and holds
+/// it until stopped, with `role_args` in its argv so the real argv probe
+/// (`pidRole`) sees what a real agent's would. Its image is python, so these
+/// tests swap only the IMAGE probe (`Probes.checkPidImage`) to claim it is an
+/// agent — otherwise `confirmed_other` would refuse every kill and prove
+/// nothing about roles.
+const HolderProcess = struct {
+    child: std.process.Child,
+    script: []u8,
+    alloc: Allocator,
+
+    fn start(alloc: Allocator, lock_path: []const u8, role_args: []const []const u8) !HolderProcess {
+        const script = try std.fmt.allocPrint(alloc,
+            \\import fcntl,sys,time
+            \\f=open('{s}','a')
+            \\fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            \\sys.stdout.write('ready\n'); sys.stdout.flush()
+            \\time.sleep(60)
+        , .{lock_path});
+        errdefer alloc.free(script);
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(alloc);
+        try argv.appendSlice(alloc, &.{ "python3", "-c", script });
+        try argv.appendSlice(alloc, role_args);
+
+        var child = std.process.Child.init(argv.items, alloc);
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Ignore;
+        child.spawn() catch return error.SkipZigTest; // no python3 → skip
+        var line: [16]u8 = undefined;
+        const n = try child.stdout.?.read(&line);
+        if (!std.mem.startsWith(u8, line[0..n], "ready")) {
+            _ = child.kill() catch {};
+            return error.HolderDidNotLock;
+        }
+        return .{ .child = child, .script = script, .alloc = alloc };
+    }
+
+    fn pid(self: *const HolderProcess) i32 {
+        return @intCast(self.child.id);
+    }
+
+    /// Whether the holder is still running (it has not been killed).
+    fn alive(self: *const HolderProcess) bool {
+        std.posix.kill(self.child.id, 0) catch return false;
+        // A killed-but-unreaped child is a zombie, which kill(0) still finds.
+        var status: c_int = 0;
+        return std.c.waitpid(self.child.id, &status, std.c.W.NOHANG) == 0;
+    }
+
+    fn stop(self: *HolderProcess) void {
+        std.posix.kill(self.child.id, std.posix.SIG.KILL) catch {};
+        var status: c_int = 0;
+        _ = std.c.waitpid(self.child.id, &status, 0);
+        self.alloc.free(self.script);
+    }
+};
+
+fn claimAgentImage(_: i32) ImageCheck {
+    return .confirmed_agent;
+}
+
+/// Write a heartbeat for `pid` at `path`, aged `age_s` seconds.
+fn plantHeartbeat(path: []const u8, pid: i32, role: ?Role, age_s: i64) !void {
+    const file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+    defer file.close();
+    var buf: [64]u8 = undefined;
+    try file.writeAll(if (role) |r|
+        try std.fmt.bufPrint(&buf, "{d}\nrole={s}\n", .{ pid, r.label() })
+    else
+        try std.fmt.bufPrint(&buf, "{d}\n", .{pid}));
+    const t: i128 = (std.time.timestamp() - age_s) * std.time.ns_per_s;
+    try file.updateTimes(t, t);
+}
+
+const TakeoverFixture = struct {
+    alloc: Allocator,
+    tmp: std.testing.TmpDir,
+    lock: []u8,
+    hb: []u8,
+
+    fn init(alloc: Allocator) !TakeoverFixture {
+        var tmp = std.testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        const dir = try tmp.dir.realpathAlloc(alloc, ".");
+        defer alloc.free(dir);
+        return .{
+            .alloc = alloc,
+            .tmp = tmp,
+            .lock = try std.fs.path.join(alloc, &.{ dir, "agent.lock" }),
+            .hb = try std.fs.path.join(alloc, &.{ dir, "agent.heartbeat" }),
+        };
+    }
+
+    fn deinit(self: *TakeoverFixture) void {
+        self.alloc.free(self.lock);
+        self.alloc.free(self.hb);
+        self.tmp.cleanup();
+    }
+};
+
+test "takeover: a relay --force-replace with the session agent's inherited paths never kills it" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    var fx = try TakeoverFixture.init(alloc);
+    defer fx.deinit();
+
+    // The live incident: the session agent holds the overridden lock and
+    // writes the overridden heartbeat — an OLDER build, so no role= line, and
+    // stale for good measure. A relay agent started from one of its panes
+    // inherited both paths, and is run with --force-replace.
+    var session_agent = try HolderProcess.start(alloc, fx.lock, &.{"--listen-unix=/tmp/agent.sock"});
+    defer session_agent.stop();
+    try plantHeartbeat(fx.hb, session_agent.pid(), null, 3600);
+
+    const hb_loc: HeartbeatLocation = .{ .path = fx.hb, .is_default = false };
+    try std.testing.expectError(
+        error.AlreadyRunning,
+        takeoverAt(alloc, .relay, true, fx.lock, hb_loc, .{ .checkPidImage = claimAgentImage }),
+    );
+    try std.testing.expect(session_agent.alive());
+
+    // Same with a NEW session agent, which declares its role itself.
+    try plantHeartbeat(fx.hb, session_agent.pid(), .listen_unix, 3600);
+    try std.testing.expectError(
+        error.AlreadyRunning,
+        takeoverAt(alloc, .relay, true, fx.lock, hb_loc, .{ .checkPidImage = claimAgentImage }),
+    );
+    try std.testing.expect(session_agent.alive());
+}
+
+test "takeover: an override path alone never licenses a kill" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    var fx = try TakeoverFixture.init(alloc);
+    defer fx.deinit();
+
+    // Pre-role heartbeat, a holder whose argv names no role: unknown.
+    var holder = try HolderProcess.start(alloc, fx.lock, &.{});
+    defer holder.stop();
+    try plantHeartbeat(fx.hb, holder.pid(), null, 3600);
+    try std.testing.expectError(error.AlreadyRunning, takeoverAt(
+        alloc,
+        .relay,
+        true,
+        fx.lock,
+        .{ .path = fx.hb, .is_default = false },
+        .{ .checkPidImage = claimAgentImage },
+    ));
+    try std.testing.expect(holder.alive());
+}
+
+test "takeover: the same role is still replaced — forced, and when stuck" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    var fx = try TakeoverFixture.init(alloc);
+    defer fx.deinit();
+    const probes: Probes = .{ .checkPidImage = claimAgentImage };
+
+    // A healthy relay agent, force-replaced (the self-update respawn).
+    {
+        var old = try HolderProcess.start(alloc, fx.lock, &.{"--relay=https://r"});
+        defer old.stop();
+        try plantHeartbeat(fx.hb, old.pid(), .relay, 0);
+        var g = try takeoverAt(alloc, .relay, true, fx.lock, .{ .path = fx.hb, .is_default = false }, probes);
+        g.release();
+        try std.testing.expect(!old.alive());
+    }
+    // A STUCK pre-role relay agent (no role= line), identified by its argv.
+    {
+        var old = try HolderProcess.start(alloc, fx.lock, &.{"--relay=https://r"});
+        defer old.stop();
+        try plantHeartbeat(fx.hb, old.pid(), null, 3600);
+        var g = try takeoverAt(alloc, .relay, false, fx.lock, .{ .path = fx.hb, .is_default = false }, probes);
+        g.release();
+        try std.testing.expect(!old.alive());
+    }
+    // A pre-role holder with no readable role, but at the role's own DEFAULT
+    // heartbeat path: that file is the relay role's by construction.
+    {
+        var old = try HolderProcess.start(alloc, fx.lock, &.{});
+        defer old.stop();
+        try plantHeartbeat(fx.hb, old.pid(), null, 0);
+        var g = try takeoverAt(alloc, .relay, true, fx.lock, .{ .path = fx.hb, .is_default = true }, probes);
+        g.release();
+        try std.testing.expect(!old.alive());
+    }
+    // ...and a FRESH same-role holder without --force-replace is left alone.
+    {
+        var live = try HolderProcess.start(alloc, fx.lock, &.{"--relay=https://r"});
+        defer live.stop();
+        try plantHeartbeat(fx.hb, live.pid(), .relay, 0);
+        try std.testing.expectError(error.AlreadyRunning, takeoverAt(
+            alloc,
+            .relay,
+            false,
+            fx.lock,
+            .{ .path = fx.hb, .is_default = false },
+            probes,
+        ));
+        try std.testing.expect(live.alive());
+    }
 }

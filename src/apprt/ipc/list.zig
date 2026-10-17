@@ -68,6 +68,10 @@ pub const List = struct {
         /// encoder does (`stashed == true ? true : nil`); win32 reports it
         /// since T1827.
         stashed: bool = false,
+        /// The pane's activity state as its machine token (`idle` / `busy` /
+        /// `needs_input`), main eb8162e59. Mac writes it for every terminal
+        /// pane and never for a viewer; null omits it the same way.
+        state: ?[]const u8 = null,
         /// The session-persistence agent session this pane is bound to
         /// (T332): the join key against `+sessions --json`. Absent for a
         /// plain local ConPTY pane and for viewers; present for local-agent
@@ -408,6 +412,10 @@ pub const List = struct {
             try jws.objectField("stashed");
             try jws.write(true);
         }
+        if (term.state) |state| {
+            try jws.objectField("state");
+            try jws.write(state);
+        }
         if (term.session_id) |sid| {
             try jws.objectField("session_id");
             try jws.write(sid);
@@ -543,17 +551,19 @@ test "List: build provenance is additive (T52)" {
 test "List: session_id is additive (T332)" {
     const testing = std.testing;
 
-    const bound: List.Node = .{ .leaf = .{
-        .id = "3F2A", // pane id (uuid in practice)
-        .title = "pwsh",
-        .working_directory = "",
-        .pid = 0,
-        .tty = "",
-        .name = "3F2A",
-        .focused = true,
-        .exit_code = null,
-        .session_id = "sess-0a1b2c3d",
-    } };
+    const bound: List.Node = .{
+        .leaf = .{
+            .id = "3F2A", // pane id (uuid in practice)
+            .title = "pwsh",
+            .working_directory = "",
+            .pid = 0,
+            .tty = "",
+            .name = "3F2A",
+            .focused = true,
+            .exit_code = null,
+            .session_id = "sess-0a1b2c3d",
+        },
+    };
     const tabs = [_]List.Tab{.{
         .id = "0",
         .title = "pwsh",
@@ -1201,6 +1211,7 @@ test "List: the JSON shape still matches the Mac Swift encoder (T370)" {
         .banner = "**PR #1**",
         .readonly = true,
         .stashed = true,
+        .state = "busy",
         .session_id = "s1",
     } };
     const leaf_right: List.Node = .{ .leaf = List.empty_terminal };

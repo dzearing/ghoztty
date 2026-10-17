@@ -861,9 +861,9 @@ fn eqlAny(name: []const u8, set: []const []const u8) bool {
 fn sigFromName(name: []const u8) ?u8 {
     const S = posix.SIG;
     const table = .{
-        .{ "HUP", S.HUP },   .{ "INT", S.INT },   .{ "QUIT", S.QUIT },
-        .{ "KILL", S.KILL }, .{ "TERM", S.TERM }, .{ "USR1", S.USR1 },
-        .{ "USR2", S.USR2 }, .{ "STOP", S.STOP }, .{ "CONT", S.CONT },
+        .{ "HUP", S.HUP },   .{ "INT", S.INT },     .{ "QUIT", S.QUIT },
+        .{ "KILL", S.KILL }, .{ "TERM", S.TERM },   .{ "USR1", S.USR1 },
+        .{ "USR2", S.USR2 }, .{ "STOP", S.STOP },   .{ "CONT", S.CONT },
         .{ "TSTP", S.TSTP }, .{ "WINCH", S.WINCH },
     };
     inline for (table) |entry| {
@@ -1050,8 +1050,29 @@ pub const PtySpawner = struct {
         const env = try alloc.create(std.process.EnvMap);
         errdefer alloc.destroy(env);
         env.* = std.process.getEnvMap(alloc) catch std.process.EnvMap.init(alloc);
+        scrubAgentPrivateEnv(env);
         self.* = .{ .alloc = alloc, .env = env };
         return self;
+    }
+
+    /// Variables that configure THIS agent process and must not reach the
+    /// shells it spawns. The guard/heartbeat overrides are the daemon's own
+    /// identity: inherited by a pane, they made every `ghoztty-agent` started
+    /// from that pane contend for the session agent's single-instance guard
+    /// and write the session agent's heartbeat (see `single_instance.zig`
+    /// §Takeover never crosses roles). The self-update opt-out likewise
+    /// belongs to the daemon the app launched, not to a user's hand-run
+    /// agent. `GHOSTTY_DEVICE_TOKEN` is a relay credential that a remote
+    /// viewer's shell has no business reading.
+    pub const agent_private_env = [_][]const u8{
+        "GHOSTTY_AGENT_LOCK",
+        "GHOSTTY_AGENT_HEARTBEAT",
+        "GHOSTTY_AGENT_NO_SELFUPDATE",
+        "GHOSTTY_DEVICE_TOKEN",
+    };
+
+    fn scrubAgentPrivateEnv(env: *std.process.EnvMap) void {
+        for (agent_private_env) |key| env.remove(key);
     }
 
     pub fn deinit(self: *PtySpawner) void {
@@ -2155,4 +2176,24 @@ test "PtyChild (Windows): a ConPTY shell that exits on its own is reapable by tr
         // second exit, and must not lose this one.
         try testing.expectEqual(@as(?i64, c.code), pc.child().tryWait());
     }
+}
+
+test "PtySpawner: the agent's private control vars never reach a child's env" {
+    const alloc = testing.allocator;
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    for (PtySpawner.agent_private_env) |key| try env.put(key, "/leaked");
+    try env.put("HOME", "/Users/x");
+    try env.put("GHOSTTY_AGENT_RING_BYTES", "1048576"); // not private: kept
+
+    PtySpawner.scrubAgentPrivateEnv(&env);
+
+    for (PtySpawner.agent_private_env) |key| try testing.expect(env.get(key) == null);
+    try testing.expectEqualStrings("/Users/x", env.get("HOME").?);
+    try testing.expect(env.get("GHOSTTY_AGENT_RING_BYTES") != null);
+
+    // And the real spawner applies it to the env it inherited.
+    var spawner = try PtySpawner.init(alloc);
+    defer spawner.deinit();
+    for (PtySpawner.agent_private_env) |key| try testing.expect(spawner.env.get(key) == null);
 }

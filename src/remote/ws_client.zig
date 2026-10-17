@@ -122,9 +122,12 @@ pub const Options = struct {
 pub const ConnectError = error{
     /// The server did not return `101 Switching Protocols`.
     WebSocketUpgradeFailed,
-    /// The server rejected the bearer (`401`/`403`). Split out from
-    /// `WebSocketUpgradeFailed` because it is the one dial failure the user can
-    /// DO something about, and it has to be spelled that way (T319).
+    /// The server rejected the bearer (`401 Unauthorized`, or `403`): it does
+    /// not accept the credential sent. Split out from `WebSocketUpgradeFailed`
+    /// because it is the one dial failure the user can DO something about, and
+    /// it has to be spelled that way (T319); it also lets a relay agent tell
+    /// "my credential was revoked" from "the relay is having a bad day"
+    /// (`--exit-on-revoke`).
     WebSocketUnauthorized,
     /// `Sec-WebSocket-Accept` was missing or did not match our key.
     WebSocketBadAccept,
@@ -438,12 +441,7 @@ pub const WsClient = struct {
     }
 
     fn is101(status_line: []const u8) bool {
-        // e.g. "HTTP/1.1 101 Switching Protocols\r\n"
-        const s = std.mem.trimRight(u8, status_line, "\r\n");
-        var it = std.mem.tokenizeScalar(u8, s, ' ');
-        _ = it.next() orelse return false; // HTTP/1.1
-        const code = it.next() orelse return false;
-        return std.mem.eql(u8, code, "101");
+        return statusCode(status_line) == 101;
     }
 
     /// The status line's numeric code, or null when it is not a status line we
@@ -456,6 +454,7 @@ pub const WsClient = struct {
         const proto = it.next() orelse return null;
         if (!std.mem.startsWith(u8, proto, "HTTP/")) return null;
         const code = it.next() orelse return null;
+        if (code.len != 3) return null;
         return std.fmt.parseInt(u16, code, 10) catch null;
     }
 
@@ -888,6 +887,14 @@ test "is101: status-line parsing" {
     try testing.expect(!WsClient.is101("HTTP/1.1 200 OK\r\n"));
     try testing.expect(!WsClient.is101("HTTP/1.1 401 Unauthorized\r\n"));
     try testing.expect(!WsClient.is101("garbage"));
+    try testing.expect(!WsClient.is101("HTTP/1.1 1010 nope\r\n"));
+}
+
+test "statusCode: a rejected upgrade's code is readable" {
+    try testing.expectEqual(@as(?u16, 401), WsClient.statusCode("HTTP/1.1 401 Unauthorized\r\n"));
+    try testing.expectEqual(@as(?u16, 503), WsClient.statusCode("HTTP/1.1 503\r\n"));
+    try testing.expectEqual(@as(?u16, null), WsClient.statusCode("HTTP/1.1\r\n"));
+    try testing.expectEqual(@as(?u16, null), WsClient.statusCode("HTTP/1.1 abc x\r\n"));
 }
 
 test "statusCode: a rejected credential is distinguishable from an unreachable relay" {

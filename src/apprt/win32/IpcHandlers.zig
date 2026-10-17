@@ -2334,6 +2334,9 @@ fn buildNode(
                     // T1827: stashed out of the layout but still a live,
                     // targetable pane - `+list` marks it, as Mac does.
                     .stashed = pane_stash.isStashed(pane),
+                    // main eb8162e59: the activity state's machine token,
+                    // written for every terminal pane as Mac does.
+                    .state = surface.activity_state.token(),
                     // T332: the agent session this pane is bound to — the join
                     // key against `+sessions --json`. Lock-free read (the
                     // backend publishes the id atomically), duped because the

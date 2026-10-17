@@ -24,6 +24,15 @@ enum PaneElevation {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
     }
 
+    /// A glass card floating inside a pane (the banner): concentric with the
+    /// pane's corner, so the gap around the corner matches the gap along the
+    /// edges. The margin is wider than the pane's radius, so truly concentric
+    /// would be square; the floor keeps a hint of rounding at a corner gap
+    /// within ~2pt of the edge gap (the shared 14pt card radius was ~6pt off).
+    static var nestedCardCornerRadius: CGFloat {
+        Swift.max(4, cornerRadius - GlassCard.outerMargin)
+    }
+
     /// The gap a `SplitView` should leave, or nil for the classic 1pt line.
     static func paneGap(for style: Ghostty.Config.MacOSPaneStyle) -> CGFloat? {
         style == .elevated ? gap : nil

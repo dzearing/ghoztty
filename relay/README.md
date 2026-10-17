@@ -108,12 +108,19 @@ around. The agent half is built in: `ghoztty-agent --enroll --relay=<base>`
 var wins, else the agent falls back to `relay.env` — so enroll → run needs no
 env plumbing.
 
-The agent's daemon modes (`--relay`, `--listen`) are single-instance per user
-session: a second daemon logs `another instance is already running; exiting`
-and exits with code **183** (named mutex `Local\GhozttyAgentDaemon` on
-Windows; `flock` on `~/.config/ghoztty/agent.lock` elsewhere), so competing
-supervisors can't stack up duplicate agents — `--stdio` and `--enroll` are
-exempt and still work while a daemon runs.
+The agent's daemon modes (`--relay`, `--listen`, `--listen-unix`) are
+single-instance per user **and per role**: a second daemon of the same role
+logs `another instance is already running; exiting` and exits with code
+**183**, so competing supervisors can't stack up duplicate agents. Different
+roles coexist — a Mac runs a `--listen-unix` session-persistence agent and a
+`--relay` agent side by side. The relay role keeps the original names (named
+mutex `Global\GhozttyAgentDaemon-<SID>`, falling back to
+`Local\GhozttyAgentDaemon`, on Windows; `flock` on `~/.config/ghoztty/agent.lock`
+elsewhere); other roles add `.<role>` (`agent.listen.lock`,
+`GhozttyAgentDaemon.listen-<SID>`). `GHOSTTY_AGENT_LOCK` names one exact lock
+path. `--force-replace` only ever replaces a holder of the same role. `--stdio`
+and `--enroll` are exempt and still work while a daemon runs. Design:
+`docs/design/mac-relay-host.md`.
 
 ### Hosted Windows installer — retired (T1175)
 

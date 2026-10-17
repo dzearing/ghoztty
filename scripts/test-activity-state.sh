@@ -75,6 +75,10 @@ begin() {
 main_payload()  { printf '{"session_id":"%s","hook_event_name":"%s"}' "$sid" "${1:-PostToolUse}"; }
 agent_payload() { printf '{"session_id":"%s","agent_id":"%s","agent_type":"general-purpose"}' "$sid" "$1"; }
 
+notification_payload() {
+  printf '{"session_id":"%s","hook_event_name":"Notification","message":"m","notification_type":"%s"}' "$sid" "$1"
+}
+
 hook() { printf '%s' "${2-}" | GHOZTTY_PANE_ID="$PANE" bash "$SCRIPT" "$1"; }
 
 expect_states() {
@@ -139,6 +143,83 @@ else
   expect_states "needs_input
 needs_input"
 fi
+
+
+# Claude fires idle_prompt ~60s after every turn ends with no input. Pausing on
+# it painted every idle pane needs_input a minute after it finished, and settle
+# kept re-asserting it until a later turn happened to run a tool.
+begin "the idle notification does NOT pause an idle pane"
+hook settle "$(main_payload Stop)"
+hook pause "$(notification_payload idle_prompt)"
+hook settle "$(main_payload Stop)"
+if [ -f "$MARKER" ]; then
+  fail_case "idle_prompt wrote the needs_input marker"
+else
+  expect_states "idle
+idle"
+fi
+
+
+begin "non-blocking and untyped notifications do NOT pause"
+hook pause "$(notification_payload auth_success)"
+hook pause "$(notification_payload some_future_type)"
+hook pause '{"session_id":"x","hook_event_name":"Notification","message":"Claude is waiting for your input"}'
+if [ -f "$MARKER" ]; then
+  fail_case "a non-blocking notification wrote the needs_input marker"
+else
+  expect_states ""
+fi
+
+
+begin "a permission-prompt notification DOES pause"
+hook pause "$(notification_payload permission_prompt)"
+hook settle "$(main_payload Stop)"
+expect_states "needs_input
+needs_input"
+
+
+begin "an elicitation-dialog notification DOES pause"
+hook pause "$(notification_payload elicitation_dialog)"
+expect_states "needs_input"
+
+
+# The PreToolUse (AskUserQuestion/ExitPlanMode) and PermissionRequest pauses
+# carry their own payloads; only a Notification is filtered by type.
+begin "a PreToolUse / PermissionRequest pause still pauses"
+hook pause "$(printf '{"session_id":"%s","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"q":"notification_type"}}' "$sid")"
+hook pause "$(printf '{"session_id":"%s","hook_event_name":"PermissionRequest","tool_name":"Bash"}' "$sid")"
+expect_states "needs_input
+needs_input"
+
+
+# Answering by typing -- a permission prompt dismissed with Escape and then a
+# new instruction, or a question answered in prose -- runs no tool, so only the
+# prompt submit can un-pause the pane.
+begin "a submitted prompt clears needs_input"
+hook pause "$(main_payload PreToolUse)"
+hook prompt-submit "$(main_payload UserPromptSubmit)"
+hook settle "$(main_payload Stop)"
+if [ -f "$MARKER" ]; then
+  fail_case "prompt-submit left the needs_input marker"
+else
+  expect_states "needs_input
+busy
+idle"
+fi
+
+
+begin "a submitted prompt with nothing paused makes no IPC call"
+hook prompt-submit "$(main_payload UserPromptSubmit)"
+expect_states ""
+
+
+begin "session start drops a question its pane's last session left"
+hook pause "$(main_payload PreToolUse)"
+hook session-start "$(main_payload SessionStart)"
+hook settle "$(main_payload Stop)"
+expect_states "needs_input
+idle
+idle"
 
 
 begin "a main-thread tool-tick DOES clear needs_input"

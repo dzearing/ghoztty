@@ -80,6 +80,35 @@ struct PaneSidebarStateTests {
         #expect(!state.isHoverOpen)
         #expect(!state.showsAllWindows, "the all-windows scope is off by default")
     }
+
+    // MARK: All-windows folds
+
+    @Test func otherWindowsStartFoldedAndThisOneOpen() {
+        #expect(State.isWindowFolded(isThisWindow: false, isToggled: false, isSearching: false))
+        #expect(!State.isWindowFolded(isThisWindow: true, isToggled: false, isSearching: false))
+    }
+
+    @Test func aToggleFlipsTheDefault() {
+        #expect(!State.isWindowFolded(isThisWindow: false, isToggled: true, isSearching: false))
+        #expect(State.isWindowFolded(isThisWindow: true, isToggled: true, isSearching: false))
+    }
+
+    @Test func aSearchUnfoldsEverything() {
+        for isThisWindow in [false, true] {
+            for isToggled in [false, true] {
+                #expect(!State.isWindowFolded(isThisWindow: isThisWindow, isToggled: isToggled, isSearching: true))
+            }
+        }
+    }
+
+    @MainActor
+    @Test func leavingAllWindowsForgetsTheFolds() {
+        let state = PaneSidebarState(isPinned: true, isHidden: false)
+        state.showsAllWindows = true
+        state.toggledWindows = [ObjectIdentifier(state)]
+        state.showsAllWindows = false
+        #expect(state.toggledWindows.isEmpty, "the next look starts from the default")
+    }
 }
 
 struct PaneSidebarTextTests {

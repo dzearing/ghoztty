@@ -1280,7 +1280,7 @@ final class LocalAgentManager {
     /// Run `/bin/launchctl` with `args`, returning its exit status + combined
     /// output. Synchronous (each launchctl verb returns promptly).
     @discardableResult
-    private static func launchctl(_ args: [String]) -> (status: Int32, output: String) {
+    static func launchctl(_ args: [String]) -> (status: Int32, output: String) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         proc.arguments = args

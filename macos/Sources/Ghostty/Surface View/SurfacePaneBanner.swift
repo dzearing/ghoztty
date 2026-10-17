@@ -41,8 +41,10 @@ extension Ghostty {
         /// once toward `maxDisplayLines`.
         static let maxCellWrapLines = 3
 
-        /// Corner radius of the floating banner card.
-        private static let cornerRadius = GlassCard.cornerRadius
+        /// Corner radius of the floating banner card: the shared glass card
+        /// radius, or — inside an elevated pane's rounded card — one
+        /// concentric with it (`PaneElevation.nestedCardCornerRadius`).
+        var cornerRadius: CGFloat = GlassCard.cornerRadius
 
         /// Uniform inner padding of the card. Equal on all sides so the
         /// collapsed card — which shows only the title row — is vertically
@@ -78,12 +80,14 @@ extension Ghostty {
             text: String,
             background: Color? = nil,
             paneWidth: CGFloat = 0,
+            cornerRadius: CGFloat = GlassCard.cornerRadius,
             initiallyCollapsed: Bool = false,
             linkSurface: Ghostty.SurfaceView? = nil
         ) {
             self.text = text
             self.background = background
             self.paneWidth = paneWidth
+            self.cornerRadius = cornerRadius
             self._collapsed = State(initialValue: initiallyCollapsed)
             self.linkSurface = linkSurface
         }
@@ -124,8 +128,8 @@ extension Ghostty {
             .font(.system(size: 12))
             .padding(Self.innerPadding)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .modifier(GlassCardBackground(fill: cardFill))
-            .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
+            .modifier(GlassCardBackground(fill: cardFill, cornerRadius: cornerRadius))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .onTapGesture {
                 guard collapsible else { return }
                 toggleCollapsed()

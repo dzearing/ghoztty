@@ -422,6 +422,23 @@ ghoztty +set-state --target=dev --state=idle
 
 Processes can also set state via OSC escape sequence: `\033]7777;<state>\007`
 
+**`needs_input` means a question is actually on screen.** It is set by
+`AskUserQuestion`/`ExitPlanMode` (PreToolUse), `PermissionRequest`, and only
+the `permission_prompt`/`elicitation_dialog` **Notification** types — never
+`idle_prompt`, which Claude fires ~60s after *every* turn ends with no input
+(pausing on it turned each idle pane into "question" a minute after it
+finished). The generated hook narrows Notification with a matcher
+(`ClaudeHookSpec.blockingNotificationMatcher`), and the script's `pause` also
+filters by `notification_type`, failing closed on an unknown or missing type,
+so a hook installed before the matcher is fixed by the script alone. A pause is
+undone by the next main-thread tool call **or by a submitted prompt** (a
+dismissed permission prompt or a question answered in prose runs no tool), and
+`session-start` drops a marker its pane's previous session left. `+list --json`
+reports each terminal pane's `state` (machine token); the human `+list` marks
+non-idle panes `[busy]` / `[question]`. **Windows:** the win32 generated hook
+(`src/apprt/win32/ClaudeHookSpec.zig`) still has the unmatched Notification
+hook — T2001.
+
 ### `ghoztty +set-banner`
 
 Set or clear the sticky banner of a named pane or window. The banner is a native overlay rendered above the terminal content of a pane — it persists (survives scrolling, screen clears, and content updates) until changed or cleared. Setting a banner on a window target applies it to that window's focused pane (banners are per-pane).
@@ -579,6 +596,21 @@ scanning live windows by name, so no `+list` is needed first. (It used to be
 registry-only, so every `--target=window-N` failed with `not found in
 registry` until something walked the tree — invisibly, for the many callers
 that discard stderr.)
+
+`$GHOZTTY_WINDOW_NAME` is baked at spawn, like every env var, and a session
+restore bakes it too: the restored window's name is settled **before** its
+panes are built, so an agent restart (reboot) RELAUNCHes each shell with it
+(`AppDelegate.sessionLayoutLeafConfig`; it used to come back with
+`GHOZTTY_PANE_ID` only). The name is the persisted target when it is still
+free, else a fresh `window-N` — never a name another window holds, which
+`+close --target=$GHOZTTY_WINDOW_NAME` would then close
+(`AppDelegate.restoredWindowName`; tests: `SessionLayoutRestoreTests`). A
+target name never changes after creation (`+rename` changes the title, not
+the target), but a process keeps the value it was spawned with, so a pane
+whose window could not re-adopt its name on restore holds a stale one. **The
+authoritative lookup is `+list --json`, keyed by `$GHOZTTY_PANE_ID`**; the
+env var is the cheap, usually-right shortcut. **Windows:** restored panes get
+`GHOZTTY_WINDOW_NAME` too (T1883).
 
 ### Pane identity
 
@@ -1016,8 +1048,14 @@ the interactive mock settled).
   every row that kills with no confirmation and no undo window; Escape leaves
   it. Right-click → Close Pane is the ordinary confirmed close.
 - Activity: a **busy** pane's icon shimmers (no spinner, no glow); `needs_input`
-  shows a **question** badge — the human label, never the machine token.
+  shows a **question** badge — the human label, never the machine token. Both
+  animate on **Core Animation**, never an endless SwiftUI animation, which
+  re-renders the whole sidebar every frame (measured: ~90% of the main thread
+  at rest with 40 windows; `PaneSidebarAnimationLayers.swift`).
 - **All-windows** header toggle (off by default) groups every window's panes.
+  Its caption counts the windows. Every window starts **folded** except this
+  one (search unfolds all; `PaneSidebarState.isWindowFolded`). **Windows:**
+  T1924.
   Windows are **sorted by name** (Finder order; stable as focus moves), and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
   **sticky** project header and labeled by its worktree alone

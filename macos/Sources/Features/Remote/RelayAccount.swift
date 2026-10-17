@@ -240,6 +240,12 @@ final class RelayAccount: ObservableObject {
         // `MachineEnrollmentRevoking`.
         await enrollment.restoreEnrollment(
             accountEmail: session.email, sessionToken: session.sessionToken)
+        // …and serve it: a restored (or never-revoked) enrollment of this
+        // account is what puts the machine in every chooser, so it comes
+        // online now rather than at the next launch.
+        if self === Self.shared {
+            await RelayHostAgent.shared.reconcile(reason: "sign-in")
+        }
         // Recover the remote windows suspended at sign-out: replay their
         // preserved manifest entries through the launch-restore path. Only the
         // real app account drives app-level window state (test instances with
@@ -306,6 +312,16 @@ final class RelayAccount: ObservableObject {
                 enrollment.armPendingRevocation(accountEmail: email)
                 revocation = .notRevoked(detail: "deferred by the user")
             }
+        }
+
+        // This machine stops serving its enrollment — awaited, so the relay
+        // agent is gone before anything reports "signed out". Every outcome
+        // above means no agent: revoked or already revoked (the credential is
+        // dead), another account's machine (not ours to serve), and a PENDING
+        // revocation, where the credential still works and stopping the agent
+        // is the only thing keeping the machine dark until the retry lands.
+        if self === Self.shared {
+            await RelayHostAgent.shared.stop(reason: "sign-out")
         }
 
         // 2. The session.

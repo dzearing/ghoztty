@@ -424,8 +424,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         c.scheduleInitialPresentation {
             if activate {
                 c.showWindow(self)
-            } else if let window = c.window {
-                Self.orderInBackground(window)
+            } else {
+                c.showWindowInBackground()
             }
 
             // Only cascade if we aren't fullscreen.
@@ -491,8 +491,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         c.scheduleInitialPresentation {
             if activate {
                 c.showWindow(self)
-            } else if let window = c.window {
-                Self.orderInBackground(window)
+            } else {
+                c.showWindowInBackground()
             }
             if let window = c.window {
                 // If we have a tree size, resize the window's content to match
@@ -1377,6 +1377,23 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     /// Setup correct window frame before showing the window
     override func showWindow(_ sender: Any?) {
+        guard window is TerminalWindow else { return }
+        applyInitialFrame()
+        super.showWindow(sender)
+    }
+
+    /// Show the window WITHOUT taking focus (`IPCFocusPolicy.background`).
+    /// Same initial frame as `showWindow` — a script-opened window used to skip
+    /// it and come up at the 800×600 placeholder instead of the last window's
+    /// size and position.
+    func showWindowInBackground() {
+        guard let window = window as? TerminalWindow else { return }
+        applyInitialFrame()
+        Self.orderInBackground(window)
+    }
+
+    /// Configured position, else the last window's frame, else centered.
+    private func applyInitialFrame() {
         guard let terminalWindow = window as? TerminalWindow else { return }
 
         // Set the initial window position. This must happen after the window
@@ -1399,8 +1416,6 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             // This doesn't work in `windowDidLoad` somehow
             terminalWindow.center()
         }
-
-        super.showWindow(sender)
     }
 
     // Shows the "+" button in the tab bar, responds to that click.
