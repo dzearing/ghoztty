@@ -36592,3 +36592,12 @@ moved to T1814.
 - **Validation.** New `test\win32\fullscreen-exit.ps1` ALL PASS (44), `-NegativeControl` fails exactly its 2 inset checks. Unit tests in `fullscreen_exit.zig` and `Config.zig`. Floor lanes, P1-P3 and the harness floor green. Due acceptance 28/31; the reds are pre-existing (T2016, T1854, T2001).
 - **Decision.** D99 asks whether Ctrl+Enter should stop toggling full screen. Unchanged until answered.
 - **Mac.** Nothing owed: Mac's full screen already reveals its title bar at the top edge, and Cmd+Ctrl+F is its platform key.
+
+## 2026-10-16 — T2010: the parallel test runner can no longer freeze when WMI stalls
+
+- **The report.** A 103-script `acceptance-parallel.ps1 run` stopped writing results at 11:34. Four scripts finished by 11:41 and were never scored, and at 12:08 the runner had no children and the 1800 s timeout had not fired.
+- **Root cause.** The runner scores every job and enforces every timeout on one thread, and after each worker job it ran `Get-CimInstance Win32_Process` with no bound. The WMI-Activity log shows the CIMWin32 provider host replaced at 11:41:07. Before that, the run's own timeline has finished scripts scored 50-93 s late in same-instant clusters. After 11:35 the sweep never returned.
+- **What changed.** `Stop-ApWorkerProcess` now lists processes through `GetProcesses` + `QueryFullProcessImageName` (`Get-ApProcessesUnder`), and no runner file calls WMI.
+- **Validation.** `test\win32\acceptance-parallel.ps1` ALL PASS (71). New section H: no WMI in the runner files (a planted call is flagged), the new sweep finds and kills (positive control), and a worker killed mid-run, a hung one past its timeout and their neighbour are all scored within seconds. The original stall was not reproduced: inducing one means breaking a system service.
+- **Filed.** T2024 (the scripts' own 83 unbounded WMI calls), T2025 (`go-loop-guard.ps1` red from lane B: it expects the `[go-loop]` marker), T2026 (`floor-lane.ps1` defaults to lane A's checkout, so a bare lane-B floor grades lane A).
+- **Mac.** Nothing owed: Windows test harness only.

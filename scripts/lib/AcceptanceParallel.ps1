@@ -522,6 +522,57 @@ function Remove-ApLineageRunKeys {
     return $removed
 }
 
+# T2010: process image paths WITHOUT WMI. The runner scores every job on one
+# thread, and that thread is also the one that enforces the per-script timeout,
+# so anything it calls must be bounded. Get-CimInstance is not: on 2026-10-16 the
+# CIMWin32 provider host stalled from about 11:35 to 11:41, every acceptance
+# script's own WMI call waited it out, and the runner's never came back - four
+# finished scripts unscored and the run idle for half an hour with no children.
+# OpenProcess + QueryFullProcessImageName is a kernel call per process and
+# cannot wait on another process's health.
+if (-not ('ApProc' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class ApProc {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool QueryFullProcessImageNameW(IntPtr h, int flags, StringBuilder name, ref int size);
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr h);
+    // PROCESS_QUERY_LIMITED_INFORMATION. Null when the process is gone or
+    // cannot be opened (a protected system process).
+    public static string ImagePath(int pid) {
+        IntPtr h = OpenProcess(0x1000, false, pid);
+        if (h == IntPtr.Zero) return null;
+        try {
+            StringBuilder sb = new StringBuilder(1024);
+            int size = sb.Capacity;
+            return QueryFullProcessImageNameW(h, 0, sb, ref size) ? sb.ToString(0, size) : null;
+        } finally { CloseHandle(h); }
+    }
+}
+'@
+}
+
+function Get-ApProcessesUnder {
+    <#
+    .SYNOPSIS
+    Every running process whose image lives under -Prefix (a directory path
+    ending in '\'), as { Id; Path }. Never touches WMI (T2010).
+    #>
+    param([Parameter(Mandatory = $true)][string]$Prefix)
+    foreach ($p in [System.Diagnostics.Process]::GetProcesses()) {
+        $path = [ApProc]::ImagePath($p.Id)
+        if ($path -and $path.StartsWith($Prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            [pscustomobject]@{ Id = $p.Id; Path = $path }
+        }
+        $p.Dispose()
+    }
+}
+
 function Stop-ApWorkerProcess {
     <#
     .SYNOPSIS
@@ -531,9 +582,8 @@ function Stop-ApWorkerProcess {
     param([Parameter(Mandatory = $true)][string]$Root)
     $prefix = (Join-Path $Root 'zig-out').TrimEnd('\') + '\'
     $n = 0
-    foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })) {
-        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    foreach ($p in @(Get-ApProcessesUnder -Prefix $prefix)) {
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         $n++
     }
     if ($n -gt 0) { Start-Sleep -Milliseconds 400 }

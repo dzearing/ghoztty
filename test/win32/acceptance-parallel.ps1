@@ -56,6 +56,13 @@
        cannot honor one and is refused there (never started), while in the
        literal checkout it runs under the default (positive control); the
        runner removes the Run-key values its lineages may have written.
+    H  T2010. Nothing the runner calls can wedge it: no runner file calls WMI
+       (its per-worker sweep once sat in Get-CimInstance through a provider-host
+       stall and four finished scripts went unscored for half an hour), with a
+       planted call as the checker's negative control; the WMI-free sweep still
+       finds and kills (positive control); and a worker killed mid-run, a hung
+       one past its declared timeout, and their neighbour are all scored
+       promptly.
 
   The "app" here is a renamed copy of ping.exe started with no window, and the
   scripts are fixtures written into a throwaway repo under %TEMP%, so the run
@@ -525,6 +532,71 @@ onexistent\ghoztty-agent.exe') } finally { $rk.Close() }
     Check 'G8 a -Exe the job''s own arguments pass is obeyed, not doubled' `
         ($ga.Count -eq 1 -and $ga[0].Kind -eq 'pass' -and $ar.Count -eq 1 -and $ar[0].exe -eq $own) ("kind=$($ga[0].Kind) $($ga[0].Line) exe=$($ar[0].exe)")
     if ($priorInst) { $env:GHOZTTY_AGENT_INSTANCE = $priorInst }
+
+    # ---- H: nothing the runner calls can wedge it (T2010) ---------------------------
+    # The runner scores every job, and enforces every timeout, on one thread. On
+    # 2026-10-16 its per-worker sweep sat in Get-CimInstance while the WMI
+    # provider host stalled, and never came back: four scripts finished and went
+    # unscored, and the 1800s timeout could not fire. So no runner file may call
+    # WMI (read from CODE, comments stripped, so the explanation above is legal).
+    $wmiRx = '(?i)Get-CimInstance|Get-WmiObject|\bgwmi\b|Invoke-CimMethod|Get-CimAssociatedInstance|\[wmi(class|searcher)?\]|ManagementObjectSearcher'
+    $findWmi = {
+        param($p)
+        $code = -join (Get-ApCodeText -Path $p).Chars
+        $n = 0
+        foreach ($l in ($code -split "`n")) { $n++; if ($l -match $wmiRx) { "$(Split-Path -Leaf $p):${n}: $($l.Trim())" } }
+    }
+    $runnerFiles = @('scripts\lib\AcceptanceParallel.ps1', 'scripts\acceptance-parallel.ps1', 'scripts\lib\RunVerdict.ps1', 'scripts\lib\AcceptanceFresh.ps1')
+    $wmiHits = @(foreach ($rf in $runnerFiles) { & $findWmi (Join-Path $RepoRoot $rf) })
+    Write-Fixture (Join-Path $fake 'test\win32\hwmi.ps1') "# Get-CimInstance only in a comment`n`$x = @(Get-CimInstance Win32_Process)`n"
+    Write-Fixture (Join-Path $fake 'test\win32\hcomment.ps1') "# Get-CimInstance only in a comment`n<# Get-WmiObject here too #>`n'ALL PASS'`n"
+    $plantHit = @(& $findWmi (Join-Path $fake 'test\win32\hwmi.ps1'))
+    $commentHit = @(& $findWmi (Join-Path $fake 'test\win32\hcomment.ps1'))
+    Check 'H1 no runner file calls WMI (the checker flags a planted call on its line, and ignores one in a comment)' `
+        ($wmiHits.Count -eq 0 -and $plantHit.Count -eq 1 -and $plantHit[0] -match ':2: ' -and $commentHit.Count -eq 0) `
+        ("runner=[$($wmiHits -join ' | ')] planted=[$($plantHit -join ' | ')] comment=[$($commentHit -join ' | ')]")
+
+    # The WMI-free sweep still finds and kills: the positive control C3 lacks.
+    $psiH = New-Object System.Diagnostics.ProcessStartInfo -ArgumentList $exe1, '-n 120 127.0.0.1'
+    $psiH.UseShellExecute = $false; $psiH.CreateNoWindow = $true; $psiH.RedirectStandardOutput = $true
+    $appH = [System.Diagnostics.Process]::Start($psiH); $planted += $appH
+    Start-Sleep -Milliseconds 500
+    $under = @(Get-ApProcessesUnder -Prefix ((Join-Path $w1 'zig-out') + '\'))
+    $sweptH = Stop-ApWorkerProcess -Root $w1
+    $appH.WaitForExit(5000) | Out-Null
+    Check 'H2 positive control: the WMI-free sweep finds the app under worker 1 by its image path and kills it' `
+        (@($under | Where-Object { $_.Id -eq $appH.Id -and $_.Path -ieq $exe1 }).Count -eq 1 -and $sweptH -ge 1 -and $appH.HasExited) `
+        ("found=$(($under | ForEach-Object { "$($_.Id)=$($_.Path)" }) -join ',') swept=$sweptH exited=$($appH.HasExited)")
+
+    # THE TASK'S FIXTURE: a worker killed mid-run is scored when it dies, a hung
+    # one when its declared timeout runs out, and the neighbour beside them is
+    # scored too - all well inside the 90s either would take on its own.
+    $hx = [ordered]@{
+        'hvictim' = "Set-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'hvictim.pid') -Value `$PID`nStart-Sleep -Seconds 90`n'ALL PASS'`n"
+        'hhang'   = "# suite-timeout-sec: 6`nStart-Sleep -Seconds 90`n'ALL PASS'`n"
+        'hok'     = "Start-Sleep -Seconds 2`n'ALL PASS'`n"
+    }
+    foreach ($k in $hx.Keys) { Write-Fixture (Join-Path $fake "test\win32\$k.ps1") $hx[$k] }
+    $pidFile = Join-Path $fixLog 'hvictim.pid'
+    $killer = "`$f = '$pidFile'; `$t = (Get-Date).AddSeconds(60); while (-not (Test-Path `$f) -and (Get-Date) -lt `$t) { Start-Sleep -Milliseconds 200 }; Start-Sleep -Seconds 2; Stop-Process -Id ([int](Get-Content `$f | Select-Object -First 1)) -Force"
+    $kpsi = New-Object System.Diagnostics.ProcessStartInfo 'powershell.exe'
+    $kpsi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"$killer`""
+    $kpsi.UseShellExecute = $false; $kpsi.CreateNoWindow = $true
+    $killProc = [System.Diagnostics.Process]::Start($kpsi); $planted += $killProc
+    $hJobs = @($hx.Keys | ForEach-Object { [pscustomobject]@{ Script = "test\win32\$_.ps1"; Args = '' } })
+    $hClock = [Diagnostics.Stopwatch]::StartNew()
+    $hr = @(Invoke-AcceptanceRun -Repo $fake -Jobs $hJobs -Width 4 -LogDir (Join-Path $fixLog 'h') -TimeoutSec 120 -RepoLiteral $fake -NoConfirm)
+    $hClock.Stop()
+    $hBy = @{}; foreach ($r in $hr) { $hBy[$r.Name] = $r }
+    $dur = { param($r) if ($r) { [int]($r.Ended - $r.Started).TotalSeconds } else { -1 } }
+    $vic = $hBy['hvictim.ps1']; $hang = $hBy['hhang.ps1']; $ok = $hBy['hok.ps1']
+    Check 'H3 a worker killed mid-run is scored red as soon as it dies, not left running' `
+        ($vic -and $vic.Kind -notin @('pass', 'skip', 'stall') -and (& $dur $vic) -lt 30) ("kind=$($vic.Kind) $(& $dur $vic)s line=$($vic.Line)")
+    Check 'H4 a hung worker is scored stall when its declared timeout runs out' `
+        ($hang -and $hang.Kind -eq 'stall' -and (& $dur $hang) -lt 30) ("kind=$($hang.Kind) $(& $dur $hang)s")
+    Check 'H5 the neighbour is scored, and the whole run ends well inside either script''s 90s' `
+        ($ok -and $ok.Kind -eq 'pass' -and $hr.Count -eq 3 -and $hClock.Elapsed.TotalSeconds -lt 45) `
+        ("rows=$($hr.Count) ok=$($ok.Kind) wall=$([int]$hClock.Elapsed.TotalSeconds)s")
 }
 catch { Write-Host "FAIL  the harness threw: $($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)"; $script:Failures++ }
 finally {

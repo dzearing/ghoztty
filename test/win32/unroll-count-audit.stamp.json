@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-16T16:29:45-07:00",
-    "commit":  "31fb974a1",
+    "generated":  "2026-10-16T16:57:18-07:00",
+    "commit":  "9232178db",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/lib/AcceptanceParallel.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
@@ -29,7 +29,7 @@
                   "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "8fc0b036bb645aed4df88b6d108e355163b6cc36665a47495dece100e53b327f",
-                  "scripts/git-commit-guard.ps1":  "e59f969e07f0607310fb4861f332e2c05f97d6f635197c00720a6d6bbc867961",
+                  "scripts/git-commit-guard.ps1":  "ca563c19e5e8ef05e36629c35e1322576ec1317c5d1e08b454596dfb9dedb3b1",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "e65ddcb0f8d3c875848b955cacc1a7d019423281995c77537e1a35d5f98970f1",
                   "scripts/go-loop-health.ps1":  "6cf687bd809ddb017a4559e49b394740c8d6379272a2f0f3160e542d8e050cd8",
@@ -43,7 +43,7 @@
                   "scripts/launch-upgrade.ps1":  "b40fbe903eface94ada0064617d4371c35459af628fa8c26e894fb2df12bff92",
                   "scripts/ledger-dupes.ps1":  "925bdaab83d54c0917554c09d98a48f3fb90e26c6e1c89be2d2570d6dbb224e2",
                   "scripts/lib/AcceptanceFresh.ps1":  "6cca87511a61fdad80d2a407552895a85edd2134a0e0426cd6fa0f37ad055f8b",
-                  "scripts/lib/AcceptanceParallel.ps1":  "fe271fdabbf2487f5c0e71d7ef8aafe4742b59306284d5c99f00687d8b571cfd",
+                  "scripts/lib/AcceptanceParallel.ps1":  "81430af6ef786a76a6a4489a9f4f3358b90795aa3088a9f7c6dca176b5d8ab68",
                   "scripts/lib/BuildCache.ps1":  "80ea732ee0458d094bf9eec6ae24d8260291db7f0211bfd2d048f1bb7fa2a20e",
                   "scripts/lib/CacheHeal.ps1":  "6cfed7ef0813d88fdbe457354757834a6e557c2172437f4d5022de79656f22f3",
                   "scripts/lib/CommitHeadroom.ps1":  "d0b9c51ed47e8c8fb890aaf75789ef824d5f6f4b4f906b942a6e9d0ad1873223",
