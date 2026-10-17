@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-16T19:32:16-07:00",
-    "commit":  "53dacf43a",
+    "generated":  "2026-10-16T21:55:13-07:00",
+    "commit":  "8dc997a45",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/floor-lane.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
@@ -24,7 +24,7 @@
                   "scripts/delivery-version.ps1":  "8678da54a8fca38a64a140258485920abbf0f282dbf07da0e51512acea3df4a0",
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",
                   "scripts/fetch-symbols.ps1":  "ef40b9f0b393b5662331bb7fdca267fe87d2dcf64f6ce9b83e99a3d7cc39c35a",
-                  "scripts/floor-lane.ps1":  "8dfd9a9dd7351f5b0c1a348239df4ea24ed7880df84da623661e09100a933a0b",
+                  "scripts/floor-lane.ps1":  "5862c35e43e85b89dfcb917e77b32fb461b7b22a2fc84aeceee976513fb1b312",
                   "scripts/focus-pull-scan.ps1":  "ce1ebfa8aac19eed0eb7cc7578fb0a1df8b39974204777a9991ac2fea1eec8e8",
                   "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",

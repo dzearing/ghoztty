@@ -191,7 +191,10 @@ param(
     # `-Dtest-optimize=ReleaseSafe` and a seed, and that the Debug floor lanes
     # carry neither, without a ten-minute compile per assertion.
     [switch]$DryRun,
-    [string]$Repo = 'D:\git\ghoztty',
+    # Resolved in the body: the worktree this copy lives in (T2026). The literal
+    # 'D:\git\ghoztty' it used to default to made every lane-B floor build and
+    # grade lane A's checkout and report ALL LANES PASS about the wrong tree.
+    [string]$Repo,
     [string]$CacheDir,
     [switch]$NoSweep,
     # A crashed lane re-runs its test binary under cdb to capture a stack (T450).
@@ -274,6 +277,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 
 # Decodes a crashed child's truncated exit code and reads the Windows crash log
 # (T444). Without it a lane can end on a bare "exited with error code 5".
@@ -1481,6 +1485,7 @@ function Invoke-ParallelFloor {
 
 $cacheDir = Resolve-CacheDir -RepoPath $Repo -Explicit $CacheDir
 if (-not (Test-Path $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
+Write-Host "FLOOR REPO=$Repo"
 Write-Host "ZIG_GLOBAL_CACHE_DIR=$cacheDir"
 
 # T1431. Zig's C/C++ compile steps (glslang, oniguruma, translate-c, helpgen)
@@ -1651,7 +1656,10 @@ if ($DryRun) {
     if ($parallel) { $Isolated = [switch]$true }
     foreach ($l in $lanes) {
         if ($l -eq 'harness') {
-            Write-Host ("DRY-RUN {0}: powershell -NoProfile -File scripts\harness-floor.ps1{1}" -f $l, $(if (-not $HarnessFull) { ' -Scoped' }))
+            # Names the repo the real run passes (T2026), so a dry run can prove
+            # which checkout the harness floor would grade.
+            Write-Host ("DRY-RUN {0}: powershell -NoProfile -File `"{1}`" -Repo `"{2}`"{3}" -f $l,
+                (Join-Path $Repo 'scripts\harness-floor.ps1'), $Repo, $(if (-not $HarnessFull) { ' -Scoped' }))
             continue
         }
         Write-Host ("DRY-RUN {0}: zig build {1}" -f $l, (Get-LaneBuildArgs -Name $l))
