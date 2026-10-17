@@ -36816,3 +36816,10 @@ moved to T1814.
 - **No code commit.** The re-runs were the deliverable, and they landed in many turns' stamp commits.
 - **Found on the way.** The due set is green except drag-perf (T1854). The harness floor ran the full set, timed out at 25 of 31 (T1657), and turned up one new red: skip-visibility B1. Fourteen scripts print SKIP without counting it, filed as T2056 (P1). Committed under `-NoGuardDue` for those two rows, neither of which covers a file this change touches.
 - **Mac.** Nothing owed: this is the Windows guard table.
+## 2026-10-17 — T2053 (lane b): the "intermittent app crash" was the other lane's agent-upgrade test killing our apps
+
+- **Root cause.** `0xFFFFFFFF` is exit -1, the code `Stop-Process` passes to TerminateProcess. No app path exits with it (a Zig panic or segfault exits 3). `agent-upgrade.ps1`'s `Stop-TestProcs` killed every `ghoztty.exe`/`ghoztty-agent*` whose command line contained `zig-out`: lane B's app and agent, and every parallel-worker mirror. Every lane-B death between 09:07 and 09:21 falls inside a lane-A agent-upgrade run. T2052, lane A's P1 bystander red, is the same kill seen from the other side.
+- **What landed.** `Stop-TestProcs` selects by image path: this checkout's `zig-out*` stem, the -Exe/-AgentExe/-StaleAgentExe dirs, this run's `$root\`, or a dead earlier run's root. New arm P4: a renamed ping in another tree's `zig-out` must survive every teardown. `CleanSlateAudit` gains `cross-lane-kill`, which no exemption can excuse (A10-A12).
+- **Validated.** agent-upgrade ALL PASS (159), P1 and P4 green, on the final file. cleanslate-audit ALL PASS (32). remote-pill (19), remote-disconnect (56) and persistence-flag (29) all green. Harness floor: see T2053; asserted-nothing and skip-visibility are PENDING (T1568, T1123). drag-perf is red on its known T1854 defect. No zig code was touched, so the zig lanes were not run.
+- **Filed.** T2054 (postmortem should call -1 an outside kill), T2055 (four scripts count by command-line zig-out), T2059 (floor-lane's harness cap is shorter than a whole sweep).
+- **Mac.** Nothing owed: Windows acceptance harness only.

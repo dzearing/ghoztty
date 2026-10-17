@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-17T11:10:39-07:00",
-    "commit":  "6afaf4e35",
+    "generated":  "2026-10-17T12:18:06-07:00",
+    "commit":  "9b2b478b4",
     "uncommitted":  [
 
                     ],
@@ -978,7 +978,7 @@
                   "test/win32/agent-sharing-uplink.ps1":  "48866fb9552847f84988466b853cf5fdc5ff48fcf6d21d8973f1fe872da10ed4",
                   "test/win32/agent-shell-integration.ps1":  "92d042090b917c3d6aa12d32eaddb9d118b09d0f3d29f255ce03880705edb8b0",
                   "test/win32/agent-stamp-inputs.ps1":  "95fbc858cddc1e0fde3e896ec699998298f5cfebbb1b595acd190e21cc913fe3",
-                  "test/win32/agent-upgrade.ps1":  "873f5f3c30bc46fad5fa63b61f4378bdd872133d8a71b13f60d90c0ddfab66db",
+                  "test/win32/agent-upgrade.ps1":  "9536e849f891c3babf17c11aa305aa1ce0356713eff7f0215afbe1b8935ac19a",
                   "test/win32/agent-user-env.ps1":  "6bb44600b96dca3b342a128736b63e28e9955c5517c2c87eba6e0c0d8d5b3fd1",
                   "test/win32/app-restart.ps1":  "55cb4a73f57cde520c5c0ca3d041242b11d8b5d534d2a8808d5d62a093a2dd4f",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
@@ -1024,7 +1024,7 @@
                   "test/win32/chrome-theme.ps1":  "d910d0060d4131b191be9c1567276f7c98747981c8f430b77cd543586dd4d051",
                   "test/win32/claude-fullscreen-env.ps1":  "af09ed9e96b5d9eda02e54f9cdbcd59e08b0ed9d3bd20143b9813da59059c0ac",
                   "test/win32/claude-integration.ps1":  "a65c25e4bb1b51a50a227b72126a6feedb1a0c7443f3838d32888b9359c4090b",
-                  "test/win32/cleanslate-audit.ps1":  "aaac1014e6239ed379c79e5b333fd5171e1cee64d4fe9a1a926bebb3d39a6062",
+                  "test/win32/cleanslate-audit.ps1":  "78bcc00c4d312aa52084b00e523c26d8922cfe376d3427516fe64633e6dc1ab9",
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
                   "test/win32/click-coord-audit.ps1":  "1a253420ca13f516c51cd7537e408b78a72ee5ebee0cd3552cf7e514b9f106f8",
                   "test/win32/cli-focus-policy.ps1":  "e2a64a514c82bed115563af1625b71f9eea10efd4c4077c1ee26a1f531c969af",
