@@ -36660,3 +36660,9 @@ moved to T1814.
 - **Fix.** The helper now appends the lineage the way `LocalAgent.pipeName` does. The script finds the rebuilt window as the widest new window, asserts it took a `window-N` name, aims J/K at that name, and lists every window on a miss.
 - **Validated.** chooser-restore-all-remote ALL PASS (49). The other bridge-helper callers are all ALL PASS: chooser-resume-remote (40), chooser-orphan-badge (17), orphan-notify (13) and session-reattach (44). The harness floor was run with `-Repo` (T2026). drag-perf (T1854) and hook-json (T2001) are red for their own tracked reasons.
 - **Mac.** Nothing owed: test-only change on the Windows harness.
+
+## 2026-10-16 — T2025: the go-loop guard harness passes from lane B as well
+
+- **The gap.** `go-loop-guard.ps1` hard-coded lane A's window marker (`[go-loop]`) and resume-shim path. Run from lane B, it went red at K2, L2 and I4, even though the scripts were correctly using lane B's names (`[go-loop b]`, `ghoztty-go-loop-resume-b.cmd`). So lane B could never clear the go-loop guard row.
+- **Fix.** The harness now gets the marker and shim from `scripts/lib/LoopLane.ps1` for the same `-Repo` the scripts under test read. A new check, K0b, keeps lane A's historical names locked in. The cleanup used to delete lane A's real shim when run from lane B; it now deletes its own lane's shim.
+- **Validated.** ALL PASS (435) on lane A, and ALL PASS (435) with `GHOZTTY_LOOP_LANE=b` (marker `[go-loop b]`). The harness floor (scoped) passed. Lane B's own tree was mid-T2016, so it was not used.

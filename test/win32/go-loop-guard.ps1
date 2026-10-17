@@ -122,6 +122,15 @@ $execScript = Join-Path $Repo 'scripts\go-loop-exec.ps1'
 # Resolve-LoopStallVerdict directly, and a helper that happens to be in scope
 # because another file needed something else is not a dependency anybody can see.
 . (Join-Path $Repo 'scripts\loop-session.ps1')
+# T2025: the window marker and the resume shim are per-LANE (T1984), so the
+# names this harness expects come from the same library the scripts under test
+# read, for the same -Repo. Lane-A literals made every run from
+# D:\git\ghoztty-b red at K2/L2/I4 against scripts behaving as designed.
+. (Join-Path $Repo 'scripts\lib\LoopLane.ps1')
+$laneId = Get-LoopLaneId -Repo $Repo
+$laneMarker = Get-LoopLaneMarker $laneId
+$laneMarkerLike = [System.Management.Automation.WildcardPattern]::Escape($laneMarker) + '*'
+$laneShim = Get-LoopLaneResumeShim $laneId
 
 New-Item -ItemType Directory -Force $root | Out-Null
 
@@ -551,7 +560,7 @@ if ($ready) {
         Assert 'I3 the pane really ran the resume shim' ($seen -match $marker)
     }
     Assert 'I4 the shim carries the whole quoted prompt' `
-        ((Get-Content (Join-Path $env:TEMP 'ghoztty-go-loop-resume.cmd') -Raw) -match "echo `"$marker`"")
+        ((Get-Content $laneShim -Raw) -match "echo `"$marker`"")
     Assert 'I5 the re-entry is recorded in the state file' `
         ((Test-Path $state) -and ((Get-Content $state -Raw | ConvertFrom-Json).last_action -eq 'new-window'))
     Ghoz @('+close', '--target=go-loop-test') | Out-Null
@@ -617,17 +626,21 @@ if ($ready) {
     $paneA = New-TestWindow 'exec-a'
     $paneC = New-TestWindow 'plain-c'
     Assert 'K0 two stand-in windows are open' ($null -ne $paneA -and $null -ne $paneC)
+    "  (lane $laneId, marker '$laneMarker')"
+    Assert 'K0b lane a keeps the historical marker and shim names' `
+        ((Get-LoopLaneMarker 'a') -eq '[go-loop]' -and
+         (Split-Path -Leaf (Get-LoopLaneResumeShim 'a')) -eq 'ghoztty-go-loop-resume.cmd')
     if ($paneA -and $paneC) {
         $r = Exec-Run @('mark', '-PaneId', $paneA.id)
         Assert 'K1 mark succeeds' ($r.Code -eq 0 -and $r.Out -match '^MARKED')
-        Assert 'K2 the window title carries the marker' ((Get-WindowTitle 'exec-a') -like '`[go-loop`]*')
-        Assert 'K3 an unmarked window keeps its own title' ((Get-WindowTitle 'plain-c') -notlike '`[go-loop`]*')
+        Assert 'K2 the window title carries the marker' ((Get-WindowTitle 'exec-a') -like $laneMarkerLike)
+        Assert 'K3 an unmarked window keeps its own title' ((Get-WindowTitle 'plain-c') -notlike $laneMarkerLike)
         $r = Exec-Run @('list', '-PaneId', $paneA.id)
         Assert 'K4 list flags only the marked window' `
             (([regex]::Matches($r.Out, '(?m)^EXEC ')).Count -eq 1 -and $r.Out -match 'EXEC exec-a')
         $r = Exec-Run @('unmark', '-PaneId', $paneA.id)
         Assert 'K5 unmark succeeds' ($r.Code -eq 0 -and $r.Out -match '^UNMARKED')
-        Assert 'K6 the marker is gone from the title' ((Get-WindowTitle 'exec-a') -notlike '`[go-loop`]*')
+        Assert 'K6 the marker is gone from the title' ((Get-WindowTitle 'exec-a') -notlike $laneMarkerLike)
     }
 
     ""
@@ -645,7 +658,7 @@ if ($ready) {
 
         $r = Exec-Run @('claim', '-PaneId', $paneA.id, '-GraceSeconds', 1)
         Assert 'L1 the lock holder claims primary' ($r.Code -eq 0 -and $r.Out -match '^PRIMARY')
-        Assert 'L2 it marks its own window' ((Get-WindowTitle 'exec-a') -like '`[go-loop`]*')
+        Assert 'L2 it marks its own window' ((Get-WindowTitle 'exec-a') -like $laneMarkerLike)
         Assert 'L3 it names the duplicate' ($r.Out -match 'DUPLICATE execution window target=exec-b')
         Assert 'L4 it reports resolving exactly one' ($r.Out -match 'resolved 1 duplicate')
         $gone = $false
@@ -666,7 +679,7 @@ if ($ready) {
             $r = Exec-Run @('claim', '-PaneId', $paneD.id, '-NoSelfClose')
             Assert 'L8 it stands down with exit 3' ($r.Code -eq 3 -and $r.Out -match '^STAND-DOWN')
             Assert 'L9 it names the primary it deferred to' ($r.Out -match "notified primary in pane $($paneA.id)")
-            Assert 'L10 it unmarks itself' ((Get-WindowTitle 'exec-d') -notlike '`[go-loop`]*')
+            Assert 'L10 it unmarks itself' ((Get-WindowTitle 'exec-d') -notlike $laneMarkerLike)
             $seen = ''
             for ($i = 0; $i -lt 20; $i++) {
                 Start-Sleep -Milliseconds 500
@@ -2983,7 +2996,7 @@ Kill-Sleepers
 Stop-DebugGhoztty
 if ($td) { Remove-TestDesktop }
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
-Remove-Item (Join-Path $env:TEMP 'ghoztty-go-loop-resume.cmd') -Force -ErrorAction SilentlyContinue
+Remove-Item $laneShim -Force -ErrorAction SilentlyContinue
 
 # --- stamp (T783) ---------------------------------------------------------
 # A green run RECORDS the content of every file it covers, so
