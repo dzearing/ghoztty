@@ -36830,3 +36830,9 @@ moved to T1814.
 - **Validated.** fork-identity ALL PASS (66), exit 0. The scorer with the same arguments and one skip prints `ALL PASS (65 assertions, 1 SKIPPED)`. `$SkipAuditPending` is empty, so nothing was exempted.
 - **Still red, not this task.** skip-visibility B1 fails on 14 other scripts with an empty pending list. They are named on T1123, which owns that red; the harness floor already reports it as PENDING against T1123.
 - **Mac.** Nothing owed: Windows acceptance harness only.
+
+## 2026-10-17 — T1045 (lane b): holder-volume's August B4/C3 flake was the ring overrun T1116 fixed; closed as fixed by 870693615
+
+- **Re-verified, not rebuilt.** `next` flagged CHECK FIRST. The harness was rewritten the day after this was filed. 870693615 (T1116) found that the flood, sized in typed bytes, overran the agent's own ring once the ConPTY re-rendered it. That evicted the marker, which is why B4 and C3 went red together. Neither of the task's two candidates was the cause. The echoed-marker one is real but separate (T1143), and the harness no longer waits on that marker.
+- **Validated.** 10/10 ALL PASS (17), each run straight after `holder-durable.ps1`. The marker reached disk 3-4 s after the sync point every time, against a 24 s window. `-NegativeControl` ALL PASS (15) and still loses the marker.
+- **Mac.** Nothing owed: Windows acceptance harness only.
