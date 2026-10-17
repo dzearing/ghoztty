@@ -476,3 +476,12 @@ as the digest that showed them.
 - Which panes came back (new angle on marking panes that will not come back: after a restart each pane shows reconnected or new shell)
 - Busy but silent (a busy pane with no output for ten minutes gets a "stuck?" mark in the sidebar)
 - Restart in place (an update restarts only the window process; panes keep live sessions and redraw where they were)
+
+## 2026-10-17
+
+- Click an error, land on the line (a compiler/test file:line:col in pane output opens the code viewer at that line, highlighted)
+- Every sidebar row shows its latest line (the pane's last printed line, dimmed, under its name)
+- Do not let the PC sleep mid-job (keep Windows awake while any pane is busy, shown as a moon in the sidebar)
+- Even out the whole window (new angle on evening out a divider: every pane in the window to equal size, again to restore)
+- A huge paste cannot freeze the window (new angle on the paste preview: a big paste streams with progress, Esc stops it)
+- Typing never waits on a save (session/layout saves fully off the input path, a slow disk delays a save, never a keystroke)
