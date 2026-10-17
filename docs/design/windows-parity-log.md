@@ -36823,3 +36823,10 @@ moved to T1814.
 - **Validated.** agent-upgrade ALL PASS (159), P1 and P4 green, on the final file. cleanslate-audit ALL PASS (32). remote-pill (19), remote-disconnect (56) and persistence-flag (29) all green. Harness floor: see T2053; asserted-nothing and skip-visibility are PENDING (T1568, T1123). drag-perf is red on its known T1854 defect. No zig code was touched, so the zig lanes were not run.
 - **Filed.** T2054 (postmortem should call -1 an outside kill), T2055 (four scripts count by command-line zig-out), T2059 (floor-lane's harness cap is shorter than a whole sweep).
 - **Mac.** Nothing owed: Windows acceptance harness only.
+
+## 2026-10-17 — T1043 (lane b): fork-identity's skip count was already on its verdict line; closed as fixed by aa615ffbf
+
+- **Re-verified, not rebuilt.** `next` flagged CHECK FIRST. aa615ffbf (T1511, 2026-09-12) moved `fork-identity.ps1` onto `Write-TestVerdict -Skipped $script:skips`, which was this task's recommended fix. 7317fec93 taught the analyzer to read that `-Skipped`. A skip-visibility re-run no longer names fork-identity.
+- **Validated.** fork-identity ALL PASS (66), exit 0. The scorer with the same arguments and one skip prints `ALL PASS (65 assertions, 1 SKIPPED)`. `$SkipAuditPending` is empty, so nothing was exempted.
+- **Still red, not this task.** skip-visibility B1 fails on 14 other scripts with an empty pending list. They are named on T1123, which owns that red; the harness floor already reports it as PENDING against T1123.
+- **Mac.** Nothing owed: Windows acceptance harness only.
