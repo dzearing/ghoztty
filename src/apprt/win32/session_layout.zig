@@ -298,8 +298,9 @@ pub const Window = struct {
     /// physical pixels, and over Remote Desktop the same machine can be 100%
     /// from one connection and 200% from the next, so a restore converts the
     /// size from this DPI to the one the window lands on. Additive: absent in
-    /// older manifests and in Mac blobs (whose frames are points already), and
-    /// a reader without it replays the frame unscaled, as before.
+    /// older manifests, and a reader without it replays the frame unscaled, as
+    /// before. A Mac blob never carries it, but its frame is in points, so the
+    /// translation sets 96 here (T1979, `mac_layout_blob.mac_points_dpi`).
     frame_dpi: ?u32 = null,
     maximized: bool = false,
     title_override: ?[]const u8 = null,

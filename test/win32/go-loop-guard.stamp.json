@@ -1,13 +1,13 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-10-16T23:19:07-07:00",
-    "commit":  "155e808c3",
+    "generated":  "2026-10-17T00:06:09-07:00",
+    "commit":  "d401aed67",
     "uncommitted":  [
 
                     ],
     "files":  {
-                  "scripts/git-commit-guard.ps1":  "f8f181fbfdb06e2de7801c9f60c728a90dfe62fa8ff4753b3b6d9f09f7a9f30a",
+                  "scripts/git-commit-guard.ps1":  "362105b3677ccb7e401ba858ca7dad11ba6a12d4abd77c9c07cf6f3b24af55bf",
                   "scripts/githooks/pre-commit":  "daec7d5f82b46569ef65b60775e50f2dc971c8fa6dc21855d438c14e3dd52d92",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "e65ddcb0f8d3c875848b955cacc1a7d019423281995c77537e1a35d5f98970f1",
@@ -18,6 +18,6 @@
                   "scripts/lib/StampMerge.ps1":  "c1397eeccbf3039c88b7d576b1c1948db4370987ebf053e8b9b6f50a6bf76926",
                   "scripts/loop-session.ps1":  "36cb72a6b1d94ad16e4db19676c4369a8d414f7754859b1a9d5c7f307fb993b6",
                   "scripts/stamp-merge.ps1":  "9cac1de32cf4554fbc4070e374cbe163e5b34cf164564499b002c0b3b6a67f3a",
-                  "test/win32/go-loop-guard.ps1":  "b16aa3baca8bee80414fc55d2207266728f78c9a3063ae6c6bca36458b439f68"
+                  "test/win32/go-loop-guard.ps1":  "b780407c2d3e89e36881add1472faf78dfa3e82882bba354c9909d88fe4c18e9"
               }
 }

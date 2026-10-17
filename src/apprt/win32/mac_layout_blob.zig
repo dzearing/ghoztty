@@ -59,6 +59,13 @@ const Allocator = std.mem.Allocator;
 
 const restore_frame = @import("restore_frame.zig");
 const session_layout = @import("session_layout.zig");
+const window_placement = @import("window_placement.zig");
+
+/// The DPI a macOS frame is measured at (T1979). Cocoa window frames are in
+/// points, which are device-independent at 1/72 inch on paper but map 1:1 onto
+/// win32 DIPs on screen (a 2x Retina point is two pixels, a 200% win32 DIP is
+/// two pixels), so a Mac frame is a frame "captured at" 96 dpi.
+pub const mac_points_dpi: u32 = 96;
 
 /// Ceiling on the nodes one entry's tree may flatten to. `Split.left`/`right`
 /// are `u16` indices, so this must stay well under 65535; a real window is a
@@ -222,6 +229,12 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             // and adopting the Mac window's identity here would let this rebuilt
             // copy overwrite the original's blob on the next push.
             .frame = frame,
+            // T1979: a Mac frame is in POINTS, and a point is a DIP - 96 dpi
+            // in win32 terms - whatever the source display's backing scale.
+            // Saying so lets the restore convert the size to the monitor the
+            // window lands on; without it a 200% display took the points as
+            // pixels and opened every Mac window at half size.
+            .frame_dpi = if (frame != null) mac_points_dpi else null,
             .title_override = window_title,
             .ipc_name = ipc_name,
             .active_tab = 0,
@@ -868,6 +881,10 @@ test "T337: tab siblings become one window in tabIndex order" {
     try testing.expectEqualStrings("dev", grouped.ipc_name.?);
     try testing.expectEqualStrings("pinned", grouped.title_override.?);
     try testing.expectEqual(@as(i32, 800), grouped.frame.?.w);
+    // T1979: the points are declared as 96-dpi units so the restore scales
+    // them; a window with no frame claims no scale.
+    try testing.expectEqual(@as(?u32, 96), grouped.frame_dpi);
+    try testing.expectEqual(@as(?u32, null), windows[1].frame_dpi);
     try testing.expectEqual(@as(usize, 2), grouped.tabs.len);
     try testing.expectEqualStrings("first", grouped.tabs[0].title.?);
     try testing.expectEqualStrings("second", grouped.tabs[1].title.?);
@@ -999,4 +1016,35 @@ test "T337: grouping an empty set is an empty set" {
     const arena = arena_state.allocator();
     const windows = try groupIntoWindows(arena, &.{});
     try testing.expectEqual(@as(usize, 0), windows.len);
+}
+
+test "T1979: a Mac window restores at its own size on a 200% display" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A 1440x900-point window, read the way Restore All reads it, then
+    // placed by the same pure rule `applyRestoreFrame` uses. At 200% the
+    // points are two pixels each: 2880x1800, not the old half-size 1440x900.
+    const entry = try translate(arena,
+        \\{"id":"e","frame":{"x":120,"y":60,"width":1440,"height":900},
+        \\ "tree":{"leaf":{"_0":{"sessionID":"a"}}}}
+    );
+    const windows = try groupIntoWindows(arena, &.{entry});
+    const w = windows[0];
+    const f = w.frame.?;
+    const work: restore_frame.Rect = .{ .x = 0, .y = 0, .w = 3840, .h = 2088 };
+    const rect: restore_frame.Rect = .{ .x = f.x, .y = f.y, .w = f.w, .h = f.h };
+
+    const at200 = window_placement.fitToMonitor(rect, w.frame_dpi, 192, work);
+    try testing.expectEqual(@as(i32, 2880), at200.w);
+    try testing.expectEqual(@as(i32, 1800), at200.h);
+
+    // At 100% a point IS a pixel, so nothing moves or resizes.
+    try testing.expectEqual(rect, window_placement.fitToMonitor(rect, w.frame_dpi, 96, work));
+
+    // At 150% the size scales by the same ratio as any other DPI change.
+    const at150 = window_placement.fitToMonitor(rect, w.frame_dpi, 144, work);
+    try testing.expectEqual(@as(i32, 2160), at150.w);
+    try testing.expectEqual(@as(i32, 1350), at150.h);
 }

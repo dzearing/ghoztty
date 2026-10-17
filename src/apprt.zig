@@ -727,6 +727,11 @@ test {
     // only non-std import is `remote/protocol.zig`, which builds in every lane).
     _ = @import("apprt/win32/layout_blobs.zig");
 
+    // Its macOS-lineage half (T337): reading a Mac manifest entry as a win32
+    // window. `layout_blobs.zig` imports it, but an import alone does not pull
+    // a file's tests into the binary, so until T1979 none of its tests ran.
+    _ = @import("apprt/win32/mac_layout_blob.zig");
+
     // Pure win32 cross-machine frame re-anchoring — a window frame authored on
     // another machine's monitors, clamped onto one of ours (T336), same
     // no-OS-imports deal.

@@ -1,6 +1,11 @@
 # T230 acceptance: an agent restart must NEVER re-execute a pane's recorded
 # command.
 #
+# @parallel-unsafe - beside three other workers (2026-10-17, T1979's due
+# sweep) its reboot-shape setup found no session manager or PTY holder alive
+# twice (2 of 147 red), then passed 147/147 alone: the agent kill/respawn it
+# stages does not survive a loaded box.
+#
 # The defect: `session-relaunch` defaulted to `auto`, so when the local agent
 # restarted (a reboot, or the T147 mandatory agent upgrade) every restored pane
 # fired a RELAUNCH of the command it had been opened with. The user rejected
