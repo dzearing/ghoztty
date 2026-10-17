@@ -1,8 +1,8 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-10-17T11:10:31-07:00",
-    "commit":  "6afaf4e35",
+    "generated":  "2026-10-17T12:11:28-07:00",
+    "commit":  "224679949",
     "uncommitted":  [
 
                     ],

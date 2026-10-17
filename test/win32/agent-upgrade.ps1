@@ -243,16 +243,47 @@ function Stop-TestProcs {
     # agent with), and Win32_Process.Name is the image name recorded at
     # creation - so an exact-name filter would walk straight past the one
     # process that arm is about and leak it into the next run.
+    #
+    # T2053: and matched by WHERE THE IMAGE LIVES, never by `*zig-out*` in the
+    # command line. That filter killed every debug ghoztty on the box - the
+    # other loop lane's app under test (D:\git\ghoztty-b\zig-out), every
+    # parallel worker's mirror - and the victims read as `CRASHED 0xFFFFFFFF`
+    # (Stop-Process's exit code) in whatever script they belonged to. The same
+    # goes for the temp root: `ghoztty-agent-upgrade-*` also matched a second
+    # run of this script under another pid.
     foreach ($n in @('ghoztty.exe', 'ghoztty-agent%')) {
         # cleanslate-exempt: LIKE, because the image under test is ghoztty-agent.exe.bak
         Get-CimInstance Win32_Process -Filter "Name LIKE '$n'" |
-            Where-Object {
-                $_.CommandLine -like '*zig-out*' -or
-                $_.ExecutablePath -like "$script:TestProcRoot*"
-            } |
+            Where-Object { Test-OwnTestProc $_.ExecutablePath } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     }
     Start-Sleep -Milliseconds 700
+}
+# The image directories this run launches from: this checkout's zig-out trees
+# (zig-out, zig-out-release, zig-out-release-stale), the -Exe/-AgentExe/
+# -StaleAgentExe directories when they were passed from elsewhere, and this
+# run's own temp root. Each compared with a trailing separator, except the
+# zig-out prefix, which is deliberately a stem inside this checkout only.
+function Get-OwnTestProcPrefixes {
+    $dirs = @("$root\")
+    foreach ($p in @($Exe, $AgentExe, $StaleAgentExe)) {
+        if ($p) { $dirs += ((Split-Path -Parent ([IO.Path]::GetFullPath($p))).TrimEnd('\') + '\') }
+    }
+    return @($dirs) + @((Join-Path $RepoRoot 'zig-out'))
+}
+function Test-OwnTestProc([string]$ImagePath) {
+    if (-not $ImagePath) { return $false }
+    foreach ($pre in (Get-OwnTestProcPrefixes)) {
+        if ($ImagePath.StartsWith($pre, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    # An earlier run's root is still ours to sweep once the run that made it is
+    # gone - the 2026-08-03 corpse holding the agent pipe (see above) came from
+    # exactly that. A root whose run is still alive is a concurrent run's.
+    $rx = '^' + [regex]::Escape($script:TestProcRoot) + '(\d+)\\'
+    if ($ImagePath -match $rx) {
+        return ($null -eq (Get-Process -Id ([int]$Matches[1]) -ErrorAction SilentlyContinue))
+    }
+    return $false
 }
 
 # The agents belonging to THIS run (their command line names this run's state
@@ -493,6 +524,21 @@ function Set-SeenNotesVersion([string]$version) {
     $name = if ($Release) { 'whats-new-seen' } else { 'whats-new-seen-debug' }
     [System.IO.File]::WriteAllText((Join-Path $dir $name), $version)
 }
+
+# T2053: the OTHER LANE's app, as far as a victim filter can tell - an image
+# named ghoztty.exe in somebody else's zig-out, `zig-out` in its command line.
+# A renamed ping, so it opens no window and dies on its own within 20 minutes
+# if this run never reaches its own kill. Every Stop-TestProcs below must walk
+# past it; P4 at the end says whether they did.
+$otherLaneDir = Join-Path $env:TEMP "ghoztty-t2053-otherlane-$PID\zig-out\bin"
+New-Item -ItemType Directory -Force $otherLaneDir | Out-Null
+$otherLaneExe = Join-Path $otherLaneDir 'ghoztty.exe'
+Copy-Item (Join-Path $env:SystemRoot 'System32\PING.EXE') $otherLaneExe -Force
+# persistence: not applicable - a renamed ping wearing the image name, never ghoztty
+# stderr: n/a - a copy of ping.exe wearing our name, not the app.
+$otherLane = Start-Process -FilePath $otherLaneExe -ArgumentList '-n', '1200', '127.0.0.1' `
+    -WindowStyle Hidden -PassThru
+$null = $otherLane.Handle
 
 Stop-TestProcs
 New-Item -ItemType Directory -Force $root | Out-Null
@@ -1733,6 +1779,14 @@ $stillAlive = @(Get-Process -Id $bystandersBefore -ErrorAction SilentlyContinue 
 $goneBy = @($bystandersBefore | Where-Object { $stillAlive -notcontains $_ })
 Assert "P1 bystander agents untouched (before: $($bystandersBefore.Count), gone: $($goneBy -join ' '))" `
     ($goneBy.Count -eq 0)
+# T2053: and the other lane's app. Before this the teardown matched `*zig-out*`
+# in the command line and killed every debug ghoztty on the box; lane B's apps
+# died as `CRASHED 0xFFFFFFFF` in whatever script they belonged to.
+Assert "P4 another tree's zig-out ghoztty.exe survived every teardown (pid $($otherLane.Id))" `
+    (-not $otherLane.HasExited)
+Stop-Process -Id $otherLane.Id -Force -ErrorAction SilentlyContinue
+$null = $otherLane.WaitForExit(5000)
+Remove-Item -Recurse -Force (Join-Path $env:TEMP "ghoztty-t2053-otherlane-$PID") -ErrorAction SilentlyContinue
 # A RELEASE app writes the agent autostart Run value; its name carries the
 # lineage suffix, so it can only ever be a NEW value beside the user's, never an
 # overwrite of theirs. Both halves are measured, then ours is removed - a Run

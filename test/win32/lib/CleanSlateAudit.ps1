@@ -49,6 +49,8 @@ $script:CleanSlateAuditNames = "ghoztty\.exe|ghoztty-agent\.exe|ghoztty-agent%|g
 # reason has to be seen to be reported, and a pattern that demanded `\S` would
 # simply not match it - leaving a rubber stamp indistinguishable from no stamp.
 $script:CleanSlateAuditMarker = '#\s*cleanslate-exempt\s*:?(.*)$'
+# T2053: a victim filter keyed on `zig-out` anywhere in the command line.
+$script:CleanSlateAuditCrossLane = "CommandLine\s+-(i)?like\s+['""]\*zig-out"
 
 # How far a kill's pipeline may run past the query line before we stop looking.
 # Six covers the widest real shape in the corpus (query, two Where-Object lines,
@@ -97,6 +99,20 @@ function Get-CleanSlateFindings {
         # and filtered on `$n`, so the name sits a line or two ABOVE.
         $back = [Math]::Max(0, $i - 3)
         if (($Text[$back..$last] -join ' ') -notmatch $script:CleanSlateAuditNames) { continue }
+
+        # T2053: a kill that picks its victims by `zig-out` in the COMMAND LINE
+        # is not excusable. Every debug ghoztty on the box has that in its
+        # command line - the other loop lane's app, every parallel worker's
+        # mirror - so no reason text can make it this run's process. It is
+        # how agent-upgrade.ps1, exempt for its LIKE, killed lane B's apps.
+        if ($forward -match $script:CleanSlateAuditCrossLane) {
+            $findings += [pscustomobject]@{
+                Line = $i + 1
+                Kind = 'cross-lane-kill'
+                Text = $line.Trim()
+            }
+            continue
+        }
 
         # A comment ABOVE the kill excuses it, and must say why.
         $first = [Math]::Max(0, $i - $script:CleanSlateAuditWindow)

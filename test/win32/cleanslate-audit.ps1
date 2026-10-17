@@ -71,11 +71,38 @@ $both = @(
     'function Stop-TestProcs {',
     '    foreach ($n in @(''ghoztty.exe'', ''ghoztty-agent.exe'')) {',
     '        Get-CimInstance Win32_Process -Filter "Name=''$n''" |',
-    '            Where-Object { $_.CommandLine -like ''*zig-out*'' } |',
+    '            Where-Object { $_.ExecutablePath -eq $Exe } |',
     '            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
     '    }',
     '}')
 Assert 'A3 the app+agent loop shape is a finding' ((KindsOf $both) -eq 'private-kill')
+
+# T2053: a victim filter on `zig-out` in the COMMAND LINE takes every debug
+# ghoztty on the box - the other loop lane's app included - and no exemption
+# excuses it. This is agent-upgrade.ps1's old Stop-TestProcs, marker and all.
+$crossLane = @(
+    'function Stop-TestProcs {',
+    '    foreach ($n in @(''ghoztty.exe'', ''ghoztty-agent%'')) {',
+    '        # cleanslate-exempt: LIKE, because the image under test is ghoztty-agent.exe.bak',
+    '        Get-CimInstance Win32_Process -Filter "Name LIKE ''$n''" |',
+    '            Where-Object {',
+    '                $_.CommandLine -like ''*zig-out*'' -or',
+    '                $_.ExecutablePath -like "$script:TestProcRoot*"',
+    '            } |',
+    '            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }',
+    '    }',
+    '}')
+Assert 'A10 a command-line zig-out kill is a cross-lane finding, exemption or not' ((KindsOf $crossLane) -eq 'cross-lane-kill')
+$crossLaneBare = @(
+    '    Get-CimInstance Win32_Process -Filter "Name=''ghoztty.exe''" |',
+    '        Where-Object { $_.CommandLine -like ''*zig-out*'' } |',
+    '        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }')
+Assert 'A11 and without a marker it is still cross-lane, not merely private' ((KindsOf $crossLaneBare) -eq 'cross-lane-kill')
+# Counting by command line stays legal: only the KILL takes another lane's app.
+$crossLaneCount = @(
+    '    @(Get-CimInstance Win32_Process -Filter "Name=''ghoztty.exe''" |',
+    '        Where-Object { $_.CommandLine -like ''*zig-out*'' }).Count')
+Assert 'A12 a command-line zig-out COUNT is not a finding' ((Findings $crossLaneCount).Count -eq 0)
 
 # The rule is about KILLS. Counting or inspecting processes is normal and stays
 # silent - several scripts assert on pids they enumerate.
