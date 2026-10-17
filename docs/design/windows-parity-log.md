@@ -36617,3 +36617,10 @@ moved to T1814.
 - **Left.** The "at least 2x closes a day" check. Single-lane baseline from the progress logs: 21, 20, 17 closes on 10-13..10-15. Lane B only came up at 16:47 today, so the first full two-lane day is 2026-10-17. The task is `blocked` with an `unblock:` that holds the counting command; the 10-18 morning triage should count it.
 - **Commit.** Docs and tracker only; validate runs under `-NoGuardDue` for hook-json (T2001), restore-all-remote (T2016) and drag-perf (T1854), all due at claim and none touching a file this turn changed.
 - **Mac.** Nothing owed: loop process only.
+
+## 2026-10-16 — T2013: the hero-mode tests measure against the pane grid, not the whole window
+
+- **Root cause.** Nothing was wrong in the app. The pane sidebar's rail (Mac's 68 DIP) now starts the pane grid at x=68. The hero is 977 of the 1314 px grid, or 74.4%. Both harnesses compared it with the full 1382 px client and required `left <= 2`, so every hero layout check failed on `left=68`, which the old message never printed.
+- **Fix.** `hero-mode.ps1` and `hero-viewer-tile.ps1` read the grid's left edge from the layout before hero mode and measure the ratio and left edge against the grid. The carousel's ~25% check now uses the grid too. The failure message prints h, left and grid-left.
+- **Validated.** hero-mode ALL PASS (88), hero-viewer-tile ALL PASS (18), scoped harness floor PASS. Zig lanes were not run because no Zig source changed.
+- **Mac.** Nothing owed: Windows test scripts only.

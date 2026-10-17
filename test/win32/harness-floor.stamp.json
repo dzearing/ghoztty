@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-16T17:44:00-07:00",
-    "commit":  "9232178db",
+    "generated":  "2026-10-16T18:29:13-07:00",
+    "commit":  "cfd2f8bb2",
     "uncommitted":  [
-                        "test/win32/acceptance-parallel.ps1"
+                        "test/win32/hero-mode.ps1",
+                        "test/win32/hero-viewer-tile.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -160,9 +161,9 @@
                   "test/win32/harness-floor.ps1":  "050f2c6bb9ff91e58ade9e5bdc2e6cb725c50cdc8d2a9b427c966feb286736d5",
                   "test/win32/harness-process-leak.ps1":  "b46c6e53003f25b41da789d1b52d215d9864b2ce6020edf9cac7e6ada45f6b53",
                   "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
-                  "test/win32/hero-mode.ps1":  "c8c1555bc57856bb9b7230747ea263552b4d90277fcbf22634890be083a74f35",
+                  "test/win32/hero-mode.ps1":  "eb2db2edbe2c0cdf46c3df32cf643aebd490e195409b48dbde2fe6f0804f139c",
                   "test/win32/hero-nav.ps1":  "730406b805999669a6d694b6d1e9ee20ec156dcba0e057d37c7dbf67c629f024",
-                  "test/win32/hero-viewer-tile.ps1":  "26d4fbd7098c85d97cc2ddb45a69fb5df5c5fdf00af461956a503b2a41ea7601",
+                  "test/win32/hero-viewer-tile.ps1":  "5adf19a67f7f9abb7a44391f43c23938f02427aa6ea66e5e300dbbcd83f29761",
                   "test/win32/history-guard-flavor.ps1":  "764859c2785f580a4c58e5e8af65e1d4c1fedfc15d81f0281f54d518fb91cf73",
                   "test/win32/holder-adopt.ps1":  "29d1c2e049f06473c3cb1003c930fdf6822c6718527789cdeed1dd4f6431983d",
                   "test/win32/holder-durable.ps1":  "7d42ae987bd4754e5cb9d4a041064eee0aa22f35d6cbc21313b2b1a9eda81be4",

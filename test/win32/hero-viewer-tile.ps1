@@ -233,6 +233,9 @@ try {
     }
     $termH = [IntPtr]$terms[0].Hwnd
     $viewH = [IntPtr]$views[0].Hwnd
+    # Left edge of the pane grid: the pane sidebar's rail (Mac's 68 DIP)
+    # sits left of it, so hero's ~75% is of the grid, not the client (T2013).
+    $gridLeft = [int](@($leaves | ForEach-Object { $_.Left }) | Measure-Object -Minimum).Minimum
 
     $haveLog = (Test-Path $errlog)
     # Positive control: a chord posted at the terminal reaches binding
@@ -263,8 +266,9 @@ try {
     if ($visible.Count -ne 1) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue; exit 1 }
     $hero = $visible[0]
     Assert ($hero.Kind -eq 'GhozttyTerminal') 'hero on: the focused TERMINAL is the hero pane'
-    Assert (($hero.Width -ge [int](0.6 * $client[0])) -and ($hero.Left -le 2)) `
-        "hero on: hero fills ~75% width on the left (w=$($hero.Width) of $($client[0]))"
+    $gridW = $client[0] - $gridLeft
+    Assert (($hero.Width -ge [int](0.6 * $gridW)) -and ($hero.Left -le ($gridLeft + 2))) `
+        "hero on: hero fills ~75% of the pane grid on its left (w=$($hero.Width) of grid $gridW, left=$($hero.Left) grid-left=$gridLeft)"
     # T58: every leaf is hero-sized, viewers included, so a selection swap
     # needs no reflow. This is also what makes the tile aspect ratio right.
     $hidden = @($leaves | Where-Object { -not $_.Visible })

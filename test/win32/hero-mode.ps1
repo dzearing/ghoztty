@@ -215,11 +215,15 @@ function Assert-HeroLayout($panes, $client, [string]$label) {
     Assert $ok "$label - exactly one visible pane (got $($visible.Count))"
     if (-not $ok) { return @{ Hero = $null; Ok = $false } }
     $hero = $visible[0]
-    $geom = ($hero.Width -ge [int](0.6 * $client[0])) -and
-            ($hero.Width -le [int](0.85 * $client[0])) -and
+    # The ratio is of the pane GRID, not the client: the pane sidebar's rail
+    # (Mac's 68 DIP) sits left of the grid, so the grid starts at
+    # $script:GridLeft, measured from the pre-hero layout (T2013).
+    $gridW = $client[0] - $script:GridLeft
+    $geom = ($hero.Width -ge [int](0.6 * $gridW)) -and
+            ($hero.Width -le [int](0.85 * $gridW)) -and
             ($hero.Height -ge [int](0.9 * $client[1])) -and
-            ($hero.Left -le 2)
-    Assert $geom "$label - hero fills ~75% width / full height on the left (w=$($hero.Width) of $($client[0]))"
+            ($hero.Left -le ($script:GridLeft + 2))
+    Assert $geom "$label - hero fills ~75% width / full height on the left of the grid (w=$($hero.Width) of grid $gridW, h=$($hero.Height) of $($client[1]), left=$($hero.Left) grid-left=$($script:GridLeft))"
     $allHeroSized = $true
     foreach ($p in $hidden) { if (-not (Same-Rect $p $hero)) { $allHeroSized = $false } }
     Assert $allHeroSized "$label - all hidden leaves sized exactly like the hero rect (T58: no reflow on swap)"
@@ -446,6 +450,10 @@ $pair = Get-Panes $top
 $client = Get-ClientSize $top
 Assert ($pair.Count -eq 2) "setup: 2 panes exist (got $($pair.Count))"
 $leaf0 = ($pair | Sort-Object Top, Left | Select-Object -First 1)
+# Left edge of the pane grid (right of the pane sidebar's rail), from the
+# normal layout before hero mode is on.
+$script:GridLeft = [int](@($pair | ForEach-Object { $_.Left }) | Measure-Object -Minimum).Minimum
+Assert ($script:GridLeft -lt [int](0.2 * $client[0])) "setup: pane grid starts near the left edge (grid-left=$($script:GridLeft))"
 $leaf0Hwnd = [IntPtr]$leaf0.Hwnd
 
 # --- Positive control: ctrl+k reaches binding dispatch (T55/T47-proven) ------
@@ -595,8 +603,8 @@ $res = Assert-HeroLayout $hero $client 'hero on (3 panes)'
 $big = $res.Hero
 if ($null -eq $big) { Write-Host 'ABORT: no hero pane'; exit 1 }
 Assert ($big.Hwnd -eq $leaf0.Hwnd) 'hero seeds from the focused pane (leaf 0 is the hero)'
-$ratio = ($client[0] - $big.Right) / [double]$client[0]
-Assert ([Math]::Abs($ratio - 0.25) -lt 0.06) ("carousel column is ~25% of client width (got {0:P1})" -f $ratio)
+$ratio = ($client[0] - $big.Right) / [double]($client[0] - $script:GridLeft)
+Assert ([Math]::Abs($ratio - 0.25) -lt 0.06) ("carousel column is ~25% of the pane grid's width (got {0:P1})" -f $ratio)
 
 # The carousel column owns no child HWNDs - it is owner-painted (T58). Every
 # leaf sits in the hero rect, so nothing may extend into the column.
