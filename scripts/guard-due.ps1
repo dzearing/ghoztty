@@ -5463,6 +5463,28 @@ $GuardTable = @(
         )
     },
 
+    # T1034 - the unwired-hook sweep. A hook documented "called by X" loses its
+    # caller when the CALLER changes, anywhere in the tree (signalFrameDrawn's
+    # would have been in src\renderer), so all of `src\` is covered, and the
+    # test scripts too, since a script that posts a WM_APP_* message by name
+    # is that message's sender. The run is a couple of seconds.
+    [pscustomobject]@{
+        Name   = 'unwired-hook'
+        Script = 'test\win32\unwired-hook-audit.ps1'
+        Stamp  = 'test\win32\unwired-hook-audit.stamp.json'
+        Covers = @(
+            'test\win32\unwired-hook-audit.ps1',
+            'test\win32\lib\UnwiredHookAudit.ps1',
+            'build.zig',
+            'src\*.zig',
+            'src\*\*.zig',
+            'src\*\*\*.zig',
+            'src\*\*\*\*.zig',
+            'src\*\*\*\*\*.zig',
+            'test\win32\*.ps1'
+        )
+    },
+
     # T796 - the seam sweep. It watches `test\win32\*.ps1` because a NEW script
     # is exactly how an unclassified seam arrives, and `src\**` because the
     # other half of a seam is the product learning to read the variable. Both

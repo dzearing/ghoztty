@@ -790,6 +790,19 @@ list, and ratchets the existing population per file
 from separately-rounded terms must be composed the same way in the script -
 round each term, then add (T314's `text_x`).
 
+**A hook whose doc comment names its caller must have one** (T1034). T1031
+found `Surface.signalFrameDrawn` documented "called by the renderer thread
+after SwapBuffers" with no call site anywhere, so the wait it fed expired on
+its timeout every frame from the day it was written, with every lane green.
+`test\win32\unwired-hook-audit.ps1` holds every `///`-documented fn, field or
+const under `src\apprt\win32` and `src\remote` whose comment says "called by",
+"set by", "posted by" and the like to its word - its name must appear on a
+code line somewhere in `src\` outside its declaration and outside a `test`
+block (a test is not the caller the comment promises) - and every `WM_APP_*`
+message to having both a handler and a sender. No registry and no baseline:
+it was zero on arrival, so a finding is new and is fixed by wiring the caller
+or deleting the hook with its comment.
+
 **A seam you SET is a statement that the unset case is untested** (T796). Every
 GUI section of `test\win32\relay-account.ps1` set `GHOSTTY_GOOGLE_CLIENT_ID` —
 legitimately, because a fake relay needs a fake id — and so the configuration
