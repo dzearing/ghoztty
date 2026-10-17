@@ -1478,17 +1478,66 @@ pub fn updateKeyStateIndicator(self: *Surface) void {
 /// window nobody resizes would otherwise stay broken.
 pub fn healOverlayZOrders(self: *Surface) void {
     const owner = self.hwnd orelse return;
-    if (self.banner_overlay) |b| w32.healOverlayZOrder(b.hwnd, owner);
-    if (self.dim_overlay) |d| w32.healOverlayZOrder(d.hwnd, owner);
-    if (self.bell_border) |b| w32.healOverlayZOrder(b.hwnd, owner);
-    if (self.readonly_badge) |b| w32.healOverlayZOrder(b.hwnd, owner);
-    if (self.key_state_indicator) |k| w32.healOverlayZOrder(k.hwnd, owner);
-    if (self.scrollbar) |s| w32.healOverlayZOrder(s.hwnd, owner);
+    inline for (overlay_fields) |name| {
+        if (@field(self, name)) |o| w32.healOverlayZOrder(o.hwnd, owner);
+    }
     // The hovered-URL bubble belongs on this list too (T180). It was left out
     // of T142 as a "short-lived popup", but only its VISIBILITY is short-lived:
     // the HWND is created on the first link hover and lives until the surface
     // is destroyed, so a stray topmost on it outlives every hover that follows.
     if (self.link_preview_hwnd) |h| w32.healOverlayZOrder(h, owner);
+}
+
+/// Every layered popup this pane owns (T2012): the one list both the z-order
+/// heal above and `hideOverlays` below walk, so an overlay that is healed is
+/// also hidden. Each is a separate top-level window owned by the surface
+/// HWND (`overlay_zorder.zig` says why), and hiding an OWNER does not hide
+/// the windows it owns - only minimizing does. A new overlay type joins this
+/// list or the "every pane overlay is listed" test below fails.
+const overlay_fields = .{
+    "banner_overlay",
+    "dim_overlay",
+    "bell_border",
+    "readonly_badge",
+    "key_state_indicator",
+    "scrollbar",
+};
+
+/// Take every popup this pane owns off screen NOW (T2012). For a pane that
+/// left the layout while staying alive - a close parked for `undo-timeout`
+/// (T1825) - nothing else will: the overlay passes walk the tab trees, and
+/// the pane is no longer in one, so its banner stood over the neighbour that
+/// took its space until the undo expired and `deinit` destroyed it. Hiding
+/// goes through each overlay's own `hide` so its shown-cache knows; coming
+/// back into a tree, the next layout pass re-shows whichever still apply.
+pub fn hideOverlays(self: *Surface) void {
+    inline for (overlay_fields) |name| {
+        if (@field(self, name)) |o| o.hide();
+    }
+    if (self.link_preview_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+}
+
+test "every pane overlay is listed in overlay_fields (T2012)" {
+    // An overlay here is a `?*T` field whose `T` carries both an `owner` and an
+    // `hwnd` HWND - the shape of every layered pane popup. One that is missing
+    // from the list is never hidden when its pane leaves the layout.
+    inline for (@typeInfo(Surface).@"struct".fields) |f| {
+        const info = @typeInfo(f.type);
+        if (info != .optional) continue;
+        const ptr = @typeInfo(info.optional.child);
+        if (ptr != .pointer) continue;
+        const T = ptr.pointer.child;
+        if (@typeInfo(T) != .@"struct") continue;
+        if (!@hasField(T, "owner") or !@hasField(T, "hwnd")) continue;
+        comptime var listed = false;
+        inline for (overlay_fields) |name| {
+            if (comptime std.mem.eql(u8, name, f.name)) listed = true;
+        }
+        if (!listed) {
+            std.debug.print("Surface.{s} is a pane overlay missing from overlay_fields\n", .{f.name});
+            return error.OverlayNotListed;
+        }
+    }
 }
 
 /// Set (or clear, with null/empty text) this pane's sticky banner (T35).

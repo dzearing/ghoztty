@@ -3141,6 +3141,19 @@ pub const WM_DISPLAYCHANGE: u32 = 0x007E;
 /// and re-read the accent from the registry (`system_colors.zig`, T305).
 pub const WM_DWMCOLORIZATIONCOLORCHANGED: u32 = 0x0320;
 pub const WM_SHOWWINDOW: u32 = 0x0018;
+/// Sent after any `SetWindowPos`/`DeferWindowPos`/`ShowWindow`; `lparam` is a
+/// `*const WINDOWPOS`. Unlike `WM_SHOWWINDOW` it also fires for a window
+/// shown or hidden by a position call's `SWP_SHOWWINDOW`/`SWP_HIDEWINDOW`.
+pub const WM_WINDOWPOSCHANGED: u32 = 0x0047;
+pub const WINDOWPOS = extern struct {
+    hwnd: ?HWND,
+    hwndInsertAfter: ?HWND,
+    x: i32,
+    y: i32,
+    cx: i32,
+    cy: i32,
+    flags: u32,
+};
 pub const HWND_BROADCAST: HWND = @ptrFromInt(0xFFFF);
 pub const SMTO_ABORTIFHUNG: u32 = 0x0002;
 

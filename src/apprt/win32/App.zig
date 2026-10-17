@@ -11746,6 +11746,24 @@ fn surfaceWndProc(
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
+        w32.WM_WINDOWPOSCHANGED => {
+            // A pane hidden by a position call - a stash, a zoom, the hero
+            // carousel, all `SWP_HIDEWINDOW` in a layout batch - gets no
+            // WM_SHOWWINDOW, so the arm above never ran and its owned popups
+            // stayed over the neighbour (T2012). Hidden: every popup goes with
+            // it. Shown: the scrollbar comes back here; the layout pass that
+            // showed the pane re-shows the rest.
+            if (drives_terminal) {
+                const pos: *const w32.WINDOWPOS = @ptrFromInt(@as(usize, @bitCast(lparam)));
+                if (pos.flags & w32.SWP_HIDEWINDOW != 0) {
+                    surface.hideOverlays();
+                } else if (pos.flags & w32.SWP_SHOWWINDOW != 0) {
+                    if (surface.scrollbar) |sb| sb.setOwnerVisible(true);
+                }
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
         w32.WM_SETTINGCHANGE => {
             // A broadcast reaches top-level windows, which here means the two
             // POPUPS and never the child terminal - the terminal hears this

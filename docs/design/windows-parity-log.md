@@ -36631,3 +36631,11 @@ moved to T1814.
 - **Fix.** `tab-strip-autohide.ps1` pins `--macos-pane-style=flat`, as `chrome-merged-row.ps1` already does. `pane-elevation.ps1` still scores the margin.
 - **Validated.** tab-strip-autohide ALL PASS (15). The negative control is still red. The scoped harness floor passed, and so did the zig lanes (lib/none/win32/agent).
 - **Mac.** Nothing owed: Windows test script only.
+## 2026-10-16 — T2012: a closed pane's banner no longer hangs over its neighbour
+
+- **The report.** With several bannered panes open, closing one left its banner on screen for about five seconds.
+- **Root cause.** A closed split is parked for `undo-timeout` (5 s by default, T1825) so ctrl+shift+z can bring it back. Parking hid the pane's own window only. Its banner, dim wash, bell frame, badges and scrollbar are separate popups the pane OWNS, and hiding an owner leaves owned windows up. The parked pane is also out of the tab tree that every overlay pass walks, so nothing touched them until the undo expired. A second hole showed up in the harness: a pane hidden by a layout batch (stash, zoom) gets no `WM_SHOWWINDOW`, which was the scrollbar's only hide hook.
+- **What changed.** `Surface.overlay_fields` is one list walked by both the z-order heal and the new `hideOverlays()`, and a comptime test fails if a new overlay field is left off it. `CloseUndo.hidePane` calls it through `PaneView`. The terminal surface's `WM_WINDOWPOSCHANGED` hides every popup on `SWP_HIDEWINDOW`, and the scrollbar no longer re-shows itself over a hidden owner.
+- **Validation.** New `test\win32\close-overlays.ps1` ALL PASS (16): every popup of the closed pane is off screen by the time `+close` answers (~50 ms) and still hidden 1 s later while the pane stays parked, and the same is true for `+stash`, with banner and scrollbar back on `+restore`. Its `-NegativeControl` goes red. `floor-lane.ps1 -Lane all` ALL LANES PASS.
+- **Filed.** T2028 (place overlays inside the pane's layout batch, so a drag can never show a banner a frame behind), T2029 (a move-to-window section for the harness).
+- **Mac.** Nothing owed: Mac's banner is a SwiftUI overlay inside the pane's view, so it already leaves with the pane.

@@ -236,6 +236,16 @@ pub fn hideDimOverlay(self: *PaneView) void {
     }
 }
 
+/// Take every layered popup this pane owns off screen now (T2012), for a
+/// pane that leaves the layout while staying alive. A viewer's only popup is
+/// its dim wash.
+pub fn hideOverlays(self: *PaneView) void {
+    switch (self.kind) {
+        .terminal => |s| s.hideOverlays(),
+        .viewer => |v| v.hideDimOverlay(),
+    }
+}
+
 /// Re-check the z-order of this pane's layered popups (T142).
 pub fn healOverlayZOrders(self: *PaneView) void {
     switch (self.kind) {

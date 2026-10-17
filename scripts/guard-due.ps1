@@ -4674,6 +4674,20 @@ $GuardTable = @(
             'test\win32\close-undo.ps1'
         )
     },
+    # A pane's overlay popups leave the screen with the pane (T2012): a close
+    # parked for undo hid the pane's window and left its banner, dim wash and
+    # scrollbar standing over the neighbour for the whole undo window. Covers
+    # the hide's two ends and the harness.
+    [pscustomobject]@{
+        Name   = 'close-overlays'
+        Script = 'test\win32\close-overlays.ps1'
+        Stamp  = 'test\win32\close-overlays.stamp.json'
+        Covers = @(
+            'src\apprt\win32\CloseUndo.zig',
+            'src\apprt\win32\PaneView.zig',
+            'test\win32\close-overlays.ps1'
+        )
+    },
     # The pane sidebar (T1828): its rules and geometry are unit-tested in every
     # lane, but whether the column is placed, pushes the grid over, paints, and
     # routes its clicks, pin and chord is only answered on the box. Covers the

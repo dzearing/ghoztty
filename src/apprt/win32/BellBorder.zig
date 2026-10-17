@@ -166,6 +166,12 @@ pub const BellBorder = struct {
         }
     }
 
+    /// The uniform name `Surface.hideOverlays` calls on every pane popup
+    /// (T2012): a pane leaving the layout drops its frame with no fade.
+    pub fn hide(self: *BellBorder) void {
+        self.hideNow();
+    }
+
     /// Off screen now, with no fade.
     pub fn hideNow(self: *BellBorder) void {
         _ = w32.KillTimer(self.hwnd, FADE_TIMER_ID);

@@ -357,6 +357,10 @@ fn pushOwned(self: *CloseUndo, key: usize, payload: Parked) Allocator.Error!void
 pub fn hidePane(pane: *PaneView) void {
     pane.setVisible(false);
     if (pane.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+    // Its banner, dim wash, bell frame, badges and scrollbar are popups the
+    // pane OWNS, and hiding an owner leaves its owned windows up: they stood
+    // over the neighbour for the whole undo window (T2012).
+    pane.hideOverlays();
 }
 
 fn hideTree(tree: *const Tree) void {

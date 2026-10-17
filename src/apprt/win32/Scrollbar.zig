@@ -350,7 +350,27 @@ pub const Scrollbar = struct {
             .w = width,
             .h = client_h,
         };
-        if (chrome_fanout.moveNeeded(self.shown, Placement.eql(self.placed, placement))) {
+        // A hidden owner keeps its scrollbar hidden (T2012), the rule the
+        // banner's `updatePosition` already follows. A pane parked for undo
+        // is still moved and sized, and `SWP_SHOWWINDOW` below would put its
+        // scrollbar back over the neighbour that took its place. It is still
+        // PLACED, hidden, so the owner's WM_SHOWWINDOW brings it back where
+        // the pane now is rather than where it last was.
+        if (w32.IsWindowVisible_(self.owner) == 0) {
+            if (!Placement.eql(self.placed, placement) or self.shown) {
+                _ = w32.SetWindowPos(
+                    self.hwnd,
+                    null,
+                    placement.x,
+                    placement.y,
+                    placement.w,
+                    placement.h,
+                    w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_HIDEWINDOW,
+                );
+                self.shown = false;
+                self.placed = placement;
+            }
+        } else if (chrome_fanout.moveNeeded(self.shown, Placement.eql(self.placed, placement))) {
             const was_shown = self.shown;
             chrome_fanout.noteMove(.scrollbar);
             _ = w32.SetWindowPos(
@@ -392,6 +412,12 @@ pub const Scrollbar = struct {
         // `SWP_SHOWWINDOW` lifts it above unrelated windows, which is the
         // T142 case the heal exists for (T1345).
         if (!visible) self.shown = false;
+    }
+
+    /// Off screen now - the same as the owner being hidden. The uniform name
+    /// `Surface.hideOverlays` calls on every pane popup (T2012).
+    pub fn hide(self: *Scrollbar) void {
+        self.setOwnerVisible(false);
     }
 
     /// Update cached theme colors and repaint if they changed.
