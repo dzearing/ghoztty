@@ -36601,3 +36601,11 @@ moved to T1814.
 - **Validation.** `test\win32\acceptance-parallel.ps1` ALL PASS (71). New section H: no WMI in the runner files (a planted call is flagged), the new sweep finds and kills (positive control), and a worker killed mid-run, a hung one past its timeout and their neighbour are all scored within seconds. The original stall was not reproduced: inducing one means breaking a system service.
 - **Filed.** T2024 (the scripts' own 83 unbounded WMI calls), T2025 (`go-loop-guard.ps1` red from lane B: it expects the `[go-loop]` marker), T2026 (`floor-lane.ps1` defaults to lane A's checkout, so a bare lane-B floor grades lane A).
 - **Mac.** Nothing owed: Windows test harness only.
+
+## 2026-10-16 — T1986: loop lane B is running beside lane A
+
+- **What is up.** `D:\git\ghoztty-b` is a worktree on a local `lane-b` branch that tracks `origin/users/dzearing/windows-amd64`. It has its own supervisor (`GhozttyGoLoopWatchdog-b`: Run entry, revive task, mutex), its own window (`main-b`, `[go-loop b]`, opened in the background) and its own lock. go.md step 0 says how to run, stop and rebuild it.
+- **The gap it found.** The commit guard pushed with a bare `git push`, which git refuses when the local branch name differs from the one it tracks. Every lane B commit would have stayed on the box. The guard now pushes `HEAD:<tracked branch>` by name, and lane A pushes exactly as before.
+- **Validation.** `go-loop-guard.ps1` ALL PASS (434). New W28c-f: a control shows the bare push is refused, a lane-shaped commit lands on the trunk without creating a `lane-b` branch on the remote, and a rejected one rebases and lands there. In production: lane B claimed T2010 while lane A held T1986, closed it, and pushed `46c18c396` + `c8bd56399` from `lane-b` onto the trunk. Lane A's next commit was rejected, rebased onto both and pushed (`3680467fc`), with no conflict and no lost commit. Lane B then took T2012. Harness floor and the due audits are green. No zig source changed, so the zig lanes were not run.
+- **Left for T1937.** The full-day throughput number (at least 2x the single-lane baseline) is the umbrella's to measure, now that both lanes run.
+- **Mac.** Nothing owed: the loop is Windows-seat process.
