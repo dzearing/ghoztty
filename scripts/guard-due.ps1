@@ -2490,12 +2490,20 @@ $GuardTable = @(
     # Deliberately narrow: the panel's pure modules (layout, rows, cards, the
     # gauge) carry their own unit tests in the win32 lane, and covering them
     # here would fire this gate on edits the script cannot fail on.
+    #
+    # The two IMPURE modules T299 split out of ActivityMonitor.zig are here
+    # (T1040): `activity_input.zig` is the filter field, the focus ring and the
+    # row keys that sections D, D2, L and O drive, and `activity_procs.zig` is
+    # Kill and New Process, which H, I, M and O drive. Until T1040 the row named
+    # only the file they had left, so an edit to either made nothing due.
     [pscustomobject]@{
         Name   = 'activity-monitor'
         Script = 'test\win32\activity-monitor.ps1'
         Stamp  = 'test\win32\activity-monitor.stamp.json'
         Covers = @(
             'src\apprt\win32\ActivityMonitor.zig',
+            'src\apprt\win32\activity_input.zig',
+            'src\apprt\win32\activity_procs.zig',
             'test\win32\activity-monitor.ps1'
         )
     },
@@ -4580,6 +4588,11 @@ $GuardTable = @(
     # it. `Window.zig` is on the list despite moving for a hundred unrelated
     # reasons, because the entry point that names the panel lives there and its
     # absence is exactly how the drift shipped.
+    #
+    # `activity_probe_conn.zig` joined in T1040: section H is the only place a
+    # per-card probe dials and CONNECTS (an inactive card carrying live numbers
+    # from its own connection, and close handing every probe back), and the
+    # module had no unit tests and no row.
     [pscustomobject]@{
         Name   = 'activity-monitor-remote'
         Script = 'test\win32\activity-monitor-remote.ps1'
@@ -4587,8 +4600,29 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\activity_borrow.zig',
             'src\apprt\win32\activity_machines.zig',
+            'src\apprt\win32\activity_probe_conn.zig',
             'src\apprt\win32\Window.zig',
             'test\win32\activity-monitor-remote.ps1'
+        )
+    },
+    # The probe's OTHER half (T298, row T1040): a directory machine that
+    # refuses the dial. activity-monitor-remote.ps1 cannot reach it - every card
+    # in that fixture exists because a window is connected, so every card is
+    # reachable - which is why this harness exists, and until T1040 it was in no
+    # row at all, so it had no stamp and could never be reported stale.
+    # `activity_probe_conn.zig` is the dial and its failure arm,
+    # `activity_machines.zig` turns the directory entry into a card (claim A).
+    # The backoff policy itself (`activity_probe.zig`) is pure and unit-tested,
+    # and stays out by the table's convention; section C is the end-to-end
+    # check that the policy is actually consulted.
+    [pscustomobject]@{
+        Name   = 'activity-monitor-probe-fail'
+        Script = 'test\win32\activity-monitor-probe-fail.ps1'
+        Stamp  = 'test\win32\activity-monitor-probe-fail.stamp.json'
+        Covers = @(
+            'src\apprt\win32\activity_probe_conn.zig',
+            'src\apprt\win32\activity_machines.zig',
+            'test\win32\activity-monitor-probe-fail.ps1'
         )
     },
     # The Activity Monitor's DIALED path (T297) - the third row on

@@ -36801,3 +36801,10 @@ moved to T1814.
 - **Found.** The agent's debug family is `-Doptimize=Debug` only, while the app's is Debug or ReleaseSafe. So a ReleaseSafe app's agent is on the user's endpoints. Filed as T2051.
 - **Validated.** `build-mode-guard.ps1` section H passes (H1-H11: stub agents, including ReleaseSafe; 66 assertions total). `launch-preflight-audit.ps1` passes (36): 29 agent launchers, 0 violations. All four zig lanes PASS. Due sweep: see the task file.
 - **Mac.** The flag ships in the shared agent. The harness gate is Windows test infrastructure.
+
+## 2026-10-17 — T1040: every Activity Monitor module with no unit tests is now in a guard row
+
+- **Re-verified first.** T329, T1419, T1634 and T709 had already closed most of this card in passing. Still unwatched: `activity_input.zig` (filter, focus ring, row keys), `activity_procs.zig` (Kill / New Process), `activity_probe_conn.zig` (per-card probe connections), and `activity-monitor-probe-fail.ps1`, which had no row and so had never stamped.
+- **What landed.** In `scripts/guard-due.ps1`, `activity-monitor` now covers input + procs and `activity-monitor-remote` covers probe_conn. A new `activity-monitor-probe-fail` row covers probe_conn + machines, and that script now stamps itself on a green run. The pure modules (cards, layout, probe, rows, panes) have 12-36 unit tests each and stay out, by the table's convention.
+- **Validated.** probe-fail ALL PASS (17), remote (96), activity-monitor (210), all stamped. `guard-due.ps1` went red on H2/P2 until the probe-fail script got its `update -Guard` call, then ALL PASS (128). body-complete, argv-hazard, unroll-count, unwired-hook and checkout-guard are green, and the scoped harness floor PASS. drag-perf is red only for T1854.
+- **Mac.** Nothing owed: this is the Windows guard table.

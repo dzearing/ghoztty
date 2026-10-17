@@ -310,6 +310,17 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+# --- stamp (T783, row added by T1040) ------------------------------------
+# A green run RECORDS the content of the probe's connection code and this
+# script, so scripts\guard-due.ps1 can answer "has anything run this harness
+# against the code as it now stands?". Until T1040 this harness was in no row,
+# so it had no stamp and an edit to the refused-dial arm made nothing due. A red
+# run leaves the stamp alone on purpose, and a -NegativeControl run never stamps.
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard activity-monitor-probe-fail -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+
 Write-Host ''
 if ($script:fail -eq 0) { Write-Host "ACTIVITY MONITOR PROBE-FAIL ACCEPTANCE: ALL PASS ($script:pass assertions)" }
 else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red; exit 1 }
