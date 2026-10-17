@@ -57,6 +57,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'count-or-zero.ps1'; Why = 'an assertion count is a real count, not a zero dressed as one (T617)' }
     [pscustomobject]@{ Name = 'unroll-count-audit.ps1'; Why = 'a count is wrapped at the point of use, so a one-element return cannot make it vacuous (T794)' }
     [pscustomobject]@{ Name = 'dip-rounding-audit.ps1'; Why = 'a DIP length is converted the way the app rounds it, so a 112.5% screen measures the pixel the app drew (T1020)' }
+    [pscustomobject]@{ Name = 'click-coord-audit.ps1'; Why = 'a click is aimed in screen coordinates, so a client offset cannot miss silently and fail a feature that works (T1032)' }
     [pscustomobject]@{ Name = 'seam-audit.ps1'; Why = 'an env seam a script sets is classified, so the state it hides is armed, a named gap, or knowingly out of reach (T796)' }
     [pscustomobject]@{ Name = 'isolation-meta.ps1'; Why = 'a script drives its own endpoints, never the user terminal''s' }
     [pscustomobject]@{ Name = 'build-mode-guard.ps1'; Why = 'a run refuses a release-lineage build before it launches anything (T350)' }

@@ -5374,6 +5374,9 @@ $GuardTable = @(
         Script = 'test\win32\harness-floor.ps1'
         Stamp  = 'test\win32\harness-floor-teeth.stamp.json'
         Covers = @(
+            # H14 asserts the command floor-lane hands the runner; T2026
+            # changed it and nothing made this harness due (T1032 turn).
+            'scripts\floor-lane.ps1',
             'scripts\harness-floor.ps1',
             'scripts\lib\HarnessFloor.ps1',
             'test\win32\harness-floor.ps1'
@@ -5438,6 +5441,25 @@ $GuardTable = @(
             'test\win32\dip-rounding-audit.ps1',
             'test\win32\lib\DipRoundingAudit.ps1',
             'test\win32\dip-rounding-audit.baseline.json'
+        )
+    },
+
+    # T1032 - the click-coordinate sweep. Its family, plus the two libraries
+    # whose CONTENT it depends on: TestDesktop.ps1 declares Send-TestMouse's
+    # parameter order (which the analyzer binds positional calls by) and the
+    # Send-TestClickStorm exemption's reason, and ChromeGeometry.ps1 holds the
+    # geometry objects its teeth are measured against. The corpus-wide net (a
+    # new script with a new click) is the harness-floor row, as for every
+    # floor member.
+    [pscustomobject]@{
+        Name   = 'click-coord'
+        Script = 'test\win32\click-coord-audit.ps1'
+        Stamp  = 'test\win32\click-coord-audit.stamp.json'
+        Covers = @(
+            'test\win32\click-coord-audit.ps1',
+            'test\win32\lib\ClickCoordAudit.ps1',
+            'test\win32\lib\TestDesktop.ps1',
+            'test\win32\lib\ChromeGeometry.ps1'
         )
     },
 

@@ -1396,6 +1396,24 @@ a moved button as a moved button. `GHOZTTY_TEST_MOUSE_CLIENT=1` reproduces the
 pre-T263 harness from the same tree, which is how a red script is told apart
 from a routing regression. Acceptance: `test/win32/mouse-nc-routing.ps1`.
 
+**A click is aimed in SCREEN coordinates, and a sweep checks it** (T1032).
+`Send-TestMouse` converts a screen point itself, so a client offset passed raw
+lands one client origin up and to the left - the post succeeds, the helper
+returns `$true`, and the test fails against a feature that works (T318's
+`-X $geo.KillX`). Offset by a screen rect: `($cr.Left + $geo.KillX)` with
+`$cr = Get-TestWindowRect -Client`. `test\win32\click-coord-audit.ps1` holds
+every `-X`/`-Y` in the suite to that, with no baseline (T327 found every site
+correct): the value must reach a rect's `Left`/`Top`/`Right`/`Bottom`, a
+screen producer (`Get-TestWindowRect`, `Get-TestWindows`, a pixel probe ...),
+or a lib helper whose own literal builds it from one (`$m.ClientLeft`). A
+geometry object that defines its OWN `Left` (the chooser roster geometry is
+client-space) is not a rect, and a property with no visible derivation is
+opaque. A point that arrives as a wrapper's parameter is judged at the
+wrapper's callers, to a fixpoint. `Send-TestClickStorm` takes CLIENT
+coordinates on purpose and is exempt by name. Exemption:
+`# click-coord: <reason>`; a point parsed from the app's log is declared
+screen-space in the audit's `$Declared` list instead.
+
 **A test sandbox can have an agent of its own** (T167). The local agent's
 single-instance guard is per-user and per-LINEAGE, and the lineage is a
 compile-time fact (`local-debug` for every debug build), so a debug agent
