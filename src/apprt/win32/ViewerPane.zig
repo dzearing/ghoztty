@@ -5018,6 +5018,8 @@ pub fn setGlassBackdrop(self: *ViewerPane, spec: ?pane_elevation.GlassBackdrop) 
     // The nav bar is a material over the same slice (T1916), and a child is
     // not repainted by its parent's invalidation.
     if (self.nav) |nav| _ = w32.InvalidateRect(nav.hwnd, null, 0);
+    // So is the feedback composer under it (T1926).
+    if (self.feedback) |bar| _ = w32.InvalidateRect(bar.hwnd, null, 0);
 }
 
 /// Assign the content mode, keeping the web view's background in step when
@@ -7928,6 +7930,56 @@ test "host floor: a real controller on a real window, on this box" {
             log.warn("glass nav band: x0=0x{X:0>6} mid=0x{X:0>6} solid=0x{X:0>6}", .{ got[0], got[got.len / 2], solid });
         }
 
+        // The feedback composer is the same material one band down (T1926):
+        // Mac's `ChromeBarBackground` is shared by both bars. Placed where the
+        // pane's bounds sync puts it - under the nav bar, so its slice of the
+        // desk is NOT the host's top-left - and photographed the same way.
+        const fb_row = struct {
+            fn shot(a: Allocator, bar: *ViewerFeedbackBar) ![]u32 {
+                var br: w32.RECT = undefined;
+                if (w32.GetClientRect(bar.hwnd, &br) == 0) return error.Win32Error;
+                const bw = br.right - br.left;
+                const bh = br.bottom - br.top;
+                if (bw <= 0 or bh <= 0) return error.Win32Error;
+                const screen = w32.GetDC(null) orelse return error.Win32Error;
+                defer _ = w32.ReleaseDC(null, screen);
+                const dib = Dib32.create(screen, bw, bh) orelse return error.Win32Error;
+                defer dib.destroy();
+                _ = w32.SendMessageW(bar.hwnd, w32.WM_PRINTCLIENT, @intFromPtr(dib.dc), 0);
+                // The top row: above the pill and the buttons, all band.
+                const row = try a.alloc(u32, @intCast(bw));
+                for (row, dib.pixels[0..@intCast(bw)]) |*o, p| o.* = p & 0x00FFFFFF;
+                return row;
+            }
+        }.shot;
+        const fb_top: i32 = fb_top: {
+            var hr: w32.RECT = undefined;
+            if (w32.GetClientRect(pane.hwnd.?, &hr) == 0) return error.Win32Error;
+            const top = nav_layout.Layout.init(pane.scale, hr.right - hr.left, pane.nav.?.shown()).bar_h;
+            pane.feedback.?.place(top, hr.right - hr.left, pane.scale);
+            break :fb_top top;
+        };
+        try testing.expect(fb_top > 0);
+        {
+            const bar = pane.feedback.?;
+            const got = try fb_row(alloc, bar);
+            defer alloc.free(got);
+            const want = try alloc.alloc(u32, got.len);
+            defer alloc.free(want);
+            pane_elevation.glassHeadRegion(want, got.len, 1, spec.rect[0], spec.rect[1] + fb_top, spec.full_w, spec.full_h, spec.palette, pane.bg, bar.bar_rgb);
+            for ([_]usize{ 0, got.len / 2, got.len - 1 }) |i| {
+                try testing.expectEqual(want[i], got[i]);
+            }
+            const solid: u32 = (@as(u32, bar.bar_rgb.r) << 16) | (@as(u32, bar.bar_rgb.g) << 8) | bar.bar_rgb.b;
+            try testing.expect(got[0] != solid);
+            // The nav bar's slice would be a different row of the desk; the
+            // band must not have painted the host's top-left.
+            const at_origin = try alloc.alloc(u32, got.len);
+            defer alloc.free(at_origin);
+            pane_elevation.glassHeadRegion(at_origin, got.len, 1, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg, bar.bar_rgb);
+            log.warn("glass composer band: top={d} x0=0x{X:0>6} mid=0x{X:0>6} origin=0x{X:0>6} solid=0x{X:0>6}", .{ fb_top, got[0], got[got.len / 2], at_origin[got.len / 2], solid });
+        }
+
         // What the browser's windows under the host are, for the record: the
         // sheet is laid under them on the strength of WebView2 showing the
         // host's pixels through a clear background.
@@ -7977,6 +8029,14 @@ test "host floor: a real controller on a real window, on this box" {
             const got = try nav_row(alloc, nav);
             defer alloc.free(got);
             const solid: u32 = (@as(u32, nav.bar_rgb.r) << 16) | (@as(u32, nav.bar_rgb.g) << 8) | nav.bar_rgb.b;
+            for ([_]usize{ 0, got.len / 2, got.len - 1 }) |i| try testing.expectEqual(solid, got[i]);
+        }
+        // ...and so is the composer (T1926).
+        {
+            const bar = pane.feedback.?;
+            const got = try fb_row(alloc, bar);
+            defer alloc.free(got);
+            const solid: u32 = (@as(u32, bar.bar_rgb.r) << 16) | (@as(u32, bar.bar_rgb.g) << 8) | bar.bar_rgb.b;
             for ([_]usize{ 0, got.len / 2, got.len - 1 }) |i| try testing.expectEqual(solid, got[i]);
         }
     }

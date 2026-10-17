@@ -61,6 +61,8 @@ const color_math = @import("color_math.zig");
 const chrome_theme = @import("chrome_theme.zig");
 const banner_card = @import("banner_card.zig");
 const banner_layout = @import("banner_layout.zig");
+const pane_elevation = @import("pane_elevation.zig");
+const Dib32 = @import("dib32.zig");
 const type_ramp = @import("type_ramp.zig");
 const icon_button = @import("icon_button.zig");
 const icon_paint = @import("icon_button_paint.zig");
@@ -224,6 +226,11 @@ selector: ?*RegionSelector = null,
 /// changes.
 scale: f32 = 0,
 caption_font: ?*anyopaque = null, // HFONT
+
+/// Where `place` last put the band in the host's client area - under the nav
+/// bar, never at the host's top-left - which is the band's slice of the glass
+/// sheet (T1926).
+top: i32 = 0,
 
 // Theme, derived from the pane's background in `applyTheme` — the same
 // derivation the nav bar runs, so the two bands are one surface.
@@ -903,6 +910,12 @@ pub fn place(self: *ViewerFeedbackBar, top: i32, width: i32, scale: f32) void {
     const l = layout_mod.Layout.init(self.layoutInput(width, scale));
     // Resize-aware, in-frame reposition (T1392) — see `chrome_reposition`.
     _ = chrome_reposition.place(self.hwnd, 0, top, width, l.bar_h, 0);
+    // On glass a band that only MOVED (the nav bar grew a row) covers a
+    // different slice of the desk, and a move can carry the old pixels along.
+    if (top != self.top) {
+        self.top = top;
+        if (self.pane.glass != null) _ = w32.InvalidateRect(self.hwnd, null, 0);
+    }
     if (self.scale != scale) {
         self.scale = scale;
         if (self.caption_font) |f| _ = w32.DeleteObject(@ptrCast(f));
@@ -1733,11 +1746,13 @@ fn buttonEnabled(self: *const ViewerFeedbackBar, b: layout_mod.Button) bool {
 }
 
 fn paint(self: *ViewerFeedbackBar, hdc: w32.HDC, width: i32, height: i32) void {
-    const bar_ref = w32.RGB(self.bar_rgb.r, self.bar_rgb.g, self.bar_rgb.b);
-    if (w32.CreateSolidBrush(bar_ref)) |brush| {
-        defer _ = w32.DeleteObject(@ptrCast(brush));
-        var r = w32.RECT{ .left = 0, .top = 0, .right = width, .bottom = height };
-        _ = w32.FillRect(hdc, &r, brush);
+    if (!self.paintGlass(hdc, width, height)) {
+        const bar_ref = w32.RGB(self.bar_rgb.r, self.bar_rgb.g, self.bar_rgb.b);
+        if (w32.CreateSolidBrush(bar_ref)) |brush| {
+            defer _ = w32.DeleteObject(@ptrCast(brush));
+            var r = w32.RECT{ .left = 0, .top = 0, .right = width, .bottom = height };
+            _ = w32.FillRect(hdc, &r, brush);
+        }
     }
 
     const l = layout_mod.Layout.init(self.layoutInput(width, self.scale));
@@ -1750,6 +1765,44 @@ fn paint(self: *ViewerFeedbackBar, hdc: w32.HDC, width: i32, height: i32) void {
     self.paintButtons(hdc, l);
     self.paintCarousel(hdc, l);
     self.paintFooter(hdc, l);
+}
+
+/// On a glass pane the band is the nav bar's material over the sheet rather
+/// than a solid band (T1926): on Mac `ChromeBarBackground` is shared by the nav
+/// bar and this composer, so the two read as one stack of chrome over the
+/// desk. The band sits `top` below the host's top-left, so its slice of the
+/// desk is offset by that much. False off glass or when no buffer could be
+/// made: the caller fills `bar_rgb`.
+fn paintGlass(self: *const ViewerFeedbackBar, hdc: w32.HDC, width: i32, height: i32) bool {
+    const g = self.pane.glass orelse return false;
+    if (width <= 0 or height <= 0) return true;
+    const dib = Dib32.create(hdc, width, height) orelse return false;
+    defer dib.destroy();
+    self.glassBand(dib.pixels, 0, 0, width, height, g);
+    _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
+    return true;
+}
+
+/// The band's material at the `w` x `h` block whose top-left is (`x`, `y`) in
+/// this window - the pixels `paintGlass` lays at those coordinates.
+fn glassBand(self: *const ViewerFeedbackBar, out: []u32, x: i32, y: i32, w: i32, h: i32, g: pane_elevation.GlassBackdrop) void {
+    pane_elevation.glassHeadRegion(out, @intCast(w), @intCast(h), g.rect[0] + x, g.rect[1] + self.top + y, g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb);
+}
+
+/// The overflow cue's opacity at column `col` of a `w`-wide cue: opaque at the
+/// strip's outer edge, clear at the inner one (T668).
+fn cueAlpha(side: layout_mod.Side, col: usize, w: usize) u32 {
+    const from_outer: usize = if (side == .start) col else w - 1 - col;
+    return @intCast(255 - @min(255, (from_outer * 255) / w));
+}
+
+/// `rgb` (`0x??RRGGBB`) premultiplied by `a`, with `a` in the alpha byte - the
+/// source `AlphaBlend` wants under `AC_SRC_ALPHA`.
+fn premultiplied(rgb: u32, a: u32) u32 {
+    const r = (((rgb >> 16) & 0xFF) * a) / 255;
+    const g = (((rgb >> 8) & 0xFF) * a) / 255;
+    const b = ((rgb & 0xFF) * a) / 255;
+    return (a << 24) | (r << 16) | (g << 8) | b;
 }
 
 /// The thumbnail strip: one tile per live chip, clipped to the viewport, with
@@ -1838,49 +1891,36 @@ fn paintCue(self: *ViewerFeedbackBar, hdc: w32.HDC, l: layout_mod.Layout, side: 
     const h = cue.height();
     if (w <= 0 or h <= 0) return;
 
-    // A one-row, `w`-wide premultiplied DIB stretched down the strip: the band
-    // background at full alpha on the OUTSIDE edge, transparent on the inside,
-    // so the tiles dissolve into the chrome instead of being chopped by it.
-    var bmi = std.mem.zeroes(w32.BITMAPINFO);
-    bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -1; // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-
-    if (w32.CreateCompatibleDC(hdc)) |mem_dc| {
-        defer _ = w32.DeleteDC(mem_dc);
-        var bits: ?*anyopaque = null;
-        if (w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0)) |bmp| {
-            defer _ = w32.DeleteObject(bmp);
-            if (bits) |raw| {
-                const pixels = @as([*]u32, @ptrCast(@alignCast(raw)))[0..@intCast(w)];
-                for (pixels, 0..) |*p, col| {
-                    // Opaque at the outer edge, clear at the inner one.
-                    const from_outer: usize = if (side == .start) col else @as(usize, @intCast(w - 1)) - col;
-                    const a: u32 = @intCast(255 - @min(255, (from_outer * 255) / @as(usize, @intCast(w))));
-                    const r = (@as(u32, self.bar_rgb.r) * a) / 255;
-                    const g = (@as(u32, self.bar_rgb.g) * a) / 255;
-                    const b = (@as(u32, self.bar_rgb.b) * a) / 255;
-                    p.* = (a << 24) | (r << 16) | (g << 8) | b;
-                }
-                const old = w32.SelectObject(mem_dc, bmp);
-                defer _ = w32.SelectObject(mem_dc, old);
-                _ = w32.AlphaBlend(
-                    hdc,
-                    cue.left,
-                    cue.top,
-                    w,
-                    h,
-                    mem_dc,
-                    0,
-                    0,
-                    w,
-                    1,
-                    w32.BLENDFUNCTION{ .SourceConstantAlpha = 255 },
-                );
-            }
+    // A premultiplied DIB of the band's own background at full alpha on the
+    // OUTSIDE edge, transparent on the inside, so the tiles dissolve into the
+    // chrome instead of being chopped by it. Solid, that is one row stretched
+    // down the strip; on glass (T1926) the band is a material that varies
+    // with the desk under it, so the cue is the material at its own pixels.
+    const glass = self.pane.glass;
+    const src_h: i32 = if (glass != null) h else 1;
+    if (Dib32.create(hdc, w, src_h)) |dib| {
+        defer dib.destroy();
+        const wu: usize = @intCast(w);
+        if (glass) |spec| {
+            self.glassBand(dib.pixels, cue.left, cue.top, w, h, spec);
+        } else {
+            const solid = (@as(u32, self.bar_rgb.r) << 16) | (@as(u32, self.bar_rgb.g) << 8) | self.bar_rgb.b;
+            @memset(dib.pixels, solid);
         }
+        for (dib.pixels, 0..) |*p, i| p.* = premultiplied(p.*, cueAlpha(side, i % wu, wu));
+        _ = w32.AlphaBlend(
+            hdc,
+            cue.left,
+            cue.top,
+            w,
+            h,
+            dib.dc,
+            0,
+            0,
+            w,
+            src_h,
+            w32.BLENDFUNCTION{ .SourceConstantAlpha = 255 },
+        );
     }
 
     const m = icon_button.Metrics.init(self.scale);
@@ -2570,6 +2610,24 @@ fn wndProc(
 
         else => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+// T1926: the cue's fade is the same ramp whatever it fades to - the solid band
+// or the glass material - opaque on the strip's outer edge and clear inside.
+test "viewer feedback cue: fade runs opaque outside to clear inside" {
+    try std.testing.expectEqual(@as(u32, 255), cueAlpha(.start, 0, 10));
+    try std.testing.expectEqual(@as(u32, 255), cueAlpha(.end, 9, 10));
+    try std.testing.expect(cueAlpha(.start, 9, 10) < 64);
+    try std.testing.expect(cueAlpha(.end, 0, 10) < 64);
+    try std.testing.expect(cueAlpha(.start, 3, 10) > cueAlpha(.start, 4, 10));
+}
+
+test "viewer feedback cue: premultiplied source for AlphaBlend" {
+    try std.testing.expectEqual(@as(u32, 0xFF336699), premultiplied(0x00336699, 255));
+    // The coverage byte a glass region carries is not a colour channel.
+    try std.testing.expectEqual(@as(u32, 0xFF336699), premultiplied(0xAB336699, 255));
+    try std.testing.expectEqual(@as(u32, 0x00000000), premultiplied(0x00FFFFFF, 0));
+    try std.testing.expectEqual(@as(u32, 0x80808080), premultiplied(0x00FFFFFF, 0x80));
 }
 
 // T467: `paint` fills the client and then places the pill, the image carousel
