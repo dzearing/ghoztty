@@ -1,11 +1,16 @@
 {
     "guard":  "activity-state",
     "script":  "test/win32/activity-state.ps1",
-    "generated":  "2026-08-21T00:33:08-07:00",
-    "commit":  "a905a5363",
+    "generated":  "2026-10-17T07:46:17-07:00",
+    "commit":  "590ee23c3",
+    "uncommitted":  [
+                        "src/apprt/win32/assets/ghoztty/hooks/ghoztty-activity-state.sh",
+                        "test/win32/activity-state.ps1",
+                        "test/win32/lib/upstream/test-activity-state.sh"
+                    ],
     "files":  {
-                  "src/apprt/win32/assets/ghoztty/hooks/ghoztty-activity-state.sh":  "8a37b7305be4d2b14e9c12455bee30b155ea46ea93a88f431667257e124a05b5",
-                  "test/win32/activity-state.ps1":  "209ae3df48c44fb7543ce13583d55b3204698531ed4a398075ca097164428c74",
-                  "test/win32/lib/upstream/test-activity-state.sh":  "fbe1f5959f77c3be67b6b15c280c6affe699ae449c732b424a7dc07fa68a0463"
+                  "src/apprt/win32/assets/ghoztty/hooks/ghoztty-activity-state.sh":  "6220aedd95f707f8fc143574ada94b836496895f574cc65c076a270323bfbe28",
+                  "test/win32/activity-state.ps1":  "0b3669240e2083d6e3b8ba56b430a2f85c9e7ee52f6822650dd4243aefa36155",
+                  "test/win32/lib/upstream/test-activity-state.sh":  "513049af18721acf1a9a95f2c8a3ad4601f1bc92fafd18cf397688b47405dc8b"
               }
 }

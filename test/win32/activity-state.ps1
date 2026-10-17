@@ -120,7 +120,12 @@ foreach ($l in $failLines) {
     $oracleOut | Write-Host
 }
 $summary = @($oracleOut | Where-Object { $_ -match '^\d+ passed, \d+ failed$' }) | Select-Object -Last 1
-Assert ([bool]$summary -and $summary -match '^16 passed, 0 failed$') "oracle summary is '16 passed, 0 failed' (got '$summary')"
+# The expected count is the oracle's own case count (one `begin "..."` per
+# case), not a literal: a literal went stale the day main grew the suite
+# (T2001, 16 -> 24), and a short count must still read as a failure.
+$expectedCases = @($oracleLines | Where-Object { $_ -match '^begin "' }).Count
+Assert ($expectedCases -gt 0) "oracle declares its cases ($expectedCases begin lines)"
+Assert ([bool]$summary -and $summary -eq "$expectedCases passed, 0 failed") "oracle summary is '$expectedCases passed, 0 failed' (got '$summary')"
 Assert ($oracleRc -eq 0) "oracle exits 0 (got $oracleRc)"
 
 Write-Host ''

@@ -137,6 +137,27 @@ Assert "window busy suffix" (Wait-FloorState 'the busy title' -NominalMs 1000 { 
 [void](Ghoz @('+set-state', '--target=p3a', '--state=needs_input'))
 # The title shows the HUMAN label: needs_input reads "(question)" (T465).
 Assert "needs_input outranks busy" (Wait-FloorState 'the question title' -NominalMs 1000 { (Get-P3Title) -match '\(question\)( \[DEBUG\])?$' })
+# T2001 (main eb8162e59): +list reports each pane's own state - the machine
+# token in --json, the human mark on the text line - so a script can tell
+# WHICH pane is asking without reading the window title's aggregate.
+function Get-TerminalStates($node, $acc) {
+    if ($null -eq $node) { return }
+    if ($node -is [System.Array]) { foreach ($n in $node) { Get-TerminalStates $n $acc }; return }
+    if ($node -isnot [System.Management.Automation.PSCustomObject]) { return }
+    if ($node.PSObject.Properties['terminal'] -and $node.terminal.PSObject.Properties['name']) {
+        $st = if ($node.terminal.PSObject.Properties['state']) { [string]$node.terminal.state } else { '<absent>' }
+        $acc[[string]$node.terminal.name] = $st
+    }
+    foreach ($p in $node.PSObject.Properties) { Get-TerminalStates $p.Value $acc }
+}
+$p3States = @{}
+Get-TerminalStates (Get-P3Json) $p3States
+$p3aState = $p3States['p3a']
+$otherStates = @($p3States.Keys | Where-Object { $_ -ne 'p3a' } | ForEach-Object { $p3States[$_] })
+Assert "+list --json state per pane (p3a=$p3aState, others=$($otherStates -join ','))" ($p3aState -eq 'needs_input' -and ($otherStates -contains 'busy'))
+$listText = (Ghoz @('+list')).Output
+Assert "+list marks the asking pane [question]" ($listText -match '(?m)\[name: p3a\].*\[question\]')
+Assert "+list marks the working pane [busy]" ($listText -match '(?m)^.*\[busy\]')
 [void](Ghoz @('+set-state', '--target=p3a', '--state=idle'))
 Assert "back to busy" (Wait-FloorState 'the title back to busy' -NominalMs 1000 { (Get-P3Title) -match '\(busy\)( \[DEBUG\])?$' })
 [void](Ghoz @('+set-state', '--target=p3', '--state=idle'))

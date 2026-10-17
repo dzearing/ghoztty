@@ -60,15 +60,23 @@ pub fn hooksBlock(
         .{ .matcher = "startup|clear", .purpose = .session_start },
         .{ .purpose = .activity_session_start },
     }, banner_script_path));
+    // A typed prompt also answers whatever the pane was paused on - a
+    // dismissed permission prompt or a question answered in prose runs no
+    // tool, so PostToolUse alone would never un-pause it.
     try block.put("UserPromptSubmit", try eventArray(arena, &.{
         .{ .purpose = .prompt_submit },
+        .{ .purpose = .activity_prompt_submit },
     }, banner_script_path));
     // Anything that blocks on the user outranks everything else.
     try block.put("PreToolUse", try eventArray(arena, &.{
         .{ .matcher = "AskUserQuestion|ExitPlanMode", .purpose = .activity_pause },
     }, banner_script_path));
+    // Only the notifications that ARE a question. Claude also notifies
+    // `idle_prompt` ~60s after every turn ends, and pausing on that marked
+    // every idle pane needs_input a minute later. (The script filters the
+    // same way, for hooks installed before this matcher.)
     try block.put("Notification", try eventArray(arena, &.{
-        .{ .purpose = .activity_pause },
+        .{ .matcher = blocking_notification_matcher, .purpose = .activity_pause },
     }, banner_script_path));
     try block.put("PermissionRequest", try eventArray(arena, &.{
         .{ .purpose = .activity_pause },
@@ -91,6 +99,13 @@ pub fn hooksBlock(
 
     return block;
 }
+
+/// The Claude notification types that block on the user: a permission
+/// prompt and an MCP elicitation dialog. Deliberately an allow-list - an
+/// unknown future type must not paint the pane needs_input - and it must
+/// match the `case` in the activity-state script's `pause` branch (Mac:
+/// `ClaudeHookSpec.blockingNotificationMatcher`).
+pub const blocking_notification_matcher = "permission_prompt|elicitation_dialog";
 
 const ElementSpec = struct {
     matcher: ?[]const u8 = null,
@@ -348,6 +363,7 @@ test "merged fragment registers every activity-state event with its verb" {
         .{ .event = "Notification", .verb = "pause" },
         .{ .event = "PermissionRequest", .verb = "pause" },
         .{ .event = "PostToolUse", .verb = "tool-tick" },
+        .{ .event = "UserPromptSubmit", .verb = "prompt-submit" },
         .{ .event = "SubagentStart", .verb = "agent-start" },
         .{ .event = "SubagentStop", .verb = "agent-stop" },
         .{ .event = "Stop", .verb = "settle" },
@@ -372,6 +388,35 @@ test "PreToolUse pauses only for user-blocking tools" {
         "AskUserQuestion|ExitPlanMode",
         elements.items[0].object.get("matcher").?.string,
     );
+}
+
+test "Notification pauses only for the types that are a question" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const merged = try merge(alloc, emptyObject(alloc), test_banner);
+    const elements = hooksOf(merged).?.get("Notification").?.array;
+    try testing.expectEqual(@as(usize, 1), elements.items.len);
+    // Never unmatched: an unmatched Notification hook runs for `idle_prompt`.
+    try testing.expectEqualStrings(
+        "permission_prompt|elicitation_dialog",
+        elements.items[0].object.get("matcher").?.string,
+    );
+}
+
+test "UserPromptSubmit keeps the banner hook and adds the activity un-pause" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const merged = try merge(alloc, emptyObject(alloc), test_banner);
+    const elements = hooksOf(merged).?.get("UserPromptSubmit").?.array;
+    try testing.expectEqual(@as(usize, 2), elements.items.len);
+    const first = try stable_json.compactAlloc(alloc, elements.items[0]);
+    const second = try stable_json.compactAlloc(alloc, elements.items[1]);
+    try testing.expect(std.mem.indexOf(u8, first, "prompt-hook --runtime=claude") != null);
+    try testing.expect(std.mem.indexOf(u8, second, "prompt-submit --runtime=claude") != null);
 }
 
 test "activity-state elements are owned by the directory signature and fully removed" {
