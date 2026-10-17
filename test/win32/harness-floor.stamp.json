@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-16T18:29:13-07:00",
-    "commit":  "cfd2f8bb2",
+    "generated":  "2026-10-16T18:46:57-07:00",
+    "commit":  "791b6d326",
     "uncommitted":  [
-                        "test/win32/hero-mode.ps1",
-                        "test/win32/hero-viewer-tile.ps1"
+                        "test/win32/tab-strip-autohide.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -409,7 +408,7 @@
                   "test/win32/tab-color.ps1":  "af75bcd47eeb68cf93ee056b7aa4e14e147314ab8b4adc3a9c0eb27dfb43f967",
                   "test/win32/tab-overview-action.ps1":  "901c7fca766740c2439244200dad732fd42f9ed25b1ce269adcc113ca6fa71cb",
                   "test/win32/tab-strip.ps1":  "04573b2ee4b0e1885ff2ec03bb5021ff95862eac72265b6be7f2b9903489e981",
-                  "test/win32/tab-strip-autohide.ps1":  "3db31a8e9c2a639c8b1d5cdb469811b0dcf889bc84813991c04d19893367f018",
+                  "test/win32/tab-strip-autohide.ps1":  "b380ab43805b9402a25be5a426f2261c7e428fabe8ab818616a77c3af6771b21",
                   "test/win32/tab-tooltip.ps1":  "eded1e0c052efa8032cb617e313b856ed098d22864f5237b3066cc881f87355e",
                   "test/win32/target-staleness.ps1":  "f839b289d37ee78c0a57d46ae0f2278545a7337dfca72a7744b34cb6b8c929de",
                   "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d",

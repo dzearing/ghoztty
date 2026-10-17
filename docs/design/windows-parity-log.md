@@ -36624,3 +36624,10 @@ moved to T1814.
 - **Fix.** `hero-mode.ps1` and `hero-viewer-tile.ps1` read the grid's left edge from the layout before hero mode and measure the ratio and left edge against the grid. The carousel's ~25% check now uses the grid too. The failure message prints h, left and grid-left.
 - **Validated.** hero-mode ALL PASS (88), hero-viewer-tile ALL PASS (18), scoped harness floor PASS. Zig lanes were not run because no Zig source changed.
 - **Mac.** Nothing owed: Windows test scripts only.
+
+## 2026-10-16 — T2014: the tab-strip autohide test measures the caption, not the raised-card margin
+
+- **Root cause.** Nothing was wrong in the app. The "14 px of extra chrome" is the elevated pane style's grid margin plus its rim inset at 1.25x. T1831 made that style the default, and the test's pane-offset oracle counted it as caption.
+- **Fix.** `tab-strip-autohide.ps1` pins `--macos-pane-style=flat`, as `chrome-merged-row.ps1` already does. `pane-elevation.ps1` still scores the margin.
+- **Validated.** tab-strip-autohide ALL PASS (15). The negative control is still red. The scoped harness floor passed, and so did the zig lanes (lib/none/win32/agent).
+- **Mac.** Nothing owed: Windows test script only.

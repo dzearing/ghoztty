@@ -84,6 +84,12 @@ function Start-Win([string[]]$extra) {
             '--config-default-files=false',
             '--session-persistence=false',
             '--confirm-close-surface=false',
+            # The oracle is the pane's offset under the caption, and the
+            # elevated style (the default since T1831) pads the whole grid by
+            # its margin plus a rim inset - 14 px at 1.25x that is not chrome
+            # (T2014). pane-elevation.ps1 scores that margin; chrome-merged-
+            # row.ps1 pins flat for the same reason.
+            '--macos-pane-style=flat',
             '--background=#000000'
         ) + $extra)
     $h = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 25000
