@@ -36609,3 +36609,11 @@ moved to T1814.
 - **Validation.** `go-loop-guard.ps1` ALL PASS (434). New W28c-f: a control shows the bare push is refused, a lane-shaped commit lands on the trunk without creating a `lane-b` branch on the remote, and a rejected one rebases and lands there. In production: lane B claimed T2010 while lane A held T1986, closed it, and pushed `46c18c396` + `c8bd56399` from `lane-b` onto the trunk. Lane A's next commit was rejected, rebased onto both and pushed (`3680467fc`), with no conflict and no lost commit. Lane B then took T2012. Harness floor and the due audits are green. No zig source changed, so the zig lanes were not run.
 - **Left for T1937.** The full-day throughput number (at least 2x the single-lane baseline) is the umbrella's to measure, now that both lanes run.
 - **Mac.** Nothing owed: the loop is Windows-seat process.
+
+## 2026-10-16 — T1937: two loop lanes are proven side by side; the 2x day is parked until it has happened
+
+- **Re-verified, nothing to build.** All eight dependencies are done, and six of the seven checks are met with evidence from them (claim race and id race T1981, timing lock T1982, isolation audit T1983, health/dashboard/no-publish T1984).
+- **Live.** Lane A closed T1986 at 18:04 while lane B closed T2010 at 18:02; both pushed onto the trunk and the log merged cleanly. At 18:09 health read `lanes=a:held/T1937,b:held/T2012`.
+- **Left.** The "at least 2x closes a day" check. Single-lane baseline from the progress logs: 21, 20, 17 closes on 10-13..10-15. Lane B only came up at 16:47 today, so the first full two-lane day is 2026-10-17. The task is `blocked` with an `unblock:` that holds the counting command; the 10-18 morning triage should count it.
+- **Commit.** Docs and tracker only; validate runs under `-NoGuardDue` for hook-json (T2001), restore-all-remote (T2016) and drag-perf (T1854), all due at claim and none touching a file this turn changed.
+- **Mac.** Nothing owed: loop process only.
