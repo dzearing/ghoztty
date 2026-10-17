@@ -36679,3 +36679,11 @@ moved to T1814.
 - **Fix.** `.gitattributes` routes `test/win32/*.stamp.json` to a merge driver (`scripts/stamp-merge.ps1`) that keeps the newer stamp whole and leaves anything unreadable as a real conflict. `git-commit-guard.ps1 install` registers it in local config every claim. On a rejected push, the guard parks dirty stamps (and only stamps) across the rebase and puts each back only if it is newer. A wrong pick costs one re-run: guard-due re-checks the kept stamp's hashes against disk.
 - **Validated.** go-loop-guard W28g–W28r, with three negative controls (no driver conflicts, a bare pull refuses a dirty stamp, a dirty non-stamp file still blocks). ALL PASS (447). drag-perf (T1854) and hook-json (T2001) are red for their own tracked reasons.
 - **Mac.** Nothing owed: the loop tooling is Windows-seat only. A clone without the driver merges exactly as before.
+
+## 2026-10-16 — T2033: a task finished in one lane is no longer handed to the other
+
+- **The gap.** Closing a task released its claim in the shared lane ledger at once, while the other worktree still read it as todo until the close was pushed and pulled. Lane A got T2012 one second after lane B finished it and redid the whole turn.
+- **Fix.** `set-status` done/skipped/blocked now turns the claim into a reservation (`closed`, `path`, `pushedAt` in `scripts/lib/LoopLedger.ps1`). The other lane's `next` skips it with `FINISHED IN OTHER LANE … pull`. `next` ends a reservation once the reading lane's copy shows the close, or a TTL after the finisher's `@{u}` has it; while unpushed its heartbeat stays fresh. `todo` still releases outright. go-loop-health no longer lists a reservation as a lane's current task.
+- **Validated.** `test/win32/parity-tasks-lanes.ps1` section F (F1–F11, a real git upstream for the push leg, negative control `GHOZTTY_LOOP_LEDGER_NO_RESERVE=1`), ALL PASS (43). gate-negatives, parity-tasks-seat, loop-lanes, go-loop-guard, argv-hazard, unroll-count and the scoped harness floor are green and stamped. hook-json (T2001) and drag-perf (T1854) stay red for their own tracked reasons.
+- **Mac.** Nothing owed: the loop tooling is Windows-seat only.
+- **Filed.** T2038: the residual (a lane unpulled for over an hour after the push can still be handed the task).
