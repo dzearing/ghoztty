@@ -3241,13 +3241,28 @@ pub fn insertPaneAsTab(self: *Window, pane: *PaneView, tree: SplitTree(PaneView)
 /// - over whatever app the user is in. `background_zorder.place` is the rule;
 /// this only describes the live z-order to it.
 ///
-/// A remembered or configured MAXIMIZED state is not honored here: Windows has
-/// no show command that maximizes without activating (`SW_SHOWMAXIMIZED` is
-/// the only maximize spelling, and it activates), and not taking focus is the
-/// whole contract. The window opens at its restored size, which is the size it
-/// would restore down to anyway.
+/// The frame is the one a focused window gets (T1966, the win32 half of main
+/// ec6c793d7): size and cascade position are decided at `CreateWindowExW`,
+/// before either show path runs, so only the MAXIMIZED half of the placement
+/// memory needs this path's own handling. Windows has no show command that
+/// maximizes without activating (`SW_SHOWMAXIMIZED` is the only maximize
+/// spelling, and it activates), so `maximizeHidden` maximizes by style and the
+/// window is shown "in its current state" with `SW_SHOWNA`. Until T1966 the
+/// maximized state was simply dropped here, and a user who works maximized got
+/// every script-opened window at its restored size.
 fn showInBackground(self: *Window, h: w32.HWND) void {
-    _ = w32.ShowWindow(h, w32.SW_SHOWNOACTIVATE);
+    const restore_down: ?w32.WINDOWPLACEMENT = if (self.start_maximized) self.maximizeHidden(h) else null;
+    const maximized = restore_down != null;
+    _ = w32.ShowWindow(h, if (maximized) w32.SW_SHOWNA else w32.SW_SHOWNOACTIVATE);
+    if (restore_down) |placement| {
+        // The maximize move overwrote the restore-down rect with the maximized
+        // one (measured: restoring then went nowhere). Hand back the created
+        // frame, still without activating.
+        var wp = placement;
+        wp.flags = 0;
+        wp.showCmd = w32.SW_SHOWNA;
+        _ = w32.SetWindowPlacement(h, &wp);
+    }
 
     const cap = 512;
     var entries: [cap]background_zorder.Entry = undefined;
@@ -3285,7 +3300,51 @@ fn showInBackground(self: *Window, h: w32.HWND) void {
         0,
         w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE | w32.SWP_NOOWNERZORDER,
     );
-    log.info("window opened in the background (T1797): placed behind {?}", .{after});
+    log.info("window opened in the background (T1797): placed behind {?} maximized={}", .{ after, maximized });
+}
+
+/// Maximize a window that has not been shown yet, without activating it
+/// (T1966): set `WS_MAXIMIZE` and move it to the maximized rect of the monitor
+/// it was created on. Answers the placement from BEFORE the move - its
+/// `rcNormalPosition` is the created (remembered) frame, which the move
+/// overwrites and the caller puts back once the window is shown. Null when the
+/// monitor or the placement cannot be read; the caller then opens it restored.
+fn maximizeHidden(self: *Window, h: w32.HWND) ?w32.WINDOWPLACEMENT {
+    var before: w32.WINDOWPLACEMENT = undefined;
+    before.length = @sizeOf(w32.WINDOWPLACEMENT);
+    if (w32.GetWindowPlacement(h, &before) == 0) return null;
+    const mon = w32.MonitorFromWindow(h, w32.MONITOR_DEFAULTTONEAREST);
+    var mi: w32.MONITORINFO = undefined;
+    mi.cbSize = @sizeOf(w32.MONITORINFO);
+    if (w32.GetMonitorInfoW(mon, &mi) == 0) return null;
+    const dpi = w32.GetDpiForWindow(h);
+    const pad = w32.GetSystemMetricsForDpi(w32.SM_CXPADDEDBORDER, dpi);
+    const r = window_placement.maximizedFrame(
+        .{
+            .x = mi.rcWork.left,
+            .y = mi.rcWork.top,
+            .w = mi.rcWork.right - mi.rcWork.left,
+            .h = mi.rcWork.bottom - mi.rcWork.top,
+        },
+        w32.GetSystemMetricsForDpi(w32.SM_CXSIZEFRAME, dpi) + pad,
+        w32.GetSystemMetricsForDpi(w32.SM_CYSIZEFRAME, dpi) + pad,
+    ) orelse return null;
+    const style = w32.GetWindowLongW(h, w32.GWL_STYLE);
+    _ = w32.SetWindowLongW(h, w32.GWL_STYLE, style | w32.WS_MAXIMIZE);
+    // The rect is exact for the monitor it is on: keep it through any
+    // WM_DPICHANGED the move provokes (the same guard a restore uses).
+    self.placing_exact_frame = true;
+    defer self.placing_exact_frame = false;
+    _ = w32.SetWindowPos(
+        h,
+        null,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+        w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | w32.SWP_FRAMECHANGED,
+    );
+    return before;
 }
 
 /// The same, at an index the CALLER chose rather than the one the config

@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-16T23:15:09-07:00",
-    "commit":  "155e808c3",
+    "generated":  "2026-10-17T00:02:52-07:00",
+    "commit":  "afc5bea35",
     "uncommitted":  [
-
+                        "scripts/guard-due.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
@@ -29,14 +29,14 @@
                   "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "8fc0b036bb645aed4df88b6d108e355163b6cc36665a47495dece100e53b327f",
-                  "scripts/git-commit-guard.ps1":  "f8f181fbfdb06e2de7801c9f60c728a90dfe62fa8ff4753b3b6d9f09f7a9f30a",
+                  "scripts/git-commit-guard.ps1":  "362105b3677ccb7e401ba858ca7dad11ba6a12d4abd77c9c07cf6f3b24af55bf",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "e65ddcb0f8d3c875848b955cacc1a7d019423281995c77537e1a35d5f98970f1",
                   "scripts/go-loop-health.ps1":  "14d62dfa33d78bbed90170260637b8e111d85416284d1ecc7777f45533b6145f",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "84a223af995b00dfdf1d70164321c320e39df45ab1f45539372de0ad72cba33e",
-                  "scripts/guard-due.ps1":  "7a09979b7a74f2800164f032e1ceae11042996beefc8d3a2a1b4ffe6c9fb1718",
+                  "scripts/guard-due.ps1":  "8bb09cad04c340c74c3e0d96a74278e0f727829daea925d1833164a8228f7129",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",

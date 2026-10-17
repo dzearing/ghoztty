@@ -86,6 +86,28 @@ pub fn show(maximized: bool) Show {
     return if (maximized) .maximized else .show_noactivate;
 }
 
+/// The outer rect Windows gives a maximized window on a monitor whose work area
+/// is `work`: the sizing frame (`frame_x` / `frame_y`, per side) hangs off every
+/// edge, so the client edge - not the border - meets the work area.
+///
+/// Needed by the background first show (T1966), which maximizes by style rather
+/// than by show command: `SW_SHOWMAXIMIZED` is the only maximize spelling and it
+/// activates, so a background window that must open maximized is given
+/// `WS_MAXIMIZE`, moved here, and shown with `SW_SHOWNA` ("in its current
+/// state", without activating). A zero-sized `work` (a failed query) answers
+/// null and the caller opens the window at its restored size instead.
+pub fn maximizedFrame(work: Rect, frame_x: i32, frame_y: i32) ?Rect {
+    if (work.w <= 0 or work.h <= 0) return null;
+    const fx = @max(frame_x, 0);
+    const fy = @max(frame_y, 0);
+    return .{
+        .x = work.x -| fx,
+        .y = work.y -| fy,
+        .w = work.w +| 2 *| fx,
+        .h = work.h +| 2 *| fy,
+    };
+}
+
 /// The scale a size was measured at (T1971). Every number this module
 /// and the manifest carry is a PHYSICAL pixel, and a physical pixel is only
 /// half the story: 1200 pixels is a comfortable window at 100% and a small one
@@ -211,6 +233,27 @@ test "show: the recorded state decides, and only maximizing costs activation" {
     // state being asked for either way.
     try testing.expectEqual(Show.maximized, show(true));
     try testing.expectEqual(Show.show_noactivate, show(false));
+}
+
+test "maximizedFrame: the frame hangs off every edge of the work area" {
+    // A 1920x1032 work area (bottom taskbar) with an 8px sizing frame.
+    try testing.expectEqual(
+        Rect{ .x = -8, .y = -8, .w = 1936, .h = 1048 },
+        maximizedFrame(.{ .x = 0, .y = 0, .w = 1920, .h = 1032 }, 8, 8).?,
+    );
+    // A monitor left of primary with a top taskbar: only the origin moves.
+    try testing.expectEqual(
+        Rect{ .x = -1931, .y = 37, .w = 1942, .h = 1052 },
+        maximizedFrame(.{ .x = -1920, .y = 48, .w = 1920, .h = 1030 }, 11, 11).?,
+    );
+}
+
+test "maximizedFrame: an unreadable work area answers null, a negative frame is none" {
+    try testing.expectEqual(@as(?Rect, null), maximizedFrame(.{ .x = 0, .y = 0, .w = 0, .h = 900 }, 8, 8));
+    try testing.expectEqual(
+        Rect{ .x = 0, .y = 0, .w = 1280, .h = 720 },
+        maximizedFrame(.{ .x = 0, .y = 0, .w = 1280, .h = 720 }, -3, 0).?,
+    );
 }
 
 test "scaleDim: a size measured at 100% doubles at 200% and rounds to the nearest pixel" {

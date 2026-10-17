@@ -92,6 +92,7 @@ pub const WS_POPUP: u32 = 0x80000000;
 pub const WS_CAPTION: u32 = 0x00C00000;
 pub const WS_THICKFRAME: u32 = 0x00040000;
 pub const WS_SYSMENU: u32 = 0x00080000;
+pub const WS_MAXIMIZE: u32 = 0x01000000;
 
 // Extended window styles
 pub const WS_EX_LAYERED: u32 = 0x00080000;
@@ -260,6 +261,7 @@ pub const SC_MASK: usize = 0xFFF0;
 /// because the band's pixels are client but its mouse messages are NC.
 pub const TME_NONCLIENT: u32 = 0x00000010;
 
+pub const SM_CXSIZEFRAME: i32 = 32;
 pub const SM_CYSIZEFRAME: i32 = 33;
 pub const SM_CXPADDEDBORDER: i32 = 92;
 

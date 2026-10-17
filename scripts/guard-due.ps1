@@ -571,6 +571,21 @@ $GuardTable = @(
             'src\apprt\win32\background_zorder.zig'
         )
     },
+    # A background window gets the focused window's frame (T1966, main
+    # ec6c793d7): the creation size/cascade and the maximize-by-style first
+    # show (`Window.zig`), its rect rule (`window_placement.zig`), and the
+    # placement memory it reads (`window_memory.zig`).
+    [pscustomobject]@{
+        Name   = 'background-window-frame'
+        Script = 'test\win32\background-window-frame.ps1'
+        Stamp  = 'test\win32\background-window-frame.stamp.json'
+        Covers = @(
+            'test\win32\background-window-frame.ps1',
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\window_placement.zig',
+            'src\apprt\win32\window_memory.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

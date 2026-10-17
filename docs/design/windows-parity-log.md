@@ -36701,3 +36701,10 @@ moved to T1814.
 - **Validated.** The win32 lane's live host-floor test now checks the composer's top row against the material on glass and against `bar_rgb` off glass. New cue unit tests. All four floor lanes PASS; viewer-feedback.ps1 ALL PASS (107).
 - **Mac.** Nothing owed: this brings Windows up to Mac.
 - **Filed.** T2039: an on-screen check of the glass cue over an overflowing strip (needs the input desktop).
+
+## 2026-10-16 — T1966: a script-opened background window opens maximized when you work maximized
+
+- **Gap.** Main ec6c793d7 fixed Mac background windows (`+new-window` without `--focus`) opening at a placeholder frame. On win32 the size and cascade position are already decided at `CreateWindowExW`, before either show path runs, so a background window was already at the remembered size and cascade. The remembered maximized state was not: `showInBackground` dropped it, because `SW_SHOWMAXIMIZED` is the only maximize show command and it activates.
+- **Fix.** `Window.maximizeHidden` sets `WS_MAXIMIZE`, moves the hidden window to the monitor's maximized rect (`window_placement.maximizedFrame`, unit-tested), and the window is shown with `SW_SHOWNA`. The maximize move overwrites the restore-down rect, so the pre-move placement is handed back after the show (still `SW_SHOWNA`).
+- **Validated.** New `test\win32\background-window-frame.ps1` (guard row added): arm A checks the background and `--focus` windows get the same remembered size and 30px cascade; arm B checks maximized memory gives a maximized, non-activated background window that restores down to the remembered size. ALL PASS (19). The negative control fails as it should, and the first run caught the overwritten restore-down rect before the hand-back landed. Floor lanes all PASS.
+- **Mac.** Nothing further owed: ec6c793d7 is the Mac half, and Mac has no separate maximized state to carry.

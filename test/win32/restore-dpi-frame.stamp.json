@@ -1,14 +1,14 @@
 {
     "guard":  "restore-dpi-frame",
     "script":  "test/win32/restore-dpi-frame.ps1",
-    "generated":  "2026-10-16T11:32:57-07:00",
-    "commit":  "161784011",
+    "generated":  "2026-10-16T23:50:12-07:00",
+    "commit":  "afc5bea35",
     "uncommitted":  [
-                        "test/win32/restore-dpi-frame.ps1"
+                        "src/apprt/win32/window_placement.zig"
                     ],
     "files":  {
                   "src/apprt/win32/window_memory.zig":  "5525d3e747fd7a5e272f8de1c82754c9139652ccefa7a51f71efbe30a9452d3a",
-                  "src/apprt/win32/window_placement.zig":  "9b93667e80b5d643d4edc90f9d80360f1d41af59730ad0db064e3e6433338f2a",
+                  "src/apprt/win32/window_placement.zig":  "f0b952edacb2c92627aae5ac2fedfc8cd651372c8b0b8a93b93a0613ef9ce7ab",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe"
               }
 }
