@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-17T00:32:34-07:00",
-    "commit":  "afc5bea35",
+    "generated":  "2026-10-17T01:20:14-07:00",
+    "commit":  "975da5ce2",
     "uncommitted":  [
-                        "test/win32/background-window-frame.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -381,7 +381,7 @@
                   "test/win32/session-reattach-zombie.ps1":  "ea9ea8399c40fcc7989bf7a11f5721c7227e6b607bfe29e6df56dd44773b322c",
                   "test/win32/session-reboot-tui.ps1":  "bd8cbdf7e31963cfa22fa849312d03b69153e492b0280314f90fc21c3351f494",
                   "test/win32/session-relaunch.ps1":  "9576d96d4157c48be3470cc55083a18aa686acf5bd19c2d82e4178c7c5dabd09",
-                  "test/win32/session-relaunch-notify.ps1":  "8016593b25622923c50be4f7cc1aea6ecf0061edb01337b9f47d8a97f005c94a",
+                  "test/win32/session-relaunch-notify.ps1":  "f9deea35cee0c5722ca2105b82fcc52edc883a0dc03b5beeaabf968a350bb61b",
                   "test/win32/session-restore-maximized.ps1":  "0932e8a5349195cd276f262fb1248934ed099eef6e1b9ec9ea5c74aa428c4731",
                   "test/win32/session-resume-offset.ps1":  "801d7a280b290b75edee978b12ae4fbe0b32e0e5d019ce25f1a3bc24a5d2c865",
                   "test/win32/sessions-agent-build.ps1":  "3df416b801ef9617658e2b756860d43980a17cf6a809835b5cb760db62759f2f",

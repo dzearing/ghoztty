@@ -36715,3 +36715,9 @@ moved to T1814.
 - **Validated.** New `T1979:` unit test (1440x900 pt -> 2880x1800 at 200%, 2160x1350 at 150%, unchanged at 100%), proven red by a negative control. All four floor lanes PASS; layout-blob-cross-lineage.ps1 ALL PASS (14); due sweep 19 PASS (session-relaunch-notify red beside workers, 147/147 alone, now `@parallel-unsafe`); test-reach and the scoped harness floor PASS. hook-json/drag-perf red for T2001/T1854.
 - **Mac.** Nothing owed for size: Mac frames are already points. The mirror (a Mac reading a win32 blob's pixels) is the Mac seat's reader.
 - **Filed.** T2041: test-reach audit stayed green over the unreached module. T2040 (P3): the Mac ORIGIN is still points used as pixels, so a window lands at the right size but not the same relative spot on a scaled display.
+## 2026-10-17 — T1030: the close-button contrast test now checks every hue, not just red
+
+- **The gap.** The `cappedLuminance` sweep fed hue in degrees (0..360) to `hsbToRgb`, which takes a 0..1 turn, so every step came out pure red. The `pale_red` probe had the same unit bug, and its hue check compared a 0..1 value with 5, so it passed whatever the result was.
+- **Fix (test only).** The sweep is now 72 steps of 1/72 turn and asserts that its inputs land in all six sixths of the hue circle. `pale_red` is at 5/360 and its delta is measured in degrees. `cappedLuminance` holds on every hue, so no code defect was found. Every other `hsbToRgb` caller already passed a 0..1 hue.
+- **Validated.** `zig test color_math.zig` 25/25; the negative control (degree feed put back) fails the new sextant assertion. All four floor lanes PASS; chrome-theme.ps1 ALL PASS (151). The due sweep is green apart from drag-perf (T1854) and hook-json (T2001), both already tracked. test-reach-audit and the scoped harness floor PASS.
+- **Mac.** Nothing owed: the defect was in a win32-only test.

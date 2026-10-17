@@ -910,11 +910,17 @@ test "cappedLuminance: the ceiling holds on the 8-bit color it returns" {
     const red: Rgb = .{ .r = 0xC4, .g = 0x2B, .b = 0x1C };
     try testing.expectEqual(red, cappedLuminance(red, cap));
 
-    // The whole hue circle at full saturation, plus the greys, capped.
-    var h: f64 = 0;
-    while (h < 360) : (h += 5) {
+    // The whole hue circle, every 5 degrees, at three saturations, capped.
+    // `hsbToRgb` takes hue as a 0..1 turn, not degrees: feeding it 0..360
+    // made every step an even multiple of 30 and the sweep red-only (T1030).
+    var sextants = [_]bool{false} ** 6;
+    var step: u32 = 0;
+    while (step < 72) : (step += 1) {
+        const h = @as(f64, @floatFromInt(step)) / 72.0;
         for ([_]f64{ 0.4, 0.7, 1.0 }) |s| {
             const base = hsbToRgb(.{ .h = h, .s = s, .b = 1.0 });
+            const base_h = rgbToHsb(base).h;
+            sextants[@min(@as(usize, @intFromFloat(base_h * 6.0)), 5)] = true;
             const capped = cappedLuminance(base, cap);
             // Under the cap, measured on the quantized result...
             try testing.expect(wcagLuminance(capped) <= cap);
@@ -927,15 +933,19 @@ test "cappedLuminance: the ceiling holds on the 8-bit color it returns" {
             try testing.expect(rgbToHsb(capped).s >= s * 0.5);
         }
     }
+    // The sweep really is a circle: its inputs land in every sixth of it.
+    for (sextants) |hit| try testing.expect(hit);
 
     // Hue, on the color this exists for: an over-light red comes back a
     // darker RED. (Checked here rather than across the whole sweep because
     // the L* move holds CIELAB's hue angle, not HSB's, and the two disagree
-    // by more than a few degrees for blues.)
-    const pale_red = hsbToRgb(.{ .h = 5, .s = 0.85, .b = 1.0 });
+    // by more than a few degrees for blues.) Hue in degrees, converted at
+    // the boundary of the 0..1-turn HSB functions.
+    const pale_red = hsbToRgb(.{ .h = 5.0 / 360.0, .s = 0.85, .b = 1.0 });
+    try testing.expect(pale_red.g > 0); // 5 degrees, not pure red
     const dark_red = cappedLuminance(pale_red, cap);
     try testing.expect(wcagLuminance(dark_red) <= cap);
-    const hue_delta = @abs(rgbToHsb(dark_red).h - 5);
+    const hue_delta = @abs(rgbToHsb(dark_red).h * 360.0 - 5.0);
     try testing.expect(@min(hue_delta, 360 - hue_delta) < 15.0);
 
     // Degenerate caps: 0 admits only black, 1 admits everything.
