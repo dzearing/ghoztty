@@ -36856,3 +36856,11 @@ moved to T1814.
 - **Validated.** `hero-nav.ps1` ALL PASS (48) through `acceptance-parallel.ps1 run`. The scoped harness floor and `unwired-hook-audit` both passed.
 - **Split.** The card's third criterion asked for no instance anywhere in `test\win32`. An awk sweep found about 44 more sites in 20 files, so they moved to **T2061**, which lists them by file.
 - **Mac.** Nothing owed: Windows acceptance harness only.
+
+## 2026-10-17 — T1049 (lane b): the task README's field table lists every field a task file actually carries
+
+- **Partly fixed already.** `milestone:` got its row with T1722. A survey of all 2082 task files found five more keys in use with no row: `unblock`, `user-report`, `unblock-do`, `unblock-command` and `blocked-on`, each read by the dashboard or `parity-tasks.ps1`. All five are documented now. `phase:` is marked retired, since no file carries it and nothing reads it.
+- **Kept true.** Section T of `parity-tasks-seat.ps1` fails when any task file carries a key the table lacks, or one it marks retired. A fixture proves it names both, and run against the old README it named exactly the five missing fields.
+- **Validated.** `parity-tasks-seat.ps1` ALL PASS (213). drag-perf is still red on T1854's known line, so this commit takes `-NoGuardDue` for that row only.
+- **Mac.** Nothing owed: tracker documentation and a Windows tracker harness.
+- **Filed.** T2062 (`validate` should flag an unlisted key when the file is written, not only when this harness runs). T2064 (the full harness floor overran the lane's 30-minute budget while lane a was loading the box, and finishing the unreached members with `-Include` does not count as completing it).

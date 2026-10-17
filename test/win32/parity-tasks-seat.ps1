@@ -89,6 +89,11 @@
 #      whole reason the match is idf-weighted rather than raw overlap; `similar`
 #      asks the question without writing a file; and the closing check runs the
 #      real 1400-title tracker.
+#   T. The README field table (T1049). Every frontmatter key any real task file
+#      carries must have a row in windows-parity-tasks\README.md, and no file
+#      may carry a row marked Retired. A fixture with an invented field and a
+#      retired one proves the check names both before it is trusted on the
+#      real tracker.
 #
 # Hermetic: sections A-H run against a fixture task dir under $env:TEMP via
 # `-TaskDir`; docs\design\windows-parity-tasks\ is only ever READ (section I).
@@ -1048,6 +1053,58 @@ Reset-Fixture
 $sample = 'parity-tasks.ps1 new should warn when a similar task already exists'
 $r = Task-Run @('similar', '-Title', $sample) -Dir $realDir
 Assert 'S10 the real tracker finds its own T651' ($r.Out -match '(?m)^\s+T651\s')
+
+# --- T. every field a task file carries is in the README table (T1049) -------
+'T. the README field table lists every frontmatter field in use (T1049)'
+
+# The README's field table is the one place that says what a task file may
+# contain. `unblock:` and `user-report:` (plus three dashboard-only fields) were
+# read by code and written into files for weeks without a row, so a hand-written
+# file had nowhere to look them up. This compares the table against the keys the
+# files actually carry. A row whose text starts "Retired" is documented as
+# do-not-write, so a file carrying it is a finding too.
+function Get-FieldTableGaps {
+    param([string]$ReadmePath, [string]$Dir)
+    $rows = @{}
+    foreach ($line in [System.IO.File]::ReadAllLines($ReadmePath)) {
+        if ($line -notmatch '^\| `([a-z][a-z0-9-]*)` \| (.*)$') { continue }
+        # Capture before testing the text: a second -match overwrites $Matches.
+        $key = $Matches[1]; $text = $Matches[2]
+        $rows[$key] = ($text -match '^Retired')
+    }
+    $gaps = @()
+    foreach ($f in Get-ChildItem -Path $Dir -Filter 'T*.md') {
+        $lines = [System.IO.File]::ReadAllLines($f.FullName)
+        if ($lines.Count -eq 0 -or $lines[0] -ne '---') { continue }
+        for ($i = 1; $i -lt $lines.Count -and $lines[$i] -ne '---'; $i++) {
+            if ($lines[$i] -notmatch '^([a-z][a-z0-9_-]*):') { continue }
+            $key = $Matches[1]
+            if (-not $rows.ContainsKey($key)) { $gaps += "undocumented $key ($($f.BaseName))" }
+            elseif ($rows[$key]) { $gaps += "retired $key ($($f.BaseName))" }
+        }
+    }
+    return $gaps
+}
+
+$realReadme = Join-Path $realDir 'README.md'
+
+# T1/T2: the check can go red. A fixture with an invented field and a retired
+# one, measured against the real table, must name both - otherwise T3's green
+# says nothing.
+Reset-Fixture
+New-FixtureTask -Id 'T1' -ExtraLines @('invented-field: "x"')
+New-FixtureTask -Id 'T2' -ExtraLines @('phase: "A"')
+New-FixtureTask -Id 'T3' -PriorityLine 'priority: "P2"' -ExtraLines @('unblock: "a crash recurs"', 'user-report: true')
+$gaps = @(Get-FieldTableGaps -ReadmePath $realReadme -Dir $fixture)
+Assert 'T1 an invented field is named as undocumented' (@($gaps) -contains 'undocumented invented-field (T1)')
+Assert 'T2 a retired field is named as retired' (@($gaps) -contains 'retired phase (T2)')
+Assert 'T2b documented fields raise nothing' (@($gaps).Count -eq 2)
+
+# T3: the real tracker. Every key in every task file has a row.
+$gaps = @(Get-FieldTableGaps -ReadmePath $realReadme -Dir $realDir)
+Assert 'T3 every field in the real tracker is in the README table' (@($gaps).Count -eq 0)
+if (@($gaps).Count) { $gaps | Select-Object -First 10 | ForEach-Object { "    $_" } }
+Reset-Fixture
 
 # --- teardown ---------------------------------------------------------------
 if (Test-Path $fixture) { Remove-Item -Recurse -Force $fixture }
