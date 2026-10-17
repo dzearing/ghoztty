@@ -3563,7 +3563,10 @@ fn closeTabByIndex(self: *Window, idx: usize) void {
     // (Window.deinit) never runs this path, so quitting keeps sessions.
     {
         var it = tree.iterator();
-        while (it.next()) |entry| entry.view.setSessionCloseIntent(true);
+        while (it.next()) |entry| {
+            entry.view.hideOverlays(); // T2012: off screen with the tab
+            entry.view.setSessionCloseIntent(true);
+        }
     }
     tree.deinit(); // This unrefs all surfaces → Surface.unref frees when ref_count=0
     self.removeTabSlot(idx);
@@ -3692,7 +3695,13 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     // unrefs `pane` to zero, freeing it and reading this flag as its
     // termio backend tears down. A PARKED pane (T1825) is not marked: the
     // undo entry holds it alive, and marks it when the undo expires.
-    if (parked) CloseUndo.hidePane(pane) else pane.setSessionCloseIntent(true);
+    // Either way its popups leave the screen NOW (T2012): the pane is in no
+    // tree after the swap below, so no layout sweep will reach them again, and
+    // without an undo its last reference can still outlive this call.
+    if (parked) CloseUndo.hidePane(pane) else {
+        pane.hideOverlays();
+        pane.setSessionCloseIntent(true);
+    }
 
     // Same swap-then-release order as `replaceTabRoot`, and here it is what
     // keeps the app alive (T1356): a viewer pane's `deinit` closes its

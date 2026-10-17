@@ -1514,7 +1514,14 @@ pub fn hideOverlays(self: *Surface) void {
     inline for (overlay_fields) |name| {
         if (@field(self, name)) |o| o.hide();
     }
-    if (self.link_preview_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+    // The plain-HWND popups: the hovered-URL bubble, and an open search bar or
+    // command palette. Hidden directly rather than through
+    // `setSearchActive(false)` / `setCommandPaletteActive(false)`, which would
+    // hand keyboard focus to the pane that is leaving; one that was open
+    // stays hidden after an undo until it is opened again.
+    inline for (.{ "link_preview_hwnd", "search_hwnd", "palette_hwnd" }) |name| {
+        if (@field(self, name)) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+    }
 }
 
 test "every pane overlay is listed in overlay_fields (T2012)" {

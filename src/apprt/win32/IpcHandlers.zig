@@ -1366,6 +1366,9 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                 // longer in it.
                 view.clearDetachPin();
             }
+            // A pane leaving the layout takes its popups with it NOW (T2012):
+            // no sweep walks it once the tree is swapped.
+            if (!in_new_tree) view.hideOverlays();
         }
     }
 

@@ -306,6 +306,11 @@ pub fn parkWindow(self: *CloseUndo, window: *Window) bool {
     window.parked_for_undo = true;
     window.closing = true;
     window.setActiveTabVisible(false);
+    // Hiding the window does not hide the popups its panes own (T2012).
+    for (window.tab_trees[0..window.tab_count]) |*tree| {
+        var it = tree.iterator();
+        while (it.next()) |entry| entry.view.hideOverlays();
+    }
     _ = w32.ShowWindow(hwnd, w32.SW_HIDE);
     self.removeFromApp(window);
     log.info("parked closed window for undo", .{});

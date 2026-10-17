@@ -36646,3 +36646,11 @@ moved to T1814.
 - **Validated.** viewer-restore ALL PASS (58), up from 3 failures. J7 was red on every run before the COM init and green after. `floor-lane.ps1 -Lane all -Repo D:\git\ghoztty-b` ALL LANES PASS, the due harnesses are green, and the harness floor is stamped. `chooser-restore-all-remote.ps1` is red 21 with or without the change, which is T2016.
 - **Filed.** T2032 (other fixtures may still assume the pre-T1797 split focus). T2031 was closed as a duplicate of T2026: lane B's `floor-lane.ps1` grades lane A's tree unless given `-Repo`.
 - **Mac.** Nothing owed: WKWebView needs no COM apartment, and the fixture is Windows-only.
+
+## 2026-10-16 — T2034: closing a whole window takes its panes' banners down too
+
+- **What happened.** Both loop lanes worked T2012. Lane B claimed it at 18:04 and marked it done at 18:59, but its commit did not reach origin until 19:00. At 18:59 the claim ledger had already released the task, while lane A's checkout still showed it `todo`, so lane A was handed it again. Filed as T2033 (P1). Lane A rebased onto B's fix and kept only what B's version misses.
+- **The gap.** Closing a whole window parks it for undo. Hiding the window neither hides its panes' popups nor sends the panes a hide message, so every banner in a closed window stayed up for the undo window. `close-overlays.ps1` section 5 proves it: red without the fix, green with it.
+- **Fix.** `CloseUndo.parkWindow` hides every pane's popups. The search bar and command palette join `Surface.hideOverlays`. The no-undo close paths and `+rearrange`'s departing panes hide their popups at once.
+- **Validated.** close-overlays ALL PASS (19), and the negative control is still red. All four zig lanes, the harness floor and P1-P3 passed. Due harnesses: see T2034.
+- **Mac.** Nothing owed: the Mac banner is a view inside the pane.

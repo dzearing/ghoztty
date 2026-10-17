@@ -1,10 +1,10 @@
 {
     "guard":  "viewer-nav-pin",
     "script":  "test/win32/viewer-nav-pin.ps1",
-    "generated":  "2026-10-16T03:14:39-07:00",
-    "commit":  "945ca9f93",
+    "generated":  "2026-10-16T20:07:46-07:00",
+    "commit":  "53dacf43a",
     "uncommitted":  [
-                        "src/apprt/win32/ViewerPane.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/viewer_nav_layout.zig":  "169666f4f29e3d7066727112f7ef7459fc401ce38f56ef2dfb6f34892900deea",

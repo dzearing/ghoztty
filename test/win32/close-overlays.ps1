@@ -20,6 +20,8 @@
 #      the T2012 shape and not a plain teardown.
 #   4. +stash c3: its banner is hidden at once too (stash keeps the pane in the
 #      tree; this pins that path so a refactor cannot regress it).
+#   5. +close the whole cw window (parked for undo, since the launch window is
+#      still open): both of its banners leave the screen at once.
 #
 # -NegativeControl runs the section-2 oracle BEFORE the close, when c2's banner
 # is legitimately visible, so it MUST fail: the proof that the oracle can see a
@@ -204,6 +206,18 @@ try {
             $barBack = Wait-Until { Test-HwndVisible $appPid $c3Bar.Hwnd } 3000
             Assert $barBack "+restore c3: its scrollbar comes back with it"
         }
+
+        # --- 5. +close the whole cw window: its panes' popups go with it -----
+        # The launch window is still open, so the close PARKS cw for undo:
+        # the window is hidden, and hiding a top-level does not hide the
+        # popups its panes own. Every banner on screen now is cw's (the
+        # launch window has none).
+        $cwBanners = @(Get-VisibleBanners $appPid)
+        Assert ($cwBanners.Count -eq 2) "setup: cw shows two banners before its window closes (saw $($cwBanners.Count))"
+        & $exe +close --target=cw | Out-Null
+        $goneW = Wait-Until { @($cwBanners | Where-Object { Test-HwndVisible $appPid $_.Hwnd }).Count -eq 0 } 300
+        Assert $goneW "+close the cw window: every banner it showed leaves the screen at once"
+        Assert (@($cwBanners | Where-Object { Test-HwndExists $appPid $_.Hwnd }).Count -eq $cwBanners.Count) "cw was parked for undo, not torn down (its banner HWNDs still exist)"
     }
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
