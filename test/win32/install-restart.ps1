@@ -213,7 +213,7 @@ if ($TeethCheck) {
         else { "  PASS $name (caught)"; $script:passes++ }
     }
     ""
-    if ($script:failures -eq 0) { "ALL PASS" } else { "$($script:failures) FAILURE(S)" }
+    if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" } else { "$($script:failures) FAILURE(S)" }
     exit ([int]($script:failures -gt 0))
 }
 
@@ -730,4 +730,4 @@ if ($script:failures -eq 0 -and $script:skipped -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'install-restart' -MinPass 30
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped -Label 'install-restart' -MinPass 30

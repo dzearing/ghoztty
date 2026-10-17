@@ -76,6 +76,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-captiontest$PID"
 . (Join-Path $PSScriptRoot 'lib\ColorMath.ps1')
 
 $script:pass = 0
+$script:skipped = 0
 $script:fail = 0
 function Ok([string]$msg) { $script:pass++; Write-Host "  PASS  $msg" }
 function Bad([string]$msg) { $script:fail++; Write-Host "  FAIL  $msg" }
@@ -418,7 +419,7 @@ try {
     # assertion is therefore a BAND - lit, but not as firm as a press - which
     # is what catches a hover that silently paints the pressed treatment.
     if (-not (Test-HoverCaptureAvailable)) {
-        Write-Host '  SKIP  hover fill: this build has no capture-hover seam (ReleaseFast)'
+        Write-Host '  SKIP  hover fill: this build has no capture-hover seam (ReleaseFast)'; $script:skipped++
     } else {
         $hovMin  = Get-TestHoverCapture -Hwnd $h -X $geo.PtMin[0] -Y $geo.PtMin[1]
         # The DRAG band, as the dead-space control: a caption point that is not
@@ -591,7 +592,7 @@ try {
 
     Write-Host ""
     if ($script:fail -eq 0) {
-        Write-Host "ALL PASS ($script:pass assertions)"
+        Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
         $exitCode = 0
     } else {
         Write-Host "$script:fail FAILURE(S) ($script:pass passed)"

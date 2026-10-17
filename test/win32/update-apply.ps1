@@ -57,6 +57,7 @@ Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 $td = New-TestDesktop
 
 $script:pass = 0
+$script:skipped = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
@@ -217,7 +218,7 @@ if (Test-Path $staged) {
 if (-not $releaseBefore) {
     Assert (-not (Test-Path $releaseStaging)) 'msi: a debug run staged nothing into the release lineage'
 } else {
-    Write-Host 'SKIP  msi: release staging dir pre-existed; lineage separation not asserted'
+    Write-Host 'SKIP  msi: release staging dir pre-existed; lineage separation not asserted'; $script:skipped++
 }
 
 # -- 2. an asset that is not a package is refused -------------------------
@@ -460,4 +461,4 @@ if ($script:fail -eq 0) {
         ForEach-Object { Write-Host "  $_" }
 }
 
-Write-TestVerdict -Pass $script:pass -Fail $script:fail
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

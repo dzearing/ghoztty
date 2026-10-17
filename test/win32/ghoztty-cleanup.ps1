@@ -399,9 +399,7 @@ if ($script:failures -eq 0 -and $script:skips -eq 0 -and -not $NegativeControl) 
 
 Say ''
 if ($script:failures -eq 0) {
-    $note = ''
-    if ($script:skips -gt 0) { $note = " / $script:skips skipped" }
-    Say "GHOZTTY-CLEANUP: ALL PASS ($script:passes$note)"
+    Say "GHOZTTY-CLEANUP: ALL PASS ($script:passes$(if ($script:skips) { ", $script:skips SKIPPED" }))"
     exit 0
 } else {
     Say "GHOZTTY-CLEANUP: $script:failures FAILURE(S) / $script:passes passed"

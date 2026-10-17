@@ -48,6 +48,7 @@ $ErrorActionPreference = 'Continue'
 
 $script:failures = 0
 $script:passes = 0
+$script:skipped = 0
 
 function Assert($name, $cond, $detail = '') {
     if ($cond) { "  PASS $name"; $script:passes++ }
@@ -168,7 +169,7 @@ Assert 'C3 no unswept file arms a timer on msg_hwnd' ($newcomers.Count -eq 0) `
 $zig = (Get-Command zig -ErrorAction SilentlyContinue)
 if (-not $zig) {
     "  SKIP D: zig is not on PATH, so the compile-time half cannot be exercised here"
-    $script:skipped = 1
+    $script:skipped++
 }
 else {
     if (-not $env:ZIG_GLOBAL_CACHE_DIR) { $env:ZIG_GLOBAL_CACHE_DIR = 'D:\zig-global-cache' }

@@ -67,6 +67,7 @@ $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 . (Join-Path $repo 'scripts\lib\BuildCache.ps1')
 
 $script:pass = 0
+$script:skipped = 0
 $script:fail = 0
 $script:negReached = $false
 
@@ -276,7 +277,7 @@ Assert 'D7 the same drive is reported once, not once per path' `
 # The default must not fire on a healthy box, or the gate is just a new outage.
 $state = Get-BuildCacheState -CacheDirs @((Join-Path $repo '.zig-cache')) -MinFreeGB 0 -MaxEntries 999999
 if ($null -eq $state.FreeGB) {
-    Write-Host '  SKIP D8: could not read free space on the repo drive'
+    Write-Host '  SKIP D8: could not read free space on the repo drive'; $script:skipped++
 } else {
     Assert 'D8 the repo drive is above the 10 GB default, so ordinary runs are unaffected' ($state.FreeGB -gt 10)
 }
@@ -487,4 +488,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'build-cache' -MinPass 50
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -Label 'build-cache' -MinPass 50

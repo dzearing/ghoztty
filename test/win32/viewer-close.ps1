@@ -86,6 +86,7 @@ Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 Register-RepoBuildTeardown -Exe $exe | Out-Null
 
 $script:pass = 0
+$script:skipped = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
@@ -344,7 +345,7 @@ try {
             Assert (Wait-NoWin 'vc5') 'B: the closed window is gone from +list'
         }
     } else {
-        Write-Host '  SKIP B: the app did not survive section A'
+        Write-Host '  SKIP B: the app did not survive section A'; $script:skipped++
     }
 
     # =====================================================================
@@ -372,7 +373,7 @@ try {
             Assert (Wait-NoWin 'vc2') 'C: the closed window is gone from +list'
         }
     } else {
-        Write-Host '  SKIP C: the app did not survive an earlier section'
+        Write-Host '  SKIP C: the app did not survive an earlier section'; $script:skipped++
     }
 
     # =====================================================================
@@ -406,7 +407,7 @@ try {
             Assert ($left -eq 1) "D: the window survived the pane close with its other pane (got $left)"
         }
     } else {
-        Write-Host '  SKIP D: the app did not survive an earlier section'
+        Write-Host '  SKIP D: the app did not survive an earlier section'; $script:skipped++
     }
 
     # =====================================================================
@@ -459,7 +460,7 @@ try {
         Assert ($null -eq $pm.DumpPath) `
             "E: no crash dump was written (dump: $(if ($pm.DumpPath) { $pm.DumpPath } else { 'none' }))"
     } else {
-        Write-Host '  SKIP E: the app did not survive an earlier section'
+        Write-Host '  SKIP E: the app did not survive an earlier section'; $script:skipped++
     }
 
     Complete-TestBody
@@ -484,4 +485,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 Write-Host ''
 # -MinPass: a full run scores 33. A throw that unwinds a section leaves far
 # less than that, and a partial score must not read as a pass (T271/T1039).
-Write-TestVerdict -Label 'VIEWER CLOSE' -Pass $script:pass -Fail $script:fail -MinPass 30
+Write-TestVerdict -Label 'VIEWER CLOSE' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -MinPass 30

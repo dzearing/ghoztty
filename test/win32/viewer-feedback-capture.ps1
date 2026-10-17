@@ -147,6 +147,7 @@ public class GhozttyCaptureFrame {
 '@ -ErrorAction SilentlyContinue
 
 $script:pass = 0
+$script:skipped = 0
 $script:fail = 0
 
 function Assert([bool]$cond, [string]$label) {
@@ -912,7 +913,7 @@ try {
                 Assert ($left.Caret.X -ne $right.Caret.X -or $left.Caret.Y -ne $right.Caret.Y) `
                     "moving the window to another monitor moves the caret with it ($($left.Caret.X),$($left.Caret.Y) -> $($right.Caret.X),$($right.Caret.Y)) - the pointer never moved"
             } else {
-                Write-Host "SKIP  one monitor on this desk, so left and right are the same screen ($($left.Home.W)x$($left.Home.H)) - the cross-monitor half of T706 is unproven here"
+                Write-Host "SKIP  one monitor on this desk, so left and right are the same screen ($($left.Home.W)x$($left.Home.H)) - the cross-monitor half of T706 is unproven here"; $script:skipped++
             }
         }
     }
@@ -950,4 +951,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'VIEWER FEEDBACK CAPTURE ACCEPTANCE'
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -Label 'VIEWER FEEDBACK CAPTURE ACCEPTANCE'

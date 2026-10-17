@@ -20,6 +20,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:skipped = 0
 $tmp = Join-Path $env:TEMP "ghoztty-ipc-remote-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
@@ -136,7 +137,7 @@ if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
     $wslOk = ($LASTEXITCODE -eq 0)
 }
 if (-not $wslOk) {
-    "  SKIP 3b wsl.exe - no WSL distro on this box that can run /bin/true"
+    "  SKIP 3b wsl.exe - no WSL distro on this box that can run /bin/true"; $script:skipped++
 } else {
     $r = Ghoz @('+new-remote-window', '--host=127.0.0.1', "--port=$Port", '--name=remwsl', '--shell=wsl.exe', '--command=echo remote-wsl-marker')
     Assert "wsl remote exit 0" ($r.ExitCode -eq 0)
@@ -277,5 +278,5 @@ Stop-DebugGhoztty
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 }
+if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"; exit 0 }
 else { "$($script:failures) FAILURE(S)"; exit 1 }

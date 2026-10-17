@@ -109,6 +109,7 @@ try {
     '-- C. every non-green verdict preserves, not just FAILURE(S)'
 
     $liveN = New-TestTranscript -Name 'unit-n' -Dir $root
+    # skip-audit: fixture text for the transcript under test, not this script skipping
     Set-Content -LiteralPath $liveN -Value '  SKIP whole run: the fixture never came up'
     Reset-TestBody; Complete-TestBody
     $nothing = Complete-TestTranscript -Name 'unit-n' -Path $liveN -Dir $root `

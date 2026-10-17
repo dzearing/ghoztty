@@ -204,7 +204,11 @@ function Get-SkipAuditFindings {
         # against ANOTHER script's output is not this script's verdict:
         # go-loop-guard and crash-stacks both assert `-match 'ALL PASS'` on a
         # tool they invoke, which is not their own summary line.
-        $isAssert = ($line -match '^\s*(Assert|AssertEq|Check)\b')
+        # Any `Assert*` helper counts (T2056): daily-publish's
+        # `AssertMatch '...' 'SKIP.*Docker' $f1.Text` is the pattern it expects
+        # in ANOTHER script's log, and the old `Assert|AssertEq` list read it as
+        # this script skipping twice.
+        $isAssert = ($line -match '^\s*(Assert\w*|Check)\b')
         $isOperand = ($line -match "-(c|i)?(match|like|eq|ne|contains|notmatch|notlike)\s*['`"][^'`"]*ALL PASS")
 
         # T271: a script on the shared scorer has no ALL PASS literal - the

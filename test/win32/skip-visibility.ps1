@@ -119,6 +119,16 @@ $notSkips = @(
 Assert "A9 assertions, fixture data, prose and WARNs are not skip sites" (
     (Findings $notSkips).Count -eq 0)
 
+# T2056: any Assert* helper is an assertion, not only Assert/AssertEq. The
+# pattern a script expects in ANOTHER tool's log is not this script skipping.
+# skip-audit: the fixture below is analyzer input, not this script skipping
+$assertHelper = @(
+    'AssertMatch ''F1 with Docker named in the log'' ''SKIP.*Docker'' $f1.Text',
+    'if ($script:fail -eq 0) { Write-Host "ALL PASS" }'
+)
+Assert "A18 an AssertMatch on another tool's SKIP text is not a skip site" (
+    (Findings $assertHelper).Count -eq 0)
+
 # A verdict asserted about ANOTHER tool's output is not this script's verdict.
 $foreignVerdict = @(
     'Write-Host ''SKIP P13 (node not on PATH)''; $script:skipped++',

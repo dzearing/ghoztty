@@ -111,6 +111,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-tabstriptest$PID"
 if ($DebugMarker) { $env:GHOZTTY_DEBUG_MARKER = '1'; Write-Host 'INFO  debug chrome marker ENABLED (-DebugMarker)' }
 
 $script:pass = 0
+$script:skipped = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
@@ -126,7 +127,7 @@ function Assert([bool]$cond, [string]$label) {
 # changes, so a -DebugMarker run is green exactly when the answer is yes.
 function Assert-Wash([bool]$cond, [string]$label) {
     if ($DebugMarker) {
-        Write-Host "SKIP  $label - the marker tints the bar and every chrome wash is a fraction of it (T43)"
+        Write-Host "SKIP  $label - the marker tints the bar and every chrome wash is a fraction of it (T43)"; $script:skipped++
         return
     }
     Assert $cond $label

@@ -85,8 +85,9 @@ $script:HARNESS_FLOOR_AUDITS = @(
 # name -> the task id that converts it. RED TODAY AND TRACKED, never a permanent
 # allowlist: see the ratchet note at the top.
 $script:HARNESS_FLOOR_PENDING = @{
-    # 13 scripts skip a section without the verdict line naming a skip count.
-    'skip-visibility.ps1' = 'T1123'
+    # (skip-visibility.ps1 left this list on 2026-10-17, T2056: pending against
+    # T1123 it ran red in every sweep for two months and joined 14 violators
+    # without ever failing one. A new violator now fails the floor.)
     # C5: eight scripts stamp a guard from a body that may have unwound, against
     # a ratchet ceiling of six.
     'asserted-nothing.ps1' = 'T1568'
