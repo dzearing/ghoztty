@@ -36687,3 +36687,10 @@ moved to T1814.
 - **Validated.** `test/win32/parity-tasks-lanes.ps1` section F (F1–F11, a real git upstream for the push leg, negative control `GHOZTTY_LOOP_LEDGER_NO_RESERVE=1`), ALL PASS (43). gate-negatives, parity-tasks-seat, loop-lanes, go-loop-guard, argv-hazard, unroll-count and the scoped harness floor are green and stamped. hook-json (T2001) and drag-perf (T1854) stay red for their own tracked reasons.
 - **Mac.** Nothing owed: the loop tooling is Windows-seat only.
 - **Filed.** T2038: the residual (a lane unpulled for over an hour after the push can still be handed the task).
+
+## 2026-10-16 — T2036: each loop lane now runs its own git hooks
+
+- **The gap.** The two loop lanes are worktrees of one repository, and every worktree reads one shared `.git/config`. The commit guard's `install` wrote `core.hooksPath` and the stamp merge driver there, so whichever lane claimed last ran ITS pre-commit hook and driver for both. Lane A was committing through lane B's hooks when this was filed.
+- **Fix.** `git-commit-guard.ps1 install` enables `extensions.worktreeConfig` and writes both settings with `--worktree` (`Install-OwnConfig`). The main tree also keeps the shared default. A linked tree that finds its own path in the shared file hands it back to the main tree's (or removes it). The effective value is then read back, and install fails with exit 2 if it does not apply to this tree. `status` reports the effective hooksPath.
+- **Validated.** go-loop-guard W41–W48: a main tree plus a linked `lane-b` fixture, starting from the broken shared entry (W41 control). Each tree ends on its own hooks and driver, a repeat install is a no-op, and a hook edited in lane B fires for lane B's commits only (W47/W48). W15 now checks the real tree's effective path is its own. ALL PASS (455), plus argv-hazard, unroll-count and the scoped harness floor. On the box, D:\git\ghoztty and D:\git\ghoztty-b each resolve to their own pair. hook-json (T2001) and drag-perf (T1854) are red for their own tracked reasons.
+- **Mac.** Nothing owed: the loop tooling is Windows-seat only. A single-clone checkout behaves as before (the main tree writes both scopes).

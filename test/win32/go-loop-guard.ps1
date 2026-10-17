@@ -2041,11 +2041,82 @@ $r = CG @('commit', '-Paths', 'msg-stale.txt', '-MessageFile', $msgPath)
 Assert 'W40 the next turn cannot inherit the last turn''s subject' `
     ($r.Code -eq 2 -and (WHead) -eq $headBefore)
 
+# T2036: two loop lanes are two WORKTREES of one repository, and every worktree
+# reads the one shared .git/config. `install` wrote core.hooksPath there, so the
+# lane that claimed last armed ITS hooks (and its stamp merge driver) for both:
+# on 2026-10-16 lane A was committing through lane B's pre-commit. The fixture
+# is that box in miniature - a main tree and a linked `lane-b` tree, each with
+# its own copy of the guard - started from the broken shape the old install
+# left behind, so the control below proves the arms measure the fix.
+$wt = Join-Path $root 'wtcfg'
+$wtA = Join-Path $wt 'main'
+$wtB = Join-Path $wt 'lane-b'
+New-Item -ItemType Directory -Force (Join-Path $wtA 'scripts\lib') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $wtA 'scripts\githooks') | Out-Null
+foreach ($rel in @('scripts\git-commit-guard.ps1', 'scripts\stamp-merge.ps1', 'scripts\lib\StampMerge.ps1', 'scripts\githooks\pre-commit')) {
+    Copy-Item -LiteralPath (Join-Path $Repo $rel) -Destination (Join-Path $wtA $rel)
+}
+git -C $wtA init -q 2>$null
+git -C $wtA config user.email 't@t' 2>$null; git -C $wtA config user.name 't' 2>$null
+git -C $wtA add -A 2>$null
+git -C $wtA -c core.hooksPath= commit -q -m 'fixture' 2>$null
+git -C $wtA worktree add -q -b lane-b $wtB 2>$null
+function WtHooks([string]$dir) { (& git -C $dir config --get core.hooksPath 2>$null | Select-Object -First 1) }
+function WtDriver([string]$dir) { (& git -C $dir config --get merge.ghoztty-stamp.driver 2>$null | Select-Object -First 1) }
+function WtOwn([string]$value, [string]$dir) {
+    if (-not $value) { return $false }
+    $v = ($value -replace '\\', '/').TrimEnd('/')
+    $d = ((Join-Path $dir 'scripts') -replace '\\', '/').TrimEnd('/')
+    return $v.StartsWith("$d/", [System.StringComparison]::OrdinalIgnoreCase)
+}
+function WtInstall([string]$dir) {
+    $o = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir 'scripts\git-commit-guard.ps1') install -Repo $dir 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String
+    return @{ Code = $LASTEXITCODE; Out = $o.Trim() }
+}
+# The state the pre-fix install leaves after lane B claims last: lane B's paths
+# in the shared file.
+git -C $wtA config --local core.hooksPath ((Join-Path $wtB 'scripts\githooks') -replace '\\', '/') 2>$null
+Assert 'W41 control: with one shared entry the main tree runs lane B''s hooks' `
+    (WtOwn (WtHooks $wtA) $wtB)
+
+$rB = WtInstall $wtB
+Assert 'W42 lane B''s install arms its own hooks for lane B' `
+    ($rB.Code -eq 0 -and (WtOwn (WtHooks $wtB) $wtB))
+Assert 'W43 and hands the shared entry back, so the main tree runs the main tree''s hooks' `
+    (WtOwn (WtHooks $wtA) $wtA)
+$rA = WtInstall $wtA
+Assert 'W44 after BOTH lanes install, each worktree''s effective hooksPath is its own' `
+    ($rA.Code -eq 0 -and (WtOwn (WtHooks $wtA) $wtA) -and (WtOwn (WtHooks $wtB) $wtB))
+Assert 'W45 and each worktree merges stamps with its own driver' `
+    ((WtOwn ((WtDriver $wtA) -replace "^.*-File '", '') $wtA) -and (WtOwn ((WtDriver $wtB) -replace "^.*-File '", '') $wtB))
+$rA2 = WtInstall $wtA; $rB2 = WtInstall $wtB
+Assert 'W46 a second install in each lane changes nothing (already set)' `
+    ($rA2.Out -match 'hooksPath already set' -and $rA2.Out -match 'driver registered \(already set\)' -and
+     $rB2.Out -match 'hooksPath already set' -and $rB2.Out -match 'driver registered \(already set\)')
+# The behaviour, not the config: a hook edit made in lane B fires for lane B's
+# commits and for nobody else's.
+$wtMark = (Join-Path $wt 'hook-b-ran.txt') -replace '\\', '/'
+$hookB = Join-Path $wtB 'scripts\githooks\pre-commit'
+$hookText = [IO.File]::ReadAllText($hookB) -replace "`r`n", "`n"
+$hookText = $hookText -replace '^(#!/bin/sh\n)', "`$1echo ran >> '$wtMark'`n"
+[IO.File]::WriteAllText($hookB, $hookText)
+git -C $wtA commit -q --allow-empty -m 'lane a commits' 2>$null
+$aCommitted = ($LASTEXITCODE -eq 0)
+Assert 'W47 a commit in the main tree does not run lane B''s edited hook' `
+    ($aCommitted -and -not (Test-Path -LiteralPath $wtMark))
+git -C $wtB commit -q --allow-empty -m 'lane b commits' 2>$null
+Assert 'W48 a commit in lane B does run it (positive control)' `
+    ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $wtMark))
+
 # The one arm about THIS box: claim arms the guard every turn, so the real repo
 # should be wired right now. Read-only - nothing here reconfigures the real repo.
-$realHooks = (& git -C $Repo config --local --get core.hooksPath 2>$null)
-Assert 'W15 the real repo has the guard armed (run go-loop-exec.ps1 claim if this fails)' `
-    ($realHooks -match 'githooks')
+# Effective, and THIS tree's own (T2036): the other lane's hooks dir also
+# matches 'githooks'.
+$realHooks = (& git -C $Repo config --get core.hooksPath 2>$null | Select-Object -First 1)
+$ownHooks = ((Join-Path $Repo 'scripts\githooks') -replace '\\', '/').TrimEnd('/')
+Assert 'W15 the real repo has its OWN guard armed (run go-loop-exec.ps1 claim if this fails)' `
+    ($realHooks -and (($realHooks -replace '\\', '/').TrimEnd('/') -ieq $ownHooks))
 
 # --- X. the loop has an off switch, and the watchdog honours it (2026-08-23/24)
 # The loop had no way to be stopped on purpose. Closing the window is not it:

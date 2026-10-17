@@ -294,20 +294,102 @@ function Get-PushArgs {
     return @('push', $remote, "HEAD:$merge")
 }
 
-# Register the stamp merge driver in this clone's local config (T2027) and
-# answer with the line to print, or $null on failure. The path is absolute for
-# the reason core.hooksPath's is: a driver resolved against the wrong cwd is a
-# driver that silently is not there, and git runs it from wherever it is.
-function Install-StampMergeDriver {
-    $driverScript = (Join-Path $PSScriptRoot 'stamp-merge.ps1') -replace '\\', '/'
+# Where this checkout's per-clone config lives (T2036). Every worktree of one
+# repository shares ONE .git/config, so a `config --local` write from lane B's
+# tree is read by lane A's commits too: the last lane to claim armed ITS hooks
+# for both. A linked worktree is told apart from the main one by its git dir.
+function Get-WorktreeScope {
+    $g = Git-Run @('rev-parse', '--path-format=absolute', '--absolute-git-dir')
+    $c = Git-Run @('rev-parse', '--path-format=absolute', '--git-common-dir')
+    if ($g.Code -ne 0 -or $c.Code -ne 0 -or -not $g.Out -or -not $c.Out) { return $null }
+    $gd = (($g.Out -split "`r?`n")[0].Trim() -replace '\\', '/').TrimEnd('/')
+    $cd = (($c.Out -split "`r?`n")[0].Trim() -replace '\\', '/').TrimEnd('/')
+    $mainRoot = $null
+    if ((Split-Path -Leaf $cd) -eq '.git') { $mainRoot = Split-Path -Parent $cd }
+    return @{ Linked = ($gd -ne $cd); MainRoot = $mainRoot }
+}
+
+function Test-SameConfigValue([string]$a, [string]$b) {
+    if (-not $a -or -not $b) { return $false }
+    return (($a -replace '\\', '/').TrimEnd('/') -ieq ($b -replace '\\', '/').TrimEnd('/'))
+}
+
+function Get-ConfigValue([string[]]$scope, [string]$key) {
+    $r = Git-Run (@('config') + $scope + @('--get', $key))
+    if ($r.Code -ne 0 -or -not $r.Out) { return $null }
+    return ($r.Out -split "`r?`n")[0].Trim()
+}
+
+# Write one per-checkout value so that it governs THIS worktree and no other
+# (T2036): into the worktree's own config.worktree, which git reads after the
+# shared file. The shared value stays the default for a worktree nobody armed,
+# so it is the MAIN worktree's: the main worktree writes it, and a linked one
+# that finds its own value there - the pre-T2036 shape - hands it back to the
+# main tree's ($mainWant) or removes it when the main tree has none. Then the
+# EFFECTIVE value is read back, since a write that does not govern is the
+# failure this exists to end. Answers @{ Ok; Changed; Effective }.
+function Install-OwnConfig([string]$key, [string]$want, [string]$mainWant) {
+    $sc = Get-WorktreeScope
+    if (-not $sc) { return @{ Ok = $false; Changed = $false; Effective = $null } }
+    $changed = $false
+    if ((Get-ConfigValue @('--local') 'extensions.worktreeConfig') -ne 'true') {
+        $e = Git-Run @('config', '--local', 'extensions.worktreeConfig', 'true')
+        if ($e.Code -ne 0) { return @{ Ok = $false; Changed = $false; Effective = $null } }
+        $changed = $true
+    }
+    if (-not (Test-SameConfigValue (Get-ConfigValue @('--worktree') $key) $want)) {
+        $w = Git-Run @('config', '--worktree', $key, $want)
+        if ($w.Code -ne 0) { return @{ Ok = $false; Changed = $changed; Effective = $null } }
+        $changed = $true
+    }
+    $shared = Get-ConfigValue @('--local') $key
+    if (-not $sc.Linked) {
+        if (-not (Test-SameConfigValue $shared $want)) {
+            $null = Git-Run @('config', '--local', $key, $want); $changed = $true
+        }
+    } elseif ((Test-SameConfigValue $shared $want) -and -not (Test-SameConfigValue $shared $mainWant)) {
+        # (A value both trees agree on - the driver's name - is nobody's to hand back.)
+        if ($mainWant) { $null = Git-Run @('config', '--local', $key, $mainWant) }
+        else { $null = Git-Run @('config', '--local', '--unset-all', $key) }
+        $changed = $true
+    }
+    $eff = Get-ConfigValue @() $key
+    return @{ Ok = (Test-SameConfigValue $eff $want); Changed = $changed; Effective = $eff }
+}
+
+# The main worktree's copy of a file of ours, or $null when it has none (a
+# fixture repo, a main tree on a branch without the script).
+function Get-MainTreeFile([string]$relative) {
+    $sc = Get-WorktreeScope
+    if (-not $sc -or -not $sc.MainRoot) { return $null }
+    $f = Join-Path $sc.MainRoot $relative
+    if (Test-Path -LiteralPath $f) { return $f }
+    return $null
+}
+
+function Get-StampDriverCommand([string]$driverScript) {
     # Single quotes: git runs the driver through sh, which strips them, while
     # PS 5.1 silently drops embedded DOUBLE quotes on the way to git config.
-    $want = "powershell -NoProfile -ExecutionPolicy Bypass -File '$driverScript' %O %A %B"
-    $cur = Git-Run @('config', '--local', '--get', 'merge.ghoztty-stamp.driver')
-    if ($cur.Code -eq 0 -and $cur.Out -eq $want) { return 'stamp merge driver registered (already set)' }
-    $a = Git-Run @('config', '--local', 'merge.ghoztty-stamp.name', 'keep the newer guard stamp (T2027)')
-    $b = Git-Run @('config', '--local', 'merge.ghoztty-stamp.driver', $want)
-    if ($a.Code -ne 0 -or $b.Code -ne 0) { return $null }
+    $p = $driverScript -replace '\\', '/'
+    return "powershell -NoProfile -ExecutionPolicy Bypass -File '$p' %O %A %B"
+}
+
+# Register the stamp merge driver for this checkout (T2027) and answer with the
+# line to print, or $null on failure. The path is absolute for the reason
+# core.hooksPath's is: a driver resolved against the wrong cwd is a driver that
+# silently is not there, and git runs it from wherever it is. Per worktree since
+# T2036, for the same reason too: the shared entry named whichever lane last
+# claimed, so one lane merged with the other lane's driver.
+function Install-StampMergeDriver {
+    $driverScript = (Join-Path $PSScriptRoot 'stamp-merge.ps1') -replace '\\', '/'
+    $want = Get-StampDriverCommand $driverScript
+    $mainFile = Get-MainTreeFile 'scripts\stamp-merge.ps1'
+    $mainWant = if ($mainFile) { Get-StampDriverCommand $mainFile } else { $null }
+    $name = 'keep the newer guard stamp (T2027)'
+    $n = Install-OwnConfig 'merge.ghoztty-stamp.name' $name $name
+    $d = Install-OwnConfig 'merge.ghoztty-stamp.driver' $want $mainWant
+    if (-not $n.Ok -or -not $d.Ok) { return $null }
+    if (-not $n.Changed -and -not $d.Changed) { return 'stamp merge driver registered (already set)' }
     return "stamp merge driver registered (merge.ghoztty-stamp -> $driverScript)"
 }
 
@@ -419,27 +501,32 @@ function Test-PathCovered([string]$file, [string[]]$requested) {
 switch ($Action) {
 
     # ---------------------------------------------------------------- install
-    # core.hooksPath is LOCAL config (per clone, like the index it guards), so
-    # this cannot ride in with a `git pull` - it is re-asserted every turn by
+    # core.hooksPath is per-checkout config (like the index it guards), so this
+    # cannot ride in with a `git pull` - it is re-asserted every turn by
     # go-loop-exec.ps1's claim. Absolute path on purpose: git's handling of a
     # relative hooksPath has changed between versions, and a hooks dir resolved
-    # against the wrong cwd is a guard that silently is not there.
+    # against the wrong cwd is a guard that silently is not there. Written per
+    # WORKTREE since T2036 (Install-OwnConfig): each loop lane is a worktree of
+    # one repository, and a shared entry ran the last-claiming lane's hooks for
+    # both - so a hook edit in one lane governed the other.
     'install' {
         $hook = Join-Path $hooksDir 'pre-commit'
         if (-not (Test-Path -LiteralPath $hook)) { Fail "ERROR no pre-commit hook at $hook" 2 }
-        $current = (& git -C $Repo config --local --get core.hooksPath 2>$null)
-        if ($LASTEXITCODE -ne 0) { $current = $null }
         $want = (Resolve-Path -LiteralPath $hooksDir).Path
-        # The stamp merge driver rides on the same per-clone install (T2027):
+        # The stamp merge driver rides on the same per-checkout install (T2027):
         # merge.<name>.driver is local config too, so it never arrives by pull.
         $driverMsg = Install-StampMergeDriver
         if ($null -eq $driverMsg) { Fail "ERROR could not register the stamp merge driver" 2 }
-        if ($current -and (($current -replace '\\', '/').TrimEnd('/') -eq ($want -replace '\\', '/').TrimEnd('/'))) {
+        $mainHooks = Get-MainTreeFile 'scripts\githooks\pre-commit'
+        if ($mainHooks) { $mainHooks = Split-Path -Parent $mainHooks }
+        $h = Install-OwnConfig 'core.hooksPath' $want $mainHooks
+        if (-not $h.Ok) {
+            Fail "ERROR core.hooksPath does not govern this worktree: effective '$($h.Effective)', wanted '$want'" 2
+        }
+        if (-not $h.Changed) {
             if (-not $Quiet) { "commit guard armed (hooksPath already set)"; $driverMsg }
             exit 0
         }
-        & git -C $Repo config --local core.hooksPath $want 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { Fail "ERROR could not set core.hooksPath" 2 }
         if (-not $Quiet) { "commit guard armed (hooksPath -> $want)"; $driverMsg }
         exit 0
     }
@@ -449,7 +536,7 @@ switch ($Action) {
         $lp = Get-LockPath
         if (-not $lp) { Fail "ERROR not a git repo: $Repo" 2 }
         $L = Read-Lock $lp
-        $hooks = (& git -C $Repo config --local --get core.hooksPath 2>$null)
+        $hooks = (& git -C $Repo config --get core.hooksPath 2>$null)
         if ($LASTEXITCODE -ne 0) { $hooks = '' }
         if ($Json) {
             $jKey = ''; $jHolder = ''; $jAge = 0; $jTtl = $DefaultTtl
