@@ -637,8 +637,21 @@ try {
     Assert ($rebuiltN -ge 2) "the machine's whole topology came back, not one window of it ($rebuiltN)"
     Assert ($shapesAfter.Count -eq ($shapesBefore.Count + $rebuiltN)) `
         "every rebuilt window is on screen ($($shapesBefore.Count) -> $($shapesAfter.Count), rebuilt $rebuiltN)"
-    $restored = @($shapesAfter | Where-Object { $_.Name -eq 't336-multi' }) | Select-Object -First 1
-    Assert ($null -ne $restored) 'the rebuilt window kept its ipc name'
+    # T2016: the rebuilt fixture window is found by what it IS (one of the
+    # windows that were not here before the press, the widest of them), not by
+    # its old ipc name - since T1883 a cross-machine restore deliberately mints a
+    # FRESH local name (Mac parity: `t336-multi` is the far machine's name, and
+    # adopting it could collide with a local window's). Matching on the title
+    # instead would make E2 below assert what it had just selected on.
+    $namesBefore = @($shapesBefore | ForEach-Object { $_.Name })
+    $restored = @($shapesAfter | Where-Object { $namesBefore -notcontains $_.Name } |
+        Sort-Object -Property Panes -Descending) | Select-Object -First 1
+    # On a miss, say what IS on screen - a bare FAIL cannot tell a renamed
+    # window from a missing one.
+    $shapeList = (@($shapesAfter | ForEach-Object { "$($_.Name)|$($_.Title)|$($_.Panes)" }) -join '; ')
+    Assert ($null -ne $restored -and $restored.Name -match '^window-\d+$') `
+        "the rebuilt window took a fresh LOCAL name, not the far machine's 't336-multi' (T1883; windows: $shapeList)"
+    $restoredName = if ($restored) { $restored.Name } else { 't336-multi' }
     Assert ($null -ne $restored -and $restored.Panes -eq 3) `
         "and its recorded split topology - three panes ($(if ($restored) { $restored.Panes } else { 0 }))"
     # T1296: the reported loss. A restored set of windows the user cannot tell
@@ -731,7 +744,7 @@ try {
     Assert ($scrollbackAttaches -ge 3) `
         "J2 every rebuilt pane took the scrollback-bearing repaint, not the raw ring ($scrollbackAttaches of 3)"
 
-    $paneIds = @(Get-WindowPaneIds 't336-multi')
+    $paneIds = @(Get-WindowPaneIds $restoredName)
     Assert (Wait-PaneText $paneIds $T413MARK) `
         "J the repaint still brought the machine's own output back ('$T413MARK' readable in $($paneIds.Count) rebuilt pane(s))"
 
@@ -742,7 +755,7 @@ try {
     # is the only question a recording cannot answer, and here it crosses the
     # whole cross-machine path: local keystroke -> relay -> agent -> child, and
     # the child's answer all the way back onto this screen.
-    Assert (Test-PaneLive -Exe $Exe -Target 't336-multi' -Tmp $tmp -Tag 'CRR') `
+    Assert (Test-PaneLive -Exe $Exe -Target $restoredName -Tmp $tmp -Tag 'CRR') `
         'K a rebuilt REMOTE pane is LIVE: input crosses the relay and output comes back'
 
     # --- 7. the double-attach guard, across the relay -----------------------

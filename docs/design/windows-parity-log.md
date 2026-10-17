@@ -36654,3 +36654,9 @@ moved to T1814.
 - **Fix.** `CloseUndo.parkWindow` hides every pane's popups. The search bar and command palette join `Surface.hideOverlays`. The no-undo close paths and `+rearrange`'s departing panes hide their popups at once.
 - **Validated.** close-overlays ALL PASS (19), and the negative control is still red. All four zig lanes, the harness floor and P1-P3 passed. Due harnesses: see T2034.
 - **Mac.** Nothing owed: the Mac banner is a view inside the pane.
+## 2026-10-16 — T2016: the remote Restore All acceptance script is green again
+
+- **Root cause.** Two test defects, no product bug. `Get-LocalAgentPipeName` (`test/win32/lib/PipeBridge.ps1`) ignored `GHOZTTY_AGENT_INSTANCE`, so under the parallel runner's lineage the pipe bridge dialed `ghoztty-agent-debug-<user>` while the agent listened on `ghoztty-agent-debug-apm-<pid>-<user>`. Every relay dial then timed out at the handshake (21 failures). The 5 failures left after that came from asserting that the rebuilt window keeps the far machine's ipc name `t336-multi`. T1883 deliberately changed that to a fresh local `window-N` (Mac parity).
+- **Fix.** The helper now appends the lineage the way `LocalAgent.pipeName` does. The script finds the rebuilt window as the widest new window, asserts it took a `window-N` name, aims J/K at that name, and lists every window on a miss.
+- **Validated.** chooser-restore-all-remote ALL PASS (49). The other bridge-helper callers are all ALL PASS: chooser-resume-remote (40), chooser-orphan-badge (17), orphan-notify (13) and session-reattach (44). The harness floor was run with `-Repo` (T2026). drag-perf (T1854) and hook-json (T2001) are red for their own tracked reasons.
+- **Mac.** Nothing owed: test-only change on the Windows harness.

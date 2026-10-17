@@ -176,11 +176,22 @@ function Stop-PipeBridge {
 }
 
 # The local agent's pipe name for THIS lineage - the same derivation
-# `LocalAgent.pipeName` makes (`ghoztty-agent[-debug]-<USERNAME>`, backslashes
-# sanitized). Bare name, no `\\.\pipe\` prefix.
+# `LocalAgent.pipeName` makes (`ghoztty-agent[-debug][-<instance>]-<USERNAME>`,
+# backslashes sanitized). Bare name, no `\\.\pipe\` prefix.
+#
+# T2016: the `-<instance>` part is GHOZTTY_AGENT_INSTANCE, which the parallel
+# runner (and a second loop lane) sets for every script. Leaving it out bridged
+# a pipe nobody listens on: every relay dial then timed out at the handshake and
+# the remote chooser scripts read as a product failure. -Instance overrides the
+# ambient lineage; an empty -Instance means "no lineage".
 function Get-LocalAgentPipeName {
-    param([switch]$Release)
+    param(
+        [switch]$Release,
+        [AllowEmptyString()][string]$Instance
+    )
     $suffix = if ($Release) { '' } else { '-debug' }
+    $inst = if ($PSBoundParameters.ContainsKey('Instance')) { $Instance } else { $env:GHOZTTY_AGENT_INSTANCE }
+    if ($inst) { $suffix = "$suffix-$inst" }
     $user = $env:USERNAME
     if (-not $user) { $user = 'user' }
     $user = $user -replace '[\\/]', '_'
