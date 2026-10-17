@@ -36748,6 +36748,7 @@ moved to T1814.
 - **Parity caught by the lanes.** The T370 shape test failed on Mac's new `+list --json` `state` key. The win32 encoder now writes each terminal pane's activity token.
 - **Validated.** floor-lane all PASS, P1-P3 ALL PASS, 17 of 20 due harnesses green. The three reds are tracked: upgrade-no-fork (lane B by design, T2043), drag-perf (T1854), and hook-json (the vendored activity-state script mirror, the hook half of T2001, now unblocked).
 - **Unblocked.** T2001, T1965 and T1967 have their shared-core half now.
+- **Filed.** T2047: the commit guard has no merge-commit path, and a rejected push recovered by `pull --rebase` replays the whole merge (cost this turn a rebase abort and a second merge, 0c410303d).
 
 ## 2026-10-17 — T1035: a test now proves a resizing pane is woken by its new frame, not by a timer
 

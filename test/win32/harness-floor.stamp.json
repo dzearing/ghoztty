@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-17T05:45:08-07:00",
-    "commit":  "88ab694b5",
+    "generated":  "2026-10-17T06:50:57-07:00",
+    "commit":  "0c410303d",
     "uncommitted":  [
-                        "test/win32/drag-perf.ps1",
-                        "test/win32/resize-flicker.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -274,6 +273,7 @@
                   "test/win32/lib/ThrowawayProduct.ps1":  "d0754fbb3791ee3d5fec2369a523df0c23ccb6d4738bad21dd37c25cf86c82fd",
                   "test/win32/lib/Transcript.ps1":  "8ef78f20c86cc60c290a3afe71a6bbc22e228bc0f2c58f27f616bbd74a3a29dd",
                   "test/win32/lib/UnrollCountAudit.ps1":  "6f237d65de90843000c81d510845ac188396d6f22dcd4c8889756cd9edbdab77",
+                  "test/win32/lib/UnwiredHookAudit.ps1":  "4a0600ed0088b093dddebaab1adfbbf2fffe4c572a49948a89cd58ec94acc28c",
                   "test/win32/lib/UserPresence.ps1":  "b72ad76b97a7b3cc4533094ca2faf1dec12497500eaee4e7b62389567e863d2c",
                   "test/win32/lib/VerdictExitAudit.ps1":  "87d8cad08aa867a0cc2de896872e47d4abcd469850f4f5a897deb778a7aaf16f",
                   "test/win32/lib/VtText.ps1":  "e9a099093c681d1bbef2c78055e1ed4b29daf9b0d020a3e4c454509c9ee28f9a",
@@ -432,6 +432,7 @@
                   "test/win32/translucent-window.ps1":  "eba06c72df9125b51d640a2be2beb4000ab627b5fed0b935bf5f65ac28af5406",
                   "test/win32/tui-copy-reflow.ps1":  "27aaf25b87bf115d160981b2a3cb856190ea4891ed0cd5abb2796247249d98ea",
                   "test/win32/unroll-count-audit.ps1":  "9dcfec7cb85733af607909d2f62e59631473868dfcf64b6fb4e0cfbf706680e2",
+                  "test/win32/unwired-hook-audit.ps1":  "a487661c2174d465a284ba42129a62996a3f14d84634962601136cc5c8a36c67",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
                   "test/win32/update-auto-apply.ps1":  "d8ce62a5b4deb188abfd7c9ee7b27901797885e8e140909aaa4d1973e3520903",
                   "test/win32/update-check.ps1":  "ef98ba03b9b8710d071b0e193cbd8b0865f74e29ae009cd14c02b73cf1cb4370",
