@@ -214,6 +214,19 @@ awaited_size: u64 = 0,
 /// synchronize rendering with the DWM compositor.
 frame_event: ?w32.HANDLE = null,
 
+/// `GHOZTTY_PRESENT_LAG_MS`: hold this pane's "frame presented" signal back
+/// this many milliseconds on the renderer thread (T1035), the way a
+/// vsync-throttled compositor holds `SwapBuffers` until the next vblank. On
+/// the hidden test desktop presents are not throttled, so the new-size frame
+/// is routinely on screen before the layout pass even starts waiting and the
+/// frame signal never decides anything; this puts the wait back in the state
+/// the user's desktop is in, where it really blocks and the signal is what
+/// ends it. Measurement knob only, clamped well inside the one-frame budget.
+/// Read once beside `frame_event` and never written again, so the renderer
+/// thread reads it without a race (unlike `parent_window`, which an adopt
+/// can move).
+present_lag_ms: u8 = 0,
+
 /// Themed scrollbar (custom layered-popup overlay).
 /// Created lazily after the surface HWND exists.
 scrollbar: ?*Scrollbar = null,
@@ -698,6 +711,10 @@ fn initOnce(
     // Create a manual-reset event for synchronizing resize with the
     // renderer thread. Manual-reset so we control exactly when it's reset.
     self.frame_event = w32.CreateEventW(null, 1, 0, null);
+    self.present_lag_ms = @min(
+        std.process.parseEnvVarInt("GHOZTTY_PRESENT_LAG_MS", u8, 10) catch 0,
+        drag_perf.present_lag_max_ms,
+    );
 
     // Create a WS_CHILD window inside the parent Window container.
     const parent_hwnd = parent.hwnd orelse return error.Win32Error;
@@ -4114,10 +4131,10 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
                     std.time.Timer.start() catch null
                 else
                     null;
-                const timed_out = self.waitForAwaitedFrame();
+                const outcome = self.waitForAwaitedFrame();
                 self.parent_window.addFrameWait(
                     if (timer) |*t| t.read() / std.time.ns_per_us else 0,
-                    timed_out,
+                    outcome,
                 );
             }
         }
@@ -5564,14 +5581,15 @@ fn writeWin32InputSequence(
 }
 
 /// Block until the renderer has presented a frame at `awaited_size`, or the
-/// pass's one-frame budget runs out. Returns true if it ran out (T1476).
+/// pass's one-frame budget runs out (T1476), and say which of the two it was
+/// and whether a present woke it on the way (T1035).
 ///
 /// The serial half of the batched loop in `Window.endFrameWaitBatch`, and it
 /// exists for the same reason: a signalled event only says a frame landed, and
 /// the frame that lands first after a resize is routinely the one the renderer
 /// had already started at the OLD size.
-fn waitForAwaitedFrame(self: *Surface) bool {
-    const event = self.frame_event orelse return false;
+fn waitForAwaitedFrame(self: *Surface) drag_perf.WaitOutcome {
+    const event = self.frame_event orelse return .{};
     var budget = std.time.Timer.start() catch null;
     var timed_out = false;
     var answered = false;
@@ -5582,10 +5600,10 @@ fn waitForAwaitedFrame(self: *Surface) bool {
         if (!resize_paint.presentIsStale(
             self.awaited_size,
             self.presented_size.load(.acquire),
-        )) return false;
+        )) return .{ .woken = answered };
         if (timed_out or (answered and self.parent_window.frame_wait_any)) {
             self.parent_window.noteStalePresent();
-            return true;
+            return .{ .timed_out = true, .woken = answered };
         }
         const spent_ms = if (budget) |*t| t.read() / std.time.ns_per_ms else drag_perf.frame_wait_ms;
         if (spent_ms >= drag_perf.frame_wait_ms) {
@@ -5604,6 +5622,11 @@ fn waitForAwaitedFrame(self: *Surface) bool {
 /// frame has been presented. Wakes the main thread if it's blocking
 /// in handleResize during live resize.
 pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
+    // `GHOZTTY_PRESENT_LAG_MS` (T1035): stand in for a throttled compositor,
+    // so the resize wait has to be WOKEN by this signal rather than finding
+    // the frame already there. Zero, and therefore free, outside a harness.
+    const lag = self.present_lag_ms;
+    if (lag != 0) std.Thread.sleep(@as(u64, lag) * std.time.ns_per_ms);
     // Ordered before the event for the same reason `has_presented_frame` is:
     // a thread the event wakes must never read a size older than the frame it
     // was woken for (T1476).

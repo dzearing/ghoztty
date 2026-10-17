@@ -334,6 +334,11 @@
             "unset": "unreachable",
             "note": "unset is the user's live named pipe. Isolating is a standing safety rule (docs\\claude\\build.md), not a convenience."
         },
+        "GHOZTTY_PRESENT_LAG_MS": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T1035. resize-flicker.ps1 holds each present back 8ms so the resize wait really blocks on the hidden desktop; unset (no lag) is what every other acceptance run and the product use."
+        },
         "GHOZTTY_RELAUNCH_GUARD": {
             "class": "isolation",
             "unset": "shipped-elsewhere",

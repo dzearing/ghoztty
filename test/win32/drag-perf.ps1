@@ -132,7 +132,7 @@ function Get-DragSamples([string]$log) {
     foreach ($l in @(Get-Content $log -ErrorAction SilentlyContinue)) {
         if ($l -match ('divider drag ticks=(\d+) mean_us=(\d+) max_us=(\d+) ' +
                 'mean_wait_us=(\d+) fps=(\d+) panes=(\d+) resizes_max=(\d+) waits_max=(\d+) ' +
-                'waits_total=(\d+) timeouts=(\d+) stale=(\d+) mean_layout_us=(\d+) ' +
+                'waits_total=(\d+) timeouts=(\d+) stale=(\d+) (?:woken=\d+ )?mean_layout_us=(\d+) ' +
                 'mean_place_us=(\d+) mean_paint_us=(\d+) ' +
                 'mean_overlay_us=(\d+) mean_resize_us=(\d+) (?:mean_cards_us=\d+ )?' +
                 'chrome_moves=(\d+) chrome_sb=(\d+) chrome_dim=(\d+) ' +

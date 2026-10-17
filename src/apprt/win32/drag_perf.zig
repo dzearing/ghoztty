@@ -31,6 +31,11 @@ pub const frame_budget_us: u64 = 16_667;
 /// as `Surface.handleResize` spells it.
 pub const frame_wait_ms: u64 = 16;
 
+/// The most `GHOZTTY_PRESENT_LAG_MS` may hold a present back (T1035): half the
+/// frame wait, so a lagged frame still lands inside the budget and a wait that
+/// times out under the knob is a real miss rather than the knob's own doing.
+pub const present_lag_max_ms: u8 = frame_wait_ms / 2;
+
 /// What the frame wait can cost a motion tick when it is paid PER PANE: the
 /// pre-T1343 shape, where every resized surface waits its own 16 ms in turn.
 /// Linear in the pane count, which is why the drag got worse the more panes
@@ -46,6 +51,17 @@ pub fn serialWaitCeilingUs(panes: usize) u64 {
 pub fn batchedWaitCeilingUs(panes: usize) u64 {
     return if (panes == 0) 0 else frame_wait_ms * std.time.us_per_ms;
 }
+
+/// How one frame wait ended (T1035). Three endings, not two: a wait can run
+/// out its budget, be WOKEN by a renderer's present, or find the frame already
+/// on screen before it ever blocked. Only the second proves the renderer's
+/// frame signal reaches the wait — `timed_out == false` alone does not, since
+/// "the frame was already there" is also not a timeout, and that is what a
+/// wait with its signal unwired looks like whenever the renderer is quick.
+pub const WaitOutcome = struct {
+    timed_out: bool = false,
+    woken: bool = false,
+};
 
 /// One motion tick of a divider drag.
 pub const Sample = struct {
@@ -89,6 +105,12 @@ pub const Sample = struct {
     /// How many of those waits ran out the full timeout rather than being woken
     /// by a presented frame — the shape that costs the drag a whole frame each.
     timeouts: usize = 0,
+    /// How many of those waits a presented frame actually WOKE (T1035): the
+    /// renderer's signal ended the block, rather than the clock or a frame
+    /// that had already landed. Zero over a drag that waited means the wait
+    /// is a sleep with a size check on the end — the shape T1031 found, where
+    /// `signalFrameDrawn` had no caller — and nothing else counts it.
+    woken: usize = 0,
     /// Panes whose wait came back on a frame the renderer had drawn at the
     /// PREVIOUS size (T1476). Distinct from `timeouts`: the wait was answered,
     /// promptly, by the wrong frame — which is a blink the timeout count calls
@@ -137,6 +159,7 @@ pub const Stats = struct {
     resizes_max: usize = 0,
     waits_total: u64 = 0,
     timeouts_total: u64 = 0,
+    woken_total: u64 = 0,
     stale_total: u64 = 0,
     overlay_us: u64 = 0,
     resize_us: u64 = 0,
@@ -175,6 +198,7 @@ pub const Stats = struct {
         self.resize_us += s.resize_us;
         self.waits_total += s.waits;
         self.timeouts_total += s.timeouts;
+        self.woken_total += s.woken;
         self.stale_total += s.stale;
         if (s.chrome_moves > self.chrome_moves_max) self.chrome_moves_max = s.chrome_moves;
         if (s.chrome_sb_moves > self.chrome_sb_moves_max) self.chrome_sb_moves_max = s.chrome_sb_moves;
@@ -284,6 +308,7 @@ test "stats accumulate mean, max, fps and the over-budget count" {
         .panes = 2,
         .waits = 2,
         .timeouts = 1,
+        .woken = 1,
         .resizes = 2,
         .overlay_us = 1_000,
         .resize_us = 3_000,
@@ -313,6 +338,9 @@ test "stats accumulate mean, max, fps and the over-budget count" {
     try testing.expectEqual(@as(usize, 4), st.waits_max);
     try testing.expectEqual(@as(u64, 6), st.waits_total);
     try testing.expectEqual(@as(u64, 5), st.timeouts_total);
+    // T1035: woken is its own count, not "waits minus timeouts" — a wait that
+    // found its frame already presented is neither.
+    try testing.expectEqual(@as(u64, 1), st.woken_total);
     try testing.expectEqual(@as(usize, 4), st.resizes_max);
     try testing.expectEqual(@as(u64, 1_500), st.meanOverlayUs());
     try testing.expectEqual(@as(u64, 2_000), st.meanResizeUs());

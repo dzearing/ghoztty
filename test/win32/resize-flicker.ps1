@@ -120,6 +120,14 @@ $env:GHOZTTY_PIPE_SUFFIX = "-resizeflicker$PID"
 $env:GHOZTTY_PERF = '1'
 # The pre-T1476 wait shape must NOT be inherited from the caller's shell.
 Remove-Item env:GHOZTTY_RESIZE_WAIT_ANY -ErrorAction SilentlyContinue
+# T1035: hold every present back 4ms, the way a vsync-throttled compositor
+# does. This desktop does not throttle, so without it the new-size frame is
+# already on screen before the layout pass waits - measured: 11 of 11 drag
+# waits and 9 of 9 window passes ended woken=0 timeouts=0 - and a wait whose
+# frame signal had been unwired would score exactly the same. With the lag the
+# wait really blocks, and the `woken` assertions in D and E can tell the two
+# apart. Well inside the 16ms budget (the app clamps it to 8).
+$env:GHOZTTY_PRESENT_LAG_MS = '8'
 $errlog = Join-Path $env:TEMP 'ghoztty-resize-flicker-stderr.log'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
@@ -192,8 +200,10 @@ function Get-EraseDecisions([string]$log) {
 }
 
 # The whole-window resize passes the app has logged so far, newest last (T1393).
-# Each entry is @{ Cause; Panes; Sync; Waits; Timeouts } - `Sync` being how many
-# of the `Panes` resized by that pass blocked for a frame at their new size.
+# Each entry is @{ Cause; Panes; Sync; Waits; Timeouts; Woken } - `Sync` being
+# how many of the `Panes` resized by that pass blocked for a frame at their new
+# size, and `Woken` how many of its waits a presented frame ended (T1035; -1 on
+# a build that predates the field, so a stale exe reads as a failure, not as 0).
 function Get-ResizePasses([string]$log) {
     if (-not (Test-Path $log)) { return @() }
     $out = @()
@@ -206,6 +216,7 @@ function Get-ResizePasses([string]$log) {
                 Fresh    = [int]$Matches[4]
                 Waits    = [int]$Matches[5]
                 Timeouts = [int]$Matches[6]
+                Woken    = $(if ($l -match ' woken=(\d+)') { [int]$Matches[1] } else { -1 })
             }
         }
     }
@@ -213,7 +224,7 @@ function Get-ResizePasses([string]$log) {
 }
 
 # The `divider drag ...` summaries the app has printed, oldest first (T1476).
-# Only `stale` and `timeouts` are pulled out - drag-perf.ps1 owns the rest of
+# Only `stale`, `timeouts` and `woken` are pulled out - drag-perf.ps1 owns the rest of
 # that line, and a second full parser here would be a copy to keep in step.
 function Get-DragSummaries([string]$log) {
     if (-not (Test-Path $log)) { return @() }
@@ -225,6 +236,7 @@ function Get-DragSummaries([string]$log) {
                 WaitsTotal = [int]$Matches[2]
                 Timeouts   = [int]$Matches[3]
                 Stale      = [int]$Matches[4]
+                Woken      = $(if ($l -match ' woken=(\d+)') { [int]$Matches[1] } else { -1 })
             }
         }
     }
@@ -412,7 +424,7 @@ try {
     } else {
         $d = $drags[$drags.Count - 1]
         Write-Host ("  drag summary: ticks=$($d.Ticks) waits=$($d.WaitsTotal) " +
-                    "timeouts=$($d.Timeouts) stale=$($d.Stale)")
+                    "timeouts=$($d.Timeouts) stale=$($d.Stale) woken=$($d.Woken)")
         # VACUITY: `stale=0` is free on a drag that never waited for anything,
         # which is the exact state a regression in section D would produce. So
         # the count only means something once the waits are shown to have
@@ -427,6 +439,20 @@ try {
         if ($NegativeControl) { $staleOk = -not $staleOk }
         Assert $staleOk ("every frame wait came back on a frame drawn at the new size " +
             "(stale=$($d.Stale) of $($d.WaitsTotal) wait(s))")
+        # THE WIRING (T1035). `stale=0` and `waits>0` both hold for a wait that
+        # is only a 16ms sleep with a size check on the end: the clock ends the
+        # block, the one last look finds the frame the renderer drew meanwhile,
+        # and nothing is stale. That is exactly the build T1031 found -
+        # `signalFrameDrawn` had no caller - and it would pass every assertion
+        # above. `woken` counts the waits a renderer's present actually ended,
+        # so it is zero on that build and only on that build. Measured teeth:
+        # with the SetEvent in `signalFrameDrawn` removed and rebuilt, this
+        # reads woken=0 and fails; restored, it passes.
+        $wokenOk = ($d.Woken -gt 0)
+        if ($NegativeControl) { $wokenOk = -not $wokenOk }
+        Assert $wokenOk ("a presented frame woke the drag's frame waits " +
+            "(woken=$($d.Woken) of $($d.WaitsTotal) wait(s), timeouts=$($d.Timeouts); " +
+            "-1 means the build does not report it)")
     }
 
     # ---- C2. across whole-window resizes --------------------------------
@@ -588,6 +614,22 @@ try {
     if ($NegativeControl) { $syncOk = -not $syncOk }
     Assert $syncOk ('every whole-window resize waits for a frame in every pane' +
         $(if ($unguarded.Count) { ' -- ' + (($unguarded | Select-Object -First 4) -join '; ') } else { '' }))
+
+    # And the waits those passes took were ended by a FRAME, not by the clock
+    # (T1035) - the whole-window half of section E's wiring check. Summed over
+    # the passes rather than per pass: whether one pass's frame was already on
+    # screen before its wait began is a race, but a run of whole-window resizes
+    # in which no present ever woke a wait is a wait with nothing signalling it.
+    $waited = @($withPanes | Where-Object { $_.Waits -gt 0 })
+    if ($waited.Count -gt 0) {
+        $wokeSum = 0; $oldBuild = $false
+        foreach ($p in $waited) { if ($p.Woken -lt 0) { $oldBuild = $true } else { $wokeSum += $p.Woken } }
+        $winWokenOk = (-not $oldBuild) -and ($wokeSum -gt 0)
+        if ($NegativeControl) { $winWokenOk = -not $winWokenOk }
+        Assert $winWokenOk ("a presented frame woke the whole-window resize waits " +
+            "($wokeSum woken over $($waited.Count) waiting pass(es)" +
+            $(if ($oldBuild) { '; the build does not report woken=' } else { '' }) + ')')
+    }
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
     Complete-TestBody  # T1039: the run reached the end of its body
