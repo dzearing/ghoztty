@@ -561,6 +561,11 @@ $workDir = Join-Path $root 'work'
 $stateDir = Join-Path $root 'state'
 $tempDir = Join-Path $root 'temp'
 $sandboxExe = Join-Path $installDir 'ghoztty.exe'
+
+# T1029: the sandbox install is a COPY of $Exe, launched below by Run-Sandbox,
+# so the build-mode + freshness pre-flight asks about the bytes it copies.
+. (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
 $upgrade = Join-Path $Repo 'scripts\upgrade-ghoztty-windows.ps1'
 $upgradeLog = Join-Path $tempDir 'ghoztty-upgrade.log'
 

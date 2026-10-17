@@ -24,6 +24,12 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T1029: the build-mode + freshness pre-flight (lib\BuildMode.ps1, loaded by
+# CleanSlate). `+sessions` below runs $Exe, and a release-lineage CLI dials the
+# user's agent rather than the hermetic one this script starts. Asked before
+# anything is launched. (The agent exe itself is T1036's question.)
+Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
+
 # T359: remote-test-client is an on-demand build target, so a tree that only
 # ever ran the normal build does not have it. Resolve (and build it if needed)
 # HERE, before %LOCALAPPDATA% is redirected below - this shells out to zig.

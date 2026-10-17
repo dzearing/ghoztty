@@ -125,6 +125,12 @@ $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
 if ($ExePath) { $exe = $ExePath }
 if (-not (Test-Path $exe)) { Write-Host "SETUP FAIL: no exe at $exe"; exit 1 }
 
+# T1029: the build-mode + freshness pre-flight (lib\BuildMode.ps1, loaded by
+# CleanSlate). This spike launches the app through its own CreateProcessW
+# rather than Start-OnTestDesktop, so the helper's pre-flight never speaks for
+# it - asked here, before the first launch.
+Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
+
 # T1794: this spike reaches the INPUT desktop too, so it never runs over a
 # person using the box. Asked before anything is launched.
 . (Join-Path $PSScriptRoot 'lib\UserPresence.ps1')

@@ -11,14 +11,20 @@
 # the app without asking, and nothing enumerated who else did - which is the
 # hole this scan closes.
 #
-# WHAT COUNTS AS LAUNCHING THE APP, for a text scan: `Start-Process` on a path
-# or variable that this script itself binds to a `ghoztty.exe`. Deliberately
-# NOT covered:
+# WHAT COUNTS AS LAUNCHING THE APP, read off the PowerShell AST (T1029; T1033's
+# text regex missed two real launchers): a `Start-Process` that mentions an app
+# var or path anywhere in its arguments, the call operator on one, or a static
+# call into a type the script itself declares with Add-Type (a P/Invoke
+# CreateProcessW launcher). An "app var" is one this script binds to a
+# `ghoztty.exe` by assignment or param() default. `Get-RawAppLaunch` has the
+# detail. Deliberately NOT covered:
 #
 #   * `Start-OnTestDesktop` - since T1033 the helper runs the pre-flight itself
-#     for any exe named ghoztty.exe, which is how ~80 GUI scripts get it. That
-#     seam is not assumed either: section B EXERCISES it against stub exes, so
-#     a refactor that drops the assert fails here rather than years later.
+#     for any exe named ghoztty.exe, which is how ~80 GUI scripts get it, and
+#     it answers for the `& $exe +verb` CLI calls those scripts make after it
+#     (not for a raw launch beside it). That seam is not assumed either:
+#     section B EXERCISES it against stub exes, so a refactor that drops the
+#     assert fails here rather than years later.
 #   * `ghoztty-agent.exe` launches. The agent's endpoints are build-mode
 #     derived too, but its exe prints a build STAMP rather than a mode, so
 #     `Get-GhozttyBuildMode` cannot read it and this assert cannot speak for
@@ -73,30 +79,117 @@ function Get-Throw($block) {
 }
 
 $ClaimPattern = 'Assert-GhozttyIsolatedBuild|Reset-GhozttyTestState|Assert-GhozttyPrivateEndpoint|#\s*preflight:\s*none'
+# T1029: a Start-OnTestDesktop launch answers for the CLI calls (`& $exe`) that
+# follow it - the helper runs the gate for any ghoztty.exe (section B proves
+# it), and ~60 GUI scripts launch through it and then drive the CLI that way.
+# It does NOT answer for a raw Start-Process or a P/Invoke launch beside it.
+$DesktopClaimPattern = 'Start-OnTestDesktop'
 
-# Every variable this script binds to a path ending in ghoztty.exe. Binding is
-# what makes the variable NAME meaningful: $AgentExe and $ClientExe are launched
-# the same way and are not the app, so the scan reads assignments rather than
-# guessing from names.
-function Get-AppExeVariable([string]$Text) {
+# A variable name without its scope prefix, lowercased: `$script:exe` and `$exe`
+# are the same binding for this question.
+function Get-AstVarKey($VarAst) {
+    return (($VarAst.VariablePath.UserPath -split ':')[-1]).ToLower()
+}
+
+# Every variable this script binds to a path ending in ghoztty.exe - by
+# assignment or by a param() default. Binding is what makes the variable NAME
+# meaningful: $AgentExe and $ClientExe are launched the same way and are not
+# the app, so the scan reads bindings rather than guessing from names.
+function Get-AppExeVariable($Ast) {
     $vars = @{}
-    foreach ($m in [regex]::Matches($Text, '(?i)\$(\w+)\s*=\s*[^\r\n]*?ghoztty\.exe')) {
-        $vars[$m.Groups[1].Value.ToLower()] = $true
+    $assigns = $Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)
+    foreach ($a in $assigns) {
+        if ($a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $a.Right.Extent.Text -match '(?i)ghoztty\.exe') { $vars[(Get-AstVarKey $a.Left)] = $true }
+    }
+    $params = $Ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ParameterAst] }, $true)
+    foreach ($p in $params) {
+        if ($p.DefaultValue -and $p.DefaultValue.Extent.Text -match '(?i)ghoztty\.exe') {
+            $vars[(Get-AstVarKey $p.Name)] = $true
+        }
     }
     return $vars
 }
 
 # The app launches this script performs itself, as human-readable strings.
+#
+# T1029: read off the AST, not a regex over the text. T1033's regex knew one
+# shape - `Start-Process $exe` - and two scripts launched the app in shapes it
+# could not see, so neither was ever asked the pre-flight question:
+#
+#   * agent-pipe.ps1:  Start-Process cmd.exe -ArgumentList "/c `"$Exe`" ..."
+#     (the app var is INSIDE an argument string, not the -FilePath)
+#   * test-desktop-spike.ps1:  [DeskSpike]::Run($exe, ...) - its own Add-Type
+#     class calls CreateProcessW, so no PowerShell launch verb appears at all
+#
+# So a launch is any of:
+#   L1  a Start-Process whose arguments mention an app var or an app path
+#       anywhere, nested strings included
+#   L2  the call operator on one: `& $exe +list` runs the CLI, and a release
+#       CLI dials the user's app
+#   L3  a static call into a type THIS script declares (Add-Type `class X`)
+#       with an app var as an argument - a P/Invoke launcher. Restricted to the
+#       script's own types so `[regex]::Escape($exe)` and `[IO.File]::...` are
+#       never read as launches.
 function Get-RawAppLaunch([string]$Text) {
-    $vars = Get-AppExeVariable $Text
+    $tok = $null; $err = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tok, [ref]$err)
+    $vars = Get-AppExeVariable $ast
+    $isApp = {
+        param($n)
+        ($n -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $vars.ContainsKey((Get-AstVarKey $n))) -or
+        ($n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+            $n.Value -match '(?i)ghoztty\.exe$')
+    }
+    $ownTypes = @{}
+    foreach ($m in [regex]::Matches($Text, '\b(?:class|struct)\s+(\w+)')) { $ownTypes[$m.Groups[1].Value.ToLower()] = $true }
+
     $hits = @()
-    $pattern = '(?i)Start-Process\s+(?:-FilePath\s+)?(?:\$(\w+)|''([^'']*ghoztty\.exe)''|"([^"]*ghoztty\.exe)")'
-    foreach ($m in [regex]::Matches($Text, $pattern)) {
-        if ($m.Groups[1].Success) {
-            $n = $m.Groups[1].Value
-            if ($vars.ContainsKey($n.ToLower())) { $hits += "Start-Process `$$n" }
-        } else {
-            $hits += 'Start-Process <ghoztty.exe path>'
+    $cmds = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+    foreach ($c in $cmds) {
+        if ($c.GetCommandName() -eq 'Start-Process') {
+            if (@($c.FindAll($isApp, $true)).Count -eq 0) { continue }
+            # Which element is the -FilePath: the named one, else the first
+            # positional. The app AS the file is a direct launch; the app
+            # inside a wrapper's arguments (`cmd /c "$Exe" +verb > out`) is the
+            # CLI-call idiom, the same question as `& $exe`.
+            $els = $c.CommandElements
+            $file = $null
+            for ($i = 1; $i -lt $els.Count; $i++) {
+                $e = $els[$i]
+                if ($e -is [System.Management.Automation.Language.CommandParameterAst]) {
+                    if ('filepath'.StartsWith($e.ParameterName.ToLower()) -and $e.ParameterName.Length -ge 2) {
+                        $file = if ($e.Argument) { $e.Argument } elseif ($i + 1 -lt $els.Count) { $els[$i + 1] } else { $null }
+                        break
+                    }
+                    if (-not $e.Argument -and $i + 1 -lt $els.Count -and
+                        $els[$i + 1] -isnot [System.Management.Automation.Language.CommandParameterAst] -and
+                        $e.ParameterName -notmatch '^(?i)(PassThru|Wait|NoNewWindow|UseNewEnvironment|LoadUserProfile)$') { $i++ }
+                    continue
+                }
+                if ($null -eq $file) { $file = $e; break }
+            }
+            if ($null -ne $file -and @($file.FindAll($isApp, $true)).Count -gt 0) {
+                $hits += "Start-Process <app> (line $($c.Extent.StartLineNumber))"
+            } else {
+                $hits += "cli Start-Process <wrapper> <app> (line $($c.Extent.StartLineNumber))"
+            }
+        } elseif ($c.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Ampersand -and
+                  (& $isApp $c.CommandElements[0])) {
+            $hits += "& $($c.CommandElements[0].Extent.Text) (line $($c.Extent.StartLineNumber))"
+        }
+    }
+    $members = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Static }, $true)
+    foreach ($m in $members) {
+        if ($m.Expression -isnot [System.Management.Automation.Language.TypeExpressionAst]) { continue }
+        $type = (($m.Expression.TypeName.Name -split '\.')[-1]).ToLower()
+        if (-not $ownTypes.ContainsKey($type)) { continue }
+        foreach ($arg in @($m.Arguments)) {
+            if ($null -ne $arg -and (& $isApp $arg)) {
+                $hits += "$($m.Expression.Extent.Text)::$($m.Member.Extent.Text)(<app>) (line $($m.Extent.StartLineNumber))"
+                break
+            }
         }
     }
     return $hits
@@ -109,6 +202,10 @@ function Get-PreflightViolation([string]$Path) {
     $hits = @(Get-RawAppLaunch $text)
     if ($hits.Count -eq 0) { return $null }
     if ($text -match $ClaimPattern) { return $null }
+    if ($text -match $DesktopClaimPattern) {
+        $hits = @($hits | Where-Object { -not ($_.StartsWith('& ') -or $_.StartsWith('cli ')) })
+        if ($hits.Count -eq 0) { return $null }
+    }
     return "launches the app ($($hits[0])) with no build-mode pre-flight"
 }
 
@@ -197,6 +294,81 @@ $cmd = New-Fixture 'cmd' @(
 )
 Assert 'A8 a launch that is not the app needs nothing' `
     ($null -eq (Get-PreflightViolation $cmd))
+
+# T1029: the shapes the text regex could not see. Each is the real script's
+# idiom, cut down to the launch.
+$nested = New-Fixture 'nested' @(
+    'param([string]$Exe = ''D:\git\ghoztty\zig-out\bin\ghoztty.exe'')',
+    '$p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `',
+    '    -ArgumentList "/c `"`"$Exe`" +sessions > out.txt 2>&1`""'
+)
+Assert 'A9 an app var inside a Start-Process argument string is a launch (agent-pipe shape)' `
+    ($null -ne (Get-PreflightViolation $nested))
+
+$pinvoke = New-Fixture 'pinvoke' @(
+    'Add-Type @''',
+    'public class FixSpike { public static void Run(string exe) { /* CreateProcessW(exe, ...) */ } }',
+    '''@',
+    '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '[FixSpike]::Run($exe)'
+)
+Assert 'A10 a call into the script''s own Add-Type launcher is a launch (test-desktop-spike shape)' `
+    ($null -ne (Get-PreflightViolation $pinvoke))
+
+$callop = New-Fixture 'callop' @(
+    '$script:exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '$json = & $exe +list --json'
+)
+Assert 'A11 the call operator on the app is a launch (a release CLI dials the user''s app)' `
+    ($null -ne (Get-PreflightViolation $callop))
+
+$bcl = New-Fixture 'bcl' @(
+    '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '$rx = [regex]::Escape($exe)',
+    '$ok = [IO.File]::Exists($exe)'
+)
+Assert 'A12 a framework call that merely takes the path is NOT a launch' `
+    ($null -eq (Get-PreflightViolation $bcl))
+
+$deskcli = New-Fixture 'deskcli' @(
+    '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '$app = Start-OnTestDesktop -Exe $exe',
+    '$json = & $exe +list --json'
+)
+Assert 'A13 CLI calls after a Start-OnTestDesktop launch are answered by the helper' `
+    ($null -eq (Get-PreflightViolation $deskcli))
+
+$deskraw = New-Fixture 'deskraw' @(
+    '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '$app = Start-OnTestDesktop -Exe $exe',
+    '$p = Start-Process -FilePath $exe -PassThru'
+)
+Assert 'A14 but a raw launch BESIDE Start-OnTestDesktop still needs its own pre-flight' `
+    ($null -ne (Get-PreflightViolation $deskraw))
+
+$prose = New-Fixture 'prose' @(
+    '# Start-Process $exe and & $exe +list are discussed here, never run.',
+    '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '"  the old shape was: Start-Process $exe"'
+)
+Assert 'A15 a launch that only appears in a comment or a string is not one' `
+    ($null -eq (Get-PreflightViolation $prose))
+
+$deskwrap = New-Fixture 'deskwrap' @(
+    'param([string]$Exe = ''D:\git\ghoztty\zig-out\bin\ghoztty.exe'')',
+    '$app = Start-OnTestDesktop -Exe $Exe',
+    '$p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru -ArgumentList "/c `"`"$Exe`" +list"'
+)
+Assert 'A16 a cmd-wrapped CLI call after Start-OnTestDesktop is answered by the helper' `
+    ($null -eq (Get-PreflightViolation $deskwrap))
+
+$deskpos = New-Fixture 'deskpos' @(
+    'param([string]$Exe = ''D:\git\ghoztty\zig-out\bin\ghoztty.exe'')',
+    '$app = Start-OnTestDesktop -Exe $Exe',
+    '$p = Start-Process -WindowStyle Minimized -PassThru $Exe'
+)
+Assert 'A17 the app as a positional -FilePath after other params is still a direct launch' `
+    ($null -ne (Get-PreflightViolation $deskpos))
 
 # ---------------------------------------------------------------------------
 "== B: the helper the other ~80 scripts rely on really does ask"
