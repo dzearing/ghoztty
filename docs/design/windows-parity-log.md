@@ -36672,3 +36672,10 @@ moved to T1814.
 - **Fix.** An empty `-Repo` now resolves to the checkout the script lives in (the daily-publish / acceptance-parallel shape). Every run prints `FLOOR REPO=<path>`, and the harness-lane dry run names the `-Repo` the real run hands `harness-floor.ps1`. Lane A resolves to the same path as before.
 - **Validated.** Arms 17-20 of `floor-lane-releasesafe.ps1` run a copy of the script from a scratch checkout and require it to name that checkout. A copy with the old literal is the negative control. ALL PASS (20). The 8 floor-lane harnesses the edit made due are green. A bare `-Lane all` from lane B printed `FLOOR REPO=D:\git\ghoztty-b`, and ALL LANES PASS. The bare harness floor handed `harness-floor.ps1 -Repo "D:\git\ghoztty-b"`. T2037 is filed for the crash and soak scripts and libs that still carry the literal.
 - **Mac.** Nothing owed: Windows loop tooling.
+
+## 2026-10-16 — T2027: two loop lanes no longer jam on the same test stamp
+
+- **The gap.** Both lanes re-stamp the shared harnesses. Two commits that each rewrite one `stamp.json` conflicted on the commit guard's `pull --rebase`, and a stamp left uncommitted by a green run made that pull refuse outright. Closing T1986 needed a hand reset of three stamps.
+- **Fix.** `.gitattributes` routes `test/win32/*.stamp.json` to a merge driver (`scripts/stamp-merge.ps1`) that keeps the newer stamp whole and leaves anything unreadable as a real conflict. `git-commit-guard.ps1 install` registers it in local config every claim. On a rejected push, the guard parks dirty stamps (and only stamps) across the rebase and puts each back only if it is newer. A wrong pick costs one re-run: guard-due re-checks the kept stamp's hashes against disk.
+- **Validated.** go-loop-guard W28g–W28r, with three negative controls (no driver conflicts, a bare pull refuses a dirty stamp, a dirty non-stamp file still blocks). ALL PASS (447). drag-perf (T1854) and hook-json (T2001) are red for their own tracked reasons.
+- **Mac.** Nothing owed: the loop tooling is Windows-seat only. A clone without the driver merges exactly as before.

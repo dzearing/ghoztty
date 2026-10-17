@@ -1,13 +1,16 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-10-16T21:01:19-07:00",
-    "commit":  "5c8ee7ed2",
+    "generated":  "2026-10-16T21:57:02-07:00",
+    "commit":  "fbbf4ac41",
     "uncommitted":  [
+                        "scripts/git-commit-guard.ps1",
+                        "scripts/lib/StampMerge.ps1",
+                        "scripts/stamp-merge.ps1",
                         "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
-                  "scripts/git-commit-guard.ps1":  "ca563c19e5e8ef05e36629c35e1322576ec1317c5d1e08b454596dfb9dedb3b1",
+                  "scripts/git-commit-guard.ps1":  "f8f181fbfdb06e2de7801c9f60c728a90dfe62fa8ff4753b3b6d9f09f7a9f30a",
                   "scripts/githooks/pre-commit":  "daec7d5f82b46569ef65b60775e50f2dc971c8fa6dc21855d438c14e3dd52d92",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "e65ddcb0f8d3c875848b955cacc1a7d019423281995c77537e1a35d5f98970f1",
@@ -15,7 +18,9 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "84a223af995b00dfdf1d70164321c320e39df45ab1f45539372de0ad72cba33e",
+                  "scripts/lib/StampMerge.ps1":  "c1397eeccbf3039c88b7d576b1c1948db4370987ebf053e8b9b6f50a6bf76926",
                   "scripts/loop-session.ps1":  "36cb72a6b1d94ad16e4db19676c4369a8d414f7754859b1a9d5c7f307fb993b6",
-                  "test/win32/go-loop-guard.ps1":  "9fe93fb2e4fed69bd0124bb74b37de78f6a03cb34678029fdce8f36a758ee068"
+                  "scripts/stamp-merge.ps1":  "9cac1de32cf4554fbc4070e374cbe163e5b34cf164564499b002c0b3b6a67f3a",
+                  "test/win32/go-loop-guard.ps1":  "b16aa3baca8bee80414fc55d2207266728f78c9a3063ae6c6bca36458b439f68"
               }
 }

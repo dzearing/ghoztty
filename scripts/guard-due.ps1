@@ -159,6 +159,8 @@ $GuardTable = @(
             'scripts\go-loop-*.ps1',
             'scripts\loop-session.ps1',
             'scripts\git-commit-guard.ps1',
+            'scripts\stamp-merge.ps1',
+            'scripts\lib\StampMerge.ps1',
             'scripts\githooks\*',
             'test\win32\go-loop-guard.ps1'
         )

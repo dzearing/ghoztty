@@ -104,6 +104,7 @@ $ErrorActionPreference = 'Stop'
 
 if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
 $hooksDir = Join-Path $PSScriptRoot 'githooks'
+. (Join-Path $PSScriptRoot 'lib\StampMerge.ps1')
 
 # How long a hold is honoured before the hook treats it as debris. The window it
 # covers is a `git add` plus a `git commit`; 120s is two orders of magnitude of
@@ -293,6 +294,79 @@ function Get-PushArgs {
     return @('push', $remote, "HEAD:$merge")
 }
 
+# Register the stamp merge driver in this clone's local config (T2027) and
+# answer with the line to print, or $null on failure. The path is absolute for
+# the reason core.hooksPath's is: a driver resolved against the wrong cwd is a
+# driver that silently is not there, and git runs it from wherever it is.
+function Install-StampMergeDriver {
+    $driverScript = (Join-Path $PSScriptRoot 'stamp-merge.ps1') -replace '\\', '/'
+    # Single quotes: git runs the driver through sh, which strips them, while
+    # PS 5.1 silently drops embedded DOUBLE quotes on the way to git config.
+    $want = "powershell -NoProfile -ExecutionPolicy Bypass -File '$driverScript' %O %A %B"
+    $cur = Git-Run @('config', '--local', '--get', 'merge.ghoztty-stamp.driver')
+    if ($cur.Code -eq 0 -and $cur.Out -eq $want) { return 'stamp merge driver registered (already set)' }
+    $a = Git-Run @('config', '--local', 'merge.ghoztty-stamp.name', 'keep the newer guard stamp (T2027)')
+    $b = Git-Run @('config', '--local', 'merge.ghoztty-stamp.driver', $want)
+    if ($a.Code -ne 0 -or $b.Code -ne 0) { return $null }
+    return "stamp merge driver registered (merge.ghoztty-stamp -> $driverScript)"
+}
+
+# The other half of T2027: `pull --rebase` refuses ANY dirty tracked file, and a
+# harness run leaves its stamp dirty until somebody commits it. When the only
+# thing between the rejected push and its rebase is guard stamps - files a
+# script wrote, not anybody's half-written edit - they are parked in memory,
+# reset to HEAD, and put back after the rebase under the same keep-the-newer
+# rule the merge driver applies. Anything else dirty is NOT touched: the
+# no-autostash rule above stands for every file a person or the other window
+# might be editing, and the pull refuses exactly as it did before.
+function Get-StampPark {
+    # Not Git-Run: its Trim() eats the leading blank of the first `XY path`
+    # line (" M ..."), and the column-3 path slice below then loses a letter.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $stLines = @(& git -C $Repo status --porcelain --untracked-files=all 2>$null)
+        $stCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $prev }
+    if ($stCode -ne 0) { return @() }
+    $park = @()
+    foreach ($line in $stLines) {
+        if (-not $line -or $line.Length -le 3) { continue }
+        $path = $line.Substring(3).Trim().Trim('"')
+        $xy = $line.Substring(0, 2)
+        if (Test-StampPath $path) {
+            $full = Join-Path $Repo $path
+            $bytes = $null
+            if (Test-Path -LiteralPath $full) { $bytes = [System.IO.File]::ReadAllBytes($full) }
+            $park += [pscustomobject]@{ Path = $path; Full = $full; Bytes = $bytes; Untracked = ($xy -eq '??') }
+            continue
+        }
+        # Untracked non-stamp files never block a rebase; a tracked edit does,
+        # and it is not ours to move.
+        if ($xy -ne '??') { return @() }
+    }
+    return $park
+}
+
+function Restore-StampPark($park) {
+    $lines = @()
+    foreach ($p in @($park)) {
+        if ($null -eq $p.Bytes) { continue }   # deleted locally: the rebase's answer stands
+        $now = $null
+        if (Test-Path -LiteralPath $p.Full) { $now = [System.IO.File]::ReadAllText($p.Full, [System.Text.Encoding]::UTF8) }
+        $mine = [System.Text.Encoding]::UTF8.GetString($p.Bytes)
+        $keepMine = $true
+        if ($null -ne $now) { $keepMine = ((Select-NewerStamp $now $mine) -ne 'ours') }
+        if ($keepMine) {
+            [System.IO.File]::WriteAllBytes($p.Full, $p.Bytes)
+            $lines += "  stamp kept (this lane's is newer): $($p.Path)"
+        } else {
+            $lines += "  stamp dropped (the pulled one is newer): $($p.Path)"
+        }
+    }
+    return $lines
+}
+
 function Invoke-PushWithRebase {
     $lines = @()
     $pushArgs = Get-PushArgs
@@ -302,7 +376,31 @@ function Invoke-PushWithRebase {
         return @{ Ok = $false; Out = $res.Out; Rebased = $false; Lines = $lines }
     }
     $lines += 'push rejected (the branch moved under us) - pulling with rebase, per go.md step 4'
+    $park = @(Get-StampPark)
+    if ($park.Count -gt 0) {
+        $lines += "parking $($park.Count) dirty guard stamp(s) across the rebase (T2027)"
+        foreach ($p in $park) {
+            if ($p.Untracked) { Remove-Item -LiteralPath $p.Full -Force -ErrorAction SilentlyContinue }
+            else { Git-Run @('checkout', 'HEAD', '--', $p.Path) | Out-Null }
+        }
+    }
     $pull = Git-Run @('-c', 'rebase.autoStash=false', 'pull', '--rebase')
+    if ($park.Count -gt 0) {
+        $gd = Get-GitDir
+        $midRebase = $gd -and ((Test-Path (Join-Path $gd 'rebase-merge')) -or (Test-Path (Join-Path $gd 'rebase-apply')))
+        if ($midRebase) {
+            # Writing into a stopped rebase would mix our stamps into its
+            # conflict. Keep them beside it instead, and say where.
+            $keep = Join-Path $gd 'ghoztty-parked-stamps'
+            New-Item -ItemType Directory -Force -Path $keep | Out-Null
+            foreach ($p in $park) {
+                if ($null -ne $p.Bytes) { [System.IO.File]::WriteAllBytes((Join-Path $keep (Split-Path -Leaf $p.Path)), $p.Bytes) }
+            }
+            $lines += "  the rebase stopped; this lane's stamps are kept in $keep"
+        } else {
+            foreach ($l in @(Restore-StampPark $park)) { $lines += $l }
+        }
+    }
     if ($pull.Code -ne 0) {
         return @{ Ok = $false; Rebased = $true; Lines = $lines
             Out = ("push was rejected and the rebase did not run:`n" + $pull.Out) }
@@ -332,13 +430,17 @@ switch ($Action) {
         $current = (& git -C $Repo config --local --get core.hooksPath 2>$null)
         if ($LASTEXITCODE -ne 0) { $current = $null }
         $want = (Resolve-Path -LiteralPath $hooksDir).Path
+        # The stamp merge driver rides on the same per-clone install (T2027):
+        # merge.<name>.driver is local config too, so it never arrives by pull.
+        $driverMsg = Install-StampMergeDriver
+        if ($null -eq $driverMsg) { Fail "ERROR could not register the stamp merge driver" 2 }
         if ($current -and (($current -replace '\\', '/').TrimEnd('/') -eq ($want -replace '\\', '/').TrimEnd('/'))) {
-            if (-not $Quiet) { "commit guard armed (hooksPath already set)" }
+            if (-not $Quiet) { "commit guard armed (hooksPath already set)"; $driverMsg }
             exit 0
         }
         & git -C $Repo config --local core.hooksPath $want 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) { Fail "ERROR could not set core.hooksPath" 2 }
-        if (-not $Quiet) { "commit guard armed (hooksPath -> $want)" }
+        if (-not $Quiet) { "commit guard armed (hooksPath -> $want)"; $driverMsg }
         exit 0
     }
 

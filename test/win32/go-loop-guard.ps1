@@ -1762,6 +1762,136 @@ $lLocal = (& git -C $lRepo rev-parse HEAD 2>$null | Select-Object -First 1)
 Assert 'W28f a rejected lane b push is rebased onto the trunk and pushed there' `
     ($lCode -eq 0 -and $r -match 'push rejected' -and $r -match 'PUSHED' -and $lRemote -eq $lLocal)
 
+# T2027: both lanes re-stamp the same harness. Two commits that each rewrite one
+# stamp.json conflicted on the rebase above, and a stamp left dirty by a green
+# run made `pull --rebase` refuse outright. Two clones of one remote, carrying
+# the real .gitattributes line, play the two lanes.
+. (Join-Path $Repo 'scripts\lib\StampMerge.ps1')
+$sAttr = @(Get-Content -LiteralPath (Join-Path $Repo '.gitattributes') | Where-Object { $_ -match 'stamp\.json\s+merge=' })
+Assert 'W28g .gitattributes routes guard stamps to the stamp merge driver' `
+    ($sAttr.Count -eq 1 -and $sAttr[0] -match '^test/win32/\*\.stamp\.json merge=ghoztty-stamp$')
+function SStamp([string]$dir, [string]$name, [string]$when) {
+    $d = Join-Path $dir 'test\win32'
+    New-Item -ItemType Directory -Force $d | Out-Null
+    $body = "{`n  `"guard`": `"$name`",`n  `"generated`": `"$when`",`n  `"files`": {`n    `"a.txt`": `"$when`"`n  }`n}`n"
+    [System.IO.File]::WriteAllText((Join-Path $d "$name.stamp.json"), $body, (New-Object System.Text.UTF8Encoding $false))
+}
+function SGenerated([string]$text) { $g = Get-StampGenerated $text; if ($g) { $g.ToString('o') } else { '' } }
+function SCommitted([string]$bare, [string]$name) {
+    $eapS = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { return ((& git -C $bare show "HEAD:test/win32/$name.stamp.json" 2>$null) -join "`n") }
+    finally { $ErrorActionPreference = $eapS }
+}
+function SGuard([string]$repoDir, [string[]]$argList) {
+    $o = & powershell -NoProfile -ExecutionPolicy Bypass -File $cgScript @argList -Repo $repoDir 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String
+    return @{ Code = $LASTEXITCODE; Out = $o.Trim() }
+}
+function New-StampLanes([string]$tag, [bool]$driver) {
+    $bare = Join-Path $root "stamp-$tag.git"
+    $la = Join-Path $root "stamp-$tag-a"
+    $lb = Join-Path $root "stamp-$tag-b"
+    git init -q --bare $bare 2>$null
+    git clone -q $bare $la 2>$null
+    git -C $la config user.email 't@t' 2>$null; git -C $la config user.name 't' 2>$null
+    Copy-Item -LiteralPath (Join-Path $Repo '.gitattributes') -Destination (Join-Path $la '.gitattributes')
+    SStamp $la 'shared' '2026-10-16T09:00:00-07:00'
+    git -C $la add -A 2>$null
+    git -C $la -c core.hooksPath= commit -q -m 'seed' 2>$null
+    git -C $la push -q -u origin HEAD 2>$null
+    git clone -q $bare $lb 2>$null
+    git -C $lb config user.email 't@t' 2>$null; git -C $lb config user.name 't' 2>$null
+    if ($driver) { SGuard $la @('install') | Out-Null; SGuard $lb @('install') | Out-Null }
+    return @{ Bare = $bare; A = $la; B = $lb }
+}
+
+# Negative control: no driver registered, the T1986 shape conflicts exactly as
+# it did that day, so the arms below measure the fix and not a lucky git.
+$sn = New-StampLanes 'neg' $false
+SStamp $sn.B 'shared' '2026-10-16T11:00:00-07:00'
+SGuard $sn.B @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane b stamps') | Out-Null
+SStamp $sn.A 'shared' '2026-10-16T12:00:00-07:00'
+$r = SGuard $sn.A @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane a stamps')
+Assert 'W28h control: without the driver two stamp commits conflict on the rebase' `
+    ($r.Code -ne 0 -and $r.Out -match 'rebase did not run' -and $r.Out -match 'CONFLICT|conflict')
+& git -C $sn.A rebase --abort 2>$null | Out-Null
+
+# The fix, both directions: the lane that pushes second keeps ITS stamp when it
+# is the newer one, and takes the pulled one when that is newer.
+$sp = New-StampLanes 'drv' $true
+$drv = (& git -C $sp.A config --local --get merge.ghoztty-stamp.driver 2>$null | Select-Object -First 1)
+Assert 'W28i install registers the stamp merge driver in local config' `
+    ($drv -match 'stamp-merge\.ps1' -and $drv -match '%O %A %B')
+SStamp $sp.B 'shared' '2026-10-16T11:00:00-07:00'
+SGuard $sp.B @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane b stamps') | Out-Null
+SStamp $sp.A 'shared' '2026-10-16T12:00:00-07:00'
+$r = SGuard $sp.A @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane a stamps newer')
+Assert 'W28j the second lane''s stamp commit rebases through the driver and pushes' `
+    ($r.Code -eq 0 -and $r.Out -match 'push rejected' -and $r.Out -match 'PUSHED')
+Assert 'W28k and the newer stamp (the second lane''s) is what the remote holds' `
+    ((SGenerated (SCommitted $sp.Bare 'shared')) -eq (SGenerated "{`"generated`":`"2026-10-16T12:00:00-07:00`"}"))
+SStamp $sp.B 'shared' '2026-10-16T10:30:00-07:00'
+$r = SGuard $sp.B @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane b stamps older')
+Assert 'W28l an OLDER stamp pushed second gives way to the newer one already on the trunk' `
+    ($r.Code -eq 0 -and $r.Out -match 'PUSHED' -and
+     (SGenerated (SCommitted $sp.Bare 'shared')) -eq (SGenerated "{`"generated`":`"2026-10-16T12:00:00-07:00`"}"))
+
+# A dirty stamp: lane a ran a harness (stamp left uncommitted) and commits
+# something else; lane b moved the trunk, stamp included. Control first - a bare
+# pull --rebase refuses this tree, which is the outright block the task names.
+SStamp $sp.B 'shared' '2026-10-16T13:00:00-07:00'
+SGuard $sp.B @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane b stamps again') | Out-Null
+& git -C $sp.A pull -q --rebase 2>$null | Out-Null
+SStamp $sp.A 'shared' '2026-10-16T14:00:00-07:00'
+SStamp $sp.B 'shared' '2026-10-16T13:30:00-07:00'
+SGuard $sp.B @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane b moves the trunk') | Out-Null
+$probe = Join-Path $root 'stamp-probe'
+git clone -q $sp.Bare $probe 2>$null
+SStamp $probe 'shared' '2026-10-16T15:00:00-07:00'
+SStamp $sp.B 'other' '2026-10-16T13:40:00-07:00'
+SGuard $sp.B @('commit', '-Paths', 'test/win32/other.stamp.json', '-Message', 'lane b adds a stamp') | Out-Null
+$eapS = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$probeOut = (& git -C $probe -c rebase.autoStash=false pull --rebase 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
+$probeCode = $LASTEXITCODE
+$ErrorActionPreference = $eapS
+Assert 'W28m control: a bare pull --rebase refuses a tree holding a dirty stamp' `
+    ($probeCode -ne 0 -and $probeOut -match 'unstaged changes|uncommitted changes|Please commit or stash')
+Set-Content -Path (Join-Path $sp.A 'lane-a-work.txt') -Value 'lane a work'
+$r = SGuard $sp.A @('commit', '-Paths', 'lane-a-work.txt', '-Message', 'lane a work beside a dirty stamp')
+$aRemote = (& git -C $sp.Bare rev-parse HEAD 2>$null | Select-Object -First 1)
+$aLocal = (& git -C $sp.A rev-parse HEAD 2>$null | Select-Object -First 1)
+Assert 'W28n a dirty stamp is parked across the rebase and the commit pushes' `
+    ($r.Code -eq 0 -and $r.Out -match 'parking 1 dirty guard stamp' -and $r.Out -match 'PUSHED' -and $aRemote -eq $aLocal)
+$aDisk = [System.IO.File]::ReadAllText((Join-Path $sp.A 'test\win32\shared.stamp.json'))
+Assert 'W28o the parked stamp is back, still uncommitted, because it is the newer one' `
+    ((SGenerated $aDisk) -eq (SGenerated "{`"generated`":`"2026-10-16T14:00:00-07:00`"}") -and
+     ((& git -C $sp.A status --porcelain -- test/win32/shared.stamp.json 2>$null | Out-String) -match 'M'))
+# Older parked stamp: the trunk's newer one stands and the tree comes back clean.
+& git -C $sp.A checkout -q HEAD -- test/win32/shared.stamp.json 2>$null
+SStamp $sp.A 'shared' '2026-10-16T08:00:00-07:00'
+SStamp $sp.B 'shared' '2026-10-16T16:00:00-07:00'
+& git -C $sp.B pull -q --rebase 2>$null | Out-Null
+SGuard $sp.B @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane b newest') | Out-Null
+Set-Content -Path (Join-Path $sp.A 'lane-a-work-2.txt') -Value 'more'
+$r = SGuard $sp.A @('commit', '-Paths', 'lane-a-work-2.txt', '-Message', 'lane a again')
+$aDisk = [System.IO.File]::ReadAllText((Join-Path $sp.A 'test\win32\shared.stamp.json'))
+Assert 'W28p an older parked stamp is dropped for the newer pulled one' `
+    ($r.Code -eq 0 -and $r.Out -match 'stamp dropped' -and
+     (SGenerated $aDisk) -eq (SGenerated "{`"generated`":`"2026-10-16T16:00:00-07:00`"}"))
+# Anything that is not a stamp is still nobody's to move: the pull refuses as
+# before and the edit is untouched.
+SStamp $sp.B 'shared' '2026-10-16T17:00:00-07:00'
+SGuard $sp.B @('commit', '-Paths', 'test/win32/shared.stamp.json', '-Message', 'lane b once more') | Out-Null
+Set-Content -Path (Join-Path $sp.A '.gitattributes') -Value 'a half-written edit' -NoNewline
+Set-Content -Path (Join-Path $sp.A 'lane-a-work-3.txt') -Value 'more'
+$r = SGuard $sp.A @('commit', '-Paths', 'lane-a-work-3.txt', '-Message', 'lane a beside a real edit')
+Assert 'W28q a dirty non-stamp file still blocks the rebase and is left exactly as it was' `
+    ($r.Code -ne 0 -and $r.Out -notmatch 'parking' -and
+     ([System.IO.File]::ReadAllText((Join-Path $sp.A '.gitattributes'))) -eq 'a half-written edit')
+Assert 'W28r an unreadable stamp is never decided, so git keeps the conflict' `
+    ($null -eq (Select-NewerStamp '<<<<<<< ours' "{`"generated`":`"2026-10-16T12:00:00-07:00`"}") -and
+     (Select-NewerStamp "{`"generated`":`"2026-10-16T12:00:00-07:00`"}" "{`"generated`":`"2026-10-16T12:00:00-07:00`"}") -eq 'ours')
+
 # A branch nobody has ever pushed is the same problem with a longer tail.
 $oRepo = Join-Path $root 'no-upstream-repo'
 New-Item -ItemType Directory -Force $oRepo | Out-Null

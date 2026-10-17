@@ -86,6 +86,15 @@ scripts/githooks/* text eol=lf
 docs/design/windows-parity-log.md merge=union
 docs/design/windows-parity-feature-ideas.md merge=union
 
+# Guard stamps (T2027). Two loop lanes re-stamp the same shared harnesses, and
+# two commits that each rewrite one stamp conflict on `pull --rebase`. A stamp is
+# a whole-file claim - union would splice two JSON documents into one that does
+# not parse - so the driver keeps the NEWER stamp whole (scripts/stamp-merge.ps1;
+# the rule is in scripts/lib/StampMerge.ps1). The driver is registered in local
+# config by `scripts/git-commit-guard.ps1 install`; a clone without it (the Mac
+# seat) falls back to git's text merge, exactly as before this line existed.
+test/win32/*.stamp.json merge=ghoztty-stamp
+
 #--------------------------------------------------------------------
 # Linguist
 #--------------------------------------------------------------------
