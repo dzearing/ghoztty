@@ -1,18 +1,18 @@
 {
     "guard":  "agent-sharing-uplink",
     "script":  "test/win32/agent-sharing-uplink.ps1",
-    "generated":  "2026-10-17T09:44:03-07:00",
-    "commit":  "8d1fedf00",
+    "generated":  "2026-10-17T11:15:55-07:00",
+    "commit":  "6afaf4e35",
     "uncommitted":  [
-                        "src/remote/agent/main.zig"
+
                     ],
     "files":  {
                   "src/remote/agent/link_control.zig":  "e3138c9c1326081092f25b9c090388fe58a3561c17734a83778df474ededd40a",
-                  "src/remote/agent/main.zig":  "0e62ac09e37dccc6e0ffd9a13153adca155aec265adf0320b4cb0a22c46ead58",
+                  "src/remote/agent/main.zig":  "06b83f213358701fd2b6f07353c9c3db48cf9dea4c776a2e0020277fe6e14c37",
                   "src/remote/agent/relay_creds.zig":  "906cf1f4bd95c0c1e28f73298abbea8a657c4860e7a215cced15245a13db230d",
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/sharing.zig":  "4ecfaef4c8e7cf9428531f82beee5b28bdb604ce3385507ddc858edf781ff29a",
                   "src/remote/relay_revoke_pending.zig":  "c8fc9f9cd94f770e5e6362cef9dbbf83680bab592c4abd5fcb616dba484f6a06",
-                  "test/win32/agent-sharing-uplink.ps1":  "fed8114bad4275ed6c9870b247861bb9a2b4b70ce44776ab0a81070cc4c4dde0"
+                  "test/win32/agent-sharing-uplink.ps1":  "48866fb9552847f84988466b853cf5fdc5ff48fcf6d21d8973f1fe872da10ed4"
               }
 }

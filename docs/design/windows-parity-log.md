@@ -36808,3 +36808,11 @@ moved to T1814.
 - **What landed.** In `scripts/guard-due.ps1`, `activity-monitor` now covers input + procs and `activity-monitor-remote` covers probe_conn. A new `activity-monitor-probe-fail` row covers probe_conn + machines, and that script now stamps itself on a green run. The pure modules (cards, layout, probe, rows, panes) have 12-36 unit tests each and stay out, by the table's convention.
 - **Validated.** probe-fail ALL PASS (17), remote (96), activity-monitor (210), all stamped. `guard-due.ps1` went red on H2/P2 until the probe-fail script got its `update -Guard` call, then ALL PASS (128). body-complete, argv-hazard, unroll-count, unwired-hook and checkout-guard are green, and the scoped harness floor PASS. drag-perf is red only for T1854.
 - **Mac.** Nothing owed: this is the Windows guard table.
+
+## 2026-10-17 — T1041: the 39 harnesses the August completion marker made DUE have all been re-run since
+
+- **Already fixed, re-verified.** A sweep of every `test/win32/*.stamp.json` finds no stamp naming a commit older than 2026-08-21. A stamp is only written by a clean green run, so every harness the T1039 marker made DUE has been run green against the marked file since, across later turns.
+- **Today's DUE rows are new debt, not this card's.** They are all over this week's edits (`src/remote/agent/main.zig`, `test/win32/lib/BuildMode.ps1`, `drag_perf.zig`). This turn ran them through `acceptance-parallel.ps1 due` before committing.
+- **No code commit.** The re-runs were the deliverable, and they landed in many turns' stamp commits.
+- **Found on the way.** The due set is green except drag-perf (T1854). The harness floor ran the full set, timed out at 25 of 31 (T1657), and turned up one new red: skip-visibility B1. Fourteen scripts print SKIP without counting it, filed as T2056 (P1). Committed under `-NoGuardDue` for those two rows, neither of which covers a file this change touches.
+- **Mac.** Nothing owed: this is the Windows guard table.
