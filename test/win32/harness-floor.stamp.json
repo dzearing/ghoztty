@@ -1,15 +1,14 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-17T03:56:53-07:00",
-    "commit":  "fc2ef42cd",
+    "generated":  "2026-10-17T04:42:44-07:00",
+    "commit":  "1439b77ba",
     "uncommitted":  [
-                        "test/win32/lib/UnwiredHookAudit.ps1",
-                        "test/win32/unwired-hook-audit.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
-                  "scripts/lib/HarnessFloor.ps1":  "ea50119fc0124c03d3bd7a7fb27fa32dc291f2f39ae8c8e3c03af0bbb3e2bb6a",
+                  "scripts/lib/HarnessFloor.ps1":  "e10c6e77b398f3069d7248ae3d148bcfd27b3ef748f73d9595c9fa2fb6f41c03",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/acceptance-parallel.ps1":  "fd632509e2ed3eb4bef5489abdfc8ea28051a2ea48c37f7f51430e5b95c760da",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -88,6 +87,7 @@
                   "test/win32/claude-integration.ps1":  "a65c25e4bb1b51a50a227b72126a6feedb1a0c7443f3838d32888b9359c4090b",
                   "test/win32/cleanslate-audit.ps1":  "aaac1014e6239ed379c79e5b333fd5171e1cee64d4fe9a1a926bebb3d39a6062",
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
+                  "test/win32/click-coord-audit.ps1":  "1a253420ca13f516c51cd7537e408b78a72ee5ebee0cd3552cf7e514b9f106f8",
                   "test/win32/cli-focus-policy.ps1":  "e2a64a514c82bed115563af1625b71f9eea10efd4c4077c1ee26a1f531c969af",
                   "test/win32/cli-launch-cwd.ps1":  "4a377618f1c5954fa3459d6e1582cee72aa72a86b7346be41f96dc7aacc5b1a0",
                   "test/win32/clipboard-paste.ps1":  "b931eeb01938913c1b2d91fdbe7819c2a5b67c7de99db9712bd475226fd8c5fd",
@@ -160,7 +160,7 @@
                   "test/win32/gui-launch-command.ps1":  "8e90681b56d560d7779cccbeb8ba4c3c652d48b42fbc2546a0e35ac4662c69aa",
                   "test/win32/gui-postmortem.ps1":  "5c63e9a8563ad9f82bb9c9888bbadbe650f41173508f0d124d83b840d4918077",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
-                  "test/win32/harness-floor.ps1":  "050f2c6bb9ff91e58ade9e5bdc2e6cb725c50cdc8d2a9b427c966feb286736d5",
+                  "test/win32/harness-floor.ps1":  "78b92e36c1ce07a9da43b380a464389a724a5e61132b37a723ed0c0603cf7562",
                   "test/win32/harness-process-leak.ps1":  "b46c6e53003f25b41da789d1b52d215d9864b2ce6020edf9cac7e6ada45f6b53",
                   "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
                   "test/win32/hero-mode.ps1":  "eb2db2edbe2c0cdf46c3df32cf643aebd490e195409b48dbde2fe6f0804f139c",
@@ -226,6 +226,7 @@
                   "test/win32/lib/ChromeGeometry.ps1":  "070bc30356ec1e6ac10382fbbfd7a1a812732ed0af83db7b80a36d11b1120a2a",
                   "test/win32/lib/CleanSlate.ps1":  "6c7fe0e7d3492b136034828cb7a2eb6565f36bf0b0fc9e477b69fe56539116ff",
                   "test/win32/lib/CleanSlateAudit.ps1":  "5868a695cf3d6201454e27586289704a483a883133cd417b65f7b1bbc128ab30",
+                  "test/win32/lib/ClickCoordAudit.ps1":  "62a8877a5ffd947158403d7060aab3c9d55403045a8fdaefe299bee42146dad7",
                   "test/win32/lib/ColorMath.ps1":  "e0b7cb256aa2322eed4d2d75d88c3557598eacf8ffcc825f659a071f36b3c0f7",
                   "test/win32/lib/CommandResolveAudit.ps1":  "9ed2f0925dfee89eb032a932ef0d0b046f5d5ed38a7e1a5c4cef19cb2109e424",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
