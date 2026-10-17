@@ -7,7 +7,7 @@
 #
 # Covers, end to end against a fake relay on loopback:
 #   A. the checkbox EXISTS in the chooser's account row, visible, enabled and
-#      UNCHECKED when no sharing.json exists (opt-in default, decision D22).
+#      UNCHECKED when no sharing.json exists on a machine that is not enrolled.
 #   B. with a credential already in relay.env, one click writes
 #      {"enabled":true} to sharing.json with NO enrollment traffic, and the
 #      box checks. The credential file is untouched.
@@ -28,6 +28,12 @@
 #   H. the negative control that makes G mean anything: the SAME flip against
 #      the same agent with nothing suppressed says the ordinary "your other
 #      devices can open terminals here", with no update sentence anywhere.
+#      (G and H start from an explicit off, since an enrolled machine with no
+#      sharing.json is already shared - section I.)
+#   I. an ENROLLED machine nobody configured is shared (T1965; D22 resolved
+#      default-on, and an enrolled Mac hosts since main 6dfb31232): with a
+#      credential and no sharing.json the chooser opens CHECKED without writing
+#      anything, and one click is an explicit off.
 #
 # Hermetic: GHOSTTY_SHARING_CONFIG and GHOSTTY_RELAY_ENV point both files at a
 # scratch dir (the same overrides the agent's own path resolution honors, so
@@ -258,7 +264,7 @@ Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 
 try {
-    "== A: the toggle exists, unchecked by default (opt-in, D22)"
+    "== A: the toggle exists, unchecked on a machine that is not enrolled"
     $g = Launch-Gui "http://127.0.0.1:$port"
     if ($null -eq $g) { throw 'SETUP FAIL: GUI did not come up' }
     $chooser = Open-Chooser $g
@@ -269,7 +275,7 @@ try {
     if ($null -eq $cb) { throw 'SETUP FAIL: no checkbox to drive' }
     Assert 'share checkbox visible' $cb.Visible
     Assert 'share checkbox enabled' $cb.Enabled
-    Assert 'unchecked with no sharing.json (sharing is opt-in)' ((Get-ShareChecked $chooser) -eq $false)
+    Assert 'unchecked with no sharing.json and no credential' ((Get-ShareChecked $chooser) -eq $false)
     Assert 'no sharing.json was created just by opening the chooser' (-not (Test-Path $sharingCfg))
 
     "== B: toggle on with an existing credential - one file write, no enrollment"
@@ -352,7 +358,9 @@ try {
     $agentArm = {
         param($suppress, $label)
         Stop-DebugGhoztty
-        Remove-Item $sharingCfg -Force -ErrorAction SilentlyContinue
+        # An explicit off, so the click below is a flip ON: with the credential
+        # and no file the box would already be ticked (section I).
+        Set-Content -Path $sharingCfg -Value '{"version":1,"enabled":false}' -Encoding ascii
         Set-Content -Path $relayEnv -Value "RELAY_BASE=http://127.0.0.1:$port`nDEVICE_TOKEN=tok-seeded-t889`n" -Encoding ascii
         $gg = Launch-Gui "http://127.0.0.1:$port" $true $suppress
         if ($null -eq $gg) { return @{ Ok = $false; Why = "$label GUI did not come up" } }
@@ -387,6 +395,28 @@ try {
     }
     if ($old.Ok -and $new.Ok) {
         Assert 'G and H are DIFFERENT sentences (the gate can score both ways)' ($old.Hint -ne $new.Hint)
+    }
+
+    "== I: an enrolled machine nobody configured is shared (T1965)"
+    Stop-DebugGhoztty
+    Remove-Item $sharingCfg -Force -ErrorAction SilentlyContinue
+    Set-Content -Path $relayEnv -Value "RELAY_BASE=http://127.0.0.1:$port`nDEVICE_TOKEN=tok-seeded-t1965`n" -Encoding ascii
+    $gi = Launch-Gui "http://127.0.0.1:$port"
+    Assert 'I GUI came up' ($null -ne $gi)
+    if ($null -ne $gi) {
+        $chi = Open-Chooser $gi
+        Assert 'I chooser opened' ($chi -ne [IntPtr]::Zero)
+        $cbi = if ($chi -ne [IntPtr]::Zero) { Get-ShareCheckbox $chi } else { $null }
+        Assert 'I share checkbox present' ($null -ne $cbi)
+        if ($null -ne $cbi) {
+            Assert 'I CHECKED: enrolled with no sharing.json means shared' ((Get-ShareChecked $chi) -eq $true)
+            Assert 'I opening the chooser wrote no sharing.json' (-not (Test-Path $sharingCfg))
+            [void](Send-TestControlClick -Control $cbi.Hwnd)
+            Assert 'I one click is an explicit off (enabled:false)' (Wait-SharingEnabled $false)
+            Start-Sleep -Milliseconds 400
+            Assert 'I checkbox unchecked after the click' ((Get-ShareChecked $chi) -eq $false)
+            Assert 'I credential kept by the off' ((Get-Content $relayEnv -Raw -ErrorAction SilentlyContinue) -match 'tok-seeded-t1965')
+        }
     }
 
     Complete-TestBody  # T1039: the run reached the end of its body
@@ -424,4 +454,4 @@ if ($script:failures -eq 0) {
         update -Guard share-machine -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-Write-TestVerdict -Label 'T547 SHARE MACHINE' -Pass $script:passes -Fail $script:failures -MinPass 37
+Write-TestVerdict -Label 'T547 SHARE MACHINE' -Pass $script:passes -Fail $script:failures -MinPass 45

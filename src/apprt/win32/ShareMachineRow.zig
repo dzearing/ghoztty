@@ -59,10 +59,17 @@ pub fn isRunning() bool {
     return running.load(.acquire);
 }
 
-/// Read the persisted per-machine sharing state. Absent or unreadable is
-/// disabled — the same lenient read the agent does.
+/// Whether this machine is shared, as the agent will act on it (T1965): the
+/// user's explicit on/off when there is one, else "enrolled" — an enrolled
+/// machine nobody configured serves (D22 default-on), so the box is ticked.
+/// Same `sharing.decide` the agent's reconciler runs, so the checkbox can
+/// never show a state the agent is not in.
 pub fn isEnabled(alloc: Allocator, config_path: []const u8) bool {
-    return sharing.load(alloc, config_path).enabled;
+    const has_credential = if (enroll.loadDeviceToken(alloc)) |tok| blk: {
+        alloc.free(tok);
+        break :blk true;
+    } else false;
+    return sharing.effectiveEnabled(sharing.loadChoice(alloc, config_path), has_credential);
 }
 
 /// Turn sharing OFF: one atomic write, on the GUI thread (it is a rename, not

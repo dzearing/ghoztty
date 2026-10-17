@@ -220,10 +220,23 @@ itself after two 401s; an unreachable relay changes nothing; a
 relay-disabled app (`GhosttyRelayDisable`) touches nothing. `RelayHostAgent`
 (`macos/Sources/Features/Remote/RelayHostAgent.swift`), policy
 `MachineHostingVerdict.decide`; design: `docs/design/mac-relay-host.md`;
-tests: `RelayHostAgentTests`. **Windows:** an enrolled Windows machine's
-reachable / not-reachable contract is T1965; the per-role guard and
-`--exit-on-revoke` arrive in the shared agent with the T1902 merge, and
-proving them on Windows is T1967.
+tests: `RelayHostAgentTests`.
+
+**Windows hosts the same way (T1965), translated:** the relay uplink rides the
+session agent (T546) rather than a second job, so "start/stop the relay agent"
+is the agent's `SharingUplink` raising/parking its link. The rule is
+`sharing.decide` (`src/remote/agent/sharing.zig`), run by both the agent's 5s
+reconcile and the chooser's "Share this machine" checkbox, so they cannot
+disagree: with **no `sharing.json`** an enrolled machine serves (D22 resolved
+default-on) and a client-only one stays quietly down; an explicit untick
+(`{"enabled":false}`) keeps it down while staying enrolled; the credential is
+re-read every tick, so a sign-out that deletes `relay.env` parks the uplink and
+a re-enroll resumes it with no restart; a pending revocation vetoes it (T1427).
+It survives an agent kill and an app relaunch because the agent re-reads the
+same files at startup. `--exit-on-revoke` is never passed here — exiting would
+take the user's local panes with it — and the per-role guard is proven by
+`test/win32/agent-role-guard.ps1` (T1967). Tests: `agent-sharing-uplink.ps1`
+(sections 1, 2, 5b) and `share-machine.ps1` (section I).
 
 #### Signing out revokes THIS machine (T1421)
 

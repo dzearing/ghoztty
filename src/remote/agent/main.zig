@@ -2658,24 +2658,41 @@ const SharingUplink = struct {
             if (r.isHolding()) return;
         }
 
-        const cfg = sharing.load(self.alloc, self.config_path);
-        if (!cfg.enabled) {
-            self.said_unavailable = false;
-            // Park only a currently-online link so a parked one is not
-            // re-woken every tick.
-            if (self.raised and self.link.display() != .offline) {
-                std.debug.print("ghoztty-agent: sharing disabled; parking the relay uplink (local sessions unaffected)\n", .{});
-                self.link.disconnect();
-            }
-            return;
+        // T1965: the credential is part of the question now. An unset
+        // sharing.json follows enrollment, so a sign-out that removes
+        // relay.env takes the machine off the relay here, and a re-enroll
+        // brings it back — the creds watcher alone keeps redialing with the
+        // last token it had.
+        const choice = sharing.loadChoice(self.alloc, self.config_path);
+        const has_credential = if (enroll.loadDeviceToken(self.alloc)) |tok| blk: {
+            self.alloc.free(tok);
+            break :blk true;
+        } else false;
+        switch (sharing.decide(choice, has_credential)) {
+            .park, .unavailable => |action| {
+                if (action == .park) self.said_unavailable = false;
+                // Park only a currently-online link so a parked one is not
+                // re-woken every tick.
+                if (self.raised and self.link.display() != .offline) {
+                    std.debug.print("ghoztty-agent: sharing {s}; parking the relay uplink (local sessions unaffected)\n", .{
+                        if (choice == .off) "disabled" else "has no credential",
+                    });
+                    self.link.disconnect();
+                }
+                if (action == .unavailable and !self.raised) {
+                    self.sayUnavailable("no device token in relay.env", "enroll this machine first (Share this machine in the chooser)");
+                }
+            },
+            .raise => {
+                if (self.raised) {
+                    // Wanted and built: make sure it is not parked (no-op when
+                    // already online — reconnect only flips offline→online).
+                    self.link.reconnect();
+                    return;
+                }
+                self.tryRaise();
+            },
         }
-        if (self.raised) {
-            // Enabled and built: make sure it is not parked (no-op when
-            // already online — reconnect only flips offline→online).
-            self.link.reconnect();
-            return;
-        }
-        self.tryRaise();
     }
 
     /// Build the uplink: relay.env → wss base + credential → creds watcher +

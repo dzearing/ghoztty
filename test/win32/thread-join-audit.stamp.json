@@ -1,10 +1,11 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-10-17T07:11:59-07:00",
-    "commit":  "5296c80e2",
+    "generated":  "2026-10-17T08:08:15-07:00",
+    "commit":  "b7d180176",
     "uncommitted":  [
-                        "src/remote/agent/single_instance.zig"
+                        "src/remote/agent/main.zig",
+                        "src/remote/agent/sharing.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -30,7 +31,7 @@
                   "src/remote/agent/keepalive.zig":  "178584c3f9dfd67a8b00076c2ef4147631495461fec17fad8cd0a45d6cb9cb4e",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",
                   "src/remote/agent/link_control.zig":  "e3138c9c1326081092f25b9c090388fe58a3561c17734a83778df474ededd40a",
-                  "src/remote/agent/main.zig":  "5dde1c000813a2b84784ee82561b35f28e68abb45f58351a934473d01441b393",
+                  "src/remote/agent/main.zig":  "1836a33c638b76e775331a6b3d344b533359d5890421a6ad5db6435315451f69",
                   "src/remote/agent/metrics.zig":  "c4f0863d8706b9b7d24057cff5b388f72cc606a30df05105b19a19f97a68a4d6",
                   "src/remote/agent/msi_ca.zig":  "fa0ef30b29983b3edf5995afbe9ac5d4c5909361ac76b33e0c43651787eb17fb",
                   "src/remote/agent/mux.zig":  "bb91f11b8e95720f71e322fe788d2b7fbeba605e99132ec0ce0f317003f49867",
@@ -50,7 +51,7 @@
                   "src/remote/agent/server.zig":  "8d9f7e32e81b397617c4e01f5dbaede55bd3917c1a825b220f9f85490ee3c92f",
                   "src/remote/agent/session.zig":  "226b8672fea7ad3d0d291e0e9989cd747af1854b790d11fa5bfc1fe8c5a5b49c",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
-                  "src/remote/agent/sharing.zig":  "271eaa812c1282a8bf90d0585a09677a752bfb1e05e9d09f076f4bc8aa81bab3",
+                  "src/remote/agent/sharing.zig":  "4ecfaef4c8e7cf9428531f82beee5b28bdb604ce3385507ddc858edf781ff29a",
                   "src/remote/agent/single_instance.zig":  "17b1519d6fc3a881da850f2b8d8ddc61c455bf1271f97d25936c907114f71dd6",
                   "src/remote/agent/startup_error.zig":  "39a77b7e42b11c03d92d7868d48ae3183a39971d44b406dc86464cbf8258e86b",
                   "src/remote/agent/test_util.zig":  "93a64a05d6f8bb7aee6b54e60564c856e64bc2215fb4397c4544faf58f347d83",

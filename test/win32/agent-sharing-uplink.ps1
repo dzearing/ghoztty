@@ -4,10 +4,12 @@
 #
 #   powershell -NoProfile -File test\win32\agent-sharing-uplink.ps1
 #
-# Covers: a --listen-pipe agent with NO sharing.json never dials (negative
-# control); writing {"enabled":true} beside sessions.json raises the uplink
-# hot (a real `GET /v1/agent/control` with the relay.env Bearer token arrives
-# at a loopback listener); {"enabled":false} parks it (the dial stream stops);
+# Covers: a --listen-pipe agent on a machine that is NOT enrolled never dials
+# (negative control); enrollment alone - relay.env appearing, no sharing.json -
+# raises the uplink hot (T1965: a real `GET /v1/agent/control` with the
+# relay.env Bearer token arrives at a loopback listener); {"enabled":false}
+# parks it (the dial stream stops); losing the credential (a sign-out) parks
+# it and a re-enroll brings it back (T1965);
 # an agent started with sharing already enabled dials without any toggle;
 # a pending revocation beside relay.env takes the machine off the relay and is
 # retried BY THE AGENT with no app running, then releases the uplink once it
@@ -144,19 +146,25 @@ $savedInst = Get-GhozttyAgentLineage
 $env:GHOZTTY_AGENT_INSTANCE = "t546$PID"
 $env:GHOSTTY_RELAY_ENV = $relayEnv
 try {
-    "== 1: no sharing.json - agent serves the pipe and never dials (negative control)"
+    "== 1: not enrolled, no sharing.json - agent serves the pipe and never dials (negative control)"
+    $credential = Get-Content $relayEnv -Raw
+    Remove-Item $relayEnv -ErrorAction SilentlyContinue
     $agent = Start-TestAgent "$tmp\a1.out" "$tmp\a1.err"
     Assert 'agent came up (port.json)' (Wait-ForText $portFile 'pipe' 15)
     Assert 'agent is running' (-not $agent.HasExited)
     Start-Sleep -Seconds 8
-    Assert 'no relay dial without sharing.json' ((Get-DialCount) -eq 0)
-    Assert 'no sharing chatter when unconfigured' ((Read-Shared "$tmp\a1.err") -notmatch 'sharing')
+    Assert 'no relay dial on a machine that is not enrolled' ((Get-DialCount) -eq 0)
+    Assert 'no sharing chatter on a client-only machine' ((Read-Shared "$tmp\a1.err") -notmatch 'sharing')
 
-    "== 2: hot enable - writing sharing.json raises the uplink in-process"
-    Set-Content -Path $sharingFile -Value '{"version":1,"enabled":true}' -Encoding ascii
+    "== 2: enrollment alone raises the uplink - no sharing.json needed (T1965, D22 default-on)"
+    # What an enrolled Mac does since main 6dfb31232: being enrolled IS being
+    # reachable. Before T1965 this machine stayed dark until somebody ticked
+    # "Share this machine" - listed on every device on the account, never online.
+    Set-Content -Path $relayEnv -Value $credential -Encoding ascii -NoNewline
     Assert 'agent announced the raise' (Wait-ForText "$tmp\a1.err" 'relay uplink raised' 20)
     Assert 'control dial reached the relay' (Wait-ForText $dialLog 'GET /v1/agent/control' 20)
     Assert 'dial authenticated with the relay.env token' (Wait-ForText $dialLog "Bearer $token" 5)
+    Assert 'still no sharing.json - enrollment was the whole opt-in' (-not (Test-Path $sharingFile))
 
     "== 3: hot disable - the uplink parks and the dial stream stops"
     Set-Content -Path $sharingFile -Value '{"version":1,"enabled":false}' -Encoding ascii
@@ -222,6 +230,29 @@ try {
     Assert 'the uplink dials again once the revocation is gone' ((Get-DialCount) -gt $backCount)
     Stop-TestAgents
 
+    "== 5b: an enrolled machine leaves the relay when its credential goes, and returns with it (T1965)"
+    # Sign-out (T1421) de-enrolls and deletes relay.env. The creds watcher keeps
+    # the last token it had, so before T1965 the uplink went on redialing as a
+    # machine its owner had signed out of.
+    Remove-Item $portFile -ErrorAction SilentlyContinue
+    Remove-Item $sharingFile -ErrorAction SilentlyContinue
+    $agent5 = Start-TestAgent "$tmp\a5.out" "$tmp\a5.err"
+    Assert 'enrolled agent with no sharing.json raised at startup' (Wait-ForText "$tmp\a5.err" 'relay uplink raised' 25)
+    Remove-Item $relayEnv -ErrorAction SilentlyContinue
+    Assert 'agent parks the uplink once the credential is gone' (Wait-ForText "$tmp\a5.err" 'has no credential; parking' 20)
+    Start-Sleep -Seconds 6   # drain a dial already in flight/backoff
+    $goneCount = Get-DialCount
+    Start-Sleep -Seconds 10  # past the backoff and two reconcile ticks
+    Assert 'no control dials after the credential is gone' ((Get-DialCount) -eq $goneCount)
+    Assert 'no "cannot start" noise for a machine that simply left' ((Read-Shared "$tmp\a5.err") -notmatch 'uplink cannot start')
+    Set-Content -Path $relayEnv -Value $credential -Encoding ascii -NoNewline
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and (Get-DialCount) -le $goneCount) { Start-Sleep -Milliseconds 500 }
+    Assert 'a re-enroll brings the uplink back with no restart' ((Get-DialCount) -gt $goneCount)
+    Assert 'agent survived the sign-out and the re-enroll' (-not $agent5.HasExited)
+    Stop-TestAgents
+    Set-Content -Path $sharingFile -Value '{"version":1,"enabled":true}' -Encoding ascii
+
     "== 6: enabled but no credential - local-only with one explanatory line"
     Remove-Item $portFile -ErrorAction SilentlyContinue
     Remove-Item $relayEnv -ErrorAction SilentlyContinue
@@ -246,7 +277,7 @@ try {
 # call, which meant the guard went DUE on the first `main.zig` edit and could
 # never come back - the one shape a staleness gate must not have, since a guard
 # that is permanently red is a guard everybody learns to step over.
-if ($script:failures -eq 0 -and $script:passes -ge 25) {
+if ($script:failures -eq 0 -and $script:passes -ge 32) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-sharing-uplink -Repo $repo 2>&1 | ForEach-Object { "  $_" }
@@ -254,4 +285,4 @@ if ($script:failures -eq 0 -and $script:passes -ge 25) {
 
 # MinPass = the full-run assertion count: an abort (exception past section N
 # jumping to finally) must never score the truncated run as ALL PASS.
-Write-TestVerdict -Label 'T546 SHARING UPLINK' -Pass $script:passes -Fail $script:failures -MinPass 25
+Write-TestVerdict -Label 'T546 SHARING UPLINK' -Pass $script:passes -Fail $script:failures -MinPass 32

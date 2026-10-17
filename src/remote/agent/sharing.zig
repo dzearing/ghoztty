@@ -19,7 +19,9 @@
 //! see `enroll.zig`) stays the single source for where to dial and as whom.
 //! This file is only the per-machine "should the local agent serve" switch —
 //! kept separate precisely so signing in to REACH other machines never
-//! implies serving this one (decision 3, D22: sharing is opt-in).
+//! implies serving this one. ENROLLING does (D22 resolved default-on; T1965
+//! matched main 6dfb31232's "an enrolled Mac hosts"): with no file at all,
+//! an enrolled machine serves; the file only records an explicit on/off.
 //!
 //! Everything here is pure config logic (path resolution, lenient parse,
 //! atomic save, the raise/park decision) so it unit-tests in the `test-agent`
@@ -87,22 +89,60 @@ pub fn save(alloc: Allocator, path: []const u8, cfg: Config) !void {
     try atomic_write.writeChunks(alloc, path, &.{content}, .{});
 }
 
+/// What the user has said about sharing THIS machine (T1965). Tri-state,
+/// because "nobody ever flipped the switch" is its own answer: D22 resolved
+/// it as default-on, and main 6dfb31232 made the Mac host whenever it is
+/// enrolled, so an enrolled machine with no `sharing.json` serves.
+pub const Choice = enum {
+    /// No `sharing.json`: follow enrollment — serve while relay.env holds a
+    /// credential, stay quiet and down while it does not (a client-only box).
+    unset,
+    /// The user ticked "Share this machine".
+    on,
+    /// The user unticked it: stay down even though the machine is enrolled.
+    off,
+};
+
+/// Read the user's choice at `path`. Only an ABSENT file is `unset`; a file
+/// that exists but cannot be read or parsed is `off`, so a corrupt flag
+/// never overturns an explicit "don't share" (the `parse` safe default).
+pub fn loadChoice(alloc: Allocator, path: []const u8) Choice {
+    const content = std.fs.cwd().readFileAlloc(alloc, path, 64 * 1024) catch |err| switch (err) {
+        error.FileNotFound => return .unset,
+        else => return .off,
+    };
+    defer alloc.free(content);
+    return if (parse(alloc, content).enabled) .on else .off;
+}
+
+/// Whether the machine is shared as the user sees it — what the chooser's
+/// checkbox shows. Pure; the same answer `decide` acts on.
+pub fn effectiveEnabled(choice: Choice, has_credential: bool) bool {
+    return decide(choice, has_credential) == .raise;
+}
+
 /// What the uplink controller should do about the current state. Pure, so the
 /// policy is unit-testable apart from the threads that act on it.
 pub const Action = enum {
-    /// Sharing is on and a credential exists: the uplink should be up.
+    /// Sharing applies and a credential exists: the uplink should be up.
     raise,
-    /// Sharing is off: the uplink should be down (parked if already built).
+    /// The uplink should be down (parked if already built): sharing is off,
+    /// or it follows enrollment and the machine is not enrolled — including
+    /// a sign-out that just removed relay.env.
     park,
-    /// Sharing is on but there is no relay credential to dial with: stay
-    /// down and say why once — the enrollment (chooser toggle, T547/T548)
-    /// writes relay.env first, so this is the "hand-edited flag" case.
+    /// Sharing is explicitly on but there is no relay credential to dial
+    /// with: stay down and say why once — the enrollment (chooser toggle,
+    /// T547/T548) writes relay.env first, so this is the "hand-edited flag"
+    /// case.
     unavailable,
 };
 
-pub fn decide(enabled: bool, has_credential: bool) Action {
-    if (!enabled) return .park;
-    return if (has_credential) .raise else .unavailable;
+pub fn decide(choice: Choice, has_credential: bool) Action {
+    return switch (choice) {
+        .off => .park,
+        .unset => if (has_credential) .raise else .park,
+        .on => if (has_credential) .raise else .unavailable,
+    };
 }
 
 // =============================================================================
@@ -111,14 +151,48 @@ pub fn decide(enabled: bool, has_credential: bool) Action {
 
 const testing = std.testing;
 
-test "decide: disabled parks regardless of credential" {
-    try testing.expectEqual(Action.park, decide(false, false));
-    try testing.expectEqual(Action.park, decide(false, true));
+test "decide: off parks regardless of credential" {
+    try testing.expectEqual(Action.park, decide(.off, false));
+    try testing.expectEqual(Action.park, decide(.off, true));
 }
 
-test "decide: enabled raises only with a credential" {
-    try testing.expectEqual(Action.raise, decide(true, true));
-    try testing.expectEqual(Action.unavailable, decide(true, false));
+test "decide: on raises only with a credential" {
+    try testing.expectEqual(Action.raise, decide(.on, true));
+    try testing.expectEqual(Action.unavailable, decide(.on, false));
+}
+
+test "decide: unset follows enrollment, quietly (T1965)" {
+    // An enrolled machine nobody configured serves (D22 default-on, the Mac
+    // contract of main 6dfb31232)...
+    try testing.expectEqual(Action.raise, decide(.unset, true));
+    // ...and a client-only one is simply down, not "unavailable" noise.
+    try testing.expectEqual(Action.park, decide(.unset, false));
+}
+
+test "effectiveEnabled: the checkbox shows what the agent does" {
+    try testing.expect(effectiveEnabled(.unset, true));
+    try testing.expect(!effectiveEnabled(.unset, false));
+    try testing.expect(effectiveEnabled(.on, true));
+    try testing.expect(!effectiveEnabled(.on, false));
+    try testing.expect(!effectiveEnabled(.off, true));
+}
+
+test "loadChoice: absent is unset, explicit values round-trip, corrupt is off" {
+    try testing.expectEqual(Choice.unset, loadChoice(testing.allocator, "/definitely/not/a/real/dir/sharing.json"));
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(dir);
+    const p = try std.fs.path.join(testing.allocator, &.{ dir, file_name });
+    defer testing.allocator.free(p);
+
+    try save(testing.allocator, p, .{ .enabled = true });
+    try testing.expectEqual(Choice.on, loadChoice(testing.allocator, p));
+    try save(testing.allocator, p, .{ .enabled = false });
+    try testing.expectEqual(Choice.off, loadChoice(testing.allocator, p));
+    try tmp.dir.writeFile(.{ .sub_path = file_name, .data = "garbage" });
+    try testing.expectEqual(Choice.off, loadChoice(testing.allocator, p));
 }
 
 test "parse: round-trips enabled and disabled" {

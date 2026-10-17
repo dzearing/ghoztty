@@ -117,6 +117,12 @@ kind of thing. Windows UI is T547, macOS is T548.
 
 ## Decision 3 — serving is opt-in (D22 filed for override)
 
+> **Overridden.** D22 was answered *default-on once signed in* (2026-08-07),
+> and T547 shipped the opt-in shape anyway. T1965 (2026-10-17) brought Windows
+> to the answer and to main 6dfb31232's "an enrolled Mac hosts": enrolling is
+> the opt-in, so an enrolled machine with no `sharing.json` serves, and the
+> toggle's untick is an explicit off. The rationale below is kept as history.
+
 Sharing is **off until the user flips the toggle**, per machine. Rationale:
 consolidation makes the uplink expose the user's *real local terminals*, not
 a separate remote-only store — sign-in today means "connect out", and a

@@ -1,12 +1,10 @@
 {
     "guard":  "test-wait-oracle",
     "script":  "test/win32/test-wait-oracle.ps1",
-    "generated":  "2026-10-17T06:05:48-07:00",
-    "commit":  "e9a22e401",
+    "generated":  "2026-10-17T08:08:09-07:00",
+    "commit":  "b7d180176",
     "uncommitted":  [
-                        "src/cli/explain_config.zig",
-                        "src/cli/stdio.zig",
-                        "src/cli/validate_config.zig"
+
                     ],
     "files":  {
                   "src/cli/action.zig":  "dedb0dfe145e8d39dfb53af30225e6c8a170a02e1d79a9c224de1779f0efb654",
@@ -22,7 +20,7 @@
                   "src/cli/ghostty.zig":  "85048b74f8795c4f500ca8dd98fa52a24e92a94808ef1b16df34070b4cf6094d",
                   "src/cli/help.zig":  "ad8647deba3db716e751701821bdf3d958235b7bb8bea1a3f60642dd0ab4e528",
                   "src/cli/json.zig":  "3e9d5025af34529c2cc57d433306195a1c55b4c582dc385379ce9b6748e0f251",
-                  "src/cli/list.zig":  "82c3fcd6644471c490196fe83d9aa1b36fdc89e92dc81f1b222c0ee3f33c5ff4",
+                  "src/cli/list.zig":  "e51ba193ff48e9d09675791d8cdf81f43a8fe5ed8e884028bb560742c7221a2d",
                   "src/cli/list_actions.zig":  "71a293e3ddd367680c048d09333eed9c4d0b6fc99eddaaceaa1010bd128869fa",
                   "src/cli/list_colors.zig":  "ac649fb765789173c9b73a797d9de094ca587edf144874a8e5ca71770ec9aff6",
                   "src/cli/list_fonts.zig":  "7e25bc361e6c81ee9a61231b45713417c33eedd190d2fbf9d538c1db0aee1715",
@@ -51,7 +49,7 @@
                   "src/cli/verb_flags.zig":  "bda869e6c325347ca64c0ce8008cde3054c1f9821be670e377d48670c6ac46a1",
                   "src/cli/version.zig":  "6b2bc632a3f4096373189da3b0ca71103dac63ceaeb15d24cb3b9eafe2693303",
                   "src/cli/view_arg.zig":  "e743f118fc97e7c676b7fc40e2448b0285439e956a8131bdb03bc5faa0697cbf",
-                  "src/remote/agent/pty_child.zig":  "ac9cc765ecea2854d59c20c3771e0d540dfb7959715486e51da8e7419f17a6f9",
+                  "src/remote/agent/pty_child.zig":  "0b63576d67418e3293281f4b7f952a620b8608ae3377d4ad74483da65b722b1a",
                   "src/remote/agent/test_util.zig":  "93a64a05d6f8bb7aee6b54e60564c856e64bc2215fb4397c4544faf58f347d83",
                   "src/remote/connection.zig":  "050791affe74732f2e85de48383ddf0fee6e6fa2496ebd7f09a4203aa340c5ab",
                   "src/remote/test_util.zig":  "a645a6fe87547061970dfa2ddeefcbc0c6e36b008e1333d992f31cb8b50d07db",
