@@ -218,6 +218,17 @@ pub fn main() !void {
         std.log.warn("advertising a REDUCED capability set (suppressed: {s})", .{v});
     } else |_| {}
 
+    // Handoff kill switch, second half (T1038): the supervisor will not start
+    // (`handoff.Supervisor.start`), so the HELLO must not promise a handoff
+    // either. A peer that believes `agent_handoff` stands down instead of
+    // restarting a stale agent, and with nothing behind the promise the agent
+    // would then never be upgraded at all — the opposite of the pre-T907
+    // behavior the switch exists to restore.
+    if (handoff.disabled(alloc)) {
+        server.Server.withdrawHandoff(true);
+        std.log.warn("{s} is set: not advertising {s}", .{ handoff.env_disable, protocol.capability.agent_handoff });
+    }
+
     // Quiet attach (T804 test seam): record an attaching client's geometry but
     // do not touch the child, so nothing repaints behind the repaint the agent
     // injects — the POSIX shape, on a seat where ConPTY always repaints. Read

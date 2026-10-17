@@ -46,6 +46,10 @@
 #      STANDS DOWN. No dialog, the decision logged as such, no destructive
 #      restart attempted, and the agent's own replacement carries the session
 #      across.
+#   O: T1038 - arm M's world with the handoff KILL SWITCH set => the agent
+#      stops PROMISING a handoff it will not perform, so the app reads it as
+#      the legacy generation (arm C's leave-alone) instead of standing down
+#      for a replacement that never comes.
 #
 # T1056 - what a STALE BUILD may cost the user, which is now nothing. An app
 # update replaces ghoztty-agent.exe while the running agent keeps every PTY
@@ -504,6 +508,7 @@ $savedSuppress = $env:GHOSTTY_AGENT_SUPPRESS_CAPS
 $savedHolder = $env:GHOZTTY_AGENT_PTY_HOLDER
 $savedForce = $env:GHOZTTY_AGENT_HANDOFF_FORCE
 $savedInterval = $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS
+$savedNoHandoff = $env:GHOZTTY_AGENT_NO_HANDOFF
 $savedInstance = $env:GHOZTTY_AGENT_INSTANCE
 $savedScheme = $env:GHOZTTY_URL_SCHEME
 $savedSelfheal = $env:GHOZTTY_PATH_SELFHEAL
@@ -545,6 +550,7 @@ $env:GHOZTTY_AGENT_PTY_HOLDER = '1'
 $env:GHOSTTY_AGENT_SUPPRESS_CAPS = $null
 $env:GHOZTTY_AGENT_HANDOFF_FORCE = $null
 $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $null
+$env:GHOZTTY_AGENT_NO_HANDOFF = $null
 # Isolate the IPC endpoint unconditionally: every `+list` / `+read` /
 # `+send-keys` below is an oracle, and an instance answering the shared pipe
 # would answer them about somebody else's windows.
@@ -1591,6 +1597,82 @@ $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $null
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 Stop-TestProcs
 
+# ============================================================================
+Say "== O: T1038 - the handoff kill switch withdraws the promise, not just the supervisor"
+# ============================================================================
+# Arm M's world exactly - stale agent run from the delivery's .bak, newer binary
+# beside it, holders on, a live session, and (in debug) the force seam - plus
+# GHOZTTY_AGENT_NO_HANDOFF. Before T1038 the switch stopped only the supervisor:
+# the HELLO still carried agent_handoff, the app believed it and stood down
+# (arm M's M4 line), and nothing ever upgraded the agent. With both halves of
+# the switch in place the agent advertises what it will actually do, and the app
+# takes the legacy generation's path - arm C's leave-alone, adopted at the next
+# idle (arm E) - which is what the switch promises.
+#
+# Arm M is this arm's negative control: same world, switch unset, and the
+# stand-down line plus a self-replacement. A seam that stopped reaching the
+# agent would turn N into a re-run of M and fail N1/N2 below.
+$handoffDirO = Join-Path $tmp 'handoff-o'
+New-Item -ItemType Directory -Force $handoffDirO | Out-Null
+$runningAgentO = Join-Path $handoffDirO 'ghoztty-agent.exe.bak'
+$bundledAgentO = Join-Path $handoffDirO 'ghoztty-agent.exe'
+$sourceForRunningO = if ($Release -and $script:StaleAgent) { $script:StaleAgent } else { $AgentExe }
+Copy-Item $sourceForRunningO $runningAgentO -Force
+Copy-Item $AgentExe $bundledAgentO -Force
+$env:GHOZTTY_AGENT_PTY_HOLDER = '1'
+$env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = '2000'
+$env:GHOZTTY_AGENT_NO_HANDOFF = '1'
+if ($Release) {
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $bundledAgentO
+    $staleO = Set-StaleWorld 'o' $runningAgentO
+    Assert-StaleWorld "O0 the old agent is running from the delivery's .bak, beside a newer binary" $staleO
+} else {
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $runningAgentO
+    $env:GHOZTTY_AGENT_HANDOFF_FORCE = '1'
+    $env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+}
+$appPidO = Start-App $tmp 't1038-killswitch'
+$logO = $script:AppLog
+Assert "O1 the GUI came up" ($appPidO -ne 0)
+$agentO = Wait-AgentPid $tmp 25
+Assert "O2 an agent is running for this run" ($agentO -ne 0)
+$treeO = Wait-Panes $tmp 'o0' 1
+Assert "O3 it has a live session" ((Leaf-Count $treeO) -ge 1)
+$leafO = (All-Leaves $treeO)[0]
+# THE assert: the switch reached the HELLO, so the app no longer reads a promise.
+if ($NegativeControl) {
+    Say 'NEGATIVE CONTROL: asserting the kill-switched agent still advertised the handoff - this run MUST fail'
+    Assert "O4 the agent is reported as handoff-capable (inverted)" `
+        (Wait-LogMatch $logO 'agent upgrade check: stale.*handoff-capable=true' 25)
+} else {
+    Assert "O4 the agent is reported as NOT handoff-capable" `
+        (Wait-LogMatch $logO 'agent upgrade check: stale with live sessions.*handoff-capable=false' 25)
+}
+Assert "O5 ... and the app takes the legacy leave-alone, not the stand-down" `
+    (Wait-LogMatch $logO 'agent upgrade check: stale with live sessions, but protocol-compatible; leaving it alone' 25)
+Assert "O6 the stand-down for a self-replacement was never logged" `
+    ((Read-AppLog $logO) -notmatch 'replacing itself without losing any session')
+Assert "O7 no confirmation was raised (T1056: a build gap is not the user's problem)" `
+    ((Wait-Dialog $appPidO 15) -eq [IntPtr]::Zero)
+Assert "O8 the app attempted no destructive restart of its own" `
+    ((Read-AppLog $logO) -notmatch 'agent restart: begin')
+# The supervisor half, still holding: several intervals pass with the force seam
+# armed, and the agent does not replace itself. Wait-AgentPid answers the
+# CURRENT pid when no other one turns up, so "unchanged" is the pass.
+$agentO2 = Wait-AgentPid $tmp 12 $agentO
+Assert "O9 the kill-switched agent did NOT replace itself (same pid)" `
+    ($agentO2 -eq $agentO -and (Get-RunAgents $tmp).Count -eq 1)
+if ($agentO2 -ne $agentO) {
+    (Read-AppLog $logO) -split "`n" | Where-Object { $_ -match 'agent' } | Select-Object -Last 25 | ForEach-Object { Say "      | $_" }
+}
+Assert "O10 the live pane is still responsive" (Test-PaneResponsive $tmp $leafO.id 'o' 20)
+$env:GHOZTTY_AGENT_NO_HANDOFF = $null
+$env:GHOZTTY_AGENT_HANDOFF_FORCE = $null
+$env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $null
+$env:GHOZTTY_AGENT_BUNDLED_VERSION = $null
+$env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
+Stop-TestProcs
+
 } catch {
     # T1511: the foreground-leak checks below are part of this run too, so this
     # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
@@ -1612,6 +1694,7 @@ Stop-TestProcs
     $env:GHOZTTY_AGENT_PTY_HOLDER = $savedHolder
     $env:GHOZTTY_AGENT_HANDOFF_FORCE = $savedForce
     $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $savedInterval
+    $env:GHOZTTY_AGENT_NO_HANDOFF = $savedNoHandoff
     $env:GHOZTTY_AGENT_INSTANCE = $savedInstance
     $env:GHOZTTY_URL_SCHEME = $savedScheme
     $env:GHOZTTY_PATH_SELFHEAL = $savedSelfheal

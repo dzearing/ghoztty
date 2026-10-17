@@ -1,12 +1,13 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-17T08:10:04-07:00",
-    "commit":  "b7d180176",
+    "generated":  "2026-10-17T09:33:04-07:00",
+    "commit":  "8d1fedf00",
     "uncommitted":  [
-                        "src/apprt/win32/ShareMachineRow.zig",
+                        "src/remote/agent/handoff.zig",
                         "src/remote/agent/main.zig",
-                        "src/remote/agent/sharing.zig"
+                        "src/remote/agent/server.zig",
+                        "test/win32/seam-audit.registry.json"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -70,7 +71,7 @@
                   "src/apprt/win32/claude_plugin_manifest.zig":  "a0812c8b3cb533065274a5b9be19a18df4fe2f0efd0932972e082748debf7b89",
                   "src/apprt/win32/claude_plugin_migration.zig":  "09ae22a00d446fce29cf1b98c2bb30b97a90395bdb2f0869af8172ca9ee6e28d",
                   "src/apprt/win32/claude_setup.zig":  "7800892ae8d8afadd52d0574aaa86fb7e0d945b2824030c79661e3e5761fb47f",
-                  "src/apprt/win32/ClaudeHookSpec.zig":  "1f1b3c306da5bddc1ab165f3a7e99d3e22f8f444c974a639e0e33c57ecff6038",
+                  "src/apprt/win32/ClaudeHookSpec.zig":  "6b1fd51e16dd79b3a3a30a296ba539cc2b9e9575b7043441ed302ff5e99ff86e",
                   "src/apprt/win32/clipboard_image.zig":  "b90cac60d5eb7ce990cca439a2cf1dacd502895580fff337d6995b6736482e7d",
                   "src/apprt/win32/clipboard_open.zig":  "97d4c0fdc4216f5071f9dfb87067be04c7687c2a1a0a48f74dfe70f20d700815",
                   "src/apprt/win32/close_undo.zig":  "8316a81b0aeb43382d0f196c37933a101b1503bbe022c9a25b3e62937e221910",
@@ -105,7 +106,7 @@
                   "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
                   "src/apprt/win32/HeroCarousel.zig":  "0ff195ee46796a6b3503a73514b32561e8040bbb93775063ec652e30fc5f4179",
                   "src/apprt/win32/hook_scripts.zig":  "14e615048fbb327357b088f593c277ca098cbcc9020d582bc0958aa4b93fa3d8",
-                  "src/apprt/win32/hook_spec.zig":  "ac46b07aa199499c6cf95afbfe4120ceebc5ef0fb5024d977615aa94c0da7dfa",
+                  "src/apprt/win32/hook_spec.zig":  "2db3663425c1bba4b1f792756033827feeb5e731addc19fc610369e23a629185",
                   "src/apprt/win32/HookComponent.zig":  "3d361d52017260e9ddac744a89d6c357eeaaba30f2c0bd1d7c04aa21396109b2",
                   "src/apprt/win32/host_defaults.zig":  "994b374543855d65b0203cfd687650c1d07d6ff5ff645d0455854f50e4ca59be",
                   "src/apprt/win32/HostSettingsDialog.zig":  "6f5a5ba088ac27d2385278af27ec6013246f79801542b8f4c085ddd95ff141fd",
@@ -397,12 +398,12 @@
                   "src/remote/agent/enroll.zig":  "ebec2f4106c8aef3fd7fe9457bdb334cbb5a650bc9a0947365971e7472942919",
                   "src/remote/agent/foreground.zig":  "82275d0b6662ba646b4df91534b666f21eaaee6de7f111b85545f96391597388",
                   "src/remote/agent/grid_snapshot.zig":  "5574a849d16a8326b6e7b0de01d8a18e645db9ee4de3233e435a11b1fb784f3e",
-                  "src/remote/agent/handoff.zig":  "b6a7de3a9e3fa2da023655ecb2f902e40302f8104cdfbe5cdccce352a2124d0f",
+                  "src/remote/agent/handoff.zig":  "cc825bbd604abab575e3d2a0d1589e43b3de2b38ce96848563d773b2c0057716",
                   "src/remote/agent/holder_adopt.zig":  "364d11b359dad4497047e51922c728a816e34c9aa24e15e198927ab4acba261b",
                   "src/remote/agent/keepalive.zig":  "178584c3f9dfd67a8b00076c2ef4147631495461fec17fad8cd0a45d6cb9cb4e",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",
                   "src/remote/agent/link_control.zig":  "e3138c9c1326081092f25b9c090388fe58a3561c17734a83778df474ededd40a",
-                  "src/remote/agent/main.zig":  "1836a33c638b76e775331a6b3d344b533359d5890421a6ad5db6435315451f69",
+                  "src/remote/agent/main.zig":  "0e62ac09e37dccc6e0ffd9a13153adca155aec265adf0320b4cb0a22c46ead58",
                   "src/remote/agent/metrics.zig":  "c4f0863d8706b9b7d24057cff5b388f72cc606a30df05105b19a19f97a68a4d6",
                   "src/remote/agent/msi_ca.zig":  "fa0ef30b29983b3edf5995afbe9ac5d4c5909361ac76b33e0c43651787eb17fb",
                   "src/remote/agent/mux.zig":  "bb91f11b8e95720f71e322fe788d2b7fbeba605e99132ec0ce0f317003f49867",
@@ -419,7 +420,7 @@
                   "src/remote/agent/relay_perf.zig":  "b74d79c5fa170240818c28504aeac97e85b194fc24042d225a073a23573a2ca7",
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/ring_snapshot.zig":  "43d927ca2996eeecafac57a50952fc4de4c0fb5b07bf1368d10eecd4a05f4234",
-                  "src/remote/agent/server.zig":  "8d9f7e32e81b397617c4e01f5dbaede55bd3917c1a825b220f9f85490ee3c92f",
+                  "src/remote/agent/server.zig":  "5ff4c2f9b5aad8e6f5936a0b4e2c3a4db8fafb4165b9a677b266baf09255ef4b",
                   "src/remote/agent/session.zig":  "226b8672fea7ad3d0d291e0e9989cd747af1854b790d11fa5bfc1fe8c5a5b49c",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
                   "src/remote/agent/sharing.zig":  "4ecfaef4c8e7cf9428531f82beee5b28bdb604ce3385507ddc858edf781ff29a",
@@ -496,6 +497,6 @@
                   "src/termio/Thread.zig":  "d2cd2a4fab35b32e02897f3b987e7bd74b467cda59e7bb3e6ffac5c2453bbeae",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
-                  "test/win32/seam-audit.registry.json":  "4152e4bebc7264448b79770d189470df39e5668b1bab79d9733bf46e3121c308"
+                  "test/win32/seam-audit.registry.json":  "071ff658a2654d6df2306f727bc4a3e7a782e880da777542f091d28a3db38b2a"
               }
 }

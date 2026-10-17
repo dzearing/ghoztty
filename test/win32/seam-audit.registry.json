@@ -151,6 +151,11 @@
             "unset": "unreachable",
             "note": "unset is the default lineage - the endpoints the user's live agent owns. A dev build must never join them."
         },
+        "GHOZTTY_AGENT_NO_HANDOFF": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the handoff supervisor runs and agent_handoff is advertised, as in every other run (arm M)."
+        },
         "GHOZTTY_AGENT_PROTO_VERSION": {
             "class": "fault",
             "unset": "shipped-elsewhere",

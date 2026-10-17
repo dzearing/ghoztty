@@ -1,10 +1,10 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-10-17T08:10:06-07:00",
-    "commit":  "b7d180176",
+    "generated":  "2026-10-17T09:32:09-07:00",
+    "commit":  "8d1fedf00",
     "uncommitted":  [
-                        "src/apprt/win32/ShareMachineRow.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -68,7 +68,7 @@
                   "src/apprt/win32/claude_plugin_manifest.zig":  "a0812c8b3cb533065274a5b9be19a18df4fe2f0efd0932972e082748debf7b89",
                   "src/apprt/win32/claude_plugin_migration.zig":  "09ae22a00d446fce29cf1b98c2bb30b97a90395bdb2f0869af8172ca9ee6e28d",
                   "src/apprt/win32/claude_setup.zig":  "7800892ae8d8afadd52d0574aaa86fb7e0d945b2824030c79661e3e5761fb47f",
-                  "src/apprt/win32/ClaudeHookSpec.zig":  "1f1b3c306da5bddc1ab165f3a7e99d3e22f8f444c974a639e0e33c57ecff6038",
+                  "src/apprt/win32/ClaudeHookSpec.zig":  "6b1fd51e16dd79b3a3a30a296ba539cc2b9e9575b7043441ed302ff5e99ff86e",
                   "src/apprt/win32/clipboard_image.zig":  "b90cac60d5eb7ce990cca439a2cf1dacd502895580fff337d6995b6736482e7d",
                   "src/apprt/win32/clipboard_open.zig":  "97d4c0fdc4216f5071f9dfb87067be04c7687c2a1a0a48f74dfe70f20d700815",
                   "src/apprt/win32/close_undo.zig":  "8316a81b0aeb43382d0f196c37933a101b1503bbe022c9a25b3e62937e221910",
@@ -103,7 +103,7 @@
                   "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
                   "src/apprt/win32/HeroCarousel.zig":  "0ff195ee46796a6b3503a73514b32561e8040bbb93775063ec652e30fc5f4179",
                   "src/apprt/win32/hook_scripts.zig":  "14e615048fbb327357b088f593c277ca098cbcc9020d582bc0958aa4b93fa3d8",
-                  "src/apprt/win32/hook_spec.zig":  "ac46b07aa199499c6cf95afbfe4120ceebc5ef0fb5024d977615aa94c0da7dfa",
+                  "src/apprt/win32/hook_spec.zig":  "2db3663425c1bba4b1f792756033827feeb5e731addc19fc610369e23a629185",
                   "src/apprt/win32/HookComponent.zig":  "3d361d52017260e9ddac744a89d6c357eeaaba30f2c0bd1d7c04aa21396109b2",
                   "src/apprt/win32/host_defaults.zig":  "994b374543855d65b0203cfd687650c1d07d6ff5ff645d0455854f50e4ca59be",
                   "src/apprt/win32/HostSettingsDialog.zig":  "6f5a5ba088ac27d2385278af27ec6013246f79801542b8f4c085ddd95ff141fd",

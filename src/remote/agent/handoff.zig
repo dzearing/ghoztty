@@ -73,9 +73,10 @@ const log = std.log.scoped(.agent_handoff);
 // Environment knobs
 // =============================================================================
 
-/// Kill switch. Any non-empty value disables the supervisor entirely, so a box
-/// that hits trouble can be put back on the pre-T907 behavior without a
-/// downgrade.
+/// Kill switch. Any non-empty value but "0" disables the supervisor entirely
+/// AND withdraws `agent_handoff` from the HELLO (T1038), so a box that hits
+/// trouble is put back on the pre-T907 behavior — the app restarts a stale
+/// agent again — without a downgrade.
 pub const env_disable = "GHOZTTY_AGENT_NO_HANDOFF";
 
 /// How often the supervisor looks at the binary on disk, in milliseconds.
@@ -95,6 +96,23 @@ pub const env_interval = "GHOZTTY_AGENT_HANDOFF_INTERVAL_MS";
 /// Never honored in a release build, where a stray environment variable must not
 /// be able to restart a user's agent.
 pub const env_force = "GHOZTTY_AGENT_HANDOFF_FORCE";
+
+/// True iff the kill switch (`env_disable`) is set in this process's
+/// environment. Public because the switch has TWO halves (T1038): the
+/// supervisor must not start, and the HELLO must stop advertising
+/// `agent_handoff` — a peer that believes the promise stands down and never
+/// restarts us, so advertising it with the supervisor off leaves an agent
+/// nothing ever upgrades. `main.zig` asks this once at startup for the second.
+pub fn disabled(alloc: Allocator) bool {
+    const v = std.process.getEnvVarOwned(alloc, env_disable) catch return false;
+    defer alloc.free(v);
+    return disabledValue(v);
+}
+
+/// The kill switch's reading of a value: any non-empty value but "0" disables.
+pub fn disabledValue(v: []const u8) bool {
+    return v.len > 0 and !std.mem.eql(u8, v, "0");
+}
 
 pub const default_interval_ms: u64 = 60 * std.time.ms_per_s;
 
@@ -620,12 +638,6 @@ const win = struct {
         return true;
     }
 
-    fn disabled(alloc: Allocator) bool {
-        const v = std.process.getEnvVarOwned(alloc, env_disable) catch return false;
-        defer alloc.free(v);
-        return v.len > 0 and !std.mem.eql(u8, v, "0");
-    }
-
     fn intervalMs(alloc: Allocator) u64 {
         const v = std.process.getEnvVarOwned(alloc, env_interval) catch return default_interval_ms;
         defer alloc.free(v);
@@ -728,6 +740,13 @@ pub const successor_flag = "--handoff-successor";
 // =============================================================================
 
 const testing = std.testing;
+
+test "disabledValue: any non-empty value but \"0\" is the kill switch (T1038)" {
+    try std.testing.expect(!disabledValue(""));
+    try std.testing.expect(!disabledValue("0"));
+    try std.testing.expect(disabledValue("1"));
+    try std.testing.expect(disabledValue("yes"));
+}
 
 test "READY round-trips, and anything else is refused" {
     var buf: [128]u8 = undefined;

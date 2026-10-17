@@ -1,16 +1,16 @@
 {
     "guard":  "sessions-running-cmd",
     "script":  "test/win32/sessions-running-cmd.ps1",
-    "generated":  "2026-10-17T05:51:10-07:00",
-    "commit":  "cd6593007",
+    "generated":  "2026-10-17T09:31:34-07:00",
+    "commit":  "8d1fedf00",
     "uncommitted":  [
-                        "src/remote/agent/pty_child.zig"
+                        "src/remote/agent/server.zig"
                     ],
     "files":  {
                   "src/cli/sessions.zig":  "84d8ab29a13e76c03235a78f7e18a50f292b7c2a244e5fc89eca471eba170ea1",
                   "src/remote/agent/pty_child.zig":  "0b63576d67418e3293281f4b7f952a620b8608ae3377d4ad74483da65b722b1a",
                   "src/remote/agent/pty_holder_child.zig":  "198095818b07ea25e60da88546b33affca04236e90a7bcebeca013845c90387f",
-                  "src/remote/agent/server.zig":  "8d9f7e32e81b397617c4e01f5dbaede55bd3917c1a825b220f9f85490ee3c92f",
+                  "src/remote/agent/server.zig":  "5ff4c2f9b5aad8e6f5936a0b4e2c3a4db8fafb4165b9a677b266baf09255ef4b",
                   "src/remote/connection.zig":  "050791affe74732f2e85de48383ddf0fee6e6fa2496ebd7f09a4203aa340c5ab",
                   "src/remote/protocol.zig":  "b83a701e634ca0a30de11b76c3193f32eaded5580ae753a697e8e253de4e36c4",
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee"

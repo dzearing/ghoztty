@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-17T08:28:55-07:00",
-    "commit":  "590ee23c3",
+    "generated":  "2026-10-17T10:20:46-07:00",
+    "commit":  "8d1fedf00",
     "uncommitted":  [
-                        "test/win32/activity-state.ps1",
-                        "test/win32/ipc-p3.ps1"
+                        "test/win32/agent-upgrade.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -36,11 +35,12 @@
                   "test/win32/agent-recovery.ps1":  "fef467a100915842a846ec6bf26aedcc327f52a2bb00ab95d5fe3566ddeae8ed",
                   "test/win32/agent-recovery-tabs.ps1":  "1ec7928dd4af80a87c0745818ad9c8878cffb3f1a285d3f5ececb62ed6f5af17",
                   "test/win32/agent-relay-session-e2e.ps1":  "de37bf43c50158bd2ccadac32252a8830ea2cfb3c9e29926f0edce67cd8bc6c4",
+                  "test/win32/agent-role-guard.ps1":  "3ed480dff2e7a030ab981fba5589f7ae76c503c7956b6a9f785941b047c63805",
                   "test/win32/agent-session-cap.ps1":  "608a52326bccbddebbcd2a7e5824a6f461a834e64bf4209c9de0dc284fd84813",
-                  "test/win32/agent-sharing-uplink.ps1":  "88b83eb08f07dd8ae51e8c88e09df45d8079d9ae886b1e5e6113992c6e1b9cda",
+                  "test/win32/agent-sharing-uplink.ps1":  "fed8114bad4275ed6c9870b247861bb9a2b4b70ce44776ab0a81070cc4c4dde0",
                   "test/win32/agent-shell-integration.ps1":  "92d042090b917c3d6aa12d32eaddb9d118b09d0f3d29f255ce03880705edb8b0",
                   "test/win32/agent-stamp-inputs.ps1":  "95fbc858cddc1e0fde3e896ec699998298f5cfebbb1b595acd190e21cc913fe3",
-                  "test/win32/agent-upgrade.ps1":  "193a33f2dada5bea1b74382b72bcbefd4fb4eb6df61c3e40aa978bea9d2a6800",
+                  "test/win32/agent-upgrade.ps1":  "873f5f3c30bc46fad5fa63b61f4378bdd872133d8a71b13f60d90c0ddfab66db",
                   "test/win32/agent-user-env.ps1":  "fe6a7fbc1304cb705a72a688929a5fd00f10cd66c8548080a1d01a16ead4f226",
                   "test/win32/app-restart.ps1":  "55cb4a73f57cde520c5c0ca3d041242b11d8b5d534d2a8808d5d62a093a2dd4f",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
@@ -393,7 +393,7 @@
                   "test/win32/session-snapshot-reattach.ps1":  "f78fdcfd7eab2a54540c6f1bb6cee9775cca9a16607ecfaa681877878038e507",
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",
-                  "test/win32/share-machine.ps1":  "54adee5303d889563005ef0624d18d54e5e5d1b1168f7e28dfda03dd7299e86d",
+                  "test/win32/share-machine.ps1":  "02b0600437871b235bdf8c4a4733a6558ae689060ae8a5d6821353df36437960",
                   "test/win32/ship-workflow.ps1":  "28634520cb227573a1a9acf8a9cb7006389228c34a56f3776072eca61f5b1b83",
                   "test/win32/single-instance-join.ps1":  "d276a7d97773c26b7cc622fe3ae14c735381f5e15c7ce137cfb44d84aa249039",
                   "test/win32/skip-visibility.ps1":  "8e38cf9572e9d999a0bd9286eebbcfb343a878af5af8fce816038f5e57938167",

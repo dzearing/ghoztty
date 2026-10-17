@@ -437,9 +437,25 @@ pub const Server = struct {
         @memcpy(suppress_buf[0..suppress_len], list[0..suppress_len]);
     }
 
-    /// True iff `name` appears in the suppression set. Whitespace around an
-    /// entry is ignored so `"a, b"` behaves like `"a,b"`.
+    /// `capability.agent_handoff` withdrawn because the handoff kill switch is
+    /// set (T1038). Not a test seam, and deliberately not folded into
+    /// `suppress_buf`: that set is last-call-wins, so a skew test setting it
+    /// would silently re-advertise a promise the supervisor is not keeping.
+    /// Set-once at startup, read-only afterwards → no synchronization.
+    var handoff_withdrawn: bool = false;
+
+    /// Stop advertising `agent_handoff` — call when the handoff supervisor is
+    /// disabled, so the HELLO never promises a self-replacement nothing will
+    /// perform. Idempotent.
+    pub fn withdrawHandoff(on: bool) void {
+        handoff_withdrawn = on;
+    }
+
+    /// True iff `name` appears in the suppression set, or is the handoff
+    /// capability withdrawn by the kill switch. Whitespace around an entry is
+    /// ignored so `"a, b"` behaves like `"a,b"`.
     fn isSuppressed(name: []const u8) bool {
+        if (handoff_withdrawn and std.mem.eql(u8, name, protocol.capability.agent_handoff)) return true;
         if (suppress_len == 0) return false;
         var it = std.mem.splitScalar(u8, suppress_buf[0..suppress_len], ',');
         while (it.next()) |raw| {
@@ -4173,6 +4189,48 @@ test "suppressCapabilities: turns a capability off at the source, in the HELLO (
     try testing.expect(!neg.session_cpu);
     // Everything NOT named is untouched: this suppresses, it does not reset.
     try testing.expect(neg.close_session);
+}
+
+test "withdrawHandoff: a disabled supervisor is not advertised, whatever the skew seam says (T1038)" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var sp: FakeSpawner = .{ .children = &.{} };
+    var prng = std.Random.DefaultPrng.init(1038);
+
+    defer Server.withdrawHandoff(false);
+    defer Server.suppressCapabilities("");
+    Server.withdrawHandoff(true);
+    // A later skew-seam call must not clear the withdrawal: last-call-wins is
+    // that seam's contract, and it is the reason the two are kept apart.
+    Server.suppressCapabilities("open_failed");
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    const caps = [_][]const u8{ protocol.capability.agent_handoff, protocol.capability.close_session };
+    try h.client.handshakeCaps(&caps);
+    const neg = try h.server.waitHandshake();
+    try testing.expect(!neg.agent_handoff);
+    try testing.expect(neg.close_session);
+    for (h.server.local_hello.capabilities) |c| {
+        try testing.expect(!std.mem.eql(u8, c, protocol.capability.agent_handoff));
+    }
+}
+
+test "withdrawHandoff: off, the seat's handoff promise is advertised as before (T1038 negative control)" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var sp: FakeSpawner = .{ .children = &.{} };
+    var prng = std.Random.DefaultPrng.init(1039);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    const caps = [_][]const u8{protocol.capability.agent_handoff};
+    try h.client.handshakeCaps(&caps);
+    const neg = try h.server.waitHandshake();
+    // Only the Windows seat has the mechanism, so only it makes the promise.
+    try testing.expectEqual(builtin.os.tag == .windows, neg.agent_handoff);
 }
 
 test "OPEN refused: the agent answers OPEN_FAILED with a reason, not silence (T469)" {
