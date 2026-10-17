@@ -282,14 +282,22 @@ $script:vrJob = Start-Job -ScriptBlock {
         $client = $listener.AcceptTcpClient()
         try {
             $stream = $client.GetStream()
-            Start-Sleep -Milliseconds 50
             $buf = New-Object byte[] 8192
             $req = ''
-            while ($stream.DataAvailable) {
+            # Until the headers are complete, not one fixed 50ms look (T2015):
+            # a cold WebView2 (the agentless relaunch) opens its connection
+            # before it writes the request, and a server that closed an empty
+            # connection left that pane on its host name with no page at all.
+            # Bounded, because Chromium also preconnects sockets it may never
+            # use, and this loop serves one connection at a time.
+            $reqDeadline = (Get-Date).AddSeconds(3)
+            while (-not $req.Contains("`r`n`r`n") -and (Get-Date) -lt $reqDeadline) {
+                if (-not $stream.DataAvailable) { Start-Sleep -Milliseconds 20; continue }
                 $r = $stream.Read($buf, 0, $buf.Length)
                 if ($r -le 0) { break }
                 $req += [Text.Encoding]::UTF8.GetString($buf, 0, $r)
             }
+            if ($req -eq '') { Add-Content -Path $hitsFile -Value 'EMPTY connection closed unanswered' }
             $line = ($req -split "`r`n")[0]
             if ($line -match '^GET ') {
                 $n++
@@ -328,10 +336,19 @@ try {
 
     $r = Invoke-Verb @('+split', '--target=vr', '--name=vrterm', '--direction=right')
     Assert ($r.Code -eq 0) "+split (terminal) exits 0 (got $($r.Code))"
-    $r = Invoke-Verb @('+split', '--target=vr', '--name=vrblank', '--direction=down', "--view=$blank")
+    # Anchored at the terminal BY NAME (T2015). `--target=vr` splits the window's
+    # active pane, and since T1797 a `+split` without --focus leaves the active
+    # pane where it was - so it split the viewer, built viewer,viewer,terminal,
+    # and the restore faithfully reproduced a layout D2 never meant to test.
+    $r = Invoke-Verb @('+split', '--pane=vrterm', '--name=vrblank', '--direction=down', "--view=$blank")
     Assert ($r.Code -eq 0) "+split --view exits 0 (got $($r.Code))"
     $panes = @(Wait-Panes 'vr' 3)
     Assert ($panes.Count -eq 3) "the mixed window has three panes (got $($panes.Count))"
+    # D2/J4 compare the restored order against THIS one; a setup that built a
+    # different tree is named here rather than read later as a restore defect.
+    $preKinds = (@($panes | ForEach-Object { $_.type }) -join ',')
+    Assert ($preKinds -eq 'viewer,terminal,viewer') `
+        "D0 setup: the mixed window was built viewer,terminal,viewer (got $preKinds)"
 
     # A viewer-ONLY window, pointed at a file that does not exist: the pane is
     # real either way (the error lives in the page), and this is the window with
@@ -606,6 +623,12 @@ try {
     $vrN3 = Wait-ViewerTitleNum 'vrweb' $vrN2 45
     Assert ($vrN3 -gt $vrN2) `
         "J7 the agentless restore's web viewer is LIVE too (title $vrN2 -> $vrN3)"
+    if ($vrN3 -le $vrN2) {
+        # What the pane says and what the server saw, so a red J7 tells a page
+        # that never loaded from a title that never reached +list.
+        $hits = @(Get-Content $vrHits -ErrorAction SilentlyContinue)
+        Say "  J7 diag: vrweb title='$(Get-ViewerTitle 'vrweb')' server log=$($hits.Count) last='$($hits | Select-Object -Last 1)'"
+    }
 
 } finally {
     Say '== cleanup'
@@ -629,6 +652,12 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($fgSeen.Count -gt 0) 'Z1 the foreground watcher actually sampled (negative control)'
     $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
     Assert ($leaked.Count -eq 0) 'Z2 no test-desktop app ever became foreground on the interactive desktop'
+}
+
+# --- stamp (T783) -----------------------------------------------------------
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard viewer-restore -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''

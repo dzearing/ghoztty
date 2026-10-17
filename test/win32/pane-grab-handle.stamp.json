@@ -1,13 +1,13 @@
 {
     "guard":  "pane-grab-handle",
     "script":  "test/win32/pane-grab-handle.ps1",
-    "generated":  "2026-10-16T18:30:34-07:00",
-    "commit":  "3680467fc",
+    "generated":  "2026-10-16T19:29:27-07:00",
+    "commit":  "53dacf43a",
     "uncommitted":  [
                         "src/apprt/win32/App.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "45702270eecf528a05ce391a18e33927a87f5724f5cdeb239c32ef91c6fe7849",
+                  "src/apprt/win32/App.zig":  "e92ffa21a3c51cfa46822d62a1366afc3cca9aad18b28b90f130755a233be06d",
                   "src/apprt/win32/pane_grab_handle.zig":  "c88d26a4c72cb14f51081890cb915598da1115058c14df06bd0707c8989e1f95",
                   "src/apprt/win32/PaneGrabHandle.zig":  "9c58b86162b7f14ba8ea8368fe387c05fa911fe8f95851e576a7180094d6a0f2",
                   "src/apprt/win32/Window.zig":  "74b8e6f5a914e63502a234ddbecbc2767fb700ed4a79322ddb293cdf3a398c14",

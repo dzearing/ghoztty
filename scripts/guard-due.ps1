@@ -1007,6 +1007,21 @@ $GuardTable = @(
             'src\apprt\win32\session_layout.zig'
         )
     },
+    # Viewer panes survive a restore, with the agent and without it (T2015).
+    # The harness had no row, so it sat red for weeks: a T1797 contract change
+    # stale in its fixture, and every agentless-restored viewer dead on a
+    # missing COM apartment. `App.zig` is left off for the reason the rows
+    # around this one give; `webview2.zig` is where that dead page starts.
+    [pscustomobject]@{
+        Name   = 'viewer-restore'
+        Script = 'test\win32\viewer-restore.ps1'
+        Stamp  = 'test\win32\viewer-restore.stamp.json'
+        Covers = @(
+            'test\win32\viewer-restore.ps1',
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\webview2.zig'
+        )
+    },
     # A restored or remembered window size crosses a change of SCALE (T1971):
     # frames and the placement memory are physical pixels plus the DPI they
     # were measured at, converted to the monitor the window lands on. Over

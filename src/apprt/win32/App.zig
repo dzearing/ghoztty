@@ -838,6 +838,14 @@ pub fn init(
     };
     self.close_undo = CloseUndo.init(self);
 
+    // A COM apartment on the UI thread before anything can build a viewer
+    // (T2015). WebView2 refuses to create an environment without one
+    // (CO_E_NOTINITIALIZED), and until now the only init on this thread was
+    // the lazy one in `taskbarList`: an ordinary launch reached it before any
+    // viewer existed, but a restore with no local agent rebuilds its viewers
+    // first, and every one of them came back as a dead page.
+    self.ensureCom();
+
     // Register the window container class (GDI painting, no CS_OWNDC).
     // CS_DBLCLKS is required to receive WM_LBUTTONDBLCLK for divider equalize.
     // Application icon, loaded from the embedded resource. Falls back
@@ -9271,15 +9279,19 @@ fn isEditShortcutVk(vk: u16) bool {
 /// Scans keybinds for entries with the `global` flag.
 /// Lazily create (and cache) the shell ITaskbarList3 used for taskbar-button
 /// progress. Returns null if COM or the taskbar object is unavailable.
+/// Initialize the UI thread's single-threaded COM apartment, once. `App.init`
+/// calls it first thing (T2015); S_FALSE (already initialized) is fine.
+fn ensureCom(self: *App) void {
+    if (self.com_initialized) return;
+    _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
+    self.com_initialized = true;
+}
+
 fn taskbarList(self: *App) ?*w32.ITaskbarList3 {
     if (self.taskbar) |tb| return tb;
 
     // COM must be initialized on this (the UI) thread before CoCreateInstance.
-    // S_FALSE (already initialized) is fine; we only need it done once.
-    if (!self.com_initialized) {
-        _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
-        self.com_initialized = true;
-    }
+    self.ensureCom();
 
     var ptr: ?*anyopaque = null;
     const hr = w32.CoCreateInstance(
