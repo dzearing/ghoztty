@@ -1,8 +1,8 @@
 {
     "guard":  "agent-stamp-inputs",
     "script":  "test/win32/agent-stamp-inputs.ps1",
-    "generated":  "2026-10-17T23:50:15-07:00",
-    "commit":  "13544c3e0",
+    "generated":  "2026-10-18T00:15:25-07:00",
+    "commit":  "2ee8f2eba",
     "uncommitted":  [
 
                     ],

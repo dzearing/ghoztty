@@ -564,6 +564,50 @@ public static class GhozttyMouseArm {
         SetConsoleMode(hin, mi);
         return s.Replace("\u001b", "E");
     }
+
+    // T1078: arm an arbitrary mode string, then read raw until EVERY regex in
+    // needles ('~'-separated, matched against the raw bytes) has matched, or
+    // waitMs runs out. Unlike Arm it disarms on the way out - nothing after it
+    // depends on the modes being left set.
+    public static string ArmUntil(string marker, int waitMs, string modes, string disarm, string needles) {
+        hin = GetStdHandle(STD_IN);
+        hout = GetStdHandle(STD_OUT);
+        uint mi, mo;
+        if (!GetConsoleMode(hin, out mi)) { return "NOCONSOLEIN"; }
+        if (!GetConsoleMode(hout, out mo)) { return "NOCONSOLEOUT"; }
+        SetConsoleMode(hin, (mi | ENABLE_VIRTUAL_TERMINAL_INPUT) & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT));
+        SetConsoleMode(hout, mo | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        string[] want = needles.Split('~');
+        Emit(modes);
+        Emit(marker + "\r\n");
+        Thread t = new Thread(delegate() {
+            byte[] buf = new byte[512];
+            while (true) {
+                uint r;
+                if (!ReadFile(hin, buf, (uint)buf.Length, out r, IntPtr.Zero)) { break; }
+                if (r == 0) { break; }
+                lock (got) {
+                    got.Append(Encoding.ASCII.GetString(buf, 0, (int)r));
+                    string all = got.ToString();
+                    bool done = true;
+                    foreach (string w in want) {
+                        if (!System.Text.RegularExpressions.Regex.IsMatch(all, w)) { done = false; break; }
+                    }
+                    if (done) { break; }
+                }
+            }
+        });
+        t.IsBackground = true;
+        t.Start();
+        t.Join(waitMs);
+        string s;
+        lock (got) { s = got.ToString(); }
+        Emit(disarm);
+        Thread.Sleep(1500);
+        FlushConsoleInputBuffer(hin);
+        SetConsoleMode(hin, mi);
+        return s.Replace("\u001b", "E");
+    }
 }
 '@
 [System.IO.File]::WriteAllText($armCs, $armCsText, [System.Text.Encoding]::ASCII)
@@ -648,6 +692,86 @@ Assert "M3 the snapshot arms no input-reporting mode (found: $($armedFound -join
 # rather than a dead program's leftover. So it must SURVIVE.
 Assert "M4 the snapshot still serializes non-input modes (?9001h survives)" (
     $null -ne $decodedM -and $decodedM.Contains("$esc[?9001h"))
+
+# ============================================================================
+Say "== W: the wheel and a press-drag-release reach a TUI in a session pane (T1078)"
+# ============================================================================
+# M1b proved a move and a click get back to an agent-backed child. The two
+# gestures a user notices next are the WHEEL (a TUI's scrollback, any list
+# widget) and a PRESS-DRAG-RELEASE (selecting inside a TUI). This child asks
+# for BUTTON-EVENT tracking (`?1002h`), not any-event, because that is what a
+# selecting TUI arms - and it makes W4 a real check: under 1002 a move with no
+# button down must NOT be reported, so a pane that leaked any-event motion
+# through (or a conhost that re-encoded it that way) goes red there.
+$wMarker = "MOUSEWHL$($PID)XYZ"
+$wPs = Join-Path $tmp 'arm-wheel.ps1'
+$wCmd = Join-Path $tmp 'arm-wheel.cmd'
+$wPsText = @'
+Add-Type -TypeDefinition ([System.IO.File]::ReadAllText('@@CS@@'))
+$e = [char]27
+$r = [GhozttyMouseArm]::ArmUntil('@@MARKER@@', 60000, "$e[?1002h$e[?1006h", "$e[?1002l$e[?1006l", '\x1b\[<64;\d+;\d+M~\x1b\[<65;\d+;\d+M~\x1b\[<32;\d+;\d+M~\x1b\[<0;\d+;\d+m')
+Write-Host ("T1078GOT[" + $r + "]")
+'@
+[System.IO.File]::WriteAllText(
+    $wPs,
+    ($wPsText.Replace('@@CS@@', $armCs).Replace('@@MARKER@@', $wMarker)),
+    [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllText(
+    $wCmd,
+    "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"$wPs`"`r`n",
+    [System.Text.Encoding]::ASCII)
+
+Run-Cli "+send-keys --target=$paneC $wCmd Enter" "$tmp\arm-wheel-send.txt" 12 | Out-Null
+$wArmOk = $false
+$deadline = (Get-Date).AddSeconds(45)
+while ((Get-Date) -lt $deadline) {
+    Run-Cli "+read --name=$paneC --lines=200" "$tmp\read-arm-wheel.txt" 10 | Out-Null
+    if (((Out-Text "$tmp\read-arm-wheel.txt") -replace '\s', '') -match $wMarker) { $wArmOk = $true; break }
+    Start-Sleep -Milliseconds 600
+}
+Assert "W1 a button-event-tracking child is armed and waiting in the pane" $wArmOk
+
+$wSeen = ''
+if (-not $wArmOk -or $surfaceM -eq [IntPtr]::Zero) {
+    Say "  DIAG: W gestures not sent (armed=$wArmOk surface=$surfaceM)"
+} else {
+    $rc = Get-TestWindowRect -Window $surfaceM
+    $cx = [int](($rc.Left + $rc.Right) / 2)
+    $cy = [int](($rc.Top + $rc.Bottom) / 2)
+    # One notch up, one notch down: SGR buttons 64 and 65.
+    [void](Send-TestMouse -Window $topM -Target $surfaceM -X $cx -Y $cy -Action wheel -Delta 120)
+    Start-Sleep -Milliseconds 300
+    [void](Send-TestMouse -Window $topM -Target $surfaceM -X $cx -Y $cy -Action wheel -Delta -120)
+    Start-Sleep -Milliseconds 300
+    # A buttonless move to the drag's start: under 1002 this must stay silent.
+    $x1 = $cx - 120
+    [void](Send-TestMouse -Window $topM -Target $surfaceM -X $x1 -Y $cy -Action move)
+    Start-Sleep -Milliseconds 300
+    # Press, drag right across several cells, release at the far end.
+    [void](Send-TestMouse -Window $topM -Target $surfaceM -X $x1 -Y $cy -Action down)
+    Start-Sleep -Milliseconds 150
+    [void](Send-TestMouse -Window $topM -Target $surfaceM -X ($x1 + 120) -Y $cy -Action move)
+    Start-Sleep -Milliseconds 150
+    [void](Send-TestMouse -Window $topM -Target $surfaceM -X ($x1 + 240) -Y $cy -Action move)
+    Start-Sleep -Milliseconds 150
+    [void](Send-TestMouse -Window $topM -Target $surfaceM -X ($x1 + 240) -Y $cy -Action up)
+    $deadline = (Get-Date).AddSeconds(40)
+    while ((Get-Date) -lt $deadline) {
+        Run-Cli "+read --name=$paneC --lines=200" "$tmp\read-wheel-sgr.txt" 10 | Out-Null
+        $flat = (Out-Text "$tmp\read-wheel-sgr.txt") -replace '\s', ''
+        if ($flat -match 'T1078GOT\[([^\]]*)\]') { $wSeen = $Matches[1]; break }
+        Start-Sleep -Milliseconds 600
+    }
+}
+Assert "W2 a wheel notch up and down reach the child as SGR 64/65 reports (got: $wSeen)" (
+    $wSeen -match 'E\[<64;\d+;\d+M' -and $wSeen -match 'E\[<65;\d+;\d+M')
+$dragOk = $false
+if ($wSeen -match 'E\[<0;(\d+);\d+M.*E\[<32;\d+;\d+M.*E\[<0;(\d+);\d+m') {
+    $dragOk = ([int]$Matches[2] -gt [int]$Matches[1])
+}
+Assert "W3 a press-drag-release reaches the child as press, button-motion, release - ending right of where it began" $dragOk
+Assert "W4 under button-event tracking a move with no button down is not reported" (
+    $wSeen -ne '' -and $wSeen -notmatch 'E\[<35;')
 
 # ============================================================================
 Say "== R: a TUI still running when the app restarts keeps its mouse (T1066)"

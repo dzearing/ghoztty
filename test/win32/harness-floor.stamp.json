@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-18T00:27:02-07:00",
+    "generated":  "2026-10-18T00:35:55-07:00",
     "commit":  "2ee8f2eba",
     "uncommitted":  [
-                        "test/win32/daily-publish.ps1",
-                        "test/win32/verify-release-assets.ps1"
+                        "test/win32/session-snapshot-reattach.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -115,7 +114,7 @@
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e",
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
-                  "test/win32/daily-publish.ps1":  "eccff5616c9023dacbe70ec3aa3623db00b16c1123de1516e757fb5974cd9352",
+                  "test/win32/daily-publish.ps1":  "83a9cdd249d1916134ab415d4e6a716890a8c2687438f12efedf119da0960971",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
                   "test/win32/deliver-windows-build.ps1":  "15c2564c8d36bdf0966076a094502ccd040e8e7b5c116a6db74e50288a8421eb",
@@ -392,7 +391,7 @@
                   "test/win32/session-resume-offset.ps1":  "801d7a280b290b75edee978b12ae4fbe0b32e0e5d019ce25f1a3bc24a5d2c865",
                   "test/win32/sessions-agent-build.ps1":  "dece3962aa9ead6958aacd2fdef71048d5fd3fcc3798c1aac534a4d4f27950a0",
                   "test/win32/session-shell-exit.ps1":  "3d60d7703bb364ea19de403a9c101e68d7ea5a6909d185970b897e35e71fb032",
-                  "test/win32/session-snapshot-reattach.ps1":  "043c6d5bb7fc9c5f2f5f83eed7348fd14585c0c5755552fc0d04064d7d34665e",
+                  "test/win32/session-snapshot-reattach.ps1":  "b86fb9af73414ff62034973f8d002e375b68cabeaed1d7de7319f76b2f2afcb8",
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",
                   "test/win32/share-machine.ps1":  "02b0600437871b235bdf8c4a4733a6558ae689060ae8a5d6821353df36437960",
@@ -450,7 +449,6 @@
                   "test/win32/upstream-stage.ps1":  "18d15337939a38f04528f533b73e5e578d73bfab95254d3a31e133030b8a485e",
                   "test/win32/url-scheme.ps1":  "33fe6b3246d5e2ca17e5f68af88fac03d4eb50f8b2210c801fc7c2f0303909a6",
                   "test/win32/verdict-exit-audit.ps1":  "0a356320134c6a1f234067b806e439f64ba62573cd251f39c7adcf43ad51c91b",
-                  "test/win32/verify-release-assets.ps1":  "a312bcbecac74e1f5d757eb1efec9bde94ba847cc8f63562ec92b58096f5ef94",
                   "test/win32/verify-release-clean.ps1":  "756fee5cbd0b8a1ad8d3d01987658087b62efb6dd8327de4cb9aef10d5107dd3",
                   "test/win32/viewer-close.ps1":  "db3dc1453f6d49be9669b5cd739d9a765b2c53c21826ec41352b70cbe25d8e3b",
                   "test/win32/viewer-composer.ps1":  "884e11cadc3a85a60b400e48522b2c7c5e7ddad28d3f8e039338c62197eded23",
