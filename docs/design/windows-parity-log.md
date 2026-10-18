@@ -36883,3 +36883,10 @@ moved to T1814.
 - **Already fixed.** Both things the task asked for landed after it was filed. A red run's transcript is now preserved where a re-run cannot overwrite it (T379, T900). A setup call that half-succeeds now stops the run with one named failure instead of a cascade (T1285, T894), and fixed sleeps became polls (T1156).
 - **Validated.** No preserved `ghoztty-ipc-p3-fail-*.log` exists since T900 landed on 2026-09-20. Four back-to-back p2-then-p3 runs through the acceptance runner were all green (19 assertions each). Closed against T1285's commit, the one that removed the cascade shape.
 - **Mac.** Nothing owed: Windows acceptance harness only.
+
+## 2026-10-17 — T1059: the morning digest now names every open PR and whether it needs a turn
+
+- **Built.** `scripts/pr-health.ps1` asks GitHub for every open PR on the fork (checks, review, merge state) in one `gh pr list --repo dzearing/ghoztty` call and sorts them into Needs a turn (red checks, no checks, conflict, changes requested, three idle days), In flight, and Healthy. `-Format markdown` is the digest block; go.md step 0.5 pastes it under Commentary. Today's digest carries it (none open).
+- **Never a fake green.** No gh, not signed in, non-JSON, or slower than the 20s budget all print "unknown" and exit 0. The first version killed only the gh process; the harness showed an orphaned child kept the caller waiting 30s, so it now kills the whole tree.
+- **Validated.** `test/win32/pr-health.ps1`, 34 assertions, ALL PASS and stamped, including the fork's real red PR #12 rollup and stub gh processes for each failure. New guard row `pr-health`.
+- **Mac.** Nothing owed: tracker tooling, platform-neutral and run from the Windows seat.

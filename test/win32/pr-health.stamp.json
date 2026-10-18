@@ -1,0 +1,14 @@
+{
+    "guard":  "pr-health",
+    "script":  "test/win32/pr-health.ps1",
+    "generated":  "2026-10-17T18:44:40-07:00",
+    "commit":  "7c351639b",
+    "uncommitted":  [
+                        "scripts/pr-health.ps1",
+                        "test/win32/pr-health.ps1"
+                    ],
+    "files":  {
+                  "scripts/pr-health.ps1":  "6873baf643cdb26eab420835773bebe768026c997337d08b8a965ceb7124baaa",
+                  "test/win32/pr-health.ps1":  "e89f247e2e366809f0129e781a7e5ad08aa3225f62c3166905e31dd3ed14df5a"
+              }
+}

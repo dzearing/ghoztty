@@ -204,6 +204,19 @@ $GuardTable = @(
             'docs\design\windows-parity-ship-workflow.md'
         )
     },
+    # The digest's open-PR block (T1059). Nothing runs it but the morning digest,
+    # and its two failure modes - a red PR shown as healthy, an unreachable
+    # GitHub shown as "none open" - both read as a quiet morning, so an edit
+    # that introduced either would never be noticed by using it.
+    [pscustomobject]@{
+        Name   = 'pr-health'
+        Script = 'test\win32\pr-health.ps1'
+        Stamp  = 'test\win32\pr-health.stamp.json'
+        Covers = @(
+            'scripts\pr-health.ps1',
+            'test\win32\pr-health.ps1'
+        )
+    },
     # Stage 0 of the upstream pull (T957): the upstream remote and the union merge
     # drivers. Neither is exercised by any lane - the remote is git config and
     # the drivers only fire inside a merge - so nothing else would notice a

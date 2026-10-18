@@ -185,6 +185,19 @@ Concretely, in order, with no stops in between:
 
        — and a stranded list holding a fix somebody is waiting on is exactly what
        this tab exists to surface. The remedy is a request, per step 6.5.
+     - **Open pull requests** (T1059) — paste the block this prints, verbatim,
+       as an H3 inside `## Commentary`:
+
+       ```
+       powershell -NoProfile -File scripts\pr-health.ps1 -Format markdown
+       ```
+
+       It reads every open PR on the fork from GitHub (checks, review, merge
+       state) and puts the ones that need a turn first — red checks, no checks,
+       a conflict, changes requested, or no activity for three days. "None
+       open" is the normal state until the cutover; "unknown" means GitHub could
+       not be asked and is never to be rewritten as a green. A PR it says needs
+       a turn is inherited work the same way step 6.9's `list` is.
      - **Today's focus** — what the queue says comes next and why that is the
        right next thing.
      - **Reflection** — a genuine step back: how the work has been going,
