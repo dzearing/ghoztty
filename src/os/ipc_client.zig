@@ -770,7 +770,7 @@ pub fn sendActionWithHandoff(
 /// Diagnostics are discarded rather than printed: the caller is a GUI launch
 /// with no console, and this exchange is an internal question the user never
 /// asked. Strings are allocated from `alloc` and owned by the caller.
-pub fn queryIdentity(alloc: Allocator) ?handoff.Identity {
+pub fn queryIdentity(alloc: Allocator) ?RunningInstance {
     var discard: std.Io.Writer.Discarding = .init(&.{});
 
     const path = clientEndpointPath(alloc) catch return null;
@@ -786,6 +786,23 @@ pub fn queryIdentity(alloc: Allocator) ?handoff.Identity {
     }, &discard.writer) catch return null;
     defer alloc.free(resp);
 
+    return parseRunningInstance(alloc, resp);
+}
+
+/// What a launch learns about the instance that owns the endpoint (T1023,
+/// T1070): which build it is, which process, and whether it can be switched.
+pub const RunningInstance = struct {
+    id: handoff.Identity,
+    /// The server's process id, 0 when it did not say. The launch waits on it
+    /// after a switch, so the endpoint is retried only once that app is gone.
+    pid: u32 = 0,
+    offer: handoff.SwitchOffer = .unsupported,
+};
+
+/// Parse a `version` reply. Split from `queryIdentity` so the capability read —
+/// in particular that an OLDER build's reply, which carries no `handoff_quit`,
+/// reads as `.unsupported` — is unit-tested without a server.
+fn parseRunningInstance(alloc: Allocator, resp: []const u8) ?RunningInstance {
     const parsed = std.json.parseFromSlice(
         struct {
             success: bool = false,
@@ -793,6 +810,10 @@ pub fn queryIdentity(alloc: Allocator) ?handoff.Identity {
                 version: []const u8 = "",
                 commit: []const u8 = "",
                 exe: []const u8 = "",
+                pid: u32 = 0,
+                // T1070: absent from every build before the switch existed.
+                handoff_quit: bool = false,
+                session_persistence: bool = false,
             } = .{},
         },
         alloc,
@@ -801,13 +822,81 @@ pub fn queryIdentity(alloc: Allocator) ?handoff.Identity {
     ) catch return null;
     defer parsed.deinit();
     if (!parsed.value.success) return null;
+    const d = parsed.value.data;
 
-    // The parse borrows from `resp`, which this function frees.
+    // The parse borrows from `resp`, which the caller frees.
     return .{
-        .version = alloc.dupe(u8, parsed.value.data.version) catch return null,
-        .commit = alloc.dupe(u8, parsed.value.data.commit) catch return null,
-        .exe = alloc.dupe(u8, parsed.value.data.exe) catch return null,
+        .id = .{
+            .version = alloc.dupe(u8, d.version) catch return null,
+            .commit = alloc.dupe(u8, d.commit) catch return null,
+            .exe = alloc.dupe(u8, d.exe) catch return null,
+        },
+        .pid = d.pid,
+        .offer = handoff.SwitchOffer.fromReply(d.handoff_quit, d.session_persistence),
     };
+}
+
+/// Ask the instance that owns the endpoint to quit so this launch can take
+/// over (T1070). `launcher` is this launch's identity: the server refuses the
+/// request without one, and refuses it from the same build, so only a launch
+/// of a different build can ever close the user's app this way.
+///
+/// True only on an explicit success reply. A refusal, a timeout and an older
+/// server that answers "unknown action" are all false, and the caller then
+/// hands its window over as it did before the switch existed.
+pub fn requestHandoffQuit(alloc: Allocator, launcher: handoff.Identity) bool {
+    var discard: std.Io.Writer.Discarding = .init(&.{});
+
+    const path = clientEndpointPath(alloc) catch return false;
+    defer alloc.free(path);
+    const conn = connectPath(alloc, path) catch return false;
+    defer conn.close();
+
+    const json_bytes = buildRequestWithHandoff(alloc, handoff.quit_action, null, launcher) catch return false;
+    defer alloc.free(json_bytes);
+
+    const resp = exchange(alloc, conn, json_bytes, .{
+        .action = handoff.quit_action,
+    }, &discard.writer) catch return false;
+    defer alloc.free(resp);
+
+    const parsed = std.json.parseFromSlice(
+        struct { success: bool = false },
+        alloc,
+        resp,
+        .{ .ignore_unknown_fields = true },
+    ) catch return false;
+    defer parsed.deinit();
+    return parsed.value.success;
+}
+
+test "parseRunningInstance: an older build's reply offers no switch (T1070)" {
+    const testing = std.testing;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The reply shape every build before T1070 sends.
+    const old = parseRunningInstance(arena,
+        \\{"success":true,"data":{"version":"1.3.0","commit":"aaaaaaa","exe":"C:\\a\\ghoztty.exe","pid":42}}
+    ).?;
+    try testing.expectEqualStrings("1.3.0", old.id.version);
+    try testing.expectEqual(@as(u32, 42), old.pid);
+    try testing.expectEqual(handoff.SwitchOffer.unsupported, old.offer);
+
+    const new = parseRunningInstance(arena,
+        \\{"success":true,"data":{"version":"1.4.0","commit":"b","pid":7,"handoff_quit":true,"session_persistence":true}}
+    ).?;
+    try testing.expectEqual(handoff.SwitchOffer.keeps_terminals, new.offer);
+
+    const off = parseRunningInstance(arena,
+        \\{"success":true,"data":{"version":"1.4.0","handoff_quit":true,"session_persistence":false}}
+    ).?;
+    try testing.expectEqual(handoff.SwitchOffer.closes_terminals, off.offer);
+    try testing.expectEqual(@as(u32, 0), off.pid);
+
+    try testing.expect(parseRunningInstance(arena, "{\"success\":false}") == null);
+    try testing.expect(parseRunningInstance(arena, "not json") == null);
 }
 
 test "buildRequest: no handoff object unless a launch supplies one (T1022)" {

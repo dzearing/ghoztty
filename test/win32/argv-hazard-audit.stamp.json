@@ -1,14 +1,14 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-17T21:38:22-07:00",
-    "commit":  "ebb09c8a5",
+    "generated":  "2026-10-17T22:30:45-07:00",
+    "commit":  "8a1b6934a",
     "uncommitted":  [
-
+                        "scripts/agent-stamp-inputs.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
-                  "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
+                  "scripts/agent-stamp-inputs.ps1":  "0763da8ff3ca2fee6baf1225486039bae3f38e141fe85e51baffa3cf537d7b61",
                   "scripts/blur-backdrop-probe.ps1":  "161435ffccf4a2e759d1f24887ced73c4c7c44da9d473a24eccbd977dc4cc38f",
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",

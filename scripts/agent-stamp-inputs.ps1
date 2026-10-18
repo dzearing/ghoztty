@@ -131,12 +131,28 @@ function Get-ManifestInputs([string]$RepoRoot, [string]$ManifestPath) {
 # The newest manifest that names the agent's own entry point. `zig build agent`
 # and `zig build test-agent` both produce one; either answers this question,
 # since a test build's extra inputs are a superset of the exe's.
+#
+# And the entry point must be THIS tree's. The acceptance runner's worker
+# mirrors (scripts\acceptance-parallel.ps1, D:\git\.ghoztty-par\w<n>) link
+# their .zig-cache to this one, so a worker that builds the agent writes the
+# newest manifest here - naming every source under the MIRROR's path, which the
+# input filter below rightly drops, leaving a dozen survivors and a red B3/C1
+# that has nothing to do with the code (T1070's turn found it).
 function Find-Manifest([string]$RepoRoot) {
     $dir = Join-Path $RepoRoot '.zig-cache\h'
     if (-not (Test-Path -LiteralPath $dir)) { return $null }
+    $root = (Normalize $RepoRoot) + '/'
     $hit = Get-ChildItem -LiteralPath $dir -Filter *.txt -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
-        Where-Object { Select-String -Path $_.FullName -SimpleMatch 'remote\agent\main.zig' -Quiet } |
+        Where-Object {
+            $m = Select-String -Path $_.FullName -SimpleMatch 'remote\agent\main.zig' | Select-Object -First 1
+            if (-not $m) { return $false }
+            $parts = $m.Line -split ' ', 6
+            if ($parts.Count -lt 6) { return $false }
+            $p = Normalize $parts[5]
+            # Relative (to a prefix of this build) or absolute under this tree.
+            (-not ($p -match '^[A-Za-z]:/')) -or $p.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)
+        } |
         Select-Object -First 1
     if (-not $hit) { return $null }
     return $hit.FullName

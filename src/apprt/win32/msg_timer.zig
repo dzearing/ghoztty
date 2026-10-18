@@ -93,6 +93,10 @@ pub const pane_scopes: usize = 21;
 /// repeating poll, because neither occlusion nor a DWM cloak has a message.
 pub const visibility: usize = 22;
 
+/// One-shot: quit for a launch of another build that asked to take over
+/// (T1070, `App.scheduleHandoffQuit`). Deferred so the IPC reply leaves first.
+pub const handoff_quit: usize = 23;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

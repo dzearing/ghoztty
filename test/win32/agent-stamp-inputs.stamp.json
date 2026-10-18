@@ -1,16 +1,14 @@
 {
     "guard":  "agent-stamp-inputs",
     "script":  "test/win32/agent-stamp-inputs.ps1",
-    "generated":  "2026-09-16T01:12:22-07:00",
-    "commit":  "c8b87873e",
+    "generated":  "2026-10-17T22:27:43-07:00",
+    "commit":  "8a1b6934a",
     "uncommitted":  [
-                        "scripts/agent-stamp-inputs.ps1",
-                        "src/build/GhosttyAgent.zig",
-                        "test/win32/agent-stamp-inputs.ps1"
+                        "scripts/agent-stamp-inputs.ps1"
                     ],
     "files":  {
-                  "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
-                  "src/apprt/win32/agent_upgrade.zig":  "32238c442c66a6ee5885c31c751f9fbf23f174c36bf852905eda7cd1ad3ea603",
+                  "scripts/agent-stamp-inputs.ps1":  "0763da8ff3ca2fee6baf1225486039bae3f38e141fe85e51baffa3cf537d7b61",
+                  "src/apprt/win32/agent_upgrade.zig":  "401b12129845032db916a20004897c1b11193349b4258db7b81e0dac795ca049",
                   "src/build/GhosttyAgent.zig":  "a9b57f7c0bbfd9341121f41e72eaae80e16b821e280501edc60d2d8498f03cd7",
                   "src/remote/agent_build.zig":  "a5c429e91c7eed2a6995e2fbf8459962a16e0dc519c96f6c479fa3ad2d744d2f",
                   "test/win32/agent-stamp-inputs.ps1":  "95fbc858cddc1e0fde3e896ec699998298f5cfebbb1b595acd190e21cc913fe3"

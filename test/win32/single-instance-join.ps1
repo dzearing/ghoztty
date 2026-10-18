@@ -73,9 +73,15 @@ function Stop-TestProcs {
 # job_escape), so the process we started routinely exits while the app it
 # became keeps running. "The second launch exited" is therefore a statement
 # about how many apps exist, not about one pid.
+#
+# The EXACT exe, not "anything under a zig-out": a second loop lane
+# (D:\git\ghoztty-b) and the parallel runner's worker mirrors run their own
+# zig-out builds on this box at the same time, and counting theirs turned A2/A5/
+# B2 red on a run where this script's own launches were exactly right (T1070).
 function Get-AppPids {
+    $want = [IO.Path]::GetFullPath($Exe)
     return @(Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe'" |
-        Where-Object { $_.ExecutablePath -like '*zig-out*' } |
+        Where-Object { $_.ExecutablePath -and ([IO.Path]::GetFullPath($_.ExecutablePath) -ieq $want) } |
         ForEach-Object { [int]$_.ProcessId })
 }
 
@@ -362,7 +368,7 @@ function Wait-PromptGone($timeoutSec = 20) {
 
 # A launch that claims to be another build. Everything else about it is a normal
 # launch: same exe, same endpoint, same lineage.
-function Launch-AsBuild($suffix, $version, $commit, $mode, $launchArgs) {
+function Launch-AsBuild($suffix, $version, $commit, $mode, $launchArgs, $persist = $false) {
     $savedSuffix = $env:GHOZTTY_PIPE_SUFFIX
     $savedVersion = $env:GHOZTTY_HANDOFF_VERSION
     $savedCommit = $env:GHOZTTY_HANDOFF_COMMIT
@@ -371,7 +377,9 @@ function Launch-AsBuild($suffix, $version, $commit, $mode, $launchArgs) {
     $env:GHOZTTY_HANDOFF_VERSION = $version
     $env:GHOZTTY_HANDOFF_COMMIT = $commit
     if ($mode) { $env:GHOZTTY_HANDOFF_PROMPT = $mode } else { $env:GHOZTTY_HANDOFF_PROMPT = $null }
-    [void](Start-OnTestDesktop -Exe $Exe -Arguments (@('--session-persistence=false') + $launchArgs))
+    # persistence: off unless the caller's subject is the sessions (section G).
+    $pre = if ($persist) { @() } else { @('--session-persistence=false') }
+    [void](Start-OnTestDesktop -Exe $Exe -Arguments ($pre + $launchArgs))
     $env:GHOZTTY_PIPE_SUFFIX = $savedSuffix
     $env:GHOZTTY_HANDOFF_VERSION = $savedVersion
     $env:GHOZTTY_HANDOFF_COMMIT = $savedCommit
@@ -426,6 +434,203 @@ $winsJoin = @(Wait-WindowCount $pipeA ($countBeforeJoin + 1) 45)
 Assert 'D10 GHOZTTY_HANDOFF_PROMPT=join hands off without asking' (
     $winsJoin.Count -eq $countBeforeJoin + 1)
 Assert 'D11 ...and put no question on screen' ((Find-Prompt) -eq [IntPtr]::Zero)
+
+# ============================================================================
+"== E: the running build says it can be switched, and refuses anyone else"
+# ============================================================================
+# T1070. The third answer needs the running instance to quit on request, and
+# the launch can only offer it if the running build understands the request -
+# the other build may well be an older one. The `version` reply is that
+# handshake.
+$verE = Invoke-GhozttyIpc -Action 'version' -PipeName $pipeA -TimeoutMs 12000
+Assert 'E1 the running instance advertises that it can be switched' (
+    $null -ne $verE -and $verE.success -and $verE.data.handoff_quit -eq $true)
+Assert 'E2 ...and that switching would close its shells (persistence is off here)' (
+    $null -ne $verE -and $verE.data.session_persistence -eq $false)
+
+# Only a LAUNCH of a DIFFERENT build may ask. Anything else on the pipe - a CLI,
+# a script, the same build joining - must not be able to close the user's app.
+$refBare = Invoke-GhozttyIpc -Action 'handoff-quit' -PipeName $pipeA -TimeoutMs 12000
+Assert 'E3 a quit request carrying no launch identity is refused' (
+    $null -ne $refBare -and -not $refBare.success)
+$refSame = Invoke-GhozttyIpc -Action 'handoff-quit' -PipeName $pipeA -TimeoutMs 12000 -Extra @{
+    handoff = @{ version = $runningVersion; commit = $runningCommit; exe = $runningExe }
+}
+Assert 'E4 a quit request from the SAME build is refused' (
+    $null -ne $refSame -and -not $refSame.success)
+Start-Sleep -Seconds 2
+Assert 'E5 ...and the app is still the one answering the endpoint' (
+    (Get-ServerPid $pipeA) -eq $serverA1)
+
+# Buttons on the question, read as the text of its BUTTON children. The dialog
+# lives on the test desktop, so its children are read there too.
+function Prompt-Buttons($hwnd) {
+    return @(Get-TestChildWindows -Window $hwnd -Class '*' |
+        Where-Object { $_.Class -ieq 'Button' } |
+        ForEach-Object { [string](Get-TestControlText -Control ([IntPtr]$_.Hwnd)) })
+}
+
+# The window-owning app processes: "a second app" is a second process with a
+# terminal window, which is what a second tray icon would come with. The launch
+# that is switching is a process too, but it owns nothing until it is the app.
+function Get-WindowedAppPids {
+    $acc = @()
+    foreach ($p in @(Get-AppPids)) {
+        if (@(Get-TestWindows -ProcessId $p -Class 'GhozttyWindow' -AllowHidden).Count -gt 0) { $acc += $p }
+    }
+    return $acc
+}
+
+# ============================================================================
+"== F: against a build too old to be switched, the question keeps two answers"
+# ============================================================================
+# GHOZTTY_TEST_PRE_SWITCH (debug-only) makes the running app answer `version`
+# and `handoff-quit` exactly as a build from before T1070 does.
+Stop-TestProcs
+$env:GHOZTTY_TEST_PRE_SWITCH = '1'
+Launch $suffixA @()
+$env:GHOZTTY_TEST_PRE_SWITCH = $null
+$winsF0 = @(Wait-WindowCount $pipeA 1 45)
+Assert 'F0 a fresh instance came up acting as a pre-switch build' ($winsF0.Count -ge 1)
+$serverF = Get-ServerPid $pipeA
+$verF = Invoke-GhozttyIpc -Action 'version' -PipeName $pipeA -TimeoutMs 12000
+Assert 'F1 ...whose version reply offers no switch' (
+    $null -ne $verF -and $verF.success -and $null -eq $verF.data.handoff_quit)
+
+Launch-AsBuild $suffixA '0.0.0-older-copy' '0000000' $null @()
+$dlgF = Wait-Prompt 45
+Assert 'F2 the different-build question still comes up' ($dlgF -ne [IntPtr]::Zero)
+$btnF = if ($dlgF -ne [IntPtr]::Zero) { @(Prompt-Buttons $dlgF) } else { @() }
+Assert "F3 ...with Open Window and Cancel ($($btnF -join ' | '))" (
+    @($btnF | Where-Object { $_ -match 'Open Window' }).Count -eq 1 -and
+    @($btnF | Where-Object { $_ -match 'Cancel' }).Count -eq 1)
+Assert 'F4 ...and no Switch, since that build cannot be asked to quit' (
+    @($btnF | Where-Object { $_ -match 'Switch' }).Count -eq 0)
+if ($dlgF -ne [IntPtr]::Zero) { Answer-Prompt $dlgF 2 }
+Assert 'F5 cancelling it closed the question' (Wait-PromptGone 20)
+
+# A scripted "switch" against that build joins, exactly as the dialog would
+# have offered: a window in the app already running, and nothing quit.
+$countBeforeF = @(Get-Windows-On $pipeA).Count
+Launch-AsBuild $suffixA '0.0.0-older-copy' '0000000' 'switch' @()
+$winsF = @(Wait-WindowCount $pipeA ($countBeforeF + 1) 45)
+Assert 'F6 a switch the running build cannot honour opens a window in it instead' (
+    $winsF.Count -eq $countBeforeF + 1)
+Start-Sleep -Seconds 3
+Assert 'F7 ...and that app is still the one running, alone' (
+    (Get-ServerPid $pipeA) -eq $serverF -and @(Get-AppPids).Count -eq 1)
+
+# ============================================================================
+"== G: Switch quits the running build and the copy you started takes over"
+# ============================================================================
+# Persistence ON: the user's terminals have to come back, and they only can
+# because they live in the background agent rather than in the app that quits.
+Stop-TestProcs
+$savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
+$env:GHOSTTY_LOCAL_AGENT_BIN = Join-Path (Split-Path -Parent $Exe) 'ghoztty-agent.exe'
+$savedSuffixG = $env:GHOZTTY_PIPE_SUFFIX
+$env:GHOZTTY_PIPE_SUFFIX = $suffixA
+# persistence: ON on purpose (the default) - section G's subject is the sessions
+# surviving the switch.
+[void](Start-OnTestDesktop -Exe $Exe -Arguments @())
+$winsG0 = @(Wait-WindowCount $pipeA 1 45)
+Assert 'G0 a persistent instance came up' ($winsG0.Count -ge 1)
+
+function Alive-Ids {
+    $out = (& $Exe +sessions --json 2>$null | Out-String)
+    if (-not $out -or $out.Trim().Length -eq 0) { return @() }
+    try { $rows = $out | ConvertFrom-Json } catch { return @() }
+    return @(@($rows) | ForEach-Object { $_ } | Where-Object { $_.alive -eq $true } |
+        ForEach-Object { [string]$_.id } | Sort-Object)
+}
+function Wait-Listed([string]$name, [int]$timeoutSec = 30) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $out = (& $Exe +list --json 2>$null | Out-String)
+        if ($out -and $out -match [regex]::Escape("`"$name`"")) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+function Read-Has([string]$name, [string]$text, [int]$timeoutSec = 20) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $txt = ((& $Exe +read "--name=$name" --lines=200 2>$null | Out-String) -replace '\s', '')
+        if ($txt -match [regex]::Escape($text)) { return $true }
+        Start-Sleep -Milliseconds 600
+    }
+    return $false
+}
+
+& $Exe +split --direction=right --name=t1070b 2>&1 | Out-Null
+Assert 'G1 setup: a named pane to follow across the switch' (Wait-Listed 't1070b')
+$markG = 'T1070MARK' + (Get-Random -Maximum 999999)
+# Generated text goes through --keys-file, never the native argv.
+$keysG = Join-Path $root 'mark-keys.txt'
+[IO.File]::WriteAllText($keysG, "echo $markG")
+& $Exe +send-keys --target=t1070b "--keys-file=$keysG" Enter 2>&1 | Out-Null
+Assert 'G2 setup: a marker is in that pane' (Read-Has 't1070b' $markG)
+Start-Sleep -Seconds 3   # let the debounced layout writer include the split
+$idsG0 = @(Alive-Ids)
+Assert "G3 setup: live sessions before the switch ($($idsG0.Count))" ($idsG0.Count -ge 2)
+$oldG = Get-ServerPid $pipeA
+# Positive control for G9: the sampler has to SEE the app that is running, or
+# "never two" would be satisfied by a sampler that sees nothing at all.
+$windowedG0 = @(Get-WindowedAppPids)
+Assert "G3b the window sampler sees the running app ($($windowedG0 -join ','))" (
+    $windowedG0.Count -eq 1 -and $windowedG0[0] -eq $oldG)
+
+$verG = Invoke-GhozttyIpc -Action 'version' -PipeName $pipeA -TimeoutMs 12000
+Assert 'G4 the running app says its terminals would survive a switch' (
+    $null -ne $verG -and $verG.data.handoff_quit -eq $true -and $verG.data.session_persistence -eq $true)
+
+# The real question, answered on its third button (control id 200).
+Launch-AsBuild $suffixA '0.0.0-older-copy' '0000000' $null @() $true
+$dlgG = Wait-Prompt 45
+Assert 'G5 the different-build question came up' ($dlgG -ne [IntPtr]::Zero)
+$btnG = if ($dlgG -ne [IntPtr]::Zero) { @(Prompt-Buttons $dlgG) } else { @() }
+Assert "G6 ...and it offers Switch beside the other two ($($btnG -join ' | '))" (
+    @($btnG | Where-Object { $_ -match 'Switch' }).Count -eq 1 -and $btnG.Count -ge 3)
+if ($dlgG -ne [IntPtr]::Zero) { Answer-Prompt $dlgG 200 }
+
+# Watch the hand-over: the old app must go, a new one must answer, and at no
+# sample may two processes own terminal windows at once.
+$maxWindowed = 0
+$newG = 0
+$deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $deadline) {
+    $n = @(Get-WindowedAppPids).Count
+    if ($n -gt $maxWindowed) { $maxWindowed = $n }
+    $s = Get-ServerPid $pipeA
+    if ($s -ne 0 -and $s -ne $oldG) { $newG = $s; break }
+    Start-Sleep -Milliseconds 300
+}
+# ...and on through the new app's restore, which is when its windows appear.
+$settle = (Get-Date).AddSeconds(4)
+while ((Get-Date) -lt $settle) {
+    $n = @(Get-WindowedAppPids).Count
+    if ($n -gt $maxWindowed) { $maxWindowed = $n }
+    Start-Sleep -Milliseconds 300
+}
+Assert 'G7 the app that was running quit' (
+    $null -eq (Get-Process -Id $oldG -ErrorAction SilentlyContinue))
+Assert "G8 the copy that was started now answers the endpoint (pid $newG)" ($newG -ne 0)
+Assert "G9 there was never a second app with windows ($maxWindowed at most)" (
+    $maxWindowed -ge 1 -and $maxWindowed -le 1)
+$winsG = @(Wait-WindowCount $pipeA 1 45)
+Assert 'G10 the copy that took over has a window' ($winsG.Count -ge 1)
+Start-Sleep -Seconds 3
+Assert 'G11 ...and it is the only app process' (
+    @(Get-AppPids).Count -eq 1 -and @(Get-AppPids)[0] -eq $newG)
+Assert 'G12 no question is left on screen' ((Find-Prompt) -eq [IntPtr]::Zero)
+Assert 'G13 the named pane came back in the new app' (Wait-Listed 't1070b')
+$idsG1 = @(Alive-Ids)
+Assert "G14 the same sessions are alive ($($idsG1.Count))" (
+    $idsG0.Count -ge 2 -and (($idsG0 -join ',') -eq ($idsG1 -join ',')))
+Assert 'G15 the marker survived in that pane' (Read-Has 't1070b' $markG)
+
+$env:GHOZTTY_PIPE_SUFFIX = $savedSuffixG
+$env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin
 
 # ============================================================================
 "== cleanup"

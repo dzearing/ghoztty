@@ -320,6 +320,12 @@ const UPDATE_MANUAL_TIMER_ID: usize = msg_timer.update_manual;
 /// The automatic-install moment check (T1934). See `maybeAutoApplyUpdate`.
 const UPDATE_AUTO_APPLY_TIMER_ID: usize = msg_timer.update_auto_apply;
 
+/// The deferred quit a `handoff-quit` request arms (T1070).
+const HANDOFF_QUIT_TIMER_ID: usize = msg_timer.handoff_quit;
+/// Long enough for the listener thread to write the reply, short enough that
+/// the launch waiting on this process barely notices.
+const HANDOFF_QUIT_DELAY_MS: u32 = 150;
+
 /// How often the running app re-asks the release channel. Ten minutes is a
 /// tick, not a fetch: `shouldRunUpdateCheck` still throttles the network to
 /// one request per `UPDATE_CHECK_INTERVAL_SECS`, so this only bounds how long
@@ -990,53 +996,10 @@ pub fn init(
     // (Mac single-app behavior).
     self.ipc_server = @as(IpcServer, undefined);
     self.ipc_server.?.init(self) catch |err| switch (err) {
-        error.AlreadyRunning => {
-            log.info("another instance owns the IPC pipe; forwarding new-window", .{});
-            // T487: forward what THIS launch asked for, not a bare verb. A
-            // null payload threw away `-e`/`--command` and the working
-            // directory after they were parsed — exit 0, nothing logged, the
-            // command just never ran (the same silent-drop shape T406 fixed
-            // on the restore path). The process exits on the next line, so
-            // the argv is never freed.
-            const fwd_args = forwardedNewWindowArgs(
-                alloc,
-                self.config.@"initial-command",
-                self.config.@"working-directory",
-            ) catch null;
-            // T1022: and say WHICH build asked. Two copies of one lineage
-            // (the installed release and the Desktop portable) share this
-            // endpoint by design, so the window the user gets belongs to
-            // whichever was started first — D79 chose that, and named the
-            // shortcut-looks-wrong case as its one con. The running instance
-            // compares this identity with its own and is loud when they
-            // differ; when they match it stays silent, because two copies of
-            // the same build are indistinguishable and the join is invisible
-            // on purpose.
-            // T1023: and ASK first when the build that owns the endpoint is
-            // not the build the user started. D79's mitigation says two
-            // different versions must not quietly become one app; they cannot
-            // become two apps either (the local agent and the saved layout are
-            // shared on purpose, so they survive an upgrade), so what the
-            // mitigation buys the user is the CHOICE — take the window from the
-            // build already running, or back out and quit it first.
-            var id = launchIdentity(alloc);
-            if (self.handoffChoice(alloc, &id) == .cancel) {
-                log.info("launch cancelled: a different build owns the endpoint", .{});
-                exit_reason.recordExit("handoff-cancelled");
-                std.process.exit(0);
-            }
-            const ok = internal_os.ipc_client.sendActionWithHandoff(
-                alloc,
-                "new-window",
-                fwd_args,
-                id,
-            ) catch false;
-            // This launch opened a ledger entry in init and is about to end
-            // by design; closing it here is what keeps the next launch from
-            // reporting every forwarded second click as a vanished app (T1686).
-            exit_reason.recordExit(if (ok) "forwarded" else "forward-failed");
-            std.process.exit(if (ok) 0 else 1);
-        },
+        // Returns only when this launch took the endpoint over (T1070, the
+        // "Switch" answer); every other outcome hands the window over and
+        // exits the process.
+        error.AlreadyRunning => self.handOffOrTakeOver(alloc),
         error.OutOfMemory => return error.OutOfMemory,
         // Run without an IPC server rather than refusing to start.
         error.BindFailed => self.ipc_server = null,
@@ -1687,18 +1650,90 @@ fn envOverride(alloc: Allocator, name: []const u8) ?[]const u8 {
 }
 
 /// What a losing launch does with the window it asked for (T1023).
-const HandoffChoice = enum {
+/// Another instance owns the IPC endpoint: forward this launch's window to it
+/// and exit (Mac single-app behavior) - or, when the user answers "Switch" on
+/// the different-build question (T1070), take the endpoint over and RETURN, so
+/// `init` carries on and this process starts as the app.
+///
+/// Everything the handoff allocates lives in one arena. The forward paths exit
+/// the process and never free it; the takeover returns into a long-lived app,
+/// so there the arena is what keeps the handoff from leaking into it.
+fn handOffOrTakeOver(self: *App, app_alloc: Allocator) void {
+    var arena_state = std.heap.ArenaAllocator.init(app_alloc);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    log.info("another instance owns the IPC pipe; forwarding new-window", .{});
+    // T487: forward what THIS launch asked for, not a bare verb. A null
+    // payload threw away `-e`/`--command` and the working directory after
+    // they were parsed — exit 0, nothing logged, the command just never ran
+    // (the same silent-drop shape T406 fixed on the restore path).
+    const fwd_args = forwardedNewWindowArgs(
+        alloc,
+        self.config.@"initial-command",
+        self.config.@"working-directory",
+    ) catch null;
+    // T1022: and say WHICH build asked. Two copies of one lineage (the
+    // installed release and the Desktop portable) share this endpoint by
+    // design, so the window the user gets belongs to whichever was started
+    // first — D79 chose that, and named the shortcut-looks-wrong case as its
+    // one con. The running instance compares this identity with its own and is
+    // loud when they differ; when they match it stays silent, because two
+    // copies of the same build are indistinguishable and the join is invisible
+    // on purpose.
+    // T1023: and ASK first when the build that owns the endpoint is not the
+    // build the user started. D79's mitigation says two different versions
+    // must not quietly become one app; they cannot become two apps either (the
+    // local agent and the saved layout are shared on purpose, so they survive
+    // an upgrade), so what the mitigation buys the user is the CHOICE — take
+    // the window from the build already running, back out, or (T1070) switch.
+    var id = launchIdentity(alloc);
+    switch (self.handoffChoice(alloc, &id)) {
+        .cancel => {
+            log.info("launch cancelled: a different build owns the endpoint", .{});
+            exit_reason.recordExit("handoff-cancelled");
+            std.process.exit(0);
+        },
+        // T1070: the running build quits and THIS launch carries on starting
+        // as the app, so its own launch restore re-attaches the sessions that
+        // build just detached. Anything short of owning the endpoint falls
+        // through to the ordinary handoff below.
+        .switch_build => |running_pid| {
+            if (self.takeOverEndpoint(alloc, id, running_pid)) return;
+        },
+        .join => {},
+    }
+    const ok = internal_os.ipc_client.sendActionWithHandoff(
+        alloc,
+        "new-window",
+        fwd_args,
+        id,
+    ) catch false;
+    // This launch opened a ledger entry in init and is about to end by design;
+    // closing it here is what keeps the next launch from reporting every
+    // forwarded second click as a vanished app (T1686).
+    exit_reason.recordExit(if (ok) "forwarded" else "forward-failed");
+    std.process.exit(if (ok) 0 else 1);
+}
+
+const HandoffChoice = union(enum) {
     /// Open it in the instance that already owns the endpoint.
     join,
     /// Open nothing: the user would rather quit that instance and start this
     /// copy themselves.
     cancel,
+    /// Quit the running instance and become the app (T1070). Carries its pid,
+    /// which the takeover waits on before it retries the endpoint (0 = it did
+    /// not say, and the retry alone has to find the moment it is free).
+    switch_build: u32,
 };
 
 /// Test/automation hook: `join` skips the T1023 prompt and hands off exactly
 /// as the build before it did. An acceptance script that drives a deliberate
 /// mismatch has no one to answer a modal dialog, and a scripted launch must
-/// never be able to block on one.
+/// never be able to block on one. `switch` (T1070) answers "Switch" without
+/// asking - but only where the running instance offers it, exactly as the
+/// dialog would; against one that does not, it joins.
 const handoff_prompt_env = "GHOZTTY_HANDOFF_PROMPT";
 
 /// Ask the user before handing this launch's window to a DIFFERENT build, and
@@ -1716,9 +1751,11 @@ fn handoffChoice(
     alloc: Allocator,
     id: *internal_os.ipc_handoff.Identity,
 ) HandoffChoice {
+    var scripted_switch = false;
     if (std.process.getEnvVarOwned(alloc, handoff_prompt_env)) |mode| {
         defer alloc.free(mode);
         if (std.mem.eql(u8, mode, "join")) return .join;
+        scripted_switch = std.mem.eql(u8, mode, "switch");
     } else |_| {}
 
     // T1120: the morning delivery relaunches this exe with nobody in front of
@@ -1735,17 +1772,32 @@ fn handoffChoice(
     }
 
     const running = internal_os.ipc_client.queryIdentity(alloc) orelse return .join;
-    const prompt = (internal_os.ipc_handoff.mismatchPrompt(alloc, id.*, running) catch
+    const prompt = (internal_os.ipc_handoff.mismatchPrompt(alloc, id.*, running.id, running.offer) catch
         return .join) orelse return .join;
     log.warn(
-        "launch of a different build: launcher={s} running={s}; asking",
-        .{ id.version, running.version },
+        "launch of a different build: launcher={s} running={s} pid={d} switch={t}; asking",
+        .{ id.version, running.id.version, running.pid, running.offer },
     );
+
+    if (scripted_switch) {
+        if (prompt.switch_label == null) {
+            log.warn("handoff: switch requested but the running build cannot be switched; joining", .{});
+            return .join;
+        }
+        id.prompted = true;
+        return .{ .switch_build = running.pid };
+    }
 
     const title_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, prompt.title) catch return .join;
     const text_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, prompt.text) catch return .join;
     const ok_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, prompt.ok_label) catch return .join;
     const cancel_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, prompt.cancel_label) catch return .join;
+    // A failed conversion costs the third button, never the dialog: the two
+    // answers T1023 shipped still work against any build.
+    const switch_w: ?[:0]const u16 = if (prompt.switch_label) |l|
+        std.unicode.utf8ToUtf16LeAllocZ(alloc, l) catch null
+    else
+        null;
 
     // There is no window to own the dialog — this process lost the race before
     // it created one — so it centers on the screen and takes the foreground it
@@ -1762,10 +1814,82 @@ fn handoffChoice(
         .default_cancel = false,
         .ok_label = ok_w,
         .cancel_label = cancel_w,
+        // T1070: [Switch] [Open Window] [Cancel]. Enter stays on Open Window,
+        // the answer that closes nothing.
+        .alt_label = switch_w,
     });
-    if (result != .ok) return .cancel;
-    id.prompted = true;
-    return .join;
+    switch (result) {
+        .cancel => return .cancel,
+        .ok => {
+            id.prompted = true;
+            return .join;
+        },
+        .alt => {
+            id.prompted = true;
+            return .{ .switch_build = running.pid };
+        },
+    }
+}
+
+/// How long a switching launch waits for the instance it asked to quit (T1070).
+/// A quit with persistence on detaches every pane and flushes the layout, which
+/// is a second or two on a busy app; past this the launch stops waiting and
+/// hands its window to whatever owns the endpoint then.
+const handoff_exit_wait_ms: u32 = 20_000;
+/// And how long it keeps retrying the bind once that process is gone: the pipe
+/// can outlive its server by a moment while the kernel tears it down.
+const handoff_bind_retry_ms: u64 = 5_000;
+
+/// Take the endpoint over from the instance that was just asked to quit
+/// (T1070). True when this process now owns it (or runs without one, as any
+/// launch does when the pipe cannot be created) and should carry on starting
+/// as THE app; false when the running instance refused, never left, or someone
+/// else took the endpoint first - the caller then hands its window over, the
+/// answer every failure here falls back to.
+fn takeOverEndpoint(
+    self: *App,
+    alloc: Allocator,
+    id: internal_os.ipc_handoff.Identity,
+    running_pid: u32,
+) bool {
+    if (!internal_os.ipc_client.requestHandoffQuit(alloc, id)) {
+        log.warn("handoff: the running instance did not agree to quit; handing the window over", .{});
+        return false;
+    }
+    log.warn("handoff: the running instance (pid={d}) is quitting; waiting to take over", .{running_pid});
+
+    if (running_pid != 0) {
+        if (w32.OpenProcess(w32.SYNCHRONIZE, 0, running_pid)) |h| {
+            defer _ = w32.CloseHandle(h);
+            if (w32.WaitForSingleObject(h, handoff_exit_wait_ms) != w32.WAIT_OBJECT_0) {
+                log.warn("handoff: pid={d} still running after {d}ms", .{ running_pid, handoff_exit_wait_ms });
+            }
+        }
+        // A null handle means it is already gone (or never was ours to see);
+        // the bind retry below answers which.
+    }
+
+    const deadline = std.time.milliTimestamp() + @as(i64, @intCast(handoff_bind_retry_ms));
+    while (true) {
+        self.ipc_server.?.init(self) catch |err| switch (err) {
+            error.AlreadyRunning => {
+                if (std.time.milliTimestamp() >= deadline) {
+                    log.warn("handoff: the endpoint never came free; handing the window over", .{});
+                    return false;
+                }
+                std.Thread.sleep(100 * std.time.ns_per_ms);
+                continue;
+            },
+            error.OutOfMemory => return false,
+            error.BindFailed => {
+                self.ipc_server = null;
+                log.warn("handoff: took over without an IPC endpoint (bind failed)", .{});
+                return true;
+            },
+        };
+        log.warn("handoff: this launch is now the app ({s})", .{id.version});
+        return true;
+    }
 }
 
 fn forwardedNewWindowArgs(
@@ -10885,6 +11009,24 @@ pub fn restartApp(self: *App, kind: app_restart.Kind) bool {
     return true;
 }
 
+/// Quit so a launch of another build can start in this one's place (T1070,
+/// the IPC `handoff-quit`). Deferred by a short timer so the reply that tells
+/// the launch to wait reaches it before teardown begins; the quit itself is the
+/// ordinary one, so with persistence on the sessions are detached, not closed.
+pub fn scheduleHandoffQuit(self: *App) void {
+    // The launch that asked is the process the user just started, and the
+    // window it opens should be allowed to come to the front.
+    _ = w32.AllowSetForegroundWindow(w32.ASFW_ANY);
+    if (self.msg_hwnd) |mh| {
+        if (w32.SetTimer(mh, HANDOFF_QUIT_TIMER_ID, HANDOFF_QUIT_DELAY_MS, null) != 0) return;
+    }
+    // No timer to defer on: quit now. The reply may be lost, and the launch
+    // then reads that as a refusal and hands its window over instead - to an
+    // app that is gone, so its forward fails and it says so.
+    self.quit_requested = true;
+    w32.PostQuitMessage(0);
+}
+
 /// `%LOCALAPPDATA%\ghoztty\update-reopen[-debug]` (T1208). Caller frees.
 fn updateReopenMarkerPath(alloc: Allocator) ?[]u8 {
     const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
@@ -12891,6 +13033,14 @@ fn msgWndProc(
     // interrupts nobody (T1934). Repeating.
     if (msg == w32.WM_TIMER and wparam == UPDATE_AUTO_APPLY_TIMER_ID) {
         _ = app.maybeAutoApplyUpdate(.tick);
+        return 0;
+    }
+
+    // T1070: a launch of another build asked to take over; its reply is out.
+    if (msg == w32.WM_TIMER and wparam == HANDOFF_QUIT_TIMER_ID) {
+        _ = w32.KillTimer(hwnd, HANDOFF_QUIT_TIMER_ID);
+        app.quit_requested = true;
+        w32.PostQuitMessage(0);
         return 0;
     }
 

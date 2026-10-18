@@ -399,6 +399,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the real byte <-> UTF-16 conversion, which every composer run including viewer-feedback-utf16.ps1's own default run uses; -BreakUtf16 is its teeth check (T1710)."
         },
+        "GHOZTTY_TEST_PRE_SWITCH": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the version reply advertises handoff_quit and handoff-quit is served, which sections E and G of single-instance-join.ps1 run under; set, the app answers like a pre-T1070 build so section F can prove the launch degrades to two answers. Debug builds only."
+        },
         "GHOZTTY_TEST_REMOTE_SESSION_FILE": {
             "class": "isolation",
             "unset": "shipped-elsewhere",

@@ -158,7 +158,51 @@ pub const Prompt = struct {
     ok_label: []const u8,
     /// Dismissive: open nothing, leave the running app alone.
     cancel_label: []const u8,
+    /// The third answer (T1070): quit the running build and start the copy the
+    /// user launched. Null when the running instance cannot be asked to quit,
+    /// which is the two-answer dialog T1023 shipped.
+    switch_label: ?[]const u8 = null,
 };
+
+/// Whether the instance already running can be switched for the user (T1070),
+/// and what switching costs them. Read from its `version` reply, which is the
+/// capability handshake: a build that predates the switch says nothing, and
+/// that silence is `.unsupported` — a normal outcome, not an error, because
+/// the whole point of this path is that the other instance is a DIFFERENT
+/// build and may well be an older one.
+pub const SwitchOffer = enum {
+    /// The running build does not understand `handoff-quit`.
+    unsupported,
+    /// It does, and its terminals live in the background agent: they are
+    /// attached again by the copy that takes over.
+    keeps_terminals,
+    /// It does, but session persistence is off there, so quitting it ends the
+    /// shells it has open. The user is told before they choose it.
+    closes_terminals,
+
+    /// Decide from the two fields the `version` reply carries. An absent
+    /// `handoff_quit` (an older build) is `false`.
+    pub fn fromReply(handoff_quit: bool, session_persistence: bool) SwitchOffer {
+        if (!handoff_quit) return .unsupported;
+        return if (session_persistence) .keeps_terminals else .closes_terminals;
+    }
+};
+
+/// The IPC action a launch sends to ask the running instance to quit so it can
+/// take over (T1070). Not a CLI verb: it is one half of the launch handoff, and
+/// the server refuses it from anything that is not a launch of a different
+/// build (`refuseHandoffQuit`).
+pub const quit_action = "handoff-quit";
+
+/// Why a `handoff-quit` must be refused, or null when it may go ahead. Only a
+/// LAUNCH carries a build identity, and only a launch of a DIFFERENT build has
+/// a reason to ask: the same build joining is invisible by design, so a quit
+/// requested for it would close the user's app for nothing.
+pub fn refuseHandoffQuit(launcher: ?Identity, running: Identity) ?[]const u8 {
+    const l = launcher orelse return "handoff-quit is only sent by a launch of another build";
+    if (sameBuild(l, running)) return "handoff-quit refused: the launch is the build already running";
+    return null;
+}
 
 /// Build the prompt for a launch whose build differs from the one already
 /// running, or null when they match and the join is invisible by design.
@@ -168,6 +212,7 @@ pub fn mismatchPrompt(
     alloc: Allocator,
     launcher: Identity,
     running: Identity,
+    offer: SwitchOffer,
 ) Allocator.Error!?Prompt {
     if (sameBuild(launcher, running)) return null;
 
@@ -179,19 +224,32 @@ pub fn mismatchPrompt(
     const launcher_where = try where(alloc, launcher);
     defer alloc.free(launcher_where);
 
+    // The last paragraph is the only part that depends on what the running
+    // instance can do: it names every button the dialog actually has, and says
+    // what switching costs before the user picks it.
+    const choice: []const u8 = switch (offer) {
+        .unsupported => "Two versions cannot run at the same time, and the Ghoztty " ++
+            "already running is too old to be switched for you. Open a window in it, " ++
+            "or cancel and quit it first to run the copy you started.",
+        .keeps_terminals => "Two versions cannot run at the same time. Switch to quit " ++
+            "the Ghoztty already running and start the copy you started; your " ++
+            "terminals will reopen in it. Or open a window in the one already running.",
+        .closes_terminals => "Two versions cannot run at the same time. Switch to quit " ++
+            "the Ghoztty already running and start the copy you started; the terminals " ++
+            "open in it will close. Or open a window in the one already running.",
+    };
+
     return .{
         .title = "A different Ghoztty is already running",
         .text = try std.fmt.allocPrint(
             alloc,
             "Ghoztty {s} is already running{s}\n\n" ++
-                "The copy you started is {s}{s}\n\n" ++
-                "Two versions cannot run at the same time. Open a window in the " ++
-                "Ghoztty already running, or cancel and quit it first to run the " ++
-                "copy you started.",
-            .{ describe(running), running_where, describe(launcher), launcher_where },
+                "The copy you started is {s}{s}\n\n{s}",
+            .{ describe(running), running_where, describe(launcher), launcher_where, choice },
         ),
         .ok_label = "Open Window",
         .cancel_label = "Cancel",
+        .switch_label = if (offer == .unsupported) null else "Switch",
     };
 }
 
@@ -298,12 +356,12 @@ test "mismatchNotice: an empty running exe still produces a sentence" {
 test "mismatchPrompt: the same build is never asked about" {
     const testing = std.testing;
     const id: Identity = .{ .version = "1.4.0", .commit = "abc1234", .exe = "C:\\a\\ghoztty.exe" };
-    try testing.expect(try mismatchPrompt(testing.allocator, id, id) == null);
+    try testing.expect(try mismatchPrompt(testing.allocator, id, id, .keeps_terminals) == null);
     // `prompted` is not part of the build's identity: a launch that has already
     // asked is still the SAME build and must stay silent.
     var asked = id;
     asked.prompted = true;
-    try testing.expect(try mismatchPrompt(testing.allocator, asked, id) == null);
+    try testing.expect(try mismatchPrompt(testing.allocator, asked, id, .unsupported) == null);
     try testing.expect(try mismatchNotice(testing.allocator, asked, id) == null);
 }
 
@@ -317,6 +375,7 @@ test "mismatchPrompt: names both builds and offers both ways out" {
         arena,
         .{ .version = "1.3.0", .commit = "aaaaaaa", .exe = "D:\\Users\\David\\Desktop\\Ghoztty-portable-x64\\ghoztty.exe" },
         .{ .version = "1.4.0", .commit = "bbbbbbb", .exe = "C:\\Users\\David\\AppData\\Local\\Programs\\Ghoztty\\ghoztty.exe" },
+        .unsupported,
     )).?;
 
     // Which build owns the app right now, and which one the user just started:
@@ -331,6 +390,10 @@ test "mismatchPrompt: names both builds and offers both ways out" {
     // Both ways out are named, and the dismissive one says what to do instead.
     try testing.expect(prompt.ok_label.len > 0 and prompt.cancel_label.len > 0);
     try testing.expect(std.mem.indexOf(u8, prompt.text, "quit it first") != null);
+    // A running build that cannot be switched gets no third button, and the
+    // text says why the user has to do it by hand (T1070).
+    try testing.expect(prompt.switch_label == null);
+    try testing.expect(std.mem.indexOf(u8, prompt.text, "too old to be switched") != null);
 
     // No line is long enough to be clipped by the dialog's word wrap: paths are
     // tailed, and every other line is prose that breaks between words.
@@ -351,10 +414,55 @@ test "mismatchPrompt: a build with no exe path still produces both sentences" {
         arena,
         .{ .version = "1.3.0", .commit = "aaaaaaa" },
         .{ .version = "1.4.0", .commit = "bbbbbbb" },
+        .unsupported,
     )).?;
     // No dangling colon-newline with nothing after it.
     try testing.expect(std.mem.indexOf(u8, prompt.text, ":\n") == null);
     try testing.expect(std.mem.indexOf(u8, prompt.text, "1.4.0 is already running.") != null);
+}
+
+test "mismatchPrompt: a switchable build gets the third answer, priced honestly (T1070)" {
+    const testing = std.testing;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const launcher: Identity = .{ .version = "1.3.0", .commit = "aaaaaaa" };
+    const running: Identity = .{ .version = "1.4.0", .commit = "bbbbbbb" };
+
+    const keeps = (try mismatchPrompt(arena, launcher, running, .keeps_terminals)).?;
+    try testing.expect(keeps.switch_label != null);
+    // The text names the button it offers, and what it costs.
+    try testing.expect(std.mem.indexOf(u8, keeps.text, "Switch") != null);
+    try testing.expect(std.mem.indexOf(u8, keeps.text, "terminals will reopen") != null);
+    // ...and no longer tells the user to do by hand what the button does.
+    try testing.expect(std.mem.indexOf(u8, keeps.text, "quit it first") == null);
+
+    // With persistence off over there, switching ends those shells, and the
+    // user reads that before they choose it rather than after.
+    const closes = (try mismatchPrompt(arena, launcher, running, .closes_terminals)).?;
+    try testing.expect(closes.switch_label != null);
+    try testing.expect(std.mem.indexOf(u8, closes.text, "will close") != null);
+    try testing.expect(std.mem.indexOf(u8, closes.text, "will reopen") == null);
+}
+
+test "SwitchOffer.fromReply: silence from an older build is not an offer" {
+    const testing = std.testing;
+    try testing.expectEqual(SwitchOffer.unsupported, SwitchOffer.fromReply(false, true));
+    try testing.expectEqual(SwitchOffer.unsupported, SwitchOffer.fromReply(false, false));
+    try testing.expectEqual(SwitchOffer.keeps_terminals, SwitchOffer.fromReply(true, true));
+    try testing.expectEqual(SwitchOffer.closes_terminals, SwitchOffer.fromReply(true, false));
+}
+
+test "refuseHandoffQuit: only a launch of a DIFFERENT build may ask" {
+    const testing = std.testing;
+    const running: Identity = .{ .version = "1.4.0", .commit = "bbbbbbb" };
+    // No identity at all is a CLI caller or a hand-framed request, not a launch.
+    try testing.expect(refuseHandoffQuit(null, running) != null);
+    // The same build joining is invisible; quitting the app for it would close
+    // the user's terminal for nothing.
+    try testing.expect(refuseHandoffQuit(running, running) != null);
+    try testing.expect(refuseHandoffQuit(.{ .version = "1.3.0", .commit = "aaaaaaa" }, running) == null);
 }
 
 test "tail: cuts on a character boundary" {
