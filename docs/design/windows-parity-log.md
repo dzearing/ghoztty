@@ -37043,3 +37043,9 @@ moved to T1814.
 - **Already fixed at claim.** The empty reading was the capture, as triaged, and T1283 (76da6337f) repaired it. T1084 (dee68db96) then landed this task's other goal on the same two scripts: an empty probe now fails as `PROBE DID NOT RUN`, not as a colour mismatch.
 - **Validated.** Re-run at HEAD c1a81e47b through `acceptance-parallel.ps1 run`: split-dim.ps1 ALL PASS (29), split-dim-viewer.ps1 ALL PASS (46). The overlay paints the right fill, so no product defect. No code changed.
 - **Mac.** Nothing owed: tracker-only close.
+
+## 2026-10-18 — T1109: the deferred-relaunch "session restarted" divider was already fixed by 29b5040be
+
+- **Already fixed at claim.** 29b5040be (2026-09-02) cured both causes: the agent now appends the divider on every relaunch, not only after an agent restart, and the viewer parks the replay into scrollback so the fresh shell cannot paint over it.
+- **Validated.** `session-relaunch.ps1` run alone at HEAD 3d8648503 through `acceptance-parallel.ps1 run` on the test desktop: ALL PASS, `PASS B7`. The by-eye check was NOT RUN because the user is present; the pane's text, read with `+read`, is the evidence. No code changed.
+- **Mac.** Nothing owed: tracker-only close.
