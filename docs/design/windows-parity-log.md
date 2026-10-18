@@ -37074,3 +37074,9 @@ moved to T1814.
 - **Already fixed at claim, in passing.** The 2026-08-22 red was the maximized-window capture coming back one flat colour in the serial sweep. It passes today in all three shapes: alone, in an 8-script width-4 batch of chrome tests, and mid-way through the alphabetical first-48 sweep slice at width 4 (ALL PASS, 38 assertions each time). No single commit can be proven to have fixed it. Closed against T941's posed `-Sync` capture (4312d369b) as the likeliest fix, with the per-run isolation since then contributing. No code changed.
 - **The sweep slice turned up other reds.** T2078 is filed: activity-truncated C and activity-help-tooltips E race the machine's process count past the Activity Monitor row cap when other workers run beside them. Already tracked and given today's evidence: T2055 (auto-launch-cwd counts other worktrees' zig-out processes) and T1568 (asserted-nothing C4/C5 ratchets).
 - **Mac.** Nothing owed: tracker-only close.
+
+## 2026-10-18 — T1117: the POSIX history-guard red was the test, not the guard
+
+- **Already fixed at claim, by T1081 (dc11f2812).** history-guard-flavor.ps1 passes today (ALL PASS, 5 assertions, twice). The POSIX trial now loses 18 lines, which is the expected proof that the guard is disarmed. The pre-T1081 copy of the script, run against the same build, reproduces the original `lost 0` failure exactly. So the defect was the fixture. A bare kill left the first trial's window and session to be restored into the second, and the "POSIX" trial ended up measuring a ConPTY pane. The guard and its flavor plumbing were never wrong. No code changed.
+- **Neighbouring flavors.** There are only conpty and posix. A missing or unknown spelling falls back to this machine's own flavor, which the connection/protocol unit tests already cover.
+- **Mac.** Nothing owed: tracker-only close.
