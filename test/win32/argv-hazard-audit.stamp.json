@@ -1,17 +1,16 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-17T20:31:55-07:00",
-    "commit":  "e712456ae",
+    "generated":  "2026-10-17T21:29:41-07:00",
+    "commit":  "1ad217a65",
     "uncommitted":  [
-                        "scripts/build-cache.ps1",
-                        "scripts/lib/BuildCache.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
                   "scripts/blur-backdrop-probe.ps1":  "161435ffccf4a2e759d1f24887ced73c4c7c44da9d473a24eccbd977dc4cc38f",
-                  "scripts/build-cache.ps1":  "ed378456ec63ea451146fad6b8ad9db1a2c8c1a9095d5d129006afd52f0c2f80",
+                  "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",
                   "scripts/ci-status.ps1":  "c273364f2c71a956e9d63876b8a0b9218388503f0a1ae7853617649403911286",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
@@ -45,7 +44,7 @@
                   "scripts/ledger-dupes.ps1":  "925bdaab83d54c0917554c09d98a48f3fb90e26c6e1c89be2d2570d6dbb224e2",
                   "scripts/lib/AcceptanceFresh.ps1":  "6cca87511a61fdad80d2a407552895a85edd2134a0e0426cd6fa0f37ad055f8b",
                   "scripts/lib/AcceptanceParallel.ps1":  "81430af6ef786a76a6a4489a9f4f3358b90795aa3088a9f7c6dca176b5d8ab68",
-                  "scripts/lib/BuildCache.ps1":  "3baeada3624fb2ddf739867c49ac97a776a17147f82bfb29cbdf5889bcdc90bf",
+                  "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
                   "scripts/lib/CacheHeal.ps1":  "6cfed7ef0813d88fdbe457354757834a6e557c2172437f4d5022de79656f22f3",
                   "scripts/lib/CommitHeadroom.ps1":  "d0b9c51ed47e8c8fb890aaf75789ef824d5f6f4b4f906b942a6e9d0ad1873223",
                   "scripts/lib/CompilerCrash.ps1":  "3c0fd966fdd0fbb9daac57b22868ca7260351b812f6577b3dc43d0fedb83d09c",

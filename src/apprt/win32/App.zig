@@ -738,6 +738,12 @@ agent_skew_notice_shown: bool = false,
 /// innocent agent over and over.
 agent_upgrade_attempts: u8 = 0,
 
+/// A newer background process is installed and waiting for a quiet moment
+/// (T1068), as the last staleness check found it. Puts the "Background Update
+/// Ready…" row on the window menu and its palette row; null hides both. Only a
+/// check that can answer the question changes it (`agent_upgrade.settlesPending`).
+agent_update_pending: ?agent_upgrade.Pending = null,
+
 pub const IpcTarget = IpcRegistry.Target;
 
 pub fn init(
@@ -5543,6 +5549,9 @@ pub fn refreshLocalAgentIfStale(self: *App, reason: []const u8) void {
             reason,
         },
     );
+    if (agent_upgrade.settlesPending(decision.reason)) {
+        self.setAgentUpdatePending(agent_upgrade.pendingFor(decision.reason));
+    }
 
     switch (decision.action) {
         .none => return,
@@ -5588,6 +5597,80 @@ pub fn refreshLocalAgentIfStale(self: *App, reason: []const u8) void {
             return;
         },
     }
+}
+
+/// Show or retire the waiting-update row (T1068). Logged on a CHANGE only, so
+/// the line marks the moment the row appeared or went away — which is how an
+/// acceptance run (and anyone reading a user's log) can tell, since the row
+/// itself is visible only inside a popup menu.
+fn setAgentUpdatePending(self: *App, pending: ?agent_upgrade.Pending) void {
+    if (self.agent_update_pending == pending) return;
+    self.agent_update_pending = pending;
+    if (pending) |p| {
+        log.info("agent update affordance: shown ({s}); a newer background process is waiting", .{@tagName(p)});
+    } else {
+        log.info("agent update affordance: cleared", .{});
+    }
+}
+
+/// The waiting background-process update, or null when there is none (T1068).
+/// Read by the menu build and the palette, both on the GUI thread.
+pub fn pendingAgentUpdate(self: *const App) ?agent_upgrade.Pending {
+    if (!self.config.@"session-persistence") return null;
+    return self.agent_update_pending;
+}
+
+/// The "Background Update Ready…" row was chosen (T1068). The user went
+/// looking, so this is the one place a session may be ended for a build gap —
+/// and still only after a dialog that leads with "waiting costs nothing" and
+/// defaults to Later.
+///
+/// The check is re-run first: the row reflects the LAST check, and by now the
+/// handoff may have finished or the sessions may all have closed. Idle is
+/// refreshed silently by that re-check, exactly as at any other quiet moment,
+/// so the dialog only ever appears when something would really be lost.
+pub fn offerAgentUpdate(self: *App, owner: ?*Window, refocus: ?w32.HWND) void {
+    const alloc = self.core_app.alloc;
+    self.refreshLocalAgentIfStale("menu: background update");
+    const pending = self.pendingAgentUpdate() orelse {
+        log.info("agent update offer: nothing waiting any more (the re-check settled it)", .{});
+        return;
+    };
+    const live: ?usize = if (self.agentSessionMix()) |m| m.live else null;
+    log.info("agent update offer: asking (pending={s} live={?d})", .{ @tagName(pending), live });
+
+    var text_buf: [1024]u8 = undefined;
+    const text = agent_upgrade.installNowText(&text_buf, pending, live);
+    if (text.len == 0) return;
+    const title_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, agent_upgrade.install_now_title) catch return;
+    defer alloc.free(title_w);
+    const text_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, text) catch return;
+    defer alloc.free(text_w);
+    const result = ConfirmDialog.show(
+        self,
+        if (owner) |w| w.hwnd else null,
+        if (owner) |w| w.scale else 1.0,
+        refocus,
+        .{
+            .title = title_w.ptr,
+            .text = text_w,
+            .icon = .warning,
+            // Enter lands on Later: never let a stray keystroke end work.
+            .default_cancel = true,
+            .ok_label = std.unicode.utf8ToUtf16LeStringLiteral(agent_upgrade.install_now_ok),
+            .cancel_label = std.unicode.utf8ToUtf16LeStringLiteral(agent_upgrade.install_now_cancel),
+        },
+    );
+    if (result != .ok) {
+        log.info("agent update offer: user chose Later; the update keeps waiting", .{});
+        return;
+    }
+    log.warn("agent update offer: user chose to install now, restarting the background process (live={?d})", .{live});
+    // The restart Mac and Windows already offer as "Restart Ghoztty and
+    // Background Sessions" (T1804): the relaunched app spawns the agent from
+    // the newer binary on disk. Already confirmed above, so it is not asked
+    // twice.
+    if (!self.restartApp(.app_and_agent)) self.showRestartFailed(owner, refocus);
 }
 
 /// The mandatory-update path, and since T1056 its ONLY trigger: the running
@@ -10728,23 +10811,26 @@ pub fn requestRestart(self: *App, kind: app_restart.Kind, owner: ?*Window, refoc
         }
     }
 
-    if (!self.restartApp(kind)) {
-        const text = std.unicode.utf8ToUtf16LeStringLiteral(
-            "Ghoztty could not restart itself.\n\nNothing was closed. Quit and reopen Ghoztty instead.",
-        );
-        _ = ConfirmDialog.show(
-            self,
-            if (owner) |w| w.hwnd else null,
-            if (owner) |w| w.scale else 1.0,
-            refocus,
-            .{
-                .title = std.unicode.utf8ToUtf16LeStringLiteral("Restart Ghoztty"),
-                .text = text,
-                .style = .ok_only,
-                .icon = .warning,
-            },
-        );
-    }
+    if (!self.restartApp(kind)) self.showRestartFailed(owner, refocus);
+}
+
+/// A restart the user asked for could not be set up, so nothing happened.
+fn showRestartFailed(self: *App, owner: ?*Window, refocus: ?w32.HWND) void {
+    const text = std.unicode.utf8ToUtf16LeStringLiteral(
+        "Ghoztty could not restart itself.\n\nNothing was closed. Quit and reopen Ghoztty instead.",
+    );
+    _ = ConfirmDialog.show(
+        self,
+        if (owner) |w| w.hwnd else null,
+        if (owner) |w| w.scale else 1.0,
+        refocus,
+        .{
+            .title = std.unicode.utf8ToUtf16LeStringLiteral("Restart Ghoztty"),
+            .text = text,
+            .style = .ok_only,
+            .icon = .warning,
+        },
+    );
 }
 
 /// Quit and come back (T1804). False when the restart could not be set up, in

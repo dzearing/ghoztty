@@ -200,6 +200,7 @@ const machine_cache = @import("machine_cache.zig");
 const commands = @import("commands.zig");
 const menu_bar = @import("menu_bar.zig");
 const update_badge = @import("update_badge.zig");
+const agent_upgrade = @import("agent_upgrade.zig");
 const menu_label = @import("menu_label.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
 const background_zorder = @import("background_zorder.zig");
@@ -11789,6 +11790,19 @@ pub fn openMenuBarAt(self: *Window, anchor: MenuAnchor) void {
             w32.MF_STRING,
             menu_bar.menuCommandId(.install_update),
             @ptrCast(&wide),
+        );
+        _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
+    }
+
+    // The waiting background-process update (T1068), directly beneath. No dot
+    // on the button for it: the wait costs the user nothing, so this is a row
+    // to find when they look, not a badge asking them to.
+    if (self.app.pendingAgentUpdate() != null) {
+        _ = w32.AppendMenuW(
+            menu,
+            w32.MF_STRING,
+            menu_bar.menuCommandId(.install_agent_update),
+            std.unicode.utf8ToUtf16LeStringLiteral(agent_upgrade.pending_menu_label),
         );
         _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
     }

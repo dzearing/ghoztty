@@ -366,6 +366,13 @@ pub const omitted = [_]Omitted{
             "present row would be a row that is grayed out 364 days a year",
     },
     .{
+        .cmd = .install_agent_update,
+        .why = "not in the static tree because its row is CONDITIONAL (T1068): " ++
+            "`Window.openMenu` prepends `Background Update Ready…` to the root " ++
+            "popup only while a newer background process is waiting, the same " ++
+            "shape as the app update row above it",
+    },
+    .{
         .cmd = .dismiss_update,
         .why = "palette-only on macOS too (T1754): Mac's `Cancel or Skip " ++
             "Update` lives in TerminalCommandPalette.swift `updateOptions` and " ++

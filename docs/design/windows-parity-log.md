@@ -36932,3 +36932,10 @@ moved to T1814.
 - **Harness fix.** Section M's child left the console in raw VT-input mode, so the shell read later mouse bytes and send-keys' paste markers as typed text. The child now drains its input and restores the mode on exit, as a real TUI does.
 - **Validated.** session-snapshot-reattach ALL PASS (39); floor `-Lane all` and `-Lane harness` PASS; ipc-p1/p2/p3 ALL PASS. drag-perf is red, the known T1854 defect.
 - **Mac.** Nothing owed: a Windows acceptance arm plus a unit test in the shared agent.
+## 2026-10-17 — T1068: a waiting background-process update is visible, and installing it early is opt-in
+
+- **Still real.** Since T1056 a stale-but-compatible agent is left alone while sessions are live, and nothing said so. The row could wait forever on a box whose windows never all close.
+- **What landed.** The window menu grows a quiet **Background Update Ready…** row under the app-update row while an update waits. There is no dot and no balloon, because the wait costs nothing. The palette lists **Install Background Process Update…** under the same condition. Choosing either re-checks first. If the agent is idle, it is refreshed silently. Otherwise a dialog says waiting is free and then names the sessions that would end, with Later as the default. Restart Now is the T1804 agent restart.
+- **Policy is pure.** `agent_upgrade.pendingFor` and `settlesPending` decide which check results show or retire the row. A skew or an unreadable bundled build never clears it.
+- **Validated.** `agent-upgrade.ps1` ALL PASS (164), with new asserts B8/C10/E9/E10/L9: row shown for when_idle and draining, retired by the idle refresh, absent for a current agent. The zig floor passed on all four lanes. Clicking the row on screen was NOT RUN, because the user is present.
+- **Mac.** The other half is T2068 (`seat: mac`).

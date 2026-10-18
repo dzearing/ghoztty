@@ -681,6 +681,13 @@ ring/snapshot/gap-fill replay, HELLO handshake):
     ended 95 live sessions on this path before the rule was written down. The
     confirmation exists for the skew the handshake actually flags, where the app
     cannot reach the sessions to save them and there is no other way back.
+  - **Left alone is not the same as invisible** (T1068). While a newer build
+    waits, the window menu carries a quiet **Background Update Ready…** row
+    (and the palette an **Install Background Process Update…** row) — no
+    dialog, no balloon, no badge. Choosing it re-checks first (idle ⇒ silent
+    refresh), then asks Restart Now / Later, default Later; only Restart Now
+    ends sessions. Windows: `agent_upgrade.pendingFor` + `App.offerAgentUpdate`;
+    Mac: T2068.
   - **When the APP is the older side, say so** (T626). The agent must not be
     restarted there — that would replace a newer binary with an older one and
     end its sessions to do it — but "no action" is not permission to say

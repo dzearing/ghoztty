@@ -51,6 +51,11 @@
 #      the legacy generation (arm C's leave-alone) instead of standing down
 #      for a replacement that never comes.
 #
+# T1068 - a leave-alone is silent but no longer INVISIBLE: the waiting update
+# puts a quiet "Background Update Ready..." row on the window menu. The row is
+# inside a popup this desktop cannot open, so B8/C10/E9/E10/L9 read the line the
+# app logs when the row appears or retires.
+#
 # T1056 - what a STALE BUILD may cost the user, which is now nothing. An app
 # update replaces ghoztty-agent.exe while the running agent keeps every PTY
 # attached, and the staleness check used to read that build-stamp gap as grounds
@@ -865,6 +870,9 @@ Assert "B6 the pane still works" (Test-PaneResponsive $tmp $leafB.id 'b')
 # never ran produced identical logs.
 Assert "B7 the no-op decision is logged with its reason" `
     (Wait-LogMatch $logB 'agent upgrade check: no action, running agent is the bundled build' 20)
+# T1068: a current agent has nothing waiting, so the menu grows no row for it.
+Assert "B8 no waiting-update row for a current agent" `
+    ((Read-AppLog $logB) -notmatch 'agent update affordance: shown')
 Stop-TestProcs
 
 # ============================================================================
@@ -935,6 +943,10 @@ Assert "C8 the app attempted no destructive restart of its own" `
 $treeC = Wait-Panes $tmp 'c0' 1
 $leafC = (All-Leaves $treeC)[0]
 Assert "C9 the live pane is still responsive" (Test-PaneResponsive $tmp $leafC.id 'c')
+# T1068: leaving it alone is silent, but no longer invisible - the window menu
+# grows a quiet "Background Update Ready..." row (never a dialog: C5 above).
+Assert "C10 the waiting update is surfaced as a menu row (when_idle)" `
+    (Wait-LogMatch $logC 'agent update affordance: shown \(when_idle\)' 10)
 Stop-TestProcs
 
 # ============================================================================
@@ -977,6 +989,12 @@ Assert "E7 no dialog was shown anywhere in this arm" ((Find-Dialog $appPidE) -eq
 # with no UI at all, so the log is the ONLY record that it happened.
 Assert "E8 the silent idle refresh is logged with its reason" `
     (Wait-LogMatch $logE 'agent upgrade check: stale and idle, refreshing now' 20)
+# T1068: the row goes up while the session is live and comes down with the
+# refresh, so the menu never offers an update that has already happened.
+Assert "E9 the waiting-update row was shown while the session was live" `
+    (Wait-LogMatch $logE 'agent update affordance: shown \(when_idle\)' 5)
+Assert "E10 ... and retired once the idle refresh installed it" `
+    (Wait-LogMatch $logE 'agent update affordance: cleared' 20)
 Stop-TestProcs
 
 # ============================================================================
@@ -1536,6 +1554,8 @@ Assert "L7 the agent was not restarted (same pid)" ((Agent-Pid $tmp) -eq $agentL
 $treeL = Wait-Panes $tmp 'l0' 1
 $leafL = (All-Leaves $treeL)[0]
 Assert "L8 the legacy session is still responsive" (Test-PaneResponsive $tmp $leafL.id 'l')
+Assert "L9 the draining update is surfaced as a menu row (draining)" `
+    (Wait-LogMatch $logL 'agent update affordance: shown \(draining\)' 10)
 Stop-TestProcs
 
 # ============================================================================

@@ -230,6 +230,145 @@ pub fn decide(running: ?[]const u8, bundled: ?[]const u8, live_sessions: usize) 
 }
 
 // =============================================================================
+// The waiting-update affordance (T1068)
+// =============================================================================
+
+/// A newer background process is installed and waiting for a quiet moment,
+/// as the user can be told about it.
+///
+/// T1056 made a stale-but-compatible agent a silent leave-alone, which is right
+/// — and also made the wait invisible: on a box whose last window never closes
+/// it can last indefinitely with nobody able to see it or take it on purpose.
+/// So the two leave-alone reasons put a quiet row on the window menu (never a
+/// dialog, never a balloon) whose action is opt-in.
+pub const Pending = enum {
+    /// A pre-T907 agent: the newer build is adopted when the last session
+    /// closes, or at the next cold start.
+    when_idle,
+    /// A handoff-capable agent still holding sessions it owns directly: it
+    /// replaces itself as those close.
+    draining,
+};
+
+/// Which reasons leave an update WAITING, as opposed to current, newer,
+/// unknown, or already happening. `stale_handoff` is deliberately not one: the
+/// agent is replacing itself right now, so a row offering to do it would be
+/// offering what is already under way.
+pub fn pendingFor(reason: Reason) ?Pending {
+    return switch (reason) {
+        .stale_live_deferred => .when_idle,
+        .stale_handoff_draining => .draining,
+        else => null,
+    };
+}
+
+/// Whether a check that reached `reason` says anything about the waiting
+/// update at all. A skew or an unknown bundled build is a different question,
+/// and must not clear a row that a real staleness check put up.
+pub fn settlesPending(reason: Reason) bool {
+    return switch (reason) {
+        .current,
+        .running_newer,
+        .stale_idle,
+        .stale_handoff,
+        .stale_live_deferred,
+        .stale_handoff_draining,
+        => true,
+        .bundled_unknown,
+        .skew_agent_older,
+        .skew_app_older,
+        .skew_unknown,
+        .confirm_deferred,
+        => false,
+    };
+}
+
+/// The window-menu row. Title case and a trailing ellipsis, because choosing
+/// it opens a dialog rather than acting (the Windows menu convention).
+pub const pending_menu_label = "Background Update Ready\u{2026}";
+
+/// The palette row, listed only while an update is waiting.
+pub const pending_palette_name = "Install Background Process Update\u{2026}";
+
+pub const install_now_title = "Install the background process update now?";
+pub const install_now_ok = "Restart Now";
+pub const install_now_cancel = "Later";
+
+/// The body of the opt-in dialog. It says first that waiting costs nothing —
+/// the user went looking, but they may only have wanted to know what the row
+/// meant — and only then what installing early costs, with the count.
+pub fn installNowText(buf: []u8, pending: Pending, live_sessions: ?usize) []const u8 {
+    const lead = "A newer version of Ghoztty\u{2019}s background terminal process is installed. ";
+    const when = switch (pending) {
+        .when_idle => "It takes over on its own once all your terminal sessions have closed",
+        .draining => "It takes over on its own as your older terminal sessions close",
+    };
+    const mid = ", so nothing you have open is interrupted.\n\n" ++
+        "Installing it now restarts Ghoztty and closes ";
+    const tail = " and the programs running in them. They can\u{2019}t be carried across.";
+    if (live_sessions) |n| {
+        return std.fmt.bufPrint(buf, "{s}{s}{s}your {d} open terminal session{s}{s}", .{
+            lead, when, mid, n, if (n == 1) "" else "s", tail,
+        }) catch buf[0..0];
+    }
+    return std.fmt.bufPrint(buf, "{s}{s}{s}every open terminal session{s}", .{
+        lead, when, mid, tail,
+    }) catch buf[0..0];
+}
+
+test "pendingFor: only the two leave-alone reasons leave an update waiting (T1068)" {
+    try std.testing.expectEqual(Pending.when_idle, pendingFor(.stale_live_deferred).?);
+    try std.testing.expectEqual(Pending.draining, pendingFor(.stale_handoff_draining).?);
+    inline for (@typeInfo(Reason).@"enum".fields) |f| {
+        const r: Reason = @enumFromInt(f.value);
+        if (r != .stale_live_deferred and r != .stale_handoff_draining) {
+            try std.testing.expectEqual(@as(?Pending, null), pendingFor(r));
+        }
+    }
+}
+
+test "settlesPending: every reason that sets the row also settles it (T1068)" {
+    inline for (@typeInfo(Reason).@"enum".fields) |f| {
+        const r: Reason = @enumFromInt(f.value);
+        if (pendingFor(r) != null) try std.testing.expect(settlesPending(r));
+    }
+    // A skew or an unreadable bundled build says nothing about the wait.
+    try std.testing.expect(!settlesPending(.bundled_unknown));
+    try std.testing.expect(!settlesPending(.skew_unknown));
+    // The refresh and the handoff end the wait, so they clear it.
+    try std.testing.expect(settlesPending(.stale_idle));
+    try std.testing.expect(settlesPending(.stale_handoff));
+    try std.testing.expect(settlesPending(.current));
+}
+
+test "evaluate → pendingFor: a stale agent with live sessions puts the row up, idle does not (T1068)" {
+    const live_legacy = evaluate("20260101-aaaaaaa", "20260201-bbbbbbb", 3, .{});
+    try std.testing.expectEqual(Pending.when_idle, pendingFor(live_legacy.reason).?);
+    const draining = evaluate("20260101-aaaaaaa", "20260201-bbbbbbb", 3, .{ .capable = true, .legacy_live = 1 });
+    try std.testing.expectEqual(Pending.draining, pendingFor(draining.reason).?);
+    const idle = evaluate("20260101-aaaaaaa", "20260201-bbbbbbb", 0, .{});
+    try std.testing.expectEqual(@as(?Pending, null), pendingFor(idle.reason));
+    const current = evaluate("20260201-bbbbbbb", "20260201-bbbbbbb", 3, .{});
+    try std.testing.expectEqual(@as(?Pending, null), pendingFor(current.reason));
+}
+
+test "installNowText: says waiting is free before it names what ends (T1068)" {
+    var buf: [1024]u8 = undefined;
+    const one = installNowText(&buf, .when_idle, 1);
+    try std.testing.expect(std.mem.indexOf(u8, one, "your 1 open terminal session and") != null);
+    const free = std.mem.indexOf(u8, one, "nothing you have open is interrupted").?;
+    const cost = std.mem.indexOf(u8, one, "closes").?;
+    try std.testing.expect(free < cost);
+
+    const many = installNowText(&buf, .draining, 4);
+    try std.testing.expect(std.mem.indexOf(u8, many, "your 4 open terminal sessions and") != null);
+    try std.testing.expect(std.mem.indexOf(u8, many, "as your older terminal sessions close") != null);
+
+    const unknown = installNowText(&buf, .when_idle, null);
+    try std.testing.expect(std.mem.indexOf(u8, unknown, "every open terminal session") != null);
+}
+
+// =============================================================================
 // Unattended deferral (T525)
 // =============================================================================
 

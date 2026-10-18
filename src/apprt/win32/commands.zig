@@ -67,6 +67,9 @@ pub const Kind = enum {
     restart_app,
     /// Restart the background agent too, ending its sessions (T1804).
     restart_app_and_agent,
+    /// Explain the waiting background-process update and offer to install it
+    /// now (T1068). Listed only while one is waiting.
+    install_agent_update,
 };
 
 /// Stable identity for a command. The name is the identity — reordering
@@ -166,6 +169,7 @@ pub const Id = enum {
     dismiss_update,
     restart_app,
     restart_app_and_agent,
+    install_agent_update,
 };
 
 /// Where "Ghoztty Help" goes. The docs are the same for every platform, so
@@ -234,12 +238,17 @@ pub const Condition = enum {
     /// Only while an update offer is pending — the same state that puts the
     /// dot on the menu button and the `Install Update <ver>` row on its popup.
     update_pending,
+    /// Only while a newer background process is installed and waiting for a
+    /// quiet moment (T1068) — the state behind the menu's "Background Update
+    /// Ready…" row.
+    agent_update_pending,
 };
 
 /// What the palette knows about the app when it builds its rows. Kept to
 /// plain values so `available` is a pure function the none lane can test.
 pub const State = struct {
     update_pending: bool = false,
+    agent_update_pending: bool = false,
 };
 
 /// Whether the palette should list `c` right now.
@@ -247,6 +256,7 @@ pub fn available(c: Command, state: State) bool {
     return switch (c.when) {
         .always => true,
         .update_pending => state.update_pending,
+        .agent_update_pending => state.agent_update_pending,
     };
 }
 
@@ -371,6 +381,10 @@ pub const registry = [_]Command{
     // process as well and asks first, naming what ends (`app_restart.zig`).
     .{ .id = .restart_app, .name = "Restart Ghoztty", .action = .new_window, .kind = .restart_app, .keywords = "relaunch reopen" },
     .{ .id = .restart_app_and_agent, .name = "Restart Ghoztty and Background Sessions", .action = .new_window, .kind = .restart_app_and_agent, .keywords = "relaunch reopen agent" },
+    // T1068: listed only while a newer background process is waiting. Not
+    // pinned and not emphasized: the wait costs the user nothing, so the row
+    // must not compete with an app update for attention.
+    .{ .id = .install_agent_update, .name = @import("agent_upgrade.zig").pending_palette_name, .action = .new_window, .kind = .install_agent_update, .when = .agent_update_pending, .keywords = "agent background session update" },
     .{ .id = .quit, .name = "Quit", .action = .quit, .quit_keep = true },
 };
 
@@ -581,6 +595,7 @@ test "only the local kinds carry a placeholder action" {
         .dismiss_update,
         .restart_app,
         .restart_app_and_agent,
+        .install_agent_update,
         => try std.testing.expectEqual(
             input.Binding.Action.new_window,
             c.action,
@@ -630,10 +645,22 @@ test "every other command is listed regardless of app state (T1676)" {
     // visible reason. Extend this list when a new conditional row lands.
     for (registry) |c| {
         if (c.id == .install_update or c.id == .dismiss_update) continue;
+        if (c.id == .install_agent_update) continue;
         try std.testing.expectEqual(Condition.always, c.when);
         try std.testing.expect(available(c, .{}));
         try std.testing.expect(available(c, .{ .update_pending = true }));
     }
+}
+
+test "the background-update row is listed only while one is waiting, and never pinned (T1068)" {
+    const c = get(.install_agent_update);
+    try std.testing.expect(!available(c, .{}));
+    try std.testing.expect(!available(c, .{ .update_pending = true }));
+    try std.testing.expect(available(c, .{ .agent_update_pending = true }));
+    try std.testing.expect(!pinned(c));
+    try std.testing.expect(!c.emphasis);
+    try std.testing.expect(matches(c, "agent"));
+    try std.testing.expect(matches(c, "background"));
 }
 
 test "the restart commands are found by restart and by relaunch (T1804)" {

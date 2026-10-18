@@ -3219,7 +3219,10 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
 
     // A conditional command is listed only while its target exists (T1676):
     // the update rows are absent unless an offer is pending.
-    const state: commands.State = .{ .update_pending = self.app.pendingUpdate() != null };
+    const state: commands.State = .{
+        .update_pending = self.app.pendingUpdate() != null,
+        .agent_update_pending = self.app.pendingAgentUpdate() != null,
+    };
     for (palette_entries, 0..) |entry, i| {
         if (!commands.available(entry, state)) continue;
         if (!commands.matches(entry, filter)) continue;
@@ -3436,6 +3439,10 @@ pub fn performCommand(self: *Surface, id: commands.Id) void {
         // which words, is `app_restart.zig`; the restart itself is App's.
         .restart_app => self.app.requestRestart(.app, self.parent_window, self.hwnd),
         .restart_app_and_agent => self.app.requestRestart(.app_and_agent, self.parent_window, self.hwnd),
+
+        // The waiting background-process update (T1068): explain it, and
+        // install it now only if the user says so (`App.offerAgentUpdate`).
+        .install_agent_update => self.app.offerAgentUpdate(self.parent_window, self.hwnd),
 
         // The Agent Integrations management window (T871): per-agent state
         // rows with Set Up / Update / Uninstall, probing off-thread. Mac's
