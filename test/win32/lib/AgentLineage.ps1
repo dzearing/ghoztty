@@ -297,3 +297,29 @@ function Get-GhozttyHarnessLaunchedPid {
     if (-not (Get-Command Get-TestLaunchRecords -ErrorAction SilentlyContinue)) { return $null }
     return , @(Get-TestLaunchRecords | ForEach-Object { [int]$_.Pid })
 }
+
+function Set-GhozttyHarnessLaunchKilled {
+    <#
+    .SYNOPSIS
+    Mark a harness launch record as killed on purpose (T2058).
+
+    .DESCRIPTION
+    The teardown postmortem (`Write-TestDesktopPostmortems`, lib\TestDesktop.ps1)
+    reports every launch that is gone and was not killed by the harness - and
+    until now only `Remove-TestDesktop`'s own kill set that flag. A script that
+    stopped its app through `Stop-RepoGhoztty` (drag-perf does it once per
+    round) left the record unmarked, so the teardown read Stop-Process's exit
+    code of -1 as `CRASHED - 0xFFFFFFFF` three times over a run whose app never
+    crashed. Called by `Stop-RepoGhoztty` for each pid it actually stopped, so
+    a launch that died BEFORE the stop is still reported. A no-op when the
+    test-desktop helpers are not loaded or the pid was never launched through
+    them. Returns the number of records marked.
+    #>
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    if (-not (Get-Command Get-TestLaunchRecords -ErrorAction SilentlyContinue)) { return 0 }
+    $n = 0
+    foreach ($r in @(Get-TestLaunchRecords)) {
+        if ([int]$r.Pid -eq $ProcessId) { $r.Killed = $true; $n++ }
+    }
+    return $n
+}

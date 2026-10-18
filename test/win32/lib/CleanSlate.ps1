@@ -252,6 +252,9 @@ function Stop-RepoGhoztty {
         foreach ($p in $live) {
             Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
             $stopped[[string]$p.ProcessId] = $true
+            # T2058: a kill is not a crash. Mark the launch record so the
+            # teardown postmortem does not read exit -1 as CRASHED 0xFFFFFFFF.
+            [void](Set-GhozttyHarnessLaunchKilled -ProcessId ([int]$p.ProcessId))
         }
 
         if ($clock.ElapsedMilliseconds -ge $TimeoutMs) {

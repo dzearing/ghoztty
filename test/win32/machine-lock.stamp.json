@@ -1,16 +1,16 @@
 {
     "guard":  "machine-lock",
     "script":  "test/win32/machine-lock.ps1",
-    "generated":  "2026-10-16T21:19:19-07:00",
-    "commit":  "8dc997a45",
+    "generated":  "2026-10-17T15:31:48-07:00",
+    "commit":  "2e29ff1ba",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1"
+                        "test/win32/lib/CleanSlate.ps1"
                     ],
     "files":  {
                   "scripts/floor-lane.ps1":  "5862c35e43e85b89dfcb917e77b32fb461b7b22a2fc84aeceee976513fb1b312",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/lib/MachineLock.ps1":  "f9e8529b949b37f2f85c50dd87f551556454e85a7425de4899594fd07c828cd7",
-                  "test/win32/lib/CleanSlate.ps1":  "6c7fe0e7d3492b136034828cb7a2eb6565f36bf0b0fc9e477b69fe56539116ff",
+                  "test/win32/lib/CleanSlate.ps1":  "af897128dddfb7ec79fc8cfd6fe7000353c83566caa7eb7559d0e504e4c8977a",
                   "test/win32/machine-lock.ps1":  "95c57d9daef68bfb8403be792a5e21c87bfad2ee1f5dd0507feb2c51aaca32d5"
               }
 }

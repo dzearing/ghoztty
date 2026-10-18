@@ -36864,3 +36864,10 @@ moved to T1814.
 - **Validated.** `parity-tasks-seat.ps1` ALL PASS (213). drag-perf is still red on T1854's known line, so this commit takes `-NoGuardDue` for that row only.
 - **Mac.** Nothing owed: tracker documentation and a Windows tracker harness.
 - **Filed.** T2062 (`validate` should flag an unlisted key when the file is written, not only when this harness runs). T2064 (the full harness floor overran the lane's 30-minute budget while lane a was loading the box, and finishing the unreached members with `-Include` does not count as completing it).
+
+## 2026-10-17 — T2058: a test that stops its own terminal no longer reports that terminal as crashed
+
+- **The diagnosis was half right.** The three `GUI POSTMORTEM ... CRASHED - 0xFFFFFFFF` blocks in drag-perf's log were bogus. drag-perf stops its app once per round through `Stop-RepoGhoztty`, which never marked the harness launch record as killed, so the teardown read Stop-Process's exit code of -1 as a crash. But those blocks never affected the score. The one FAILURE is a real assertion that went to stderr: T1854's "2 waits/move at 2 panes, 2 at 8". drag-perf stays red until T1854 lands.
+- **What landed.** `Set-GhozttyHarnessLaunchKilled` (lib/AgentLineage.ps1) sits beside the existing launch-record seam. `Stop-RepoGhoztty` calls it for each pid it actually stops. A launch that died on its own before the stop is still reported.
+- **Validated.** New section J in gui-postmortem.ps1 runs a cmd.exe copy under the repo: the stopped child is not reported (J4) and is recorded as killed (J5), and the self-exited sibling is still reported (J3). Result: ALL PASS (46). Negative control: with the call removed, J4 and J5 go red, printing the exact `CRASHED - 0xFFFFFFFF` shape. A drag-perf re-run printed zero postmortem blocks (it had printed three). The seven harnesses the library edit made due passed 7/7. The full harness floor ran directly, because floor-lane's 30-minute cap is still T1657 (a duplicate I filed, T2063, is closed).
+- **Mac.** Nothing owed: Windows acceptance harness only.

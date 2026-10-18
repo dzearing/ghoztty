@@ -33,6 +33,8 @@ $ErrorActionPreference = 'Continue'
 $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T2058: section J drives the harness's own kill, Stop-RepoGhoztty.
+. (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
 # T1511: the shared scorer. The dot-source is what ARMS the run, so the child
 # process that writes this harness's guard stamp below refuses to write one
@@ -296,6 +298,44 @@ if (-not (Test-Path $avExe)) {
         Assert 'I4 a dump a per-pid postmortem already printed is not printed twice' `
             (($n2 -eq 0) -and (@(Get-LastGuiPostmortem)).Count -eq 0)
     }
+}
+
+# ------------- J. a kill through Stop-RepoGhoztty is not a crash either (T2058)
+
+# WHY. Section F covers the teardown's own kill. drag-perf stops its app once per
+# round through `Stop-RepoGhoztty` instead, and that path never marked the launch
+# record: the teardown then read Stop-Process's exit -1 as `CRASHED - 0xFFFFFFFF`
+# three times over a run whose app never crashed. The fixture is a copy of
+# cmd.exe UNDER the repo, because Stop-RepoGhoztty refuses any exe that is not.
+# J3 is the teeth: a launch that died on its own before the stop is still
+# reported, so the mark is per stopped pid rather than a blanket silence.
+Write-Host 'J a kill through Stop-RepoGhoztty is not reported as a death'
+$jDir = Join-Path $Repo ('temp\gui-postmortem-j-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $jDir -Force | Out-Null
+try {
+    $jExe = Join-Path $jDir 'jsleeper.exe'
+    Copy-Item -LiteralPath $env:ComSpec -Destination $jExe -Force
+    $td4 = New-TestDesktop
+    $jKill = Start-OnTestDesktop -Exe $jExe -Arguments @('/c', 'ping -n 30 127.0.0.1 >nul')
+    $jDie = Start-OnTestDesktop -Exe $jExe -Arguments @('/c', 'ping -n 2 127.0.0.1 >nul & exit 5')
+    $jDieGone = Wait-Gone -ProcessId $jDie.Pid -TimeoutSec 60
+    Assert 'J1 the self-exiting child exited before the stop' $jDieGone
+    $jStopped = Stop-RepoGhoztty -Exe $jExe -AppOnly -SettleMs 0
+    Assert 'J2 Stop-RepoGhoztty stopped the long-running child' ($jStopped -ge 1)
+    Clear-LastGuiPostmortem
+    $jCount = Write-TestDesktopPostmortems -WaitSeconds 1
+    # Get-LastGuiPostmortem holds only the LAST block printed, so J4 counts
+    # blocks rather than searching text: the killed launch was started first
+    # and its block, if any, would already have been overwritten by J3's.
+    $jBlock = (@(Get-LastGuiPostmortem) -join "`n")
+    Assert 'J3 the child that died on its own is still reported' `
+        ($jBlock -like "*pid $($jDie.Pid)*" -and $jBlock -like '*exited with 5*')
+    Assert "J4 the child Stop-RepoGhoztty killed is not reported (blocks: $jCount, want 1)" ($jCount -eq 1)
+    $jRec = @(Get-TestLaunchRecords | Where-Object { $_.Pid -eq $jKill.Pid })
+    Assert 'J5 the stopped launch is on the record as killed' ($jRec.Count -eq 1 -and $jRec[0].Killed)
+    Remove-TestDesktop
+} finally {
+    Remove-Item -Recurse -Force $jDir -ErrorAction SilentlyContinue
 }
 
 Complete-TestBody

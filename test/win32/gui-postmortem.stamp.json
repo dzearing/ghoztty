@@ -1,14 +1,14 @@
 {
     "guard":  "gui-postmortem",
     "script":  "test/win32/gui-postmortem.ps1",
-    "generated":  "2026-10-15T08:07:33-07:00",
-    "commit":  "94e9c83cd",
+    "generated":  "2026-10-17T15:28:09-07:00",
+    "commit":  "2e29ff1ba",
     "uncommitted":  [
-                        "scripts/lib/CrashDiag.ps1"
+                        "test/win32/gui-postmortem.ps1"
                     ],
     "files":  {
                   "scripts/lib/CrashDiag.ps1":  "fe512622eae4215c4c4755fcbfe8552b4760ab9ee6174fe4c5aa80a71a76cdf4",
-                  "test/win32/gui-postmortem.ps1":  "5c63e9a8563ad9f82bb9c9888bbadbe650f41173508f0d124d83b840d4918077",
+                  "test/win32/gui-postmortem.ps1":  "b0595f3b54b8326445756b773988528e7702572014b7e730c06e29cdd68eb30c",
                   "test/win32/lib/GuiPostmortem.ps1":  "a00924779898b364a5752d79eb725dc9f8c85ddc4cd3f3b71df27fefd886d3ca"
               }
 }
