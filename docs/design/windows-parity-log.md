@@ -36877,3 +36877,9 @@ moved to T1814.
 - **Split, not deleted.** The two frozen sections moved verbatim to `windows-parity-tasks-history.md`. The live doc is 137 lines: a rewritten resume protocol that matches go.md, the user's bar and goal, landmarks, related docs, and a pointer to the history. go.md, the task README and this log's header now route there.
 - **Kept true.** Section F of `docs-routing.ps1` fails on a state-table row, a FROZEN section, or more than 250 lines in the live doc. Negative control: one injected row turned F2 red. The dashboard reads the old table only from pre-split commits via `git show`, so it is unaffected.
 - **Mac.** Nothing owed: tracker documentation.
+
+## 2026-10-17 — T1051: the one-off 9-of-15 P3 floor failure was already fixed by later work
+
+- **Already fixed.** Both things the task asked for landed after it was filed. A red run's transcript is now preserved where a re-run cannot overwrite it (T379, T900). A setup call that half-succeeds now stops the run with one named failure instead of a cascade (T1285, T894), and fixed sleeps became polls (T1156).
+- **Validated.** No preserved `ghoztty-ipc-p3-fail-*.log` exists since T900 landed on 2026-09-20. Four back-to-back p2-then-p3 runs through the acceptance runner were all green (19 assertions each). Closed against T1285's commit, the one that removed the cascade shape.
+- **Mac.** Nothing owed: Windows acceptance harness only.
