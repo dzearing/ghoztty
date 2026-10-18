@@ -37049,3 +37049,9 @@ moved to T1814.
 - **Already fixed at claim.** 29b5040be (2026-09-02) cured both causes: the agent now appends the divider on every relaunch, not only after an agent restart, and the viewer parks the replay into scrollback so the fresh shell cannot paint over it.
 - **Validated.** `session-relaunch.ps1` run alone at HEAD 3d8648503 through `acceptance-parallel.ps1 run` on the test desktop: ALL PASS, `PASS B7`. The by-eye check was NOT RUN because the user is present; the pane's text, read with `+read`, is the evidence. No code changed.
 - **Mac.** Nothing owed: tracker-only close.
+
+## 2026-10-18 — T1111: the '...' button's hit test was never wrong; the test was aiming at minimize, fixed by T767
+
+- **Already fixed at claim.** T767 (fcbd6abf7, 2026-09-15) filed and fixed the same defect. `tab-strip-autohide.ps1` aimed its probe with the pre-T496 button arithmetic, so it landed one slab right, inside minimize. The product's hit test was correct all along. T767 makes the script read the button positions from `Get-TestChromeMetrics`, the same source `caption-bar.ps1` checks against painted pixels.
+- **Validated.** Both scripts re-run at HEAD f9e5b3570 through `acceptance-parallel.ps1 run`. tab-strip-autohide.ps1 ALL PASS (15): '...' is HTSYSMENU (3) with the strip hidden. caption-bar.ps1 ALL PASS (38): '...' is HTSYSMENU (3) and minimize is HTMINBUTTON (8) with the strip up. No code changed.
+- **Mac.** Nothing owed: tracker-only close.
