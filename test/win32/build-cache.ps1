@@ -52,6 +52,10 @@
          standing in for a compiler each defer `sweep` (exit 0, named pid,
          cache intact); `-IgnoreBusy` and `clear -Force` go ahead, the latter
          with a warning; with the build gone, the next sweep clears.
+      I. Stale scratch dirs (T1062). Live outputs (`.dumps`, `zig-out-release*`)
+         and zig's own `p\`/`b\` are not leftovers; `sweep` (the claim) names a
+         leftover only while it is new and then stops repeating it; `check`
+         and `scratch` still list every one, and nothing deletes.
 
     Launches no GUI and touches no real cache: every section works on throwaway
     directories under $TEMP. Section D runs the real `floor-lane.ps1` but only
@@ -245,6 +249,82 @@ $r = Invoke-Sweeper @('check', '-Repo', $scratchRepo, '-CacheDir', $scratchCache
 Assert 'C17 a scratch dir under a cache is reported too' ($r.Out -match 't999-scratch')
 Assert "C18 but zig's own o\ and h\ are not called scratch" ($r.Out -notmatch 'stale scratch dirs: [3-9]')
 
+# ===========================================================================
+Write-Host ''
+Write-Host '== I: the claim names a scratch dir while it is new, then stops (T1062)'
+# ===========================================================================
+
+# Live outputs and zig's own global-cache dirs are not leftovers: before T1062
+# the claim named `.dumps`, `zig-out-release`, `p` and `b` every single turn.
+$liveRepo = Join-Path $tmp 'live-repo'
+foreach ($d in @('.dumps', 'zig-out-release', 'zig-out-release-stale', 'zig-out-t1062')) {
+    New-Item -ItemType Directory -Force (Join-Path $liveRepo $d) | Out-Null
+}
+$liveGlobal = Join-Path $tmp 'live-global'
+foreach ($d in @('o', 'h', 'p', 'b', 'z', 'tmp', 'leftover-cache')) {
+    New-Item -ItemType Directory -Force (Join-Path $liveGlobal $d) | Out-Null
+}
+$found = @(Get-StaleScratchDir -Repo $liveRepo -CacheDirs @($liveGlobal))
+$foundNames = @($found | ForEach-Object { $_.Name }) -join ','
+AssertEq 'I1 only the real leftovers are scratch (no .dumps/zig-out-release*/p/b)' 'zig-out-t1062,leftover-cache' $foundNames
+
+# The stamp: first seen now -> new; first seen 25h ago -> quiet.
+$statePath = Join-Path $tmp 'seen\scratch-dirs-seen.json'
+$now = Get-Date
+$first = @(Update-ScratchDirSeen -Dirs $found -StatePath $statePath -Now $now)
+AssertEq 'I2 a dir seen for the first time is new' 2 @($first | Where-Object { $_.New }).Count
+Assert 'I3 and the stamp file was written' (Test-Path -LiteralPath $statePath)
+$later = @(Update-ScratchDirSeen -Dirs $found -StatePath $statePath -Now $now.AddHours(25))
+$laterNew = @($later | Where-Object { $_.New }).Count
+if ($NegativeControl) { $script:negReached = $true; $laterNew = 2 - $laterNew }
+AssertEq 'I4 a day later the same dirs are no longer new' 0 $laterNew
+AssertEq 'I5 and the first-seen date did not move' $now.ToString('o') $later[0].FirstSeen.ToString('o')
+# A dir that went away and came back is new again.
+$onlyOne = @($found | Select-Object -First 1)
+$null = Update-ScratchDirSeen -Dirs $onlyOne -StatePath $statePath -Now $now.AddHours(26)
+$back = @(Update-ScratchDirSeen -Dirs $found -StatePath $statePath -Now $now.AddHours(27))
+AssertEq 'I6 a dir that vanished and returned is new again' 1 @($back | Where-Object { $_.New }).Count
+# A torn stamp file never fails the claim; it re-announces instead.
+Set-Content -LiteralPath $statePath -Value '{ not json' -Encoding ascii
+$torn2 = @(Update-ScratchDirSeen -Dirs $found -StatePath $statePath -Now $now)
+AssertEq 'I7 a torn stamp file reads as "all new", not as an error' 2 @($torn2 | Where-Object { $_.New }).Count
+# A box with no leftovers hands it an empty list, which arrives as $null.
+$noneErr = $null
+try { $none = @(Update-ScratchDirSeen -Dirs @(Get-StaleScratchDir -Repo (Join-Path $tmp 'no-such-repo')) -StatePath $statePath -Now $now) } catch { $noneErr = $_ }
+Assert 'I7b no leftovers at all is an empty answer, not a refused parameter' (($null -eq $noneErr) -and $none.Count -eq 0)
+
+# On the wire: the first sweep names it, a sweep with a back-dated stamp does
+# not, and `check` still names it either way.
+$wireRepo = Join-Path $tmp 'wire-repo'
+New-Item -ItemType Directory -Force (Join-Path $wireRepo 'zig-out-t1062') | Out-Null
+$wireCache = Join-Path $wireRepo '.zig-cache'
+$wireArgs = @('-Repo', $wireRepo, '-CacheDir', $wireCache, '-MinFreeGB', '0', '-MaxEntries', '1000')
+$r = Invoke-Sweeper (@('sweep') + $wireArgs)
+Assert 'I8 the first sweep names the new leftover' ($r.Out -match 'new scratch dirs: 1 \(zig-out-t1062\)')
+$wireState = Join-Path $wireRepo 'temp\scratch-dirs-seen.json'
+$old = [ordered]@{ (Join-Path $wireRepo 'zig-out-t1062') = (Get-Date).AddDays(-3).ToString('o') }
+[IO.File]::WriteAllText($wireState, ($old | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+$r = Invoke-Sweeper (@('sweep') + $wireArgs)
+Assert 'I9 a sweep after the new window is quiet about it' ($r.Out -notmatch 'scratch dirs')
+AssertEq 'I10 and exits 0' 0 $r.Code
+$r = Invoke-Sweeper (@('check') + $wireArgs)
+Assert 'I11 check still names every leftover' ($r.Out -match 'stale scratch dirs: 1 \(zig-out-t1062\)')
+Assert 'I12 the leftover is still on disk (nothing deletes)' (Test-Path -LiteralPath (Join-Path $wireRepo 'zig-out-t1062'))
+
+# `scratch` lists it with a size, and outside a git repo says it cannot tell
+# what references it rather than calling it a delete candidate.
+$r = Invoke-Sweeper (@('scratch') + $wireArgs)
+Assert 'I13 scratch lists the leftover with its size' ($r.Out -match 'zig-out-t1062\s+\d+ MB')
+Assert 'I14 and outside git it does not offer a delete' (($r.Out -match 'references unknown') -and ($r.Out -notmatch 'Remove-Item'))
+# In the real repo the reference check answers: build-cache.ps1 names
+# zig-out-release, a made-up name is named by nothing.
+$refHit = Get-ScratchDirReference -Repo $repo -Name 'zig-out-release'
+Assert 'I15 a dir a script names is reported as referenced' ($refHit.Known -and @($refHit.Files).Count -gt 0)
+# Built at run time: a literal here would be named by this very file.
+$refMiss = Get-ScratchDirReference -Repo $repo -Name ('zig-out-nosuch' + $PID + 'x' + (Get-Random))
+# Known must be true: "named by nothing" and "could not ask" are different
+# answers, and the first build of this read them as the same one.
+Assert 'I16 a dir nothing names is unreferenced (a candidate), not "unknown"' ($refMiss.Known -and @($refMiss.Files).Count -eq 0)
 # ===========================================================================
 Write-Host ''
 Write-Host '== D: the floor lane says "disk", not "error: Unexpected"'

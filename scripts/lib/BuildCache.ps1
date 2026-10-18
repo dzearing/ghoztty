@@ -448,10 +448,16 @@ function Get-StaleScratchDir {
         # would report none of them.
         [string[]]$CacheDirs = @()
     )
+    # Live outputs that scripts write and read today, so they are not leftovers
+    # (T1062): `.dumps` is CrashCatch's default dump directory and floor-lane's
+    # crash catch writes into it, `zig-out-release` is launch-upgrade's and the
+    # delivery scripts' staging prefix, and `zig-out-release-stale` is the
+    # older-agent build agent-upgrade.ps1 makes on demand. Reporting them every
+    # turn taught the claim's reader to skip the line.
+    $live = @('zig-out', '.zig-cache', '.dumps', 'zig-out-release', 'zig-out-release-stale')
     $found = @()
     foreach ($d in @(Get-ChildItem -LiteralPath $Repo -Directory -Force -ErrorAction SilentlyContinue)) {
-        $keep = ($d.Name -eq 'zig-out') -or ($d.Name -eq '.zig-cache')
-        if ($keep) { continue }
+        if ($d.Name -in $live) { continue }
         if ($d.Name -like 'zig-out-*' -or $d.Name -eq '.dumps') {
             $found += [pscustomobject]@{ Path = $d.FullName; Name = $d.Name; Kind = 'repo' }
         }
@@ -459,11 +465,87 @@ function Get-StaleScratchDir {
     foreach ($cache in @($CacheDirs | Where-Object { $_ })) {
         if (-not (Test-Path -LiteralPath $cache)) { continue }
         foreach ($d in @(Get-ChildItem -LiteralPath $cache -Directory -Force -ErrorAction SilentlyContinue)) {
-            # Zig's own subdirectories are o/h/c/tmp/z; anything else under a
-            # cache directory was put there by one of our scripts.
-            if ($d.Name -in @('o', 'h', 'c', 'tmp', 'z')) { continue }
+            # Zig's own subdirectories are o/h/c/tmp/z, plus p (fetched
+            # packages) and b (builtin.zig per target) in the GLOBAL cache -
+            # T1062 found both reported as scratch. Anything else under a cache
+            # directory was put there by one of our scripts.
+            if ($d.Name -in @('o', 'h', 'c', 'tmp', 'z', 'p', 'b')) { continue }
             $found += [pscustomobject]@{ Path = $d.FullName; Name = $d.Name; Kind = 'cache-scratch' }
         }
     }
     return $found
+}
+
+function Update-ScratchDirSeen {
+    <#
+        Stamp each scratch dir with the moment it was first seen, and say which
+        are still NEW (T1062). The claim runs the sweeper once a turn, and a
+        report of the same two dozen leftovers on every one of them is noise
+        that trains the reader to skip the line - the guard-due list's fate. So
+        a dir is announced while it is younger than -NewHours since first seen,
+        long enough for the next few turns to notice a dead turn's leftover, and
+        is then quiet. `build-cache.ps1 scratch` still lists every one.
+
+        The stamp file is per worktree (`temp\` is gitignored and lane-local).
+        A dir that has gone away is dropped from it, so one that comes back is
+        new again. Returns the input records with FirstSeen and New added.
+    #>
+    param(
+        # AllowNull: an empty list from Get-StaleScratchDir arrives as $null.
+        [Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()][object[]]$Dirs,
+        [Parameter(Mandatory = $true)][string]$StatePath,
+        [double]$NewHours = 24,
+        [datetime]$Now = (Get-Date)
+    )
+    $seen = @{}
+    if (Test-Path -LiteralPath $StatePath) {
+        try {
+            $raw = Get-Content -LiteralPath $StatePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            foreach ($p in @($raw.PSObject.Properties)) {
+                $v = $p.Value
+                if ($v -isnot [datetime]) { $v = [datetime]::Parse([string]$v, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) }
+                $seen[$p.Name] = $v
+            }
+        } catch {
+            # A torn stamp file costs one day of re-announcing, never the claim.
+            $seen = @{}
+        }
+    }
+    $out = @()
+    $next = [ordered]@{}
+    foreach ($d in @($Dirs | Where-Object { $_ })) {
+        $first = if ($seen.ContainsKey($d.Path)) { $seen[$d.Path] } else { $Now }
+        $next[$d.Path] = $first.ToString('o')
+        $isNew = (($Now - $first).TotalHours -lt $NewHours)
+        $out += [pscustomobject]@{ Path = $d.Path; Name = $d.Name; Kind = $d.Kind; FirstSeen = $first; New = $isNew }
+    }
+    try {
+        $dir = Split-Path -Parent $StatePath
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+        [IO.File]::WriteAllText($StatePath, ($next | ConvertTo-Json -Depth 2), (New-Object Text.UTF8Encoding($false)))
+    } catch { }
+    return $out
+}
+
+function Get-ScratchDirReference {
+    <#
+        Which tracked scripts, tests or sources name this directory (T1062).
+        An empty answer is what makes a leftover a delete CANDIDATE; it is
+        still the user's yes that deletes it. Task files and the log are left
+        out on purpose: they cite these dirs as evidence of past runs, which
+        does not make anything read them.
+
+        Returns a record, Known + Files, never a bare array: an empty array
+        returned from a function unrolls to $null, which would read "named by
+        nothing" as "could not ask". Known is $false outside a git repo.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Repo,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if (-not (Test-Path -LiteralPath (Join-Path $Repo '.git'))) {
+        return [pscustomobject]@{ Known = $false; Files = @() }
+    }
+    $hits = @(& git -C $Repo grep -l -F -e $Name -- scripts test src build.zig .github 2>$null | Where-Object { $_ })
+    return [pscustomobject]@{ Known = $true; Files = $hits }
 }

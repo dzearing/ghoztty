@@ -20,6 +20,17 @@
               test binaries), because the other window or the other loop lane
               may be mid-build (T1061); `-IgnoreBusy` overrides.
       clear   Clear now, whatever the numbers say.
+      scratch List every stale scratch directory (leftover `zig-out-*` copies
+              and our own dirs under a cache) with its size, when it was first
+              seen, and which tracked scripts still name it. Unreferenced ones
+              are delete CANDIDATES, printed with the command that removes
+              them; nothing here deletes - outside a cache that is the user's
+              call (T1062).
+
+    Stale scratch dirs on the `sweep` line are announced only while NEW - for
+    -ScratchNewHours after a dir is first seen - so the claim names a dead
+    turn's leftover a few times and then stops repeating it every turn (T1062).
+    `check` still names all of them.
 
     `check` and `sweep` also ask whether the fetched packages in the global
     cache look WHOLE, not merely numerous (T1436). On 2026-09-07 the claim
@@ -52,7 +63,7 @@
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('check', 'sweep', 'clear')]
+    [ValidateSet('check', 'sweep', 'clear', 'scratch')]
     [string]$Action = 'check',
 
     [string]$Repo,
@@ -79,7 +90,9 @@ param(
     # The process names counted as a compiler. Only a harness changes this, to
     # stand a harmless fixture in for zig.exe.
     [string[]]$ZigName = @('zig.exe'),
-    [switch]$Json
+    [switch]$Json,
+    # How long `sweep` keeps announcing a scratch dir after first seeing it.
+    [double]$ScratchNewHours = 24
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,6 +114,35 @@ if (-not $CacheDir -or $CacheDir.Count -eq 0) {
 # A repo whose global cache resolves onto the repo cache (or a caller passing
 # the same path twice) must not be cleared twice and counted twice.
 $CacheDir = @($CacheDir | Where-Object { $_ } | Select-Object -Unique)
+
+$scratchState = Join-Path $Repo 'temp\scratch-dirs-seen.json'
+
+if ($Action -eq 'scratch') {
+    $all = @(Get-StaleScratchDir -Repo $Repo -CacheDirs $CacheDir)
+    $all = @(Update-ScratchDirSeen -Dirs $all -StatePath $scratchState -NewHours $ScratchNewHours)
+    if ($all.Count -eq 0) { Write-Host 'stale scratch dirs: none'; exit 0 }
+    $candidates = @()
+    $totalMB = 0
+    Write-Host "stale scratch dirs: $($all.Count)"
+    foreach ($d in $all) {
+        $bytes = (Get-ChildItem -LiteralPath $d.Path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        $mb = [math]::Round(([double]$bytes) / 1MB)
+        $totalMB += $mb
+        $refs = Get-ScratchDirReference -Repo $Repo -Name $d.Name
+        $refFiles = @($refs.Files)
+        $refText = if (-not $refs.Known) { 'references unknown (not a git repo)' }
+            elseif ($refFiles.Count -eq 0) { 'UNREFERENCED' }
+            else { 'named by ' + (($refFiles | Select-Object -First 3) -join ', ') }
+        if ($refs.Known -and $refFiles.Count -eq 0) { $candidates += $d }
+        Write-Host ("  {0,-24} {1,6} MB  first seen {2}  {3}" -f $d.Name, $mb, $d.FirstSeen.ToString('yyyy-MM-dd'), $refText)
+    }
+    Write-Host ("  total {0} MB; {1} unreferenced" -f $totalMB, $candidates.Count)
+    if ($candidates.Count -gt 0) {
+        Write-Host '  delete candidates (outside a cache: confirm before running):'
+        foreach ($d in $candidates) { Write-Host "    Remove-Item -LiteralPath '$($d.Path)' -Recurse -Force" }
+    }
+    exit 0
+}
 
 $state = Get-BuildCacheState -CacheDirs $CacheDir -MinFreeGB $MinFreeGB `
     -MaxEntries $MaxEntries -WarnFreeGB $WarnFreeGB
@@ -255,10 +297,17 @@ if ($tempState.Low -or -not $tempState.Redirected) {
 
 if ($Action -ne 'clear') {
     $scratch = @(Get-StaleScratchDir -Repo $Repo -CacheDirs $CacheDir)
+    $label = 'stale scratch dirs'
+    if ($Action -eq 'sweep') {
+        # The claim's line: only what is new since it was first seen (T1062).
+        $scratch = @(Update-ScratchDirSeen -Dirs $scratch -StatePath $scratchState -NewHours $ScratchNewHours |
+            Where-Object { $_.New })
+        $label = 'new scratch dirs'
+    }
     if ($scratch.Count -gt 0) {
         $names = ($scratch | Select-Object -First 6 | ForEach-Object { $_.Name }) -join ', '
         $more = if ($scratch.Count -gt 6) { ", +$($scratch.Count - 6) more" } else { '' }
-        Write-Host "  stale scratch dirs: $($scratch.Count) ($names$more) - left alone; delete by hand when done with them"
+        Write-Host "  ${label}: $($scratch.Count) ($names$more) - left alone; build-cache.ps1 scratch lists every leftover and what still names it"
     }
 }
 

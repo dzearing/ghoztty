@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-17T20:18:32-07:00",
-    "commit":  "8b910f339",
+    "generated":  "2026-10-17T20:30:16-07:00",
+    "commit":  "e712456ae",
     "uncommitted":  [
 
                     ],
@@ -990,7 +990,7 @@
                   "test/win32/bell-border.ps1":  "46652c74e867a0424e930baf04a336e6a44e79bb9ac4888800e0047e4616cb04",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/body-complete-audit.ps1":  "ad5462f3989f2efbd5f3447b4fa9dd0cf5d56d69a89d7730816c7ad2baf4fc4f",
-                  "test/win32/build-cache.ps1":  "60741332caadc542e2fa7d8a79c133558dda06f0e5598f92f4a5401ae9b3ed0c",
+                  "test/win32/build-cache.ps1":  "d5a3712a8f363ad099ea0ed85d4d76bd833516d4a4b0b832025319005538ccb0",
                   "test/win32/build-fresh-guard.ps1":  "0e567d9a72a4e5ff377b5c7d98281ddbfd5da0543d93e277cb99aeac351b09c2",
                   "test/win32/build-locked-artifact.ps1":  "e42a71b9730f428c28d7cc844a54d73d5730f696a9a3e315dc5cffaafe0869f5",
                   "test/win32/build-mode-guard.ps1":  "7673d5a305e97dea7e34586af8ffe74ae7e0ee9a140eab26a87f5bf03840deda",
