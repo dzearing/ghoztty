@@ -4,12 +4,15 @@
 # connection, prints the framed JSON request it receives, and replies with
 # a canned framed response. Run it in one shell, then in another:
 #
-#   .\ghoztty.exe +list            # against a ReleaseFast exe
+#   $env:GHOZTTY_PIPE_SUFFIX = '-fake-<pid it printed>'
+#   .\ghoztty.exe +list
 #   .\ghoztty.exe +close --target=x
 #
-# The exe decides the pipe name from its build config:
-#   ReleaseFast -> \\.\pipe\ghoztty-<username>          (default here)
-#   Debug       -> \\.\pipe\ghoztty-debug-<username>    (use -DebugPipe)
+# The pipe it binds:
+#   (no switch)  -> \\.\pipe\ghoztty-fake-<pid>-<username>  (private, T1119)
+#   -Suffix <s>  -> \\.\pipe\ghoztty<s>-<username>
+#   -DebugPipe   -> \\.\pipe\ghoztty-debug-<username>       (a Debug exe's own)
+# A name already bound fails with a SETUP sentence and exit 3.
 #
 # Framing (both directions): 4-byte big-endian length + UTF-8 JSON.
 #
@@ -41,15 +44,36 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# T1119: with neither switch the name used to be the RELEASE endpoint,
+# ghoztty-<user> - the pipe the user's installed Ghoztty owns. Run bare it
+# collided with their live terminal ("All pipe instances are busy", the T1094
+# sweep's crash), and on a box where that terminal was closed it would have
+# squatted on it, answering their CLI with a canned reply. A bare run now binds
+# a private per-process name; the real endpoints are reachable only by asking
+# for them (-DebugPipe, or -Suffix '' for the release name).
 $sfx = if ($PSBoundParameters.ContainsKey('Suffix')) { $Suffix }
        elseif ($DebugPipe) { '-debug' }
-       else { '' }
+       else { "-fake-$PID" }
 $name = "ghoztty$sfx-$env:USERNAME"
-$pipe = New-Object System.IO.Pipes.NamedPipeServerStream(
-    $name,
-    [System.IO.Pipes.PipeDirection]::InOut,
-    1  # maxNumberOfServerInstances
-)
+try {
+    $pipe = New-Object System.IO.Pipes.NamedPipeServerStream(
+        $name,
+        [System.IO.Pipes.PipeDirection]::InOut,
+        1  # maxNumberOfServerInstances
+    )
+} catch {
+    # The raw .NET text names neither the pipe nor what to do about it. Who
+    # holds it is not asked: finding out means connecting as a client, and the
+    # holder may be the user's live terminal.
+    $who = if ($sfx -eq '') { "the release endpoint - normally the user's installed Ghoztty" }
+           elseif ($sfx -eq '-debug') { 'the debug endpoint - normally a running zig-out Debug build' }
+           else { 'another process already bound this exact name' }
+    $why = $_.Exception.Message
+    if ($_.Exception.InnerException) { $why = $_.Exception.InnerException.Message }
+    $why = $why.Trim().TrimEnd('.')
+    [Console]::Error.WriteLine("SETUP: cannot bind \\.\pipe\$name ($who): $why. Pass a private -Suffix instead of a real endpoint.")
+    exit 3
+}
 
 Write-Host "listening on \\.\pipe\$name (one request, then exit)"
 $pipe.WaitForConnection()

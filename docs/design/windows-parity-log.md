@@ -37094,3 +37094,10 @@ moved to T1814.
 - **Validated.** msi-upgrade ALL PASS (37). The negative control `-V2ProductVer 26.7.1902` goes red on the old line. In the due set, ghoztty-cleanup and unwired-hook-audit are green. drag-perf is red on T1854's known line.
 - **Filed.** T2079: the fixtures exist only in lane A's `zig-out`, so any other checkout gets SETUP FAIL instead of a SKIP that names the rebuild recipe.
 - **Mac.** Nothing owed: Windows installer test.
+
+## 2026-10-18 — T1119: the fake IPC server no longer collides with the user's terminal, and the sweep no longer runs it
+
+- **Root cause.** Not a leaked earlier run. With no switches, `ipc-fake-server.ps1` bound the release endpoint `ghoztty-<user>`, the pipe the user's installed Ghoztty owns. Run bare by the T1094 full sweep, it hit their live terminal ("All pipe instances are busy"). On a box where that terminal was closed, it would instead have taken over the endpoint and answered their CLI with a canned reply.
+- **Fix, helper.** A bare run now binds a private `ghoztty-fake-<pid>-<user>`. A name already in use fails with a SETUP sentence naming which endpoint it is, and exits 3. The one caller (ipc-timeout.ps1) passes `-Suffix` and is unaffected (ALL PASS, 23).
+- **Fix, runner.** `suite-run.ps1` leaves out any script whose leading comment block declares `# verdict-audit:` (a helper with no verdict), names it in `list`, and refuses it by name in `-Order`. The first version matched the marker anywhere in the file and silently removed suite-run.ps1 itself, whose here-string fixture spells it. A12 now checks the real suite for exactly one helper. suite-run.ps1 ALL PASS (114).
+- **Mac.** Nothing owed: a Windows test helper and the Windows suite runner.

@@ -510,8 +510,10 @@ deliberately does not claim is a **computed** exit code (`exit ([int]($failures
 measures real codes on the wire instead, both shapes and both directions, with
 the unfixed shape as a negative control. Exemption: the same stated-intent
 `# verdict-audit: <reason>` marker, carried today only by `ipc-fake-server.ps1`,
-a helper process with nothing to score. Acceptance:
-`test\win32\verdict-exit-audit.ps1`, whose `-TeethCheck` plants a real violator
+a helper process with nothing to score. Since T1119 the same marker, in the
+file's leading comment block, is also what keeps `scripts\suite-run.ps1` from
+running a helper as a test (run bare, that one bound the user's live pipe).
+Acceptance: `test\win32\verdict-exit-audit.ps1`, whose `-TeethCheck` plants a real violator
 inside the swept directory and requires the sweep to find it.
 
 **Those exit codes only reach you if you do not pipe them away** (T982). The

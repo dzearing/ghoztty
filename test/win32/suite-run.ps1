@@ -12,7 +12,8 @@
 
   Sections:
     A. Enumeration - top-level only, gui/cli classification, lib\ and
-       artifacts\ never enumerated.
+       artifacts\ never enumerated, and a `# verdict-audit:` helper process
+       neither enumerated nor runnable by name (T1119).
     B. Scoring - the five verdict kinds, and the runner's own exit code.
     C. Timeout - a hanging script is killed and scored `stall`, and the suite
        CARRIES ON. One hang must never cost the other 240 scripts.
@@ -131,10 +132,25 @@ $null = "New-TestDesktop"
 "ALL PASS (3 assertions)"
 exit 0
 '@
+    # The marker spelled inside a STRING (verdict-exit-audit.ps1's fixtures do
+    # this) does not make a script a helper - A9 holds this one in the suite.
     Set-FixtureScript 'b-pass.ps1' @'
+$null = '# verdict-audit: spelled in a string, not a comment'
 "ALL PASS (7 assertions)"
 exit 0
 '@
+    # A helper process (T1119): carries the marker, asserts nothing, and - run
+    # bare - waits forever for a client. It must never be enumerated; if it
+    # were, section B would stall on it and count 7 rows.
+    # Written by hand rather than through Set-FixtureScript: the marker has to
+    # lead the file, ahead of the invocation-recording preamble. And it is
+    # concatenated, never spelled as one line here - a line in THIS file that
+    # opens with the marker is exactly what once took suite-run.ps1 itself out
+    # of the suite (A12 below holds that).
+    Set-Content -LiteralPath (Join-Path $FixTests 'h-fakeserver.ps1') -Encoding ASCII -Value (
+        ('#' + ' verdict-audit: a helper process, nothing to score') + "`n" +
+        "Add-Content -LiteralPath '$RunLog' -Value 'h-fakeserver.ps1'`n" +
+        "Start-Sleep -Seconds 90`n")
     Set-FixtureScript 'c-fail.ps1' @'
 "  FAIL something"
 "2 FAILURE(S) (5 passed)"
@@ -224,6 +240,22 @@ try {
     # supposed to be there - the check would have passed a real leak of the
     # artifacts directory and failed a correct run instead.
     Check 'A5 artifacts\ is not enumerated' ($r.Text -notmatch '(?m)^\s*\w+\s+thing\.ps1\s*$') ''
+
+    Check 'A7 a # verdict-audit: helper is not enumerated (T1119)' ($r.Text -notmatch '(?m)^\s*\w+\s+h-fakeserver\.ps1') $r.Text
+    Check 'A8 the list names the helper it left out' ($r.Text -match '1 helper\(s\) not run.*h-fakeserver\.ps1') $r.Text
+    Check 'A9 the marker inside a string keeps a script in the suite' ($r.Text -match '(?m)^\s*cli\s+b-pass\.ps1') $r.Text
+
+    $r = Invoke-Runner @('-Order', 'h-fakeserver.ps1', '-OutDir', (Join-Path $Fixture 'runA10'), '-TimeoutSec', '10')
+    Check 'A10 naming a helper in -Order refuses and says it is a helper' `
+        (($r.Exit -ne 0) -and ($r.Text -match 'helper process')) "exit $($r.Exit)"
+    Check 'A11 the refused helper never ran' ((Get-InvocationCount 'h-fakeserver.ps1') -eq 0) ''
+
+    # The real suite, not the fixture: the one true helper is left out, and the
+    # tests that spell the marker inside strings and here-strings stay in.
+    $realList = (& powershell -NoProfile -ExecutionPolicy Bypass -File $Runner -Repo $Repo list) -join "`n"
+    Check 'A12 in the real suite only ipc-fake-server.ps1 is a helper' `
+        ($realList -match '(?m)^1 helper\(s\) not run, no verdict to score: ipc-fake-server\.ps1\s*$') `
+        (@($realList -split "`n" | Select-String 'helper') -join ' | ')
 
     $r = Invoke-Runner @('list', '-Set', 'gui')
     Check 'A6 -Set gui selects only the window-driving script' `

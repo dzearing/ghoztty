@@ -230,13 +230,35 @@ function Resolve-ScriptTimeout {
     return $t
 }
 
+function Test-SuiteHelper {
+    param([string]$Text)
+    foreach ($line in ($Text -split "`r?`n")) {
+        $t = $line.Trim()
+        if ($t -eq '') { continue }
+        if (-not $t.StartsWith('#')) { return $false }
+        if ($t -match '^#\s*verdict-audit:') { return $true }
+    }
+    return $false
+}
+
 function Get-SuiteScript {
     param([string]$Root, [string]$SetName, [string[]]$Inc)
 
     $rows = @()
+    $script:SuiteHelpers = @()
     foreach ($f in (Get-ChildItem -LiteralPath $Root -Filter *.ps1 -File | Sort-Object Name)) {
         $text = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction SilentlyContinue
         if ($null -eq $text) { $text = '' }
+        # A helper process (T1119) carries `# verdict-audit:` - it asserts
+        # nothing, so it has no verdict to score, and run bare it binds an
+        # endpoint and waits for a client that never comes. ipc-fake-server.ps1
+        # is the one today: the T1094 sweep ran it as a test, it collided with
+        # the user's live pipe, and the row read as a crash. Read from the
+        # file's LEADING comment block only: a test that spells the marker in a
+        # string or a here-string fixture (verdict-exit-audit.ps1, this
+        # runner's own acceptance) is still a test - a whole-file match took
+        # suite-run.ps1 itself out of the suite.
+        if (Test-SuiteHelper -Text $text) { $script:SuiteHelpers += $f.Name; continue }
         # A GUI script is one that opens a test desktop. That is the property
         # that makes it slow, focus-sensitive and order-sensitive, and it is a
         # single call every such script must make (lib\TestDesktop.ps1).
@@ -297,6 +319,9 @@ function Sort-SuiteOrder {
         $key = $w
         if (-not $key.EndsWith('.ps1')) { $key = "$key.ps1" }
         if ($byName.ContainsKey($key)) { $out += $byName[$key] }
+        elseif (@($script:SuiteHelpers) -contains $key) {
+            throw "-Order names '$w', which is a helper process (# verdict-audit:), not an acceptance script - it has no verdict to run for."
+        }
         else { throw "-Order names '$w', which is not in the selected set (check -Set/-Include)." }
     }
     return @($out)
@@ -795,6 +820,8 @@ if ($Action -eq 'list') {
     ''
     "{0} scripts selected ({1} gui, {2} cli) of {3} in $TestRoot" -f `
         $rows.Count, $gui, ($rows.Count - $gui), (Get-ChildItem -LiteralPath $TestRoot -Filter *.ps1 -File).Count
+    $helpers = @($script:SuiteHelpers)
+    if ($helpers.Count -gt 0) { "{0} helper(s) not run, no verdict to score: {1}" -f $helpers.Count, ($helpers -join ', ') }
     exit 0
 }
 
