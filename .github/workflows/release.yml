@@ -233,82 +233,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DOWNLOAD_URL="https://github.com/dzearing/ghoztty/releases/download/v${VERSION}/${DMG_NAME}"
-          PUB_DATE=$(date -u '+%a, %d %b %Y %H:%M:%S %z')
-
           ED_SIGNATURE=$(echo "$SPARKLE_SIGN_OUTPUT" | grep -o 'sparkle:edSignature="[^"]*"' | cut -d'"' -f2)
-
           REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/dzearing/ghoztty.git"
-          git clone --branch gh-pages --single-branch "$REPO_URL" /tmp/gh-pages
-          cd /tmp/gh-pages
-
           CLIENT_NOTES="$GITHUB_WORKSPACE/release-notes/client/${VERSION}.json"
-          python3 - "$VERSION" "$DOWNLOAD_URL" "$ED_SIGNATURE" "$DMG_LENGTH" "$PUB_DATE" "$CLIENT_NOTES" <<'PYEOF'
-          import sys, os, xml.etree.ElementTree as ET
 
-          version, url, sig, length, pub_date, client_notes_path = sys.argv[1:7]
-
-          ns = {"sparkle": "http://www.andymatuschak.net/xml-namespaces/sparkle"}
-          ET.register_namespace("sparkle", ns["sparkle"])
-          ET.register_namespace("dc", "http://purl.org/dc/elements/1.1/")
-
-          tree = ET.parse("appcast.xml")
-          channel = tree.find("channel")
-
-          # Idempotent: a re-run (or a dispatch re-release) must REPLACE this
-          # version's entry, never append a second one. A rebuilt DMG has a new
-          # signature and length, so the newest write is the correct one.
-          for existing in channel.findall("item"):
-              v = existing.find("{%s}version" % ns["sparkle"])
-              if v is not None and (v.text or "").strip() == version:
-                  channel.remove(existing)
-
-          item = ET.SubElement(channel, "item")
-          ET.SubElement(item, "title").text = f"Version {version}"
-          ET.SubElement(item, "{%s}version" % ns["sparkle"]).text = version
-          ET.SubElement(item, "{%s}shortVersionString" % ns["sparkle"]).text = version
-          ET.SubElement(item, "pubDate").text = pub_date
-
-          if client_notes_path and os.path.isfile(client_notes_path):
-              with open(client_notes_path, "r", encoding="utf-8") as f:
-                  ET.SubElement(item, "description").text = f.read()
-
-          enclosure = ET.SubElement(item, "enclosure")
-          enclosure.set("url", url)
-          enclosure.set("type", "application/octet-stream")
-          enclosure.set("{%s}edSignature" % ns["sparkle"], sig)
-          enclosure.set("length", length)
-
-          ET.indent(tree, space="    ")
-          tree.write("appcast.xml", xml_declaration=True, encoding="utf-8")
-          PYEOF
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add appcast.xml
-
-          # A re-run whose appcast edit is byte-identical has nothing to
-          # commit, and `git commit` exits non-zero on that - which under
-          # bash -e would fail a release that is already fully published.
-          if git diff --cached --quiet; then
-            echo "Appcast already up to date for v${VERSION}"
-            exit 0
-          fi
-          git commit -m "Update appcast for v${VERSION}"
-
-          # release-windows.yml also writes index.html on this branch from the
-          # same tag push (T39), so this push has two concurrent writers.
-          # gh-pages also carries the website version bump, so a release can
-          # race a human push and lose on a non-fast-forward. Rebase and retry
-          # rather than failing the job after the release is already public.
-          for attempt in 1 2 3 4 5; do
-            if git push origin gh-pages; then
-              echo "Appcast pushed"
-              exit 0
-            fi
-            echo "::warning::gh-pages push rejected (attempt ${attempt}); rebasing"
-            git pull --rebase origin gh-pages || exit 1
-            sleep 5
-          done
-
-          echo "::error::Could not push the appcast to gh-pages"
-          exit 1
+          # The clone, the appcast edit, and the rebase-retry push live in a
+          # script (T1089) so test\win32\website-windows-download.ps1 section H
+          # can run them against a staged gh-pages collision -- the retry only
+          # executes here when this push loses to release-windows.yml's
+          # website push, which is no time to find out it is broken.
+          "$GITHUB_WORKSPACE/dist/website/publish-appcast.sh" \
+            "$REPO_URL" "$VERSION" "$DOWNLOAD_URL" "$ED_SIGNATURE" "$DMG_LENGTH" \
+            "$CLIENT_NOTES" /tmp/gh-pages

@@ -2160,6 +2160,8 @@ $GuardTable = @(
         Covers = @(
             'dist\website\publish-windows-links.sh',
             'dist\website\update-windows-links.py',
+            'dist\website\publish-appcast.sh',
+            'dist\website\update-appcast.py',
             'test\win32\website-windows-download.ps1'
         )
     },

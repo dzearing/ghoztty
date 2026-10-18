@@ -37024,3 +37024,9 @@ moved to T1814.
 - **Landed.** `test/win32/chooser-orphan-badge.ps1`: section 3 now names the displayed row it resumed from. A new section 4 reverses the persisted chooser sort (the `-debug` pref file, saved and restored around the run), opens a second orphan, and resumes it from its new row. It asserts the row differs from section 3's. Also fixed a stale filter handle after section 3's reopen: Escape was going to a dead window.
 - **Validated.** 3 runs ALL PASS (25): resumed from rows 2→0, 2→0, 2→1, which includes rows 0 and 1, where the original filing saw it fail. unwired-hook-audit and ghoztty-cleanup PASS. drag-perf red on T1854's known line.
 - **Mac.** Nothing owed: test-only, Windows harness.
+## 2026-10-18 — T1089: the Mac appcast push's rejected-push retry now runs in tests, not only in a release
+
+- **Still real at claim.** release.yml still carried the appcast clone/edit/push-with-retry inline in YAML. It is the other writer of the gh-pages race that T353 covered for the Windows half.
+- **Fix.** Extracted to `dist/website/publish-appcast.sh` (100755) + `dist/website/update-appcast.py`, with the logic carried over verbatim. release.yml now calls the script. One addition: an empty edSignature exits 2 instead of publishing an entry every installed Mac would reject.
+- **Validated.** `test\win32\website-windows-download.ps1` ALL PASS. New section H runs the script against bare repos with the website push staged as the rival. H4b/H4c: attempt 1 was rejected and attempt 2 landed, with both writes kept. Also covered: replace-on-re-release, bounded retries, no-`<channel>` failure, empty-signature refusal. D5/D5c: the inline loop is gone. Due harnesses green except drag-perf (red on T1854's known 2-pane line). checkout-guard green. Scoped harness floor PASS. All four zig lanes PASS.
+- **Mac.** T2072 (seat mac): confirm the extracted step on the macOS runner at the next `v*` release.

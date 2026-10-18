@@ -1,14 +1,18 @@
 {
     "guard":  "website-windows-links",
     "script":  "test/win32/website-windows-download.ps1",
-    "generated":  "2026-10-18T01:28:17-07:00",
-    "commit":  "b82e7fd55",
+    "generated":  "2026-10-18T01:49:28-07:00",
+    "commit":  "5a920fe9c",
     "uncommitted":  [
+                        "dist/website/publish-appcast.sh",
+                        "dist/website/update-appcast.py",
                         "test/win32/website-windows-download.ps1"
                     ],
     "files":  {
+                  "dist/website/publish-appcast.sh":  "378d74a4df63e88d3f5fc48a8807f0665f5d84af7ab40289996ae4c57e3e2bc0",
                   "dist/website/publish-windows-links.sh":  "41e424f4e850c82993b759d82c45b3556d8264b4fb95707d9672f8e4a74f97e4",
+                  "dist/website/update-appcast.py":  "9c9f6d97a27bcf01e1caf6ffb0cfc936faef336daff62735405ba348b8575fda",
                   "dist/website/update-windows-links.py":  "03573c2f74effb040242d4bd588b7b6a8d770267c98664a02392e6efa763615c",
-                  "test/win32/website-windows-download.ps1":  "24abd8b16bfe4ec7d6160d36f5f5074bae096cfca4457aeb6df399b08be1f306"
+                  "test/win32/website-windows-download.ps1":  "fa72c76b2a8a9ee3e7e6bf6e3a9e62d395c0344544f50d4dabdb4ae77c54444a"
               }
 }

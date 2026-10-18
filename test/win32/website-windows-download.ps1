@@ -40,6 +40,11 @@
 #      rival push staged so its rejected-push retry actually executes (T353).
 #      That loop is dead code on a normal release, so until this section the
 #      first execution of it would have been a release depending on it.
+#   H  the macOS half of the same branch: release.yml's appcast publish
+#      script, RUN the same way with the website push staged as the rival
+#      (T1089) -- entry written once and replaced on a re-release, the
+#      rejected-push retry, bounded retries, a feed with no <channel>, and an
+#      empty signature refused rather than shipped to every installed Mac.
 #
 # Read-only apart from a temp dir. Never launches the app, never publishes.
 #
@@ -71,11 +76,13 @@ $indexPath = Join-Path $Repo 'relay\deploy\ghpages\index.html'
 $cssPath   = Join-Path $Repo 'relay\deploy\ghpages\landing\styles.css'
 $pyPath    = Join-Path $Repo 'dist\website\update-windows-links.py'
 $pubPath   = Join-Path $Repo 'dist\website\publish-windows-links.sh'
+$appcastPath = Join-Path $Repo 'dist\website\publish-appcast.sh'
+$appcastPy   = Join-Path $Repo 'dist\website\update-appcast.py'
 $wfPath    = Join-Path $Repo '.github\workflows\release-windows.yml'
 $macWfPath = Join-Path $Repo '.github\workflows\release.yml'
 $sharedSh  = Join-Path $Repo 'dist\windows-installer\build-release-artifacts.sh'
 
-foreach ($p in @($indexPath, $cssPath, $pyPath, $pubPath, $wfPath, $macWfPath, $sharedSh)) {
+foreach ($p in @($indexPath, $cssPath, $pyPath, $pubPath, $appcastPath, $appcastPy, $wfPath, $macWfPath, $sharedSh)) {
     if (-not (Test-Path -LiteralPath $p)) {
         "FATAL: missing $p"
         "1 FAILURE(S)"
@@ -90,6 +97,7 @@ $wf     = Get-Content -LiteralPath $wfPath -Raw
 $macWf  = Get-Content -LiteralPath $macWfPath -Raw
 $shared = Get-Content -LiteralPath $sharedSh -Raw
 $pub    = Get-Content -LiteralPath $pubPath -Raw
+$appcastPub = Get-Content -LiteralPath $appcastPath -Raw
 
 "=== A. page shape ==="
 
@@ -343,10 +351,15 @@ Assert 'D3 the website step runs after the publish step' `
     ($iPublish -ge 0 -and $iWeb -gt $iPublish)
 Assert 'D4 windows gh-pages push retries on rejection' `
     ($pub -match 'git pull --rebase origin gh-pages')
-Assert 'D5 mac appcast push retries on rejection too' `
-    ($macWf -match 'git pull --rebase origin gh-pages')
+# T1089: the mac writer's retry lives in a script too, so section H can run it.
+Assert 'D5 mac appcast step publishes through its script' `
+    ($macWf -match 'dist/website/publish-appcast\.sh')
+Assert 'D5b mac appcast push retries on rejection too' `
+    ($appcastPub -match 'git pull --rebase origin gh-pages')
+Assert 'D5c and the inline YAML copy of that loop is gone' `
+    (-not ($macWf -match 'git pull --rebase origin gh-pages'))
 Assert 'D6 both writers target the gh-pages branch' `
-    (($pub -match 'clone --branch gh-pages') -and ($macWf -match 'clone --branch gh-pages'))
+    (($pub -match 'clone --branch gh-pages') -and ($appcastPub -match 'clone --branch gh-pages'))
 # The workflow invokes the script directly (not `bash script`), so a file that
 # lost its executable bit is a release that dies at the last step. git's index
 # mode is the one that travels to the runner; the working-tree bit on this box
@@ -356,6 +369,11 @@ Push-Location $Repo
 try { $pubMode = (& git ls-files -s -- 'dist/website/publish-windows-links.sh' 2>$null) } finally { Pop-Location }
 Assert 'D6b the publish script is executable in the index (100755)' `
     ("$pubMode" -match '^100755\s')
+$appcastMode = ''
+Push-Location $Repo
+try { $appcastMode = (& git ls-files -s -- 'dist/website/publish-appcast.sh' 2>$null) } finally { Pop-Location }
+Assert 'D6c the appcast publish script is executable in the index (100755)' `
+    ("$appcastMode" -match '^100755\s')
 
 # T577. The workflow was correct for two weeks and had still never run once,
 # because a workflow runs from the tree of the ref that triggered it and the
@@ -527,9 +545,9 @@ function New-Python3Shim([string]$WorkDir, [string]$Interp) {
 
 $bash = Get-BashPath
 if (-not $bash) {
-    Skip 'G1-G12 publish script behavior' 'no Git Bash on this box'
+    Skip 'G1-G8, H1-H9 publish script behavior' 'no Git Bash on this box'
 } elseif (-not $interp) {
-    Skip 'G1-G12 publish script behavior' 'no python 3 interpreter on PATH'
+    Skip 'G1-G8, H1-H9 publish script behavior' 'no python 3 interpreter on PATH'
 } else {
     $g = Join-Path $env:TEMP ('ghoztty-t353-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $g -Force | Out-Null
@@ -570,6 +588,28 @@ git remote add broken "$W/origin-broken.git"
 git push -q broken gh-pages
 cd "$W"
 git clone -q --branch gh-pages --single-branch "$W/origin.git" rival
+# Section H (T1089): a gh-pages whose appcast is a real Sparkle feed, one whose
+# appcast has no <channel>, and a rival clone to push the website from.
+for repo in origin-appcast origin-nochannel; do
+    git init -q --bare "$repo.git"
+    git init -q "seed-$repo"
+    cd "seed-$repo"
+    git checkout -q -b gh-pages
+    printf '<html>website base</html>\n' > index.html
+    if [ "$repo" = origin-appcast ]; then
+        printf '%s\n' "<?xml version='1.0' encoding='utf-8'?>" \
+            '<rss xmlns:sparkle="http://www.andymatuschak.net/xml-namespaces/sparkle" version="2.0">' \
+            '    <channel>' '        <title>Ghoztty</title>' '    </channel>' '</rss>' > appcast.xml
+    else
+        printf '<rss version="2.0"></rss>\n' > appcast.xml
+    fi
+    git add index.html appcast.xml
+    git commit -qm "base"
+    git remote add origin "$W/$repo.git"
+    git push -q origin gh-pages
+    cd "$W"
+done
+git clone -q --branch gh-pages --single-branch "$W/origin-appcast.git" rival-appcast
 echo SETUP-OK
 '@
         $hook = @'
@@ -585,10 +625,13 @@ fi
     # while the assertions below read as a broken retry.
     git -C "$RIVAL" fetch -q origin gh-pages
     git -C "$RIVAL" reset -q --hard FETCH_HEAD
-    printf '<rss>appcast %s</rss>\n' "$(date +%s)-$$" > "$RIVAL/appcast.xml"
-    git -C "$RIVAL" add appcast.xml
+    # Section G races the appcast against the website; section H the website
+    # against the appcast (RIVAL_FILE=index.html RIVAL_WORD=website).
+    F="${RIVAL_FILE:-appcast.xml}"
+    printf '<rss>%s %s</rss>\n' "${RIVAL_WORD:-appcast}" "$(date +%s)-$$" > "$RIVAL/$F"
+    git -C "$RIVAL" add "$F"
     git -C "$RIVAL" -c user.name=rival -c user.email=rival@example.invalid \
-        commit -qm "appcast push racing the website update"
+        commit -qm "rival gh-pages push ($F)"
     git -C "$RIVAL" push origin gh-pages
 } >> "$RIVAL_LOG" 2>&1
 echo "hook rc=$? at $(date +%s)" >> "$RIVAL_LOG"
@@ -692,11 +735,137 @@ exit 0
             $code6 = $LASTEXITCODE
             AssertEq 'G8 no arguments exits 2' 2 $code6
             Assert 'G8b and prints usage' ("$out6" -match 'usage: publish-windows-links\.sh')
+
+            # ============================================================
+            # H. The appcast half of the same branch (T1089). release.yml's
+            #    appcast push is the OTHER writer G races against; if its
+            #    retry is broken it loses to the website push, and installed
+            #    Macs stop seeing updates. Same fixture, roles reversed: the
+            #    rival pushes index.html, the script under test appcast.xml.
+            # ============================================================
+            "=== H. the appcast publish script, run ==="
+            $acU      = ConvertTo-MsysPath $appcastPath
+            $acOrigin = Join-Path $g 'origin-appcast.git'
+            $ncOrigin = Join-Path $g 'origin-nochannel.git'
+            $notesW   = Join-Path $g 'notes.json'
+            [IO.File]::WriteAllText($notesW, '{"notes":"t1089 client notes"}', (New-Object Text.UTF8Encoding $false))
+            $notesU   = ConvertTo-MsysPath $notesW
+            $env:APPCAST_PUSH_BACKOFF = '0'
+            $env:APPCAST_PUB_DATE = 'Sun, 18 Oct 2026 00:00:00 +0000'
+            $sparkleNs = 'http://www.andymatuschak.net/xml-namespaces/sparkle'
+
+            function Invoke-Appcast($originPath, $version, $sig, $clone, $notes) {
+                $url = "https://example.invalid/v$version/Ghoztty-$version-arm64.dmg"
+                $out = & $bash $acU $originPath $version $url $sig '12345' $notes "$gu/$clone" 2>&1
+                return [pscustomobject]@{ Out = ("$out"); Code = $LASTEXITCODE }
+            }
+            # Facts about one version's entries, as a string: the count, then the
+            # first entry's enclosure attributes and description. A string
+            # because a function's array return unrolls (PS5.1 trap).
+            function AppcastFacts($repo, $version) {
+                $text = GhPages $repo 'appcast.xml'
+                try { $x = [xml]$text } catch { return 'unparseable' }
+                $m = New-Object Xml.XmlNamespaceManager $x.NameTable
+                $m.AddNamespace('s', $sparkleNs)
+                $items = $x.SelectNodes("/rss/channel/item[s:version='$version']", $m)
+                if ($items.Count -eq 0) { return 'count=0' }
+                $e = $items.Item(0).SelectSingleNode('enclosure')
+                $d = $items.Item(0).SelectSingleNode('description')
+                return ('count={0} url={1} sig={2} length={3} desc={4}' -f $items.Count,
+                    $e.GetAttribute('url'), $e.GetAttribute('edSignature', $sparkleNs),
+                    $e.GetAttribute('length'), $(if ($d) { $d.InnerText } else { '' }))
+            }
+
+            # -- H1/H2: the ordinary path.
+            $h1 = Invoke-Appcast "$gu/origin-appcast.git" '9.9.9' 'SIG-ONE' 'ac1' $notesU
+            AssertEq 'H1 appcast publish exits 0 on an uncontended push' 0 $h1.Code
+            Assert 'H1b it says which attempt succeeded' ($h1.Out -match 'appcast pushed \(attempt 1\)')
+            $f1 = AppcastFacts $acOrigin '9.9.9'
+            Assert "H2 gh-pages appcast has exactly one 9.9.9 entry ($f1)" ($f1 -match '^count=1 ')
+            Assert 'H2b with the download url, signature and length it was given' `
+                ($f1 -match 'url=https://example\.invalid/v9\.9\.9/Ghoztty-9\.9\.9-arm64\.dmg sig=SIG-ONE length=12345 ')
+            Assert 'H2c and the client release notes as its description' ($f1 -match 't1089 client notes')
+            $acCount1 = CommitCount $acOrigin
+
+            # -- H3: same release, same date. Nothing to say is not a commit.
+            $h2 = Invoke-Appcast "$gu/origin-appcast.git" '9.9.9' 'SIG-ONE' 'ac2' $notesU
+            AssertEq 'H3 a byte-identical re-run exits 0' 0 $h2.Code
+            Assert 'H3b and says the appcast is already up to date' ($h2.Out -match 'already up to date')
+            AssertEq 'H3c and pushed nothing' $acCount1 (CommitCount $acOrigin)
+
+            # -- H3d: a re-release (new DMG, new signature) REPLACES the entry.
+            $env:APPCAST_PUB_DATE = 'Sun, 18 Oct 2026 01:00:00 +0000'
+            $h3 = Invoke-Appcast "$gu/origin-appcast.git" '9.9.9' 'SIG-TWO' 'ac3' $notesU
+            $f3 = AppcastFacts $acOrigin '9.9.9'
+            AssertEq 'H3d a re-release exits 0' 0 $h3.Code
+            Assert "H3e and leaves ONE 9.9.9 entry, carrying the new signature ($f3)" `
+                ($f3 -match '^count=1 .*sig=SIG-TWO ')
+
+            # -- H4: THE POINT. The website push lands between our clone and
+            #    our push; the retry must rebase and win, keeping both writes.
+            $env:GIT_TEMPLATE_DIR = "$gw/tmpl"
+            $env:RIVAL = "$gw/rival-appcast"
+            $env:RIVAL_MARKER = "$gw/collided-appcast.once"
+            $env:RIVAL_FILE = 'index.html'
+            $env:RIVAL_WORD = 'website'
+            $h4 = Invoke-Appcast "$gu/origin-appcast.git" '9.9.10' 'SIG-TEN' 'ac4' "$gu/no-notes.json"
+            Remove-Item Env:\GIT_TEMPLATE_DIR -ErrorAction SilentlyContinue
+            AssertEq 'H4 appcast publish still exits 0 when its push is rejected' 0 $h4.Code
+            Assert 'H4b the rejection was real (attempt 1 lost)' `
+                ($h4.Out -match 'push rejected \(attempt 1\)')
+            Assert 'H4c the rebase-retry then landed it' ($h4.Out -match 'appcast pushed \(attempt 2\)')
+            Assert 'H5 gh-pages appcast carries 9.9.10 after the retry' `
+                ((AppcastFacts $acOrigin '9.9.10') -match '^count=1 .*sig=SIG-TEN ')
+            Assert 'H5b and the earlier 9.9.9 entry is still there' `
+                ((AppcastFacts $acOrigin '9.9.9') -match '^count=1 ')
+            Assert 'H5c and the rival website push survived the retry' `
+                ((GhPages $acOrigin 'index.html') -match 'website \d')
+
+            # -- H6: retries are bounded, and losing every race is an error.
+            $env:GIT_TEMPLATE_DIR = "$gw/tmpl"
+            $env:RIVAL_ALWAYS = '1'
+            $env:APPCAST_PUSH_ATTEMPTS = '2'
+            $h5 = Invoke-Appcast "$gu/origin-appcast.git" '9.9.11' 'SIG-ELEVEN' 'ac5' "$gu/no-notes.json"
+            Remove-Item Env:\GIT_TEMPLATE_DIR -ErrorAction SilentlyContinue
+            Remove-Item Env:\RIVAL_ALWAYS -ErrorAction SilentlyContinue
+            Remove-Item Env:\APPCAST_PUSH_ATTEMPTS -ErrorAction SilentlyContinue
+            Assert 'H6 losing every race fails' ($h5.Code -ne 0)
+            Assert 'H6b and says so as a workflow error' `
+                ($h5.Out -match 'could not push the appcast to gh-pages after 2 attempts')
+            AssertEq 'H6c and no 9.9.11 entry reached the branch' 'count=0' (AppcastFacts $acOrigin '9.9.11')
+
+            # -- H7: an appcast the edit cannot place an entry in fails the
+            #    step rather than reporting success over an unchanged feed.
+            $h6 = Invoke-Appcast "$gu/origin-nochannel.git" '9.9.9' 'SIG-ONE' 'ac6' "$gu/no-notes.json"
+            Assert 'H7 an appcast with no <channel> fails the publish' ($h6.Code -ne 0)
+            Assert 'H7b and names the missing channel' ($h6.Out -match 'has no <channel>')
+            AssertEq 'H7c and nothing was committed to that branch' 1 (CommitCount $ncOrigin)
+
+            # -- H8: an EMPTY signature (a sign step that printed nothing) is
+            #    refused: Sparkle rejects an update whose signature does not
+            #    verify, so publishing it offers every Mac an uninstallable
+            #    update. PS5.1 drops an empty native argument, so a two-line
+            #    wrapper passes the empty string for real.
+            $wrap = Join-Path $g 'empty-sig.sh'
+            [IO.File]::WriteAllText($wrap, "#!/bin/sh`nexec `"`$1`" `"`$2`" 9.9.12 https://example.invalid/x.dmg `"`" 12345 `"`" `"`$3`"`n", (New-Object Text.UTF8Encoding $false))
+            $acCountBefore = CommitCount $acOrigin
+            $out7 = & $bash (ConvertTo-MsysPath $wrap) $acU "$gu/origin-appcast.git" "$gu/ac7" 2>&1
+            $code7 = $LASTEXITCODE
+            AssertEq 'H8 an empty signature exits 2' 2 $code7
+            Assert 'H8b and says why' ("$out7" -match 'no Sparkle edSignature')
+            AssertEq 'H8c and nothing was pushed' $acCountBefore (CommitCount $acOrigin)
+
+            # -- H9: called wrong is a usage error.
+            $out8 = & $bash $acU 2>&1
+            $code8 = $LASTEXITCODE
+            AssertEq 'H9 no arguments exits 2' 2 $code8
+            Assert 'H9b and prints usage' ("$out8" -match 'usage: publish-appcast\.sh')
         }
     } finally {
         $env:PATH = $savedPath
         foreach ($v in @('WEBSITE_PUSH_BACKOFF', 'WEBSITE_PUSH_ATTEMPTS', 'RIVAL', 'RIVAL_MARKER',
-                         'RIVAL_ALWAYS', 'RIVAL_LOG', 'GIT_TEMPLATE_DIR')) {
+                         'RIVAL_ALWAYS', 'RIVAL_LOG', 'GIT_TEMPLATE_DIR', 'RIVAL_FILE', 'RIVAL_WORD',
+                         'APPCAST_PUSH_BACKOFF', 'APPCAST_PUSH_ATTEMPTS', 'APPCAST_PUB_DATE')) {
             Remove-Item ("Env:\" + $v) -ErrorAction SilentlyContinue
         }
         Remove-Item -LiteralPath $g -Recurse -Force -ErrorAction SilentlyContinue
