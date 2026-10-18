@@ -49,6 +49,43 @@ function Assert($name, $cond) {
 }
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T1093: is the commit a binary baked in still the code the tree holds?
+#
+# This script used to demand that commit be HEAD, and went red on nearly every
+# turn: the loop builds, tests, and THEN commits, so by step 6 the exe honestly
+# reports HEAD's parent while its bytes are exactly what HEAD's sources produce
+# (lib\BuildFresh.ps1 records the same reasoning for choosing mtime over the
+# baked commit). HEAD-equality is the DELIVERY question - upgrade-staleness asks
+# it, and is right to. Here the question is whether the version surface tells
+# the truth about the build, so a commit passes when it is HEAD, or an ancestor
+# of HEAD from which no build input has changed since. Build inputs are the set
+# BuildFresh.ps1 scores: build.zig, build.zig.zon and src\ minus *.md and the
+# Linux frontend. Returns Ok plus a Reason a FAIL line can print.
+function Test-BakedCommitCurrent {
+    param([string]$Repo, [string]$Commit)
+    if ($Commit -notmatch '^[0-9a-f]{7,40}$') {
+        return [pscustomobject]@{ Ok = $false; Reason = "not a commit id: '$Commit'" }
+    }
+    $full = (git -C $Repo rev-parse --verify --quiet "$Commit^{commit}" 2>$null)
+    if (-not $full) {
+        return [pscustomobject]@{ Ok = $false; Reason = "$Commit is not a commit in $Repo" }
+    }
+    $head = (git -C $Repo rev-parse HEAD)
+    if ($full -eq $head) { return [pscustomobject]@{ Ok = $true; Reason = "$Commit is HEAD" } }
+    git -C $Repo merge-base --is-ancestor $full $head 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return [pscustomobject]@{ Ok = $false; Reason = "$Commit is not an ancestor of HEAD" }
+    }
+    $changed = @(git -C $Repo diff --name-only $full $head -- build.zig build.zig.zon src `
+        ':(exclude)src/**/*.md' ':(exclude)src/*.md' ':(exclude)src/apprt/gtk' 2>$null |
+        Where-Object { $_ })
+    if ($changed.Count -gt 0) {
+        return [pscustomobject]@{ Ok = $false
+            Reason = "$($changed.Count) build input(s) changed since $Commit, e.g. $($changed[0])" }
+    }
+    return [pscustomobject]@{ Ok = $true; Reason = "$Commit is an ancestor of HEAD and no build input changed since" }
+}
+
 # T248: one shared reset instead of a private copy — see lib\CleanSlate.ps1.
 # It kills the sibling agent too and drops the debug session-layout manifest,
 # so a pane from a previous run cannot be focused in place of the fixture.
@@ -75,14 +112,35 @@ Assert "window is NOT enumerable on the interactive desktop" (-not (Test-TestDes
 # because the app process's threads live there.
 & $Exe +new-window --target=vt 2>&1 | Out-Null
 Start-Sleep -Seconds 2
-$expectCommit = (git -C $Repo log --pretty=format:%h -n 1)
+"== 0: the 'is this commit current' oracle bites (T1093)"
+# Pure git, no app: prove the judge below can say no before trusting its yes.
+$lastSrc = (git -C $Repo log -1 --format=%H -- build.zig build.zig.zon src ':(exclude)src/**/*.md' ':(exclude)src/apprt/gtk')
+$headSha = (git -C $Repo rev-parse HEAD)
+Assert "T1093 HEAD is current" (Test-BakedCommitCurrent -Repo $Repo -Commit $headSha.Substring(0, 9)).Ok
+# The defect's own shape: a build baked at the last source commit, judged after
+# later commits that changed no source (tracker chores) - must be green.
+$r = Test-BakedCommitCurrent -Repo $Repo -Commit $lastSrc.Substring(0, 9)
+Assert "T1093 a bake at the last source commit is current after source-free commits ($($r.Reason))" $r.Ok
+# Planted mismatches: a bake from before a source change, and an id that is no commit.
+$r = Test-BakedCommitCurrent -Repo $Repo -Commit (git -C $Repo rev-parse "$lastSrc^").Substring(0, 9)
+Assert "T1093 a bake from before the last source change is NOT current ($($r.Reason))" (-not $r.Ok)
+Assert "T1093 a sha that names no commit is NOT current" `
+    (-not (Test-BakedCommitCurrent -Repo $Repo -Commit 'deadbeef0').Ok)
+Assert "T1093 a malformed commit is NOT current" `
+    (-not (Test-BakedCommitCurrent -Repo $Repo -Commit 'not-a-sha').Ok)
 
 "== 1: +version reports the running instance"
 cmd /c "`"$Exe`" +version > `"$tmp\version.txt`" 2>&1"
 Assert "exit 0" ($LASTEXITCODE -eq 0)
 $vtxt = Get-Content "$tmp\version.txt" -Raw
 Assert "Running Instance section" ($vtxt -match 'Running Instance')
-Assert "commit matches HEAD ($expectCommit)" ($vtxt -match "commit\s*:\s*$([regex]::Escape($expectCommit))")
+# T1093: the commit to hold every surface to is the one this binary says it was
+# built from - judged current against the tree rather than required to be HEAD.
+$expectCommit = if ($vtxt -match '(?m)^\s*-\s*commit:\s*([0-9a-f]{7,40})\s*\(this binary\)') { $Matches[1] } else { '' }
+$cur = Test-BakedCommitCurrent -Repo $Repo -Commit $expectCommit
+Assert "T1093 the binary's baked commit is the tree's code ($($cur.Reason))" $cur.Ok
+Assert "running app reports the same commit ($expectCommit)" `
+    ($expectCommit -and $vtxt -match "(?m)^\s*-\s*commit\s+:\s*$([regex]::Escape($expectCommit))\s*\(the running app\)")
 # T805: this document answers for TWO binaries, and until T805 only the RUNNING
 # one had a line labelled `commit` - so a reader grepping for the commit got the
 # other binary's, which was filed as a P1 about a bake that was correct (T773).

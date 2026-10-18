@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-18T02:13:48-07:00",
-    "commit":  "5a920fe9c",
+    "generated":  "2026-10-18T02:35:38-07:00",
+    "commit":  "7c4895153",
     "uncommitted":  [
-                        "test/win32/chooser-orphan-badge.ps1"
+                        "test/win32/ipc-version.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -200,7 +200,7 @@
                   "test/win32/ipc-target-exists-note.ps1":  "5d92714c75607c77a5882b5935bde14dbe26dbba54226b3a003648a3e9318dfc",
                   "test/win32/ipc-timeout.ps1":  "1cc28e2c148b1e65b8e4ec719f0cd1e22b936506a49c75581590da11692d5d30",
                   "test/win32/ipc-under-load.ps1":  "aaa4d805d59edc8a89c47cb5c60807c15be85de370c8cde3a034c684dfd043a1",
-                  "test/win32/ipc-version.ps1":  "09d5d1b7a53c70ebe20b8eb2a4e36f51d7c3ed8d5d542e61ba9101acfa34e145",
+                  "test/win32/ipc-version.ps1":  "a2af14e7a2a1e52da099d88a3116dd2c6e8661fe2d4b228590197fcb96cc260c",
                   "test/win32/ipc-when-idle.ps1":  "9f4f4e064df51079fdd4dd86dfb8afad9b4f639e43f91f7bd557f75dc5fb50d6",
                   "test/win32/isolation-meta.ps1":  "cb7688ef19b8663b15f80479ff8f220b0ddc09f83670420f6817cc3d85d38ef5",
                   "test/win32/job-escape-startup.ps1":  "5d14fe7f499bbbe6d87ed6d375d4d43abc8e22e2eed9e2e6a6c32c3de6dfc573",
@@ -475,7 +475,7 @@
                   "test/win32/viewer-worktree.ps1":  "b4e4b244e68d07d4525b768afdab49cd7273c46b95f7b99bee68b58303fbfcbb",
                   "test/win32/viewer-worktree-port.ps1":  "b991f340cf0f1f4a34fa3edab4305aad56e131ad7115a9e01417343306fe31e2",
                   "test/win32/vt-escape-scan.ps1":  "52f5f59c717c2d090c6d78f7594839a28011843fe58c08df59e4b1bf8fcff4ea",
-                  "test/win32/website-windows-download.ps1":  "24abd8b16bfe4ec7d6160d36f5f5074bae096cfca4457aeb6df399b08be1f306",
+                  "test/win32/website-windows-download.ps1":  "fa72c76b2a8a9ee3e7e6bf6e3a9e62d395c0344544f50d4dabdb4ae77c54444a",
                   "test/win32/whats-new.ps1":  "2dd7e75d9014532aa4be67f64269147a6245630877a8b1ff3b4e54660a7609d2",
                   "test/win32/whea-report.ps1":  "e4cbc0522661b29c95d827023f4f40b0168935dd852021435e2a930c4c00ad90",
                   "test/win32/wheel-scroll.ps1":  "5ddcfef5925d88800a7bfe738e3df7d75a0df62fe400243070fba6f78cc8a2a1",
