@@ -19,6 +19,10 @@
               without running anything. -Scripts narrows it; default is every
               top-level test\win32 script.
 
+  -List (with due or run) prints the queue in run order, each script's class
+  beside it, and exits 0 without checking the build or starting anything
+  (T1086). A red row's summary line names its log file.
+
   -Width 1 runs the same set strictly one at a time, from the real repo, with
   your environment - the serial baseline, for comparing verdicts.
 
@@ -65,6 +69,7 @@ param(
     [switch]$NoConfirm,
     [switch]$FailFast,
     [switch]$NoRebuild,
+    [switch]$List,
     [switch]$Json,
     [string]$Repo
 )
@@ -122,6 +127,18 @@ if ($Action -eq 'run') {
     if ($jobs.Count -eq 0) { "ACCEPTANCE DUE: nothing is due."; exit 0 }
 }
 
+# T1086: the queue, in run order, and nothing else - no build check, no launch.
+if ($List) {
+    "ACCEPTANCE LIST {0}: {1} script(s), in the order they would start" -f $Action, $jobs.Count
+    $n = 0
+    foreach ($j in $jobs) {
+        $n++
+        $c = Get-AcceptanceScriptClass -Path (Join-Path $Repo $j.Script)
+        "  {0,3}. {1,-10} {2}{3}" -f $n, $c.Class, $j.Script, $(if ($j.Args) { " $($j.Args)" } else { '' })
+    }
+    exit 0
+}
+
 # T1961: one freshness answer for the whole run, before anything launches.
 $fresh = Invoke-AcceptanceFreshPreflight -Repo $Repo -NoRebuild:$NoRebuild
 $fresh.Line
@@ -168,7 +185,12 @@ $counts = ($final | Group-Object Kind | Sort-Object Name | ForEach-Object { "$($
 if ($notRun.Count -gt 0) { $counts += " not-run=$($notRun.Count)" }
 "ACCEPTANCE {0}: {1} in {2:N0}s wall ({3:N0}s of script time, width {4}) - {5}" -f $(if ($red.Count -eq 0 -and $overlap.Count -eq 0 -and $notRun.Count -eq 0) { 'GREEN' } else { 'RED' }),
     $final.Count, $clock.Elapsed.TotalSeconds, $busy, $Width, $counts
-foreach ($r in $red) { "  RED {0} ({1}): {2}" -f $r.Name, $r.Kind, $r.Line }
+foreach ($r in $red) {
+    "  RED {0} ({1}): {2}" -f $r.Name, $r.Kind, $r.Line
+    # T1086: a stall's last line is rarely the story; name where the rest is.
+    $log = @($results | Where-Object { $_.Seq -eq $r.Seq -and $_.Log } | Select-Object -Last 1)
+    if ($log.Count) { "      log: {0}" -f $log[0].Log }
+}
 if ($notRun.Count -gt 0) { "  NOT RUN (-FailFast stopped at the first red): {0}" -f ($notRun -join ', ') }
 if ($overlap.Count -gt 0) { exit 3 }
 exit ([int]($red.Count -gt 0 -or $notRun.Count -gt 0))

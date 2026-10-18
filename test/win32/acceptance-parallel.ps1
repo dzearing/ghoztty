@@ -414,6 +414,18 @@ function Save-Record([string]$verdictKind, [int]$others) {
     Check 'F10 the runner names what -FailFast never ran, and a skipped script is not GREEN' `
         ($r.Code -eq 1 -and $r.Text -match 'NOT RUN \(-FailFast stopped at the first red\): probe\.ps1' -and $r.Text -match 'ACCEPTANCE RED' -and -not (Test-Path $marker)) `
         ("exit=$($r.Code) :: $($r.Text)")
+    Check 'F12 a red row names its log file, and the file is there' `
+        ($r.Text -match '(?m)^\s+log: (.+red[^\r\n]*)$' -and (Test-Path -LiteralPath $Matches[1].Trim())) ("text=$($r.Text)")
+
+    # T1086: -List is the queue and nothing else. Planted stale build: a list
+    # that checked the build would refuse (exit 4); one that ran would make the
+    # probe's marker.
+    Set-FixtureAge $true
+    $r = Invoke-Runner "run -Scripts 'red.ps1,probe.ps1' -List"
+    Set-FixtureAge $false
+    Check 'F13 -List prints the queue in order and exits 0 without checking the build or starting a script' `
+        ($r.Code -eq 0 -and $r.Text -match 'ACCEPTANCE LIST run: 2 script' -and $r.Text -match '(?s)1\. \S+\s+test\\win32\\red\.ps1.*2\. \S+\s+test\\win32\\probe\.ps1' -and
+        $r.Text -notmatch 'BUILD ' -and -not (Test-Path $marker)) ("exit=$($r.Code) probeRan=$(Test-Path $marker) :: $($r.Text)")
 
     # Most specific harness first: the changed feature's own row before the sweeps.
     $oj = ConvertTo-Json -Depth 4 -InputObject @(

@@ -36997,3 +36997,10 @@ moved to T1814.
 - **Landed.** `Assert-Fill` in `test/win32/split-dim.ps1` and `split-dim-viewer.ps1`. An empty `$fill` now fails as `PROBE DID NOT RUN`, kept apart from `want X, got Y`. The old `got ''` message sent both T1084 and T1283 after the wrong cause.
 - **Validated.** split-dim ALL PASS (29) x2, split-dim-viewer ALL PASS (46), `-NegativeControl` 1 FAILED on the inverted colour. All three `Assert-Fill` branches were exercised from the scripts' own ASTs. Due harnesses green except drag-perf (the known T1854). Scoped harness floor PASS. No zig source touched.
 - **Mac.** Nothing owed: test-only, Windows harnesses.
+
+## 2026-10-18 — T1086 (lane b): the due acceptance queue can be listed without running it, and a red row names its log
+
+- **Mostly already fixed.** The card asked for one command that drains the guard-due acceptance list, with a timeout per script and one verdict line each. T1960's `acceptance-parallel.ps1 due` is exactly that, and T2010 proves a hung or killed script is scored while its neighbour carries on.
+- **What was left, now added.** `-List` (with `due` or `run`) prints the queue in run order with each script's class, and exits 0 without a build check or a launch. A red row's summary line is followed by `log: <path>`. These are F12 and F13 in `test\win32\acceptance-parallel.ps1`.
+- **Validated.** acceptance-parallel ALL PASS (73). The live `due` drained 6 rows: 5 PASS, including harness-floor (29 audits). drag-perf is red for T1854's known reason (every pane count shows the 2-pane sample), and its row named its log as designed.
+- **Mac.** Nothing owed: a Windows test-runner script only.

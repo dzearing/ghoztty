@@ -1,15 +1,13 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-17T23:47:00-07:00",
-    "commit":  "13544c3e0",
+    "generated":  "2026-10-18T01:01:49-07:00",
+    "commit":  "b06bf26e2",
     "uncommitted":  [
-                        "scripts/daily-publish.ps1",
-                        "scripts/guard-due.ps1",
-                        "scripts/verify-release-assets.ps1"
+                        "scripts/acceptance-parallel.ps1"
                     ],
     "files":  {
-                  "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
+                  "scripts/acceptance-parallel.ps1":  "de0387b596e8e31885fa64f769bc9c784b10f9acd938b785c17855ac6ccaac81",
                   "scripts/agent-stamp-inputs.ps1":  "0763da8ff3ca2fee6baf1225486039bae3f38e141fe85e51baffa3cf537d7b61",
                   "scripts/blur-backdrop-probe.ps1":  "161435ffccf4a2e759d1f24887ced73c4c7c44da9d473a24eccbd977dc4cc38f",
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
