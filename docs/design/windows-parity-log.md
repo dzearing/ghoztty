@@ -36923,3 +36923,12 @@ moved to T1814.
 - **Inventory.** There are 19 leftovers. `zig-out-prof` is still named by `profile-latency.ps1` (T1383). The other 18 (4.8 GB) are named by nothing. Deleting them is the user's call, filed as T2066 (blocked on that yes).
 - **Validated.** Section I of `test/win32/build-cache.ps1`: ALL PASS (120 with T1061's section H merged in), and the negative control goes red on I4. I16 caught an empty-array-to-$null unroll on the first build, and `unroll-count-audit` caught a Mandatory parameter that refused an empty list. Both are fixed. `floor-lane-parallel`, `unroll-count`, `argv-hazard`, `unwired-hook` and `ghoztty-cleanup` are green. `drag-perf` is red only on T1854's filed defect.
 - **Mac.** Nothing owed: Windows loop tooling.
+
+## 2026-10-17 — T1066 (lane b): a TUI still running across an app restart is now proven to keep its mouse
+
+- **Still real.** T1067's M1b armed the mouse in a pane that had ALREADY been restored. Nothing covered the case T1055's fix was a trade for: a program that keeps running while only the app restarts. After the restart its mouse comes back only through the agent's attach repaint.
+- **Landed.** New section R of `test/win32/session-snapshot-reattach.ps1`. A raw-read, VT-input child arms the mouse family and waits. The app is killed and relaunched, the pane re-attaches on the delta path, and a posted click reaches that same child as `E[<35;37;13M`. Also added a unit pin in `src/remote/agent/grid_snapshot.zig`: the attach snapshot restates the live child's input modes.
+- **Teeth.** With the agent's repaint told to drop input modes, only R4 fails and the unit test fails too. Reverted, both pass again.
+- **Harness fix.** Section M's child left the console in raw VT-input mode, so the shell read later mouse bytes and send-keys' paste markers as typed text. The child now drains its input and restores the mode on exit, as a real TUI does.
+- **Validated.** session-snapshot-reattach ALL PASS (39); floor `-Lane all` and `-Lane harness` PASS; ipc-p1/p2/p3 ALL PASS. drag-perf is red, the known T1854 defect.
+- **Mac.** Nothing owed: a Windows acceptance arm plus a unit test in the shared agent.

@@ -29,6 +29,10 @@
 #      agreement WORKS while the program lives), and the snapshot the app
 #      records carries none of those "keep sending me reports" modes (so the
 #      agreement DIES with it), while still describing the picture.
+#   R. LIVE-TUI half (T1066) - a mouse-driven child still running when ONLY the
+#      app is killed gets its mouse back after the relaunch: a click at the
+#      restored pane reaches that same child as an SGR report, which only the
+#      agent's attach repaint (restating the live modes) can make true.
 #
 # The log line is the oracle because the two paths are indistinguishable from
 # outside: both end with a pane full of the right text. `-NegativeControl`
@@ -497,6 +501,7 @@ public static class GhozttyMouseArm {
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetConsoleMode(IntPtr h, uint m);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool ReadFile(IntPtr h, byte[] b, uint n, out uint r, IntPtr o);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool WriteFile(IntPtr h, byte[] b, uint n, out uint w, IntPtr o);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool FlushConsoleInputBuffer(IntPtr h);
 
     const int STD_IN = -10;
     const int STD_OUT = -11;
@@ -549,6 +554,14 @@ public static class GhozttyMouseArm {
         t.Join(waitMs);
         string s;
         lock (got) { s = got.ToString(); }
+        // Hand the console back the way a real TUI does on exit (T1066): the
+        // input mode is per-CONSOLE, so left raw + VT-input the shell after us
+        // reads the click's trailing press/release and every bracketed-paste
+        // marker as typed text, and the next command R sends never runs. Drain
+        // first, so reports already queued in VT form do not outlive the mode.
+        Thread.Sleep(1500);
+        FlushConsoleInputBuffer(hin);
+        SetConsoleMode(hin, mi);
         return s.Replace("\u001b", "E");
     }
 }
@@ -635,6 +648,107 @@ Assert "M3 the snapshot arms no input-reporting mode (found: $($armedFound -join
 # rather than a dead program's leftover. So it must SURVIVE.
 Assert "M4 the snapshot still serializes non-input modes (?9001h survives)" (
     $null -ne $decodedM -and $decodedM.Contains("$esc[?9001h"))
+
+# ============================================================================
+Say "== R: a TUI still running when the app restarts keeps its mouse (T1066)"
+# ============================================================================
+# M proves the mouse works for a TUI armed in an ALREADY-restored pane, and M3
+# proves the app's own snapshot forgets the arming. Together those leave the
+# case the T1055 fix was a trade for: a mouse-driven program that is STILL
+# RUNNING across the restart. On a delta re-attach the client paints its
+# snapshot (no input modes, by M3) and then drops every input-reporting mode
+# (`termio.Remote.input_mode_reset`); the only thing that gives the live
+# program its mouse back is the agent's attach repaint, which restates the
+# modes its emulator saw the child arm (`agent/grid_snapshot.zig`). Nothing
+# watched that happen. So: arm a TUI, leave it in its raw read, kill ONLY the
+# app, relaunch, and post a pointer at the restored pane. The report has to
+# reach the SAME child, which has been waiting since before the restart.
+#
+# Teeth (measured 2026-10-17): with `.input_modes = false` added to the agent's
+# snapshot extras, R4 goes RED with the child reporting nothing; with the code
+# as it stands it scores an SGR report.
+$liveArmMarker = "MOUSELIVE$($PID)XYZ"
+$liveArmPs = Join-Path $tmp 'arm-live.ps1'
+$liveArmCmd = Join-Path $tmp 'arm-live.cmd'
+[System.IO.File]::WriteAllText(
+    $liveArmPs,
+    ("Add-Type -TypeDefinition ([System.IO.File]::ReadAllText('$armCs'))`r`n" +
+     "`$r = [GhozttyMouseArm]::Arm('$liveArmMarker', 150000)`r`n" +
+     "Write-Host (`"T1066GOT[`" + `$r + `"]`")`r`n"),
+    [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllText(
+    $liveArmCmd,
+    "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"$liveArmPs`"`r`n",
+    [System.Text.Encoding]::ASCII)
+
+Run-Cli "+send-keys --target=$paneC $liveArmCmd Enter" "$tmp\arm-live-send.txt" 12 | Out-Null
+$liveArmOk = $false
+$deadline = (Get-Date).AddSeconds(45)
+while ((Get-Date) -lt $deadline) {
+    Run-Cli "+read --name=$paneC --lines=200" "$tmp\read-arm-live.txt" 10 | Out-Null
+    if (((Out-Text "$tmp\read-arm-live.txt") -replace '\s', '') -match $liveArmMarker) { $liveArmOk = $true; break }
+    Start-Sleep -Milliseconds 600
+}
+Assert "R1 a mouse-driven child is armed and waiting in the pane" $liveArmOk
+
+# Provoke a capture that post-dates the arming, so the relaunch below restores
+# on the DELTA path - the one that resets input modes and depends on the
+# agent's repaint to bring them back.
+Run-Cli "+rename --target=$paneC --title=t1066-live" "$tmp\ren4.txt" 12 | Out-Null
+$livePat = $liveArmMarker
+$mR = Wait-Manifest $tmp {
+    param($m)
+    $l = First-Snapshot-Leaf $m
+    $null -ne $l -and (Snapshot-Text (Decode-Snapshot $l.screen_snapshot)) -match $livePat
+} 35
+$leafR = First-Snapshot-Leaf $mR
+Assert "R1b the app recorded a snapshot of the armed pane before the restart" (
+    $null -ne $leafR -and
+    (Snapshot-Text (Decode-Snapshot $leafR.screen_snapshot)) -match $liveArmMarker)
+
+Stop-AppOnly
+$agentIdsR = @(Alive-Ids (Wait-AliveCount $tmp 'r-agent' 1 18))
+Assert "R2 the agent kept the session (and the waiting child) alive across the app kill" (
+    $agentIdsR.Count -eq 1 -and $agentIdsR[0] -eq $sid)
+
+$logR = Join-Path $root 'app-r.err'
+# persistence: on (default) - the restore IS the subject.
+$relaunchedR = Start-OnTestDesktop -Exe $Exe -StdErr $logR
+$hitR = Wait-LogMatch $logR "attach: session=$sid offset=(\d+) snapshot=(\d+)" 40
+$deltaR = ($null -ne $hitR -and [uint64]$hitR.Groups[1].Value -gt 0 -and [uint64]$hitR.Groups[2].Value -gt 0)
+Assert "R3 the restart re-attached on the delta path (the one that resets input modes)" $deltaR
+
+$paneR = Wait-FirstPaneId $tmp 30
+$liveSeen = ''
+$topR = Wait-TestWindow -ProcessId $relaunchedR.Pid -TimeoutMs 15000
+$surfaceR = if ($topR -ne [IntPtr]::Zero) {
+    Get-TestChildWindow -Window $topR -Class 'GhozttyTerminal'
+} else { [IntPtr]::Zero }
+if ($surfaceR -eq [IntPtr]::Zero -or $null -eq $paneR) {
+    Assert "R4 a click in the restored pane reaches the still-running child as an SGR report" $false
+    Say "  DIAG: no restored surface/pane (top=$topR surface=$surfaceR pane=$paneR)"
+} else {
+    # Let the attach repaint land before pointing at the pane: the report is
+    # encoded from the client terminal's modes at the moment of the event.
+    Start-Sleep -Milliseconds 1500
+    $rc = Get-TestWindowRect -Window $surfaceR
+    $cx = [int](($rc.Left + $rc.Right) / 2)
+    $cy = [int](($rc.Top + $rc.Bottom) / 2)
+    [void](Send-TestMouse -Window $topR -Target $surfaceR -X $cx -Y $cy -Action move)
+    Start-Sleep -Milliseconds 300
+    [void](Send-TestMouse -Window $topR -Target $surfaceR -X $cx -Y $cy -Action click)
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        Run-Cli "+read --name=$paneR --lines=200" "$tmp\read-live-sgr.txt" 10 | Out-Null
+        $flat = (Out-Text "$tmp\read-live-sgr.txt") -replace '\s', ''
+        if ($flat -match 'T1066GOT\[([^\]]*)\]') { $liveSeen = $Matches[1]; break }
+        Start-Sleep -Milliseconds 600
+    }
+    Assert "R4 a click in the restored pane reaches the still-running child as an SGR report (got: $liveSeen)" (
+        $liveSeen -match 'E\[<\d+;\d+;\d+[Mm]')
+}
+Assert "R5 the relaunched app has no window on the interactive desktop" `
+    (-not (Test-TestDesktopLeak -ProcessId $relaunchedR.Pid))
 
 if ($script:failures -gt 0) {
     Say "== DIAG: sid=$sid pane=$pane offsetA=$offsetA offsetFinal=$offsetFinal"

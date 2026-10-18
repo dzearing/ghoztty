@@ -392,6 +392,28 @@ test "GridEmulator: primary-screen snapshot clears then repaints the visible tex
     try testing.expect(std.mem.indexOf(u8, snap, "?1049h") == null);
 }
 
+// T1066: the client drops every input-reporting mode before this repaint lands
+// (`termio.Remote.input_mode_reset`, T1055), so this repaint is the ONLY thing
+// that gives a still-running TUI its mouse back after a re-attach. If it stopped
+// restating the modes the live child armed, the pane would come back deaf to the
+// pointer with nothing else to notice.
+test "GridEmulator: the attach snapshot restates the live child's input-reporting modes" {
+    const alloc = testing.allocator;
+    const emu = try GridEmulator.create(alloc, 24, 80);
+    defer emu.destroy();
+
+    emu.feed("\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[?1004h\x1b[?2004h");
+    emu.feed("tui frame");
+
+    const snap = try emu.snapshotAlloc(alloc, .{});
+    defer alloc.free(snap);
+
+    for ([_][]const u8{ "\x1b[?1003h", "\x1b[?1006h", "\x1b[?1004h", "\x1b[?2004h" }) |seq| {
+        try testing.expect(std.mem.indexOf(u8, snap, seq) != null);
+    }
+    try testing.expect(std.mem.indexOf(u8, snap, "tui frame") != null);
+}
+
 test "GridEmulator: alt-screen snapshot re-enters alt and repaints its content" {
     const alloc = testing.allocator;
     const emu = try GridEmulator.create(alloc, 24, 80);

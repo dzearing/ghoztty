@@ -1,10 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-17T11:12:10-07:00",
-    "commit":  "6afaf4e35",
+    "generated":  "2026-10-17T20:57:38-07:00",
+    "commit":  "6c57075ee",
     "uncommitted":  [
-
+                        "src/remote/agent/grid_snapshot.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -684,7 +684,7 @@
                   "src/remote/agent/descendants.zig":  "bbd319ec821cb683fbaddfd9b76f4bc20c32d44b6efb5369aa25e6341142319b",
                   "src/remote/agent/enroll.zig":  "ebec2f4106c8aef3fd7fe9457bdb334cbb5a650bc9a0947365971e7472942919",
                   "src/remote/agent/foreground.zig":  "82275d0b6662ba646b4df91534b666f21eaaee6de7f111b85545f96391597388",
-                  "src/remote/agent/grid_snapshot.zig":  "5574a849d16a8326b6e7b0de01d8a18e645db9ee4de3233e435a11b1fb784f3e",
+                  "src/remote/agent/grid_snapshot.zig":  "e7caba791587deea23d070e0584a4be830edcd27f0b3bbb36f6abba6e32351f5",
                   "src/remote/agent/handoff.zig":  "cc825bbd604abab575e3d2a0d1589e43b3de2b38ce96848563d773b2c0057716",
                   "src/remote/agent/holder_adopt.zig":  "364d11b359dad4497047e51922c728a816e34c9aa24e15e198927ab4acba261b",
                   "src/remote/agent/keepalive.zig":  "178584c3f9dfd67a8b00076c2ef4147631495461fec17fad8cd0a45d6cb9cb4e",

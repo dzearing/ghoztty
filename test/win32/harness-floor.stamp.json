@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-17T20:41:43-07:00",
-    "commit":  "e712456ae",
+    "generated":  "2026-10-17T21:06:41-07:00",
+    "commit":  "6c57075ee",
     "uncommitted":  [
-                        "test/win32/build-cache.ps1"
+                        "test/win32/session-snapshot-reattach.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -52,7 +52,7 @@
                   "test/win32/bell-border.ps1":  "46652c74e867a0424e930baf04a336e6a44e79bb9ac4888800e0047e4616cb04",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/body-complete-audit.ps1":  "ad5462f3989f2efbd5f3447b4fa9dd0cf5d56d69a89d7730816c7ad2baf4fc4f",
-                  "test/win32/build-cache.ps1":  "d5a3712a8f363ad099ea0ed85d4d76bd833516d4a4b0b832025319005538ccb0",
+                  "test/win32/build-cache.ps1":  "60741332caadc542e2fa7d8a79c133558dda06f0e5598f92f4a5401ae9b3ed0c",
                   "test/win32/build-fresh-guard.ps1":  "0e567d9a72a4e5ff377b5c7d98281ddbfd5da0543d93e277cb99aeac351b09c2",
                   "test/win32/build-locked-artifact.ps1":  "e42a71b9730f428c28d7cc844a54d73d5730f696a9a3e315dc5cffaafe0869f5",
                   "test/win32/build-mode-guard.ps1":  "7673d5a305e97dea7e34586af8ffe74ae7e0ee9a140eab26a87f5bf03840deda",
@@ -391,7 +391,7 @@
                   "test/win32/session-resume-offset.ps1":  "801d7a280b290b75edee978b12ae4fbe0b32e0e5d019ce25f1a3bc24a5d2c865",
                   "test/win32/sessions-agent-build.ps1":  "dece3962aa9ead6958aacd2fdef71048d5fd3fcc3798c1aac534a4d4f27950a0",
                   "test/win32/session-shell-exit.ps1":  "3d60d7703bb364ea19de403a9c101e68d7ea5a6909d185970b897e35e71fb032",
-                  "test/win32/session-snapshot-reattach.ps1":  "f78fdcfd7eab2a54540c6f1bb6cee9775cca9a16607ecfaa681877878038e507",
+                  "test/win32/session-snapshot-reattach.ps1":  "043c6d5bb7fc9c5f2f5f83eed7348fd14585c0c5755552fc0d04064d7d34665e",
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",
                   "test/win32/share-machine.ps1":  "02b0600437871b235bdf8c4a4733a6558ae689060ae8a5d6821353df36437960",
