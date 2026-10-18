@@ -37037,3 +37037,9 @@ moved to T1814.
 - **Fix.** New `Test-BakedCommitCurrent` in the script. A commit passes when it is HEAD, or an ancestor of HEAD with no build input changed since. Build inputs are BuildFresh.ps1's set: build.zig, build.zig.zon, src minus *.md and gtk. The commit every surface is held to now comes from the binary's own `(this binary)` line. The running-app line, `+list --json` build.commit and the T1205 arm must all match it. Kept local to the script, its only caller. The HEAD-equality question stays with upgrade-staleness, where it belongs.
 - **Validated.** ipc-version ALL PASS (60), live on the exact defect shape. Section 0 plants a bake from before the last source change, a non-commit sha and a malformed id, and all three are refused. Due harnesses: unwired-hook and ghoztty-cleanup PASS; drag-perf red on T1854's known line. Scoped harness floor PASS. Zig lanes not run: no zig source touched.
 - **Mac.** Nothing owed: test-only, Windows harness.
+
+## 2026-10-18 — T1101: the split-dim colour probe was already fixed; closed as a duplicate of T1084
+
+- **Already fixed at claim.** The empty reading was the capture, as triaged, and T1283 (76da6337f) repaired it. T1084 (dee68db96) then landed this task's other goal on the same two scripts: an empty probe now fails as `PROBE DID NOT RUN`, not as a colour mismatch.
+- **Validated.** Re-run at HEAD c1a81e47b through `acceptance-parallel.ps1 run`: split-dim.ps1 ALL PASS (29), split-dim-viewer.ps1 ALL PASS (46). The overlay paints the right fill, so no product defect. No code changed.
+- **Mac.** Nothing owed: tracker-only close.
