@@ -1,16 +1,16 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-18T01:19:40-07:00",
-    "commit":  "b06bf26e2",
+    "generated":  "2026-10-18T01:32:10-07:00",
+    "commit":  "c0d560465",
     "uncommitted":  [
-                        "test/win32/acceptance-parallel.ps1"
+                        "test/win32/orphan-notify.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/lib/HarnessFloor.ps1":  "bb51b591f55a32caf8b830081a812a99307ba0cc6e22dc197a4dec092e000b81",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
-                  "test/win32/acceptance-parallel.ps1":  "e581876681ce1ed8a6c4076bc409384d20af4e8a9386d18971412c17c396baba",
+                  "test/win32/acceptance-parallel.ps1":  "fd632509e2ed3eb4bef5489abdfc8ea28051a2ea48c37f7f51430e5b95c760da",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
@@ -298,7 +298,7 @@
                   "test/win32/notification-click-real.ps1":  "f656c41eba944964fef9920dd64f078380023105e3d05a066571f97f9c9526ba",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
                   "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
-                  "test/win32/orphan-notify.ps1":  "6f276f00e7f0d26a2149b293d9f8c013c50f6ff6f4703808bc6319e0ff3e7f4d",
+                  "test/win32/orphan-notify.ps1":  "a8c7962850f4bdf5c8c5f8c09b20930b57e88264dedfa13a3bd47e69aaf2bf55",
                   "test/win32/overlay-zorder.ps1":  "62d995250f699e0b28745c9045f9ab8fd57b33e1b92b8802cf9f6a4dcc72003b",
                   "test/win32/palette-close-crash.ps1":  "a22d78896b8a333e0dec14c230101606f0c13b48dbf1bb7ff7b79a44e2e63707",
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
@@ -400,8 +400,8 @@
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
                   "test/win32/soak.ps1":  "d3fd1ac5975a290fe0b6796fcbb06601da6b05d359a75aeaaffe8f357f7ad53f",
                   "test/win32/soak-daemon.ps1":  "266cee53040004b1a1c4189de4a94d25521563339cda9927632decdc1006b1ac",
-                  "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
-                  "test/win32/split-dim-viewer.ps1":  "3775cecc0d93488b88311d24f75f63fb3e14bd0458d4c04fda886c4ae37cccbb",
+                  "test/win32/split-dim.ps1":  "5026870ee86ebcc4ec7ec2a7f1672961a9d8ff5187488f8c17ecbce489f20d68",
+                  "test/win32/split-dim-viewer.ps1":  "4f689aed21e8ba0c7f02669bfc1658944b723de07fa713daf81c1acedbe5ed05",
                   "test/win32/split-divider.ps1":  "f1f51018b1cefad778db1e4cbcac79c99227be6adf6325418d8ae0d8d93b8fd7",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",

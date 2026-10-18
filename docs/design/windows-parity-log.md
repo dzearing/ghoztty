@@ -37004,3 +37004,9 @@ moved to T1814.
 - **What was left, now added.** `-List` (with `due` or `run`) prints the queue in run order with each script's class, and exits 0 without a build check or a launch. A red row's summary line is followed by `log: <path>`. These are F12 and F13 in `test\win32\acceptance-parallel.ps1`.
 - **Validated.** acceptance-parallel ALL PASS (73). The live `due` drained 6 rows: 5 PASS, including harness-floor (29 audits). drag-perf is red for T1854's known reason (every pane count shows the 2-pane sample), and its row named its log as designed.
 - **Mac.** Nothing owed: a Windows test-runner script only.
+## 2026-10-18 — T1087: the orphan-notify resume check now says what the agent reported when the attach never lands
+
+- **Mostly already fixed.** T1107 (2d652e4c0) had already replaced the fixed 3s sample with a polled wait that reports the latency. It also replaced the 400ms pre-Return sleep with the chooser cursor-log walk.
+- **Landed.** `test/win32/orphan-notify.ps1`: on a timeout both attach assertions now name the agent's last answer (`Format-AttachState`: no row / attached / alive / unattached_since). A new `-NegativeControl` withholds the Return, so the attach never happens, and the run must go red. It never stamps.
+- **Validated.** ALL PASS (13) standalone, and ALL PASS (13) run serially right after chooser-resume and chooser-orphan-badge (the original red's condition). The attach landed in 21ms. `-NegativeControl` 2 FAILURE(S), both naming `attached=False ... unattached_since=<ms>`. ghoztty-cleanup and unwired-hook-audit PASS. drag-perf red on T1854's known line. Scoped harness floor PASS and stamped. All four zig lanes PASS.
+- **Mac.** Nothing owed: test-only, Windows harness.

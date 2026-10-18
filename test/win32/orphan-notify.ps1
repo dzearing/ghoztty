@@ -29,9 +29,14 @@
 #   powershell -NoProfile -File test\win32\orphan-notify.ps1
 #
 # Only touches ghoztty processes running from this repo's zig-out.
+#
+# -NegativeControl never presses Return in section 4, so the attach the poll
+# waits on never happens: the run MUST score red on the two attach assertions,
+# and their message must name what the agent reported (T1087). It never stamps.
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
-    [string]$ClientExe = 'D:\git\ghoztty\zig-out\bin\remote-test-client.exe'
+    [string]$ClientExe = 'D:\git\ghoztty\zig-out\bin\remote-test-client.exe',
+    [switch]$NegativeControl
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -156,6 +161,16 @@ function Wait-Attached([string]$id, [int]$timeoutMs = 20000) {
     return @{ Row = $row; ElapsedMs = [int]$sw.ElapsedMilliseconds }
 }
 
+# What the agent last said about the session, for the assertion message: a row
+# still reporting attached=false with its clock running is a resume that never
+# attached, which is a different defect from the session being gone (T1087).
+function Format-AttachState($row) {
+    if ($row.Count -eq 0) { return 'agent lists NO session with that id' }
+    if ($row.Count -gt 1) { return "agent lists $($row.Count) sessions with that id" }
+    $since = if ($null -eq $row[0].unattached_since) { 'null' } else { "$($row[0].unattached_since)" }
+    return "agent reported attached=$($row[0].attached) alive=$($row[0].alive) unattached_since=$since"
+}
+
 function Wait-NotifyLine($path, [int]$after, $timeoutMs) {
     $waited = 0
     while ($waited -lt $timeoutMs) {
@@ -253,13 +268,22 @@ try {
     Assert ($landed -eq $loose[0].id) "the roster cursor parks on the orphan ($landed of $($rendered.Count) rendered)"
     if ($landed -ne $loose[0].id) { Write-Host 'SETUP FAIL: cursor never reached the orphan'; exit 1 }
 
-    Send-TestKeys -Window $chooser -Target $filter -Key 'Return' | Out-Null
-
-    $attach = Wait-Attached $loose[0].id
+    if ($NegativeControl) {
+        Write-Host '     (NEGATIVE CONTROL: Return withheld - the attach assertions below MUST fail)'
+        $attach = Wait-Attached $loose[0].id 4000
+    } else {
+        Send-TestKeys -Window $chooser -Target $filter -Key 'Return' | Out-Null
+        $attach = Wait-Attached $loose[0].id
+    }
     $row = $attach.Row
-    Write-Host "     (attach landed after $($attach.ElapsedMs) ms)"
-    Assert ($row.Count -eq 1 -and $row[0].attached) 'the agent reports the resumed session ATTACHED'
-    Assert ($row.Count -eq 1 -and $null -eq $row[0].unattached_since) 'the attach reset unattached_since to null'
+    $state = Format-AttachState $row
+    if ($row.Count -eq 1 -and $row[0].attached) {
+        Write-Host "     (attach landed after $($attach.ElapsedMs) ms)"
+    } else {
+        Write-Host "     (no attach after $($attach.ElapsedMs) ms: $state)"
+    }
+    Assert ($row.Count -eq 1 -and $row[0].attached) "the agent reports the resumed session ATTACHED ($state)"
+    Assert ($row.Count -eq 1 -and $null -eq $row[0].unattached_since) "the attach reset unattached_since to null ($state)"
 
     Complete-TestBody
 } finally {
@@ -270,7 +294,7 @@ try {
 
 # A clean green run stamps the covered files (T783); a red run leaves the
 # stamp alone on purpose - red must stay due.
-if ($script:fail -eq 0) {
+if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard orphan-notify -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
