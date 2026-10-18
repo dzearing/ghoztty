@@ -36968,3 +36968,5 @@ moved to T1814.
 - **What landed.** A new `scripts/githooks/post-commit` says NOT PUSHED, with the push command, right after a bare `git commit` leaves the branch ahead of origin. `pre-commit` now refuses the next commit while that one is still local, and names it. Commits made through `git-commit-guard.ps1` (lock key), a rebase (detached HEAD), a branch with no upstream and a merge being concluded are never blocked. `GHOZTTY_ALLOW_UNPUSHED=1` is the hatch for an amend or no network, and it says it was taken.
 - **Validated.** `go-loop-guard.ps1` ALL PASS (463), new arms W33a-W33h including a no-hooks negative control (W33d). No zig source touched, so the zig lanes were not re-run. The scoped harness floor ran for the test edit.
 - **Mac.** Same hooks dir, same `install`; nothing extra owed.
+
+- 2026-10-18 T1077: measured the doubled download (ghoztty.com = 19.9 MB of the 45.6 MB portable zip); rejected a lean CLI .com and a single binary that relies on a Windows 11 24H2-only setting; split the recommended fix (create the .com at install time) into T2071. No code changed.
