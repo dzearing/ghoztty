@@ -3,6 +3,10 @@
 #
 #   powershell -NoProfile -File test\win32\ship-workflow.ps1
 #
+# @parallel-unsafe - A10 asserts `git status` of the repo is unchanged across a
+# readiness run, so a neighbouring worker writing a guard stamp turns it red
+# (2026-10-17, T1060's due sweep: red beside three workers, green alone).
+#
 # Non-interactive. Launches no Ghoztty and touches no user state: the subjects
 # are two git/gh-driving scripts, so the lifecycle half runs entirely inside a
 # throwaway repo pair under $env:TEMP, and the readiness half only READS this
@@ -58,6 +62,7 @@ function Say($m) { Write-Host $m }
 
 $Readiness = Join-Path $Repo 'scripts\ship-readiness.ps1'
 $Feature = Join-Path $Repo 'scripts\ship-feature.ps1'
+$Review = Join-Path $Repo 'scripts\pr-review.ps1'
 $Doc = Join-Path $Repo 'docs\design\windows-parity-ship-workflow.md'
 $GoMd = Join-Path $Repo 'go.md'
 
@@ -289,7 +294,7 @@ try {
     # SUCCEEDS against the wrong repository, so there is no error to catch - by
     # the time anything is observable, a pull request exists on somebody else's
     # project.
-    $familyScripts = @($Readiness, $Feature) | Where-Object { Test-Path $_ }
+    $familyScripts = @($Readiness, $Feature, $Review) | Where-Object { Test-Path $_ }
     $bareGh = @()
     foreach ($f in $familyScripts) {
         $lineNo = 0
@@ -319,16 +324,19 @@ try {
     # The fork's own name must be a default somewhere, not a value every caller
     # is expected to remember and type.
     $forkDefaulted = @($familyScripts | Where-Object { (Get-Content $_ -Raw) -match "ForkRepo\s*=\s*'dzearing/ghoztty'" })
-    Assert 'C2 the fork is the default -ForkRepo in both scripts' ($forkDefaulted.Count -eq $familyScripts.Count) `
+    Assert 'C2 the fork is the default -ForkRepo in every family script' ($forkDefaulted.Count -eq $familyScripts.Count) `
         "defaulted in $($forkDefaulted.Count) of $($familyScripts.Count)"
 
     # And the funnel is single. `--repo` on every call site is only as good as
     # the number of call sites somebody has to remember to write it on; one
     # funnel makes the NEXT call site inherit the guard instead of needing it.
+    foreach ($funnelScript in @($Feature, $Review)) {
+    if (-not (Test-Path $funnelScript)) { continue }
+    $funnelName = [System.IO.Path]::GetFileNameWithoutExtension($funnelScript)
     $ghSites = @()
     $inHelp2 = $false
     $lineNo2 = 0
-    foreach ($line in (Get-Content $Feature)) {
+    foreach ($line in (Get-Content $funnelScript)) {
         $lineNo2++
         if ($line -match '^\s*<#') { $inHelp2 = $true }
         if ($inHelp2) {
@@ -338,8 +346,9 @@ try {
         if ($line -match '^\s*#') { continue }
         if ($line -match '&\s*gh\b') { $ghSites += "$lineNo2" }
     }
-    Assert 'C3 gh is invoked from exactly one place in ship-feature' ($ghSites.Count -eq 1) `
+    Assert "C3 gh is invoked from exactly one place in $funnelName" ($ghSites.Count -eq 1) `
         "invocation lines: $($ghSites -join ',')"
+    }
 
     # =====================================================================
     Say ''
@@ -369,6 +378,157 @@ try {
         Assert 'D4 go.md reaches the readiness gate' ($goText -match 'ship-readiness\.ps1')
         Assert 'D5 go.md reaches the feature lifecycle' ($goText -match 'ship-feature\.ps1')
         Assert 'D6 go.md links the workflow doc' ($goText -match 'windows-parity-ship-workflow\.md')
+    }
+    if (Test-Path $Doc) {
+        $docText2 = Get-Content $Doc -Raw
+        Assert 'D7 the doc carries the review checklist markers pr-review prompt reads' `
+            ($docText2 -match '<!-- review-checklist:begin -->' -and $docText2 -match '<!-- review-checklist:end -->')
+    }
+
+    # =====================================================================
+    Say ''
+    Say 'E - the adversarial review gate catches what it exists to catch (T1060)'
+    # =====================================================================
+
+    # The teeth-check for the reviewer itself: a sandbox repo with one PR that
+    # carries every defect the gate names, planted on purpose, and one clean PR
+    # that must pass without invented findings. A rule that does not fire on
+    # its own planted defect is a rule that cannot fire.
+    if (-not (Test-Path $Review)) {
+        Skip 'E (all)' 'scripts\pr-review.ps1 missing'
+    }
+    else {
+        $rvOrigin = Join-Path $sandbox 'review-origin.git'
+        $rvDir = Join-Path $sandbox 'review'
+        New-Item -ItemType Directory -Path $sandbox -Force | Out-Null
+        & git init --bare -b main $rvOrigin *> $null
+        & git clone $rvOrigin $rvDir *> $null
+        & git -C $rvDir config user.email 'test@example.com' *> $null
+        & git -C $rvDir config user.name 'Review Gate Test' *> $null
+        function Write-Rv([string]$Rel, [string]$Text) {
+            $p = Join-Path $rvDir $Rel
+            New-Item -ItemType Directory -Path (Split-Path $p -Parent) -Force | Out-Null
+            [System.IO.File]::WriteAllText($p, $Text, (New-Object System.Text.UTF8Encoding($false)))
+        }
+        function Commit-Rv([string]$Msg) {
+            & git -C $rvDir add -A *> $null
+            & git -C $rvDir commit -q -m $Msg *> $null
+            return (Invoke-GitIn $rvDir @('rev-parse', 'HEAD')).Text.Trim()
+        }
+        # The base: a shared library helper, a frontend file, and the real
+        # workflow doc (prompt reads its checklist from the repo it reviews).
+        Write-Rv 'scripts/lib/Shared.ps1' "function Get-SharedThing {`n    param([string]`$x)`n    return `$x`n}`n"
+        Write-Rv 'src/apprt/win32/base.zig' "pub fn parseKeyValue(s: []const u8) []const u8 {`n    return s;`n}`n"
+        Write-Rv 'docs/design/windows-parity-ship-workflow.md' (Get-Content $Doc -Raw)
+        $rvBase = Commit-Rv 'base'
+        & git -C $rvDir push -q -u origin main *> $null
+
+        # --- the planted-defect PR ------------------------------------------
+        & git -C $rvDir checkout -q -b bad *> $null
+        Write-Rv 'docs/design/windows-parity-tasks/T9001.md' ("---`nid: T9001`nseat: `"win`"`ntags: [`"feature`"]`n---`n`n# T9001`n`n" +
+            "## Validation criteria`n`n- [x] it works`n- [x] the overlay draws: ``test\win32\overlay.ps1`` ALL PASS (12)`n")
+        Write-Rv 'scripts/tool.ps1' "function Get-SharedThing {`n    return 1`n}`n"
+        Write-Rv 'src/apprt/win32/bad.zig' ("fn parseKeyValue(s: []const u8) []const u8 {`n    return s;`n}`n`n" +
+            "test `"looks like a test`" {`n    _ = parseKeyValue(`"a`");`n}`n")
+        Write-Rv 'test/win32/bad.ps1' "Assert 'always' `$true`nAssert `"also always`" `$true`n"
+        $rvBad = Commit-Rv 'a windows-only feature with every planted defect'
+
+        $e1 = Invoke-Script $Review @('check', '-Repo', $rvDir, '-Base', $rvBase, '-Head', $rvBad, '-Json')
+        $e1p = $null
+        try { $e1p = $e1.Text | ConvertFrom-Json } catch { $e1p = $null }
+        $keys = if ($e1p) { @($e1p.findings | ForEach-Object { $_.Key }) } else { @() }
+        Assert 'E1 check exits 1 over the planted PR' ($e1.Code -eq 1) "exit $($e1.Code): $($e1.Text)"
+        Assert 'E2 the unevidenced tick is caught, the evidenced one is not' `
+            (@($keys | Where-Object { $_ -like 'unproven-tick:*T9001.md:L11' }).Count -eq 1 -and @($keys | Where-Object { $_ -like 'unproven-tick:*' }).Count -eq 1) `
+            "keys: $($keys -join ', ')"
+        Assert 'E3 the one-platform feature is caught' (@($keys | Where-Object { $_ -like 'one-platform:*' }).Count -eq 1) "keys: $($keys -join ', ')"
+        Assert 'E4 the duplicated PowerShell helper is caught' ($keys -contains 'duplicate-helper:scripts/tool.ps1:Get-SharedThing') "keys: $($keys -join ', ')"
+        Assert 'E5 the duplicated zig helper is caught' ($keys -contains 'duplicate-helper:src/apprt/win32/bad.zig:parseKeyValue') "keys: $($keys -join ', ')"
+        Assert 'E6 the zig test that cannot fail is caught' ($keys -contains 'toothless-test:src/apprt/win32/bad.zig:looks like a test') "keys: $($keys -join ', ')"
+        Assert 'E7 the harness whose asserts are all $true is caught' ($keys -contains 'toothless-test:test/win32/bad.ps1') "keys: $($keys -join ', ')"
+
+        # A pass cannot be recorded over that, and the refusal names the keys.
+        $e8 = Invoke-Script $Review @('record', '-Repo', $rvDir, '-Base', $rvBase, '-Head', $rvBad, '-Verdict', 'pass', '-Summary', 'lgtm')
+        Assert 'E8 record refuses a pass over unanswered findings' ($e8.Code -eq 1 -and $e8.Text -match 'REFUSED' -and $e8.Text -match 'one-platform') `
+            "exit $($e8.Code): $($e8.Text)"
+        $e9 = Invoke-Script $Review @('gate', '-Repo', $rvDir, '-Head', $rvBad)
+        Assert 'E9 gate is shut with no review recorded' ($e9.Code -eq 1 -and $e9.Text -match 'REVIEW MISSING') "exit $($e9.Code): $($e9.Text)"
+
+        $e10 = Invoke-Script $Review @('prompt', '-Repo', $rvDir, '-Base', $rvBase, '-Head', $rvBad)
+        Assert 'E10 the brief carries the doc checklist and every finding' `
+            ($e10.Code -eq 0 -and $e10.Text -match 'Default to NOT PROVEN' -and $e10.Text -match 'duplicate-helper:scripts/tool.ps1:Get-SharedThing' -and $e10.Text -match 'VERDICT: FAIL') `
+            "exit $($e10.Code)"
+
+        $e11 = Invoke-Script $Review @('record', '-Repo', $rvDir, '-Base', $rvBase, '-Head', $rvBad, '-Verdict', 'fail', '-Summary', 'five planted defects')
+        $e11g = Invoke-Script $Review @('gate', '-Repo', $rvDir, '-Head', $rvBad)
+        Assert 'E11 a recorded fail keeps the gate shut' ($e11.Code -eq 0 -and $e11g.Code -eq 1 -and $e11g.Text -match 'REVIEW FAILED') `
+            "record $($e11.Code) / gate $($e11g.Code): $($e11g.Text)"
+
+        # --- untested code --------------------------------------------------
+        & git -C $rvDir checkout -q main *> $null
+        & git -C $rvDir checkout -q -b untested *> $null
+        Write-Rv 'scripts/other.ps1' "Write-Host 'changed behaviour'`n"
+        $rvUntested = Commit-Rv 'code with no test'
+        $e12 = Invoke-Script $Review @('check', '-Repo', $rvDir, '-Base', $rvBase, '-Head', $rvUntested)
+        Assert 'E12 code changed with no test is caught' ($e12.Code -eq 1 -and $e12.Text -match '\[untested:scripts/other.ps1\]') "exit $($e12.Code): $($e12.Text)"
+
+        # A waiver is the recorded answer: it opens the gate, and it is IN the record.
+        $e13 = Invoke-Script $Review @('record', '-Repo', $rvDir, '-Base', $rvBase, '-Head', $rvUntested, '-Verdict', 'pass', '-Summary', 'ok',
+            '-Waive', 'untested:scripts/other.ps1=a log line only')
+        $e13g = Invoke-Script $Review @('gate', '-Repo', $rvDir, '-Head', $rvUntested)
+        $ledger = Join-Path $rvDir ".git\ghoztty-review\$rvUntested.json"
+        $ledgerText = if (Test-Path $ledger) { Get-Content $ledger -Raw } else { '' }
+        Assert 'E13 a waived finding allows a pass and the gate opens' ($e13.Code -eq 0 -and $e13g.Code -eq 0 -and $e13g.Text -match 'REVIEW PASS') `
+            "record $($e13.Code): $($e13.Text) / gate $($e13g.Code): $($e13g.Text)"
+        Assert 'E14 the waiver is written into the verdict' ($ledgerText -match 'a log line only') "ledger: $ledgerText"
+        $e15 = Invoke-Script $Review @('record', '-Repo', $rvDir, '-Base', $rvBase, '-Head', $rvUntested, '-Verdict', 'pass', '-Summary', 'ok',
+            '-Waive', 'untested:scripts/nope.ps1=invented')
+        Assert 'E15 a waiver for a finding that is not reported is refused' ($e15.Code -eq 1) "exit $($e15.Code): $($e15.Text)"
+
+        # A push after the review: the verdict was for the older commit.
+        Write-Rv 'scripts/other.ps1' "Write-Host 'changed again after review'`n"
+        $rvLater = Commit-Rv 'after the review'
+        $e16 = Invoke-Script $Review @('gate', '-Repo', $rvDir, '-Head', $rvLater)
+        Assert 'E16 a review of an older commit is STALE, not a pass' ($e16.Code -eq 1 -and $e16.Text -match 'REVIEW STALE' -and $e16.Text -match $rvUntested.Substring(0, 9)) `
+            "exit $($e16.Code): $($e16.Text)"
+
+        # --- the clean PR: no invented findings -----------------------------
+        & git -C $rvDir checkout -q main *> $null
+        & git -C $rvDir checkout -q -b clean *> $null
+        Write-Rv 'docs/design/windows-parity-tasks/T9002.md' ("---`nid: T9002`nseat: `"win`"`ntags: [`"feature`"]`n---`n`n# T9002 - the banner fades, as it does on the Mac`n`n" +
+            "## Validation criteria`n`n- [x] the fade runs: ``test\win32\banner.ps1`` section C, ALL PASS (9)`n")
+        Write-Rv 'src/apprt/win32/fade.zig' ("const std = @import(`"std`");`n`nfn fadeStep(a: u8) u8 {`n    return a -| 16;`n}`n`n" +
+            "test `"fade steps down`" {`n    try std.testing.expectEqual(@as(u8, 4), fadeStep(20));`n}`n")
+        $rvClean = Commit-Rv 'the banner fades'
+        $e17 = Invoke-Script $Review @('check', '-Repo', $rvDir, '-Base', $rvBase, '-Head', $rvClean)
+        Assert 'E17 a clean PR passes check with no invented findings' ($e17.Code -eq 0 -and $e17.Text -match 'REVIEW CHECK CLEAN') "exit $($e17.Code): $($e17.Text)"
+
+        # --- the merge verb runs the gate -----------------------------------
+        $mgArgs = @('-Repo', $rvDir, '-ForkRepo', 'nobody/not-a-repo')
+        $e18n = Invoke-Script $Feature (@('new', '-Slug', 'gated') + $mgArgs + @('-NoFetch'))
+        $gatedDir = Join-Path "$rvDir-wt" 'gated'
+        if ($e18n.Code -ne 0 -or -not (Test-Path $gatedDir)) {
+            Assert 'E18 merge sandbox worktree created' $false "exit $($e18n.Code): $($e18n.Text)"
+        }
+        else {
+            [System.IO.File]::WriteAllText((Join-Path $gatedDir 'notes.md'), "gated work`n")
+            & git -C $gatedDir add -A *> $null
+            & git -C $gatedDir commit -q -m 'gated work' *> $null
+            & git -C $gatedDir push -q -u origin users/dzearing/gated *> $null
+            $e18 = Invoke-Script $Feature (@('merge', '-Slug', 'gated') + $mgArgs)
+            Assert 'E18 merge refuses with no review of the head' ($e18.Code -eq 1 -and $e18.Text -match 'REVIEW MISSING' -and $e18.Text -match 'REFUSED') `
+                "exit $($e18.Code): $($e18.Text)"
+            $e19 = Invoke-Script $Feature (@('merge', '-Slug', 'gated', '-Override') + $mgArgs)
+            Assert 'E19 -Override without -Reason is refused' ($e19.Code -eq 1 -and $e19.Text -match 'needs -Reason') "exit $($e19.Code): $($e19.Text)"
+            $e20r = Invoke-Script $Review @('record', '-Repo', $gatedDir, '-Base', 'origin/main', '-Head', 'HEAD', '-Verdict', 'pass', '-Summary', 'refuted nothing')
+            $e20 = Invoke-Script $Feature (@('merge', '-Slug', 'gated') + $mgArgs)
+            # The gate opens; the merge then stops at the PR lookup because gh is
+            # pointed at a repository that does not exist - nothing leaves the box.
+            Assert 'E20 a review recorded from the worktree opens the merge gate' `
+                ($e20r.Code -eq 0 -and $e20.Text -match 'REVIEW PASS' -and $e20.Text -match 'no pull request found') `
+                "record $($e20r.Code): $($e20r.Text) / merge $($e20.Code): $($e20.Text)"
+            & git -C $rvDir worktree remove --force $gatedDir *> $null
+        }
     }
 }
 catch {

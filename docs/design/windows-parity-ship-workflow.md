@@ -170,7 +170,67 @@ The turn shape in `go.md` changes in exactly three places:
   PR, not a separate commit on the trunk.
 - **Merging** is its own act, gated by the adversarial review (T1060) and
   reported in the digest (T1059). A turn does not merge its own PR without that
-  review having run.
+  review having run — `ship-feature.ps1 merge` refuses until it has.
+
+## The adversarial review (T1060)
+
+User directive, 2026-08-21: every PR gets a review whose job is to **refute**
+it — accuracy, CLAUDE.md compliance, quality and DRY design, and tests that can
+fail. The person who wrote the change is the worst judge of it, so the reviewer
+is never the turn that wrote the code: it is a fresh subagent handed the brief
+below, with no stake in the merge.
+
+```
+# 1. mechanical refutation over the PR's diff (exit 1 = findings)
+powershell -NoProfile -File scripts\pr-review.ps1 check -Base origin/main -Head HEAD
+
+# 2. the brief for the independent reviewer: this checklist + the findings + the range
+powershell -NoProfile -File scripts\pr-review.ps1 prompt -Base origin/main -Head HEAD
+
+# 3. record what the reviewer concluded, keyed on the exact head; posted on the PR
+powershell -NoProfile -File scripts\pr-review.ps1 record -Head HEAD -Verdict pass `
+    -Summary "..." -Pr 12 [-Waive '<key>=<why it is a false positive>']
+
+# 4. the merge, which runs the gate itself
+powershell -NoProfile -File scripts\ship-feature.ps1 merge -Slug banner-fade
+```
+
+How it holds:
+
+- **A pass cannot be recorded over an unanswered finding.** Each mechanical
+  finding is fixed (it stops being reported) or waived with a one-sentence
+  argument, and the waiver is written into the verdict and the PR comment.
+- **The verdict is for one commit.** A push after the review makes it stale;
+  `gate` says `REVIEW STALE` and names the commit that was reviewed.
+- **Overriding is explicit.** `merge -Override -Reason "<why>"` records an
+  `override` verdict with the reason, in the ledger and on the PR.
+- The ledger lives under the repository's git common dir (`ghoztty-review\`),
+  so a review recorded from a feature worktree is the one the gate reads.
+
+The checklist the reviewer works — `pr-review.ps1 prompt` prints exactly the
+text between these markers, so the gate and this document cannot drift apart:
+
+<!-- review-checklist:begin -->
+1. **Accuracy.** Every claim in the PR description, the commit messages and the
+   task file is backed by evidence you can re-run or read. A ticked validation
+   criterion is unproven until its text names how it was verified and that
+   check actually says so. Re-run at least one claimed-green check yourself.
+2. **CLAUDE.md compliance.** Platform symmetry: a feature lands on both macOS
+   and Windows, or the other seat's task is filed in the same change. Nothing
+   touches the user's installed Ghoztty; Windows builds are `-Doptimize=Debug`
+   with the cache on the repo drive. The app<->agent wire protocol evolves
+   additively. Code flows from Ghostty into Ghoztty, never back.
+3. **Quality and DRY.** No second implementation of something that already
+   exists: before accepting a new helper, search the shared libraries
+   (`scripts\lib`, `test\win32\lib`, `src/`) for one that does the job. No mega
+   files; split modules as they grow.
+4. **Tests that can fail.** Pure logic has unit tests; behavior has an on-box
+   acceptance script. For each new or changed test, name the edit to the code
+   under test that would turn it red — a test nobody has seen go red is not
+   evidence. A negative control is the best answer.
+5. **Default to NOT PROVEN.** When you cannot establish a claim, it fails.
+   Report defects a user or the next turn would pay for, not style preferences.
+<!-- review-checklist:end -->
 
 Everything else — the claim, the digest, the guards, `/reset-context` — is
 unchanged.
@@ -181,13 +241,15 @@ unchanged.
 |---|---|---|
 | T87 | macOS regression build, then the merge validated on Mac | **Mac seat** — cannot be done here |
 | T1059 | the digest names every open PR and its CI health | Windows seat, after this |
-| T1060 | the adversarial review gate before any merge | Windows seat, after this |
+| T1060 | the adversarial review gate before any merge | done: `scripts\pr-review.ps1`, `ship-feature.ps1 merge` |
 | `behind` | 93 commits of `origin/main` merged into the branch | Windows seat |
 
 ## Acceptance
 
 `test\win32\ship-workflow.ps1` — the readiness gate's honesty (A), the whole
 lifecycle in a throwaway repo pair including every refusal (B), the `gh`
-landmine scan (C), and the doc/go.md wiring (D). Registered in
-`scripts\guard-due.ps1` as `ship-workflow`, so editing either script marks the
-harness due.
+landmine scan (C), the doc/go.md wiring (D), and the review gate's teeth (E): a
+sandbox PR carrying every defect the gate names, each of which must be caught,
+a clean PR that must pass without invented findings, and the record / stale /
+merge refusals. Registered in `scripts\guard-due.ps1` as `ship-workflow`, so
+editing any of the three scripts marks the harness due.

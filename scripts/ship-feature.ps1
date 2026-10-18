@@ -36,6 +36,11 @@
             project. Refuses a dirty tree and refuses a branch with no commits
             of its own, since both produce a PR that says nothing.
 
+    merge   Merge the PR - only when scripts\pr-review.ps1 gate finds a pass
+            verdict from an adversarial review of the exact pushed head (T1060).
+            -Override -Reason "<why>" merges anyway and records the reason as
+            the verdict, in the review ledger and on the PR.
+
     done    Remove the worktree and delete its branch. Refuses while the tree is
             dirty or the branch has unpushed commits, and refuses while the PR
             is still open unless -Force - the merge is the signal that the work
@@ -67,7 +72,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('new', 'list', 'pr', 'done')]
+    [ValidateSet('new', 'list', 'pr', 'merge', 'done')]
     [string]$Command,
 
     # Short kebab-case name for the feature. Becomes both the worktree
@@ -92,6 +97,14 @@ param(
     [string]$Title,
     [string]$Body,
     [switch]$Draft,
+
+    # `merge` only: merge over a missing, stale or failing adversarial review.
+    # Requires -Reason, which is recorded as the review verdict (`override`) in
+    # the ledger and on the PR, so the exception is on the record, not silent.
+    [switch]$Override,
+    [string]$Reason,
+    [ValidateSet('squash', 'merge', 'rebase')]
+    [string]$MergeMethod = 'squash',
 
     # `done` only: delete even though the PR is still open or unmergeable. Says
     # so loudly; exists for a feature that was abandoned rather than merged.
@@ -349,6 +362,71 @@ switch ($Command) {
         $url = (($created.Text) -split "`r?`n" | Where-Object { $_ -match '^https?://' } | Select-Object -First 1)
         Write-Result "PR OPENED $($url.Trim())"
         Write-Result "  base $Trunk  head $branch  repo $ForkRepo"
+        exit 0
+    }
+
+    # ---------------------------------------------------------------- merge --
+    # T1060: nothing merges without an adversarial review of the exact commit
+    # being merged. The gate is scripts\pr-review.ps1; this verb is the only
+    # merge path the loop has, so the refusal cannot be walked around by
+    # forgetting to ask.
+    'merge' {
+        if (-not $Slug) { Write-Result 'ERROR: -Slug is required'; exit 2 }
+        $dest = Join-Path $WorktreeRoot $Slug
+        if (-not (Test-Path $dest)) {
+            Write-Result "REFUSED: no worktree at $dest"
+            exit 1
+        }
+        $branch = (Invoke-GitIn $dest @('rev-parse', '--abbrev-ref', 'HEAD')).Text
+        $st = Invoke-GitIn $dest @('status', '--porcelain')
+        $dirty = @(($st.Text -split "`r?`n") | Where-Object { $_.Trim() })
+        if ($dirty.Count -gt 0) {
+            Write-Result ("REFUSED: {0} uncommitted path(s) in {1}. What merges is what was reviewed, and this is neither." -f $dirty.Count, $dest)
+            exit 1
+        }
+        $up = Invoke-GitIn $dest @('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')
+        if (-not $up.Ok) {
+            Write-Result "REFUSED: $branch was never pushed; open its PR with 'pr -Slug $Slug' first."
+            exit 1
+        }
+        $c = Invoke-GitIn $dest @('rev-list', '--count', "$($up.Text)..HEAD")
+        if ($c.Ok -and $c.Text -ne '0') {
+            Write-Result "REFUSED: $($c.Text) commit(s) in $branch are not pushed, so the PR is not what would be reviewed. Push them first."
+            exit 1
+        }
+
+        $review = Join-Path $PSScriptRoot 'pr-review.ps1'
+        $pr = Get-PrForBranch $branch
+        $prNum = if ($pr) { "$($pr.number)" } else { '0' }
+        if ($Override) {
+            if (-not $Reason) {
+                Write-Result 'REFUSED: -Override needs -Reason; a merge over the review is recorded, never silent.'
+                exit 1
+            }
+            $rec = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $review record -Repo $dest -Head HEAD `
+                    -Base "$Remote/$Trunk" -Verdict override -Summary $Reason -Reviewer 'merge override' -Pr $prNum -ForkRepo $ForkRepo 2>&1)
+            $rec | ForEach-Object { Write-Result "  $_" }
+            if ($LASTEXITCODE -ne 0) { Write-Result 'ERROR: the override could not be recorded, so nothing was merged.'; exit 2 }
+            Write-Result "NOTE: -Override was used: $Reason"
+        }
+        $gate = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $review gate -Repo $dest -Head HEAD 2>&1)
+        $gateCode = $LASTEXITCODE
+        $gate | ForEach-Object { Write-Result "  $_" }
+        if ($gateCode -ne 0) {
+            Write-Result "REFUSED: $branch has no passing adversarial review of its head. See docs\design\windows-parity-ship-workflow.md (The adversarial review)."
+            exit 1
+        }
+
+        if (-not $pr) {
+            Write-Result "REFUSED: no pull request found for $branch on $ForkRepo."
+            exit 1
+        }
+        $m = Invoke-GhPr 'merge' @("$($pr.number)", "--$MergeMethod")
+        if (-not $m.Ok) {
+            Write-Result "ERROR: the merge failed on ${ForkRepo}: $($m.Text)"
+            exit 2
+        }
+        Write-Result "MERGED #$($pr.number) ($MergeMethod). Next: done -Slug $Slug"
         exit 0
     }
 

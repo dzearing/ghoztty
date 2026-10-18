@@ -200,6 +200,7 @@ $GuardTable = @(
         Covers = @(
             'scripts\ship-readiness.ps1',
             'scripts\ship-feature.ps1',
+            'scripts\pr-review.ps1',
             'test\win32\ship-workflow.ps1',
             'docs\design\windows-parity-ship-workflow.md'
         )

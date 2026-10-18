@@ -1011,9 +1011,14 @@ Concretely, in order, with no stops in between:
      criteria, each a number or an exit code, and an **unmeasured** criterion
      counts as unmet — a lane that was green yesterday says nothing about
      today's tree. Exit 0 is the only thing that authorises the cutover.
-   - `ship-feature.ps1 new|list|pr|done` is the lifecycle afterwards: a worktree
-     off a freshly fetched `main`, a branch, a PR against the fork, and a
-     teardown that refuses to delete unpushed work. **After the cutover,
+   - `ship-feature.ps1 new|list|pr|merge|done` is the lifecycle afterwards: a
+     worktree off a freshly fetched `main`, a branch, a PR against the fork, a
+     merge, and a teardown that refuses to delete unpushed work. **`merge`
+     refuses until an adversarial review of the exact pushed head has passed**
+     (T1060): `scripts\pr-review.ps1 prompt` is the brief, handed to a FRESH
+     subagent (never the turn that wrote the code), and `pr-review.ps1 record`
+     writes its verdict. The checklist and the rules are in the workflow doc's
+     "The adversarial review" section. **After the cutover,
      `list` runs BEFORE step 1's `next`**: an open, unmerged PR is inherited
      work and outranks a fresh task, exactly the way a `RESUME:` outranks a
      `NEXT:`.
