@@ -577,6 +577,39 @@ pub fn pairTabs(
     return pairByKey(alloc, keys, live_keys);
 }
 
+/// The stable key a split-tree node is matched under: a leaf's recorded
+/// `pane_id` (T113), or the empty string — which never matches — for a split
+/// node and for a leaf captured while its OPEN was still in flight.
+pub fn leafKey(node: Node) []const u8 {
+    const lf = node.leaf orelse return "";
+    return lf.pane_id orelse "";
+}
+
+/// Pair a LIVE tab's node walk against its CAPTURED one by pane identity
+/// (T1071) — the last level of the T343/T1048 class.
+///
+/// In-place recovery used to hand `captured.nodes[i]` to live node `i`, licensed
+/// only by a node-SHAPE comparison. Two leaves swapped in an otherwise identical
+/// tree (ctrl+shift+arrow, a drag, a shape-preserving `+rearrange`) pass that
+/// check, so each pane was re-ATTACHed to the other one's session. The pane id
+/// is the identity that travels with the pane through any such move.
+///
+/// `live_keys` holds one key per LIVE node in node-array order (the pane id for
+/// a leaf, `""` for a split); the result holds one entry per live node: the
+/// index of the captured node it owns, or `null` — split nodes, panes born after
+/// the capture, and id-less captured leaves alike — which the caller leaves
+/// alone.
+pub fn pairLeaves(
+    alloc: Allocator,
+    captured: []const Node,
+    live_keys: []const []const u8,
+) ![]const ?usize {
+    const keys = try alloc.alloc([]const u8, captured.len);
+    defer alloc.free(keys);
+    for (captured, 0..) |cap, ci| keys[ci] = leafKey(cap);
+    return pairByKey(alloc, keys, live_keys);
+}
+
 /// The join both pairings are: first unused captured entry whose key matches,
 /// else `null`.
 ///
@@ -1982,6 +2015,65 @@ test "T1048: a pre-T1048 capture with no tab uuid pairs nothing" {
 
     try testing.expect(pairing[0] == null);
     try testing.expect(pairing[1] == null);
+}
+
+// -- pairLeaves (T1071) -------------------------------------------------------
+
+test "T1071: leaf pairing follows the pane id through a swapped split" {
+    const alloc = testing.allocator;
+    // split(left, right) captured; the two leaves were swapped mid-recovery, so
+    // the live tree has the SAME shape — which is all the shape check compares —
+    // with the panes exchanged. A positional join hands each the other's shell.
+    const captured = [_]Node{
+        .{ .split = .{ .layout = "horizontal", .ratio = 0.5, .left = 1, .right = 2 } },
+        .{ .leaf = .{ .session_id = "sess-left", .pane_id = "pane-left" } },
+        .{ .leaf = .{ .session_id = "sess-right", .pane_id = "pane-right" } },
+    };
+    const live = [_][]const u8{ "", "pane-right", "pane-left" };
+    const pairing = try pairLeaves(alloc, &captured, &live);
+    defer alloc.free(pairing);
+
+    try testing.expectEqual(@as(usize, 3), pairing.len);
+    try testing.expect(pairing[0] == null);
+    try testing.expectEqual(@as(?usize, 2), pairing[1]);
+    try testing.expectEqual(@as(?usize, 1), pairing[2]);
+}
+
+test "T1071: an id-less captured leaf pairs nothing, never its index" {
+    const alloc = testing.allocator;
+    // A leaf whose OPEN was still in flight at capture time has no id. It must
+    // pair with nothing, including a live leaf whose own key is somehow empty —
+    // otherwise "no identity" would pair with "no identity" by position.
+    const captured = [_]Node{
+        .{ .split = .{ .layout = "vertical", .ratio = 0.5, .left = 1, .right = 2 } },
+        .{ .leaf = .{ .session_id = "sess-a", .pane_id = "pane-a" } },
+        .{ .leaf = .{ .session_id = "sess-b" } },
+    };
+    const live = [_][]const u8{ "", "pane-a", "" };
+    const pairing = try pairLeaves(alloc, &captured, &live);
+    defer alloc.free(pairing);
+
+    try testing.expectEqual(@as(?usize, 1), pairing[1]);
+    try testing.expect(pairing[2] == null);
+}
+
+test "T1071: a pane born after the capture is left alone" {
+    const alloc = testing.allocator;
+    const captured = [_]Node{
+        .{ .leaf = .{ .session_id = "sess-a", .pane_id = "pane-a" } },
+    };
+    const live = [_][]const u8{ "pane-new", "pane-a" };
+    const pairing = try pairLeaves(alloc, &captured, &live);
+    defer alloc.free(pairing);
+
+    try testing.expect(pairing[0] == null);
+    try testing.expectEqual(@as(?usize, 0), pairing[1]);
+}
+
+test "T1071: leafKey is empty for a split node and an id-less leaf" {
+    try testing.expectEqualStrings("", leafKey(.{ .split = .{ .layout = "horizontal", .ratio = 0.5, .left = 1, .right = 2 } }));
+    try testing.expectEqualStrings("", leafKey(.{ .leaf = .{} }));
+    try testing.expectEqualStrings("p", leafKey(.{ .leaf = .{ .pane_id = "p" } }));
 }
 
 test "T1048: an empty capture pairs nothing and an empty live walk is empty" {

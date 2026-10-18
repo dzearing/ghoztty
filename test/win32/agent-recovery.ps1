@@ -975,8 +975,18 @@ Assert "K6 the pane opened during the wedge is a WORKING pane" (
 # And the app says WHY it fell back, so the same event is diagnosable from a
 # log the user can send. Secondary to K6 on purpose: the log line is evidence,
 # the round-trip is the verdict.
-Assert "K7 the app said it opened the surface without the agent" (
-    (Read-AppLog $logMarkK) -match 'opening this surface without the agent')
+#
+# Polled, like K3, not read once (T1071): `Get-AppLogText` answers '' when the
+# read races the app's own write to the log, so a single read could miss a line
+# that a dump a moment later printed in full - three red runs that way.
+$k7Said = $false
+$deadline = (Get-Date).AddSeconds(15)
+while ((Get-Date) -lt $deadline) {
+    if ((Read-AppLog $logMarkK) -match 'opening this surface without the agent') { $k7Said = $true; break }
+    Start-Sleep -Milliseconds 500
+}
+Assert "K7 the app said it opened the surface without the agent" $k7Said
+if (-not $k7Said) { Dump-AppLog $logMarkK 'K7' }
 
 # Unwedge and leave the box the way J did: the original panes must still be
 # fine, so the fallback cost nothing to the panes that were already there.

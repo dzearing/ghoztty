@@ -6521,10 +6521,12 @@ pub fn rebuildWindowInPlace(
 ///
 /// That walk is licensed by a correspondence check, not by hope:
 /// `captureSessionLayout` writes the manifest node array as a 1:1 copy of the
-/// live `SplitTree` node array, so while the two still agree node-for-node,
-/// index `i` names the same pane in both. A tab whose tree MOVED between the
-/// capture and the rebuild falls back to replacing the whole root, which is
-/// correct for any tree at the cost of the churn above.
+/// live `SplitTree` node array, and while the two still agree node-for-node in
+/// shape, every live pane has a slot to be rebuilt in. WHICH captured leaf goes
+/// in which slot is the pane id's call, not the index's (T1071). A tab whose
+/// tree changed shape between the capture and the rebuild falls back to
+/// replacing the whole root, which is correct for any tree at the cost of the
+/// churn above.
 fn rebuildTabInPlace(
     self: *App,
     arena: Allocator,
@@ -6539,7 +6541,7 @@ fn rebuildTabInPlace(
     const captured_shapes = try capturedNodeShapes(arena, tab.nodes);
     const live_shapes = try liveNodeShapes(arena, &window.tab_trees[tab_index]);
     if (agent_recovery.shapesCorrespond(captured_shapes, live_shapes)) {
-        return self.rebuildTabLeavesInPlace(window, tab_index, tab, tr, attach);
+        return self.rebuildTabLeavesInPlace(arena, window, tab_index, tab, tr, attach);
     }
 
     log.warn(
@@ -6556,39 +6558,69 @@ fn rebuildTabInPlace(
 }
 
 /// Swap ONLY this tab's terminal leaves, each in the slot it already holds.
-/// Caller has already established that `tab.nodes` and the live tree correspond
-/// index-for-index, which is what makes `nodes[i]` addressable in both.
+/// Caller has already established that `tab.nodes` and the live tree have the
+/// same SHAPE; which captured leaf belongs to which live pane is decided here,
+/// by pane id (T1071), because a shape match says nothing about two leaves that
+/// swapped places.
 ///
 /// Never fails as a whole: a leaf that cannot be rebuilt is logged and left
 /// frozen, because the panes that DID come back are worth more than an
 /// all-or-nothing tab. Returns how many leaves actually came back.
 fn rebuildTabLeavesInPlace(
     self: *App,
+    arena: Allocator,
     window: *Window,
     tab_index: usize,
     tab: session_layout.Tab,
     tr: RestoreTransport,
     attach: ?*const std.StringHashMap(void),
 ) usize {
-    var attached: usize = 0;
-    for (tab.nodes, 0..) |node, i| {
-        const lf = node.leaf orelse continue;
-        if (!agent_recovery.rebuildsLeaf(if (lf.isViewer()) .viewer else .terminal)) continue;
+    // Pair live panes to captured leaves BY IDENTITY (T1071), the move T343 and
+    // T1048 made for windows and tabs. This used to hand `tab.nodes[i]` to live
+    // node `i`, licensed only by the shape check — and two leaves swapped in an
+    // otherwise identical tree (ctrl+shift+arrow, a drag, a `+rearrange`) pass
+    // it, so each pane came back re-ATTACHed to the other one's shell. A live
+    // pane the capture has no entry for, and a captured leaf with no id, pair
+    // with nothing: that pane is left as it is rather than rebuilt from a
+    // neighbour.
+    //
+    // Both the pairing and the HANDLES are taken before anything is replaced:
+    // each replacement re-allocates the node array (the tree is a persistent
+    // structure) and frees the departing surface, whose `paneId()` slice goes
+    // with it. The handles of the panes not yet replaced are what stay put.
+    const live_nodes = window.tab_trees[tab_index].nodes;
+    const live_keys = arena.alloc([]const u8, live_nodes.len) catch return 0;
+    const live_panes = arena.alloc(?*PaneView, live_nodes.len) catch return 0;
+    for (live_nodes, 0..) |n, i| switch (n) {
+        .leaf => |pane| {
+            live_keys[i] = pane.paneId();
+            live_panes[i] = pane;
+        },
+        .split => {
+            live_keys[i] = "";
+            live_panes[i] = null;
+        },
+    };
+    const pairing = session_layout.pairLeaves(arena, tab.nodes, live_keys) catch return 0;
 
-        // Re-read the tree every iteration: each replacement re-allocates the
-        // node array (the tree is a persistent structure), so a slice taken
-        // before the loop would be freed memory by the second pass. The HANDLES
-        // are what stay put, which is the whole reason this walk is by index.
-        const live = switch (window.tab_trees[tab_index].nodes[i]) {
-            .leaf => |pane| pane,
-            .split => continue,
+    var attached: usize = 0;
+    for (pairing, 0..) |paired, i| {
+        const live = live_panes[i] orelse continue;
+        const ci = paired orelse {
+            if (!live.isViewer()) log.warn(
+                "in-place recovery: tab {d} pane {s} has no captured leaf; leaving it as it is",
+                .{ tab_index, live_keys[i] },
+            );
+            continue;
         };
+        const lf = tab.nodes[ci].leaf orelse continue;
+        if (!agent_recovery.rebuildsLeaf(if (lf.isViewer()) .viewer else .terminal)) continue;
 
         var ov = self.restoreAttachOverride(lf, tr, attach);
         const fresh = window.replaceTabLeaf(tab_index, live, .{ .terminal = &ov }) catch |err| {
             log.warn(
                 "in-place recovery: tab {d} leaf {d} failed err={}",
-                .{ tab_index, i, err },
+                .{ tab_index, ci, err },
             );
             continue;
         };

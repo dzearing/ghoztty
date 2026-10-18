@@ -1,3 +1,7 @@
+# @parallel-unsafe - section B runs `zig build`, and beside other workers its
+#   install step met a ghoztty-agent.exe held open by a sibling run and printed a
+#   warning on stderr that the scan read as a throw (2026-10-17, T1071's due
+#   sweep: red beside three workers, ALL PASS (26) alone).
 # T784 acceptance: the agent's build stamp follows everything the agent is
 # built from.
 #
