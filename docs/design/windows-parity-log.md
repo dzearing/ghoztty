@@ -36909,3 +36909,10 @@ moved to T1814.
 - **What landed.** `Get-BuildCacheUser` (`scripts/lib/BuildCache.ps1`) names any `zig.exe` on the box plus any process whose image lives in a cache dir (the build runner, test binaries). An over-limit `sweep` with one alive prints `BUILD CACHE CLEAR DEFERRED ... (<name> pid <n>)`, leaves the cache in place and exits 0, and the next claim tries again. `-IgnoreBusy` overrides it. `clear -Force` still clears and prints a warning naming the builds it may break. The process walk only runs when a clear is about to happen, so the ordinary claim pays nothing for it.
 - **Validated.** New section H of `test/win32/build-cache.ps1` uses ping copies as stand-ins: one under the cache (a test binary) and one named as the compiler outside it (the other lane). Result: ALL PASS (103). `-NegativeControl` goes red on H5. C2 now passes a fixture compiler name so a real build in another window cannot turn it into a deferral.
 - **Mac.** Nothing owed: Windows loop tooling.
+
+## 2026-10-17 — T1064 (lane b): closed as already fixed by 64617ec49
+
+- **Already fixed.** A BOM at the head of a commit message file was the defect. The commit guard has stripped it since 64617ec49 (2026-09-04). It also re-encodes UTF-16 and prints a note when it does either. W39a-W39m in `test/win32/go-loop-guard.ps1` cover this, and that guard was stamped current today. No new code. The task is closed against the commit that fixed it.
+- **Due harnesses run.** unwired-hook, unroll-count, argv-hazard, ghoztty-cleanup and the scoped harness floor all passed and were re-stamped, except ghoztty-cleanup. drag-perf is red on exactly T1854.
+- **ghoztty-cleanup cannot stamp.** On this box its H5 always skips, so it never writes a stamp. I filed T2067 for that and then closed it as a duplicate of T2060. The commit used `-NoGuardDue` for those two harnesses, and the commit says so.
+- **Mac.** Nothing owed: Windows loop tooling.

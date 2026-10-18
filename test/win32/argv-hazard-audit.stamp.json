@@ -1,11 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-17T19:45:03-07:00",
-    "commit":  "4417c1fff",
+    "generated":  "2026-10-17T20:20:09-07:00",
+    "commit":  "8b910f339",
     "uncommitted":  [
-                        "scripts/build-cache.ps1",
-                        "scripts/lib/BuildCache.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
@@ -37,7 +36,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "84a223af995b00dfdf1d70164321c320e39df45ab1f45539372de0ad72cba33e",
-                  "scripts/guard-due.ps1":  "7c718f917f08572fa66752ff9e00cb31c909fa2b48492a93d68877c87ad12017",
+                  "scripts/guard-due.ps1":  "e63c0e8b132d0d285363100691d516e05b413fe13f78e4ff925c503d38cd53d9",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -74,11 +73,12 @@
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
                   "scripts/parity-tasks.ps1":  "75d4e55ce9e55d88806b639228104004a767b9a3be327a6b8caa71269b5ec7c5",
                   "scripts/pr-health.ps1":  "6873baf643cdb26eab420835773bebe768026c997337d08b8a965ceb7124baaa",
+                  "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
                   "scripts/publish-windows-release.ps1":  "1cd6f75ffc5deddbb6699b4dfe84e1b8fad40ebb5271f802f1a31ee28613069a",
                   "scripts/publish-windows-tag.ps1":  "d72d5cdf2189a2fd31a213d7e18107c7e313c139c2368e2696e82474b4cfa4a3",
                   "scripts/rdp-perf-probe.ps1":  "b5e70fb1c4b8eb1ae74033ad8131b48e9aa20a3aacc7b4291d355d81c33b866a",
                   "scripts/report-false-positive.ps1":  "67875bcfc4d235afa9a8810294a7ea9d48fc7cb57f69e74c9617970b65d68534",
-                  "scripts/ship-feature.ps1":  "5fcde228d19c43b887fe4ae42202a1c84c0f7e0a464fbe3caec600c39796663e",
+                  "scripts/ship-feature.ps1":  "5352d1b5a8f1ea1c0db81a36f7bed23f07a4e7e07194ae69058a858a6f55a0a0",
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",
                   "scripts/stamp-merge.ps1":  "9cac1de32cf4554fbc4070e374cbe163e5b34cf164564499b002c0b3b6a67f3a",
