@@ -191,16 +191,15 @@ Do NOT touch this by hand:
 cd /tmp/ghoztty-gh-pages && git add index.html && git commit -m "Update website version to vX.Y.Z" && git push origin gh-pages
 ```
 
-Then mirror the deployed page back into `relay/deploy/ghpages/index.html` so the in-repo copy does not drift from the live site. **Copy the whole file, do not re-apply the edit by hand** — `release-windows.yml` pushes its own commit to `gh-pages` in this same release (the Windows link rewrite), so the deployed page carries changes this step never made, and re-typing only the macOS edit reproduces exactly the drift this guards. Pull first for the same reason:
+Then refresh the in-repo mirror, `relay/deploy/ghpages/index.html`, from what is now deployed. **Never re-apply the edit by hand** — `release-windows.yml` pushes its own commit to `gh-pages` on every `win-v` release (the Windows link rewrite, daily), so the deployed page carries changes this step never made:
 
 ```bash
-cd /tmp/ghoztty-gh-pages && git pull --rebase origin gh-pages
-cp /tmp/ghoztty-gh-pages/index.html <repo>/relay/deploy/ghpages/index.html
-# commit the mirror on the working branch, then:
 git worktree remove /tmp/ghoztty-gh-pages
+python3 dist/website/site-mirror.py sync     # fetches origin/gh-pages, copies the page if only version stamps differ
+# commit the mirror on the working branch
 ```
 
-`test/win32/website-windows-download.ps1` (check F) fails when the mirror and the deployed page disagree. It has now drifted three times — 2026-08-07 was `v1.28.0` in the mirror against `v1.31.0` live — so run it before calling the release done.
+`site-mirror.py` (T1088) classifies the difference before it writes. Version numbers lagging (`MIRROR STAMPS`) is the normal state between releases — the daily Windows publish moves the live page and nothing writes back — so it is refreshed without ceremony and `test/win32/website-windows-download.ps1` section F passes on it. A **content** difference (`MIRROR DRIFT`: copy or markup that exists on one side only) is a real defect whose direction the files cannot tell you, so `sync` refuses it: deploy the mirror's change to `gh-pages`, or take the live page with `sync --force` once you know it is the right one. `python3 dist/website/site-mirror.py check` asks without writing.
 
 ### Step 8: Report
 

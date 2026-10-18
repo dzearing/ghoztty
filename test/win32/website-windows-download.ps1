@@ -33,8 +33,9 @@
 #      it, and both writers of the gh-pages branch retry on a rejected push
 #      (release.yml pushes appcast.xml on the same tag push -- concurrent).
 #   E  live: the URLs on the page answer 200. Needs network; SKIPs without.
-#   F  drift: the in-repo mirror matches the deployed gh-pages page. It has
-#      silently drifted twice.
+#   F  drift: the in-repo mirror carries the same page as deployed gh-pages.
+#      Release-stamped version numbers lagging is normal and passes (T1088,
+#      dist/website/site-mirror.py); a content difference fails.
 #   G  the gh-pages publish script, RUN, against bare repos on disk -- with a
 #      rival push staged so its rejected-push retry actually executes (T353).
 #      That loop is dead code on a normal release, so until this section the
@@ -406,40 +407,76 @@ if (-not $online) {
 
 "=== F. the in-repo mirror matches the deployed page ==="
 
-Push-Location $Repo
-try {
-    $live = & git show origin/gh-pages:index.html 2>$null
-    $haveLive = ($LASTEXITCODE -eq 0 -and $live -ne $null)
-} catch {
-    $haveLive = $false
-}
-Pop-Location
+# T1088. The mirror is behind the deployed page after EVERY release, because
+# release.yml and release-windows.yml stamp new version numbers onto gh-pages
+# and nothing writes them back. That lag is not a defect and used to fail this
+# section anyway (hand-synced three times). dist/website/site-mirror.py tells
+# the two apart: a stamps-only difference passes with a refresh line, and only
+# a CONTENT difference -- a page edit made on one side and not the other --
+# fails. F1-F7 prove the classifier and its sync on synthetic pages, both
+# directions, so the verdict on the real mirror (F8) is not taken on faith.
 
-if (-not $haveLive) {
-    Skip 'F1 mirror == deployed gh-pages index.html' 'origin/gh-pages not fetched'
+$mirrorPy = Join-Path $Repo 'dist\website\site-mirror.py'
+Assert 'F0 site-mirror.py exists' (Test-Path -LiteralPath $mirrorPy)
+
+if (-not $interp) {
+    Skip 'F1-F8 mirror classifier' 'no python 3 interpreter on PATH'
 } else {
-    # Compare line-by-line so a CRLF/LF checkout difference is not a failure.
-    $liveText   = ($live -join "`n").TrimEnd()
-    $mirrorText = (($html -split "`r?`n") -join "`n").TrimEnd()
-    if ($liveText -ceq $mirrorText) {
-        "  PASS F1 mirror == deployed gh-pages index.html"
+    $fw = Join-Path $env:TEMP ('ghoztty-t1088-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    New-Item -ItemType Directory -Path $fw | Out-Null
+    try {
+        $utf8 = New-Object Text.UTF8Encoding $false
+        $pageOld = "<p>Download v1.2.3</p>`n<a href=`"x/win-v1.2.4/Ghoztty-1.2.4-x64.msi`">msi</a>`n<p>Defender note</p>`n"
+        $pageNew = $pageOld -replace '1\.2\.3', '1.9.0' -replace '1\.2\.4', '1.9.7'
+        $pageEdit = $pageNew -replace 'Defender note', 'Defender may quarantine'
+        $fOld  = Join-Path $fw 'old.html';  [IO.File]::WriteAllText($fOld, $pageOld, $utf8)
+        $fNew  = Join-Path $fw 'new.html';  [IO.File]::WriteAllText($fNew, $pageNew, $utf8)
+        $fEdit = Join-Path $fw 'edit.html'; [IO.File]::WriteAllText($fEdit, $pageEdit, $utf8)
+        $fCrlf = Join-Path $fw 'crlf.html'; [IO.File]::WriteAllText($fCrlf, ($pageOld -replace "`n", "`r`n"), $utf8)
+
+        $o = & $interp $mirrorPy compare $fOld $fCrlf 2>&1; $rc = $LASTEXITCODE
+        Assert "F1 same page with CRLF vs LF reads OK (rc=$rc)" ($rc -eq 0 -and "$o" -match 'MIRROR OK')
+        $o = & $interp $mirrorPy compare $fOld $fNew 2>&1; $rc = $LASTEXITCODE
+        Assert "F2 version-only lag reads STAMPS and exits 0 (rc=$rc)" ($rc -eq 0 -and "$o" -match 'MIRROR STAMPS' -and "$o" -match '1\.2\.3' -and "$o" -match '1\.9\.7')
+        $o = & $interp $mirrorPy compare $fOld $fEdit 2>&1; $rc = $LASTEXITCODE
+        Assert "F3 a copy edit on the live side reads DRIFT and exits 1 (rc=$rc)" ($rc -eq 1 -and "$o" -match 'MIRROR DRIFT' -and "$o" -match 'quarantine')
+        $o = & $interp $mirrorPy compare $fEdit $fOld 2>&1; $rc = $LASTEXITCODE
+        Assert "F4 a copy edit on the mirror side reads DRIFT too (rc=$rc)" ($rc -eq 1 -and "$o" -match 'MIRROR DRIFT')
+
+        # sync, against a throwaway repo whose gh-pages branch is the live page.
+        $sr = Join-Path $fw 'repo'
+        New-Item -ItemType Directory -Path (Join-Path $sr 'relay\deploy\ghpages') -Force | Out-Null
+        $sm = Join-Path $sr 'relay\deploy\ghpages\index.html'
+        $null = & git -C $sr init -q 2>&1
+        $null = & git -C $sr checkout -q -b gh-pages 2>&1
+        [IO.File]::WriteAllText((Join-Path $sr 'index.html'), $pageEdit, $utf8)
+        $null = & git -C $sr add index.html 2>&1
+        $null = & git -C $sr -c user.name=t -c user.email=t@t commit -q -m live 2>&1
+        [IO.File]::WriteAllText($sm, $pageOld, $utf8)
+        $o = & $interp $mirrorPy sync --repo $sr --ref gh-pages --no-fetch 2>&1; $rc = $LASTEXITCODE
+        $unchanged = [IO.File]::ReadAllText($sm) -ceq $pageOld
+        Assert "F5 sync REFUSES a content drift and leaves the mirror alone (rc=$rc)" ($rc -eq 1 -and "$o" -match 'SYNC REFUSED' -and $unchanged)
+        $o = & $interp $mirrorPy sync --repo $sr --ref gh-pages --no-fetch --force 2>&1; $rc = $LASTEXITCODE
+        Assert "F6 sync --force takes the live page (rc=$rc)" ($rc -eq 0 -and "$o" -match 'SYNC WROTE' -and ([IO.File]::ReadAllText($sm) -ceq $pageEdit))
+        [IO.File]::WriteAllText($sm, ($pageEdit -replace '1\.9\.7', '1.8.0'), $utf8)
+        $o = & $interp $mirrorPy sync --repo $sr --ref gh-pages --no-fetch 2>&1; $rc = $LASTEXITCODE
+        $o2 = & $interp $mirrorPy check --repo $sr --ref gh-pages --no-fetch 2>&1
+        Assert "F7 sync refreshes stamps without --force, and check then reads OK (rc=$rc)" ($rc -eq 0 -and "$o" -match 'SYNC WROTE' -and "$o2" -match 'MIRROR OK')
+    } finally {
+        Remove-Item -LiteralPath $fw -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # The real mirror against whatever origin/gh-pages this clone already has
+    # (no fetch: this script is read-only apart from its temp dir).
+    $o = & $interp $mirrorPy check --repo $Repo --no-fetch 2>&1; $rc = $LASTEXITCODE
+    if ($rc -eq 2) {
+        Skip 'F8 mirror vs deployed gh-pages index.html' 'origin/gh-pages not fetched'
+    } elseif ($rc -eq 0) {
+        "  PASS F8 mirror vs deployed gh-pages index.html: $(($o | Select-Object -First 1))"
     } else {
-        "  FAIL F1 mirror != deployed gh-pages index.html (the mirror has drifted twice before; sync it)"
+        "  FAIL F8 mirror vs deployed gh-pages index.html"
+        $o | ForEach-Object { "       $_" }
         $script:failures++
-        $lm = ($mirrorText -split "`n")
-        $ll = ($liveText -split "`n")
-        $n = [Math]::Max($lm.Count, $ll.Count)
-        $shown = 0
-        for ($i = 0; $i -lt $n -and $shown -lt 6; $i++) {
-            $a = if ($i -lt $lm.Count) { $lm[$i] } else { '<eof>' }
-            $b = if ($i -lt $ll.Count) { $ll[$i] } else { '<eof>' }
-            if ($a -cne $b) {
-                "       line $($i + 1):"
-                "         mirror: $a"
-                "         live  : $b"
-                $shown++
-            }
-        }
     }
 }
 

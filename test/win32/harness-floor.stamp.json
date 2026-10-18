@@ -1,16 +1,16 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-18T01:32:10-07:00",
-    "commit":  "c0d560465",
+    "generated":  "2026-10-18T01:40:00-07:00",
+    "commit":  "b82e7fd55",
     "uncommitted":  [
-                        "test/win32/orphan-notify.ps1"
+                        "test/win32/website-windows-download.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/lib/HarnessFloor.ps1":  "bb51b591f55a32caf8b830081a812a99307ba0cc6e22dc197a4dec092e000b81",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
-                  "test/win32/acceptance-parallel.ps1":  "fd632509e2ed3eb4bef5489abdfc8ea28051a2ea48c37f7f51430e5b95c760da",
+                  "test/win32/acceptance-parallel.ps1":  "e581876681ce1ed8a6c4076bc409384d20af4e8a9386d18971412c17c396baba",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
@@ -298,7 +298,7 @@
                   "test/win32/notification-click-real.ps1":  "f656c41eba944964fef9920dd64f078380023105e3d05a066571f97f9c9526ba",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
                   "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
-                  "test/win32/orphan-notify.ps1":  "a8c7962850f4bdf5c8c5f8c09b20930b57e88264dedfa13a3bd47e69aaf2bf55",
+                  "test/win32/orphan-notify.ps1":  "6f276f00e7f0d26a2149b293d9f8c013c50f6ff6f4703808bc6319e0ff3e7f4d",
                   "test/win32/overlay-zorder.ps1":  "62d995250f699e0b28745c9045f9ab8fd57b33e1b92b8802cf9f6a4dcc72003b",
                   "test/win32/palette-close-crash.ps1":  "a22d78896b8a333e0dec14c230101606f0c13b48dbf1bb7ff7b79a44e2e63707",
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
@@ -475,7 +475,7 @@
                   "test/win32/viewer-worktree.ps1":  "b4e4b244e68d07d4525b768afdab49cd7273c46b95f7b99bee68b58303fbfcbb",
                   "test/win32/viewer-worktree-port.ps1":  "b991f340cf0f1f4a34fa3edab4305aad56e131ad7115a9e01417343306fe31e2",
                   "test/win32/vt-escape-scan.ps1":  "52f5f59c717c2d090c6d78f7594839a28011843fe58c08df59e4b1bf8fcff4ea",
-                  "test/win32/website-windows-download.ps1":  "32701ddb1259d19533c96c283b936da56ef165175577a34188b8b022e291a941",
+                  "test/win32/website-windows-download.ps1":  "24abd8b16bfe4ec7d6160d36f5f5074bae096cfca4457aeb6df399b08be1f306",
                   "test/win32/whats-new.ps1":  "2dd7e75d9014532aa4be67f64269147a6245630877a8b1ff3b4e54660a7609d2",
                   "test/win32/whea-report.ps1":  "e4cbc0522661b29c95d827023f4f40b0168935dd852021435e2a930c4c00ad90",
                   "test/win32/wheel-scroll.ps1":  "5ddcfef5925d88800a7bfe738e3df7d75a0df62fe400243070fba6f78cc8a2a1",

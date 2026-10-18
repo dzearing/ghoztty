@@ -37010,3 +37010,10 @@ moved to T1814.
 - **Landed.** `test/win32/orphan-notify.ps1`: on a timeout both attach assertions now name the agent's last answer (`Format-AttachState`: no row / attached / alive / unattached_since). A new `-NegativeControl` withholds the Return, so the attach never happens, and the run must go red. It never stamps.
 - **Validated.** ALL PASS (13) standalone, and ALL PASS (13) run serially right after chooser-resume and chooser-orphan-badge (the original red's condition). The attach landed in 21ms. `-NegativeControl` 2 FAILURE(S), both naming `attached=False ... unattached_since=<ms>`. ghoztty-cleanup and unwired-hook-audit PASS. drag-perf red on T1854's known line. Scoped harness floor PASS and stamped. All four zig lanes PASS.
 - **Mac.** Nothing owed: test-only, Windows harness.
+
+## 2026-10-18 — T1088 (lane b): a site mirror that only lags the release version numbers no longer fails the website test
+
+- **Still real at claim.** The in-repo copy of the download page sat at macOS v1.34.0 / Windows win-v1.36.6 against a live v1.39.2 / win-v1.39.25. Every daily Windows publish moves the live page and nothing writes back, so the old byte-compare could only ever be red.
+- **Fix.** New `dist/website/site-mirror.py` (python, so the Mac release runbook can run it too). It classifies the difference: OK, STAMPS (version numbers only: normal, exit 0) or DRIFT (page text differs: exit 1). `sync` copies the live page on STAMPS and refuses DRIFT without `--force`, so a mirror-side edit is never silently overwritten. Section F of `test\win32\website-windows-download.ps1` now uses it and proves both directions on synthetic pages (F1-F7). `release.md` step 7 calls `sync` instead of a hand `cp`.
+- **Validated.** website-windows-download ALL PASS: F8 read STAMPS before the sync and OK after it. one-installer, unwired-hook-audit and ghoztty-cleanup green. Scoped harness floor PASS.
+- **Mac.** The tool and runbook step are shared; nothing else owed.
