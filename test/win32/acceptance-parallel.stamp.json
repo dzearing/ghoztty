@@ -1,16 +1,15 @@
 {
     "guard":  "acceptance-parallel",
     "script":  "test/win32/acceptance-parallel.ps1",
-    "generated":  "2026-10-18T00:57:36-07:00",
-    "commit":  "b06bf26e2",
+    "generated":  "2026-10-18T02:55:52-07:00",
+    "commit":  "56189ad8b",
     "uncommitted":  [
-                        "scripts/acceptance-parallel.ps1",
-                        "test/win32/acceptance-parallel.ps1"
+                        "scripts/lib/AcceptanceParallel.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "de0387b596e8e31885fa64f769bc9c784b10f9acd938b785c17855ac6ccaac81",
                   "scripts/lib/AcceptanceFresh.ps1":  "6cca87511a61fdad80d2a407552895a85edd2134a0e0426cd6fa0f37ad055f8b",
-                  "scripts/lib/AcceptanceParallel.ps1":  "81430af6ef786a76a6a4489a9f4f3358b90795aa3088a9f7c6dca176b5d8ab68",
+                  "scripts/lib/AcceptanceParallel.ps1":  "d4a82e68eecc0a1b868a3ef32ff20a9b18ad30ff33daa27388732261acb390b2",
                   "scripts/lib/RunVerdict.ps1":  "a23842bebc540f3c3e7fb0477bad5816d3720e9adf91bfedd74a9ad0b5d6da07",
                   "test/win32/acceptance-parallel.ps1":  "e581876681ce1ed8a6c4076bc409384d20af4e8a9386d18971412c17c396baba",
                   "test/win32/lib/BuildFresh.ps1":  "0314737dc6419b7d45d9421584a37dc009939b0384ae609378701c0cb306e31b",

@@ -43,6 +43,13 @@
        on a background desktop, no SendInput off the input desktop) is scored
        apart from both pass and fail, counted apart, listed by name, and not
        re-run by the confirm pass (T1100).
+    W. -Jobs N - the whole selected set runs N at a time through the T1960
+       worker engine (T1092): scripts really overlap (measured from their own
+       timestamps), a `# @timing-sensitive` one overlaps nothing, a red row is
+       re-run alone by THIS runner's confirm pass (a script red only inside a
+       worker mirror is green alone), -MaxTimeoutSec still bounds a declared
+       cap, the summary records `jobs`, and `compare` reads -Jobs 4 and
+       -Jobs 1 over the same set as STABLE.
 
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
@@ -77,6 +84,10 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # Section M asks the same question the runner asks: is a dialog still on screen?
 . (Join-Path $PSScriptRoot 'lib\ModalSweep.ps1')
+# Section W's cleanup: a -Jobs run leaves worker mirrors (junctions into the
+# fixture) beside it, and only this library knows how to remove a junction
+# without following it.
+. (Join-Path $Repo 'scripts\lib\AcceptanceParallel.ps1')
 
 $Runner = Join-Path $Repo 'scripts\suite-run.ps1'
 
@@ -972,6 +983,106 @@ exit 1
             (($rCmp.Exit -eq 1) -and ($rCmp.Text -match 'DIFFER\s+b-pass\.ps1\s+pass \| fail')) $rCmp.Text
     }
 
+    # --- W. -Jobs N: the whole suite, N at a time (T1092) -----------------
+    Write-Host ''
+    Write-Host '-- W. -Jobs runs the selected set N at a time'
+
+    # Written directly rather than through Set-FixtureScript: its preamble
+    # appends to ONE shared invocations file, and four scripts appending to it
+    # at the same moment is a sharing violation that would score as the
+    # runner's fault. Each W script stamps its own interval file instead, so
+    # the overlap is measured from what the scripts saw, not from the runner.
+    $wTimes = Join-Path $Fixture 'w-times'
+    New-Item -ItemType Directory -Force -Path $wTimes | Out-Null
+    $stamp = @"
+`$t = Join-Path '$wTimes' ([IO.Path]::GetFileNameWithoutExtension(`$MyInvocation.MyCommand.Path) + '.txt')
+Set-Content -LiteralPath `$t -Value ((Get-Date).Ticks.ToString() + ' ' + `$PSScriptRoot)
+"@
+    $stampEnd = "Add-Content -LiteralPath `$t -Value (Get-Date).Ticks.ToString()`n"
+    function Set-WScript([string]$Name, [string]$Body, [string]$Head = '') {
+        Set-Content -LiteralPath (Join-Path $FixTests $Name) -Encoding ASCII `
+            -Value ($Head + $stamp + "`n" + $Body + "`n" + $stampEnd + $(if ($Body -match 'exit \d') { '' } else { "'ALL PASS (1 assertions)'`nexit 0`n" }))
+    }
+    foreach ($k in 1..4) { Set-WScript "w-slow$k.ps1" 'Start-Sleep -Seconds 4' }
+    Set-WScript 'w-timing.ps1' 'Start-Sleep -Seconds 2' "# @timing-sensitive`n"
+    Set-WScript 'w-fail.ps1' "Add-Content -LiteralPath `$t -Value (Get-Date).Ticks.ToString()`n'1 FAILURE(S) (0 passed)'`nexit 1"
+    # Red ONLY inside a worker mirror: the confirm pass runs it from the real
+    # repo, so it must come back green alone - the PARALLEL-SENSITIVE shape.
+    Set-WScript 'w-flaky.ps1' "Add-Content -LiteralPath `$t -Value (Get-Date).Ticks.ToString()`nif (`$PSScriptRoot -like '*-par\w*') { '1 FAILURE(S) (0 passed)'; exit 1 }`n'ALL PASS (1 assertions)'`nexit 0"
+    Set-WScript 'w-hang.ps1' 'Start-Sleep -Seconds 90' "# suite-timeout-sec: 300`n"
+
+    function Get-WInterval([string]$Name) {
+        $f = Join-Path $wTimes ($Name + '.txt')
+        if (-not (Test-Path -LiteralPath $f)) { return $null }
+        $l = @(Get-Content -LiteralPath $f)
+        if ($l.Count -lt 2) { return $null }
+        $first = $l[0] -split ' ', 2
+        return [pscustomobject]@{ Start = [long]$first[0]; End = [long]$l[$l.Count - 1]; Root = $first[1] }
+    }
+    function Test-WOverlap($a, $b) { return ($a -and $b -and $a.Start -lt $b.End -and $b.Start -lt $a.End) }
+
+    $dirW = Join-Path $Fixture 'runW4'
+    $rW = Invoke-Runner @('-Include', 'w-*', '-Jobs', '4', '-MaxTimeoutSec', '6', '-OutDir', $dirW, '-TimeoutSec', '60')
+    $sW = Get-Summary $dirW
+    Check 'W1 a -Jobs 4 run scores every selected script' (@($sW.results).Count -eq 8) "$(@($sW.results).Count) rows: $($rW.Text)"
+    Check 'W2 the summary records the width it ran at' ([int]$sW.jobs -eq 4) "jobs=$($sW.jobs)"
+    $slow = @(1..4 | ForEach-Object { Get-WInterval "w-slow$_" })
+    $pairs = 0
+    for ($a = 0; $a -lt 4; $a++) { for ($b = $a + 1; $b -lt 4; $b++) { if (Test-WOverlap $slow[$a] $slow[$b]) { $pairs++ } } }
+    Check 'W3 the scripts really ran side by side (their own timestamps overlap)' ($pairs -ge 1) "$pairs overlapping pair(s)"
+    Check 'W4 every slow script ran from a worker mirror, not the real repo' `
+        (@($slow | Where-Object { $_ -and $_.Root -like '*-par\w*' }).Count -eq 4) (($slow | ForEach-Object { $_.Root }) -join '; ')
+    $tim = Get-WInterval 'w-timing'
+    $others = @('w-slow1', 'w-slow2', 'w-slow3', 'w-slow4', 'w-fail', 'w-flaky') | ForEach-Object { Get-WInterval $_ }
+    Check 'W5 a # @timing-sensitive script overlapped nothing' `
+        ($tim -and @($others | Where-Object { Test-WOverlap $tim $_ }).Count -eq 0) ''
+    $rowT = @($sW.results | Where-Object { $_.Name -eq 'w-timing.ps1' })[0]
+    Check 'W6 and its row says where it ran' ($rowT.Lane -eq 'exclusive') "lane=$($rowT.Lane)"
+    $rowF = @($sW.results | Where-Object { $_.Name -eq 'w-fail.ps1' })[0]
+    Check 'W7 a red row is re-run alone and reproduces' `
+        (($rowF.Verdict -eq 'fail') -and ($rowF.Reproduced -eq 'yes')) "verdict=$($rowF.Verdict) reproduced=$($rowF.Reproduced)"
+    $rowK = @($sW.results | Where-Object { $_.Name -eq 'w-flaky.ps1' })[0]
+    Check 'W8 a row red only in a worker is green on the confirm pass' `
+        (($rowK.Verdict -eq 'fail') -and ($rowK.Alone -eq 'pass') -and ($rowK.Reproduced -eq 'no')) "verdict=$($rowK.Verdict) alone=$($rowK.Alone) reproduced=$($rowK.Reproduced)"
+    Check 'W9 the confirm pass wrote its own .alone log beside the sweep''s' `
+        (Test-Path -LiteralPath (Join-Path $dirW 'w-flaky.alone.log')) ''
+    $rowH = @($sW.results | Where-Object { $_.Name -eq 'w-hang.ps1' })[0]
+    Check 'W10 -MaxTimeoutSec bounds a declared cap in a parallel run too' `
+        (($rowH.Verdict -eq 'stall') -and ([double]$rowH.Seconds -lt 30)) "verdict=$($rowH.Verdict) seconds=$($rowH.Seconds)"
+    Check 'W11 the run is red and exits 1' (($rW.Exit -eq 1) -and ($rW.Text -match 'SUITE \d+ FAILURE\(S\)')) "exit $($rW.Exit)"
+    Check 'W12 the header names the width' ($rW.Text -match 'jobs=4') ''
+
+    # The verdict-set comparison the task asks for: the same set at -Jobs 4
+    # and -Jobs 1, read by `compare`. w-flaky is left out on purpose - it is
+    # DESIGNED to differ in a worker - and w-hang to keep the pair quick.
+    $setArgs = @('-Include', 'w-slow*,w-timing.ps1,w-fail.ps1', '-NoConfirm', '-TimeoutSec', '60')
+    $dirW4b = Join-Path $Fixture 'runW4b'
+    $dirW1 = Join-Path $Fixture 'runW1'
+    Get-ChildItem -LiteralPath $wTimes -File | Remove-Item -Force
+    $null = Invoke-Runner ($setArgs + @('-Jobs', '4', '-OutDir', $dirW4b))
+    $par = @(1..4 | ForEach-Object { Get-WInterval "w-slow$_" })
+    $null = Invoke-Runner ($setArgs + @('-Jobs', '1', '-OutDir', $dirW1))
+    $serial = @(1..4 | ForEach-Object { Get-WInterval "w-slow$_" })
+    $sp = 0
+    for ($a = 0; $a -lt 4; $a++) { for ($b = $a + 1; $b -lt 4; $b++) { if (Test-WOverlap $serial[$a] $serial[$b]) { $sp++ } } }
+    Check 'W13 -Jobs 1 is still the serial sweep (nothing overlaps)' ($sp -eq 0) "$sp overlapping pair(s)"
+    Check 'W14 -Jobs 1 runs from the real repo' `
+        (@($serial | Where-Object { $_ -and $_.Root -notlike '*-par\w*' }).Count -eq 4) (($serial | ForEach-Object { $_.Root }) -join '; ')
+    $rCmpW = Invoke-Runner @('compare', '-Runs', "$dirW4b,$dirW1")
+    Check 'W15 compare reads -Jobs 4 and -Jobs 1 over the same set as STABLE' `
+        (($rCmpW.Exit -eq 0) -and ($rCmpW.Text -match 'SUITE COMPARE STABLE \(6 scripts')) $rCmpW.Text
+    # Span of the four 4-second scripts, from their own clocks: about 16s
+    # serial, about 4s four-wide. The improvement measured, not argued.
+    function Get-WSpan($iv) {
+        $ok = @($iv | Where-Object { $_ })
+        if ($ok.Count -lt 4) { return -1 }
+        return ((($ok | Measure-Object End -Maximum).Maximum) - (($ok | Measure-Object Start -Minimum).Minimum)) / 1e7
+    }
+    $span4 = Get-WSpan $par
+    $span1 = Get-WSpan $serial
+    Check 'W16 the same four scripts finish in well under the serial span' `
+        (($span4 -gt 0) -and ($span1 -gt 0) -and ($span4 -lt ($span1 * 0.6))) ('{0:N1}s four-wide vs {1:N1}s serial' -f $span4, $span1)
+
     # --- J. the duration in the report ------------------------------------
     Write-Host ''
     Write-Host '-- J. Format-Duration'
@@ -994,6 +1105,19 @@ finally {
         Where-Object { $_.CommandLine -and $_.CommandLine -like "*$Fixture*" } |
         ForEach-Object { try { & taskkill.exe /T /F /PID $_.ProcessId *> $null } catch { } }
     Start-Sleep -Milliseconds 300
+    # Section W's worker mirrors: every junction unlinked first (never
+    # followed - PS 5.1's recursive delete would walk into the fixture, and in
+    # a mis-rooted run into the repo), then what is left is plain directories.
+    $parBase = Get-AcceptanceWorkerBase -Repo $Fixture
+    if (Test-Path -LiteralPath $parBase) {
+        foreach ($w in @(Get-ChildItem -LiteralPath $parBase -Directory -Force)) {
+            try {
+                if ($w.Name -like '*-local') { [IO.Directory]::Delete($w.FullName, $true) }
+                else { Remove-AcceptanceWorkerRoot -Root $w.FullName }
+            } catch { Write-Host "  cleanup: $($w.FullName): $($_.Exception.Message)" }
+        }
+        try { [IO.Directory]::Delete($parBase, $false) } catch { }
+    }
     Remove-Item -LiteralPath $Fixture -Recurse -Force -ErrorAction SilentlyContinue
 }
 

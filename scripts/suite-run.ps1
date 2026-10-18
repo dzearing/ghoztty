@@ -51,27 +51,27 @@
   says so when HEAD has moved underneath it, and `confirm` carries that commit
   through unchanged, because both are reporting on a run that already happened.
 
-  WHY IT IS SERIAL, AND STAYS SERIAL. The parallel version is not a matter of
-  adding workers. Every script here resolves the app under test as
-  `<repo>\zig-out\bin\ghoztty.exe` - 91 of them compute that path internally,
+  SERIAL BY DEFAULT, -Jobs N TO RUN SIDE BY SIDE (T1092). Parallelism is not a
+  matter of adding workers. Every script here resolves the app under test as
+  `<repo>\zig-out\bin\ghoztty.exe` - most compute that path internally,
   ignoring any `-Exe` a caller might pass - and `lib\CleanSlate.ps1` kills the
   app under test by EXACT ExecutablePath. So two workers running out of one
   zig-out do not merely share state: each one's clean-slate kills the other's
   app, mid-assertion, with no error either of them can attribute. The same is
   true of `%LOCALAPPDATA%\ghoztty\*`, which every script clears at launch.
-  Parallelism therefore needs a per-worker exe copy AND a per-worker
-  LOCALAPPDATA, which needs every script to honor an injected exe path first -
-  a suite-wide change, filed as its own task rather than smuggled in here.
-  Until then the honest number is the serial one, and this prints it.
 
-  T1960 found the shape that needs no script edits, and it lives in
-  scripts\acceptance-parallel.ps1 (the per-turn DUE set, about four at a
-  time): each worker runs from a mirror of the repo - junctions to the real
-  tree and its own hard-linked zig-out - so every path a script derives from
-  `$PSScriptRoot` names that worker's copy, and its own LOCALAPPDATA, agent
-  lineage and pipe suffix come from the environment. Scripts it cannot place
-  in a worker run one at a time beside them or with nothing beside them. This
-  runner stays the serial whole-suite sweep; the two share lib\RunVerdict.ps1.
+  T1960 found the shape that needs no script edits, in
+  scripts\lib\AcceptanceParallel.ps1: each worker runs from a mirror of the
+  repo - junctions to the real tree and its own hard-linked zig-out - so every
+  path a script derives from `$PSScriptRoot` names that worker's copy, and its
+  own LOCALAPPDATA, agent lineage and pipe suffix come from the environment.
+  Scripts it cannot place in a worker run one at a time beside them or with
+  nothing beside them. `-Jobs N` hands this runner's selection to that engine
+  (Invoke-ParallelSweep, below) and keeps everything else - scoring, summary,
+  confirm pass, compare - so `compare -Runs <jobs4>,<jobs1>` is the check that
+  the two agree. What it gives up is the per-script leak and modal sweeps: those
+  run once, at the end. scripts\acceptance-parallel.ps1 is the same engine
+  pointed at the per-turn DUE set.
 
   A RED ROW IS RE-RUN ONCE, ALONE, BEFORE THE RUN ENDS (T1137). "The feature is
   broken" and "the test is broken" produce the same red row, and the sweep of
@@ -96,6 +96,7 @@
   powershell -NoProfile -File scripts\suite-run.ps1 list
   powershell -NoProfile -File scripts\suite-run.ps1 -Set gui
   powershell -NoProfile -File scripts\suite-run.ps1 -Set gui -Order reverse
+  powershell -NoProfile -File scripts\suite-run.ps1 -Jobs 4
   powershell -NoProfile -File scripts\suite-run.ps1 -Resume temp\suite-runs\20260822-021500\summary.json
   powershell -NoProfile -File scripts\suite-run.ps1 compare -Runs run1\summary.json,run2\summary.json
   powershell -NoProfile -File scripts\suite-run.ps1 confirm -Resume temp\suite-runs\fwd1
@@ -165,6 +166,14 @@ param(
     # script that defines its own collides with every caller's muscle memory
     # about what it means.
     [switch]$NoConfirm,
+
+    # How many scripts run at once (T1092). 1 (the default) is the serial
+    # sweep described above, unchanged. N > 1 hands the selected set to the
+    # parallel engine in scripts\lib\AcceptanceParallel.ps1 - the T1960 worker
+    # mirrors, at most N at a time - and then runs this runner's own confirm
+    # pass over the red rows, serially, exactly as a serial sweep would. The
+    # summary is the same schema, so `compare` sets -Jobs 4 against -Jobs 1.
+    [int]$Jobs = 1,
 
     [switch]$DryRun,
     [string]$Repo
@@ -640,6 +649,7 @@ function Save-Summary {
         commit  = $Meta.Commit
         branch  = $Meta.Branch
         dirty   = $Meta.Dirty
+        jobs    = $Meta.Jobs
         results = @($Rows)
     }
     $json = $payload | ConvertTo-Json -Depth 6
@@ -919,6 +929,94 @@ if ($Action -eq 'confirm') {
     exit 1
 }
 
+<#
+The whole selected set, -Jobs at a time (T1092).
+
+WHY THIS IS NOT A SECOND RUNNER. The parallel engine T1960 built for the
+per-turn due set already answers the question this file's header gives as the
+reason to stay serial: every worker runs from its own mirror of the repo
+(junctions plus a hard-linked zig-out) with its own LOCALAPPDATA, agent lineage
+and pipe suffix, so no worker's clean slate can reach another worker's app, and
+a script that cannot run in a worker is scheduled alone. So this hands the rows
+to Invoke-AcceptanceRun and converts what comes back into this runner's rows -
+same verdict scorer (lib\RunVerdict.ps1), same summary schema, and the same
+confirm pass afterwards (run by the caller, serially, from the real repo). The
+engine's own confirm is switched off so a red row is re-run by exactly one code
+path, the property Invoke-ScoredScript exists to keep.
+
+What a parallel sweep cannot do is the BETWEEN-script sweeps: with four scripts
+running at once, a leaked process or a stray dialog belongs to whichever of them
+raised it and nothing can say which. The engine kills each worker's leftovers
+when its script ends; the repo's zig-out is swept and the desktop checked for
+dialogs ONCE, at the end, and a dialog found there fails the RUN rather than
+being pinned on a script at random.
+#>
+function Invoke-ParallelSweep {
+    $byName = @{}
+    $index = @{}
+    $n = 0
+    foreach ($r in $rows) { $n++; $byName[$r.Name] = $r; $index[$r.Name] = $n }
+
+    $out = New-Object System.Collections.ArrayList
+    foreach ($r in $rows) { if ($done.ContainsKey($r.Name)) { [void]$out.Add($done[$r.Name]) } }
+    $repoPrefix = $Repo.TrimEnd('\') + '\'
+    $jobList = @($rows | Where-Object { -not $done.ContainsKey($_.Name) } | ForEach-Object {
+            $rel = $_.Path
+            if ($rel.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) { $rel = $rel.Substring($repoPrefix.Length) }
+            [pscustomobject]@{ Script = $rel; Args = '' }
+        })
+    if ($jobList.Count -eq 0) { return @($out | Sort-Object Index) }
+
+    $script:parDone = $out.Count
+    $total = $rows.Count
+    $onResult = {
+        param($e)
+        $src = $byName[$e.Name]
+        $refused = ($e.Phase -eq 'refused')
+        $lane = $(if ($refused) { 'refused' } elseif ($e.Class -eq 'parallel') { "w$($e.Slot)" } else { $e.Class })
+        $row = [pscustomobject]@{
+            Name    = $e.Name
+            Class   = $(if ($src) { $src.Class } else { '' })
+            Verdict = $(if ($refused) { 'error' } else { $e.Kind })
+            Line    = $e.Line
+            Seconds = [math]::Round(($e.Ended - $e.Started).TotalSeconds, 1)
+            Exit    = $e.ExitCode
+            Leaked  = 0
+            Modals  = 0
+            Log     = $(if ($e.Log) { Split-Path $e.Log -Leaf } else { '' })
+            Index   = $index[$e.Name]
+            Alone      = $(if ($refused) { 'unknown' } else { '' })
+            AloneLine  = $(if ($refused) { 'not re-run: refused in this checkout' } else { '' })
+            Reproduced = ''
+            Timeout  = $(if ($src) { Resolve-ScriptTimeout -Declared $src.Declared -Default $TimeoutSec -Max $MaxTimeoutSec } else { $TimeoutSec })
+            Declared = $(if ($src) { $src.Declared } else { 0 })
+            # Where it ran: w<N> = a worker mirror, main / exclusive = the real
+            # repo, refused = never started. Read beside a red row, it says
+            # whether that script could have met another one at all.
+            Lane     = $lane
+        }
+        [void]$out.Add($row)
+        $script:parDone++
+        Write-ResultLine -Row $row -Index $script:parDone -Total $total
+        # After EVERY script, for the same reason as the serial loop.
+        Save-Summary -Path $summaryPath -Meta $meta -Rows @($out | Sort-Object Index)
+    }
+
+    $null = Invoke-AcceptanceRun -Repo $Repo -Jobs $jobList -Width $Jobs -LogDir $OutDir `
+        -TimeoutSec $TimeoutSec -MaxTimeoutSec $MaxTimeoutSec -NoConfirm -OnResult $onResult
+
+    if (-not $NoSweep) {
+        $leaked = Invoke-LeakSweep -ZigOut $zigOut
+        if ($leaked -gt 0) { Write-Host "  parallel sweep: $leaked process(es) still running out of $zigOut at the end - killed" -ForegroundColor Yellow }
+        $modals = @(Invoke-ModalSweep -ZigOut $zigOut)
+        if ($modals.Count -gt 0) {
+            $script:parModalLines = @(Format-StrayModalDialog -Modals $modals)
+            Write-Host "  parallel sweep: stray modal dialog(s) at the end of the run: $($script:parModalLines -join '; ')" -ForegroundColor Red
+        }
+    }
+    return @($out | Sort-Object Index)
+}
+
 # =============================================================== action: run
 
 # @() at every step - see the note in the list action above.
@@ -973,9 +1071,10 @@ $meta = [pscustomobject]@{
     Started = (Get-Date).ToString('o'); Set = $Set; Order = $Order
     TimeoutSec = $TimeoutSec; MaxTimeoutSec = $MaxTimeoutSec; Repo = $Repo
     Commit = $runAt.Commit; Branch = $runAt.Branch; Dirty = $runAt.Dirty
+    Jobs = [Math]::Max(1, $Jobs)
 }
 
-"suite-run: $($rows.Count) script(s), set=$Set order=$Order timeout=${TimeoutSec}s"
+"suite-run: $($rows.Count) script(s), set=$Set order=$Order timeout=${TimeoutSec}s jobs=$($meta.Jobs)"
 "  out: $OutDir"
 "  commit: $(Format-RunCommit -Commit $runAt.Commit -Branch $runAt.Branch -Dirty $runAt.Dirty)"
 if ($movedFrom) {
@@ -1004,7 +1103,11 @@ if ($DryRun) {
 $results = @()
 $i = 0
 $suiteSw = [System.Diagnostics.Stopwatch]::StartNew()
+$script:parModalLines = @()
 
+if ($Jobs -gt 1) {
+    $results = @(Invoke-ParallelSweep)
+} else {
 foreach ($r in $rows) {
     $i++
     if ($done.ContainsKey($r.Name)) {
@@ -1049,14 +1152,21 @@ foreach ($r in $rows) {
     # killed sooner or later, and the rows it already bought must survive it.
     Save-Summary -Path $summaryPath -Meta $meta -Rows $results
 }
+}
 
 $suiteSw.Stop()
 Save-Summary -Path $summaryPath -Meta $meta -Rows $results
 
 if (-not $NoConfirm) {
-    $results = @(Invoke-ConfirmPass -Rows $results -Scripts $rows -LogDir $OutDir `
-            -StdinFile $stdinFile -ZigOut $zigOut -Sweep (-not $NoSweep) `
-            -DefaultTimeout $TimeoutSec -MaxTimeout $MaxTimeoutSec)
+    # A row the parallel engine REFUSED is never re-run: in this checkout its
+    # body would grade another checkout's build (T1993), and a confirm pass
+    # that ran it anyway would answer that question about the wrong code. The
+    # confirm pass edits the rows it is handed in place, so handing it the
+    # subset still fills in $results.
+    $confirmable = @($results | Where-Object { -not ($_.PSObject.Properties['Lane'] -and $_.Lane -eq 'refused') })
+    $null = Invoke-ConfirmPass -Rows $confirmable -Scripts $rows -LogDir $OutDir `
+        -StdinFile $stdinFile -ZigOut $zigOut -Sweep (-not $NoSweep) `
+        -DefaultTimeout $TimeoutSec -MaxTimeout $MaxTimeoutSec
     Save-Summary -Path $summaryPath -Meta $meta -Rows $results
 }
 
@@ -1068,6 +1178,9 @@ foreach ($k in @('pass', 'skip', 'fail', 'stall', 'nothing', 'error')) {
 # counting it as a failure would make the suite's colour a property of the
 # desktop the run happened on rather than of the product.
 $red = $results.Count - $byKind['pass'] - $byKind['skip']
+# A parallel sweep looks for dialogs once, at the end, and cannot say which
+# script raised one - so one there fails the RUN (see Invoke-ParallelSweep).
+if (@($script:parModalLines).Count -gt 0) { $red++ }
 
 ''
 '---- suite summary ----------------------------------------------------------'

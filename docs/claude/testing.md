@@ -1110,16 +1110,20 @@ launder as green). Four properties are the ones that matter in practice:
   forward, reverse, then compare the three summaries: a script whose verdict
   moves is reading state a neighbour left behind.
 
-**It is serial, and that is a measured decision, not an omission.** Every script
-here resolves the app as `<repo>\zig-out\bin\ghoztty.exe` — 91 of them compute
-that path internally and ignore any `-Exe` a caller passes — and `CleanSlate`
-kills the app under test by exact ExecutablePath. Two workers out of one
-`zig-out` therefore kill each other's app mid-assertion, with no error either
-can attribute, and they share `%LOCALAPPDATA%\ghoztty\*` besides. Parallelism
-needs a per-worker exe copy and a per-worker `LOCALAPPDATA`, which needs every
-script to honor an injected exe path first — a suite-wide change with its own
-task. Until then the honest number is the serial one, and the runner prints it.
-Acceptance: `test\win32\suite-run.ps1`.
+**It is serial by default; `-Jobs 4` runs it side by side** (T1092). Every
+script here resolves the app as `<repo>\zig-out\bin\ghoztty.exe` and
+`CleanSlate` kills the app under test by exact ExecutablePath, so two workers out
+of one `zig-out` would kill each other's app mid-assertion. `-Jobs N` avoids that
+without editing a script: it hands the selection to the T1960 engine
+(`scripts\lib\AcceptanceParallel.ps1`), where each worker runs from its own
+mirror of the repo with its own hard-linked `zig-out`, `LOCALAPPDATA`, agent
+lineage and pipe, and a script that cannot share (`# @timing-sensitive`,
+`# @parallel-unsafe`, a box-global resource) runs alone. Scoring, `summary.json`
+(which records `jobs`), the confirm pass and `compare` are unchanged, so
+`compare -Runs <jobs4>,<jobs1>` checks that the two agree. The trade-off: the
+leak and modal sweeps run once at the end instead of between scripts, so a
+leak cannot be pinned on one script. When that attribution matters, run serial.
+Acceptance: `test\win32\suite-run.ps1` (section W).
 
 **A red script is RE-RUN ALONE before it becomes a task** (T1137). "The feature
 is broken" and "the test is broken" produce exactly the same red row, and the

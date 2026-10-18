@@ -653,6 +653,10 @@ function Invoke-AcceptanceRun {
         [int]$Width = 4,
         [Parameter(Mandatory = $true)][string]$LogDir,
         [int]$TimeoutSec = 1800,
+        # Upper bound on a script's DECLARED `# suite-timeout-sec:` cap; 0 =
+        # honoured in full. suite-run.ps1 -Jobs passes its -MaxTimeoutSec here
+        # so a parallel sweep is bounded exactly like a serial one (T1092).
+        [int]$MaxTimeoutSec = 0,
         [string]$RepoLiteral,
         [switch]$NoConfirm,
         [switch]$FailFast,
@@ -671,11 +675,13 @@ function Invoke-AcceptanceRun {
         $abs = Join-Path $Repo $j.Script
         $cls = Get-AcceptanceScriptClass -Path $abs -RepoLiteral $RepoLiteral
         $declared = Get-ScriptTimeout -Text ([IO.File]::ReadAllText($abs))
+        $cap = $(if ($declared -gt 0) { $declared } else { $TimeoutSec })
+        if ($MaxTimeoutSec -gt 0 -and $cap -gt $MaxTimeoutSec) { $cap = $MaxTimeoutSec }
         $item = [pscustomobject]@{
             Seq = $i; Script = $j.Script; Args = [string]$j.Args; Name = $cls.Name
             Class = $(if ($Width -le 1) { 'serial' } else { $cls.Class })
             StaticClass = $cls.Class; Reasons = $cls.Reasons; Inject = $cls.Inject
-            Timeout = $(if ($declared -gt 0) { $declared } else { $TimeoutSec })
+            Timeout = $cap
         }
         if ($foreign -and (@($cls.Pinned).Count -gt 0 -or @($cls.Unscoped).Count -gt 0)) {
             $item | Add-Member -NotePropertyName Pinned -NotePropertyValue @($cls.Pinned)
