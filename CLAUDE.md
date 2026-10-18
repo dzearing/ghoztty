@@ -983,6 +983,19 @@ ghoztty +close --target=doc
     which is where the highlights are. Return steps a match only from the find
     field; in the filter it opens the top file and in the address bar it
     navigates, each via its own field.
+  - **A plain key the page ignores does not beep** (`ViewerView.keyDown`).
+    WKWebView offers every keyDown to the page and re-sends one the page left
+    alone (Return on a page body, a letter, an arrow with nothing to scroll)
+    up the responder chain, where nothing handles a plain key — every Ghoztty
+    key handler above a pane is an event monitor that already ran — so it
+    reached the controller's `noResponder(for:)`, i.e. `NSBeep()`. The pane now
+    ends that walk for keys its content handed back. The page still gets every
+    key first. **Command chords** still climb (they already went through
+    `performKeyEquivalent` and `ViewerKeyFallback`; an unbound one beeps as in
+    any Mac app), and so do **Tab / Shift-Tab**, which the window's key-view
+    loop needs to move the caret out of a page. Text fields in the pane are
+    untouched (the policy only applies while the content view has focus).
+    Tests: `ViewerUnhandledKeyBeepTests`.
   - These **override their global binding only while the viewer holds focus**
     (Cmd+R = "Set Pane Banner…", Cmd+D = split right). Focus a terminal pane
     and they do their global thing again; Cmd+Shift+R ("Change Window Title"),
