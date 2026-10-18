@@ -3268,6 +3268,45 @@ final class ViewerView: NSView, Codable, ObservableObject {
         return true
     }
 
+    /// End the responder-chain walk of a key the pane's content handed back
+    /// unconsumed, so it does not beep.
+    ///
+    /// WKWebView offers every keyDown to the page first; one the page leaves
+    /// alone (Return on a page body, a letter, an arrow with nothing to
+    /// scroll) is re-sent to `super.keyDown`, which climbs WKWebView → this
+    /// view → the SwiftUI hosts → the window → its controller, and the
+    /// controller, with no `nextResponder`, calls `noResponder(for:)`:
+    /// `NSBeep()`. Nothing on that walk handles a plain key — every Ghoztty
+    /// key handler above a pane is an event monitor, which ran before
+    /// dispatch — so the walk's only outcome was the beep. A browser does not
+    /// beep at keys a page ignores, so neither does a viewer pane.
+    ///
+    /// The page has already had the key by the time it gets here, which is
+    /// what makes ending the walk safe; see `endsUnhandledKeyWalk` for the
+    /// keys that still go on up.
+    override func keyDown(with event: NSEvent) {
+        if isViewerContentFocused, Self.endsUnhandledKeyWalk(event) { return }
+        super.keyDown(with: event)
+    }
+
+    /// Whether a key the content handed back stops here rather than climbing
+    /// to the window. Pure, so the policy is testable.
+    ///
+    /// - **Command chords go on**: they already passed through
+    ///   `performKeyEquivalent` (pane chords, `ViewerKeyFallback`, the menu),
+    ///   and an unbound one beeping is ordinary Mac feedback, not this bug.
+    /// - **Tab / Shift-Tab go on**: a page hands Tab back when focus runs off
+    ///   the end of its own tab order, and the window's key-view loop is what
+    ///   moves the caret out of the web view.
+    static func endsUnhandledKeyWalk(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        if event.modifierFlags.contains(.command) { return false }
+        switch event.specialKey {
+        case .tab?, .backTab?: return false
+        default: return true
+        }
+    }
+
     /// The subview that holds keyboard focus on this pane's behalf: the web
     /// view, or the image surface's scroll view while the pane is showing an
     /// image. Everything that hands focus back to "the content" goes through
