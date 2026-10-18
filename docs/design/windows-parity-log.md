@@ -37055,3 +37055,9 @@ moved to T1814.
 - **Already fixed at claim.** T767 (fcbd6abf7, 2026-09-15) filed and fixed the same defect. `tab-strip-autohide.ps1` aimed its probe with the pre-T496 button arithmetic, so it landed one slab right, inside minimize. The product's hit test was correct all along. T767 makes the script read the button positions from `Get-TestChromeMetrics`, the same source `caption-bar.ps1` checks against painted pixels.
 - **Validated.** Both scripts re-run at HEAD f9e5b3570 through `acceptance-parallel.ps1 run`. tab-strip-autohide.ps1 ALL PASS (15): '...' is HTSYSMENU (3) with the strip hidden. caption-bar.ps1 ALL PASS (38): '...' is HTSYSMENU (3) and minimize is HTMINBUTTON (8) with the strip up. No code changed.
 - **Mac.** Nothing owed: tracker-only close.
+
+## 2026-10-18 — T1112: the chooser Ctrl+W sweep-only red was already root-caused and fixed by T1284
+
+- **Already fixed at claim.** T1284 (f9e2311ed, 2026-09-02) caught the same sweep-only red independently, without seeing this card. The cause was not lost input. The positive control's Ctrl+W hit a pane whose shell still had a child process, so the app raised its modal close confirmation. That froze the pane count and kept the owner window disabled, so one wrong assertion turned into three. The control now waits for idle shells and reads the dialog back.
+- **Validated.** `acceptance-parallel.ps1 run` at HEAD 4c7e4d850, on the test desktop: ALL PASS (16). `-ForceConfirm` scores 2 FAILURE(S) and `-NegativeControl` scores 1 FAILURE(S), each red at exactly the assertion it targets. No code changed.
+- **Mac.** Nothing owed: tracker-only close.
