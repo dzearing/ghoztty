@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-18T00:42:00-07:00",
-    "commit":  "f82f3977c",
+    "generated":  "2026-10-18T01:01:01-07:00",
+    "commit":  "dee68db96",
     "uncommitted":  [
 
                     ],
@@ -1263,7 +1263,7 @@
                   "test/win32/session-resume-offset.ps1":  "801d7a280b290b75edee978b12ae4fbe0b32e0e5d019ce25f1a3bc24a5d2c865",
                   "test/win32/sessions-agent-build.ps1":  "dece3962aa9ead6958aacd2fdef71048d5fd3fcc3798c1aac534a4d4f27950a0",
                   "test/win32/session-shell-exit.ps1":  "3d60d7703bb364ea19de403a9c101e68d7ea5a6909d185970b897e35e71fb032",
-                  "test/win32/session-snapshot-reattach.ps1":  "043c6d5bb7fc9c5f2f5f83eed7348fd14585c0c5755552fc0d04064d7d34665e",
+                  "test/win32/session-snapshot-reattach.ps1":  "b86fb9af73414ff62034973f8d002e375b68cabeaed1d7de7319f76b2f2afcb8",
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",
                   "test/win32/share-machine.ps1":  "02b0600437871b235bdf8c4a4733a6558ae689060ae8a5d6821353df36437960",
@@ -1272,8 +1272,8 @@
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
                   "test/win32/soak.ps1":  "d3fd1ac5975a290fe0b6796fcbb06601da6b05d359a75aeaaffe8f357f7ad53f",
                   "test/win32/soak-daemon.ps1":  "266cee53040004b1a1c4189de4a94d25521563339cda9927632decdc1006b1ac",
-                  "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
-                  "test/win32/split-dim-viewer.ps1":  "3775cecc0d93488b88311d24f75f63fb3e14bd0458d4c04fda886c4ae37cccbb",
+                  "test/win32/split-dim.ps1":  "5026870ee86ebcc4ec7ec2a7f1672961a9d8ff5187488f8c17ecbce489f20d68",
+                  "test/win32/split-dim-viewer.ps1":  "4f689aed21e8ba0c7f02669bfc1658944b723de07fa713daf81c1acedbe5ed05",
                   "test/win32/split-divider.ps1":  "f1f51018b1cefad778db1e4cbcac79c99227be6adf6325418d8ae0d8d93b8fd7",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
