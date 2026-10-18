@@ -224,7 +224,10 @@ param(
     # T1312. Skip the second-opinion scanner readback that runs once, when a
     # tagged release is confirmed real. It is advisory either way; this is for a
     # run that must not touch the network beyond gh.
-    [switch]$NoScanCheck
+    [switch]$NoScanCheck,
+    # T1076. Skip the readback of the release's MSI and ZIP that runs beside the
+    # scan. Advisory either way; this is for a run that must not download.
+    [switch]$NoAssetCheck
 )
 
 $ErrorActionPreference = 'Continue'
@@ -667,6 +670,22 @@ if ($mark.Result -eq 'tagged' -and $mark.Tag) {
                 3 { Log "SCAN DETECTED: engines flagged assets of $($mark.Tag). $(($scanOut | Out-String).Trim())" }
                 4 { Log "SCAN NOT ASKED: no second-opinion scanner available (no API key or no network)." }
                 default { Log "SCAN ERROR: the scanner check could not run for $($mark.Tag)." }
+            }
+        }
+
+        # And read back what GitHub is now SERVING (T1076): everything before
+        # this proved what was built and copied locally, never the download
+        # itself, so a broken asset was only found by whoever downloaded it.
+        # Same shape as the scan: once per release, here, ADVISORY.
+        if (-not $NoAssetCheck) {
+            $readback = Join-Path $PSScriptRoot 'verify-release-assets.ps1'
+            $assetOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $readback `
+                -Tag $mark.Tag 2>&1
+            switch ($LASTEXITCODE) {
+                0 { Log "ASSETS OK: $($mark.Tag)'s MSI and portable ZIP read back as one working build." }
+                3 { Log "ASSETS BROKEN: $($mark.Tag) is serving a broken download. $((@($assetOut) | Where-Object { "$_" -match '^\s+- ' } | ForEach-Object { "$_".Trim() }) -join ' ')" }
+                4 { Log "ASSETS NOT ASKED: could not fetch $($mark.Tag)'s assets back from GitHub." }
+                default { Log "ASSETS ERROR: the asset readback could not run for $($mark.Tag)." }
             }
         }
     } elseif ((Invoke-Probe { gh auth status }) -eq 0) {

@@ -1,10 +1,12 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-17T22:30:45-07:00",
-    "commit":  "8a1b6934a",
+    "generated":  "2026-10-17T23:46:58-07:00",
+    "commit":  "13544c3e0",
     "uncommitted":  [
-                        "scripts/agent-stamp-inputs.ps1"
+                        "scripts/daily-publish.ps1",
+                        "scripts/guard-due.ps1",
+                        "scripts/verify-release-assets.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
@@ -17,7 +19,7 @@
                   "scripts/control-char-scan.ps1":  "5d86caddd7c8b44be9b3148dd5994881a8f8fa8eb1a07d2fe5414b0dd6428ba8",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
-                  "scripts/daily-publish.ps1":  "52503d6690861c95c2746908801d9b30514c59c7d7247db4262f07d93830957c",
+                  "scripts/daily-publish.ps1":  "44bdce30b404b4f8da2bb69527ae66f389d5aaa4b47e0c89f623bfefbbe78a2a",
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
                   "scripts/deliver-windows-build.ps1":  "177c6421716f590b0b3a89ec32990512482a977657161155aa773db266b99aac",
                   "scripts/delivery-manifest.ps1":  "e985781584ffa1b524cf12bc0ed8b01cd952b8f18391e1a3fd2d229c15388a34",
@@ -36,7 +38,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "84a223af995b00dfdf1d70164321c320e39df45ab1f45539372de0ad72cba33e",
-                  "scripts/guard-due.ps1":  "e63c0e8b132d0d285363100691d516e05b413fe13f78e4ff925c503d38cd53d9",
+                  "scripts/guard-due.ps1":  "47ca5852a73efad0eab3ca40c81a2d9c0ee6e877c20172eb28834b843143f8f4",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -90,6 +92,7 @@
                   "scripts/upgrade-ghoztty-windows.ps1":  "49e2426fad831e6745c7862602bf3a43b773daf259aef37f99b33e6ff45fc069",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",
                   "scripts/upstream-stage.ps1":  "a51dc2a35a5f4e1dcec4f5e7e16b2b895ec39af1b6a25bea056c780dba6aa81f",
+                  "scripts/verify-release-assets.ps1":  "215cbd6d59eec0582b4c0f49b5e65fcccaddef9a537cee7dab17c36b143f4241",
                   "scripts/verify-release-clean.ps1":  "ee41494c52f72b6d60caf4ee8750f3fc760ab4330481a7a16c4b4f1d8830c39b",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "scripts/watchdog-ghoztty-windows.ps1":  "83c84a3e39fa70558219214014f9171145dff9acf2fefc00b221a2a9a28a06f2",

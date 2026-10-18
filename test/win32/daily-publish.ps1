@@ -435,6 +435,14 @@ function Invoke-Decider([string[]]$Extra, [int]$DockerCode, [int]$GhCode, [strin
     $out = Join-Path $sandbox 'out.txt'
     $prevPath = $env:PATH
     $env:PATH = "$binDir;$prevPath"
+    # Speak as lane a (T1076). Since T1984 every other lane's decider stops at
+    # LANE REFUSED before any of the logic these sections test, so run from
+    # lane b's tree this harness went 7-red and its guard could never be
+    # re-stamped there. Safe because every outward act is a stand-in: the
+    # publisher is $fakePublish, gh and docker are fakes, the watermark is the
+    # sandbox's. The refusal itself is loop-lanes.ps1's to prove.
+    $prevLane = $env:GHOZTTY_LOOP_LANE
+    $env:GHOZTTY_LOOP_LANE = 'a'
     try {
         $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $publishDecider,
             '-Repo', $Repo, '-WatermarkPath', $watermark, '-PublishScript', $fakePublish,
@@ -442,7 +450,7 @@ function Invoke-Decider([string[]]$Extra, [int]$DockerCode, [int]$GhCode, [strin
             '-Now', $At, '-HourLocal', '17') + $Extra
         & powershell @psArgs > $out
         $code = $LASTEXITCODE
-    } finally { $env:PATH = $prevPath }
+    } finally { $env:PATH = $prevPath; $env:GHOZTTY_LOOP_LANE = $prevLane }
     return [pscustomobject]@{ Exit = $code; Text = (Get-Content -Raw -LiteralPath $out) }
 }
 

@@ -2212,6 +2212,23 @@ $GuardTable = @(
             'test\win32\verify-release-clean.ps1'
         )
     },
+    # The release asset readback (T1076): the one check that reads what GitHub
+    # is SERVING rather than what was built or copied locally. Offline harness,
+    # not in the P1-P3 floor, and every verdict in it is constructed - so an
+    # edit that blinds one check would otherwise go unnoticed until a broken
+    # download reached somebody. daily-publish.ps1 is covered because section D
+    # asserts the readback still calls it.
+    [pscustomobject]@{
+        Name   = 'verify-release-assets'
+        Script = 'test\win32\verify-release-assets.ps1'
+        Stamp  = 'test\win32\verify-release-assets.stamp.json'
+        Covers = @(
+            'scripts\verify-release-assets.ps1',
+            'scripts\delivery-manifest.ps1',
+            'scripts\daily-publish.ps1',
+            'test\win32\verify-release-assets.ps1'
+        )
+    },
     # The false-positive submission packet (T1313): a report to Microsoft
     # corrects the BYTES it names, and this project publishes new bytes several
     # times a day -- so the packet is generated from the current release rather
