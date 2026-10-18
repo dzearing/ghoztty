@@ -31,7 +31,7 @@ Recommend a version tag (e.g. `v1.4.1`) with clear reasoning:
 
 State plainly which artifacts will publish, e.g. "app + agent both changed → full release", "agent-only changed → skip the DMG/tag, just run Step 4", or "app-only → tag + DMG, agent auto-skips". If NEITHER changed, there is nothing to release — say so and stop. If only the agent changed you can skip the macOS tag/DMG entirely (Steps 3, 5, 6) and jump to Step 4.
 
-Present the recommendation and ask the user to confirm or override. Do NOT proceed until confirmed.
+State the chosen version and the reasoning in one or two lines, then proceed. Do NOT ask the user to confirm — saying "release" is the go-ahead. Stop only if there is nothing to release, or the semver call is genuinely ambiguous (e.g. a possibly-breaking change).
 
 ### Step 2: Generate Release Notes
 
@@ -61,7 +61,7 @@ From the categorized commits, write user-facing release notes. Rules:
   - Synced with Ghostty vX.Y.Z (if applicable)
   ```
 
-Present the notes and ask the user to approve or edit. Do NOT proceed until approved.
+Show the notes in your output for the record, then proceed. Do NOT ask the user to approve or edit them.
 
 **If the agent changed, author the bundled agent notes.** When this release
 changes the background agent (session persistence, re-attach, agent lifecycle,
@@ -146,7 +146,7 @@ Once the DMG is built, update the GitHub release with the friendly notes:
 gh release edit vX.Y.Z --repo dzearing/ghoztty --title "Ghoztty vX.Y.Z" --notes "$(cat <<'NOTES'
 ## What's new in Ghoztty vX.Y.Z
 
-{the approved release notes from step 2}
+{the release notes from step 2}
 
 ---
 
