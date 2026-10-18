@@ -1,0 +1,13 @@
+{
+    "guard":  "background-blur",
+    "script":  "test/win32/background-blur.ps1",
+    "generated":  "2026-10-18T03:40:53-07:00",
+    "commit":  "df2f94242",
+    "uncommitted":  [
+
+                    ],
+    "files":  {
+                  "src/apprt/win32/blur_backdrop.zig":  "35e95fc688e5251678422cb22df3f2dd08c32f325397332e5021ea4cb81aec8b",
+                  "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a"
+              }
+}

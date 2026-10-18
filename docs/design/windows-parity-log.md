@@ -37068,3 +37068,9 @@ moved to T1814.
 - **Validated.** `test-desktop-harness.ps1` (its section Z forces the missing-capability path) re-run through `acceptance-parallel.ps1 run`: ALL PASS (95). No code changed.
 - **Still owed, filed.** A green run of the real right-click assertions needs the input desktop, which the loop may not take (never pull focus). Filed T2076.
 - **Mac.** Nothing owed: tracker-only close.
+
+## 2026-10-18 — T1114: caption-bar.ps1's sweep-only flat capture no longer reproduces
+
+- **Already fixed at claim, in passing.** The 2026-08-22 red was the maximized-window capture coming back one flat colour in the serial sweep. It passes today in all three shapes: alone, in an 8-script width-4 batch of chrome tests, and mid-way through the alphabetical first-48 sweep slice at width 4 (ALL PASS, 38 assertions each time). No single commit can be proven to have fixed it. Closed against T941's posed `-Sync` capture (4312d369b) as the likeliest fix, with the per-run isolation since then contributing. No code changed.
+- **The sweep slice turned up other reds.** T2078 is filed: activity-truncated C and activity-help-tooltips E race the machine's process count past the Activity Monitor row cap when other workers run beside them. Already tracked and given today's evidence: T2055 (auto-launch-cwd counts other worktrees' zig-out processes) and T1568 (asserted-nothing C4/C5 ratchets).
+- **Mac.** Nothing owed: tracker-only close.
