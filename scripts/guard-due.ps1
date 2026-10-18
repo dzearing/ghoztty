@@ -4409,6 +4409,8 @@ $GuardTable = @(
         Covers = @(
             'CLAUDE.md',
             'docs\claude\*.md',
+            'docs\design\windows-parity-tasks.md',
+            'docs\design\windows-parity-tasks-history.md',
             'test\win32\docs-routing.ps1'
         )
     },

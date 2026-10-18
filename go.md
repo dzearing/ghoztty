@@ -442,8 +442,9 @@ Concretely, in order, with no stops in between:
 
    **`next` IS the ordering authority, as of 2026-08-21 (T345).** There is no
    hand-curated list above it any more: every task named in **Current
-   priorities** in `windows-parity-tasks.md` is closed, and that section is now
-   frozen history like the state table beside it. What replaces it is
+   priorities** is closed, and that section is now frozen history like the
+   state table beside it (both in `windows-parity-tasks-history.md` since
+   T1050). What replaces it is
    re-triage — `set-priority` moves a task to the head of the queue on its own
    and journals why — so the queue is a pure function of the task files and no
    turn negotiates with itself about what to work on.
@@ -1170,13 +1171,13 @@ the fix is the message.
    powershell -NoProfile -File scripts\parity-tasks.ps1 show T144
    ```
 
-   `docs/design/windows-parity-tasks.md` is still worth reading for its
-   narrative sections — the resume protocol and the key code landmarks — but
-   its **state table is frozen**: a historical snapshot, no longer ground
-   truth. Never add a row to it. **Current priorities** is frozen too as of
-   2026-08-21 (T345): every task it names is closed, and `next` is the
-   ordering authority now. Do not add to it; re-triage with `set-priority`
-   instead, which moves the queue and leaves a receipt. Likewise `windows-parity-details.md` is frozen; its
+   `docs/design/windows-parity-tasks.md` holds only what is live — the resume
+   protocol, the user's standing bar and goal, and the key code landmarks —
+   and is short enough to read whole. The frozen **state table** (2026-07-29)
+   and **Current priorities** (2026-08-21, T345) moved to
+   `windows-parity-tasks-history.md` in T1050: history only, never consulted
+   to pick work. `next` is the ordering authority; re-triage with
+   `set-priority`, which moves the queue and leaves a receipt. Likewise `windows-parity-details.md` is frozen; its
    per-task sections were copied into the task files, and the task file
    wins. The session log (`windows-parity-log.md`), the audit appendix
    (`windows-parity-audit.md`), and the spec (`windows-parity-spec.md`) are

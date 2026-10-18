@@ -1,7 +1,7 @@
 # Windows parity — session log
 
 History only. **Do not read this file as part of normal resume** —
-`windows-parity-tasks.md` (state table + task sections) is the hot doc.
+`windows-parity-tasks.md` (resume protocol) and the task files are the hot docs.
 Open a single entry here only when you need the backstory for a specific
 task (why a decision was made, what a past validation actually proved).
 
@@ -36871,3 +36871,9 @@ moved to T1814.
 - **What landed.** `Set-GhozttyHarnessLaunchKilled` (lib/AgentLineage.ps1) sits beside the existing launch-record seam. `Stop-RepoGhoztty` calls it for each pid it actually stops. A launch that died on its own before the stop is still reported.
 - **Validated.** New section J in gui-postmortem.ps1 runs a cmd.exe copy under the repo: the stopped child is not reported (J4) and is recorded as killed (J5), and the self-exited sibling is still reported (J3). Result: ALL PASS (46). Negative control: with the call removed, J4 and J5 go red, printing the exact `CRASHED - 0xFFFFFFFF` shape. A drag-perf re-run printed zero postmortem blocks (it had printed three). The seven harnesses the library edit made due passed 7/7. The full harness floor ran directly, because floor-lane's 30-minute cap is still T1657 (a duplicate I filed, T2063, is closed).
 - **Mac.** Nothing owed: Windows acceptance harness only.
+## 2026-10-17 — T1050 (lane b): the tracker's start-here doc is now only its live part
+
+- **Still real.** `windows-parity-tasks.md` was 1,690 lines, of which about 1,560 were the state table (frozen 2026-07-29) and Current priorities (frozen 2026-08-21). Its resume protocol still told a turn to edit table rows and read `windows-parity-details.md`, both retired.
+- **Split, not deleted.** The two frozen sections moved verbatim to `windows-parity-tasks-history.md`. The live doc is 137 lines: a rewritten resume protocol that matches go.md, the user's bar and goal, landmarks, related docs, and a pointer to the history. go.md, the task README and this log's header now route there.
+- **Kept true.** Section F of `docs-routing.ps1` fails on a state-table row, a FROZEN section, or more than 250 lines in the live doc. Negative control: one injected row turned F2 red. The dashboard reads the old table only from pre-split commits via `git show`, so it is unaffected.
+- **Mac.** Nothing owed: tracker documentation.

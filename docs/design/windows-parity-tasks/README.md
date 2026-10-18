@@ -294,11 +294,13 @@ Nothing was dropped, including three things the first pass would have lost:
 **The old docs are frozen, not deleted:**
 
 - `../windows-parity-tasks.md` — the resume protocol and the key code
-  landmarks are still live and still worth reading; its **state table** is a
-  historical snapshot. Do not add rows to it. **Current priorities** was
-  frozen on 2026-08-21 (T345) once every task it named had closed: `next` is
-  the ordering authority, and the way to change what comes next is to
-  re-triage the task (`set-priority`), not to hand-maintain a list.
+  landmarks, which are live; nothing else since T1050.
+- `../windows-parity-tasks-history.md` — the **state table** (frozen
+  2026-07-29) and **Current priorities** (frozen 2026-08-21, T345, once every
+  task it named had closed), moved out of the file above in T1050. Do not add
+  to either: `next` is the ordering authority, and the way to change what
+  comes next is to re-triage the task (`set-priority`), not to hand-maintain a
+  list.
 - `../windows-parity-details.md` — its per-task sections were copied into the
   task files. Do not edit it; edit the task file.
 - `../windows-parity-log.md` — unchanged, still the dated session log.

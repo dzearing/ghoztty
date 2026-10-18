@@ -21,6 +21,9 @@
 #      partition) names a heading that really is in that doc
 #   E  no partition is orphaned - every docs\claude\*.md is routed to from the
 #      root CLAUDE.md, so a file nobody can be told to read is a finding
+#   F  the tracker resume doc (windows-parity-tasks.md) holds only the live
+#      part - no frozen state table or priorities, which live in
+#      windows-parity-tasks-history.md since T1050
 #
 # Deliberately NOT checked: prose mentions of CLAUDE.md with no section
 # ("CLAUDE.md: the global cache must sit on the repo's drive"). Those name a
@@ -225,7 +228,7 @@ try { $tracked = @(& git ls-files) } finally { Pop-Location }
 Assert 'C1 git listed the tracked tree' ($tracked.Count -gt 100) "(got $($tracked.Count))"
 
 # The append-only parity record is history, not navigation (see the header).
-$HistoryPattern = '^docs/design/windows-parity-(log|audit|details|spec|digests/|tasks/|tasks\.md|decisions/)'
+$HistoryPattern = '^docs/design/windows-parity-(log|audit|details|spec|digests/|tasks/|tasks\.md|tasks-history\.md|decisions/)'
 $TextExt = @('.md', '.ps1', '.zig', '.swift', '.sh', '.yml', '.yaml', '.txt', '.json')
 
 $scanned = 0
@@ -297,6 +300,33 @@ foreach ($p in $partitions) {
 foreach ($o in $orphans) { "  ORPHAN $o (exists but the root routes nobody to it)" }
 Assert 'E2 every partition is routed to from the root CLAUDE.md' ($orphans.Count -eq 0) `
     "($($orphans.Count) orphan(s))"
+
+# ---------------------------------------------------------------------------
+"== F: the tracker resume doc holds only what is live (T1050)"
+# ---------------------------------------------------------------------------
+# go.md sends every fresh turn to windows-parity-tasks.md. Until T1050 that
+# meant 1,500 lines of frozen state table and priorities before the live part;
+# they moved to windows-parity-tasks-history.md. This keeps them from growing
+# back: no state-table rows, no FROZEN section, and a size a turn can read whole.
+$trackerRel = 'docs\design\windows-parity-tasks.md'
+$historyRel = 'docs\design\windows-parity-tasks-history.md'
+$trackerText = Read-Text (Join-Path $Repo $trackerRel)
+Assert 'F1 the tracker resume doc is readable' ($trackerText.Length -gt 0)
+$trackerLines = @($trackerText -split "`r?`n")
+$tableRows = @($trackerLines | Where-Object { $_ -match '^\|\s*T\d+[a-z0-9]*\s*\|' })
+Assert 'F2 the tracker resume doc carries no state-table rows' ($tableRows.Count -eq 0) `
+    "($($tableRows.Count) row(s); they belong in $historyRel)"
+$frozenHeads = @($trackerLines | Where-Object { $_ -match '^#+ .*FROZEN' -or $_ -match '^## State table' })
+Assert 'F3 the tracker resume doc has no frozen section' ($frozenHeads.Count -eq 0) `
+    "(found: $($frozenHeads -join '; '))"
+Assert 'F4 the tracker resume doc stays short enough to read whole' ($trackerLines.Count -le 250) `
+    "($($trackerLines.Count) lines)"
+$historyText = Read-Text (Join-Path $Repo $historyRel)
+Assert 'F5 the history file exists and holds the frozen state table' `
+    ($historyText -match '(?m)^## State table' -and $historyText -match '(?m)^## Current priorities') `
+    "($historyRel)"
+Assert 'F6 the tracker resume doc points at the history file' `
+    ($trackerText -match [regex]::Escape('windows-parity-tasks-history.md'))
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can
 # answer "has this scan been run against the docs as they now stand?".
