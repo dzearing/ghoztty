@@ -485,3 +485,13 @@ as the digest that showed them.
 - Even out the whole window (new angle on evening out a divider: every pane in the window to equal size, again to restore)
 - A huge paste cannot freeze the window (new angle on the paste preview: a big paste streams with progress, Esc stops it)
 - Typing never waits on a save (session/layout saves fully off the input path, a slow disk delays a save, never a keystroke)
+
+## 2026-10-18
+
+- Copy a file in Explorer, paste its path (Ctrl+C on a file in File Explorer, paste into a pane, get its quoted full path)
+- See the size while you drag (a divider drag or window resize shows each pane's columns x rows)
+- Pinch to zoom on a touch screen (pinch changes a pane's text size; two-finger swipe scrolls smoothly)
+- The emoji panel types into the pane (Win+. picks land in the shell as typed text)
+- This pane's environment, in a side pane (a searchable list of the pane's environment variables)
+- One pane cannot eat all your memory (a per-pane scrollback memory ceiling, with a sidebar note when it trims)
+- A huge diff opens on its first screen (diff pane shows the first changed file at once and fills in as you scroll)
