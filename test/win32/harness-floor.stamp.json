@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-17T21:51:03-07:00",
-    "commit":  "1ad217a65",
+    "generated":  "2026-10-17T22:14:34-07:00",
+    "commit":  "ebb09c8a5",
     "uncommitted":  [
-                        "test/win32/agent-upgrade.ps1"
+                        "test/win32/agent-upgrade.ps1",
+                        "test/win32/floor-lane-parallel.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -40,7 +41,7 @@
                   "test/win32/agent-sharing-uplink.ps1":  "48866fb9552847f84988466b853cf5fdc5ff48fcf6d21d8973f1fe872da10ed4",
                   "test/win32/agent-shell-integration.ps1":  "92d042090b917c3d6aa12d32eaddb9d118b09d0f3d29f255ce03880705edb8b0",
                   "test/win32/agent-stamp-inputs.ps1":  "95fbc858cddc1e0fde3e896ec699998298f5cfebbb1b595acd190e21cc913fe3",
-                  "test/win32/agent-upgrade.ps1":  "e82079046e0ad1fc43cf72aacaed5a95e8e21c614b761ba6b27ff1407843a516",
+                  "test/win32/agent-upgrade.ps1":  "e5e4b301e6e0def6ddb556b6511ec85fe2393f230793cf853ceb52844c39d68f",
                   "test/win32/agent-user-env.ps1":  "6bb44600b96dca3b342a128736b63e28e9955c5517c2c87eba6e0c0d8d5b3fd1",
                   "test/win32/app-restart.ps1":  "55cb4a73f57cde520c5c0ca3d041242b11d8b5d534d2a8808d5d62a093a2dd4f",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
@@ -138,7 +139,7 @@
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",
                   "test/win32/floor-lane-desktop.ps1":  "98ad27a978e7689f77af81c616bb81634f405d9a6cf27f30ce02d80e5e96d2fc",
                   "test/win32/floor-lane-leak-sweep.ps1":  "5de04f1c939d27fbb7c8ab7baf5f11ea9429d76864e400e2683fbf00d7689c0f",
-                  "test/win32/floor-lane-parallel.ps1":  "6be791990cc6e65a960413e26079f583ec671789832590f3d5070769920edecd",
+                  "test/win32/floor-lane-parallel.ps1":  "af067ab7ff35ffae1f17da4c43a04e57478ff826f3aa0b16ce84d3ff6f677972",
                   "test/win32/floor-lane-releasesafe.ps1":  "997b397e623cc1951aeaf250e1e642ad0739eb42d0f2903c3504ab10a1e655bd",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
@@ -391,7 +392,7 @@
                   "test/win32/session-resume-offset.ps1":  "801d7a280b290b75edee978b12ae4fbe0b32e0e5d019ce25f1a3bc24a5d2c865",
                   "test/win32/sessions-agent-build.ps1":  "dece3962aa9ead6958aacd2fdef71048d5fd3fcc3798c1aac534a4d4f27950a0",
                   "test/win32/session-shell-exit.ps1":  "3d60d7703bb364ea19de403a9c101e68d7ea5a6909d185970b897e35e71fb032",
-                  "test/win32/session-snapshot-reattach.ps1":  "f78fdcfd7eab2a54540c6f1bb6cee9775cca9a16607ecfaa681877878038e507",
+                  "test/win32/session-snapshot-reattach.ps1":  "043c6d5bb7fc9c5f2f5f83eed7348fd14585c0c5755552fc0d04064d7d34665e",
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",
                   "test/win32/share-machine.ps1":  "02b0600437871b235bdf8c4a4733a6558ae689060ae8a5d6821353df36437960",

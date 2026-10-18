@@ -569,8 +569,18 @@ $savedSelfheal = $env:GHOZTTY_PATH_SELFHEAL
 # holding their live panes - and the autostart Run values it did not write.
 # Enumerated before the first launch and asserted at the end.
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# Only the long-lived DAEMONS that are not a dev build. A `--pty-host` child
+# ends whenever its pane does (the user closing a tab mid-run is not this
+# script touching anything), and a `zig-out` agent belongs to some harness -
+# with two loop lanes, the other lane's run ends its own agents in the middle of
+# ours. Both used to land in this set and fail P1 for things this script never
+# did (T1069's validation run: two pids gone, neither ours).
 function Get-BystanderAgentPids {
     return , @(Get-CimInstance Win32_Process -Filter "Name LIKE 'ghoztty-agent%'" |
+        Where-Object {
+            ([string]$_.CommandLine -notmatch '--pty-host') -and
+            ([string]$_.ExecutablePath -notmatch '\\zig-out')
+        } |
         ForEach-Object { [int]$_.ProcessId })
 }
 function Get-GhozttyRunValues {
@@ -1317,14 +1327,27 @@ Assert "J17 the restart reports its OUTCOME, not just its intent" `
 # T421. J11 asserts the app survived; this asserts that it would have been
 # BROUGHT BACK if it had not. The guard is armed inside the confirmed path
 # itself, so this is the only place the arming half is exercised end to end -
-# `test/win32/relaunch-guard.ps1` drives the watching half directly. Its DISARM
-# is deliberately NOT asserted here: after the aborted re-dial the app raises the
-# modal failure notice, which blocks the very function whose `defer` would
-# disarm, so the guard stays armed and its marker stays on disk for as long as
-# that notice is up. Filed as its own defect (T1069) rather than measured as
-# correct here.
+# `test/win32/relaunch-guard.ps1` drives the watching half directly.
 Assert "J18 T421: the destructive window is SUPERVISED (guard armed)" `
     (Wait-LogMatch $logJ 'relaunch guard: ARMED \(guard pid \d+ watching app pid \d+' 30)
+# T1069. After the aborted re-dial the app raises the modal failure notice, which
+# does not return until it is answered. The guard used to be disarmed only by the
+# `defer` of the function that raised it, so it stayed ARMED - marker on disk -
+# for as long as the notice was up, and closing the app from under it read as a
+# death inside a refresh. The destructive window is over by then, so the guard is
+# disarmed FIRST: the line is logged, it comes before the notice, and the marker
+# is gone while the notice is still on screen.
+Assert "J18a T1069: the guard is DISARMED after the failed recovery" `
+    (Wait-LogMatch $logJ 'relaunch guard: disarmed' 30)
+$failTextJ = Read-AppLog $logJ
+$disarmAtJ = $failTextJ.IndexOf('relaunch guard: disarmed')
+$noticeAtJ = $failTextJ.IndexOf('agent refresh failed; telling the user')
+Assert "J18b T1069: ... BEFORE the modal failure notice is raised" `
+    (($disarmAtJ -ge 0) -and ($noticeAtJ -gt $disarmAtJ))
+$markerJ = Join-Path $tmp ("ghoztty\" + $(if ($Release) { 'agent-refresh.marker' } else { 'agent-refresh-debug.marker' }))
+Assert "J18c T1069: ... so no guard marker is on disk while the notice is up" `
+    ((-not (Test-Path -LiteralPath $markerJ)) -and `
+     ((Wait-TestWindow -ProcessId $appPidJ -Class 'GhozttyConfirmDialog' -TimeoutMs 20000) -ne [IntPtr]::Zero))
 # The identity gate (T421): the pid out of port.json is verified to be the agent
 # before it is killed, so a stale/recycled pid can never make this a self-kill.
 Assert "J19 T421: the kill target was VERIFIED as the agent binary first" `

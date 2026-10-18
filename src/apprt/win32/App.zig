@@ -5832,7 +5832,16 @@ fn handleAgentProtocolSkew(self: *App, skew: LocalAgent.Skew, reason: []const u8
     _ = self.local_agent.restartForUpgrade();
     const rebuilt = self.recoverLocalAgentInPlace();
     log.warn("protocol-skew agent restart finished: {d} window(s) rebuilt", .{rebuilt orelse 0});
-    if (rebuilt == null) self.showAgentRefreshFailed();
+    if (rebuilt == null) {
+        // T1069: disarm BEFORE the notice. The notice is a modal that does not
+        // return until it is answered, and the destructive window the guard
+        // watches is already over — the app survived it. Left armed, closing
+        // the app from under the notice reads as a death inside a refresh and
+        // relaunches it, and the marker leaks into the next run.
+        if (guard) |*g| g.disarm();
+        guard = null;
+        self.showAgentRefreshFailed();
+    }
 }
 
 /// Guard the window of time in which the app is destroying and rebuilding its

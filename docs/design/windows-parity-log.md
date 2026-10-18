@@ -36939,3 +36939,11 @@ moved to T1814.
 - **Policy is pure.** `agent_upgrade.pendingFor` and `settlesPending` decide which check results show or retire the row. A skew or an unreadable bundled build never clears it.
 - **Validated.** `agent-upgrade.ps1` ALL PASS (164), with new asserts B8/C10/E9/E10/L9: row shown for when_idle and draining, retired by the idle refresh, absent for a current agent. The zig floor passed on all four lanes. Clicking the row on screen was NOT RUN, because the user is present.
 - **Mac.** The other half is T2068 (`seat: mac`).
+
+## 2026-10-17 — T1069 (lane b): a failed agent restart no longer leaves the relaunch guard armed behind its notice
+
+- **Still real, one site not two.** `handleAgentProtocolSkew` is the only caller of `showAgentRefreshFailed`. The idle refresh named in the task never raises the notice. The guard was disarmed only by that function's `defer`, so for as long as the modal notice stayed up the guard stayed armed and its marker stayed on disk.
+- **Landed.** On a failed re-dial, `src/apprt/win32/App.zig` now disarms the guard and nulls it before raising the notice. The destructive window is over by then and the app survived it, which is exactly what the guard was watching for.
+- **Validated.** New J18a-c in `test/win32/agent-upgrade.ps1` assert the disarm line, that it comes before `agent refresh failed; telling the user`, and that no marker is on disk while the notice window is up. Result: ALL PASS (162). The task's 2026-08-21 evidence shows no disarm line at all on the old code. Floor `-Lane all` PASS.
+- **Harness fixes.** agent-upgrade P1 counted every `ghoztty-agent`, including per-pane `--pty-host` children and the other lane's `zig-out` test agents, so two pids that were never ours failed it. It now counts only non-pty-host daemons outside `zig-out`. `floor-lane-parallel.ps1` read peak=3 beside other workers and passed alone, so it is now `# @timing-sensitive`.
+- **Mac.** Nothing owed: the relaunch guard is win32-only (T421; nothing in `macos/` has one).

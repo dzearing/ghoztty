@@ -1,3 +1,4 @@
+# @timing-sensitive - it asserts that four fake lanes really overlap in wall time, so a loaded box (other workers, the other loop lane) reads as peak=3 (T1069 turn); it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 <#
 .SYNOPSIS
   Acceptance test for the parallel floor (T1959): `floor-lane.ps1 -Lane all`
