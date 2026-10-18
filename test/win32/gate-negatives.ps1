@@ -200,6 +200,10 @@ $Registry = @(
 
     # --- parity-tasks.ps1 validate -----------------------------------------
     [pscustomobject]@{ Label = 'BAD FRONTMATTER'; Kind = 'gate'; Demo = $Self; Marker = 'BAD FRONTMATTER' }
+    # T1053: a zero-byte task file is named as the failed `new` that left it,
+    # and `new` itself refuses loudly when its write fails rather than leaving one.
+    [pscustomobject]@{ Label = 'EMPTY TASK FILE'; Kind = 'gate'; Demo = $Seat; Marker = 'EMPTY TASK FILE' }
+    [pscustomobject]@{ Label = 'NOT FILED'; Kind = 'gate'; Demo = $Seat; Marker = 'NOT FILED' }
     [pscustomobject]@{ Label = 'ID MISMATCH'; Kind = 'gate'; Demo = $Self; Marker = 'ID MISMATCH' }
     [pscustomobject]@{ Label = 'NO TITLE'; Kind = 'gate'; Demo = $Self; Marker = 'NO TITLE' }
     [pscustomobject]@{ Label = 'NO STATUS'; Kind = 'gate'; Demo = $Self; Marker = 'NO STATUS' }

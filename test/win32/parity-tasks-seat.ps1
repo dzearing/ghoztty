@@ -94,6 +94,11 @@
 #      may carry a row marked Retired. A fixture with an invented field and a
 #      retired one proves the check names both before it is trusted on the
 #      real tracker.
+#   U. A failed `new` leaves no corpse (T1053). With the write forced to fail
+#      (GHOZTTY_TASKS_FAULT=write, and a directory that denies new files) no
+#      T<n>.md and no temp file is left, and `new` names the id it burned;
+#      `validate` calls a zero-byte task file a failed `new`; four concurrent
+#      callers still get four distinct ids.
 #
 # Hermetic: sections A-H run against a fixture task dir under $env:TEMP via
 # `-TaskDir`; docs\design\windows-parity-tasks\ is only ever READ (section I).
@@ -1104,6 +1109,62 @@ Assert 'T2b documented fields raise nothing' (@($gaps).Count -eq 2)
 $gaps = @(Get-FieldTableGaps -ReadmePath $realReadme -Dir $realDir)
 Assert 'T3 every field in the real tracker is in the README table' (@($gaps).Count -eq 0)
 if (@($gaps).Count) { $gaps | Select-Object -First 10 | ForEach-Object { "    $_" } }
+Reset-Fixture
+
+# --- U. a failed `new` leaves no corpse (T1053) ------------------------------
+""
+"U. a failed new leaves no task file behind, and validate names an empty one (T1053)"
+
+# U1/U2: the full-disk shape - the write fails after some bytes are down.
+# Before T1053 `new` created T<n>.md empty and then wrote into it, so this left
+# a zero-byte file holding the id.
+New-FixtureTask -Id 'T1'
+$env:GHOZTTY_TASKS_FAULT = 'write'
+$r = Task-Run @('new', '-Title', 'a write that fails', '-NoSimilarCheck')
+Remove-Item Env:\GHOZTTY_TASKS_FAULT
+Assert 'U1 a failed write exits non-zero' ($r.Code -ne 0)
+Assert 'U1b and says which id it burned and that nothing was filed' ($r.Out -match 'NOT FILED: writing T2 failed' -and $r.Out -match 'Nothing was filed')
+Assert 'U2 no T2.md is left behind' (-not (Test-Path (Join-Path $fixture 'T2.md')))
+Assert 'U2b nor a temp file' (@(Get-ChildItem -Path $fixture -Force -Filter '.new-*').Count -eq 0)
+$r = Task-Run @('validate')
+Assert 'U2c the tracker still validates after the failure' ($r.Code -eq 0)
+
+# U3: a directory that refuses new files (a deny ACE on add-file).
+$ro = Join-Path $fixture 'ro'
+New-Item -ItemType Directory -Force $ro | Out-Null
+New-FixtureTask -Id 'T1'
+Copy-Item (Join-Path $fixture 'T1.md') $ro
+$who = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+& icacls $ro /deny "${who}:(WD)" 2>&1 | Out-Null
+$r = Task-Run @('new', '-Title', 'into a read-only dir', '-NoSimilarCheck') $ro
+& icacls $ro /remove:d $who 2>&1 | Out-Null
+Assert 'U3 a refusing directory exits non-zero and says NOT FILED' ($r.Code -ne 0 -and $r.Out -match 'NOT FILED')
+Assert 'U3b and leaves nothing behind' (@(Get-ChildItem -Path $ro -Force).Count -eq 1)
+
+# U4: validate names an empty task file for what it is, and passes once it goes.
+[System.IO.File]::WriteAllBytes((Join-Path $fixture 'T7.md'), [byte[]]@())
+$r = Task-Run @('validate')
+Assert 'U4 a zero-byte task file fails validate' ($r.Code -eq 1)
+Assert 'U4b named as a failed new, not as bad frontmatter' ($r.Out -match "EMPTY TASK FILE: T7\.md is empty - a failed 'new'" -and $r.Out -notmatch 'BAD FRONTMATTER: T7')
+Remove-Item (Join-Path $fixture 'T7.md') -Force
+$r = Task-Run @('validate')
+Assert 'U4c and passes once it is removed' ($r.Code -eq 0)
+
+# U5: the rename is still an atomic claim - concurrent callers never share an id.
+$jobs = 1..4 | ForEach-Object {
+    $i = $_
+    Start-Job -ScriptBlock {
+        param($s, $d, $i)
+        & powershell -NoProfile -File $s new -Title "concurrent $i" -NoSimilarCheck -TaskDir $d 2>&1 | ForEach-Object { $_.ToString() } | Out-String
+    } -ArgumentList $taskScript, $fixture, $i
+}
+$outs = @($jobs | Wait-Job -Timeout 120 | Receive-Job)
+$jobs | Remove-Job -Force
+$ids = @($outs | ForEach-Object { [regex]::Matches($_, 'created (T\d+)') | ForEach-Object { $_.Groups[1].Value } })
+Assert 'U5 four concurrent news all filed' ($ids.Count -eq 4)
+Assert 'U5b with four distinct ids' (@($ids | Sort-Object -Unique).Count -eq 4)
+$r = Task-Run @('validate')
+Assert 'U5c and the result validates' ($r.Code -eq 0)
 Reset-Fixture
 
 # --- teardown ---------------------------------------------------------------

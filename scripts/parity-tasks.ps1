@@ -1550,16 +1550,21 @@ switch ($Command) {
         $first = $max + 1
         if ($LedgerOn) { $first = Reserve-LedgerId -DiskMax $max }
 
+        # T1053: the file is written WHOLE to a temp name first and then renamed
+        # onto `T<n>.md`. A rename without replace fails when the target exists,
+        # so it is the same atomic claim the old CreateNew made - but it only
+        # ever lands a complete file. The old shape created `T<n>.md` empty and
+        # then wrote into it, so a write that failed (on 2026-08-21, a full
+        # disk) left a zero-byte corpse holding the id. The temp name starts
+        # with a dot and is not `T*.md`, so nothing that lists tasks sees it.
+        $tmp = Join-Path $TaskDir ('.new-{0}-{1}.tmp' -f $PID, [guid]::NewGuid().ToString('N'))
         $created = $null
+        $writeError = $null
+        $burned = $null
         for ($n = $first; $n -lt $first + 49; $n++) {
             $tid = "T$n"
             $path = Join-Path $TaskDir "$tid.md"
-            try {
-                $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
-            }
-            catch {
-                continue   # taken (possibly by the other agent, this second)
-            }
+            if (Test-Path -LiteralPath $path) { continue }   # taken (possibly by the other agent, this second)
             try {
                 $body = if ($Summary) { $Summary } else { 'TODO: describe the defect or gap, the evidence, the fix, and the validation.' }
                 $lines = @(
@@ -1596,15 +1601,46 @@ switch ($Command) {
                     ''
                 )
                 $bytes = [System.Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
-                $fs.Write($bytes, 0, $bytes.Length)
+                $fs = [System.IO.File]::Open($tmp, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+                try {
+                    $fs.Write($bytes, 0, $bytes.Length)
+                    # Fault injection for the acceptance harness: fail AFTER
+                    # some bytes are down, which is the full-disk shape.
+                    if ($env:GHOZTTY_TASKS_FAULT -eq 'write') { throw 'injected write failure (GHOZTTY_TASKS_FAULT=write)' }
+                    $fs.Flush($true)
+                }
+                finally {
+                    $fs.Close()
+                }
             }
-            finally {
-                $fs.Close()
+            catch {
+                $writeError = $_.Exception.Message; $burned = $tid
+                break
+            }
+            try {
+                [System.IO.File]::Move($tmp, $path)
+            }
+            catch {
+                # Lost the race for this number: the other agent's rename landed
+                # between our Test-Path and ours. Anything else is a real failure.
+                if (Test-Path -LiteralPath $path) { continue }
+                $writeError = $_.Exception.Message; $burned = $tid
+                break
             }
             $created = $tid
             break
         }
+        # Every failure above is caught, so this always runs; a temp left by
+        # a failed write must not outlive the call.
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
 
+        if ($writeError) {
+            # Say which id was spent and that NOTHING was filed, so a turn
+            # re-runs instead of assuming the task landed. The id stays a gap:
+            # gaps are harmless, a half-written file is not.
+            $gap = if ($LedgerOn) { ' It was reserved in the ledger, so it stays a gap.' } else { '' }
+            throw ("NOT FILED: writing {0} failed ({1}). Nothing was filed and no {0}.md was left behind.{2} Fix the cause and run new again." -f $burned, $writeError, $gap)
+        }
         if (-not $created) { throw 'Could not allocate a task id.' }
         # A CreateNew retry may have stepped past the reserved number; the
         # ledger must never hand out an id below one that now exists.
@@ -1868,6 +1904,11 @@ switch ($Command) {
         $problems = 0
 
         foreach ($f in Get-ChildItem -Path $TaskDir -Filter 'T*.md') {
+            # T1053: an empty file is not a malformed task, it is a `new` whose
+            # write failed - name the cause so the remedy is obvious.
+            if ($f.Length -eq 0 -or ($f.Length -lt 64 -and [string]::IsNullOrWhiteSpace([System.IO.File]::ReadAllText($f.FullName)))) {
+                Write-Host ("EMPTY TASK FILE: {0} is empty - a failed 'new' left it behind; delete it or write the task into it" -f $f.Name); $problems++; continue
+            }
             $t = ConvertFrom-Frontmatter -Path $f.FullName
             if ($null -eq $t) {
                 Write-Host ("BAD FRONTMATTER: {0}" -f $f.Name); $problems++; continue
