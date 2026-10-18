@@ -37017,3 +37017,10 @@ moved to T1814.
 - **Fix.** New `dist/website/site-mirror.py` (python, so the Mac release runbook can run it too). It classifies the difference: OK, STAMPS (version numbers only: normal, exit 0) or DRIFT (page text differs: exit 1). `sync` copies the live page on STAMPS and refuses DRIFT without `--force`, so a mirror-side edit is never silently overwritten. Section F of `test\win32\website-windows-download.ps1` now uses it and proves both directions on synthetic pages (F1-F7). `release.md` step 7 calls `sync` instead of a hand `cp`.
 - **Validated.** website-windows-download ALL PASS: F8 read STAMPS before the sync and OK after it. one-installer, unwired-hook-audit and ghoztty-cleanup green. Scoped harness floor PASS.
 - **Mac.** The tool and runbook step are shared; nothing else owed.
+
+## 2026-10-18 — T1091 (lane b): the chooser orphan test now proves Return resumes the session from any row
+
+- **Already fixed at source.** f26f33202 (T1106) replaced the blind Down-count with the cursor-log walk (`lib\ChooserCursor.ps1`), which does not depend on row order. But every run still put the orphan on row 2, the only row the old code passed on, so the fix had never been shown to work anywhere else.
+- **Landed.** `test/win32/chooser-orphan-badge.ps1`: section 3 now names the displayed row it resumed from. A new section 4 reverses the persisted chooser sort (the `-debug` pref file, saved and restored around the run), opens a second orphan, and resumes it from its new row. It asserts the row differs from section 3's. Also fixed a stale filter handle after section 3's reopen: Escape was going to a dead window.
+- **Validated.** 3 runs ALL PASS (25): resumed from rows 2→0, 2→0, 2→1, which includes rows 0 and 1, where the original filing saw it fail. unwired-hook-audit and ghoztty-cleanup PASS. drag-perf red on T1854's known line.
+- **Mac.** Nothing owed: test-only, Windows harness.

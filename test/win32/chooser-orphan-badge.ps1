@@ -187,6 +187,25 @@ function Send-ChooserKey($chooser, $filter, $key) {
     return Send-TestKeys -Window $chooser -Target $filter -Key $key
 }
 
+# T1091: the DISPLAYED row a Walk-ChooserCursorToId landed on. The walk logs one
+# "cursor on session" line per row it visits from row 0, so the count of those
+# since $base (a Get-ChooserCursorLineCount taken just before the walk), minus
+# one, is the landed row's index.
+function Get-WalkedRow($path, [int]$base) {
+    $lines = @(Select-String -Path $path -Pattern 'chooser roster: cursor (on session id=|left the list)' -ErrorAction SilentlyContinue)
+    return @($lines | Select-Object -Skip $base | Where-Object { $_.Line -match 'on session id=' }).Count - 1
+}
+
+# Open one session straight against the agent and DETACH it, so it lives on
+# with no pane: an orphan by construction (see the header).
+function New-Orphan {
+    $pipe = "\\.\pipe\$(Get-LocalAgentPipeName)"
+    $pc = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
+        -ArgumentList "/c `"`"$ClientExe`" --pipe=$pipe --hold=1 > `"$clientlog`" 2>&1`""
+    if (-not $pc.WaitForExit(25000)) { Stop-Process -Id $pc.Id -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 800
+}
+
 # Resuming from the chooser is ASYNCHRONOUS: the app opens a window, dials the
 # agent, and only then does the ATTACH land and the mark clear. Sleeping a
 # fixed two seconds at that makes the assertion a race against box load, which
@@ -225,6 +244,14 @@ $errlog = Join-Path $env:TEMP "ghoztty-t520-stderr-$PID.log"
 $clientlog = Join-Path $env:TEMP "ghoztty-t520-client-$PID.log"
 Remove-Item $errlog, $clientlog -ErrorAction SilentlyContinue
 
+# The chooser's persisted session sort (chooser_session_sort.zig; the -debug
+# file, so the release app's preference is never touched). Section 4 reverses
+# it; whatever was there before is put back on the way out.
+$sortPref = Join-Path $env:LOCALAPPDATA 'ghoztty\chooser_session_sort-debug'
+$sortPrefSaved = $null
+if (Test-Path $sortPref) { $sortPrefSaved = [System.IO.File]::ReadAllText($sortPref) }
+Remove-Item $sortPref -ErrorAction SilentlyContinue  # sections 1-3 run under the default order
+
 try {
     # --- 1. Sessions held by panes are never marked ------------------------
     Write-Host ''
@@ -255,11 +282,7 @@ try {
     # --- 2. A session opened directly against the agent is marked ----------
     Write-Host ''
     Write-Host '2. a live session no pane holds gets counted'
-    $pipe = "\\.\pipe\$(Get-LocalAgentPipeName)"
-    $pc = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
-        -ArgumentList "/c `"`"$ClientExe`" --pipe=$pipe --hold=1 > `"$clientlog`" 2>&1`""
-    if (-not $pc.WaitForExit(25000)) { Stop-Process -Id $pc.Id -Force -ErrorAction SilentlyContinue }
-    Start-Sleep -Milliseconds 800
+    New-Orphan
 
     # The independent oracle: the agent itself, dialled directly, reports the
     # orphan alive with no viewer - the exact set the roster must mark.
@@ -286,9 +309,14 @@ try {
     # blind Right/Down/Return cannot tell that apart from a broken resume, and
     # did not: that is the whole of T1106's reported "resume does not attach".
     $rendered = @(Get-RenderedSessions)
+    $cursorBase = Get-ChooserCursorLineCount $errlog
     $landed = Walk-ChooserCursorToId -Chooser $chooser -Filter $filter -Log $errlog `
         -TargetIds @($loose[0].id) -MaxRows ([Math]::Max(4, $rendered.Count + 2))
-    Assert ($landed -eq $loose[0].id) "the roster cursor parks on the marked row ($landed of $($rendered.Count) rendered)"
+    # T1091: say WHICH displayed row the orphan sat on. The old blind Down-count
+    # passed only when the orphan sorted to index 2; section 4 reverses the sort
+    # and requires the resume to work from a different row.
+    $orphanRow = Get-WalkedRow $errlog $cursorBase
+    Assert ($landed -eq $loose[0].id) "the roster cursor parks on the marked row ($landed at displayed row $orphanRow of $($rendered.Count))"
     if ($landed -ne $loose[0].id) { Write-Host 'SETUP FAIL: cursor never reached the marked row'; exit 1 }
 
     Send-ChooserKey $chooser $filter 'Return' | Out-Null
@@ -312,10 +340,58 @@ try {
     $chooser = Open-Chooser $g
     Assert ($chooser -ne [IntPtr]::Zero) 'the chooser reopens once more'
     Assert (Wait-OrphanLine $errlog 0 $zeroBase 8000) 'the resumed session dropped its mark (count back to 0)'
+    # A fresh dialog has a fresh filter EDIT; the old handle died with the last one.
+    $filter = ConvertTo-TestHwnd (Get-ChooserFilterField -Chooser $chooser)
+    Send-ChooserKey $chooser $filter 'Escape' | Out-Null
+    Assert (Wait-WindowGone $chooser) 'Escape dismisses the chooser'
+
+    # --- 4. ...from whichever row the orphan sorts to (T1091) ---------------
+    # Section 3 only ever saw the orphan on one row, and the blind walk T1106
+    # replaced passed on exactly that row and no other. Reverse the persisted
+    # sort (re-read on every chooser open) so a fresh orphan lands elsewhere, and
+    # require the resume to work there too.
+    Write-Host ''
+    Write-Host '4. a reversed sort moves the orphan, and Return still resumes it'
+    New-Item -ItemType Directory -Force -Path (Split-Path $sortPref -Parent) | Out-Null
+    [System.IO.File]::WriteAllText($sortPref, "name desc`n")
+    New-Orphan
+    $loose2 = @(Get-Sessions | Where-Object { $_.alive -and -not $_.attached })
+    Assert ($loose2.Count -eq 1) "a second direct OPEN leaves exactly one live session with no viewer ($($loose2.Count))"
+    if ($loose2.Count -lt 1) { Write-Host 'SETUP FAIL: second direct OPEN left no orphan'; exit 1 }
+
+    $chooser = Open-Chooser $g
+    Assert ($chooser -ne [IntPtr]::Zero) 'the chooser opens under the reversed sort'
+    if ($chooser -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: no chooser'; exit 1 }
+    $filter = ConvertTo-TestHwnd (Get-ChooserFilterField -Chooser $chooser)
+    Assert ($null -ne (Wait-LogLine $errlog 'chooser roster: sort loaded key=name dir=desc' 6000)) 'the chooser loaded the reversed sort'
+    $rendered = @(Get-RenderedSessions)
+    $cursorBase = Get-ChooserCursorLineCount $errlog
+    $landed = Walk-ChooserCursorToId -Chooser $chooser -Filter $filter -Log $errlog `
+        -TargetIds @($loose2[0].id) -MaxRows ([Math]::Max(4, $rendered.Count + 2))
+    $orphanRow2 = Get-WalkedRow $errlog $cursorBase
+    Assert ($landed -eq $loose2[0].id) "the roster cursor parks on the new marked row ($landed at displayed row $orphanRow2 of $($rendered.Count))"
+    if ($landed -ne $loose2[0].id) { Write-Host 'SETUP FAIL: cursor never reached the marked row'; exit 1 }
+    Assert ($orphanRow2 -ne $orphanRow) "the reversed sort put the orphan on a different row (row $orphanRow2 vs $orphanRow)"
+
+    $attachBase = Count-LogLines $errlog 'resume session: attaching local session id='
+    Send-ChooserKey $chooser $filter 'Return' | Out-Null
+    $resumed2 = ''
+    $waited = 0
+    while ($waited -lt 6000) {
+        $hits = @(Select-String -Path $errlog -Pattern 'resume session: attaching local session id=([0-9a-fA-F]+)' -ErrorAction SilentlyContinue)
+        if ($hits.Count -gt $attachBase) { $resumed2 = $hits[-1].Matches[0].Groups[1].Value; break }
+        Start-Sleep -Milliseconds 100
+        $waited += 100
+    }
+    Assert ($resumed2 -eq $loose2[0].id) "Return resumes the orphan from row $orphanRow2 ($resumed2 vs $($loose2[0].id))"
+    $attached = Wait-Attached $loose2[0].id
+    Assert ($attached.Row.Count -eq 1 -and $attached.Row[0].attached) 'the agent reports the second resumed session ATTACHED'
 
     Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     Stop-RepoProcesses @('ghoztty', 'ghoztty-agent', 'remote-test-client')
+    if ($null -ne $sortPrefSaved) { [System.IO.File]::WriteAllText($sortPref, $sortPrefSaved) }
+    else { Remove-Item $sortPref -ErrorAction SilentlyContinue }
     Remove-TestDesktop
 }
 
