@@ -129,7 +129,9 @@ function Invoke-GrowTrial([string]$Label, [string]$Flavor) {
 
     # A fresh agent per trial: the flavour is read once, at agent start, and an
     # agent left over from the previous trial would answer with ITS flavour.
-    Kill-RepoInstances
+    # T1081: and the WHOLE reset - persistence is on in the ambient LOCALAPPDATA,
+    # so a bare kill would let the last trial's window be restored into this one.
+    [void](Reset-GhozttyTestState -Exe $exe -SettleMs 800)
 
     $result = @{ Filled = 0; Lost = -1; Sessions = 0 }
     # persistence: ON deliberately - an agent-backed pane is the whole subject
@@ -179,7 +181,7 @@ function Invoke-GrowTrial([string]$Label, [string]$Flavor) {
 }
 
 $td = New-TestDesktop -Interactive:$Interactive
-Kill-RepoInstances
+[void](Reset-GhozttyTestState -Exe $exe -SettleMs 800)  # T1081: whole reset, see Invoke-GrowTrial
 
 try {
     # ---- A. the agent tells the truth: guard ARMED -----------------------

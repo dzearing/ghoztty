@@ -161,7 +161,10 @@ function Get-HeaderInkPixels($chooser, $geo) {
 }
 
 Write-Host 'T602 chooser session-list sort'
-Stop-RepoProcesses
+# T1081: the pre-fixture reset is the WHOLE reset - persistence is on and
+# LOCALAPPDATA is the ambient one, so a bare kill would leave last run's window
+# manifest and the agent's layout store to restore into run 1.
+[void](Reset-GhozttyTestState -Exe $Exe -SettleMs 500)
 Reset-AgentState
 Remove-Item $prefFile -ErrorAction SilentlyContinue
 New-TestDesktop | Out-Null
@@ -270,6 +273,8 @@ try {
     Write-Host '6. the sort order survives an app restart'
     Assert ((Test-Path $prefFile) -and ((Get-Content $prefFile -Raw).Trim() -eq 'cpu desc')) `
         'the preference file holds the last choice (cpu desc)'
+    # A RESTART, not a reset (T1081): kill only. This run's own manifest and
+    # sessions are what the relaunch is meant to come back to.
     Stop-RepoProcesses
     $g2 = Launch-Gui $errlog2
     if (-not $g2) { Write-Host 'SETUP FAIL: GUI died at relaunch'; exit 1 }

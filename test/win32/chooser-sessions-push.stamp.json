@@ -1,13 +1,13 @@
 {
     "guard":  "chooser-roster-push",
     "script":  "test/win32/chooser-sessions-push.ps1",
-    "generated":  "2026-10-16T11:23:36-07:00",
-    "commit":  "161784011",
+    "generated":  "2026-10-18T00:37:26-07:00",
+    "commit":  "f82f3977c",
     "uncommitted":  [
                         "test/win32/chooser-sessions-push.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/SessionRosterProbe.zig":  "97d287a7ceaf0131a0583b4a1e3ec77cd5234f010fae99c194c28dc5e8fb10c4",
-                  "test/win32/chooser-sessions-push.ps1":  "6dc2fbf268731cce7a1f4614cecfe15bbadc14d0f35db0bace7a91901b7e5bf5"
+                  "test/win32/chooser-sessions-push.ps1":  "77bd4ca1b2ee476f4323f9b62e04862984d61aa0e04ae2fcd55621471bbb60d5"
               }
 }

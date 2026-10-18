@@ -223,7 +223,10 @@ function Get-LastTipText($path) {
 # the chooser, and hand back everything the assertions need. `$suppress` makes
 # the agent advertise like one too old to serve the stream (F).
 function Start-Fixture($errlog, $suppress) {
-    Stop-RepoProcesses
+    # T1081: the pre-fixture reset is the WHOLE reset - persistence is on and
+    # LOCALAPPDATA is the ambient one, so a bare kill would leave last run's
+    # window manifest and the agent's layout store to restore into this fixture.
+    [void](Reset-GhozttyTestState -Exe $Exe -SettleMs 500)
     Stop-BusyLoops
     Reset-AgentState
     if ($suppress) { $env:GHOSTTY_AGENT_SUPPRESS_CAPS = 'session_cpu' }

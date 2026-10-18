@@ -153,7 +153,10 @@ function Get-OpenRowNames($path) {
 # Launch the app on the test desktop and open the chooser on the local machine.
 # `$suppress` makes the agent advertise like one too old to push (G).
 function Start-Fixture($errlog, $suppress) {
-    Stop-RepoProcesses
+    # T1081: the pre-fixture reset is the WHOLE reset - persistence is on and
+    # LOCALAPPDATA is the ambient one, so a bare kill would leave last run's
+    # window manifest and the agent's layout store to restore into this fixture.
+    [void](Reset-GhozttyTestState -Exe $Exe -SettleMs 500)
     Reset-AgentState
     if ($suppress) { $env:GHOSTTY_AGENT_SUPPRESS_CAPS = 'sessions_push' }
     else { Remove-Item 'env:GHOSTTY_AGENT_SUPPRESS_CAPS' -ErrorAction SilentlyContinue }

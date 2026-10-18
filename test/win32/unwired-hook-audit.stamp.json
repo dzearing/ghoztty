@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-18T00:18:49-07:00",
-    "commit":  "2ee8f2eba",
+    "generated":  "2026-10-18T00:42:00-07:00",
+    "commit":  "f82f3977c",
     "uncommitted":  [
 
                     ],
@@ -1014,10 +1014,10 @@
                   "test/win32/chooser-resume-remote.ps1":  "00a2a067277ca5f3a110c7ebbdee23f3d7b37d2efc9975fad7228a3564a59ce2",
                   "test/win32/chooser-roster-refetch.ps1":  "3310c2adfa17a4b8a0d390e6e286f925faeba79d88a55db0c610f0171ae17878",
                   "test/win32/chooser-selection.ps1":  "f5749642a82e6ccd66fdd846de7eaea9d32b02968f0c8499fb15738d57d7a829",
-                  "test/win32/chooser-session-cpu.ps1":  "d08485df521f8c0e2e25a2ccc485afe72b9bb79dadbfc807abfc417b313475e6",
+                  "test/win32/chooser-session-cpu.ps1":  "7d2323620ac619c7ff961fe6e1770fa67255386e141332176bec3d3b25725054",
                   "test/win32/chooser-sessions.ps1":  "826e9fbedb3c93dd35223668832a561ca9512fcdbef48e1937d0bf4cc46b8c05",
-                  "test/win32/chooser-session-sort.ps1":  "bc1dd92ae8adc9c92db0d6f3627d3835da9c1835bbfaa59d26bc56b4a8ea940b",
-                  "test/win32/chooser-sessions-push.ps1":  "6dc2fbf268731cce7a1f4614cecfe15bbadc14d0f35db0bace7a91901b7e5bf5",
+                  "test/win32/chooser-session-sort.ps1":  "9aff299c636b6855701aa2e38a05a26c9213d8c70ec38a8c75d14e31c1dca0e5",
+                  "test/win32/chooser-sessions-push.ps1":  "77bd4ca1b2ee476f4323f9b62e04862984d61aa0e04ae2fcd55621471bbb60d5",
                   "test/win32/chooser-sessions-remote.ps1":  "6d4bef6c7bf6703dba1ddc0d8a8ce43b7fb78a9e2019bc63d49d8c2fc782f7ef",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "54a72f9a33d3a97306fa46cbdb4f641b2cb08097b0539cd2fcd4be7b5d60abe2",
@@ -1105,7 +1105,7 @@
                   "test/win32/hero-mode.ps1":  "eb2db2edbe2c0cdf46c3df32cf643aebd490e195409b48dbde2fe6f0804f139c",
                   "test/win32/hero-nav.ps1":  "77fbfdd2679c7db44743b69d3a1b7e961ef56c057ee39933b4e90d5b754010f4",
                   "test/win32/hero-viewer-tile.ps1":  "5adf19a67f7f9abb7a44391f43c23938f02427aa6ea66e5e300dbbcd83f29761",
-                  "test/win32/history-guard-flavor.ps1":  "764859c2785f580a4c58e5e8af65e1d4c1fedfc15d81f0281f54d518fb91cf73",
+                  "test/win32/history-guard-flavor.ps1":  "1d9bdcea796adecd76f31f1920d575ffcf59d4b800e8328aaaf18ce47efe46d2",
                   "test/win32/holder-adopt.ps1":  "a469a3e70dc374175943fa4eac8c673ed2edbe96ef3a5997bc7bf71e60de9ce6",
                   "test/win32/holder-durable.ps1":  "7d42ae987bd4754e5cb9d4a041064eee0aa22f35d6cbc21313b2b1a9eda81be4",
                   "test/win32/holder-soak.ps1":  "a8c7eaa00a75aeb97f8436055214b4afc913f9af0f6f9c552f672cd42f4f30f6",
