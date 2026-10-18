@@ -36963,3 +36963,8 @@ moved to T1814.
 - **Validated.** Four `T1071:` unit tests. With the positional join put back, 3 of them fail (`expected 2, found 1` on the swap). Floor `-Lane all` PASS; agent-recovery ALL PASS (85), agent-recovery-tabs ALL PASS (18).
 - **Harness fix.** agent-recovery K7 read the app log once. `Get-AppLogText` answers `''` when that read races the app's write, so it went red 3/3 with the wanted line in the log. It now polls for 15s, like K3.
 - **Mac.** Nothing owed. `rebuildSessionLayoutController` (`SessionLayoutRestore.swift`) builds a fresh root from the manifest tree and swaps the whole `surfaceTree`. It never pairs captured leaves to live slots, so there is no positional join to fix. A mid-recovery swap would be undone there, but no pane gets another pane's shell.
+## 2026-10-17 — T1072: a bare git commit can no longer leave work unpushed without a word
+
+- **What landed.** A new `scripts/githooks/post-commit` says NOT PUSHED, with the push command, right after a bare `git commit` leaves the branch ahead of origin. `pre-commit` now refuses the next commit while that one is still local, and names it. Commits made through `git-commit-guard.ps1` (lock key), a rebase (detached HEAD), a branch with no upstream and a merge being concluded are never blocked. `GHOZTTY_ALLOW_UNPUSHED=1` is the hatch for an amend or no network, and it says it was taken.
+- **Validated.** `go-loop-guard.ps1` ALL PASS (463), new arms W33a-W33h including a no-hooks negative control (W33d). No zig source touched, so the zig lanes were not re-run. The scoped harness floor ran for the test edit.
+- **Mac.** Same hooks dir, same `install`; nothing extra owed.

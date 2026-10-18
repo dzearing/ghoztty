@@ -1,0 +1,25 @@
+#!/bin/sh
+# ghoztty post-commit: say it out loud when a commit made AROUND the commit
+# guard is sitting unpushed (tracker T1072).
+#
+# scripts\git-commit-guard.ps1 commit pushes on its own (T1057), so a commit
+# that carries its lock key is skipped here. A bare `git commit` from either
+# window does not push, and until T1072 nothing said so until the next turn's
+# claim or validate - a whole turn later. This is the "warn on the first" half;
+# the pre-commit hook refuses the second while the first is still local.
+#
+# Advisory only: a post-commit hook cannot undo anything, and it must never be
+# the reason a commit looks like it failed, so it always exits 0.
+
+[ -n "$GHOZTTY_COMMIT_LOCK_KEY" ] && exit 0
+branch=$(git symbolic-ref -q --short HEAD 2>/dev/null) || exit 0
+upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) || exit 0
+ahead=$(git rev-list --count '@{u}..HEAD' 2>/dev/null)
+[ -n "$ahead" ] && [ "$ahead" -gt 0 ] || exit 0
+
+echo "" >&2
+echo "NOT PUSHED - $branch is $ahead commit(s) ahead of $upstream (T1072)." >&2
+echo "Push it now; the next commit is REFUSED until you do:" >&2
+echo "  powershell -NoProfile -File scripts\\git-commit-guard.ps1 push" >&2
+echo "" >&2
+exit 0

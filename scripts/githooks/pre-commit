@@ -50,9 +50,53 @@ if [ -n "$top" ] && [ -f "$top/scripts/control-char-scan.ps1" ] && command -v po
 fi
 
 lock="$git_dir/ghoztty-commit.lock"
-[ -f "$lock" ] || exit 0
 
 field() { sed -n "s/^$1=//p" "$lock" | head -n 1 | tr -d '\r'; }
+
+# T1072: refuse a SECOND unpushed commit made around the guard. The guard's own
+# commit pushes (T1057), and claim/validate catch unpushed work at the turn
+# boundary - but a bare `git commit` from either window skipped all of that, so
+# its work sat on this box for up to a whole turn. The post-commit hook warns on
+# the first one; this refuses the next while the first is still local, which is
+# the point where "I'll push in a minute" has stopped being true. A commit made
+# BY the guard (its key matches the held lock) is exempt: the guard pushes on
+# its own and a no-network push failure must not wedge its next commit.
+# Skipped on a detached HEAD (a rebase in progress), on a branch with no
+# upstream (nowhere to push yet), and while concluding a merge (the merge IS
+# the integration step a push follows). GHOZTTY_ALLOW_UNPUSHED=1 is the hatch -
+# an amend of the unpushed commit needs it - and it says it was taken.
+guard_commit=0
+if [ -n "$GHOZTTY_COMMIT_LOCK_KEY" ] && [ -f "$lock" ] && [ "$GHOZTTY_COMMIT_LOCK_KEY" = "$(field key)" ]; then
+    guard_commit=1
+fi
+if [ "$guard_commit" -eq 0 ] && [ ! -f "$git_dir/MERGE_HEAD" ] &&
+    branch=$(git symbolic-ref -q --short HEAD 2>/dev/null) &&
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+    ahead=$(git rev-list --count '@{u}..HEAD' 2>/dev/null)
+    if [ -n "$ahead" ] && [ "$ahead" -gt 0 ]; then
+        if [ "$GHOZTTY_ALLOW_UNPUSHED" = "1" ]; then
+            echo "ghoztty commit guard: UNPUSHED CHECK SKIPPED (GHOZTTY_ALLOW_UNPUSHED=1) - $branch is $ahead ahead of $upstream" >&2
+        else
+            echo "" >&2
+            echo "COMMIT REFUSED - $branch is already $ahead commit(s) ahead of $upstream (T1072)." >&2
+            echo "" >&2
+            git log --oneline -n 5 '@{u}..HEAD' 2>/dev/null | sed 's/^/  /' >&2
+            echo "" >&2
+            echo "Every commit is pushed before the next one is made (go.md step 4): an" >&2
+            echo "unpushed commit is invisible to the other seat and dies with this box." >&2
+            echo "Push what is there, then commit again:" >&2
+            echo "" >&2
+            echo "  powershell -NoProfile -File scripts\\git-commit-guard.ps1 push" >&2
+            echo "" >&2
+            echo "Amending that unpushed commit, or no network at all? Say so:" >&2
+            echo "  GHOZTTY_ALLOW_UNPUSHED=1 git commit ..." >&2
+            echo "" >&2
+            exit 1
+        fi
+    fi
+fi
+
+[ -f "$lock" ] || exit 0
 
 key=$(field key)
 holder=$(field holder)

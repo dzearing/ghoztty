@@ -1940,6 +1940,48 @@ CG @('push') | Out-Null
 $r = WValidate @()
 Assert 'W33 validate goes green once the commit is pushed' ($r.Code -eq 0 -and $r.Out -notmatch 'UNPUSHED WORK')
 
+# --- T1072: a bare `git commit` cannot pile up unpushed work ---------------
+# The guard pushes and the turn boundary catches what it did not, but a plain
+# `git commit` from either window went around both - its work sat local until
+# the next claim. The hooks now warn on the first unpushed bare commit and
+# refuse the second. Same fixture, level with its upstream after W33.
+function WBare([string]$file, [string]$msg) {
+    Set-Content -Path (Join-Path $wRepo $file) -Value $msg
+    git -C $wRepo add -- $file 2>$null
+    return (WCommit $msg)
+}
+$r = WBare 'bare-one.txt' 'a bare commit, first'
+Assert 'W33a the first bare commit lands, and post-commit says it is NOT PUSHED' `
+    ($r.Code -eq 0 -and $r.Out -match 'NOT PUSHED' -and $r.Out -match 'git-commit-guard\.ps1 push')
+$headBefore = WHead
+$r = WBare 'bare-two.txt' 'a bare commit, second'
+Assert 'W33b the second bare commit is REFUSED while the first is unpushed' `
+    ($r.Code -ne 0 -and $r.Out -match 'COMMIT REFUSED' -and $r.Out -match '1 commit\(s\) ahead' -and (WHead) -eq $headBefore)
+Assert 'W33c the refusal names the unpushed commit and the remedy' `
+    ($r.Out -match 'a bare commit, first' -and $r.Out -match 'git-commit-guard\.ps1 push' -and $r.Out -match 'GHOZTTY_ALLOW_UNPUSHED')
+# Negative control: the same commit with the hooks unwired goes through, so the
+# refusal above is the hook's and not something else about the fixture.
+$out = & git -C $wRepo -c core.hooksPath= commit -m 'control: no hooks' 2>&1 | ForEach-Object { $_.ToString() } | Out-String
+Assert 'W33d control: without the hook the second bare commit is NOT refused' `
+    ($LASTEXITCODE -eq 0 -and $out -notmatch 'COMMIT REFUSED' -and (WHead) -ne $headBefore)
+git -C $wRepo reset -q --soft $headBefore 2>$null
+$env:GHOZTTY_ALLOW_UNPUSHED = '1'
+try { $r = WCommit 'a bare commit, hatch taken' } finally { Remove-Item Env:GHOZTTY_ALLOW_UNPUSHED -ErrorAction SilentlyContinue }
+Assert 'W33e GHOZTTY_ALLOW_UNPUSHED=1 lets it through, and says it was taken' `
+    ($r.Code -eq 0 -and $r.Out -match 'UNPUSHED CHECK SKIPPED' -and (WHead) -ne $headBefore)
+# The guard's own commit is exempt: it pushes itself, and a push that failed
+# for want of network must not wedge its next commit.
+Set-Content -Path (Join-Path $wRepo 'guard-while-ahead.txt') -Value 'guard commit over unpushed work'
+$r = CG @('commit', '-NoPush', '-Reason', 'T1072 exemption arm', '-Paths', 'guard-while-ahead.txt', '-Message', 'a guard commit while ahead')
+Assert 'W33f a guard commit is not refused while the branch is ahead' `
+    ($r.Code -eq 0 -and $r.Out -match 'COMMITTED' -and $r.Out -notmatch 'COMMIT REFUSED')
+$r = CG @('push')
+$r = WBare 'bare-three.txt' 'a bare commit after the push'
+Assert 'W33g once pushed, a bare commit is allowed again' ($r.Code -eq 0 -and $r.Out -notmatch 'COMMIT REFUSED')
+CG @('push') | Out-Null
+$r = CG @('unpushed')
+Assert 'W33h and the fixture is level again for the arms below' ($r.Code -eq 0 -and $r.Out -match 'push clean')
+
 # --- T1245: the message file is written for THIS commit, or there is no commit
 # `-MessageFile temp\msg2.txt` was run on a turn that never wrote that file, and
 # a leftover from an earlier turn was sitting there: the guard proved the PATHS
