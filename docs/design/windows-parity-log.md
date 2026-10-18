@@ -36991,3 +36991,9 @@ moved to T1814.
 - **Still real in four.** An inventory of the 228 `Stop-RepoGhoztty` callers found 8 with none of those protections. Four of them launch with persistence ON in the ambient LOCALAPPDATA: chooser-session-cpu, chooser-session-sort, chooser-sessions-push and history-guard-flavor. Their pre-fixture calls are now `Reset-GhozttyTestState`. The sort script's run-2 relaunch stays a plain kill, commented as a restart.
 - **Validated.** All four ran twice back to back through `acceptance-parallel.ps1 run`, ALL PASS both times (19/19/5/30). cleanslate-audit ALL PASS (32), unwired-hook-audit PASS, and `-Lane harness` PASS and stamped. The inherited ghoztty-cleanup is ALL PASS, with one skip. No zig source touched, so the zig lanes were not re-run.
 - **Mac.** Nothing owed: this changes Windows acceptance scripts only.
+## 2026-10-18 — T1084: a dim-overlay check that reads no pixel now says the probe did not run, instead of blaming the colour
+
+- **Already fixed in part.** The empty reading was T1283's (76da6337f): the uniform-bitmap guard refused the one-colour overlay capture. `split-dim.ps1` was ALL PASS (29) at claim, twice.
+- **Landed.** `Assert-Fill` in `test/win32/split-dim.ps1` and `split-dim-viewer.ps1`. An empty `$fill` now fails as `PROBE DID NOT RUN`, kept apart from `want X, got Y`. The old `got ''` message sent both T1084 and T1283 after the wrong cause.
+- **Validated.** split-dim ALL PASS (29) x2, split-dim-viewer ALL PASS (46), `-NegativeControl` 1 FAILED on the inverted colour. All three `Assert-Fill` branches were exercised from the scripts' own ASTs. Due harnesses green except drag-perf (the known T1854). Scoped harness floor PASS. No zig source touched.
+- **Mac.** Nothing owed: test-only, Windows harnesses.

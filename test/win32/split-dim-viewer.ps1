@@ -67,6 +67,16 @@ function Assert([bool]$cond, [string]$label) {
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
 }
 
+# Same shape as split-dim.ps1 (T1084): an EMPTY reading is a probe that never
+# produced a pixel, reported as that, never as a wrong colour.
+function Assert-Fill($fill, [string]$want, [string]$label) {
+    if ([string]::IsNullOrEmpty($fill)) {
+        Assert $false "$label - PROBE DID NOT RUN: no pixel was read (capture failed), so no colour was measured"
+    } else {
+        Assert ($fill -eq $want) "$label (want $want, got $fill)"
+    }
+}
+
 # The AGENT too (T248): +new-window/+split are idempotent against a PERSISTED
 # session, and killing ghoztty.exe does not remove one.
 function Stop-RepoInstances {
@@ -216,7 +226,7 @@ try {
         $la = Get-TestLayeredAttrs -Window ([IntPtr]$ov[0].Hwnd)
         Assert ($la.Ok -and $la.Alpha -eq 77) "terminal overlay: layered alpha is 77 = (1-0.7)*255 (got $($la.Alpha))"
         $fill = Get-OverlayFill $ov[0]
-        Assert ($fill -eq '16,16,20') "terminal overlay paints the background color #101014 (got $fill)"
+        Assert-Fill $fill '16,16,20' "terminal overlay paints the background color #101014"
     }
     Assert-ViewerNeverDimmed 'viewer focused'
 

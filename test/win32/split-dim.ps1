@@ -81,6 +81,18 @@ function Assert([bool]$cond, [string]$label) {
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
 }
 
+# A colour assertion over Get-OverlayFill (T1084). An EMPTY reading means the
+# probe never produced a pixel, which is a broken check, not a wrong colour -
+# T1084 and T1283 were both filed off `got ''` read as a colour verdict. So it
+# fails under its own label, and only a real reading is scored against $want.
+function Assert-Fill($fill, [string]$want, [string]$label) {
+    if ([string]::IsNullOrEmpty($fill)) {
+        Assert $false "$label - PROBE DID NOT RUN: no pixel was read (capture failed), so no colour was measured"
+    } else {
+        Assert ($fill -eq $want) "$label (want $want, got $fill)"
+    }
+}
+
 # The AGENT too (T248): +new-window/+split are idempotent against a PERSISTED
 # session, and killing ghoztty.exe does not remove one, so from the second run
 # onward a surviving agent would hand this run last run's windows.
@@ -250,7 +262,7 @@ try {
         # The fill DEFAULTS to the background color, pinned exactly. Paired
         # with run 3's #ff0000 this is what proves the capture tracks config.
         $fill = Get-OverlayFill $ov[0]
-        Assert ($fill -eq '16,16,20') "default: overlay paints the background color #101014 (got $fill)"
+        Assert-Fill $fill '16,16,20' "default: overlay paints the background color #101014"
     }
 
     # Focus flip: ctrl+alt+up focuses pane A -> overlay must move to pane B.
@@ -304,7 +316,7 @@ try {
         $fill = Get-OverlayFill $ov[0]
         $want = if ($NegativeControl) { '16,16,20' } else { '255,0,0' }
         $script:negReached = $true
-        Assert ($fill -eq $want) "custom: overlay paints the configured fill #ff0000 (want $want, got $fill)"
+        Assert-Fill $fill $want "custom: overlay paints the configured fill #ff0000"
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'custom: no crash'
     Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
