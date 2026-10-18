@@ -37061,3 +37061,10 @@ moved to T1814.
 - **Already fixed at claim.** T1284 (f9e2311ed, 2026-09-02) caught the same sweep-only red independently, without seeing this card. The cause was not lost input. The positive control's Ctrl+W hit a pane whose shell still had a child process, so the app raised its modal close confirmation. That froze the pane count and kept the owner window disabled, so one wrong assertion turned into three. The control now waits for idle shells and reads the dialog back.
 - **Validated.** `acceptance-parallel.ps1 run` at HEAD 4c7e4d850, on the test desktop: ALL PASS (16). `-ForceConfirm` scores 2 FAILURE(S) and `-NegativeControl` scores 1 FAILURE(S), each red at exactly the assertion it targets. No code changed.
 - **Mac.** Nothing owed: tracker-only close.
+
+## 2026-10-18 — T1113: context-menu-real-input.ps1's setup red was already turned into a declared SKIP by T1100
+
+- **Already fixed at claim.** T1100 (549faef3c, 2026-09-02) wired this exact script to `Assert-TestDesktopCapability -Name real-input, foreground -Interactive`, ahead of any launch, and turned a lost foreground grab into `Exit-TestSkip -Capability foreground`. The sweep's "could not take the foreground" no longer reads as a product failure: it is `SKIP ALL` naming the capability, at exit 0.
+- **Validated.** `test-desktop-harness.ps1` (its section Z forces the missing-capability path) re-run through `acceptance-parallel.ps1 run`: ALL PASS (95). No code changed.
+- **Still owed, filed.** A green run of the real right-click assertions needs the input desktop, which the loop may not take (never pull focus). Filed T2076.
+- **Mac.** Nothing owed: tracker-only close.
