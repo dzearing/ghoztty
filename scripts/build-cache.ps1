@@ -14,7 +14,11 @@
 
       check   Report the cheap health question and exit 0. Never deletes.
       sweep   Report, and CLEAR the caches when they are over a limit. This is
-              what `go-loop-exec.ps1 claim` runs once a turn.
+              what `go-loop-exec.ps1 claim` runs once a turn. A clear is
+              DEFERRED while a build is using the cache (any zig.exe, or a
+              process whose image lives in a cache dir - the build runner and
+              test binaries), because the other window or the other loop lane
+              may be mid-build (T1061); `-IgnoreBusy` overrides.
       clear   Clear now, whatever the numbers say.
 
     `check` and `sweep` also ask whether the fetched packages in the global
@@ -68,6 +72,13 @@ param(
     # a cold rebuild. `sweep` does not need it: being over the limit IS the
     # authorization.
     [switch]$Force,
+    # Clear even while a build is using the cache (T1061). `sweep` otherwise
+    # DEFERS an over-limit clear while any zig, build runner or test binary is
+    # alive, and the next claim tries again.
+    [switch]$IgnoreBusy,
+    # The process names counted as a compiler. Only a harness changes this, to
+    # stand a harmless fixture in for zig.exe.
+    [string[]]$ZigName = @('zig.exe'),
     [switch]$Json
 )
 
@@ -123,6 +134,23 @@ if ($Action -eq 'clear') {
     $didClear = $true
 }
 
+# T1061: a clear is whole, so it deletes generated files out from under any
+# build that is running - in the other Claude window on this repo, or in the
+# other loop lane, which shares the global cache. Ask only when about to clear:
+# the process walk costs a few hundred ms and the ordinary claim never needs it.
+# `sweep` defers (being over the limit is not urgent enough to break a build;
+# the next claim retries). `clear -Force` was asked for by a person, so it goes
+# ahead but names who it is about to break.
+$busy = @()
+$deferred = $false
+if ($didClear -and -not $IgnoreBusy) {
+    $busy = @(Get-BuildCacheUser -CacheDirs $CacheDir -ZigName $ZigName)
+    if ($busy.Count -gt 0 -and $Action -eq 'sweep') {
+        $didClear = $false
+        $deferred = $true
+    }
+}
+
 if ($didClear) {
     foreach ($dir in $CacheDir) {
         $r = Clear-BuildCache -CacheDir $dir
@@ -130,7 +158,9 @@ if ($didClear) {
     }
 }
 
-# A whole clear already removed them; otherwise the sweep repairs them here.
+# A whole clear already removed them; otherwise the sweep repairs them here
+# (a deferred clear included: the in-flight age window already keeps this from
+# touching a file a running build is writing).
 $tornGenHealed = 0
 if (-not $didClear -and $Action -eq 'sweep' -and $tornGen.Count -gt 0) {
     $tornGenHealed = Invoke-CacheHeal -Entries $tornGen
@@ -141,6 +171,8 @@ if ($Json) {
         action  = $Action
         over    = [bool]$state.Over
         reason  = $state.Reason
+        deferred = $deferred
+        busy    = @($busy | ForEach-Object { [ordered]@{ pid = $_.Pid; name = $_.Name; path = $_.Path } })
         warn    = [bool]$state.Warn
         freeGB  = $state.FreeGB
         entries = $state.Entries
@@ -176,8 +208,17 @@ if ($didClear) {
         # can now name outputs under a half-removed `o\`.
         Write-Host "  PARTIAL: $($f.Path) not fully removed - $($f.Error)"
     }
+} elseif ($deferred) {
+    $names = ($busy | Select-Object -First 4 | ForEach-Object { "$($_.Name) pid $($_.Pid)" }) -join ', '
+    $more = if ($busy.Count -gt 4) { ", +$($busy.Count - 4) more" } else { '' }
+    Write-Host ("BUILD CACHE CLEAR DEFERRED: over limit ($($state.Reason)), {0} entries with {1} GB free, but {2} build process(es) are using it ($names$more) - left in place; the next claim tries again" -f `
+        $state.Entries, $state.FreeGB, $busy.Count)
 } else {
     Write-Host $state.Summary
+}
+if ($didClear -and $busy.Count -gt 0) {
+    $names = ($busy | Select-Object -First 4 | ForEach-Object { "$($_.Name) pid $($_.Pid)" }) -join ', '
+    Write-Host "  WARNING: cleared while $($busy.Count) build process(es) were running ($names) - those builds may fail on missing cache files"
 }
 
 # T1436: "big" and "healthy" are different questions and only the first one was

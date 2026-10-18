@@ -45,6 +45,13 @@
          young enough to be mid-write, `check` reports without deleting,
          `sweep` (the claim) deletes only the torn entries, and the live repo
          cache reads clean so the rule costs a healthy box nothing.
+      H. A clear is DEFERRED while a build is using the cache (T1061): the
+         other Claude window, or the other loop lane, may be mid-build, and a
+         whole clear under it fails that build on a vanished generated file.
+         A fixture standing in for a cache-resident test binary and one
+         standing in for a compiler each defer `sweep` (exit 0, named pid,
+         cache intact); `-IgnoreBusy` and `clear -Force` go ahead, the latter
+         with a warning; with the build gone, the next sweep clears.
 
     Launches no GUI and touches no real cache: every section works on throwaway
     directories under $TEMP. Section D runs the real `floor-lane.ps1` but only
@@ -187,7 +194,9 @@ function Invoke-Sweeper([string[]]$sweeperArgs) {
 
 # The half that clears.
 $sweepOver = New-FixtureCache 'sweep-over' 12
-$r = Invoke-Sweeper @('sweep', '-Repo', $tmp, '-CacheDir', $sweepOver, '-MinFreeGB', '0', '-MaxEntries', '12')
+# -ZigName: a real lane building in another window must not turn this into a
+# deferral (section H owns that behavior).
+$r = Invoke-Sweeper @('sweep', '-Repo', $tmp, '-CacheDir', $sweepOver, '-MinFreeGB', '0', '-MaxEntries', '12', '-ZigName', 'no-such-compiler.exe')
 AssertEq 'C2 sweep over the limit exits 0 (a claim must never fail over housekeeping)' 0 $r.Code
 Assert 'C3 and says it cleared, with the reason' ($r.Out -match 'BUILD CACHE CLEARED over limit \(entries\)')
 Assert 'C4 and the cache is actually gone' (-not (Test-Path -LiteralPath $sweepOver))
@@ -470,6 +479,79 @@ $sweeper = Get-Content -LiteralPath $cacheScript -Raw
 Assert 'G15 the sweeper runs the generated-source scan' ($sweeper -match 'Get-TornGeneratedEntry')
 $claim = Get-Content -LiteralPath (Join-Path $repo 'scripts\go-loop-exec.ps1') -Raw
 Assert 'G16 and the claim runs the sweeper in sweep mode' ($claim -match 'cacheScript sweep')
+
+# ===========================================================================
+Write-Host ''
+Write-Host '== H: a clear is deferred while a build is using the cache (T1061)'
+# ===========================================================================
+
+# A harmless long-lived console program stands in for each kind of cache user.
+# ping is used because it runs for as long as it is told to, needs no input, and
+# opens no window (-NoNewWindow + redirected output keeps it off the desktop).
+$pingSrc = Join-Path $env:SystemRoot 'System32\PING.EXE'
+function Start-CacheUser([string]$imagePath) {
+    $log = Join-Path $tmp ("user-{0}.out" -f [guid]::NewGuid().ToString('N'))
+    $p = Start-Process -FilePath $imagePath -ArgumentList '-n', '120', '127.0.0.1' -NoNewWindow -PassThru `
+        -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+    $null = $p.Handle
+    # Positive control: the fixture must actually be alive, or every deferral
+    # assertion below is about a process that never existed.
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline -and -not (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue)) {
+        Start-Sleep -Milliseconds 100
+    }
+    return $p
+}
+
+# H1-H6: a test binary running out of the cache (image under the cache dir).
+$busyCache = New-FixtureCache 'busy-resident' 12
+$resident = Join-Path $busyCache 'o\00000000000000ff\test.exe'
+New-Item -ItemType Directory -Force (Split-Path $resident) | Out-Null
+Copy-Item -LiteralPath $pingSrc -Destination $resident
+$p1 = Start-CacheUser $resident
+try {
+    Assert 'H1 the cache-resident fixture is running' (-not $p1.HasExited)
+    $users = @(Get-BuildCacheUser -CacheDirs @($busyCache) -ZigName @('no-such-compiler.exe'))
+    Assert 'H2 Get-BuildCacheUser names the process whose image lives in the cache' `
+        (@($users | Where-Object { $_.Pid -eq $p1.Id }).Count -eq 1)
+    $r = Invoke-Sweeper @('sweep', '-Repo', $tmp, '-CacheDir', $busyCache, '-MinFreeGB', '0', '-MaxEntries', '12', '-ZigName', 'no-such-compiler.exe')
+    AssertEq 'H3 a deferred sweep still exits 0' 0 $r.Code
+    Assert 'H4 and says it deferred, with the reason and the pid' `
+        ($r.Out -match 'BUILD CACHE CLEAR DEFERRED: over limit \(entries\)' -and $r.Out -match "pid $($p1.Id)")
+    $kept = (Test-Path -LiteralPath (Join-Path $busyCache 'h\manifest.txt'))
+    if ($NegativeControl) { $script:negReached = $true; $kept = -not $kept }
+    Assert 'H5 and the cache is still there' $kept
+    $r = Invoke-Sweeper @('sweep', '-IgnoreBusy', '-Repo', $tmp, '-CacheDir', $busyCache, '-MinFreeGB', '0', '-MaxEntries', '12', '-ZigName', 'no-such-compiler.exe')
+    Assert 'H6 -IgnoreBusy is the override, and it clears' ($r.Out -match 'BUILD CACHE CLEARED' -and -not (Test-Path -LiteralPath (Join-Path $busyCache 'h')))
+} finally {
+    if (-not $p1.HasExited) { Stop-Process -Id $p1.Id -Force -ErrorAction SilentlyContinue; $p1.WaitForExit(5000) | Out-Null }
+}
+
+# H7-H10: a compiler running for some OTHER tree (named like zig, image outside
+# every cache) - the other lane building against the shared global cache.
+$fakeBin = Join-Path $tmp 'fakebin'
+New-Item -ItemType Directory -Force $fakeBin | Out-Null
+$fakeZig = Join-Path $fakeBin 'ghz-fake-zig.exe'
+Copy-Item -LiteralPath $pingSrc -Destination $fakeZig
+$zigCache = New-FixtureCache 'busy-zig' 12
+$p2 = Start-CacheUser $fakeZig
+try {
+    $r = Invoke-Sweeper @('sweep', '-Repo', $tmp, '-CacheDir', $zigCache, '-MinFreeGB', '0', '-MaxEntries', '12', '-ZigName', 'ghz-fake-zig.exe')
+    Assert 'H7 a compiler anywhere on the box defers the clear' `
+        ($r.Out -match 'CLEAR DEFERRED' -and $r.Out -match "ghz-fake-zig\.exe pid $($p2.Id)")
+    Assert 'H8 and the cache is still there' (Test-Path -LiteralPath (Join-Path $zigCache 'o'))
+    $r = Invoke-Sweeper @('clear', '-Force', '-Repo', $tmp, '-CacheDir', $zigCache, '-MinFreeGB', '0', '-MaxEntries', '1000', '-ZigName', 'ghz-fake-zig.exe')
+    Assert 'H9 clear -Force (a person asking) goes ahead' (-not (Test-Path -LiteralPath $zigCache))
+    Assert 'H10 but names the build it may have broken' ($r.Out -match 'WARNING: cleared while 1 build process')
+} finally {
+    if (-not $p2.HasExited) { Stop-Process -Id $p2.Id -Force -ErrorAction SilentlyContinue; $p2.WaitForExit(5000) | Out-Null }
+}
+
+# H11: once the build has exited, the next claim's sweep does clear - the
+# deferral is a retry, not a permanent stand-off.
+$afterCache = New-FixtureCache 'busy-after' 12
+$r = Invoke-Sweeper @('sweep', '-Repo', $tmp, '-CacheDir', $afterCache, '-MinFreeGB', '0', '-MaxEntries', '12', '-ZigName', 'ghz-fake-zig.exe')
+Assert 'H11 with the build gone, the sweep clears' ($r.Out -match 'BUILD CACHE CLEARED' -and -not (Test-Path -LiteralPath $afterCache))
 
 Write-Host ''
 if ($NegativeControl -and -not $script:negReached) {

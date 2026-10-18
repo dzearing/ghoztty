@@ -385,6 +385,51 @@ function Clear-BuildCache {
     return [pscustomobject]@{ Path = $CacheDir; Removed = $gone; FreedGB = $freed; Error = $err }
 }
 
+function Get-BuildCacheUser {
+    <#
+        The processes that may be using a build cache right now (T1061): any
+        `zig.exe` - the global cache is shared by every worktree and lane on the
+        box, so a compiler running for ANY of them is a reader of it - plus
+        anything whose image lives under one of the cache directories, which is
+        the build runner and every test binary a lane is executing.
+
+        Clearing under one of them deletes a generated file mid-build, and the
+        lane in the other window then fails on a vanished file: red code that is
+        really housekeeping, the same misleading failure T1054 exists to remove.
+
+        -ZigName exists so a harness can stand a harmless fixture in for the
+        compiler. Returns records: Pid, Name, Path. The caller's own process is
+        never reported.
+    #>
+    param(
+        [string[]]$CacheDirs = @(),
+        [string[]]$ZigName = @('zig.exe')
+    )
+    $roots = @($CacheDirs | Where-Object { $_ } | ForEach-Object {
+            $full = [IO.Path]::GetFullPath($_)
+            if (-not $full.EndsWith('\')) { $full += '\' }
+            $full
+        })
+    $procs = @()
+    try { $procs = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop) } catch { return @() }
+    $users = @()
+    foreach ($p in $procs) {
+        if ([int]$p.ProcessId -eq $PID) { continue }
+        $path = [string]$p.ExecutablePath
+        $hit = $false
+        foreach ($n in $ZigName) { if ([string]$p.Name -ieq $n) { $hit = $true } }
+        if (-not $hit -and $path) {
+            foreach ($r in $roots) {
+                if ($path.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)) { $hit = $true; break }
+            }
+        }
+        if ($hit) {
+            $users += [pscustomobject]@{ Pid = [int]$p.ProcessId; Name = [string]$p.Name; Path = $path }
+        }
+    }
+    return $users
+}
+
 function Get-StaleScratchDir {
     <#
         Leftovers from finished tasks that are NOT caches: `zig-out-*` staging

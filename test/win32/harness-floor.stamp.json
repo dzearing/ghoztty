@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-17T20:05:33-07:00",
-    "commit":  "332dedff3",
+    "generated":  "2026-10-17T20:06:05-07:00",
+    "commit":  "4417c1fff",
     "uncommitted":  [
-                        "test/win32/ship-workflow.ps1"
+                        "test/win32/build-cache.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -52,7 +52,7 @@
                   "test/win32/bell-border.ps1":  "46652c74e867a0424e930baf04a336e6a44e79bb9ac4888800e0047e4616cb04",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/body-complete-audit.ps1":  "ad5462f3989f2efbd5f3447b4fa9dd0cf5d56d69a89d7730816c7ad2baf4fc4f",
-                  "test/win32/build-cache.ps1":  "3f269ac6cdd06e431034cabc894c4252dadb4b34af48915d7d002ed002f0c4ec",
+                  "test/win32/build-cache.ps1":  "60741332caadc542e2fa7d8a79c133558dda06f0e5598f92f4a5401ae9b3ed0c",
                   "test/win32/build-fresh-guard.ps1":  "0e567d9a72a4e5ff377b5c7d98281ddbfd5da0543d93e277cb99aeac351b09c2",
                   "test/win32/build-locked-artifact.ps1":  "e42a71b9730f428c28d7cc844a54d73d5730f696a9a3e315dc5cffaafe0869f5",
                   "test/win32/build-mode-guard.ps1":  "7673d5a305e97dea7e34586af8ffe74ae7e0ee9a140eab26a87f5bf03840deda",
@@ -151,7 +151,7 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "42c2cf7649451430672620c75d7574796370fc7eb2dc7db507ed5ccc13cd98d1",
-                  "test/win32/gate-negatives.ps1":  "8532f64d3beacceb2c8ef5b7be3dfc33b0fb15c42395fac40eb265c33b09da51",
+                  "test/win32/gate-negatives.ps1":  "a866595fe5246d6a62dac5d62d626260174fbaca29eff9d8b23f330029c05b1f",
                   "test/win32/ghoztty-cleanup.ps1":  "6c920aaa49bd05d3c18f496991a51af7796075f695d86c2c4f856cc115299085",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
                   "test/win32/go-loop-guard.ps1":  "b780407c2d3e89e36881add1472faf78dfa3e82882bba354c9909d88fe4c18e9",
@@ -325,7 +325,7 @@
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "438b373dc1659658869eac28217f2fdfdc230025c8c752ceb44d0a288090d9cd",
-                  "test/win32/parity-tasks-seat.ps1":  "b09b09a47dcb79fdb0554b385080bf8c9c66989cec1420d7836dac0ecf19ec8f",
+                  "test/win32/parity-tasks-seat.ps1":  "42388eed9192ec811aff7016988b19524e48f9724da3a311a911ce81862c7bc4",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "e37347a9c7c11b2b85bcb7fca1fb80a13fe5984a401f9cadcd81ee245d41781f",
                   "test/win32/persistence-flag.ps1":  "c8d93f1a71d3d4f19304d948c1e00bedfd6a1cd6abda7382c62c81504b224920",
@@ -395,7 +395,7 @@
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",
                   "test/win32/share-machine.ps1":  "02b0600437871b235bdf8c4a4733a6558ae689060ae8a5d6821353df36437960",
-                  "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
+                  "test/win32/ship-workflow.ps1":  "28634520cb227573a1a9acf8a9cb7006389228c34a56f3776072eca61f5b1b83",
                   "test/win32/single-instance-join.ps1":  "d276a7d97773c26b7cc622fe3ae14c735381f5e15c7ce137cfb44d84aa249039",
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
                   "test/win32/soak.ps1":  "d3fd1ac5975a290fe0b6796fcbb06601da6b05d359a75aeaaffe8f357f7ad53f",
