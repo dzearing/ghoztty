@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-18T04:09:40-07:00",
-    "commit":  "b9827a4a1",
+    "generated":  "2026-10-18T05:05:38-07:00",
+    "commit":  "ec8057b2f",
     "uncommitted":  [
 
                     ],
@@ -1163,7 +1163,7 @@
                   "test/win32/merge-terminology.ps1":  "7d155ca2da0de4866e7afab82df19ab046be33aa3c34655481192c1e158b5d25",
                   "test/win32/mouse-nc-routing.ps1":  "4f982fe22519310d39a3d910edbd2596e9929fdfc3db7462799a1f625cb677cc",
                   "test/win32/msg-timer-ids.ps1":  "ea90ccfcaece4c0b0fe9e88d1bdf8fcb3d8be8bc7009d532d17ac2f18f1b4e4e",
-                  "test/win32/msi-upgrade.ps1":  "b32e7da7020dbad39ea0691b79bb013ae2037da7a2f6a7fbcf7a0ae17e1168b0",
+                  "test/win32/msi-upgrade.ps1":  "f5a2f12bd4920bae74c81f9d5b0b74f3f4a4ceb79fdaf18c44d9300dfb42a2ce",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
                   "test/win32/new-window-cwd.ps1":  "340b6850b96d7a3cf04465db1f042cec4ec30c3b6211236e20acea80eb98bd30",
                   "test/win32/notification-click-focus.ps1":  "43777bc3c6728b1874037f9e0917084ab8f8e51aff04bde05d86c991f0612edf",

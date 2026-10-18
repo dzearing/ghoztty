@@ -23,7 +23,12 @@ param(
     [string]$TestName = 'GhozttyT23Test',
     [string]$V1FileVer = '26.7.19.1',
     [string]$V2FileVer = '26.7.19.2',
-    [string]$V2ProductVer = '26.7.1902'
+    # Empty = read it from the v2 MSI (T1121). build-msi.sh derives
+    # ProductVersion from the DAY THE MSI WAS BUILT (yy.m.dNN), not from the
+    # exe's file version, so a hard-coded value goes stale the moment the
+    # throwaway MSIs are rebuilt on another day: the 2026-07-20 rebuild
+    # declared 26.7.2002 and this default still said 26.7.1902.
+    [string]$V2ProductVer = ''
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -106,6 +111,39 @@ if (-not (Test-Path $MsiV1) -or -not (Test-Path $MsiV2)) {
     Write-Host "SETUP FAIL: missing $MsiV1 / $MsiV2 (build both throwaway MSIs first)" -ForegroundColor Red
     exit 1
 }
+
+# Reads one row of an MSI's Property table, read-only; '' when absent.
+function Get-MsiProperty([string]$msi, [string]$name) {
+    $inst = New-Object -ComObject WindowsInstaller.Installer
+    $db = $inst.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $inst, @($msi, 0))
+    $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db,
+        @("SELECT Value FROM Property WHERE Property='$name'"))
+    try {
+        [void]$view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+        $rec = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+        if ($rec) { return [string]$rec.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec, @(1)) }
+        return ''
+    } finally {
+        [void]$view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
+    }
+}
+
+# What Apps & Features shows is ARPDISPLAYVERSION when the package sets one
+# (a --semver build, T1205) and ProductVersion otherwise - the same fallback
+# build-msi.sh applies when it writes the package.
+$v1ProductVer = Get-MsiProperty $MsiV1 'ProductVersion'
+$v2MsiProductVer = Get-MsiProperty $MsiV2 'ProductVersion'
+if (-not $V2ProductVer) {
+    $V2ProductVer = Get-MsiProperty $MsiV2 'ARPDISPLAYVERSION'
+    if (-not $V2ProductVer) { $V2ProductVer = $v2MsiProductVer }
+}
+Write-Host "v1 ProductVersion $v1ProductVer; v2 ProductVersion $v2MsiProductVer; v2 expected DisplayVersion $V2ProductVer"
+Assert ([bool]$V2ProductVer) 'setup: v2 MSI declares a version to compare DisplayVersion against'
+# A major upgrade only fires when v2 compares GREATER; equal versions are the
+# "refuses to install over itself" case, not an upgrade at all.
+$verCmp = 0
+if ($v1ProductVer -and $v2MsiProductVer) { $verCmp = ([version]$v2MsiProductVer).CompareTo([version]$v1ProductVer) }
+Assert ($verCmp -gt 0) "setup: v2 ProductVersion $v2MsiProductVer > v1 $v1ProductVer (a real major upgrade)"
 
 Write-Host "== pre-clean any leftover $TestName install =="
 Remove-TestProduct

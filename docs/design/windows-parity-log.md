@@ -37087,3 +37087,10 @@ moved to T1814.
 - **Measured.** 12 real GUI scripts: 6m 19s at `-Jobs 4`, 10m 11s serial. 11 of 12 verdicts identical. The difference was activity-help-tooltips.ps1 (red only 4-wide), filed as T2074.
 - **Validated.** suite-run ALL PASS (124), acceptance-parallel (73), checkout-guard, docs-routing and five audits green. Found while there: ghoztty-cleanup.ps1 D5 red (T2075, not this change). drag-perf red on T1854's known line.
 - **Mac.** Nothing owed: Windows test infrastructure.
+## 2026-10-18 — T1121 (lane b): msi-upgrade.ps1 reads the version it expects from the MSI instead of hard-coding it
+
+- **Which side was wrong.** The test. `build-msi.sh` stamps ProductVersion from the day the MSI is built (`yy.m.dNN`). The throwaway fixtures were rebuilt on 2026-07-20 and declare `26.7.2001` / `26.7.2002`. The script still expected `26.7.1902`. The installed Apps & Features entry read `26.7.2002`, which is exactly what the package declares, so the installer has no defect.
+- **Landed.** `-V2ProductVer` now defaults to the v2 MSI's ARPDISPLAYVERSION, falling back to its ProductVersion (the same fallback `build-msi.sh` uses). The value is read through the WindowsInstaller COM API. Two setup checks were added: v2 declares a version, and v2 compares greater than v1, so the run really is a major upgrade.
+- **Validated.** msi-upgrade ALL PASS (37). The negative control `-V2ProductVer 26.7.1902` goes red on the old line. In the due set, ghoztty-cleanup and unwired-hook-audit are green. drag-perf is red on T1854's known line.
+- **Filed.** T2079: the fixtures exist only in lane A's `zig-out`, so any other checkout gets SETUP FAIL instead of a SKIP that names the rebuild recipe.
+- **Mac.** Nothing owed: Windows installer test.
