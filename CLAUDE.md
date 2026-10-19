@@ -1511,8 +1511,9 @@ dark theme and lighter on a light one, where a dim pool of the
 **complementary** hue subtly lights that corner) and leaves the terminals their theme
 color; an explicit `--color=#hex`, `random` on a split, and `random` in the
 `flat` style still tint the terminal background as before. `flat` is the classic
-edge-to-edge look with a 1px `split-divider-color` line, and its geometry is
-unchanged byte for byte. Geometry and palette live once in
+edge-to-edge look with a 1px `split-divider-color` line; its panes meet at a
+0.5pt gap (the line straddles the edge), and they stack like any other (see
+Stacked panes). Geometry and palette live once in
 `PaneElevation`/`PaneDesk`/`PaneCard` (`Features/Splits/PaneElevation.swift`),
 which the grid AND the hidden stashed-pane slots both use — the slots must lay
 out exactly like the grid or a restored pane would reflow. The pinned pane
@@ -1551,6 +1552,59 @@ repaints — the resize flicker — and is now ~4
 which also writes a ScreenCaptureKit capture of its own window. A translucent terminal
 (`background-opacity` < 1) gets an equally translucent gradient. Settled in the
 pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).
+
+## Stacked panes
+
+**A pane is never narrower (or shorter) than 300pt.** A row of panes that
+cannot fit side by side at that minimum becomes a **stack**: as many panes as
+fit stay on show (the **run**), and the rest are **minimized** into strips at
+the edge they live on — a dark bar with the pane's title down it. Nothing is
+ever squeezed below the minimum to make room. Layout is one pure function,
+`PaneLayout.compute` (`Features/Splits/PaneLayout.swift`), used by the live grid
+AND the stashed-pane slots, so a restored pane never reflows.
+
+- **Clicking a strip focuses its pane, and focus is what brings it forward**
+  — there is no separate "bring forward" state. A click, `goto_split`, the pane
+  sidebar, `ghoztty://focus/…` all just focus the pane, and the row follows
+  (`PaneStackState.noteFocus`). It is a carousel, not a z-flip: the clicked card
+  slides into the slot it takes and the cards it displaces slide to the slots it
+  left, every card staying in tree order left to right. A strip click restores
+  just that pane, sharing the space evenly; a pane on the far edge minimizes
+  only when there is no room for one more.
+- **Elevation**: the run is highest, and strips sit lower the farther they are
+  from it, on both sides — the run casts its shadow on the strip beside it, and
+  each strip on the next one out. Before the run a strip is its card's leading
+  edge (the rest under the card after it); past the run a card is drawn as its
+  strip alone (`Leaf.isSliver`), so slides never move a card through another.
+  Paint order is `Leaf.elevation`, not tree order.
+- **Collapsing by hand**: dragging a divider ~48pt past a pane's minimum
+  minimizes the outermost pane on that side, **while the mouse is still down**;
+  dragging back to the minimum restores it, in the same drag
+  (`BaseTerminalController.setRowDrag` replays each step from a snapshot taken
+  at mouse-down). A collapsed row stays collapsed with room to spare (a `Pin`).
+  Grips between cards on show resize them; a grip at the run's edge widens it
+  again when one more card fits. Rows nest (`a | (b / c)` is a row whose second
+  item is a column), and each keeps its own collapse.
+- **No resize per animation frame**: a slide is a Core Animation animation of
+  each card's layer (`PaneStage`), never a frame change, so a terminal is told
+  its size once — a minimized pane keeps the size of the slot it would come
+  forward into, and its PTY never SIGWINCHes during a slide.
+- **Drag a strip** to pick its pane up: the card itself follows the pointer (no
+  drag image, past a 5pt threshold, so a click with a wobble is a click) and
+  drops through the ordinary resolver — onto a pane on show it swaps with it,
+  and the row stays collapsed (`PaneStackState.swap`). Strips are drop targets
+  too (`PaneDragSession` uses the strip's rect for a minimized pane).
+- **Zoom / hero** show one pane, so nothing stacks. **The pane sidebar** lists
+  minimized panes like any other; clicking one focuses it, which restores it.
+  Dragging a strip onto the sidebar stashes it. **Flat style** stacks the same way, with square
+  strips and a 1px line on its grips.
+- **Ephemeral**: which panes are minimized and how a run's slots are sized are
+  not persisted. A relaunch starts from the focused pane with every row side by
+  side again where it fits.
+
+Code: `PaneLayout.swift` (pure), `PaneStackState.swift`, `PaneStage.swift`,
+`PaneStackTab.swift`. Tests: `PaneLayoutTests`, `PaneStackStateTests`,
+`PaneStackWindowTests` (captures to `/tmp/pane-stack-snapshots`).
 
 ## Pane rearrange mode
 

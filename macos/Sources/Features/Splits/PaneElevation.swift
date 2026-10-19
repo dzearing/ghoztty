@@ -242,9 +242,16 @@ struct PaneDesk: View {
 struct PaneCard: ViewModifier {
     let isElevated: Bool
     var isGlass: Bool = false
+    /// A card other cards overlap (a stacked row's): glass would show the
+    /// card behind through it, so it is nearly opaque.
+    var isSolid: Bool = false
     var isFocused: Bool = false
     let background: Color
     let isLight: Bool
+
+    /// How opaque a stacked card is: enough that the card behind it is gone,
+    /// a trace of the desk still reading through.
+    static let solidOpacity: Double = 0.92
 
     func body(content: Content) -> some View {
         card(content)
@@ -271,7 +278,12 @@ struct PaneCard: ViewModifier {
                                       : Color.white.opacity(isFocused ? 0.20 : 0.10),
                                       lineWidth: 0.5)
                         .allowsHitTesting(false))
-                .background(PaneGlass(tint: background, isLight: isLight))
+                .background {
+                    PaneGlass(tint: background, isLight: isLight)
+                    if isSolid {
+                        PaneElevation.cardShape.fill(background.opacity(PaneCard.solidOpacity))
+                    }
+                }
         } else if isElevated {
             content
                 .clipShape(PaneElevation.cardShape)

@@ -191,7 +191,7 @@ struct SplitTreeStashTests {
         let stashed = try tree.stashing(b)
         guard let visibleRoot = stashed.visibleTree.root else { Issue.record("empty"); return }
         let moved = try stashed.applyingToVisible {
-            try $0.movingDivider(of: visibleRoot, to: 50, in: 100)
+            try $0.movingDivider(of: visibleRoot, to: 50, in: 100, minimum: CGSize(width: 10, height: 10))
         }
         guard case .split(let root) = moved.root else { Issue.record("expected a split"); return }
         #expect(abs(root.ratio - 0.5) < 0.0001)

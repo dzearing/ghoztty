@@ -36,6 +36,9 @@ protocol TerminalViewModel: ObservableObject {
     /// The pane rearrange mode state for this window.
     var rearrangeModeState: RearrangeModeState { get }
 
+    /// The focus history that decides which panes a stacked row shows.
+    var paneStackState: PaneStackState { get }
+
     /// Names this window when resolving a pane drop.
     var rearrangeWindowRef: PaneDropWindowRef { get }
 
@@ -144,6 +147,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                             action: { delegate?.performSplitAction($0) },
                             heroModeState: viewModel.heroModeState,
                             rearrangeModeState: viewModel.rearrangeModeState,
+                            stackState: viewModel.paneStackState,
                             windowRef: viewModel.rearrangeWindowRef)
                     }
                         .environmentObject(ghostty)

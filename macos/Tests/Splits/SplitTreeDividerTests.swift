@@ -5,6 +5,10 @@ import Testing
 /// Tests for fixed-edge divider movement: moving one divider moves only that
 /// edge, and every other divider in the tree keeps its pixel position.
 struct SplitTreeDividerTests {
+    /// These tests are about the divider mechanics, measured in a 900pt window of
+    /// 300pt panes; a 10pt pane minimum keeps their numbers readable.
+    private let tiny = CGSize(width: 10, height: 10)
+
     // MARK: - Fixtures
 
     /// Three columns of 300pt in a 900pt-wide window, nested to the RIGHT:
@@ -75,20 +79,20 @@ struct SplitTreeDividerTests {
         let root = try #require(try makeRightNestedColumns().0.root)
 
         // Three panes stacked along the horizontal axis: three pane minimums.
-        #expect(root.minimumSize(along: .horizontal) == 30)
+        #expect(root.minimumSize(along: .horizontal, minimum: tiny) == 30)
     }
 
     @Test func minimumSizePeaksAcrossTheSplitAxis() throws {
         let root = try #require(try makeRightNestedColumns().0.root)
 
         // Nothing is stacked vertically, so vertically it's one pane's worth.
-        #expect(root.minimumSize(along: .vertical) == 10)
+        #expect(root.minimumSize(along: .vertical, minimum: tiny) == 10)
     }
 
     @Test func minimumSizeOfALeafIsOnePane() {
         let node = SplitTree<MockView>.Node.leaf(view: MockView())
-        #expect(node.minimumSize(along: .horizontal) == 10)
-        #expect(node.minimumSize(along: .vertical) == 10)
+        #expect(node.minimumSize(along: .horizontal, minimum: tiny) == 10)
+        #expect(node.minimumSize(along: .vertical, minimum: tiny) == 10)
     }
 
     // MARK: - Fixed edges
@@ -98,7 +102,7 @@ struct SplitTreeDividerTests {
         let root = try #require(tree.root)
 
         // Drag the A|B divider 100pt right. B absorbs all of it; C must not move.
-        let moved = root.movingDivider(to: 400, in: 900)
+        let moved = root.movingDivider(to: 400, in: 900, minimum: tiny)
 
         #expect(widths(moved, in: 900, of: a, b, c) == [400, 200, 300])
     }
@@ -108,7 +112,7 @@ struct SplitTreeDividerTests {
         let root = try #require(tree.root)
 
         // Drag the B|C divider 100pt right. B absorbs all of it; A must not move.
-        let moved = root.movingDivider(to: 700, in: 900)
+        let moved = root.movingDivider(to: 700, in: 900, minimum: tiny)
 
         #expect(widths(moved, in: 900, of: a, b, c) == [300, 400, 200])
     }
@@ -122,7 +126,7 @@ struct SplitTreeDividerTests {
         }
 
         // The B|C divider lives in the nested node, which measures 600pt.
-        let movedInner = outer.right.movingDivider(to: 400, in: 600)
+        let movedInner = outer.right.movingDivider(to: 400, in: 600, minimum: tiny)
         let moved = try root.replacingNode(at: .init(path: [.right]), with: movedInner)
 
         #expect(widths(moved, in: 900, of: a, b, c) == [300, 400, 200])
@@ -132,7 +136,7 @@ struct SplitTreeDividerTests {
         let (tree, a, b, c) = try makeRightNestedRows()
         let root = try #require(tree.root)
 
-        let moved = root.movingDivider(to: 400, in: 900)
+        let moved = root.movingDivider(to: 400, in: 900, minimum: tiny)
 
         #expect(heights(moved, in: 900, of: a, b, c) == [400, 200, 300])
     }
@@ -148,7 +152,7 @@ struct SplitTreeDividerTests {
 
         // Drag the column divider 100pt left. A and B share that edge, so both
         // narrow together, and the divider between them doesn't move.
-        let moved = root.movingDivider(to: 500, in: 900)
+        let moved = root.movingDivider(to: 500, in: 900, minimum: tiny)
 
         #expect(widths(moved, in: 900, of: a, b, c) == [500, 500, 400])
         #expect(heights(moved, in: 800, of: a, b, c) == [400, 400, 800])
@@ -163,7 +167,7 @@ struct SplitTreeDividerTests {
         // Drag the B|C divider from 600 to 200. B can only give up 290 of the
         // 400 before it hits the 10pt minimum, so A gives up the rest and the
         // A|B divider finally moves too.
-        let moved = root.movingDivider(to: 200, in: 900)
+        let moved = root.movingDivider(to: 200, in: 900, minimum: tiny)
 
         #expect(widths(moved, in: 900, of: a, b, c) == [190, 10, 700])
     }
@@ -172,7 +176,7 @@ struct SplitTreeDividerTests {
         let (tree, a, b, c) = try makeLeftNestedColumns()
         let root = try #require(tree.root)
 
-        let moved = root.movingDivider(to: -500, in: 900)
+        let moved = root.movingDivider(to: -500, in: 900, minimum: tiny)
 
         #expect(widths(moved, in: 900, of: a, b, c) == [10, 10, 880])
     }
@@ -181,7 +185,7 @@ struct SplitTreeDividerTests {
         let (tree, a, b, c) = try makeRightNestedColumns()
         let root = try #require(tree.root)
 
-        let moved = root.movingDivider(to: 5000, in: 900)
+        let moved = root.movingDivider(to: 5000, in: 900, minimum: tiny)
 
         #expect(widths(moved, in: 900, of: a, b, c) == [880, 10, 10])
     }
@@ -191,20 +195,20 @@ struct SplitTreeDividerTests {
 
         // 25pt can't hold three 10pt panes, so there is no valid position to
         // move to: leave the ratios alone rather than invent out-of-range ones.
-        #expect(root.movingDivider(to: 12, in: 25) == root)
+        #expect(root.movingDivider(to: 12, in: 25, minimum: tiny) == root)
     }
 
     @Test func aZeroSizedSplitIsLeftAlone() throws {
         let root = try #require(try makeRightNestedColumns().0.root)
 
-        #expect(root.movingDivider(to: 100, in: 0) == root)
+        #expect(root.movingDivider(to: 100, in: 0, minimum: tiny) == root)
     }
 
     @Test func everyRatioStaysInRangeWhereverTheDividerIsPushed() throws {
         let root = try #require(try makeRightNestedColumns().0.root)
 
         for position in stride(from: -200.0, through: 1100.0, by: 37.0) {
-            let moved = root.movingDivider(to: position, in: 900)
+            let moved = root.movingDivider(to: position, in: 900, minimum: tiny)
             for slot in moved.spatial(within: CGSize(width: 900, height: 100)).slots {
                 guard case .split(let split) = slot.node else { continue }
                 #expect(split.ratio > 0 && split.ratio < 1, "ratio \(split.ratio) at position \(position)")
@@ -219,16 +223,16 @@ struct SplitTreeDividerTests {
         let root = try #require(tree.root)
 
         let stepped = root
-            .movingDivider(to: 350, in: 900)
-            .movingDivider(to: 400, in: 900)
-        let direct = root.movingDivider(to: 400, in: 900)
+            .movingDivider(to: 350, in: 900, minimum: tiny)
+            .movingDivider(to: 400, in: 900, minimum: tiny)
+        let direct = root.movingDivider(to: 400, in: 900, minimum: tiny)
 
         #expect(widths(stepped, in: 900, of: a, b, c) == widths(direct, in: 900, of: a, b, c))
     }
 
     @Test func movingADividerOnALeafDoesNothing() {
         let node = SplitTree<MockView>.Node.leaf(view: MockView())
-        #expect(node.movingDivider(to: 100, in: 900) == node)
+        #expect(node.movingDivider(to: 100, in: 900, minimum: tiny) == node)
     }
 
     // MARK: - Tree-level entry point
@@ -240,7 +244,7 @@ struct SplitTreeDividerTests {
             return
         }
 
-        let moved = try tree.movingDivider(of: outer.right, to: 400, in: 600)
+        let moved = try tree.movingDivider(of: outer.right, to: 400, in: 600, minimum: tiny)
 
         #expect(widths(try #require(moved.root), in: 900, of: a, b, c) == [300, 400, 200])
     }
@@ -251,7 +255,7 @@ struct SplitTreeDividerTests {
 
         var thrown: Error?
         do {
-            _ = try tree.movingDivider(of: stranger, to: 400, in: 900)
+            _ = try tree.movingDivider(of: stranger, to: 400, in: 900, minimum: tiny)
         } catch {
             thrown = error
         }
@@ -264,7 +268,7 @@ struct SplitTreeDividerTests {
         let zoomedNode = try #require(columns.root?.node(view: c))
         let tree = SplitTree(root: columns.root, zoomed: zoomedNode, stashed: [])
 
-        let moved = try tree.movingDivider(of: try #require(tree.root), to: 400, in: 900)
+        let moved = try tree.movingDivider(of: try #require(tree.root), to: 400, in: 900, minimum: tiny)
 
         #expect(moved.zoomed == zoomedNode)
     }
@@ -276,7 +280,7 @@ struct SplitTreeDividerTests {
         let bounds = CGRect(x: 0, y: 0, width: 900, height: 500)
 
         // resize_split:right,100 from A moves the A|B divider right by 100.
-        let resized = try tree.resizing(node: .leaf(view: a), by: 100, in: .right, with: bounds)
+        let resized = try tree.resizing(node: .leaf(view: a), by: 100, in: .right, with: bounds, minimum: tiny)
 
         #expect(widths(try #require(resized.root), in: 900, of: a, b, c) == [400, 200, 300])
     }
@@ -285,7 +289,7 @@ struct SplitTreeDividerTests {
         let (tree, a, b, c) = try makeRightNestedColumns()
         let bounds = CGRect(x: 0, y: 0, width: 900, height: 500)
 
-        let resized = try tree.resizing(node: .leaf(view: a), by: 5000, in: .right, with: bounds)
+        let resized = try tree.resizing(node: .leaf(view: a), by: 5000, in: .right, with: bounds, minimum: tiny)
 
         #expect(widths(try #require(resized.root), in: 900, of: a, b, c) == [880, 10, 10])
     }
@@ -295,8 +299,8 @@ struct SplitTreeDividerTests {
         let bounds = CGRect(x: 0, y: 0, width: 900, height: 500)
 
         // C's nearest horizontal parent is the root, whose divider sits at 600.
-        let resized = try tree.resizing(node: .leaf(view: c), by: 400, in: .left, with: bounds)
-        let dragged = try #require(tree.root).movingDivider(to: 200, in: 900)
+        let resized = try tree.resizing(node: .leaf(view: c), by: 400, in: .left, with: bounds, minimum: tiny)
+        let dragged = try #require(tree.root).movingDivider(to: 200, in: 900, minimum: tiny)
 
         #expect(
             widths(try #require(resized.root), in: 900, of: a, b, c) ==

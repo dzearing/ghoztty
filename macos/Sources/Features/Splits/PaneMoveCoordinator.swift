@@ -186,6 +186,9 @@ enum PaneMoveCoordinator {
                 logger.warning("failed to swap panes")
                 return
             }
+            // A collapsed row keeps its shape with the other pane in it: a
+            // tucked card dropped on one on show swaps in for it.
+            source.paneStackState.swap(pane.id, destPane.id)
             commit(in: source, tree: swapped, focus: pane)
             return
         }
@@ -207,6 +210,8 @@ enum PaneMoveCoordinator {
             newSourceTree = newSourceTree.withStash(
                 source.surfaceTree.stashed.map { $0 == pane.id ? destPane.id : $0 })
         }
+        source.paneStackState.swap(pane.id, destPane.id)
+        destination.paneStackState.swap(pane.id, destPane.id)
         crossWindowCommit(
             pane: pane, alsoRelocated: [destPane],
             source: source, sourceTree: newSourceTree,

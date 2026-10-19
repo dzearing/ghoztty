@@ -319,7 +319,13 @@ extension SplitTree {
     ///   - bounds: The bounds used to construct the spatial tree representation
     /// - Returns: A new SplitTree with the adjusted split ratios
     /// - Throws: SplitError.viewNotFound if the node is not found in the tree or no suitable parent split exists
-    func resizing(node: Node, by pixels: UInt16, in direction: Spatial.Direction, with bounds: CGRect) throws -> Self {
+    func resizing(
+        node: Node,
+        by pixels: UInt16,
+        in direction: Spatial.Direction,
+        with bounds: CGRect,
+        minimum: CGSize = PaneLayout.Metrics.minimumPaneSize
+    ) throws -> Self {
         guard let root else { throw SplitError.viewNotFound }
 
         // Find the path to the target node
@@ -372,7 +378,7 @@ extension SplitTree {
         case .left, .up: -CGFloat(pixels)
         case .right, .down: CGFloat(pixels)
         }
-        let newSplitNode = splitNode.movingDivider(to: size * split.ratio + offset, in: size)
+        let newSplitNode = splitNode.movingDivider(to: size * split.ratio + offset, in: size, minimum: minimum)
 
         // Replace the split node with the new one
         let newRoot = try root.replacingNode(at: splitPath, with: newSplitNode)
@@ -392,13 +398,18 @@ extension SplitTree {
     ///   - size: `node`'s current size along its split axis, in points.
     /// - Returns: A new SplitTree with the adjusted split ratios
     /// - Throws: SplitError.viewNotFound if the node is not in the tree
-    func movingDivider(of node: Node, to position: CGFloat, in size: CGFloat) throws -> Self {
+    func movingDivider(
+        of node: Node,
+        to position: CGFloat,
+        in size: CGFloat,
+        minimum: CGSize = PaneLayout.Metrics.minimumPaneSize
+    ) throws -> Self {
         guard contains(node) else { throw SplitError.viewNotFound }
 
         // A divider held against its clamp keeps reporting the same position; return
         // the identical tree so the embedder doesn't republish an unchanged layout on
         // every frame of the drag.
-        let moved = node.movingDivider(to: position, in: size)
+        let moved = node.movingDivider(to: position, in: size, minimum: minimum)
         guard moved != node else { return self }
 
         return try replacing(node: node, with: moved)
@@ -745,11 +756,6 @@ extension SplitTree.Node {
         }
     }
 
-    /// The smallest size, in points, that a single pane may be shrunk to along either
-    /// axis. Mirrors `SplitView.minSize`, which is what a divider drag clamped against
-    /// before the clamp had to become tree-aware.
-    static var minimumPaneSize: CGFloat { 10 }
-
     /// Which edge of a subtree stays put while the subtree is resized.
     enum ResizeAnchor {
         /// The leading (left/top) edge is fixed; the trailing edge moves.
@@ -759,21 +765,44 @@ extension SplitTree.Node {
         case trailing
     }
 
-    /// The smallest size this subtree can occupy along `direction`, in points.
+    /// The smallest size this subtree can occupy along `direction`, in points, with
+    /// every pane side by side at `minimum` (`PaneLayout.Metrics.minimumPaneSize`).
     ///
     /// Splits that run along `direction` stack their children end to end, so their
     /// minimums add up; splits that run across it lay their children over the same
     /// extent, so the larger minimum wins.
-    func minimumSize(along direction: SplitTree.Direction) -> CGFloat {
-        switch self {
-        case .leaf:
-            return Self.minimumPaneSize
+    func minimumSize(
+        along direction: SplitTree.Direction,
+        minimum: CGSize = PaneLayout.Metrics.minimumPaneSize
+    ) -> CGFloat {
+        PaneLayout.minimumExtent(self, along: direction.layoutDirection, minimum: minimum, stacking: false)
+    }
 
-        case .split(let split):
-            let leading = split.left.minimumSize(along: direction)
-            let trailing = split.right.minimumSize(along: direction)
-            return split.direction == direction ? leading + trailing : Swift.max(leading, trailing)
-        }
+    /// The smallest size this subtree can occupy along `direction` when rows that
+    /// don't fit side by side are allowed to stack (see `PaneLayout`).
+    func compactSize(
+        along direction: SplitTree.Direction,
+        minimum: CGSize = PaneLayout.Metrics.minimumPaneSize
+    ) -> CGFloat {
+        PaneLayout.minimumExtent(self, along: direction.layoutDirection, minimum: minimum, stacking: true)
+    }
+
+    /// The minimums a divider move clamps the two sides of this split against:
+    /// every pane side by side when that fits in `size`, else the stacked minimums
+    /// — a row whose nested rows already stack can still be resized, as far as
+    /// the stacking lets it — else nil, for no position fits at all.
+    fileprivate func clampMinimums(
+        _ split: Split,
+        in size: CGFloat,
+        minimum: CGSize
+    ) -> (leading: CGFloat, trailing: CGFloat)? {
+        let full = (split.left.minimumSize(along: split.direction, minimum: minimum),
+                    split.right.minimumSize(along: split.direction, minimum: minimum))
+        if full.0 + full.1 <= size { return full }
+        let compact = (split.left.compactSize(along: split.direction, minimum: minimum),
+                       split.right.compactSize(along: split.direction, minimum: minimum))
+        if compact.0 + compact.1 <= size { return compact }
+        return nil
     }
 
     /// Returns this split node with its divider moved to `position` points from the
@@ -785,7 +814,7 @@ extension SplitTree.Node {
     /// panes flanking this divider change size and every other edge stays put.
     ///
     /// The panes can run out of room, and then the fixed edges have to give: once the
-    /// pane being pushed is down to `minimumPaneSize`, the one behind it starts
+    /// pane being pushed is down to its minimum, the one behind it starts
     /// shrinking too, and so on outward until every pane on that side is at its
     /// minimum and the divider can move no further.
     ///
@@ -794,15 +823,16 @@ extension SplitTree.Node {
     /// - Parameters:
     ///   - position: The divider's new offset from this node's leading edge, in points.
     ///   - size: This node's current size along its split axis, in points.
-    func movingDivider(to position: CGFloat, in size: CGFloat) -> Self {
+    func movingDivider(
+        to position: CGFloat,
+        in size: CGFloat,
+        minimum: CGSize = PaneLayout.Metrics.minimumPaneSize
+    ) -> Self {
         guard case .split(let split) = self, size > 0 else { return self }
-
-        let minLeading = split.left.minimumSize(along: split.direction)
-        let minTrailing = split.right.minimumSize(along: split.direction)
 
         // Too small to honor both minimums: there is no position that satisfies them,
         // so leave the ratios alone rather than invent out-of-range ones.
-        guard minLeading + minTrailing <= size else { return self }
+        guard let (minLeading, minTrailing) = clampMinimums(split, in: size, minimum: minimum) else { return self }
 
         let newLeading = Swift.min(Swift.max(position, minLeading), size - minTrailing)
         let oldLeading = size * split.ratio
@@ -816,12 +846,14 @@ extension SplitTree.Node {
                 along: split.direction,
                 from: oldLeading,
                 to: newLeading,
-                anchoring: .leading),
+                anchoring: .leading,
+                minimum: minimum),
             right: split.right.resized(
                 along: split.direction,
                 from: size - oldLeading,
                 to: size - newLeading,
-                anchoring: .trailing)))
+                anchoring: .trailing,
+                minimum: minimum)))
     }
 
     /// Returns this subtree laid out in `newSize` points along `direction` instead of
@@ -829,7 +861,7 @@ extension SplitTree.Node {
     ///
     /// Every divider that this resize could move keeps its distance from the anchored
     /// edge, so the change is absorbed entirely by the pane at the far end — and only
-    /// once that pane is down to `minimumPaneSize` does the next one give ground.
+    /// once that pane is down to its minimum does the next one give ground.
     ///
     /// This is the recursive half of `movingDivider(to:in:)`; `newSize` is expected to
     /// be at least `minimumSize(along:)`, which that method guarantees.
@@ -837,7 +869,8 @@ extension SplitTree.Node {
         along direction: SplitTree.Direction,
         from oldSize: CGFloat,
         to newSize: CGFloat,
-        anchoring anchor: ResizeAnchor
+        anchoring anchor: ResizeAnchor,
+        minimum: CGSize = PaneLayout.Metrics.minimumPaneSize
     ) -> Self {
         guard case .split(let split) = self, oldSize > 0, newSize > 0 else { return self }
 
@@ -848,25 +881,24 @@ extension SplitTree.Node {
             return .split(.init(
                 direction: split.direction,
                 ratio: split.ratio,
-                left: split.left.resized(along: direction, from: oldSize, to: newSize, anchoring: anchor),
-                right: split.right.resized(along: direction, from: oldSize, to: newSize, anchoring: anchor)))
+                left: split.left.resized(
+                    along: direction, from: oldSize, to: newSize, anchoring: anchor, minimum: minimum),
+                right: split.right.resized(
+                    along: direction, from: oldSize, to: newSize, anchoring: anchor, minimum: minimum)))
         }
 
         let oldLeading = oldSize * split.ratio
         let oldTrailing = oldSize - oldLeading
-        let minLeading = split.left.minimumSize(along: direction)
-        let minTrailing = split.right.minimumSize(along: direction)
-
         // Squashed below what the minimums allow, there is no fixed position left to
         // hold onto, so fall back to scaling both sides proportionally.
-        guard minLeading + minTrailing <= newSize else {
+        guard let (minLeading, minTrailing) = clampMinimums(split, in: newSize, minimum: minimum) else {
             return .split(.init(
                 direction: split.direction,
                 ratio: split.ratio,
                 left: split.left.resized(
-                    along: direction, from: oldLeading, to: newSize * split.ratio, anchoring: anchor),
+                    along: direction, from: oldLeading, to: newSize * split.ratio, anchoring: anchor, minimum: minimum),
                 right: split.right.resized(
-                    along: direction, from: oldTrailing, to: newSize * (1 - split.ratio), anchoring: anchor)))
+                    along: direction, from: oldTrailing, to: newSize * (1 - split.ratio), anchoring: anchor, minimum: minimum)))
         }
 
         // Hold the child on the anchored side at the size it already has and let the
@@ -882,9 +914,9 @@ extension SplitTree.Node {
             direction: split.direction,
             ratio: newLeading / newSize,
             left: split.left.resized(
-                along: direction, from: oldLeading, to: newLeading, anchoring: anchor),
+                along: direction, from: oldLeading, to: newLeading, anchoring: anchor, minimum: minimum),
             right: split.right.resized(
-                along: direction, from: oldTrailing, to: newSize - newLeading, anchoring: anchor)))
+                along: direction, from: oldTrailing, to: newSize - newLeading, anchoring: anchor, minimum: minimum)))
     }
 
     /// Get the leftmost leaf in this subtree
