@@ -1585,6 +1585,21 @@ AND the stashed-pane slots, so a restored pane never reflows.
   Grips between cards on show resize them; a grip at the run's edge widens it
   again when one more card fits. Rows nest (`a | (b / c)` is a row whose second
   item is a column), and each keeps its own collapse.
+- **Adding or removing a pane never brings minimized panes back out** —
+  in a row or a column — unless only one pane is left in that direction.
+  Every tree change carries each collapse over to the row it became
+  (`PaneStackState.rowsDidChange`, `Pin.carrying`): the same items with
+  some gone, some joined, or moved within it.
+- **A pane joining a collapsed row keeps it collapsed** (a split — Cmd-D,
+  `+split` —, a drop, a restored stash): one that lands beside the panes on
+  show, or between them, is on show with them — a split of a pane on show
+  shows both where they fit, else the focused one, and the pane it pushed out
+  becomes a strip. One that lands among the strips is a strip until focused.
+  A split *across* the row (`d` becomes a column `d / e`) changes no slot.
+  A row that already has a collapse of its own keeps it (an undone close, a
+  restored stash). A pane moved within the row keeps the same panes on show;
+  a swap swaps what is on show (`PaneStackState.swap`). Focus landing before
+  or after the tree change gives the same row.
 - **A pane leaving a collapsed row keeps it collapsed** (closed, stashed,
   moved away): the panes still on show take its space and the strips stay
   strips on their sides; closing the only pane on show brings out the strip

@@ -396,6 +396,46 @@ struct PaneStackWindowTests {
         #expect(extent > total - 4 * PaneLayout.Metrics.peek - 40, "\(extent) of \(total)")
     }
 
+    @Test(arguments: [(false, false), (false, true), (true, false), (true, true)])
+    func splittingAPaneOnShowKeepsTheStripsMinimized(vertical: Bool, across: Bool) async throws {
+        let direction: SplitTree<PaneView>.NewDirection = vertical ? .down : .right
+        let (controller, window, panes) = try await collapsedRow(direction)
+        defer { controller.close() }
+        let name = "\(vertical ? "column" : "row")-\(across ? "across" : "along")"
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id))
+
+        // Split the focused pane on show, as Cmd-D / Cmd-Shift-D do.
+        let split: SplitTree<PaneView>.NewDirection = across ? (vertical ? .right : .down) : direction
+        let anchor = try #require(panes[3].surfaceView)
+        let surface = try #require(controller.newSplit(at: anchor, direction: split))
+        await settle(1.2)
+        try await capture(window, "split-\(name)-after")
+        let added = try #require(controller.surfaceTree.pane(for: surface))
+
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id), "the strips stay minimized")
+        #expect(added.isFocusedPane)
+    }
+
+    @Test(arguments: [false, true])
+    func splittingTheOnlyPaneOnShowWithNoRoomForTwoShowsTheNewOne(vertical: Bool) async throws {
+        // Room for two on show: c d, then d splits. The new pane comes on
+        // show beside d, c minimizes to make room, and nothing else moves.
+        let direction: SplitTree<PaneView>.NewDirection = vertical ? .down : .right
+        let (controller, window, panes) = try await collapsedRow(direction)
+        defer { controller.close() }
+        window.setContentSize(vertical ? NSSize(width: 900, height: 700) : NSSize(width: 950, height: 600))
+        await settle(1.0)
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id))
+
+        let anchor = try #require(panes[3].surfaceView)
+        let surface = try #require(controller.newSplit(at: anchor, direction: direction))
+        await settle(1.2)
+        try await capture(window, "split-\(vertical ? "column" : "row")-no-room")
+        let added = try #require(controller.surfaceTree.pane(for: surface))
+        #expect(strips(window) == [panes[0], panes[1], panes[2], panes[4], panes[5]].map(\.id))
+        #expect(added.isFocusedPane)
+    }
+
     @Test func aWobbleDuringAClickOnAStripIsStillAClick() async throws {
         let (controller, window, panes) = try await stackedWindow()
         defer { controller.close() }
