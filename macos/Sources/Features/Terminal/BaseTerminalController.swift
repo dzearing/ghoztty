@@ -1065,6 +1065,11 @@ class BaseTerminalController: NSWindowController,
         // without touching the first responder or `focusedSurface`.
         publishFocusedPane()
 
+        // A collapsed row a pane left (closed, stashed, moved away) stays
+        // collapsed: the panes on show take its space.
+        paneStackState.rowsDidChange(
+            from: PaneLayout.rows(from.visibleTree.root), to: PaneLayout.rows(to.visibleTree.root))
+
         // Session close intent: a leaf that LEFT the tree was closed by the
         // user (removeSurfaceNode, or a redo of a close) — its agent session
         // must actually END when the view is eventually freed (after the undo
@@ -1451,12 +1456,21 @@ class BaseTerminalController: NSWindowController,
         // can't express — hand it focus explicitly afterwards.
         let closedHadFocus = node.contains(where: { $0.surfaceView === focusedSurface })
             || focusedViewerPane.map { pane in node.contains(where: { $0 === pane }) } ?? false
+        let newTree = surfaceTree.removing(node)
+        // Never into a pane minimized in a collapsed row: focusing it would
+        // bring it back out (`PaneStackState.noteFocus`).
         let nextFocus: PaneView? = closedHadFocus
-            ? findNextFocusTargetAfterClosing(node: node)
+            ? findNextFocusTargetAfterClosing(node: node).flatMap { candidate in
+                let id = paneStackState.paneOnShow(
+                    instead: candidate.id,
+                    from: PaneLayout.rows(surfaceTree.visibleTree.root),
+                    to: PaneLayout.rows(newTree.visibleTree.root))
+                return newTree.first { $0.id == id } ?? candidate
+            }
             : nil
 
         replaceSurfaceTree(
-            surfaceTree.removing(node),
+            newTree,
             moveFocusTo: nextFocus?.surfaceView,
             moveFocusFrom: focusedSurface,
             undoAction: "Close Terminal"
