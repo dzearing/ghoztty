@@ -782,5 +782,40 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.40.0/Ghoztty-1.40.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="FOTLqoppnR9M0rwsrvlH0ELJJCb3d1/ETxRRbjXwAsH9Oo9uuxtKbqVtVcy97JinfdYJF7MFUcmaWj3G6QbrDw==" length="26529116" />
         </item>
+        <item>
+            <title>Version 1.41.0</title>
+            <sparkle:version>1.41.0</sparkle:version>
+            <sparkle:shortVersionString>1.41.0</sparkle:shortVersionString>
+            <pubDate>Mon, 19 Oct 2026 16:35:22 +0000</pubDate>
+            <description>{
+  "version": "1.41.0",
+  "sections": [
+    {
+      "title": "Glass panes",
+      "items": [
+        { "title": "Unfocused panes let the background through", "text": "Panes you're not working in are now the more see-through ones, so the window's gradient shows through them and the focused pane stands out. Before, unfocused panes got a background-colored wash that made them the more solid ones." },
+        { "title": "Hero mode is glass too", "text": "A pane in hero mode now gets the same glass card as a focused pane." }
+      ]
+    },
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Strips stay put when panes come and go", "text": "Closing a pane, or splitting a new one into a collapsed row, no longer brings every minimized strip back out. The panes on show share the space, and the strips stay strips. This applies to rows and columns." },
+        { "title": "No solid cards behind strips", "text": "Minimized panes are drawn as their strip alone, so the run on show reads cleanly over the glass." },
+        { "title": "Smoother slides", "text": "Each terminal is resized once, after a slide finishes, instead of several times during it." }
+      ]
+    },
+    {
+      "title": "Viewer panes",
+      "items": [
+        { "title": "Cmd-L for the address bar", "text": "Cmd-L now puts the caret in a viewer's address bar, like a browser. Cmd-D splits again, even in a window that has only viewers." },
+        { "title": "Command palette over viewers", "text": "The command palette now opens while a viewer pane is focused, and runs its commands from there." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.41.0/Ghoztty-1.41.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="R8szfHRlrGF7To5fKExGP348hK8zo/LLv8zLsd6oGkfT9lVJ/1SnarZ8ARnHGwaB+RFWVyxg1+hmMHxj2jU5DA==" length="26565368" />
+        </item>
     </channel>
 </rss>
