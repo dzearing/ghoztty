@@ -385,6 +385,46 @@ struct PaneLayoutTests {
         #expect(PaneLayout.Pin(start: 0, count: 2).restoring(3, fits: 3, of: 4) == .init(start: 1, count: 3))
     }
 
+    @Test func aPaneLeavingTheRunClosesUpOverItsSlot() {
+        // a b [c d] e f: c closes. d takes the run alone, between the same strips.
+        let pin = PaneLayout.Pin(start: 2, count: 2)
+        #expect(pin.removing([2], of: 6) == .init(start: 2, count: 1))
+        #expect(pin.removing([3], of: 6) == .init(start: 2, count: 1))
+        // A strip closes: the run keeps its panes, shifted when it was before them.
+        #expect(pin.removing([0], of: 6) == .init(start: 1, count: 2))
+        #expect(pin.removing([5], of: 6) == .init(start: 2, count: 2))
+        // Everything left fits in the run: side by side again.
+        #expect(PaneLayout.Pin(start: 0, count: 2).removing([2], of: 3) == nil)
+        // A row of one is no row.
+        #expect(PaneLayout.Pin(start: 0, count: 1).removing([1], of: 2) == nil)
+    }
+
+    @Test func theOnlyPaneOnShowClosingBringsOutItsNeighbourBefore() {
+        // a b [c] d e: the pane before it comes on show — where the caret
+        // goes after a close — and the rest stay strips.
+        #expect(PaneLayout.Pin(start: 2, count: 1).removing([2], of: 5) == .init(start: 1, count: 1))
+        // Nothing before it: the one after.
+        #expect(PaneLayout.Pin(start: 0, count: 1).removing([0], of: 4) == .init(start: 0, count: 1))
+    }
+
+    @Test func rowsListEveryChainOutermostFirst() throws {
+        // a | (b / (c | d))
+        let a = MockView(), b = MockView(), c = MockView(), d = MockView()
+        let inner = SplitTree<MockView>.Node.split(.init(
+            direction: .horizontal, ratio: 0.5, left: .leaf(view: c), right: .leaf(view: d)))
+        let column = SplitTree<MockView>.Node.split(.init(
+            direction: .vertical, ratio: 0.5, left: .leaf(view: b), right: inner))
+        let node = SplitTree<MockView>.Node.split(.init(
+            direction: .horizontal, ratio: 0.5, left: .leaf(view: a), right: column))
+        let expected: [[[UUID]]] = [
+            [[a.id], [b.id, c.id, d.id]],
+            [[b.id], [c.id, d.id]],
+            [[c.id], [d.id]],
+        ]
+        #expect(PaneLayout.rows(node) == expected)
+        #expect(PaneLayout.rows(SplitTree<MockView>.Node.leaf(view: a)).isEmpty)
+    }
+
     @Test func aStackKnowsHowManyCardsFit() throws {
         let (node, views) = try row(4)
         let collapsed = layout(node, width: 1400, pins: [key(views): .init(start: 0, count: 2)])
@@ -459,6 +499,74 @@ struct PaneStackStateTests {
         state.swap(c, elsewhere)
         #expect(state.pin(for: [a, b, elsewhere]) == .init(start: 0, count: 2))
         #expect(state.pin(for: [a, b, c]) == nil)
+    }
+
+    @Test func closingAPaneOnShowKeepsTheRowCollapsed() {
+        // a b [c d] e f: c closes, and d alone is on show between the strips.
+        let state = PaneStackState()
+        let ids = (0..<6).map { _ in UUID() }
+        let before = ids.map { [$0] }
+        state.restack(.init(items: before, run: 1...4, sizes: [1, 1, 1, 1]), .collapse(.leading))
+        state.restack(.init(items: before, run: 2...4, sizes: [1, 1, 1]), .collapse(.trailing))
+        #expect(state.pin(for: Set(ids)) == .init(start: 2, count: 2))
+
+        let after = before.filter { $0 != [ids[2]] }
+        state.rowsDidChange(from: [before], to: [after])
+        #expect(state.pin(for: Set(ids).subtracting([ids[2]])) == .init(start: 2, count: 1))
+        #expect(state.shares[Set(ids).subtracting([ids[2]])] == nil, "one slot needs no shares")
+        // Undoing the close brings back the row as it was.
+        state.rowsDidChange(from: [after], to: [before])
+        #expect(state.pin(for: Set(ids)) == .init(start: 2, count: 2))
+    }
+
+    @Test func closingAMinimizedPaneKeepsTheRunAndTheSizesOfItsPanes() {
+        let state = PaneStackState()
+        let ids = (0..<5).map { _ in UUID() }
+        let before = ids.map { [$0] }
+        state.restack(.init(items: before, run: 1...4, sizes: [1, 1, 2, 2]), .collapse(.trailing))
+        #expect(state.pin(for: Set(ids)) == .init(start: 1, count: 3))
+        let key = Set(ids).subtracting([ids[0]])
+        state.rowsDidChange(from: [before], to: [Array(before.dropFirst())])
+        #expect(state.pin(for: key) == .init(start: 0, count: 3))
+        #expect(state.shares[key] == state.shares[Set(ids)])
+    }
+
+    @Test func closingAPaneOnShowKeepsTheOthersSizes() throws {
+        let state = PaneStackState()
+        let ids = (0..<5).map { _ in UUID() }
+        let before = ids.map { [$0] }
+        // a [b c d] e, sized 1:1:2.
+        state.restack(.init(items: before, run: 0...3, sizes: [1, 1, 1, 2]), .collapse(.leading))
+        state.rowsDidChange(from: [before], to: [before.filter { $0 != [ids[2]] }])
+        let key = Set(ids).subtracting([ids[2]])
+        #expect(state.pin(for: key) == .init(start: 1, count: 2))
+        let shares = try #require(state.shares[key])
+        let expected: [CGFloat] = [1.0 / 3, 2.0 / 3]
+        #expect(shares.count == 2)
+        #expect(zip(shares, expected).allSatisfy { abs($0 - $1) < 1e-9 })
+    }
+
+    @Test func aPaneLeavingAColumnInsideARowKeepsBothCollapsed() {
+        // a | (b / c / d), the row and the column each collapsed; c closes.
+        let state = PaneStackState()
+        let a = UUID(), b = UUID(), c = UUID(), d = UUID(), e = UUID()
+        state.restack(.init(items: [[b], [c], [d]], run: 0...2), .collapse(.trailing))
+        state.restack(.init(items: [[a], [b, c, d], [e]], run: 0...2), .collapse(.trailing))
+        state.rowsDidChange(
+            from: [[[a], [b, c, d], [e]], [[b], [c], [d]]],
+            to: [[[a], [b, d], [e]], [[b], [d]]])
+        #expect(state.pin(for: [a, b, d, e]) == .init(start: 0, count: 2), "the row keeps its run")
+        #expect(state.pin(for: [b, d]) == .init(start: 0, count: 1), "the column keeps its strip")
+    }
+
+    @Test func aRowThatChangedShapeIsNotGuessedAt() {
+        // a | (b / (c | d)): b closes, and c | d joins the outer row. That row
+        // is not the one the user collapsed; it lays out afresh.
+        let state = PaneStackState()
+        let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+        state.restack(.init(items: [[a], [b, c, d]], run: 0...1), .collapse(.trailing))
+        state.rowsDidChange(from: [[[a], [b, c, d]], [[b], [c, d]], [[c], [d]]], to: [[[a], [c], [d]]])
+        #expect(state.pin(for: [a, c, d]) == nil)
     }
 
     @Test func focusingAMinimizedPaneWithNoRoomSlidesTheRunToIt() {

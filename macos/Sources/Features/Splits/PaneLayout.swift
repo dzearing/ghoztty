@@ -157,6 +157,26 @@ enum PaneLayout {
             return pin.count >= n ? nil : pin
         }
 
+        /// What is left of the pin when the items at `removed` leave a row of
+        /// `n` (a pane closed, stashed, or moved away): the items still on
+        /// show close up over the slots the others left, and the tucked ones
+        /// stay tucked on their sides. When nothing on show is left, the item
+        /// before the run comes on show — where the caret goes after a close
+        /// — or, with nothing before it, the one after. Nil when what is left
+        /// all shows, or is no row at all.
+        func removing(_ removed: Set<Int>, of n: Int) -> Pin? {
+            let kept = (0..<n).filter { !removed.contains($0) }
+            guard kept.count > 1 else { return nil }
+            let run = start..<(start + count)
+            let shown = kept.indices.filter { run.contains(kept[$0]) }
+            let pin = if let first = shown.first {
+                Pin(start: first, count: shown.count)
+            } else {
+                Pin(start: kept.lastIndex { $0 < start } ?? 0, count: 1)
+            }
+            return pin.count >= kept.count ? nil : pin
+        }
+
         /// What `change` makes of a row of `n` items showing `run`; nil when
         /// it shows the whole row again.
         static func restacking(_ run: ClosedRange<Int>, of n: Int, _ change: Restack) -> Pin? {
@@ -293,6 +313,18 @@ extension PaneLayout {
         var engine = Engine<V>(metrics: metrics, rank: rank, pin: pin, shares: shares)
         engine.result.displayed = engine.layout(root, in: rect, tucked: false, clip: nil)
         return engine.result
+    }
+
+    /// Every row in `node` (see the type's doc), outermost first, as its
+    /// items' leaf ids: what `PaneStackState` keys a row's collapse by.
+    static func rows<V>(_ node: SplitTree<V>.Node?) -> [[[V.ID]]] where V.ID: Hashable {
+        guard case .split(let split) = node else { return [] }
+        func chain(_ node: SplitTree<V>.Node) -> [SplitTree<V>.Node] {
+            guard case .split(let inner) = node, inner.direction == split.direction else { return [node] }
+            return chain(inner.left) + chain(inner.right)
+        }
+        let items = chain(.split(split))
+        return [items.map { $0.leaves().map(\.id) }] + items.flatMap { rows($0) }
     }
 
     /// The smallest extent of `node` along `d` with every pane at `minimum`:

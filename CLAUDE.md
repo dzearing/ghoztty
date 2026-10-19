@@ -1585,6 +1585,15 @@ AND the stashed-pane slots, so a restored pane never reflows.
   Grips between cards on show resize them; a grip at the run's edge widens it
   again when one more card fits. Rows nest (`a | (b / c)` is a row whose second
   item is a column), and each keeps its own collapse.
+- **A pane leaving a collapsed row keeps it collapsed** (closed, stashed,
+  moved away): the panes still on show take its space and the strips stay
+  strips on their sides; closing the only pane on show brings out the strip
+  before it (else after). The caret never lands on a strip after a close —
+  focusing one would bring it back out. A row whose remaining items no longer
+  form the same row (a column emptied into its parent) lays out afresh. Pins
+  are keyed by the row's pane set, so `PaneStackState.rowsDidChange` carries
+  them over on every tree change; the old key's pin is kept, so undoing the
+  close or restoring the stash brings the row back as it was.
 - **No resize per animation frame**: a slide is a Core Animation animation of
   each card's layer (`PaneStage`), never a frame change, so a terminal is told
   its size once — a minimized pane keeps the size of the slot it would come

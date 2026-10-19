@@ -329,6 +329,73 @@ struct PaneStackWindowTests {
         #expect(state.pin(for: column) == .init(start: 0, count: 1), "C is still minimized")
     }
 
+    /// Six panes in one row (or column), collapsed by hand to two on show
+    /// with two strips on each side, the second of the two focused.
+    private func collapsedRow(
+        _ direction: SplitTree<PaneView>.NewDirection
+    ) async throws -> (TerminalController, NSWindow, [PaneView]) {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let panes = (0..<6).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        var tree = SplitTree<PaneView>(view: panes[0])
+        for i in 1..<6 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: direction) }
+        tree = SplitTree(root: tree.root?.equalize(), zoomed: nil, stashed: [])
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        controller.paneSidebarState.isHidden = true
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(direction == .right ? NSSize(width: 1600, height: 600) : NSSize(width: 900, height: 1000))
+        window.makeFirstResponder(panes[3].surfaceView)
+        await settle(1.2)
+        let items = panes.map { [$0.id] }
+        controller.performSplitAction(.restack(.init(items: items, run: 1...4), .collapse(.leading)))
+        controller.performSplitAction(.restack(.init(items: items, run: 2...4), .collapse(.trailing)))
+        await settle(0.8)
+        #expect(controller.paneStackState.pin(for: Set(panes.map(\.id))) == .init(start: 2, count: 2))
+        return (controller, window, panes)
+    }
+
+    /// The panes drawn as strips, in order.
+    private func strips(_ window: NSWindow) -> [UUID?] {
+        all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
+            .sorted {
+                let a = $0.convert($0.bounds, to: nil), b = $1.convert($1.bounds, to: nil)
+                return a.minX == b.minX ? a.minY > b.minY : a.minX < b.minX
+            }
+            .map { $0.pane?.id }
+    }
+
+    @Test(arguments: [false, true])
+    func closingAPaneOnShowKeepsTheStripsMinimized(vertical: Bool) async throws {
+        let direction: SplitTree<PaneView>.NewDirection = vertical ? .down : .right
+        let (controller, window, panes) = try await collapsedRow(direction)
+        defer { controller.close() }
+        let name = direction == .right ? "row" : "column"
+        try await capture(window, "close-\(name)-before")
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id))
+
+        // Close the first of the two on show (the caret's neighbour, so the
+        // caret has to go somewhere).
+        window.makeFirstResponder(panes[2].surfaceView)
+        await settle(0.4)
+        controller.closeSurface(try #require(panes[2].surfaceView), withConfirmation: false)
+        await settle(1.0)
+        try await capture(window, "close-\(name)-after")
+
+        let rest = [panes[0], panes[1], panes[3], panes[4], panes[5]]
+        #expect(controller.paneStackState.pin(for: Set(rest.map(\.id))) == .init(start: 2, count: 1))
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id), "the strips stay minimized")
+        #expect(panes[3].isFocusedPane, "the caret went to the pane still on show")
+        // The one left on show takes the whole run: the row's extent less the
+        // four strips.
+        let extent = direction == .right ? panes[3].contentView.frame.width : panes[3].contentView.frame.height
+        let stage = try #require(all(PaneCardView.self, in: window.contentView!).first?.superview)
+        let total = direction == .right ? stage.bounds.width : stage.bounds.height
+        #expect(extent > total - 4 * PaneLayout.Metrics.peek - 40, "\(extent) of \(total)")
+    }
+
     @Test func aWobbleDuringAClickOnAStripIsStillAClick() async throws {
         let (controller, window, panes) = try await stackedWindow()
         defer { controller.close() }
