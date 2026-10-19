@@ -1278,6 +1278,11 @@ GHOSTTY_API bool ghostty_app_key_binding_perform(ghostty_app_t,
                                                  ghostty_input_key_s);
 GHOSTTY_API ghostty_string_s ghostty_binding_action_canonical(const char*,
                                                               uintptr_t);
+GHOSTTY_API int ghostty_binding_action_requires(const char*, uintptr_t);
+GHOSTTY_API bool ghostty_app_binding_action(ghostty_app_t,
+                                            ghostty_surface_t,
+                                            const char*,
+                                            uintptr_t);
 GHOSTTY_API void ghostty_app_keyboard_changed(ghostty_app_t);
 GHOSTTY_API void ghostty_app_open_config(ghostty_app_t);
 GHOSTTY_API void ghostty_app_update_config(ghostty_app_t, ghostty_config_t);

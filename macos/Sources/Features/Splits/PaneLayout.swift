@@ -27,10 +27,10 @@ import AppKit
 ///
 /// Paint order is `Leaf.elevation`: the run is highest, and tucked cards sit
 /// lower the farther they are from it, on both sides — so the run casts its
-/// shadow on the cards beside it, and each card on the next one out. Before
-/// the run a card's sliver is its leading edge, the rest under the card after
-/// it. Past the run a card is drawn as its sliver alone (`Leaf.isSliver`):
-/// it lies over the next card out, which shows past it.
+/// shadow on the cards beside it, and each card on the next one out. A tucked
+/// card, on either side, is drawn as its sliver alone (`Leaf.isSliver`): the
+/// rest of it, which would lie under its neighbours, is not drawn, so no card
+/// on show — a translucent glass one included — ever has a card under it.
 ///
 /// "Row" here means a same-direction chain of the binary tree: `a | (b | c)`
 /// is one row of three, and `a | (b / c)` is a row of two whose second item
@@ -88,8 +88,8 @@ enum PaneLayout {
         /// at the pane's left edge; `.vertical`: a short one at its top).
         var tabAxis: Direction?
 
-        /// The card is past its stack's run, so it is drawn as its tab alone:
-        /// it lies over the cards farther out, which show beyond it.
+        /// The card is tucked into its stack, so it is drawn as its tab alone:
+        /// the rest of it would lie under its neighbours.
         var isSliver = false
 
         /// Where the card is painted: leaves are painted in ascending
@@ -645,7 +645,10 @@ private extension PaneLayout {
                     let shows = !tab.isNull && !tab.isEmpty
                     placed.tab = shows ? tab : nil
                     placed.tabAxis = shows ? d : nil
-                    placed.isSliver = shows && i > run.upperBound
+                    // On either side of the run a tucked card is drawn as
+                    // its sliver alone: nothing of it lies under a card on
+                    // show, so a glass card never shows one through itself.
+                    placed.isSliver = shows
                     result.leaves[leaf.id] = placed
                 }
             }

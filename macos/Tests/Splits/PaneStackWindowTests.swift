@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 import ScreenCaptureKit
+import CoreImage
+import CoreMedia
 import GhosttyKit
 import Testing
 @testable import Ghostty
@@ -57,7 +59,7 @@ struct PaneStackWindowTests {
         return (controller, window, panes)
     }
 
-    @Test func clickingATabSlidesTheCardsWithoutResizingAnyTerminal() async throws {
+    @Test func clickingATabSlidesTheCardsWithoutResizingAnyTerminalMidSlide() async throws {
         let (controller, window, panes) = try await stackedWindow()
         defer { controller.close() }
         let cards = all(PaneCardView.self, in: window.contentView!)
@@ -92,7 +94,11 @@ struct PaneStackWindowTests {
         var shot = 0
         for _ in 0..<40 {
             await settle(0.01)
-            #expect(sizes() == before, "a slide never resizes a terminal")
+            // While the cards are still on their way, nothing has been resized
+            // (the pane coming forward takes its slot's size once it is there).
+            if card(panes[1])?.layer?.animationKeys()?.isEmpty == false {
+                #expect(sizes() == before, "a slide never resizes a terminal mid-slide")
+            }
             let target = try #require(card(panes[1])).frame.minX
             if let shown = card(panes[1])?.layer?.presentation()?.frame.minX,
                shown > x0 + 4, shown < target - 4 {
@@ -114,7 +120,13 @@ struct PaneStackWindowTests {
         await settle(0.6)
         try await capture(window, "after")
         #expect(panes[0].isFocusedPane)
-        #expect(sizes() == before)
+        // Once it is over, only the pane that came forward has a new size:
+        // its slot's, the size of the pane that was on show. It was hidden
+        // while minimized, and hidden panes are not resized (the window
+        // shrank around it); the panes still minimized are untouched.
+        let after = sizes()
+        #expect(after[1...] == before[1...], "a pane that stayed minimized was resized")
+        #expect(after[0] == before[3], "the pane brought forward is not its slot's size")
         let xs = panes.compactMap { card($0)?.frame.minX }
         #expect(xs == xs.sorted(), "left stays left")
         #expect(try #require(card(panes[1])).frame.minX > x0, "the cards after it moved right")
@@ -180,6 +192,103 @@ struct PaneStackWindowTests {
         let left = all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
         #expect(left.isEmpty, "\(left.map { t in "\(panes.firstIndex { $0.id == t.pane?.id } ?? -1) a=\(t.alphaValue) f=\(t.frame)" })")
         #expect(handles(window).count == 2, "side by side, with its dividers back")
+    }
+
+    /// A strip click that changes how many cards are on show (2 → 3), so every
+    /// card changes size: each terminal is resized ONCE, together, after the
+    /// slide — never mid-slide (it used to be resized on every frame of a focus
+    /// fade, seven times in 250ms); a pane that stays minimized is not resized
+    /// at all, and shows nothing through its strip; and, recorded at the
+    /// display's frame rate,
+    /// no frame of the slide blanks or flashes the card that stays put.
+    /// Frames go to /tmp/pane-stack-snapshots/frames.
+    @Test func aResizingSlideResizesEachTerminalOnceAfterIt() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 4, width: 1300)
+        defer { controller.close() }
+        let key = Set(panes.map(\.id))
+        drag(try #require(handles(window).last), by: 500)
+        await settle(0.8)
+        drag(try #require(handles(window)[1]), by: 500)
+        await settle(0.8)
+        try #require(controller.paneStackState.pin(for: key) == .init(start: 0, count: 2))
+        func grid() -> [String] {
+            panes.map { p in let s = ghostty_surface_size(p.surface!); return "\(s.columns)x\(s.rows)" }
+        }
+        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
+            .sorted { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
+        let strip = try #require(tabs.first)
+        let point = strip.convert(NSPoint(x: strip.bounds.midX, y: strip.bounds.midY), to: nil)
+        let hit = try #require(window.contentView!.superview!.hitTest(point))
+        // The first card stays where it is through the slide: its text is what
+        // a flash would show up in.
+        let still = try #require(panes[0].surfaceView)
+        let stillFrame = still.convert(still.bounds, to: nil)
+
+        let recorder = WindowFrameRecorder()
+        try await recorder.start(window)
+        await settle(0.2)
+        let start = CACurrentMediaTime()
+        var changes: [(CFTimeInterval, [String])] = [(0, grid())]
+        hit.mouseDown(with: try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)))
+        hit.mouseUp(with: try #require(NSEvent.mouseEvent(
+            with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)))
+        while CACurrentMediaTime() - start < 1.0 {
+            let g = grid()
+            if g != changes.last?.1 { changes.append((CACurrentMediaTime() - start, g)) }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        let frames = await recorder.stop()
+        let log = changes.map { String(format: "t=%.3f ", $0.0) + $0.1.joined(separator: " ") }.joined(separator: "\n")
+        try? log.write(toFile: "/tmp/pane-stack-snapshots/resize-log.txt", atomically: true, encoding: .utf8)
+
+        #expect(controller.paneStackState.pin(for: key) == .init(start: 0, count: 3))
+        #expect(changes.count == 2, "each terminal is resized once, all together:\n\(log)")
+        if changes.count == 2 {
+            #expect(changes[1].0 >= PaneStageView.slideDuration - 0.02, "resized mid-slide:\n\(log)")
+            // The three on show all take the same slot size; the one still a
+            // strip is never resized at all.
+            let after = changes[1].1
+            #expect(Set(after[0...2]).count == 1, "the cards on show are not all their slot's size:\n\(log)")
+            #expect(after[3] == changes[0].1[3], "a minimized pane was resized:\n\(log)")
+        }
+
+        // A strip shows nothing of its pane.
+        let cards = all(PaneCardView.self, in: window.contentView!)
+        let tucked = try #require(cards.first { $0.paneID == panes[3].id })
+        #expect(tucked.isContentHidden, "a minimized pane's content shows through its strip")
+        #expect(!(try #require(cards.first { $0.paneID == panes[2].id })).isContentHidden)
+
+        // The recording: dense through the slide, and the still card's text
+        // never vanishes from a frame of it.
+        let dir = "/tmp/pane-stack-snapshots/frames"
+        try? FileManager.default.removeItem(atPath: dir)
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        func text(_ image: CGImage) -> Int {
+            let scale = CGFloat(image.width) / window.frame.width
+            let rep = NSBitmapImageRep(cgImage: image)
+            var n = 0
+            for y in stride(from: stillFrame.minY + 20, to: stillFrame.maxY - 20, by: 3) {
+                for x in stride(from: stillFrame.minX + 6, to: stillFrame.minX + 200, by: 2) {
+                    if let c = rep.colorAt(x: Int(x * scale), y: Int((window.frame.height - y) * scale)),
+                       (c.redComponent + c.greenComponent + c.blueComponent) / 3 > 0.55 { n += 1 }
+                }
+            }
+            return n
+        }
+        let during = frames.filter { $0.0 - start >= 0 && $0.0 - start <= PaneStageView.slideDuration + 0.15 }
+        #expect(during.count >= 15, "the slide was recorded at \(during.count) frames")
+        let baseline = frames.first.map { text($0.1) } ?? 0
+        #expect(baseline > 100, "no text to watch in the still card")
+        for (n, frame) in frames.enumerated() {
+            let ms = Int((frame.0 - start) * 1000)
+            let t = text(frame.1)
+            #expect(t * 2 > baseline, "frame \(n) at \(ms)ms: the still card flashed (\(t) of \(baseline) text pixels)")
+            try NSBitmapImageRep(cgImage: frame.1).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: String(format: "%@/f%03d-%+05dms.png", dir, n, ms)))
+        }
     }
 
     @Test func aTuckedPaneDroppedOnOneOnShowSwapsWithItAndTheRowStaysCollapsed() async throws {
@@ -346,5 +455,46 @@ struct PaneStackWindowTests {
         source.mouseUp(with: try event(.leftMouseUp, NSPoint(x: point.x + 2, y: point.y - 2)))
         await settle(0.6)
         #expect(panes[0].isFocusedPane, "the click brought the pane forward")
+    }
+}
+
+/// Records a window at its display's frame rate (ScreenCaptureKit, own window:
+/// no screen-recording grant) — what the slide actually looks like, frame by
+/// frame, as the window server composited it.
+final class WindowFrameRecorder: NSObject, SCStreamOutput, @unchecked Sendable {
+    private let lock = NSLock()
+    private var frames: [(CFTimeInterval, CGImage)] = []
+    private var stream: SCStream?
+    private let context = CIContext()
+
+    func start(_ window: NSWindow, scale: CGFloat = 1) async throws {
+        let content = try await SCShareableContent.currentProcess
+        guard let scWindow = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else { return }
+        let cfg = SCStreamConfiguration()
+        cfg.width = Int(scWindow.frame.width * scale)
+        cfg.height = Int(scWindow.frame.height * scale)
+        cfg.minimumFrameInterval = CMTime(value: 1, timescale: 120)
+        cfg.queueDepth = 8
+        cfg.showsCursor = false
+        let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg, delegate: nil)
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "recorder"))
+        try await stream.startCapture()
+        self.stream = stream
+    }
+
+    func stop() async -> [(CFTimeInterval, CGImage)] {
+        try? await stream?.stopCapture()
+        lock.lock(); defer { lock.unlock() }
+        return frames
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer buffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen,
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let raw = attachments.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete,
+              let pixels = CMSampleBufferGetImageBuffer(buffer) else { return }
+        let image = CIImage(cvPixelBuffer: pixels)
+        guard let cg = context.createCGImage(image, from: image.extent) else { return }
+        lock.lock(); frames.append((CACurrentMediaTime(), cg)); lock.unlock()
     }
 }

@@ -16,7 +16,7 @@ protocol TerminalViewDelegate: AnyObject {
     func cellSizeDidChange(to: NSSize)
 
     /// Perform an action. At the time of writing this is only triggered by the command palette.
-    func performAction(_ action: String, on: Ghostty.SurfaceView)
+    func performAction(_ action: String, on: PaneView)
 
     /// A split tree operation
     func performSplitAction(_ action: TerminalSplitOperation)
@@ -48,6 +48,9 @@ protocol TerminalViewModel: ObservableObject {
 
     /// The command palette state.
     var commandPaletteIsShowing: Bool { get set }
+
+    /// The pane the command palette was opened over, of either kind.
+    var commandPaletteAnchor: PaneView? { get }
 
     /// The update overlay should be visible.
     var updateOverlayIsVisible: Bool { get }
@@ -181,13 +184,15 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                 // Ignore safe area to extend up in to the titlebar region if we have the "hidden" titlebar style
                 .ignoresSafeArea(.container, edges: ghostty.config.macosTitlebarStyle == .hidden ? .top : [])
 
-                if let surfaceView = lastFocusedSurface?.value {
+                // Over whichever pane it was opened from — a window of nothing
+                // but viewers included, which has no terminal to anchor on.
+                if let pane = viewModel.commandPaletteAnchor {
                     TerminalCommandPaletteView(
-                        surfaceView: surfaceView,
+                        pane: pane,
                         isPresented: $viewModel.commandPaletteIsShowing,
                         ghosttyConfig: ghostty.config,
                         updateViewModel: (NSApp.delegate as? AppDelegate)?.updateViewModel) { action in
-                        self.delegate?.performAction(action, on: surfaceView)
+                        self.delegate?.performAction(action, on: pane)
                     }
                 }
 

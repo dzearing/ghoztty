@@ -429,20 +429,7 @@ pub fn performBindingForNonTerminal(
 
     var performed = false;
     for (actions) |action| {
-        if (action.scoped(.app)) |app_action| {
-            self.performAction(rt_app, app_action) catch |err| {
-                log.warn("error performing app binding action={t} err={}", .{ action, err });
-                continue;
-            };
-            performed = true;
-            continue;
-        }
-
-        const s = surface orelse continue;
-        const v = s.performBindingAction(action) catch |err| {
-            log.warn("error performing binding action={t} err={}", .{ action, err });
-            continue;
-        };
+        const v = self.performActionForNonTerminal(rt_app, surface, action);
         performed = performed or v;
 
         // A closing action may have freed the surface; nothing after it
@@ -451,6 +438,32 @@ pub fn performBindingForNonTerminal(
     }
 
     return performed;
+}
+
+/// Perform one binding action WITHOUT a focused terminal (a key from a viewer
+/// pane, or a command palette entry run from one): an app action directly,
+/// anything else through `surface`, a terminal in the same window, when there
+/// is one. The caller must only send actions whose `requires` allows it.
+/// Returns whether the action was performed.
+pub fn performActionForNonTerminal(
+    self: *App,
+    rt_app: *apprt.App,
+    surface: ?*Surface,
+    action: input.Binding.Action,
+) bool {
+    if (action.scoped(.app)) |app_action| {
+        self.performAction(rt_app, app_action) catch |err| {
+            log.warn("error performing app binding action={t} err={}", .{ action, err });
+            return false;
+        };
+        return true;
+    }
+
+    const s = surface orelse return false;
+    return s.performBindingAction(action) catch |err| {
+        log.warn("error performing binding action={t} err={}", .{ action, err });
+        return false;
+    };
 }
 
 /// Call to notify Ghostty that the color scheme for the app has changed.

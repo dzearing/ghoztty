@@ -347,6 +347,72 @@ struct ViewerKeyFallbackWindowTests {
         }
     }
 
+    /// Cmd-D from a window holding nothing but an HTML page splits it: the
+    /// viewer does not claim the chord (its address field is Cmd-L), and with
+    /// no terminal in the window it reaches Split Right's menu item, whose
+    /// handler knows the focused pane can be a viewer.
+    @Test func cmdDSplitsAWindowOfOnlyAnHTMLPage() async throws {
+        let page = try fixture("page.html") {
+            try "<!doctype html><title>Page</title><p>hello</p>".write(to: $0, atomically: true, encoding: .utf8)
+        }
+        try await withWindow(page.path, withTerminal: false) { h in
+            h.window.makeFirstResponder(h.viewer.webView)
+            await settle(0.3)
+            let cmdD = keyEvent("d", [.command], keyCode: 2, window: h.window)
+            #expect(ViewerView.paneChord(for: cmdD) == nil, "the viewer must not claim Cmd-D")
+            let delegate = try #require(NSApp.delegate as? AppDelegate)
+            let config = try #require(delegate.ghostty.config.config)
+            let binding = try #require(ViewerKeyFallback.binding(for: cmdD, config: config))
+            let action = try #require(binding.action)
+            #expect(action.hasPrefix("new_split"), "Cmd-D is bound to \(action)")
+            #expect(ViewerKeyFallback.hostSurface(in: h.controller) == nil)
+            #expect(ViewerKeyFallback.route(
+                for: binding, event: cmdD, textInputFocused: false,
+                hasMenuItem: delegate.hasGhosttyBindingMenuItem(forAction: action),
+                hasHostSurface: false) == .menuItem)
+
+            // The menu item's action, from the focused page, splits the window.
+            // (Performing the item itself needs a KEY window for AppKit's menu
+            // validation, which a test host cannot have.)
+            #expect(h.controller.surfaceTree.visibleLeaves.count == 1)
+            #expect(h.window.firstResponder?.tryToPerform(
+                #selector(BaseTerminalController.splitRight(_:)), with: nil) == true)
+            #expect(h.controller.surfaceTree.visibleLeaves.count == 2)
+        }
+    }
+
+    /// The command palette opens in a window holding nothing but a viewer —
+    /// it used to be mounted only for a window with a terminal in it, so
+    /// Cmd-Shift-P toggled a flag nothing drew.
+    @Test func thePaletteOpensInAWindowOfOnlyAViewer() async throws {
+        let page = try fixture("page.html") {
+            try "<!doctype html><title>Page</title><p>hello</p>".write(to: $0, atomically: true, encoding: .utf8)
+        }
+        try await withWindow(page.path, withTerminal: false) { h in
+            h.window.makeFirstResponder(h.viewer.webView)
+            await settle(0.3)
+            func paletteField(_ v: NSView) -> NSTextField? {
+                if let f = v as? NSTextField, f.placeholderString == "Execute a command…" { return f }
+                return v.subviews.lazy.compactMap(paletteField).first
+            }
+            h.controller.toggleCommandPalette(nil)
+            _ = await poll(timeout: 2) { h.window.contentView.flatMap(paletteField) != nil }
+            #expect(h.controller.commandPaletteIsShowing)
+            #expect(h.window.contentView.flatMap(paletteField) != nil, "the palette is not on screen")
+            #expect(h.controller.commandPaletteAnchor === h.controller.surfaceTree.visibleLeaves.first)
+
+            // Its commands follow the rule a key from the viewer does: a
+            // menu-backed pane action runs through its menu item, an app action
+            // through the core, and a terminal action is not offered at all.
+            #expect(ViewerKeyFallback.paletteRoute(action: "new_split:right", in: h.controller) == .menuItem)
+            #expect(ViewerKeyFallback.paletteRoute(action: "copy_to_clipboard", in: h.controller) == .pass)
+            #expect(ViewerKeyFallback.paletteRoute(action: "open_config", in: h.controller) != .pass)
+            #expect(ViewerKeyFallback.requires(action: "not_an_action") == nil)
+            h.controller.toggleCommandPalette(nil)
+            await settle(0.3)
+        }
+    }
+
     @Test func addressFieldForwardsChordsButKeepsTyping() async throws {
         try requireDefaultRearrangeBinding()
         try await withWindow(try markdownFile().path) { h in

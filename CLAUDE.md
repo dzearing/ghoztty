@@ -962,8 +962,10 @@ ghoztty +close --target=doc
   - **Cmd+R** reloads the pane in place, exactly like `+reload` (web
     re-fetches from origin, files re-render with scroll preserved, images
     re-decode keeping their zoom).
-  - **Cmd+D** puts the caret in the address field with the whole address
-    selected — the keyboard version of clicking into it.
+  - **Cmd+L** puts the caret in the address field with the whole address
+    selected — the keyboard version of clicking into it, and every browser's
+    chord for it. (It used to be Cmd+D, which is split right: a window holding
+    nothing but a viewer then had no keyboard way to split.)
   - **Cmd+F** opens the find bar and puts the caret in it (see Find in page).
     **Cmd+G** / **Cmd+Shift+G** step to the next / previous match, re-opening
     the bar if it was closed. With no query yet there is nothing to step, so
@@ -997,10 +999,18 @@ ghoztty +close --target=doc
     untouched (the policy only applies while the content view has focus).
     Tests: `ViewerUnhandledKeyBeepTests`.
   - These **override their global binding only while the viewer holds focus**
-    (Cmd+R = "Set Pane Banner…", Cmd+D = split right). Focus a terminal pane
-    and they do their global thing again; Cmd+Shift+R ("Change Window Title"),
-    Cmd+Shift+D (split down), and Ctrl+Cmd+F (Toggle Full Screen) are never
-    affected.
+    (Cmd+R = "Set Pane Banner…"). Focus a terminal pane and they do their
+    global thing again; Cmd+D / Cmd+Shift+D (split), Cmd+Shift+R ("Change
+    Window Title"), and Ctrl+Cmd+F (Toggle Full Screen) are never affected.
+  - **The command palette (Cmd+Shift+P) opens over a viewer too**, a window
+    of nothing but viewers included. It anchors on the pane it was opened
+    from (`commandPaletteAnchor`, taken at open, either kind) — it used to be
+    mounted only over a terminal, so in a viewer-only window the chord toggled
+    a flag nothing drew. Over a viewer, config commands follow the same rule a
+    key from it does (`ViewerKeyFallback.paletteRoute`): a menu item first,
+    else the core (`ghostty_app_binding_action`, an action named by string,
+    classified by `ghostty_binding_action_requires`); terminal-only commands
+    are not offered. The Viewer: Open… commands open beside the viewer.
   - **Every other chord falls back to Ghoztty's keybindings**
     (`ViewerKeyFallback`): a chord neither the pane's own handling above nor
     anything inside the pane claims is dispatched as a focused terminal would
@@ -1541,6 +1551,34 @@ card spills past its edges onto the desk (masked to outside the card, so it neve
 lightens the pane's own glass) — a subtle outer glow only, nothing inside the
 pane (`PaneFocusGlow`, driven by
 `PaneView.isFocusedPane`; `PaneFocusGlowTests`).
+**On glass, an unfocused pane is the MORE see-through one.** Its sheet's tint
+drops from `PaneGlass.tint` (40%) to `PaneGlass.unfocusedTint` (15%), and an
+unfocused **terminal** also fades as a whole — its content (text included) and
+its sheet, each at `unfocused-split-opacity` (default 0.7) — animated with the
+focus change, so the desk reads through every pane but the focused one, which
+stays solid and backlit. A **viewer** gets the thinner sheet only: its page is
+never faded (an HTML pane's especially). Upstream's unfocused dimming — a wash
+of `unfocused-split-fill` (default: the terminal background) at
+`1 - unfocused-split-opacity` drawn OVER the pane — is not drawn on glass: over
+a translucent sheet it made the unfocused panes the more opaque ones.
+`PaneCard.isDimmed` (one of several panes, not the focused one) and
+`PaneCard.dimmedOpacity` (content and sheet fade) are the switches; the fades
+animate opacity ONLY (`FocusFade`) — a strip click changes focus and a card's
+size in one update, and an `.animation(_:value:)` over the card animated the
+frame too, resizing the terminal on every frame of the fade. `flat`, and
+`elevated` without glass, keep the wash and honor both config keys as before.
+**A stacked row has no solid cards.** A tucked card, on either side of the
+run, is drawn as its sliver alone, so nothing lies under a card on show and
+every card is glass. (Cards used to be drawn whole with most of them under
+their neighbours, so every stacked card was filled 92% opaque — a row that did
+not fit lost its glass altogether.) **Hero mode** shows its pane as that
+same glass card — the hero container paints no fill of its own on glass
+(`HeroPaneContainer.isGlass`); it used to fill with the terminal background,
+an opaque slab where every other pane is glass. Measured on the composited window — how
+much of the desk in the gutter beside a pane its glass hides — by
+`unfocusedGlassPanesAreMoreTransparent`, `stackedRowCardsOnShowStayGlass` and
+`heroModeIsGlassLikeAFocusedPane` (`PaneSidebarWindowTests`); the layout rule by `noCardIsDrawnOverAnother`
+(`PaneLayoutTests`).
 
 **Resizes are debounced before they reach the program** (`src/termio/Thread.zig`
 `Coalesce`): applied once resizes stop arriving for 100ms, never held back more
@@ -1573,9 +1611,9 @@ AND the stashed-pane slots, so a restored pane never reflows.
   only when there is no room for one more.
 - **Elevation**: the run is highest, and strips sit lower the farther they are
   from it, on both sides — the run casts its shadow on the strip beside it, and
-  each strip on the next one out. Before the run a strip is its card's leading
-  edge (the rest under the card after it); past the run a card is drawn as its
-  strip alone (`Leaf.isSliver`), so slides never move a card through another.
+  each strip on the next one out. On either side of the run a tucked card is
+  drawn as its strip alone (`Leaf.isSliver`), so slides never move a card
+  through another and no card on show ever has one under its glass.
   Paint order is `Leaf.elevation`, not tree order.
 - **Collapsing by hand**: dragging a divider ~48pt past a pane's minimum
   minimizes the outermost pane on that side, **while the mouse is still down**;
@@ -1587,8 +1625,22 @@ AND the stashed-pane slots, so a restored pane never reflows.
   item is a column), and each keeps its own collapse.
 - **No resize per animation frame**: a slide is a Core Animation animation of
   each card's layer (`PaneStage`), never a frame change, so a terminal is told
-  its size once — a minimized pane keeps the size of the slot it would come
-  forward into, and its PTY never SIGWINCHes during a slide.
+  its size once, and its PTY never SIGWINCHes during a slide. **A minimized
+  pane is its strip and nothing else**: its content is hidden (it used to show
+  through the strip), and it keeps the size it last had on show — a row
+  reflowing around it never resizes a program nobody can see. It takes its
+  slot's size once, when the slide bringing it forward ends. A slide that ALSO
+  changes card sizes (a row gaining or losing a card on show) gives each card
+  its new shape at once but holds its content at the old size — anchored top
+  left, cut by the card or with sheet to spare (`paneContentFreeze`) — until
+  the slide ends; then every card takes its size in one transaction: **one
+  resize per terminal, after the motion**. It used to be resized on every frame
+  of the 0.25s focus fade (a strip click focuses AND reshapes in one update),
+  seven times in 250ms, each a reflow the shell repainted mid-slide. Tested by
+  `aResizingSlideResizesEachTerminalOnceAfterIt`, which also records the slide
+  at the display's frame rate (`WindowFrameRecorder`, frames in
+  `/tmp/pane-stack-snapshots/frames`) and fails on a frame where the still card
+  flashes.
 - **Drag a strip** to pick its pane up: the card itself follows the pointer (no
   drag image, past a 5pt threshold, so a click with a wobble is a click) and
   drops through the ordinary resolver — onto a pane on show it swaps with it,

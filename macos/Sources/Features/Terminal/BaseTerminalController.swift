@@ -138,6 +138,15 @@ class BaseTerminalController: NSWindowController,
     /// This can be set to show/hide the command palette.
     @Published var commandPaletteIsShowing: Bool = false
 
+    /// The pane the command palette was opened over — a terminal or a viewer —
+    /// which its commands act on and focus returns to. Taken when it opens,
+    /// because once its own field has the caret no pane has focus. Weak, so a
+    /// pane closed since the palette last opened is not kept alive by it.
+    var commandPaletteAnchor: PaneView? { commandPaletteAnchorRef }
+    private weak var commandPaletteAnchorRef: PaneView? {
+        willSet { objectWillChange.send() }
+    }
+
     /// Set if the terminal view should show the update overlay.
     @Published var updateOverlayIsVisible: Bool = false
 
@@ -2235,7 +2244,12 @@ class BaseTerminalController: NSWindowController,
         }
     }
 
-    func performAction(_ action: String, on surfaceView: Ghostty.SurfaceView) {
+    func performAction(_ action: String, on pane: PaneView) {
+        // From a viewer, as a key from it would go (`ViewerKeyFallback`).
+        guard let surfaceView = pane.surfaceView else {
+            ViewerKeyFallback.performPalette(action: action, in: self)
+            return
+        }
         guard let surface = surfaceView.surface else { return }
         let len = action.utf8CString.count
         if len == 0 { return }
@@ -3722,6 +3736,9 @@ class BaseTerminalController: NSWindowController,
     }
 
     @IBAction func toggleCommandPalette(_ sender: Any?) {
+        if !commandPaletteIsShowing {
+            commandPaletteAnchorRef = focusedPane ?? surfaceTree.visibleLeaves.first
+        }
         commandPaletteIsShowing.toggle()
         if commandPaletteIsShowing {
             // Fix the incorrect focus when toggling from InlineTitleEditor

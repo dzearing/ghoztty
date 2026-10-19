@@ -129,9 +129,8 @@ enum RemoteActivityMonitor {
     /// the wrong UI here, and breaks as a nested modal when launched from the
     /// command palette: its `runModal` can't take over event routing from the
     /// palette, leaving it click/keyboard-dead).
-    static func openFromPalette(surfaceView: Ghostty.SurfaceView) {
-        if let controller = surfaceView.window?.windowController as? BaseTerminalController,
-           let connection = controller.remoteConnection {
+    static func openFromPalette(in controller: BaseTerminalController?) {
+        if let connection = controller?.remoteConnection {
             presentReusing(connection: connection.handle, machine: connection.machine)
             return
         }
