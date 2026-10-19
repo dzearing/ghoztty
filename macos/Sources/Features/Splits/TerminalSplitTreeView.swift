@@ -198,7 +198,6 @@ private struct PaneGrid: View {
                                 content: AnyView(PaneLeafView(
                                     pane: pane,
                                     isSplit: !(isRoot && panesAreOne),
-                                    isStacked: isStacked,
                                     rearranging: rearranging)))
                         },
                         size: geo.size,
@@ -413,20 +412,27 @@ private struct PaneLeafView: View {
     @EnvironmentObject var ghostty: Ghostty.App
     @ObservedObject var pane: PaneView
     let isSplit: Bool
-    /// A card of a stacked row, which other cards overlap.
-    var isStacked: Bool = false
     let rearranging: Bool
 
     @ObservedObject private var dragSession = PaneDragSession.shared
+    @Environment(\.paneContentFreeze) private var freeze
 
     private var isBeingDragged: Bool { dragSession.isDragging(pane) }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if rearranging {
-                PaneHeaderView(pane: pane)
+        // Mid-slide the pane keeps the size it had (`PaneStage`), from the
+        // card's top-left corner — cut by the card, or with sheet to spare —
+        // and is resized once the slide is over. An overlay, so a frozen pane
+        // larger than its card never reports that size up (a frame would, and
+        // be centered); the same structure frozen or not, so nothing remounts.
+        Color.clear.overlay(alignment: .topLeading) {
+            VStack(spacing: 0) {
+                if rearranging {
+                    PaneHeaderView(pane: pane)
+                }
+                content
             }
-            content
+            .frame(width: freeze?.width, height: freeze?.height)
         }
         // The source pane fades for the duration of the drag, so the layout
         // it is leaving reads as provisional.
@@ -439,9 +445,12 @@ private struct PaneLeafView: View {
         .modifier(PaneCard(
             isElevated: ghostty.config.macosPaneStyle == .elevated,
             isGlass: ghostty.config.paneGlass,
-            isSolid: isStacked,
             // Only among siblings: a lone pane has nothing to stand out from.
             isFocused: isSplit && pane.isFocusedPane,
+            isDimmed: isSplit && !pane.isFocusedPane,
+            // A terminal fades as a whole, text included, by the user's
+            // `unfocused-split-opacity`; a viewer's page is left as it is.
+            dimmedOpacity: pane.surfaceView != nil ? 1 - ghostty.config.unfocusedSplitOpacity : 1,
             background: ghostty.config.backgroundColor,
             isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
     }

@@ -5,8 +5,8 @@ import AppKit
 /// from, mirroring the CLI `+split --view=...` behavior.
 enum ViewerCommands {
     @MainActor
-    static func openFileFromPalette(surfaceView: Ghostty.SurfaceView) {
-        guard let window = surfaceView.window,
+    static func openFileFromPalette(pane: PaneView) {
+        guard let window = pane.contentView.window,
               let controller = window.windowController as? BaseTerminalController else { return }
 
         let panel = NSOpenPanel()
@@ -16,7 +16,7 @@ enum ViewerCommands {
         // Sheet (not app-modal): the run loop keeps servicing IPC.
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
-            openViewer(location: url.path, controller: controller, anchor: surfaceView)
+            openViewer(location: url.path, controller: controller, anchor: pane)
         }
     }
 
@@ -25,24 +25,24 @@ enum ViewerCommands {
     /// interactive counterpart to `+split --view=<url>` for the common case
     /// where the URL is not known up front — no modal to fill in first.
     @MainActor
-    static func openBrowserFromPalette(surfaceView: Ghostty.SurfaceView) {
-        guard let window = surfaceView.window,
+    static func openBrowserFromPalette(pane: PaneView) {
+        guard let window = pane.contentView.window,
               let controller = window.windowController as? BaseTerminalController else { return }
 
         // A blank pane has no content to derive provenance from, so the
-        // terminal it was opened beside supplies the origin directory — the
+        // pane it was opened beside supplies the origin directory — the
         // same relationship `+split --view=` gets from `--working-directory`.
         let viewer = ViewerView(
             location: ViewerView.blankPage,
-            originDirectory: surfaceView.pwd)
-        controller.newViewerSplit(at: surfaceView, direction: .right, viewer: viewer)
+            originDirectory: directory(of: pane))
+        controller.newViewerSplit(atPane: pane, direction: .right, viewer: viewer)
         // After the split lands and the bar's hosting view is mounted.
         DispatchQueue.main.async { viewer.focusAddressBar() }
     }
 
     @MainActor
-    static func openURLFromPalette(surfaceView: Ghostty.SurfaceView) {
-        guard let window = surfaceView.window,
+    static func openURLFromPalette(pane: PaneView) {
+        guard let window = pane.contentView.window,
               let controller = window.windowController as? BaseTerminalController else { return }
 
         let alert = NSAlert()
@@ -59,7 +59,7 @@ enum ViewerCommands {
             var text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
             if !text.contains("://") { text = "https://" + text }
-            openViewer(location: text, controller: controller, anchor: surfaceView)
+            openViewer(location: text, controller: controller, anchor: pane)
         }
     }
 
@@ -67,11 +67,20 @@ enum ViewerCommands {
     private static func openViewer(
         location: String,
         controller: BaseTerminalController,
-        anchor: Ghostty.SurfaceView
+        anchor: PaneView
     ) {
         controller.newViewerSplit(
-            at: anchor,
+            atPane: anchor,
             direction: .right,
-            viewer: ViewerView(location: location, originDirectory: anchor.pwd))
+            viewer: ViewerView(location: location, originDirectory: directory(of: anchor)))
+    }
+
+    /// The directory a pane opened beside `pane` belongs to: a terminal's
+    /// working directory, or a viewer's file's folder, else its origin.
+    @MainActor
+    private static func directory(of pane: PaneView) -> String? {
+        if let surfaceView = pane.surfaceView { return surfaceView.pwd }
+        guard let viewer = pane.viewerView else { return nil }
+        return viewer.fileURL?.deletingLastPathComponent().path ?? viewer.originDirectory
     }
 }

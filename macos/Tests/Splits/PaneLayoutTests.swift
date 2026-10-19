@@ -170,6 +170,31 @@ struct PaneLayoutTests {
         }
     }
 
+    @Test func noCardIsDrawnOverAnother() throws {
+        // A tucked card, on either side of the run, is drawn as its sliver
+        // alone — so no card, a translucent glass card on show above all, ever
+        // has another card under it to show through itself.
+        let (node, views) = try row(5)
+        for width in [420.0, 600, 900, 1200, 1400] {
+            for focused in views {
+                let result = layout(node, width: width, focus: [focused])
+                let drawn = views.map { v -> CGRect in
+                    let leaf = result.leaves[v.id]!
+                    if leaf.isTucked { #expect(leaf.isSliver, "a tucked card is its sliver at \(width)") }
+                    if leaf.isSliver { return leaf.tab! }
+                    return leaf.clip.map { leaf.frame.intersection($0) } ?? leaf.frame
+                }
+                for i in drawn.indices {
+                    for j in drawn.indices where j > i {
+                        let o = drawn[i].intersection(drawn[j])
+                        #expect(o.isNull || o.width <= 0 || o.height <= 0,
+                                "cards \(i) and \(j) overlap at \(width), focus \(views.firstIndex(of: focused)!)")
+                    }
+                }
+            }
+        }
+    }
+
     @Test func cardsSitLowerTheFartherTheyAreFromTheRun() throws {
         // a b [c] d e: the run on top, falling away to either side.
         let (node, views) = try row(5)
@@ -178,7 +203,7 @@ struct PaneLayoutTests {
         let order = PaneLayout.paintOrder(views, result.leaves).map { views.firstIndex(of: $0)! }
         #expect(order == [0, 1, 4, 3, 2])
         #expect(result.leaves[views[3].id]?.isSliver == true, "past the run a card is its sliver")
-        #expect(result.leaves[views[1].id]?.isSliver == false)
+        #expect(result.leaves[views[1].id]?.isSliver == true, "and before it")
         #expect(result.leaves[views[2].id]?.isSliver == false)
     }
 

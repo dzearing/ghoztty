@@ -2,8 +2,9 @@ import SwiftUI
 import GhosttyKit
 
 struct TerminalCommandPaletteView: View {
-    /// The surface that this command palette represents.
-    let surfaceView: Ghostty.SurfaceView
+    /// The pane this command palette was opened over — a terminal or a
+    /// viewer. Its commands act on it, and focus returns to it.
+    let pane: PaneView
 
     /// Set this to true to show the view, this will be set to false if any actions
     /// result in the view disappearing.
@@ -25,7 +26,7 @@ struct TerminalCommandPaletteView: View {
                     VStack {
                         Spacer().frame(height: geometry.size.height * 0.05)
 
-                        ResponderChainInjector(responder: surfaceView)
+                        ResponderChainInjector(responder: pane.contentView)
                             .frame(width: 0, height: 0)
 
                         CommandPaletteView(
@@ -43,13 +44,17 @@ struct TerminalCommandPaletteView: View {
         }
         .onChange(of: isPresented) { newValue in
             // When the command palette disappears we need to send focus back to the
-            // surface view we were overlaid on top of. There's probably a better way
+            // pane we were overlaid on top of. There's probably a better way
             // to handle the first responder state here but I don't know it.
             if !newValue {
                 // Has to be on queue because onChange happens on a user-interactive
                 // thread and Xcode is mad about this call on that.
                 DispatchQueue.main.async {
-                    surfaceView.window?.makeFirstResponder(surfaceView)
+                    if let surfaceView = pane.surfaceView {
+                        surfaceView.window?.makeFirstResponder(surfaceView)
+                    } else {
+                        Ghostty.moveFocus(to: pane)
+                    }
                 }
             }
         }
@@ -136,11 +141,18 @@ struct TerminalCommandPaletteView: View {
         return options
     }
 
-    /// Custom commands from the command-palette-entry configuration.
+    /// Custom commands from the command-palette-entry configuration. Over a
+    /// viewer only the ones that can run from one are offered — the same rule
+    /// a key from a viewer follows (`ViewerKeyFallback`): nothing that acts on
+    /// a terminal, which would have to be some terminal the user is not
+    /// looking at.
     private var terminalOptions: [CommandOption] {
         guard let appDelegate = NSApp.delegate as? AppDelegate else { return [] }
+        let controller = pane.contentView.window?.windowController as? BaseTerminalController
         return appDelegate.ghostty.config.commandPaletteEntries
             .filter(\.isSupported)
+            .filter { pane.surfaceView != nil
+                || ViewerKeyFallback.paletteRoute(action: $0.action, in: controller) != .pass }
             .map { c in
                 let symbols = appDelegate.ghostty.config.keyboardShortcut(for: c.action)?.keyList
                 return CommandOption(
@@ -185,7 +197,8 @@ struct TerminalCommandPaletteView: View {
             description: "Show CPU, memory, and the process table for a remote machine",
             leadingIcon: "chart.bar.xaxis"
         ) {
-            RemoteActivityMonitor.openFromPalette(surfaceView: surfaceView)
+            RemoteActivityMonitor.openFromPalette(
+                in: pane.contentView.window?.windowController as? BaseTerminalController)
         })
         return options
     }
@@ -199,21 +212,21 @@ struct TerminalCommandPaletteView: View {
                 description: "Render a markdown, code, or image file beside this pane",
                 leadingIcon: "doc.richtext"
             ) {
-                ViewerCommands.openFileFromPalette(surfaceView: surfaceView)
+                ViewerCommands.openFileFromPalette(pane: pane)
             },
             CommandOption(
                 title: "Viewer: Open URL in Pane…",
                 description: "Open a website beside this pane",
                 leadingIcon: "globe"
             ) {
-                ViewerCommands.openURLFromPalette(surfaceView: surfaceView)
+                ViewerCommands.openURLFromPalette(pane: pane)
             },
             CommandOption(
                 title: "Viewer: Open Browser Pane",
                 description: "Open a blank browser beside this pane and type an address",
                 leadingIcon: "safari"
             ) {
-                ViewerCommands.openBrowserFromPalette(surfaceView: surfaceView)
+                ViewerCommands.openBrowserFromPalette(pane: pane)
             },
         ]
     }

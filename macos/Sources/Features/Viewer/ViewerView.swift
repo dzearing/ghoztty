@@ -1048,7 +1048,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// whole address selected — the keyboard equivalent of clicking into it.
     /// Used by the "Open Browser Pane" command, which opens a blank pane whose
     /// whole point is that the user types an address into it, and by the
-    /// pane-scoped Cmd-D chord (see `paneChord`).
+    /// pane-scoped Cmd-L chord (see `paneChord`).
     ///
     /// Returns false when this pane has no address field to focus — it is not
     /// in a window, so no chrome bar can ever mount — so a keybinding can fall
@@ -3358,8 +3358,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
             handleZoom(action)
             return true
         }
-        // Pane-scoped chords (Cmd-R reload, Cmd-D address field). These override
-        // their global Ghoztty bindings (prompt_surface_banner / new_split) only
+        // Pane-scoped chords (Cmd-R reload, Cmd-L address field). Cmd-R overrides
+        // its global Ghoztty binding (prompt_surface_banner) only
         // while THIS pane holds keyboard focus; every other pane, and every
         // terminal, still gets the global behavior because we fall through to
         // super, whose walk ends at the menu's key equivalent.
@@ -3391,7 +3391,9 @@ final class ViewerView: NSView, Codable, ObservableObject {
     enum PaneChord {
         /// Cmd-R — reload in place, the interactive `+reload`.
         case reload
-        /// Cmd-D — focus and select the address field.
+        /// Cmd-L — focus and select the address field, as in every browser.
+        /// Not Cmd-D: that is split right, which a window holding nothing but
+        /// a viewer would then have no keyboard way to reach.
         case focusAddress
         /// Cmd-F — open the find bar and focus its field.
         case find
@@ -3406,8 +3408,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// unit-testable without a live pane. Requires Command and rejects
     /// Control/Option, so Ctrl+Cmd+F ("Toggle Full Screen") is untouched. Shift
     /// is rejected for every chord but Cmd+Shift+G — the macOS-standard "find
-    /// previous" — so Cmd+Shift+R ("Change Window Title") and Cmd+Shift+D
-    /// (split down) keep their global meanings.
+    /// previous" — so Cmd+Shift+R ("Change Window Title") keeps its global
+    /// meaning.
     static func paneChord(for event: NSEvent) -> PaneChord? {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard mods.contains(.command),
@@ -3417,7 +3419,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         let shift = mods.contains(.shift)
         switch (event.charactersIgnoringModifiers?.lowercased() ?? "", shift) {
         case ("r", false): return .reload
-        case ("d", false): return .focusAddress
+        case ("l", false): return .focusAddress
         case ("f", false): return .find
         case ("g", false): return .findNext
         case ("g", true): return .findPrevious

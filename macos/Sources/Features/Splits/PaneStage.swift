@@ -17,6 +17,15 @@ import SwiftUI
 /// it was, so the terminal inside never changes size (nothing is told to
 /// reflow), and a click mid-slide starts the next slide from where the cards
 /// are on screen.
+///
+/// A slide that also changes a card's SIZE (a row gaining or losing a card on
+/// show) gives the card its new shape at once, but holds what is inside it at
+/// the size it had (`paneContentFreeze`) — clipped by the card, or with sheet
+/// to spare — until the slide ends. Then every card on the stage takes its
+/// new size in the same transaction: one resize per pane, after the motion,
+/// never a reflow (and a program's repaint) mid-slide. A tucked card shows
+/// only its strip, and its pane is held at its last size on show until it is
+/// back: a program nobody can see is never resized.
 struct PaneStage: NSViewRepresentable {
     struct Card {
         let pane: PaneView
@@ -49,12 +58,9 @@ struct PaneStage: NSViewRepresentable {
     func updateNSView(_ view: PaneStageView, context: Context) {
         // Each card hosts its own SwiftUI tree, which inherits nothing from
         // this one unless it is handed over.
-        let environment = context.environment
         view.apply(
-            cards: cards.map { card in
-                Card(pane: card.pane, leaf: card.leaf, isStacked: card.isStacked,
-                     content: AnyView(card.content.environment(\.self, environment)))
-            },
+            cards: cards,
+            environment: context.environment,
             size: size,
             runs: runs,
             duration: isGesturing ? PaneStageView.gestureSlideDuration : PaneStageView.slideDuration,
@@ -66,6 +72,8 @@ final class PaneStageView: NSView {
     private var cards: [UUID: PaneCardView] = [:]
     private var lastRuns: [ClosedRange<Int>]?
     private var lastSize: CGSize?
+    /// When the slide under way ends, and the frozen cards take their sizes.
+    private var thawAt: CFTimeInterval = 0
 
     /// How a card slides: the HTML mock's curve and duration — or, while a
     /// drag is reshaping the row, quicker, so the layout keeps up with the hand.
@@ -83,7 +91,7 @@ final class PaneStageView: NSView {
     override var isFlipped: Bool { true }
 
     func apply(
-        cards: [PaneStage.Card], size: CGSize, runs: [ClosedRange<Int>],
+        cards: [PaneStage.Card], environment: EnvironmentValues, size: CGSize, runs: [ClosedRange<Int>],
         duration: CFTimeInterval, style: PaneStage.Style
     ) {
         // Only a change in which cards are on show slides anything: a window
@@ -102,7 +110,7 @@ final class PaneStageView: NSView {
                 self.cards[id] = view
                 return view
             }()
-            view.apply(card, style: style, slides: slides ? duration : nil)
+            view.apply(card, environment: environment, style: style, slides: slides ? duration : nil)
             order.append(view)
         }
         for (id, view) in self.cards where !live.contains(id) {
@@ -110,6 +118,25 @@ final class PaneStageView: NSView {
             self.cards[id] = nil
         }
         if subviews != order { subviews = order }
+
+        // Frozen cards all take their sizes together, once the slide is over
+        // (a slide that starts before then carries them on to its own end).
+        if slides, self.cards.values.contains(where: \.isFrozen) {
+            thawAt = CACurrentMediaTime() + duration
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+                guard let self, CACurrentMediaTime() >= self.thawAt - 0.001 else { return }
+                self.thaw()
+            }
+        } else if !slides, CACurrentMediaTime() >= thawAt {
+            thaw()
+        }
+    }
+
+    private func thaw() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for card in cards.values { card.thaw() }
+        CATransaction.commit()
     }
 
     // Points over no card fall through to whatever is behind the stage.
@@ -145,6 +172,17 @@ final class PaneCardView: NSView {
 
     private var leaf: PaneLayout.Leaf?
     private var style: PaneStage.Style?
+    /// The pane's SwiftUI content, and the environment it inherits (a
+    /// hosting view's tree inherits nothing unless it is handed over), as
+    /// last handed over.
+    private var content: AnyView?
+    private var environment: EnvironmentValues?
+    /// The size the pane's content is held at while its card changes size
+    /// in a slide (`PaneStage`). Nil: it fills the card.
+    private var frozenSize: CGSize?
+    var isFrozen: Bool { frozenSize != nil }
+    /// The pane is hidden, leaving only the strip: a tucked card.
+    var isContentHidden: Bool { host.alphaValue == 0 }
     /// The pane this card shows.
     private(set) var paneID: UUID?
     /// The cut that keeps a hanging card inside its stack, as a layer whose
@@ -203,7 +241,7 @@ final class PaneCardView: NSView {
 
     /// - Parameter slides: how long a card that moved takes to slide there;
     ///   nil, it is placed there at once.
-    func apply(_ card: PaneStage.Card, style: PaneStage.Style, slides: CFTimeInterval?) {
+    func apply(_ card: PaneStage.Card, environment: EnvironmentValues, style: PaneStage.Style, slides: CFTimeInterval?) {
         let o = Self.outset
         let old = leaf
         leaf = card.leaf
@@ -215,12 +253,24 @@ final class PaneCardView: NSView {
         let size = frame.size
         let paneRect = CGRect(x: o, y: o, width: card.leaf.frame.width, height: card.leaf.frame.height)
 
-        // The SwiftUI content, laid out exactly where the grid puts the pane.
-        host.rootView = AnyView(
-            card.content
-                .frame(width: card.leaf.frame.width, height: card.leaf.frame.height)
-                .padding(o)
-                .ignoresSafeArea())
+        // A tucked card is its strip and nothing else: its pane is hidden, and
+        // keeps the size it last had on show — a row reflowing around it never
+        // resizes a program nobody can see. It takes its slot's size once it
+        // is back on show (when the slide bringing it forward ends).
+        // A slide that resizes a card on show holds its content the same way,
+        // through every slide until they end, not the last one's start.
+        if card.leaf.isTucked {
+            frozenSize = frozenSize ?? old?.frame.size ?? card.leaf.frame.size
+        } else if slides != nil, let old, old.frame.size != card.leaf.frame.size {
+            frozenSize = frozenSize ?? old.frame.size
+        }
+        if card.leaf.isTucked != (old?.isTucked ?? false) || old == nil {
+            // Out as it tucks away under its neighbours; in as it comes forward.
+            Self.fade(host, to: card.leaf.isTucked ? 0 : 1, duration: old == nil ? 0 : (slides ?? 0.15))
+        }
+        content = card.content
+        self.environment = environment
+        render()
 
         let moved = slides != nil && old != nil && old!.frame.origin != card.leaf.frame.origin
         let slide = moved && old!.frame.size == card.leaf.frame.size
@@ -339,6 +389,26 @@ final class PaneCardView: NSView {
         }
         isTabShown = card.leaf.tab != nil
         setAccessibilityElement(false)
+    }
+
+    /// The SwiftUI content, laid out exactly where the grid puts the pane.
+    private func render() {
+        guard let leaf, let content, var environment else { return }
+        environment.paneContentFreeze = frozenSize
+        host.rootView = AnyView(
+            content
+                .environment(\.self, environment)
+                .frame(width: leaf.frame.width, height: leaf.frame.height)
+                .padding(Self.outset)
+                .ignoresSafeArea())
+    }
+
+    /// Let the content fill the card again, after a resizing slide. A tucked
+    /// card stays as it is until it is back on show.
+    func thaw() {
+        guard frozenSize != nil, leaf?.isTucked != true else { return }
+        frozenSize = nil
+        render()
     }
 
     /// Draw the card `offset` from its place, above every other card: it is
@@ -528,5 +598,18 @@ final class FlippedLayerView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         return hit === self ? nil : hit
+    }
+}
+
+private struct PaneContentFreezeKey: EnvironmentKey {
+    static let defaultValue: CGSize? = nil
+}
+
+extension EnvironmentValues {
+    /// The size a pane's content is held at while its card changes size in a
+    /// slide (`PaneStage`); nil, it fills the card.
+    var paneContentFreeze: CGSize? {
+        get { self[PaneContentFreezeKey.self] }
+        set { self[PaneContentFreezeKey.self] = newValue }
     }
 }

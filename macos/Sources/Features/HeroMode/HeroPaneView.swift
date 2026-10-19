@@ -2,32 +2,48 @@ import SwiftUI
 import GhosttyKit
 
 struct HeroPaneView: View {
+    @EnvironmentObject var ghostty: Ghostty.App
     let leaves: [PaneView]
     @ObservedObject var state: HeroModeState
 
     var body: some View {
+        // With glass panes the hero is the one pane on show, so it is the
+        // same glass card a focused pane is: the container paints nothing of
+        // its own (the terminal draws no background on glass either), and the
+        // card's sheet is the pane's background.
         HeroPaneRepresentable(
             leaves: leaves,
-            selectedIndex: state.selectedIndex
+            selectedIndex: state.selectedIndex,
+            isGlass: ghostty.config.paneGlass
         )
+        .modifier(PaneCard(
+            isElevated: ghostty.config.macosPaneStyle == .elevated && ghostty.config.paneGlass,
+            isGlass: ghostty.config.paneGlass,
+            background: ghostty.config.backgroundColor,
+            isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
     }
 }
 
 struct HeroPaneRepresentable: NSViewRepresentable {
     let leaves: [PaneView]
     let selectedIndex: Int
+    let isGlass: Bool
 
     func makeNSView(context: Context) -> HeroPaneContainer {
         HeroPaneContainer()
     }
 
     func updateNSView(_ container: HeroPaneContainer, context: Context) {
+        container.isGlass = isGlass
         container.update(leaves: leaves, selectedIndex: selectedIndex)
     }
 }
 
 class HeroPaneContainer: NSView {
     override var isFlipped: Bool { true }
+
+    /// Glass panes: paint nothing, so the card's sheet shows through.
+    var isGlass = false
 
     private let strip = HeroPaneStrip()
     private var slots: [HeroPaneSlot] = []
@@ -110,7 +126,9 @@ class HeroPaneContainer: NSView {
         // Viewers have no terminal config; tint off the first terminal pane,
         // falling back to the window background when the tree is all viewers.
         let bgColor: CGColor
-        if let surface = slots.compactMap({ $0.pane.surfaceView }).first {
+        if isGlass {
+            bgColor = .clear
+        } else if let surface = slots.compactMap({ $0.pane.surfaceView }).first {
             bgColor = NSColor(surface.derivedConfig.backgroundColor).cgColor
         } else {
             bgColor = NSColor.windowBackgroundColor.cgColor
