@@ -165,16 +165,41 @@ enum PaneLayout {
         /// — or, with nothing before it, the one after. Nil when what is left
         /// all shows, or is no row at all.
         func removing(_ removed: Set<Int>, of n: Int) -> Pin? {
-            let kept = (0..<n).filter { !removed.contains($0) }
-            guard kept.count > 1 else { return nil }
-            let run = start..<(start + count)
-            let shown = kept.indices.filter { run.contains(kept[$0]) }
-            let pin = if let first = shown.first {
-                Pin(start: first, count: shown.count)
-            } else {
-                Pin(start: kept.lastIndex { $0 < start } ?? 0, count: 1)
+            carrying((0..<n).filter { !removed.contains($0) })
+        }
+
+        /// The pin when items join a row, at `added` of the `n` it has now (a
+        /// split, a pane dropped or restored into it): one beside the run or
+        /// inside it — a split of a pane on show — is on show with it, and
+        /// one among the tucked items is tucked with them. Adding never
+        /// brings a tucked item out.
+        func adding(_ added: Set<Int>, of n: Int) -> Pin? {
+            var next = 0
+            let origin: [Int?] = (0..<n).map { index in
+                guard !added.contains(index) else { return nil }
+                defer { next += 1 }
+                return next
             }
-            return pin.count >= kept.count ? nil : pin
+            return carrying(origin)
+        }
+
+        /// The pin when the row's items become `origin`: each one's index in
+        /// the row before, or nil for one that joined it. Items keep the side
+        /// of the run they were on (`removing`, `adding`), and a reorder keeps
+        /// the same items on show.
+        func carrying(_ origin: [Int?]) -> Pin? {
+            guard origin.count > 1 else { return nil }
+            let run = start..<(start + count)
+            let shown = origin.indices.filter { origin[$0].map(run.contains) ?? false }
+            let pin: Pin
+            if var lower = shown.first, var upper = shown.last {
+                while lower > 0, origin[lower - 1] == nil { lower -= 1 }
+                while upper < origin.count - 1, origin[upper + 1] == nil { upper += 1 }
+                pin = Pin(start: lower, count: upper - lower + 1)
+            } else {
+                pin = Pin(start: origin.lastIndex { $0.map { $0 < start } ?? false } ?? 0, count: 1)
+            }
+            return pin.count >= origin.count ? nil : pin
         }
 
         /// What `change` makes of a row of `n` items showing `run`; nil when
