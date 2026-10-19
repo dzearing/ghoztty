@@ -240,10 +240,13 @@ final class PaneDragSession: ObservableObject {
         }
 
         var paneRects: [(id: UUID, rect: CGRect)] = []
+        // A pane tucked into a stack shows only its tab, and that is what a
+        // drop can land on: the rest of it is under the cards in front.
+        let tabs = PaneStackTabView.all(in: window)
         // Only panes ON SCREEN are drop targets: a stashed pane is mounted
         // (hidden, in its slot) but nothing can land on it.
         for pane in controller.surfaceTree.visibleLeaves {
-            let view = pane.contentView
+            let view = tabs[pane.id] ?? pane.contentView
             // A pane that is not mounted (zoomed out, hero mode) has no
             // window and no meaningful frame.
             guard view.window === window else { continue }

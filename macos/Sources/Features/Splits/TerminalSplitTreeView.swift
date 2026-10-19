@@ -12,6 +12,14 @@ import SwiftUI
 enum TerminalSplitOperation {
     case resize(Resize)
 
+    /// A drag that tucks a row's outermost pane on one side behind the rest,
+    /// or brings one back (see `PaneLayout.Restack`).
+    case restack(PaneLayout.Row<UUID>, PaneLayout.Restack)
+
+    /// A grip on a stack dragged: between two cards it resizes them, or
+    /// collapses the row; at the run's edge it widens it.
+    case stackDrag(StackDrag)
+
     struct Resize {
         /// The split node whose divider the gesture is on.
         let node: SplitTree<PaneView>.Node
@@ -19,6 +27,26 @@ enum TerminalSplitOperation {
         /// What the gesture is doing. A `.moved` reports the divider's position in
         /// POINTS rather than a ratio, which is what lets the embedder move that one
         /// edge and leave the rest of the window's dividers where they are.
+        let gesture: SplitViewDividerGesture
+
+        /// On `.began`: the tree as it is laid out on screen
+        /// (`PaneLayout.Result.displayed`), which `node` belongs to. Its ratios
+        /// differ from the stored ones where a pane minimum overrides them, and
+        /// the drag starts from what the user sees.
+        var displayed: SplitTree<PaneView>.Node? = nil
+
+        /// On `.began`: the row the divider is in. Dragged well past a pane's
+        /// minimum, the row collapses instead (`PaneLayout.Restack`).
+        var row: PaneLayout.Row<UUID>? = nil
+    }
+
+    /// A grip on a stacked row dragged (`PaneLayout.StackHandle`). The row and
+    /// grip are as the drag found them; `.moved` carries the distance from
+    /// mouse-down.
+    struct StackDrag {
+        let row: PaneLayout.Row<UUID>
+        let kind: PaneLayout.StackHandle<UUID>.Kind
+        let direction: PaneLayout.Direction
         let gesture: SplitViewDividerGesture
     }
 }
@@ -28,6 +56,7 @@ struct TerminalSplitTreeView: View {
     let action: (TerminalSplitOperation) -> Void
     @ObservedObject var heroModeState: HeroModeState
     @ObservedObject var rearrangeModeState: RearrangeModeState
+    @ObservedObject var stackState: PaneStackState
 
     /// Names this window for drop resolution.
     let windowRef: PaneDropWindowRef
@@ -38,15 +67,21 @@ struct TerminalSplitTreeView: View {
         // as the panes behind a zoom are not. Divider gestures report nodes of
         // this tree; the controller lifts their ratios back onto the full one.
         let visible = tree.visibleTree
+        let ranks = Dictionary(uniqueKeysWithValues: stackState.recency.enumerated().map { ($1, $0) })
         Group {
             if heroModeState.isActive {
                 HeroModeView(tree: visible, state: heroModeState)
                     .transition(.opacity)
             } else if let node = visible.zoomed ?? visible.root {
-                TerminalSplitSubtreeView(
+                PaneGrid(
                     node: node,
                     isRoot: node == visible.root,
                     rearranging: rearrangeModeState.isActive,
+                    ranks: ranks,
+                    pins: stackState.pins,
+                    shares: stackState.shares,
+                    stackState: stackState,
+                    slots: nil,
                     action: action)
                 // This is necessary because we can't rely on SwiftUI's implicit
                 // structural identity to detect changes to this view. Due to
@@ -60,7 +95,19 @@ struct TerminalSplitTreeView: View {
         }
         .background {
             if !tree.stashed.isEmpty, let root = tree.root {
-                StashedPaneSlots(node: root, stashed: Set(tree.stashed))
+                // Where stashed panes LIVE: mounted, hidden, behind the grid,
+                // each in the slot it would occupy in the full (unstashed)
+                // layout. See `PaneGrid.slots`.
+                PaneGrid(
+                    node: root,
+                    isRoot: true,
+                    rearranging: false,
+                    ranks: ranks,
+                    pins: stackState.pins,
+                    shares: stackState.shares,
+                    stackState: stackState,
+                    slots: Set(tree.stashed),
+                    action: { _ in })
                     .id(root.structuralIdentity)
                     // Opacity, not `.hidden()`: a hidden SwiftUI subtree
                     // never mounts its AppKit views, which is the bug this
@@ -74,31 +121,128 @@ struct TerminalSplitTreeView: View {
     }
 }
 
-/// Where stashed panes LIVE: mounted, hidden, behind the grid, each in the
-/// slot it would occupy in the full (unstashed) layout.
+/// A window's panes, each where `PaneLayout` puts it: side by side, or — in
+/// a row too narrow for them — stacked, with the panes that don't fit tucked
+/// behind as cards the user clicks to bring forward.
 ///
-/// A stashed pane is out of the layout but must keep its geometry. Unmounted,
-/// a terminal that was stashed when the window opened (a session restore) is
-/// never laid out at all and is told it is the 800×600 placeholder — 49×17
-/// cells — so its program re-renders at 49 columns, and restoring it is a
-/// reflow. Laid out here with the SAME split views the grid uses, it always
-/// has exactly the size it will have when it comes back, through relaunches
-/// and window resizes alike, and it keeps a window (so window-scoped actions
-/// from its terminal still find their controller).
-///
-/// Visible leaves are empty placeholders: they are mounted in the grid, and a
-/// view can only be in one place. The layer is hidden and never hit-tested;
-/// its dividers do nothing.
-private struct StashedPaneSlots: View {
+/// One flat layer of panes rather than nested split views, because a stack
+/// is a property of a whole row and its cards slide across what were nested
+/// split boundaries. Each pane keeps its identity (its id), so bringing a
+/// card forward moves the pane's view; nothing is remounted.
+private struct PaneGrid: View {
     @EnvironmentObject var ghostty: Ghostty.App
 
     let node: SplitTree<PaneView>.Node
-    let stashed: Set<UUID>
+    let isRoot: Bool
+    let rearranging: Bool
+    /// `PaneStackState.recency` as ranks: 0 is the focused pane.
+    let ranks: [UUID: Int]
+    /// Which rows the user collapsed — passed by value, so a change to them
+    /// redraws the grid.
+    let pins: [Set<UUID>: PaneLayout.Pin]
+    /// How the user sized stacked runs (`PaneStackState.shares`).
+    let shares: [Set<UUID>: [CGFloat]]
+    /// Told the order of each stack's items, which a focus change slides by.
+    let stackState: PaneStackState
+
+    /// Non-nil: this is the hidden layer where stashed panes live, and only
+    /// these panes are mounted (each at the size it will come back at).
+    ///
+    /// A stashed pane is out of the layout but must keep its geometry.
+    /// Unmounted, a terminal that was stashed when the window opened (a session
+    /// restore) is never laid out at all and is told it is the 800×600
+    /// placeholder — 49×17 cells — so its program re-renders at 49 columns, and
+    /// restoring it is a reflow. Laid out here by the SAME layout the grid uses,
+    /// it always has exactly the size it will have when it comes back, through
+    /// relaunches and window resizes alike, and it keeps a window (so
+    /// window-scoped actions from its terminal still find their controller).
+    ///
+    /// Visible panes are empty placeholders: they are mounted in the grid, and
+    /// a view can only be in one place. The layer is hidden and never
+    /// hit-tested; it has no dividers or tabs.
+    let slots: Set<UUID>?
+
+    let action: (TerminalSplitOperation) -> Void
+
+    private var paneGap: CGFloat? { PaneElevation.paneGap(for: ghostty.config.macosPaneStyle) }
+    private var isElevated: Bool { ghostty.config.macosPaneStyle == .elevated }
 
     var body: some View {
-        switch node {
-        case .leaf(let pane):
-            if stashed.contains(pane.id) {
+        GeometryReader { geo in
+            let layout = PaneLayout.compute(
+                node,
+                in: CGRect(origin: .zero, size: geo.size),
+                metrics: .forStyle(paneGap: paneGap),
+                rank: { ranks[$0.id] },
+                pin: { pins[$0] },
+                shares: { shares[$0] })
+            let panes = node.leaves()
+            let _ = layout.stacks.forEach { stackState.noteItems($0.items, fits: $0.fits) }
+            ZStack(alignment: .topLeading) {
+                if let slots {
+                    ForEach(panes, id: \.id) { pane in
+                        if let leaf = layout.leaves[pane.id] {
+                            slot(pane, leaf, isStashed: slots.contains(pane.id))
+                        }
+                    }
+                } else {
+                    let stacked = Set(layout.stacks.flatMap { $0.items.flatMap { $0 } })
+                    PaneStage(
+                        cards: PaneLayout.paintOrder(panes, layout.leaves).compactMap { pane in
+                            guard let leaf = layout.leaves[pane.id] else { return nil }
+                            let isStacked = stacked.contains(pane.id)
+                            return PaneStage.Card(
+                                pane: pane,
+                                leaf: leaf,
+                                isStacked: isStacked,
+                                content: AnyView(PaneLeafView(
+                                    pane: pane,
+                                    isSplit: !(isRoot && panesAreOne),
+                                    isStacked: isStacked,
+                                    rearranging: rearranging)))
+                        },
+                        size: geo.size,
+                        runs: layout.stacks.map(\.run),
+                        isGesturing: stackState.isGesturing,
+                        style: .init(
+                            cornerRadius: isElevated ? PaneElevation.cornerRadius : 0,
+                            background: ghostty.config.backgroundColor,
+                            isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    // Keyed by place in the row, so a divider that goes away
+                    // mid-drag (its row collapsed) takes its drag with it.
+                    ForEach(layout.dividers, id: \.id) { divider in
+                        GridDivider(
+                            divider: divider,
+                            displayed: layout.displayed,
+                            paneGap: paneGap,
+                            color: ghostty.config.splitDividerColor,
+                            action: action)
+                    }
+                    ForEach(layout.stackHandles, id: \.id) { handle in
+                        StackGrip(
+                            handle: handle,
+                            paneGap: paneGap,
+                            color: ghostty.config.splitDividerColor,
+                            action: action)
+                    }
+                }
+            }
+        }
+    }
+
+    /// A window of one pane has nothing to set it apart from.
+    private var panesAreOne: Bool {
+        if case .leaf = node { return true }
+        return false
+    }
+
+    /// A pane's place in the hidden stashed-pane layer: the pane itself if it
+    /// is stashed, else an empty placeholder.
+    @ViewBuilder
+    private func slot(_ pane: PaneView, _ leaf: PaneLayout.Leaf, isStashed: Bool) -> some View {
+        Group {
+            if isStashed {
                 switch pane.content {
                 case .terminal(let surfaceView):
                     Ghostty.InspectableSurface(surfaceView: surfaceView, isSplit: true)
@@ -108,65 +252,155 @@ private struct StashedPaneSlots: View {
             } else {
                 Color.clear
             }
-
-        case .split(let split):
-            SplitView(
-                split.direction == .horizontal ? .horizontal : .vertical,
-                CGFloat(split.ratio),
-                dividerColor: ghostty.config.splitDividerColor,
-                resizeIncrements: .init(width: 1, height: 1),
-                onDividerGesture: { _ in },
-                left: { StashedPaneSlots(node: split.left, stashed: stashed) },
-                right: { StashedPaneSlots(node: split.right, stashed: stashed) },
-                onEqualize: {},
-                // The slots must lay out EXACTLY as the grid does, gaps and all.
-                paneGap: PaneElevation.paneGap(for: ghostty.config.macosPaneStyle))
         }
+        .frame(width: leaf.frame.width, height: leaf.frame.height)
+        .offset(x: leaf.frame.minX, y: leaf.frame.minY)
     }
 }
 
-private struct TerminalSplitSubtreeView: View {
+/// A divider between two side-by-side panes: the line (flat style) or the
+/// gap (elevated), with the AppKit grab handle over it. A drag reports the
+/// divider's position in points from its split node's leading edge.
+private struct GridDivider: View {
     @EnvironmentObject var ghostty: Ghostty.App
 
-    let node: SplitTree<PaneView>.Node
-    var isRoot: Bool = false
-    let rearranging: Bool
+    let divider: PaneLayout.Divider<SplitTree<PaneView>.Node, UUID>
+    /// The tree as laid out, which the drag starts from.
+    let displayed: SplitTree<PaneView>.Node?
+    let paneGap: CGFloat?
+    let color: Color
     let action: (TerminalSplitOperation) -> Void
 
+    /// Extra grab zone around the visible line (~4pt into each pane). This is
+    /// realized by an APPKIT handle view (`DividerHandle`) layered above the
+    /// panes: the panes host AppKit views (terminal surfaces, web views) that
+    /// out-hit-test any SwiftUI gesture area, so a SwiftUI-only divider is
+    /// effectively a 1px target no matter how large its invisible frame is.
+    private let grabZone: CGFloat = 8
+
+    /// A drag keeps a sliver of each side; the controller clamps again
+    /// against the pane minimums, which can only be tighter.
+    private let floor: CGFloat = 10
+
+
+    private var direction: SplitViewDirection {
+        divider.direction == .horizontal ? .horizontal : .vertical
+    }
+
+    private var extent: CGFloat {
+        divider.direction == .horizontal ? divider.nodeFrame.width : divider.nodeFrame.height
+    }
+
     var body: some View {
-        switch node {
-        case .leaf(let pane):
-            PaneLeafView(pane: pane, isSplit: !isRoot, rearranging: rearranging)
-
-        case .split(let split):
-            let splitViewDirection: SplitViewDirection = switch split.direction {
-            case .horizontal: .horizontal
-            case .vertical: .vertical
-            }
-
-            SplitView(
-                splitViewDirection,
-                CGFloat(split.ratio),
-                dividerColor: ghostty.config.splitDividerColor,
-                resizeIncrements: .init(width: 1, height: 1),
-                onDividerGesture: { action(.resize(.init(node: node, gesture: $0))) },
-                left: {
-                    TerminalSplitSubtreeView(
-                        node: split.left, rearranging: rearranging, action: action)
+        let visibleSize = paneGap ?? 1
+        let hit = divider.line(thickness: visibleSize + grabZone)
+        ZStack {
+            SplitView<EmptyView, EmptyView>.Divider(
+                direction: direction,
+                visibleSize: visibleSize,
+                invisibleSize: grabZone,
+                color: paneGap == nil ? color : .clear,
+                split: divider.fraction,
+                onAdjust: { fraction in
+                    // An accessibility nudge is a drag of one step.
+                    send(.began)
+                    move(to: fraction * extent)
+                    send(.ended)
+                })
+            DividerHandle(
+                direction: direction,
+                onDragBegan: { send(.began) },
+                onDragDelta: { delta, startSplit in
+                    // The delta is cumulative from mouse-down and `startSplit` is
+                    // where the divider was then, so this is an absolute target
+                    // measured against the layout the drag started from. Not
+                    // clamped: well past a minimum, the row collapses.
+                    let target = startSplit * extent + delta
+                    guard extent > 0 else { return }
+                    send(.moved(position: target, dimension: extent))
                 },
-                right: {
-                    TerminalSplitSubtreeView(
-                        node: split.right, rearranging: rearranging, action: action)
-                },
-                onEqualize: {
-                    // Any terminal surface in the subtree can host the equalize
-                    // action (the leftmost leaf may be a viewer pane).
-                    guard let surface = node.leaves().compactMap(\.surface).first else { return }
-                    ghostty.splitEqualize(surface: surface)
-                },
-                paneGap: PaneElevation.paneGap(for: ghostty.config.macosPaneStyle)
-            )
+                onDragEnded: { send(.ended) },
+                onDoubleClick: equalize,
+                currentSplit: { divider.fraction },
+                // The divider goes away when its row collapses; the drag
+                // carries on, and can bring the row back.
+                tracksModally: true)
         }
+        .frame(width: hit.width, height: hit.height)
+        .offset(x: hit.minX, y: hit.minY)
+    }
+
+    private func send(_ gesture: SplitViewDividerGesture) {
+        action(.resize(.init(
+            node: divider.node,
+            gesture: gesture,
+            displayed: { if case .began = gesture { return displayed } else { return nil } }(),
+            row: { if case .began = gesture { return divider.row } else { return nil } }())))
+    }
+
+    private func move(to position: CGFloat) {
+        guard extent > 0 else { return }
+        let clamped = min(max(position, floor), max(floor, extent - floor))
+        send(.moved(position: clamped, dimension: extent))
+    }
+
+    private func equalize() {
+        // Any terminal surface in the subtree can host the equalize action
+        // (the leftmost leaf may be a viewer pane).
+        guard let surface = divider.node.leaves().compactMap(\.surface).first else { return }
+        ghostty.splitEqualize(surface: surface)
+    }
+}
+
+/// A grip on a stacked row (`PaneLayout.StackHandle`). Between two cards on
+/// show it resizes them, and a drag well past a card's minimum tucks the
+/// outermost card on that side behind instead, as a divider does; at the edge
+/// of a run the user narrowed, a drag out over the tucked cards brings the
+/// nearest one back. Either way, dragging back undoes it while the mouse is
+/// still down (see `BaseTerminalController.splitDidDragStack`).
+private struct StackGrip: View {
+    let handle: PaneLayout.StackHandle<UUID>
+    let paneGap: CGFloat?
+    let color: Color
+    let action: (TerminalSplitOperation) -> Void
+
+    private let grabZone: CGFloat = 8
+
+    private var direction: SplitViewDirection {
+        handle.direction == .horizontal ? .horizontal : .vertical
+    }
+
+    var body: some View {
+        let isBetweenCards = if case .between = handle.kind { true } else { false }
+        let visibleSize = paneGap ?? 1
+        let hit = handle.line(thickness: visibleSize + grabZone)
+        ZStack {
+            // In the flat style the cards on show meet at a line, as panes
+            // side by side do; elsewhere a grip is only a cursor.
+            if isBetweenCards && paneGap == nil {
+                Rectangle()
+                    .fill(color)
+                    .frame(width: direction == .horizontal ? 1 : nil, height: direction == .vertical ? 1 : nil)
+            }
+            DividerHandle(
+                direction: direction,
+                onDragBegan: { send(.began) },
+                onDragDelta: { delta, _ in send(.moved(position: delta, dimension: 0)) },
+                onDragEnded: { send(.ended) },
+                onDoubleClick: nil,
+                currentSplit: { 0.5 },
+                // A grip goes away as the row collapses or widens; the drag
+                // carries on, and can undo it.
+                tracksModally: true)
+        }
+        .frame(width: hit.width, height: hit.height)
+        .offset(x: hit.minX, y: hit.minY)
+    }
+
+    /// Every message of one drag carries the row and grip as the drag found
+    /// them: the controller replays each step from there.
+    private func send(_ gesture: SplitViewDividerGesture) {
+        action(.stackDrag(.init(row: handle.row, kind: handle.kind, direction: handle.direction, gesture: gesture)))
     }
 }
 
@@ -179,6 +413,8 @@ private struct PaneLeafView: View {
     @EnvironmentObject var ghostty: Ghostty.App
     @ObservedObject var pane: PaneView
     let isSplit: Bool
+    /// A card of a stacked row, which other cards overlap.
+    var isStacked: Bool = false
     let rearranging: Bool
 
     @ObservedObject private var dragSession = PaneDragSession.shared
@@ -203,6 +439,7 @@ private struct PaneLeafView: View {
         .modifier(PaneCard(
             isElevated: ghostty.config.macosPaneStyle == .elevated,
             isGlass: ghostty.config.paneGlass,
+            isSolid: isStacked,
             // Only among siblings: a lone pane has nothing to stand out from.
             isFocused: isSplit && pane.isFocusedPane,
             background: ghostty.config.backgroundColor,

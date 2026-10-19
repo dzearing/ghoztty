@@ -134,7 +134,7 @@ struct PaneSidebarWindowTests {
         let dragSeconds = Date().timeIntervalSince(started)
         await settle(1.0)
         let during = read() - before
-        try? "resizes delivered during the drag: \(during)\n".write(
+        try? "resizes delivered during the drag: \(during) over \(Int(dragSeconds * 1000))ms\n".write(
             toFile: "/tmp/pane-sidebar-snapshots/winch-result.txt", atomically: true, encoding: .utf8)
         #expect(during >= 1, "the final size must still arrive")
         // Was 35 (one per 25ms) before the debounce; 4 after, measured. A long

@@ -74,8 +74,23 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     /// pane-sidebar row is a list row first and keeps the arrow.
     var showsGrabCursor: Bool = true
 
+    /// Draw no drag image: the source moves something real with the pointer
+    /// instead (`onDragMoved`) — a stack's strip moves its card.
+    var showsPreview: Bool = true
+
+    /// The pointer moved, in screen points, during a drag; and the drag ended.
+    var onDragMoved: ((NSPoint) -> Void)?
+    var onDragFinished: (() -> Void)?
+
+    /// How far the pointer must move with the button down before it is a drag
+    /// rather than a click. A wobble during a click is not a drag.
+    static let dragThreshold: CGFloat = 5
+
     /// Whether we are inside a drag (between `willBegin` and `endedAt`).
     private var isTracking: Bool = false
+
+    /// Where the button went down, in window coordinates.
+    private var downLocation: NSPoint?
 
     private var escapeMonitor: Any?
     private var dragCancelledByEscape: Bool = false
@@ -95,6 +110,7 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     override func mouseDown(with event: NSEvent) {
         // Deliberately not calling super: consuming mouseDown keeps the
         // window drag handler out of it. The drag starts in mouseDragged.
+        downLocation = event.locationInWindow
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -119,6 +135,10 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
 
     override func mouseDragged(with event: NSEvent) {
         guard !isTracking, let pane else { return }
+        if let downLocation {
+            let moved = hypot(event.locationInWindow.x - downLocation.x, event.locationInWindow.y - downLocation.y)
+            guard moved >= Self.dragThreshold else { return }
+        }
 
         // A lone pane in the only terminal window has nowhere to go: every
         // target would either be itself or a new window holding the same pane.
@@ -144,7 +164,12 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
 
         // A stashed pane is unmounted and has nothing to snapshot; the row it
         // is being dragged from stands in for it.
-        if let snapshot = pane.dragSnapshot ?? ownSnapshot {
+        if !showsPreview {
+            // AppKit wants a frame for the item; an empty image draws nothing.
+            let point = convert(event.locationInWindow, from: nil)
+            draggingItem.setDraggingFrame(NSRect(x: point.x, y: point.y, width: 1, height: 1),
+                                          contents: NSImage(size: NSSize(width: 1, height: 1)))
+        } else if let snapshot = pane.dragSnapshot ?? ownSnapshot {
             let imageSize = NSSize(
                 width: snapshot.size.width * Self.previewScale,
                 height: snapshot.size.height * Self.previewScale)
@@ -205,6 +230,7 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
         NSCursor.closedHand.set()
+        onDragMoved?(screenPoint)
         MainActor.assumeIsolated {
             PaneDragSession.shared.update(screenPoint: screenPoint)
         }
@@ -231,7 +257,9 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
         }
 
         isTracking = false
+        downLocation = nil
         onDragStateChanged?(false)
+        onDragFinished?()
     }
 }
 
