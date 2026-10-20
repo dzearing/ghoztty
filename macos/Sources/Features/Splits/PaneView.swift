@@ -33,6 +33,8 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
     @Published private(set) var bell: Bool = false
     @Published private(set) var activityState: Ghostty.ActivityState = .idle
     @Published private(set) var paneBanner: String?
+    /// The terminal's working directory (nil for a viewer).
+    @Published private(set) var pwd: String?
 
     var surfaceView: Ghostty.SurfaceView? {
         if case .terminal(let view) = content { return view }
@@ -72,7 +74,15 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             confirmCloseEnabled: confirmCloseEnabled)
     }
 
-    var pwd: String? { surfaceView?.pwd }
+    /// What the pane is called in one line — a sidebar row, a stacked
+    /// strip: its banner's title, else its own (`PaneSidebarText.label`).
+    var displayLabel: String {
+        PaneSidebarText.label(
+            title: title,
+            pwd: pwd,
+            kind: surfaceView != nil ? "Terminal" : "Viewer",
+            banner: paneBanner)
+    }
 
     /// Forward geometry to the mounted content view (see class doc).
     override var bounds: NSRect {
@@ -98,6 +108,7 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             view.$bell.assign(to: &$bell)
             view.$activityState.assign(to: &$activityState)
             view.$paneBanner.assign(to: &$paneBanner)
+            view.$pwd.assign(to: &$pwd)
         case .viewer(let view):
             view.$title.assign(to: &$title)
         }

@@ -280,12 +280,7 @@ struct PaneSidebarRow: View {
 
     private var isBusy: Bool { pane.activityState == .busy }
 
-    private var displayTitle: String {
-        PaneSidebarText.title(
-            pane.title,
-            pwd: pane.surfaceView?.pwd,
-            kind: pane.surfaceView != nil ? "Terminal" : "Viewer")
-    }
+    private var displayTitle: String { pane.displayLabel }
 
     private var iconColor: Color {
         if onAccent { return .white }
@@ -372,7 +367,7 @@ private struct PaneSidebarSubtitle: View {
 
         var body: some View {
             // A banner line is prose — cut its tail. A path keeps both ends.
-            let isBanner = PaneSidebarText.bannerLine(banner) != nil
+            let isBanner = PaneSidebarText.bannerTitle(banner) == nil && PaneSidebarText.bannerLine(banner) != nil
             line(PaneSidebarText.distinct(
                     PaneSidebarText.subtitle(banner: banner, pwd: surface.pwd, viewerLocation: nil),
                     from: title),

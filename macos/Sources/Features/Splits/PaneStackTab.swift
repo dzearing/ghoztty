@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The visible sliver of a pane tucked into a stack (see `PaneLayout`): a
-/// dark strip down the card's leading edge with the pane's title running
+/// dark strip down the card's leading edge with the pane's name running
 /// along it, over the scrim that dims the card (`PaneCardView`). Clicking it
 /// focuses the pane, which is what brings it forward — the stack's run
 /// follows focus (`PaneStackState`).
@@ -66,7 +66,11 @@ final class PaneStackTabView: NSView {
             addSubview(host, positioned: .below, relativeTo: dragSource)
             self.host = host
         }
-        setAccessibilityLabel("Tucked pane: \(face.title)")
+    }
+
+    // Read when asked, so it follows a banner or title change between layouts.
+    override func accessibilityLabel() -> String? {
+        pane.map { "Tucked pane: \($0.displayLabel)" }
     }
 
     // The whole tab is one target; the face inside it is only drawing.
@@ -176,9 +180,9 @@ struct PaneStackTabFace: View {
         }
     }
 
-    var title: String {
-        pane.title.isEmpty ? "Pane" : pane.title
-    }
+    /// The banner's title when it has one, else the pane's — the same name
+    /// the pane sidebar gives it. Observing the pane keeps it live.
+    var title: String { pane.displayLabel }
 
     private var strip: Color {
         let base = OSColor(background).blended(withFraction: isLight ? 0.06 : 0.35, of: .black) ?? OSColor(background)

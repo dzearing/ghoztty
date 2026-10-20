@@ -964,14 +964,15 @@ extension PaneSidebarText {
     /// set one, the placeholder ghost. What the all-windows scope sorts and
     /// groups by.
     /// Everything a pane's row says about it, for the all-windows search:
-    /// its title, banner, and working directory or location (both as shown
-    /// and in full, so `~/git` and `/Users/me/git` each find it).
+    /// its name, its own title (which a banner title hides), banner, and
+    /// working directory or location (both as shown and in full, so `~/git`
+    /// and `/Users/me/git` each find it).
     @MainActor
     static func searchFields(of pane: PaneView) -> [String?] {
         let pwd = pane.surfaceView?.pwd
         let location = pane.viewerView?.location
         return [
-            title(pane.title, pwd: pwd, kind: pane.surfaceView != nil ? "Terminal" : "Viewer"),
+            pane.displayLabel, pane.title,
             bannerLine(pane.paneBanner),
             pwd, pwd?.abbreviatedPath,
             location, location?.abbreviatedPath,

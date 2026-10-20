@@ -1003,6 +1003,80 @@ struct PaneStackWindowTests {
         #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id))
     }
 
+    /// A strip is named by its pane's banner title when the banner has one,
+    /// live: setting the banner relabels the strip, a banner with no title
+    /// leaves the pane's own title, and clearing it brings that back. Read
+    /// off the composited window, so it is the drawn label, not a model.
+    @Test func aStripIsLabeledByItsBannerTitleLive() async throws {
+        let (controller, window, panes) = try await stackedWindow()
+        defer { controller.close() }
+        let pane = panes[0]
+        let surface = try #require(pane.surfaceView)
+        let strip = try tab(window, pane)
+        let ownName = strip.accessibilityLabel()
+
+        // The strip's pixels, from a capture of the whole window.
+        func stripPixels(_ name: String) async throws -> [UInt8] {
+            let content = try await SCShareableContent.currentProcess
+            let scWindow = try #require(content.windows.first { $0.windowID == CGWindowID(window.windowNumber) })
+            let cfg = SCStreamConfiguration()
+            cfg.width = Int(scWindow.frame.width * 2)
+            cfg.height = Int(scWindow.frame.height * 2)
+            cfg.showsCursor = false
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg)
+            let dir = "/tmp/pane-stack-snapshots"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: "\(dir)/strip-label-\(name).png"))
+            // Window points, top-left origin, to the capture's pixels.
+            let r = strip.convert(strip.bounds, to: nil)
+            let frame = window.frame
+            let scale = CGFloat(image.width) / frame.width
+            let crop = CGRect(x: r.minX * scale, y: (frame.height - r.maxY) * scale,
+                              width: r.width * scale, height: r.height * scale).integral
+            let cropped = try #require(image.cropping(to: crop))
+            let rep = NSBitmapImageRep(cgImage: cropped)
+            var out: [UInt8] = []
+            for y in 0..<rep.pixelsHigh {
+                for x in 0..<rep.pixelsWide {
+                    let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+                    out.append(UInt8(((c?.brightnessComponent ?? 0) * 255).rounded()))
+                }
+            }
+            return out
+        }
+        func differs(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+            a.count != b.count || zip(a, b).contains { abs(Int($0) - Int($1)) > 24 }
+        }
+
+        let plain = try await stripPixels("0-pane-title")
+
+        surface.paneBanner = PaneSidebarTextTests.hookBanner
+        await settle(0.4)
+        #expect(strip.accessibilityLabel() == "Tucked pane: Strip label from banner title")
+        let titled = try await stripPixels("1-banner-title")
+        #expect(differs(plain, titled), "the banner title replaced the pane title on the strip")
+
+        surface.paneBanner = "## Another task\n|  |  |\n|---|---|\n| **Status** | Working |"
+        await settle(0.4)
+        #expect(strip.accessibilityLabel() == "Tucked pane: Another task")
+        #expect(differs(titled, try await stripPixels("2-new-banner-title")), "a new banner title relabels it")
+
+        // A banner with no title names nothing: the pane's own title is back.
+        surface.paneBanner = "|  |  |\n|---|---|\n| **Prompt** | do the thing |\n| **Status** | Idle |"
+        await settle(0.4)
+        #expect(strip.accessibilityLabel() == ownName)
+        #expect(!differs(plain, try await stripPixels("3-untitled-banner")), "an untitled banner keeps the pane title")
+
+        surface.paneBanner = PaneSidebarTextTests.hookBanner
+        await settle(0.4)
+        surface.paneBanner = nil
+        await settle(0.4)
+        #expect(strip.accessibilityLabel() == ownName)
+        #expect(!differs(plain, try await stripPixels("4-cleared")), "clearing the banner brings the pane title back")
+    }
+
     @Test func aWobbleDuringAClickOnAStripIsStillAClick() async throws {
         let (controller, window, panes) = try await stackedWindow()
         defer { controller.close() }
