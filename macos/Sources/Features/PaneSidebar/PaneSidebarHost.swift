@@ -417,7 +417,23 @@ private struct PaneSidebarChrome: View {
                 }
             })
             .frame(width: SidePanelResizeHandle.grabWidth)
-            .offset(x: SidePanelResizeHandle.grabWidth / 2 - (mode == .mini ? railInsets.trailing : 0))
+            .offset(x: resizeHandleOffset)
+    }
+
+    /// Where the edge grip sits against the card's trailing edge. Like every
+    /// resizer, never over a pane: it straddles the edge only when what lies
+    /// past it is a gutter (the elevated grid's margin beside the pinned
+    /// panel); beside the flat grid, which starts right at the panel, and on
+    /// the card floating over the grid (the rail, open or not), it lies just
+    /// inside the edge.
+    private var resizeHandleOffset: CGFloat {
+        let half = SidePanelResizeHandle.grabWidth / 2
+        let elevated = controller.ghostty.config.macosPaneStyle == .elevated
+        switch mode {
+        case .expanded: return elevated ? half : -half
+        case .mini: return -half - railInsets.trailing
+        case .hidden: return 0
+        }
     }
 
     private var railInsets: PaneSidebarState.RailInsets {

@@ -36,8 +36,16 @@ enum TerminalSplitOperation {
         var displayed: SplitTree<PaneView>.Node? = nil
 
         /// On `.began`: the row the divider is in. Dragged well past a pane's
-        /// minimum, the row collapses instead (`PaneLayout.Restack`).
+        /// minimum, the row collapses instead (`PaneLayout.Restack`), one
+        /// pane after another as the drag goes on (`PaneLayout.chain`).
         var row: PaneLayout.Row<UUID>? = nil
+
+        /// On `.began`: how many of the row's items lie before the divider.
+        var boundary: Int = 0
+
+        /// On `.began`: where the node starts in the row, so a position in
+        /// the node is measured from the row's start by adding it.
+        var rowOffset: CGFloat = 0
     }
 
     /// A grip on a stacked row dragged (`PaneLayout.StackHandle`). The row and
@@ -48,6 +56,8 @@ enum TerminalSplitOperation {
         let kind: PaneLayout.StackHandle<UUID>.Kind
         let direction: PaneLayout.Direction
         let gesture: SplitViewDividerGesture
+        /// Where the grip was in its row when the drag began.
+        var position: CGFloat = 0
     }
 }
 
@@ -89,8 +99,9 @@ struct TerminalSplitTreeView: View {
                 // See: https://github.com/ghostty-org/ghostty/issues/7546
                 .id(node.structuralIdentity)
                 // A top-level insert spans the whole window, so its feedback
-                // cannot belong to any one leaf.
+                // cannot belong to any one leaf; nor does a strip's slot.
                 .overlay { TopLevelDropOverlay(windowRef: windowRef) }
+                .overlay { BladeDropOverlay(windowRef: windowRef) }
             }
         }
         .background {
@@ -175,9 +186,16 @@ private struct PaneGrid: View {
                 metrics: .forStyle(paneGap: paneGap),
                 rank: { ranks[$0.id] },
                 pin: { pins[$0] },
-                shares: { shares[$0] })
+                shares: { shares[$0] },
+                // The stashed-pane layer lays out another tree; the runs
+                // that stick are the grid's.
+                shown: { slots == nil ? stackState.shownRun($0) : nil })
             let panes = node.leaves()
-            let _ = layout.stacks.forEach { stackState.noteItems($0.items, fits: $0.fits) }
+            // The grid on screen is the one whose stacks a drag finds; the
+            // hidden stashed-pane layer lays out the full tree.
+            let _ = slots == nil
+                ? stackState.noteStacks(layout.stacks)
+                : layout.stacks.forEach { stackState.noteItems($0.items, fits: $0.fits) }
             ZStack(alignment: .topLeading) {
                 if let slots {
                     ForEach(panes, id: \.id) { pane in
@@ -270,13 +288,6 @@ private struct GridDivider: View {
     let color: Color
     let action: (TerminalSplitOperation) -> Void
 
-    /// Extra grab zone around the visible line (~4pt into each pane). This is
-    /// realized by an APPKIT handle view (`DividerHandle`) layered above the
-    /// panes: the panes host AppKit views (terminal surfaces, web views) that
-    /// out-hit-test any SwiftUI gesture area, so a SwiftUI-only divider is
-    /// effectively a 1px target no matter how large its invisible frame is.
-    private let grabZone: CGFloat = 8
-
     /// A drag keeps a sliver of each side; the controller clamps again
     /// against the pane minimums, which can only be tighter.
     private let floor: CGFloat = 10
@@ -291,13 +302,21 @@ private struct GridDivider: View {
     }
 
     var body: some View {
-        let visibleSize = paneGap ?? 1
-        let hit = divider.line(thickness: visibleSize + grabZone)
+        // The grab target is the gutter between the panes, all of it and
+        // nothing more: a click just inside a pane's edge is the pane's (its
+        // grab handle sits there). It is an APPKIT handle view
+        // (`DividerHandle`) layered above the panes, because the panes host
+        // AppKit views (terminal surfaces, web views) that out-hit-test any
+        // SwiftUI gesture area.
+        let hit = divider.gutter
+        let across = direction == .horizontal ? hit.width : hit.height
+        // The flat style's line, down the middle of its gutter.
+        let line: CGFloat = paneGap == nil ? 1 : across
         ZStack {
             SplitView<EmptyView, EmptyView>.Divider(
                 direction: direction,
-                visibleSize: visibleSize,
-                invisibleSize: grabZone,
+                visibleSize: line,
+                invisibleSize: across - line,
                 color: paneGap == nil ? color : .clear,
                 split: divider.fraction,
                 onAdjust: { fraction in
@@ -330,11 +349,15 @@ private struct GridDivider: View {
     }
 
     private func send(_ gesture: SplitViewDividerGesture) {
+        let began = if case .began = gesture { true } else { false }
+        let nodeStart = divider.direction == .horizontal ? divider.nodeFrame.minX : divider.nodeFrame.minY
         action(.resize(.init(
             node: divider.node,
             gesture: gesture,
-            displayed: { if case .began = gesture { return displayed } else { return nil } }(),
-            row: { if case .began = gesture { return divider.row } else { return nil } }())))
+            displayed: began ? displayed : nil,
+            row: began ? divider.row : nil,
+            boundary: divider.index,
+            rowOffset: nodeStart - divider.row.start)))
     }
 
     private func move(to position: CGFloat) {
@@ -363,16 +386,14 @@ private struct StackGrip: View {
     let color: Color
     let action: (TerminalSplitOperation) -> Void
 
-    private let grabZone: CGFloat = 8
-
     private var direction: SplitViewDirection {
         handle.direction == .horizontal ? .horizontal : .vertical
     }
 
     var body: some View {
         let isBetweenCards = if case .between = handle.kind { true } else { false }
-        let visibleSize = paneGap ?? 1
-        let hit = handle.line(thickness: visibleSize + grabZone)
+        // The gutter it sits in, and nothing more (see `GridDivider`).
+        let hit = handle.gutter
         ZStack {
             // In the flat style the cards on show meet at a line, as panes
             // side by side do; elsewhere a grip is only a cursor.
@@ -399,7 +420,9 @@ private struct StackGrip: View {
     /// Every message of one drag carries the row and grip as the drag found
     /// them: the controller replays each step from there.
     private func send(_ gesture: SplitViewDividerGesture) {
-        action(.stackDrag(.init(row: handle.row, kind: handle.kind, direction: handle.direction, gesture: gesture)))
+        action(.stackDrag(.init(
+            row: handle.row, kind: handle.kind, direction: handle.direction, gesture: gesture,
+            position: handle.position)))
     }
 }
 

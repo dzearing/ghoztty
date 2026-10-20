@@ -53,13 +53,111 @@ enum PaneDropTarget: Equatable {
     /// dragging across the screen.
     case joinWindow(window: PaneDropWindowRef)
 
+    /// A strip dragged along its own row: move the pane to `side` of the
+    /// row's item made of the panes `beside`, within the row. `caret` is
+    /// the insertion line to draw, in screen coordinates.
+    case reorder(window: PaneDropWindowRef, beside: Set<UUID>, side: SplitTree<PaneView>.NewDirection, caret: CGRect)
+
+    /// A strip dragged to a screen's edge: a new window holding the pane,
+    /// covering `frame` — that half of the screen's visible frame.
+    case tile(frame: CGRect)
+
     /// The window this target lands in, or nil for a brand new one.
     var window: PaneDropWindowRef? {
         switch self {
         case .split(let w, _, _), .swap(let w, _), .topLevel(let w, _), .newTab(let w, _),
-             .stash(let w, _), .joinWindow(let w): w
-        case .newWindow: nil
+             .stash(let w, _), .joinWindow(let w), .reorder(let w, _, _, _): w
+        case .newWindow, .tile: nil
         }
+    }
+}
+
+/// A strip — a pane minimized in a collapsed row — being dragged. It gets
+/// targets of its own instead of a pane's (`PaneDropResolver.resolveBlade`).
+struct PaneBladeDrag {
+    /// Where in its row the strip can go: one slot per place between two of
+    /// the row's items (cards on show and strips alike), and one at each
+    /// end. In screen coordinates.
+    struct Slot: Equatable {
+        /// Where the pointer means this slot.
+        let rect: CGRect
+        /// The insertion line to draw: the gutter at the slot.
+        let caret: CGRect
+        /// The item the pane goes beside, by its panes, and which side.
+        let beside: Set<UUID>
+        let side: SplitTree<PaneView>.NewDirection
+    }
+
+    /// The window the strip lives in.
+    let window: PaneDropWindowRef
+    let slots: [Slot]
+    /// Every screen's visible frame, for tiling to an edge.
+    let screens: [CGRect]
+
+    /// How far in from a screen's edge a drop tiles to it. Narrower than the
+    /// window edge band: a window that fills the screen keeps its own edges
+    /// just inside.
+    static let screenEdgeBand: CGFloat = 12
+
+    /// How far a slot reaches into the cards either side of its gutter: a
+    /// strip is 36pt, so the slots either side of one meet across it.
+    static let slotReach: CGFloat = 24
+
+    /// The slots of a row: `items` in order, each with the screen rect its
+    /// panes show in (a card, or its strip) and its panes; `dragged`'s own
+    /// item is left out (a drop beside itself changes nothing).
+    static func slots(
+        items: [(rect: CGRect, panes: Set<UUID>)],
+        direction: PaneLayout.Direction,
+        dragged: UUID
+    ) -> [Slot] {
+        // The dragged pane leaves wherever it was: its own item, or the
+        // column it was one pane of.
+        let others = items.filter { $0.panes != [dragged] }
+            .map { (rect: $0.rect, panes: $0.panes.subtracting([dragged])) }
+        guard !others.isEmpty else { return [] }
+        let across = others.dropFirst().reduce(others[0].rect) { $0.union($1.rect) }
+        // Screen coordinates run UP: a column's first item is its top.
+        let (before, after): (SplitTree<PaneView>.NewDirection, SplitTree<PaneView>.NewDirection) =
+            direction == .horizontal ? (.left, .right) : (.up, .down)
+        func band(_ from: CGFloat, _ to: CGFloat) -> (rect: CGRect, caret: CGRect) {
+            let mid = (from + to) / 2
+            let reach = Swift.max(slotReach, (to - from) / 2)
+            switch direction {
+            case .horizontal:
+                return (CGRect(x: mid - reach, y: across.minY, width: 2 * reach, height: across.height),
+                        CGRect(x: mid - 1.5, y: across.minY, width: 3, height: across.height))
+            case .vertical:
+                return (CGRect(x: across.minX, y: mid - reach, width: across.width, height: 2 * reach),
+                        CGRect(x: across.minX, y: mid - 1.5, width: across.width, height: 3))
+            }
+        }
+        // Along the row: leading to trailing (a column's leading is its top,
+        // which is the HIGHER y on screen).
+        func lead(_ r: CGRect) -> CGFloat { direction == .horizontal ? r.minX : r.maxY }
+        func trail(_ r: CGRect) -> CGFloat { direction == .horizontal ? r.maxX : r.minY }
+        var slots: [Slot] = []
+        let first = others[0]
+        let start = band(lead(first.rect), lead(first.rect))
+        slots.append(Slot(rect: start.rect, caret: start.caret, beside: first.panes, side: before))
+        for (a, b) in zip(others, others.dropFirst()) {
+            // Leaving out the dragged pane's own item leaves its neighbours'
+            // gap wider; the slot spans it.
+            let gap = direction == .horizontal ? band(trail(a.rect), lead(b.rect)) : band(lead(b.rect), trail(a.rect))
+            slots.append(Slot(rect: gap.rect, caret: gap.caret, beside: a.panes, side: after))
+        }
+        let last = others[others.count - 1]
+        let end = band(trail(last.rect), trail(last.rect))
+        slots.append(Slot(rect: end.rect, caret: end.caret, beside: last.panes, side: after))
+        // A drop beside the strip's own neighbours, on its own side, is
+        // where it already is.
+        let index = items.firstIndex { $0.panes == [dragged] }
+        return slots.enumerated().filter { k, _ in
+            guard let index else { return true }
+            // Slot k sits between others[k-1] and others[k]: the dragged
+            // item's own place is the slot that replaced it.
+            return k != index
+        }.map(\.element)
     }
 }
 
@@ -176,12 +274,15 @@ enum PaneDropResolver {
 
     /// The drop `screenPoint` currently means, or nil for "nothing would
     /// happen" (over a window but not over any target, or over the dragged
-    /// pane itself).
+    /// pane itself). A strip being dragged (`blade`) means something else
+    /// (`resolveBlade`).
     static func resolve(
         screenPoint: CGPoint,
         candidates: [PaneDropCandidate],
-        dragged: UUID
+        dragged: UUID,
+        blade: PaneBladeDrag? = nil
     ) -> PaneDropTarget? {
+        if let blade { return resolveBlade(screenPoint: screenPoint, candidates: candidates, dragged: dragged, blade: blade) }
         let ordered = candidates.sorted { $0.zOrder < $1.zOrder }
 
         // The tab bar sits outside the content rect and outranks it: it is
@@ -223,6 +324,71 @@ enum PaneDropResolver {
         case .center: .swap(window: candidate.window, pane: pane.id)
         case .edge(let direction): .split(window: candidate.window, pane: pane.id, direction: direction)
         }
+    }
+
+    /// What dropping a strip at `screenPoint` means. A strip is a pane put
+    /// away in its row, so it has the targets of a pane being put somewhere
+    /// else in that row, or taken out of the window — never a pane's own
+    /// split quadrants or swap (a strip used to swap with a pane it was
+    /// dropped on):
+    ///
+    /// 1. **A screen's edge** (`screenEdgeBand`): a new window tiled to that
+    ///    half of the screen. Outermost, so it wins at the very edge.
+    /// 2. **The pane sidebar**: stash it, as for any pane.
+    /// 3. **A slot in its own row**, between two of its cards or strips or
+    ///    at either end: the pane moves there.
+    /// 4. **A window's edge band**: a top-level insert, as for any pane.
+    ///
+    /// Anywhere else, nothing: the card settles back.
+    static func resolveBlade(
+        screenPoint: CGPoint,
+        candidates: [PaneDropCandidate],
+        dragged: UUID,
+        blade: PaneBladeDrag
+    ) -> PaneDropTarget? {
+        if let frame = tileFrame(at: screenPoint, screens: blade.screens) {
+            return .tile(frame: frame)
+        }
+        let ordered = candidates.sorted { $0.zOrder < $1.zOrder }
+        // The pane sidebar is chrome, as for any pane: a strip stashes there.
+        if let hit = sidebarHit(screenPoint: screenPoint, candidates: ordered, dragged: dragged) {
+            return hit
+        }
+        let over = ordered.first { $0.contentRect.contains(screenPoint) }
+        if over == nil || over?.window == blade.window,
+           let slot = blade.slots.min(by: { distance(screenPoint, $0.caret) < distance(screenPoint, $1.caret) }),
+           slot.rect.contains(screenPoint) {
+            return .reorder(window: blade.window, beside: slot.beside, side: slot.side, caret: slot.caret)
+        }
+        guard let over, let side = edgeBandSide(for: screenPoint, in: over.contentRect) else { return nil }
+        return .topLevel(window: over.window, side: side)
+    }
+
+    /// The half of a screen a point at its edge tiles to, or nil when the
+    /// point is not at any screen's edge.
+    static func tileFrame(at point: CGPoint, screens: [CGRect]) -> CGRect? {
+        let band = PaneBladeDrag.screenEdgeBand
+        for screen in screens where screen.insetBy(dx: -1, dy: -1).contains(point) {
+            let toLeft = point.x - screen.minX, toRight = screen.maxX - point.x
+            let toTop = screen.maxY - point.y, toBottom = point.y - screen.minY
+            let nearest = Swift.min(toLeft, toRight, toTop, toBottom)
+            guard nearest <= band else { return nil }
+            let half = CGSize(width: screen.width / 2, height: screen.height / 2)
+            if nearest == toLeft { return CGRect(origin: screen.origin, size: CGSize(width: half.width, height: screen.height)) }
+            if nearest == toRight {
+                return CGRect(x: screen.midX, y: screen.minY, width: half.width, height: screen.height)
+            }
+            if nearest == toTop { return CGRect(x: screen.minX, y: screen.midY, width: screen.width, height: half.height) }
+            return CGRect(origin: screen.origin, size: CGSize(width: screen.width, height: half.height))
+        }
+        return nil
+    }
+
+    /// How far a point is from a rect (0 inside it).
+    private static func distance(_ p: CGPoint, _ r: CGRect) -> CGFloat {
+        let dx = Swift.max(r.minX - p.x, 0, p.x - r.maxX)
+        let dy = Swift.max(r.minY - p.y, 0, p.y - r.maxY)
+        return (dx * dx + dy * dy).squareRoot()
     }
 
     /// The tab currently under the pointer, for the long-hover timer that

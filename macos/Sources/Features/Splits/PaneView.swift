@@ -120,6 +120,15 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
     /// false since PaneView is never in a window.)
     var contentIsFirstResponder: Bool { contentView.isFirstResponder }
 
+    /// The window's first responder is this pane's content or inside it (a
+    /// viewer's web view, its address field): the pane really has the caret,
+    /// rather than being remembered as the window's focused terminal while
+    /// the caret is somewhere else.
+    var holdsKeyboardFocus: Bool {
+        guard let responder = contentView.window?.firstResponder as? NSView else { return false }
+        return responder === contentView || responder.isDescendant(of: contentView)
+    }
+
     /// Forward focus change notifications to terminal content. No-op for
     /// viewers (WKWebView manages its own focus ring).
     func focusDidChange(_ focused: Bool) {

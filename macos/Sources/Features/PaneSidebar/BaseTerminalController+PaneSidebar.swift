@@ -36,7 +36,7 @@ extension BaseTerminalController {
 
         // Decide focus against the CURRENT layout, before the pane leaves it.
         let nextFocus: PaneView? = (!wasStashed && focusedPane === pane)
-            ? surfaceTree.root?.node(view: pane).flatMap { findNextFocusTargetAfterClosing(node: $0) }
+            ? surfaceTree.root?.node(view: pane).flatMap { focusTargetAfterRemoving($0, leaving: newTree) }
             : nil
 
         replaceSurfaceTree(
@@ -191,7 +191,7 @@ extension BaseTerminalController {
         }
 
         let nextFocus: PaneView? = focusedPane === pane
-            ? findNextFocusTargetAfterClosing(node: node)
+            ? focusTargetAfterRemoving(node, leaving: surfaceTree.removing(node))
             : nil
 
         // Assigning directly is what skips the undo registration. The

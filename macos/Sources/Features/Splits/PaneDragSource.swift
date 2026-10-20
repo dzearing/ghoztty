@@ -78,6 +78,10 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     /// instead (`onDragMoved`) — a stack's strip moves its card.
     var showsPreview: Bool = true
 
+    /// A stack's strip: the drag has a strip's targets
+    /// (`PaneDropResolver.resolveBlade`).
+    var isBlade: Bool = false
+
     /// The pointer moved, in screen points, during a drag; and the drag ended.
     var onDragMoved: ((NSPoint) -> Void)?
     var onDragFinished: (() -> Void)?
@@ -193,7 +197,7 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
         }
 
         MainActor.assumeIsolated {
-            PaneDragSession.shared.begin(pane: pane, from: controller)
+            PaneDragSession.shared.begin(pane: pane, from: controller, isBlade: isBlade)
         }
         onDragStateChanged?(true)
 

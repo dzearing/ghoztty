@@ -63,10 +63,14 @@ enum PaneLayout {
         /// small for even one pane plus slivers lets the front panes shrink.
         static let minimumPeek: CGFloat = 8
 
+        /// The flat style's gutter: its 1pt line runs down the middle. A real
+        /// gutter, not the line alone, because the gutters are where every
+        /// resize grip lives — a grip on a bare line would have to reach into
+        /// the panes either side, and an edge click there would resize.
+        static let flatGap: CGFloat = 6
+
         static func forStyle(paneGap: CGFloat?) -> Metrics {
-            // The flat style's 1pt line straddles the edge between two panes,
-            // half of it over each; the elevated style leaves a real gap.
-            Metrics(gap: paneGap ?? 0.5, peek: peek, minimumPaneSize: minimumPaneSize)
+            Metrics(gap: paneGap ?? flatGap, peek: peek, minimumPaneSize: minimumPaneSize)
         }
     }
 
@@ -121,6 +125,15 @@ enum PaneLayout {
         let run: ClosedRange<Int>
         /// The extent of each item on show, in order (`run.count` of them).
         var sizes: [CGFloat] = []
+        /// Where the row starts along its direction, in the grid's points,
+        /// and how long it is: what a drag's pointer is measured against.
+        var start: CGFloat = 0
+        var extent: CGFloat = 0
+        /// The smallest each item may be along the row, in order.
+        var minimums: [CGFloat] = []
+        /// The row's gutter, and how much of a strip shows.
+        var gap: CGFloat = 0
+        var peek: CGFloat = Metrics.peek
 
         /// What names the row in `PaneStackState`: its panes, in any order, so
         /// swapping two of them keeps the row what it was.
@@ -218,6 +231,111 @@ enum PaneLayout {
         }
     }
 
+    /// What a drag on a divider or a grip between cards has squeezed out of
+    /// its row: `count` items on show on `side` of it, outermost first.
+    struct Squeeze: Equatable {
+        var side: Side
+        var count: Int
+
+        /// The pin this makes of `row` (as the drag found it).
+        func pin<ID>(of row: Row<ID>) -> Pin? {
+            var run = row.run
+            var pin: Pin?
+            for _ in 0..<count {
+                pin = Pin.restacking(run, of: row.items.count, .collapse(side))
+                guard let pin else { break }
+                run = pin.start...(pin.start + pin.count - 1)
+            }
+            return pin
+        }
+
+        /// The run of `row` with this squeezed out of it.
+        func run<ID>(of row: Row<ID>) -> ClosedRange<Int> {
+            side == .trailing
+                ? row.run.lowerBound...(row.run.upperBound - count)
+                : (row.run.lowerBound + count)...row.run.upperBound
+        }
+    }
+
+    /// How a drag already squeezing `row` carries on, with its pointer at `x`
+    /// (from the row's start; the centre of the gutter the grip is in) and
+    /// `boundary` the row index of the first item after the grip: the chain.
+    /// Once the first item has tucked away (`current`), the grip follows the
+    /// pointer through the run (`squeezedShares`), and the next item on show
+    /// on the squeezed side tucks away in its turn once the pointer is
+    /// `past` beyond its minimum — until nothing on that side is left on
+    /// show. Coming back, each one returns once there is room for it again
+    /// at its minimum, last tucked first. Never below one: the first item's
+    /// return is the caller's (the drag's own threshold, which knows how its
+    /// split squeezes).
+    static func chain<ID>(_ row: Row<ID>, boundary: Int, at x: CGFloat, current: Squeeze, past: CGFloat) -> Squeeze {
+        let n = row.items.count, step = row.peek + row.gap
+        let maxCount = current.side == .trailing
+            ? row.run.upperBound - boundary + 1
+            : boundary - row.run.lowerBound
+        /// Room on the squeezed side with `k` squeezed out, and what the
+        /// items still on show there need.
+        func fit(_ k: Int) -> (room: CGFloat, need: CGFloat, shown: Int) {
+            let squeezed = Squeeze(side: current.side, count: k)
+            let run = squeezed.run(of: row)
+            let shown = run.filter { current.side == .trailing ? $0 >= boundary : $0 < boundary }
+            let need = shown.reduce(0) { $0 + (row.minimums.indices.contains($1) ? row.minimums[$1] : 0) }
+                + CGFloat(Swift.max(0, shown.count - 1)) * row.gap
+            let room: CGFloat = current.side == .trailing
+                ? row.extent - CGFloat(n - 1 - run.upperBound) * step - x - row.gap / 2
+                : x - row.gap / 2 - CGFloat(run.lowerBound) * step
+            return (room, need, shown.count)
+        }
+        var k = Swift.max(1, Swift.min(current.count, maxCount))
+        while k < maxCount {
+            let f = fit(k)
+            guard f.shown > 0, f.room < f.need - past else { break }
+            k += 1
+        }
+        while k > 1 {
+            let back = fit(k - 1)
+            guard back.room >= back.need else { break }
+            k -= 1
+        }
+        return Squeeze(side: current.side, count: k)
+    }
+
+    /// The run's slot sizes, as shares, that put the grip under the pointer
+    /// at `x` while `squeeze` is squeezed out of `row`: each side of it keeps
+    /// the proportions the drag found it with, and no item goes under its
+    /// minimum.
+    static func squeezedShares<ID>(_ row: Row<ID>, boundary: Int, squeeze: Squeeze, at x: CGFloat) -> [CGFloat] {
+        let n = row.items.count, step = row.peek + row.gap
+        let run = squeeze.run(of: row)
+        let runStart = CGFloat(run.lowerBound) * step
+        let runEnd = row.extent - CGFloat(n - 1 - run.upperBound) * step
+        let before = run.filter { $0 < boundary }, after = run.filter { $0 >= boundary }
+        func size(_ i: Int) -> CGFloat {
+            let k = i - row.run.lowerBound
+            return row.sizes.indices.contains(k) ? row.sizes[k] : 1
+        }
+        func minimum(_ i: Int) -> CGFloat { row.minimums.indices.contains(i) ? row.minimums[i] : 0 }
+        func fill(_ items: [Int], _ space: CGFloat) -> [CGFloat] {
+            guard !items.isEmpty else { return [] }
+            let available = space - CGFloat(items.count - 1) * row.gap
+            let floor = items.reduce(0) { $0 + minimum($1) }
+            return PaneLayout.waterFill(items.map(size), minimums: items.map(minimum),
+                                        available: Swift.max(available, floor))
+        }
+        let total = runEnd - runStart
+        var sizes: [CGFloat]
+        if before.isEmpty || after.isEmpty {
+            sizes = fill(before + after, total)
+        } else {
+            let afterFloor = after.reduce(0) { $0 + minimum($1) } + CGFloat(after.count - 1) * row.gap
+            let beforeFloor = before.reduce(0) { $0 + minimum($1) } + CGFloat(before.count - 1) * row.gap
+            let split = Swift.min(Swift.max(x - row.gap / 2 - runStart, beforeFloor), total - row.gap - afterFloor)
+            sizes = fill(before, split) + fill(after, total - split - row.gap)
+        }
+        let sum = sizes.reduce(0, +)
+        return sum > 0 ? sizes.map { $0 / sum } : sizes
+    }
+
     /// A divider between two side-by-side panes (or groups of panes).
     struct Divider<Node, ID: Hashable> {
         /// The binary split this divider belongs to — what a drag on it moves.
@@ -233,6 +351,9 @@ enum PaneLayout {
         let row: Row<ID>
         /// How many of the row's items lie before the divider.
         let index: Int
+        /// The gutter between the panes either side: where the divider takes
+        /// the mouse, and nowhere else.
+        var gutter: CGRect = .null
 
         /// The divider's place in its row, which outlives a change of ratio.
         var id: String { "\(row.items)#\(index)" }
@@ -241,18 +362,6 @@ enum PaneLayout {
         var fraction: CGFloat {
             let extent = direction == .horizontal ? nodeFrame.width : nodeFrame.height
             return extent > 0 ? position / extent : 0.5
-        }
-
-        /// The gap the divider sits in, as a line across the node.
-        func line(thickness: CGFloat) -> CGRect {
-            switch direction {
-            case .horizontal:
-                CGRect(x: nodeFrame.minX + position - thickness / 2, y: nodeFrame.minY,
-                       width: thickness, height: nodeFrame.height)
-            case .vertical:
-                CGRect(x: nodeFrame.minX, y: nodeFrame.minY + position - thickness / 2,
-                       width: nodeFrame.width, height: thickness)
-            }
         }
     }
 
@@ -275,20 +384,13 @@ enum PaneLayout {
         /// The grip's centre, in points from the stack's leading edge.
         let position: CGFloat
         let kind: Kind
+        /// The gutter the grip sits in — between two cards on show, or
+        /// between the run and the strip beside it — where it takes the
+        /// mouse, and nowhere else.
+        var gutter: CGRect = .null
 
         /// The grip's place, which outlives a resize of the slots around it.
         var id: String { "\(row.items)#\(row.run)#\(kind)" }
-
-        func line(thickness: CGFloat) -> CGRect {
-            switch direction {
-            case .horizontal:
-                CGRect(x: frame.minX + position - thickness / 2, y: frame.minY,
-                       width: thickness, height: frame.height)
-            case .vertical:
-                CGRect(x: frame.minX, y: frame.minY + position - thickness / 2,
-                       width: frame.width, height: thickness)
-            }
-        }
     }
 
     /// A row that is stacked, for callers that want to know (tests, a11y).
@@ -327,15 +429,20 @@ extension PaneLayout {
     ///   clicking its tab, by `goto_split`, from the sidebar — is what brings
     ///   it forward, and a stack the user is not working in keeps showing what
     ///   they last looked at there.
+    /// - Parameter shown: the run a row of these items had when last laid
+    ///   out, if it was a stack. The run sticks (`stickyRun`): focusing a
+    ///   pane already on show changes nothing, and focusing a strip slides
+    ///   the run only as far as it takes to show it.
     static func compute<V>(
         _ root: SplitTree<V>.Node,
         in rect: CGRect,
         metrics: Metrics,
         rank: @escaping (V) -> Int?,
         pin: @escaping (Set<V.ID>) -> Pin? = { _ in nil },
-        shares: @escaping (Set<V.ID>) -> [CGFloat]? = { _ in nil }
+        shares: @escaping (Set<V.ID>) -> [CGFloat]? = { _ in nil },
+        shown: @escaping ([[V.ID]]) -> ClosedRange<Int>? = { _ in nil }
     ) -> Result<V> where V.ID: Hashable {
-        var engine = Engine<V>(metrics: metrics, rank: rank, pin: pin, shares: shares)
+        var engine = Engine<V>(metrics: metrics, rank: rank, pin: pin, shares: shares, shown: shown)
         engine.result.displayed = engine.layout(root, in: rect, tucked: false, clip: nil)
         return engine.result
     }
@@ -363,7 +470,8 @@ extension PaneLayout {
             metrics: Metrics(gap: 0, peek: Metrics.peek, minimumPaneSize: minimum),
             rank: { _ in nil },
             pin: { _ in nil },
-            shares: { _ in nil })
+            shares: { _ in nil },
+            shown: { _ in nil })
         return stacking ? engine.compact(node, along: d) : engine.comfortable(node, along: d)
     }
 
@@ -408,6 +516,26 @@ extension PaneLayout {
         }.map(\.element)
     }
 
+    /// Which items of a stack are on show, given the run it showed when last
+    /// laid out (`before`): that run again while it is the same size and
+    /// shows the most recently focused item, else slid just far enough to
+    /// show it — so focusing a pane on show never moves a card (it used to
+    /// re-centre the run on it, bringing a strip out), and focusing a strip
+    /// moves the fewest. With no run before, or one of another size (the
+    /// window grew or shrank past a card), `visibleRun`.
+    static func stickyRun(_ before: ClosedRange<Int>?, ranks: [Int?], count: Int) -> ClosedRange<Int> {
+        let n = ranks.count
+        let count = Swift.min(Swift.max(count, 1), n)
+        guard let before, before.count == count, before.lowerBound >= 0, before.upperBound < n else {
+            return visibleRun(ranks: ranks, count: count)
+        }
+        let key = ranks.map { $0 ?? Int.max }
+        guard let front = key.indices.min(by: { key[$0] < key[$1] }), key[front] != Int.max,
+              !before.contains(front)
+        else { return before }
+        return front < before.lowerBound ? front...(front + count - 1) : (front - count + 1)...front
+    }
+
     static func visibleRun(ranks: [Int?], count: Int) -> ClosedRange<Int> {
         let n = ranks.count
         guard n > 0 else { return 0...0 }
@@ -437,6 +565,7 @@ private extension PaneLayout {
         let rank: (V) -> Int?
         let pin: (Set<V.ID>) -> Pin?
         let shares: (Set<V.ID>) -> [CGFloat]?
+        let shown: ([[V.ID]]) -> ClosedRange<Int>?
         var result = Result<V>()
         /// The elevation of the card being laid out, in each stack it is in.
         var elevation: [Int] = []
@@ -445,12 +574,14 @@ private extension PaneLayout {
             metrics: Metrics,
             rank: @escaping (V) -> Int?,
             pin: @escaping (Set<V.ID>) -> Pin?,
-            shares: @escaping (Set<V.ID>) -> [CGFloat]?
+            shares: @escaping (Set<V.ID>) -> [CGFloat]?,
+            shown: @escaping ([[V.ID]]) -> ClosedRange<Int>?
         ) {
             self.metrics = metrics
             self.rank = rank
             self.pin = pin
             self.shares = shares
+            self.shown = shown
         }
 
         // MARK: Sizes
@@ -480,7 +611,7 @@ private extension PaneLayout {
                     // Collapsed by the user: its run of cards, and slivers.
                     let card = row.map { compact($0.node, along: d) }.max() ?? 0
                     return card * CGFloat(pin.count) + metrics.gap * CGFloat(pin.count - 1)
-                        + metrics.peek * CGFloat(row.count - pin.count)
+                        + (metrics.peek + metrics.gap) * CGFloat(row.count - pin.count)
                 }
                 return row.reduce(0) { $0 + comfortable($1.node, along: d) }
                     + metrics.gap * CGFloat(row.count - 1)
@@ -494,7 +625,7 @@ private extension PaneLayout {
             if split.direction.layoutDirection == d {
                 let row = items(node, along: d)
                 let widest = row.map { compact($0.node, along: d) }.max() ?? 0
-                return widest + metrics.peek * CGFloat(row.count - 1)
+                return widest + (metrics.peek + metrics.gap) * CGFloat(row.count - 1)
             }
             return Swift.max(compact(split.left, along: d), compact(split.right, along: d))
         }
@@ -549,7 +680,10 @@ private extension PaneLayout {
                         offset += size + metrics.gap
                     }
                     var index = 0
-                    let shown = Row(items: ids(row.map(\.node)), run: 0...(row.count - 1), sizes: sizes)
+                    let shown = Row(
+                        items: ids(row.map(\.node)), run: 0...(row.count - 1), sizes: sizes,
+                        start: d == .horizontal ? rect.minX : rect.minY, extent: extent,
+                        minimums: minimums, gap: metrics.gap, peek: metrics.peek)
                     return layoutChain(node, along: d, spans: spans, index: &index, row: shown,
                                        tucked: tucked, clip: clip).node
                 } else {
@@ -590,9 +724,17 @@ private extension PaneLayout {
                 right: right.node))
             // A tucked row's dividers are under the cards in front of it.
             if !tucked {
+                // The gutter, in whole points as the panes are (`integral`).
+                let gutter = d == .horizontal
+                    ? CGRect(x: left.frame.maxX.rounded(), y: frame.minY.rounded(),
+                             width: Swift.max(0, right.frame.minX.rounded() - left.frame.maxX.rounded()),
+                             height: frame.maxY.rounded() - frame.minY.rounded())
+                    : CGRect(x: frame.minX.rounded(), y: left.frame.maxY.rounded(),
+                             width: frame.maxX.rounded() - frame.minX.rounded(),
+                             height: Swift.max(0, right.frame.minY.rounded() - left.frame.maxY.rounded()))
                 result.dividers.append(.init(
                     node: displayed, direction: d, nodeFrame: frame, position: centre - start,
-                    row: row, index: before))
+                    row: row, index: before, gutter: gutter))
             }
             return (frame, displayed)
         }
@@ -609,21 +751,31 @@ private extension PaneLayout {
         }
 
         /// A row that doesn't fit: as many items side by side as fit, the rest
-        /// tucked at either end.
+        /// tucked at either end. Every card on show and every strip is
+        /// separated from the next by the same gutter as panes side by side
+        /// (`Metrics.gap`): that is where the grips live, and a strip's
+        /// gutter is a place to drop a card between two others. The gutters
+        /// are the same wherever the run is, so moving it never resizes one.
         mutating func layoutStack(
             _ row: [Node], in rect: CGRect, along d: Direction, tucked: Bool, clip: CGRect?,
             fitsSideBySide: Bool
         ) -> [Node] {
             var laidOut: [Node] = []
             let n = row.count
+            let gap = metrics.gap
             let extent = d == .horizontal ? rect.width : rect.height
             // No card smaller than the largest item's minimum.
             let card = row.map { compact($0, along: d) }.max() ?? minimum(along: d)
-            let peek = Swift.max(Metrics.minimumPeek, Swift.min(metrics.peek, ((extent - card) / CGFloat(n - 1)).rounded(.down)))
+            let peek = Swift.max(
+                Metrics.minimumPeek,
+                Swift.min(metrics.peek, ((extent - card) / CGFloat(n - 1) - gap).rounded(.down)))
+            /// The extent `onShow` cards need with the rest as strips.
+            func needed(_ onShow: Int) -> CGFloat {
+                CGFloat(n - onShow) * (peek + gap) + CGFloat(onShow) * card + CGFloat(onShow - 1) * gap
+            }
             let pin = pinned(row)
             var fits = 1
-            while fits + 1 < n,
-                  CGFloat(n - fits - 1) * peek + CGFloat(fits + 1) * card + CGFloat(fits) * metrics.gap <= extent {
+            while fits + 1 < n, needed(fits + 1) <= extent {
                 fits += 1
             }
             let count = Swift.min(fits, pin?.count ?? n - 1)
@@ -631,7 +783,7 @@ private extension PaneLayout {
             // The run's slots: equal, or as the user sized them (`shares`), never
             // under a card's minimum. In whole points, so a card that moves to a
             // slot of the same size is not resized by rounding.
-            let runSpace = (extent - CGFloat(n - count) * peek - CGFloat(count - 1) * metrics.gap).rounded(.down)
+            let runSpace = (extent - CGFloat(n - count) * (peek + gap) - CGFloat(count - 1) * gap).rounded(.down)
             let wanted = shares(Set(ids(row).joined())).flatMap { $0.count == count ? $0 : nil }
                 ?? Array(repeating: 1 / CGFloat(count), count: count)
             var slots = PaneLayout.waterFill(
@@ -641,23 +793,27 @@ private extension PaneLayout {
             ).map { Swift.max(1, $0.rounded(.down)) }
             slots[count - 1] = Swift.max(1, runSpace - slots.dropLast().reduce(0, +))
             let ranks = row.map { node in node.leaves().compactMap(rank).min() }
+            let before = shown(ids(row))
             let run: ClosedRange<Int>
             if let pin {
                 // The user's run, or — in a window too small for all of it —
                 // the part of it around the pane last focused there.
                 let window = pin.start...(pin.start + pin.count - 1)
-                let part = PaneLayout.visibleRun(ranks: Array(ranks[window]), count: count)
+                let part = PaneLayout.stickyRun(
+                    before.flatMap { $0.clamped(to: window) == $0 ? ($0.lowerBound - pin.start)...($0.upperBound - pin.start) : nil },
+                    ranks: Array(ranks[window]), count: count)
                 run = (part.lowerBound + pin.start)...(part.upperBound + pin.start)
             } else {
-                run = PaneLayout.visibleRun(ranks: ranks, count: count)
+                run = PaneLayout.stickyRun(before, ranks: ranks, count: count)
             }
 
             let end = d == .horizontal ? rect.maxX : rect.maxY
-            let runStart = CGFloat(run.lowerBound) * peek
+            let runStart = CGFloat(run.lowerBound) * (peek + gap)
             /// Where slot `k` of the run starts.
             func slotStart(_ k: Int) -> CGFloat {
-                runStart + slots.prefix(k).reduce(0, +) + CGFloat(k) * metrics.gap
+                runStart + slots.prefix(k).reduce(0, +) + CGFloat(k) * gap
             }
+            let runEnd = slotStart(count - 1) + slots[count - 1]
             for (i, item) in row.enumerated() {
                 // A tucked card is the size of the slot it would come forward
                 // into: the run's first, or its last.
@@ -669,11 +825,11 @@ private extension PaneLayout {
                     slots[count - 1]
                 }
                 let offset: CGFloat = if i < run.lowerBound {
-                    CGFloat(i) * peek
+                    CGFloat(i) * (peek + gap)
                 } else if i <= run.upperBound {
                     slotStart(i - run.lowerBound)
                 } else {
-                    extent - CGFloat(n - i) * peek
+                    runEnd + gap + CGFloat(i - run.upperBound - 1) * (peek + gap)
                 }
                 let frame = rect.span(along: d, from: offset, length: size)
                 let isTucked = !run.contains(i)
@@ -700,7 +856,7 @@ private extension PaneLayout {
                     guard var placed = result.leaves[leaf.id] else { continue }
                     let tab = placed.frame.intersection(tabSpan)
                     let shows = !tab.isNull && !tab.isEmpty
-                    placed.tab = shows ? tab : nil
+                    placed.tab = shows ? tab.integral() : nil
                     placed.tabAxis = shows ? d : nil
                     // On either side of the run a tucked card is drawn as
                     // its sliver alone: nothing of it lies under a card on
@@ -712,26 +868,36 @@ private extension PaneLayout {
             let items = ids(row)
             result.stacks.append(.init(frame: rect, direction: d, items: items, run: run, fits: fits))
 
-            // Grips, on a stack that shows: between the cards on show, and at
-            // the edges of a run the user narrowed that there is room to widen.
+            // Grips, on a stack that shows: in the gutters between the cards
+            // on show, and in the gutter where a run the user narrowed meets
+            // its strips, when there is room to widen it.
             guard !tucked else { return laidOut }
-            let shown = Row(items: items, run: run, sizes: slots)
+            let shown = Row(
+                items: items, run: run, sizes: slots,
+                start: d == .horizontal ? rect.minX : rect.minY, extent: extent,
+                minimums: Array(repeating: card, count: n), gap: gap, peek: peek)
+            /// The gutter from `from` to `from + gap`, across the stack.
+            func gutter(at from: CGFloat) -> CGRect {
+                rect.span(along: d, from: from.rounded(), length: (from + gap).rounded() - from.rounded())
+                    .integral()
+            }
             for k in 0..<(count - 1) {
                 result.stackHandles.append(.init(
                     row: shown, direction: d, frame: rect,
-                    position: slotStart(k + 1) - metrics.gap / 2, kind: .between(slot: k)))
+                    position: slotStart(k + 1) - gap / 2, kind: .between(slot: k),
+                    gutter: gutter(at: slotStart(k + 1) - gap)))
             }
-            let roomForOneMore = CGFloat(n - count - 1) * peek + CGFloat(count + 1) * card
-                + CGFloat(count) * metrics.gap <= extent
+            let roomForOneMore = needed(count + 1) <= extent
             if pin != nil, roomForOneMore {
                 if run.lowerBound > 0 {
                     result.stackHandles.append(.init(
-                        row: shown, direction: d, frame: rect, position: runStart, kind: .expand(.leading)))
+                        row: shown, direction: d, frame: rect, position: runStart - gap / 2,
+                        kind: .expand(.leading), gutter: gutter(at: runStart - gap)))
                 }
                 if run.upperBound < n - 1 {
                     result.stackHandles.append(.init(
-                        row: shown, direction: d, frame: rect,
-                        position: slotStart(count - 1) + slots[count - 1], kind: .expand(.trailing)))
+                        row: shown, direction: d, frame: rect, position: runEnd + gap / 2,
+                        kind: .expand(.trailing), gutter: gutter(at: runEnd)))
                 }
             }
             return laidOut
