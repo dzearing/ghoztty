@@ -19,14 +19,16 @@ final class PaneStackTabView: NSView {
     private var host: NSHostingView<PaneStackTabFace>?
     private let hover = PaneStackTabFace.Hover()
 
-    /// A click brings the pane forward; a drag picks it up, as the pane's grab
-    /// handle does — drop it on a pane on show and the two swap.
+    /// A click brings the pane forward; a drag picks it up, with a strip's
+    /// targets: a slot between the cards and strips of its row, a window's
+    /// edge, or a screen's (`PaneDropResolver.resolveBlade`).
     private let dragSource = PaneDragSourceView()
 
     init() {
         super.init(frame: .zero)
         wantsLayer = true
         dragSource.showsGrabCursor = false
+        dragSource.isBlade = true
         dragSource.onClick = { [weak self] _ in self?.activate() }
         // No drag image: the card itself comes out of the stack and follows
         // the pointer, and settles back when it is dropped.
@@ -133,10 +135,12 @@ final class PaneStackTabView: NSView {
         }
     }
 
-    /// The tabs showing in `window`, by the pane each fronts.
+    /// The tabs showing in `window`, by the pane each fronts. Only showing:
+    /// every card keeps its tab view, hidden while it is on show, and a
+    /// hidden tab — wherever it was last — is not where its pane is.
     static func all(in window: NSWindow) -> [UUID: PaneStackTabView] {
         var found: [UUID: PaneStackTabView] = [:]
-        for tab in mounted.allObjects where tab.window === window {
+        for tab in mounted.allObjects where tab.window === window && !tab.isHidden && tab.alphaValue > 0 {
             guard let pane = tab.pane else { continue }
             found[pane.id] = tab
         }

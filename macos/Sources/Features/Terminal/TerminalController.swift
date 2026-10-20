@@ -233,7 +233,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         _ newTree: SplitTree<PaneView>,
         moveFocusTo newView: Ghostty.SurfaceView? = nil,
         moveFocusFrom oldView: Ghostty.SurfaceView? = nil,
-        undoAction: String? = nil
+        undoAction: String? = nil,
+        stackBefore: PaneStackState.Saved? = nil
     ) {
         // We have a special case if our tree is empty to close our tab immediately.
         // This makes it so that undo is handled properly.
@@ -246,7 +247,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             newTree,
             moveFocusTo: newView,
             moveFocusFrom: oldView,
-            undoAction: undoAction)
+            undoAction: undoAction,
+            stackBefore: stackBefore)
     }
 
     // MARK: Terminal Creation
@@ -476,10 +478,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     ///   - tree: The split tree to use for the new window.
     ///   - position: Optional screen position (top-left corner) for the new window.
     ///               If nil, the window will cascade from the last cascade point.
+    ///   - frame: Optional screen frame for the new window, overriding both
+    ///            the tree's size and `position` (a pane tiled to a screen edge).
     static func newWindow(
         _ ghostty: Ghostty.App,
         tree: SplitTree<PaneView>,
         position: NSPoint? = nil,
+        frame: NSRect? = nil,
         confirmUndo: Bool = true,
         activate: Bool = true
     ) -> TerminalController {
@@ -502,7 +507,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 }
 
                 if !window.styleMask.contains(.fullScreen) {
-                    if let position {
+                    if let frame {
+                        window.setFrame(frame, display: true)
+                    } else if let position {
                         window.setFrameTopLeftPoint(position)
                         window.constrainToScreen()
                     } else {

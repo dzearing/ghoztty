@@ -347,7 +347,7 @@ struct PaneStackWindowTests {
         #expect(after.max()! - after.min()! >= 70, "one slot grew at another's expense: \(before) -> \(after) shares \(controller.paneStackState.shares)")
 
         // Squeeze the next card well past its minimum: the far card tucks.
-        drag(try #require(handles(window).first), by: 600)
+        drag(try #require(handles(window).first), by: 120)
         await settle(0.8)
         let key = Set(panes.map(\.id))
         #expect(controller.paneStackState.pin(for: key)?.count == 2)
@@ -441,13 +441,18 @@ struct PaneStackWindowTests {
     /// Six panes in one row (or column), collapsed by hand to two on show
     /// with two strips on each side, the second of the two focused.
     private func collapsedRow(
-        _ direction: SplitTree<PaneView>.NewDirection
+        _ direction: SplitTree<PaneView>.NewDirection,
+        viewerAt viewer: Int? = nil
     ) async throws -> (TerminalController, NSWindow, [PaneView]) {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         let app = try #require(ghostty.app)
         var config = Ghostty.SurfaceConfiguration()
         config.command = "/bin/sh -c 'cat'"
-        let panes = (0..<6).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        let panes = (0..<6).map { i in
+            i == viewer
+                ? PaneView(viewer: ViewerView(location: "about:blank"))
+                : PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        }
         var tree = SplitTree<PaneView>(view: panes[0])
         for i in 1..<6 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: direction) }
         tree = SplitTree(root: tree.root?.equalize(), zoomed: nil, stashed: [])
@@ -456,7 +461,7 @@ struct PaneStackWindowTests {
         for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
         let window = try #require(controller.window)
         window.setContentSize(direction == .right ? NSSize(width: 1600, height: 600) : NSSize(width: 900, height: 1000))
-        window.makeFirstResponder(panes[3].surfaceView)
+        window.makeFirstResponder(panes[3].surfaceView ?? panes[3].contentView)
         await settle(1.2)
         let items = panes.map { [$0.id] }
         controller.performSplitAction(.restack(.init(items: items, run: 1...4), .collapse(.leading)))
@@ -498,11 +503,12 @@ struct PaneStackWindowTests {
         #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id), "the strips stay minimized")
         #expect(panes[3].isFocusedPane, "the caret went to the pane still on show")
         // The one left on show takes the whole run: the row's extent less the
-        // four strips.
+        // four strips and their gutters.
         let extent = direction == .right ? panes[3].contentView.frame.width : panes[3].contentView.frame.height
         let stage = try #require(all(PaneCardView.self, in: window.contentView!).first?.superview)
         let total = direction == .right ? stage.bounds.width : stage.bounds.height
-        #expect(extent > total - 4 * PaneLayout.Metrics.peek - 40, "\(extent) of \(total)")
+        let margins = 2 * PaneElevation.margin
+        #expect(extent >= total - margins - 4 * (PaneLayout.Metrics.peek + PaneElevation.gap) - 1, "\(extent) of \(total)")
     }
 
     @Test(arguments: [(false, false), (false, true), (true, false), (true, true)])
@@ -532,7 +538,7 @@ struct PaneStackWindowTests {
         let direction: SplitTree<PaneView>.NewDirection = vertical ? .down : .right
         let (controller, window, panes) = try await collapsedRow(direction)
         defer { controller.close() }
-        window.setContentSize(vertical ? NSSize(width: 900, height: 700) : NSSize(width: 950, height: 600))
+        window.setContentSize(vertical ? NSSize(width: 900, height: 760) : NSSize(width: 950, height: 600))
         await settle(1.0)
         #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id))
 
@@ -543,6 +549,458 @@ struct PaneStackWindowTests {
         let added = try #require(controller.surfaceTree.pane(for: surface))
         #expect(strips(window) == [panes[0], panes[1], panes[2], panes[4], panes[5]].map(\.id))
         #expect(added.isFocusedPane)
+    }
+
+    // MARK: - A drag that goes on squeezing
+
+    /// The user's repro: three panes side by side, the LEFT divider dragged
+    /// right with the mouse. The rightmost pane tucks into a strip; as the
+    /// drag goes on, the next one does too, until one pane is left on show;
+    /// and coming back, still held, they return in reverse. Driven with real
+    /// mouse events through the divider the window hit-tests at its gutter,
+    /// for both tree shapes a row of three can have.
+    @Test(arguments: [false, true])
+    func draggingTheLeftDividerOnCollapsesOnePaneAfterAnother(leftNested: Bool) async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let panes = (0..<3).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        var tree = SplitTree<PaneView>(view: panes[0])
+        tree = try tree.inserting(view: panes[1], at: panes[0], direction: .right)
+        // a | (b | c), or (a | b) | c.
+        tree = try tree.inserting(view: panes[2], at: panes[leftNested ? 1 : 1], direction: .right)
+        if leftNested {
+            tree = SplitTree<PaneView>(view: panes[0])
+            tree = try tree.inserting(view: panes[1], at: panes[0], direction: .right)
+            tree = tree.insertingAtTopLevel(view: panes[2], side: .right)
+        }
+        tree = SplitTree(root: tree.root?.equalize(), zoomed: nil, stashed: [])
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = true
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1300, height: 600))
+        window.makeFirstResponder(panes[0].surfaceView)
+        await settle(1.2)
+        let key = Set(panes.map(\.id))
+
+        // The left divider, as the window hit-tests it in its gutter.
+        let divider = try #require(handles(window).first)
+        let gutter = divider.convert(divider.bounds, to: nil)
+        let start = NSPoint(x: gutter.midX, y: gutter.midY)
+        let hit = try #require(window.contentView?.superview?.hitTest(start))
+        #expect(hit === divider, "the gutter is the divider's")
+
+        // Every step of the drag, the row as it stood after it.
+        var steps: [(x: CGFloat, count: Int?)] = []
+        let deliver = divider.onDragDelta
+        divider.onDragDelta = { delta, split in
+            deliver?(delta, split)
+            let pin = controller.paneStackState.pin(for: key)
+            steps.append((start.x + delta, pin == nil ? nil : pin!.count))
+        }
+        func event(_ type: NSEvent.EventType, _ x: CGFloat) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: x, y: start.y), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+        }
+        let far = gutter.midX + 1200
+        let out = Array(stride(from: start.x + 10, through: far, by: 10))
+        for x in out + out.reversed() + [start.x] { NSApp.postEvent(try event(.leftMouseDragged, x), atStart: false) }
+        NSApp.postEvent(try event(.leftMouseUp, start.x), atStart: false)
+        divider.mouseDown(with: try event(.leftMouseDown, start.x))
+        await settle(0.8)
+
+        // Out: side by side, then c tucked (two on show), then b (one on
+        // show), and nothing past that.
+        let counts = steps.map(\.count)
+        let outward = Array(counts.prefix(out.count))
+        func runs(_ values: [Int?]) -> [Int?] {
+            values.reduce(into: []) { if $0.last != $1 { $0.append($1) } }
+        }
+        #expect(runs(outward) == [nil, 2, 1], "out: \(runs(outward)) at \(steps.map { Int($0.x) })")
+        // Back: b, then c, in reverse, and side by side where it began.
+        let back = Array(counts.suffix(out.count + 1))
+        #expect(runs(back) == [1, 2, nil], "back: \(runs(back))")
+        #expect(controller.paneStackState.pin(for: key) == nil)
+        #expect(!controller.paneStackState.isGesturing)
+    }
+
+    // MARK: - Resizers live in the gutters
+
+    /// Where every card shows, in window coordinates: a card on show is its
+    /// pane; a strip is its tab.
+    private func cardRects(_ window: NSWindow) -> [CGRect] {
+        all(PaneCardView.self, in: window.contentView!).compactMap { card -> CGRect? in
+            if let tab = all(PaneStackTabView.self, in: card).first(where: { !$0.isHidden }) {
+                return tab.convert(tab.bounds, to: nil)
+            }
+            guard !card.isContentHidden else { return nil }
+            let o = PaneCardView.outset
+            return card.convert(card.bounds.insetBy(dx: o, dy: o), to: nil)
+        }
+    }
+
+    /// Every resize target in the window: split dividers, stack grips (between
+    /// cards and at a run's edge) and the pane sidebar's edge.
+    private func resizerRects(_ window: NSWindow) -> [(String, CGRect)] {
+        let grips = all(DividerHandle.DividerHandleView.self, in: window.contentView!)
+            .map { ("grip", $0.convert($0.bounds, to: nil)) }
+        let sidebar = all(SidePanelResizeHandle.self, in: window.contentView!)
+            .filter { !$0.isHiddenOrHasHiddenAncestor }
+            .map { ("sidebar edge", $0.convert($0.bounds, to: nil)) }
+        return grips + sidebar
+    }
+
+    /// No resizer overlaps any card, and a click just inside any card's edge
+    /// is the card's, not a resize: the resizers live in the gutters alone,
+    /// so dragging a pane (its grab handle, a strip) and resizing each have
+    /// their own target.
+    private func expectResizersInGutters(_ window: NSWindow, _ name: String) throws {
+        let cards = cardRects(window), resizers = resizerRects(window)
+        #expect(!resizers.isEmpty, "\(name): no resizers found")
+        // The sidebar's card, open over the grid, covers what is under it: a
+        // grip on that card is on the sidebar, not on the pane beneath.
+        let sidebar = all(PaneSidebarHostView.self, in: window.contentView!).first
+            .map { $0.convert($0.cardRect, to: nil) }
+        for (kind, r) in resizers {
+            if let sidebar, sidebar.contains(r) { continue }
+            for c in cards {
+                let overlap = r.intersection(c)
+                #expect(overlap.isNull || overlap.width < 0.01 || overlap.height < 0.01,
+                        "\(name): a \(kind) \(r) overlaps a card \(c) by \(overlap)")
+            }
+        }
+        let root = try #require(window.contentView?.superview)
+        for c in cards {
+            for p in [CGPoint(x: c.minX + 1, y: c.midY), CGPoint(x: c.maxX - 1, y: c.midY),
+                      CGPoint(x: c.midX, y: c.minY + 1), CGPoint(x: c.midX, y: c.maxY - 1)] {
+                let hit = root.hitTest(p)
+                #expect(!(hit is DividerHandle.DividerHandleView) && !(hit is SidePanelResizeHandle),
+                        "\(name): a click at \(p), just inside a card's edge, starts a resize")
+            }
+        }
+    }
+
+    @Test func everyResizerSitsInAGutter() async throws {
+        // Side by side, with a column (a horizontal divider runs along the
+        // top of the lower pane, where its grab handle is).
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let panes = (0..<3).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        var tree = SplitTree<PaneView>(view: panes[0])
+        tree = try tree.inserting(view: panes[1], at: panes[0], direction: .right)
+        tree = try tree.inserting(view: panes[2], at: panes[1], direction: .down)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = true
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1300, height: 900))
+        await settle(1.0)
+        try expectResizersInGutters(window, "side by side")
+
+        // The sidebar pinned beside them.
+        controller.paneSidebarState.isHidden = false
+        controller.setPaneSidebarPinned(true)
+        await settle(1.0)
+        try expectResizersInGutters(window, "pinned sidebar")
+        controller.setPaneSidebarPinned(false)
+        await settle(1.0)
+        try expectResizersInGutters(window, "sidebar rail")
+    }
+
+    @Test func everyResizerOfAStackSitsInAGutter() async throws {
+        // A collapsed row: grips between the cards on show and at the run's
+        // edges, beside the strips.
+        let (controller, window, _) = try await collapsedRow(.right)
+        defer { controller.close() }
+        window.setContentSize(NSSize(width: 1800, height: 600))
+        await settle(1.0)
+        #expect(handles(window).count == 3, "between c and d, and at both edges of the run")
+        try expectResizersInGutters(window, "collapsed row")
+
+        // A row stacked for want of room.
+        let (narrow, narrowWindow, _) = try await stackedWindow(count: 4, width: 1100)
+        defer { narrow.close() }
+        try expectResizersInGutters(narrowWindow, "stacked row")
+    }
+
+    // MARK: - Dragging a strip
+
+    /// A view's frame in screen coordinates.
+    private func onScreen(_ view: NSView) -> CGRect {
+        view.window!.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+
+    private func tab(_ window: NSWindow, _ pane: PaneView) throws -> PaneStackTabView {
+        try #require(all(PaneStackTabView.self, in: window.contentView!).first { $0.pane === pane && !$0.isHidden })
+    }
+
+    /// `a b [c d] e f`: b's strip dragged into the gutter between c and d
+    /// comes on show there, between them, and takes focus; the row stays
+    /// collapsed. Over the middle of a card there is no target at all — a
+    /// strip has no swap or split there — and the caret shows only over a
+    /// slot.
+    @Test func aStripDroppedBetweenTwoCardsComesOnShowThere() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        let session = PaneDragSession.shared
+        session.begin(pane: panes[1], from: controller, isBlade: true)
+        defer { session.end(commit: false) }
+
+        let c = onScreen(panes[2].contentView), d = onScreen(panes[3].contentView)
+        session.update(screenPoint: CGPoint(x: c.midX, y: c.midY))
+        #expect(session.target == nil, "a strip over a card has no target")
+
+        session.update(screenPoint: CGPoint(x: (c.maxX + d.minX) / 2, y: c.midY))
+        guard case .reorder(_, let beside, let side, _) = session.target else {
+            Issue.record("expected a slot, got \(String(describing: session.target))")
+            return
+        }
+        #expect(beside == [panes[2].id] && side == .right)
+        await settle(0.3)
+        try await capture(window, "blade-slot")
+        session.end(commit: true)
+        await settle(1.0)
+        try await capture(window, "blade-dropped-between-cards")
+
+        #expect(controller.surfaceTree.root?.leaves().map(\.id) == [0, 2, 1, 3, 4, 5].map { panes[$0].id })
+        #expect(strips(window) == [panes[0], panes[4], panes[5]].map(\.id))
+        #expect(panes[1].isFocusedPane)
+        #expect(panes[1].surfaceView?.surface != nil, "the pane lives on")
+    }
+
+    /// Dropped between two strips, a strip stays one there, and the panes on
+    /// show stay as they were.
+    @Test func aStripDroppedBetweenTwoStripsStaysAStrip() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        let session = PaneDragSession.shared
+        session.begin(pane: panes[1], from: controller, isBlade: true)
+        let e = onScreen(try tab(window, panes[4])), f = onScreen(try tab(window, panes[5]))
+        session.update(screenPoint: CGPoint(x: (e.maxX + f.minX) / 2, y: e.midY))
+        guard case .reorder(_, let beside, let side, _) = session.target else {
+            session.end(commit: false)
+            Issue.record("expected a slot, got \(String(describing: session.target))")
+            return
+        }
+        #expect(beside == [panes[4].id] && side == .right)
+        session.end(commit: true)
+        await settle(1.0)
+        #expect(controller.surfaceTree.root?.leaves().map(\.id) == [0, 2, 3, 4, 1, 5].map { panes[$0].id })
+        #expect(strips(window) == [panes[0], panes[4], panes[1], panes[5]].map(\.id))
+        #expect(panes[3].isFocusedPane, "the caret stays where it was")
+    }
+
+    /// A strip brought back on show is a pane like any other to a pane drag:
+    /// dropped on the middle of it, the drag swaps with it. (Its strip, hidden
+    /// once it came out, was still taken for where the pane is, so the drop
+    /// missed it.)
+    @Test func aPaneThatWasAStripIsADropTargetOnceOnShow() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        window.makeFirstResponder(panes[1].surfaceView)
+        await settle(1.0)
+        #expect(!strips(window).contains(panes[1].id))
+        let session = PaneDragSession.shared
+        session.begin(pane: panes[3], from: controller)
+        defer { session.end(commit: false) }
+        let b = onScreen(panes[1].contentView)
+        session.update(screenPoint: CGPoint(x: b.midX, y: b.midY))
+        #expect(session.target == .swap(window: controller.rearrangeWindowRef, pane: panes[1].id))
+    }
+
+    /// At a screen's edge a strip tiles: a preview of that half of the
+    /// screen, then a window of its own covering it — and its session is
+    /// not ended by the move.
+    @Test func aStripAtTheScreensEdgeTilesIntoAWindowOfItsOwn() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        let screen = try #require(window.screen?.visibleFrame)
+        let session = PaneDragSession.shared
+        session.begin(pane: panes[1], from: controller, isBlade: true)
+        session.update(screenPoint: CGPoint(x: screen.maxX - 4, y: screen.midY))
+        let half = CGRect(x: screen.midX, y: screen.minY, width: screen.width / 2, height: screen.height)
+        #expect(session.target == .tile(frame: half))
+        #expect(TileDropPreview.shared.shownFrame == half.insetBy(dx: 6, dy: 6), "the half is previewed")
+        session.end(commit: true)
+        #expect(TileDropPreview.shared.shownFrame == nil, "and the preview goes with the drag")
+        await settle(1.2)
+
+        let tiled = try #require(TerminalController.all.first { $0.surfaceTree.root?.leaves().map(\.id) == [panes[1].id] })
+        defer { tiled.close() }
+        let frame = try #require(tiled.window?.frame)
+        #expect(abs(frame.minX - half.minX) < 2 && abs(frame.width - half.width) < 2, "\(frame) vs \(half)")
+        #expect(!controller.surfaceTree.contains { $0 === panes[1] })
+        #expect(panes[1].surfaceView?.surface != nil, "the pane lives on in its new window")
+        #expect(strips(window) == [panes[0], panes[4], panes[5]].map(\.id), "the row it left stays collapsed")
+    }
+
+    /// The user's repro: seven panes in a row with room for four, stacked for
+    /// want of room. Clicking the far card ON SHOW must change nothing — it
+    /// used to re-centre the run on it from the focus history, sliding three
+    /// cards out and three strips in.
+    @Test func clickingACardOnShowNeverMovesTheRow() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 7, width: 1500)
+        defer { controller.close() }
+        // The run shows the last four (the last pane has focus); bring the
+        // first one forward with a click on its strip: 0...3 on show.
+        let first = try tab(window, panes[0])
+        let point = first.convert(NSPoint(x: first.bounds.midX, y: first.bounds.midY), to: nil)
+        let root = try #require(window.contentView?.superview)
+        func click(_ at: NSPoint) throws {
+            let hit = try #require(root.hitTest(at))
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try #require(NSEvent.mouseEvent(
+                    with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                    pressure: type == .leftMouseDown ? 1 : 0))
+                type == .leftMouseDown ? hit.mouseDown(with: event) : hit.mouseUp(with: event)
+            }
+        }
+        try click(point)
+        await settle(1.0)
+        let before = strips(window)
+        #expect(before == [4, 5, 6].map { panes[$0].id }, "a b c d on show")
+
+        // Click the far card on show: the click is the pane's, and focuses it.
+        let far = try #require(panes[3].surfaceView)
+        let frame = far.convert(far.bounds, to: nil)
+        #expect(root.hitTest(NSPoint(x: frame.midX, y: frame.midY))?.isDescendant(of: far) == true)
+        window.makeFirstResponder(far)
+        await settle(1.0)
+        try await capture(window, "click-far-card-on-show")
+        #expect(panes[3].isFocusedPane)
+        #expect(strips(window) == before, "focusing a pane on show moved the row")
+    }
+
+    // MARK: - Focus never lands on a strip
+
+    /// `a b [c d] e f`, c focused: stashing c must hand the caret to d, the
+    /// pane still on show — not to b, the neighbour a close would pick, which
+    /// is a strip, and focusing it would bring it back out.
+    @Test func stashingTheFocusedPaneNeverFocusesAStrip() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        window.makeFirstResponder(panes[2].surfaceView)
+        await settle(0.4)
+        #expect(controller.stashPane(panes[2]))
+        await settle(1.0)
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id), "a strip came out")
+        #expect(panes[3].isFocusedPane)
+    }
+
+    /// The same, for the sidebar's trash mode (`killPane`).
+    @Test func killingTheFocusedPaneNeverFocusesAStrip() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        window.makeFirstResponder(panes[2].surfaceView)
+        await settle(0.4)
+        controller.killPane(panes[2])
+        await settle(1.0)
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id), "a strip came out")
+        #expect(panes[3].isFocusedPane)
+    }
+
+    /// Cmd-W in a focused VIEWER pane on show (`close(_:)`): the caret goes
+    /// to the pane still on show, not to the strip beside it.
+    @Test func closingAFocusedViewerNeverFocusesAStrip() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right, viewerAt: 2)
+        defer { controller.close() }
+        window.makeFirstResponder(try #require(panes[2].viewerView))
+        await settle(0.4)
+        #expect(panes[2].isFocusedPane)
+        controller.close(self)
+        await settle(1.0)
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id), "a strip came out")
+        #expect(panes[3].isFocusedPane)
+    }
+
+    /// Three panes, the middle one a viewer with focus. The terminal last
+    /// focused (a) is minimized by a drag. `focusedSurface` still names it,
+    /// so when the caret leaves the viewer for something that is no pane
+    /// (the window itself, after a re-parent) the window must not read a as
+    /// focused again and bring it out — nor must the window becoming key,
+    /// which restores its focused surface.
+    @Test func aTerminalMinimizedWhileAViewerHasFocusStaysMinimized() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let a = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let v = PaneView(viewer: ViewerView(location: "about:blank"))
+        let c = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        var tree = SplitTree<PaneView>(view: a)
+        tree = try tree.inserting(view: v, at: a, direction: .right)
+        tree = try tree.inserting(view: c, at: v, direction: .right)
+        tree = SplitTree(root: tree.root?.equalize(), zoomed: nil, stashed: [])
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = true
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1300, height: 600))
+        window.makeFirstResponder(a.surfaceView)
+        await settle(0.6)
+        window.makeFirstResponder(try #require(v.viewerView))
+        await settle(0.6)
+        #expect(v.isFocusedPane)
+        #expect(controller.focusedSurface === a.surfaceView)
+
+        controller.performSplitAction(.restack(.init(items: [[a.id], [v.id], [c.id]], run: 0...2), .collapse(.leading)))
+        await settle(0.8)
+        #expect(strips(window) == [a.id])
+        #expect(v.isFocusedPane, "the viewer keeps the caret")
+
+        // The caret leaves the viewer for the window itself.
+        window.makeFirstResponder(nil)
+        await settle(0.6)
+        #expect(strips(window) == [a.id], "the stale focused surface brought its strip out")
+
+        // The window becomes key with nothing focused: it restores focus,
+        // into a pane on show.
+        controller.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: window))
+        await settle(0.6)
+        #expect(strips(window) == [a.id], "becoming key brought a strip out")
+        #expect(!a.isFocusedPane)
+    }
+
+    /// A pane on show dragged onto a strip trades places with it: it takes
+    /// the strip's place, minimized, and the caret goes to the pane that came
+    /// out of the strip — focusing the dragged pane would bring it straight
+    /// back out and undo the drop.
+    @Test func aPaneDroppedOnAStripTakesItsPlace() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        PaneMoveCoordinator.apply(.swap(window: controller.rearrangeWindowRef, pane: panes[1].id),
+                                  pane: panes[3], from: controller)
+        await settle(1.0)
+        #expect(strips(window) == [panes[0], panes[3], panes[4], panes[5]].map(\.id))
+        #expect(panes[1].isFocusedPane)
+    }
+
+    /// Closing a pane on show and undoing the close brings the row back
+    /// exactly as it was.
+    @Test func undoingACloseBringsTheRowBack() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        let key = Set(panes.map(\.id))
+        window.makeFirstResponder(panes[2].surfaceView)
+        await settle(0.4)
+        controller.closeSurface(try #require(panes[2].surfaceView), withConfirmation: false)
+        await settle(1.0)
+        #expect(controller.paneStackState.pin(for: key) == nil, "a row not on screen has no collapse")
+        try #require(window.undoManager?.canUndo == true)
+        window.undoManager?.undo()
+        await settle(1.0)
+        #expect(controller.paneStackState.pin(for: key) == .init(start: 2, count: 2))
+        #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id))
     }
 
     @Test func aWobbleDuringAClickOnAStripIsStillAClick() async throws {

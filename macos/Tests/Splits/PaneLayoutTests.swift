@@ -80,7 +80,8 @@ struct PaneLayoutTests {
 
     @Test func aRowThatCantFitStacksAndShowsWhatFits() throws {
         // 4 × 300 + gaps = 1230 > 760: a stack. Two cards fit side by side
-        // with two slivers (2×36 + 2×300 + 10 ≤ 760); three don't.
+        // with two slivers, each with its gutter (2×46 + 2×300 + 10 ≤ 760);
+        // three don't.
         let (node, views) = try row()
         let result = layout(node, width: 760)
 
@@ -90,7 +91,7 @@ struct PaneLayoutTests {
         #expect(result.dividers.isEmpty, "a stack has no dividers")
         // Every card is the same width, so moving the run never resizes one.
         #expect(Set(frames(result, views).map(\.width)).count == 1)
-        #expect(frames(result, views)[0].width == CGFloat(760 - 72 - 10) / 2)
+        #expect(frames(result, views)[0].width == CGFloat(760 - 2 * 46 - 10) / 2)
     }
 
     @Test func theFocusedPaneIsOnShow() throws {
@@ -121,12 +122,13 @@ struct PaneLayoutTests {
         #expect(before.stacks.first?.run == 3...3)
         #expect(after.stacks.first?.run == 0...0)
 
-        let w: CGFloat = 600 - 3 * 36
+        // Each strip is 36pt and its gutter 10.
+        let w: CGFloat = 600 - 3 * 46
         // Before: a, b, c tucked on the left; d in front.
-        #expect(frames(before, views).map(\.minX) == [0, 36, 72, 108])
+        #expect(frames(before, views).map(\.minX) == [0, 46, 92, 138])
         // After: a pops into place at the left; b, c, d slide right to be
         // tucked at the far end, each showing its leading edge.
-        #expect(frames(after, views).map(\.minX) == [0, w, w + 36, w + 72])
+        #expect(frames(after, views).map(\.minX) == [0, w + 10, w + 56, w + 102])
         // Nothing changed size.
         #expect(frames(before, views).map(\.size) == frames(after, views).map(\.size))
     }
@@ -213,16 +215,16 @@ struct PaneLayoutTests {
 
         #expect(result.leaves[views[1].id]?.tab == nil, "the card on show has no tab")
         #expect(result.leaves[views[0].id]?.tab == CGRect(x: 0, y: 0, width: 36, height: 600))
-        let w: CGFloat = 600 - 3 * 36
-        #expect(result.leaves[views[2].id]?.tab == CGRect(x: 36 + w, y: 0, width: 36, height: 600))
-        #expect(result.leaves[views[3].id]?.tab == CGRect(x: 72 + w, y: 0, width: 36, height: 600))
+        let w: CGFloat = 600 - 3 * 46
+        #expect(result.leaves[views[2].id]?.tab == CGRect(x: 46 + w + 10, y: 0, width: 36, height: 600))
+        #expect(result.leaves[views[3].id]?.tab == CGRect(x: 46 + w + 56, y: 0, width: 36, height: 600))
         #expect(result.leaves[views[3].id]?.tabAxis == .horizontal)
     }
 
     @Test func cardsPastTheRunAreClippedToTheStack() throws {
         let (node, views) = try row()
         let result = layout(node, width: 600, focus: [views[0]])
-        let w: CGFloat = 600 - 3 * 36
+        let w: CGFloat = 600 - 3 * 46
 
         let d = try #require(result.leaves[views[3].id])
         #expect(d.frame.maxX > 600, "d hangs past the stack")
@@ -230,18 +232,18 @@ struct PaneLayoutTests {
         #expect(clip.maxX == 600, "cut at the stack's far end")
         #expect(clip.minX < d.frame.minX && clip.minY < 0 && clip.maxY > 600,
                 "and nowhere else, so its shadow falls on the card behind")
-        #expect(d.frame.intersection(clip) == CGRect(x: w + 72, y: 0, width: 600 - (w + 72), height: 600))
+        #expect(d.frame.intersection(clip) == CGRect(x: w + 102, y: 0, width: 600 - (w + 102), height: 600))
         #expect(result.leaves[views[0].id]?.clip == nil)
     }
 
     @Test func aTooNarrowStackShrinksItsSliversBeforeItsCards() throws {
         let (node, views) = try row()
-        // 300 + 3 × 36 = 408 > 380: slivers shrink to whole points of
-        // (380 - 300) / 3, and the card keeps the rest.
+        // 300 + 3 × (36 + 10) = 438 > 380: slivers shrink to whole points of
+        // (380 - 300) / 3 less their gutter, and the card keeps the rest.
         let result = layout(node, width: 380, focus: [views[0]])
 
-        #expect(result.leaves[views[1].id]?.tab?.width == 26)
-        #expect(frames(result, views)[0].width == CGFloat(380 - 3 * 26))
+        #expect(result.leaves[views[1].id]?.tab?.width == 16)
+        #expect(frames(result, views)[0].width == CGFloat(380 - 3 * (16 + 10)))
     }
 
     @Test func columnsStackToo() throws {
@@ -257,7 +259,7 @@ struct PaneLayoutTests {
         #expect(stack.run == 2...2)
         #expect(result.leaves[a.id]?.tabAxis == .vertical)
         #expect(result.leaves[a.id]?.tab?.height == 36)
-        #expect(result.leaves[c.id]?.frame.height == CGFloat(400 - 2 * 36))
+        #expect(result.leaves[c.id]?.frame.height == CGFloat(400 - 2 * 46))
     }
 
     // MARK: - Nesting
@@ -366,7 +368,7 @@ struct PaneLayoutTests {
         #expect(result.leaves[views[2].id]?.isTucked == true)
         #expect(result.leaves[views[2].id]?.tab?.maxX == 1200, "c is a sliver at the far edge")
         // The two on show share the rest, equally.
-        let w = (1200 - 36 - 10) / 2
+        let w = (1200 - 46 - 10) / 2
         #expect(frames(result, views).prefix(2).map(\.width) == [CGFloat(w), CGFloat(w)])
     }
 
@@ -493,11 +495,64 @@ struct PaneLayoutTests {
             node, in: CGRect(x: 0, y: 0, width: 1200, height: 600), metrics: metrics,
             rank: { _ in nil }, pin: { pins[$0] }, shares: { $0 == key(views) ? [0.3, 0.7] : nil })
         let widths = frames(result, views).map(\.width)
-        let run: CGFloat = 1200 - 36 - 10
+        let run: CGFloat = 1200 - 46 - 10
         #expect(widths[0] == (run * 0.3).rounded(.down))
         #expect(widths[0] + widths[1] == run)
         #expect(widths[2] == widths[1])
         #expect(result.stackHandles.first { $0.kind == .between(slot: 0) }?.row.sizes == Array(widths.prefix(2)))
+    }
+
+    // MARK: - A drag that goes on squeezing
+
+    /// a | b | c side by side in 1220pt (three 400pt panes, 10pt gutters),
+    /// the drag on the grip between a and b (boundary 1).
+    private func threeAcross() -> PaneLayout.Row<UUID> {
+        PaneLayout.Row(
+            items: (0..<3).map { _ in [UUID()] }, run: 0...2, sizes: [400, 400, 400],
+            start: 0, extent: 1220, minimums: [300, 300, 300], gap: 10, peek: 36)
+    }
+
+    @Test func aDragGoesOnSqueezingOnePaneAfterAnother() {
+        let row = threeAcross()
+        let first = PaneLayout.Squeeze(side: .trailing, count: 1)
+        // c tucked: the run is a b and the strip, 46pt with its gutter. b
+        // needs 300 between the pointer and the run's end (1174).
+        #expect(PaneLayout.chain(row, boundary: 1, at: 700, current: first, past: 48) == first)
+        // 48 past b's minimum, b tucks too: a is all that is on show.
+        #expect(PaneLayout.chain(row, boundary: 1, at: 1174 - 5 - 300 + 49, current: first, past: 48).count == 2)
+        // And no further: the run never empties.
+        #expect(PaneLayout.chain(row, boundary: 1, at: 1210, current: first, past: 48).count == 2)
+        // Back: b returns once it fits again at its minimum, in the run it
+        // comes back to (one strip, so the run ends at 1174).
+        let both = PaneLayout.Squeeze(side: .trailing, count: 2)
+        #expect(PaneLayout.chain(row, boundary: 1, at: 1174 - 5 - 300 + 10, current: both, past: 48) == both,
+                "between the minimum and the threshold, it stays")
+        #expect(PaneLayout.chain(row, boundary: 1, at: 1174 - 5 - 300, current: both, past: 48) == first)
+        // The first one's return is the drag's own (never below one here).
+        #expect(PaneLayout.chain(row, boundary: 1, at: 100, current: first, past: 48) == first)
+    }
+
+    @Test func aDragGoesOnSqueezingTowardTheLeadingSideToo() {
+        let row = threeAcross()
+        // The grip between b and c (boundary 2), dragged left: a tucks, then b.
+        let first = PaneLayout.Squeeze(side: .leading, count: 1)
+        #expect(PaneLayout.chain(row, boundary: 2, at: 600, current: first, past: 48) == first)
+        #expect(PaneLayout.chain(row, boundary: 2, at: 46 + 5 + 300 - 49, current: first, past: 48).count == 2)
+        #expect(PaneLayout.Squeeze(side: .leading, count: 2).pin(of: row) == .init(start: 2, count: 1))
+    }
+
+    @Test func aSqueezedRowsGripFollowsThePointer() {
+        let row = threeAcross()
+        let squeeze = PaneLayout.Squeeze(side: .trailing, count: 1)
+        // The run is 1220 - 46 = 1174 wide less one gutter: a and b split it
+        // where the pointer is.
+        let shares = PaneLayout.squeezedShares(row, boundary: 1, squeeze: squeeze, at: 700)
+        let slots = shares.map { $0 * (1174 - 10) }
+        #expect(shares.count == 2)
+        #expect(abs(slots[0] - (700 - 5)) < 0.5, "\(slots)")
+        // Never under a minimum: past b's, b stays at it.
+        let pinned = PaneLayout.squeezedShares(row, boundary: 1, squeeze: squeeze, at: 1100).map { $0 * 1164 }
+        #expect(abs(pinned[1] - 300) < 0.5, "\(pinned)")
     }
 
     @Test func aCollapseKeepsTheSizesOfThePanesStillOnShow() {
@@ -549,11 +604,15 @@ struct PaneStackStateTests {
         #expect(state.pin(for: Set(ids)) == .init(start: 2, count: 2))
 
         let after = before.filter { $0 != [ids[2]] }
+        let saved = state.saved
         state.rowsDidChange(from: [before], to: [after])
         #expect(state.pin(for: Set(ids).subtracting([ids[2]])) == .init(start: 2, count: 1))
         #expect(state.shares[Set(ids).subtracting([ids[2]])] == nil, "one slot needs no shares")
-        // Undoing the close brings back the row as it was.
+        #expect(state.pin(for: Set(ids)) == nil, "a row not on screen has no collapse")
+        // Undoing the close brings back the row as it was (the controller
+        // restores what it saved with the tree).
         state.rowsDidChange(from: [after], to: [before])
+        state.restore(saved)
         #expect(state.pin(for: Set(ids)) == .init(start: 2, count: 2))
     }
 
@@ -564,9 +623,10 @@ struct PaneStackStateTests {
         state.restack(.init(items: before, run: 1...4, sizes: [1, 1, 2, 2]), .collapse(.trailing))
         #expect(state.pin(for: Set(ids)) == .init(start: 1, count: 3))
         let key = Set(ids).subtracting([ids[0]])
+        let sizes = state.shares[Set(ids)]
         state.rowsDidChange(from: [before], to: [Array(before.dropFirst())])
         #expect(state.pin(for: key) == .init(start: 0, count: 3))
-        #expect(state.shares[key] == state.shares[Set(ids)])
+        #expect(state.shares[key] == sizes)
     }
 
     @Test func closingAPaneOnShowKeepsTheOthersSizes() throws {
@@ -597,14 +657,88 @@ struct PaneStackStateTests {
         #expect(state.pin(for: [b, d]) == .init(start: 0, count: 1), "the column keeps its strip")
     }
 
-    @Test func aRowThatChangedShapeIsNotGuessedAt() {
-        // a | (b / (c | d)): b closes, and c | d joins the outer row. That row
-        // is not the one the user collapsed; it lays out afresh.
+    @Test func aColumnEmptiedIntoItsRowKeepsItsPlace() {
+        // a | (b / (c | d)), the column minimized: b closes, and c | d joins
+        // the outer row. Both pieces were minimized, and stay strips.
         let state = PaneStackState()
         let a = UUID(), b = UUID(), c = UUID(), d = UUID()
         state.restack(.init(items: [[a], [b, c, d]], run: 0...1), .collapse(.trailing))
         state.rowsDidChange(from: [[[a], [b, c, d]], [[b], [c, d]], [[c], [d]]], to: [[[a], [c], [d]]])
-        #expect(state.pin(for: [a, c, d]) == nil)
+        #expect(state.pin(for: [a, c, d]) == .init(start: 0, count: 1))
+    }
+
+    @Test func aColumnOnShowEmptiedIntoItsRowIsOnShowWithItsStripsKept() {
+        // x | (e / (g | h)) | c | d with x, the column on show and c, d
+        // strips: e closes. g and h join the row on show; c, d stay strips
+        // (seed 100 of the fuzz test brought them out).
+        let state = PaneStackState()
+        let x = UUID(), e = UUID(), g = UUID(), h = UUID(), c = UUID(), d = UUID()
+        let before: [[UUID]] = [[x], [e, g, h], [c], [d]]
+        state.restack(.init(items: before, run: 0...3, sizes: [1, 1, 1, 1]), .collapse(.trailing))
+        state.restack(.init(items: before, run: 0...2, sizes: [1, 1, 1]), .collapse(.trailing))
+        #expect(state.pin(for: Set(before.joined())) == .init(start: 0, count: 2))
+        state.rowsDidChange(
+            from: [before, [[e], [g, h]], [[g], [h]]],
+            to: [[[x], [g], [h], [c], [d]]])
+        let key: Set<UUID> = [x, g, h, c, d]
+        #expect(state.pin(for: key) == .init(start: 0, count: 3))
+        let shares = state.shares[key] ?? []
+        // x keeps its half; the column's half is shared out between its pieces.
+        let expected: [CGFloat] = [0.5, 0.25, 0.25]
+        #expect(shares.count == 3 && zip(shares, expected).allSatisfy { abs($0 - $1) < 1e-9 }, "\(shares)")
+    }
+
+    @Test func aCollapsedRowMergingIntoACollapsedRowKeepsBothStrips() {
+        // a | b | ((h | f) / e) | d: a, b and the column on show, d a strip;
+        // inside the column, h | f with f a strip. e closes, and h | f joins
+        // the outer row: a b h on show, f and d strips. Undone, both rows
+        // come back as they were.
+        let state = PaneStackState()
+        let a = UUID(), b = UUID(), h = UUID(), f = UUID(), e = UUID(), d = UUID()
+        let outer: [[UUID]] = [[a], [b], [h, f, e], [d]]
+        let column: [[UUID]] = [[h, f], [e]]
+        let inner: [[UUID]] = [[h], [f]]
+        state.restack(.init(items: inner, run: 0...1, sizes: [1, 1]), .collapse(.trailing))
+        state.restack(.init(items: outer, run: 0...3, sizes: [1, 1, 1, 1]), .collapse(.trailing))
+        let before = [outer, column, inner]
+        let after: [[[UUID]]] = [[[a], [b], [h], [f], [d]]]
+        let saved = state.saved
+        state.rowsDidChange(from: before, to: after)
+        #expect(state.pin(for: [a, b, h, f, d]) == .init(start: 0, count: 3))
+        state.rowsDidChange(from: after, to: before)
+        state.restore(saved)
+        #expect(state.pin(for: Set(outer.joined())) == .init(start: 0, count: 3))
+        #expect(state.pin(for: [h, f]) == .init(start: 0, count: 1))
+    }
+
+    @Test func piecesOfTwoItemsInOneAreNotGuessedAt() {
+        // A row whose new item holds panes of two old ones is some other row.
+        let state = PaneStackState()
+        let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+        state.restack(.init(items: [[a], [b], [c], [d]], run: 0...3), .collapse(.trailing))
+        state.rowsDidChange(from: [[[a], [b], [c], [d]]], to: [[[a], [b, c]], [[b], [c]]])
+        #expect(state.pin(for: [a, b, c]) == nil)
+    }
+
+    @Test func aCollapseUndoneByFocusDoesNotComeBackWithTheRow() {
+        // a [b] [c] collapsed; b splits down (the row is now a | (b/d) | c,
+        // its collapse carried over). Focusing a brings the row back side by
+        // side. Closing d gives back the row's old panes — whose collapse,
+        // kept for an undo, is stale: it must not minimize a, the focused
+        // pane (seed 117 of the fuzz test).
+        let state = PaneStackState()
+        let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+        let row: [[UUID]] = [[a], [b], [c]]
+        state.restack(.init(items: row, run: 0...2, sizes: [1, 1, 1]), .collapse(.leading))
+        let split: [[UUID]] = [[a], [b, d], [c]]
+        state.rowsDidChange(from: [row], to: [split, [[b], [d]]])
+        state.noteItems(split, fits: 3)
+        #expect(state.pin(for: [a, b, c, d]) == .init(start: 1, count: 2))
+        state.noteFocus(a)
+        #expect(state.pin(for: [a, b, c, d]) == nil)
+        state.rowsDidChange(from: [split, [[b], [d]]], to: [row])
+        #expect(state.pin(for: [a, b, c]) == nil, "a stale collapse came back")
+        #expect(state.pin(for: [a, b, c, d]) == nil)
     }
 
     /// a b [c] d e, collapsed by hand to c alone on show.
@@ -638,9 +772,10 @@ struct PaneStackStateTests {
         let x = UUID()
         var after = before
         after[2] = [ids[2], x]
+        let sizes = state.shares[Set(ids)]
         state.rowsDidChange(from: [before], to: [after, [[ids[2]], [x]]])
         #expect(state.pin(for: Set(ids + [x])) == .init(start: 2, count: 3))
-        #expect(state.shares[Set(ids + [x])] == state.shares[Set(ids)], "the same slots keep their sizes")
+        #expect(state.shares[Set(ids + [x])] == sizes, "the same slots keep their sizes")
         #expect(state.pin(for: [ids[2], x]) == nil, "the new column is side by side")
     }
 
@@ -698,14 +833,16 @@ struct PaneStackStateTests {
         #expect(pins[0] == .init(start: 2, count: 2))
     }
 
-    @Test func undoingACloseKeepsTheRowsOwnCollapse() {
-        // An add whose row already has a collapse of its own (an undone close,
-        // a restored stash) brings that back rather than deriving one.
+    @Test func undoingACloseBringsBackTheRowAsItWas() {
+        // a b [c] d e: a closes and the row carries on as b [c] d e. Undone,
+        // the row it was comes back from what was saved with the tree.
         let (state, ids, before) = collapsedToOne()
         let after = before.filter { $0 != [ids[0]] }
-        state.rowsDidChange(from: [before], to: [after])
+        let saved = state.saved
+        state.rowsDidChange(from: [before], to: after.isEmpty ? [] : [after])
         #expect(state.pin(for: Set(ids.dropFirst())) == .init(start: 1, count: 1))
         state.rowsDidChange(from: [after], to: [before])
+        state.restore(saved)
         #expect(state.pin(for: Set(ids)) == .init(start: 2, count: 1))
     }
 

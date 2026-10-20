@@ -353,4 +353,137 @@ struct PaneDropResolverTests {
         #expect(PaneDropTarget.newTab(window: windowB, index: 2).window == windowB)
         #expect(PaneDropTarget.newWindow(at: .zero).window == nil)
     }
+
+    // MARK: - A strip's targets
+
+    /// A collapsed row across a 1000x800 window at the origin: strips a and b
+    /// on the left, c and d on show, strip e on the right — 10pt gutters,
+    /// 36pt strips. b is the strip being dragged.
+    private struct Row {
+        let a = UUID(), b = UUID(), c = UUID(), d = UUID(), e = UUID()
+        var items: [(rect: CGRect, panes: Set<UUID>)] {
+            [(CGRect(x: 0, y: 0, width: 36, height: 800), [a]),
+             (CGRect(x: 46, y: 0, width: 36, height: 800), [b]),
+             (CGRect(x: 92, y: 0, width: 400, height: 800), [c]),
+             (CGRect(x: 502, y: 0, width: 452, height: 800), [d]),
+             (CGRect(x: 964, y: 0, width: 36, height: 800), [e])]
+        }
+    }
+
+    private let screen = CGRect(x: -500, y: -300, width: 2560, height: 1440)
+
+    private func blade(_ row: Row) -> PaneBladeDrag {
+        PaneBladeDrag(
+            window: windowA,
+            slots: PaneBladeDrag.slots(items: row.items, direction: .horizontal, dragged: row.b),
+            screens: [screen])
+    }
+
+    private func rowCandidate(_ row: Row) -> PaneDropCandidate {
+        PaneDropCandidate(
+            window: windowA, zOrder: 0, contentRect: CGRect(x: 0, y: 0, width: 1000, height: 800),
+            paneRects: row.items.map { (id: $0.panes.first!, rect: $0.rect) })
+    }
+
+    @Test func aStripHasASlotBetweenEveryTwoOfItsRowsItemsButItsOwn() {
+        let row = Row()
+        let slots = PaneBladeDrag.slots(items: row.items, direction: .horizontal, dragged: row.b)
+        // Before a; [between a and c is where b already is]; c|d; d|e; after e.
+        #expect(slots.map(\.beside) == [[row.a], [row.c], [row.d], [row.e]])
+        #expect(slots.map(\.side) == [.left, .right, .right, .right])
+        // The c|d slot's caret runs down the middle of their gutter.
+        #expect(slots[1].caret.midX == 497)
+        #expect(slots[1].caret.height == 800)
+    }
+
+    @Test func aStripDroppedInAGutterOfItsRowMovesThere() {
+        let row = Row()
+        let target = PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 497, y: 400), candidates: [rowCandidate(row)], dragged: row.b, blade: blade(row))
+        guard case .reorder(let window, let beside, let side, _) = target else {
+            Issue.record("expected a reorder, got \(String(describing: target))")
+            return
+        }
+        #expect(window == windowA && beside == [row.c] && side == .right)
+        // A slot reaches a little way into the cards either side of it.
+        let near = PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 480, y: 400), candidates: [rowCandidate(row)], dragged: row.b, blade: blade(row))
+        #expect(near.map { if case .reorder = $0 { true } else { false } } == true)
+    }
+
+    @Test func aStripOverAPaneHasNoTargetThere() {
+        // No quadrant, no swap: the middle of a card on show means nothing.
+        let row = Row()
+        #expect(PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 290, y: 400), candidates: [rowCandidate(row)],
+            dragged: row.b, blade: blade(row)) == nil)
+    }
+
+    @Test func aStripAtTheWindowsEdgeInsertsAtTheTopLevel() {
+        let row = Row()
+        #expect(PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 290, y: 790), candidates: [rowCandidate(row)],
+            dragged: row.b, blade: blade(row)) == .topLevel(window: windowA, side: .up))
+    }
+
+    @Test func aStripAtTheScreensEdgeTilesThatHalf() {
+        let row = Row()
+        let at = { (p: CGPoint) in
+            PaneDropResolver.resolve(screenPoint: p, candidates: [rowCandidate(row)], dragged: row.b, blade: blade(row))
+        }
+        #expect(at(CGPoint(x: -495, y: 500)) == .tile(frame: CGRect(x: -500, y: -300, width: 1280, height: 1440)))
+        #expect(at(CGPoint(x: 2055, y: 500)) == .tile(frame: CGRect(x: 780, y: -300, width: 1280, height: 1440)))
+        #expect(at(CGPoint(x: 300, y: 1135)) == .tile(frame: CGRect(x: -500, y: 420, width: 2560, height: 720)))
+        // Off any edge and off every window: nothing (not a new window).
+        #expect(at(CGPoint(x: 1500, y: 500)) == nil)
+    }
+
+    @Test func aStripOverAnotherWindowHasOnlyItsEdges() {
+        let row = Row()
+        let other = PaneDropCandidate(
+            window: windowB, zOrder: 0, contentRect: CGRect(x: 1200, y: 0, width: 600, height: 800),
+            paneRects: [(id: paneOne, rect: CGRect(x: 1200, y: 0, width: 600, height: 800))])
+        let candidates = [rowCandidate(row), other]
+        #expect(PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 1500, y: 400), candidates: candidates, dragged: row.b, blade: blade(row)) == nil)
+        #expect(PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 1790, y: 400), candidates: candidates, dragged: row.b,
+            blade: blade(row)) == .topLevel(window: windowB, side: .right))
+    }
+
+    @Test func aColumnsSlotsRunTopToBottom() {
+        // Screen coordinates run up: the column's first item is the top one.
+        let top = UUID(), middle = UUID(), bottom = UUID()
+        let items: [(rect: CGRect, panes: Set<UUID>)] = [
+            (CGRect(x: 0, y: 764, width: 800, height: 36), [top]),
+            (CGRect(x: 0, y: 310, width: 800, height: 444), [middle]),
+            (CGRect(x: 0, y: 0, width: 800, height: 300), [bottom])]
+        let slots = PaneBladeDrag.slots(items: items, direction: .vertical, dragged: top)
+        #expect(slots.map(\.beside) == [[middle], [bottom]])
+        #expect(slots.map(\.side) == [.down, .down])
+        #expect(slots[0].caret.midY == 305, "in the gutter between middle and bottom")
+    }
+
+    @Test func aStripOfAColumnInARowLeavesItsColumn() {
+        // b is one pane of the column [b, x]: the slots name the column by
+        // what is left of it.
+        let a = UUID(), b = UUID(), x = UUID(), c = UUID()
+        let items: [(rect: CGRect, panes: Set<UUID>)] = [
+            (CGRect(x: 0, y: 0, width: 36, height: 800), [a]),
+            (CGRect(x: 46, y: 0, width: 36, height: 800), [b, x]),
+            (CGRect(x: 92, y: 0, width: 900, height: 800), [c])]
+        let slots = PaneBladeDrag.slots(items: items, direction: .horizontal, dragged: b)
+        #expect(slots.map(\.beside) == [[a], [a], [x], [c]])
+    }
+
+    @Test func aStripOnTheSidebarStashes() {
+        let row = Row()
+        let withSidebar = PaneDropCandidate(
+            window: windowA, zOrder: 0, contentRect: CGRect(x: 0, y: 0, width: 1000, height: 800),
+            paneRects: row.items.map { (id: $0.panes.first!, rect: $0.rect) },
+            sidebar: .init(rect: CGRect(x: -240, y: 0, width: 240, height: 800)))
+        #expect(PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: -100, y: 400), candidates: [withSidebar],
+            dragged: row.b, blade: blade(row)) == .stash(window: windowA, index: 0))
+    }
 }

@@ -1521,9 +1521,10 @@ dark theme and lighter on a light one, where a dim pool of the
 **complementary** hue subtly lights that corner) and leaves the terminals their theme
 color; an explicit `--color=#hex`, `random` on a split, and `random` in the
 `flat` style still tint the terminal background as before. `flat` is the classic
-edge-to-edge look with a 1px `split-divider-color` line; its panes meet at a
-0.5pt gap (the line straddles the edge), and they stack like any other (see
-Stacked panes). Geometry and palette live once in
+edge-to-edge look with a 1px `split-divider-color` line, drawn down the middle
+of a 6pt gutter (`PaneLayout.Metrics.flatGap`) — a real gutter, because the
+gutters are where the resize grips live (see Stacked panes → Resizers live in
+the gutters) — and its panes stack like any other. Geometry and palette live once in
 `PaneElevation`/`PaneDesk`/`PaneCard` (`Features/Splits/PaneElevation.swift`),
 which the grid AND the hidden stashed-pane slots both use — the slots must lay
 out exactly like the grid or a restored pane would reflow. The pinned pane
@@ -1608,45 +1609,92 @@ AND the stashed-pane slots, so a restored pane never reflows.
   slides into the slot it takes and the cards it displaces slide to the slots it
   left, every card staying in tree order left to right. A strip click restores
   just that pane, sharing the space evenly; a pane on the far edge minimizes
-  only when there is no room for one more.
+  only when there is no room for one more. **Focusing a pane already on show
+  never moves anything**, in a collapsed row or one stacked for want of room:
+  the run sticks (`PaneLayout.stickyRun`, from the run last laid out,
+  `PaneStackState.shownRun`), and a strip brought forward slides it only as far
+  as it takes. Focus history decides a run only when there is none to keep (a
+  new row, the window grown or shrunk past a card) — it used to decide every
+  layout, so clicking the far card on show re-centred the row on it.
 - **Elevation**: the run is highest, and strips sit lower the farther they are
   from it, on both sides — the run casts its shadow on the strip beside it, and
   each strip on the next one out. On either side of the run a tucked card is
   drawn as its strip alone (`Leaf.isSliver`), so slides never move a card
   through another and no card on show ever has one under its glass.
   Paint order is `Leaf.elevation`, not tree order.
-- **Collapsing by hand**: dragging a divider ~48pt past a pane's minimum
-  minimizes the outermost pane on that side, **while the mouse is still down**;
-  dragging back to the minimum restores it, in the same drag
-  (`BaseTerminalController.setRowDrag` replays each step from a snapshot taken
-  at mouse-down). A collapsed row stays collapsed with room to spare (a `Pin`).
-  Grips between cards on show resize them; a grip at the run's edge widens it
-  again when one more card fits. Rows nest (`a | (b / c)` is a row whose second
-  item is a column), and each keeps its own collapse.
+- **Collapsing by hand**: dragging a divider (or a grip between cards on
+  show) ~48pt past the minimum of the pane it squeezes minimizes the outermost
+  pane on that side, **while the mouse is still down** — and the drag **goes
+  on**: the grip then follows the pointer through the run, and each next pane
+  on that side tucks away in its turn once the pointer is 48pt past its
+  minimum, until nothing on that side is on show (three across, the left
+  divider dragged right: c, then b, then a alone). Dragging back returns them
+  in reverse — each once there is room for it again at its minimum, the first
+  by the divider's own threshold — all in the same drag
+  (`PaneLayout.chain` / `squeezedShares`, pure; `BaseTerminalController
+  .squeezeRow` replays each step from a snapshot taken at mouse-down). It
+  measures in row coordinates, so `(a | b) | c` and `a | (b | c)` behave the
+  same. A collapsed row stays collapsed with room to spare (a `Pin`). Grips
+  between cards on show resize them; a grip at the run's edge widens it again
+  when one more card fits. Rows nest (`a | (b / c)` is a row whose second item
+  is a column), and each keeps its own collapse.
+- **Resizers live in the gutters**: every card on show and every strip is
+  separated from the next by the same gutter (`Metrics.gap`: 10pt elevated,
+  6pt flat), whatever the run's position — so moving the run never resizes a
+  card. Every resizer takes the mouse in its gutter and nowhere else
+  (`Divider.gutter`, `StackHandle.gutter`): split dividers, grips between
+  cards, the grip where the run meets its strips, and the pane sidebar's edge
+  (inside its card where the grid or a pane lies right past it). A click just
+  inside a card's edge is the card's — its grab handle sits at its top edge,
+  and a strip is its own drag source. Pinned by
+  `everyResizerSitsInAGutter` / `everyResizerOfAStackSitsInAGutter` (real
+  windows: every resizer frame against every card frame, plus hit-tests just
+  inside each card's edges) and by `PaneStackFuzzTests` in both styles.
 - **Adding or removing a pane never brings minimized panes back out** —
   in a row or a column — unless only one pane is left in that direction.
   Every tree change carries each collapse over to the row it became
   (`PaneStackState.rowsDidChange`, `Pin.carrying`): the same items with
-  some gone, some joined, or moved within it.
+  some gone, some joined, or moved within it — or with a column that emptied
+  down to a row of its own merged into it, each of its pieces keeping the
+  column's place (a strip if it was one). A collapsed row nested in that column
+  keeps what it minimized: the merged row's run is what both show
+  (`intersecting`). The one exception is the focused pane: a merge never
+  leaves it a strip, so a strip between it and the run comes out with it (a
+  run is contiguous). `PaneStackFuzzTests` drives random sequences of
+  collapse, widen, focus, split, close, close-and-undo, swap and resize, in
+  rows, columns and nested rows, both styles, checking these rules after every
+  step.
 - **A pane joining a collapsed row keeps it collapsed** (a split — Cmd-D,
   `+split` —, a drop, a restored stash): one that lands beside the panes on
   show, or between them, is on show with them — a split of a pane on show
   shows both where they fit, else the focused one, and the pane it pushed out
   becomes a strip. One that lands among the strips is a strip until focused.
   A split *across* the row (`d` becomes a column `d / e`) changes no slot.
-  A row that already has a collapse of its own keeps it (an undone close, a
-  restored stash). A pane moved within the row keeps the same panes on show;
-  a swap swaps what is on show (`PaneStackState.swap`). Focus landing before
-  or after the tree change gives the same row.
+  A pane moved within the row keeps the same panes on show; a swap swaps
+  what is on show (`PaneStackState.swap`), and a pane dropped on a strip
+  takes its place there, minimized — the caret goes to the pane that came out
+  of the strip, not the dragged one. Focus landing before or after the tree
+  change gives the same row.
 - **A pane leaving a collapsed row keeps it collapsed** (closed, stashed,
   moved away): the panes still on show take its space and the strips stay
   strips on their sides; closing the only pane on show brings out the strip
-  before it (else after). The caret never lands on a strip after a close —
-  focusing one would bring it back out. A row whose remaining items no longer
-  form the same row (a column emptied into its parent) lays out afresh. Pins
-  are keyed by the row's pane set, so `PaneStackState.rowsDidChange` carries
-  them over on every tree change; the old key's pin is kept, so undoing the
-  close or restoring the stash brings the row back as it was.
+  before it (else after). Pins are keyed by the row's pane set, so
+  `PaneStackState.rowsDidChange` carries them over on every tree change; a row
+  that is no longer on screen has no pin. **Undo puts back the stack state
+  saved with the tree** (`PaneStackState.Saved`, taken by
+  `replaceSurfaceTree`), so an undone close brings the row back exactly. (Old
+  rows' pins used to be kept for that, and came back stale after later changes
+  — minimizing the focused pane.)
+- **The caret never lands on a strip** unless the user asked for that pane:
+  focusing one brings it out. Every handoff picks the pane on show nearest
+  the candidate (`paneOnShow`, `focusTargetAfterRemoving`): a close, Cmd-W in
+  a viewer, a stash, the sidebar's trash kill, and the window becoming key
+  with nothing focused. And only a pane that **really has the caret** counts
+  as focused to a stack (`PaneView.holdsKeyboardFocus`): `focusedPane` falls
+  back to the last focused terminal while the caret is elsewhere (a viewer
+  gave it up, the window itself after a re-parent), and that terminal may
+  have been minimized since — reading it as focused again brought it back
+  out.
 - **No resize per animation frame**: a slide is a Core Animation animation of
   each card's layer (`PaneStage`), never a frame change, so a terminal is told
   its size once, and its PTY never SIGWINCHes during a slide. **A minimized
@@ -1666,10 +1714,15 @@ AND the stashed-pane slots, so a restored pane never reflows.
   `/tmp/pane-stack-snapshots/frames`) and fails on a frame where the still card
   flashes.
 - **Drag a strip** to pick its pane up: the card itself follows the pointer (no
-  drag image, past a 5pt threshold, so a click with a wobble is a click) and
-  drops through the ordinary resolver — onto a pane on show it swaps with it,
-  and the row stays collapsed (`PaneStackState.swap`). Strips are drop targets
-  too (`PaneDragSession` uses the strip's rect for a minimized pane).
+  drag image, past a 5pt threshold, so a click with a wobble is a click). A
+  strip has **targets of its own** (`PaneDropResolver.resolveBlade`; see Pane
+  rearrange mode): a slot between any two cards or strips of its row (or at
+  either end) moves it there — on show if it lands between cards on show, a
+  strip among strips — a window's edge inserts it at the top level, a
+  screen's edge tiles it into a window of its own, the pane sidebar stashes
+  it. Over a pane there is nothing: no split quadrants, no swap. Strips are
+  still drop targets for a NORMAL pane drag (`PaneDragSession` uses the
+  strip's rect for a minimized pane — only a strip that is showing).
 - **Zoom / hero** show one pane, so nothing stacks. **The pane sidebar** lists
   minimized panes like any other; clicking one focuses it, which restores it.
   Dragging a strip onto the sidebar stashes it. **Flat style** stacks the same way, with square
@@ -1680,7 +1733,8 @@ AND the stashed-pane slots, so a restored pane never reflows.
 
 Code: `PaneLayout.swift` (pure), `PaneStackState.swift`, `PaneStage.swift`,
 `PaneStackTab.swift`. Tests: `PaneLayoutTests`, `PaneStackStateTests`,
-`PaneStackWindowTests` (captures to `/tmp/pane-stack-snapshots`).
+`PaneStackFuzzTests`, `PaneStackWindowTests` (real windows, real mouse events
+for divider drags; captures to `/tmp/pane-stack-snapshots`).
 
 ## Pane rearrange mode
 
@@ -1708,6 +1762,25 @@ resolver. There is no "moded dropping" to drift from "unmoded dropping".
 | Within **28pt of the window's edge** | Insert at the **top level** of that window's tree, spanning the full side |
 | The **tab bar** | Move the pane into a **new tab of its own**, at the index under the pointer |
 | Anywhere else | Move the pane into a **new window** there |
+
+**A strip (a minimized pane) has its own targets** — it is a pane put away
+in its row, so it gets the targets of putting it somewhere else in that row or
+taking it out of the window, never a pane's quadrants or swap
+(`PaneDropResolver.resolveBlade`, in this order):
+
+| Where a strip is released | Result | Preview |
+|---|---|---|
+| Within **12pt of a screen's edge** | A **new window** holding the pane, **tiled** to that half of the screen's visible frame | A translucent accent panel over that half (`TileDropPreview`) |
+| The **pane sidebar** | Stash it, as any pane | As any pane |
+| A **slot of its own row** — the gutter between two of its cards or strips (reaching 24pt into each), or either end | **Move it there** within the row: on show between cards on show, a strip among strips; the row stays collapsed | An accent insertion bar down the gutter (`BladeDropOverlay`) |
+| Within **28pt of a window's edge** | Insert at the **top level**, as any pane | As any pane |
+| Anywhere else (over a pane, another window, the desktop) | **Nothing** — the card settles back | — |
+
+The slots are read off the strips and cards on screen
+(`PaneBladeDrag.slots`, from the row `PaneStackState.stackMinimizing` names);
+a slot beside the strip's own place is left out. A strip that is one pane of a
+minimized column leaves the column. Resize grips never compete: they live in
+the gutters only, and a strip is a drag source of its own.
 
 Pane zones use the pane's diagonals (nearest edge wins), with a centered swap
 rectangle at 34% of each dimension — floored at 44pt so a narrow pane stays

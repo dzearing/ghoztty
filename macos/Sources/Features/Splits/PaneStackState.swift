@@ -64,8 +64,9 @@ final class PaneStackState: ObservableObject {
         pins[row]
     }
 
-    /// Collapse or widen a row (a divider or stack grip dragged).
-    func restack(_ row: PaneLayout.Row<UUID>, _ change: PaneLayout.Restack) {
+    /// Collapse or widen a row (a divider or stack grip dragged), as many
+    /// times over as `times` (a drag that goes on squeezing).
+    func restack(_ row: PaneLayout.Row<UUID>, _ change: PaneLayout.Restack, times: Int = 1) {
         let key = row.key
         // Rows nest (a column is one item of the row beside it), and each
         // keeps its own collapse. A row that only partly overlaps this one
@@ -75,11 +76,19 @@ final class PaneStackState: ObservableObject {
             pins[other] = nil
             pinnedItems[other] = nil
         }
-        pins[key] = PaneLayout.Pin.restacking(row.run, of: row.items.count, change)
-        pinnedItems[key] = pins[key] == nil ? nil : row.items
-        // The panes still on show keep the sizes they had; a pane coming back
-        // gets an average slot.
-        shares[key] = pins[key] == nil ? nil : Self.shares(row.sizes, change)
+        var run = row.run, sizes: [CGFloat]? = row.sizes
+        var pin: PaneLayout.Pin?
+        for _ in 0..<Swift.max(1, times) {
+            pin = PaneLayout.Pin.restacking(run, of: row.items.count, change)
+            guard let next = pin else { break }
+            run = next.start...(next.start + next.count - 1)
+            // The panes still on show keep the sizes they had; a pane coming
+            // back gets an average slot.
+            sizes = sizes.flatMap { Self.shares($0, change) }
+        }
+        pins[key] = pin
+        pinnedItems[key] = pin == nil ? nil : row.items
+        shares[key] = pin == nil ? nil : sizes
     }
 
     /// One row's collapse and slot sizes, as a drag found them: every step
@@ -99,6 +108,24 @@ final class PaneStackState: ObservableObject {
         if pins[row] != snapshot.pin { pins[row] = snapshot.pin }
         if shares[row] != snapshot.shares { shares[row] = snapshot.shares }
         pinnedItems[row] = snapshot.items
+    }
+
+    /// Every row's collapse, slot sizes and order: what an undo puts back
+    /// along with the tree it was taken with.
+    struct Saved {
+        fileprivate let pins: [Set<UUID>: PaneLayout.Pin]
+        fileprivate let shares: [Set<UUID>: [CGFloat]]
+        fileprivate let items: [Set<UUID>: [[UUID]]]
+        fileprivate let capacity: [Set<UUID>: Int]
+    }
+
+    var saved: Saved { Saved(pins: pins, shares: shares, items: pinnedItems, capacity: capacity) }
+
+    func restore(_ saved: Saved) {
+        if pins != saved.pins { pins = saved.pins }
+        if shares != saved.shares { shares = saved.shares }
+        pinnedItems = saved.items
+        capacity = saved.capacity
     }
 
     /// A drag on a divider or stack grip is under way. Cards move faster while
@@ -127,6 +154,31 @@ final class PaneStackState: ObservableObject {
     /// How many items of each pinned row fit on show at once, as last laid out.
     private var capacity: [Set<UUID>: Int] = [:]
 
+    /// The stacked rows as last laid out on screen: where a strip being
+    /// dragged lives (`PaneDragSession`).
+    private(set) var stacks: [PaneLayout.Stack<UUID>] = []
+
+    /// The grid's stacked rows, as it lays them out.
+    func noteStacks(_ stacks: [PaneLayout.Stack<UUID>]) {
+        self.stacks = stacks
+        for stack in stacks { noteItems(stack.items, fits: stack.fits) }
+    }
+
+    /// The run a stacked row of exactly these items showed when last laid
+    /// out: it sticks (`PaneLayout.stickyRun`).
+    func shownRun(_ items: [[UUID]]) -> ClosedRange<Int>? {
+        stacks.first { $0.items == items }?.run
+    }
+
+    /// The stacked row `id` is minimized in — the innermost, when its card is
+    /// in more than one — as last laid out.
+    func stackMinimizing(_ id: UUID) -> PaneLayout.Stack<UUID>? {
+        stacks.filter { stack in
+            guard let index = stack.items.firstIndex(where: { $0.contains(id) }) else { return false }
+            return !stack.run.contains(index)
+        }.min { $0.items.joined().count < $1.items.joined().count }
+    }
+
     /// The layout's current order of a pinned row's items, and how many of
     /// them fit on show.
     func noteItems(_ items: [[UUID]], fits: Int) {
@@ -144,14 +196,10 @@ final class PaneStackState: ObservableObject {
     /// restore — stays collapsed with them (`Pin.adding`): one that lands
     /// beside the panes on show is on show too (the layout shows as many of
     /// the run as fit, the focused one first), and one among the minimized
-    /// ones is minimized with them until it is focused. A row whose items
-    /// are not the row the user collapsed any more (a column that emptied to
-    /// one pane, merging what was in it into the row around it) lays out
-    /// afresh.
-    ///
-    /// The collapse under the row's old panes is kept, so an undone close or
-    /// a restored stash brings the row back as it was: a row that already
-    /// has a collapse of its own keeps it when panes join it.
+    /// ones is minimized with them until it is focused. A column that
+    /// emptied down to a row of its own merges into the row around it, each
+    /// of its pieces keeping the column's place (`origin`); a row nested in
+    /// it that was collapsed too keeps what it minimized (`intersecting`).
     func rowsDidChange(from old: [[[UUID]]], to new: [[[UUID]]]) {
         let carried = Self.carried(pins, shares, pinnedItems, from: old, to: new)
         for (key, row) in carried {
@@ -160,9 +208,20 @@ final class PaneStackState: ObservableObject {
             pinnedItems[key] = row.pin == nil ? nil : row.items
             capacity[key] = row.pin == nil ? nil : capacity[row.from]
         }
+        // A row that is not on screen any more has no collapse: what it
+        // became carries it. (Undo brings the old one back exactly, from a
+        // `Saved` taken with the tree — not from a collapse kept under the
+        // old row's panes, which a later change could make stale and bring
+        // back over panes the user has had on show since.)
+        let keys = Set(new.map { Set($0.joined()) })
+        for key in pins.keys where !keys.contains(key) {
+            pins[key] = nil
+            shares[key] = nil
+            capacity[key] = nil
+        }
+        for key in shares.keys where !keys.contains(key) { shares[key] = nil }
         // A focus change slides only rows on screen (the layout notes them
         // again as it lays them out).
-        let keys = Set(new.map { Set($0.joined()) })
         for key in pinnedItems.keys where !keys.contains(key) { pinnedItems[key] = nil }
         // The focus can land before the tree change is seen (a pane focused
         // as it joins a row): it comes on show as it would have after.
@@ -186,6 +245,17 @@ final class PaneStackState: ObservableObject {
             id = row[target].min { (rank(of: $0) ?? .max) < (rank(of: $1) ?? .max) } ?? id
         }
         return id
+    }
+
+    /// Whether `id` is minimized in a collapsed row of `rows` (what the
+    /// window's rows are, or are about to be with these collapses).
+    func isMinimized(_ id: UUID, in rows: [[[UUID]]]) -> Bool {
+        rows.contains { row in
+            guard let pin = pins[Set(row.joined())], let index = row.firstIndex(where: { $0.contains(id) }) else {
+                return false
+            }
+            return !(pin.start..<(pin.start + pin.count)).contains(index)
+        }
     }
 
     /// A collapse `rowsDidChange` carries over: the new pin, slot sizes and
@@ -219,23 +289,52 @@ final class PaneStackState: ObservableObject {
                         .compactMap { origin[$0].map { $0 - pin.start } }
                         .filter(old.indices.contains)
                     guard slots.count == carried.count else { return nil }
-                    let sizes = slots.map { old[$0] }
+                    // A slot that became several (a column merged into the
+                    // row) shares its size out among them.
+                    let sizes = slots.map { slot in old[slot] / CGFloat(slots.filter { $0 == slot }.count) }
                     let total = sizes.reduce(0, +)
                     return sizes.count > 1 && total > 0 ? sizes.map { $0 / total } : nil
                 }
-                result[Set(row.joined())] = (carried, sizes, row, key)
+                let rowKey = Set(row.joined())
+                if let earlier = result[rowKey] {
+                    // A row carried into twice: a collapsed row, and a
+                    // collapsed row nested in one of its items whose column
+                    // emptied into it. What either minimized stays minimized:
+                    // the run is what both show.
+                    let both = Self.intersecting(earlier.pin, carried, of: row.count)
+                    result[rowKey] = (both, both == earlier.pin ? earlier.shares : nil, row, earlier.from)
+                } else {
+                    result[rowKey] = (carried, sizes, row, key)
+                }
                 break
             }
         }
         return result
     }
 
+    /// The run two pins of a row of `n` both show; nil is the whole row. When
+    /// they share nothing, the first.
+    private static func intersecting(_ a: PaneLayout.Pin?, _ b: PaneLayout.Pin?, of n: Int) -> PaneLayout.Pin? {
+        let x = a.map { $0.start..<($0.start + $0.count) } ?? 0..<n
+        let y = b.map { $0.start..<($0.start + $0.count) } ?? 0..<n
+        let both = x.clamped(to: y)
+        guard !both.isEmpty else { return a }
+        return both.count >= n ? nil : PaneLayout.Pin(start: both.lowerBound, count: both.count)
+    }
+
     /// Each of `row`'s items' index in `items`, a collapsed row before the
     /// change, or nil for an item that joined it — when `row` is what became
-    /// of `items`: its panes a strict subset or superset of theirs with every
-    /// item they share intact and in order, or the same items reordered. Nil
-    /// when it is some other row. A row that gained panes and already has a
+    /// of `items`: its panes a strict subset or superset of theirs, every new
+    /// item made of the panes of ONE old item, in order, from at least two of
+    /// them (all of it from one is a row across that item), or the same items
+    /// reordered. Nil when it is some other row. A row that already has a
     /// collapse of its own (`pinned`) keeps that one.
+    ///
+    /// An old item may become several new ones: a column that a close
+    /// emptied down to a row of its own merges into the row around it, and
+    /// each of its pieces keeps the item's place — on show if it was, a strip
+    /// if it was minimized. (It used to lay the row out afresh, and every
+    /// strip in it came back out.)
     ///
     /// A reorder is measured from `order`, the order the collapse was last
     /// laid out in, not from `items`: a swap (`swap(_:_:)`) trades the two
@@ -255,14 +354,24 @@ final class PaneStackState: ObservableObject {
         }
         // The row itself is still there: it is not what this one became.
         guard !newKeys.contains(key) else { return nil }
-        let grew = rowKey.isStrictSuperset(of: key)
-        guard rowKey.isStrictSubset(of: key) || (grew && pinned[rowKey] == nil) else { return nil }
+        // A row that already has a collapse of its own — kept from before it
+        // left the screen (an undone close, a restored stash) — keeps it.
+        guard pinned[rowKey] == nil,
+              rowKey.isStrictSubset(of: key) || rowKey.isStrictSuperset(of: key)
+        else { return nil }
         let common = key.intersection(rowKey)
-        let left = items.map { $0.filter(common.contains) }
-        let right = row.map { $0.filter(common.contains) }
-        guard left.filter({ !$0.isEmpty }) == right.filter({ !$0.isEmpty }) else { return nil }
-        var kept = left.indices.filter { !left[$0].isEmpty }.makeIterator()
-        return right.map { $0.isEmpty ? nil : kept.next() }
+        var origin: [Int?] = []
+        for item in row {
+            let homes = Set(item.filter(common.contains).compactMap { id in items.firstIndex { $0.contains(id) } })
+            // Panes of two old items in one new item: not what the row became.
+            guard homes.count <= 1 else { return nil }
+            origin.append(homes.first)
+        }
+        let kept = origin.compactMap { $0 }
+        // All of it from one old item is a row across that item (a column
+        // in it), not this row: the row itself is gone, down to one item.
+        guard Set(kept).count > 1, kept == kept.sorted() else { return nil }
+        return origin
     }
 
     /// Two panes traded places (a rearrange swap): a collapsed row keeps its
