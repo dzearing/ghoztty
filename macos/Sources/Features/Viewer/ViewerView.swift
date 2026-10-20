@@ -116,6 +116,31 @@ final class ViewerView: NSView, Codable, ObservableObject {
         didSet { if isOnGlass != oldValue { applyGlass() } }
     }
 
+    /// The grid leaf that last offered to host this pane (`ViewerLeafHost`).
+    weak var leafHost: ViewerLeafHost?
+
+    /// Hero mode has this pane on its strip (`HeroPaneSlot`), and while it
+    /// does no grid leaf may take it. SwiftUI can still run an update — even
+    /// build a fresh leaf — in the grid that hero mode just replaced, and a
+    /// leaf that took the pane then would carry it off with it when it is torn
+    /// down, leaving the hero blank. When the last hold is released the
+    /// grid's current leaf takes the pane back.
+    var isInHero: Bool { heroHolds > 0 }
+
+    /// Holds, not a flag: a hero container SwiftUI rebuilds claims the pane
+    /// before the one it replaces lets go of it.
+    private var heroHolds = 0
+
+    func holdForHero() {
+        heroHolds += 1
+    }
+
+    func releaseFromHero() {
+        guard heroHolds > 0 else { return }
+        heroHolds -= 1
+        if heroHolds == 0 { leafHost?.adopt() }
+    }
+
     /// Our own pages — markdown, code, a diff, an image — are see-through on
     /// a glass pane, so the sheet behind is their background, as it is a
     /// terminal's. A website or an HTML file keeps its own: a page that sets

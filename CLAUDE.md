@@ -1070,6 +1070,15 @@ ghoztty +close --target=doc
 - `+read`/`+send-keys`/`+set-state`/`+set-banner` against a viewer fail with
   `... is a viewer pane, not a terminal` (exit 1). `+close` works normally
   and never prompts for viewers.
+- **Hero mode** shows every viewer kind, and gives it back to the grid on
+  exit. A viewer sits in the grid inside a `ViewerLeafHost` — SwiftUI never
+  hosts the `ViewerView` directly, as a terminal's `SurfaceScrollView` wraps
+  its surface — and while a hero slot holds it (`ViewerView.holdForHero`) no
+  grid leaf may take it. SwiftUI re-adds whatever view it was handed on every
+  update, and the grid hero mode replaces still runs one last update: it used
+  to take the pane back out of the hero about one entry in two, and the hero
+  was blank (`viewer.window == nil`). Tests: `HeroViewerRenderWindowTests`
+  (captured pixels per viewer kind), `ViewerLeafHostTests`.
 - Session persistence: viewer panes restore by re-opening their file/URL —
   an image pane comes back at best-fit, since a zoom is a transient reading
   posture rather than something the pane IS — and a diff pane by RE-RUNNING

@@ -25,15 +25,22 @@ struct ViewerSplitLeaf: View {
     }
 }
 
-/// Bridges the ViewerView (an NSView) into SwiftUI.
+/// Bridges the ViewerView (an NSView) into SwiftUI, through a
+/// `ViewerLeafHost` rather than handing SwiftUI the pane itself — as a
+/// terminal's `SurfaceScrollView` wraps its surface. SwiftUI re-adds the view
+/// it was handed to its own host whenever it updates or rebuilds the leaf, so
+/// a leaf in a grid hero mode had just replaced could take the pane out of
+/// the hero.
 private struct ViewerRepresentable: NSViewRepresentable {
     let viewerView: ViewerView
 
-    func makeNSView(context: Context) -> ViewerView {
-        viewerView
+    func makeNSView(context: Context) -> ViewerLeafHost {
+        ViewerLeafHost(viewerView: viewerView)
     }
 
-    func updateNSView(_ nsView: ViewerView, context: Context) {}
+    func updateNSView(_ host: ViewerLeafHost, context: Context) {
+        host.adoptIfOrphaned()
+    }
 
     /// Take the pane exactly as offered, however narrow.
     ///
@@ -47,7 +54,7 @@ private struct ViewerRepresentable: NSViewRepresentable {
     /// edge of the window.
     func sizeThatFits(
         _ proposal: ProposedViewSize,
-        nsView: ViewerView,
+        nsView: ViewerLeafHost,
         context: Context
     ) -> CGSize? {
         // A concrete proposal is the pane's size and is taken verbatim. Nothing
@@ -61,6 +68,51 @@ private struct ViewerRepresentable: NSViewRepresentable {
         return CGSize(
             width: resolve(proposal.width, current: nsView.frame.width),
             height: resolve(proposal.height, current: nsView.frame.height))
+    }
+}
+
+/// A viewer pane's place in the split grid: the view SwiftUI hosts, holding
+/// the `ViewerView` itself. The pane fills it, by frame.
+///
+/// A host takes the pane when it is made — a grid leaf being built is the
+/// grid claiming the pane — and otherwise only takes back a pane that nothing
+/// holds. Never while hero mode has it (`ViewerView.isInHero`): that is the
+/// one owner a grid leaf must not take a pane from.
+final class ViewerLeafHost: NSView {
+    let viewerView: ViewerView
+
+    init(viewerView: ViewerView) {
+        self.viewerView = viewerView
+        super.init(frame: .zero)
+        viewerView.leafHost = self
+        adopt()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    /// Mount the pane here, unless hero mode holds it.
+    func adopt() {
+        guard !viewerView.isInHero, viewerView.superview !== self else { return }
+        viewerView.leafHost = self
+        viewerView.removeFromSuperview()
+        // Frame-based, as in a hero slot: SwiftUI turned this off for a view
+        // it hosted directly, and nothing here lays the pane out by constraint.
+        viewerView.translatesAutoresizingMaskIntoConstraints = true
+        viewerView.autoresizingMask = [.width, .height]
+        viewerView.frame = bounds
+        addSubview(viewerView)
+    }
+
+    /// Take back a pane that was left mounted nowhere.
+    func adoptIfOrphaned() {
+        if viewerView.superview == nil { adopt() }
+    }
+
+    override func layout() {
+        super.layout()
+        if viewerView.superview === self { viewerView.frame = bounds }
     }
 }
 
