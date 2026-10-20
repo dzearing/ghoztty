@@ -817,5 +817,33 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.41.0/Ghoztty-1.41.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="R8szfHRlrGF7To5fKExGP348hK8zo/LLv8zLsd6oGkfT9lVJ/1SnarZ8ARnHGwaB+RFWVyxg1+hmMHxj2jU5DA==" length="26565368" />
         </item>
+        <item>
+            <title>Version 1.42.0</title>
+            <sparkle:version>1.42.0</sparkle:version>
+            <sparkle:shortVersionString>1.42.0</sparkle:shortVersionString>
+            <pubDate>Tue, 20 Oct 2026 05:49:07 +0000</pubDate>
+            <description>{
+  "version": "1.42.0",
+  "sections": [
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Drag to collapse keeps going", "text": "Dragging a divider past a pane's minimum now collapses the next pane, and the one after it, as the drag continues. Dragging back brings them out again in reverse, in the same drag." },
+        { "title": "New drop targets for strips", "text": "When you drag a minimized strip, you can drop it between any cards or strips in its row, at a window's edge, or at a screen's edge. A screen edge opens the pane in a new window tiled to that half of the screen. Dropping a strip on a pane no longer splits or swaps. Each target shows a preview." },
+        { "title": "Resizers stay in the gutters", "text": "Dividers, stack grips and the sidebar edge only take the mouse in the gaps between panes. They no longer cover a pane's drag handle or its edge." },
+        { "title": "Strips stay put", "text": "Focusing a pane that's already on show never shuffles the row. Undo, stash, closing a viewer and switching windows no longer bring strips back out or put the caret on one. A pane dropped on a strip stays minimized there." }
+      ]
+    },
+    {
+      "title": "Hero mode",
+      "items": [
+        { "title": "Viewers no longer go blank", "text": "HTML pages, websites, markdown, code, images and diffs now show reliably in hero mode, and again when you leave it. Before, a viewer could show a blank page in hero mode about half the time." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.42.0/Ghoztty-1.42.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="CUCp8h2z7dIMZpagPUrwXlDdzK1uKisClrOeWoTpLl6ptEzYwZuL9UhSlQYIKgbUSywbCIZqEeRhk4mBr47pCg==" length="26610214" />
+        </item>
     </channel>
 </rss>
