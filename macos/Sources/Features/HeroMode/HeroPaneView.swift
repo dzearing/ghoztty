@@ -37,6 +37,11 @@ struct HeroPaneRepresentable: NSViewRepresentable {
         container.isGlass = isGlass
         container.update(leaves: leaves, selectedIndex: selectedIndex)
     }
+
+    /// Hero mode is over: hand every viewer back to the grid.
+    static func dismantleNSView(_ container: HeroPaneContainer, coordinator: ()) {
+        container.releaseAll()
+    }
 }
 
 class HeroPaneContainer: NSView {
@@ -116,10 +121,16 @@ class HeroPaneContainer: NSView {
 
         for (_, slot) in slotsByPane {
             slot.removeFromSuperview()
+            slot.release()
         }
 
         slots = newSlots
         return true
+    }
+
+    /// Let go of every pane, for the grid to take back.
+    func releaseAll() {
+        for slot in slots { slot.release() }
     }
 
     private func updateBackgroundColor() {
@@ -253,15 +264,30 @@ private class HeroPaneSlot: NSView {
         wantsLayer = true
         let content = pane.contentView
         content.removeFromSuperview()
-        // SwiftUI mounts pane content with translatesAutoresizingMaskIntoConstraints
-        // off and positions it via its own constraints. Hero mode lays out by
+        // Pane content may arrive with translatesAutoresizingMaskIntoConstraints
+        // off, positioned by constraints. Hero mode lays out by
         // assigning frames, so re-enable the autoresizing translation to make
         // the assigned frame authoritative in the constraint engine. Without
         // this a viewer's WKWebView — edge-pinned to the ViewerView with Auto
         // Layout — solves against an ambiguous 0×0 parent and renders nothing.
-        // (SwiftUI switches it back off when it re-adopts the view on exit.)
         content.translatesAutoresizingMaskIntoConstraints = true
         addSubview(content)
+        // Held until released, so the grid hero mode replaced cannot take a
+        // viewer back while its last update runs (`ViewerView.isInHero`).
+        pane.viewerView?.holdForHero()
+        isHolding = true
+    }
+
+    /// Whether this slot still holds its viewer (`release` lets go once).
+    private var isHolding = false
+
+    deinit { release() }
+
+    /// The pane leaves hero mode: a viewer goes back to its grid leaf.
+    func release() {
+        guard isHolding else { return }
+        isHolding = false
+        pane.viewerView?.releaseFromHero()
     }
 
     required init?(coder: NSCoder) { fatalError() }
