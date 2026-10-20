@@ -289,6 +289,8 @@ Processes can also set the banner from inside the pane via OSC escape sequence: 
 
 Banners are persisted per pane in the session-layout manifest (keyed to the stable pane id), so a session-persistence restore brings them back with their text intact — across app quit/relaunch/upgrade re-attach and across an agent-restart relaunch alike. `+list --json` reports each terminal pane's current banner in a `banner` field (absent when no banner is set), which is also the CLI way to read a banner back.
 
+A banner with a **title** — an `## ` heading on its first line, or a one-line banner opening with a standalone `**bold**` run — also **names its pane** in the pane sidebar and on a stacked pane's strip, in place of the pane title (see Stacked panes).
+
 ### `ghoztty +reload`
 
 Reload a named **viewer pane** (see Viewer Panes below) in place — no
@@ -1473,6 +1475,14 @@ the interactive mock settled).
   so no terminal resizes; only pin/unpin change the column. A window narrower
   than 720pt shows the rail even when pinned. **Ctrl+Cmd+S** hides/shows the
   sidebar entirely.
+- A row (and a rail tile's monogram) names its pane the way a stacked strip
+  does: the **banner's title** when it has one, else the pane's title
+  (`PaneView.displayLabel`; see Stacked panes). The subtitle is then the
+  working directory — a titled banner's first line IS the title, so showing
+  it again said nothing — and the banner's first line only when the banner
+  has no title. The all-windows search still matches the pane's own title.
+  The all-windows **window** names are not affected: they group by window
+  title (`<project>: <worktree>`), which a pane banner has no say in.
 - Rows: grid panes (focused one selected), then **STASHED**. Click focuses /
   restores to the exact slot it left; **Option-click** swaps a stashed pane with
   the focused one; drag a pane's grab handle onto the list to stash it, a row
@@ -1606,10 +1616,29 @@ pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).
 **A pane is never narrower (or shorter) than 300pt.** A row of panes that
 cannot fit side by side at that minimum becomes a **stack**: as many panes as
 fit stay on show (the **run**), and the rest are **minimized** into strips at
-the edge they live on — a dark bar with the pane's title down it. Nothing is
+the edge they live on — a dark bar with the pane's name down it. Nothing is
 ever squeezed below the minimum to make room. Layout is one pure function,
 `PaneLayout.compute` (`Features/Splits/PaneLayout.swift`), used by the live grid
 AND the stashed-pane slots, so a restored pane never reflows.
+
+- **A strip is named by its pane's banner title** when the banner has one,
+  else by the pane's own title (else its directory's name, else its kind) —
+  `PaneSidebarText.label`, the same name its pane sidebar row shows
+  (`PaneView.displayLabel`). The banner title wins because somebody chose it:
+  the banner hook sets it to the task, while Claude Code retitles the pane
+  (OSC 0/2) with whatever it is doing. It is live — `+set-banner`, OSC 7778
+  and Cmd+R relabel the strip at once, and clearing the banner (or a banner
+  with no title) brings the pane's own title back. **What counts as a banner
+  title** (`PaneSidebarText.bannerTitle`, pure) is deliberately narrow, never
+  just the first line: a heading on the banner's first line (`## Fix strip
+  labels` — what the hook writes above its table), or a ONE-line banner that
+  opens with a bold run standing alone or before ` · ` (`**Fix strip labels**
+  · **Goal:** …` — the hook's OSC fallback). A bold label (`**Goal:** …`), a
+  bold run followed by prose (`**PR #12** — 3 files`), a bold line heading a
+  multi-line banner (`**Last result**`), and a title-less table are not
+  titles. Markdown is stripped (bold, code, links → their label). Tests:
+  `PaneSidebarTextTests`, `aStripIsLabeledByItsBannerTitleLive` (reads the
+  composited window).
 
 - **Clicking a strip focuses its pane, and focus is what brings it forward**
   — there is no separate "bring forward" state. A click, `goto_split`, the pane
