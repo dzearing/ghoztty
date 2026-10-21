@@ -151,6 +151,8 @@ const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
 const split_geometry = @import("split_geometry.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const pane_stack_grid = @import("pane_stack_grid.zig");
+const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const DimOverlay = @import("DimOverlay.zig").DimOverlay;
@@ -772,6 +774,11 @@ kbd_resize: split_resize.KeyboardGesture = .{},
 /// up on no screenshot. Active-tab state, so it is dropped alongside the
 /// hero transients whenever the tab or the tree changes.
 hover_split: ?SplitTree(PaneView).Node.Handle = null,
+
+/// Which panes of a stacked row are on show (T2108): the window's pane focus
+/// history and the rows the user collapsed, read by `stackGrid` as the
+/// layout's provider. Made on first use; ephemeral, like Mac's.
+pane_stacks: ?pane_stack_state.PaneStackState = null,
 
 /// True after the last tab has been closed and WM_CLOSE has been posted.
 /// Input handlers must bail when this is set — between PostMessage(WM_CLOSE)
@@ -1910,6 +1917,8 @@ pub fn deinit(self: *Window) void {
     // Drop IPC names pointing at this window before the memory can be
     // recycled.
     self.app.ipcForget(.{ .window = self });
+    if (self.pane_stacks) |*st| st.deinit();
+    self.pane_stacks = null;
     if (self.ipc_name) |n| {
         self.app.core_app.alloc.free(n);
         self.ipc_name = null;
@@ -4185,32 +4194,21 @@ fn collectPaneSlots(self: *Window, out: []PaneSlot) usize {
         }
         return 0;
     }
+    var grid = self.stackGrid() orelse return 0;
+    defer grid.deinit();
+    // Tree order, and only the panes on show: a tucked card is its strip
+    // (T2109), not a slot.
     var n: usize = 0;
-    self.collectPaneSlotsNode(tree, .root, rect, out, &n);
-    return n;
-}
-
-fn collectPaneSlotsNode(
-    self: *Window,
-    tree: SplitTree(PaneView),
-    handle: SplitTree(PaneView).Node.Handle,
-    rect: w32.RECT,
-    out: []PaneSlot,
-    n: *usize,
-) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |view| {
-            if (n.* >= out.len) return;
-            out[n.*] = .{ .view = view, .rect = rect };
-            n.* += 1;
-        },
-        .split => |sp| {
-            const r = self.splitRects(tree, sp, rect);
-            if (r.lo) |lo| self.collectPaneSlotsNode(tree, sp.left, lo, out, n);
-            if (r.hi) |hi| self.collectPaneSlotsNode(tree, sp.right, hi, out, n);
-        },
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (n >= out.len) break;
+        if (pane_stash.isStashed(entry.view)) continue;
+        const p = grid.placement(pane_stack_grid.viewId(entry.view)) orelse continue;
+        if (p.is_tucked) continue;
+        out[n] = .{ .view = entry.view, .rect = winRect(p.rect) };
+        n += 1;
     }
+    return n;
 }
 
 fn paneById(self: *Window, tab: usize, id: []const u8) ?*PaneView {
@@ -6662,8 +6660,14 @@ pub fn layoutSplits(self: *Window) void {
     }
     var place_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
     var hdwp = beginPaneBatch(self.leafCount(self.active_tab));
-    self.layoutNode(tree, .root, rect, &hdwp);
-    if (pane_stash.stashedCount(tree) > 0) self.placeStashedNode(tree, .root, rect, &hdwp);
+    if (self.stackGrid()) |laid| {
+        var grid = laid;
+        defer grid.deinit();
+        self.placeGrid(tree, &grid, &hdwp);
+        // The runs on show stick to the next layout (`stickyRun`).
+        self.stackState().noteStacks(grid.result.stacks.items) catch {};
+    }
+    if (pane_stash.stashedCount(tree) > 0) self.placeStashed(tree, rect, &hdwp);
     // Every pane of this pass lands in ONE frame here, before the divider
     // bands are painted below (T1031).
     endPaneBatch(hdwp);
@@ -7210,102 +7214,131 @@ fn endPaneBatch(hdwp: ?w32.HDWP) void {
     if (hdwp) |batch| _ = w32.EndDeferWindowPos(batch);
 }
 
-fn layoutNode(self: *Window, tree: SplitTree(PaneView), handle: SplitTree(PaneView).Node.Handle, rect: w32.RECT, hdwp: *?w32.HDWP) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |view| {
-            view.setVisible(true);
-            if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, rect, true);
-        },
-        .split => |s| {
-            // Panes and the divider band TILE the rect (T155): the child
-            // rects end/start exactly at the band, so no parent-owned pixel
-            // is left between them to hold a stale line. A side that is all
-            // stashed panes gets no rect (T1827): `placeStashedNode` sizes it.
-            const r = self.splitRects(tree, s, rect);
-            if (r.lo) |lo| self.layoutNode(tree, s.left, lo, hdwp);
-            if (r.hi) |hi| self.layoutNode(tree, s.right, hi, hdwp);
-        },
-    }
-}
-
-/// The rects a split hands its two sides and the band between them,
-/// stash-aware (T1827). A side holding no visible pane gets null, and the
-/// split COLLAPSES: the visible side takes the whole rect and there is no
-/// band. That is Mac's `visibleTree` pruning done in place, on the full tree's
-/// own handles - so a divider handle means the same split in the layout, the
-/// paint, the hit test and the drag, and the collapsed split keeps its
-/// direction and ratio for the pane that comes back to it.
+/// The active tab's grid as the stacked-panes layout lays it out (T2108,
+/// `pane_stack_grid` over `pane_stack_layout`): every pane's card, which panes
+/// are tucked behind a stack's run, and every divider's gutter, in client
+/// pixels. Null with no tab, in hero or zoom (each owns the surface), or when
+/// the layout could not allocate.
 ///
-/// EVERY geometry walk goes through here; one that computed its own rects
-/// would place a header or a hit band beside a pane that is not there.
-const SplitRects = struct {
-    lo: ?w32.RECT,
-    hi: ?w32.RECT,
-    band: ?w32.RECT,
-    axis: split_geometry.Axis,
-};
-
-fn splitRects(
-    self: *Window,
-    tree: SplitTree(PaneView),
-    s: SplitTree(PaneView).Split,
-    rect: w32.RECT,
-) SplitRects {
-    const full = self.splitRectsFull(s, rect);
-    const lo_vis = pane_stash.subtreeVisible(tree, s.left);
-    const hi_vis = pane_stash.subtreeVisible(tree, s.right);
-    if (lo_vis and hi_vis) return full;
-    return .{
-        .lo = if (lo_vis) rect else null,
-        .hi = if (hi_vis and !lo_vis) rect else null,
-        .band = null,
-        .axis = full.axis,
-    };
+/// EVERY geometry walk reads this - placement, the stash's slots, the desk's
+/// cards, the divider paint, hit test and drag, the rearrange headers - so a
+/// header or a hit band can never sit beside a pane the layout did not put
+/// there. It is the one layout function, the way `PaneLayout` is on Mac; the
+/// per-split walk it replaced could not honour a pane's 300 DIP minimum or
+/// stack a row, because both need to see a whole row at once.
+///
+/// The focused pane is noted into the stack state first, so a stack's run is
+/// built around it. Pane ids are the views' addresses
+/// (`pane_stack_grid.viewId`). Caller deinits.
+fn stackGrid(self: *Window) ?pane_stack_grid.Grid {
+    return self.stackGridOf(.visible);
 }
 
-/// `splitRects` ignoring the stash: the slots the FULL layout would give.
-/// Only `placeStashedNode` wants this.
-fn splitRectsFull(self: *Window, s: SplitTree(PaneView).Split, rect: w32.RECT) SplitRects {
-    // The elevated style's gap IS the band (T1831); flat keeps the 2 DIP line.
-    const band = pane_elevation.gapPx(self.paneStyle(), self.scale) orelse
+fn stackGridOf(self: *Window, comptime panes: pane_stack_grid.Panes) ?pane_stack_grid.Grid {
+    if (self.tab_count == 0) return null;
+    if (self.tab_hero_active[self.active_tab]) return null;
+    const tree = self.tab_trees[self.active_tab];
+    if (tree.zoomed != null) return null;
+    const gpa = self.app.core_app.alloc;
+    const state = self.stackState();
+    const focus = pane_stack_grid.viewId(self.tab_active_pane[self.active_tab]);
+    if (state.recency.first() != focus) state.noteFocus(focus);
+    var built = pane_stack_grid.buildWith(gpa, tree, pane_stack_grid.viewId, panes) catch return null;
+    defer built.deinit(gpa);
+    const r = self.gridRect();
+    return pane_stack_grid.computeBuilt(
+        gpa,
+        built,
+        .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom },
+        self.scale,
+        pane_stack_grid.metrics(self.stackGapDip()),
+        state.provider(),
+    ) catch null;
+}
+
+fn stackState(self: *Window) *pane_stack_state.PaneStackState {
+    if (self.pane_stacks == null) self.pane_stacks = pane_stack_state.PaneStackState.init(self.app.core_app.alloc);
+    return &self.pane_stacks.?;
+}
+
+/// The space between two side-by-side panes, in DIPs: the elevated style's
+/// gap (T1831), or the flat style's 2 DIP band (`split_geometry.bandPx`).
+/// Flat keeps today's band rather than Mac's 6 pt gutter until T2084 decides
+/// that look on purpose.
+///
+/// Given as the band's whole PIXELS over the scale, not as the DIP constant,
+/// so the gap the grid lays out in pixels (`Metrics.scaled`) is exactly the
+/// band `bandPx` rounds once - 3 px for 2 DIP at 125% - wherever it falls.
+fn stackGapDip(self: *Window) f64 {
+    const px = pane_elevation.gapPx(self.paneStyle(), self.scale) orelse
         split_geometry.bandPx(self.scale);
-    if (s.layout == .horizontal) {
-        const a = split_geometry.axisWithBand(rect.left, rect.right, s.ratio, band);
-        return .{
-            .lo = .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom },
-            .hi = .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom },
-            .band = .{ .left = a.band_lo, .top = rect.top, .right = a.band_hi, .bottom = rect.bottom },
-            .axis = a,
-        };
+    const scale: f64 = if (self.scale > 0) self.scale else 1;
+    return @as(f64, @floatFromInt(px)) / scale;
+}
+
+/// Write the ratios on screen into the tree before a divider moves (T2108).
+/// Where a pane's minimum overrides the ratios the user made, what is on
+/// screen is `Result.displayed_ratio`, not the stored ratio; a drag or a
+/// keyboard step solved against the stored one would first jump the divider
+/// to where the stored ratio says it is. Only splits with a divider on screen
+/// are touched: a split the stash collapsed keeps the slot its pane returns
+/// to, and a row that is stacked has no ratio on screen at all.
+fn adoptDisplayedRatios(self: *Window) void {
+    var grid = self.stackGrid() orelse return;
+    defer grid.deinit();
+    const tree = &self.tab_trees[self.active_tab];
+    for (grid.result.dividers.items) |d| {
+        if (d.node >= tree.nodes.len or d.node >= grid.result.displayed_ratio.len) continue;
+        switch (tree.nodes[d.node]) {
+            .leaf => {},
+            .split => |sp| {
+                const shown = grid.result.displayed_ratio[d.node];
+                if (@abs(shown - @as(f64, sp.ratio)) > 1e-3) tree.resizeInPlace(@enumFromInt(d.node), @floatCast(shown));
+            },
+        }
     }
-    const a = split_geometry.axisWithBand(rect.top, rect.bottom, s.ratio, band);
-    return .{
-        .lo = .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo },
-        .hi = .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end },
-        .band = .{ .left = rect.left, .top = a.band_lo, .right = rect.right, .bottom = a.band_hi },
-        .axis = a,
-    };
+}
+
+fn winRect(r: pane_stack_grid.PxRect) w32.RECT {
+    return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+}
+
+/// Place every visible pane where `grid` puts it. A card tucked behind its
+/// stack's run is hidden but keeps the full size of the slot it would come
+/// forward into - the same treatment as a stashed pane - so bringing it on
+/// show is a move, never a ConPTY resize. What shows of it is its strip,
+/// which the window paints (T2109).
+fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_grid.Grid, hdwp: *?w32.HDWP) void {
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        const view = entry.view;
+        if (pane_stash.isStashed(view)) continue;
+        const p = grid.placement(pane_stack_grid.viewId(view)) orelse continue;
+        const shown = !p.is_tucked;
+        view.setVisible(shown);
+        if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, winRect(p.rect), shown);
+    }
 }
 
 /// Size every STASHED pane to the slot the full layout would give it, and
 /// keep it hidden (T1827, main c6826b79a). A stashed terminal is still
 /// running; told it was some placeholder size it would re-render its program
 /// at that size, and again on restore. Sized as the full tree lays it out, it
-/// already holds the size it will come back at.
-fn placeStashedNode(self: *Window, tree: SplitTree(PaneView), handle: SplitTree(PaneView).Node.Handle, rect: w32.RECT, hdwp: *?w32.HDWP) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |view| {
-            if (!pane_stash.isStashed(view)) return;
-            view.setVisible(false);
-            if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, rect, false);
-        },
-        .split => |s| {
-            const r = self.splitRectsFull(s, rect);
-            self.placeStashedNode(tree, s.left, r.lo.?, hdwp);
-            self.placeStashedNode(tree, s.right, r.hi.?, hdwp);
-        },
+/// already holds the size it will come back at. Falls back to the whole grid
+/// when the full layout could not be made.
+fn placeStashed(self: *Window, tree: SplitTree(PaneView), rect: w32.RECT, hdwp: *?w32.HDWP) void {
+    var full = self.stackGridOf(.all);
+    defer if (full) |*g| g.deinit();
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        const view = entry.view;
+        if (!pane_stash.isStashed(view)) continue;
+        const slot = if (full) |*g|
+            (if (g.placement(pane_stack_grid.viewId(view))) |p| winRect(p.rect) else rect)
+        else
+            rect;
+        view.setVisible(false);
+        if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, slot, false);
     }
 }
 
@@ -7350,7 +7383,6 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return;
     if (tree.zoomed != null) return;
-    const rect = self.gridRect();
     const configured = self.dividerConfiguredColor();
 
     // T233: the hovered/dragged divider paints shaded, and which way to shade
@@ -7377,7 +7409,16 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
     const hot_handle: ?SplitTree(PaneView).Node.Handle =
         if (self.dragging_split) self.drag_split_handle else self.hover_split;
 
-    self.paintDividerNode(hdc, tree, .root, rect, brush, hot_brush orelse brush, hot_handle);
+    var grid = self.stackGrid() orelse return;
+    defer grid.deinit();
+    // FILL the whole gutter (Mac draws a filled Rectangle, not a stroke). A
+    // hairline down the middle of a wider gap reads as three edges once the
+    // panes carry their own background tint.
+    for (grid.result.dividers.items, 0..) |d, i| {
+        const hot = if (hot_handle) |h| h.idx() == d.node else false;
+        var band = winRect(grid.dividerGutter(i));
+        _ = w32.FillRect(hdc, &band, if (hot) hot_brush orelse brush else brush);
+    }
 }
 
 /// The elevated style's window-owned pixels (T1831): the ocean desk over the
@@ -7591,35 +7632,6 @@ fn bannerGlass(self: *Window) ?BannerOverlay.GlassDesk {
     };
 }
 
-fn paintDividerNode(
-    self: *Window,
-    hdc: w32.HDC,
-    tree: SplitTree(PaneView),
-    handle: SplitTree(PaneView).Node.Handle,
-    rect: w32.RECT,
-    rest_brush: w32.HBRUSH,
-    hot_brush: w32.HBRUSH,
-    hot_handle: ?SplitTree(PaneView).Node.Handle,
-) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    const brush = if (hot_handle) |h| (if (h == handle) hot_brush else rest_brush) else rest_brush;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => {},
-        .split => |s| {
-            // FILL the whole band (Mac draws a filled Rectangle, not a
-            // stroke). A hairline down the middle of a wider gap reads as
-            // three edges once the panes carry their own background tint.
-            const r = self.splitRects(tree, s, rect);
-            if (r.band) |b| {
-                var band = b;
-                _ = w32.FillRect(hdc, &band, brush);
-            }
-            if (r.lo) |lo| self.paintDividerNode(hdc, tree, s.left, lo, rest_brush, hot_brush, hot_handle);
-            if (r.hi) |hi| self.paintDividerNode(hdc, tree, s.right, hi, rest_brush, hot_brush, hot_handle);
-        },
-    }
-}
-
 /// Paint every pane's rearrange header (T1530). A no-op with the mode off, so
 /// it rides the ordinary chrome paint path rather than a conditional one.
 ///
@@ -7646,30 +7658,12 @@ fn paintRearrangeHeaders(self: *Window, hdc: w32.HDC) void {
         }
         return;
     }
-    self.paintRearrangeNode(hdc, tree, .root, rect, pal, ib);
-}
-
-fn paintRearrangeNode(
-    self: *Window,
-    hdc: w32.HDC,
-    tree: SplitTree(PaneView),
-    handle: SplitTree(PaneView).Node.Handle,
-    rect: w32.RECT,
-    pal: chrome_theme.Palette,
-    ib: icon_button.Metrics,
-) void {
-    if (handle.idx() >= tree.nodes.len) return;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |view| self.paintRearrangeHeader(hdc, view, rect, pal, ib),
-        .split => |s| {
-            // The SAME geometry `layoutNode` places panes with — a header
-            // computed from a rect the pane was not placed in is a band
-            // floating next to its own terminal.
-            const r = self.splitRects(tree, s, rect);
-            if (r.lo) |lo| self.paintRearrangeNode(hdc, tree, s.left, lo, pal, ib);
-            if (r.hi) |hi| self.paintRearrangeNode(hdc, tree, s.right, hi, pal, ib);
-        },
-    }
+    // The SAME slots the panes were placed in - a header computed from a
+    // rect the pane was not placed in is a band floating next to its own
+    // terminal.
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = self.collectPaneSlots(&slots);
+    for (slots[0..n]) |slot| self.paintRearrangeHeader(hdc, slot.view, slot.rect, pal, ib);
 }
 
 fn toIconRect(r: rearrange_header.Rect) icon_button.Rect {
@@ -7863,34 +7857,14 @@ pub fn hitTestRearrangeHeader(self: *Window, x: i32, y: i32) ?RearrangeHover {
         }
         return null;
     }
-    return self.hitTestRearrangeNode(tree, .root, rect, x, y);
-}
-
-fn hitTestRearrangeNode(
-    self: *Window,
-    tree: SplitTree(PaneView),
-    handle: SplitTree(PaneView).Node.Handle,
-    rect: w32.RECT,
-    x: i32,
-    y: i32,
-) ?RearrangeHover {
-    if (handle.idx() >= tree.nodes.len) return null;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |view| return self.hitTestRearrangeLeaf(view, rect, x, y),
-        .split => |s| {
-            const r = self.splitRects(tree, s, rect);
-            // Collapsed (T1827): the one visible side owns the whole rect.
-            if (r.band == null) {
-                if (r.lo) |lo| return self.hitTestRearrangeNode(tree, s.left, lo, x, y);
-                if (r.hi) |hi| return self.hitTestRearrangeNode(tree, s.right, hi, x, y);
-                return null;
-            }
-            const coord = if (s.layout == .horizontal) x else y;
-            if (coord < r.axis.band_lo) return self.hitTestRearrangeNode(tree, s.left, r.lo.?, x, y);
-            if (coord >= r.axis.band_hi) return self.hitTestRearrangeNode(tree, s.right, r.hi.?, x, y);
-            return null;
-        },
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = self.collectPaneSlots(&slots);
+    for (slots[0..n]) |slot| {
+        const r = slot.rect;
+        if (x < r.left or x >= r.right or y < r.top or y >= r.bottom) continue;
+        return self.hitTestRearrangeLeaf(slot.view, slot.rect, x, y);
     }
+    return null;
 }
 
 fn hitTestRearrangeLeaf(self: *Window, view: *PaneView, slot: w32.RECT, x: i32, y: i32) ?RearrangeHover {
@@ -7935,36 +7909,39 @@ pub fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
-    const rect = self.gridRect();
-    return self.hitTestDividerNode(tree, .root, rect, x, y);
+    var grid = self.stackGrid() orelse return null;
+    defer grid.deinit();
+    // Each divider takes the mouse across its grab band - wider than the
+    // gutter it is painted in (T94) - and along the whole of its split.
+    for (grid.result.dividers.items, 0..) |d, i| {
+        const g = grid.dividerGutter(i);
+        const f = grid.px(d.node_frame);
+        const hit = switch (d.direction) {
+            .horizontal => split_geometry.inGrabBand(gutterAxis(g.left, g.right), x, self.scale) and y >= f.top and y <= f.bottom,
+            .vertical => split_geometry.inGrabBand(gutterAxis(g.top, g.bottom), y, self.scale) and x >= f.left and x <= f.right,
+        };
+        if (!hit) continue;
+        if (d.node >= tree.nodes.len) continue;
+        switch (tree.nodes[d.node]) {
+            .leaf => continue,
+            .split => |s| return .{ .handle = @enumFromInt(d.node), .layout = s.layout },
+        }
+    }
+    return null;
 }
 
-fn hitTestDividerNode(
-    self: *Window,
-    tree: SplitTree(PaneView),
-    handle: SplitTree(PaneView).Node.Handle,
-    rect: w32.RECT,
-    x: i32,
-    y: i32,
-) ?DividerHit {
-    if (handle.idx() >= tree.nodes.len) return null;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => return null,
-        .split => |s| {
-            const r = self.splitRects(tree, s, rect);
-            // A collapsed split has no band on screen to grab (T1827).
-            if (r.band != null) {
-                const hit = if (s.layout == .horizontal)
-                    split_geometry.inGrabBand(r.axis, x, self.scale) and y >= rect.top and y <= rect.bottom
-                else
-                    split_geometry.inGrabBand(r.axis, y, self.scale) and x >= rect.left and x <= rect.right;
-                if (hit) return .{ .handle = handle, .layout = s.layout };
-            }
-            if (r.lo) |lo| if (self.hitTestDividerNode(tree, s.left, lo, x, y)) |h| return h;
-            if (r.hi) |hi| return self.hitTestDividerNode(tree, s.right, hi, x, y);
-            return null;
-        },
+/// A gutter as the split axis `split_geometry.inGrabBand` measures from:
+/// the band is the gutter, centred where the split is.
+fn gutterAxis(lo: i32, hi: i32) split_geometry.Axis {
+    return .{ .lo_start = lo, .band_lo = lo, .band_hi = hi, .hi_end = hi, .split_pos = lo + @divTrunc(hi - lo, 2) };
+}
+
+/// The divider of split `target` in `grid`, if it is one on screen.
+fn gridDivider(grid: *const pane_stack_grid.Grid, target: SplitTree(PaneView).Node.Handle) ?usize {
+    for (grid.result.dividers.items, 0..) |d, i| {
+        if (d.node == target.idx()) return i;
     }
+    return null;
 }
 
 /// The client-coordinate rect of ONE split's divider band in the active
@@ -7975,28 +7952,12 @@ fn dividerBandRect(self: *Window, target: SplitTree(PaneView).Node.Handle) ?w32.
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
-    return self.dividerBandRectNode(tree, .root, self.gridRect(), target);
-}
-
-fn dividerBandRectNode(
-    self: *Window,
-    tree: SplitTree(PaneView),
-    handle: SplitTree(PaneView).Node.Handle,
-    rect: w32.RECT,
-    target: SplitTree(PaneView).Node.Handle,
-) ?w32.RECT {
-    if (handle.idx() >= tree.nodes.len) return null;
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => return null,
-        .split => |s| {
-            const r = self.splitRects(tree, s, rect);
-            // A collapsed split's band is not on screen (T1827): null.
-            if (handle == target) return r.band;
-            if (r.lo) |lo| if (self.dividerBandRectNode(tree, s.left, lo, target)) |b| return b;
-            if (r.hi) |hi| return self.dividerBandRectNode(tree, s.right, hi, target);
-            return null;
-        },
-    }
+    var grid = self.stackGrid() orelse return null;
+    defer grid.deinit();
+    // A split the stash collapsed, or one inside a stack, has no band on
+    // screen: null.
+    const i = gridDivider(&grid, target) orelse return null;
+    return winRect(grid.dividerGutter(i));
 }
 
 /// The client-coordinate rect a split NODE subdivides — its own layout
@@ -8009,32 +7970,10 @@ fn splitRegionRect(self: *Window, target: SplitTree(PaneView).Node.Handle) ?w32.
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
-    return self.splitRegionRectNode(tree, .root, self.gridRect(), target);
-}
-
-fn splitRegionRectNode(
-    self: *Window,
-    tree: SplitTree(PaneView),
-    handle: SplitTree(PaneView).Node.Handle,
-    rect: w32.RECT,
-    target: SplitTree(PaneView).Node.Handle,
-) ?w32.RECT {
-    if (handle.idx() >= tree.nodes.len) return null;
-    if (handle == target) {
-        return switch (tree.nodes[handle.idx()]) {
-            .leaf => null,
-            .split => rect,
-        };
-    }
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => return null,
-        .split => |s| {
-            const r = self.splitRects(tree, s, rect);
-            if (r.lo) |lo| if (self.splitRegionRectNode(tree, s.left, lo, target)) |g| return g;
-            if (r.hi) |hi| return self.splitRegionRectNode(tree, s.right, hi, target);
-            return null;
-        },
-    }
+    var grid = self.stackGrid() orelse return null;
+    defer grid.deinit();
+    const i = gridDivider(&grid, target) orelse return null;
+    return winRect(grid.px(grid.result.dividers.items[i].node_frame));
 }
 
 /// Repaint ONE divider band through the normal paint cycle (T233).
@@ -8159,6 +8098,7 @@ fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layo
     self.dragging_split = true;
     self.drag_split_handle = handle;
     self.drag_split_layout = layout;
+    self.adoptDisplayedRatios();
     // The dragged NODE's own region, not the surface (T495): a nested
     // split's ratio is relative to its sub-rectangle, and mapping the
     // pointer against the whole surface teleported the second divider of a
@@ -8785,6 +8725,7 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
     // stepping over splits a stash collapsed (T1827) - their divider is not
     // on screen, and moving one would only shift a stashed pane's slot.
     const target = pane_stash.nearestShowingSplit(tree.*, layout, handle) orelse return;
+    self.adoptDisplayedRatios();
     const ratio: f32 = switch (tree.nodes[target.idx()]) {
         .leaf => return,
         .split => |sp| @floatCast(sp.ratio),
@@ -8963,7 +8904,7 @@ pub fn restorePane(self: *Window, pane: *PaneView, focus: bool) void {
 /// focus dance `stashPane` does — nothing has been shown yet — but the tab's
 /// active pane must not be one of them, or the tab would come up focused on a
 /// pane nobody can see. The first layout pass sizes each stashed pane to its
-/// real slot (`placeStashedNode`), exactly as for a pane stashed live. Session
+/// real slot (`placeStashed`), exactly as for a pane stashed live. Session
 /// close intent is never touched: this is layout, not a close.
 pub fn applyRecordedStash(self: *Window, tab: usize, recorded: []pane_stash.Recorded(PaneView)) void {
     if (recorded.len == 0 or tab >= self.tab_count) return;

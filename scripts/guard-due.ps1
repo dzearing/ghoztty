@@ -550,6 +550,23 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T2108: the grid places panes through the stacked-panes layout - a pane
+    # stops at 300 DIP and a row that cannot fit stacks. The engine is
+    # `pane_stack_layout.zig`, the window's adapter `pane_stack_grid.zig`, the
+    # run's memory `pane_stack_state.zig`, and `Window.stackGrid` reads them
+    # for every geometry walk.
+    [pscustomobject]@{
+        Name   = 'pane-stack-grid'
+        Script = 'test\win32\pane-stack-grid.ps1'
+        Stamp  = 'test\win32\pane-stack-grid.stamp.json'
+        Covers = @(
+            'test\win32\pane-stack-grid.ps1',
+            'src\apprt\win32\pane_stack_layout.zig',
+            'src\apprt\win32\pane_stack_grid.zig',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was

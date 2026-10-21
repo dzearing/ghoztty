@@ -8,7 +8,7 @@
 //! - **Nodes, index for index.** `nodes[i]` describes `tree.nodes[i]`, so a
 //!   `Divider.node` or `Result.displayed_ratio[i]` names a split of the real
 //!   tree - the one a divider drag writes its ratio into. The stash is applied
-//!   the way `Window.splitRects` applies it (T1827): a split with a side that
+//!   the way the per-split walk it replaced did (T1827): a split with a side that
 //!   holds no visible pane COLLAPSES into its visible side, by pointing its
 //!   parent straight at that side's node. The collapsed split keeps its
 //!   direction and ratio in the real tree for the pane that comes back, and the
@@ -77,8 +77,8 @@ pub fn build(gpa: Allocator, tree: anytype, comptime idOf: anytype) Allocator.Er
 }
 
 /// Which panes get a slot: the ones on screen, or every leaf as if nothing
-/// were stashed - the slot a stashed pane is kept sized to (T1827), which
-/// `Window.splitRectsFull` computes today.
+/// were stashed - the slot a stashed pane is kept sized to (T1827,
+/// `Window.placeStashed`).
 pub const Panes = enum { visible, all };
 
 pub fn buildWith(gpa: Allocator, tree: anytype, comptime idOf: anytype, comptime panes: Panes) Allocator.Error!Built {
@@ -234,18 +234,21 @@ pub fn computeBuilt(
     provider: layout.Provider,
 ) Allocator.Error!Grid {
     const s: f64 = if (scale > 0) scale else 1;
-    const dip: layout.Rect = .{
-        .w = @as(f64, @floatFromInt(@max(rect.width(), 0))) / s,
-        .h = @as(f64, @floatFromInt(@max(rect.height(), 0))) / s,
+    // Laid out in pixels, not DIPs (`Metrics.scaled`): the engine snaps every
+    // edge to a whole unit, and only a whole pixel keeps a gap the same width
+    // wherever it falls.
+    const px_rect: layout.Rect = .{
+        .w = @floatFromInt(@max(rect.width(), 0)),
+        .h = @floatFromInt(@max(rect.height(), 0)),
     };
     // A wholly stashed tree lays nothing out; `compute` treats an
     // out-of-range root as empty.
     const root: u32 = built.root orelse @intCast(built.nodes.len);
     return .{
-        .result = try layout.compute(gpa, built.nodes, root, dip, m, provider),
+        .result = try layout.compute(gpa, built.nodes, root, px_rect, m.scaled(s), provider),
         .origin_x = rect.left,
         .origin_y = rect.top,
-        .scale = s,
+        .scale = 1,
     };
 }
 
@@ -398,6 +401,27 @@ test "pane_stack_grid: shared DIP edges stay shared in pixels at a fractional sc
         prev_right = p.rect.right;
     }
     try testing.expectEqual(@as(i32, 1601), prev_right);
+}
+
+test "pane_stack_grid: a whole-pixel gap that is not a whole DIP stays whole everywhere" {
+    var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 }, .{ .id = 4 } };
+    const n = rowOfFour(&v);
+    // The flat band at 125%: 3 px is 2.4 DIP. Snapped to whole DIPs it came
+    // out 2 or 3 DIP, so 2, 3 or 4 px depending on where it fell (T2108).
+    for ([_]i32{ 1601, 1700, 1777, 1903 }) |w| {
+        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = w, .bottom = 700 }, 1.25, metrics(3.0 / 1.25), .{});
+        defer g.deinit();
+        try testing.expectEqual(@as(usize, 0), g.result.stacks.items.len);
+        var prev_right: i32 = 0;
+        for (1..5) |id| {
+            const p = g.placement(id).?;
+            if (id > 1) try testing.expectEqual(@as(i32, 3), p.rect.left - prev_right);
+            // Still never under 300 DIP = 375 px.
+            try testing.expect(p.rect.width() >= 375);
+            prev_right = p.rect.right;
+        }
+        try testing.expectEqual(w, prev_right);
+    }
 }
 
 test "pane_stack_grid: four panes narrower than 4 x 300 DIP stack, and a strip is hit" {

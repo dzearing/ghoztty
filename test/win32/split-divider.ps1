@@ -1153,7 +1153,14 @@ if ($a495.Process -and $a495.Process.HasExited) {
         # the pane sidebar's 68 DIP column since T1828 - the middle pane hit
         # its minimum width 22px short of the target, which read as the drag
         # not tracking.
-        [void](Set-TestWindowSize -Window $t495 -Width 1500 -Height 700)
+        # Sized in DIP since T2108: a pane now stops at 300 DIP, and 1500 px is
+        # only 1200 DIP at 125% - the drags below pushed the middle pane into
+        # that minimum, which moves its neighbour on purpose. The middle pane
+        # is a quarter of the row (split[p1, split[p2, p3]]) and the drags take
+        # ~130 DIP from it, so 1900 DIP keeps it near 320 DIP at the far end.
+        $s495 = [double](Get-TestWindowDpi -Window $t495) / 96.0
+        if ($s495 -le 0) { $s495 = 1.0 }
+        [void](Set-TestWindowSize -Window $t495 -Width ([int][Math]::Round(1900 * $s495, [MidpointRounding]::AwayFromZero)) -Height ([int][Math]::Round(700 * $s495, [MidpointRounding]::AwayFromZero)))
         Start-Sleep -Milliseconds 600
         & $exe +split --direction=right | Out-Null
         Start-Sleep -Milliseconds 800

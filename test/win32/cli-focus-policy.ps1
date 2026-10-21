@@ -95,9 +95,27 @@ function Wait-NewTop([int64[]]$before, [string]$label) {
     return [int64]0
 }
 
+# Every pane the window holds, on show or not, as the app reports it. Not the
+# visible pane HWNDs: since T2108 a row that cannot fit at the 300 DIP pane
+# minimum tucks the panes that are not focused behind a strip (hidden), and a
+# background split is exactly such a pane. Not every pane HWND either: a
+# closed pane's is kept hidden so the close can be undone.
+function Count-LeafNodes($node) {
+    if ($null -eq $node) { return 0 }
+    if ($node.type -eq 'leaf') { return 1 }
+    return (Count-LeafNodes $node.left) + (Count-LeafNodes $node.right)
+}
 function Count-Panes([int64]$hwnd) {
-    @(Get-TestChildWindows -Window ([IntPtr]$hwnd) -Class '*' |
-        Where-Object { $_.Visible -and ($_.Class -eq 'GhozttyTerminal' -or $_.Class -eq 'GhozttyViewer') }).Count
+    $json = (& $exe +list --json 2>$null | Out-String).Trim()
+    if (-not $json) { return -1 }
+    try { $data = ($json | ConvertFrom-Json).data } catch { return -1 }
+    foreach ($w in @($data.windows)) {
+        if ([int64]$w.id -ne $hwnd) { continue }
+        $n = 0
+        foreach ($t in @($w.tabs)) { $n += Count-LeafNodes $t.splits }
+        return $n
+    }
+    return -1
 }
 
 function Active { [int64](Get-TestActiveWindow -Window ([IntPtr]$script:w1)) }

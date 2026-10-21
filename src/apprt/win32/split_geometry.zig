@@ -1,8 +1,9 @@
 //! Pure geometry for split-pane dividers (T155). No OS imports so these
 //! unit tests run in every app-runtime lane (the hero_math.zig pattern).
-//! The windowing half lives in Window.zig (layoutNode / paintDividerNode /
-//! hitTestDividerNode), all three of which used to carry their own copy of
-//! this arithmetic.
+//! Pane placement itself now comes from the stacked-panes layout
+//! (`pane_stack_layout` via `Window.stackGrid`, T2108); what stays here is
+//! the band's paint, its grab zone and the drag's ratio arithmetic, which
+//! Window.zig's divider paint, hit test and drag share.
 //!
 //! Mac parity (`SplitView.swift`): the divider is a filled rectangle of
 //! `splitterVisibleSize` = 1pt, and the panes are inset by exactly half of

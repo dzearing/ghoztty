@@ -15,7 +15,7 @@
 #
 # Claims:
 #   A) after the stash, three panes are on screen in three columns
-#   B) dragging the ROOT divider (P's right edge) out and back moves P's edge
+#   B) dragging the ROOT divider (P's right edge) in and back moves P's edge
 #      and holds s3's left edge - the visible nested divider - within 1px at
 #      every sampled tick
 #   C) +restore puts s1 back at the same share of the right-hand region it had
@@ -56,6 +56,7 @@ $root = Join-Path $env:TEMP "ghoztty-stash-divider-drag-$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
@@ -130,8 +131,14 @@ try {
     Say '== setup: P | (s1 | (s2 | s3))'
     $app = Start-App
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
-    # A window wide enough that four columns are all well clear of the clamp.
-    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width 1600 -Height 700)
+    # A window wide enough that four columns all fit at the 300 DIP pane
+    # minimum (T2108), sized in DIP: 1600 px is only 1280 DIP at 125%, and a
+    # row that cannot fit stacks a pane out of view. After the stash, P | s2
+    # | s3 sit near 750/375/375 DIP, so the drag below stays clear of it.
+    $dpi = [int](Get-TestWindowDpi -Window $top)
+    if ($dpi -le 0) { $dpi = 96 }
+    $scale = $dpi / 96.0
+    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 1500 -Scale $scale) -Height (Get-TestChromeDip -Dip 700 -Scale $scale))
     Start-Sleep -Seconds 2
     & $exe +split --direction=right --name=s1 | Out-Null
     Start-Sleep -Milliseconds 800
@@ -158,7 +165,7 @@ try {
     $s3Left0 = $c3[2].Left
 
     # ---- B: drag the root divider out and back ---------------------------------
-    Say '== drag the root divider (P | s2) out and back'
+    Say '== drag the root divider (P | s2) in and back'
     # SCREEN coordinates; Send-TestMouse converts per target (drag-perf.ps1).
     $x = [int](($c3[0].Right + $c3[1].Left) / 2)
     $y = [int](($c3[0].Top + $c3[0].Bottom) / 2)
@@ -168,7 +175,10 @@ try {
     $steps = 16
     for ($i = 1; $i -le $steps; $i++) {
         $dx = if ($i -le ($steps / 2)) { $i * 15 } else { ($steps - $i) * 15 }
-        [void](Send-TestMouse -Window $top -Target $top -X ($x + $dx) -Y $y -Action move -HoldMs 0)
+        # Inward (P shrinks): P has ~700 DIP of room, while s2 sits ~50 DIP
+        # above the 300 DIP minimum (T2108), and pushing a pane INTO its minimum
+        # moves its neighbour on purpose - that is not the pin this claims.
+        [void](Send-TestMouse -Window $top -Target $top -X ($x - $dx) -Y $y -Action move -HoldMs 0)
         Start-Sleep -Milliseconds 90
         $now = @(Get-VisiblePanes $top)
         if ($now.Count -eq 3) {

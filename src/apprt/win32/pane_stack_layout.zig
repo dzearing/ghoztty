@@ -127,6 +127,8 @@ pub const Metrics = struct {
     /// The smallest a pane may be before its row starts stacking.
     minimum_width: f64 = default_minimum_width,
     minimum_height: f64 = default_minimum_height,
+    /// `minimum_peek` in this layout's units (`scaled` multiplies it).
+    floor_peek: f64 = minimum_peek,
 
     /// The size floor: 300 is about 35 columns of a typical font, the point
     /// below which a terminal (or a page) stops being readable; 200 is about a
@@ -154,6 +156,22 @@ pub const Metrics = struct {
 
     pub fn forStyle(pane_gap: ?f64) Metrics {
         return .{ .gap = pane_gap orelse flat_gap };
+    }
+
+    /// These metrics in units `s` times smaller than a DIP - physical pixels,
+    /// for a window at scale `s` (T2108). Frames are snapped to whole units
+    /// (`Rect.integral`), and on Mac a whole point is a whole backing pixel
+    /// pair; a whole DIP at 125% is not a whole pixel, so a 3 px gap laid out
+    /// in DIPs came out 2, 3 or 4 px depending on where it fell. Laid out in
+    /// pixels, the gap is rounded to whole pixels once and lands whole.
+    pub fn scaled(m: Metrics, s: f64) Metrics {
+        return .{
+            .gap = @round(m.gap * s),
+            .peek = m.peek * s,
+            .minimum_width = m.minimum_width * s,
+            .minimum_height = m.minimum_height * s,
+            .floor_peek = m.floor_peek * s,
+        };
     }
 
     fn minimum(m: Metrics, d: Direction) f64 {
@@ -1030,7 +1048,7 @@ const Engine = struct {
         var card: f64 = 0;
         for (row) |it| card = @max(card, try e.compact(it.node, d));
         if (n == 0) card = e.metrics.minimum(d);
-        const peek = @max(Metrics.minimum_peek, @min(e.metrics.peek, @floor((extent - card) / (nf - 1) - gap)));
+        const peek = @max(e.metrics.floor_peek, @min(e.metrics.peek, @floor((extent - card) / (nf - 1) - gap)));
         const Needed = struct {
             n: f64,
             peek: f64,

@@ -291,9 +291,18 @@ try {
     }
     $hW1 = [IntPtr]$w1.Hwnd; $hDest = [IntPtr]$d0.Hwnd; $hLone = [IntPtr]$l0.Hwnd
     # Clear of each other, so no drop point is ambiguous between two windows.
-    Set-TestWindowPos -Window $hW1 -X 10 -Y 10 -Width 820 -Height 520 | Out-Null
-    Set-TestWindowPos -Window $hDest -X 850 -Y 10 -Width 1000 -Height 1000 | Out-Null
-    Set-TestWindowPos -Window $hLone -X 10 -Y 560 -Width 820 -Height 460 | Out-Null
+    # window-1 is sized in DIP since T2108: its two panes must both be on show
+    # at the 300 DIP pane minimum (plus the 68 DIP pane sidebar), and 820 px is
+    # only 656 DIP at 125% - the row stacked and tucked the pane the drag grabs.
+    $s0 = [double](Get-TestWindowDpi -Window $hW1) / 96.0
+    if ($s0 -le 0) { $s0 = 1.0 }
+    $w1W = [int][Math]::Round(760 * $s0, [MidpointRounding]::AwayFromZero)
+    Set-TestWindowPos -Window $hW1 -X 10 -Y 10 -Width $w1W -Height 520 | Out-Null
+    # dest ends up with three panes side by side (move 2), and the pop-out needs
+    # the third on show: 3 x 300 DIP plus the sidebar is about 980 DIP.
+    $destW = [int][Math]::Round(1100 * $s0, [MidpointRounding]::AwayFromZero)
+    Set-TestWindowPos -Window $hDest -X ($w1W + 30) -Y 10 -Width $destW -Height 1000 | Out-Null
+    Set-TestWindowPos -Window $hLone -X 10 -Y 560 -Width $w1W -Height 460 | Out-Null
     Start-Sleep -Milliseconds 800
 
     $destOwn = $d0.Panes[0]

@@ -1,13 +1,14 @@
 {
     "guard":  "split-divider",
     "script":  "test/win32/split-divider.ps1",
-    "generated":  "2026-10-11T17:28:03-07:00",
-    "commit":  "3ad7b1721",
+    "generated":  "2026-10-21T07:49:52-07:00",
+    "commit":  "d25e3b484",
     "uncommitted":  [
+                        "src/apprt/win32/split_geometry.zig",
                         "test/win32/split-divider.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/split_geometry.zig":  "c60bd4f763c403d8e2c32d66f1b88956565a4928bc64f4d6a09406398ffbc312",
-                  "test/win32/split-divider.ps1":  "f1f51018b1cefad778db1e4cbcac79c99227be6adf6325418d8ae0d8d93b8fd7"
+                  "src/apprt/win32/split_geometry.zig":  "84a1ca8016ec65c787ad9825588be8ae6079a170a7698a58969006d29deeb201",
+                  "test/win32/split-divider.ps1":  "b4929299b29674dd39288ed0c32cb3cf9c5633a0d84ea92d1cb3053c7108c637"
               }
 }
