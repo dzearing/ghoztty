@@ -625,6 +625,20 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # A collapsed row carried across a tree change (T2083/T2119): a pane on
+    # show closed, undone, or split leaves the strips as strips and the caret
+    # on a pane on show. `CloseUndo.zig` saves the stack state with the tree.
+    [pscustomobject]@{
+        Name   = 'stack-collapse-carry'
+        Script = 'test\win32\stack-collapse-carry.ps1'
+        Stamp  = 'test\win32\stack-collapse-carry.stamp.json'
+        Covers = @(
+            'test\win32\stack-collapse-carry.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\CloseUndo.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was
