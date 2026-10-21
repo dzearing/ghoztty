@@ -336,6 +336,8 @@ test {
     _ = @import("apprt/win32/pane_stack_grid.zig");
     // What a tucked pane's strip looks like (T2109) - same deal.
     _ = @import("apprt/win32/pane_stack_strip.zig");
+    // How a card glides when a stack's run changes (T2102) - same deal.
+    _ = @import("apprt/win32/pane_stack_slide.zig");
     // A pane's own progress light - the ring circling a busy pane and the
     // percentage line across its top (T1899) - same deal.
     _ = @import("apprt/win32/busy_light.zig");

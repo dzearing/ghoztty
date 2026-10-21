@@ -582,6 +582,20 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # The carousel slide (T2102): a run change glides the cards on show to
+    # their slots and resizes no terminal mid-slide. `pane_stack_grid.zig` is
+    # named because the slide's from/to rects are its placements.
+    [pscustomobject]@{
+        Name   = 'pane-stack-slide'
+        Script = 'test\win32\pane-stack-slide.ps1'
+        Stamp  = 'test\win32\pane-stack-slide.stamp.json'
+        Covers = @(
+            'test\win32\pane-stack-slide.ps1',
+            'src\apprt\win32\pane_stack_slide.zig',
+            'src\apprt\win32\pane_stack_grid.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was

@@ -154,6 +154,7 @@ const pane_elevation = @import("pane_elevation.zig");
 const pane_stack_grid = @import("pane_stack_grid.zig");
 const pane_stack_layout = @import("pane_stack_layout.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
+const pane_stack_slide = @import("pane_stack_slide.zig");
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
 const PaneDesk = @import("PaneDesk.zig");
@@ -309,6 +310,11 @@ const SIDEBAR_SYNC_TIMER_ID: usize = 0x5353; // 'SS'
 /// The full-screen reveal poll (T2011): `fullscreen_exit.POLL_MS`, alive only
 /// while this window is full screen.
 const FULLSCREEN_POLL_TIMER_ID: usize = 0x4653; // 'FS'
+
+/// The stacked-pane carousel slide's clock (T2102): ~16ms, alive only while
+/// cards glide to their new slots (`pane_stack_slide.duration_ms`).
+const STACK_SLIDE_TIMER_ID: usize = 0x534C; // 'SL'
+const STACK_SLIDE_TICK_MS: u32 = 16;
 pub const SIDEBAR_SYNC_MS: u32 = 250;
 pub const HERO_SLIDE_MS: f32 = 350.0;
 const HERO_RECENTER_MS: f32 = 300.0;
@@ -785,6 +791,18 @@ pane_stacks: ?pane_stack_state.PaneStackState = null,
 /// The tucked pane whose strip the pointer is over (T2109): its label takes
 /// Mac's stronger hover ink. Compared, never dereferenced.
 strip_hover: ?*PaneView = null,
+
+/// The carousel slide under way (T2102), and when it started: the cards
+/// gliding to their new slots after a stack's run changed. Null at rest.
+stack_slide: ?pane_stack_slide.Slide = null,
+stack_slide_start: ?std.time.Instant = null,
+/// Where the last layout put each card of the active tab, the tab and the
+/// grid rect it laid out in: what the next layout compares against to tell a
+/// run change (a slide) from a resize or a tab switch (none).
+stack_placed: [pane_stack_slide.max_cards]pane_stack_slide.Placed = undefined,
+stack_placed_len: usize = 0,
+stack_placed_tab: usize = 0,
+stack_placed_grid: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
 /// True after the last tab has been closed and WM_CLOSE has been posted.
 /// Input handlers must bail when this is set — between PostMessage(WM_CLOSE)
@@ -4221,9 +4239,11 @@ fn collectPaneSlots(self: *Window, out: []PaneSlot) usize {
     while (it.next()) |entry| {
         if (n >= out.len) break;
         if (pane_stash.isStashed(entry.view)) continue;
-        const p = grid.placement(pane_stack_grid.viewId(entry.view)) orelse continue;
+        const id = pane_stack_grid.viewId(entry.view);
+        const p = grid.placement(id) orelse continue;
         if (p.is_tucked) continue;
-        out[n] = .{ .view = entry.view, .rect = winRect(p.rect) };
+        // A sliding card's desk card goes with it (T2102).
+        out[n] = .{ .view = entry.view, .rect = winRect(self.stackSlideRect(id) orelse p.rect) };
         n += 1;
     }
     return n;
@@ -6681,6 +6701,7 @@ pub fn layoutSplits(self: *Window) void {
     if (self.stackGrid()) |laid| {
         var grid = laid;
         defer grid.deinit();
+        self.planStackSlide(tree, &grid);
         self.placeGrid(tree, &grid, &hdwp);
         // The runs on show stick to the next layout (`stickyRun`).
         self.stackState().noteStacks(grid.result.stacks.items) catch {};
@@ -7366,11 +7387,104 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
     while (it.next()) |entry| {
         const view = entry.view;
         if (pane_stash.isStashed(view)) continue;
-        const p = grid.placement(pane_stack_grid.viewId(view)) orelse continue;
+        const id = pane_stack_grid.viewId(view);
+        const p = grid.placement(id) orelse continue;
         const shown = !p.is_tucked;
         view.setVisible(shown);
-        if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, winRect(p.rect), shown);
+        // Mid-slide a card is where the slide has it (T2102), at the size it
+        // slid from: a move, so its terminal is not resized until the end.
+        const rect = if (shown) self.stackSlideRect(id) orelse p.rect else p.rect;
+        if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, winRect(rect), shown);
     }
+}
+
+/// Compare this layout with the last one and start, carry on, or drop the
+/// carousel slide (T2102; Mac `PaneStageView.apply`). Only a change in which
+/// cards are on show slides, and only in the tab and grid rect the last
+/// layout used: a window resize or a tab switch lays out at once, as it
+/// always has. A run change mid-slide starts the next slide from where the
+/// cards are on screen. With Animation effects off, or over Remote Desktop
+/// (`App.clientAreaAnimationsEnabled`), nothing slides.
+fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_grid.Grid) void {
+    var now: [pane_stack_slide.max_cards]pane_stack_slide.Placed = undefined;
+    var n: usize = 0;
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (n == now.len) break;
+        if (pane_stash.isStashed(entry.view)) continue;
+        const id = pane_stack_grid.viewId(entry.view);
+        const p = grid.placement(id) orelse continue;
+        now[n] = .{ .id = id, .rect = p.rect, .tucked = p.is_tucked };
+        n += 1;
+    }
+    const rect = self.gridRect();
+    const before = self.stack_placed[0..self.stack_placed_len];
+    const same_view = self.stack_placed_tab == self.active_tab and
+        std.meta.eql(self.stack_placed_grid, rect) and before.len > 0;
+    if (!same_view) {
+        self.endStackSlide();
+    } else if (pane_stack_slide.runsChanged(before, now[0..n])) {
+        if (App.clientAreaAnimationsEnabled()) {
+            const elapsed = self.stackSlideElapsedMs();
+            const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
+            const next = pane_stack_slide.plan(before, now[0..n], current, elapsed, self.stackSlideDurationMs());
+            if (next.len > 0) {
+                self.stack_slide = next;
+                self.stack_slide_start = std.time.Instant.now() catch null;
+                if (self.stack_slide_start != null) {
+                    if (self.hwnd) |h| _ = w32.SetTimer(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS, null);
+                } else self.endStackSlide();
+            } else self.endStackSlide();
+        } else self.endStackSlide();
+    }
+    @memcpy(self.stack_placed[0..n], now[0..n]);
+    self.stack_placed_len = n;
+    self.stack_placed_tab = self.active_tab;
+    self.stack_placed_grid = rect;
+}
+
+/// How long a slide takes: Mac's, or its quicker gesture time while a divider
+/// drag reshapes the row. `GHOZTTY_STACK_SLIDE_MS` stretches it so an
+/// acceptance script can watch a card mid-slide.
+fn stackSlideDurationMs(self: *Window) f64 {
+    if (std.process.parseEnvVarInt("GHOZTTY_STACK_SLIDE_MS", u32, 10)) |ms| {
+        return @floatFromInt(ms);
+    } else |_| {}
+    return if (self.dragging_split) pane_stack_slide.gesture_duration_ms else pane_stack_slide.duration_ms;
+}
+
+fn stackSlideElapsedMs(self: *Window) f64 {
+    const start = self.stack_slide_start orelse return 0;
+    const now = std.time.Instant.now() catch return std.math.inf(f64);
+    return @as(f64, @floatFromInt(now.since(start))) / std.time.ns_per_ms;
+}
+
+/// Where the slide under way has card `id` right now, or null when it is not
+/// sliding (or the slide is over): it sits at its slot.
+fn stackSlideRect(self: *Window, id: pane_stack_grid.Id) ?pane_stack_grid.PxRect {
+    const s = &(self.stack_slide orelse return null);
+    const elapsed = self.stackSlideElapsedMs();
+    if (s.done(elapsed)) return null;
+    return s.rectAt(id, elapsed);
+}
+
+fn endStackSlide(self: *Window) void {
+    if (self.stack_slide == null) return;
+    self.stack_slide = null;
+    self.stack_slide_start = null;
+    if (self.hwnd) |h| _ = w32.KillTimer(h, STACK_SLIDE_TIMER_ID);
+}
+
+/// One frame of the slide: every card one step further along. The last frame
+/// ends the slide and lays every card out at its slot - which is where a card
+/// that changes size takes its new size, once.
+fn stackSlideTick(self: *Window) void {
+    const s = self.stack_slide orelse {
+        if (self.hwnd) |h| _ = w32.KillTimer(h, STACK_SLIDE_TIMER_ID);
+        return;
+    };
+    if (s.done(self.stackSlideElapsedMs())) self.endStackSlide();
+    self.layoutSplits();
 }
 
 /// Size every STASHED pane to the slot the full layout would give it, and
@@ -13523,6 +13637,10 @@ pub fn windowWndProc(
             }
             if (wparam == BUSY_LIGHT_TIMER_ID) {
                 window.busyLightTick();
+                return 0;
+            }
+            if (wparam == STACK_SLIDE_TIMER_ID) {
+                window.stackSlideTick();
                 return 0;
             }
             if (wparam == FULLSCREEN_POLL_TIMER_ID) {

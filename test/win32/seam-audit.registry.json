@@ -344,6 +344,11 @@
             "unset": "shipped-elsewhere",
             "note": "T1035. resize-flicker.ps1 holds each present back 8ms so the resize wait really blocks on the hidden desktop; unset (no lag) is what every other acceptance run and the product use."
         },
+        "GHOZTTY_STACK_SLIDE_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "T2102. pane-stack-slide.ps1 stretches the stacked-pane carousel slide to 2 s so its sampler sees cards mid-slide (and to 0 ms for its negative control); unset is Mac's 0.38 s, which pane-stack-strip.ps1's strip click runs through."
+        },
         "GHOZTTY_RELAUNCH_GUARD": {
             "class": "isolation",
             "unset": "shipped-elsewhere",
