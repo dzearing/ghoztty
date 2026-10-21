@@ -50,6 +50,8 @@
 #
 #   FOCUS GLOW (T1834). Of two cards, only the focused one lights the desk
 #   just past its edge, and a goto_split moves the light to the other card.
+#   The light fades in from the card's edge (T2112): the first desk pixel is
+#   dimmer than the glow 3pt out, so no bright line hugs the card.
 #
 #   GLASS DIM (T2086). Of two glass panes the unfocused one is the thinner
 #   sheet (15% vs 40%, read from each pane's own pixels against the desk
@@ -641,10 +643,10 @@ $launched += $script:GhozttyTestDesktopPids
 $top = $g.Top
 $m = Get-MarginPx $g.Scale
 $i = Get-InsetPx $g.Scale
-function Get-GlowLift($shot, $pane) {
+function Get-GlowLift($shot, $pane, [double]$OutDip = 3) {
     $cardRight = [int]$pane.Right + $i
     $y = [int](($pane.Top + $pane.Bottom) / 2)
-    $near = Get-TestPixel -Shot $shot -X ($cardRight + (Round-Away (3 * $g.Scale))) -Y $y
+    $near = Get-TestPixel -Shot $shot -X ($cardRight + (Round-Away ($OutDip * $g.Scale))) -Y $y
     $far = Get-TestPixel -Shot $shot -X ($cardRight + $m - 1) -Y $y
     if ($null -eq $near -or $null -eq $far) { return $null }
     return ($near.R + $near.G + $near.B) - ($far.R + $far.G + $far.B)
@@ -655,9 +657,11 @@ function Get-GlowState([string]$label) {
     try {
         if ((Get-TestDistinctColors -Shot $shot) -lt 4) { return $null }
         $lifts = @($panes | ForEach-Object { Get-GlowLift $shot $_ })
+        # The first desk pixel past the card (T2112).
+        $edgeLifts = @($panes | ForEach-Object { Get-GlowLift $shot $_ -OutDip 0 })
     } finally { Close-TestWindowPixels $shot }
-    Write-Host "      $label glow lift (near - far, channel sum): top=$($lifts[0]) bottom=$($lifts[1])"
-    return [pscustomobject]@{ Panes = $panes; Lifts = $lifts }
+    Write-Host "      $label glow lift (near - far, channel sum): top=$($lifts[0]) bottom=$($lifts[1]); at the edge: top=$($edgeLifts[0]) bottom=$($edgeLifts[1])"
+    return [pscustomobject]@{ Panes = $panes; Lifts = $lifts; EdgeLifts = $edgeLifts }
 }
 Start-Sleep -Milliseconds 600
 $s1 = Get-GlowState 'before'
@@ -673,6 +677,19 @@ if ($null -eq $s1 -or $s1.Lifts.Count -ne 2 -or $null -eq $s1.Lifts[0] -or $null
         Assert (($s1.Lifts[$litIx] - $s1.Lifts[$dimIx]) -ge 15) 'glow: exactly one of two cards lights the desk beside it'
     }
     Assert ([math]::Abs($s1.Lifts[$dimIx]) -lt 12) 'glow: the other card leaves the desk beside it alone'
+    # T2112: the glow fades in from the card's edge rather than peaking on
+    # it, so no bright line hugs the focused card. Each depth is the lit
+    # card's lift minus the unlit one's, which cancels the shadow and the
+    # desk; the old edge-centred band put MORE light on the first desk pixel
+    # than 3pt out (~100 vs ~60 channel units), the ramped one far less.
+    if ($null -ne $s1.EdgeLifts[0] -and $null -ne $s1.EdgeLifts[1]) {
+        $glowEdge = $s1.EdgeLifts[$litIx] - $s1.EdgeLifts[$dimIx]
+        $glowOut = $s1.Lifts[$litIx] - $s1.Lifts[$dimIx]
+        Write-Host "      glow at the card edge: $glowEdge, 3pt out: $glowOut"
+        Assert ($glowEdge -lt ($glowOut / 2)) 'glow: the first desk pixel past the focused card is dimmer than the glow 3pt out (no bright inner line)'
+    } else {
+        $script:skipped++; Write-Host 'SKIP  glow edge probe: no pixel at the card edge'
+    }
     # Move focus to the other pane; after the 250ms fade the light follows.
     Assert (Send-TestKeys -Window $top -Target ([IntPtr]$s1.Panes[$litIx].Hwnd) -Modifiers ctrl, alt -Key f9) 'glow: goto_split chord delivered'
     $moved = $false

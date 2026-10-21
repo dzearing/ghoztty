@@ -519,17 +519,27 @@ pub fn glowReachPx(scale: f32) i32 {
     return @intFromFloat(@ceil((GLOW_STROKE_DIP / 2 + 3 * GLOW_SIGMA_DIP) * scale));
 }
 
+/// How far past the card the glow takes to come up to full strength (T2112).
+/// The band is centred on the edge, so unramped its brightest light sat on
+/// the first desk pixel and read as a hard line hugging the card ("the inner
+/// edge of the glow shouldn't be as bright"). Easing it in over this span
+/// moves the peak ~2pt out and leaves everything past it - the outer
+/// falloff - exactly as it was.
+pub const GLOW_INNER_RAMP_DIP: f32 = 2.5;
+
 /// The glow's alpha at signed distance `d` from the card's edge (negative
-/// inside): the blurred band's profile across a straight edge, times the
-/// share of the pixel that lies OUTSIDE the card - nothing lights the pane
-/// itself.
+/// inside): the blurred band's profile across a straight edge, eased in over
+/// `GLOW_INNER_RAMP_DIP`, times the share of the pixel that lies OUTSIDE the
+/// card - nothing lights the pane itself.
 pub fn glowAlpha(d: f32, is_light: bool, scale: f32) f32 {
     const outside = std.math.clamp(0.5 + d, 0, 1);
     if (outside <= 0) return 0;
     const hw = GLOW_STROKE_DIP / 2 * scale;
     const k = GLOW_SIGMA_DIP * scale * std.math.sqrt2;
     const band = 0.5 * (erfc((d - hw) / k) - erfc((d + hw) / k));
-    return glowOpacity(is_light) * band * outside;
+    const r = std.math.clamp(d / (GLOW_INNER_RAMP_DIP * scale), 0, 1);
+    const ramp = r * r * (3 - 2 * r);
+    return glowOpacity(is_light) * band * ramp * outside;
 }
 
 /// The glow's strength `elapsed_ms` into a focus change, 0 -> 1 on Mac's
@@ -1303,6 +1313,35 @@ test "T1834: the glow's reach is ~8pt and scales with DPI" {
     }
     // A light theme's glow is stronger (white on light needs more to show).
     try testing.expect(glowAlpha(2, true, 1) > glowAlpha(2, false, 1));
+}
+
+test "T2112: the glow fades in from the card's edge, peaks out on the desk, and keeps its outer falloff" {
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |s| for ([_]bool{ true, false }) |light| {
+        // The peak, sampled every tenth of a pixel across the reach.
+        var peak: f32 = 0;
+        var peak_d: f32 = 0;
+        var d: f32 = 0;
+        while (d < @as(f32, @floatFromInt(glowReachPx(s)))) : (d += 0.1) {
+            const a = glowAlpha(d, light, s);
+            if (a > peak) {
+                peak = a;
+                peak_d = d;
+            }
+        }
+        // It sits out on the desk - 1.5 to 3pt past the edge - not on it.
+        try testing.expect(peak_d >= 1.5 * s and peak_d <= 3 * s);
+        // The pixel touching the card is a fraction of that peak, so no
+        // bright line hugs the card.
+        try testing.expect(glowAlpha(0.5, light, s) < 0.25 * peak);
+        // Ramp fully in: past the ramp the profile is the unramped band.
+        const hw = GLOW_STROKE_DIP / 2 * s;
+        const k = GLOW_SIGMA_DIP * s * std.math.sqrt2;
+        for ([_]f32{ 3, 4, 6 }) |out| {
+            const x = out * s;
+            const band = 0.5 * (erfc((x - hw) / k) - erfc((x + hw) / k));
+            try testing.expectApproxEqAbs(glowOpacity(light) * band, glowAlpha(x, light, s), 1e-6);
+        }
+    };
 }
 
 test "T1834: the focused rim is brighter, in both styles and both themes" {
