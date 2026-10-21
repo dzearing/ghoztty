@@ -39,6 +39,12 @@
 #      its pane, then the click hint (Mac's .help); the open card's rows,
 #      row buttons and pin carry theirs. Scored from the `pane sidebar tips`
 #      log line: comctl32 tooltips are never shown on a background desktop.
+#  10. (T2085, Mac f9e99a860) A banner's title names its pane: `## Fix login`
+#      on P makes its row (and its tile's tip) read "Fix login" with the
+#      subtitle left to the directory; a banner with no title gives the pane
+#      title back and becomes the subtitle; a one-line bold banner is a title
+#      too; clearing restores the row exactly. Scored from the `pane sidebar
+#      text` log line - drawn text cannot be read back off a background desktop.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -422,6 +428,56 @@ try {
     $cardTips = $tips | Where-Object { $_ -match 'card=3' } | Select-Object -First 1
     "  $cardTips"
     Assert "the open card registered its pin and both rows (card=3)" ($null -ne $cardTips)
+
+    "== 10: a banner's title names its pane's row and tile (T2085)"
+    # Scored from the `pane sidebar text` line (each row's pane id, title and
+    # subtitle), logged when any of them changes: text drawn on a background
+    # desktop cannot be read back. P is tile 0, so its tip names it too.
+    function Get-RowText([string]$Id) {
+        $line = @(Get-Content $errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar text ' }) | Select-Object -Last 1
+        if ($null -eq $line) { return $null }
+        $m = [regex]::Match($line, "#$([regex]::Escape($Id)) title=(?<t>[^;]*?) sub=(?<s>[^;]*);")
+        if (-not $m.Success) { return $null }
+        return @{ Title = $m.Groups['t'].Value; Sub = $m.Groups['s'].Value }
+    }
+    function Wait-RowText([string]$Id, [scriptblock]$Want, [int]$Ms = 5000) {
+        $deadline = (Get-Date).AddMilliseconds($Ms)
+        do {
+            $r = Get-RowText $Id
+            if ($null -ne $r -and (& $Want $r)) { return $r }
+            Start-Sleep -Milliseconds 200
+        } while ((Get-Date) -lt $deadline)
+        return (Get-RowText $Id)
+    }
+    $before = Get-RowText $pId0
+    "  before: title='$($before.Title)' sub='$($before.Sub)'"
+    Assert "P's row is logged with its own title before any banner" ($null -ne $before -and $before.Title -ne '' -and $before.Title -ne 'Fix login')
+
+    [void](Invoke-Cli "+set-banner --target=$pId0 `"## Fix login\n|  |  |\n|---|---|\n| **Status** | Working |`"")
+    $titled = Wait-RowText $pId0 { param($r) $r.Title -eq 'Fix login' }
+    "  titled: title='$($titled.Title)' sub='$($titled.Sub)'"
+    Assert "a '## Fix login' banner names P's row 'Fix login'" ($null -ne $titled -and $titled.Title -eq 'Fix login')
+    Assert "the subtitle is not the banner's title or table (the directory takes it)" ($null -ne $titled -and $titled.Sub -notmatch 'Fix login|Status|Working')
+    Start-Sleep -Milliseconds 600
+    $tip = @(Get-Content $errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar tips ' }) | Select-Object -Last 1
+    if ($tip -match ' mode=mini ') {
+        Assert "P's rail tile tip names it by the banner title" ($tip -match 'tile0=Fix login\|')
+    } else { "  (rail not in mini mode now - tile tip not scored: $tip)" }
+
+    [void](Invoke-Cli "+set-banner --target=$pId0 `"Deploying to staging`"")
+    $plain = Wait-RowText $pId0 { param($r) $r.Title -ne 'Fix login' }
+    "  untitled: title='$($plain.Title)' sub='$($plain.Sub)'"
+    Assert "a banner with no title gives P its own title back" ($null -ne $plain -and $plain.Title -eq $before.Title)
+    Assert "...and its first line is the subtitle" ($null -ne $plain -and $plain.Sub -eq 'Deploying to staging')
+
+    [void](Invoke-Cli "+set-banner --target=$pId0 `"**Ship it**`"")
+    $bold = Wait-RowText $pId0 { param($r) $r.Title -eq 'Ship it' }
+    Assert "a one-line banner opening with a bold run is a title too" ($null -ne $bold -and $bold.Title -eq 'Ship it')
+
+    [void](Invoke-Cli "+set-banner --target=$pId0 --clear")
+    $cleared = Wait-RowText $pId0 { param($r) $r.Title -eq $before.Title -and $r.Sub -eq $before.Sub }
+    "  cleared: title='$($cleared.Title)' sub='$($cleared.Sub)'"
+    Assert "clearing the banner restores P's own title and subtitle" ($null -ne $cleared -and $cleared.Title -eq $before.Title -and $cleared.Sub -eq $before.Sub)
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

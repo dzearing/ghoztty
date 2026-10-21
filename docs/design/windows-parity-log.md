@@ -37108,3 +37108,9 @@ moved to T1814.
 - **Validated.** resize-flicker.ps1 has a new section D assertion that the tab-switch pass ends `stale=0`. It PASSES on the fix and FAILS 2 of 2 with the old line put back (`stale=4`, `stale=3`). Zig lanes all PASS. Due acceptance green. low-power-render was red only beside other scripts, so it is now marked `# @timing-sensitive`.
 - **Daily triage (this turn).** Digest, M1 promotions (T2046, T2049, T2050), three harness-cap duplicates folded into T1657, T1653 closed. The full harness sweep timed out again at 25/31 (T1657). asserted-nothing C4/C5 is red (20 unarmed stampers): T2080 was filed and folded into T1568.
 - **Mac.** The fix is in shared core, so both platforms get it.
+## 2026-10-20 — T2085 (lane b): a pane's banner title names its row in the pane sidebar
+
+- **What changed.** Claude Code retitles its pane with whatever it is doing at the moment. The banner hook's title is the task. The sidebar row, the rail tile's monogram and its tooltip now use the banner's title when it has one, with the same rule as Mac f9e99a860: an `## ` heading on the first line, or a one-line banner that opens with a bold run. A titled banner leaves the subtitle to the working directory. Search still finds a pane by its own title.
+- **Landed.** `pane_sidebar.zig` has `bannerTitle`, `paneLabel` and `bannerSubtitle`, and `bannerLine` now strips a heading to its text. `PaneSidebar.zig` uses them for rows and for search. Live updates needed nothing new: the roster signature already hashes the banner. A new `pane sidebar text` debug line is the acceptance oracle.
+- **Validated.** 10 unit tests port every Mac case, and a negative control turned them red. `pane-sidebar.ps1` section 10 is ALL PASS (73). Floor lanes all PASS.
+- **Mac.** Nothing owed: this ports Mac's feature. The strip half goes with T2082 and is recorded in its progress log.

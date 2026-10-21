@@ -317,6 +317,8 @@ anim_armed: [2]bool = .{ false, false },
 /// The last roster tally logged (busy, question, bell), so the log says when
 /// it moved rather than on every refresh.
 logged_marks: [3]usize = .{ 0, 0, 0 },
+/// The hash of the last row text logged (`logText`), for the same reason.
+logged_text: u64 = 0,
 
 // The card material behind the rail and behind the open card, each cached
 // like the TOC card's (two caches, or the two sizes would thrash one).
@@ -598,6 +600,7 @@ fn rosterChanged(self: *PaneSidebar) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.logOutline();
     self.logMarks();
+    self.logText();
     if (self.card_open) {
         // More or fewer rows: the card is as tall as before, but its region
         // and rows are re-derived with it.
@@ -691,6 +694,28 @@ fn logMarks(self: *PaneSidebar) void {
     if (std.mem.eql(usize, &tally, &self.logged_marks)) return;
     self.logged_marks = tally;
     log.info("pane sidebar marks busy={d} question={d} bell={d}", .{ tally[0], tally[1], tally[2] });
+}
+
+/// What each row says - pane id, title and subtitle - logged when it changes,
+/// for the acceptance script: text drawn on a background desktop cannot be
+/// read back, and the title rule (a banner's title names its pane, T2085) is
+/// exactly what it scores.
+fn logText(self: *PaneSidebar) void {
+    var buf: [4096]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    const w = fbs.writer();
+    for (self.entries.items) |e| {
+        var t8: [name_cap]u8 = undefined;
+        var s8: [name_cap]u8 = undefined;
+        const tn = std.unicode.utf16LeToUtf8(&t8, e.title[0..@min(e.title.len, name_cap / 3)]) catch 0;
+        const sn = std.unicode.utf16LeToUtf8(&s8, e.subtitle[0..@min(e.subtitle.len, name_cap / 3)]) catch 0;
+        w.print(" #{s} title={s} sub={s};", .{ e.pane.paneId(), t8[0..tn], s8[0..sn] }) catch break;
+    }
+    const line = fbs.getWritten();
+    const h = std.hash.Wyhash.hash(0x74657874, line);
+    if (h == self.logged_text) return;
+    self.logged_text = h;
+    log.debug("pane sidebar text{s}", .{line});
 }
 
 const TabRef = struct { window: *Window, tab: usize };
@@ -858,18 +883,26 @@ fn filterActive(self: *const PaneSidebar) bool {
 fn paneMatches(query: []const u8, window_name: []const u8, v: *PaneView, home: ?[]const u8) bool {
     const kind_name: []const u8 = if (v.isViewer()) "Viewer" else "Terminal";
     const pwd: ?[]const u8 = if (v.surface()) |s| (if (s.pwd) |p| p else null) else null;
-    const title8 = pane_sidebar.displayTitle(if (v.title()) |t| t else null, pwd, kind_name);
+    var title_buf: [512]u8 = undefined;
+    const label8 = pane_sidebar.paneLabel(if (v.title()) |t| t else null, pwd, kind_name, bannerOf(v), &title_buf);
+    // The pane's own title still finds it when a banner title hides it (T2085).
+    const own8: ?[]const u8 = if (v.title()) |t| t else null;
     var line_buf: [512]u8 = undefined;
-    const banner: ?[]const u8 = switch (v.kind) {
-        .terminal => |s| pane_sidebar.bannerLine(if (s.banner_text) |b| b else null, &line_buf),
-        .viewer => null,
-    };
+    const banner = pane_sidebar.bannerLine(bannerOf(v), &line_buf);
     const location: ?[]const u8 = if (v.viewer()) |vp| (if (vp.location) |l| l else null) else null;
     var pwd_buf: [512]u8 = undefined;
     var loc_buf: [512]u8 = undefined;
     const pwd_short: ?[]const u8 = if (pwd) |p| pane_sidebar.abbreviatePath(p, home, &pwd_buf) else null;
     const loc_short: ?[]const u8 = if (location) |l| pane_sidebar.abbreviatePath(l, home, &loc_buf) else null;
-    return outline.matches(query, &.{ window_name, title8, banner, pwd, pwd_short, location, loc_short });
+    return outline.matches(query, &.{ window_name, label8, own8, banner, pwd, pwd_short, location, loc_short });
+}
+
+/// A terminal pane's banner text; a viewer has none.
+fn bannerOf(v: *PaneView) ?[]const u8 {
+    return switch (v.kind) {
+        .terminal => |s| if (s.banner_text) |b| b else null,
+        .viewer => null,
+    };
 }
 
 fn isOwn(self: *const PaneSidebar, r: TabRef) bool {
@@ -957,13 +990,16 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
     for (views) |v| {
         const kind_name: []const u8 = if (v.isViewer()) "Viewer" else "Terminal";
         const pwd: ?[]const u8 = if (v.surface()) |s| (if (s.pwd) |p| p else null) else null;
-        const title8 = pane_sidebar.displayTitle(if (v.title()) |t| t else null, pwd, kind_name);
+        // The banner's title names the row (and so the tile's monogram and
+        // tip) when it has one (T2085).
+        var title_buf: [512]u8 = undefined;
+        const title8 = pane_sidebar.paneLabel(if (v.title()) |t| t else null, pwd, kind_name, bannerOf(v), &title_buf);
 
         var line_buf: [512]u8 = undefined;
         const subtitle8: ?[]const u8 = blk: {
             switch (v.kind) {
                 .terminal => |s| {
-                    if (pane_sidebar.bannerLine(if (s.banner_text) |b| b else null, &line_buf)) |l| break :blk l;
+                    if (pane_sidebar.bannerSubtitle(if (s.banner_text) |b| b else null, &line_buf)) |l| break :blk l;
                     if (pwd) |p| {
                         // A shell titled by its own directory (cmd and pwsh
                         // do that) would show the same place twice.

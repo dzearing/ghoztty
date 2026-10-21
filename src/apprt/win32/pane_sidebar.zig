@@ -244,10 +244,70 @@ pub fn displayTitle(raw: ?[]const u8, pwd: ?[]const u8, kind: []const u8) []cons
     return kind;
 }
 
+/// What a pane is called wherever it is named in one line - a sidebar row, a
+/// rail tile, a stacked pane's strip (Mac `PaneSidebarText.label`, T2085): its
+/// banner's title when the banner has one, else `displayTitle`. The banner
+/// title wins because somebody chose it: an agent's banner hook sets it to the
+/// task, while the agent itself retitles the pane (OSC 0/2) with whatever it is
+/// doing. A banner title is written into `buf`.
+pub fn paneLabel(raw: ?[]const u8, pwd: ?[]const u8, kind: []const u8, banner: ?[]const u8, buf: []u8) []const u8 {
+    return bannerTitle(banner, buf) orelse displayTitle(raw, pwd, kind);
+}
+
+/// The title a pane banner gives itself, as plain text, or null when it has
+/// none (Mac `PaneSidebarText.bannerTitle`). Only a line that IS a title
+/// counts, never just the first line of whatever the banner says:
+/// - a heading on the banner's first line (`## Fix strip labels`) - what the
+///   banner hook writes above its table;
+/// - a one-line banner that opens with a bold run standing on its own
+///   (`**Fix strip labels**`, or followed by ` · ...`) - the hook's OSC
+///   fallback. A bold label (`**Goal:** ...`) is not a title, and neither is a
+///   bold run followed by more prose (`**PR #12** — 3 files`).
+/// Written into `buf`.
+pub fn bannerTitle(banner: ?[]const u8, buf: []u8) ?[]const u8 {
+    const text = banner orelse return null;
+    var lines = LineIter{ .s = text };
+    var first: ?[]const u8 = null;
+    var more = false;
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) continue;
+        if (first != null) {
+            more = true;
+            break;
+        }
+        first = line;
+    }
+    const line = first orelse return null;
+    if (headingText(line)) |heading| {
+        const plain = stripInlineMarkdown(heading, buf);
+        return if (plain.len == 0) null else plain;
+    }
+    if (more or !std.mem.startsWith(u8, line, "**")) return null;
+    const rest = line[2..];
+    const close = std.mem.indexOf(u8, rest, "**") orelse return null;
+    const after = std.mem.trim(u8, rest[close + 2 ..], " \t");
+    if (after.len > 0 and !std.mem.startsWith(u8, after, "\u{00B7}")) return null;
+    const plain = stripInlineMarkdown(rest[0..close], buf);
+    if (plain.len == 0 or plain[plain.len - 1] == ':') return null;
+    return plain;
+}
+
+/// An ATX heading's text (`## Title` -> `Title`): 1-6 `#` and a space, as the
+/// banner renders one. `line` is already trimmed.
+fn headingText(line: []const u8) ?[]const u8 {
+    var hashes: usize = 0;
+    while (hashes < line.len and line[hashes] == '#') hashes += 1;
+    if (hashes < 1 or hashes > 6) return null;
+    if (hashes >= line.len or line[hashes] != ' ') return null;
+    const text = std.mem.trim(u8, line[hashes..], " \t");
+    return if (text.len == 0) null else text;
+}
+
 /// The first line of a pane banner as plain text (Mac
 /// `PaneSidebarText.bannerLine`): the banner markdown subset stripped to its
-/// words. Table and rule lines are skipped - they are layout, not a summary.
-/// Written into `buf`; null when nothing is left.
+/// words, and a heading to its text. Table and rule lines are skipped - they
+/// are layout, not a summary. Written into `buf`; null when nothing is left.
 pub fn bannerLine(banner: ?[]const u8, buf: []u8) ?[]const u8 {
     const text = banner orelse return null;
     var lines = LineIter{ .s = text };
@@ -256,11 +316,19 @@ pub fn bannerLine(banner: ?[]const u8, buf: []u8) ?[]const u8 {
         if (line.len == 0) continue;
         if (line[0] == '|') continue;
         if (isThematicBreak(line)) continue;
-        const plain = stripInlineMarkdown(line, buf);
+        const plain = stripInlineMarkdown(headingText(line) orelse line, buf);
         if (plain.len == 0) return null;
         return plain;
     }
     return null;
+}
+
+/// A terminal row's subtitle from its banner (Mac `PaneSidebarText.subtitle`):
+/// the banner's first line when it is not the banner's title - a titled banner
+/// already names the row (`paneLabel`), so the working directory takes the line.
+pub fn bannerSubtitle(banner: ?[]const u8, buf: []u8) ?[]const u8 {
+    if (bannerTitle(banner, buf) != null) return null;
+    return bannerLine(banner, buf);
 }
 
 /// `subtitle`, unless it only repeats `title` - then null (Mac `distinct`).
@@ -1328,6 +1396,97 @@ test "pane_sidebar: bannerLine strips markdown and skips layout lines" {
     try testing.expectEqualStrings("snake_case stays", bannerLine("_snake_case stays_", &buf).?);
     try testing.expect(bannerLine(null, &buf) == null);
     try testing.expect(bannerLine("\n  \n", &buf) == null);
+    // A heading line is its text (T2085).
+    try testing.expectEqualStrings("Fix strip labels", bannerLine("## Fix strip labels\n|  |  |\n|---|---|", &buf).?);
+}
+
+// Banner title (T2085, Mac PaneSidebarTextTests).
+
+/// What the banner hook writes on its CLI path, verbatim.
+const hook_banner = "## Strip label from banner title\n|  |  |\n|---|---|\n" ++
+    "| **Goal** | Minimized pane strips show the banner title |\n| **Status** | Reading code \u{00B7} Working |";
+
+fn expectTitle(want: ?[]const u8, banner: ?[]const u8) !void {
+    var buf: [256]u8 = undefined;
+    const got = bannerTitle(banner, &buf);
+    if (want) |w| {
+        try testing.expect(got != null);
+        try testing.expectEqualStrings(w, got.?);
+    } else if (got) |g| {
+        std.debug.print("expected no title for {?s}, got \"{s}\"\n", .{ banner, g });
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "pane_sidebar: the hook's heading is the banner title" {
+    try expectTitle("Strip label from banner title", hook_banner);
+    try expectTitle("Fix strip labels", "## Fix strip labels\n|  |  |\n|---|---|\n| **Status** | Working |");
+}
+
+test "pane_sidebar: the hook's OSC line gives its bold title" {
+    try expectTitle("Fix strip labels", "**Fix strip labels** \u{00B7} **Goal:** Label strips \u{00B7} **Status:** Working");
+    try expectTitle("Fix strip labels", "**Fix strip labels**");
+}
+
+test "pane_sidebar: a banner without a title has none" {
+    // The hook with no title set: just its table, or its OSC labels.
+    try expectTitle(null, "|  |  |\n|---|---|\n| **Prompt** | do the thing |\n| **Status** | Idle |");
+    try expectTitle(null, "**Prompt:** do the thing \u{00B7} **Status:** Idle");
+    // Prose, even prose that opens in bold, names no title.
+    try expectTitle(null, "Deploying to staging");
+    try expectTitle(null, "**PR #123** \u{2014} _3 files_, +120/\u{2212}45");
+    try expectTitle(null, "**PR** [#12](https://example.com/12)");
+    // A bold line heads a multi-line banner only as a label.
+    try expectTitle(null, "**Last result**\n- [x] Fixed it");
+    // A heading counts only on the first line.
+    try expectTitle(null, "Status: ok\n## Later");
+    try expectTitle(null, null);
+    try expectTitle(null, "  \n ");
+    // A bold label standing alone is still a label.
+    try expectTitle(null, "**Goal:**");
+}
+
+test "pane_sidebar: a banner heading needs its space and text" {
+    try expectTitle(null, "##Title");
+    try expectTitle(null, "## ");
+    try expectTitle(null, "####### Seven");
+    try expectTitle("One", "# One");
+    try expectTitle("Six", "###### Six");
+}
+
+test "pane_sidebar: the banner title is plain text" {
+    try expectTitle("Fix the strip label now", "## **Fix** the `strip` [label](https://example.com) _now_");
+    try expectTitle("Ship v2", "**Ship `v2`** \u{00B7} **Status:** ok");
+    try expectTitle("Escaped * star", "## Escaped \\* star");
+    try expectTitle("Keep some_tool", "## Keep some_tool");
+}
+
+test "pane_sidebar: a literal backslash-n is a line break for the banner title" {
+    try expectTitle("Title", "## Title\\n| a | b |");
+    // ...and so splits a bold run's banner into two lines, which is no title.
+    try expectTitle(null, "**Title**\\nmore");
+}
+
+test "pane_sidebar: the banner title names the pane" {
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("Strip label from banner title", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", hook_banner, &buf));
+}
+
+test "pane_sidebar: without a banner title the pane title names it" {
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("\u{2733} Claude Code", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", null, &buf));
+    try testing.expectEqualStrings("\u{2733} Claude Code", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", "|  |  |\n|---|---|\n| **Status** | Idle |", &buf));
+    try testing.expectEqualStrings("proj", paneLabel(placeholder_title, "C:\\tmp\\proj", "Terminal", "Just prose", &buf));
+}
+
+test "pane_sidebar: a titled banner leaves the subtitle to the directory" {
+    var buf: [256]u8 = undefined;
+    // The title already names the row; repeating it as the subtitle says
+    // nothing - the caller falls through to the working directory.
+    try testing.expect(bannerSubtitle(hook_banner, &buf) == null);
+    // An untitled banner's first line is still the subtitle.
+    try testing.expectEqualStrings("Relay cutover", bannerSubtitle("**Relay** cutover", &buf).?);
+    try testing.expect(bannerSubtitle(null, &buf) == null);
 }
 
 test "pane_sidebar: distinct drops a subtitle that repeats the title" {
