@@ -115,6 +115,15 @@ fn resolve(tree: anytype, i: usize, nodes: []Node, comptime idOf: anytype, compt
     }
 }
 
+/// Every row of `tree`'s panes on screen, outermost first (`layout.rows`):
+/// what the stack state keys a collapse by, and diffs to carry one over a
+/// tree change (T2083). Appended to `out`, allocated in `a` (an arena).
+pub fn appendRows(a: Allocator, out: *std.ArrayListUnmanaged([]const []const Id), tree: anytype, comptime idOf: anytype) Allocator.Error!void {
+    const built = try buildWith(a, tree, idOf, .visible);
+    const root = built.root orelse return;
+    try out.appendSlice(a, try layout.rows(a, built.nodes, root));
+}
+
 /// The engine's metrics for a style: the elevated style's gap in DIPs, or null
 /// for the flat style's gutter (`Metrics.flat_gap`).
 pub fn metrics(gap_dip: ?f64) layout.Metrics {
@@ -330,6 +339,23 @@ test "pane_stack_grid: the full build keeps a stashed pane's slot" {
     defer b.deinit(testing.allocator);
     try testing.expectEqual(@as(u32, 2), b.nodes[0].split.right);
     try testing.expectEqual(@as(Id, 2), b.nodes[3].leaf);
+}
+
+test "pane_stack_grid: a tree's rows are its panes on screen, chain by chain" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2, .stash_seq = 7 }, .{ .id = 3 }, .{ .id = 4 } };
+    const n = rowOfFour(&v);
+    var out: std.ArrayListUnmanaged([]const []const Id) = .empty;
+    try appendRows(a, &out, FakeTree{ .nodes = &n }, fakeId);
+    // a | (b | (c | d)) is one row of four; b stashed leaves a c d.
+    try testing.expectEqual(@as(usize, 1), out.items.len);
+    try testing.expectEqual(@as(usize, 3), out.items[0].len);
+    try testing.expectEqualSlices(Id, &.{3}, out.items[0][1]);
+    // A tree with nothing on screen adds nothing.
+    try appendRows(a, &out, FakeTree{ .nodes = &.{} }, fakeId);
+    try testing.expectEqual(@as(usize, 1), out.items.len);
 }
 
 test "pane_stack_grid: a wholly stashed side leaves the visible root" {

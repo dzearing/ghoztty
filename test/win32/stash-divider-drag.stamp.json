@@ -1,16 +1,15 @@
 {
     "guard":  "stash-divider-drag",
     "script":  "test/win32/stash-divider-drag.ps1",
-    "generated":  "2026-10-21T07:33:52-07:00",
-    "commit":  "d25e3b484",
+    "generated":  "2026-10-21T09:25:58-07:00",
+    "commit":  "8ca65f6a5",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig",
-                        "test/win32/stash-divider-drag.ps1"
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_stash.zig":  "f3bbf02701af707e022220eba9a4d0d5b1d674941622fadf7b8e8878d56fadfc",
                   "src/apprt/win32/split_resize.zig":  "b9386513ced76d2718903482e01880755b3797a6382a639bb6f6ce906c27095e",
-                  "src/apprt/win32/Window.zig":  "2781e9bdb725bb23b2f423f89f924324e8df04425c3043bb733757daca474124",
+                  "src/apprt/win32/Window.zig":  "bd6e430f0c77342737ef761ce1546d4c9565e7621ef8f3bac62eaece297f3eb9",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79"
               }
 }

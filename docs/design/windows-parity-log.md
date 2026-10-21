@@ -37192,3 +37192,8 @@ moved to T1814.
 - **Mac.** There is no checkbox there. A guest's app stops the relay agent, and nothing lets a guest take over another account's enrollment. So Windows refuses the tick. It does not re-enroll as the signed-in account, which would cut the owner's devices off the PC. Filed as D101 for the user.
 - **Landed.** `ShareMachineRow.enablePlan` refuses when the veto holds and writes nothing. The chooser footer names the owning account (`owner_veto.ownerAt`) and says to sign in as them.
 - **Validated.** Unit tests cover enablePlan, notOursHint and ownerAt. share-machine.ps1 gains section J, with a negative control where a stale veto still enables (ALL PASS, 63). floor-lane all.
+## 2026-10-21 — T2083 (lane b): a collapsed stacked row stays collapsed when its panes change
+
+- **Landed.** `PaneStackState.rowsDidChange` / `paneOnShow` ported in Mac's final form (3090ac2aa, d26e51183, plus 2811a3043's column-merge and off-screen-wipe hardening, so T2084 need not rewrite it). Win32 bridge: `noteRows` remembers every tab's rows and diffs them at each layout, which covers all ~15 tree-replacement sites at once; `closeSplitPane` sends the caret to a pane on show, never a strip.
+- **Validated.** 20 new unit tests (every Mac case) plus one grid test; floor-lane all four PASS; due set 28 of 30 green, scoped harness floor PASS. Reds are pre-existing and filed: drag-perf (T1854) and ipc-machine-chooser (T2118). ghoztty-cleanup passes with its box-state H5 skip, so it does not stamp.
+- **Not run.** No on-box acceptance yet: Windows cannot collapse a row by hand until T2084. Filed T2119 (deps T2083, T2084) and noted on T2084 what it still owns (the restack gesture, undo restoring `Saved`, the stash and viewer caret rules).

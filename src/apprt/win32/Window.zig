@@ -3753,6 +3753,11 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     };
     log.debug("closeSplitPane: has_next={}", .{next_pane != null});
 
+    // The tab's rows before the close, for where the caret may go (T2083).
+    var rows_arena = std.heap.ArenaAllocator.init(alloc);
+    defer rows_arena.deinit();
+    const rows_before = self.stackRowsOf(rows_arena.allocator(), tab) catch null;
+
     // T1825: park the pane for `undo-timeout` instead of ending it. Read from
     // the tree it is still in, so the anchor can put it back where it was.
     const parked = self.app.close_undo.parkPane(self, tab, handle, pane);
@@ -3795,6 +3800,13 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     if (pane_stash.normalize(&self.tab_trees[tab])) |restored| {
         if (next_pane == null) next_pane = restored;
     }
+
+    // Never into a pane minimized in a collapsed row (T2083, Mac 3090ac2aa):
+    // focusing it would bring it back out. The pane on show nearest it,
+    // focused last, takes the caret instead.
+    if (!closing_stashed) if (next_pane) |candidate| if (rows_before) |before| {
+        next_pane = self.paneOnShowAfter(tab, candidate, before, rows_arena.allocator()) orelse candidate;
+    };
 
     if (next_pane) |ns| {
         log.debug("closeSplitPane: focusing next pane", .{});
@@ -7236,6 +7248,7 @@ fn stackGrid(self: *Window) ?pane_stack_grid.Grid {
 
 fn stackGridOf(self: *Window, comptime panes: pane_stack_grid.Panes) ?pane_stack_grid.Grid {
     if (self.tab_count == 0) return null;
+    self.noteStackRows();
     if (self.tab_hero_active[self.active_tab]) return null;
     const tree = self.tab_trees[self.active_tab];
     if (tree.zoomed != null) return null;
@@ -7254,6 +7267,40 @@ fn stackGridOf(self: *Window, comptime panes: pane_stack_grid.Panes) ?pane_stack
         pane_stack_grid.metrics(self.stackGapDip()),
         state.provider(),
     ) catch null;
+}
+
+/// Carry every collapsed row over whatever changed the trees since the last
+/// look (T2083): a close, a stash, a split, a drop, a move. Mac does this in
+/// its tree setter; a tab's tree is replaced in a dozen places here, and every
+/// one of them is followed by a layout, so the layout is where the change is
+/// seen. One state serves the window, so the rows are every tab's.
+fn noteStackRows(self: *Window) void {
+    var arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer arena.deinit();
+    const rows = self.stackRowsOf(arena.allocator(), null) catch return;
+    self.stackState().noteRows(rows) catch |err| log.warn("stacked rows not carried over: {}", .{err});
+}
+
+/// The pane of tab `tab` the caret goes to instead of `candidate` now that
+/// its rows changed from `before` (`PaneStackState.paneOnShow`). Null when
+/// the answer is no pane of the tab.
+fn paneOnShowAfter(self: *Window, tab: usize, candidate: *PaneView, before: pane_stack_state.Rows, a: Allocator) ?*PaneView {
+    const after = self.stackRowsOf(a, tab) catch return null;
+    const id = self.stackState().paneOnShow(pane_stack_grid.viewId(candidate), before, after) catch return null;
+    var it = self.tab_trees[tab].iterator();
+    while (it.next()) |entry| if (pane_stack_grid.viewId(entry.view) == id) return entry.view;
+    return null;
+}
+
+/// The rows of one tab's panes on screen, or of every tab's (`tab` null).
+/// Allocated in `a` (an arena).
+fn stackRowsOf(self: *Window, a: Allocator, tab: ?usize) Allocator.Error!pane_stack_state.Rows {
+    var out: std.ArrayListUnmanaged([]const []const pane_stack_grid.Id) = .empty;
+    for (0..self.tab_count) |t| {
+        if (tab != null and tab.? != t) continue;
+        try pane_stack_grid.appendRows(a, &out, self.tab_trees[t], pane_stack_grid.viewId);
+    }
+    return out.items;
 }
 
 fn stackState(self: *Window) *pane_stack_state.PaneStackState {
