@@ -1,12 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-21T14:40:32-07:00",
-    "commit":  "645ed841b",
+    "generated":  "2026-10-21T15:11:35-07:00",
+    "commit":  "c4b0cbeda",
     "uncommitted":  [
-                        "test/win32/pane-elevation.ps1",
-                        "test/win32/pane-sidebar-resize.ps1",
-                        "test/win32/split-divider.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -324,6 +322,7 @@
                   "test/win32/pane-sidebar-persist.ps1":  "3f68c484cdd8640cbbcde5584801a77a79ae521126b73ad0b45c2c241391e515",
                   "test/win32/pane-sidebar-resize.ps1":  "55787f9e4ec5f13d78d25831c0e2bb4ee4cc98408135a94681e2365e05325720",
                   "test/win32/pane-sidebar-scroll.ps1":  "5aa2f6aa4e7f30afde28ff9a030d6938b9ab8218497fa37eba0f1c2d47369956",
+                  "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
                   "test/win32/pane-stack-grid.ps1":  "26fea1e6b122b57a9f179cee38343f3b414e1b743dc6e7f810b6ad52238423c0",
                   "test/win32/pane-stack-slide.ps1":  "99b5a46d9de8597cf3f1c0c4ff07d2fd610b4090463a200bd40e309ae193882e",
                   "test/win32/pane-stack-strip.ps1":  "ba7ba9491709a32b19d889d6276a744de0052c0e6cbb576c380fcccab96b05df",
@@ -411,6 +410,7 @@
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
+                  "test/win32/stack-collapse-carry.ps1":  "53fa5986270614a4b357c592efbdd87f41876e9422e207dbd7cc87b3af04546d",
                   "test/win32/stack-collapse-drag.ps1":  "8225600e90181f93462160e1969d509910e4f5ae7d495a8166718077c1aa2053",
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79",
