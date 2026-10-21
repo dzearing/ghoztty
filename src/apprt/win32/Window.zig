@@ -7767,6 +7767,26 @@ pub fn bringForward(self: *Window, view: *PaneView) void {
     if (view.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
 }
 
+/// A focus path just made a pane its tab's focused pane (T2110): goto_split,
+/// a sidebar row, a `ghoztty://focus` link, IPC `--focus`. On Mac every one
+/// of them goes through `PaneStackState.noteFocus` before the relayout, so a
+/// pane tucked behind a stack's run comes on show. The layout notes the focus
+/// (`stackGridOf`); this runs it when the pane is tucked - hidden in the tab
+/// on show - and is a no-op otherwise, so a focus move between panes already
+/// on show costs nothing.
+pub fn showFocusedPane(self: *Window, tab: usize) void {
+    if (tab >= self.tab_count or tab != self.active_tab) return;
+    if (self.tab_hero_active[tab] or self.tab_trees[tab].zoomed != null) return;
+    const view = self.tab_active_pane[tab];
+    if (pane_stash.isStashed(view)) return;
+    const h = view.hwnd() orelse return;
+    const top = self.hwnd orelse return;
+    if (w32.IsWindowVisible(top) == 0 or w32.IsWindowVisible(h) != 0) return;
+    log.info("stacked pane brought on show by focus", .{});
+    self.layoutSplits();
+    _ = w32.InvalidateRect(top, null, 0);
+}
+
 /// Light the hovered strip's label (Mac's hover ink), repainting the strips
 /// when it changes.
 fn setStripHover(self: *Window, view: ?*PaneView) void {
@@ -9194,6 +9214,7 @@ pub fn gotoSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
                 }
                 self.layoutSplits();
             }
+            self.showFocusedPane(tab); // T2110
 
             if (surface.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
         },
@@ -9452,7 +9473,10 @@ pub fn restorePane(self: *Window, pane: *PaneView, focus: bool) void {
         self.tab_active_pane[tab] = pane;
         if (tab != self.active_tab) {
             self.selectTabIndex(tab);
-        } else if (pane.hwnd()) |h| App.deferSetFocus(h); // T48
+        } else {
+            self.showFocusedPane(tab); // T2110: a sidebar row's tucked pane
+            if (pane.hwnd()) |h| App.deferSetFocus(h); // T48
+        }
     }
 }
 

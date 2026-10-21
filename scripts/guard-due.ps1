@@ -582,6 +582,20 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # Every focus path brings a tucked pane on show (T2110): a
+    # ghoztty://focus link (the IPC focus), goto_split, a sidebar row - all
+    # through `Window.showFocusedPane`.
+    [pscustomobject]@{
+        Name   = 'pane-stack-focus'
+        Script = 'test\win32\pane-stack-focus.ps1'
+        Stamp  = 'test\win32\pane-stack-focus.stamp.json'
+        Covers = @(
+            'test\win32\pane-stack-focus.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The carousel slide (T2102): a run change glides the cards on show to
     # their slots and resizes no terminal mid-slide. `pane_stack_grid.zig` is
     # named because the slide's from/to rects are its placements.

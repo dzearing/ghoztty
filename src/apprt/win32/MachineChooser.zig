@@ -4604,6 +4604,7 @@ fn focusOpenSession(self: *MachineChooser, id: []const u8) bool {
                 self.close(false);
                 win.selectTabIndex(t);
                 win.tab_active_pane[t] = surface;
+                win.showFocusedPane(t); // T2110: a pane tucked behind a stack's run
                 if (win.hwnd) |hwnd| {
                     if (w32.IsIconic(hwnd) != 0) _ = w32.ShowWindow(hwnd, w32.SW_RESTORE);
                     _ = w32.SetForegroundWindow(hwnd);

@@ -269,6 +269,11 @@ pub fn focusTarget(entry: App.IpcTarget) void {
                     return;
                 }
             }
+            // A pane tucked behind a stack's run comes on show (T2110).
+            if (window.tabIndexOfPane(p)) |tab| {
+                window.tab_active_pane[tab] = p;
+                window.showFocusedPane(tab);
+            }
             if (p.hwnd()) |h| {
                 App.deferSetFocus(h); // T48
             }
