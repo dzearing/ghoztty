@@ -845,5 +845,24 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.42.0/Ghoztty-1.42.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="CUCp8h2z7dIMZpagPUrwXlDdzK1uKisClrOeWoTpLl6ptEzYwZuL9UhSlQYIKgbUSywbCIZqEeRhk4mBr47pCg==" length="26610214" />
         </item>
+        <item>
+            <title>Version 1.43.0</title>
+            <sparkle:version>1.43.0</sparkle:version>
+            <sparkle:shortVersionString>1.43.0</sparkle:shortVersionString>
+            <pubDate>Wed, 21 Oct 2026 05:26:59 +0000</pubDate>
+            <description>{
+  "version": "1.43.0",
+  "sections": [
+    {
+      "title": "Stacked panes and the pane sidebar",
+      "items": [
+        { "title": "Panes are named by their banner title", "text": "When a pane's banner starts with a heading (like the title the Claude banner hook writes), minimized strips and pane sidebar rows now show that title instead of whatever the program in the pane last named itself. It updates as soon as the banner changes. Clearing the banner, or a banner with no heading, brings back the pane's own title." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.43.0/Ghoztty-1.43.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="IpW8XO8n1JeSaava7/+NbttxrIf30lg85lLsWqBFvP2KIh3lwxkBG7BeseUyaC9QBpmSShdpg1nwHKasBrU3Cg==" length="26609688" />
+        </item>
     </channel>
 </rss>
