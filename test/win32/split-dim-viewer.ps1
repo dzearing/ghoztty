@@ -186,7 +186,8 @@ try {
     }
 
     Remove-Item $errlog -ErrorAction SilentlyContinue
-    $sp = @{ Exe = $exe; Arguments = @('--session-persistence=false', '--background=#101014') }
+    # Solid panes (T2086): a glass pane's wash is the desk, not this fill.
+    $sp = @{ Exe = $exe; Arguments = @('--session-persistence=false', '--macos-pane-glass=false', '--background=#101014') }
     if (-not $ExePath) { $sp.StdErr = $errlog }
     $app = Start-OnTestDesktop @sp
     Start-Sleep -Seconds 3

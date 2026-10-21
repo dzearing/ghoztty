@@ -186,7 +186,10 @@ function Start-Gui([string]$label, [string[]]$extraArgs, [bool]$control) {
     # manifest that the NEXT launch would restore - so section 2 came up with
     # section 1's panes and "2 visible panes" failed. Same trap T131 fixed for
     # pane-banner.ps1's bw window (found again here 2026-07-29 during T155).
-    $sp = @{ Exe = $exe; Arguments = (@('--session-persistence=false') + $extraArgs) }
+    # --macos-pane-glass=false: this script's subject is the FILL-coloured
+    # wash, which is what a solid pane gets. A glass pane's wash is the desk
+    # under it (T2086), asserted by pane-elevation.ps1's glass-dim run.
+    $sp = @{ Exe = $exe; Arguments = (@('--session-persistence=false', '--macos-pane-glass=false') + $extraArgs) }
     if (-not $ExePath -and $control) { $sp.StdErr = $errlog }
     $app = Start-OnTestDesktop @sp
     Start-Sleep -Seconds 3

@@ -45,6 +45,25 @@ pub const DimOverlay = struct {
     /// The owner's region this wash was last clipped to (T1831); see
     /// `matchOwnerRegion`.
     region_key: u64 = 0,
+    /// On a glass pane the wash is the desk under the pane rather than the
+    /// fill colour (T2086): the slice last cropped, `wash_w` x `wash_h`,
+    /// top-down, and the key it was cropped for. Null with a solid wash.
+    wash: ?[]u32 = null,
+    wash_w: i32 = 0,
+    wash_h: i32 = 0,
+    wash_key: u64 = 0,
+
+    /// Where a glass pane's desk wash comes from (T2086): the window's
+    /// rendered desk and where its top-left sits in `parent`'s client area.
+    pub const DeskWash = struct {
+        parent: w32.HWND,
+        left: i32,
+        top: i32,
+        pixels: []const u32,
+        w: i32,
+        h: i32,
+        gen: u32,
+    };
 
     pub fn create(
         alloc: std.mem.Allocator,
@@ -92,7 +111,57 @@ pub const DimOverlay = struct {
     pub fn destroy(self: *DimOverlay) void {
         _ = w32.DestroyWindow(self.hwnd);
         if (self.brush) |b| _ = w32.DeleteObject(@ptrCast(b));
+        if (self.wash) |px| self.alloc.free(px);
         self.alloc.destroy(self);
+    }
+
+    /// Bring the desk wash up to date for an overlay at `placement` (screen
+    /// coordinates), or drop it with a null `desk`. Returns whether the
+    /// pixels changed. A crop is a row copy per row and only happens when
+    /// the pane moved, resized, or the desk was re-rendered.
+    fn syncWash(self: *DimOverlay, desk: ?DeskWash, placement: dim_math.Placement) bool {
+        const d = desk orelse {
+            if (self.wash == null) return false;
+            self.alloc.free(self.wash.?);
+            self.wash = null;
+            self.wash_key = 0;
+            return true;
+        };
+        var pt: w32.POINT = .{ .x = placement.left, .y = placement.top };
+        _ = w32.ScreenToClient(d.parent, &pt);
+        const ox = pt.x - d.left;
+        const oy = pt.y - d.top;
+        const words = [_]u64{
+            @bitCast(@as(i64, ox)),               @bitCast(@as(i64, oy)),
+            @bitCast(@as(i64, placement.width)),  @bitCast(@as(i64, placement.height)),
+            @bitCast(@as(i64, d.w)),              @bitCast(@as(i64, d.h)),
+            d.gen,
+        };
+        const key = std.hash.Wyhash.hash(0x2086, std.mem.sliceAsBytes(&words)) | 1;
+        if (key == self.wash_key and self.wash != null) return false;
+        const n: usize = @intCast(placement.width * placement.height);
+        if (self.wash == null or self.wash.?.len != n) {
+            if (self.wash) |px| self.alloc.free(px);
+            self.wash = self.alloc.alloc(u32, n) catch {
+                self.wash = null;
+                self.wash_key = 0;
+                return true;
+            };
+        }
+        dim_math.cropWash(
+            self.wash.?,
+            @intCast(placement.width),
+            @intCast(placement.height),
+            d.pixels,
+            @intCast(d.w),
+            @intCast(d.h),
+            ox,
+            oy,
+        );
+        self.wash_w = placement.width;
+        self.wash_h = placement.height;
+        self.wash_key = key;
+        return true;
     }
 
     /// Show the overlay glued over the owner surface at the given fill
@@ -112,7 +181,11 @@ pub const DimOverlay = struct {
     /// A failed `DeferWindowPos` invalidates the batch handle, so the caller's
     /// handle is nulled and this — and every later popup in the pass — drops
     /// to a direct `SetWindowPos`. Same contract as `Window.placePane`.
-    pub fn show(self: *DimOverlay, color: u32, alpha: u8, batch: ?*?w32.HDWP) bool {
+    ///
+    /// `desk`, on a glass pane, makes the wash the desk under the pane in
+    /// place of `color` (T2086): Mac fades a glass terminal whole, so the
+    /// desk is what reads through it.
+    pub fn show(self: *DimOverlay, color: u32, alpha: u8, desk: ?DeskWash, batch: ?*?w32.HDWP) bool {
         const color_changed = self.brush == null or color != self.color;
         if (color_changed) {
             if (self.brush) |b| _ = w32.DeleteObject(@ptrCast(b));
@@ -137,6 +210,11 @@ pub const DimOverlay = struct {
             .height = @max(rect.bottom - rect.top, 1),
         };
 
+        // A glass pane's wash is the desk under it (T2086), re-cropped when
+        // the pane moves or the desk is re-rendered.
+        const wash_changed = self.syncWash(desk, placement);
+        if (wash_changed) _ = w32.InvalidateRect(self.hwnd, null, 0);
+
         // T1295: a caller that changed nothing gets nothing. show() rides
         // every layout, focus, move, activate and config event, and it used
         // to SetWindowPos(SWP_SHOWWINDOW) unconditionally — free on a
@@ -147,7 +225,7 @@ pub const DimOverlay = struct {
             .shown = self.shown,
             .placement_changed = !dim_math.Placement.eql(self.placement, placement),
             .alpha_changed = alpha_changed,
-            .color_changed = color_changed,
+            .color_changed = color_changed or wash_changed,
         })) return false;
 
         // And when a re-blend IS unavoidable, start it from clean pixels
@@ -235,9 +313,31 @@ pub const DimOverlay = struct {
     /// The dim wash, into whichever DC this overlay is handed — the paint
     /// cycle's own, or a caller's under WM_PRINTCLIENT (T940).
     fn paintInto(self: *const DimOverlay, hwnd: w32.HWND, hdc: w32.HDC) void {
-        const brush = self.brush orelse return;
         var rect: w32.RECT = undefined;
         if (w32.GetClientRect(hwnd, &rect) == 0) return;
+        // A glass pane's wash: the desk under the pane (T2086).
+        if (self.wash) |px| {
+            const bmi: w32.BITMAPINFO = .{ .bmiHeader = .{
+                .biWidth = self.wash_w,
+                .biHeight = -self.wash_h, // top-down
+            } };
+            if (w32.StretchDIBits(
+                hdc,
+                0,
+                0,
+                self.wash_w,
+                self.wash_h,
+                0,
+                0,
+                self.wash_w,
+                self.wash_h,
+                px.ptr,
+                &bmi,
+                w32.DIB_RGB_COLORS,
+                w32.SRCCOPY,
+            ) != 0) return;
+        }
+        const brush = self.brush orelse return;
         _ = w32.FillRect(hdc, &rect, brush);
     }
 };
@@ -280,13 +380,8 @@ fn dimWndProc(
         w32.WM_MOUSEACTIVATE => return w32.MA_NOACTIVATE,
 
         w32.WM_ERASEBKGND => {
-            const brush = self.brush orelse return 0;
             if (wparam == 0) return 0;
-            const hdc: w32.HDC = @ptrFromInt(wparam);
-            var rect: w32.RECT = undefined;
-            if (w32.GetClientRect(hwnd, &rect) != 0) {
-                _ = w32.FillRect(hdc, &rect, brush);
-            }
+            self.paintInto(hwnd, @ptrFromInt(wparam));
             return 1;
         },
 

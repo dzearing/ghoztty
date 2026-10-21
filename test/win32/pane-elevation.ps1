@@ -51,10 +51,15 @@
 #   FOCUS GLOW (T1834). Of two cards, only the focused one lights the desk
 #   just past its edge, and a goto_split moves the light to the other card.
 #
+#   GLASS DIM (T2086). Of two glass panes the unfocused one is the thinner
+#   sheet (15% vs 40%, read from each pane's own pixels against the desk
+#   beside it), and its dim wash is the desk under it rather than the fill.
+#
 # Runs on a background desktop (test/win32/lib/TestDesktop.ps1): nothing here
 # takes the user's foreground, which is asserted at the end.
 #
-# -NegativeControl inverts the elevated-margin assertion and MUST fail.
+# -NegativeControl inverts the elevated-margin assertion (and, among others,
+# the glass-dim sheet difference) and MUST fail.
 #
 #   powershell -NoProfile -File test\win32\pane-elevation.ps1
 param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
@@ -681,6 +686,88 @@ if ($null -eq $s1 -or $s1.Lifts.Count -ne 2 -or $null -eq $s1.Lifts[0] -or $null
     Assert $moved 'glow: moving focus to the other pane moves the light with it'
 }
 Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'glow: no crash'
+Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+
+# ---------------------------------------------------------------------------
+# Run 1d: glass panes dim the Mac way (T2086, Mac 89848fd59). Of two glass
+# panes the unfocused one is the MORE see-through: its own sheet is 15% of the
+# black terminal background, the focused one's 40%. Each is read from the
+# pane's own pixels (capture-pane) at its right edge against the desk just
+# outside its card at the same height, as the share of the desk that pane
+# keeps in linear light (black terminal: pane = desk x (1 - tint)). And the
+# unfocused pane's dim wash is the desk under it, never the fill colour: the
+# overlay's own paint at the pane's middle is a desk pixel, not #000.
+# ---------------------------------------------------------------------------
+function Get-Linear([double]$v) {
+    $x = $v / 255.0
+    if ($x -le 0.04045) { return $x / 12.92 }
+    return [math]::Pow(($x + 0.055) / 1.055, 2.4)
+}
+$g = Start-Gui 'glass dim' ($common + '--unfocused-split-opacity=0.7') -Split
+$launched += $script:GhozttyTestDesktopPids
+$top = $g.Top
+$i = Get-InsetPx $g.Scale
+$m = Get-MarginPx $g.Scale
+Start-Sleep -Milliseconds 1200
+$panes = @(Get-Panes $top | Sort-Object Top)
+$tints = @()
+foreach ($ix in 0, 1) {
+    $ss = Get-GlassSamples $top "glass dim #$ix" -Index $ix
+    if ($null -eq $ss) { continue }
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try {
+        # The far side of the margin: past the focused card's glow (~8pt) and
+        # the sheet's shadow, either of which would bias the reference.
+        $d = Get-TestPixel -Shot $shot -X ([int]($panes[$ix].Right + $i + $m - 1)) -Y ([int]($panes[$ix].Top + $ss.EdgeY))
+    } finally { Close-TestWindowPixels $shot }
+    if ($null -eq $d -or -not (Test-DeskPixel $d)) { continue }
+    $keep = (Get-Linear $ss.Edge.B) / [math]::Max((Get-Linear $d.B), 1e-6)
+    $tint = 1 - $keep
+    Write-Host ("      glass dim #{0}: desk B={1} pane edge B={2} -> sheet tint {3:N3}" -f $ix, $d.B, $ss.Edge.B, $tint)
+    $tints += $tint
+}
+if ($tints.Count -ne 2) {
+    $script:skipped++; Write-Host 'SKIP  glass dim tint probes: no pane capture or no desk beside a pane'
+} else {
+    $lo = [math]::Min($tints[0], $tints[1])
+    $hi = [math]::Max($tints[0], $tints[1])
+    if ($NegativeControl) {
+        Write-Host 'NEGATIVE CONTROL: asserting both panes keep the same sheet - this run MUST fail'
+        Assert (($hi - $lo) -lt 0.08) 'glass dim: both panes are the same sheet (negative control)'
+    } else {
+        Assert (($hi - $lo) -ge 0.15) 'glass dim: the two panes are different sheets - one is thinner'
+    }
+    Assert ([math]::Abs($hi - 0.40) -le 0.07) 'glass dim: the focused pane keeps the 40% sheet'
+    Assert ([math]::Abs($lo - 0.15) -le 0.07) 'glass dim: the unfocused pane is the 15% sheet - more of the desk reads through it'
+}
+# The wash over the unfocused pane is the desk itself.
+$ov = @()
+for ($t = 0; $t -lt 20 -and $ov.Count -ne 1; $t++) {
+    $ov = @(Get-TestWindows -ProcessId $g.App.Pid -Class 'GhozttyDimOverlay' | Where-Object Visible)
+    if ($ov.Count -ne 1) { Start-Sleep -Milliseconds 150 }
+}
+Assert ($ov.Count -eq 1) "glass dim: exactly one pane carries a dim wash (saw $($ov.Count))"
+if ($ov.Count -eq 1) {
+    $c = $null
+    for ($t = 0; $t -lt 10 -and $null -eq $c; $t++) {
+        $shot = $null
+        try {
+            $shot = Get-TestWindowPixels -Window ([IntPtr]$ov[0].Hwnd) -Sync -AllowUniform
+            $c = Get-TestPixel -Shot $shot -X ([int](($ov[0].Left + $ov[0].Right) / 2)) -Y ([int](($ov[0].Top + $ov[0].Bottom) / 2))
+        } catch {
+            Start-Sleep -Milliseconds 150
+        } finally {
+            if ($shot) { Close-TestWindowPixels -Shot $shot }
+        }
+    }
+    if ($null -eq $c) {
+        $script:skipped++; Write-Host 'SKIP  glass dim wash probe: the overlay could not be photographed'
+    } else {
+        Write-Host "      glass dim wash centre = $($c.R),$($c.G),$($c.B)"
+        Assert (Test-DeskPixel $c) 'glass dim: the wash is the desk under the pane, not the #000 fill'
+    }
+}
+Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'glass dim: no crash'
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------

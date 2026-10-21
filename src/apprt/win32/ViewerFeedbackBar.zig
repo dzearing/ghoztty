@@ -1786,7 +1786,7 @@ fn paintGlass(self: *const ViewerFeedbackBar, hdc: w32.HDC, width: i32, height: 
 /// The band's material at the `w` x `h` block whose top-left is (`x`, `y`) in
 /// this window - the pixels `paintGlass` lays at those coordinates.
 fn glassBand(self: *const ViewerFeedbackBar, out: []u32, x: i32, y: i32, w: i32, h: i32, g: pane_elevation.GlassBackdrop) void {
-    pane_elevation.glassHeadRegion(out, @intCast(w), @intCast(h), g.rect[0] + x, g.rect[1] + self.top + y, g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb);
+    pane_elevation.glassHeadRegion(out, @intCast(w), @intCast(h), g.rect[0] + x, g.rect[1] + self.top + y, g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb, g.sheet);
 }
 
 /// The overflow cue's opacity at column `col` of a `w`-wide cue: opaque at the

@@ -1825,7 +1825,7 @@ pub fn showDimOverlay(self: *ViewerPane, alloc: Allocator, color: u32, alpha: u8
             return;
         };
     }
-    _ = self.dim_overlay.?.show(color, alpha, batch);
+    _ = self.dim_overlay.?.show(color, alpha, null, batch);
 }
 
 /// Hide this pane's dim overlay if it exists.
@@ -6776,7 +6776,7 @@ fn paintGlass(self: *const ViewerPane, hdc: w32.HDC, width: i32, height: i32) bo
     if (width <= 0 or height <= 0) return true;
     const dib = Dib32.create(hdc, width, height) orelse return false;
     defer dib.destroy();
-    pane_elevation.glassSheetRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.bg);
+    pane_elevation.glassSheetRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.bg, g.sheet);
     _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
     return true;
 }
@@ -7885,12 +7885,26 @@ test "host floor: a real controller on a real window, on this box" {
             pane.paint(dib.dc, sw, sh);
             const want = try alloc.alloc(u32, sw * sh);
             defer alloc.free(want);
-            pane_elevation.glassSheetRegion(want, sw, sh, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg);
+            pane_elevation.glassSheetRegion(want, sw, sh, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg, spec.sheet);
             for ([_]usize{ 0, sw - 1, @as(usize, sw) * (sh / 2) + sw / 2, @as(usize, sw) * sh - 1 }) |i| {
                 try testing.expectEqual(want[i], dib.pixels[i] & 0x00FFFFFF);
             }
             // And the sheet is not a flat fill: the desk runs through it.
             try testing.expect(want[0] != want[@as(usize, sw) * sh - 1]);
+
+            // An unfocused viewer among several takes the thin sheet, and no
+            // fade - its page is its own business (T2086, T1809).
+            var thin = spec;
+            thin.sheet = pane_elevation.sheetFor(true, 0);
+            pane.setGlassBackdrop(thin);
+            pane.paint(dib.dc, sw, sh);
+            const thin_want = try alloc.alloc(u32, sw * sh);
+            defer alloc.free(thin_want);
+            pane_elevation.glassSheetRegion(thin_want, sw, sh, thin.rect[0], thin.rect[1], thin.full_w, thin.full_h, thin.palette, pane.bg, thin.sheet);
+            const mid = @as(usize, sw) * (sh / 2) + sw / 2;
+            try testing.expectEqual(thin_want[mid], dib.pixels[mid] & 0x00FFFFFF);
+            try testing.expect(thin_want[mid] != want[mid]);
+            pane.setGlassBackdrop(spec);
         }
 
         // The nav bar is the chrome colour as a material over that same
@@ -7921,7 +7935,7 @@ test "host floor: a real controller on a real window, on this box" {
             defer alloc.free(got);
             const want = try alloc.alloc(u32, got.len);
             defer alloc.free(want);
-            pane_elevation.glassHeadRegion(want, got.len, 1, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg, nav.bar_rgb);
+            pane_elevation.glassHeadRegion(want, got.len, 1, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg, nav.bar_rgb, spec.sheet);
             for ([_]usize{ 0, got.len / 2, got.len - 1 }) |i| {
                 try testing.expectEqual(want[i], got[i]);
             }
@@ -7966,7 +7980,7 @@ test "host floor: a real controller on a real window, on this box" {
             defer alloc.free(got);
             const want = try alloc.alloc(u32, got.len);
             defer alloc.free(want);
-            pane_elevation.glassHeadRegion(want, got.len, 1, spec.rect[0], spec.rect[1] + fb_top, spec.full_w, spec.full_h, spec.palette, pane.bg, bar.bar_rgb);
+            pane_elevation.glassHeadRegion(want, got.len, 1, spec.rect[0], spec.rect[1] + fb_top, spec.full_w, spec.full_h, spec.palette, pane.bg, bar.bar_rgb, spec.sheet);
             for ([_]usize{ 0, got.len / 2, got.len - 1 }) |i| {
                 try testing.expectEqual(want[i], got[i]);
             }
@@ -7976,7 +7990,7 @@ test "host floor: a real controller on a real window, on this box" {
             // band must not have painted the host's top-left.
             const at_origin = try alloc.alloc(u32, got.len);
             defer alloc.free(at_origin);
-            pane_elevation.glassHeadRegion(at_origin, got.len, 1, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg, bar.bar_rgb);
+            pane_elevation.glassHeadRegion(at_origin, got.len, 1, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg, bar.bar_rgb, spec.sheet);
             log.warn("glass composer band: top={d} x0=0x{X:0>6} mid=0x{X:0>6} origin=0x{X:0>6} solid=0x{X:0>6}", .{ fb_top, got[0], got[got.len / 2], at_origin[got.len / 2], solid });
         }
 
@@ -11703,27 +11717,43 @@ test "T1295: a redundant dim-overlay show does not re-blend" {
     // Every steady-state event - a focus change elsewhere, a WM_MOVE that did
     // not move this pane, a config reload that changed nothing - lands here
     // with identical arguments and must do nothing at all.
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null));
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null));
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null, null));
 
     // A real change still gets through: the pane moves...
     _ = w32.MoveWindow(host, 40, 30, 150, 100, 0);
-    try testing.expect(d.show(w32.RGB(16, 16, 20), 77, null));
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null));
+    try testing.expect(d.show(w32.RGB(16, 16, 20), 77, null, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null, null));
 
     // ...unfocused-split-opacity changes...
-    try testing.expect(d.show(w32.RGB(16, 16, 20), 128, null));
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 128, null));
+    try testing.expect(d.show(w32.RGB(16, 16, 20), 128, null, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 128, null, null));
 
     // ...unfocused-split-fill changes...
-    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null));
-    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, null));
+    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null, null));
+    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, null, null));
+
+    // ...a glass pane's wash turns to the desk under it (T2086): steady while
+    // nothing moves, re-cropped when the desk is re-rendered...
+    var desk_px: [64 * 64]u32 = undefined;
+    for (&desk_px, 0..) |*p, k| p.* = @intCast(k & 0xFF_FFFF);
+    var wash: @TypeOf(d.*).DeskWash = .{ .parent = host, .left = 0, .top = 0, .pixels = &desk_px, .w = 64, .h = 64, .gen = 1 };
+    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, wash, null));
+    try testing.expect(d.wash != null);
+    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, wash, null));
+    wash.gen = 2;
+    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, wash, null));
+    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, wash, null));
+    // ...and is the fill again when glass goes off.
+    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null, null));
+    try testing.expect(d.wash == null);
+    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, null, null));
 
     // ...and a hide/show flip (focus out and back) always replaces it.
     d.hide();
     try testing.expect(!d.shown);
-    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null));
+    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null, null));
 }
 
 // -------------------------------------------------------------------------

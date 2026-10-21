@@ -1,15 +1,15 @@
 {
     "guard":  "viewer-feedback",
     "script":  "test/win32/viewer-feedback.ps1",
-    "generated":  "2026-10-16T23:11:24-07:00",
-    "commit":  "155e808c3",
+    "generated":  "2026-10-20T21:09:27-07:00",
+    "commit":  "3dd81bfe7",
     "uncommitted":  [
                         "src/apprt/win32/ViewerFeedbackBar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_feedback_doc.zig":  "f5c871e6e68e437dcb170794201619d59664e9e60077ef3453910b65f3e004e9",
                   "src/apprt/win32/viewer_feedback_page.zig":  "75ac79316a2b0ab69868c523656a2040bb58e1cc7f26fb87a757a3ff3b508053",
-                  "src/apprt/win32/ViewerFeedbackBar.zig":  "ef4600830e58d07699ae5a5c367dff89eb31f73b4ddde316c043f210e189a71f",
+                  "src/apprt/win32/ViewerFeedbackBar.zig":  "c5dda0c1e2fce254b090fcff7798cf9c05cd370fe5174818a11f004833959af7",
                   "src/apprt/win32/ViewerFeedbackWeb.zig":  "8848202d5b02faf5ecbb68a9dba13ca53731b3e96d58612046d9b0a49175eed6",
                   "src/viewer/composer.js":  "ba5e2801f2702309b5707497de1ab122b7837da482bf6c15919ed947c8b87eb5",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",

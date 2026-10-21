@@ -1372,7 +1372,7 @@ pub fn setVisible(self: *Surface, visible: bool) void {
 /// Show (or reposition) this pane's dim overlay at the given fill color
 /// (COLORREF) and alpha. Lazily creates the overlay popup on first use.
 /// Called by Window.updateDimOverlays (T74).
-pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, batch: ?*?w32.HDWP) void {
+pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, desk: ?DimOverlay.DeskWash, batch: ?*?w32.HDWP) void {
     const hwnd = self.hwnd orelse return;
     if (self.dim_overlay == null) {
         self.dim_overlay = DimOverlay.create(
@@ -1384,7 +1384,7 @@ pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, batch: ?*?w32.HDWP)
             return;
         };
     }
-    _ = self.dim_overlay.?.show(color, alpha, batch);
+    _ = self.dim_overlay.?.show(color, alpha, desk, batch);
     // An elevated pane's wash takes its card's rounded shape (T1831).
     if (self.pane_view) |pv| self.dim_overlay.?.matchOwnerRegion(pv.card_region_key);
 }
@@ -5086,7 +5086,9 @@ pub fn setPaneBackdrop(self: *Surface, spec: ?GlassBackdrop, desk: ?PaneDesk.Bac
             .data = data,
             .width = @intCast(bw),
             .height = @intCast(bh),
-            .opacity = 1 - pane_elevation.GLASS_TINT,
+            // The sheet's tint only (T2086): a dimmed terminal's fade is
+            // the desk wash laid over the whole pane, text included.
+            .opacity = 1 - b.sheet.t,
         };
     } else null;
     _ = self.core_surface.renderer_thread.mailbox.push(.{ .pane_backdrop = msg }, .{ .forever = {} });

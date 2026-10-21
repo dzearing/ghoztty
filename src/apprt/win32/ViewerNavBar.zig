@@ -996,7 +996,7 @@ fn paintGlass(self: *const ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) 
     if (width <= 0 or height <= 0) return true;
     const dib = Dib32.create(hdc, width, height) orelse return false;
     defer dib.destroy();
-    pane_elevation.glassHeadRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb);
+    pane_elevation.glassHeadRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb, g.sheet);
     _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
     return true;
 }

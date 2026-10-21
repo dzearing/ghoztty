@@ -113,6 +113,10 @@ pub const Card = struct {
     /// sheet. A viewer's nav bar is the same material on glass (T1916; Mac
     /// `ChromeBarBackground`).
     head_glass: bool = false,
+    /// This card's glass sheet (T2086): thinner - and for a dimmed terminal,
+    /// faded - on an unfocused pane among several. Read only when the style
+    /// is glass.
+    sheet: Sheet = .{},
 
     /// The card's colour on row `y`, or null for the style's (glass-able)
     /// terminal fill.
@@ -215,6 +219,8 @@ pub const GlassBackdrop = struct {
     full_w: i32,
     full_h: i32,
     palette: desk_palette.Palette,
+    /// The pane's sheet (T2086): thinner on an unfocused pane among several.
+    sheet: Sheet = .{},
 };
 
 /// Mac `PaneGlass.tint` (0d8de3436): how much of the terminal's background
@@ -223,6 +229,36 @@ pub const GlassBackdrop = struct {
 /// while text keeps its contrast (T1833).
 pub const GLASS_TINT: f32 = 0.4;
 
+/// Mac `PaneGlass.unfocusedTint` (89848fd59, T2086): an unfocused pane among
+/// several keeps well under half the focused pane's sheet, so the desk reads
+/// through it more - glass's version of `unfocused-split-opacity`, whose
+/// background-coloured wash would make the unfocused pane the MORE opaque one.
+pub const GLASS_UNFOCUSED_TINT: f32 = 0.15;
+
+/// One pane's glass sheet (T2086): `t` of the terminal's background over the
+/// desk, and then - a dimmed terminal fading whole, Mac's
+/// `FocusFade(opacity: dimmedOpacity)` - `fade` of the desk back over that,
+/// mixed in sRGB the way the layered dim wash over the pane child blends.
+pub const Sheet = struct {
+    t: f32 = GLASS_TINT,
+    fade: f32 = 0,
+
+    /// What the sheet covers of the desk.
+    pub fn cover(self: Sheet) f32 {
+        return self.t * (1 - self.fade);
+    }
+};
+
+/// The sheet a glass pane gets (T2086; Mac `PaneCard.glassCard`). A pane
+/// that is `dimmed` - one of several, and not the focused one - gets the
+/// thin sheet; a dimmed terminal then fades whole by `fade` (the dim wash's
+/// alpha, 1 - `unfocused-split-opacity`), sheet included. A viewer passes 0:
+/// its page is its own business (T1809), so it gets the thinner sheet only.
+pub fn sheetFor(dimmed: bool, fade: f32) Sheet {
+    if (!dimmed) return .{};
+    return .{ .t = GLASS_UNFOCUSED_TINT, .fade = std.math.clamp(fade, 0, 1) };
+}
+
 /// How much of the header band's colour a glass pane's rearrange header
 /// keeps over the sheet (T1884) - the stand-in for Mac's `.regularMaterial`,
 /// which is mostly its own colour with the backdrop's light carried through.
@@ -230,7 +266,12 @@ pub const GLASS_TINT: f32 = 0.4;
 pub const HEAD_MATERIAL: f32 = 0.7;
 
 /// What a glass head row covers of the desk: the sheet, then the material.
-pub const HEAD_COVER: f32 = 1 - (1 - GLASS_TINT) * (1 - HEAD_MATERIAL);
+pub const HEAD_COVER: f32 = headCover(GLASS_TINT);
+
+/// What a glass head row covers of the desk over a sheet of `t` (T2086).
+pub fn headCover(t: f32) f32 {
+    return 1 - (1 - t) * (1 - HEAD_MATERIAL);
+}
 
 /// Mac `PaneGlass`'s pre-Liquid-Glass shadow (`radius: 9, y: 6`, black 20%
 /// dark / 6% light). SwiftUI casts it from the sheet's own alpha, so it
@@ -318,10 +359,33 @@ pub fn glassMix(desk: u32, tint: color_math.Rgb, t: f32) u32 {
         mixChannel(desk & 0xFF, srgb_to_linear[tint.b], t);
 }
 
+fn sheetChannel(desk: u32, tint_lin: f32, sheet: Sheet) u32 {
+    const m = mixChannel(desk, tint_lin, sheet.t);
+    if (sheet.fade <= 0) return m;
+    const f = std.math.clamp(sheet.fade, 0, 1);
+    const v = @as(f32, @floatFromInt(m)) * (1 - f) + @as(f32, @floatFromInt(desk)) * f;
+    return @intFromFloat(@round(std.math.clamp(v, 0, 255)));
+}
+
+/// A pane's sheet over one desk pixel (T2086): `glassMix` at the sheet's
+/// tint, then its fade back to the desk.
+pub fn sheetMix(desk: u32, tint: color_math.Rgb, sheet: Sheet) u32 {
+    return (sheetChannel((desk >> 16) & 0xFF, srgb_to_linear[tint.r], sheet) << 16) |
+        (sheetChannel((desk >> 8) & 0xFF, srgb_to_linear[tint.g], sheet) << 8) |
+        sheetChannel(desk & 0xFF, srgb_to_linear[tint.b], sheet);
+}
+
 /// A glass header row's colour over one desk pixel (T1884): the sheet, then
 /// the band's material over it.
 pub fn glassHeadMix(desk: u32, fill: color_math.Rgb, head: color_math.Rgb) u32 {
-    return glassMix(glassMix(desk, fill, GLASS_TINT), head, HEAD_MATERIAL);
+    return glassHeadMixAt(desk, fill, head, GLASS_TINT);
+}
+
+/// `glassHeadMix` over a sheet of `t` (T2086). A head band is chrome laid on
+/// the card, outside the pane child the dim wash covers, so it takes the
+/// sheet's tint and never its fade.
+pub fn glassHeadMixAt(desk: u32, fill: color_math.Rgb, head: color_math.Rgb, t: f32) u32 {
+    return glassMix(glassMix(desk, fill, t), head, HEAD_MATERIAL);
 }
 
 /// Fill `out` (`w` x `h`, `0x00RRGGBB`) with the glass sheet over the part of
@@ -339,11 +403,12 @@ pub fn glassSheetRegion(
     full_h: i32,
     pal: desk_palette.Palette,
     tint: color_math.Rgb,
+    sheet: Sheet,
 ) void {
     std.debug.assert(out.len >= w * h);
     const fw: f32 = @floatFromInt(@max(full_w, 1));
     const fh: f32 = @floatFromInt(@max(full_h, 1));
-    const lut = GlassLut.init(tint, GLASS_TINT, GLASS_TINT);
+    const lut = GlassLut.initSheet(tint, sheet);
     for (0..h) |row| {
         const y = @as(f32, @floatFromInt(ry + @as(i32, @intCast(row)))) + 0.5;
         for (0..w) |col| {
@@ -373,9 +438,11 @@ pub fn glassHeadRegion(
     pal: desk_palette.Palette,
     fill: color_math.Rgb,
     head: color_math.Rgb,
+    sheet: Sheet,
 ) void {
-    glassSheetRegion(out, w, h, rx, ry, full_w, full_h, pal, fill);
-    const lut = GlassLut.init(head, HEAD_MATERIAL, HEAD_COVER);
+    // A head band takes the sheet's tint, never its fade (`glassHeadMixAt`).
+    glassSheetRegion(out, w, h, rx, ry, full_w, full_h, pal, fill, .{ .t = sheet.t });
+    const lut = GlassLut.init(head, HEAD_MATERIAL, headCover(sheet.t));
     for (out[0 .. w * h]) |*p| p.* = lut.mix(p.*);
 }
 
@@ -391,12 +458,22 @@ const GlassLut = struct {
     /// `t` is the mix; `cover_t` what the layer covers of the desk's
     /// coverage, which for a head band is the sheet AND the material.
     fn init(tint: color_math.Rgb, t: f32, cover_t: f32) GlassLut {
+        return initWith(tint, .{ .t = t }, cover_t);
+    }
+
+    /// `sheetMix` at `s` (T2086). The fade is per channel as well, so a
+    /// faded sheet costs the paint nothing more than a plain one.
+    fn initSheet(tint: color_math.Rgb, s: Sheet) GlassLut {
+        return initWith(tint, s, s.cover());
+    }
+
+    fn initWith(tint: color_math.Rgb, s: Sheet, cover_t: f32) GlassLut {
         var l: GlassLut = undefined;
         for (0..256) |i| {
             const c: u32 = @intCast(i);
-            l.r[i] = mixChannel(c, srgb_to_linear[tint.r], t) << 16;
-            l.g[i] = mixChannel(c, srgb_to_linear[tint.g], t) << 8;
-            l.b[i] = mixChannel(c, srgb_to_linear[tint.b], t);
+            l.r[i] = sheetChannel(c, srgb_to_linear[tint.r], s) << 16;
+            l.g[i] = sheetChannel(c, srgb_to_linear[tint.g], s) << 8;
+            l.b[i] = sheetChannel(c, srgb_to_linear[tint.b], s);
             l.cover[i] = desk_palette.withCoverage(0, desk_palette.coverOver(desk_palette.coverage(c << 24), cover_t));
         }
         return l;
@@ -683,11 +760,11 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
     const rim_w = RIM_DIP * style.scale;
     // The inner edge of the band an antialiased rim pixel can sit in.
     const edge: i32 = @as(i32, @intFromFloat(@ceil(rim_w))) + 1;
-    const lut: ?GlassLut = if (style.glass) GlassLut.init(style.fill, GLASS_TINT, GLASS_TINT) else null;
-
     for (cards, 0..) |c, ci| {
         const f = Frame.of(c, radius);
         const focus = focusOf(style, ci);
+        // This card's own sheet (T2086); the default one is the common case.
+        const lut: ?GlassLut = if (style.glass) GlassLut.initSheet(style.fill, c.sheet) else null;
         const y0: i32 = @max(c.top, 0);
         const y1: i32 = @min(c.bottom, hi);
         const x0: i32 = @max(c.left, 0);
@@ -697,10 +774,18 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
         // below needs x0 <= x1 (T1912).
         if (x1 <= x0 or y1 <= y0) continue;
         // A glass head band's material, over the sheet (T1884).
+        const head_cover = headCover(c.sheet.t);
         const head_lut: ?GlassLut = if (style.glass and c.head_glass and c.head != null)
-            GlassLut.init(c.head.?, HEAD_MATERIAL, HEAD_COVER)
+            GlassLut.init(c.head.?, HEAD_MATERIAL, head_cover)
         else
             null;
+        // The sheet under a head band: the card's tint without its fade
+        // (`glassHeadMixAt`), which is `lut` itself unless the card fades.
+        const head_base_lut: ?GlassLut = if (head_lut != null and c.sheet.fade > 0)
+            GlassLut.init(style.fill, c.sheet.t, c.sheet.t)
+        else
+            null;
+        const head_base: ?*const GlassLut = if (head_base_lut) |*l| l else if (lut) |*l| l else null;
         var y = y0;
         while (y < y1) : (y += 1) {
             // This row's card colour (T1851): a header or nav band, a
@@ -709,7 +794,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
             const own = c.colorAt(y);
             const glass_head = c.glassHeadAt(y, style.glass);
             const glass = (style.glass and own == null) or glass_head;
-            const cover_t: f32 = if (glass_head) HEAD_COVER else GLASS_TINT;
+            const cover_t: f32 = if (glass_head) head_cover else c.sheet.cover();
             const row_rgb = own orelse style.fill;
             const fill: Rgbf = .{
                 .r = @floatFromInt(row_rgb.r),
@@ -735,7 +820,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
             if (in1 > in0) {
                 const span = buf[row + @as(usize, @intCast(in0)) .. row + @as(usize, @intCast(in1))];
                 if (glass_head) {
-                    for (span) |*p| p.* = head_lut.?.mix(lut.?.mix(p.*)) | head_lut.?.cover[p.* >> 24];
+                    for (span) |*p| p.* = head_lut.?.mix(head_base.?.mix(p.*)) | head_lut.?.cover[p.* >> 24];
                 } else if (glass) {
                     for (span) |*p| p.* = lut.?.sheet(p.*);
                 } else @memset(span, fill_px | 0xFF00_0000);
@@ -755,7 +840,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                 const ring = outer - inner;
                 // Glass: the sheet's own colour over THIS pixel of desk.
                 const base = if (glass_head)
-                    unpack(head_lut.?.mix(lut.?.mix(buf[i])))
+                    unpack(head_lut.?.mix(head_base.?.mix(buf[i])))
                 else if (glass)
                     unpack(lut.?.mix(buf[i]))
                 else
@@ -1014,7 +1099,7 @@ test "T1884: glassSheetRegion is the sheet over the desk at those pixels" {
     const pal = desk_palette.Palette.ocean(false);
     const tint: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
     var out: [6 * 4]u32 = undefined;
-    glassSheetRegion(&out, 6, 4, 100, 40, 800, 600, pal, tint);
+    glassSheetRegion(&out, 6, 4, 100, 40, 800, 600, pal, tint, .{});
     for (0..4) |row| for (0..6) |col| {
         const x: f32 = @as(f32, @floatFromInt(100 + col)) + 0.5;
         const y: f32 = @as(f32, @floatFromInt(40 + row)) + 0.5;
@@ -1022,7 +1107,7 @@ test "T1884: glassSheetRegion is the sheet over the desk at those pixels" {
     };
     // Different places on the desk give different glass.
     var far: [1]u32 = undefined;
-    glassSheetRegion(&far, 1, 1, 700, 500, 800, 600, pal, tint);
+    glassSheetRegion(&far, 1, 1, 700, 500, 800, 600, pal, tint, .{});
     try testing.expect(far[0] != out[0]);
 }
 
@@ -1031,7 +1116,7 @@ test "T1916: glassHeadRegion is the head material over the sheet at those pixels
     const fill: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
     const head: color_math.Rgb = .{ .r = 44, .g = 46, .b = 52 };
     var out: [6 * 4]u32 = undefined;
-    glassHeadRegion(&out, 6, 4, 100, 40, 800, 600, pal, fill, head);
+    glassHeadRegion(&out, 6, 4, 100, 40, 800, 600, pal, fill, head, .{});
     for (0..4) |row| for (0..6) |col| {
         const x: f32 = @as(f32, @floatFromInt(100 + col)) + 0.5;
         const y: f32 = @as(f32, @floatFromInt(40 + row)) + 0.5;
@@ -1040,7 +1125,7 @@ test "T1916: glassHeadRegion is the head material over the sheet at those pixels
     // A material, not a band: the desk still moves it, and it is not the
     // plain head colour anywhere.
     var far: [1]u32 = undefined;
-    glassHeadRegion(&far, 1, 1, 700, 500, 800, 600, pal, fill, head);
+    glassHeadRegion(&far, 1, 1, 700, 500, 800, 600, pal, fill, head, .{});
     try testing.expect(far[0] != out[0]);
     try testing.expect(out[0] != packRgb(44, 46, 52));
 }
@@ -1093,6 +1178,75 @@ test "T1833: a glass card shows the desk through its fill and keeps its shadow o
     @memcpy(&buf, &desk);
     paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0 });
     try testing.expectEqual(packRgb(30, 30, 30), rgbOf(buf[a]));
+}
+
+test "T2086: an unfocused glass pane is the MORE see-through one, and a dimmed terminal fades whole" {
+    // Mac 89848fd59: focused 40%, unfocused 15%, and a terminal's sheet then
+    // fades by its dim; a focused or lone pane keeps the default sheet.
+    try testing.expectEqual(Sheet{}, sheetFor(false, 0.3));
+    try testing.expectEqual(GLASS_TINT, sheetFor(false, 0.3).t);
+    try testing.expectEqual(GLASS_UNFOCUSED_TINT, sheetFor(true, 0).t);
+    try testing.expect(GLASS_UNFOCUSED_TINT < GLASS_TINT / 2);
+    try testing.expectEqual(@as(f32, 0.3), sheetFor(true, 0.3).fade);
+    try testing.expectEqual(@as(f32, 1), sheetFor(true, 7).fade);
+
+    const w = 120;
+    const h = 100;
+    var desk: [w * h]u32 = undefined;
+    for (0..h) |y| for (0..w) |x| {
+        desk[y * w + x] = packRgb(@intCast(x * 2), 200, @intCast(y * 2));
+    };
+    const bg: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    const style: CardStyle = .{ .fill = bg, .is_light = false, .scale = 1.0, .glass = true };
+    const at = 45 * w + 60;
+    const card: Card = .{ .left = 20, .top = 20, .right = 100, .bottom = 70 };
+    var focused = desk;
+    paintCards(&focused, w, h, &.{card}, style);
+    var thin_card = card;
+    thin_card.sheet = sheetFor(true, 0);
+    var thin = desk;
+    paintCards(&thin, w, h, &.{thin_card}, style);
+    var faded_card = card;
+    faded_card.sheet = sheetFor(true, 0.3);
+    var faded = desk;
+    paintCards(&faded, w, h, &.{faded_card}, style);
+
+    // How far each one moved the desk's green: the less, the more of the
+    // desk reads through.
+    const d = unpack(desk[at]).g;
+    const lift_focused = d - unpack(focused[at]).g;
+    const lift_thin = d - unpack(thin[at]).g;
+    const lift_faded = d - unpack(faded[at]).g;
+    try testing.expect(lift_thin < lift_focused * 0.6);
+    try testing.expect(lift_faded < lift_thin);
+    try testing.expect(lift_faded > 0);
+    // The fade is the sRGB lerp the layered dim wash makes over the pane.
+    try testing.expectEqual(sheetMix(desk[at], bg, faded_card.sheet), rgbOf(faded[at]));
+    const s = unpack(glassMix(desk[at], bg, GLASS_UNFOCUSED_TINT)).g;
+    try testing.expect(@abs(unpack(faded[at]).g - (s * 0.7 + d * 0.3)) <= 0.5);
+    // A sheet hides only what it covers (T1852).
+    try testing.expect(@abs(@as(i32, @intCast(faded[at] >> 24)) - @as(i32, @intFromFloat(@round(GLASS_UNFOCUSED_TINT * 0.7 * 255)))) <= 1);
+
+    // Negative control: at the old tint the "unfocused" pane is not thinner.
+    var old_card = card;
+    old_card.sheet = .{ .t = GLASS_TINT };
+    var old = desk;
+    paintCards(&old, w, h, &.{old_card}, style);
+    try testing.expect(!(d - unpack(old[at]).g < lift_focused * 0.6));
+}
+
+test "T2086: a head band takes its card's thin sheet but never the terminal's fade" {
+    const desk = packRgb(90, 160, 200);
+    const fill: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    const head: color_math.Rgb = .{ .r = 44, .g = 46, .b = 52 };
+    const pal = desk_palette.Palette.ocean(false);
+    var a: [1]u32 = undefined;
+    var b: [1]u32 = undefined;
+    glassHeadRegion(&a, 1, 1, 100, 40, 800, 600, pal, fill, head, sheetFor(true, 0.3));
+    glassHeadRegion(&b, 1, 1, 100, 40, 800, 600, pal, fill, head, sheetFor(true, 0));
+    try testing.expectEqual(a[0], b[0]);
+    try testing.expect(glassHeadMixAt(desk, fill, head, GLASS_UNFOCUSED_TINT) != glassHeadMix(desk, fill, head));
+    try testing.expectEqual(HEAD_COVER, headCover(GLASS_TINT));
 }
 
 /// Mac `PaneFocusGlowTests`, on a 300x240 buffer with a 200x140 card at
@@ -1311,7 +1465,7 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
             const own = c.colorAt(y);
             const glass_head = c.glassHeadAt(y, style.glass);
             const glass = (style.glass and own == null) or glass_head;
-            const cover_t: f32 = if (glass_head) HEAD_COVER else GLASS_TINT;
+            const cover_t: f32 = if (glass_head) headCover(c.sheet.t) else c.sheet.cover();
             const row_rgb = own orelse style.fill;
             const fill: Rgbf = .{
                 .r = @floatFromInt(row_rgb.r),
@@ -1337,13 +1491,13 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
                     // card hides it entirely (T1852).
                     buf[i] = if (glass_head)
                         desk_palette.withCoverage(
-                            glassHeadMix(buf[i], style.fill, c.head.?),
-                            desk_palette.coverOver(desk_palette.coverage(buf[i]), HEAD_COVER),
+                            glassHeadMixAt(buf[i], style.fill, c.head.?, c.sheet.t),
+                            desk_palette.coverOver(desk_palette.coverage(buf[i]), headCover(c.sheet.t)),
                         )
                     else if (glass)
                         desk_palette.withCoverage(
-                            glassMix(buf[i], style.fill, GLASS_TINT),
-                            desk_palette.coverOver(desk_palette.coverage(buf[i]), GLASS_TINT),
+                            sheetMix(buf[i], style.fill, c.sheet),
+                            desk_palette.coverOver(desk_palette.coverage(buf[i]), c.sheet.cover()),
                         )
                     else
                         fill_px | 0xFF00_0000;
@@ -1359,9 +1513,9 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
                 const ring = outer - inner;
                 // Glass: the sheet's own colour over THIS pixel of desk.
                 const base = if (glass_head)
-                    unpack(glassHeadMix(buf[i], style.fill, c.head.?))
+                    unpack(glassHeadMixAt(buf[i], style.fill, c.head.?, c.sheet.t))
                 else if (glass)
-                    unpack(glassMix(buf[i], style.fill, GLASS_TINT))
+                    unpack(sheetMix(buf[i], style.fill, c.sheet))
                 else
                     fill;
                 const rim_px = if (glass) Rgbf.lerp(base, rim_rgb, rim_a) else rim_c;
@@ -1410,6 +1564,13 @@ test "T1856: the table-driven paint matches the direct rasteriser bit for bit" {
         &.{
             .{ .left = 15, .top = 15, .right = 121, .bottom = 175, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = 45, .head_glass = true },
             .{ .left = 136, .top = -20, .right = 245, .bottom = 175, .head = .{ .r = 236, .g = 236, .b = 240 }, .head_bottom = 12, .head_glass = true },
+        },
+        // An unfocused glass terminal fading whole beside a focused one, and
+        // an unfocused viewer's thin sheet under a glass head (T2086).
+        &.{
+            .{ .left = 15, .top = 15, .right = 121, .bottom = 175, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = 45, .head_glass = true, .sheet = sheetFor(true, 0.3) },
+            .{ .left = 136, .top = 15, .right = 245, .bottom = 90 },
+            .{ .left = 136, .top = 105, .right = 245, .bottom = 175, .sheet = sheetFor(true, 0) },
         },
     };
     const glows = [_]Glow{ .{ .card = 1, .level = 0.6 }, .{ .card = 0, .level = 0.4 } };

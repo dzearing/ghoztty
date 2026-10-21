@@ -368,6 +368,9 @@ pub const BannerOverlay = struct {
         full_w: i32,
         full_h: i32,
         palette: desk_palette.Palette,
+        /// The pane's sheet under the strip (T2086): thin, and faded, on an
+        /// unfocused pane among several, as its card is round it.
+        sheet: pane_elevation.Sheet = .{},
     };
 
     pub fn create(
@@ -1903,7 +1906,7 @@ pub const BannerOverlay = struct {
         if (w <= 0 or h <= 0) return true;
         const dib = Dib32.create(hdc, w, h) orelse return false;
         defer dib.destroy();
-        pane_elevation.glassSheetRegion(dib.pixels, @intCast(w), @intCast(h), at[0] + rect.left, at[1] + rect.top, g.full_w, g.full_h, g.palette, self.pane_bg_rgb);
+        pane_elevation.glassSheetRegion(dib.pixels, @intCast(w), @intCast(h), at[0] + rect.left, at[1] + rect.top, g.full_w, g.full_h, g.palette, self.pane_bg_rgb, g.sheet);
         _ = w32.BitBlt(hdc, rect.left, rect.top, w, h, dib.dc, 0, 0, w32.SRCCOPY);
         return true;
     }
@@ -1978,7 +1981,7 @@ pub const BannerOverlay = struct {
             // Glass (T1884): the pane's sheet over this slice of the desk,
             // and the card as a wash over that.
             const g = self.glass.?;
-            pane_elevation.glassSheetRegion(pixels[0..count], @intCast(w), @intCast(h), at[0], at[1], g.full_w, g.full_h, g.palette, self.pane_bg_rgb);
+            pane_elevation.glassSheetRegion(pixels[0..count], @intCast(w), @intCast(h), at[0], at[1], g.full_w, g.full_h, g.palette, self.pane_bg_rgb, g.sheet);
             const mid = pixels[@as(usize, @intCast(@divTrunc(h, 2) * w + @divTrunc(w, 2)))];
             card.renderGlassOn(pixels[0..count], metrics, self.pane_bg_rgb);
             self.glass_strip = card.glassFillColor(.{

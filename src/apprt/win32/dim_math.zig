@@ -90,6 +90,48 @@ pub fn needsReposition(state: RepositionState) bool {
         state.alpha_changed or state.color_changed;
 }
 
+/// A glass pane's wash is the desk itself (T2086): Mac fades an unfocused
+/// glass terminal whole, so what shows through it is the desk under the pane,
+/// never a background-coloured sheet - that made the unfocused pane the MORE
+/// opaque one. Copy the `w` x `h` slice of the `dw` x `dh` desk whose top-left
+/// is (`ox`, `oy`) into `out`; a pixel off the desk takes the nearest edge
+/// pixel, so a pane mid-drag past the desk's edge never shows a seam.
+pub fn cropWash(out: []u32, w: usize, h: usize, desk: []const u32, dw: usize, dh: usize, ox: i32, oy: i32) void {
+    std.debug.assert(out.len >= w * h);
+    if (dw == 0 or dh == 0 or desk.len < dw * dh) {
+        @memset(out[0 .. w * h], 0);
+        return;
+    }
+    const max_x: i32 = @intCast(dw - 1);
+    const max_y: i32 = @intCast(dh - 1);
+    for (0..h) |row| {
+        const sy: usize = @intCast(std.math.clamp(oy + @as(i32, @intCast(row)), 0, max_y));
+        const src = desk[sy * dw ..][0..dw];
+        const dst = out[row * w ..][0..w];
+        for (dst, 0..) |*p, col| {
+            const sx: usize = @intCast(std.math.clamp(ox + @as(i32, @intCast(col)), 0, max_x));
+            p.* = src[sx] & 0x00FF_FFFF;
+        }
+    }
+}
+
+test "T2086: cropWash is the desk under the pane, edge-clamped past the desk" {
+    var desk: [4 * 3]u32 = undefined;
+    for (&desk, 0..) |*p, i| p.* = 0xFF00_0000 | @as(u32, @intCast(i));
+    var out: [2 * 2]u32 = undefined;
+    cropWash(&out, 2, 2, &desk, 4, 3, 1, 1);
+    // The coverage byte is dropped: a layered wash takes its alpha uniformly.
+    try testing.expectEqualSlices(u32, &.{ 5, 6, 9, 10 }, &out);
+    // Off the top-left and the bottom-right: the nearest edge pixel.
+    cropWash(&out, 2, 2, &desk, 4, 3, -1, -1);
+    try testing.expectEqualSlices(u32, &.{ 0, 0, 0, 0 }, &out);
+    cropWash(&out, 2, 2, &desk, 4, 3, 3, 2);
+    try testing.expectEqualSlices(u32, &.{ 11, 11, 11, 11 }, &out);
+    // No desk: black rather than a read past the slice.
+    cropWash(&out, 2, 2, &desk, 0, 0, 0, 0);
+    try testing.expectEqualSlices(u32, &.{ 0, 0, 0, 0 }, &out);
+}
+
 test "overlayAlpha: opacity 1 disables dimming" {
     try testing.expectEqual(@as(u8, 0), overlayAlpha(1.0));
 }
