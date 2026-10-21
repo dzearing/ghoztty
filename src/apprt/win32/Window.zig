@@ -169,6 +169,7 @@ const DropHighlight = @import("DropHighlight.zig");
 const fullscreen_exit = @import("fullscreen_exit.zig");
 const FullscreenExit = @import("FullscreenExit.zig").FullscreenExit;
 const split_resize = @import("split_resize.zig");
+const stack_drag = @import("stack_drag.zig");
 const drag_perf = @import("drag_perf.zig");
 
 /// How large a tab's split tree may be for a divider drag to compensate the
@@ -684,6 +685,19 @@ drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 /// rather than to a wrong one.
 drag_nodes: [MAX_DRAG_NODES]split_resize.Node = undefined,
 drag_node_len: usize = 0,
+
+/// The row a divider or stack-grip drag is in, as the drag found it, and what
+/// the drag has folded away so far (T2124, Mac `RowDrag`). Null when the drag
+/// is not in a row the layout reported, which leaves it an ordinary resize.
+row_drag: ?stack_drag.RowDrag = null,
+/// The least the dragged split's left and right sides can be along the drag,
+/// in pixels: past either by `restack_distance`, the row folds instead.
+drag_lead_min: f64 = 0,
+drag_trail_min: f64 = 0,
+
+/// A grip on a stacked row being dragged (T2124): between two cards on show,
+/// or at the edge of a narrowed run. Null when none is.
+grip_drag: ?GripDrag = null,
 
 /// What the drag the user is watching is COSTING them (T1343), accumulated per
 /// motion tick and reported once at drag end. Gated on `GHOZTTY_PERF` like
@@ -1941,6 +1955,7 @@ pub fn deinit(self: *Window) void {
     // Drop IPC names pointing at this window before the memory can be
     // recycled.
     self.app.ipcForget(.{ .window = self });
+    self.endRowDrag();
     if (self.pane_stacks) |*st| st.deinit();
     self.pane_stacks = null;
     if (self.ipc_name) |n| {
@@ -8269,6 +8284,155 @@ pub fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     return null;
 }
 
+/// A grip on a stacked row under the pointer (T2124): an index into the
+/// grid's `stack_handles`, and the axis its row runs along (the cursor's).
+pub const GripHit = struct {
+    index: usize,
+    direction: pane_stack_layout.Direction,
+};
+
+/// A grip drag under way (T2124).
+const GripDrag = struct {
+    kind: pane_stack_layout.StackHandle.Kind,
+    direction: pane_stack_layout.Direction,
+    /// Where the press was along the row, in client pixels.
+    start: i32,
+};
+
+/// Hit-test the stack grips at (x, y) in window client coords (T2124): the
+/// grips between the cards of a stack on show, and at the edge where a run the
+/// user narrowed meets its strips. Same grab band as a divider's, across the
+/// gutter the grip sits in and along the whole stack.
+pub fn hitTestStackGrip(self: *Window, x: i32, y: i32) ?GripHit {
+    if (self.tab_count == 0) return null;
+    if (self.tab_hero_active[self.active_tab]) return null;
+    if (self.tab_trees[self.active_tab].zoomed != null) return null;
+    var grid = self.stackGrid() orelse return null;
+    defer grid.deinit();
+    for (grid.result.stack_handles.items, 0..) |h, i| {
+        const g = grid.px(h.gutter);
+        const f = grid.px(h.frame);
+        const hit = switch (h.direction) {
+            .horizontal => split_geometry.inGrabBand(gutterAxis(g.left, g.right), x, self.scale) and y >= f.top and y <= f.bottom,
+            .vertical => split_geometry.inGrabBand(gutterAxis(g.top, g.bottom), y, self.scale) and x >= f.left and x <= f.right,
+        };
+        if (hit) return .{ .index = i, .direction = h.direction };
+    }
+    return null;
+}
+
+/// `restack_distance` in the grid's units (pixels).
+fn restackPast(self: *const Window) f64 {
+    const s: f64 = if (self.scale > 0) self.scale else 1;
+    return pane_stack_layout.Metrics.restack_distance * s;
+}
+
+/// The least a pane may be along `d`, in the grid's units (pixels).
+fn paneMinimum(self: *const Window, d: pane_stack_layout.Direction) f64 {
+    const s: f64 = if (self.scale > 0) self.scale else 1;
+    return s * switch (d) {
+        .horizontal => pane_stack_layout.Metrics.default_minimum_width,
+        .vertical => pane_stack_layout.Metrics.default_minimum_height,
+    };
+}
+
+/// Begin a drag that may fold panes of `row` into strips (T2124), on the grip
+/// before item `boundary`; `offset` measures the drag's positions from the
+/// row's start.
+fn beginRowDrag(self: *Window, row: pane_stack_layout.Row, boundary: usize, offset: f64) void {
+    self.endRowDrag();
+    self.row_drag = stack_drag.RowDrag.begin(
+        self.app.core_app.alloc,
+        self.stackState(),
+        row,
+        boundary,
+        offset,
+        self.restackPast(),
+    ) catch |err| blk: {
+        log.warn("row drag not started: {}", .{err});
+        break :blk null;
+    };
+}
+
+fn endRowDrag(self: *Window) void {
+    if (self.row_drag) |*rd| {
+        if (self.pane_stacks) |*st| rd.deinit(st) else rd.* = undefined;
+    }
+    self.row_drag = null;
+}
+
+/// After a step of a row drag: a pane that folded away while it had the caret
+/// gives it to the nearest pane still on show (Mac `splitDidRestack`), before
+/// the layout runs - a focused pane is brought back on show by the layout.
+fn rowDragStepped(self: *Window, step: stack_drag.Step) void {
+    if (!step.restacked or self.tab_count == 0) return;
+    const rd = &(self.row_drag orelse return);
+    const tab = self.active_tab;
+    const focused = self.tab_active_pane[tab];
+    const id = rd.focusAfterRestack(self.stackState(), pane_stack_grid.viewId(focused)) orelse return;
+    var it = self.tab_trees[tab].iterator();
+    while (it.next()) |entry| {
+        if (pane_stack_grid.viewId(entry.view) != id) continue;
+        const had_keyboard = paneHasKeyboardFocus(focused);
+        self.tab_active_pane[tab] = entry.view;
+        if (had_keyboard) if (entry.view.hwnd()) |h| App.deferSetFocus(h); // T48
+        log.info("row drag moved focus to the pane on show", .{});
+        return;
+    }
+}
+
+/// Put every split ratio of the active tab back to the drag's snapshot: a
+/// squeezed row leaves the ratios as the drag found them (Mac restores
+/// `dividerDragOrigin.tree`).
+fn restoreDragRatios(self: *Window) void {
+    if (!self.dragSnapshotMatches()) return;
+    for (self.drag_nodes[0..self.drag_node_len], 0..) |n, i| switch (n) {
+        .split => |s| self.tab_trees[self.active_tab].resizeInPlace(@enumFromInt(i), @floatCast(s.ratio)),
+        else => {},
+    };
+}
+
+fn startGripDrag(self: *Window, hit: GripHit, x: i32, y: i32) void {
+    var grid = self.stackGrid() orelse return;
+    defer grid.deinit();
+    if (hit.index >= grid.result.stack_handles.items.len) return;
+    const h = grid.result.stack_handles.items[hit.index];
+    const boundary: usize = switch (h.kind) {
+        .between => |slot| h.row.run.lo + slot + 1,
+        .expand => 0,
+    };
+    self.beginRowDrag(h.row, boundary, h.frame.start(h.direction) + h.position - h.row.start);
+    self.grip_drag = .{
+        .kind = h.kind,
+        .direction = h.direction,
+        .start = if (h.direction == .horizontal) x else y,
+    };
+    log.info("stack grip drag started kind={s}", .{@tagName(h.kind)});
+    if (self.hwnd) |hwnd| _ = w32.SetCapture(hwnd);
+}
+
+fn updateGripDrag(self: *Window, x: i32, y: i32) void {
+    const g = self.grip_drag orelse return;
+    const rd = &(self.row_drag orelse return);
+    const pos = if (g.direction == .horizontal) x else y;
+    const delta: f64 = @floatFromInt(pos - g.start);
+    const step = rd.gripMoved(self.stackState(), g.kind, delta, self.paneMinimum(g.direction)) catch |err| {
+        log.warn("stack grip drag step failed: {}", .{err});
+        return;
+    };
+    self.rowDragStepped(step);
+    self.layoutSplitsLive();
+}
+
+fn endGripDrag(self: *Window) void {
+    if (self.grip_drag == null) return;
+    self.grip_drag = null;
+    self.endRowDrag();
+    _ = w32.ReleaseCapture();
+    self.layoutSplits();
+    self.app.markLayoutDirty();
+}
+
 /// A gutter as the split axis `split_geometry.inGrabBand` measures from:
 /// the band is the gutter, centred where the split is.
 fn gutterAxis(lo: i32, hi: i32) split_geometry.Axis {
@@ -8449,11 +8613,38 @@ fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layo
     // own region resolved — compensating against the surface rect would pin
     // boundaries to positions the layout never puts them at.
     self.drag_node_len = if (region != null) self.snapshotDragNodes() else 0;
+    self.beginDividerRowDrag(handle);
     // Held hover: the band must not drop back to rest the instant it is
     // grabbed, and mid-drag the pointer routinely leaves the band.
     self.hover_split = handle;
     self.refreshDividerBand(handle);
     if (self.hwnd) |hwnd| _ = w32.SetCapture(hwnd);
+}
+
+/// The row the grabbed divider is in, for a drag that may fold its panes into
+/// strips (T2124): where the split starts in its row, how many of the row's
+/// items lie before it, and the least either side of it can be. No row drag
+/// when the divider is not one the layout reported.
+fn beginDividerRowDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle) void {
+    self.endRowDrag();
+    var grid = self.stackGrid() orelse return;
+    defer grid.deinit();
+    const i = gridDivider(&grid, handle) orelse return;
+    const d = grid.result.dividers.items[i];
+    const gpa = self.app.core_app.alloc;
+    var built = pane_stack_grid.buildWith(gpa, self.tab_trees[self.active_tab], pane_stack_grid.viewId, .visible) catch return;
+    defer built.deinit(gpa);
+    if (d.node >= built.nodes.len) return;
+    const s = switch (built.nodes[d.node]) {
+        .split => |sp| sp,
+        .leaf => return,
+    };
+    const mw = self.paneMinimum(.horizontal);
+    const mh = self.paneMinimum(.vertical);
+    self.drag_lead_min = pane_stack_layout.minimumExtent(gpa, built.nodes, s.left, d.direction, mw, mh, false) catch return;
+    self.drag_trail_min = pane_stack_layout.minimumExtent(gpa, built.nodes, s.right, d.direction, mw, mh, false) catch return;
+    self.beginRowDrag(d.row, d.index, d.node_frame.start(d.direction) - d.row.start);
+    if (self.row_drag) |*rd| rd.press = d.position;
 }
 
 /// Flatten the active tab's tree into `drag_nodes` for `split_resize.plan`.
@@ -8564,6 +8755,32 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
         .horizontal => .{ rect.left, rect.right, x },
         .vertical => .{ rect.top, rect.bottom, y },
     };
+    // T2124: well past a pane's minimum the row folds that pane into a strip
+    // instead (and the next, as the drag goes on); the ratios then stay as the
+    // drag found them. Back where it fits, the row is as it was and this is an
+    // ordinary resize again.
+    if (self.row_drag) |*rd| {
+        const step = rd.dividerMoved(
+            self.stackState(),
+            @floatFromInt(pos - start),
+            @floatFromInt(end - start),
+            self.drag_lead_min,
+            self.drag_trail_min,
+        ) catch |err| blk: {
+            log.warn("divider row drag step failed: {}", .{err});
+            break :blk stack_drag.Step{};
+        };
+        self.rowDragStepped(step);
+        if (step.restacked or step.restored) log.info("divider drag folded={?d}", .{if (rd.squeeze) |s| s.count else null});
+        if (step.squeezed) {
+            self.restoreDragRatios();
+            var lt = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+            self.layoutSplitsLive();
+            if (lt) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
+            return;
+        }
+    }
+
     const new_ratio = split_geometry.dragRatio(start, end, pos);
 
     // T533: the dragged divider exchanges space with its two adjacent PANES,
@@ -8603,6 +8820,7 @@ fn endDividerDrag(self: *Window) void {
     if (!self.dragging_split) return;
     self.dragging_split = false;
     self.drag_node_len = 0;
+    self.endRowDrag();
     self.reportDragCost();
     _ = w32.ReleaseCapture();
     // Re-derive hover from where the pointer actually ended up: the ratio is
@@ -13918,6 +14136,10 @@ pub fn windowWndProc(
         // committing wherever the pointer happened to be (T1531).
         w32.WM_CAPTURECHANGED => {
             if (window.rearrange_drag != null) window.endRearrangeDrag(false);
+            // A grip drag keeps what it has folded so far (T2124): there is
+            // no snapshot to cancel to that the user would recognise, and a
+            // drag left armed would go on resizing with no button held.
+            if (window.grip_drag != null) window.endGripDrag();
             return 0;
         },
         w32.WM_LBUTTONDOWN => {
@@ -13934,6 +14156,13 @@ pub fn windowWndProc(
             // A tucked pane's strip brings it forward (T2109).
             if (window.stackStripAt(x, y)) |view| {
                 window.bringForward(view);
+                return 0;
+            }
+            // A stack grip drags (T2124). After the strips: a grip's band is
+            // wider than its gutter, and where it reaches a strip the strip's
+            // click is the one meant.
+            if (window.hitTestStackGrip(x, y)) |hit| {
+                window.startGripDrag(hit, x, y);
                 return 0;
             }
             // A press inside a pane header belongs to the header (T1530) and
@@ -13974,6 +14203,10 @@ pub fn windowWndProc(
             }
             if (window.dragging_split) {
                 window.endDividerDrag();
+                return 0;
+            }
+            if (window.grip_drag != null) {
+                window.endGripDrag();
                 return 0;
             }
             if (window.drag_tab >= 0) {
@@ -14047,6 +14280,10 @@ pub fn windowWndProc(
             }
             if (window.dragging_split) {
                 window.updateDividerDrag(x, y);
+                return 0;
+            }
+            if (window.grip_drag != null) {
+                window.updateGripDrag(x, y);
                 return 0;
             }
             // Handle tab drag reorder
@@ -14153,8 +14390,20 @@ pub fn windowWndProc(
                     return 1;
                 }
                 // A strip is a button (Mac's pointing hand, T2109).
-                if (window.stackStripAt(pt.x, pt.y) != null) {
+                if (window.grip_drag == null and window.stackStripAt(pt.x, pt.y) != null) {
                     if (w32.LoadCursorW(null, w32.IDC_HAND)) |hc| _ = w32.SetCursor(hc);
+                    return 1;
+                }
+                // A stack grip resizes along its row, like a divider (T2124).
+                const grip_dir: ?pane_stack_layout.Direction = if (window.grip_drag) |g|
+                    g.direction
+                else if (window.hitTestStackGrip(pt.x, pt.y)) |hit| hit.direction else null;
+                if (grip_dir) |dir| {
+                    const cursor_id: usize = split_geometry.dividerCursor(switch (dir) {
+                        .horizontal => .horizontal,
+                        .vertical => .vertical,
+                    }).idc();
+                    if (w32.LoadCursorW(null, cursor_id)) |cursor| _ = w32.SetCursor(cursor);
                     return 1;
                 }
                 // Over a pane header's grab surface: the pointer says the

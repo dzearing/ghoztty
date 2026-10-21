@@ -203,7 +203,12 @@ function Invoke-DividerDrag([IntPtr]$top, [string]$log, [int]$moves) {
     # producing layout work half way through the sample.
     $moved = $false
     for ($i = 1; $i -le $moves; $i++) {
-        $dx = if ($i -le ($moves / 2)) { $i * 6 } else { ($moves - $i) * 6 }
+        # 3 px a move: the peak (36 px at the default 24 moves) stays under
+        # the 48 DIP a drag must go past a pane's minimum before the row FOLDS
+        # that pane into a strip (T2124). At 8 panes the right half is already
+        # under its minimum here, so a longer drag measured a fold - fewer
+        # panes on screen - instead of the resize this harness is about.
+        $dx = if ($i -le ($moves / 2)) { $i * 3 } else { ($moves - $i) * 3 }
         [void](Send-TestMouse -Window $top -Target $top -X ($x + $dx) -Y $y -Action move -HoldMs 0)
         Start-Sleep -Milliseconds 25
         if ($i -eq [int]($moves / 2)) {

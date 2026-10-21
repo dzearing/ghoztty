@@ -596,6 +596,21 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # The collapse gesture (T2124): a divider or stack grip dragged past a
+    # pane's minimum folds panes into strips and back. `stack_drag.zig` is the
+    # drag's state machine; the window turns pointer pixels into its steps.
+    [pscustomobject]@{
+        Name   = 'stack-collapse-drag'
+        Script = 'test\win32\stack-collapse-drag.ps1'
+        Stamp  = 'test\win32\stack-collapse-drag.stamp.json'
+        Covers = @(
+            'test\win32\stack-collapse-drag.ps1',
+            'src\apprt\win32\stack_drag.zig',
+            'src\apprt\win32\pane_stack_layout.zig',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was

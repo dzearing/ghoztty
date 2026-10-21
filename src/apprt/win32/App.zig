@@ -12419,6 +12419,10 @@ fn surfaceWndProc(
                     _ = w32.ScreenToClient(parent_hwnd, &pt);
                     if (surface.parent_window.hitTestDivider(pt.x, pt.y) != null)
                         return w32.HTTRANSPARENT;
+                    // T2124: a stack grip's band reaches into the cards
+                    // either side the same way.
+                    if (surface.parent_window.hitTestStackGrip(pt.x, pt.y) != null)
+                        return w32.HTTRANSPARENT;
                     // T1422: the hero divider's grab zone reaches into the
                     // hero pane the same way, and the same fall-through is
                     // what makes that edge grabbable rather than cursor-only.

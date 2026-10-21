@@ -98,10 +98,10 @@ pub const Rect = struct {
         return .{ .x = x0, .y = y0, .w = @max(a.maxX(), b.maxX()) - x0, .h = @max(a.maxY(), b.maxY()) - y0 };
     }
 
-    fn start(r: Rect, d: Direction) f64 {
+    pub fn start(r: Rect, d: Direction) f64 {
         return if (d == .horizontal) r.x else r.y;
     }
-    fn extentAlong(r: Rect, d: Direction) f64 {
+    pub fn extentAlong(r: Rect, d: Direction) f64 {
         return if (d == .horizontal) r.w else r.h;
     }
 };
