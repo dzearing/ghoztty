@@ -1,0 +1,11 @@
+{
+  "version": "1.43.0",
+  "sections": [
+    {
+      "title": "Stacked panes and the pane sidebar",
+      "items": [
+        { "title": "Panes are named by their banner title", "text": "When a pane's banner starts with a heading (like the title the Claude banner hook writes), minimized strips and pane sidebar rows now show that title instead of whatever the program in the pane last named itself. It updates as soon as the banner changes. Clearing the banner, or a banner with no heading, brings back the pane's own title." }
+      ]
+    }
+  ]
+}
