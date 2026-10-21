@@ -504,3 +504,12 @@ as the digest that showed them.
 - The focus glow in your Windows accent colour (focus glow and busy light follow the Windows accent setting, live)
 - Respect Windows Focus sessions (new angle on a quiet hour: alerts wait as badges during Focus, show when it ends)
 - Warn before a sign-in runs out (account menu warns a day before the Ghoztty sign-in expires and offers renewal)
+
+## 2026-10-21
+
+- Drag a strip to unfold it (drag a folded stacked-row strip toward the middle; the pane opens at the dropped width)
+- A restart keeps your reading place (new angle on resizing keeping your line: after an update or reboot each pane returns scrolled where you were reading)
+- Step through folded panes from the keyboard (one key slides the next folded pane in a row on show, Alt+Tab-style)
+- Rename a pane from its strip (double-click a folded strip's title to rename in place)
+- Folded panes cost nothing while idle (a folded pane stops drawing and rewrapping)
+- A folded pane slides back in instantly (keeps its last picture while folded, so unfolding never waits on a redraw)
