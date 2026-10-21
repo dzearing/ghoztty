@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-20T20:11:13-07:00",
-    "commit":  "4fc6c7cc8",
+    "generated":  "2026-10-20T20:54:32-07:00",
+    "commit":  "3dd81bfe7",
     "uncommitted":  [
 
                     ],
@@ -37,7 +37,7 @@
                   "test/win32/agent-relay-session-e2e.ps1":  "39c63feadeb2ba2f0bee62bd551e142c74c5597df842e5bfb0727bca51df7cba",
                   "test/win32/agent-role-guard.ps1":  "9aaed2aa420495a1dab9f9d77231b6c09f6b187ac6b2ab1262cdc33a89ad0826",
                   "test/win32/agent-session-cap.ps1":  "608a52326bccbddebbcd2a7e5824a6f461a834e64bf4209c9de0dc284fd84813",
-                  "test/win32/agent-sharing-uplink.ps1":  "48866fb9552847f84988466b853cf5fdc5ff48fcf6d21d8973f1fe872da10ed4",
+                  "test/win32/agent-sharing-uplink.ps1":  "fc1cc4aabc4507deca61440e3b4891d2b4fb729c0a6fd8eead28e09db3da8d53",
                   "test/win32/agent-shell-integration.ps1":  "92d042090b917c3d6aa12d32eaddb9d118b09d0f3d29f255ce03880705edb8b0",
                   "test/win32/agent-stamp-inputs.ps1":  "96b125e6d59506d12af8a5e4efff0e358975b4e096026a9f485865c3d1f96c37",
                   "test/win32/agent-upgrade.ps1":  "faa30bce133c028230991b0d8b402feecd2fc89611db6b5f92a0bece32a1b08f",

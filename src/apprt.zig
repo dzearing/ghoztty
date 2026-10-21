@@ -324,6 +324,9 @@ test {
     // Pure win32 elevated-pane geometry, desk gradient and card raster
     // (T1831), same no-OS-imports deal.
     _ = @import("apprt/win32/pane_elevation.zig");
+    // The stacked-panes layout - minimums, runs, strips, grips (T2082), a
+    // port of Mac's PaneLayout - same deal.
+    _ = @import("apprt/win32/pane_stack_layout.zig");
     // A pane's own progress light - the ring circling a busy pane and the
     // percentage line across its top (T1899) - same deal.
     _ = @import("apprt/win32/busy_light.zig");
