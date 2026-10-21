@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-18T05:05:38-07:00",
-    "commit":  "ec8057b2f",
+    "generated":  "2026-10-18T06:19:22-07:00",
+    "commit":  "445328513",
     "uncommitted":  [
 
                     ],
@@ -786,7 +786,7 @@
                   "src/renderer/shadertoy.zig":  "ae13286ef5418a9484d0f773ce546eac132e6c053a5549244a748d9707e61e12",
                   "src/renderer/size.zig":  "db99bca7a2b82857fc918748a6b8687745e8282ccf675fa4d2a716dad580b465",
                   "src/renderer/State.zig":  "8d9a370885f463ab3c510bef7e0c5a4f07adaa05637c258678fa48ebbdb1ae02",
-                  "src/renderer/Thread.zig":  "edcd4123b0ccb3e7f0b645de758bd4d8d1f58cc251130580cef8c68938ed97e5",
+                  "src/renderer/Thread.zig":  "723d0c1831e68ca5ab6499cb0bd4a5d68f2437de6092b5fd6b9886157c6f1e70",
                   "src/renderer/WebGL.zig":  "963023a42188b6d00f8a1a645653d82cf8204e7aed3a7c94946a6b004cae07fd",
                   "src/simd/base64.zig":  "72b444f30b59cf05fc4ce8c80e7980043b4018e04909624fa24da40ef39ee611",
                   "src/simd/base64_scalar.zig":  "67b9939963fdacb07f5cc8acd114e69a7cdca3905a2a231d6af803226ea52af2",
@@ -1237,7 +1237,7 @@
                   "test/win32/reset-context.ps1":  "54e0f328f37b3dc7694d1ae00013569ce64b504094ce00138baf2ad71ea0d0dd",
                   "test/win32/reset-window-size.ps1":  "28e18f6472e20ae4a5e0f9b5d93ec392c6a81e67c8b519785e1b433b18ada3ba",
                   "test/win32/resize-debounce.ps1":  "cc4d55d7f405d362e05efc83f6edec4e3ecfbffb4c7e00db3cbd6edd8751853d",
-                  "test/win32/resize-flicker.ps1":  "114c36697ec4cdc7a6f16c9f5e3d411101ab6dd07f528f1b2a09551fe8c8df58",
+                  "test/win32/resize-flicker.ps1":  "3be3634de83a71315667bf8d30c977658c51fda149a65d6eea0ac4e3e44f8f4a",
                   "test/win32/resolve-window-persist.ps1":  "9771bd0681e4d07ab37db752daf7e3e3fee9c6474947c6d7b71d5f2917eda9dc",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",

@@ -217,6 +217,7 @@ function Get-ResizePasses([string]$log) {
                 Waits    = [int]$Matches[5]
                 Timeouts = [int]$Matches[6]
                 Woken    = $(if ($l -match ' woken=(\d+)') { [int]$Matches[1] } else { -1 })
+                Stale    = $(if ($l -match ' stale=(\d+)') { [int]$Matches[1] } else { -1 })
             }
         }
     }
@@ -614,6 +615,27 @@ try {
     if ($NegativeControl) { $syncOk = -not $syncOk }
     Assert $syncOk ('every whole-window resize waits for a frame in every pane' +
         $(if ($unguarded.Count) { ' -- ' + (($unguarded | Select-Object -First 4) -join '; ') } else { '' }))
+
+    # THE TAB SWITCH ENDS ON A FRAME AT THE NEW SIZE (T2046). The guarantee
+    # above says every pane WAITED; it does not say the wait was answered by the
+    # right frame. A background tab shown after the window resized under it used
+    # to present one frame from its hidden-tab data first (the renderer drew on
+    # becoming visible, before it read the resize), so the switch read
+    # `timeouts=1 stale=4` of 4 panes under the 8ms present lag while every
+    # other pass ended `stale=0`. Measured teeth: with the inline draw on
+    # `.visible` restored in src/renderer/Thread.zig this goes red.
+    $tabPasses = @($withPanes | Where-Object { $_.Cause -eq 'tabswitch' -and $_.Waits -gt 0 })
+    if ($tabPasses.Count -gt 0) {
+        $tabStale = @($tabPasses | Where-Object { $_.Stale -ne 0 } |
+            ForEach-Object { "panes=$($_.Panes) waits=$($_.Waits) timeouts=$($_.Timeouts) stale=$($_.Stale)" })
+        $tabOk = ($tabStale.Count -eq 0)
+        if ($NegativeControl) { $tabOk = -not $tabOk }
+        Assert $tabOk ('a switch back to a resized tab ends on a frame at the new size in every pane' +
+            $(if ($tabStale.Count) { ' -- ' + ($tabStale -join '; ') } else { " ($($tabPasses.Count) pass(es), stale=0)" }))
+    } else {
+        $script:skipped++
+        Write-Host "SKIP  the tab switch took no frame wait, so its staleness was not measured" -ForegroundColor Yellow
+    }
 
     # And the waits those passes took were ended by a FRAME, not by the clock
     # (T1035) - the whole-window half of section E's wiring check. Summed over

@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-18T05:34:02-07:00",
-    "commit":  "ec8057b2f",
+    "generated":  "2026-10-18T06:55:40-07:00",
+    "commit":  "445328513",
     "uncommitted":  [
-                        "test/win32/msi-upgrade.ps1"
+                        "test/win32/low-power-render.ps1",
+                        "test/win32/resize-flicker.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -283,7 +284,7 @@
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
                   "test/win32/log-append.ps1":  "518d1578716983b09474e9fd64f6c4921d4550417f5d6cf7c42d52371d825158",
                   "test/win32/loop-lanes.ps1":  "f50442ec352388152085f52cce192fb05d01dc27ec46bc15bbf2f66b6ddaac94",
-                  "test/win32/low-power-render.ps1":  "a2ee4464893854ed24d5409dd2af2febf4ec5d9b8033f5f7b6d5d4853d4b3a2f",
+                  "test/win32/low-power-render.ps1":  "8c54e7930c1fcaa3549b75281ed4958802af8bf60446ab3426eeab9afbfc137e",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e",
                   "test/win32/machine-lock.ps1":  "95c57d9daef68bfb8403be792a5e21c87bfad2ee1f5dd0507feb2c51aaca32d5",
                   "test/win32/menu-bar.ps1":  "c9caa865aaff7d4e8c73aed596f88d209f01c971aa4d9c60770f96d718cddf7c",
@@ -365,7 +366,7 @@
                   "test/win32/reset-context.ps1":  "54e0f328f37b3dc7694d1ae00013569ce64b504094ce00138baf2ad71ea0d0dd",
                   "test/win32/reset-window-size.ps1":  "28e18f6472e20ae4a5e0f9b5d93ec392c6a81e67c8b519785e1b433b18ada3ba",
                   "test/win32/resize-debounce.ps1":  "cc4d55d7f405d362e05efc83f6edec4e3ecfbffb4c7e00db3cbd6edd8751853d",
-                  "test/win32/resize-flicker.ps1":  "114c36697ec4cdc7a6f16c9f5e3d411101ab6dd07f528f1b2a09551fe8c8df58",
+                  "test/win32/resize-flicker.ps1":  "3be3634de83a71315667bf8d30c977658c51fda149a65d6eea0ac4e3e44f8f4a",
                   "test/win32/resolve-window-persist.ps1":  "9771bd0681e4d07ab37db752daf7e3e3fee9c6474947c6d7b71d5f2917eda9dc",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",

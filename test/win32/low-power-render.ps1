@@ -1,3 +1,4 @@
+# @timing-sensitive - it asserts presents per second, which a busy box lowers (red beside other scripts, green alone on 2026-10-18; scripts/acceptance-parallel.ps1, T1960).
 # T1951 acceptance: low-power rendering on a machine with no GPU.
 #
 # GitHub #13: a Windows 365 Cloud PC renders through Mesa d3d12 on WARP, so

@@ -394,10 +394,14 @@ fn drainMailbox(self: *Thread) !void {
                 // Visibility affects our QoS class
                 self.setQosClass();
 
-                // If we became visible then we immediately trigger a draw.
-                // We don't need to update frame data because that should
-                // still be happening.
-                if (v) self.drawFrame(false);
+                // Becoming visible does not draw here (T2046). Our only
+                // caller, `wakeupCallback`, renders as soon as the mailbox is
+                // drained, and every message forces that frame (above). A
+                // draw from inside the drain presented the frame data the
+                // pane had while hidden, before the `.resize` queued behind
+                // this message: a tab shown after a window resize put one
+                // frame at its OLD size on screen first, and the resize
+                // wait was answered late by the real one.
 
                 // Notify the renderer so it can update any state.
                 self.renderer.setVisible(v);

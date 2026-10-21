@@ -1,10 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-18T00:14:05-07:00",
-    "commit":  "2ee8f2eba",
+    "generated":  "2026-10-18T06:21:00-07:00",
+    "commit":  "445328513",
     "uncommitted":  [
-
+                        "src/renderer/Thread.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -785,7 +785,7 @@
                   "src/renderer/shadertoy.zig":  "ae13286ef5418a9484d0f773ce546eac132e6c053a5549244a748d9707e61e12",
                   "src/renderer/size.zig":  "db99bca7a2b82857fc918748a6b8687745e8282ccf675fa4d2a716dad580b465",
                   "src/renderer/State.zig":  "8d9a370885f463ab3c510bef7e0c5a4f07adaa05637c258678fa48ebbdb1ae02",
-                  "src/renderer/Thread.zig":  "edcd4123b0ccb3e7f0b645de758bd4d8d1f58cc251130580cef8c68938ed97e5",
+                  "src/renderer/Thread.zig":  "723d0c1831e68ca5ab6499cb0bd4a5d68f2437de6092b5fd6b9886157c6f1e70",
                   "src/renderer/WebGL.zig":  "963023a42188b6d00f8a1a645653d82cf8204e7aed3a7c94946a6b004cae07fd",
                   "src/simd/base64.zig":  "72b444f30b59cf05fc4ce8c80e7980043b4018e04909624fa24da40ef39ee611",
                   "src/simd/base64_scalar.zig":  "67b9939963fdacb07f5cc8acd114e69a7cdca3905a2a231d6af803226ea52af2",
