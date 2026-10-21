@@ -6006,8 +6006,8 @@ fn findEscapeAction(
 
 /// Whether a chord is claimed by THIS pane while its content holds focus
 /// (T161): the pane-scoped table and zoom are checked BEFORE the app keybind
-/// table (design doc P7's ordering — ctrl+d must reach the address bar, not
-/// the global split-right), and the app table before the page.
+/// table (design doc P7's ordering — ctrl+r must reload the pane, not reach
+/// whatever the app binds it to), and the app table before the page.
 fn claimsChord(self: *ViewerPane, vk: u16, extended: bool, mods: inputpkg.Mods) bool {
     // ctrl+C at an image pane copies the PICTURE (T1872), Mac's
     // `ViewerImageSurface.copy`. Ahead of everything, `pageOwns` included: the

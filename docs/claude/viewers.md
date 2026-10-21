@@ -305,12 +305,13 @@ ghoztty +close --target=doc
     terminal-only commands are not offered. The Viewer: Open… commands open
     beside the viewer.
   - **On Windows** (T161) the pane-scoped chords are **Ctrl+R** (reload),
-    **Ctrl+D / Ctrl+L / Alt+D** (address bar — the latter two are
-    Windows-native aliases; Ctrl+D goes back to splitting in T2087, matching
-    Mac's move to Cmd+L), and **Ctrl+Plus/Minus/0** (page zoom, same ×1.1
-    step and [0.5, 3.0] clamp as the Mac Cmd+/−/0), under the identical
-    override-only-while-focused rule: a focused terminal keeps ctrl+r for
-    the shell, ctrl+d for split-right, and ctrl+plus/minus/0 for font size.
+    **Ctrl+L / Alt+D** (address bar — Mac's Cmd+L plus the Windows-native
+    alias; Ctrl+D splits from a viewer as it does everywhere, a viewer-only
+    window included, matching Mac's Cmd+D since T2087), and
+    **Ctrl+Plus/Minus/0** (page zoom, same ×1.1 step and [0.5, 3.0] clamp
+    as the Mac Cmd+/−/0), under the identical override-only-while-focused
+    rule: a focused terminal keeps ctrl+r for the shell and
+    ctrl+plus/minus/0 for font size.
     Zoom is content-scoped (not live in the address field), matching Mac.
 - `--view=about:blank` opens a **blank browser pane**. The command palette's
   "Viewer: Open Browser Pane" does the same interactively and puts the caret

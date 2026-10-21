@@ -357,7 +357,7 @@ pub fn nativeTag(tag: std.meta.Tag(input.Binding.Action)) bool {
 pub const PaneChord = enum {
     /// ctrl+r — reload in place, the interactive `+reload`.
     reload,
-    /// ctrl+d / ctrl+l / alt+d — focus and select the address field.
+    /// ctrl+l / alt+d — focus and select the address field.
     focus_address,
     /// ctrl+f — open the find card and put the caret in it (T1184). Mac's
     /// Cmd+F, respelled the way every Windows application spells "find".
@@ -377,9 +377,11 @@ pub const PaneChord = enum {
 ///
 /// Each chord requires EXACTLY its modifier: ctrl+shift+r ("reload
 /// bypassing cache" in browsers) is not claimed, ctrl+shift+d stays the
-/// global split-down, and the Win key never participates. `ctrl+l` and
-/// `alt+d` are Windows-native aliases for the address bar (every browser on
-/// Windows answers to both); `ctrl+d` mirrors Mac's Cmd+D.
+/// global split-down, and the Win key never participates. The address bar is
+/// `ctrl+l` (Mac's Cmd+L) and `alt+d`, the pair every browser on Windows
+/// answers to. `ctrl+d` is deliberately NOT here (T2087): it falls through to
+/// the app's split-right binding, as Mac's Cmd+D went back to splitting in
+/// 89848fd59 — a window of only viewers included.
 pub fn paneChord(vk: u16, mods: input.Mods) ?PaneChord {
     if (mods.super) return null;
     const ctrl_only = mods.ctrl and !mods.shift and !mods.alt;
@@ -389,7 +391,7 @@ pub fn paneChord(vk: u16, mods: input.Mods) ?PaneChord {
     const bare = !mods.ctrl and !mods.shift and !mods.alt;
     return switch (vk) {
         0x52 => if (ctrl_only) .reload else null, // 'R'
-        0x44 => if (ctrl_only or alt_only) .focus_address else null, // 'D'
+        0x44 => if (alt_only) .focus_address else null, // 'D'
         0x4C => if (ctrl_only) .focus_address else null, // 'L'
         0x46 => if (ctrl_only) .find else null, // 'F'
         // ctrl+g steps forward and ctrl+shift+g back — the browser pair, and
@@ -594,11 +596,13 @@ test "the extended bit distinguishes the numpad enter" {
 }
 
 test "paneChord: exact-modifier chords only" {
-    // The pinned table: ctrl+r reload; ctrl+d / ctrl+l / alt+d address bar.
+    // The pinned table: ctrl+r reload; ctrl+l / alt+d address bar.
     const ctrl: input.Mods = .{ .ctrl = true };
     const alt: input.Mods = .{ .alt = true };
     try testing.expectEqual(PaneChord.reload, paneChord(0x52, ctrl).?);
-    try testing.expectEqual(PaneChord.focus_address, paneChord(0x44, ctrl).?);
+    // ctrl+d is the app's split-right, not the address bar (T2087, Mac
+    // 89848fd59): unclaimed here so it reaches the keybind table.
+    try testing.expect(paneChord(0x44, ctrl) == null);
     try testing.expectEqual(PaneChord.focus_address, paneChord(0x4C, ctrl).?);
     try testing.expectEqual(PaneChord.focus_address, paneChord(0x44, alt).?);
 

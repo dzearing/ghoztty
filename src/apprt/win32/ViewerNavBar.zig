@@ -743,7 +743,7 @@ const address_cap_utf16 = viewer_nav.max_address + 1;
 
 /// Put the caret in the address field with the whole address selected — the
 /// keyboard entry point (the blank browser pane's palette command, and later
-/// the ctrl+l / ctrl+d chords).
+/// the ctrl+l / alt+d chords).
 pub fn focusAddress(self: *ViewerNavBar) void {
     _ = w32.SetFocus(self.edit);
     _ = w32.SendMessageW(self.edit, w32.EM_SETSEL, 0, -1);
@@ -785,7 +785,7 @@ pub fn handleEditKey(self: *ViewerNavBar, vk: u16) bool {
 
 /// The pane-scoped chords while the address field holds focus (T161): the
 /// chords are live anywhere inside the viewer pane — its page OR its bar —
-/// so ctrl+r still reloads and ctrl+l/ctrl+d re-select the address from
+/// so ctrl+r still reloads and ctrl+l/alt+d re-select the address from
 /// inside the field. Routed by the main message loop like `handleEditKey`
 /// (an EDIT never delivers modifier chords itself). Zoom is deliberately NOT
 /// here: Mac scopes ctrl+plus/minus/0 to focused CONTENT, and the field is

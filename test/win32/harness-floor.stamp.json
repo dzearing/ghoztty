@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-21T07:14:35-07:00",
-    "commit":  "d25e3b484",
+    "generated":  "2026-10-21T08:10:07-07:00",
+    "commit":  "a54ecfb2a",
     "uncommitted":  [
-                        "test/win32/pane-elevation.ps1"
+                        "test/win32/viewer-panes.ps1",
+                        "test/win32/viewer-window-chords.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -467,11 +468,11 @@
                   "test/win32/viewer-image.ps1":  "c977a62c86f11afb58b49d73f2fcaaa11a3d839c115caac49fdab6e0a4e4754d",
                   "test/win32/viewer-narrow-pane.ps1":  "fbcdcb2e4ca131f154aecba7cc8bc749d288fb0772a71e0bddd0230806683e11",
                   "test/win32/viewer-nav-pin.ps1":  "0484ea216296c7270a8ea1d117f8c555b2d1861cf92ca9af290a751ca6476438",
-                  "test/win32/viewer-panes.ps1":  "c48f521728322ef1bf940056b05e5a1725c9fccc41ab6d39469b7fd504ba8599",
+                  "test/win32/viewer-panes.ps1":  "408e14985919c5a535df41b13207e1144fe3f83ca8657010d1fb5c75329d4a38",
                   "test/win32/viewer-popup.ps1":  "026091bd991f9e035761626527cdc873d5af02d5376f941b003448bb6faa7f6d",
                   "test/win32/viewer-restore.ps1":  "25317e0bc91348dd4a2794f73083f1da5c08f46b1a3896cac22536a7faf7e28c",
                   "test/win32/viewer-toc-emphasis.ps1":  "337dbba50bb5b54ae0a3d67f9a4db9a43e483cda7068abfb5f3f130c09e6fb77",
-                  "test/win32/viewer-window-chords.ps1":  "5e6d8051ff6b988c1bee5c966f5aecbdafe7dca81a0c5af135facf73424a1df3",
+                  "test/win32/viewer-window-chords.ps1":  "98a12374e5503edcbc5fbdefde9cd8d82bd5bcf59089e0775e18b3787a3c02e7",
                   "test/win32/viewer-worktree.ps1":  "b4e4b244e68d07d4525b768afdab49cd7273c46b95f7b99bee68b58303fbfcbb",
                   "test/win32/viewer-worktree-port.ps1":  "b991f340cf0f1f4a34fa3edab4305aad56e131ad7115a9e01417343306fe31e2",
                   "test/win32/vt-escape-scan.ps1":  "52f5f59c717c2d090c6d78f7594839a28011843fe58c08df59e4b1bf8fcff4ea",

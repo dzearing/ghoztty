@@ -2188,7 +2188,7 @@ pub fn run(self: *App) !void {
                 // edit uses, because an EDIT control never sees these keys
                 // itself. Everything else falls through so typing works.
                 // The pane-scoped viewer chords (T161: ctrl+r reload,
-                // ctrl+d/ctrl+l re-select the address) are live in the
+                // ctrl+l/alt+d re-select the address) are live in the
                 // field too — the chords belong to the PANE, and the bar is
                 // inside the pane.
                 if (vk == w32.VK_RETURN or vk == w32.VK_ESCAPE) {

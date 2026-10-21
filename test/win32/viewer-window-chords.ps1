@@ -62,6 +62,13 @@
 #       pressed at the viewer brings the terminal back.
 #   Oracle: the leaf's `stashed` flag in +list --json (ipc-stash.ps1's).
 #
+# T2087 asked ctrl+d to split from a viewer again, as Mac's Cmd+D does since
+# 89848fd59 - "also from a window of only viewers":
+#   S7. the terminal is closed, so the window holds nothing but the viewer;
+#       ctrl+d (the Windows DEFAULT new_split:right) pressed at it splits the
+#       window. Oracle: the window's leaf count in +list --json. Pre-fix,
+#       ctrl+d focused the address bar and nothing split.
+#
 # Runs on the BACKGROUND test desktop; only touches ghoztty processes running
 # from this repo's zig-out*.
 #
@@ -496,6 +503,29 @@ try {
         Assert ($logS6 -notmatch 'csF2') "S6: ...and the page never saw the chord (log='$logS6')"
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'S6: no crash'
+
+    # --- SUBJECT 7: ctrl+d splits a window of only viewers (T2087) ---------
+    $termS7 = Get-TermLeaf
+    if ($termS7 -and $termS7.id) { & $exe +close "--target=$($termS7.id)" 2>&1 | Out-Null }
+    $only = $false
+    for ($t = 0; $t -lt 25 -and -not $only; $t++) {
+        $leaves = @(Get-AllLeaves)
+        $only = ($leaves.Count -eq 1) -and ($leaves[0].name -eq 't682view')
+        if (-not $only) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert $only "S7: setup: +close left a window of only the viewer ($(@(Get-AllLeaves).Count) leaves)"
+    Assert (Send-AtViewer 'D' 0x44 @('ctrl')) 'S7: ctrl+d reached the viewer accelerator hop'
+    $splitS7 = $false
+    for ($t = 0; $t -lt 25 -and -not $splitS7; $t++) {
+        $splitS7 = (@(Get-AllLeaves).Count -eq 2)
+        if (-not $splitS7) { Start-Sleep -Milliseconds 200 }
+    }
+    if ($NegativeControl) {
+        Assert (-not $splitS7) 'S7 (inverted): ctrl+d at a viewer-only window split nothing'
+    } else {
+        Assert $splitS7 "S7: ctrl+d at a window of only viewers split it ($(@(Get-AllLeaves).Count) leaves)"
+    }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'S7: no crash'
 } finally {
     if ($script:pageJob) { Stop-Job $script:pageJob -ErrorAction SilentlyContinue; Remove-Job $script:pageJob -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop

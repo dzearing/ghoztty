@@ -1,10 +1,10 @@
 {
     "guard":  "docs-routing",
     "script":  "test/win32/docs-routing.ps1",
-    "generated":  "2026-10-20T21:30:17-07:00",
-    "commit":  "3dd81bfe7",
+    "generated":  "2026-10-21T07:44:56-07:00",
+    "commit":  "a54ecfb2a",
     "uncommitted":  [
-                        "docs/claude/cli.md"
+                        "docs/claude/viewers.md"
                     ],
     "files":  {
                   "CLAUDE.md":  "b03bf0f8e5f2ead39c1dc4b636c9d234f4a9e2580bbad469906a4645c2795100",
@@ -13,7 +13,7 @@
                   "docs/claude/remote.md":  "4a46c219db0e5aa6cfa06789e98ccc22d4ed1e91935d4bc524dbda62906e9fad",
                   "docs/claude/sessions.md":  "a22df8938522820abff54aabee495046f68cacf89dead624872a3427531c94c7",
                   "docs/claude/testing.md":  "6d261472007c4994344119f402e946c08e932198d96f6f568be0737a6165c083",
-                  "docs/claude/viewers.md":  "5702df678d12f6aa52dc69276ec39d14bb454c651bd8f5efa2ec7162d476b0b3",
+                  "docs/claude/viewers.md":  "8cfe8352c27dd102a0a9d3b5387b1e4ee094f28450ea679eb7786cff9cab6d03",
                   "docs/claude/win32-ui.md":  "26c73b20fb123517b4652e8e4858a74a23e9c8bf650341de6411e6f97e7c49e6",
                   "docs/design/windows-parity-tasks.md":  "1237d3d9ae890706a80624a9dbeb406a519663d6388a2b429d67bfdd7beb99c1",
                   "docs/design/windows-parity-tasks-history.md":  "6f866f64f58a43e11fb379db6ffd816d58f57e1c901a3e48f92cf81797f34b17",

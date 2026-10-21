@@ -1079,8 +1079,9 @@ try {
 
     # --- 11d. T161: pane-scoped chords + keyboard page zoom ------------------
     # The chords that mean something different while a viewer holds focus:
-    # ctrl+r reloads the pane, ctrl+d / ctrl+l / alt+d focus the address bar,
-    # and ctrl+plus/minus/0 zoom the page. Oracles, because nothing outside a
+    # ctrl+r reloads the pane, ctrl+l / alt+d focus the address bar, and
+    # ctrl+plus/minus/0 zoom the page. ctrl+d is NOT one of them (T2087, Mac
+    # 89848fd59): from a viewer it splits right, exactly as from a terminal. Oracles, because nothing outside a
     # WebView2 can see its render:
     #   - reload: a raw-TCP page server (relay-account.ps1's shape -- no
     #     HttpListener URL-ACL) logs one line per GET and answers no-store, so
@@ -1091,8 +1092,8 @@ try {
     #     the step, so the title is a zoom readout (ratio math, not absolute:
     #     the test desktop's DPI scale is part of the number).
     #   - address bar: the focused hwnd becomes the nav bar's EDIT
-    #     (Get-TestFocusedWindow), and the pane count does NOT move -- the
-    #     negative that proves ctrl+d outranked its global split-right.
+    #     (Get-TestFocusedWindow).
+    #   - ctrl+d: the window's pane count grows by one.
     # T157's lesson: the terminal-side ctrl+d split comes FIRST as the
     # positive control that chords are being delivered at all.
 
@@ -1249,12 +1250,9 @@ try {
             Assert ([Math]::Abs($dprOut / $dpr0 - (1.0 / 1.1)) -lt 0.02) "T161 ctrl+minus zoomed out one step (got $dpr0 -> $dprOut)"
             Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers ctrl -Key '0' | Out-Null
 
-            # ctrl+d from the VIEWER focuses the address bar and does NOT
-            # split -- the pane-scoped chord outranks the global binding.
-            $panes161 = Get-PaneCount 't161'
-            Assert (Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers ctrl -Key D) 'T161 ctrl+d injected at the viewer'
-            Assert (Wait-T161AddressFocused $t161top $t161host) 'T161 ctrl+d from a viewer focused the address bar'
-            Assert ((Get-PaneCount 't161') -eq $panes161) 'T161 ctrl+d from a viewer did NOT split (pane chord outranks global)'
+            # ctrl+l is the address bar (Mac's Cmd+L).
+            Assert (Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers ctrl -Key L) 'T161 ctrl+l injected at the viewer'
+            Assert (Wait-T161AddressFocused $t161top $t161host) 'T161 ctrl+l from a viewer focused the address bar'
 
             # ctrl+r AT the address field still reloads the pane: the chords
             # are pane-scoped, not page-scoped, and the field is in the pane.
@@ -1263,16 +1261,24 @@ try {
             Assert (Send-TestKeys -Window $t161top -Target $t161edit -Modifiers ctrl -Key R) 'T161 ctrl+r injected at the address field'
             Assert (Wait-T161Hits $hits1) 'T161 ctrl+r from the address field re-fetched the page'
 
-            # ctrl+l and alt+d are the Windows-native address-bar aliases.
-            Focus-TestWindow -Window $t161top -Child $t161host | Out-Null
-            Start-Sleep -Milliseconds 400
-            Assert (Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers ctrl -Key L) 'T161 ctrl+l injected at the viewer'
-            Assert (Wait-T161AddressFocused $t161top $t161host) 'T161 ctrl+l from a viewer focused the address bar'
-
+            # alt+d is the Windows-native address-bar alias.
             Focus-TestWindow -Window $t161top -Child $t161host | Out-Null
             Start-Sleep -Milliseconds 400
             Assert (Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers alt -Key D) 'T161 alt+d injected at the viewer'
             Assert (Wait-T161AddressFocused $t161top $t161host) 'T161 alt+d from a viewer focused the address bar'
+
+            # ctrl+d from the VIEWER splits right (T2087): no pane-scoped
+            # chord claims it any more, so the app's binding answers.
+            Focus-TestWindow -Window $t161top -Child $t161host | Out-Null
+            Start-Sleep -Milliseconds 400
+            $panes161 = Get-PaneCount 't161'
+            Assert (Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers ctrl -Key D) 'T2087 ctrl+d injected at the viewer'
+            $split161 = $false
+            for ($t = 0; $t -lt 25 -and -not $split161; $t++) {
+                $split161 = ((Get-PaneCount 't161') -eq ($panes161 + 1))
+                if (-not $split161) { Start-Sleep -Milliseconds 200 }
+            }
+            Assert $split161 "T2087 ctrl+d from a viewer split the window ($panes161 -> $(Get-PaneCount 't161') panes)"
 
             Assert (-not ($app.Process -and $app.Process.HasExited)) 'T161 app alive after all viewer chords'
         }

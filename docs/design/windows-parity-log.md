@@ -37172,3 +37172,10 @@ moved to T1814.
 - **Landed.** The band is multiplied by a smoothstep ramp over `GLOW_INNER_RAMP_DIP` (2.5). The edge pixel falls to ~7% of the old peak and the peak moves ~2 DIP out. Past 2.5 DIP the curve is unchanged, so the reach (~8 DIP) and the outer falloff are the same.
 - **Validated.** New unit test at 4 scales and both themes, with a negative control (ramp forced to 1) that fails. pane-elevation.ps1 gains an edge-vs-3pt assertion: lift 10 at the edge vs 33 at 3pt out (ALL PASS, 130). floor-lane all four PASS. Due audits and the scoped harness floor are green. upgrade-no-fork (T2043, lane b), ghoztty-cleanup (T2060) and drag-perf (T1854) were not run to green, all pre-existing.
 - **Mac.** `PaneFocusGlow` has the same edge-peaked profile. Filed as T2114 (seat: mac).
+## 2026-10-21 — T2087 (lane b): Ctrl+D in a viewer splits again; the address bar is Ctrl+L / Alt+D
+
+- **Cause.** `viewer_accel.paneChord` mapped Ctrl+D to `focus_address`, copying the old Mac Cmd+D rule. Mac dropped that rule in 89848fd59: Cmd+D splits again, and the address bar is Cmd+L.
+- **Landed.** Ctrl+D is no longer a viewer pane chord. From the page it now falls through to the keybind table, which has Ctrl+D as split right by default on Windows. Ctrl+L and Alt+D still focus the address bar. Comments and docs/claude/viewers.md are updated to match.
+- **Validated.** The unit test now pins that Ctrl+D is unclaimed. viewer-panes.ps1 11d checks that Ctrl+D from a viewer splits (3 -> 4 panes) and that Ctrl+L focuses the address bar (ALL PASS, 194). viewer-window-chords.ps1 gains S7, a window holding only a viewer that Ctrl+D splits (ALL PASS, 52). floor-lane all four PASS. Due audits are green except upgrade-no-fork (lane b, T2043) and drag-perf (T1854), both pre-existing.
+- **Filed.** T2116: app keybinds most likely still do nothing while the address or find field itself has focus, because that EDIT route never reaches the binding table. Found by reading the code, not reproduced.
+- **Mac.** Nothing owed: this is the Windows half of 89848fd59.

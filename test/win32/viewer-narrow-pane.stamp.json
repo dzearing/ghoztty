@@ -1,15 +1,15 @@
 {
     "guard":  "viewer-narrow-pane",
     "script":  "test/win32/viewer-narrow-pane.ps1",
-    "generated":  "2026-10-20T21:07:23-07:00",
-    "commit":  "3dd81bfe7",
+    "generated":  "2026-10-21T07:44:29-07:00",
+    "commit":  "a54ecfb2a",
     "uncommitted":  [
                         "src/apprt/win32/ViewerNavBar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_nav_layout.zig":  "169666f4f29e3d7066727112f7ef7459fc401ce38f56ef2dfb6f34892900deea",
                   "src/apprt/win32/viewer_toc_layout.zig":  "2bb128b01b3a3ebe12a9e670cf824561be9ca2c6017a94709bb26b252f41508a",
-                  "src/apprt/win32/ViewerNavBar.zig":  "dcad6b8eaf7e85fa7510f49c0e9082a89053623b40cefa605c10b8c73138eaf3",
+                  "src/apprt/win32/ViewerNavBar.zig":  "664311e622b039957425bb05977af7f7b533ca1704fee9586321d5eb44c8f918",
                   "src/apprt/win32/ViewerTOCPanel.zig":  "64f22bf11a0e9022d45479435c5303471b0a047e4a312ae70088c4ef145724c4",
                   "test/win32/viewer-narrow-pane.ps1":  "fbcdcb2e4ca131f154aecba7cc8bc749d288fb0772a71e0bddd0230806683e11"
               }

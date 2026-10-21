@@ -9,7 +9,7 @@
 //! then owned every following keystroke, so the keyboard read as stuck.
 //!
 //! The precedent for the shape of the fix is already in this frontend — the
-//! viewer's ctrl+r / ctrl+d shadow their global bindings only while a viewer
+//! viewer's ctrl+r shadows its global binding only while a viewer
 //! pane holds focus (T161). Let the config win where the user has stated an
 //! intent, keep the platform default everywhere else.
 //!
