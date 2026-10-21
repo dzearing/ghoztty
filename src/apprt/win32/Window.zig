@@ -152,6 +152,8 @@ const blur_backdrop = @import("blur_backdrop.zig");
 const split_geometry = @import("split_geometry.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const pane_stack_grid = @import("pane_stack_grid.zig");
+const pane_stack_layout = @import("pane_stack_layout.zig");
+const pane_stack_strip = @import("pane_stack_strip.zig");
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
 const PaneDesk = @import("PaneDesk.zig");
@@ -779,6 +781,10 @@ hover_split: ?SplitTree(PaneView).Node.Handle = null,
 /// history and the rows the user collapsed, read by `stackGrid` as the
 /// layout's provider. Made on first use; ephemeral, like Mac's.
 pane_stacks: ?pane_stack_state.PaneStackState = null,
+
+/// The tucked pane whose strip the pointer is over (T2109): its label takes
+/// Mac's stronger hover ink. Compared, never dereferenced.
+strip_hover: ?*PaneView = null,
 
 /// True after the last tab has been closed and WM_CLOSE has been posted.
 /// Input handlers must bail when this is set — between PostMessage(WM_CLOSE)
@@ -7418,6 +7424,9 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
     // Same moved-band argument, one level in: a pane that just slid
     // takes its header band with it (T1530).
     self.paintRearrangeHeaders(hdc);
+    // A strip moves with its stack, and a banner change re-lays the window
+    // out, so the relabelled strip is painted here too (T2109).
+    self.paintStackStrips(hdc);
 }
 
 /// Paint divider lines between split panes in the active tab.
@@ -7466,6 +7475,175 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
         var band = winRect(grid.dividerGutter(i));
         _ = w32.FillRect(hdc, &band, if (hot) hot_brush orelse brush else brush);
     }
+}
+
+/// The strips of the panes tucked into a stack (T2109; Mac
+/// `PaneStackTabView`): a dark band of the pane's own colour down the card's
+/// leading edge, or across its top, with the pane's name along it - the
+/// banner's title first, the same name the pane sidebar gives it
+/// (`pane_sidebar.paneLabel`). Painted bottom first in the engine's paint
+/// order, so where two strips overlap the one in front is the one a click
+/// lands on (`Grid.stripAt`). The name is read on every paint, so a
+/// `+set-banner` (whose layout pass repaints here) or a title change
+/// (`onPaneTitleChanged`) shows at once.
+fn paintStackStrips(self: *Window, hdc: w32.HDC) void {
+    if (self.tab_count == 0) return;
+    if (self.tab_hero_active[self.active_tab]) return;
+    const tree = self.tab_trees[self.active_tab];
+    if (tree.zoomed != null) return;
+    var grid = self.stackGrid() orelse return;
+    defer grid.deinit();
+    var ids: [MAX_DRAG_NODES]pane_stack_grid.Id = undefined;
+    var n: usize = 0;
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (n >= ids.len) break;
+        if (pane_stash.isStashed(entry.view)) continue;
+        const id = pane_stack_grid.viewId(entry.view);
+        const p = grid.placement(id) orelse continue;
+        if (p.tab == null) continue;
+        ids[n] = id;
+        n += 1;
+    }
+    if (n == 0) return;
+    pane_stack_layout.paintOrder(ids[0..n], &grid.result);
+
+    const cfg_bg = self.app.config.background;
+    const bg: color_math.Rgb = .{ .r = cfg_bg.r, .g = cfg_bg.g, .b = cfg_bg.b };
+    const light = color_math.isLight(bg);
+    const strip_rgb = pane_stack_strip.stripRgb(bg);
+    const brush = w32.CreateSolidBrush(w32.RGB(strip_rgb.r, strip_rgb.g, strip_rgb.b)) orelse return;
+    defer _ = w32.DeleteObject(brush);
+    // One face turned to read down a tall strip, one level for a short one.
+    const across = self.stripFont(0);
+    defer if (across) |f| {
+        _ = w32.DeleteObject(f);
+    };
+    const down = self.stripFont(2700);
+    defer if (down) |f| {
+        _ = w32.DeleteObject(f);
+    };
+    const old_mode = w32.SetBkMode(hdc, w32.TRANSPARENT);
+    defer _ = w32.SetBkMode(hdc, old_mode);
+
+    for (ids[0..n]) |id| {
+        const p = grid.placement(id) orelse continue;
+        const tab_px = p.tab orelse continue;
+        const axis = p.tab_axis orelse .horizontal;
+        var band = winRect(tab_px);
+        _ = w32.FillRect(hdc, &band, brush);
+        const view: *PaneView = @ptrFromInt(id);
+        const hovered = if (self.strip_hover) |h| h == view else false;
+        const ink = pane_stack_strip.inkRgb(strip_rgb, light, hovered);
+        const font = (if (axis == .horizontal) down else across) orelse continue;
+        self.paintStripLabel(hdc, view, .{ .left = tab_px.left, .top = tab_px.top, .right = tab_px.right, .bottom = tab_px.bottom }, axis, font, ink);
+    }
+}
+
+/// The strip label's face (Mac's 11 pt semibold), turned `escapement`
+/// tenths of a degree. Caller deletes it.
+fn stripFont(self: *Window, escapement: i32) ?*anyopaque {
+    const face = std.unicode.utf8ToUtf16LeStringLiteral(type_ramp.face);
+    const height: i32 = @intFromFloat(@round(pane_stack_strip.label_dip * self.scale));
+    return w32.CreateFontW(
+        -height, // cHeight (negative = character height)
+        0, // cWidth
+        escapement, // cEscapement
+        escapement, // cOrientation
+        pane_stack_strip.label_weight, // cWeight
+        0, // bItalic
+        0, // bUnderline
+        0, // bStrikeOut
+        w32.DEFAULT_CHARSET, // iCharSet
+        0, // iOutPrecision
+        0, // iClipPrecision
+        0, // iQuality
+        0, // iPitchAndFamily
+        face,
+    );
+}
+
+/// One strip's name, cut in the middle until it fits the strip's length.
+fn paintStripLabel(
+    self: *Window,
+    hdc: w32.HDC,
+    view: *PaneView,
+    tab: pane_stack_strip.Rect,
+    axis: pane_stack_layout.Direction,
+    font: *anyopaque,
+    ink: color_math.Rgb,
+) void {
+    const room = pane_stack_strip.labelRoom(tab, axis, self.scale);
+    if (room <= 0) return;
+    var label_buf: [512]u8 = undefined;
+    const label8 = self.paneStripLabel(view, &label_buf);
+    var wide: [256]u16 = undefined;
+    const wlen = std.unicode.utf8ToUtf16Le(&wide, label8[0..@min(label8.len, wide.len)]) catch return;
+    if (wlen == 0) return;
+    const old_font = w32.SelectObject(hdc, font);
+    defer _ = w32.SelectObject(hdc, old_font);
+    const old_color = w32.SetTextColor(hdc, w32.RGB(ink.r, ink.g, ink.b));
+    defer _ = w32.SetTextColor(hdc, old_color);
+    // The longest middle cut that fits. An extent is measured along the
+    // text's own baseline whatever the font's escapement.
+    var cut_buf: [257]u16 = undefined;
+    var keep: usize = wlen;
+    var text: []const u16 = wide[0..wlen];
+    var size: w32.SIZE = .{ .cx = 0, .cy = 0 };
+    while (true) {
+        text = pane_stack_strip.middleCut(wide[0..wlen], keep, &cut_buf);
+        _ = w32.GetTextExtentPoint32W(hdc, text.ptr, @intCast(text.len), &size);
+        if (size.cx <= room or keep == 0) break;
+        keep -= 1;
+    }
+    if (size.cx > room) return;
+    const o = pane_stack_strip.labelOrigin(tab, axis, size.cx, size.cy, self.scale);
+    _ = w32.TextOutW(hdc, o.x, o.y, text.ptr, @intCast(text.len));
+}
+
+/// What a pane's strip calls it: the banner's title when it has one, else the
+/// pane's own (the pane sidebar's name for it, T2085).
+fn paneStripLabel(_: *Window, view: *PaneView, buf: []u8) []const u8 {
+    const kind_name: []const u8 = if (view.isViewer()) "Viewer" else "Terminal";
+    const surface = view.surface();
+    const pwd: ?[]const u8 = if (surface) |s| (if (s.pwd) |p| p else null) else null;
+    const banner: ?[]const u8 = if (surface) |s| (if (s.banner_text) |b| b else null) else null;
+    return pane_sidebar.paneLabel(if (view.title()) |t| t else null, pwd, kind_name, banner, buf);
+}
+
+/// The tucked pane whose strip is under window point (x, y), if any.
+pub fn stackStripAt(self: *Window, x: i32, y: i32) ?*PaneView {
+    var grid = self.stackGrid() orelse return null;
+    defer grid.deinit();
+    const id = grid.stripAt(x, y) orelse return null;
+    // Only a pane still in this tab's tree: the id is the view's address.
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| {
+        if (pane_stack_grid.viewId(entry.view) == id) return entry.view;
+    }
+    return null;
+}
+
+/// A click on a tucked pane's strip (T2109; Mac `PaneStackTabView.activate`):
+/// focus the pane. A stack's run follows focus (`PaneStackState`), so the
+/// re-layout brings it on show, with the cards around it tucked in its place.
+pub fn bringForward(self: *Window, view: *PaneView) void {
+    if (self.tab_count == 0) return;
+    const tab = self.active_tab;
+    self.setStripHover(null);
+    self.tab_active_pane[tab] = view;
+    self.refreshTabTitle(tab);
+    self.layoutSplits();
+    if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+    if (view.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
+}
+
+/// Light the hovered strip's label (Mac's hover ink), repainting the strips
+/// when it changes.
+fn setStripHover(self: *Window, view: ?*PaneView) void {
+    if (self.strip_hover == view) return;
+    self.strip_hover = view;
+    if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
 }
 
 /// The elevated style's window-owned pixels (T1831): the ocean desk over the
@@ -8139,6 +8317,7 @@ fn updateDividerHover(self: *Window, x: i32, y: i32) void {
         }
     }
     self.setDividerHover(if (self.hitTestDivider(x, y)) |hit| hit.handle else null);
+    self.setStripHover(self.stackStripAt(x, y));
 }
 
 fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layout: SplitTree(PaneView).Split.Layout) void {
@@ -9647,6 +9826,12 @@ pub fn onPaneTitleChanged(self: *Window, pane: *PaneView, title: [:0]const u8) v
     // Coalesced (T1935): a spinner title changes ten times a second.
     self.scheduleSidebarSync();
     const tab_idx = self.findTabIndex(pane) orelse return;
+    // A tucked pane's strip carries its name (T2109). Only a hidden pane of
+    // the tab on show can have one, so a spinner in a pane on show costs
+    // nothing here.
+    if (tab_idx == self.active_tab) if (pane.hwnd()) |h| if (w32.IsWindowVisible(h) == 0) {
+        if (self.hwnd) |wh| _ = w32.InvalidateRect(wh, null, 0);
+    };
     if (self.tab_title_pinned[tab_idx]) return;
     if (self.tab_active_pane[tab_idx] != pane) return;
     var wbuf: [256]u16 = undefined;
@@ -10495,6 +10680,8 @@ fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
     // Pane headers ride the same cycle as the dividers (T1530): both are
     // window-owned pixels in the band between children.
     self.paintRearrangeHeaders(hdc_screen);
+    // So are the strips of tucked panes (T2109).
+    self.paintStackStrips(hdc_screen);
     if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) {
         HeroCarousel.paint(self, hdc_screen);
         // While a selection slide runs every hero HWND is hidden and the
@@ -13626,6 +13813,11 @@ pub fn windowWndProc(
                 window.startDividerDrag(hit.handle, hit.layout);
                 return 0;
             }
+            // A tucked pane's strip brings it forward (T2109).
+            if (window.stackStripAt(x, y)) |view| {
+                window.bringForward(view);
+                return 0;
+            }
             // A press inside a pane header belongs to the header (T1530) and
             // is CLAIMED here, so it can never fall through to the chrome
             // underneath. The drag (T1531) and the pop-out button (T1538) are
@@ -13842,6 +14034,11 @@ pub fn windowWndProc(
                     }
                     return 1;
                 }
+                // A strip is a button (Mac's pointing hand, T2109).
+                if (window.stackStripAt(pt.x, pt.y) != null) {
+                    if (w32.LoadCursorW(null, w32.IDC_HAND)) |hc| _ = w32.SetCursor(hc);
+                    return 1;
+                }
                 // Over a pane header's grab surface: the pointer says the
                 // band moves before the user tries it — Mac's open hand
                 // (T1536). The pop-out button keeps the arrow.
@@ -13857,6 +14054,7 @@ pub fn windowWndProc(
             window.handleTabBarMouseLeave();
             window.heroMouseLeave();
             window.setDividerHover(null);
+            window.setStripHover(null);
             return 0;
         },
         w32.WM_ACTIVATE => {

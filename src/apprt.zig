@@ -334,6 +334,8 @@ test {
     // The window's side of that layout - its split tree as the engine's
     // nodes, the engine's DIPs as pixel rects (T2107) - same deal.
     _ = @import("apprt/win32/pane_stack_grid.zig");
+    // What a tucked pane's strip looks like (T2109) - same deal.
+    _ = @import("apprt/win32/pane_stack_strip.zig");
     // A pane's own progress light - the ring circling a busy pane and the
     // percentage line across its top (T1899) - same deal.
     _ = @import("apprt/win32/busy_light.zig");

@@ -567,6 +567,21 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # A tucked pane's strip (T2109): painted in the strip colour, named by the
+    # banner title live on +set-banner, and a click on it brings the pane on
+    # show. `pane_sidebar.zig` is named because the label is its `paneLabel`.
+    [pscustomobject]@{
+        Name   = 'pane-stack-strip'
+        Script = 'test\win32\pane-stack-strip.ps1'
+        Stamp  = 'test\win32\pane-stack-strip.stamp.json'
+        Covers = @(
+            'test\win32\pane-stack-strip.ps1',
+            'src\apprt\win32\pane_stack_strip.zig',
+            'src\apprt\win32\pane_stack_grid.zig',
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was
