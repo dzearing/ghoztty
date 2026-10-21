@@ -48,6 +48,7 @@ const enroll = @import("agent/enroll.zig");
 const relay_revoke = @import("relay_revoke.zig");
 const pending_revoke = @import("relay_revoke_pending.zig");
 const relay_suspend = @import("relay_suspend.zig");
+const relay_hosting = @import("relay_hosting.zig");
 
 const log = std.log.scoped(.relay_signin);
 
@@ -252,6 +253,13 @@ pub fn signIn(alloc: Allocator, opts: Options) Error!Outcome {
         session.value.session_token,
         relay_base,
     );
+
+    // T2049: signing in as somebody other than the account that enrolled this
+    // machine makes the app a guest here, so the agent must stop serving it
+    // (main 6dfb31232's owner != signed-in rule); signing in as the owner
+    // lifts any such veto. After the restore, so it judges the credential the
+    // restore left in relay.env.
+    _ = relay_hosting.reconcileFor(alloc, session.value.email);
 
     return .{ .email = try alloc.dupe(u8, session.value.email) };
 }

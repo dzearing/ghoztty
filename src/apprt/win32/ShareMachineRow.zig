@@ -30,6 +30,7 @@ const App = @import("App.zig");
 const MachineChooser = @import("MachineChooser.zig");
 const enroll = @import("../../remote/agent/enroll.zig");
 const sharing = @import("../../remote/agent/sharing.zig");
+const owner_veto = @import("../../remote/agent/owner_veto.zig");
 const w32 = @import("win32.zig");
 const utf16_text = @import("utf16_text.zig");
 
@@ -64,10 +65,12 @@ pub fn isRunning() bool {
 /// machine nobody configured serves (D22 default-on), so the box is ticked.
 /// Same `sharing.decide` the agent's reconciler runs, so the checkbox can
 /// never show a state the agent is not in.
+/// A credential the app found belongs to another account (T2049) counts as
+/// none: the agent parks on it, so the box must read unticked.
 pub fn isEnabled(alloc: Allocator, config_path: []const u8) bool {
     const has_credential = if (enroll.loadDeviceToken(alloc)) |tok| blk: {
         alloc.free(tok);
-        break :blk true;
+        break :blk !owner_veto.isVetoed(alloc);
     } else false;
     return sharing.effectiveEnabled(sharing.loadChoice(alloc, config_path), has_credential);
 }
