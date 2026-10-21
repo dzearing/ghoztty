@@ -88,6 +88,7 @@ const remote_connection = @import("../../remote/connection.zig");
 const relay_directory = @import("../../remote/relay_directory.zig");
 const relay_signin = @import("../../remote/relay_signin.zig");
 const relay_revoke_pending = @import("../../remote/relay_revoke_pending.zig");
+const owner_veto = @import("../../remote/agent/owner_veto.zig");
 const w32 = @import("win32.zig");
 
 const log = std.log.scoped(.win32);
@@ -1690,6 +1691,14 @@ fn onShareToggled(self: *MachineChooser) void {
         .enrolling => self.setHint(ShareMachineRow.pending_hint),
         .busy => {},
         .failed => self.setHint(ShareMachineRow.save_failed_hint),
+        // Another account's enrollment (T2099): the box stays unticked, and
+        // the footer says whose it is instead of the box just springing back.
+        .not_ours => {
+            const owner = owner_veto.vetoOwner(alloc);
+            defer if (owner) |o| alloc.free(o);
+            var buf: [512]u8 = undefined;
+            self.setHint(ShareMachineRow.notOursHint(&buf, owner orelse ""));
+        },
     }
     self.refreshAccountRow();
 }

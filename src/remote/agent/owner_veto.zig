@@ -127,13 +127,33 @@ pub fn existsAt(p: []const u8) bool {
 /// Whether the veto at `p` holds for `token`. Absent, unreadable, or decided
 /// against a different token: no veto.
 pub fn holdsAt(alloc: Allocator, p: []const u8, token: []const u8) bool {
-    const content = std.fs.cwd().readFileAlloc(alloc, p, 64 * 1024) catch return false;
+    const owner = ownerAt(alloc, p, token) orelse return false;
+    alloc.free(owner);
+    return true;
+}
+
+/// When the veto at `p` holds for `token`, who the relay said the credential
+/// belongs to (owned by the caller; empty when the record did not say). Null
+/// exactly when `holdsAt` is false. The chooser names this account when a
+/// guest ticks Share this machine (T2099).
+pub fn ownerAt(alloc: Allocator, p: []const u8, token: []const u8) ?[]u8 {
+    const content = std.fs.cwd().readFileAlloc(alloc, p, 64 * 1024) catch return null;
     defer alloc.free(content);
     const parsed = std.json.parseFromSlice(Record, alloc, content, .{
         .ignore_unknown_fields = true,
-    }) catch return false;
+    }) catch return null;
     defer parsed.deinit();
-    return holds(parsed.value.token_fp, token);
+    if (!holds(parsed.value.token_fp, token)) return null;
+    return alloc.dupe(u8, parsed.value.owner_email) catch null;
+}
+
+/// `ownerAt` for relay.env's credential right now: null when nothing vetoes it.
+pub fn vetoOwner(alloc: Allocator) ?[]u8 {
+    const token = enroll.loadDeviceToken(alloc) orelse return null;
+    defer alloc.free(token);
+    const p = path(alloc) catch return null;
+    defer alloc.free(p);
+    return ownerAt(alloc, p, token);
 }
 
 /// The agent's question: is the credential in relay.env right now one the app
@@ -195,6 +215,12 @@ test "writeAt/holdsAt/clearAt round trip, and a re-enroll makes it inert" {
     // The signed-in account re-enrolled: relay.env holds a new token.
     try testing.expect(!holdsAt(testing.allocator, p, "new-token"));
 
+    // ownerAt names the owner exactly when the veto holds (T2099).
+    const owner = ownerAt(testing.allocator, p, "old-token") orelse return error.TestExpectedOwner;
+    defer testing.allocator.free(owner);
+    try testing.expectEqualStrings("a@example.com", owner);
+    try testing.expect(ownerAt(testing.allocator, p, "new-token") == null);
+
     // The record never carries the token itself.
     const content = try std.fs.cwd().readFileAlloc(testing.allocator, p, 4096);
     defer testing.allocator.free(content);
@@ -213,4 +239,5 @@ test "holdsAt: a corrupt record is no veto" {
     const p = try tmp.dir.realpathAlloc(testing.allocator, file_name);
     defer testing.allocator.free(p);
     try testing.expect(!holdsAt(testing.allocator, p, "tok"));
+    try testing.expect(ownerAt(testing.allocator, p, "tok") == null);
 }

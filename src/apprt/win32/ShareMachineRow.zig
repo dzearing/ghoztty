@@ -89,8 +89,28 @@ pub fn disable(alloc: Allocator, config_path: []const u8) bool {
 /// What a flip to ON did. `enabled` finished synchronously (a credential was
 /// already on disk); `enrolling` started the browser flow and the caller
 /// shows the pending state until `WM_APP_SHARE_MACHINE` lands; `busy` means a
-/// flow is already pending; `failed` could not even start.
-pub const StartOutcome = enum { enabled, enrolling, busy, failed };
+/// flow is already pending; `failed` could not even start; `not_ours` refused
+/// because the credential belongs to another account (T2099).
+pub const StartOutcome = enum { enabled, enrolling, busy, failed, not_ours };
+
+/// What a flip to ON should do, given relay.env's credential. Pure (T2099).
+pub const EnablePlan = enum {
+    /// A credential this app may serve: persist `enabled = true`.
+    write_flag,
+    /// No credential: browser enrollment first.
+    enroll,
+    /// The credential belongs to another account (the T2049 veto holds). The
+    /// agent parks on it whatever sharing.json says, so writing the flag would
+    /// be a box that springs back. Mac's rule is that a guest does not serve
+    /// another account's enrollment, and it has no affordance that takes one
+    /// over, so neither does this: refuse, and say whose it is.
+    refuse_not_ours,
+};
+
+pub fn enablePlan(has_credential: bool, vetoed: bool) EnablePlan {
+    if (!has_credential) return .enroll;
+    return if (vetoed) .refuse_not_ours else .write_flag;
+}
 
 /// Turn sharing ON. With a device credential already in relay.env this is
 /// the same synchronous write `disable` does; without one it starts browser
@@ -103,15 +123,27 @@ pub fn enableAsync(
 ) StartOutcome {
     const alloc = app.core_app.alloc;
 
-    // Credential already present: no browser, just persist the flag. The
-    // token's presence is the same test the agent's reconciler applies.
-    if (enroll.loadDeviceToken(alloc)) |tok| {
+    const has_credential = if (enroll.loadDeviceToken(alloc)) |tok| blk: {
         alloc.free(tok);
-        sharing.save(alloc, config_path, .{ .enabled = true }) catch |err| {
-            log.warn("share machine: enable write failed err={}", .{err});
-            return .failed;
-        };
-        return .enabled;
+        break :blk true;
+    } else false;
+    const vetoed = has_credential and owner_veto.isVetoed(alloc);
+
+    switch (enablePlan(has_credential, vetoed)) {
+        .refuse_not_ours => {
+            log.info("share machine: enable refused; the credential belongs to another account", .{});
+            return .not_ours;
+        },
+        // Credential already present: no browser, just persist the flag. The
+        // token's presence is the same test the agent's reconciler applies.
+        .write_flag => {
+            sharing.save(alloc, config_path, .{ .enabled = true }) catch |err| {
+                log.warn("share machine: enable write failed err={}", .{err});
+                return .failed;
+            };
+            return .enabled;
+        },
+        .enroll => {},
     }
 
     if (running.swap(true, .acq_rel)) {
@@ -274,6 +306,24 @@ pub const pending_hint =
 pub const save_failed_hint =
     "Couldn't save the sharing setting. Check that the agent's data folder is writable.";
 
+/// Why the box would not tick (T2099): this machine was added to the relay by
+/// another account. Names that account when the record says who it is, and
+/// what would let the user share it. Pure; writes into `buf` and falls back to
+/// the nameless sentence when the name does not fit.
+pub fn notOursHint(buf: []u8, owner_email: []const u8) []const u8 {
+    if (owner_email.len > 0) {
+        if (std.fmt.bufPrint(
+            buf,
+            "This machine is shared from {s}'s account, so it can't be shared from yours. Sign in as {s} to change its sharing.",
+            .{ owner_email, owner_email },
+        )) |s| return s else |_| {}
+    }
+    return not_ours_hint;
+}
+
+pub const not_ours_hint =
+    "This machine is shared from another account, so it can't be shared from yours. Sign in with that account to change its sharing.";
+
 /// The same "sharing is on" news, for a machine whose background terminal
 /// process is an OLDER build than the one this app ships beside — one that
 /// predates the `sharing.json` reconciler (T546) and so will never act on the
@@ -388,6 +438,27 @@ test "enabled_pending_agent_hint: says sharing is on AND why nothing is served y
     try testing.expect(std.mem.indexOf(u8, enabled_pending_agent_hint, "sharing.json") == null);
     // It is a DIFFERENT sentence, or the negative control could never fail.
     try testing.expect(!std.mem.eql(u8, enabled_pending_agent_hint, enabled_hint));
+}
+
+test "enablePlan: another account's credential is refused, never written (T2099)" {
+    try testing.expectEqual(EnablePlan.write_flag, enablePlan(true, false));
+    try testing.expectEqual(EnablePlan.refuse_not_ours, enablePlan(true, true));
+    try testing.expectEqual(EnablePlan.enroll, enablePlan(false, false));
+    // A veto with no credential names nothing: enrollment as usual.
+    try testing.expectEqual(EnablePlan.enroll, enablePlan(false, true));
+}
+
+test "notOursHint: names the owning account and the way out" {
+    var buf: [512]u8 = undefined;
+    const s = notOursHint(&buf, "a@example.com");
+    try testing.expect(std.mem.indexOf(u8, s, "a@example.com") != null);
+    try testing.expect(std.mem.indexOf(u8, s, "Sign in") != null);
+    try testing.expect(std.mem.indexOf(u8, s, "owner-mismatch") == null);
+    // No name, or no room for it: the nameless sentence, still with the remedy.
+    try testing.expectEqualStrings(not_ours_hint, notOursHint(&buf, ""));
+    var tiny: [16]u8 = undefined;
+    try testing.expectEqualStrings(not_ours_hint, notOursHint(&tiny, "a@example.com"));
+    try testing.expect(std.mem.indexOf(u8, not_ours_hint, "another account") != null);
 }
 
 test "hints: the toggle's sentences say what changed for the user" {

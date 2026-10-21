@@ -34,6 +34,10 @@
 #      default-on, and an enrolled Mac hosts since main 6dfb31232): with a
 #      credential and no sharing.json the chooser opens CHECKED without writing
 #      anything, and one click is an explicit off.
+#   J. a credential the app found belongs to ANOTHER account (the T2049 veto)
+#      refuses the tick (T2099): no sharing.json, the box stays unticked, and the
+#      footer names the owning account; negative control: a veto naming a
+#      different credential enables as usual.
 #
 # Hermetic: GHOSTTY_SHARING_CONFIG and GHOSTTY_RELAY_ENV point both files at a
 # scratch dir (the same overrides the agent's own path resolution honors, so
@@ -419,6 +423,55 @@ try {
         }
     }
 
+    "== J: ticking the box on ANOTHER account's enrollment is refused, and says whose (T2099)"
+    Stop-DebugGhoztty
+    Remove-Item $sharingCfg -Force -ErrorAction SilentlyContinue
+    $tokJ = 'tok-seeded-t2099'
+    Set-Content -Path $relayEnv -Value "RELAY_BASE=http://127.0.0.1:$port`nDEVICE_TOKEN=$tokJ`n" -Encoding ascii
+    # The veto the app writes when whoami names another account (T2049): the
+    # fingerprint is the first 8 bytes of SHA-256(token), lowercase hex.
+    function Get-TokenFp([string]$t) {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { $d = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($t)) } finally { $sha.Dispose() }
+        return (($d[0..7] | ForEach-Object { $_.ToString('x2') }) -join '')
+    }
+    $vetoPath = Join-Path (Split-Path $relayEnv -Parent) 'owner-mismatch.json'
+    $vetoJson = '{"version":1,"token_fp":"' + (Get-TokenFp $tokJ) + '","owner_email":"owner-t2099@example.com","account_email":"guest@example.com","decided_at":1}'
+    [System.IO.File]::WriteAllText($vetoPath, $vetoJson)
+    $gj = Launch-Gui "http://127.0.0.1:$port"
+    Assert 'J GUI came up' ($null -ne $gj)
+    if ($null -ne $gj) {
+        $chj = Open-Chooser $gj
+        Assert 'J chooser opened' ($chj -ne [IntPtr]::Zero)
+        $cbj = if ($chj -ne [IntPtr]::Zero) { Get-ShareCheckbox $chj } else { $null }
+        Assert 'J share checkbox present' ($null -ne $cbj)
+        if ($null -ne $cbj) {
+            Assert 'J opens UNCHECKED: the credential is not this account''s' ((Get-ShareChecked $chj) -eq $false)
+            Assert 'J veto still on disk after launch (nobody signed in changes nothing)' (Test-Path $vetoPath)
+            [void](Send-TestControlClick -Control $cbj.Hwnd)
+            Start-Sleep -Milliseconds 800
+            Assert 'J the click wrote NO sharing.json (refused, not a flag the agent ignores)' (-not (Test-Path $sharingCfg))
+            Assert 'J checkbox still unchecked after the click' ((Get-ShareChecked $chj) -eq $false)
+            $hj = Get-ChooserHint $chj
+            Assert "J footer names the owning account (got: '$hj')" ($hj -match 'owner-t2099@example\.com')
+            Assert 'J footer says how to change it (sign in as the owner)' ($hj -match 'Sign in as')
+            Assert 'J footer never exposes the mechanism' ($hj -notmatch 'owner-mismatch|veto|whoami|token')
+            Assert 'J credential untouched by the refusal' ((Get-Content $relayEnv -Raw -ErrorAction SilentlyContinue) -match $tokJ)
+
+            # Negative control: the SAME click, the veto now naming a different
+            # credential (a re-enroll as this account), enables as usual.
+            $vetoOther = $vetoJson.Replace((Get-TokenFp $tokJ), (Get-TokenFp 'some-other-token'))
+            [System.IO.File]::WriteAllText($vetoPath, $vetoOther)
+            [void](Send-TestControlClick -Control $cbj.Hwnd)
+            Assert 'J negative control: a stale veto does not refuse (enabled:true)' (Wait-SharingEnabled $true)
+            Start-Sleep -Milliseconds 400
+            Assert 'J negative control: checkbox checked' ((Get-ShareChecked $chj) -eq $true)
+            $hj2 = Wait-ChooserHint $chj
+            Assert 'J negative control: footer is the ordinary sharing-on sentence' ($hj2 -match 'Sharing is on' -and $hj2 -notmatch 'owner-t2099')
+        }
+    }
+    Remove-Item $vetoPath -Force -ErrorAction SilentlyContinue
+
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Remove-TestDesktop
@@ -454,4 +507,4 @@ if ($script:failures -eq 0) {
         update -Guard share-machine -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-Write-TestVerdict -Label 'T547 SHARE MACHINE' -Pass $script:passes -Fail $script:failures -MinPass 45
+Write-TestVerdict -Label 'T547 SHARE MACHINE' -Pass $script:passes -Fail $script:failures -MinPass 63
