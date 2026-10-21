@@ -57,10 +57,43 @@ class BaseTerminalController: NSWindowController,
     /// Re-derive `focusedPane` and publish it if it moved.
     func publishFocusedPane() {
         let pane = focusedPane
-        guard pane !== publishedFocusedPane else { return }
-        publishedFocusedPane?.isFocusedPane = false
-        pane?.isFocusedPane = true
-        publishedFocusedPane = pane
+        if pane !== publishedFocusedPane {
+            publishedFocusedPane?.isFocusedPane = false
+            pane?.isFocusedPane = true
+            publishedFocusedPane = pane
+        }
+        // A stacked row shows the pane that has focus (see `PaneLayout`) —
+        // the pane that really HAS the caret. `focusedPane` falls back to the
+        // last focused terminal while the caret is elsewhere (a viewer that
+        // gave it up, the window itself after a re-parent), and that
+        // terminal may have been minimized since: reading it as focused
+        // again brought its strip back out.
+        if let pane, pane !== stackFocusedPane, pane.holdsKeyboardFocus {
+            stackFocusedPane = pane
+            paneStackState.noteFocus(pane.id)
+        }
+    }
+
+    /// The pane last noted as focused to `paneStackState`.
+    private weak var stackFocusedPane: PaneView?
+
+    /// `pane`, or — when it is minimized in a collapsed row — the pane on
+    /// show there nearest it: where to put the caret without bringing a
+    /// strip back out. With `newTree`, as the rows will be once the tree is
+    /// that (a close, a stash).
+    func paneOnShow(_ pane: PaneView, in newTree: SplitTree<PaneView>? = nil) -> PaneView {
+        let tree = newTree ?? surfaceTree
+        let id = paneStackState.paneOnShow(
+            instead: pane.id,
+            from: PaneLayout.rows(surfaceTree.visibleTree.root),
+            to: PaneLayout.rows(tree.visibleTree.root))
+        return tree.first { $0.id == id } ?? pane
+    }
+
+    /// Where the caret goes when `node` leaves the tree, which becomes
+    /// `newTree`: the neighbour a close picks, never a strip.
+    func focusTargetAfterRemoving(_ node: SplitTree<PaneView>.Node, leaving newTree: SplitTree<PaneView>) -> PaneView? {
+        findNextFocusTargetAfterClosing(node: node).map { paneOnShow($0, in: newTree) }
     }
 
     /// The tree of splits within this terminal window.
@@ -75,7 +108,30 @@ class BaseTerminalController: NSWindowController,
     /// has squashed a pane against its minimum. See `splitDidResize(_:)`.
     private var dividerDragOrigin: (tree: SplitTree<PaneView>, node: SplitTree<PaneView>.Node)?
 
+    /// The row a divider or stack-grip drag is in, as the drag found it, and
+    /// what the drag has done to it so far: a drag can collapse the row
+    /// (squeezing a pane well past its minimum), go on squeezing the next
+    /// pane and the next (`PaneLayout.chain`), and, still held, undo all of
+    /// it by coming back. See `splitDidResize(_:)` and `splitDidDragStack(_:)`.
+    private var rowDrag: RowDrag?
+
+    private struct RowDrag {
+        let row: PaneLayout.Row<UUID>
+        let origin: PaneStackState.Snapshot
+        /// The row index of the first item after the grip.
+        let boundary: Int
+        /// Added to the gesture's position to measure it from the row's start.
+        let offset: CGFloat
+        /// A widening drag's change, from a grip at the run's edge.
+        var change: PaneLayout.Restack?
+        /// What a squeezing drag has tucked away so far.
+        var squeeze: PaneLayout.Squeeze?
+    }
+
     let heroModeState = HeroModeState()
+
+    /// Which panes a stacked row shows: its focus history.
+    let paneStackState = PaneStackState()
 
     /// Pane rearrange mode: every pane grows a drag header and the tab bar
     /// is forced visible because it is a drop target.
@@ -126,6 +182,15 @@ class BaseTerminalController: NSWindowController,
 
     /// This can be set to show/hide the command palette.
     @Published var commandPaletteIsShowing: Bool = false
+
+    /// The pane the command palette was opened over — a terminal or a viewer —
+    /// which its commands act on and focus returns to. Taken when it opens,
+    /// because once its own field has the caret no pane has focus. Weak, so a
+    /// pane closed since the palette last opened is not kept alive by it.
+    var commandPaletteAnchor: PaneView? { commandPaletteAnchorRef }
+    private weak var commandPaletteAnchorRef: PaneView? {
+        willSet { objectWillChange.send() }
+    }
 
     /// Set if the terminal view should show the update overlay.
     @Published var updateOverlayIsVisible: Bool = false
@@ -1054,6 +1119,11 @@ class BaseTerminalController: NSWindowController,
         // without touching the first responder or `focusedSurface`.
         publishFocusedPane()
 
+        // A collapsed row a pane left (closed, stashed, moved away) stays
+        // collapsed: the panes on show take its space.
+        paneStackState.rowsDidChange(
+            from: PaneLayout.rows(from.visibleTree.root), to: PaneLayout.rows(to.visibleTree.root))
+
         // Session close intent: a leaf that LEFT the tree was closed by the
         // user (removeSurfaceNode, or a redo of a close) — its agent session
         // must actually END when the view is eventually freed (after the undo
@@ -1440,12 +1510,13 @@ class BaseTerminalController: NSWindowController,
         // can't express — hand it focus explicitly afterwards.
         let closedHadFocus = node.contains(where: { $0.surfaceView === focusedSurface })
             || focusedViewerPane.map { pane in node.contains(where: { $0 === pane }) } ?? false
-        let nextFocus: PaneView? = closedHadFocus
-            ? findNextFocusTargetAfterClosing(node: node)
-            : nil
+        let newTree = surfaceTree.removing(node)
+        // Never into a pane minimized in a collapsed row: focusing it would
+        // bring it back out (`PaneStackState.noteFocus`).
+        let nextFocus: PaneView? = closedHadFocus ? focusTargetAfterRemoving(node, leaving: newTree) : nil
 
         replaceSurfaceTree(
-            surfaceTree.removing(node),
+            newTree,
             moveFocusTo: nextFocus?.surfaceView,
             moveFocusFrom: focusedSurface,
             undoAction: "Close Terminal"
@@ -1460,10 +1531,15 @@ class BaseTerminalController: NSWindowController,
         _ newTree: SplitTree<PaneView>,
         moveFocusTo newView: Ghostty.SurfaceView? = nil,
         moveFocusFrom oldView: Ghostty.SurfaceView? = nil,
-        undoAction: String? = nil
+        undoAction: String? = nil,
+        stackBefore: PaneStackState.Saved? = nil
     ) {
         // Setup our new split tree
         let oldTree = surfaceTree
+        // Which panes of a collapsed row were on show goes with the tree: an
+        // undo puts back exactly the rows it had (a caller that changed them
+        // already for this change hands over how they were before it).
+        let oldStack = stackBefore ?? paneStackState.saved
         surfaceTree = newTree
         if let newView {
             DispatchQueue.main.async {
@@ -1482,6 +1558,7 @@ class BaseTerminalController: NSWindowController,
             expiresAfter: undoExpiration
         ) { target in
             target.surfaceTree = oldTree
+            target.paneStackState.restore(oldStack)
             if let oldView {
                 DispatchQueue.main.async {
                     Ghostty.moveFocus(to: oldView, from: target.focusedSurface)
@@ -2074,18 +2151,164 @@ class BaseTerminalController: NSWindowController,
         switch action {
         case .resize(let resize):
             splitDidResize(resize)
+        case .restack(let row, let change):
+            splitDidRestack(row, change)
+        case .stackDrag(let drag):
+            splitDidDragStack(drag)
         }
+    }
+
+    /// A grip on a stacked row dragged (`TerminalSplitOperation.StackDrag`).
+    private func splitDidDragStack(_ drag: TerminalSplitOperation.StackDrag) {
+        switch drag.gesture {
+        case .began:
+            let boundary = if case .between(let slot) = drag.kind { drag.row.run.lowerBound + slot + 1 } else { 0 }
+            beginRowDrag(drag.row, boundary: boundary, offset: drag.position)
+        case .ended:
+            endRowDrag()
+        case .moved(let delta, _):
+            let past = PaneLayout.Metrics.restackDistance
+            switch drag.kind {
+            case .expand(let side):
+                let outward = side == .trailing ? delta : -delta
+                setRowDrag(outward > past ? .expand(side) : nil)
+            case .between(let slot):
+                // `delta` runs from where the drag began, so it applies to
+                // the sizes the row had then: added to each step's result,
+                // it would compound and the edge would run ahead of the hand.
+                let sizes = rowDrag?.row.sizes ?? drag.row.sizes
+                guard slot + 1 < sizes.count else { return }
+                let minimum = drag.direction == .horizontal
+                    ? PaneLayout.Metrics.minimumPaneSize.width
+                    : PaneLayout.Metrics.minimumPaneSize.height
+                // Resizing two slots never changes their sum.
+                let pair = sizes[slot] + sizes[slot + 1]
+                let leading = sizes[slot] + delta
+                // Squeezing a card next to the grip well past its minimum
+                // tucks the outermost card on that side away, then the next,
+                // and the next, as the pointer goes on.
+                if squeezeRow(at: delta, collapsing: pair - leading < minimum - past ? .trailing
+                              : leading < minimum - past ? .leading : nil,
+                              back: leading >= minimum && pair - leading >= minimum) { return }
+                guard pair >= 2 * minimum else { return }
+                var resized = sizes
+                resized[slot] = Swift.min(Swift.max(leading, minimum), pair - minimum)
+                resized[slot + 1] = pair - resized[slot]
+                let total = resized.reduce(0, +)
+                paneStackState.resize(drag.row, shares: resized.map { $0 / total })
+            }
+        }
+    }
+
+    /// A row collapsed or widened by a drag (see `PaneLayout.Restack`), as
+    /// many times over as `times`. The caret never stays in a pane that just
+    /// tucked behind: it moves to the nearest pane still on show, the one the
+    /// room was made for.
+    private func splitDidRestack(_ row: PaneLayout.Row<UUID>, _ change: PaneLayout.Restack, times: Int = 1) {
+        paneStackState.restack(row, change, times: times)
+        guard let pin = paneStackState.pin(for: row.key),
+              let focused = focusedPane,
+              let index = row.items.firstIndex(where: { $0.contains(focused.id) })
+        else { return }
+        let target = Swift.min(Swift.max(index, pin.start), pin.start + pin.count - 1)
+        guard target != index else { return }
+        // Within the item (a nested column, say), the pane last focused there.
+        let candidates = row.items[target]
+        let id = candidates.min { (paneStackState.rank(of: $0) ?? .max) < (paneStackState.rank(of: $1) ?? .max) }
+        guard let id, let pane = surfaceTree.first(where: { $0.id == id }) else { return }
+        Ghostty.moveFocus(to: pane)
+    }
+
+    /// Begin a drag that may collapse `row`, on the grip before item
+    /// `boundary`; `offset` measures the gesture's positions from the row's
+    /// start.
+    private func beginRowDrag(_ row: PaneLayout.Row<UUID>?, boundary: Int = 0, offset: CGFloat = 0) {
+        rowDrag = row.map {
+            RowDrag(row: $0, origin: paneStackState.snapshot($0.key), boundary: boundary, offset: offset)
+        }
+        paneStackState.isGesturing = true
+    }
+
+    /// One step of a drag that can squeeze its row, with the pointer at
+    /// `position` (the gesture's own measure). `collapsing`: the side whose
+    /// first item the drag has just squeezed well past its minimum, nil if
+    /// not; `back`: the drag is back where that item fits again. Returns
+    /// whether the row is squeezed — the grip then follows the pointer
+    /// through the run, and the caller has nothing more to do.
+    private func squeezeRow(at position: CGFloat, collapsing: PaneLayout.Side?, back: Bool) -> Bool {
+        guard let drag = rowDrag else { return false }
+        let x = drag.offset + position
+        let past = PaneLayout.Metrics.restackDistance
+        let squeeze: PaneLayout.Squeeze?
+        if let current = drag.squeeze {
+            // The first item comes back by the drag's own measure; the ones
+            // after it by the chain's.
+            squeeze = current.count == 1 && back
+                ? nil
+                : PaneLayout.chain(drag.row, boundary: drag.boundary, at: x, current: current, past: past)
+        } else if let collapsing {
+            squeeze = PaneLayout.chain(
+                drag.row, boundary: drag.boundary, at: x, current: .init(side: collapsing, count: 1), past: past)
+        } else {
+            squeeze = nil
+        }
+        if squeeze != drag.squeeze {
+            paneStackState.restore(drag.row.key, drag.origin)
+            rowDrag?.squeeze = squeeze
+            if let squeeze { splitDidRestack(drag.row, .collapse(squeeze.side), times: squeeze.count) }
+        }
+        guard let squeeze else { return false }
+        paneStackState.resize(drag.row, shares: PaneLayout.squeezedShares(
+            drag.row, boundary: drag.boundary, squeeze: squeeze, at: x))
+        return true
+    }
+
+    private func endRowDrag() {
+        rowDrag = nil
+        paneStackState.isGesturing = false
+    }
+
+    /// Put the dragged row in the state `change` makes of it as the drag
+    /// found it (nil: as the drag found it): a grip at the run's edge.
+    private func setRowDrag(_ change: PaneLayout.Restack?) {
+        guard let drag = rowDrag, drag.change != change else { return }
+        paneStackState.restore(drag.row.key, drag.origin)
+        rowDrag?.change = change
+        if let change { splitDidRestack(drag.row, change) }
     }
 
     private func splitDidResize(_ resize: TerminalSplitOperation.Resize) {
         switch resize.gesture {
         case .began:
-            dividerDragOrigin = (surfaceTree, resize.node)
+            // The drag moves the layout on screen, whose ratios differ from the
+            // stored ones wherever a pane minimum overrides them; `node` is a
+            // node of that displayed tree.
+            let origin = resize.displayed.map { surfaceTree.adoptingDisplayedLayout($0) } ?? surfaceTree
+            dividerDragOrigin = (origin, resize.node)
+            beginRowDrag(resize.row, boundary: resize.boundary, offset: resize.rowOffset)
 
         case .ended:
             dividerDragOrigin = nil
+            endRowDrag()
 
         case .moved(let position, let dimension):
+            // Well past a pane's minimum, the pane on that side snaps away
+            // (`PaneLayout.Restack.collapse`) and the ratios are left as the
+            // drag found them; brought back to the minimum, it comes back.
+            if let origin = dividerDragOrigin, rowDrag != nil, case .split(let split) = origin.node {
+                let minimum = PaneLayout.Metrics.minimumPaneSize
+                let axis = split.direction.layoutDirection
+                let leading = PaneLayout.minimumExtent(split.left, along: axis, minimum: minimum, stacking: false)
+                let trailing = dimension - PaneLayout.minimumExtent(split.right, along: axis, minimum: minimum, stacking: false)
+                let past = PaneLayout.Metrics.restackDistance
+                let collapsing: PaneLayout.Side? = position < leading - past ? .leading
+                    : position > trailing + past ? .trailing : nil
+                if squeezeRow(at: position, collapsing: collapsing, back: position >= leading && position <= trailing) {
+                    surfaceTree = origin.tree
+                    return
+                }
+            }
+
             // A drag reports an absolute position measured from the layout it started
             // on, so replay it against that layout rather than against the previous
             // frame's result: dragging past a pane's minimum and back then puts the
@@ -2097,8 +2320,8 @@ class BaseTerminalController: NSWindowController,
                 dividerDragOrigin = nil
             }
 
-            // With no drag behind it -- the accessibility nudge -- there is no
-            // snapshot and the live tree is the right thing to move.
+            // With no drag behind it there is no snapshot, and the live tree is
+            // the right thing to move.
             let origin = dividerDragOrigin ?? (tree: surfaceTree, node: resize.node)
             do {
                 // The divider belongs to the rendered (visible) tree; move it
@@ -2112,7 +2335,12 @@ class BaseTerminalController: NSWindowController,
         }
     }
 
-    func performAction(_ action: String, on surfaceView: Ghostty.SurfaceView) {
+    func performAction(_ action: String, on pane: PaneView) {
+        // From a viewer, as a key from it would go (`ViewerKeyFallback`).
+        guard let surfaceView = pane.surfaceView else {
+            ViewerKeyFallback.performPalette(action: action, in: self)
+            return
+        }
         guard let surface = surfaceView.surface else { return }
         let len = action.utf8CString.count
         if len == 0 { return }
@@ -2510,8 +2738,15 @@ class BaseTerminalController: NSWindowController,
         // want to move focus to our focused terminal surface. This works around
         // various weirdness with moving surfaces around.
         if let window, window.firstResponder == window, let focusedSurface {
+            // Never into a strip: the remembered surface may have been
+            // minimized while the caret was elsewhere.
+            let pane = surfaceTree.first { $0.surfaceView === focusedSurface }.map { paneOnShow($0) }
             DispatchQueue.main.async {
-                Ghostty.moveFocus(to: focusedSurface)
+                if let pane {
+                    Ghostty.moveFocus(to: pane)
+                } else {
+                    Ghostty.moveFocus(to: focusedSurface)
+                }
             }
         }
 
@@ -3393,7 +3628,7 @@ class BaseTerminalController: NSWindowController,
         // so no confirmation.
         if let pane = focusedViewerPane,
            let node = surfaceTree.root?.node(view: pane) {
-            let next = findNextFocusTargetAfterClosing(node: node)
+            let next = focusTargetAfterRemoving(node, leaving: surfaceTree.removing(node))
             closeSurface(node, withConfirmation: false)
             if let next {
                 DispatchQueue.main.async { Ghostty.moveFocus(to: next) }
@@ -3599,6 +3834,9 @@ class BaseTerminalController: NSWindowController,
     }
 
     @IBAction func toggleCommandPalette(_ sender: Any?) {
+        if !commandPaletteIsShowing {
+            commandPaletteAnchorRef = focusedPane ?? surfaceTree.visibleLeaves.first
+        }
         commandPaletteIsShowing.toggle()
         if commandPaletteIsShowing {
             // Fix the incorrect focus when toggling from InlineTitleEditor

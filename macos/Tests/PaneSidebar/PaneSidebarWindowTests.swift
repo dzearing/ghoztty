@@ -134,7 +134,7 @@ struct PaneSidebarWindowTests {
         let dragSeconds = Date().timeIntervalSince(started)
         await settle(1.0)
         let during = read() - before
-        try? "resizes delivered during the drag: \(during)\n".write(
+        try? "resizes delivered during the drag: \(during) over \(Int(dragSeconds * 1000))ms\n".write(
             toFile: "/tmp/pane-sidebar-snapshots/winch-result.txt", atomically: true, encoding: .utf8)
         #expect(during >= 1, "the final size must still arrive")
         // Was 35 (one per 25ms) before the debounce; 4 after, measured. A long
@@ -193,7 +193,8 @@ struct PaneSidebarWindowTests {
     }
 
     /// Writes `window` as the window server composites it.
-    private func captureComposited(_ window: NSWindow, _ name: String) async throws {
+    @discardableResult
+    private func captureComposited(_ window: NSWindow, _ name: String) async throws -> CGImage {
         let dir = "/tmp/pane-sidebar-snapshots"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let content = try await SCShareableContent.currentProcess
@@ -206,6 +207,235 @@ struct PaneSidebarWindowTests {
             contentFilter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg)
         try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
             .write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
+        return image
+    }
+
+    /// A column of pixels, as sRGB 0–255 triples: `x` in window points, rows
+    /// down the lower part of `pane` (clear of its text, inside its rounded
+    /// corners).
+    private func column(_ image: CGImage, x: CGFloat, along pane: CGRect, in window: NSWindow) -> [[Double]] {
+        let scale = CGFloat(image.width) / window.frame.width
+        let rep = NSBitmapImageRep(cgImage: image)
+        return stride(from: pane.minY + 30, to: pane.minY + 30 + pane.height * 0.25, by: 4).compactMap { y in
+            guard let c = rep.colorAt(x: Int(x * scale), y: Int((window.frame.height - y) * scale))?
+                .usingColorSpace(.sRGB) else { return nil }
+            return [c.redComponent, c.greenComponent, c.blueComponent].map { Double($0) * 255 }
+        }
+    }
+
+    /// How much of the desk a pane HIDES: the mean per-channel distance
+    /// (0–255) between the pane's glass just inside its outer edge and the
+    /// bare desk in the gutter just outside it, row by row — the gradient
+    /// is smooth over those few points, so 0 would be clear glass. `desk` is
+    /// that gutter column taken while the pane is NOT focused, so the focus
+    /// glow, which spills into the gutter, is not mistaken for the desk.
+    private func occlusion(_ image: CGImage, pane: CGRect, edgeX: CGFloat, inward: CGFloat,
+                           desk: [[Double]], in window: NSWindow) -> Double {
+        let inside = column(image, x: edgeX + inward * 24, along: pane, in: window)
+        let pairs = zip(inside, desk)
+        let total = pairs.reduce(0.0) { sum, p in
+            sum + (abs(p.0[0] - p.1[0]) + abs(p.0[1] - p.1[1]) + abs(p.0[2] - p.1[2])) / 3
+        }
+        return total / Double(max(pairs.underestimatedCount, 1))
+    }
+
+    /// A stacked row's cards on show lie over nothing but the desk, so they
+    /// stay glass — and follow the focused/unfocused rule — rather than going
+    /// solid for being in a stack (`PaneLayout.covering`). Five terminals in a
+    /// window with room for four: four on show, one sliver past them.
+    @Test func stackedRowCardsOnShowStayGlass() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        try #require(ghostty.config.paneGlass, "needs the default elevated + glass pane style")
+        let app = try #require(ghostty.app)
+        let panes = (0..<5).map { _ in terminalPane(app) }
+        var tree = SplitTree<PaneView>(view: panes[0])
+        for i in 1..<5 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: .right) }
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.deskVariant = PaneDeskVariant(seed: 7)
+        controller.paneSidebarState.isHidden = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1400, height: 760))
+        await settle(2.5)
+
+        func frame(_ pane: PaneView) -> CGRect {
+            pane.surfaceView.map { $0.convert($0.bounds, to: nil) } ?? .null
+        }
+        func capture(focusing pane: PaneView, _ name: String) async throws -> (CGImage, [CGRect]) {
+            window.makeFirstResponder(pane.surfaceView)
+            _ = await poll(timeout: 2) { pane.isFocusedPane }
+            await settle(0.8)
+            return (try await captureComposited(window, name), panes.map(frame))
+        }
+        // Focus the second card, then the third: both are on show either way,
+        // and the cards stay where they are (focus moving within the run
+        // slides nothing), so each state is measured over the same desk.
+        let (focus1, frames1) = try await capture(focusing: panes[1], "glass-stack-focus-1")
+        let (focus2, frames2) = try await capture(focusing: panes[2], "glass-stack-focus-2")
+        #expect(frames1 == frames2, "the cards moved: \(frames1) → \(frames2)")
+        let card = frames2[2]
+        #expect(card.width < 400, "the row should be stacked, not side by side: \(frames2)")
+        let next = frames2[3]
+        #expect(next.minX > card.maxX, "the card after the third is on show beside it: \(frames2)")
+
+        // The third card, measured at its RIGHT edge against the gutter
+        // between it and the fourth (desk only while neither is focused).
+        let desk = column(focus1, x: card.maxX + 5, along: card, in: window)
+        let unfocused = occlusion(focus1, pane: card, edgeX: card.maxX, inward: -1, desk: desk, in: window)
+        let focused = occlusion(focus2, pane: card, edgeX: card.maxX, inward: -1, desk: desk, in: window)
+        let report = "stacked card: focused \(focused) unfocused \(unfocused)\nframes \(frames2)"
+        try? report.write(toFile: "/tmp/pane-sidebar-snapshots/glass-stack.txt", atomically: true, encoding: .utf8)
+        #expect(unfocused + 4 < focused, "\(report)")
+    }
+
+    /// Hero mode on glass shows its pane as the same glass card a focused
+    /// pane is — not on an opaque fill of the terminal background. Measured as
+    /// how much of the desk the pane hides at its left edge, against the desk in
+    /// the margin beside it: the hero hides no more than the same pane focused
+    /// in the grid did.
+    @Test func heroModeIsGlassLikeAFocusedPane() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        try #require(ghostty.config.paneGlass, "needs the default elevated + glass pane style")
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.deskVariant = PaneDeskVariant(seed: 7)
+        controller.paneSidebarState.isHidden = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1200, height: 760))
+        await settle(2.5)
+        let view = try #require(a.surfaceView)
+        window.makeFirstResponder(view)
+        await settle(0.8)
+
+        let grid = try await captureComposited(window, "glass-hero-grid")
+        let gridFrame = view.convert(view.bounds, to: nil)
+
+        controller.toggleHeroMode(self)
+        _ = await poll(timeout: 2) { controller.heroModeState.isActive }
+        await settle(1.5)
+        let hero = try await captureComposited(window, "glass-hero")
+        // The hero pane is wherever its container is; the pane's own view sits
+        // in a strip that scrolls inside it.
+        func find(_ v: NSView) -> HeroPaneContainer? {
+            (v as? HeroPaneContainer) ?? v.subviews.lazy.compactMap(find).first
+        }
+        let content = try #require(window.contentView)
+        let container = try #require(find(content))
+        let heroFrame = container.convert(container.bounds, to: nil)
+
+
+        // The desk beside the pane's left edge — from the hero capture, where
+        // no focus glow spills into the margin; both cards start at that edge.
+        #expect(heroFrame.minX == gridFrame.minX)
+        let heroDesk = column(hero, x: heroFrame.minX - 5, along: heroFrame, in: window)
+        let focused = occlusion(grid, pane: gridFrame, edgeX: gridFrame.minX, inward: 1, desk: heroDesk, in: window)
+        let heroOcclusion = occlusion(hero, pane: heroFrame, edgeX: heroFrame.minX, inward: 1, desk: heroDesk, in: window)
+        // Same desk, same edge: the glass just inside it should be the same
+        // pixels whether the pane is focused in the grid or the hero.
+        let gridGlass = column(grid, x: gridFrame.minX + 24, along: gridFrame, in: window)
+        let heroGlass = column(hero, x: heroFrame.minX + 24, along: heroFrame, in: window)
+        let pairs = zip(gridGlass, heroGlass)
+        let apart = pairs.reduce(0.0) { $0 + (abs($1.0[0] - $1.1[0]) + abs($1.0[1] - $1.1[1]) + abs($1.0[2] - $1.1[2])) / 3 }
+            / Double(max(pairs.underestimatedCount, 1))
+        controller.toggleHeroMode(self)
+        await settle(0.4)
+
+        let report = "focused in grid \(focused), hero \(heroOcclusion), apart \(apart), frames \(gridFrame) \(heroFrame)"
+        try? report.write(toFile: "/tmp/pane-sidebar-snapshots/glass-hero.txt", atomically: true, encoding: .utf8)
+        #expect(!gridGlass.isEmpty)
+        #expect(apart < 2, "the hero is not the glass a focused pane is: \(report)")
+    }
+
+    /// Glass panes: an UNFOCUSED pane is more see-through than the focused
+    /// one — the desk reads through it more — and the focused pane is the
+    /// solid one. Measured on the composited window, per pane against itself
+    /// in both states, for terminals and a viewer alike.
+    @Test func unfocusedGlassPanesAreMoreTransparent() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        try #require(ghostty.config.paneGlass, "needs the default elevated + glass pane style")
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        // A short markdown page: a template page, so it goes see-through on
+        // glass, with blank space below its one line to sample.
+        let doc = FileManager.default.temporaryDirectory.appendingPathComponent("glass-focus-\(UUID().uuidString).md")
+        try "# Glass\n".write(to: doc, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: doc) }
+        let viewer = PaneView(viewer: ViewerView(location: doc.path))
+        let tree = try SplitTree<PaneView>(view: a)
+            .inserting(view: b, at: a, direction: .right)
+            .inserting(view: viewer, at: b, direction: .down)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.deskVariant = PaneDeskVariant(seed: 7)
+        controller.paneSidebarState.isHidden = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1200, height: 760))
+        await settle(2.5)
+        let views: [NSView] = [try #require(a.surfaceView), try #require(b.surfaceView), try #require(viewer.viewerView)]
+        // Pane a is measured at its window-side LEFT edge, b and the viewer at
+        // their window-side RIGHT edge: the gutter there is only desk.
+        let frames = views.map { $0.convert($0.bounds, to: nil) }
+        let edges: [(x: CGFloat, inward: CGFloat)] = [(frames[0].minX, 1), (frames[1].maxX, -1), (frames[2].maxX, -1)]
+
+        func capture(focusing pane: PaneView, _ responder: NSView, _ name: String) async throws -> CGImage {
+            window.makeFirstResponder(responder)
+            _ = await poll(timeout: 2) { pane.isFocusedPane }
+            #expect(pane.isFocusedPane)
+            await settle(0.8)
+            return try await captureComposited(window, name)
+        }
+        let shots = [
+            try await capture(focusing: a, views[0], "glass-focus-a"),
+            try await capture(focusing: b, views[1], "glass-focus-b"),
+            try await capture(focusing: viewer, try #require(viewer.viewerView?.webView), "glass-focus-viewer"),
+        ]
+        // occlusion[pane][shot]; shot i has pane i focused. Each pane's
+        // unfocused shot is one with a TERMINAL focused elsewhere (a's is b's,
+        // everyone else's is a's).
+        let unfocused = [1, 0, 0]
+        let occ: [[Double]] = (0..<3).map { p in
+            let unfocusedShot = shots[unfocused[p]]
+            let desk = column(unfocusedShot, x: edges[p].x - edges[p].inward * 5, along: frames[p], in: window)
+            return shots.map { occlusion($0, pane: frames[p], edgeX: edges[p].x, inward: edges[p].inward, desk: desk, in: window) }
+        }
+        let names = ["a", "b", "viewer"]
+        let report = (0..<3).map { p in
+            "\(names[p]): focused \(occ[p][p]) unfocused \(occ[p][unfocused[p]])"
+        }.joined(separator: "\n")
+        try? report.write(toFile: "/tmp/pane-sidebar-snapshots/glass-focus.txt", atomically: true, encoding: .utf8)
+
+        // A terminal fades AS A WHOLE, text included: the brightest pixel of
+        // its first row (the shell's "Last login" line) is dimmer unfocused.
+        func brightestText(_ image: CGImage, _ pane: CGRect) -> Double {
+            let scale = CGFloat(image.width) / window.frame.width
+            let rep = NSBitmapImageRep(cgImage: image)
+            var best = 0.0
+            for y in stride(from: pane.maxY - 22, to: pane.maxY - 4, by: 1) {
+                for x in stride(from: pane.minX + 6, to: pane.minX + 300, by: 1) {
+                    guard let c = rep.colorAt(x: Int(x * scale), y: Int((window.frame.height - y) * scale))?
+                        .usingColorSpace(.sRGB) else { continue }
+                    best = max(best, Double(c.redComponent + c.greenComponent + c.blueComponent) / 3 * 255)
+                }
+            }
+            return best
+        }
+        let textFocused = brightestText(shots[0], frames[0]), textUnfocused = brightestText(shots[1], frames[0])
+        try? (report + "\ntext a: focused \(textFocused) unfocused \(textUnfocused)\n")
+            .write(toFile: "/tmp/pane-sidebar-snapshots/glass-focus.txt", atomically: true, encoding: .utf8)
+        #expect(textFocused > 150, "no text found to measure: \(textFocused)")
+        #expect(textUnfocused + 20 < textFocused, "an unfocused terminal's text fades with it: \(textFocused) → \(textUnfocused)")
+
+        // Noticeably: a few levels of difference would be invisible.
+        let margin = 4.0
+        for p in 0..<3 {
+            #expect(occ[p][unfocused[p]] + margin < occ[p][p], "\(names[p]) hides as much of the desk unfocused: \(report)")
+        }
     }
 
     /// Glass panes (the default): nothing paints over the window's gradient —

@@ -182,7 +182,82 @@ struct PaneSidebarTextTests {
         #expect(Text.bannerLine("   ") == nil)
     }
 
+    @Test func aHeadingLineIsItsText() {
+        #expect(Text.bannerLine("## Fix strip labels\n|  |  |\n|---|---|") == "Fix strip labels")
+    }
+
+    // MARK: Banner title
+
+    /// What the banner hook writes on its CLI path, verbatim.
+    static let hookBanner = "## Strip label from banner title\n|  |  |\n|---|---|\n"
+        + "| **Goal** | Minimized pane strips show the banner title |\n| **Status** | Reading code · Working |"
+
+    @Test func theHooksHeadingIsTheTitle() {
+        #expect(Text.bannerTitle(Self.hookBanner) == "Strip label from banner title")
+        #expect(Text.bannerTitle("## Fix strip labels\n|  |  |\n|---|---|\n| **Status** | Working |") == "Fix strip labels")
+    }
+
+    @Test func theHooksOSCLineGivesItsBoldTitle() {
+        #expect(Text.bannerTitle("**Fix strip labels** · **Goal:** Label strips · **Status:** Working") == "Fix strip labels")
+        #expect(Text.bannerTitle("**Fix strip labels**") == "Fix strip labels")
+    }
+
+    @Test func aBannerWithoutATitleHasNone() {
+        // The hook with no title set: just its table, or its OSC labels.
+        #expect(Text.bannerTitle("|  |  |\n|---|---|\n| **Prompt** | do the thing |\n| **Status** | Idle |") == nil)
+        #expect(Text.bannerTitle("**Prompt:** do the thing · **Status:** Idle") == nil)
+        // Prose, even prose that opens in bold, names no title.
+        #expect(Text.bannerTitle("Deploying to staging") == nil)
+        #expect(Text.bannerTitle("**PR #123** — _3 files_, +120/−45") == nil)
+        #expect(Text.bannerTitle("**PR** [#12](https://example.com/12)") == nil)
+        // A bold line heads a multi-line banner only as a label.
+        #expect(Text.bannerTitle("**Last result**\n- [x] Fixed it") == nil)
+        // A heading counts only on the first line.
+        #expect(Text.bannerTitle("Status: ok\n## Later") == nil)
+        #expect(Text.bannerTitle(nil) == nil)
+        #expect(Text.bannerTitle("  \n ") == nil)
+    }
+
+    @Test func aHeadingNeedsItsSpaceAndText() {
+        #expect(Text.bannerTitle("##Title") == nil)
+        #expect(Text.bannerTitle("## ") == nil)
+        #expect(Text.bannerTitle("####### Seven") == nil)
+        #expect(Text.bannerTitle("# One") == "One")
+        #expect(Text.bannerTitle("###### Six") == "Six")
+    }
+
+    @Test func theTitleIsPlainText() {
+        #expect(Text.bannerTitle("## **Fix** the `strip` [label](https://example.com) _now_") == "Fix the strip label now")
+        #expect(Text.bannerTitle("**Ship `v2`** · **Status:** ok") == "Ship v2")
+        #expect(Text.bannerTitle("## Escaped \\* star") == "Escaped * star")
+        #expect(Text.bannerTitle("## Keep some_tool") == "Keep some_tool")
+    }
+
+    @Test func aLiteralBackslashNIsALineBreakForTheTitle() {
+        #expect(Text.bannerTitle("## Title\\n| a | b |") == "Title")
+    }
+
+    // MARK: Label
+
+    @Test func theBannerTitleNamesThePane() {
+        #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal", banner: Self.hookBanner)
+                == "Strip label from banner title")
+    }
+
+    @Test func withoutABannerTitleThePaneTitleNamesIt() {
+        #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal", banner: nil) == "✳ Claude Code")
+        #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal",
+                           banner: "|  |  |\n|---|---|\n| **Status** | Idle |") == "✳ Claude Code")
+        #expect(Text.label(title: "👻", pwd: "/tmp/proj", kind: "Terminal", banner: "Just prose") == "proj")
+    }
+
     // MARK: Subtitle
+
+    @Test func aTitledBannerLeavesTheSubtitleToTheDirectory() {
+        // The title already names the row; repeating it as the subtitle says
+        // nothing.
+        #expect(Text.subtitle(banner: Self.hookBanner, pwd: "/tmp", viewerLocation: nil) == "/tmp")
+    }
 
     @Test func theBannerBeatsTheWorkingDirectory() {
         #expect(Text.subtitle(banner: "**Relay** cutover", pwd: "/tmp", viewerLocation: nil) == "Relay cutover")

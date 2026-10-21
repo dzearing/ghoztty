@@ -33,6 +33,8 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
     @Published private(set) var bell: Bool = false
     @Published private(set) var activityState: Ghostty.ActivityState = .idle
     @Published private(set) var paneBanner: String?
+    /// The terminal's working directory (nil for a viewer).
+    @Published private(set) var pwd: String?
 
     var surfaceView: Ghostty.SurfaceView? {
         if case .terminal(let view) = content { return view }
@@ -72,7 +74,15 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             confirmCloseEnabled: confirmCloseEnabled)
     }
 
-    var pwd: String? { surfaceView?.pwd }
+    /// What the pane is called in one line — a sidebar row, a stacked
+    /// strip: its banner's title, else its own (`PaneSidebarText.label`).
+    var displayLabel: String {
+        PaneSidebarText.label(
+            title: title,
+            pwd: pwd,
+            kind: surfaceView != nil ? "Terminal" : "Viewer",
+            banner: paneBanner)
+    }
 
     /// Forward geometry to the mounted content view (see class doc).
     override var bounds: NSRect {
@@ -98,6 +108,7 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             view.$bell.assign(to: &$bell)
             view.$activityState.assign(to: &$activityState)
             view.$paneBanner.assign(to: &$paneBanner)
+            view.$pwd.assign(to: &$pwd)
         case .viewer(let view):
             view.$title.assign(to: &$title)
         }
@@ -119,6 +130,15 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
     /// (The NSView extension `isFirstResponder` on PaneView itself is always
     /// false since PaneView is never in a window.)
     var contentIsFirstResponder: Bool { contentView.isFirstResponder }
+
+    /// The window's first responder is this pane's content or inside it (a
+    /// viewer's web view, its address field): the pane really has the caret,
+    /// rather than being remembered as the window's focused terminal while
+    /// the caret is somewhere else.
+    var holdsKeyboardFocus: Bool {
+        guard let responder = contentView.window?.firstResponder as? NSView else { return false }
+        return responder === contentView || responder.isDescendant(of: contentView)
+    }
 
     /// Forward focus change notifications to terminal content. No-op for
     /// viewers (WKWebView manages its own focus ring).

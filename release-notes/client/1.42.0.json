@@ -1,0 +1,20 @@
+{
+  "version": "1.42.0",
+  "sections": [
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Drag to collapse keeps going", "text": "Dragging a divider past a pane's minimum now collapses the next pane, and the one after it, as the drag continues. Dragging back brings them out again in reverse, in the same drag." },
+        { "title": "New drop targets for strips", "text": "When you drag a minimized strip, you can drop it between any cards or strips in its row, at a window's edge, or at a screen's edge. A screen edge opens the pane in a new window tiled to that half of the screen. Dropping a strip on a pane no longer splits or swaps. Each target shows a preview." },
+        { "title": "Resizers stay in the gutters", "text": "Dividers, stack grips and the sidebar edge only take the mouse in the gaps between panes. They no longer cover a pane's drag handle or its edge." },
+        { "title": "Strips stay put", "text": "Focusing a pane that's already on show never shuffles the row. Undo, stash, closing a viewer and switching windows no longer bring strips back out or put the caret on one. A pane dropped on a strip stays minimized there." }
+      ]
+    },
+    {
+      "title": "Hero mode",
+      "items": [
+        { "title": "Viewers no longer go blank", "text": "HTML pages, websites, markdown, code, images and diffs now show reliably in hero mode, and again when you leave it. Before, a viewer could show a blank page in hero mode about half the time." }
+      ]
+    }
+  ]
+}

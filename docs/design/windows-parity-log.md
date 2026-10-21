@@ -37114,3 +37114,9 @@ moved to T1814.
 - **Landed.** `pane_sidebar.zig` has `bannerTitle`, `paneLabel` and `bannerSubtitle`, and `bannerLine` now strips a heading to its text. `PaneSidebar.zig` uses them for rows and for search. Live updates needed nothing new: the roster signature already hashes the banner. A new `pane sidebar text` debug line is the acceptance oracle.
 - **Validated.** 10 unit tests port every Mac case, and a negative control turned them red. `pane-sidebar.ps1` section 10 is ALL PASS (73). Floor lanes all PASS.
 - **Mac.** Nothing owed: this ports Mac's feature. The strip half goes with T2082 and is recorded in its progress log.
+## 2026-10-20 — T2088 (lane b): main's last 20 commits are in the Windows branch
+
+- **What changed.** The Windows branch now carries main through 6e1ab5b18: stacked panes, glass panes, hero-mode viewers, the viewer's Cmd+L address chord and no-beep keys, the command palette over viewers, and the banner-title pane names. The shared core picks up `App.performActionForNonTerminal` and two C API exports (`ghostty_binding_action_requires`, `ghostty_app_binding_action`). No win32 code changed.
+- **Conflict.** CLAUDE.md alone. Ours kept the split docs. Main's eight new hunks went into `docs/claude/cli.md` (banner titles, sidebar rows, the flat gutter, the glass rules, a new Stacked panes section, strip drop targets) and `docs/claude/viewers.md`, each with a Windows status line naming T2081-T2087.
+- **Validated.** win32 Debug build green. Floor lanes all PASS. ipc-p1/p2/p3 ALL PASS. `parity-sweep.ps1 -Range 458b8b8e6..origin/main` is clean, with 8 of 8 mapped. The due harnesses are named in the task file.
+- **Mac.** Nothing owed: this is the Mac work arriving.

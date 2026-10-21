@@ -2179,6 +2179,37 @@ pub const CAPI = struct {
         );
     }
 
+    /// What `str`, an action string, needs in order to be performed — a
+    /// `ghostty_binding_requires_e` — or -1 if it does not parse. The same
+    /// classification `ghostty_config_key_binding` reports for a key, for an
+    /// action named by string (a command palette entry).
+    export fn ghostty_binding_action_requires(
+        str: [*]const u8,
+        len: usize,
+    ) c_int {
+        const action = input.Binding.Action.parse(str[0..len]) catch return -1;
+        return @intCast(@intFromEnum(action.requires()));
+    }
+
+    /// Perform `str`, an action string, WITHOUT a focused terminal (a command
+    /// palette entry run from a viewer pane): app actions directly, the rest
+    /// through `surface` (nullable), a terminal in the same window. The caller
+    /// must only send actions whose `requires` allows it (see
+    /// `ghostty_binding_action_requires`). Returns whether it was performed.
+    export fn ghostty_app_binding_action(
+        app: *App,
+        surface: ?*Surface,
+        str: [*]const u8,
+        len: usize,
+    ) bool {
+        const action = input.Binding.Action.parse(str[0..len]) catch return false;
+        return app.core_app.performActionForNonTerminal(
+            app,
+            if (surface) |s| &s.core_surface else null,
+            action,
+        );
+    }
+
     /// Returns true if the given key event would trigger a binding
     /// if it were sent to the surface right now. The "right now"
     /// is important because things like trigger sequences are only

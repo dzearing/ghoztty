@@ -325,7 +325,10 @@ extension Ghostty {
                 // If we're part of a split view and don't have focus, we put a semi-transparent
                 // rectangle above our view to make it look unfocused. We include the last
                 // focused surface so this still works while SwiftUI focus is temporarily nil.
-                if isSplit && !isFocusedSurface {
+                // A glass pane dims the other way — its sheet thins out so more
+                // of the desk reads through (`PaneCard`) — and a background-colored
+                // wash here would make the unfocused pane the MORE solid one.
+                if isSplit && !isFocusedSurface && !ghostty.config.paneGlass {
                     let overlayOpacity = ghostty.config.unfocusedSplitOpacity
                     if overlayOpacity > 0 {
                         Rectangle()

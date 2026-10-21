@@ -117,3 +117,77 @@ struct TopLevelDropOverlay: View {
         .allowsHitTesting(false)
     }
 }
+
+/// Feedback for a strip dropped in a slot of its row: an insertion bar down
+/// the gutter it would land in. Belongs to no leaf (it is between two).
+struct BladeDropOverlay: View {
+    let windowRef: PaneDropWindowRef
+
+    @ObservedObject private var dragSession = PaneDragSession.shared
+
+    var body: some View {
+        GeometryReader { geometry in
+            if case .reorder(let window, _, _, let caret) = dragSession.target, window == windowRef,
+               let rect = local(caret, in: geometry) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.accentColor)
+                    .shadow(color: Color.accentColor.opacity(0.6), radius: 4)
+                    .frame(width: rect.width, height: rect.height)
+                    .offset(x: rect.minX, y: rect.minY)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// `screen` (AppKit screen coordinates, y up) in this view's space.
+    private func local(_ screen: CGRect, in geometry: GeometryProxy) -> CGRect? {
+        guard let window = PaneMoveCoordinator.controller(for: windowRef)?.window,
+              let content = window.contentView else { return nil }
+        let inWindow = window.convertFromScreen(screen)
+        let flipped = CGRect(x: inWindow.minX, y: content.bounds.height - inWindow.maxY,
+                             width: inWindow.width, height: inWindow.height)
+        let origin = geometry.frame(in: .global).origin
+        return flipped.offsetBy(dx: -origin.x, dy: -origin.y)
+    }
+}
+
+/// Feedback for a strip dropped at a screen's edge: the half of the screen
+/// its new window would fill, as a translucent panel above everything.
+@MainActor
+final class TileDropPreview {
+    static let shared = TileDropPreview()
+
+    private var panel: NSPanel?
+
+    func show(_ frame: CGRect) {
+        let panel = self.panel ?? {
+            let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
+                                backing: .buffered, defer: false)
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = false
+            panel.ignoresMouseEvents = true
+            panel.level = .floating
+            panel.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+            let view = NSView()
+            view.wantsLayer = true
+            view.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.18).cgColor
+            view.layer?.borderColor = NSColor.controlAccentColor.cgColor
+            view.layer?.borderWidth = 3
+            view.layer?.cornerRadius = 12
+            panel.contentView = view
+            self.panel = panel
+            return panel
+        }()
+        let inset = frame.insetBy(dx: 6, dy: 6)
+        if panel.frame != inset { panel.setFrame(inset, display: true) }
+        panel.orderFrontRegardless()
+    }
+
+    func hide() {
+        panel?.orderOut(nil)
+    }
+
+    /// Showing, at this frame (for tests).
+    var shownFrame: CGRect? { panel?.isVisible == true ? panel?.frame : nil }
+}

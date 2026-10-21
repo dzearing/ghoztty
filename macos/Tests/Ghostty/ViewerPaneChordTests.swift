@@ -3,9 +3,9 @@ import Testing
 import WebKit
 @testable import Ghostty
 
-/// Cmd-R (reload) and Cmd-D (focus the address field) belong to a focused
-/// viewer pane. Both override a global Ghoztty binding — `prompt_surface_banner`
-/// and `new_split` respectively — so the classification has to be exact and the
+/// Cmd-R (reload) and Cmd-L (focus the address field) belong to a focused
+/// viewer pane. Cmd-R overrides a global Ghoztty binding
+/// (`prompt_surface_banner`), so the classification has to be exact and the
 /// gating has to be precise: a terminal pane (or an unfocused viewer split) in
 /// the same window must keep the global behavior, because
 /// `performKeyEquivalent` is offered to every view, not just the focused one.
@@ -23,7 +23,10 @@ struct ViewerPaneChordClassificationTests {
 
     @Test func recognizesReloadAndAddressChords() {
         #expect(ViewerView.paneChord(for: keyEvent("r", [.command])) == .reload)
-        #expect(ViewerView.paneChord(for: keyEvent("d", [.command])) == .focusAddress)
+        #expect(ViewerView.paneChord(for: keyEvent("l", [.command])) == .focusAddress)
+        // Cmd-D is split right, everywhere: a window holding nothing but a
+        // viewer has no other keyboard way to split.
+        #expect(ViewerView.paneChord(for: keyEvent("d", [.command])) == nil)
         // Caps lock / a capital character still reads as the same chord.
         #expect(ViewerView.paneChord(for: keyEvent("R", [.command])) == .reload)
     }
@@ -48,7 +51,7 @@ struct ViewerPaneChordClassificationTests {
         #expect(ViewerView.paneChord(for: keyEvent("r", [])) == nil)
         // Control/option combos belong to something else.
         #expect(ViewerView.paneChord(for: keyEvent("r", [.command, .control])) == nil)
-        #expect(ViewerView.paneChord(for: keyEvent("d", [.command, .option])) == nil)
+        #expect(ViewerView.paneChord(for: keyEvent("l", [.command, .option])) == nil)
     }
 
     @Test func unrelatedKeysAreNotPaneChords() {
@@ -58,7 +61,7 @@ struct ViewerPaneChordClassificationTests {
 }
 
 /// Live routing: the chords are consumed only while the viewer pane holds
-/// keyboard focus, and Cmd-D really does land the caret in the address field
+/// keyboard focus, and Cmd-L really does land the caret in the address field
 /// with the whole address selected.
 @MainActor
 @Suite(.serialized)
@@ -99,9 +102,9 @@ struct ViewerPaneChordRoutingTests {
         return file.path
     }
 
-    /// Cmd-D focuses the address field and selects the whole address, in a FILE
+    /// Cmd-L focuses the address field and selects the whole address, in a FILE
     /// viewer (the mode where the nav bar is easiest to forget about).
-    @Test func cmdDFocusesAndSelectsTheAddressInAFileViewer() async throws {
+    @Test func cmdLFocusesAndSelectsTheAddressInAFileViewer() async throws {
         let (window, viewer, _) = makePane(location: try markdownFile())
         defer {
             window.contentView?.subviews.forEach { $0.removeFromSuperview() }
@@ -109,15 +112,15 @@ struct ViewerPaneChordRoutingTests {
         }
 
         // The address the bar will show is only known once the file has
-        // loaded; pressing Cmd-D before that would focus an empty field.
+        // loaded; pressing Cmd-L before that would focus an empty field.
         await poll { !viewer.currentURL.isEmpty }
         #expect(!viewer.currentURL.isEmpty, "file viewer never resolved an address")
 
         // Focus starts on the page, as it does after clicking into the pane.
         window.makeFirstResponder(viewer.webView)
 
-        #expect(window.performKeyEquivalent(with: keyEvent("d", [.command])),
-                "Cmd-D was not handled by the focused viewer pane")
+        #expect(window.performKeyEquivalent(with: keyEvent("l", [.command])),
+                "Cmd-L was not handled by the focused viewer pane")
 
         // Poll for the caret, and capture the editor the moment it appears —
         // an offscreen window is never key, so the field holds focus only
@@ -139,7 +142,7 @@ struct ViewerPaneChordRoutingTests {
         #expect(editorText.string == viewer.currentURL,
                 "address field did not show the pane's location")
         #expect(editorText.selectedRange.length == (editorText.string as NSString).length,
-                "Cmd-D did not select the whole address")
+                "Cmd-L did not select the whole address")
     }
 
     /// Cmd-R is consumed by a focused viewer (it reloads in place) and handed
@@ -160,8 +163,8 @@ struct ViewerPaneChordRoutingTests {
         window.makeFirstResponder(sibling)
         #expect(!window.performKeyEquivalent(with: keyEvent("r", [.command])),
                 "Cmd-R was swallowed while the viewer was NOT focused")
-        #expect(!window.performKeyEquivalent(with: keyEvent("d", [.command])),
-                "Cmd-D was swallowed while the viewer was NOT focused")
+        #expect(!window.performKeyEquivalent(with: keyEvent("l", [.command])),
+                "Cmd-L was swallowed while the viewer was NOT focused")
     }
 
     /// Escape must throw away a half-typed address (browser omnibox rule): the
@@ -180,7 +183,7 @@ struct ViewerPaneChordRoutingTests {
         #expect(!original.isEmpty, "file viewer never resolved an address")
 
         window.makeFirstResponder(viewer.webView)
-        #expect(window.performKeyEquivalent(with: keyEvent("d", [.command])))
+        #expect(window.performKeyEquivalent(with: keyEvent("l", [.command])))
 
         var editor: NSText?
         await poll {
@@ -225,7 +228,7 @@ struct ViewerPaneChordRoutingTests {
     }
 
     /// A viewer that is not in a window has no chrome bar to mount and so no
-    /// address field: Cmd-D must report that it could not service the chord
+    /// address field: Cmd-L must report that it could not service the chord
     /// rather than swallowing the key.
     @Test func focusAddressBarReportsFailureWithNoAddressField() {
         let viewer = ViewerView(location: ViewerView.blankPage)

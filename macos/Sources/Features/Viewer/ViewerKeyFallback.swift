@@ -96,18 +96,24 @@ enum ViewerKeyFallback {
         // pane: they act on every surface, and the core performs them exactly
         // as it would from a focused terminal.
         if !binding.flags.isDisjoint(with: [.global, .all]) { return .core }
-        if binding.requires == .terminal { return .pass }
 
         // A performable binding must be able to decline, and the menu always
         // performs — the same reason `SurfaceView.performKeyEquivalent` keeps
         // performable bindings off the menu. (It also keeps `unconsumed:` ones
         // off it, so the key still reaches the terminal program; a viewer has
         // no program to pass the key to, so that half does not apply.)
-        if hasMenuItem, !binding.flags.contains(.performable) {
-            return .menuItem
-        }
+        return route(
+            requires: binding.requires,
+            hasMenuItem: hasMenuItem && !binding.flags.contains(.performable),
+            hasHostSurface: hasHostSurface)
+    }
 
-        switch binding.requires {
+    /// Where an action goes from a focused viewer pane, by what it needs —
+    /// for a key (`route(for:…)`) and for a command palette entry alike.
+    static func route(requires: Requires, hasMenuItem: Bool, hasHostSurface: Bool) -> Route {
+        if requires == .terminal { return .pass }
+        if hasMenuItem { return .menuItem }
+        switch requires {
         case .app: return .core
         case .window: return hasHostSurface ? .core : .pass
         // Performing a pane action through a terminal would act on that
@@ -187,6 +193,54 @@ enum ViewerKeyFallback {
         // unbound; any other consumed binding swallows it, as a terminal does.
         if binding.flags.contains(.performable) { return false }
         return !binding.flags.isDisjoint(with: [.consumed, .global, .all])
+    }
+
+    // MARK: - Command palette
+
+    /// What `action`, a command palette entry, needs — nil if it does not parse.
+    static func requires(action: String) -> Requires? {
+        let r = action.withCString { ghostty_binding_action_requires($0, UInt(strlen($0))) }
+        guard r >= 0 else { return nil }
+        return Requires(ghostty_binding_requires_e(rawValue: UInt32(r)))
+    }
+
+    /// Where a palette entry goes when the palette was opened over a viewer
+    /// pane in `controller`'s window — the same policy a key from that pane
+    /// follows. `.pass`: it cannot be performed from there, so it is not
+    /// offered.
+    @MainActor
+    static func paletteRoute(action: String, in controller: BaseTerminalController?) -> Route {
+        guard let requires = requires(action: action),
+              let delegate = NSApp.delegate as? AppDelegate else { return .pass }
+        let canonical = Ghostty.AllocatedString(
+            action.withCString { ghostty_binding_action_canonical($0, UInt(strlen($0))) }).string
+        return route(
+            requires: requires,
+            hasMenuItem: delegate.hasGhosttyBindingMenuItem(forAction: canonical),
+            hasHostSurface: controller.flatMap(hostSurface(in:)) != nil)
+    }
+
+    /// Run a palette entry on behalf of a viewer pane in `controller`'s
+    /// window: its menu item, else through libghostty — app actions directly,
+    /// window actions through a terminal in the window. Returns whether it ran.
+    @MainActor
+    @discardableResult
+    static func performPalette(action: String, in controller: BaseTerminalController?) -> Bool {
+        guard let delegate = NSApp.delegate as? AppDelegate, let app = delegate.ghostty.app else { return false }
+        switch paletteRoute(action: action, in: controller) {
+        case .pass:
+            return false
+        case .menuItem:
+            let canonical = Ghostty.AllocatedString(
+                action.withCString { ghostty_binding_action_canonical($0, UInt(strlen($0))) }).string
+            if delegate.performGhosttyBindingMenuItem(forAction: canonical) { return true }
+            // A disabled item: the core, as a key would fall back to.
+            guard let requires = requires(action: action), requires != .pane else { return false }
+            fallthrough
+        case .core:
+            let host = controller.flatMap(hostSurface(in:))
+            return action.withCString { ghostty_app_binding_action(app, host, $0, UInt(strlen($0))) }
+        }
     }
 
     /// The terminal window-scoped actions are performed through: the one that

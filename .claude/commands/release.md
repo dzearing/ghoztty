@@ -23,7 +23,7 @@ Recommend a version tag (e.g. `v1.4.1`) with clear reasoning:
 
 State plainly which artifacts will publish, e.g. "app changed → full release" or "nothing changed → nothing to release". If nothing changed, say so and stop. Step 4 (the relay signpost) is cheap and self-skipping, so it runs either way.
 
-Present the recommendation and ask the user to confirm or override. Do NOT proceed until confirmed.
+State the chosen version and the reasoning in one or two lines, then proceed. Do NOT ask the user to confirm — saying "release" is the go-ahead. Stop only if there is nothing to release, or the semver call is genuinely ambiguous (e.g. a possibly-breaking change).
 
 ### Step 2: Generate Release Notes
 
@@ -53,7 +53,7 @@ From the categorized commits, write user-facing release notes. Rules:
   - Synced with Ghostty vX.Y.Z (if applicable)
   ```
 
-Present the notes and ask the user to approve or edit. Do NOT proceed until approved.
+Show the notes in your output for the record, then proceed. Do NOT ask the user to approve or edit them.
 
 **If the agent changed, author the bundled agent notes.** When this release
 changes the background agent (session persistence, re-attach, agent lifecycle,
@@ -155,7 +155,7 @@ Once the DMG is built, update the GitHub release with the friendly notes:
 gh release edit vX.Y.Z --repo dzearing/ghoztty --title "Ghoztty vX.Y.Z" --notes "$(cat <<'NOTES'
 ## What's new in Ghoztty vX.Y.Z
 
-{the approved release notes from step 2}
+{the release notes from step 2}
 
 ---
 

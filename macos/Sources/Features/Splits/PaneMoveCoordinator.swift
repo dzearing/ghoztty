@@ -77,6 +77,13 @@ enum PaneMoveCoordinator {
             guard let destination = controller(for: window), destination !== source else { return }
             insertAtTopLevel(pane: pane, node: sourceNode, from: source,
                              in: destination, side: .right)
+
+        case .reorder(let window, let beside, let side, _):
+            guard controller(for: window) === source else { return }
+            reorder(pane: pane, node: sourceNode, in: source, beside: beside, side: side)
+
+        case .tile(let frame):
+            moveToNewWindow(pane: pane, node: sourceNode, from: source, at: nil, frame: frame)
         }
     }
 
@@ -111,8 +118,10 @@ enum PaneMoveCoordinator {
         targetIsSourceWindow: Bool
     ) -> Bool {
         switch target {
-        case .newWindow:
+        case .newWindow, .tile:
             return sourcePaneCount > 1
+        case .reorder:
+            return targetIsSourceWindow
         case .newTab:
             // A new tab beside SOME OTHER window is a real relocation; a new
             // tab beside your own lone-pane window is the churn case.
@@ -186,7 +195,16 @@ enum PaneMoveCoordinator {
                 logger.warning("failed to swap panes")
                 return
             }
-            commit(in: source, tree: swapped, focus: pane)
+            // A collapsed row keeps its shape with the other pane in it: a
+            // tucked card dropped on one on show swaps in for it.
+            let before = source.paneStackState.saved
+            source.paneStackState.swap(pane.id, destPane.id)
+            // Dropped in a strip's place, the pane is minimized there, and
+            // the caret goes to the pane that came out of it: focusing the
+            // dragged pane would bring it straight back out.
+            let minimized = source.paneStackState.isMinimized(
+                pane.id, in: PaneLayout.rows(swapped.visibleTree.root))
+            commit(in: source, tree: swapped, focus: minimized ? destPane : pane, stackBefore: before)
             return
         }
 
@@ -207,10 +225,57 @@ enum PaneMoveCoordinator {
             newSourceTree = newSourceTree.withStash(
                 source.surfaceTree.stashed.map { $0 == pane.id ? destPane.id : $0 })
         }
+        let sourceBefore = source.paneStackState.saved
+        let destinationBefore = destination.paneStackState.saved
+        source.paneStackState.swap(pane.id, destPane.id)
+        destination.paneStackState.swap(pane.id, destPane.id)
+        // Dropped in a strip's place, the pane is minimized there: the
+        // destination's caret stays where it is.
+        let minimized = destination.paneStackState.isMinimized(
+            pane.id, in: PaneLayout.rows(newDestTree.visibleTree.root))
         crossWindowCommit(
             pane: pane, alsoRelocated: [destPane],
             source: source, sourceTree: newSourceTree,
-            destination: destination, destinationTree: newDestTree)
+            destination: destination, destinationTree: newDestTree,
+            stacksBefore: (sourceBefore, destinationBefore),
+            focus: !minimized)
+    }
+
+    /// A strip dropped in a slot of its own row: the pane moves beside the
+    /// row's item made of `beside`, as an item of the row (not into that item,
+    /// which may be a column). Its row keeps its collapse — the pane is one
+    /// of its items still (`PaneStackState.rowsDidChange`) — so a strip moved
+    /// among strips stays one, and one dropped between cards on show comes
+    /// on show there. Focus moves to it only if it is on show.
+    private static func reorder(
+        pane: PaneView,
+        node: SplitTree<PaneView>.Node,
+        in controller: BaseTerminalController,
+        beside: Set<UUID>,
+        side: SplitTree<PaneView>.NewDirection
+    ) {
+        let without = controller.surfaceTree.removing(node)
+        guard let root = without.root, let item = root.node(exactly: beside) else {
+            logger.warning("the slot's item is not in the tree; ignoring blade drop")
+            return
+        }
+        let direction: SplitTree<PaneView>.Direction = side == .left || side == .right ? .horizontal : .vertical
+        let leaf = SplitTree<PaneView>.Node.leaf(view: pane)
+        let split = SplitTree<PaneView>.Node.split(.init(
+            direction: direction, ratio: 0.5,
+            left: side == .left || side == .up ? leaf : item,
+            right: side == .left || side == .up ? item : leaf))
+        guard let moved = try? without.replacing(node: item, with: split) else {
+            logger.warning("failed to move pane within its row")
+            return
+        }
+        let minimized = controller.paneStackState.isMinimized(
+            pane.id, in: PaneLayout.rows(moved.visibleTree.root))
+        if minimized {
+            controller.replaceSurfaceTree(moved, undoAction: undoActionName)
+        } else {
+            commit(in: controller, tree: moved, focus: pane)
+        }
     }
 
     private static func insertAtTopLevel(
@@ -309,7 +374,8 @@ enum PaneMoveCoordinator {
         pane: PaneView,
         node: SplitTree<PaneView>.Node,
         from source: BaseTerminalController,
-        at point: CGPoint?
+        at point: CGPoint?,
+        frame: CGRect? = nil
     ) {
         let ghostty = source.ghostty
 
@@ -323,6 +389,7 @@ enum PaneMoveCoordinator {
             ghostty,
             tree: SplitTree(view: pane),
             position: point.map { NSPoint(x: $0.x, y: $0.y) },
+            frame: frame,
             confirmUndo: false)
 
         finishRelocation(of: [pane], into: controller, from: source)
@@ -333,13 +400,15 @@ enum PaneMoveCoordinator {
     private static func commit(
         in controller: BaseTerminalController,
         tree: SplitTree<PaneView>,
-        focus: PaneView
+        focus: PaneView,
+        stackBefore: PaneStackState.Saved? = nil
     ) {
         controller.replaceSurfaceTree(
             tree,
             moveFocusTo: focus.surfaceView,
             moveFocusFrom: controller.focusedSurface,
-            undoAction: undoActionName)
+            undoAction: undoActionName,
+            stackBefore: stackBefore)
         if focus.surfaceView == nil {
             DispatchQueue.main.async { Ghostty.moveFocus(to: focus) }
         }
@@ -356,14 +425,22 @@ enum PaneMoveCoordinator {
         source: BaseTerminalController,
         sourceTree: SplitTree<PaneView>,
         destination: BaseTerminalController,
-        destinationTree: SplitTree<PaneView>
+        destinationTree: SplitTree<PaneView>,
+        stacksBefore: (source: PaneStackState.Saved, destination: PaneStackState.Saved)? = nil,
+        focus: Bool = true
     ) {
         source.undoManager?.beginUndoGrouping()
         source.undoManager?.setActionName(undoActionName)
         defer { source.undoManager?.endUndoGrouping() }
 
-        source.replaceSurfaceTree(sourceTree, moveFocusFrom: source.focusedSurface)
-        commit(in: destination, tree: destinationTree, focus: pane)
+        source.replaceSurfaceTree(
+            sourceTree, moveFocusFrom: source.focusedSurface, stackBefore: stacksBefore?.source)
+        if focus {
+            commit(in: destination, tree: destinationTree, focus: pane, stackBefore: stacksBefore?.destination)
+        } else {
+            destination.replaceSurfaceTree(
+                destinationTree, undoAction: undoActionName, stackBefore: stacksBefore?.destination)
+        }
 
         finishRelocation(of: [pane] + alsoRelocated, into: destination, from: source)
     }
@@ -411,5 +488,15 @@ enum PaneMoveCoordinator {
             if PaneDropWindowRef(controller) == ref { return controller }
         }
         return nil
+    }
+}
+
+extension SplitTree.Node {
+    /// The node whose leaves are exactly the views with `ids`: an item of a
+    /// row, named by its panes.
+    func node(exactly ids: Set<ViewType.ID>) -> Self? {
+        guard Set(leaves().map(\.id)) != ids else { return self }
+        guard case .split(let split) = self else { return nil }
+        return split.left.node(exactly: ids) ?? split.right.node(exactly: ids)
     }
 }

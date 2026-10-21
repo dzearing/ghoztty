@@ -1,0 +1,27 @@
+{
+  "version": "1.40.0",
+  "sections": [
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Panes never get squeezed", "text": "A pane is never narrower or shorter than 300pt. When a row can't fit side by side, the panes that don't fit fold into slim strips at the edge, each showing its title. Click a strip, or focus its pane any other way, and it slides into view." },
+        { "title": "Collapse by dragging", "text": "Drag a divider past a pane's minimum and the outermost pane on that side folds into a strip while you're still dragging. Drag back and it comes back out. You can also drag a strip to move its pane, swapping it with a visible pane." },
+        { "title": "No resize flicker on slides", "text": "Panes slide in and out without being resized frame by frame, so a TUI running in one doesn't redraw during the animation." }
+      ]
+    },
+    {
+      "title": "Remote machines",
+      "items": [
+        { "title": "An enrolled Mac stays online", "text": "If this Mac is enrolled as a remote machine on your account, Ghoztty now keeps its relay agent running, so the Mac shows up as online in every machine chooser. Signing out stops it." }
+      ]
+    },
+    {
+      "title": "Windows and panes",
+      "items": [
+        { "title": "Background windows open at the right size", "text": "Windows opened by `ghoztty +new-window` without `--focus` now use the same size as a window you open by hand." },
+        { "title": "Idle Claude panes stay idle", "text": "A Claude Code pane no longer switches to \"question\" a minute after it finishes. Only an actual question or permission prompt marks it that way." },
+        { "title": "No beep in viewer panes", "text": "Pressing Return, a letter, or an arrow key that a viewer page doesn't use no longer makes the system beep." }
+      ]
+    }
+  ]
+}

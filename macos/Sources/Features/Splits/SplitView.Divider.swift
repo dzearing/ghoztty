@@ -22,6 +22,11 @@ struct DividerHandle: NSViewRepresentable {
     var onHoverChanged: ((Bool) -> Void)? = nil
     /// Reads the current split fraction (captured at mouse-down).
     let currentSplit: () -> CGFloat
+    /// Follow the drag to mouse-up even if this handle leaves the window
+    /// mid-drag — a pane grid's divider does, when the drag collapses its row
+    /// into a stack — so the gesture carries on (and can be undone) instead of
+    /// stopping dead.
+    var tracksModally: Bool = false
 
     func makeNSView(context: Context) -> DividerHandleView {
         let view = DividerHandleView()
@@ -41,6 +46,7 @@ struct DividerHandle: NSViewRepresentable {
         view.onDoubleClick = onDoubleClick
         view.onHoverChanged = onHoverChanged
         view.currentSplit = currentSplit
+        view.tracksModally = tracksModally
     }
 
     final class DividerHandleView: NSView {
@@ -51,6 +57,7 @@ struct DividerHandle: NSViewRepresentable {
         var onDoubleClick: (() -> Void)?
         var onHoverChanged: ((Bool) -> Void)?
         var currentSplit: (() -> CGFloat)?
+        var tracksModally = false
 
         private var dragOrigin: CGPoint?
         private var dragStartSplit: CGFloat = 0.5
@@ -78,6 +85,18 @@ struct DividerHandle: NSViewRepresentable {
             dragOrigin = event.locationInWindow
             dragStartSplit = currentSplit?() ?? 0.5
             onDragBegan?()
+            guard tracksModally, let window else { return }
+            // Our own loop, holding the window: AppKit sends drag events to
+            // the view that took mouse-down only while it is in the window.
+            let cursor: NSCursor = direction == .horizontal ? .resizeLeftRight : .resizeUpDown
+            while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+                cursor.set()
+                if next.type == .leftMouseUp {
+                    mouseUp(with: next)
+                    break
+                }
+                mouseDragged(with: next)
+            }
         }
 
         override func mouseDragged(with event: NSEvent) {

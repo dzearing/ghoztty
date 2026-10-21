@@ -116,6 +116,31 @@ final class ViewerView: NSView, Codable, ObservableObject {
         didSet { if isOnGlass != oldValue { applyGlass() } }
     }
 
+    /// The grid leaf that last offered to host this pane (`ViewerLeafHost`).
+    weak var leafHost: ViewerLeafHost?
+
+    /// Hero mode has this pane on its strip (`HeroPaneSlot`), and while it
+    /// does no grid leaf may take it. SwiftUI can still run an update — even
+    /// build a fresh leaf — in the grid that hero mode just replaced, and a
+    /// leaf that took the pane then would carry it off with it when it is torn
+    /// down, leaving the hero blank. When the last hold is released the
+    /// grid's current leaf takes the pane back.
+    var isInHero: Bool { heroHolds > 0 }
+
+    /// Holds, not a flag: a hero container SwiftUI rebuilds claims the pane
+    /// before the one it replaces lets go of it.
+    private var heroHolds = 0
+
+    func holdForHero() {
+        heroHolds += 1
+    }
+
+    func releaseFromHero() {
+        guard heroHolds > 0 else { return }
+        heroHolds -= 1
+        if heroHolds == 0 { leafHost?.adopt() }
+    }
+
     /// Our own pages — markdown, code, a diff, an image — are see-through on
     /// a glass pane, so the sheet behind is their background, as it is a
     /// terminal's. A website or an HTML file keeps its own: a page that sets
@@ -1048,7 +1073,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// whole address selected — the keyboard equivalent of clicking into it.
     /// Used by the "Open Browser Pane" command, which opens a blank pane whose
     /// whole point is that the user types an address into it, and by the
-    /// pane-scoped Cmd-D chord (see `paneChord`).
+    /// pane-scoped Cmd-L chord (see `paneChord`).
     ///
     /// Returns false when this pane has no address field to focus — it is not
     /// in a window, so no chrome bar can ever mount — so a keybinding can fall
@@ -3272,6 +3297,45 @@ final class ViewerView: NSView, Codable, ObservableObject {
         return true
     }
 
+    /// End the responder-chain walk of a key the pane's content handed back
+    /// unconsumed, so it does not beep.
+    ///
+    /// WKWebView offers every keyDown to the page first; one the page leaves
+    /// alone (Return on a page body, a letter, an arrow with nothing to
+    /// scroll) is re-sent to `super.keyDown`, which climbs WKWebView → this
+    /// view → the SwiftUI hosts → the window → its controller, and the
+    /// controller, with no `nextResponder`, calls `noResponder(for:)`:
+    /// `NSBeep()`. Nothing on that walk handles a plain key — every Ghoztty
+    /// key handler above a pane is an event monitor, which ran before
+    /// dispatch — so the walk's only outcome was the beep. A browser does not
+    /// beep at keys a page ignores, so neither does a viewer pane.
+    ///
+    /// The page has already had the key by the time it gets here, which is
+    /// what makes ending the walk safe; see `endsUnhandledKeyWalk` for the
+    /// keys that still go on up.
+    override func keyDown(with event: NSEvent) {
+        if isViewerContentFocused, Self.endsUnhandledKeyWalk(event) { return }
+        super.keyDown(with: event)
+    }
+
+    /// Whether a key the content handed back stops here rather than climbing
+    /// to the window. Pure, so the policy is testable.
+    ///
+    /// - **Command chords go on**: they already passed through
+    ///   `performKeyEquivalent` (pane chords, `ViewerKeyFallback`, the menu),
+    ///   and an unbound one beeping is ordinary Mac feedback, not this bug.
+    /// - **Tab / Shift-Tab go on**: a page hands Tab back when focus runs off
+    ///   the end of its own tab order, and the window's key-view loop is what
+    ///   moves the caret out of the web view.
+    static func endsUnhandledKeyWalk(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown else { return false }
+        if event.modifierFlags.contains(.command) { return false }
+        switch event.specialKey {
+        case .tab?, .backTab?: return false
+        default: return true
+        }
+    }
+
     /// The subview that holds keyboard focus on this pane's behalf: the web
     /// view, or the image surface's scroll view while the pane is showing an
     /// image. Everything that hands focus back to "the content" goes through
@@ -3323,8 +3387,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
             handleZoom(action)
             return true
         }
-        // Pane-scoped chords (Cmd-R reload, Cmd-D address field). These override
-        // their global Ghoztty bindings (prompt_surface_banner / new_split) only
+        // Pane-scoped chords (Cmd-R reload, Cmd-L address field). Cmd-R overrides
+        // its global Ghoztty binding (prompt_surface_banner) only
         // while THIS pane holds keyboard focus; every other pane, and every
         // terminal, still gets the global behavior because we fall through to
         // super, whose walk ends at the menu's key equivalent.
@@ -3356,7 +3420,9 @@ final class ViewerView: NSView, Codable, ObservableObject {
     enum PaneChord {
         /// Cmd-R — reload in place, the interactive `+reload`.
         case reload
-        /// Cmd-D — focus and select the address field.
+        /// Cmd-L — focus and select the address field, as in every browser.
+        /// Not Cmd-D: that is split right, which a window holding nothing but
+        /// a viewer would then have no keyboard way to reach.
         case focusAddress
         /// Cmd-F — open the find bar and focus its field.
         case find
@@ -3371,8 +3437,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// unit-testable without a live pane. Requires Command and rejects
     /// Control/Option, so Ctrl+Cmd+F ("Toggle Full Screen") is untouched. Shift
     /// is rejected for every chord but Cmd+Shift+G — the macOS-standard "find
-    /// previous" — so Cmd+Shift+R ("Change Window Title") and Cmd+Shift+D
-    /// (split down) keep their global meanings.
+    /// previous" — so Cmd+Shift+R ("Change Window Title") keeps its global
+    /// meaning.
     static func paneChord(for event: NSEvent) -> PaneChord? {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard mods.contains(.command),
@@ -3382,7 +3448,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         let shift = mods.contains(.shift)
         switch (event.charactersIgnoringModifiers?.lowercased() ?? "", shift) {
         case ("r", false): return .reload
-        case ("d", false): return .focusAddress
+        case ("l", false): return .focusAddress
         case ("f", false): return .find
         case ("g", false): return .findNext
         case ("g", true): return .findPrevious

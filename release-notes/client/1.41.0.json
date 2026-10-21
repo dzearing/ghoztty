@@ -1,0 +1,27 @@
+{
+  "version": "1.41.0",
+  "sections": [
+    {
+      "title": "Glass panes",
+      "items": [
+        { "title": "Unfocused panes let the background through", "text": "Panes you're not working in are now the more see-through ones, so the window's gradient shows through them and the focused pane stands out. Before, unfocused panes got a background-colored wash that made them the more solid ones." },
+        { "title": "Hero mode is glass too", "text": "A pane in hero mode now gets the same glass card as a focused pane." }
+      ]
+    },
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Strips stay put when panes come and go", "text": "Closing a pane, or splitting a new one into a collapsed row, no longer brings every minimized strip back out. The panes on show share the space, and the strips stay strips. This applies to rows and columns." },
+        { "title": "No solid cards behind strips", "text": "Minimized panes are drawn as their strip alone, so the run on show reads cleanly over the glass." },
+        { "title": "Smoother slides", "text": "Each terminal is resized once, after a slide finishes, instead of several times during it." }
+      ]
+    },
+    {
+      "title": "Viewer panes",
+      "items": [
+        { "title": "Cmd-L for the address bar", "text": "Cmd-L now puts the caret in a viewer's address bar, like a browser. Cmd-D splits again, even in a window that has only viewers." },
+        { "title": "Command palette over viewers", "text": "The command palette now opens while a viewer pane is focused, and runs its commands from there." }
+      ]
+    }
+  ]
+}

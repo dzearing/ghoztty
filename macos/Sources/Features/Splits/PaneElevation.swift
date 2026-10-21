@@ -243,6 +243,17 @@ struct PaneCard: ViewModifier {
     let isElevated: Bool
     var isGlass: Bool = false
     var isFocused: Bool = false
+    /// One of several panes, and not the focused one. On glass its sheet is
+    /// thinner (`PaneGlass.unfocusedTint`), so the desk reads through it more
+    /// than through the focused pane — glass's version of
+    /// `unfocused-split-opacity`, whose background-colored wash would do the
+    /// opposite here and is not drawn on glass.
+    var isDimmed: Bool = false
+    /// How opaque a dimmed glass card is: its content, and its (already
+    /// thinner) sheet, each faded by this. 1 leaves the card alone, which is
+    /// what a viewer gets — its page is its own business, an HTML pane's
+    /// especially. A terminal passes `unfocused-split-opacity`.
+    var dimmedOpacity: Double = 1
     let background: Color
     let isLight: Bool
 
@@ -251,27 +262,16 @@ struct PaneCard: ViewModifier {
             .background {
                 if isElevated {
                     PaneFocusGlow(isLight: isLight)
-                        .opacity(isFocused ? 1 : 0)
+                        .modifier(FocusFade(opacity: isFocused ? 1 : 0))
                         .allowsHitTesting(false)
                 }
             }
-            .animation(.easeOut(duration: 0.25), value: isFocused)
     }
 
     @ViewBuilder
     private func card(_ content: Content) -> some View {
         if isElevated && isGlass {
-            content
-                .clipShape(PaneElevation.cardShape)
-                .overlay(
-                    PaneElevation.cardShape
-                        // The focused pane's rim is a touch brighter, with its glow.
-                        .strokeBorder(isLight
-                                      ? Color.black.opacity(isFocused ? 0.12 : 0.08)
-                                      : Color.white.opacity(isFocused ? 0.20 : 0.10),
-                                      lineWidth: 0.5)
-                        .allowsHitTesting(false))
-                .background(PaneGlass(tint: background, isLight: isLight))
+            glassCard(content)
         } else if isElevated {
             content
                 .clipShape(PaneElevation.cardShape)
@@ -289,6 +289,44 @@ struct PaneCard: ViewModifier {
                         .shadow(color: .black.opacity(isLight ? 0.12 : 0.24), radius: 11, y: 8))
         } else {
             content
+        }
+    }
+
+    /// The glass card: the content over its translucent sheet.
+    @ViewBuilder
+    private func glassCard(_ content: Content) -> some View {
+        content
+            .modifier(FocusFade(opacity: isDimmed ? dimmedOpacity : 1))
+            .clipShape(PaneElevation.cardShape)
+            .overlay(
+                PaneElevation.cardShape
+                    // The focused pane's rim is a touch brighter, with its glow.
+                    .strokeBorder(isLight
+                                  ? Color.black.opacity(isFocused ? 0.12 : 0.08)
+                                  : Color.white.opacity(isFocused ? 0.20 : 0.10),
+                                  lineWidth: 0.5)
+                    .allowsHitTesting(false))
+            .background {
+                PaneGlass(tint: background, isLight: isLight,
+                          tintStrength: isDimmed ? PaneGlass.unfocusedTint : PaneGlass.tint)
+                    .modifier(FocusFade(opacity: isDimmed ? dimmedOpacity : 1))
+            }
+    }
+}
+
+/// An opacity that eases when focus moves — and ONLY the opacity. A focus
+/// change often lands in the same update as a change of size (a strip click
+/// both focuses a pane and reshapes its row), and an `.animation(_:value:)`
+/// over a card animated that too: the pane's frame, a terminal resize per
+/// frame of the fade. On macOS 13 the opacity just switches.
+struct FocusFade: ViewModifier {
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.animation(.easeOut(duration: 0.25)) { $0.opacity(opacity) }
+        } else {
+            content.opacity(opacity)
         }
     }
 }
@@ -330,6 +368,10 @@ struct PaneGlass: View {
     /// app so the gradient's light and shade carry through more strongly,
     /// while text keeps its contrast.
     static let tint: Double = 0.4
+    /// An unfocused pane among several: well under half the focused pane's
+    /// sheet, so the desk visibly reads through it, while terminal text —
+    /// drawn at full strength, never washed over — stays readable.
+    static let unfocusedTint: Double = 0.15
     /// A glass card floating over glass panes (the unpinned sidebar).
     static let overlayTint: Double = 0.3
 

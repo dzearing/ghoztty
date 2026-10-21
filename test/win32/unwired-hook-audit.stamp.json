@@ -1,19 +1,19 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-20T18:13:41-07:00",
-    "commit":  "679c49fc3",
+    "generated":  "2026-10-20T19:18:29-07:00",
+    "commit":  "4fc6c7cc8",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "build.zig":  "4cbe503caee5010b7d2276270e239c1297e7a0095e8f65334cc7c37aaad8e27e",
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
-                  "src/App.zig":  "ef35bdbe80c7542c439551899438c41ed3015a4010cf0a7d1d6ef31157ceb2ef",
+                  "src/App.zig":  "a7b7c41de33b8d08f388e84254095c4ea76658b4ca362bcfd1e8d2e122227654",
                   "src/apprt.zig":  "ede76257dd86c9ca2ffe2afad9ee2cb6230576d06910d98b3b11eb1c014ccf2d",
                   "src/apprt/action.zig":  "3210d2086b19bf53dc49bf513933d95f9b2444e939d9eb69851831e42cdc408e",
                   "src/apprt/browser.zig":  "376d2d0984089935cf40015f99ab55e36d2fffb6b575b25d313fa1150a239e39",
-                  "src/apprt/embedded.zig":  "078c2a0584b0318bd04f6e5c5f5a05b4ea575ae96d42138601d748bcab433783",
+                  "src/apprt/embedded.zig":  "126b22c56102833eeeda1e0c5498e318688e301d97ed6b899ded71d83979ce7f",
                   "src/apprt/gtk.zig":  "f8c15182a54cc539a782ac6a6ff7d7b3b2e67da917ceef412613b70d356c96e4",
                   "src/apprt/gtk/adw_version.zig":  "0a4ceeda62786bbfb8cf253a2e2b5ddf9ba74899c0550f9fe381303992f8025b",
                   "src/apprt/gtk/App.zig":  "34121c7a8939f2f9e7a9144bce6b3fb3124bd9d372498d9f630e82668c453dc4",

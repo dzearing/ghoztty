@@ -1,14 +1,13 @@
 {
     "guard":  "one-installer",
     "script":  "test/win32/one-installer.ps1",
-    "generated":  "2026-10-18T01:30:06-07:00",
-    "commit":  "b82e7fd55",
+    "generated":  "2026-10-20T19:21:17-07:00",
+    "commit":  "4fc6c7cc8",
     "uncommitted":  [
-                        ".claude/commands/release.md",
-                        "relay/deploy/ghpages/index.html"
+                        ".claude/commands/release.md"
                     ],
     "files":  {
-                  ".claude/commands/release.md":  "2ec9ff7c45b0e3ee1b36d58a4dcd49be6319cdc46844f3efe0199971860b47fd",
+                  ".claude/commands/release.md":  "e9b206196a9dbef2ba0aff7269bb72540d918a3bca5fb5bfcf70e55c7c5c7676",
                   "relay/deploy/Caddyfile.example":  "68976c8bf26255febe085ecfb23896513d4ba93e4deb5a8296cd5c118bab5aa2",
                   "relay/deploy/ghpages/index.html":  "cdd9e0fbeac01c368266f63e00968efa40bf647e4b41daf7b3dfa67e35005f2b",
                   "relay/deploy/ghpages/landing/main.js":  "31620c4f632e63d7aa46efb2a2bbae280da1dc347f3c72392b2e1dd946281ae5",

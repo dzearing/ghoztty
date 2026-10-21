@@ -41,6 +41,9 @@ final class PaneDragSession: ObservableObject {
 
     private weak var source: BaseTerminalController?
     private var candidates: [PaneDropCandidate] = []
+    /// The drag is a strip's: it has the targets of a pane put away in its
+    /// row (`PaneDropResolver.resolveBlade`), not a pane's.
+    private(set) var isBlade = false
     private var dwellTimer: Timer?
     private var dwellKey: String?
 
@@ -58,9 +61,10 @@ final class PaneDragSession: ObservableObject {
 
     // MARK: Lifecycle
 
-    func begin(pane: PaneView, from controller: BaseTerminalController) {
+    func begin(pane: PaneView, from controller: BaseTerminalController, isBlade: Bool = false) {
         self.pane = pane
         self.source = controller
+        self.isBlade = isBlade
         self.target = nil
         self.hoveredTab = nil
         refreshCandidates()
@@ -76,10 +80,17 @@ final class PaneDragSession: ObservableObject {
         target = PaneDropResolver.resolve(
             screenPoint: screenPoint,
             candidates: candidates,
-            dragged: pane.id)
+            dragged: pane.id,
+            blade: isBlade ? bladeGeometry(of: pane) : nil)
 
+        if case .tile(let frame) = target {
+            TileDropPreview.shared.show(frame)
+        } else {
+            TileDropPreview.shared.hide()
+        }
         updateTabCaret()
-        updateDwell(screenPoint: screenPoint)
+        // A strip has no tab-bar targets, so nothing to dwell on either.
+        if !isBlade { updateDwell(screenPoint: screenPoint) }
     }
 
     /// Finish the drag. `commit` is false when the user cancelled (Escape).
@@ -92,8 +103,10 @@ final class PaneDragSession: ObservableObject {
     private func reset() {
         cancelDwell()
         removeTabCaret()
+        TileDropPreview.shared.hide()
         pane = nil
         source = nil
+        isBlade = false
         target = nil
         hoveredTab = nil
         candidates = []
@@ -213,6 +226,30 @@ final class PaneDragSession: ObservableObject {
 
     // MARK: Geometry
 
+    /// Where a strip being dragged can go: the slots of the row it is
+    /// minimized in, read off the cards and strips on screen; and the screens.
+    private func bladeGeometry(of pane: PaneView) -> PaneBladeDrag? {
+        guard let source, let window = source.window,
+              let stack = source.paneStackState.stackMinimizing(pane.id)
+        else { return nil }
+        let tabs = PaneStackTabView.all(in: window)
+        let panes = Dictionary(uniqueKeysWithValues: source.surfaceTree.visibleLeaves.map { ($0.id, $0) })
+        var items: [(rect: CGRect, panes: Set<UUID>)] = []
+        for item in stack.items {
+            let rects = item.compactMap { id -> CGRect? in
+                let view: NSView? = tabs[id] ?? panes[id]?.contentView
+                guard let view, view.window === window else { return nil }
+                return window.convertToScreen(view.convert(view.bounds, to: nil))
+            }
+            guard let first = rects.first else { return nil }
+            items.append((rects.dropFirst().reduce(first) { $0.union($1) }, Set(item)))
+        }
+        return PaneBladeDrag(
+            window: PaneDropWindowRef(source),
+            slots: PaneBladeDrag.slots(items: items, direction: stack.direction, dragged: pane.id),
+            screens: NSScreen.screens.map(\.visibleFrame))
+    }
+
     private func refreshCandidates() {
         var result: [PaneDropCandidate] = []
         for (index, window) in NSApp.orderedWindows.enumerated() {
@@ -240,10 +277,13 @@ final class PaneDragSession: ObservableObject {
         }
 
         var paneRects: [(id: UUID, rect: CGRect)] = []
+        // A pane tucked into a stack shows only its tab, and that is what a
+        // drop can land on: the rest of it is under the cards in front.
+        let tabs = PaneStackTabView.all(in: window)
         // Only panes ON SCREEN are drop targets: a stashed pane is mounted
         // (hidden, in its slot) but nothing can land on it.
         for pane in controller.surfaceTree.visibleLeaves {
-            let view = pane.contentView
+            let view = tabs[pane.id] ?? pane.contentView
             // A pane that is not mounted (zoomed out, hero mode) has no
             // window and no meaningful frame.
             guard view.window === window else { continue }

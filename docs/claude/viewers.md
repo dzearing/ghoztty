@@ -280,19 +280,34 @@ ghoztty +close --target=doc
   viewer mode):
   - **Cmd+R** reloads the pane in place, exactly like `+reload` (web
     re-fetches from origin, files re-render with scroll preserved).
-  - **Cmd+D** slides the nav bar in if hidden and puts the caret in the
+  - **Cmd+L** slides the nav bar in if hidden and puts the caret in the
     address field with the whole address selected — the keyboard version of
-    clicking into it.
+    clicking into it, and every browser's chord for it. (It used to be Cmd+D,
+    which is split right: a window holding nothing but a viewer then had no
+    keyboard way to split.)
+  - **A plain key the page ignores does not beep** (`ViewerView.keyDown`).
+    WKWebView re-sends a key the page left alone up the responder chain, where
+    it reached `noResponder(for:)`, i.e. `NSBeep()`; the pane now ends that
+    walk for keys its content handed back. The page still gets every key
+    first; Command chords and Tab / Shift-Tab still climb. Tests:
+    `ViewerUnhandledKeyBeepTests`.
   - The standard editing chords (Cmd+C/V/X/A) reach whichever field inside the
     pane holds focus — the address bar, or a diff panel's filter — which they
     otherwise would not, because Cmd+C/V are terminal keybindings.
   - Both **override their global binding only while the viewer holds focus**
-    (Cmd+R = "Set Pane Banner…", Cmd+D = split right). Focus a terminal pane
-    and they do their global thing again; Cmd+Shift+R ("Change Window Title")
-    and Cmd+Shift+D (split down) are never affected.
+    (Cmd+R = "Set Pane Banner…"). Focus a terminal pane and they do their
+    global thing again; Cmd+D / Cmd+Shift+D (split) and Cmd+Shift+R ("Change
+    Window Title") are never affected.
+  - **The command palette (Cmd+Shift+P) opens over a viewer too**, a window
+    of nothing but viewers included. It anchors on the pane it was opened
+    from (`commandPaletteAnchor`); over a viewer, config commands follow the
+    same rule a key from it does (`ViewerKeyFallback.paletteRoute`), and
+    terminal-only commands are not offered. The Viewer: Open… commands open
+    beside the viewer.
   - **On Windows** (T161) the pane-scoped chords are **Ctrl+R** (reload),
     **Ctrl+D / Ctrl+L / Alt+D** (address bar — the latter two are
-    Windows-native aliases), and **Ctrl+Plus/Minus/0** (page zoom, same ×1.1
+    Windows-native aliases; Ctrl+D goes back to splitting in T2087, matching
+    Mac's move to Cmd+L), and **Ctrl+Plus/Minus/0** (page zoom, same ×1.1
     step and [0.5, 3.0] clamp as the Mac Cmd+/−/0), under the identical
     override-only-while-focused rule: a focused terminal keeps ctrl+r for
     the shell, ctrl+d for split-right, and ctrl+plus/minus/0 for font size.
@@ -312,6 +327,12 @@ ghoztty +close --target=doc
 - `+read`/`+send-keys`/`+set-state`/`+set-banner` against a viewer fail with
   `... is a viewer pane, not a terminal` (exit 1). `+close` works normally
   and never prompts for viewers.
+- **Hero mode** shows every viewer kind, and gives it back to the grid on
+  exit. A viewer sits in the grid inside a `ViewerLeafHost`, and while a hero
+  slot holds it (`ViewerView.holdForHero`) no grid leaf may take it — the last
+  grid update used to take the pane back out of the hero about one entry in
+  two, leaving it blank. Tests: `HeroViewerRenderWindowTests`,
+  `ViewerLeafHostTests`.
 - Session persistence: viewer panes restore by re-opening their file/URL, and
   a diff pane by RE-RUNNING its spec against the origin directory the manifest
   persisted — so a restored `git-status:` pane shows today's working tree, not

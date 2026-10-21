@@ -249,31 +249,79 @@ enum PaneSidebarText {
     /// The title a surface has before anything sets one.
     static let placeholderTitle = "👻"
 
+    /// What a pane is called wherever it is named in one line — a sidebar
+    /// row, a rail tile, a stacked pane's strip: its banner's title when the
+    /// banner has one, else `title`. The banner title wins because it is the
+    /// one somebody chose: an agent's banner hook sets it to the task, while
+    /// the agent itself retitles the pane (OSC 0/2) with whatever it is doing.
+    static func label(title raw: String, pwd: String?, kind: String, banner: String?) -> String {
+        bannerTitle(banner) ?? title(raw, pwd: pwd, kind: kind)
+    }
+
+    /// The title a pane banner gives itself, as plain text, or nil when it
+    /// has none. Only a line that IS a title counts, never just the first
+    /// line of whatever the banner says:
+    /// - a heading on the banner's first line (`## Fix strip labels`) — what
+    ///   the banner hook writes above its table;
+    /// - a one-line banner that opens with a bold run standing on its own
+    ///   (`**Fix strip labels**`, or followed by ` · …`) — the hook's OSC
+    ///   fallback. A bold label (`**Goal:** …`) is not a title, and neither
+    ///   is a bold run followed by more prose (`**PR #12** — 3 files`).
+    static func bannerTitle(_ banner: String?) -> String? {
+        let lines = bannerLines(banner)
+        guard let first = lines.first else { return nil }
+        if let heading = headingText(first) {
+            let plain = stripInlineMarkdown(heading)
+            return plain.isEmpty ? nil : plain
+        }
+        guard lines.count == 1, first.hasPrefix("**") else { return nil }
+        let rest = first.dropFirst(2)
+        guard let close = rest.range(of: "**") else { return nil }
+        let after = rest[close.upperBound...].trimmingCharacters(in: .whitespaces)
+        guard after.isEmpty || after.hasPrefix("·") else { return nil }
+        let plain = stripInlineMarkdown(String(rest[..<close.lowerBound]))
+        return plain.isEmpty || plain.hasSuffix(":") ? nil : plain
+    }
+
+    /// A banner's non-empty lines, trimmed; a literal `\n` is a line break,
+    /// as it is when the banner renders.
+    private static func bannerLines(_ banner: String?) -> [String] {
+        guard let banner else { return [] }
+        return banner
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// An ATX heading's text (`## Title` → `Title`): 1–6 `#` and a space, as
+    /// the banner renders one.
+    private static func headingText(_ line: String) -> String? {
+        let hashes = line.prefix { $0 == "#" }
+        guard (1...6).contains(hashes.count) else { return nil }
+        let rest = line.dropFirst(hashes.count)
+        guard rest.first == " " else { return nil }
+        let text = rest.trimmingCharacters(in: .whitespaces)
+        return text.isEmpty ? nil : text
+    }
+
     /// The first line of a pane banner as plain text: the markdown subset the
     /// banner renders (`**bold**`, `*italic*`, `_italic_`, `__underline__`,
     /// `` `code` ``, `[text](url)`, `\` escapes) stripped to its words. Table
     /// and rule lines are skipped — they are layout, not a summary.
     static func bannerLine(_ banner: String?) -> String? {
-        guard let banner else { return nil }
-        let lines = banner
-            .replacingOccurrences(of: "\\n", with: "\n")
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-        guard let line = lines.first(where: { line in
-            !line.isEmpty
-                && !line.hasPrefix("|")
-                && !isThematicBreak(line)
+        guard let line = bannerLines(banner).first(where: { line in
+            !line.hasPrefix("|") && !isThematicBreak(line)
         }) else { return nil }
-        let plain = stripInlineMarkdown(line)
+        let plain = stripInlineMarkdown(headingText(line) ?? line)
         return plain.isEmpty ? nil : plain
     }
 
-    /// The row's subtitle: the banner's first line when there is one (the
-    /// banner hooks keep it as a live title/goal/status — the most useful
-    /// single line about an agent pane), else the working directory or the
-    /// viewer's location.
+    /// The row's subtitle: the banner's first line when there is one and it
+    /// is not the banner's title — a titled banner already names the row
+    /// (`label`) — else the working directory or the viewer's location.
     static func subtitle(banner: String?, pwd: String?, viewerLocation: String?) -> String? {
-        if let line = bannerLine(banner) { return line }
+        if bannerTitle(banner) == nil, let line = bannerLine(banner) { return line }
         if let pwd, !pwd.isEmpty { return pwd.abbreviatedPath }
         if let viewerLocation, !viewerLocation.isEmpty { return viewerLocation.abbreviatedPath }
         return nil

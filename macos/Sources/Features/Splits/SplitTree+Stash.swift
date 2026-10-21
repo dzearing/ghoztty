@@ -161,6 +161,30 @@ extension SplitTree {
         return liftingLayout(from: result)
     }
 
+    /// This tree with the ratios it is DISPLAYED at: `displayed` is the node the
+    /// grid laid out (`PaneLayout.Result.displayed` — the visible root, or the
+    /// zoomed node while zoomed), whose ratios differ from the stored ones
+    /// wherever a pane minimum overrode them. Unchanged if `displayed` is not
+    /// that node with other ratios.
+    func adoptingDisplayedLayout(_ displayed: Node) -> SplitTree {
+        let visible = visibleTree
+        guard let visibleRoot = visible.root else { return self }
+        let zoomPath = visible.zoomed.flatMap { visibleRoot.path(to: $0) }
+        let newVisibleRoot: Node
+        if let zoomPath {
+            guard let replaced = try? visibleRoot.replacingNode(at: zoomPath, with: displayed) else { return self }
+            newVisibleRoot = replaced
+        } else {
+            newVisibleRoot = displayed
+        }
+        guard newVisibleRoot.hasSameShape(as: visibleRoot) else { return self }
+        let lifted = SplitTree(
+            root: newVisibleRoot,
+            zoomed: zoomPath.flatMap { newVisibleRoot.node(at: $0) },
+            stashed: [])
+        return stashed.isEmpty ? lifted : liftingLayout(from: lifted)
+    }
+
     /// Copy every visible split's ratio back to the full-tree split it came
     /// from, and carry a cleared zoom.
     ///

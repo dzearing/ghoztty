@@ -1,0 +1,13 @@
+{
+  "version": "1.40.0",
+  "sections": [
+    {
+      "title": "Background agent",
+      "items": [
+        { "title": "The session agent and a relay agent can run together", "text": "Before, only one agent could run per user, so a Mac couldn't keep your panes alive and host its own remote sessions at the same time. Each kind of agent now has its own lock, and a takeover only ever replaces an agent of the same kind, so a relay agent can never kill the process that owns your panes." },
+        { "title": "Cleaner shell environments", "text": "The agent no longer passes its own lock settings or device token into the shells it starts." },
+        { "title": "Revoked agents stop", "text": "A relay agent running under the app exits once its credential has been revoked, instead of retrying forever with a dead one." }
+      ]
+    }
+  ]
+}
