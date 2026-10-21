@@ -136,6 +136,7 @@ const relay_creds = @import("relay_creds.zig");
 const revoke_watch = @import("revoke_watch.zig");
 const sharing = @import("sharing.zig");
 const owner_veto = @import("owner_veto.zig");
+const revoked_credential = @import("revoked_credential.zig");
 const adopt = @import("adopt.zig");
 const single_instance = @import("single_instance.zig");
 const startup_error = @import("startup_error.zig");
@@ -2552,7 +2553,7 @@ fn runRelay(
     // frame). The consolidated agent has no UI of its own: signing a machine in
     // and out is the machine chooser's job, on both platforms.
     _ = headless; // still accepted on the command line; no longer selects a UI
-    relayLoop(alloc, encoding, ws_base, &creds, &store, spawner.spawner(), &link, exit_on_revoke);
+    relayLoop(alloc, encoding, ws_base, &creds, &store, spawner.spawner(), &link, exit_on_revoke, null);
 }
 
 /// Convert an `https://host[:port]` / `wss://host[:port]` base to a normalized
@@ -2598,10 +2599,11 @@ const RelayArgs = struct {
     spawner: server.Spawner,
     link: *link_control.LinkControl,
     exit_on_revoke: bool,
+    on_revoked: ?RevokedHook = null,
 };
 
 fn relayLoopThread(args: RelayArgs) void {
-    relayLoop(args.alloc, args.encoding, args.ws_base, args.creds, args.store, args.spawner, args.link, args.exit_on_revoke);
+    relayLoop(args.alloc, args.encoding, args.ws_base, args.creds, args.store, args.spawner, args.link, args.exit_on_revoke, args.on_revoked);
 }
 
 /// THE RELAY DAEMON: hold the control WebSocket; on drop, back off and reconnect
@@ -2619,6 +2621,7 @@ fn relayLoop(
     spawner: server.Spawner,
     link: *link_control.LinkControl,
     exit_on_revoke: bool,
+    on_revoked: ?RevokedHook,
 ) void {
     const ctrl_url = std.fmt.allocPrint(alloc, "{s}/v1/agent/control", .{ws_base}) catch {
         std.debug.print("ghoztty-agent: relay: out of memory building control url\n", .{});
@@ -2643,6 +2646,7 @@ fn relayLoop(
         .ctrl_url = ctrl_url,
         .host = maybe_host,
         .exit_on_revoke = exit_on_revoke,
+        .on_revoked = on_revoked,
     };
     link_control.runLoop(link, transport.transport(), relay_backoff_ms);
 }
@@ -2845,8 +2849,10 @@ const SharingUplink = struct {
             .link = &self.link,
             // Never: this uplink rides the SESSION agent, and exiting on a
             // revoked credential would take the user's live panes with it.
-            // `--exit-on-revoke` is a `--relay` daemon flag only.
+            // `--exit-on-revoke` is a `--relay` daemon flag only. A revoked
+            // credential parks the uplink and drops relay.env instead (T2050).
             .exit_on_revoke = false,
+            .on_revoked = .{ .ctx = self, .func = onRevoked },
         };
         if (std.Thread.spawn(.{}, relayLoopThread, .{args})) |t| {
             t.detach();
@@ -2871,6 +2877,20 @@ const SharingUplink = struct {
             alloc.destroy(creds);
             alloc.free(ws_base);
         }
+    }
+
+    /// The relay refused `token` on `revoked_after_rejections` consecutive
+    /// dials: this machine was removed from the account somewhere else
+    /// (T2050). Runs on the relay loop thread, inside a failed dial.
+    fn onRevoked(ctx: *anyopaque, token: []const u8) void {
+        const self: *SharingUplink = @ptrCast(@alignCast(ctx));
+        const outcome = revoked_credential.dropIfStill(self.alloc, token);
+        switch (outcome) {
+            .dropped => std.debug.print("ghoztty-agent: the relay rejected this machine's credential on {d} consecutive dials; it was removed from the account, so relay.env is dropped and the relay uplink parked (local sessions unaffected)\n", .{revoked_after_rejections}),
+            .already_gone => std.debug.print("ghoztty-agent: the relay rejected this machine's credential and relay.env is already gone; parking the relay uplink\n", .{}),
+            .superseded => std.debug.print("ghoztty-agent: the relay rejected a credential relay.env no longer carries (re-enrolled); keeping the new one\n", .{}),
+        }
+        if (revoked_credential.parks(outcome)) self.link.disconnect();
     }
 
     fn sayUnavailable(self: *SharingUplink, what: []const u8, hint: []const u8) void {
@@ -2971,6 +2991,13 @@ const RevocationStreak = struct {
     }
 };
 
+/// Called on the relay loop thread once a credential is revoked, with the
+/// token the relay refused (borrowed for the call).
+const RevokedHook = struct {
+    ctx: *anyopaque,
+    func: *const fn (ctx: *anyopaque, token: []const u8) void,
+};
+
 /// One live relay control connection: the WebSocket plus its keepalive
 /// (dead-link detection) thread. Heap-allocated per dial so the keepalive's
 /// `*Keepalive` stays stable while its thread runs.
@@ -3004,6 +3031,9 @@ const RelayTransport = struct {
     /// `--exit-on-revoke` (see `Relay.exit_on_revoke`) and its streak.
     exit_on_revoke: bool = false,
     revocation: RevocationStreak = .{},
+    /// What a revoked credential does when the agent must NOT exit (the
+    /// sharing uplink, T2050). Null in `--relay` mode.
+    on_revoked: ?RevokedHook = null,
 
     fn transport(self: *RelayTransport) link_control.Transport {
         return .{ .ctx = self, .vtable = &vtable };
@@ -3038,12 +3068,21 @@ const RelayTransport = struct {
         }
 
         const ctrl = ws_client.WsClient.connectUrl(self.alloc, self.ctrl_url, headers_buf[0..n_headers]) catch |err| {
-            if (self.revocation.onDialFailed(err == error.WebSocketUnauthorized) and self.exit_on_revoke) {
-                std.debug.print(
-                    "ghoztty-agent: the relay rejected this machine's credential on {d} consecutive dials — it was revoked; exiting (--exit-on-revoke)\n",
-                    .{revoked_after_rejections},
-                );
-                std.process.exit(0);
+            if (self.revocation.onDialFailed(err == error.WebSocketUnauthorized)) {
+                if (self.exit_on_revoke) {
+                    std.debug.print(
+                        "ghoztty-agent: the relay rejected this machine's credential on {d} consecutive dials — it was revoked; exiting (--exit-on-revoke)\n",
+                        .{revoked_after_rejections},
+                    );
+                    std.process.exit(0);
+                }
+                if (self.on_revoked) |hook| {
+                    // A fresh streak for whatever credential comes next, so a
+                    // re-enroll's first refusal is not read as the third.
+                    self.revocation = .{};
+                    hook.func(hook.ctx, token);
+                    return null;
+                }
             }
             std.debug.print("ghoztty-agent: relay control connect failed ({s}); retrying (base {d}ms)\n", .{ @errorName(err), relay_backoff_ms });
             return null;
@@ -3225,6 +3264,7 @@ test {
     _ = @import("revoke_watch.zig");
     _ = @import("sharing.zig");
     _ = @import("owner_veto.zig");
+    _ = @import("revoked_credential.zig");
     _ = @import("adopt.zig");
     _ = @import("startup_error.zig");
     _ = @import("single_instance.zig");

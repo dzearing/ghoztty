@@ -16,7 +16,9 @@
 # clears (T1427); and sharing enabled with NO relay.env credential degrades to
 # local-only with one explanatory line, the pipe still served; and a credential
 # the app found belongs to ANOTHER account (owner-mismatch.json naming this
-# token) parks the uplink until the veto goes (T2049).
+# token) parks the uplink until the veto goes (T2049); and a relay that
+# answers 401 twice (the machine was removed from the account elsewhere) drops
+# relay.env and stops the dials, and a re-enroll brings it back (T2050).
 #
 # Hermetic: GHOZTTY_AGENT_INSTANCE forks the single-instance guard, the pipe
 # name is test-unique, GHOSTTY_RELAY_ENV points the credential lookup at a
@@ -49,6 +51,7 @@ $sharingFile = Join-Path $stateDir 'sharing.json'
 $relayEnv = Join-Path $tmp 'relay.env'
 $dialLog = Join-Path $tmp 'dials.log'
 $portOut = Join-Path $tmp 'listener-port.txt'
+$modeFile = Join-Path $tmp 'listener-mode.txt'   # '401' = refuse the credential (T2050)
 $pipe = "\\.\pipe\ghoztty-agent-t546-$PID"
 $token = "tok-t546-$PID"
 
@@ -107,7 +110,7 @@ function Get-DialCount {
 "== 0: loopback 'relay' listener + scratch credential"
 Stop-TestAgents
 $listener = Start-Job -ScriptBlock {
-    param($logPath, $portPath)
+    param($logPath, $portPath, $modePath)
     $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
     $l.Start()
     $port = $l.LocalEndpoint.Port
@@ -130,12 +133,14 @@ $listener = Start-Job -ScriptBlock {
                 $text += [System.Text.Encoding]::ASCII.GetString($buf, 0, $n)
             }
             if ($text.Length -gt 0) { Add-Content -Path $logPath -Value $text -Encoding ascii }
-            $resp = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 404 Not Found`r`nContent-Length: 0`r`n`r`n")
+            $status = '404 Not Found'
+            if ((Test-Path $modePath) -and ((Get-Content $modePath -Raw) -match '401')) { $status = '401 Unauthorized' }
+            $resp = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $status`r`nContent-Length: 0`r`n`r`n")
             $stream.Write($resp, 0, $resp.Length)
         } catch {}
         try { $client.Close() } catch {}
     }
-} -ArgumentList $dialLog, $portOut
+} -ArgumentList $dialLog, $portOut, $modeFile
 $gotPort = Wait-ForText $portOut '\d' 10
 Assert 'loopback listener came up' $gotPort
 if (-not $gotPort) {
@@ -290,6 +295,33 @@ try {
     Assert 'the uplink dials again once the veto is gone' ((Get-DialCount) -gt $vetoCount)
     Stop-TestAgents
 
+    "== 5d: a machine removed from the account elsewhere stops redialing and drops relay.env (T2050, main 6dfb31232)"
+    # Removing this PC from the account on another device revokes its token at
+    # the relay, which then answers 401. A Mac stops its relay agent and deletes
+    # relay.env; before T2050 this agent redialed the dead credential forever,
+    # and the chooser's "Share this machine" box - which reads relay.env - stayed
+    # ticked.
+    Remove-Item $portFile -ErrorAction SilentlyContinue
+    Set-Content -Path $relayEnv -Value $credential -Encoding ascii -NoNewline
+    Set-Content -Path $modeFile -Value '401' -Encoding ascii
+    $agent7 = Start-TestAgent "$tmp\a7.out" "$tmp\a7.err"
+    Assert 'enrolled agent raised before the revoke' (Wait-ForText "$tmp\a7.err" 'relay uplink raised' 25)
+    Assert 'agent reads two 401s as removed from the account' (Wait-ForText "$tmp\a7.err" 'removed from the account, so relay.env is dropped' 40)
+    Assert 'relay.env is gone, so the Share box reads unticked' (-not (Test-Path $relayEnv))
+    Start-Sleep -Seconds 6   # drain a dial already in flight/backoff
+    $revokedCount = Get-DialCount
+    Start-Sleep -Seconds 10  # past the backoff and two reconcile ticks
+    Assert 'no control dials after the revoke' ((Get-DialCount) -eq $revokedCount)
+    Assert 'the session agent survived the revoke (local panes unaffected)' (-not $agent7.HasExited)
+    # Re-adding the machine is a fresh enrollment: relay.env comes back and the
+    # uplink with it, no restart.
+    Set-Content -Path $modeFile -Value '404' -Encoding ascii
+    Set-Content -Path $relayEnv -Value $credential -Encoding ascii -NoNewline
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and (Get-DialCount) -le $revokedCount) { Start-Sleep -Milliseconds 500 }
+    Assert 'a re-enroll after the revoke brings the uplink back' ((Get-DialCount) -gt $revokedCount)
+    Stop-TestAgents
+
     "== 6: enabled but no credential - local-only with one explanatory line"
     Remove-Item $portFile -ErrorAction SilentlyContinue
     Remove-Item $relayEnv -ErrorAction SilentlyContinue
@@ -314,7 +346,7 @@ try {
 # call, which meant the guard went DUE on the first `main.zig` edit and could
 # never come back - the one shape a staleness gate must not have, since a guard
 # that is permanently red is a guard everybody learns to step over.
-if ($script:failures -eq 0 -and $script:passes -ge 39) {
+if ($script:failures -eq 0 -and $script:passes -ge 45) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-sharing-uplink -Repo $repo 2>&1 | ForEach-Object { "  $_" }
@@ -322,4 +354,4 @@ if ($script:failures -eq 0 -and $script:passes -ge 39) {
 
 # MinPass = the full-run assertion count: an abort (exception past section N
 # jumping to finally) must never score the truncated run as ALL PASS.
-Write-TestVerdict -Label 'T546 SHARING UPLINK' -Pass $script:passes -Fail $script:failures -MinPass 39
+Write-TestVerdict -Label 'T546 SHARING UPLINK' -Pass $script:passes -Fail $script:failures -MinPass 45
