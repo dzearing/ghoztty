@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-20T20:36:17-07:00",
-    "commit":  "3dd81bfe7",
+    "generated":  "2026-10-20T21:16:18-07:00",
+    "commit":  "01bcc6257",
     "uncommitted":  [
 
                     ],
@@ -10,7 +10,7 @@
                   "build.zig":  "4cbe503caee5010b7d2276270e239c1297e7a0095e8f65334cc7c37aaad8e27e",
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
                   "src/App.zig":  "a7b7c41de33b8d08f388e84254095c4ea76658b4ca362bcfd1e8d2e122227654",
-                  "src/apprt.zig":  "d630195ade8031259f5c116d7e37cb938c4cca660cd54745c35eb37c7e5ac79c",
+                  "src/apprt.zig":  "5c8af2d1a5ffb025d02d80c2b8a1b3cd30105e597c2bb828c800992f023f075c",
                   "src/apprt/action.zig":  "3210d2086b19bf53dc49bf513933d95f9b2444e939d9eb69851831e42cdc408e",
                   "src/apprt/browser.zig":  "376d2d0984089935cf40015f99ab55e36d2fffb6b575b25d313fa1150a239e39",
                   "src/apprt/embedded.zig":  "126b22c56102833eeeda1e0c5498e318688e301d97ed6b899ded71d83979ce7f",
@@ -244,6 +244,7 @@
                   "src/apprt/win32/pane_sidebar_scroll.zig":  "a6ab3831eeaf7f907831c40785d8039cf73880693515b2487e9be5915e801825",
                   "src/apprt/win32/pane_sidebar_search.zig":  "17849ee09e130dbc118f07dd3484252579b0469984ff28e260353c5ae9f4239f",
                   "src/apprt/win32/pane_stack_layout.zig":  "b82669c7396e5426a0dca96cc4d98ed9b2c366cf90441e84c3f4a1716dba00c5",
+                  "src/apprt/win32/pane_stack_state.zig":  "0bb6ff15f55d831e7c4397d546fe6b8d67a9e48d68bff176442c131b8b3ffbff",
                   "src/apprt/win32/pane_stash.zig":  "f3bbf02701af707e022220eba9a4d0d5b1d674941622fadf7b8e8878d56fadfc",
                   "src/apprt/win32/PaneDesk.zig":  "2853c844dee7dfdb50b53c6e26bea13c46b445551338d27cf5069bd9731caed7",
                   "src/apprt/win32/PaneGrabHandle.zig":  "9c58b86162b7f14ba8ea8368fe387c05fa911fe8f95851e576a7180094d6a0f2",

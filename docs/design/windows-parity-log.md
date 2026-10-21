@@ -37132,3 +37132,9 @@ moved to T1814.
 - **Not yet on screen.** Nothing in the window calls it. The task was split: T2100 (PaneStackState), T2101 (the grid and strips on screen, the focus paths, the acceptance), T2102 (the carousel slide, one resize per slide), T2103 (`+list` minimized state, which Mac does not report either, so both seats). T2083 now waits on T2100 and T2101.
 - **Validated.** 38 unit tests ported from PaneLayoutTests, in every lane through `src/apprt.zig`. A negative control (broken elevation rule and slot remainder) turned 9 of them red. floor-lane all four lanes PASS.
 - **Mac.** Nothing owed: this is the Mac design arriving.
+## 2026-10-20 — T2100: the stacked-panes memory (PaneStackState), ported and tested
+
+- **Landed.** `src/apprt/win32/pane_stack_state.zig` is Mac's `PaneStackState.swift` as of 2811a3043, pure: the focus history (64 kept), a row's collapse, slot shares, laid-out order and room, `restack` (chained drags), `resize`, snapshot and saved/restore, `swap`, `noteStacks`/`shownRun`/`stackMinimizing`, `isMinimized`, and focusing a strip bringing it on show. Mac's four dictionaries keyed by a pane set are one map here, keyed by the sorted ids `pane_stack_layout.Row.key` already produces. `provider()` is what `pane_stack_layout.compute` reads.
+- **Not here.** `rowsDidChange` and `paneOnShow` (a collapse surviving a close, split or drop) stay with T2083. Nothing in the window uses the state yet; that is T2101.
+- **Validated.** 19 unit tests (every Mac PaneStackStateTests case without rowsDidChange, the two PaneLayoutTests cases on this type, Windows edge cases, and one end-to-end run through `compute`), leak-checked, in every lane through `src/apprt.zig`. A negative control (the room rule and the swap re-sort broken) turned 3 red. floor-lane all four lanes PASS. Due audits green; drag-perf (T1854) and ghoztty-cleanup's box-state skip (T2060) are known.
+- **Mac.** Nothing owed: this is the Mac design arriving.

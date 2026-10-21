@@ -327,6 +327,10 @@ test {
     // The stacked-panes layout - minimums, runs, strips, grips (T2082), a
     // port of Mac's PaneLayout - same deal.
     _ = @import("apprt/win32/pane_stack_layout.zig");
+    // What decides which panes of a stacked row are on show - focus
+    // history, a row's collapse and slot sizes (T2100), a port of Mac's
+    // PaneStackState - same deal.
+    _ = @import("apprt/win32/pane_stack_state.zig");
     // A pane's own progress light - the ring circling a busy pane and the
     // percentage line across its top (T1899) - same deal.
     _ = @import("apprt/win32/busy_light.zig");
