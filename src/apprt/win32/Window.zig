@@ -7323,6 +7323,44 @@ fn noteStackRows(self: *Window) void {
     self.stackState().noteRows(rows) catch |err| log.warn("stacked rows not carried over: {}", .{err});
 }
 
+/// Every stacked row's collapse as it stands, for a close's undo to put back
+/// (T2126, Mac 2811a3043: the stack state is saved with the tree). Taken
+/// before the tree changes, after the layout's own view is brought up to date.
+/// Null when it could not be copied: the undo then carries the rows over the
+/// way any tree change does.
+pub fn stackSaved(self: *Window) ?pane_stack_state.Saved {
+    self.noteStackRows();
+    return self.stackState().saved() catch null;
+}
+
+/// An undo put tab `tab`'s panes back: its rows come back exactly as `saved`
+/// had them. The tree change is noted first, as any other is, so the next
+/// layout sees nothing left to carry over it; every other tab keeps what the
+/// user did there while the undo waited.
+pub fn restoreStackRows(self: *Window, tab: usize, saved: *const pane_stack_state.Saved) void {
+    if (tab >= self.tab_count) return;
+    self.noteStackRows();
+    var arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var scope: std.ArrayListUnmanaged(pane_stack_grid.Id) = .empty;
+    var it = self.tab_trees[tab].iterator();
+    while (it.next()) |entry| scope.append(a, pane_stack_grid.viewId(entry.view)) catch return;
+    const rows = self.stackRowsOf(a, null) catch return;
+    self.stackState().restoreScoped(saved, scope.items, rows) catch |err|
+        log.warn("stacked rows not restored by undo: {}", .{err});
+}
+
+/// Whether `pane` of tab `tab` is a strip of a collapsed row: focusing it
+/// would bring it back out.
+pub fn isStackMinimized(self: *Window, tab: usize, pane: *PaneView) bool {
+    if (tab >= self.tab_count) return false;
+    var arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer arena.deinit();
+    const rows = self.stackRowsOf(arena.allocator(), tab) catch return false;
+    return self.stackState().isMinimized(pane_stack_grid.viewId(pane), rows) catch false;
+}
+
 /// The pane of tab `tab` the caret goes to instead of `candidate` now that
 /// its rows changed from `before` (`PaneStackState.paneOnShow`). Null when
 /// the answer is no pane of the tab.

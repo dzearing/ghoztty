@@ -47,6 +47,7 @@ const IpcRegistry = @import("IpcRegistry.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const msg_timer = @import("msg_timer.zig");
 const pane_id = @import("pane_id.zig");
+const pane_stack_state = @import("pane_stack_state.zig");
 const tab_color = @import("tab_color.zig");
 const w32 = @import("win32.zig");
 
@@ -88,6 +89,9 @@ const ParkedPane = struct {
     /// The IPC name it was registered under, if any, so `--target=<name>`
     /// works again after the undo. Owned.
     name: ?[]u8,
+    /// Which panes of each stacked row were on show when it closed (T2126):
+    /// the undo puts the row back exactly, strips and all. Owned.
+    stack: ?pane_stack_state.Saved,
 };
 
 const ParkedTab = struct {
@@ -101,6 +105,8 @@ const ParkedTab = struct {
     title_len: u16,
     title_pinned: bool,
     color: tab_color.TabColor,
+    /// Its stacked rows' collapses, as `ParkedPane.stack`. Owned.
+    stack: ?pane_stack_state.Saved,
 };
 
 /// What a redo closes again. By identity, never by pointer: the pane a redo
@@ -199,6 +205,7 @@ pub fn parkPane(
     if (!self.parkable(window) or exited(pane)) return false;
     const alloc = self.app.core_app.alloc;
     var anchor = (Anchor.capture(alloc, &window.tab_trees[tab], handle) catch return false) orelse return false;
+    var stack = window.stackSaved();
 
     const name: ?[]u8 = if (self.app.ipcNameOf(.{ .pane = pane })) |n|
         alloc.dupe(u8, n) catch null
@@ -214,8 +221,10 @@ pub fn parkPane(
         .tab_uuid = uuid,
         .anchor = anchor,
         .name = name,
+        .stack = stack,
     } }) catch {
         anchor.deinit(alloc);
+        if (stack) |*st| st.deinit(alloc);
         if (name) |n| alloc.free(n);
         // Undo the extra reference without tearing anything down: the tree
         // still holds the pane at this point.
@@ -252,9 +261,13 @@ pub fn parkTab(self: *CloseUndo, window: *Window, idx: usize) bool {
         .title_len = window.tab_title_lens[idx],
         .title_pinned = window.tab_title_pinned[idx],
         .color = window.tab_colors[idx],
+        .stack = window.stackSaved(),
     };
     @memcpy(&parked.uuid, window.tabUuid(idx)[0..pane_id.len]);
-    self.push(window, .{ .tab = parked }) catch return false;
+    self.push(window, .{ .tab = parked }) catch {
+        if (parked.stack) |*st| st.deinit(self.app.core_app.alloc);
+        return false;
+    };
     hideTree(&parked.tree);
     log.info("parked closed tab for undo", .{});
     return true;
@@ -538,6 +551,7 @@ fn restorePane(self: *CloseUndo, parked: ParkedPane) ?Reclose {
     defer {
         p.anchor.deinit(alloc);
         if (p.name) |n| alloc.free(n);
+        if (p.stack) |*st| st.deinit(alloc);
     }
 
     var again: Reclose = .{ .pane = undefined };
@@ -561,13 +575,18 @@ fn restorePane(self: *CloseUndo, parked: ParkedPane) ?Reclose {
                 window.tab_trees[t] = new_tree;
                 old.deinit();
                 pane.unref(alloc); // the tree holds it now
-                window.tab_active_pane[t] = pane;
+                if (p.stack) |*st| window.restoreStackRows(t, st);
+                // A pane that comes back as a strip stays one: focusing it
+                // would bring it out, and the row is meant to be exactly as
+                // it was. The caret stays where it is.
+                const strip = window.isStackMinimized(t, pane);
+                if (!strip) window.tab_active_pane[t] = pane;
                 if (t != window.active_tab) {
                     window.selectTabIndex(t);
                 } else {
                     window.heroOnTreeChanged(t);
                     window.layoutSplits();
-                    if (pane.hwnd()) |h| App.deferSetFocus(h);
+                    if (!strip) if (pane.hwnd()) |h| App.deferSetFocus(h);
                 }
                 self.app.markLayoutDirty();
                 self.reregister(pane, p.name);
@@ -592,10 +611,15 @@ fn restorePane(self: *CloseUndo, parked: ParkedPane) ?Reclose {
 }
 
 fn restoreTab(self: *CloseUndo, parked: ParkedTab) ?Reclose {
-    _ = self;
+    var stack = parked.stack;
+    defer if (stack) |*st| st.deinit(self.app.core_app.alloc);
     const window = parked.window;
     const pos = @min(parked.index, window.tab_count);
     window.insertPaneAsTabAt(parked.active, parked.tree, pos);
+    if (stack) |*st| {
+        window.restoreStackRows(pos, st);
+        window.layoutSplits();
+    }
     window.adoptTabUuid(pos, &parked.uuid);
     window.tab_colors[pos] = parked.color;
     if (parked.title_pinned) {
@@ -623,10 +647,13 @@ fn finalize(self: *CloseUndo, parked: Parked) void {
             var pp = p;
             pp.anchor.deinit(alloc);
             if (pp.name) |n| alloc.free(n);
+            if (pp.stack) |*st| st.deinit(alloc);
             pp.pane.setSessionCloseIntent(true);
             pp.pane.unref(alloc);
         },
         .tab => |t| {
+            var stack = t.stack;
+            if (stack) |*st| st.deinit(alloc);
             var tree = t.tree;
             var it = tree.iterator();
             while (it.next()) |entry| entry.view.setSessionCloseIntent(true);
@@ -712,6 +739,7 @@ pub fn cancelPark(self: *CloseUndo, pane: *PaneView) void {
     var pp = item.payload.pane;
     pp.anchor.deinit(alloc);
     if (pp.name) |n| alloc.free(n);
+    if (pp.stack) |*st| st.deinit(alloc);
     pp.pane.unref(alloc);
     self.arm();
 }

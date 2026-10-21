@@ -341,6 +341,50 @@ pub const PaneStackState = struct {
         self.rows = copy;
     }
 
+    /// Put back the rows made only of `scope`'s panes as `s` had them, and
+    /// leave every other row alone (T2126). One state serves every tab of a
+    /// window, so an undo in one tab must not take back what the user did in
+    /// another while it waited. A row `s` had that is not one of `now` (the
+    /// window's rows) is not on screen, and keeps nothing.
+    pub fn restoreScoped(self: *PaneStackState, s: *const Saved, scope: []const Id, now: Rows) Allocator.Error!void {
+        const gpa = self.gpa;
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const sorted = try a.dupe(Id, scope);
+        std.mem.sort(Id, sorted, {}, std.sort.asc(Id));
+        const now_keys = try keysOf(a, now);
+
+        // Built whole before anything is dropped, so a failure changes nothing.
+        var next = try cloneMap(gpa, &self.rows);
+        errdefer freeMap(gpa, &next);
+        var gone: std.ArrayListUnmanaged([]const Id) = .empty;
+        var it = next.iterator();
+        while (it.next()) |kv| {
+            if (isSubset(kv.key_ptr.*, sorted)) try gone.append(a, kv.key_ptr.*);
+        }
+        for (gone.items) |key| {
+            const kv = next.fetchRemove(key).?;
+            freeEntry(gpa, kv.value);
+            gpa.free(kv.key);
+        }
+        var back = s.map.iterator();
+        while (back.next()) |kv| {
+            const key = kv.key_ptr.*;
+            if (!isSubset(key, sorted) or !containsKey(now_keys, key)) continue;
+            const src = kv.value_ptr.*;
+            const shares = if (src.shares) |v| try gpa.dupe(f64, v) else null;
+            errdefer if (shares) |v| gpa.free(v);
+            const items = if (src.items) |v| try dupeItems(gpa, v) else null;
+            errdefer if (items) |v| freeItems(gpa, v);
+            const e = try entryIn(gpa, &next, key);
+            e.* = .{ .pin = src.pin, .shares = shares, .items = items, .capacity = src.capacity };
+        }
+        freeMap(gpa, &self.rows);
+        self.rows = next;
+        self.prune();
+    }
+
     // -- what the layout saw ------------------------------------------------
 
     /// The grid's stacked rows, as it lays them out.
@@ -1524,6 +1568,56 @@ test "pane_stack_state: undoing a close brings back the row as it was" {
     try state.rowsDidChange(&.{before[1..]}, &.{&before});
     try state.restore(&saved_state);
     try expectPin(&state, &ids, .{ .start = 2, .count = 1 });
+}
+
+test "pane_stack_state: an undo in one tab puts back its rows and leaves the others alone" {
+    // Tab one: a b [c] d e, and a closes. Tab two: f g h, collapsed to g
+    // while the undo waited. Undone, tab one's row is exactly as it was and
+    // tab two keeps what the user did there.
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    const ids = [_]Id{ 1, 2, 3, 4, 5 };
+    const before = singles(5, &ids);
+    const other_ids = [_]Id{ 6, 7, 8 };
+    const other = singles(3, &other_ids);
+    try collapsedToOne(&state, &before);
+    try state.noteRows(&.{ &before, &other });
+    var saved_state = try state.saved();
+    defer saved_state.deinit(testing.allocator);
+
+    try state.noteRows(&.{ before[1..], &other });
+    try expectPin(&state, &.{ 2, 3, 4, 5 }, .{ .start = 1, .count = 1 });
+    try state.restack(.{ .items = &other, .run = .{ .lo = 0, .hi = 2 }, .sizes = &.{ 1, 1, 1 } }, .{ .collapse = .leading }, 1);
+    try state.restack(.{ .items = &other, .run = .{ .lo = 1, .hi = 2 }, .sizes = &.{ 1, 1 } }, .{ .collapse = .trailing }, 1);
+    try expectPin(&state, &other_ids, .{ .start = 1, .count = 1 });
+
+    // The window notes the undone tree first (as any tree change), then puts
+    // back what was saved for the tab it restored.
+    try state.noteRows(&.{ &before, &other });
+    try state.restoreScoped(&saved_state, &ids, &.{ &before, &other });
+    try expectPin(&state, &ids, .{ .start = 2, .count = 1 });
+    try expectPin(&state, &.{ 2, 3, 4, 5 }, null); // off screen: nothing kept
+    try expectPin(&state, &other_ids, .{ .start = 1, .count = 1 });
+    // Seen already: the next layout moves nothing.
+    try state.noteRows(&.{ &before, &other });
+    try expectPin(&state, &ids, .{ .start = 2, .count = 1 });
+}
+
+test "pane_stack_state: a scoped restore drops a saved row that is not on screen" {
+    // Saved with a b [c] d e; by the undo the tab's panes are only a b c
+    // (d and e closed for good). Nothing comes back over panes that left.
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    const ids = [_]Id{ 1, 2, 3, 4, 5 };
+    const before = singles(5, &ids);
+    try collapsedToOne(&state, &before);
+    var saved_state = try state.saved();
+    defer saved_state.deinit(testing.allocator);
+    const now = [_][]const Id{ &.{1}, &.{2}, &.{3} };
+    try state.restoreScoped(&saved_state, &ids, &.{&now});
+    try expectPin(&state, &ids, null);
+    try expectPin(&state, &.{ 1, 2, 3 }, null);
+    try testing.expectEqual(@as(u32, 0), state.rows.count());
 }
 
 test "pane_stack_state: a pane moved within the row keeps the same panes on show" {
