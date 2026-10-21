@@ -167,11 +167,16 @@ pub const RowDrag = struct {
     /// not; `back`: the drag is back where that item fits again.
     fn squeezeAt(self: *RowDrag, state: *PaneStackState, position: f64, collapsing: ?Side, back: bool) Allocator.Error!Step {
         const x = self.offset + position;
-        const next: ?Squeeze = if (self.squeeze) |current|
+        const next: ?Squeeze = if (self.squeeze) |current| blk: {
             // The first item comes back by the drag's own measure; the ones
-            // after it by the chain's.
-            (if (current.count == 1 and back) null else layout.chain(self.row, self.boundary, x, current, self.past))
-        else if (collapsing) |side|
+            // after it by the chain's - in the same step (T2129): a pointer
+            // that jumps straight back from two folds deep comes back to
+            // where it was pressed in ONE move when the mouse is fast, and
+            // the row must not keep a fold that the next move, at the same
+            // spot, would undo.
+            const chained = layout.chain(self.row, self.boundary, x, current, self.past);
+            break :blk if (chained.count == 1 and back) null else chained;
+        } else if (collapsing) |side|
             layout.chain(self.row, self.boundary, x, .{ .side = side, .count = 1 }, self.past)
         else
             null;
@@ -318,6 +323,26 @@ test "divider: a drag that goes on chains into the next pane, and coming back un
     // And all the way back: nothing folded.
     _ = try drag.dividerMoved(&state, 350, 1000, 300, 600);
     try testing.expect(state.pin(&key_3) == null);
+}
+
+test "divider: a pointer that jumps straight back from two folds deep unfolds both in one move (T2129)" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0, past_default);
+    defer drag.deinit(&state);
+
+    _ = try drag.dividerMoved(&state, 460, 1000, 300, 600);
+    _ = try drag.dividerMoved(&state, 900, 1000, 300, 600);
+    try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 1 }, state.pin(&key_3)));
+
+    // One move back to where the drag began, as a fast mouse delivers it:
+    // nothing stays folded, and a further move at the same spot changes
+    // nothing.
+    var step = try drag.dividerMoved(&state, 350, 1000, 300, 600);
+    try testing.expect(step.restored and !step.squeezed);
+    try testing.expect(state.pin(&key_3) == null);
+    step = try drag.dividerMoved(&state, 350, 1000, 300, 600);
+    try testing.expect(!step.restored and !step.restacked);
 }
 
 test "divider: a side already under its minimum at the press folds only once pushed past the press" {

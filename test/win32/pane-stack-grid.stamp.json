@@ -1,16 +1,16 @@
 {
     "guard":  "pane-stack-grid",
     "script":  "test/win32/pane-stack-grid.ps1",
-    "generated":  "2026-10-21T15:43:32-07:00",
-    "commit":  "3efd92e0f",
+    "generated":  "2026-10-21T16:02:14-07:00",
+    "commit":  "203189f51",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_grid.zig":  "af090d47cef8ad0a74e920cbb904c5f8bff21d588299e5feaab69a54ce308b76",
                   "src/apprt/win32/pane_stack_layout.zig":  "2fcf30ccf2af4faf9fe37924989babf49ec872de90fbc17af559523a35d31416",
-                  "src/apprt/win32/pane_stack_state.zig":  "4004c3364f86955235552880790457e55877856d2e8ac09e0235e15dabf0bad0",
-                  "src/apprt/win32/Window.zig":  "f0ee6e97677bbd8d75504da1562a95cb4ca1ab48d0336277ac6755b6b4761343",
+                  "src/apprt/win32/pane_stack_state.zig":  "86169cf47dabb5d1ac01a45e988b0ae864cd2cb58195147bfef5b111029c1cf7",
+                  "src/apprt/win32/Window.zig":  "36d94f73a5396a654f656335ec6d1f15351bdf0d7d3661a7f5d197d212f2c4eb",
                   "test/win32/pane-stack-grid.ps1":  "26fea1e6b122b57a9f179cee38343f3b414e1b743dc6e7f810b6ad52238423c0"
               }
 }

@@ -341,6 +341,10 @@ test {
     // A divider or stack-grip drag that folds panes into strips and back
     // (T2124, Mac's RowDrag) - same deal.
     _ = @import("apprt/win32/stack_drag.zig");
+    // Random split, close, stash, focus, drag and undo sequences over all of
+    // the above, the rules a strip lives by checked after every step (T2129,
+    // Mac's PaneStackFuzzTests) - same deal.
+    _ = @import("apprt/win32/pane_stack_fuzz.zig");
     // A pane's own progress light - the ring circling a busy pane and the
     // percentage line across its top (T1899) - same deal.
     _ = @import("apprt/win32/busy_light.zig");
