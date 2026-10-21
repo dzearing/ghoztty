@@ -97,6 +97,16 @@ pub const Target = union(enum) {
     /// being the top of the stash (T1844, Mac `.stash(window:index:)`).
     stash: struct { window: WindowRef, index: usize },
 
+    /// A strip dragged along its own row (T2128, Mac `.reorder`): move the
+    /// pane to `side` of the row's item made of the panes `beside`. `caret`
+    /// is the insertion line to draw, in screen coordinates.
+    reorder: struct { window: WindowRef, beside: []const []const u8, side: Side, caret: Rect },
+
+    /// A strip dragged to a screen's edge (T2128, Mac `.tile`): a new window
+    /// holding the pane, covering `frame` - that half of the screen's work
+    /// area.
+    tile: Rect,
+
     /// The window this target lands in, or null for a brand new one.
     pub fn window(self: Target) ?WindowRef {
         return switch (self) {
@@ -106,6 +116,8 @@ pub const Target = union(enum) {
             .new_tab => |s| s.window,
             .new_window => null,
             .stash => |s| s.window,
+            .reorder => |s| s.window,
+            .tile => null,
         };
     }
 };
@@ -176,6 +188,19 @@ pub const Metrics = struct {
     /// has a hittable center. Mac: 44pt.
     swap_minimum: i32,
 
+    /// How far in from a screen's edge a dragged strip tiles to it (T2128).
+    /// Mac: 12pt - narrower than the window edge band, so a window that fills
+    /// the screen keeps its own edges just inside.
+    screen_edge_band: i32 = 12,
+
+    /// How far a strip's slot reaches into the cards either side of its
+    /// gutter. Mac: 24pt - a strip is 36pt, so the slots either side of one
+    /// meet across it.
+    slot_reach: i32 = 24,
+
+    /// How thick a slot's insertion caret is. Mac: 3pt.
+    slot_caret: i32 = 3,
+
     /// The swap rectangle is this fraction of each of the pane's dimensions
     /// before the floor and the cap apply.
     pub const swap_fraction: f32 = 0.34;
@@ -195,6 +220,9 @@ pub const Metrics = struct {
         return .{
             .edge_band = scaled(28, scale),
             .swap_minimum = scaled(44, scale),
+            .screen_edge_band = scaled(12, scale),
+            .slot_reach = scaled(24, scale),
+            .slot_caret = scaled(3, scale),
         };
     }
 
@@ -380,6 +408,241 @@ pub fn edgeBandSide(point: Point, content_rect: Rect, metrics: Metrics) ?Side {
     if (nearest == to_right) return .right;
     if (nearest == to_top) return .up;
     return .down;
+}
+
+// -- a dragged strip (T2128) ----------------------------------------------
+
+/// Which way a row runs: `horizontal` lays its items out left to right, a
+/// `vertical` one (a column) top to bottom. Mac `PaneLayout.Direction`.
+pub const RowDirection = enum { horizontal, vertical };
+
+/// One item of a collapsed row, as the strip drag sees it: the screen rect its
+/// panes show in (a card on show, or its strip) and those panes. A column in
+/// the row is ONE item holding several panes.
+pub const RowItem = struct {
+    rect: Rect,
+    panes: []const []const u8,
+};
+
+/// Where in its row a dragged strip can go (Mac `PaneBladeDrag.Slot`): one
+/// slot per place between two of the row's items, cards and strips alike, and
+/// one at each end.
+pub const Slot = struct {
+    /// Where the pointer means this slot.
+    rect: Rect,
+    /// The insertion line to draw: the gutter at the slot.
+    caret: Rect,
+    /// The item the pane goes beside, by its panes, and which side of it.
+    beside: []const []const u8,
+    side: Side,
+};
+
+/// A strip - a pane minimized in a collapsed row - being dragged (Mac
+/// `PaneBladeDrag`). It gets targets of its own instead of a pane's:
+/// `resolveBlade`.
+pub const BladeDrag = struct {
+    /// The window the strip lives in.
+    window: WindowRef,
+    slots: []const Slot,
+    /// Every monitor's work area, for tiling to an edge.
+    screens: []const Rect,
+};
+
+/// The most items a row's slots are worked out over. A row wider than this
+/// keeps slots for its first items only - the failure that costs nothing (a
+/// far slot is not a target) rather than one that needs an allocator on every
+/// mouse move.
+pub const max_row_items: usize = 64;
+
+/// The slots of a row (Mac `PaneBladeDrag.slots`): `items` in order, leading
+/// to trailing; `dragged`'s own item is left out, since a drop beside itself
+/// changes nothing. Written into `out` (room for `items.len + 1`), each slot's
+/// `beside` borrowing from `ids` (room for every pane of the row); returns the
+/// slots written.
+pub fn bladeSlots(
+    items: []const RowItem,
+    direction: RowDirection,
+    dragged: []const u8,
+    metrics: Metrics,
+    out: []Slot,
+    ids: [][]const u8,
+) []Slot {
+    // The dragged pane leaves wherever it was: its own item, or the column it
+    // was one pane of. What is left of each item is what a slot names.
+    var others: [max_row_items]RowItem = undefined;
+    var n_others: usize = 0;
+    var n_ids: usize = 0;
+    var own_index: ?usize = null;
+    for (items[0..@min(items.len, max_row_items)], 0..) |item, i| {
+        if (item.panes.len == 1 and pane_id.eql(item.panes[0], dragged)) {
+            own_index = i;
+            continue;
+        }
+        const start = n_ids;
+        for (item.panes) |p| {
+            if (pane_id.eql(p, dragged)) continue;
+            if (n_ids >= ids.len) break;
+            ids[n_ids] = p;
+            n_ids += 1;
+        }
+        others[n_others] = .{ .rect = item.rect, .panes = ids[start..n_ids] };
+        n_others += 1;
+    }
+    if (n_others == 0) return out[0..0];
+
+    var across = others[0].rect;
+    for (others[1..n_others]) |o| {
+        across.left = @min(across.left, o.rect.left);
+        across.top = @min(across.top, o.rect.top);
+        across.right = @max(across.right, o.rect.right);
+        across.bottom = @max(across.bottom, o.rect.bottom);
+    }
+    // y grows downward here, so a column's leading edge is its TOP - the
+    // inversion of the Swift, where it is the higher y.
+    const before: Side, const after: Side = switch (direction) {
+        .horizontal => .{ .left, .right },
+        .vertical => .{ .up, .down },
+    };
+
+    var n: usize = 0;
+    // Slot k sits before others[k] (k == n_others: after the last). The
+    // dragged item's own place is the slot that replaced it - index
+    // `own_index` - and is skipped.
+    var k: usize = 0;
+    while (k <= n_others) : (k += 1) {
+        if (own_index) |own| if (k == own) continue;
+        if (n >= out.len) break;
+        const from: i32, const to: i32 = if (k == 0)
+            .{ leadEdge(others[0].rect, direction), leadEdge(others[0].rect, direction) }
+        else if (k == n_others)
+            .{ trailEdge(others[k - 1].rect, direction), trailEdge(others[k - 1].rect, direction) }
+        else
+            // Leaving out the dragged pane's own item leaves its neighbours'
+            // gap wider; the slot spans it.
+            .{ trailEdge(others[k - 1].rect, direction), leadEdge(others[k].rect, direction) };
+        const band = slotBand(from, to, across, direction, metrics);
+        out[n] = if (k == 0)
+            .{ .rect = band.rect, .caret = band.caret, .beside = others[0].panes, .side = before }
+        else
+            .{ .rect = band.rect, .caret = band.caret, .beside = others[k - 1].panes, .side = after };
+        n += 1;
+    }
+    return out[0..n];
+}
+
+fn leadEdge(r: Rect, direction: RowDirection) i32 {
+    return if (direction == .horizontal) r.left else r.top;
+}
+
+fn trailEdge(r: Rect, direction: RowDirection) i32 {
+    return if (direction == .horizontal) r.right else r.bottom;
+}
+
+const SlotBand = struct { rect: Rect, caret: Rect };
+
+fn slotBand(from: i32, to: i32, across: Rect, direction: RowDirection, metrics: Metrics) SlotBand {
+    const mid = @divFloor(from + to, 2);
+    const reach = @max(metrics.slot_reach, @divFloor(to - from, 2));
+    const lo = mid - @divFloor(metrics.slot_caret, 2);
+    return switch (direction) {
+        .horizontal => .{
+            .rect = .{ .left = mid - reach, .top = across.top, .right = mid + reach, .bottom = across.bottom },
+            .caret = .{ .left = lo, .top = across.top, .right = lo + metrics.slot_caret, .bottom = across.bottom },
+        },
+        .vertical => .{
+            .rect = .{ .left = across.left, .top = mid - reach, .right = across.right, .bottom = mid + reach },
+            .caret = .{ .left = across.left, .top = lo, .right = across.right, .bottom = lo + metrics.slot_caret },
+        },
+    };
+}
+
+/// What dropping a strip at `point` means (Mac `resolveBlade`). A strip is a
+/// pane put away in its row, so it has the targets of a pane being put
+/// somewhere else in that row, or taken out of the window - never a pane's own
+/// split quadrants or swap:
+///
+/// 1. **A screen's edge** (`screen_edge_band`): a new window tiled to that
+///    half of the screen. Outermost, so it wins at the very edge.
+/// 2. **The pane sidebar**: stash it, as for any pane.
+/// 3. **A slot in its own row**, between two of its cards or strips or at
+///    either end: the pane moves there.
+/// 4. **A window's edge band**: a top-level insert, as for any pane.
+///
+/// Anywhere else, nothing - not a new window: the card settles back.
+pub fn resolveBlade(
+    point: Point,
+    candidates: []const Candidate,
+    blade: BladeDrag,
+    metrics: Metrics,
+) ?Target {
+    if (tileFrame(point, blade.screens, metrics)) |frame| return .{ .tile = frame };
+
+    // The pane sidebar is chrome, as for any pane: a strip stashes there.
+    if (frontmost(candidates, point, sidebarContains)) |c| {
+        return .{ .stash = .{
+            .window = c.window,
+            .index = stashIndexAt(c.stash_row_rects, point),
+        } };
+    }
+
+    // Its own row's slots answer over its own window, or over no window at
+    // all (a slot at the row's end reaches past the content edge) - never over
+    // another window lying on top.
+    const over = frontmost(candidates, point, contentHit);
+    const own_window = if (over) |c| c.window == blade.window else true;
+    if (own_window) {
+        var best: ?Slot = null;
+        var best_d: i64 = std.math.maxInt(i64);
+        for (blade.slots) |slot| {
+            const d = distanceSq(point, slot.caret);
+            if (d < best_d) {
+                best = slot;
+                best_d = d;
+            }
+        }
+        if (best) |slot| if (slot.rect.contains(point)) return .{ .reorder = .{
+            .window = blade.window,
+            .beside = slot.beside,
+            .side = slot.side,
+            .caret = slot.caret,
+        } };
+    }
+
+    const c = over orelse return null;
+    const side = edgeBandSide(point, c.content_rect, metrics) orelse return null;
+    return .{ .top_level = .{ .window = c.window, .side = side } };
+}
+
+/// The half of a screen a point at its edge tiles to, or null when the point
+/// is not at any screen's edge.
+pub fn tileFrame(point: Point, screens: []const Rect, metrics: Metrics) ?Rect {
+    for (screens) |s| {
+        // One pixel of slack all round, as Mac's `insetBy(-1, -1)`: a pointer
+        // pinned against the screen's edge still counts.
+        if (point.x < s.left - 1 or point.x > s.right or
+            point.y < s.top - 1 or point.y > s.bottom) continue;
+        const to_left = point.x - s.left;
+        const to_right = s.right - 1 - point.x;
+        const to_top = point.y - s.top;
+        const to_bottom = s.bottom - 1 - point.y;
+        const nearest = @min(@min(to_left, to_right), @min(to_top, to_bottom));
+        if (nearest > metrics.screen_edge_band) return null;
+        const mid_x = s.left + @divFloor(s.width(), 2);
+        const mid_y = s.top + @divFloor(s.height(), 2);
+        // Horizontal first, so an exact corner is deterministic.
+        if (nearest == to_left) return .{ .left = s.left, .top = s.top, .right = mid_x, .bottom = s.bottom };
+        if (nearest == to_right) return .{ .left = mid_x, .top = s.top, .right = s.right, .bottom = s.bottom };
+        if (nearest == to_top) return .{ .left = s.left, .top = s.top, .right = s.right, .bottom = mid_y };
+        return .{ .left = s.left, .top = mid_y, .right = s.right, .bottom = s.bottom };
+    }
+    return null;
+}
+
+/// How far a point is from a rect, squared (0 inside it).
+fn distanceSq(p: Point, r: Rect) i64 {
+    const dx: i64 = @max(r.left - p.x, 0, p.x - (r.right - 1));
+    const dy: i64 = @max(r.top - p.y, 0, p.y - (r.bottom - 1));
+    return dx * dx + dy * dy;
 }
 
 /// The edge a point is nearest to as a FRACTION of the pane's own dimensions
@@ -1001,4 +1264,240 @@ test "a point on another window's sidebar stashes THERE" {
 test "Target.window answers for a stash" {
     const s: Target = .{ .stash = .{ .window = 9, .index = 3 } };
     try testing.expectEqual(@as(?WindowRef, 9), s.window());
+}
+
+// -- a strip's targets (T2128, Mac PaneDropResolverTests 2811a3043) -------
+
+const strip_a = "A0000000-0000-4000-8000-00000000000A";
+const strip_b = "B0000000-0000-4000-8000-00000000000B";
+const card_c = "C0000000-0000-4000-8000-00000000000C";
+const card_d = "D0000000-0000-4000-8000-00000000000D";
+const strip_e = "E0000000-0000-4000-8000-00000000000E";
+
+/// A collapsed row across a 1000x800 window at the origin: strips a and b on
+/// the left, c and d on show, strip e on the right - 10px gutters, 36px
+/// strips. b is the strip being dragged.
+const row_items = [_]RowItem{
+    .{ .rect = .{ .left = 0, .top = 0, .right = 36, .bottom = 800 }, .panes = &.{strip_a} },
+    .{ .rect = .{ .left = 46, .top = 0, .right = 82, .bottom = 800 }, .panes = &.{strip_b} },
+    .{ .rect = .{ .left = 92, .top = 0, .right = 492, .bottom = 800 }, .panes = &.{card_c} },
+    .{ .rect = .{ .left = 502, .top = 0, .right = 954, .bottom = 800 }, .panes = &.{card_d} },
+    .{ .rect = .{ .left = 964, .top = 0, .right = 1000, .bottom = 800 }, .panes = &.{strip_e} },
+};
+
+const row_panes = [_]PaneRect{
+    .{ .id = strip_a, .rect = row_items[0].rect },
+    .{ .id = strip_b, .rect = row_items[1].rect },
+    .{ .id = card_c, .rect = row_items[2].rect },
+    .{ .id = card_d, .rect = row_items[3].rect },
+    .{ .id = strip_e, .rect = row_items[4].rect },
+};
+
+const test_screen = Rect{ .left = -500, .top = -300, .right = 2060, .bottom = 1140 };
+
+/// Storage for one test's blade: the slots borrow their ids from here.
+const RowFixture = struct {
+    slots_buf: [8]Slot = undefined,
+    ids_buf: [8][]const u8 = undefined,
+
+    fn blade(self: *RowFixture) BladeDrag {
+        const slots = bladeSlots(&row_items, .horizontal, strip_b, m1, &self.slots_buf, &self.ids_buf);
+        return .{ .window = 1, .slots = slots, .screens = &.{test_screen} };
+    }
+};
+
+fn rowCandidate() Candidate {
+    return .{
+        .window = 1,
+        .z_order = 0,
+        .content_rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 },
+        .pane_rects = &row_panes,
+    };
+}
+
+fn expectIds(want: []const []const u8, got: []const []const u8) !void {
+    try testing.expectEqual(want.len, got.len);
+    for (want, got) |w, g| try testing.expect(pane_id.eql(w, g));
+}
+
+test "a strip has a slot between every two of its row's items but its own" {
+    var f: RowFixture = .{};
+    const b = f.blade();
+    // Before a; [between a and c is where b already is]; c|d; d|e; after e.
+    try testing.expectEqual(@as(usize, 4), b.slots.len);
+    try expectIds(&.{strip_a}, b.slots[0].beside);
+    try expectIds(&.{card_c}, b.slots[1].beside);
+    try expectIds(&.{card_d}, b.slots[2].beside);
+    try expectIds(&.{strip_e}, b.slots[3].beside);
+    try testing.expectEqual(Side.left, b.slots[0].side);
+    for (b.slots[1..]) |s| try testing.expectEqual(Side.right, s.side);
+    // The c|d slot's caret runs down the middle of their gutter.
+    const caret = b.slots[1].caret;
+    try testing.expectEqual(@as(i32, 497), caret.left + @divFloor(caret.width(), 2));
+    try testing.expectEqual(@as(i32, 800), caret.height());
+}
+
+test "a strip dropped in a gutter of its row moves there" {
+    var f: RowFixture = .{};
+    const b = f.blade();
+    const cands = [_]Candidate{rowCandidate()};
+    const t = resolveBlade(.{ .x = 497, .y = 400 }, &cands, b, m1).?;
+    try testing.expectEqual(@as(WindowRef, 1), t.reorder.window);
+    try expectIds(&.{card_c}, t.reorder.beside);
+    try testing.expectEqual(Side.right, t.reorder.side);
+    // A slot reaches a little way into the cards either side of it.
+    const near = resolveBlade(.{ .x = 480, .y = 400 }, &cands, b, m1).?;
+    try testing.expect(near == .reorder);
+}
+
+test "a strip over a pane has no target there" {
+    // No quadrant, no swap: the middle of a card on show means nothing.
+    var f: RowFixture = .{};
+    const cands = [_]Candidate{rowCandidate()};
+    try testing.expectEqual(@as(?Target, null), resolveBlade(.{ .x = 290, .y = 400 }, &cands, f.blade(), m1));
+}
+
+test "a strip at the window's edge inserts at the top level" {
+    var f: RowFixture = .{};
+    const cands = [_]Candidate{rowCandidate()};
+    // y grows downward: 10px from the top is the top edge (Mac's y=790).
+    const t = resolveBlade(.{ .x = 290, .y = 10 }, &cands, f.blade(), m1).?;
+    try testing.expectEqual(@as(WindowRef, 1), t.top_level.window);
+    try testing.expectEqual(Side.up, t.top_level.side);
+}
+
+test "a strip at the screen's edge tiles that half" {
+    var f: RowFixture = .{};
+    const b = f.blade();
+    const cands = [_]Candidate{rowCandidate()};
+    try testing.expectEqual(
+        Rect{ .left = -500, .top = -300, .right = 780, .bottom = 1140 },
+        resolveBlade(.{ .x = -495, .y = 500 }, &cands, b, m1).?.tile,
+    );
+    try testing.expectEqual(
+        Rect{ .left = 780, .top = -300, .right = 2060, .bottom = 1140 },
+        resolveBlade(.{ .x = 2055, .y = 500 }, &cands, b, m1).?.tile,
+    );
+    try testing.expectEqual(
+        Rect{ .left = -500, .top = -300, .right = 2060, .bottom = 420 },
+        resolveBlade(.{ .x = 300, .y = -295 }, &cands, b, m1).?.tile,
+    );
+    try testing.expectEqual(
+        Rect{ .left = -500, .top = 420, .right = 2060, .bottom = 1140 },
+        resolveBlade(.{ .x = 300, .y = 1135 }, &cands, b, m1).?.tile,
+    );
+    // Off any edge and off every window: nothing (not a new window).
+    try testing.expectEqual(@as(?Target, null), resolveBlade(.{ .x = 1500, .y = 500 }, &cands, b, m1));
+}
+
+test "the screen edge is a scaled distance with a pixel of slack" {
+    const screens = [_]Rect{test_screen};
+    const m2 = Metrics.forScale(2.0);
+    try testing.expectEqual(@as(i32, 24), m2.screen_edge_band);
+    // 20px in is past a 100% band but inside a 200% one.
+    try testing.expectEqual(@as(?Rect, null), tileFrame(.{ .x = -480, .y = 0 }, &screens, m1));
+    try testing.expect(tileFrame(.{ .x = -480, .y = 0 }, &screens, m2) != null);
+    // A pointer pinned one pixel past the edge still tiles.
+    try testing.expect(tileFrame(.{ .x = -501, .y = 0 }, &screens, m1) != null);
+    try testing.expectEqual(@as(?Rect, null), tileFrame(.{ .x = -503, .y = 0 }, &screens, m1));
+}
+
+test "a strip over another window has only its edges" {
+    var f: RowFixture = .{};
+    const b = f.blade();
+    const other_panes = [_]PaneRect{.{ .id = other_id, .rect = .{ .left = 1200, .top = 0, .right = 1800, .bottom = 800 } }};
+    const other: Candidate = .{
+        .window = 2,
+        .z_order = 0,
+        .content_rect = .{ .left = 1200, .top = 0, .right = 1800, .bottom = 800 },
+        .pane_rects = &other_panes,
+    };
+    const cands = [_]Candidate{ rowCandidate(), other };
+    try testing.expectEqual(@as(?Target, null), resolveBlade(.{ .x = 1500, .y = 400 }, &cands, b, m1));
+    const t = resolveBlade(.{ .x = 1790, .y = 400 }, &cands, b, m1).?;
+    try testing.expectEqual(@as(WindowRef, 2), t.top_level.window);
+    try testing.expectEqual(Side.right, t.top_level.side);
+}
+
+test "a window lying over the strip's row takes the point from its slots" {
+    var f: RowFixture = .{};
+    const b = f.blade();
+    // Window 2 is in front and covers the c|d gutter of window 1's row.
+    const front: Candidate = .{
+        .window = 2,
+        .z_order = 0,
+        .content_rect = .{ .left = 400, .top = 200, .right = 1000, .bottom = 600 },
+        .pane_rects = &.{},
+    };
+    var own = rowCandidate();
+    own.z_order = 1;
+    const cands = [_]Candidate{ own, front };
+    try testing.expectEqual(@as(?Target, null), resolveBlade(.{ .x = 497, .y = 400 }, &cands, b, m1));
+    // Below the front window the same gutter is a slot again.
+    try testing.expect(resolveBlade(.{ .x = 497, .y = 700 }, &cands, b, m1).? == .reorder);
+}
+
+test "a column's slots run top to bottom" {
+    const top = "10000000-0000-4000-8000-000000000001";
+    const middle = "20000000-0000-4000-8000-000000000002";
+    const bottom = "30000000-0000-4000-8000-000000000003";
+    // y grows downward: the column's first item is the one with the least y.
+    const items = [_]RowItem{
+        .{ .rect = .{ .left = 0, .top = 0, .right = 800, .bottom = 36 }, .panes = &.{top} },
+        .{ .rect = .{ .left = 0, .top = 46, .right = 800, .bottom = 490 }, .panes = &.{middle} },
+        .{ .rect = .{ .left = 0, .top = 500, .right = 800, .bottom = 800 }, .panes = &.{bottom} },
+    };
+    var out: [4]Slot = undefined;
+    var ids: [4][]const u8 = undefined;
+    const slots = bladeSlots(&items, .vertical, top, m1, &out, &ids);
+    try testing.expectEqual(@as(usize, 2), slots.len);
+    try expectIds(&.{middle}, slots[0].beside);
+    try expectIds(&.{bottom}, slots[1].beside);
+    try testing.expectEqual(Side.down, slots[0].side);
+    try testing.expectEqual(Side.down, slots[1].side);
+    // In the gutter between middle and bottom.
+    try testing.expectEqual(@as(i32, 495), slots[0].caret.top + @divFloor(slots[0].caret.height(), 2));
+}
+
+test "a strip of a column in a row leaves its column" {
+    // b is one pane of the column [b, x]: the slots name the column by what
+    // is left of it.
+    const x = "F0000000-0000-4000-8000-00000000000F";
+    const items = [_]RowItem{
+        .{ .rect = .{ .left = 0, .top = 0, .right = 36, .bottom = 800 }, .panes = &.{strip_a} },
+        .{ .rect = .{ .left = 46, .top = 0, .right = 82, .bottom = 800 }, .panes = &.{ strip_b, x } },
+        .{ .rect = .{ .left = 92, .top = 0, .right = 992, .bottom = 800 }, .panes = &.{card_c} },
+    };
+    var out: [4]Slot = undefined;
+    var ids: [4][]const u8 = undefined;
+    const slots = bladeSlots(&items, .horizontal, strip_b, m1, &out, &ids);
+    try testing.expectEqual(@as(usize, 4), slots.len);
+    try expectIds(&.{strip_a}, slots[0].beside);
+    try expectIds(&.{strip_a}, slots[1].beside);
+    try expectIds(&.{x}, slots[2].beside);
+    try expectIds(&.{card_c}, slots[3].beside);
+}
+
+test "a row holding only the dragged strip has no slots" {
+    const items = [_]RowItem{row_items[1]};
+    var out: [2]Slot = undefined;
+    var ids: [2][]const u8 = undefined;
+    try testing.expectEqual(@as(usize, 0), bladeSlots(&items, .horizontal, strip_b, m1, &out, &ids).len);
+}
+
+test "a strip on the sidebar stashes" {
+    var f: RowFixture = .{};
+    var c = rowCandidate();
+    c.sidebar_rect = .{ .left = -240, .top = 0, .right = 0, .bottom = 800 };
+    const cands = [_]Candidate{c};
+    const t = resolveBlade(.{ .x = -100, .y = 400 }, &cands, f.blade(), m1).?;
+    try testing.expectEqual(@as(WindowRef, 1), t.stash.window);
+    try testing.expectEqual(@as(usize, 0), t.stash.index);
+}
+
+test "Target.window answers for a reorder and a tile" {
+    const r: Target = .{ .reorder = .{ .window = 4, .beside = &.{}, .side = .left, .caret = test_screen } };
+    try testing.expectEqual(@as(?WindowRef, 4), r.window());
+    const t: Target = .{ .tile = test_screen };
+    try testing.expectEqual(@as(?WindowRef, null), t.window());
 }

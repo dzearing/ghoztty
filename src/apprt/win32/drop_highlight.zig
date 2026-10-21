@@ -59,6 +59,11 @@ pub const Kind = enum {
     /// Stashed with nothing else in the stash: the sidebar's empty "Drop to
     /// stash" slot, washed as the place it lands.
     stash_slot,
+    /// A dragged strip will move to this slot of its own row (T2128): the
+    /// insertion caret down the gutter it lands in. A caret, like `new_tab`'s
+    /// - where the pane ends up depends on the row's relayout, and a footprint
+    /// guessed here would be a preview that lies.
+    reorder,
 };
 
 pub const Highlight = struct {
@@ -131,6 +136,9 @@ pub const Context = struct {
 /// where the release is honoured.
 pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
     const t = target orelse return null;
+    // A strip tiled to a screen's edge (T2128) carries its own frame: the new
+    // window it makes covers exactly that half of the screen.
+    if (t == .tile) return .{ .rect = t.tile, .kind = .new_window };
     if (t.window()) |w| {
         if (w != ctx.window) return null;
     } else {
@@ -172,8 +180,9 @@ pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
                 .kind = .stash,
             };
         },
+        .reorder => |s| .{ .rect = s.caret, .kind = .reorder },
         // Answered above, before the per-window arms are reached.
-        .new_window => unreachable,
+        .new_window, .tile => unreachable,
     };
 }
 
@@ -575,4 +584,26 @@ test "T1844: a stash the window would refuse is not previewed" {
     var hidden = stashCtx(&t_rows, null);
     hidden.sidebar_rect = null;
     try testing.expectEqual(@as(?Highlight, null), forTarget(.{ .stash = .{ .window = win, .index = 0 } }, hidden));
+}
+
+test "T2128: a strip's row slot previews as its caret, in its own window only" {
+    const caret: Rect = .{ .left = 496, .top = 0, .right = 499, .bottom = 600 };
+    const t: Target = .{ .reorder = .{ .window = win, .beside = &.{panes[0].id}, .side = .right, .caret = caret } };
+    const h = forTarget(t, baseCtx()).?;
+    try testing.expectEqual(Kind.reorder, h.kind);
+    try testing.expectEqual(caret, h.rect);
+    var other = baseCtx();
+    other.window = win + 1;
+    try testing.expectEqual(@as(?Highlight, null), forTarget(t, other));
+}
+
+test "T2128: a strip tiled to a screen edge previews the half it will cover" {
+    const half: Rect = .{ .left = 0, .top = 0, .right = 1280, .bottom = 1440 };
+    // The frame is the target's own: no new-window frame is needed from the
+    // caller, and none it supplies replaces it.
+    var c = baseCtx();
+    c.new_window_frame = .{ .left = 5, .top = 5, .right = 50, .bottom = 50 };
+    const h = forTarget(.{ .tile = half }, c).?;
+    try testing.expectEqual(Kind.new_window, h.kind);
+    try testing.expectEqual(half, h.rect);
 }

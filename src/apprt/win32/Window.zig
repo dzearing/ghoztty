@@ -4290,6 +4290,9 @@ fn ownedDrop(
         .new_tab => |sp| if (honoured) .{ .new_tab = .{ .index = sp.index } } else null,
         .new_window => null,
         .stash => |sp| if (honoured) .{ .stash = .{ .index = sp.index } } else null,
+        // A strip's own targets (T2128): only `pane_drop.resolveBlade` makes
+        // them, and no drag here resolves through it yet (T2120).
+        .reorder, .tile => null,
     };
 }
 
