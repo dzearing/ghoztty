@@ -816,6 +816,10 @@ function loopBlocker(lock, file) {
     kind: String(j.recovery_blocked_kind || 'unknown'),
     why: String(j.recovery_blocked_why || ''),
     resetsAt: String(j.recovery_blocked_resets_at || ''),
+    // T2097: a blocker only the user can clear (an expired login), with the
+    // one sentence saying how - written by the same PowerShell that decided it.
+    needsUser: !!j.recovery_needs_user,
+    remedy: String(j.recovery_remedy || ''),
     observedAt: isNaN(tick) ? null : tick,
   };
 }

@@ -305,6 +305,30 @@ try {
         Assert 'F4 a loop the supervisor found unblocked reports nothing' `
             ($null -ne $j -and $null -ne $j.loop -and $null -eq $j.loop.blocked) `
             "$($j.loop.blocked | ConvertTo-Json -Compress)"
+
+        # T2097: a blocker only the user can clear carries the remedy through,
+        # so the bar can say what to do instead of promising it will lift.
+        Write-WdFixture 'started=2026-09-09T13:00:00.0000000-07:00' $true
+        $wd = Get-Content $wdFile -Raw | ConvertFrom-Json
+        $wd.recovery_blocked_kind = 'login'
+        $wd.recovery_blocked_why = 'Login expired - Please run /login'
+        $wd | Add-Member -NotePropertyName recovery_needs_user -NotePropertyValue $true -Force
+        $wd | Add-Member -NotePropertyName recovery_remedy -NotePropertyValue 'sign in again: type /login in the [go-loop] window' -Force
+        $wd | ConvertTo-Json | Out-File -FilePath $wdFile -Encoding utf8
+        $j = Get-LoopJson
+        Assert 'F5 a login block reaches the payload as needing the user, with the remedy' `
+            ($null -ne $j -and $null -ne $j.loop.blocked -and $j.loop.blocked.kind -eq 'login' -and
+             $j.loop.blocked.needsUser -eq $true -and $j.loop.blocked.remedy -match '/login') `
+            "$($j.loop.blocked | ConvertTo-Json -Compress)"
+        # Negative control for F5: the quota record (F1's) does not need the user.
+        Write-WdFixture 'started=2026-09-09T13:00:00.0000000-07:00' $true
+        $j = Get-LoopJson
+        Assert 'F6 a usage-limit block does not claim to need the user' `
+            ($null -ne $j.loop.blocked -and $j.loop.blocked.needsUser -eq $false -and -not $j.loop.blocked.remedy) `
+            "$($j.loop.blocked | ConvertTo-Json -Compress)"
+        # And the page itself words the two differently.
+        Assert 'F7 the block bar has a needs-you wording that names the remedy' `
+            ($html -match 'B\.needsUser' -and $html -match 'Only you can clear this' -and $html -match 'B\.remedy')
     } finally {
         Remove-Item $fix -Recurse -Force -ErrorAction SilentlyContinue
     }

@@ -1,12 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-20T21:28:02-07:00",
-    "commit":  "3dd81bfe7",
+    "generated":  "2026-10-20T22:46:07-07:00",
+    "commit":  "e66b7a782",
     "uncommitted":  [
-                        "test/win32/pane-elevation.ps1",
-                        "test/win32/split-dim.ps1",
-                        "test/win32/split-dim-viewer.ps1"
+                        "test/win32/go-loop-guard.ps1",
+                        "test/win32/task-dashboard.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -156,7 +155,7 @@
                   "test/win32/gate-negatives.ps1":  "a866595fe5246d6a62dac5d62d626260174fbaca29eff9d8b23f330029c05b1f",
                   "test/win32/ghoztty-cleanup.ps1":  "6c920aaa49bd05d3c18f496991a51af7796075f695d86c2c4f856cc115299085",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
-                  "test/win32/go-loop-guard.ps1":  "9a922f661c98c008566eaadb011bf05b06f522354f1180c078f04e3908b138ce",
+                  "test/win32/go-loop-guard.ps1":  "a73c8de8707176fe469a7dca58bc85a791fca7ea8f2d6c09bb7586c1a296e4d0",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "c85573dcf6e581152c9e72dbb43fd71e58b0ef40fe4c5dec08b9d357c22e8827",
@@ -420,7 +419,7 @@
                   "test/win32/tab-strip-autohide.ps1":  "b380ab43805b9402a25be5a426f2261c7e428fabe8ab818616a77c3af6771b21",
                   "test/win32/tab-tooltip.ps1":  "eded1e0c052efa8032cb617e313b856ed098d22864f5237b3066cc881f87355e",
                   "test/win32/target-staleness.ps1":  "f839b289d37ee78c0a57d46ae0f2278545a7337dfca72a7744b34cb6b8c929de",
-                  "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d",
+                  "test/win32/task-dashboard.ps1":  "255d7cd1c1b87521613ee7aa79212480bf22984e7ba376e16c197e8562735366",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
                   "test/win32/test-binary-soak.ps1":  "96c647eb2fcbdef023f99868ab73bec7341befc23f0a14f2a9eacd4aefa64f3c",
                   "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",

@@ -1070,15 +1070,21 @@ function renderBlockBar(d) {
   if (!host) return;
   var B = d && d.loop && d.loop.blocked;
   if (!B) { host.innerHTML = ''; host.className = ''; return; }
-  var head = B.kind === 'usage-limit'
+  var head = B.kind === 'login'
+    ? 'The loop is stopped and needs you: its Claude sign-in has expired.'
+    : B.kind === 'usage-limit'
     ? 'The loop is stopped: this Claude account has hit its usage limit.'
     : 'The loop is stopped: the session keeps getting an error instead of doing work.';
   var kids = [h('b', { text: head })];
   if (B.why) kids.push(h('span', { class: 'bb-why', text: '“' + B.why + '”' }));
+  // T2097: a block that never lifts on its own says what to do, instead of
+  // promising a recovery that is not coming.
+  var note = B.needsUser
+    ? 'Only you can clear this — the loop has stopped retrying. To fix: ' + (B.remedy || 'sign in again in the loop window') + '.'
+    : (B.resetsAt ? 'It clears ' + B.resetsAt + '. ' : '') +
+      'Nothing on this box can clear it — no restart, no nudge; the loop picks up on its own the moment it lifts.';
   kids.push(h('span', { class: 'bb-note',
-    text: (B.resetsAt ? 'It clears ' + B.resetsAt + '. ' : '') +
-      'Nothing on this box can clear it — no restart, no nudge; the loop picks up on its own the moment it lifts.' +
-      (B.observedAt ? ' Last confirmed ' + fDur(Date.now() - B.observedAt) + ' ago.' : '') }));
+    text: note + (B.observedAt ? ' Last confirmed ' + fDur(Date.now() - B.observedAt) + ' ago.' : '') }));
   host.className = 'blockbar';
   host.innerHTML = '';
   host.appendChild(h('div', { class: 'bb-in' }, kids));

@@ -3232,6 +3232,129 @@ Assert 'CC29 health and the watchdog call the same classifier' `
     ((Get-Content (Join-Path $Repo 'scripts\go-loop-health.ps1') -Raw) -match 'Resolve-LoopBlocker' -and
      (Get-Content $dogScript -Raw) -match 'Resolve-LoopBlocker')
 
+# --- CC30-CC51. a blocker only the USER can clear stops the typing (T2097) --
+#
+# WHY. 2026-10-18 06:32 to 2026-10-20 17:37: both lanes' Claude sign-in
+# expired, every nudge was answered 'Login expired - Please run /login', and the
+# watchdog re-entered 171 times inside one unmoved turn. CC above made it NAME
+# the blocker - but a quota lifts on its own and a login never does, so naming
+# it in a log nobody reads cost 2.5 days. The fixture is the measured entry from
+# transcript 59a6443a (2026-10-18T13:47:30Z), `"error":"authentication_failed"`
+# and U+00B7 separator included.
+""
+"CC30. a blocker only the user can clear stops the retries and tells them"
+
+$ccLoginText = "Login expired $ccDot Please run /login"
+function CCLoginEntry([switch]$NoErrorField) {
+    $o = [ordered]@{
+        type              = 'assistant'
+        timestamp         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+        message           = [ordered]@{ role = 'assistant'; model = '<synthetic>'
+                                        content = @([ordered]@{ type = 'text'; text = $ccLoginText }) }
+        isApiErrorMessage = $true
+    }
+    if (-not $NoErrorField) { $o['error'] = 'authentication_failed' }
+    return ($o | ConvertTo-Json -Depth 6 -Compress)
+}
+$ccLogin = Join-Path $ccRoot 'login.jsonl'
+Set-Content -LiteralPath $ccLogin -Encoding utf8 -Value ((@(
+    (CCEntry 'user' $ccNudge), (CCLoginEntry), (CCEntry 'user' $ccNudge), (CCLoginEntry)) -join "`n"))
+$ccLoginV = Resolve-LoopBlocker -TranscriptPath $ccLogin
+Assert 'CC30 the measured 2026-10-18 entry is a login blocker' `
+    ($ccLoginV.Blocked -and $ccLoginV.Kind -eq 'login' -and $ccLoginV.Source -eq 'transcript')
+Assert 'CC31 and it is the kind that needs the user' ($ccLoginV.NeedsUser -eq $true)
+# The structured field is the primary key; the prose is the fallback. Prove the
+# prose alone still classifies, so a field rename upstream degrades to the text
+# match rather than to "api-error, keep nudging".
+$ccLoginNoField = Join-Path $ccRoot 'login-nofield.jsonl'
+Set-Content -LiteralPath $ccLoginNoField -Encoding utf8 -Value (CCLoginEntry -NoErrorField)
+$ccV = Resolve-LoopBlocker -TranscriptPath $ccLoginNoField
+Assert 'CC32 the sentence alone, without the error field, is still a login blocker' `
+    ($ccV.Kind -eq 'login' -and $ccV.NeedsUser)
+$ccV = Resolve-LoopBlocker -TranscriptPath '' -PaneTail ("> read go.md and go`r`n  " + $ccLoginText)
+Assert 'CC33 and the pane fallback sees it too' ($ccV.Blocked -and $ccV.Kind -eq 'login' -and $ccV.NeedsUser -and $ccV.Source -eq 'pane')
+# Teeth: the self-clearing kinds must NOT be promoted, or every 529 and every
+# quota would stop the retries that do eventually work.
+Assert 'CC34 a usage limit lifts on its own, so it does not need the user' `
+    ((Resolve-LoopBlocker -TranscriptPath $ccBlocked).NeedsUser -ne $true)
+Assert 'CC35 nor does a transport error' ((Resolve-LoopBlocker -TranscriptPath $ccApi).NeedsUser -ne $true)
+Assert 'CC36 the remedy names /login and the lane window' `
+    ((Get-LoopBlockerRemedy -Kind 'login' -WindowMarker '[go-loop b]') -match '/login' -and
+     (Get-LoopBlockerRemedy -Kind 'login' -WindowMarker '[go-loop b]') -match [regex]::Escape('[go-loop b]') -and
+     -not (Get-LoopBlockerRemedy -Kind 'usage-limit'))
+
+# --- the watchdog stops typing and alerts, once ------------------------------
+$ccSink = Join-Path $ccRoot 'alerts.jsonl'
+$ccPrevSink = $env:GHOZTTY_LOOP_ALERT_SINK
+$env:GHOZTTY_LOOP_ALERT_SINK = $ccSink
+Remove-Item $state, $ccSink -Force -ErrorAction SilentlyContinue
+$L = Read-LockFile
+$L.turn_started = (Get-Date).AddMinutes(-3800).ToString('o')
+$L.transcript = $ccLogin
+Write-LockFile $L
+$r = Dog-Run @('-DryRun')
+Assert 'CC37 an expired login is not nudged: the decision is notify' `
+    ($r.Out -match 'ACTION notify' -and $r.Out -notmatch 'ACTION (nudge|new-window|launch-app|restart-in-pane)')
+Assert 'CC38 and the log says it needs the user, with the remedy' `
+    ($r.Out -match 'NEEDS USER' -and $r.Out -match '/login')
+Assert 'CC39 a dry run alerts nobody' (-not (Test-Path $ccSink))
+$r = Dog-Run @()
+$ccAlerts = @(if (Test-Path $ccSink) { Get-Content $ccSink })
+# Two channels per alert: the toast, and a banner on the loop pane - the toast
+# alone can be switched off, and was, on this box.
+Assert 'CC40 a real tick alerts the user exactly once on each channel, and still does not type' `
+    ($r.Out -match 'ACTION notify' -and $ccAlerts.Count -eq 2 -and
+     $r.Out -match 'ALERTED the user \(toast=sink; banner=sink\)')
+$ccToast = @($ccAlerts | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.title })
+$ccBanner = @($ccAlerts | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.banner })
+Assert 'CC41 the toast carries the sentence and the remedy' `
+    ($ccToast.Count -eq 1 -and $ccToast[0].body -match 'Login expired' -and $ccToast[0].body -match '/login')
+Assert 'CC41b and the banner goes on the loop pane itself, saying the same' `
+    ($ccBanner.Count -eq 1 -and $ccBanner[0].banner -eq 'PANE-CC' -and $ccBanner[0].body -match '/login')
+$r = Dog-Run @()
+$ccAlerts = @(if (Test-Path $ccSink) { Get-Content $ccSink })
+Assert 'CC42 the next tick over the same blocker does not alert again' `
+    ($ccAlerts.Count -eq 2 -and $r.Out -match 'already alerted')
+$ccSt = Get-Content $state -Raw | ConvertFrom-Json
+Assert 'CC43 the state the dashboard reads says it needs the user, and how to fix it' `
+    ($ccSt.recovery_needs_user -eq $true -and $ccSt.recovery_blocked_kind -eq 'login' -and
+     $ccSt.recovery_remedy -match '/login' -and $ccSt.recovery_turn_key -eq (Get-LoopTurnKey (Read-LockFile)))
+# The re-arm: a NEW blocker (the turn moved, then expired again) is told anew,
+# and the same one is retold after the repeat window. Pure, so no clock waits.
+$ccKey = [string]$ccSt.user_alert_key
+Assert 'CC44 the same blocker inside the repeat window is not due' `
+    (-not (Test-LoopUserAlertDue -State $ccSt -Key $ccKey -RepeatHours 12))
+Assert 'CC45 a different blocker is due at once' `
+    (Test-LoopUserAlertDue -State $ccSt -Key ($ccKey + '-other') -RepeatHours 12)
+Assert 'CC46 and the same one is due again after the window' `
+    (Test-LoopUserAlertDue -State $ccSt -Key $ccKey -RepeatHours 12 -Now (Get-Date).AddHours(13))
+# -Force is the caller saying the evidence is not to be trusted; it still
+# re-enters. Negative control for CC37 at the same time: the identical fixture
+# under -Force must reach a re-entry arm, so CC37's notify is the branch and not
+# a watchdog that has stopped deciding anything.
+$r = Dog-Run @('-DryRun', '-Force')
+Assert 'CC47 -Force still re-enters over a login blocker' `
+    ($r.Out -match 'ACTION ' -and $r.Out -notmatch 'ACTION notify')
+
+# --- health tells the same story ---------------------------------------------
+$ccH = CCHealth
+Assert 'CC48 health names the login blocker as one that needs the user' `
+    ($ccH -match 'blocked=login\(needs-you\)' -and $ccH -match 'only YOU can clear it' -and $ccH -match '/login')
+Assert 'CC49 and does not promise it will lift on its own' ($ccH -notmatch 'resumes on its own')
+$ccHJson = $null
+try { $ccHJson = (CCHealth -AsJson) | ConvertFrom-Json } catch { }
+Assert 'CC50 -Json carries needs-user and the remedy' `
+    ($null -ne $ccHJson -and $ccHJson.blocked_kind -eq 'login' -and $ccHJson.blocked_needs_user -eq $true -and
+     $ccHJson.blocked_remedy -match '/login')
+# Negative control for CC48-CC50: the quota fixture keeps its old wording.
+$L = Read-LockFile
+$L.transcript = $ccBlocked
+Write-LockFile $L
+$ccH = CCHealth
+Assert 'CC51 a usage limit is still reported as lifting on its own' `
+    ($ccH -match 'blocked=usage-limit ' -and $ccH -match 'resumes on its own' -and $ccH -notmatch 'needs-you')
+$env:GHOZTTY_LOOP_ALERT_SINK = $ccPrevSink
+
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 
 # --- cleanup --------------------------------------------------------------

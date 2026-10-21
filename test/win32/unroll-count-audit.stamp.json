@@ -1,10 +1,14 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-20T18:13:35-07:00",
-    "commit":  "679c49fc3",
+    "generated":  "2026-10-20T22:37:09-07:00",
+    "commit":  "e66b7a782",
     "uncommitted":  [
-
+                        "scripts/go-loop-health.ps1",
+                        "scripts/go-loop-watchdog.ps1",
+                        "scripts/guard-due.ps1",
+                        "scripts/lib/UserAlert.ps1",
+                        "scripts/loop-session.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "de0387b596e8e31885fa64f769bc9c784b10f9acd938b785c17855ac6ccaac81",
@@ -32,11 +36,11 @@
                   "scripts/git-commit-guard.ps1":  "362105b3677ccb7e401ba858ca7dad11ba6a12d4abd77c9c07cf6f3b24af55bf",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "e65ddcb0f8d3c875848b955cacc1a7d019423281995c77537e1a35d5f98970f1",
-                  "scripts/go-loop-health.ps1":  "14d62dfa33d78bbed90170260637b8e111d85416284d1ecc7777f45533b6145f",
+                  "scripts/go-loop-health.ps1":  "3f4b3294e34bd948e96cd860738e6e9c848cc698f74396e309c969b71eeced82",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
-                  "scripts/go-loop-watchdog.ps1":  "84a223af995b00dfdf1d70164321c320e39df45ab1f45539372de0ad72cba33e",
-                  "scripts/guard-due.ps1":  "7efdc7700fb00fb8bfe232405f84feba67decf256566481983580a46ddd218cd",
+                  "scripts/go-loop-watchdog.ps1":  "335d13ed39dada019b1156bb6b53da7a33f22a0e14b4d686212cbf5636c2054d",
+                  "scripts/guard-due.ps1":  "e78e8ac6481e7c504f4bb2049b664644a422c1eeb8b858e66189fa0b4c2f8a88",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -66,8 +70,9 @@
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
                   "scripts/lib/RunVerdict.ps1":  "a23842bebc540f3c3e7fb0477bad5816d3720e9adf91bfedd74a9ad0b5d6da07",
                   "scripts/lib/StampMerge.ps1":  "c1397eeccbf3039c88b7d576b1c1948db4370987ebf053e8b9b6f50a6bf76926",
+                  "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/lib/WebViewLane.ps1":  "14ff86074a34aef73316a5c94032bf32bd42845d7e831170366034700898a579",
-                  "scripts/loop-session.ps1":  "36cb72a6b1d94ad16e4db19676c4369a8d414f7754859b1a9d5c7f307fb993b6",
+                  "scripts/loop-session.ps1":  "39189157a285514dc8e68c86a5f844d688463d1124c90e882623373045895ade",
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
                   "scripts/parity-decisions.ps1":  "2475b9be8aa438a4f5b0cbe1f977253e14a669de074547c869246b83b44d5030",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",

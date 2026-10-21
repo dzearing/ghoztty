@@ -483,7 +483,14 @@ if ($alive -and $turnAgeMin -gt $TurnSuspectMinutes) {
         $notes += "the session transcript could not be classified, so an external blocker would be invisible here: $($_.Exception.Message)"
     }
 }
-if ($blocker.Blocked) {
+$blockerRemedy = ''
+if ($blocker.Blocked -and $blocker.NeedsUser) {
+    # The one blocker that does NOT lift on its own (T2097): saying "resumes once
+    # that lifts" over an expired login is how 2.5 days passed with nobody told.
+    $blockerRemedy = Get-LoopBlockerRemedy -Kind $blocker.Kind -WindowMarker (Get-LoopLaneMarker $laneId)
+    $notes += ("the session is BLOCKED($($blocker.Kind)) and only YOU can clear it - its last answer was " +
+        "'$($blocker.Why)'. To fix: $blockerRemedy")
+} elseif ($blocker.Blocked) {
     $notes += ("the session is BLOCKED($($blocker.Kind)) and no amount of nudging clears it - its last answer was " +
         "'$($blocker.Why)'" +
         $(if ($blocker.ResetsAt) { " (clears $($blocker.ResetsAt))" } else { '' }) +
@@ -612,6 +619,8 @@ if ($Json) {
         blocked_kind     = [string]$blocker.Kind
         blocked_why      = [string]$blocker.Why
         blocked_resets_at = [string]$blocker.ResetsAt
+        blocked_needs_user = [bool]$blocker.NeedsUser
+        blocked_remedy   = $blockerRemedy
         marked_windows = $marked
         watchdog       = $watchdog
         dashboard      = $dashboard
@@ -636,7 +645,7 @@ if ($Json) {
 } else {
     $task = if ($inProgress.Count) { $inProgress -join ',' } else { 'none' }
     "$(Now-Iso) $($verdict.ToUpper()) uptime=$uptime turn=$turn turn_age=$(Format-Age $turnAgeMin) state=$state pane=$pane pid=$loopPid " +
-    "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState deliver=$(if ($deliverState -eq 'wrong') { "wrong($deliverProblems)" } else { $deliverState }) blocked=$(if ($blocker.Blocked) { $blocker.Kind } else { 'no' }) windows=$marked watchdog=$watchdog dashboard=$dashboard lane=$laneId lanes=$lanesText"
+    "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState deliver=$(if ($deliverState -eq 'wrong') { "wrong($deliverProblems)" } else { $deliverState }) blocked=$(if ($blocker.Blocked) { $blocker.Kind + $(if ($blocker.NeedsUser) { '(needs-you)' } else { '' }) } else { 'no' }) windows=$marked watchdog=$watchdog dashboard=$dashboard lane=$laneId lanes=$lanesText"
     foreach ($n in $notes) { "  - $n" }
 }
 

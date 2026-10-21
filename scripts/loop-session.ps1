@@ -337,15 +337,23 @@ function Resolve-LoopStallVerdict {
 # Pure half, so the whole thing is testable without a live session: hand it the
 # transcript's parsed entries, oldest first.
 #
-# Returns @{ Blocked; Kind; Why; ResetsAt; Source }. Kind is 'usage-limit' (a
-# quota the user can raise or wait out), 'api-error' (transport, 5xx, overload -
-# transient and worth retrying), or 'none'.
+# Returns @{ Blocked; Kind; Why; ResetsAt; Source; NeedsUser }. Kind is
+# 'usage-limit' (a quota the user can raise or wait out), 'login' (the session's
+# sign-in expired or was refused - see below), 'api-error' (transport, 5xx,
+# overload - transient and worth retrying), or 'none'.
+#
+# NeedsUser separates the blockers that lift on their own from the one that
+# never does (T2097). A quota resets at a known instant and a 529 passes; an
+# expired login waits for a human to type /login, and on 2026-10-18..20 both
+# lanes sat 2.5 days on 'Login expired - Please run /login' while the watchdog
+# nudged the pane 171 times and told nobody. A NeedsUser blocker is the one a
+# supervisor must stop typing at and start telling the user about.
 function Resolve-LoopBlockerFromEntries {
     param(
         [object[]]$Entries = @(),
         [AllowEmptyString()][string]$PaneTail = ''
     )
-    $none = @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none' }
+    $none = @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none'; NeedsUser = $false }
 
     # Only the session's MOST RECENT answer counts. An error from four turns ago
     # is history: the loop demonstrably recovered from it, and treating it as a
@@ -360,6 +368,12 @@ function Resolve-LoopBlockerFromEntries {
         $text = Get-LoopEntryText $last
         $v = Resolve-LoopBlockerText $text
         $v.Source = 'transcript'
+        # The structured field beats the prose, the same way the epoch below
+        # does: Claude Code stamps a refused sign-in `"error":
+        # "authentication_failed"`, and that survives a reworded message.
+        $err = ''
+        try { $err = [string]$last.error } catch { $err = '' }
+        if ($err -match '^authentication') { $v.Kind = 'login'; $v.NeedsUser = $true }
         # The epoch beats the prose: the message says "Sep 12, 1am" in the
         # user's words, `quotaLimits.resetsAt` says it in seconds and is what a
         # caller can compare against a clock.
@@ -390,17 +404,51 @@ function Resolve-LoopBlockerFromEntries {
 function Resolve-LoopBlockerText {
     param([AllowEmptyString()][string]$Text = '', [switch]$RequireMatch)
     $t = ($Text -replace '\s+', ' ').Trim()
+    # Login first: the sign-in sentence never mentions a limit, but a quota
+    # sentence could one day mention signing in, and the answer to "who clears
+    # this" must not depend on the order of two alternations.
+    $login = 'login expired|run /login|not logged in|invalid api key|oauth token (has )?(expired|been revoked)|authentication_failed'
     $quota = 'spend limit|usage limit|rate limit|limit reached|hit your .*limit|quota'
-    $kind = if ($t -match $quota) { 'usage-limit' }
+    $kind = if ($t -match $login) { 'login' }
+            elseif ($t -match $quota) { 'usage-limit' }
             elseif ($RequireMatch) { 'none' }
             else { 'api-error' }
-    if ($kind -eq 'none') { return @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none' } }
+    if ($kind -eq 'none') { return @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none'; NeedsUser = $false } }
     $why = $t
     if ($why.Length -gt 200) { $why = $why.Substring(0, 200) + '...' }
     $resets = ''
     $m = [regex]::Match($t, 'resets?\s+(?:at\s+)?([^.;]{3,60})', 'IgnoreCase')
     if ($m.Success) { $resets = $m.Groups[1].Value.Trim() }
-    return @{ Blocked = $true; Kind = $kind; Why = $why; ResetsAt = $resets; Source = 'text' }
+    return @{ Blocked = $true; Kind = $kind; Why = $why; ResetsAt = $resets; Source = 'text'
+              NeedsUser = ($kind -eq 'login') }
+}
+
+# What the USER has to do about a NeedsUser blocker, in one sentence (T2097).
+# One home for it, so the toast, the watchdog log, the health note and the
+# dashboard card cannot each tell them something different.
+function Get-LoopBlockerRemedy {
+    param([string]$Kind, [string]$WindowMarker = '[go-loop]')
+    switch ($Kind) {
+        'login' { return "sign in again: type /login in the $WindowMarker window - the loop picks up on its own once it is signed in" }
+        default { return '' }
+    }
+}
+
+# Pure: should a NeedsUser blocker raise an alert now (T2097)? Once per
+# distinct blocker - the key is the turn plus the blocker text, so the same
+# expiry inside the same unmoved turn is told once - and again after
+# -RepeatHours, because a toast dismissed at 3am is not a toast read.
+function Test-LoopUserAlertDue {
+    param($State, [string]$Key, [double]$RepeatHours = 12, [datetime]$Now = (Get-Date))
+    if (-not $State) { return $true }
+    $names = $State.PSObject.Properties.Name
+    if (-not ($names -contains 'user_alert_key') -or [string]$State.user_alert_key -ne $Key) { return $true }
+    if (-not ($names -contains 'user_alert_at') -or -not $State.user_alert_at) { return $true }
+    try {
+        $at = [datetime]::Parse([string]$State.user_alert_at, [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind)
+    } catch { return $true }
+    return (($Now - $at).TotalHours -ge $RepeatHours)
 }
 
 # The text of a transcript entry, whichever shape its content takes. Claude Code

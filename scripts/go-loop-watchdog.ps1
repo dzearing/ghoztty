@@ -139,6 +139,10 @@ param(
     # short of an hour: long enough that a slow recovery is not shouted at,
     # short enough that 180 of them cannot pass unremarked for 63 hours.
     [int]$IneffectiveLimit = 3,
+    # How long a NeedsUser alert stays told (T2097). The same blocker inside the
+    # same unmoved turn is toasted once, then again after this many hours - a
+    # toast dismissed at 3am is not a toast read.
+    [double]$AlertRepeatHours = 12,
     # The PROGRESS clock, beside the liveness one above (T1319). -StaleMinutes
     # asks "has anything touched this session lately"; these two ask "has the
     # loop finished a turn lately", which is the question a supervisor is for.
@@ -230,6 +234,8 @@ $probeScript = Join-Path $PSScriptRoot 'go-loop-pane-probe.ps1'
 # New-LoopPromptFile / Get-LoopPromptNeedle (T210). Functions only, no side
 # effects at load.
 . (Join-Path $PSScriptRoot 'loop-session.ps1')
+# Send-LoopUserAlert (T2097): the toast for a blocker only the user can clear.
+. (Join-Path $PSScriptRoot 'lib\UserAlert.ps1')
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runValue = Get-LoopLaneTaskName $Lane
 
@@ -575,6 +581,8 @@ function Add-Ineffective([string]$turnKey, $blocker) {
         recovery_blocked_kind = [string]$blocker.Kind
         recovery_blocked_why  = [string]$blocker.Why
         recovery_blocked_resets_at = [string]$blocker.ResetsAt
+        recovery_needs_user   = $false
+        recovery_remedy       = ''
     }
 }
 
@@ -650,6 +658,8 @@ if ($Status) {
             $(if ($s.recovery_blocked) { " - BLOCKED($($s.recovery_blocked_kind)): $($s.recovery_blocked_why)" +
                 $(if ($s.recovery_blocked_resets_at) { " (clears $($s.recovery_blocked_resets_at))" } else { '' }) } else { '' }) }
             else { 'nothing repeating' })",
+        "needs you:  $(if ($s -and $s.recovery_needs_user) { "YES - $($s.recovery_remedy)" +
+            $(if ($s.user_alert_at) { " (alerted $($s.user_alert_at): $($s.user_alert_result))" } else { '' }) } else { 'no' })",
         "run entry:  $(if ($run) { 'present' } else { 'MISSING' })",
         "revive task:$(if (Test-ReviveTask) { " present (every ${ReviveMinutes}m)" } else { ' MISSING' })",
         "state file: $StatePath"
@@ -785,6 +795,48 @@ function Invoke-Tick {
              "(turn=$($lock.turn) $clocks). " +
              $(if ($blocker.Blocked) { "This is why: $blockText. Typing cannot clear it; the loop resumes when it clears." }
                else { "Nothing in the transcript explains it - read the pane with 'ghoztty +read --name=$($lock.pane_id)'." }))
+    }
+
+    # A BLOCKER NOBODY HERE CAN CLEAR (T2097). Every arm below types into a
+    # session or opens a new one, and against an expired login each of them is
+    # answered by the same 'Please run /login' - 171 times over 2.5 days on
+    # 2026-10-18..20, across both lanes, with the user told nothing. So stop
+    # typing and say so to the one person who can fix it: once per blocker,
+    # by toast (no focus change), and on the state the dashboard reads.
+    # -Force still re-enters: a caller who forces a tick has said the evidence
+    # here is not to be trusted.
+    if ($blocker.NeedsUser -and -not $Force) {
+        $marker = Get-LoopLaneMarker $Lane
+        $remedy = Get-LoopBlockerRemedy -Kind $blocker.Kind -WindowMarker $marker
+        Update-State @{
+            recovery_turn_key          = $turnKey
+            recovery_ineffective       = $ineffective
+            recovery_blocked           = $true
+            recovery_blocked_kind      = [string]$blocker.Kind
+            recovery_blocked_why       = [string]$blocker.Why
+            recovery_blocked_resets_at = [string]$blocker.ResetsAt
+            recovery_needs_user        = $true
+            recovery_remedy            = $remedy
+        }
+        Log "NEEDS USER: $blockText. Nothing typed into the pane can clear it, so not re-entering. Remedy: $remedy"
+        $alertKey = "$turnKey|$($blocker.Kind)|$($blocker.Why)"
+        $st = Read-State
+        if (Test-LoopUserAlertDue -State $st -Key $alertKey -RepeatHours $AlertRepeatHours) {
+            if ($DryRun) {
+                Log '  would alert the user (dry run)'
+            } else {
+                $toast = Send-LoopUserAlert -Title "The Ghoztty loop $marker needs you" `
+                    -Body "$($blocker.Why) - $remedy"
+                $banner = Send-LoopPaneBanner -GhozttyExe $GhozttyExe -PaneId ([string]$lock.pane_id) `
+                    -Text "**The loop needs you:** $($blocker.Why) - $remedy"
+                $sent = "toast=$toast; banner=$banner"
+                Update-State @{ user_alert_key = $alertKey; user_alert_at = (Get-Date).ToString('o'); user_alert_result = $sent }
+                Log "  ALERTED the user ($sent)"
+            }
+        } else {
+            Log "  already alerted the user at $($st.user_alert_at); the next reminder is due ${AlertRepeatHours}h after that"
+        }
+        return 'notify'
     }
 
     $since = Get-MinutesSinceAction
@@ -1014,7 +1066,7 @@ if ($Once) {
 # lets the replacement pick up where it left off; a watchdog is exactly the
 # kind of thing that must not need a human to notice it is out of date.
 $WatchedScripts = @($PSCommandPath, (Join-Path $PSScriptRoot 'loop-session.ps1'),
-    (Join-Path $PSScriptRoot 'lib\LoopLane.ps1'))
+    (Join-Path $PSScriptRoot 'lib\LoopLane.ps1'), (Join-Path $PSScriptRoot 'lib\UserAlert.ps1'))
 
 function Get-ScriptStamp {
     # Content hash, not mtime: `git pull` and `git checkout` both rewrite
