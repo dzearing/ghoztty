@@ -12568,6 +12568,8 @@ fn surfaceWndProc(
                 break :tab surface.parent_window.findTabIndex(pv) orelse
                     surface.parent_window.active_tab;
             };
+            // T2127: a stale focus on a folded strip is not adopted.
+            if (surface.pane_view) |pv| if (!surface.parent_window.adoptsFocus(tab, pv)) return 0;
             if (surface.pane_view) |pv| surface.parent_window.tab_active_pane[tab] = pv;
             // T92: the tab label / titlebar follow the focused pane's
             // title (no-op when the tab title is user-pinned or the

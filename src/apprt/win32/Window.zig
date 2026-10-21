@@ -7361,6 +7361,34 @@ pub fn isStackMinimized(self: *Window, tab: usize, pane: *PaneView) bool {
     return self.stackState().isMinimized(pane_stack_grid.viewId(pane), rows) catch false;
 }
 
+/// Where the caret of tab `tab` goes as it is handed back (window activation,
+/// T2127): the tab's focused pane, unless it is a strip of a collapsed row -
+/// focusing it would bring it back out - when it is the pane on show there
+/// nearest it, focused last (`PaneStackState.paneOnShow` over unchanged rows).
+pub fn caretPaneOnShow(self: *Window, tab: usize) *PaneView {
+    const pane = self.tab_active_pane[tab];
+    var arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer arena.deinit();
+    const rows = self.stackRowsOf(arena.allocator(), tab) catch return pane;
+    return self.paneOnShowAfter(tab, pane, rows, arena.allocator()) orelse pane;
+}
+
+/// A pane's window just took keyboard focus (a terminal's `WM_SETFOCUS`, a
+/// viewer's): whether it becomes its tab's focused pane (T2127, Mac
+/// `publishFocusedPane`'s `holdsKeyboardFocus` guard). Not when it is a strip
+/// of a collapsed row that the tab has not made its focused pane: that is a
+/// stale focus - a deferred or posted one that landed after the pane folded
+/// away - and adopting it would bring the strip back out. The caret goes back
+/// to the tab's focused pane instead. Every deliberate focus (a strip click,
+/// goto_split, a sidebar row, IPC) sets the tab's focused pane first.
+pub fn adoptsFocus(self: *Window, tab: usize, pane: *PaneView) bool {
+    if (tab >= self.tab_count or self.tab_active_pane[tab] == pane) return true;
+    if (!self.isStackMinimized(tab, pane)) return true;
+    log.info("stale focus on a folded strip: caret goes back to the pane on show", .{});
+    if (tab == self.active_tab) if (self.tab_active_pane[tab].hwnd()) |h| App.deferSetFocus(h); // T48
+    return false;
+}
+
 /// The pane of tab `tab` the caret goes to instead of `candidate` now that
 /// its rows changed from `before` (`PaneStackState.paneOnShow`). Null when
 /// the answer is no pane of the tab.
@@ -9521,14 +9549,24 @@ pub fn stashPane(self: *Window, pane: *PaneView) StashError!void {
 
     // Decide focus against the CURRENT layout, before the pane leaves it.
     const was_active = self.tab_active_pane[tab] == pane;
-    const next: ?*PaneView = if (was_active) blk: {
+    var next: ?*PaneView = if (was_active) blk: {
         const n = self.gotoVisible(tab, pane, .previous) orelse self.gotoVisible(tab, pane, .next);
         break :blk if (n == pane) null else n;
     } else null;
     const had_keyboard = paneHasKeyboardFocus(pane);
 
+    // The tab's rows before the stash, for where the caret may go (T2127).
+    var rows_arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer rows_arena.deinit();
+    const rows_before = if (next != null) self.stackRowsOf(rows_arena.allocator(), tab) catch null else null;
+
     pane_stash.mark(pane);
     _ = pane_stash.normalize(&self.tab_trees[tab]);
+    // Never into a strip of a collapsed row (T2127, Mac 2811a3043): focusing
+    // it would bring it back out. The close's rule, `closeSplitPane`.
+    if (next) |candidate| if (rows_before) |before| {
+        next = self.paneOnShowAfter(tab, candidate, before, rows_arena.allocator()) orelse candidate;
+    };
     if (next) |n| self.tab_active_pane[tab] = n;
     self.heroOnTreeChanged(tab);
     if (tab == self.active_tab) self.layoutSplits();
@@ -14224,9 +14262,21 @@ pub fn windowWndProc(
         w32.WM_SETFOCUS => {
             // Forward keyboard focus to the active child surface.
             // Without this, keyboard input stays on the parent and
-            // is never delivered to the terminal.
-            if (window.getActiveSurface()) |s| {
+            // is never delivered to the terminal. Never into a strip of a
+            // collapsed row (T2127, Mac `windowDidBecomeKey`): the pane on
+            // show nearest it takes the caret instead.
+            if (window.tab_count == 0) return 0;
+            const tab = window.active_tab;
+            const was = window.tab_active_pane[tab];
+            const pane = window.caretPaneOnShow(tab);
+            if (pane != was) {
+                window.tab_active_pane[tab] = pane;
+                log.info("activation moved the caret off a folded strip", .{});
+            }
+            if (pane.surface()) |s| {
                 if (s.hwnd) |h| App.deferSetFocus(h); // T48: defer out of WndProc
+            } else if (pane != was) {
+                if (pane.hwnd()) |h| App.deferSetFocus(h);
             }
             return 0;
         },

@@ -639,6 +639,21 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # The caret never handed to a strip (T2127): a stash of the focused pane
+    # whose neighbour is a strip, plus the focus adoption guard every pane's
+    # WM_SETFOCUS runs (`Window.adoptsFocus`).
+    [pscustomobject]@{
+        Name   = 'stack-caret-on-show'
+        Script = 'test\win32\stack-caret-on-show.ps1'
+        Stamp  = 'test\win32\stack-caret-on-show.stamp.json'
+        Covers = @(
+            'test\win32\stack-caret-on-show.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\ViewerPane.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was

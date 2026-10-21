@@ -1673,6 +1673,27 @@ test "pane_stack_state: after a close the caret goes to a pane still on show" {
     try testing.expectEqual(@as(Id, 2), try state.paneOnShow(2, &.{&before}, &.{&after}));
 }
 
+test "pane_stack_state: a caret handed back to a folded strip goes to the pane on show" {
+    // T2127 (Mac 2811a3043): a b [c] d e, the window activated with d - a
+    // strip - remembered as focused. Nothing changed the rows, so the answer
+    // is the pane on show there, c; a pane already on show is kept. The pane
+    // the caret lands on is never minimized: that is what keeps a stale focus
+    // from bringing the strip back out.
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    const ids = [_]Id{ 1, 2, 3, 4, 5 };
+    const rows = singles(5, &ids);
+    try collapsedToOne(&state, &rows);
+    state.noteFocus(3);
+    for (ids) |candidate| {
+        const got = try state.paneOnShow(candidate, &.{&rows}, &.{&rows});
+        try testing.expectEqual(@as(Id, 3), got);
+        try testing.expect(!try state.isMinimized(got, &.{&rows}));
+    }
+    try testing.expect(try state.isMinimized(4, &.{&rows}));
+    try expectPin(&state, &ids, .{ .start = 2, .count = 1 });
+}
+
 test "pane_stack_state: the caret goes to the pane of a column on show focused last" {
     // a [(b / c)] d: d is a strip, so the caret goes into the column on show,
     // to c, the one of it focused more recently.

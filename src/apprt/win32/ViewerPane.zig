@@ -5705,6 +5705,8 @@ fn becomeActivePane(self: *ViewerPane) void {
     const win = self.parent_window;
     if (win.closing) return;
     const tab = win.tabIndexOfPane(pv) orelse return;
+    // T2127: a stale focus on a folded strip is not adopted.
+    if (!win.adoptsFocus(tab, pv)) return;
     win.tab_active_pane[tab] = pv;
     win.refreshTabTitle(tab);
     win.updateDimOverlays();
