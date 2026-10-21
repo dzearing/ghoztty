@@ -70,6 +70,7 @@ const relay_account = @import("relay_account.zig");
 const relay_directory = @import("relay_directory.zig");
 const relay_revoke = @import("relay_revoke.zig");
 const pending_revoke = @import("relay_revoke_pending.zig");
+const relay_hosting = @import("relay_hosting.zig");
 const atomic_write = @import("agent/atomic_write.zig");
 
 const log = std.log.scoped(.relay_suspend);
@@ -584,6 +585,10 @@ pub fn launchAsync(alloc: Allocator) void {
     const path = relay_account.accountPath(alloc) catch return;
     if (relay_account.isSignedIn(alloc, path)) {
         restoreAsync(alloc);
+        // T2049: is the credential the signed-in account's to serve? Safe to
+        // run beside the restore — the veto names the token it probed, so a
+        // restore that rewrites relay.env meanwhile leaves it inert.
+        relay_hosting.reconcileAsync(alloc);
     } else {
         pending_revoke.retryAsync(alloc);
     }

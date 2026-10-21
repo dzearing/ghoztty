@@ -135,6 +135,7 @@ const link_control = @import("link_control.zig");
 const relay_creds = @import("relay_creds.zig");
 const revoke_watch = @import("revoke_watch.zig");
 const sharing = @import("sharing.zig");
+const owner_veto = @import("owner_veto.zig");
 const adopt = @import("adopt.zig");
 const single_instance = @import("single_instance.zig");
 const startup_error = @import("startup_error.zig");
@@ -2690,6 +2691,8 @@ const SharingUplink = struct {
     /// One "sharing is on but there is no credential" line per config change,
     /// not one per 5s tick.
     said_unavailable: bool = false,
+    /// One line per owner-veto transition (T2049), not one per tick.
+    said_vetoed: bool = false,
     /// Poll cadence; mirrors relay_creds.Watcher (a human-paced toggle).
     poll_interval_ms: u64 = 5_000,
     /// Set by tests to stop the tick thread; production never stops it.
@@ -2710,6 +2713,25 @@ const SharingUplink = struct {
         // once the veto clears.
         if (self.revoke) |r| {
             if (r.isHolding()) return;
+        }
+
+        // T2049 (main 6dfb31232's owner != signed-in rule): the app found that
+        // relay.env's credential belongs to a DIFFERENT account than the one
+        // signed in, so this machine is not its enrollment to serve. Second
+        // only to the revocation, and like it outranks sharing.json. The veto
+        // names the token it was decided against, so a re-enroll as the
+        // signed-in account clears it without the app's help.
+        if (owner_veto.isVetoed(self.alloc)) {
+            if (!self.said_vetoed) {
+                self.said_vetoed = true;
+                std.debug.print("ghoztty-agent: this machine's relay credential belongs to another account than the one signed in; parking the relay uplink (local sessions unaffected)\n", .{});
+            }
+            if (self.raised and self.link.display() != .offline) self.link.disconnect();
+            return;
+        }
+        if (self.said_vetoed) {
+            self.said_vetoed = false;
+            std.debug.print("ghoztty-agent: the other-account veto is gone; the relay uplink may come back up\n", .{});
         }
 
         // T1965: the credential is part of the question now. An unset
@@ -3202,6 +3224,7 @@ test {
     _ = @import("relay_creds.zig");
     _ = @import("revoke_watch.zig");
     _ = @import("sharing.zig");
+    _ = @import("owner_veto.zig");
     _ = @import("adopt.zig");
     _ = @import("startup_error.zig");
     _ = @import("single_instance.zig");

@@ -14,7 +14,9 @@
 # a pending revocation beside relay.env takes the machine off the relay and is
 # retried BY THE AGENT with no app running, then releases the uplink once it
 # clears (T1427); and sharing enabled with NO relay.env credential degrades to
-# local-only with one explanatory line, the pipe still served.
+# local-only with one explanatory line, the pipe still served; and a credential
+# the app found belongs to ANOTHER account (owner-mismatch.json naming this
+# token) parks the uplink until the veto goes (T2049).
 #
 # Hermetic: GHOZTTY_AGENT_INSTANCE forks the single-instance guard, the pipe
 # name is test-unique, GHOSTTY_RELAY_ENV points the credential lookup at a
@@ -256,6 +258,38 @@ try {
     Stop-TestAgents
     Set-Content -Path $sharingFile -Value '{"version":1,"enabled":true}' -Encoding ascii
 
+    "== 5c: a credential another account owns is not served (T2049, main 6dfb31232)"
+    # The app signed in as a different account than the one that enrolled this
+    # machine writes owner-mismatch.json beside relay.env, naming the token by
+    # fingerprint (SHA-256, first 8 bytes, hex). Before T2049 the agent never
+    # learned who was signed in and served the other account's enrollment.
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $fpBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($token))
+    $fp = (($fpBytes[0..7] | ForEach-Object { $_.ToString('x2') }) -join '')
+    $vetoFile = Join-Path $tmp 'owner-mismatch.json'
+    Remove-Item $portFile -ErrorAction SilentlyContinue
+    $agent6 = Start-TestAgent "$tmp\a6.out" "$tmp\a6.err"
+    Assert 'owner agent raised before the veto' (Wait-ForText "$tmp\a6.err" 'relay uplink raised' 25)
+    # Negative control first: a veto decided against some OTHER token (the
+    # machine was re-enrolled since) must not park the owner's machine.
+    Set-Content -Path $vetoFile -Value '{"version":1,"token_fp":"0000000000000000","owner_email":"a@example.com","account_email":"b@example.com","decided_at":1}' -Encoding ascii
+    Start-Sleep -Seconds 8   # past a reconcile tick
+    Assert 'a veto naming another token parks nothing' ((Read-Shared "$tmp\a6.err") -notmatch 'belongs to another account')
+    $vetoJson = '{"version":1,"token_fp":"' + $fp + '","owner_email":"a@example.com","account_email":"b@example.com","decided_at":1}'
+    Set-Content -Path $vetoFile -Value $vetoJson -Encoding ascii
+    Assert 'agent parks the uplink for another account' (Wait-ForText "$tmp\a6.err" 'belongs to another account than the one signed in; parking' 20)
+    Start-Sleep -Seconds 6   # drain a dial already in flight/backoff
+    $vetoCount = Get-DialCount
+    Start-Sleep -Seconds 10  # past the backoff and two reconcile ticks
+    Assert 'no control dials while vetoed' ((Get-DialCount) -eq $vetoCount)
+    Assert 'the veto is said once, not per tick' (([regex]::Matches((Read-Shared "$tmp\a6.err"), 'belongs to another account')).Count -eq 1)
+    Remove-Item $vetoFile -ErrorAction SilentlyContinue
+    Assert 'agent announces the veto lifted' (Wait-ForText "$tmp\a6.err" 'other-account veto is gone' 20)
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and (Get-DialCount) -le $vetoCount) { Start-Sleep -Milliseconds 500 }
+    Assert 'the uplink dials again once the veto is gone' ((Get-DialCount) -gt $vetoCount)
+    Stop-TestAgents
+
     "== 6: enabled but no credential - local-only with one explanatory line"
     Remove-Item $portFile -ErrorAction SilentlyContinue
     Remove-Item $relayEnv -ErrorAction SilentlyContinue
@@ -280,7 +314,7 @@ try {
 # call, which meant the guard went DUE on the first `main.zig` edit and could
 # never come back - the one shape a staleness gate must not have, since a guard
 # that is permanently red is a guard everybody learns to step over.
-if ($script:failures -eq 0 -and $script:passes -ge 32) {
+if ($script:failures -eq 0 -and $script:passes -ge 39) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-sharing-uplink -Repo $repo 2>&1 | ForEach-Object { "  $_" }
@@ -288,4 +322,4 @@ if ($script:failures -eq 0 -and $script:passes -ge 32) {
 
 # MinPass = the full-run assertion count: an abort (exception past section N
 # jumping to finally) must never score the truncated run as ALL PASS.
-Write-TestVerdict -Label 'T546 SHARING UPLINK' -Pass $script:passes -Fail $script:failures -MinPass 32
+Write-TestVerdict -Label 'T546 SHARING UPLINK' -Pass $script:passes -Fail $script:failures -MinPass 39
