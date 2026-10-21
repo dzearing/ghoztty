@@ -37145,3 +37145,10 @@ moved to T1814.
 - **Validated.** pane-elevation.ps1 run 1d: measured tints 0.388 / 0.137, and the wash photographs as desk. ALL PASS 129. Unit tests for the sheet math (with an old-tint negative control), cropWash and the desk-wash reposition gate. Viewer thin-sheet paint test. floor-lane all four lanes PASS. split-dim and split-dim-viewer are pinned to solid panes (their subject is the fill wash). Due harnesses are in the task file.
 - **Split.** T2104 (hero as a glass card), T2105 (stacked rows on glass, after T2082), T2106 (250 ms fade ease).
 - **Mac.** Nothing owed: this is the Windows half of Mac's commit.
+
+## 2026-10-20 — T2107: the window-side adapter for the stacked-panes layout; T2101 split into four
+
+- **Split.** T2101 (grid through the engine, strips, four focus paths) is several turns of Window.zig surgery. It is now T2107 (the pure adapter), T2108 (the grid places panes through the engine), T2109 (strips painted and labelled, strip click), T2110 (goto_split, sidebar, focus links, IPC focus). T2102 now depends on T2109, and T2103 and T2083 on T2108.
+- **Landed.** `pane_stack_grid.zig`: the split tree becomes the engine's nodes, node for node. A split with a wholly stashed side folds into its visible side, as `splitRects` does today. `.all` builds the full tree for stashed-pane sizing. The DIP result comes back as pixel rects: edges are scaled, not sizes, so shared edges stay shared at any DPI. Divider-gutter and strip hit tests (topmost strip wins).
+- **Validated.** 12 none-lane tests, plus a negative control that went red. floor-lane all four PASS. Due audits green. drag-perf is red on the known T1854 defect; the module is not wired into the window yet.
+- **Mac.** Nothing owed: Windows plumbing for Mac's PaneLayout.
