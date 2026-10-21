@@ -37,7 +37,9 @@ asserted in the pure geometry modules:
   tuned **optically** per glyph (a hamburger reads narrower than a plus at the
   same extent).
 - **Dividers are 2 DIP** with a real hover color change (lighten in dark,
-  darken in light) — not a cursor change alone.
+  darken in light) — not a cursor change alone — centred in a 6 DIP flat
+  gutter. Every resizer (divider, stack grip, sidebar edge) takes the mouse in
+  its gutter only, never over a pane (T2125).
 - **Vertical space belongs to the terminal.** Chrome that controls nothing does
   not appear (no tab strip at one tab); always-reachable controls belong in the
   caption bar, which the window already pays for.

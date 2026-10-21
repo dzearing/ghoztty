@@ -1269,22 +1269,17 @@ pub const grab_dip: f32 = 7;
 /// under a drag, which read as the panel jumping away mid-resize.
 pub const expand_threshold_dip: f32 = 120;
 
-/// Whether (`x`, `y`) is on the edge that drags. The pinned panel's band
-/// sits inside its trailing edge (the column, and so this window, ends
-/// there); a card's - the rail's, or the open one's - straddles the card's
-/// trailing edge, as Mac's handle does.
+/// Whether (`x`, `y`) is on the edge that drags. Like every resizer it is
+/// never over a pane (T2125, Mac 2811a3043 `resizeHandleOffset`): the band
+/// lies just inside the trailing edge of the pinned panel (the column, and so
+/// this window, ends there) and of a card - the rail's, or the open one's -
+/// which floats over the grid, so a press just past its edge is the pane's.
 pub fn onEdge(l: *const Layout, x: i32, y: i32, scale: f32) bool {
     const g = @max(px(grab_dip, scale), 1);
     return switch (l.mode) {
         .hidden => false,
         .expanded => x >= l.width - g and x < l.width and y >= 0 and y < l.height and !onButton(l, x, y, scale),
-        .mini => blk: {
-            // A card flush with the window's trailing edge (the elevated
-            // rail, T1850) keeps the whole band inside: half of it would
-            // otherwise fall past the window, where nothing receives it.
-            const left = @min(l.card.right - @divTrunc(g, 2), l.width - g);
-            break :blk x >= left and x < left + g and y >= l.card.top and y < l.card.bottom;
-        },
+        .mini => x >= l.card.right - g and x < l.card.right and y >= l.card.top and y < l.card.bottom,
     };
 }
 
@@ -1998,7 +1993,7 @@ test "pane_sidebar: on the rail, a tile's corner x is a target only in trash mod
     }
 }
 
-test "pane_sidebar: the edge band sits inside the pinned panel's edge and straddles a card's" {
+test "pane_sidebar: the edge band sits inside the pinned panel's edge and inside a card's" {
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid } };
     for (scales) |s| {
         const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
@@ -2019,15 +2014,19 @@ test "pane_sidebar: the edge band sits inside the pinned panel's edge and stradd
 
         const r = layout(.mini, px(railColumnDip(), s), h, &items, tm, s);
         const y = r.card.centerY();
-        try testing.expect(onEdge(&r, r.card.right, y, s));
         try testing.expect(onEdge(&r, r.card.right - 1, y, s));
-        try testing.expect(onEdge(&r, r.card.right + 1, y, s));
+        try testing.expect(onEdge(&r, r.card.right - g, y, s));
+        try testing.expect(!onEdge(&r, r.card.right - g - 1, y, s));
+        // Never past the card, where a pane may be (T2125).
+        try testing.expect(!onEdge(&r, r.card.right, y, s));
+        try testing.expect(!onEdge(&r, r.card.right + 1, y, s));
         try testing.expect(!onEdge(&r, r.card.centerX(), y, s));
         // Only along the card: the margin above it is the grid's.
-        try testing.expect(!onEdge(&r, r.card.right, r.card.top - 1, s));
+        try testing.expect(!onEdge(&r, r.card.right - 1, r.card.top - 1, s));
 
         const o = layoutOpen(openWidthPx(240, s), h, &items, tm, s);
         try testing.expect(onEdge(&o, o.card.right - 1, o.card.centerY(), s));
+        try testing.expect(!onEdge(&o, o.card.right, o.card.centerY(), s));
         try testing.expect(!onEdge(&o, o.card.left + 1, o.card.centerY(), s));
 
         const hidden: Layout = .{ .mode = .hidden, .width = w, .height = h };

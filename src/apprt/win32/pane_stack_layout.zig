@@ -999,14 +999,26 @@ const Engine = struct {
             try e.layout(node, span, tucked, clip);
             return span;
         };
+        const first = index.*;
         const left = try e.layoutChain(s.left, d, spans, index, row, tucked, clip);
         const before = index.*;
         const right = try e.layoutChain(s.right, d, spans, index, row, tucked, clip);
         const frame = left.unite(right);
         const centre = if (d == .horizontal) (left.maxX() + right.x) / 2 else (left.maxY() + right.y) / 2;
         const start = frame.start(d);
-        const extent = frame.extentAlong(d);
-        if (extent > 0) e.result.displayed_ratio[node] = (centre - start) / extent;
+        // The ratio on screen as this engine reads a ratio: the left side's
+        // share of the panes' sizes, the gutters left out (`itemsInto`). Laid
+        // out again it lands where it is, so a tree that adopts it does not
+        // move (T2125; a fraction of the frame put every boundary half a
+        // gutter off per adoption, which a held resize key compounded).
+        var left_size: f64 = 0;
+        var total_size: f64 = 0;
+        for (spans[first..index.*], first..) |sp, i| {
+            const size = sp.extentAlong(d);
+            total_size += size;
+            if (i < before) left_size += size;
+        }
+        if (total_size > 0) e.result.displayed_ratio[node] = left_size / total_size;
         // A tucked row's dividers are under the cards in front of it.
         if (!tucked) {
             // The gutter, in whole DIPs as the panes are (`integral`).
@@ -1336,10 +1348,35 @@ test "pane_stack_layout: a ratio that would squeeze a pane is overridden, not st
     defer r.deinit();
     try testing.expectEqual(@as(f64, 700), frameOf(&r, 1).w);
     try testing.expectEqual(@as(f64, 300), frameOf(&r, 2).w);
-    // The displayed ratio is the one on screen; the input is untouched.
-    try testing.expectApproxEqAbs(705.0 / 1010.0, r.displayed_ratio[root], 0.0001);
+    // The displayed ratio is the one on screen, as a share of the sizes (the
+    // gutter left out, T2125); the input is untouched.
+    try testing.expectApproxEqAbs(700.0 / 1000.0, r.displayed_ratio[root], 0.0001);
     try testing.expectEqual(@as(f64, 0.9), t.nodes.items[root].split.ratio);
     try testing.expectEqual(@as(f64, 705), r.dividers.items[0].position);
+}
+
+test "pane_stack_layout: T2125 a tree that adopts its displayed ratios lays out unchanged" {
+    // a | (b | c) with uneven ratios, roomy and squeezed: writing the ratios
+    // on screen back into the tree must not move a single pane - the divider
+    // solver adopts them before every drag tick and every resize key.
+    for ([_]f64{ 1400, 1000 }) |w| {
+        var t: TestTree = .{};
+        defer t.deinit();
+        const a = try t.leaf(1);
+        const b = try t.leaf(2);
+        const c = try t.leaf(3);
+        const bc = try t.split(.horizontal, 0.3, b, c);
+        const root = try t.split(.horizontal, 0.45, a, bc);
+        const p: TestProvider = .{};
+        var r1 = try testLayout(&t, root, w, 600, &p);
+        defer r1.deinit();
+        for ([_]u32{ root, bc }) |n| t.nodes.items[n].split.ratio = r1.displayed_ratio[n];
+        var r2 = try testLayout(&t, root, w, 600, &p);
+        defer r2.deinit();
+        for (1..4) |id| try testing.expectEqual(frameOf(&r1, id), frameOf(&r2, id));
+        for ([_]u32{ root, bc }) |n|
+            try testing.expectApproxEqAbs(r1.displayed_ratio[n], r2.displayed_ratio[n], 1e-9);
+    }
 }
 
 test "pane_stack_layout: waterFill pins only what falls short" {

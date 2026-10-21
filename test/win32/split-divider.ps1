@@ -1,10 +1,10 @@
 # T73 acceptance: split divider lines honor `split-divider-color`.
-# T94 acceptance (run 2 tail): the divider grab band is ~9 DIP wide - it
-# extends ~4.5 DIP each side of the line, over the pane surfaces, which the
-# panes' WM_NCHITTEST/HTTRANSPARENT fall-through makes reachable - and a drag
-# starting 4 DIP off the line still resizes.
-# T155 acceptance (tail): exactly ONE divider band, a solid fill, after drags
-# and after repeated small window resizes.
+# T2125 acceptance (run 2 tail; replaced T94's ~9 DIP grab band): the flat
+# gutter is Mac's 6 DIP with the 2 DIP line down its middle, and the divider
+# takes the mouse in that gutter and nowhere else - the panes keep the hit on
+# their own edge pixels, and a press one pixel inside a pane does not resize.
+# T155 acceptance (tail): exactly ONE divider line, centred in a clean gutter,
+# after drags and after repeated small window resizes.
 # T734 acceptance (T155 section): the CROSS-PANE scan T228 had to retire - a
 # full scanline across both panes crosses the divider color once - restored on
 # the composited capture T778 built.
@@ -168,6 +168,12 @@ function Get-Panes([IntPtr]$top) {
 # paints 3 and fail against a healthy build at the scale the user runs.
 function Get-ExpectedBandPx([int]$dpi) {
     [math]::Max([int][math]::Round(2.0 * $dpi / 96.0, [MidpointRounding]::AwayFromZero), 2)
+}
+
+# split_geometry.flatGutterPx mirrored (T2125): Mac's 6 pt flat gutter, the
+# band's line down its middle, never less than a pixel of gutter either side.
+function Get-ExpectedGutterPx([int]$dpi) {
+    [math]::Max([int][math]::Round(6.0 * $dpi / 96.0, [MidpointRounding]::AwayFromZero), (Get-ExpectedBandPx $dpi) + 2)
 }
 
 # True if r,g,b matches the target within tolerance.
@@ -506,13 +512,17 @@ if (-not (Divider-HasColor $top $A $B 90 89 89 6)) { Dump-Strip $top $A $B 'defa
 Assert (-not (Divider-HasColor $top $A $B 128 128 128 6)) 'default: the fixed 0x808080 fallback is gone (T581)'
 
 # ---------------------------------------------------------------------------
-# T94: grab-band hit target. The band is ~9 DIP total (4.5 DIP each side of
-# the line) while the visual gap is ~5 DIP, so a point 4 DIP off the line lies
-# OVER a pane surface - and the pane answering HTTRANSPARENT there is exactly
-# the fall-through that makes it reachable.
+# T2125 (Mac 2811a3043), replacing T94's grab band: the divider takes the
+# mouse in its GUTTER and nowhere else. T94 reached ~4.5 DIP into each pane
+# and made the panes fall through (HTTRANSPARENT) there; Mac then moved every
+# resizer into a real 6 pt gutter, so a click just inside a pane's edge is the
+# pane's. Asserted at both ends of the gutter and one pixel past each:
+#   * the pane keeps the hit (HTCLIENT) on its own edge pixel and at its
+#     center - nothing falls through any more;
+#   * a press on the gutter's first and last pixel drags the divider;
+#   * a press one pixel inside either pane does NOT (posted to the top-level
+#     window, so it is the window's own hit test that refuses it).
 # ---------------------------------------------------------------------------
-$dpi = Get-TestWindowDpi -Window $top
-$off4 = [int][math]::Round(4 * $dpi / 96)
 function Get-DividerLine([IntPtr]$top) {
     $panes = Get-Panes $top
     $pa = $panes | Sort-Object Top | Select-Object -First 1
@@ -525,26 +535,39 @@ function Get-DividerLine([IntPtr]$top) {
 }
 
 $d = Get-DividerLine $top
-Assert ((Get-PaneHitTest ([IntPtr]$d.B.Hwnd) $d.X $d.Y) -eq $HTTRANSPARENT) `
-    'T94: pane falls through (HTTRANSPARENT) on the divider line'
-Assert ((Get-PaneHitTest ([IntPtr]$d.B.Hwnd) $d.X ($d.Y + $off4)) -eq $HTTRANSPARENT) `
-    'T94: pane falls through 4 DIP below the line (over the pane)'
-Assert ((Get-PaneHitTest ([IntPtr]$d.A.Hwnd) $d.X ($d.Y - $off4)) -eq $HTTRANSPARENT) `
-    'T94: pane falls through 4 DIP above the line (over the pane)'
+# Pane rects are edge-exclusive, so the gutter is rows A.Bottom .. B.Top-1.
+$gFirst = $d.A.Bottom; $gLast = $d.B.Top - 1
+Assert ($gLast -ge $gFirst) "T2125: there is a gutter between the panes (rows $gFirst..$gLast)"
+Assert ((Get-PaneHitTest ([IntPtr]$d.B.Hwnd) $d.X $d.B.Top) -eq $HTCLIENT) `
+    'T2125: the lower pane keeps the hit on its own top pixel (no fall-through)'
+Assert ((Get-PaneHitTest ([IntPtr]$d.A.Hwnd) $d.X ($d.A.Bottom - 1)) -eq $HTCLIENT) `
+    'T2125: the upper pane keeps the hit on its own bottom pixel (no fall-through)'
 Assert ((Get-PaneHitTest ([IntPtr]$d.B.Hwnd) $d.X ([int](($d.B.Top + $d.B.Bottom) / 2))) -eq $HTCLIENT) `
-    'T94: pane keeps the hit at its center (band is bounded)'
+    'T2125: the pane keeps the hit at its center'
 
-# Drag from +4 DIP below the line: divider follows the mouse down.
+# A press one pixel inside either pane is the pane's: the divider stays put.
 $before = $d.Y
-Invoke-DividerDrag -Top $top -X0 $d.X -Y0 ($d.Y + $off4) -X1 $d.X -Y1 ($d.Y + $off4 + 80)
+Invoke-DividerDrag -Top $top -X0 $d.X -Y0 $d.B.Top -X1 $d.X -Y1 ($d.B.Top + 80)
 $d = Get-DividerLine $top
-Assert ($d.Y -gt $before + 40) "T94: drag from +4 DIP resized (line $before -> $($d.Y))"
+Assert ([math]::Abs($d.Y - $before) -le 1) "T2125: a press just inside the lower pane does not resize (line $before -> $($d.Y))"
+$before = $d.Y
+Invoke-DividerDrag -Top $top -X0 $d.X -Y0 ($d.A.Bottom - 1) -X1 $d.X -Y1 ($d.A.Bottom - 81)
+$d = Get-DividerLine $top
+Assert ([math]::Abs($d.Y - $before) -le 1) "T2125: a press just inside the upper pane does not resize (line $before -> $($d.Y))"
 
-# Drag from -4 DIP above the (moved) line: divider follows the mouse up.
+# A press on the gutter's last pixel: the divider follows the mouse down.
 $before = $d.Y
-Invoke-DividerDrag -Top $top -X0 $d.X -Y0 ($d.Y - $off4) -X1 $d.X -Y1 ($d.Y - $off4 - 80)
+$gLast = $d.B.Top - 1
+Invoke-DividerDrag -Top $top -X0 $d.X -Y0 $gLast -X1 $d.X -Y1 ($gLast + 80)
 $d = Get-DividerLine $top
-Assert ($d.Y -lt $before - 40) "T94: drag from -4 DIP resized (line $before -> $($d.Y))"
+Assert ($d.Y -gt $before + 40) "T2125: a drag from the gutter's last pixel resized (line $before -> $($d.Y))"
+
+# A press on the (moved) gutter's first pixel: the divider follows it up.
+$before = $d.Y
+$gFirst = $d.A.Bottom
+Invoke-DividerDrag -Top $top -X0 $d.X -Y0 $gFirst -X1 $d.X -Y1 ($gFirst - 80)
+$d = Get-DividerLine $top
+Assert ($d.Y -lt $before - 40) "T2125: a drag from the gutter's first pixel resized (line $before -> $($d.Y))"
 
 # ---------------------------------------------------------------------------
 # T233: the band is 2 DIP, and HOVER IS A COLOR CHANGE, not just a cursor.
@@ -603,14 +626,23 @@ function Gap-Has([IntPtr]$top, [int]$v, $shot = $null) {
 
 $dpiNow = Get-TestWindowDpi -Window $top
 $expBand = Get-ExpectedBandPx $dpiNow
+$expGutter = Get-ExpectedGutterPx $dpiNow
 $gapNow = Get-GapStrip $top 'down'
 if ($null -eq $gapNow) {
     Assert $false 'T233: could not measure the divider gap'
 } else {
-    Assert ($gapNow.Gap -eq $expBand) `
-        "T233: the visible band is 2 DIP ($dpiNow dpi -> ${expBand}px expected, got $($gapNow.Gap)px)"
-    Assert ($gapNow.Gap -ge 2) `
-        "T233: the band is never a single physical pixel (got $($gapNow.Gap)px at $dpiNow dpi)"
+    # T2125: the gap is the 6 DIP gutter; the 2 DIP band is the line in it.
+    Assert ($gapNow.Gap -eq $expGutter) `
+        "T2125: the gutter is 6 DIP ($dpiNow dpi -> ${expGutter}px expected, got $($gapNow.Gap)px)"
+    if ($null -ne $gapNow.Strip) {
+        $lineW = @($gapNow.Strip | Where-Object { Pixel-Matches $_ $REST_G $REST_G $REST_G $TOL }).Count
+        Assert ($lineW -eq $expBand) `
+            "T233: the visible line is 2 DIP ($dpiNow dpi -> ${expBand}px expected, got ${lineW}px)"
+        Assert ($lineW -ge 2) `
+            "T233: the line is never a single physical pixel (got ${lineW}px at $dpiNow dpi)"
+    } else {
+        Write-Host "SKIP T233 line width: empty capture"; $script:skipped++
+    }
 }
 
 $d = Get-DividerLine $top
@@ -877,17 +909,27 @@ function Max-RunLength([string[]]$strip, [int]$tr, [int]$tg, [int]$tb) {
     return $best
 }
 
-# "one solid divider fill" at every point the gap was crossed, not only at the
-# midpoint (T228). Returns "runs 1 filled 3/3; ..." for the assertion label,
-# and $false in $ok if ANY crossing is not a single full-width run.
-function Measure-GapSolid($gap) {
+# "one divider line down the middle of a clean gutter" at every point the gap
+# was crossed, not only at the midpoint (T228; T2125 made the gutter wider
+# than the line). Each crossing must hold ONE green run exactly `$band` wide,
+# no more than a pixel off centre, and every other pixel of the gutter must be
+# the terminal background (black here) - a stale line from an earlier ratio is
+# a second run or a non-background pixel. Returns the per-crossing detail for
+# the assertion label, and $false in $ok if ANY crossing is wrong.
+function Measure-GapLine($gap, [int]$band) {
     $ok = $true; $detail = @()
     for ($i = 0; $i -lt $gap.Strips.Count; $i++) {
-        $s = $gap.Strips[$i]
+        $s = @($gap.Strips[$i])
         $r = Count-ColorRuns $s 0 255 0
         $w = Max-RunLength $s 0 255 0
-        if ($r -ne 1 -or $w -ne $gap.Gap) { $ok = $false }
-        $detail += "runs $r filled $w/$($gap.Gap)"
+        $first = -1
+        for ($k = 0; $k -lt $s.Count; $k++) { if (Pixel-Matches $s[$k] 0 255 0) { $first = $k; break } }
+        $after = $s.Count - $first - $w
+        $other = 0
+        foreach ($px in $s) { if (-not (Pixel-Matches $px 0 255 0) -and -not (Pixel-Matches $px 0 0 0 12)) { $other++ } }
+        $centred = ($first -ge 1) -and ($after -ge 1) -and ([math]::Abs($first - $after) -le 1)
+        if ($r -ne 1 -or $w -ne $band -or -not $centred -or $other -ne 0) { $ok = $false }
+        $detail += "runs $r line $w/$band at $first of $($s.Count), stray $other"
     }
     return [pscustomobject]@{ Ok = $ok; Detail = ($detail -join '; ') }
 }
@@ -984,6 +1026,7 @@ foreach ($axis in @('down', 'right')) {
     $launched += $script:GhozttyTestDesktopPids
     $top = $g.Top
     $bandPx = Get-ExpectedBandPx (Get-TestWindowDpi -Window $top)
+    $gutterPx = Get-ExpectedGutterPx (Get-TestWindowDpi -Window $top)
     $panes = Get-Panes $top
     if ($panes.Count -ne 2) {
         Assert $false "T155/$axis setup: 2 visible panes (got $($panes.Count))"
@@ -1018,19 +1061,20 @@ foreach ($axis in @('down', 'right')) {
         Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
         continue
     }
-    Assert ($gap.Gap -eq $bandPx) `
-        "T155/$axis : the visible gap IS the band after 3 drags (${bandPx}px expected, got $($gap.Gap)px)"
+    Assert ($gap.Gap -eq $gutterPx) `
+        "T155/$axis : the visible gap IS the 6 DIP gutter after 3 drags (${gutterPx}px expected, got $($gap.Gap)px)"
     $runs = Count-ColorRuns $gap.Strip 0 255 0
     $width = Max-RunLength $gap.Strip 0 255 0
-    Assert ($runs -eq 1 -and $width -eq $gap.Gap) `
-        "T155/$axis : the gap is ONE solid divider fill after 3 drags (runs $runs, filled ${width}/$($gap.Gap)px)"
-    if ($runs -ne 1 -or $width -ne $gap.Gap) { Dump-Green $gap.Strip 'drags' }
+    Assert ($runs -eq 1 -and $width -eq $bandPx) `
+        "T155/$axis : the gap holds ONE divider line after 3 drags (runs $runs, line ${width}/${bandPx}px)"
+    if ($runs -ne 1 -or $width -ne $bandPx) { Dump-Green $gap.Strip 'drags' }
 
     # T228: the same claim at 20% and 80% of the band's LENGTH, not only at its
-    # midpoint. A band painted just where the last drag repainted it, or one
-    # that stops short at a nested split, reads as solid at the middle.
-    $solid = Measure-GapSolid $gap
-    Assert $solid.Ok "T155/$axis : the band is solid ALONG its length after 3 drags ($($solid.Detail))"
+    # midpoint. A line painted just where the last drag repainted it, or one
+    # that stops short at a nested split, reads as right at the middle; and
+    # (T2125) the rest of the gutter is clean background, not an old line.
+    $solid = Measure-GapLine $gap $bandPx
+    Assert $solid.Ok "T155/$axis : one centred line in a clean gutter ALONG its length after 3 drags ($($solid.Detail))"
 
     # T734: the wide scan, back on a composited capture (T778). This is the
     # half a background desktop could not express between 2026-07-31 and now -
@@ -1078,16 +1122,16 @@ foreach ($axis in @('down', 'right')) {
         Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
         continue
     }
-    Assert ($gap.Gap -eq $bandPx) `
-        "T155/$axis : the gap is STILL the band after 3 small window resizes (${bandPx}px expected, got $($gap.Gap)px)"
+    Assert ($gap.Gap -eq $gutterPx) `
+        "T155/$axis : the gap is STILL the gutter after 3 small window resizes (${gutterPx}px expected, got $($gap.Gap)px)"
     $runs2 = Count-ColorRuns $gap.Strip 0 255 0
     $width2 = Max-RunLength $gap.Strip 0 255 0
-    Assert ($runs2 -eq 1 -and $width2 -eq $gap.Gap) `
-        "T155/$axis : the gap is STILL one solid fill after resizes (runs $runs2, filled ${width2}/$($gap.Gap)px)"
-    if ($runs2 -ne 1 -or $width2 -ne $gap.Gap) { Dump-Green $gap.Strip 'resizes' }
-    $solid2 = Measure-GapSolid $gap
+    Assert ($runs2 -eq 1 -and $width2 -eq $bandPx) `
+        "T155/$axis : the gap STILL holds one line after resizes (runs $runs2, line ${width2}/${bandPx}px)"
+    if ($runs2 -ne 1 -or $width2 -ne $bandPx) { Dump-Green $gap.Strip 'resizes' }
+    $solid2 = Measure-GapLine $gap $bandPx
     Assert $solid2.Ok `
-        "T155/$axis : the band is STILL solid along its length after resizes ($($solid2.Detail))"
+        "T155/$axis : STILL one centred line in a clean gutter along its length after resizes ($($solid2.Detail))"
 
     # The resize case is the one that actually reproduced the user's report -
     # each resize drifts the split by ~2px, so the previous line survives

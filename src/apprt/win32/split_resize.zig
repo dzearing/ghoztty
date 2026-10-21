@@ -47,6 +47,16 @@
 //! ACTUALLY resulted, so everything below it is pinned against the real
 //! geometry rather than against a position nobody can reach.
 //!
+//! **The geometry is the stacked-panes engine's, not a nested view's**
+//! (T2125). The window lays a row of side-by-side panes out the way
+//! `pane_stack_layout` does: a split's ratio is its left side's share of the
+//! panes' SIZES, every gutter in the row left out (`Engine.itemsInto`). A
+//! solver that read the ratio as a fraction of the frame instead put every
+//! nested boundary up to half a gutter off, and a held resize key, which
+//! re-reads the tree each press, compounded that into a visible drift once the
+//! flat gutter became 6 DIP. `splitAxis` is that geometry and `holdRatio` its
+//! exact inverse.
+//!
 //! Mac does not do this (`SplitView.swift` is a nested per-node view whose
 //! `split` binding is relative to its own geometry, exactly like our untouched
 //! tree), so this is a deliberate divergence filed for the Mac seat rather
@@ -115,7 +125,7 @@ const Range = struct {
 const Walker = struct {
     nodes: []const Node,
     layout: Layout,
-    scale: f32,
+    band: i32,
     out: []Adjust,
     len: usize = 0,
 
@@ -148,13 +158,13 @@ const Walker = struct {
             return;
         }
 
-        const a_old = split_geometry.axis(old.start, old.end, s.ratio, self.scale);
+        const a_old = splitAxis(self.nodes, s, old.start, old.end, s.ratio, self.band);
         // The ratio that would put this divider back on its own pixel — and
         // then the layout it ACTUALLY produces, which differs from the old one
         // only where the clamp bit. Everything below is solved against that
         // real geometry, never against the position it could not reach.
-        const held = holdRatio(a_old.split_pos, new);
-        const a_new = split_geometry.axis(new.start, new.end, held, self.scale);
+        const held = holdRatio(self.nodes, s, a_old.split_pos, new, self.band);
+        const a_new = splitAxis(self.nodes, s, new.start, new.end, held, self.band);
         if (!self.push(handle, held)) return;
 
         self.walk(
@@ -172,20 +182,64 @@ const Walker = struct {
     }
 };
 
-/// The ratio that puts a split's divider at absolute position `pos` inside
-/// `region`, clamped to the same [MIN_RATIO, MAX_RATIO] band a dragged ratio
-/// obeys — a compensated pane is never squeezed to nothing, exactly as a
-/// dragged one is not.
-fn holdRatio(pos: i32, region: Range) f32 {
-    const total: f32 = @floatFromInt(@max(region.end - region.start, 1));
-    // Aim at the CENTER of the target pixel, not its left edge.
-    // `split_geometry.axis` truncates the ratio back into a position, so a
-    // ratio aimed at the edge lands a pixel low as soon as anything rounds it
-    // down — and the ratio really is rounded, to `f16`, on its way into the
-    // tree. Aiming half a pixel high centers that error instead of biasing it,
-    // which is the difference between a boundary that holds and one that
-    // creeps left every time a drag starts.
-    const p: f32 = @as(f32, @floatFromInt(pos - region.start)) + 0.5;
+/// How many panes side by side along `layout` a subtree is, as the engine
+/// flattens a row (`pane_stack_layout` `itemsInto`): a split along the axis is
+/// both its sides', anything else (a pane, a perpendicular split) is one.
+///
+/// A well-formed tree visits each node once; `budget` is what bounds a
+/// malformed (cyclic) slice, where the depth bound alone would still allow
+/// two to the power of `MAX_DEPTH` visits.
+fn itemsAlong(nodes: []const Node, handle: u16, layout: Layout) i32 {
+    var budget: usize = nodes.len + 1;
+    return itemsWalk(nodes, handle, layout, 0, &budget);
+}
+
+fn itemsWalk(nodes: []const Node, handle: u16, layout: Layout, depth: usize, budget: *usize) i32 {
+    if (depth >= MAX_DEPTH or handle >= nodes.len or budget.* == 0) return 1;
+    budget.* -= 1;
+    return switch (nodes[handle]) {
+        .leaf => 1,
+        .pass => |child| itemsWalk(nodes, child, layout, depth + 1, budget),
+        .split => |s| if (s.layout != layout)
+            1
+        else
+            itemsWalk(nodes, s.left, layout, depth + 1, budget) + itemsWalk(nodes, s.right, layout, depth + 1, budget),
+    };
+}
+
+/// The panes' total size inside `[start, end)` for split `s` - its extent less
+/// every gutter in it - and how many of those gutters lie before its own.
+const Sizes = struct { total: i32, before: i32 };
+
+fn sizesOf(nodes: []const Node, s: Node.Split, start: i32, end: i32, band: i32) Sizes {
+    const kl = itemsAlong(nodes, s.left, s.layout);
+    const kr = itemsAlong(nodes, s.right, s.layout);
+    return .{ .total = @max(end - start - (kl + kr - 1) * band, 0), .before = (kl - 1) * band };
+}
+
+/// Split `s` laid out in `[start, end)` at `ratio`, as the engine places it:
+/// its left side gets `ratio` of the panes' sizes, rounded to the pixel as the
+/// engine rounds a pane's edge, plus the gutters inside that side; its own
+/// gutter (`band` wide) follows. `split_pos` is the gutter's centre.
+fn splitAxis(nodes: []const Node, s: Node.Split, start: i32, end: i32, ratio: f32, band: i32) split_geometry.Axis {
+    const z = sizesOf(nodes, s, start, end, band);
+    const left: i32 = @intFromFloat(@round(ratio * @as(f32, @floatFromInt(z.total))));
+    const lo = start + left + z.before;
+    return .{ .lo_start = start, .band_lo = lo, .band_hi = lo + band, .hi_end = end, .split_pos = lo + @divTrunc(band, 2) };
+}
+
+/// The ratio that puts split `s`'s divider at absolute position `pos` (its
+/// gutter's centre) inside `region` - `splitAxis` inverted - clamped to the
+/// same [MIN_RATIO, MAX_RATIO] band a dragged ratio obeys, so a compensated
+/// pane is never squeezed to nothing, exactly as a dragged one is not.
+///
+/// Aimed at the target pixel itself: `splitAxis` ROUNDS, as the engine does,
+/// so the `f16` the ratio is stored as on its way into the tree errs either
+/// side of the pixel rather than always below it.
+fn holdRatio(nodes: []const Node, s: Node.Split, pos: i32, region: Range, band: i32) f32 {
+    const z = sizesOf(nodes, s, region.start, region.end, band);
+    const total: f32 = @floatFromInt(@max(z.total, 1));
+    const p: f32 = @floatFromInt(pos - @divTrunc(band, 2) - region.start - z.before);
     return std.math.clamp(
         p / total,
         split_geometry.MIN_RATIO,
@@ -209,7 +263,7 @@ pub fn plan(
     region_start: i32,
     region_end: i32,
     new_ratio: f32,
-    scale: f32,
+    band: i32,
     out: []Adjust,
 ) usize {
     if (dragged >= nodes.len) return 0;
@@ -222,13 +276,13 @@ pub fn plan(
     var w: Walker = .{
         .nodes = nodes,
         .layout = s.layout,
-        .scale = scale,
+        .band = band,
         .out = out,
     };
     if (!w.push(dragged, new_ratio)) return 0;
 
-    const a_old = split_geometry.axis(region_start, region_end, s.ratio, scale);
-    const a_new = split_geometry.axis(region_start, region_end, new_ratio, scale);
+    const a_old = splitAxis(nodes, s, region_start, region_end, s.ratio, band);
+    const a_new = splitAxis(nodes, s, region_start, region_end, new_ratio, band);
     w.walk(
         s.left,
         .{ .start = region_start, .end = a_old.band_lo },
@@ -264,10 +318,10 @@ pub fn replay(
     region_start: i32,
     region_end: i32,
     new_ratio: f32,
-    scale: f32,
+    band: i32,
     out: []Adjust,
 ) usize {
-    const n = plan(nodes, dragged, region_start, region_end, new_ratio, scale, out);
+    const n = plan(nodes, dragged, region_start, region_end, new_ratio, band, out);
     if (n == 0) return 0;
     var len = n;
     for (nodes, 0..) |node, i| {
@@ -304,21 +358,66 @@ pub fn replay(
 /// Unlike a drag, a keyboard step is solved against the tree as it STANDS —
 /// there is no gesture to snapshot, since each press is its own action — so
 /// this round-trips ratio -> pixels -> ratio once per press and the rounding
-/// has to be centered rather than merely small. `split_geometry.axis`
-/// truncates, so aiming at the target pixel's leading edge loses a fraction of
-/// a pixel EVERY press, always in the same direction: nudge a divider eight
-/// steps right and eight steps back and it lands measurably left of where it
-/// started. Aiming half a pixel high is the same correction `holdRatio` makes,
-/// for the same reason.
+/// has to be centered rather than merely small. A geometry that truncated lost
+/// a fraction of a pixel EVERY press, always in the same direction: nudge a
+/// divider eight steps right and eight steps back and it landed measurably left
+/// of where it started. `splitAxis` rounds, as the engine does, and
+/// `holdRatio` aims at the pixel itself, so the error is centred.
 pub fn nudgeRatio(
+    nodes: []const Node,
+    target: u16,
     region_start: i32,
     region_end: i32,
     ratio: f32,
-    scale: f32,
+    band: i32,
     delta: i32,
 ) f32 {
-    const a = split_geometry.axis(region_start, region_end, ratio, scale);
-    return holdRatio(a.split_pos + delta, .{ .start = region_start, .end = region_end });
+    // A target the slice does not hold is laid out as two panes: what a lone
+    // split is, and the solo fallback for a tree too big to snapshot.
+    const none = std.math.maxInt(u16);
+    const s: Node.Split = if (target < nodes.len and nodes[target] == .split)
+        nodes[target].split
+    else
+        .{ .layout = .horizontal, .ratio = ratio, .left = none, .right = none };
+    const a = splitAxis(nodes, s, region_start, region_end, ratio, band);
+    return holdRatio(nodes, s, a.split_pos + delta, .{ .start = region_start, .end = region_end }, band);
+}
+
+/// The ratio that puts split `target`'s divider under the pointer at `pos`
+/// (T2125): `split_geometry.dragRatio`'s job, on the engine's geometry rather
+/// than as a fraction of the region, so a grabbed-but-unmoved divider stays on
+/// its pixel and a drag that comes back to where it started lands there. A
+/// target the slice does not hold is laid out as two panes (`nudgeRatio`).
+pub fn ratioAt(
+    nodes: []const Node,
+    target: u16,
+    region_start: i32,
+    region_end: i32,
+    pos: i32,
+    band: i32,
+) f32 {
+    const none = std.math.maxInt(u16);
+    const s: Node.Split = if (target < nodes.len and nodes[target] == .split)
+        nodes[target].split
+    else
+        .{ .layout = .horizontal, .ratio = 0.5, .left = none, .right = none };
+    return holdRatio(nodes, s, pos, .{ .start = region_start, .end = region_end }, band);
+}
+
+test "ratioAt is splitAxis inverted: the divider lands under the pointer" {
+    for (SCALES) |scale| {
+        const band = split_geometry.bandPx(scale) * 3;
+        const nodes = threeColumns(1.0 / 3.0, 0.5);
+        const w: i32 = 2400;
+        for ([_]i32{ 600, 800, 1203, 1500 }) |pos| {
+            const r = ratioAt(&nodes, 0, 0, w, pos, band);
+            const a = splitAxis(&nodes, nodes[0].split, 0, w, r, band);
+            try testing.expect(@abs(a.split_pos - pos) <= 1);
+        }
+        // Unmoved: the pointer on the divider gives back its own ratio.
+        const here = dividerPos(&nodes, 0, 0, 0, w, .horizontal, band).?;
+        try testing.expectApproxEqAbs(nodes[0].split.ratio, ratioAt(&nodes, 0, 0, w, here, band), 0.001);
+    }
 }
 
 /// How many nodes a keyboard gesture can hold on to. Same bound the drag's
@@ -404,7 +503,7 @@ pub const KeyboardGesture = struct {
         target: u16,
         region_start: i32,
         region_end: i32,
-        scale: f32,
+        band: i32,
         delta: i32,
         out: []Adjust,
     ) usize {
@@ -427,8 +526,8 @@ pub const KeyboardGesture = struct {
             .leaf, .pass => return 0,
             .split => |sp| sp.ratio,
         };
-        const ratio = nudgeRatio(region_start, region_end, base, scale, self.offset);
-        var n = plan(self.nodes[0..self.len], target, region_start, region_end, ratio, scale, out);
+        const ratio = nudgeRatio(self.nodes[0..self.len], target, region_start, region_end, base, band, self.offset);
+        var n = plan(self.nodes[0..self.len], target, region_start, region_end, ratio, band, out);
 
         // `plan` prunes any subtree whose axis range did not move — measured
         // against the SNAPSHOT, which is what makes a drag cheap. Replaying a
@@ -497,9 +596,9 @@ pub fn dividerPos(
     range_start: i32,
     range_end: i32,
     layout: Layout,
-    scale: f32,
+    band: i32,
 ) ?i32 {
-    return posWalk(nodes, target, root, .{ .start = range_start, .end = range_end }, layout, scale, 0);
+    return posWalk(nodes, target, root, .{ .start = range_start, .end = range_end }, layout, band, 0);
 }
 
 fn posWalk(
@@ -508,24 +607,24 @@ fn posWalk(
     handle: u16,
     range: Range,
     layout: Layout,
-    scale: f32,
+    band: i32,
     depth: usize,
 ) ?i32 {
     if (depth >= MAX_DEPTH) return null;
     if (handle >= nodes.len) return null;
     const s = switch (nodes[handle]) {
         .leaf => return null,
-        .pass => |child| return posWalk(nodes, target, child, range, layout, scale, depth + 1),
+        .pass => |child| return posWalk(nodes, target, child, range, layout, band, depth + 1),
         .split => |s| s,
     };
     if (s.layout != layout) {
-        return posWalk(nodes, target, s.left, range, layout, scale, depth + 1) orelse
-            posWalk(nodes, target, s.right, range, layout, scale, depth + 1);
+        return posWalk(nodes, target, s.left, range, layout, band, depth + 1) orelse
+            posWalk(nodes, target, s.right, range, layout, band, depth + 1);
     }
-    const a = split_geometry.axis(range.start, range.end, s.ratio, scale);
+    const a = splitAxis(nodes, s, range.start, range.end, s.ratio, band);
     if (handle == target) return a.split_pos;
-    return posWalk(nodes, target, s.left, .{ .start = range.start, .end = a.band_lo }, layout, scale, depth + 1) orelse
-        posWalk(nodes, target, s.right, .{ .start = a.band_hi, .end = range.end }, layout, scale, depth + 1);
+    return posWalk(nodes, target, s.left, .{ .start = range.start, .end = a.band_lo }, layout, band, depth + 1) orelse
+        posWalk(nodes, target, s.right, .{ .start = a.band_hi, .end = range.end }, layout, band, depth + 1);
 }
 
 /// Apply a plan to a mutable node slice — the test-side mirror of what
@@ -564,11 +663,16 @@ fn expectHeld(before: i32, after: i32) !void {
 }
 
 /// `split(r1) -> [p1, split(r2) -> [p2, p3]]` — the user's three columns.
+/// A ratio as the real tree holds it: an `f16` (see `apply`).
+fn stored(r: f32) f32 {
+    return @floatCast(@as(f16, @floatCast(r)));
+}
+
 fn threeColumns(r1: f32, r2: f32) [5]Node {
     return .{
-        .{ .split = .{ .layout = .horizontal, .ratio = r1, .left = 1, .right = 2 } },
+        .{ .split = .{ .layout = .horizontal, .ratio = stored(r1), .left = 1, .right = 2 } },
         .leaf,
-        .{ .split = .{ .layout = .horizontal, .ratio = r2, .left = 3, .right = 4 } },
+        .{ .split = .{ .layout = .horizontal, .ratio = stored(r2), .left = 3, .right = 4 } },
         .leaf,
         .leaf,
     };
@@ -580,16 +684,16 @@ test "three columns: dragging divider 1 leaves divider 2 on its pixel" {
     for (SCALES) |scale| {
         const w: i32 = 3110;
         var nodes = threeColumns(1.0 / 3.0, 0.5);
-        const before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?;
+        const before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
 
         // The dragged node's own region is the whole surface (it is the root).
         var out: [16]Adjust = undefined;
-        const n = plan(&nodes, 0, 0, w, 0.2, scale, &out);
+        const n = plan(&nodes, 0, 0, w, 0.2, split_geometry.bandPx(scale), &out);
         try testing.expect(n >= 2);
         try testing.expectEqual(@as(u16, 0), out[0].handle);
         apply(&nodes, out[0..n]);
 
-        const after = dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?;
+        const after = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
         try expectHeld(before, after);
     }
 }
@@ -600,19 +704,19 @@ test "three columns: the defect itself, pinned" {
     // control for the test above: it fails the moment the walk stops working.
     const w: i32 = 3110;
     var nodes = threeColumns(1.0 / 3.0, 0.5);
-    const before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).?;
+    const before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
 
     var out: [16]Adjust = undefined;
-    const n = plan(&nodes, 0, 0, w, 0.2, 1.0, &out);
+    const n = plan(&nodes, 0, 0, w, 0.2, split_geometry.bandPx(1.0), &out);
     // Apply ONLY the dragged node, the pre-T533 behavior.
     apply(&nodes, out[0..1]);
-    const uncompensated = dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).?;
+    const uncompensated = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
     try testing.expect(before - uncompensated > 200);
 
     // And the full plan puts it back.
     var fixed = threeColumns(1.0 / 3.0, 0.5);
     apply(&fixed, out[0..n]);
-    try expectHeld(before, dividerPos(&fixed, 2, 0, 0, w, .horizontal, 1.0).?);
+    try expectHeld(before, dividerPos(&fixed, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?);
 }
 
 test "three columns: dragging divider 2 still moves only itself (T495 unchanged)" {
@@ -621,16 +725,16 @@ test "three columns: dragging divider 2 still moves only itself (T495 unchanged)
     for (SCALES) |scale| {
         const w: i32 = 3110;
         var nodes = threeColumns(1.0 / 3.0, 0.5);
-        const d1_before = dividerPos(&nodes, 0, 0, 0, w, .horizontal, scale).?;
+        const d1_before = dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
 
         // Divider 2's region is the right child's rect, not the surface.
         const root = split_geometry.axis(0, w, 1.0 / 3.0, scale);
         var out: [16]Adjust = undefined;
-        const n = plan(&nodes, 2, root.band_hi, w, 0.7, scale, &out);
+        const n = plan(&nodes, 2, root.band_hi, w, 0.7, split_geometry.bandPx(scale), &out);
         try testing.expectEqual(@as(usize, 1), n); // nothing below it to pin
         apply(&nodes, out[0..n]);
 
-        try testing.expectEqual(d1_before, dividerPos(&nodes, 0, 0, 0, w, .horizontal, scale).?);
+        try testing.expectEqual(d1_before, dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
     }
 }
 
@@ -641,13 +745,13 @@ test "the pane on the far side keeps its exact width" {
     for (SCALES) |scale| {
         const w: i32 = 1600;
         var nodes = threeColumns(0.5, 0.5);
-        const d2_before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?;
+        const d2_before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
         const p3_before = w - d2_before;
 
         var out: [16]Adjust = undefined;
-        const n = plan(&nodes, 0, 0, w, 0.25, scale, &out);
+        const n = plan(&nodes, 0, 0, w, 0.25, split_geometry.bandPx(scale), &out);
         apply(&nodes, out[0..n]);
-        const d2_after = dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?;
+        const d2_after = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
         try expectHeld(p3_before, w - d2_after);
     }
 }
@@ -665,12 +769,12 @@ test "compensation runs on the LEFT of the dragged divider too" {
             .leaf,
             .leaf,
         };
-        const before = dividerPos(&nodes, 1, 0, 0, w, .horizontal, scale).?;
+        const before = dividerPos(&nodes, 1, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
 
         var out: [16]Adjust = undefined;
-        const n = plan(&nodes, 0, 0, w, 0.75, scale, &out);
+        const n = plan(&nodes, 0, 0, w, 0.75, split_geometry.bandPx(scale), &out);
         apply(&nodes, out[0..n]);
-        try expectHeld(before, dividerPos(&nodes, 1, 0, 0, w, .horizontal, scale).?);
+        try expectHeld(before, dividerPos(&nodes, 1, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
     }
 }
 
@@ -689,14 +793,14 @@ test "deep nesting: four columns, every downstream boundary held" {
             .leaf,
             .leaf,
         };
-        const d2 = dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?;
-        const d3 = dividerPos(&nodes, 4, 0, 0, w, .horizontal, scale).?;
+        const d2 = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
+        const d3 = dividerPos(&nodes, 4, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
 
         var out: [16]Adjust = undefined;
-        const n = plan(&nodes, 0, 0, w, 0.35, scale, &out);
+        const n = plan(&nodes, 0, 0, w, 0.35, split_geometry.bandPx(scale), &out);
         apply(&nodes, out[0..n]);
-        try expectHeld(d2, dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?);
-        try expectHeld(d3, dividerPos(&nodes, 4, 0, 0, w, .horizontal, scale).?);
+        try expectHeld(d2, dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
+        try expectHeld(d3, dividerPos(&nodes, 4, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
     }
 }
 
@@ -718,15 +822,15 @@ test "a perpendicular split is walked THROUGH, not around" {
             .leaf,
             .leaf,
         };
-        const top = dividerPos(&nodes, 3, 0, 0, w, .horizontal, scale).?;
-        const bottom = dividerPos(&nodes, 6, 0, 0, w, .horizontal, scale).?;
+        const top = dividerPos(&nodes, 3, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
+        const bottom = dividerPos(&nodes, 6, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
         const row_ratio = nodes[2].split.ratio;
 
         var out: [16]Adjust = undefined;
-        const n = plan(&nodes, 0, 0, w, 0.3, scale, &out);
+        const n = plan(&nodes, 0, 0, w, 0.3, split_geometry.bandPx(scale), &out);
         apply(&nodes, out[0..n]);
-        try expectHeld(top, dividerPos(&nodes, 3, 0, 0, w, .horizontal, scale).?);
-        try expectHeld(bottom, dividerPos(&nodes, 6, 0, 0, w, .horizontal, scale).?);
+        try expectHeld(top, dividerPos(&nodes, 3, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
+        try expectHeld(bottom, dividerPos(&nodes, 6, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
         // The row boundary is on the other axis and is never rewritten.
         try testing.expectEqual(row_ratio, nodes[2].split.ratio);
         for (out[0..n]) |a| try testing.expect(a.handle != 2);
@@ -748,7 +852,7 @@ test "an untouched subtree is left bit-identical" {
         .leaf,
     };
     var out: [16]Adjust = undefined;
-    const n = plan(&nodes, 0, 0, w, 0.6, 1.0, &out);
+    const n = plan(&nodes, 0, 0, w, 0.6, split_geometry.bandPx(1.0), &out);
     for (out[0..n]) |a| try testing.expect(a.handle != 1);
     // A vertical split inside a horizontally-resized subtree has no boundary
     // on the drag axis, so it is never rewritten either.
@@ -763,7 +867,7 @@ test "clamp: a squeezed boundary gives way gracefully and stays monotonic" {
     // allows, and must never move backwards as the squeeze increases.
     const w: i32 = 1000;
     const original = threeColumns(0.2, 0.5);
-    const d2 = dividerPos(&original, 2, 0, 0, w, .horizontal, 1.0).?;
+    const d2 = dividerPos(&original, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
 
     var prev: i32 = d2;
     var i: u32 = 2;
@@ -771,9 +875,9 @@ test "clamp: a squeezed boundary gives way gracefully and stays monotonic" {
         var nodes = threeColumns(0.2, 0.5);
         var out: [16]Adjust = undefined;
         const r: f32 = @as(f32, @floatFromInt(i)) / 10.0;
-        const n = plan(&nodes, 0, 0, w, r, 1.0, &out);
+        const n = plan(&nodes, 0, 0, w, r, split_geometry.bandPx(1.0), &out);
         apply(&nodes, out[0..n]);
-        const pos = dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).?;
+        const pos = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
         // Never left of where it started, never left of the previous step:
         // the squeeze only ever pushes it right, and only once it has to.
         try testing.expect(pos >= prev - 1);
@@ -801,12 +905,12 @@ test "clamp: the pinned boundary below a clamped one uses the REAL geometry" {
         .leaf,
     };
     var out: [16]Adjust = undefined;
-    const n = plan(&nodes, 0, 0, w, 0.9, 1.0, &out);
+    const n = plan(&nodes, 0, 0, w, 0.9, split_geometry.bandPx(1.0), &out);
     apply(&nodes, out[0..n]);
 
-    const d1 = dividerPos(&nodes, 0, 0, 0, w, .horizontal, 1.0).?;
-    const d2 = dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).?;
-    const d3 = dividerPos(&nodes, 3, 0, 0, w, .horizontal, 1.0).?;
+    const d1 = dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
+    const d2 = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
+    const d3 = dividerPos(&nodes, 3, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
     try testing.expect(d1 <= d3);
     try testing.expect(d3 <= d2);
     try testing.expect(d2 <= w);
@@ -820,8 +924,8 @@ test "a drag is reversible: out and back lands on the original pixels" {
     for (SCALES) |scale| {
         const w: i32 = 3110;
         const snapshot = threeColumns(1.0 / 3.0, 0.5);
-        const d1 = dividerPos(&snapshot, 0, 0, 0, w, .horizontal, scale).?;
-        const d2 = dividerPos(&snapshot, 2, 0, 0, w, .horizontal, scale).?;
+        const d1 = dividerPos(&snapshot, 0, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
+        const d2 = dividerPos(&snapshot, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
 
         var nodes = snapshot;
         var i: u32 = 0;
@@ -830,17 +934,17 @@ test "a drag is reversible: out and back lands on the original pixels" {
             var out: [16]Adjust = undefined;
             // Always from the snapshot — this IS the rule under test.
             nodes = snapshot;
-            const n = plan(&snapshot, 0, 0, w, r, scale, &out);
+            const n = plan(&snapshot, 0, 0, w, r, split_geometry.bandPx(scale), &out);
             apply(&nodes, out[0..n]);
         }
 
         // Final tick: back to the ratio the drag started on.
         var out: [16]Adjust = undefined;
         nodes = snapshot;
-        const n = plan(&snapshot, 0, 0, w, 1.0 / 3.0, scale, &out);
+        const n = plan(&snapshot, 0, 0, w, 1.0 / 3.0, split_geometry.bandPx(scale), &out);
         apply(&nodes, out[0..n]);
-        try testing.expectEqual(d1, dividerPos(&nodes, 0, 0, 0, w, .horizontal, scale).?);
-        try expectHeld(d2, dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?);
+        try testing.expectEqual(d1, dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
+        try expectHeld(d2, dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
     }
 }
 
@@ -854,11 +958,11 @@ test "vertical analog: rows for columns, same rule" {
             .leaf,
             .leaf,
         };
-        const before = dividerPos(&nodes, 2, 0, 0, h, .vertical, scale).?;
+        const before = dividerPos(&nodes, 2, 0, 0, h, .vertical, split_geometry.bandPx(scale)).?;
         var out: [16]Adjust = undefined;
-        const n = plan(&nodes, 0, 0, h, 0.6, scale, &out);
+        const n = plan(&nodes, 0, 0, h, 0.6, split_geometry.bandPx(scale), &out);
         apply(&nodes, out[0..n]);
-        try expectHeld(before, dividerPos(&nodes, 2, 0, 0, h, .vertical, scale).?);
+        try expectHeld(before, dividerPos(&nodes, 2, 0, 0, h, .vertical, split_geometry.bandPx(scale)).?);
     }
 }
 
@@ -870,15 +974,15 @@ test "a grabbed-but-unmoved divider changes nothing" {
     const snapshot = threeColumns(1.0 / 3.0, 0.5);
     var nodes = snapshot;
     var out: [16]Adjust = undefined;
-    const n = plan(&snapshot, 0, 0, w, snapshot[0].split.ratio, 1.0, &out);
+    const n = plan(&snapshot, 0, 0, w, snapshot[0].split.ratio, split_geometry.bandPx(1.0), &out);
     apply(&nodes, out[0..n]);
     try testing.expectEqual(
-        dividerPos(&snapshot, 0, 0, 0, w, .horizontal, 1.0).?,
-        dividerPos(&nodes, 0, 0, 0, w, .horizontal, 1.0).?,
+        dividerPos(&snapshot, 0, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?,
+        dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?,
     );
     try testing.expectEqual(
-        dividerPos(&snapshot, 2, 0, 0, w, .horizontal, 1.0).?,
-        dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).?,
+        dividerPos(&snapshot, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?,
+        dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?,
     );
 }
 
@@ -886,16 +990,16 @@ test "a leaf, a bad handle and a full buffer are all answered, not crashed" {
     const w: i32 = 1000;
     var nodes = threeColumns(0.5, 0.5);
     var out: [16]Adjust = undefined;
-    try testing.expectEqual(@as(usize, 0), plan(&nodes, 1, 0, w, 0.4, 1.0, &out)); // leaf
-    try testing.expectEqual(@as(usize, 0), plan(&nodes, 99, 0, w, 0.4, 1.0, &out)); // out of range
+    try testing.expectEqual(@as(usize, 0), plan(&nodes, 1, 0, w, 0.4, split_geometry.bandPx(1.0), &out)); // leaf
+    try testing.expectEqual(@as(usize, 0), plan(&nodes, 99, 0, w, 0.4, split_geometry.bandPx(1.0), &out)); // out of range
 
     // A buffer too small to hold the whole plan truncates it: the dragged node
     // is still resized (entry 0), the deeper pins are simply not made.
     var tiny: [1]Adjust = undefined;
-    try testing.expectEqual(@as(usize, 1), plan(&nodes, 0, 0, w, 0.4, 1.0, &tiny));
+    try testing.expectEqual(@as(usize, 1), plan(&nodes, 0, 0, w, 0.4, split_geometry.bandPx(1.0), &tiny));
     try testing.expectEqual(@as(u16, 0), tiny[0].handle);
     var none: [0]Adjust = undefined;
-    try testing.expectEqual(@as(usize, 0), plan(&nodes, 0, 0, w, 0.4, 1.0, &none));
+    try testing.expectEqual(@as(usize, 0), plan(&nodes, 0, 0, w, 0.4, split_geometry.bandPx(1.0), &none));
 }
 
 test "a cyclic node slice terminates" {
@@ -906,7 +1010,7 @@ test "a cyclic node slice terminates" {
         .{ .split = .{ .layout = .horizontal, .ratio = 0.5, .left = 0, .right = 0 } },
     };
     var out: [64]Adjust = undefined;
-    const n = plan(&nodes, 0, 0, 1000, 0.4, 1.0, &out);
+    const n = plan(&nodes, 0, 0, 1000, 0.4, split_geometry.bandPx(1.0), &out);
     try testing.expect(n <= out.len);
 }
 
@@ -925,7 +1029,7 @@ fn keyboardStep(
     delta: i32,
     out: []Adjust,
 ) usize {
-    const n = g.step(nodes, 0, target, region_start, region_end, scale, delta, out);
+    const n = g.step(nodes, 0, target, region_start, region_end, split_geometry.bandPx(scale), delta, out);
     apply(nodes, out[0..n]);
     return n;
 }
@@ -939,11 +1043,11 @@ test "nudgeRatio moves the divider by the requested pixels, in its own region" {
         const root = split_geometry.axis(0, w, 1.0 / 3.0, scale);
         const before = split_geometry.axis(root.band_hi, w, 0.5, scale).split_pos;
 
-        const r = nudgeRatio(root.band_hi, w, 0.5, scale, 40);
+        const r = nudgeRatio(&.{}, 0, root.band_hi, w, 0.5, split_geometry.bandPx(scale), 40);
         const after = split_geometry.axis(root.band_hi, w, r, scale).split_pos;
         try expectHeld(before + 40, after);
 
-        const back = nudgeRatio(root.band_hi, w, r, scale, -40);
+        const back = nudgeRatio(&.{}, 0, root.band_hi, w, r, split_geometry.bandPx(scale), -40);
         try expectHeld(before, split_geometry.axis(root.band_hi, w, back, scale).split_pos);
     }
 }
@@ -954,11 +1058,11 @@ test "nudgeRatio clamps at the same floor a dragged divider does" {
     // band; it lands ON the band, the way a drag pushed to the limit does.
     try testing.expectEqual(
         split_geometry.MAX_RATIO,
-        nudgeRatio(0, w, 0.5, 1.0, 10_000),
+        nudgeRatio(&.{}, 0, 0, w, 0.5, split_geometry.bandPx(1.0), 10_000),
     );
     try testing.expectEqual(
         split_geometry.MIN_RATIO,
-        nudgeRatio(0, w, 0.5, 1.0, -10_000),
+        nudgeRatio(&.{}, 0, 0, w, 0.5, split_geometry.bandPx(1.0), -10_000),
     );
 }
 
@@ -970,8 +1074,8 @@ test "keyboard: moving divider 1 leaves divider 2 on its pixel" {
     for (SCALES) |scale| {
         const w: i32 = 3110;
         var nodes = threeColumns(1.0 / 3.0, 0.5);
-        const d2_before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?;
-        const d1_before = dividerPos(&nodes, 0, 0, 0, w, .horizontal, scale).?;
+        const d2_before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
+        const d1_before = dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
 
         // Sixty steps of the 10px `DIVIDER_STEP` — a held key, not a tap.
         // The count is the point: each press is solved against the tree as it
@@ -983,11 +1087,11 @@ test "keyboard: moving divider 1 leaves divider 2 on its pixel" {
             _ = keyboardStep(&g, &nodes, 0, 0, w, scale, 10, &out);
         }
 
-        const d1_after = dividerPos(&nodes, 0, 0, 0, w, .horizontal, scale).?;
+        const d1_after = dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
         // Control: the divider the user asked for really did travel. Without
         // it the hold below would pass on a build that ignores the key.
         try testing.expect(d1_after - d1_before >= 590);
-        try expectHeld(d2_before, dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?);
+        try expectHeld(d2_before, dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
     }
 }
 
@@ -996,16 +1100,16 @@ test "keyboard: the uncompensated answer is the control" {
     // stops being applied: divider 2 slides by half of divider 1's travel.
     const w: i32 = 3110;
     var nodes = threeColumns(1.0 / 3.0, 0.5);
-    const d2_before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).?;
+    const d2_before = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
 
     var out: [64]Adjust = undefined;
     for (0..10) |_| {
         const ratio = nodes[0].split.ratio;
-        const r = nudgeRatio(0, w, ratio, 1.0, 10);
-        _ = plan(&nodes, 0, 0, w, r, 1.0, &out);
+        const r = nudgeRatio(&.{}, 0, 0, w, ratio, split_geometry.bandPx(1.0), 10);
+        _ = plan(&nodes, 0, 0, w, r, split_geometry.bandPx(1.0), &out);
         apply(&nodes, out[0..1]); // dragged node only
     }
-    const slid = dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).? - d2_before;
+    const slid = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).? - d2_before;
     try testing.expect(slid >= 40);
 }
 
@@ -1018,16 +1122,16 @@ test "keyboard: a run out and back lands on the pixels it started on" {
     for (SCALES) |scale| {
         const w: i32 = 1600;
         var nodes = threeColumns(0.5, 0.5);
-        const d1 = dividerPos(&nodes, 0, 0, 0, w, .horizontal, scale).?;
-        const d2 = dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?;
+        const d1 = dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
+        const d2 = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
 
         var g: KeyboardGesture = .{};
         var out: [64]Adjust = undefined;
         for (0..40) |_| _ = keyboardStep(&g, &nodes, 0, 0, w, scale, 10, &out);
         for (0..40) |_| _ = keyboardStep(&g, &nodes, 0, 0, w, scale, -10, &out);
 
-        try testing.expectEqual(d1, dividerPos(&nodes, 0, 0, 0, w, .horizontal, scale).?);
-        try testing.expectEqual(d2, dividerPos(&nodes, 2, 0, 0, w, .horizontal, scale).?);
+        try testing.expectEqual(d1, dividerPos(&nodes, 0, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
+        try testing.expectEqual(d2, dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
     }
 }
 
@@ -1037,17 +1141,17 @@ test "keyboard: solving each press against the previous one is the control" {
     // tree the last one wrote, walk the held boundary tens of pixels away.
     const w: i32 = 1600;
     var nodes = threeColumns(0.5, 0.5);
-    const d2 = dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).?;
+    const d2 = dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
 
     var out: [64]Adjust = undefined;
     for (0..80) |i| {
         const delta: i32 = if (i < 40) 10 else -10;
         const ratio = nodes[0].split.ratio;
-        const r = nudgeRatio(0, w, ratio, 1.0, delta);
-        const n = plan(&nodes, 0, 0, w, r, 1.0, &out);
+        const r = nudgeRatio(&.{}, 0, 0, w, ratio, split_geometry.bandPx(1.0), delta);
+        const n = plan(&nodes, 0, 0, w, r, split_geometry.bandPx(1.0), &out);
         apply(&nodes, out[0..n]);
     }
-    try testing.expect(@abs(dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0).? - d2) > 10);
+    try testing.expect(@abs(dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).? - d2) > 10);
 }
 
 test "keyboard: the gesture ends when anything else moves the layout" {
@@ -1120,13 +1224,13 @@ test "keyboard: a perpendicular divider is not disturbed" {
         .leaf,
         .leaf,
     };
-    const before = dividerPos(&nodes, 2, 0, 0, h, .vertical, 1.0).?;
+    const before = dividerPos(&nodes, 2, 0, 0, h, .vertical, split_geometry.bandPx(1.0)).?;
 
     var g: KeyboardGesture = .{};
     var out: [64]Adjust = undefined;
     for (0..6) |_| _ = keyboardStep(&g, &nodes, 0, 0, w, 1.0, 10, &out);
 
-    try testing.expectEqual(before, dividerPos(&nodes, 2, 0, 0, h, .vertical, 1.0).?);
+    try testing.expectEqual(before, dividerPos(&nodes, 2, 0, 0, h, .vertical, split_geometry.bandPx(1.0)).?);
 }
 
 /// `split(r1) -> [p1, C]` where C = `split(0.5) -> [stashed, split(r2) -> [p2, p3]]`
@@ -1155,28 +1259,28 @@ test "stash: a collapsed split passes its whole range to the visible side" {
     // must report, or nothing pinned against it is pinned where the user sees.
     const w: i32 = 2000;
     const nodes = stashedNested(0.5, 0.5, true);
-    const pos = dividerPos(&nodes, 4, 0, 0, w, .horizontal, 1.0).?;
+    const pos = dividerPos(&nodes, 4, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
     try testing.expect(@abs(pos - 1500) <= 2);
     // And the collapsed split itself has no boundary to report.
-    try testing.expectEqual(@as(?i32, null), dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0));
+    try testing.expectEqual(@as(?i32, null), dividerPos(&nodes, 2, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)));
 }
 
 test "stash: dragging the root holds the visible nested divider (T1839)" {
     for (SCALES) |scale| {
         const w: i32 = 3110;
         var nodes = stashedNested(0.5, 0.5, true);
-        const before = dividerPos(&nodes, 4, 0, 0, w, .horizontal, scale).?;
+        const before = dividerPos(&nodes, 4, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
 
         var out: [16]Adjust = undefined;
         for ([_]f32{ 0.3, 0.2, 0.6, 0.25 }) |r| {
             var tick = nodes;
-            const n = plan(&tick, 0, 0, w, r, scale, &out);
+            const n = plan(&tick, 0, 0, w, r, split_geometry.bandPx(scale), &out);
             try testing.expect(n >= 2);
             // The collapsed split's ratio is never planned: a restored pane
             // comes back to the slot it left.
             for (out[0..n]) |a| try testing.expect(a.handle != 2);
             apply(&tick, out[0..n]);
-            try expectHeld(before, dividerPos(&tick, 4, 0, 0, w, .horizontal, scale).?);
+            try expectHeld(before, dividerPos(&tick, 4, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
         }
     }
 }
@@ -1188,7 +1292,7 @@ test "stash: the full-tree snapshot is the control - it drifts and moves the hid
     const w: i32 = 3110;
     var full = stashedNested(0.5, 0.5, false);
     var out: [16]Adjust = undefined;
-    const n = plan(&full, 0, 0, w, 0.2, 1.0, &out);
+    const n = plan(&full, 0, 0, w, 0.2, split_geometry.bandPx(1.0), &out);
     var touched_hidden = false;
     for (out[0..n]) |a| touched_hidden = touched_hidden or a.handle == 2;
     try testing.expect(touched_hidden);
@@ -1196,17 +1300,17 @@ test "stash: the full-tree snapshot is the control - it drifts and moves the hid
 
     // Measure where that plan puts the divider ON SCREEN: the same ratios,
     // laid out the way the window actually lays them out.
-    const before = dividerPos(&stashedNested(0.5, 0.5, true), 4, 0, 0, w, .horizontal, 1.0).?;
+    const before = dividerPos(&stashedNested(0.5, 0.5, true), 4, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
     var screen = stashedNested(0.2, 0.5, true);
     screen[4].split.ratio = full[4].split.ratio;
-    const after = dividerPos(&screen, 4, 0, 0, w, .horizontal, 1.0).?;
+    const after = dividerPos(&screen, 4, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
     try testing.expect(@abs(after - before) > 50);
 }
 
 test "stash: a collapsed split is not a divider to drag" {
     const nodes = stashedNested(0.5, 0.5, true);
     var out: [16]Adjust = undefined;
-    try testing.expectEqual(@as(usize, 0), plan(&nodes, 2, 0, 1000, 0.3, 1.0, &out));
+    try testing.expectEqual(@as(usize, 0), plan(&nodes, 2, 0, 1000, 0.3, split_geometry.bandPx(1.0), &out));
     var g: KeyboardGesture = .{};
     try testing.expectEqual(@as(usize, 0), g.step(&nodes, 0, 2, 0, 1000, 1.0, 10, &out));
 }
@@ -1214,17 +1318,17 @@ test "stash: a collapsed split is not a divider to drag" {
 test "stash: a keyboard run holds the visible nested divider and keeps its gesture" {
     const w: i32 = 2400;
     var nodes = stashedNested(0.5, 0.5, true);
-    const before = dividerPos(&nodes, 4, 0, 0, w, .horizontal, 1.0).?;
+    const before = dividerPos(&nodes, 4, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?;
     var g: KeyboardGesture = .{};
     var out: [64]Adjust = undefined;
     for (0..8) |_| _ = keyboardStep(&g, &nodes, 0, 0, w, 1.0, -10, &out);
-    try expectHeld(before, dividerPos(&nodes, 4, 0, 0, w, .horizontal, 1.0).?);
+    try expectHeld(before, dividerPos(&nodes, 4, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?);
     // The run is ONE gesture across a `.pass` node: eight presses travelled
     // eighty pixels from one snapshot rather than restarting each time.
     try testing.expectEqual(@as(i32, -80), g.offset);
     for (0..8) |_| _ = keyboardStep(&g, &nodes, 0, 0, w, 1.0, 10, &out);
     try testing.expectEqual(@as(i32, 0), g.offset);
-    try expectHeld(before, dividerPos(&nodes, 4, 0, 0, w, .horizontal, 1.0).?);
+    try expectHeld(before, dividerPos(&nodes, 4, 0, 0, w, .horizontal, split_geometry.bandPx(1.0)).?);
 }
 
 test "replay: a drag applied to the live tree comes back to its grab pixel cleanly (T1839)" {
@@ -1234,21 +1338,21 @@ test "replay: a drag applied to the live tree comes back to its grab pixel clean
     for (SCALES) |scale| {
         const w: i32 = 2000;
         const snapshot = threeColumns(0.4, 0.5);
-        const d2 = dividerPos(&snapshot, 2, 0, 0, w, .horizontal, scale).?;
+        const d2 = dividerPos(&snapshot, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?;
         var out: [16]Adjust = undefined;
 
         // Control: plan alone, onto the live tree.
         var live = snapshot;
-        apply(&live, out[0..plan(&snapshot, 0, 0, w, 0.45, scale, &out)]);
-        apply(&live, out[0..plan(&snapshot, 0, 0, w, 0.4, scale, &out)]);
-        try testing.expect(@abs(dividerPos(&live, 2, 0, 0, w, .horizontal, scale).? - d2) > 20);
+        apply(&live, out[0..plan(&snapshot, 0, 0, w, 0.45, split_geometry.bandPx(scale), &out)]);
+        apply(&live, out[0..plan(&snapshot, 0, 0, w, snapshot[0].split.ratio, split_geometry.bandPx(scale), &out)]);
+        try testing.expect(@abs(dividerPos(&live, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).? - d2) > 20);
 
         // replay: the same two ticks hold divider 2 and restore the snapshot.
         live = snapshot;
-        apply(&live, out[0..replay(&snapshot, 0, 0, w, 0.45, scale, &out)]);
-        try expectHeld(d2, dividerPos(&live, 2, 0, 0, w, .horizontal, scale).?);
-        apply(&live, out[0..replay(&snapshot, 0, 0, w, 0.4, scale, &out)]);
-        try expectHeld(d2, dividerPos(&live, 2, 0, 0, w, .horizontal, scale).?);
+        apply(&live, out[0..replay(&snapshot, 0, 0, w, 0.45, split_geometry.bandPx(scale), &out)]);
+        try expectHeld(d2, dividerPos(&live, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
+        apply(&live, out[0..replay(&snapshot, 0, 0, w, snapshot[0].split.ratio, split_geometry.bandPx(scale), &out)]);
+        try expectHeld(d2, dividerPos(&live, 2, 0, 0, w, .horizontal, split_geometry.bandPx(scale)).?);
         try testing.expectEqual(@as(f16, 0.5), @as(f16, @floatCast(live[2].split.ratio)));
     }
 }
@@ -1256,9 +1360,9 @@ test "replay: a drag applied to the live tree comes back to its grab pixel clean
 test "replay: a collapsed split and its stashed side are never written" {
     const snapshot = stashedNested(0.5, 0.5, true);
     var out: [16]Adjust = undefined;
-    const n = replay(&snapshot, 0, 0, 2000, 0.3, 1.0, &out);
+    const n = replay(&snapshot, 0, 0, 2000, 0.3, split_geometry.bandPx(1.0), &out);
     try testing.expect(n >= 2);
     for (out[0..n]) |a| try testing.expect(a.handle != 2 and a.handle != 3);
     // Nothing for a leaf or a collapsed split, as with `plan`.
-    try testing.expectEqual(@as(usize, 0), replay(&snapshot, 2, 0, 2000, 0.3, 1.0, &out));
+    try testing.expectEqual(@as(usize, 0), replay(&snapshot, 2, 0, 2000, 0.3, split_geometry.bandPx(1.0), &out));
 }

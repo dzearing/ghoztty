@@ -12405,11 +12405,9 @@ fn surfaceWndProc(
         },
 
         w32.WM_NCHITTEST => {
-            // T94: the split-divider grab band is ~9 DIP wide but the
-            // visual gap between panes is only ~5 DIP, so the band's
-            // outer edges lie over the pane surfaces. Fall through
-            // (HTTRANSPARENT) so those hits reach the parent Window,
-            // which owns divider drag + resize-cursor feedback.
+            // Split dividers and stack grips take the mouse in their gutters
+            // only (T2125), so a pane never falls through for them: a click
+            // just inside its edge is the pane's.
             if (is_surface_window and !surface.parent_window.dragging_split) {
                 var pt: w32.POINT = .{
                     .x = @as(i16, @truncate(lparam & 0xFFFF)),
@@ -12417,15 +12415,10 @@ fn surfaceWndProc(
                 };
                 if (surface.parent_window.hwnd) |parent_hwnd| {
                     _ = w32.ScreenToClient(parent_hwnd, &pt);
-                    if (surface.parent_window.hitTestDivider(pt.x, pt.y) != null)
-                        return w32.HTTRANSPARENT;
-                    // T2124: a stack grip's band reaches into the cards
-                    // either side the same way.
-                    if (surface.parent_window.hitTestStackGrip(pt.x, pt.y) != null)
-                        return w32.HTTRANSPARENT;
-                    // T1422: the hero divider's grab zone reaches into the
-                    // hero pane the same way, and the same fall-through is
-                    // what makes that edge grabbable rather than cursor-only.
+                    // T1422: the hero divider's grab zone (T94's ~9 DIP band)
+                    // reaches into the hero pane. Falling through
+                    // (HTTRANSPARENT) is what makes that edge grabbable
+                    // rather than cursor-only.
                     if (surface.parent_window.heroHitDivider(pt.x, pt.y))
                         return w32.HTTRANSPARENT;
                 }

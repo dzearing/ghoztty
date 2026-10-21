@@ -199,6 +199,20 @@ pub const Grid = struct {
         return null;
     }
 
+    /// The gutter of stack grip `i`, where it takes the mouse.
+    pub fn stackHandleGutter(self: *const Grid, i: usize) PxRect {
+        return self.px(self.result.stack_handles.items[i].gutter);
+    }
+
+    /// The stack grip whose gutter holds the point, if any (T2125: a grip,
+    /// like a divider, answers in its gutter and nowhere else).
+    pub fn stackHandleAt(self: *const Grid, x: i32, y: i32) ?usize {
+        for (0..self.result.stack_handles.items.len) |i| {
+            if (self.stackHandleGutter(i).contains(x, y)) return i;
+        }
+        return null;
+    }
+
     /// The tucked pane whose strip holds the point, if any: the highest in
     /// paint order wins where strips overlap, which is the one drawn on top.
     pub fn stripAt(self: *const Grid, x: i32, y: i32) ?Id {
@@ -475,6 +489,71 @@ test "pane_stack_grid: four panes narrower than 4 x 300 DIP stack, and a strip i
     try testing.expectEqual(@as(?Id, null), g.stripAt(r1.left + 5, r1.top + 5));
     // Every card is the same width, so moving the run never resizes one.
     try testing.expectEqual(g.placement(1).?.rect.width(), p4.rect.width());
+}
+
+/// Every point of `r` (every `step` px, plus its last row and column) is in
+/// no resizer's gutter.
+fn expectNoResizerIn(g: *const Grid, r: PxRect, step: i32) !void {
+    try testing.expect(r.width() > 0 and r.height() > 0);
+    var y = r.top;
+    while (true) : (y += step) {
+        const yy = @min(y, r.bottom - 1);
+        var x = r.left;
+        while (true) : (x += step) {
+            const xx = @min(x, r.right - 1);
+            try testing.expectEqual(@as(?usize, null), g.dividerAt(xx, yy));
+            try testing.expectEqual(@as(?usize, null), g.stackHandleAt(xx, yy));
+            if (xx == r.right - 1) break;
+        }
+        if (yy == r.bottom - 1) break;
+    }
+}
+
+test "pane_stack_grid: T2125 every resizer answers in its gutter and nowhere else" {
+    // a | b | c | d in the flat style at 2x, narrow enough to stack: two
+    // cards on show with a grip between them, two strips. Then roomy, with
+    // three dividers.
+    var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 }, .{ .id = 4 } };
+    const n = rowOfFour(&v);
+    for ([_]i32{ 1520, 2800 }) |w| {
+        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = w, .bottom = 1200 }, 2, metrics(null), .{});
+        defer g.deinit();
+        const gap: i32 = 12; // the 6 DIP flat gutter at 2x
+        var resizers: usize = 0;
+        // Inside every card on show and every strip: no resizer, right up to
+        // the edge pixel.
+        for (1..5) |id| {
+            const p = g.placement(id).?;
+            if (p.tab) |t| try expectNoResizerIn(&g, t, 3) else try expectNoResizerIn(&g, p.rect, 7);
+        }
+        // Every pixel of every gutter is its own resizer's.
+        for (g.result.dividers.items, 0..) |_, i| {
+            const gut = g.dividerGutter(i);
+            try testing.expectEqual(gap, gut.width());
+            var x = gut.left;
+            while (x < gut.right) : (x += 1) try testing.expectEqual(@as(?usize, i), g.dividerAt(x, 600));
+            resizers += 1;
+        }
+        for (g.result.stack_handles.items, 0..) |_, i| {
+            const gut = g.stackHandleGutter(i);
+            try testing.expectEqual(gap, gut.width());
+            var x = gut.left;
+            while (x < gut.right) : (x += 1) try testing.expectEqual(@as(?usize, i), g.stackHandleAt(x, 600));
+            resizers += 1;
+        }
+        if (g.result.stacks.items.len == 1) {
+            // One grip, between the two cards on show.
+            try testing.expectEqual(@as(usize, 1), resizers);
+            try testing.expectEqual(@as(usize, 1), g.result.stack_handles.items.len);
+            // Strips get gutters too: the same 6 DIP between the two strips.
+            const t3 = g.placement(3).?.tab.?;
+            const t4 = g.placement(4).?.tab.?;
+            try testing.expectEqual(gap, t4.left - t3.right);
+        } else {
+            try testing.expectEqual(@as(usize, 3), resizers);
+            try testing.expectEqual(@as(usize, 3), g.result.dividers.items.len);
+        }
+    }
 }
 
 test "pane_stack_grid: the focused pane is on show through the provider" {

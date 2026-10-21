@@ -235,10 +235,12 @@ pub fn dividerColor(rest: color_math.Rgb, dark: bool, hot: bool) color_math.Rgb 
     return shade(rest, hoverDelta(dark));
 }
 
-/// Half-width of the invisible grab band around the divider (T94, Mac's
-/// `splitterInvisibleSize` = 8pt around the line). Deliberately much wider
-/// than the visible band, which is why surface children must fall through
-/// via WM_NCHITTEST/HTTRANSPARENT for the outer edges to be reachable.
+/// Half-width of the invisible grab band around the hero/carousel divider
+/// (T94, Mac's `splitterInvisibleSize` = 8pt around the line). Deliberately
+/// much wider than the visible band, which is why the hero surface must fall
+/// through via WM_NCHITTEST/HTTRANSPARENT for the outer edges to be
+/// reachable. Split dividers and stack grips no longer use it: since T2125
+/// they take the mouse in their gutter and nowhere else.
 pub fn grabHalfPx(scale: f32) i32 {
     return @max(@as(i32, @intFromFloat(@round(4.5 * scale))), 4);
 }
@@ -295,12 +297,29 @@ pub fn axisWithBand(start: i32, end: i32, ratio: f64, band: i32) Axis {
     };
 }
 
-/// Whether a coordinate on the split's axis is inside the grab band.
-pub fn inGrabBand(a: Axis, coord: i32, scale: f32) bool {
-    // A band wider than the grab zone (the elevated style's gap, T1831) is
-    // grabbable across its whole width: every pixel of it is the divider.
-    const half = @max(grabHalfPx(scale), @divTrunc(a.bandWidth() + 1, 2));
-    return coord >= a.split_pos - half and coord <= a.split_pos + half;
+/// The flat style's gutter between two panes, in DIPs (T2125; Mac 2811a3043
+/// `PaneLayout.Metrics.flatGap`, 6 pt). A real gutter rather than the bare
+/// line, because the gutters are where every resizer takes the mouse - a grip
+/// on a bare line would have to reach into the panes either side, and a click
+/// just inside a pane's edge would resize it.
+pub const flat_gutter_dip: f64 = 6;
+
+/// `flat_gutter_dip` in whole physical pixels, and always wide enough to
+/// leave a pixel of gutter either side of the `bandPx` line.
+pub fn flatGutterPx(scale: f32) i32 {
+    const px: i32 = @intFromFloat(@round(@as(f32, @floatCast(flat_gutter_dip)) * scale));
+    return @max(px, bandPx(scale) + 2);
+}
+
+/// The divider line inside a flat gutter [`lo`, `hi`) along its axis (T2125):
+/// `bandPx` wide and centred, as Mac draws its line down the middle of the
+/// gutter. Clamped to the gutter, so a gutter narrower than the line is all
+/// line.
+pub fn lineInGutter(lo: i32, hi: i32, scale: f32) struct { lo: i32, hi: i32 } {
+    const w = @max(hi - lo, 0);
+    const band = @min(bandPx(scale), w);
+    const start = lo + @divTrunc(w - band, 2);
+    return .{ .lo = start, .hi = start + band };
 }
 
 /// Which way a split arranges its two children. A local mirror of
@@ -785,28 +804,41 @@ test "DividerCursor.idc: the OS cursor ids, pinned by number" {
     try testing.expect(DividerCursor.size_we.idc() != DividerCursor.size_ns.idc());
 }
 
-test "grab band is wider than the visible band on both sides" {
-    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
-        const a = axis(0, 1000, 0.5, scale);
-        try testing.expect(grabHalfPx(scale) > a.bandWidth());
-        // Reachable from a few DIP into either pane (T94's whole point).
-        try testing.expect(inGrabBand(a, a.split_pos - grabHalfPx(scale), scale));
-        try testing.expect(inGrabBand(a, a.split_pos + grabHalfPx(scale), scale));
-        try testing.expect(!inGrabBand(a, a.split_pos - grabHalfPx(scale) - 1, scale));
-        try testing.expect(!inGrabBand(a, a.split_pos + grabHalfPx(scale) + 1, scale));
-    }
-}
-
-test "T1831: a wide band (the elevated gap) is centred and grabbable edge to edge" {
+test "T1831: a wide band (the elevated gap) is centred on the split" {
     const a = axisWithBand(0, 1000, 0.5, 15);
     try testing.expectEqual(@as(i32, 500), a.split_pos);
     try testing.expectEqual(@as(i32, 15), a.bandWidth());
     try testing.expectEqual(@as(i32, 493), a.band_lo);
-    // Every pixel of the band is the divider, even past the 4.5 DIP grab.
-    var c = a.band_lo;
-    while (c < a.band_hi) : (c += 1) try testing.expect(inGrabBand(a, c, 1.0));
-    try testing.expect(!inGrabBand(a, a.band_hi + 2, 1.0));
-    // The flat band keeps its old geometry and grab zone exactly.
     try testing.expectEqual(axis(0, 1000, 0.5, 1.5), axisWithBand(0, 1000, 0.5, bandPx(1.5)));
-    try testing.expect(inGrabBand(axis(0, 1000, 0.5, 1.0), 504, 1.0));
+}
+
+test "T2125: the flat gutter is Mac's 6pt, in whole pixels, with room either side of the line" {
+    // The layout engine's own flat gap is the same number.
+    try testing.expectEqual(@import("pane_stack_layout.zig").Metrics.flat_gap, flat_gutter_dip);
+    try testing.expectEqual(@as(i32, 6), flatGutterPx(1.0));
+    try testing.expectEqual(@as(i32, 8), flatGutterPx(1.25));
+    try testing.expectEqual(@as(i32, 9), flatGutterPx(1.5));
+    try testing.expectEqual(@as(i32, 12), flatGutterPx(2.0));
+    for ([_]f32{ 0.1, 0.5, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0 }) |scale| {
+        try testing.expect(flatGutterPx(scale) >= bandPx(scale) + 2);
+    }
+}
+
+test "T2125: the line runs down the middle of its gutter" {
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
+        const g = flatGutterPx(scale);
+        const l = lineInGutter(100, 100 + g, scale);
+        try testing.expectEqual(bandPx(scale), l.hi - l.lo);
+        // Gutter either side, and the two sides differ by at most a pixel.
+        const before = l.lo - 100;
+        const after = 100 + g - l.hi;
+        try testing.expect(before >= 1 and after >= 1);
+        try testing.expect(@abs(before - after) <= 1);
+    }
+    // A gutter narrower than the line is all line; an empty one is empty.
+    const thin = lineInGutter(10, 11, 2.0);
+    try testing.expectEqual(@as(i32, 10), thin.lo);
+    try testing.expectEqual(@as(i32, 11), thin.hi);
+    const none = lineInGutter(10, 10, 1.0);
+    try testing.expectEqual(none.lo, none.hi);
 }

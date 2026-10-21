@@ -7389,18 +7389,26 @@ fn stackState(self: *Window) *pane_stack_state.PaneStackState {
 }
 
 /// The space between two side-by-side panes, in DIPs: the elevated style's
-/// gap (T1831), or the flat style's 2 DIP band (`split_geometry.bandPx`).
-/// Flat keeps today's band rather than Mac's 6 pt gutter until T2084 decides
-/// that look on purpose.
+/// gap (T1831), or the flat style's 6 DIP gutter with its line down the
+/// middle (T2125, Mac's `flatGap`; `split_geometry.flatGutterPx`).
 ///
-/// Given as the band's whole PIXELS over the scale, not as the DIP constant,
-/// so the gap the grid lays out in pixels (`Metrics.scaled`) is exactly the
-/// band `bandPx` rounds once - 3 px for 2 DIP at 125% - wherever it falls.
+/// Given as the gutter's whole PIXELS over the scale, not as the DIP
+/// constant, so the gap the grid lays out in pixels (`Metrics.scaled`) is
+/// exactly the gutter `flatGutterPx` rounds once - 8 px for 6 DIP at 125% -
+/// wherever it falls.
 fn stackGapDip(self: *Window) f64 {
-    const px = pane_elevation.gapPx(self.paneStyle(), self.scale) orelse
-        split_geometry.bandPx(self.scale);
+    const px = self.stackGapPx();
     const scale: f64 = if (self.scale > 0) self.scale else 1;
     return @as(f64, @floatFromInt(px)) / scale;
+}
+
+/// `stackGapDip` in the whole pixels the grid lays out. It is also the band
+/// the divider solver (`split_resize`) models each split with: a solver whose
+/// band is narrower than the gutter on screen misplaces every nested boundary
+/// by half the difference, and a held key repeats that once per press (T2125).
+fn stackGapPx(self: *Window) i32 {
+    return pane_elevation.gapPx(self.paneStyle(), self.scale) orelse
+        split_geometry.flatGutterPx(self.scale);
 }
 
 /// Write the ratios on screen into the tree before a divider moves (T2108).
@@ -7634,14 +7642,65 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
 
     var grid = self.stackGrid() orelse return;
     defer grid.deinit();
-    // FILL the whole gutter (Mac draws a filled Rectangle, not a stroke). A
-    // hairline down the middle of a wider gap reads as three edges once the
-    // panes carry their own background tint.
+    // T2125 (Mac 2811a3043): the flat style's gutter is 6 DIP with the line
+    // down its middle - a real gutter, because every resizer takes the mouse
+    // there and nowhere else. The window never erases, so the rest of every
+    // gutter (between panes, between cards, between strips) is painted the
+    // terminal background here, every pixel the window owns, or an old line
+    // would stay on screen where a divider used to be (T155). The lines and
+    // everything a pane or strip covers are clipped out first, so no pixel is
+    // painted twice and nothing flickers.
+    const saved = w32.SaveDC(hdc);
+    var lines: [MAX_DRAG_NODES * 2]struct { rect: w32.RECT, hot: bool } = undefined;
+    var nl: usize = 0;
     for (grid.result.dividers.items, 0..) |d, i| {
-        const hot = if (hot_handle) |h| h.idx() == d.node else false;
-        var band = winRect(grid.dividerGutter(i));
-        _ = w32.FillRect(hdc, &band, if (hot) hot_brush orelse brush else brush);
+        if (nl >= lines.len) break;
+        lines[nl] = .{
+            .rect = self.flatLine(winRect(grid.dividerGutter(i)), d.direction),
+            .hot = if (hot_handle) |h| h.idx() == d.node else false,
+        };
+        nl += 1;
     }
+    // In the flat style the cards on show meet at a line, as panes side by
+    // side do; a grip anywhere else is only a cursor (Mac `StackGrip`).
+    for (grid.result.stack_handles.items, 0..) |sh, i| {
+        if (nl >= lines.len) break;
+        if (std.meta.activeTag(sh.kind) != .between) continue;
+        lines[nl] = .{ .rect = self.flatLine(winRect(grid.stackHandleGutter(i)), sh.direction), .hot = false };
+        nl += 1;
+    }
+    for (lines[0..nl]) |l| _ = w32.ExcludeClipRect(hdc, l.rect.left, l.rect.top, l.rect.right, l.rect.bottom);
+    var leaves = grid.result.leaves.iterator();
+    while (leaves.next()) |e| {
+        const shown = if (e.value_ptr.tab) |t| grid.px(t) else if (!e.value_ptr.is_tucked) grid.px(e.value_ptr.frame) else continue;
+        _ = w32.ExcludeClipRect(hdc, shown.left, shown.top, shown.right, shown.bottom);
+    }
+    if (w32.CreateSolidBrush(w32.RGB(cfg_bg.r, cfg_bg.g, cfg_bg.b))) |bg_brush| {
+        var area = self.gridRect();
+        _ = w32.FillRect(hdc, &area, bg_brush);
+        _ = w32.DeleteObject(bg_brush);
+    }
+    if (saved != 0) _ = w32.RestoreDC(hdc, saved);
+    for (lines[0..nl]) |*l| _ = w32.FillRect(hdc, &l.rect, if (l.hot) hot_brush orelse brush else brush);
+}
+
+/// The flat style's divider line inside `gutter` (T2125): `bandPx` wide down
+/// the middle of it, along the whole gutter.
+fn flatLine(self: *const Window, gutter: w32.RECT, d: pane_stack_layout.Direction) w32.RECT {
+    var r = gutter;
+    switch (d) {
+        .horizontal => {
+            const l = split_geometry.lineInGutter(gutter.left, gutter.right, self.scale);
+            r.left = l.lo;
+            r.right = l.hi;
+        },
+        .vertical => {
+            const l = split_geometry.lineInGutter(gutter.top, gutter.bottom, self.scale);
+            r.top = l.lo;
+            r.bottom = l.hi;
+        },
+    }
+    return r;
 }
 
 /// The strips of the panes tucked into a stack (T2109; Mac
@@ -8308,11 +8367,10 @@ const DividerHit = struct {
     layout: SplitTree(PaneView).Split.Layout,
 };
 
-/// Hit-test the split divider grab band at (x, y) in window client
-/// coords. The band is ~9 DIP wide (T94, Mac grab-handle parity) —
-/// wider than the ~5 DIP visual gap between panes, so surface children
-/// must fall through via WM_NCHITTEST/HTTRANSPARENT for the outer edges
-/// to be reachable (see App.surfaceWndProc).
+/// Hit-test the split dividers at (x, y) in window client coords. A divider
+/// takes the mouse in its gutter and nowhere else (T2125, Mac 2811a3043): a
+/// click just inside a pane's edge is the pane's. The gutter lies between the
+/// panes, so no surface ever has to fall through for it.
 pub fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     if (self.tab_count == 0) return null;
     // Hero mode ignores the tree layout, so tree dividers don't exist on
@@ -8323,23 +8381,13 @@ pub fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     if (tree.zoomed != null) return null;
     var grid = self.stackGrid() orelse return null;
     defer grid.deinit();
-    // Each divider takes the mouse across its grab band - wider than the
-    // gutter it is painted in (T94) - and along the whole of its split.
-    for (grid.result.dividers.items, 0..) |d, i| {
-        const g = grid.dividerGutter(i);
-        const f = grid.px(d.node_frame);
-        const hit = switch (d.direction) {
-            .horizontal => split_geometry.inGrabBand(gutterAxis(g.left, g.right), x, self.scale) and y >= f.top and y <= f.bottom,
-            .vertical => split_geometry.inGrabBand(gutterAxis(g.top, g.bottom), y, self.scale) and x >= f.left and x <= f.right,
-        };
-        if (!hit) continue;
-        if (d.node >= tree.nodes.len) continue;
-        switch (tree.nodes[d.node]) {
-            .leaf => continue,
-            .split => |s| return .{ .handle = @enumFromInt(d.node), .layout = s.layout },
-        }
-    }
-    return null;
+    const i = grid.dividerAt(x, y) orelse return null;
+    const d = grid.result.dividers.items[i];
+    if (d.node >= tree.nodes.len) return null;
+    return switch (tree.nodes[d.node]) {
+        .leaf => null,
+        .split => |s| .{ .handle = @enumFromInt(d.node), .layout = s.layout },
+    };
 }
 
 /// A grip on a stacked row under the pointer (T2124): an index into the
@@ -8359,24 +8407,16 @@ const GripDrag = struct {
 
 /// Hit-test the stack grips at (x, y) in window client coords (T2124): the
 /// grips between the cards of a stack on show, and at the edge where a run the
-/// user narrowed meets its strips. Same grab band as a divider's, across the
-/// gutter the grip sits in and along the whole stack.
+/// user narrowed meets its strips. Like a divider, a grip takes the mouse in
+/// the gutter it sits in and nowhere else (T2125).
 pub fn hitTestStackGrip(self: *Window, x: i32, y: i32) ?GripHit {
     if (self.tab_count == 0) return null;
     if (self.tab_hero_active[self.active_tab]) return null;
     if (self.tab_trees[self.active_tab].zoomed != null) return null;
     var grid = self.stackGrid() orelse return null;
     defer grid.deinit();
-    for (grid.result.stack_handles.items, 0..) |h, i| {
-        const g = grid.px(h.gutter);
-        const f = grid.px(h.frame);
-        const hit = switch (h.direction) {
-            .horizontal => split_geometry.inGrabBand(gutterAxis(g.left, g.right), x, self.scale) and y >= f.top and y <= f.bottom,
-            .vertical => split_geometry.inGrabBand(gutterAxis(g.top, g.bottom), y, self.scale) and x >= f.left and x <= f.right,
-        };
-        if (hit) return .{ .index = i, .direction = h.direction };
-    }
-    return null;
+    const i = grid.stackHandleAt(x, y) orelse return null;
+    return .{ .index = i, .direction = grid.result.stack_handles.items[i].direction };
 }
 
 /// `restack_distance` in the grid's units (pixels).
@@ -8489,12 +8529,6 @@ fn endGripDrag(self: *Window) void {
     _ = w32.ReleaseCapture();
     self.layoutSplits();
     self.app.markLayoutDirty();
-}
-
-/// A gutter as the split axis `split_geometry.inGrabBand` measures from:
-/// the band is the gutter, centred where the split is.
-fn gutterAxis(lo: i32, hi: i32) split_geometry.Axis {
-    return .{ .lo_start = lo, .band_lo = lo, .band_hi = hi, .hi_end = hi, .split_pos = lo + @divTrunc(hi - lo, 2) };
 }
 
 /// The divider of split `target` in `grid`, if it is one on screen.
@@ -8839,7 +8873,17 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
         }
     }
 
-    const new_ratio = split_geometry.dragRatio(start, end, pos);
+    // On the engine's geometry (T2125): a ratio is the left side's share of
+    // the pane sizes, so the pointer is mapped through the same gutters the
+    // layout puts in, or the divider sits half a gutter off the pointer.
+    const new_ratio = if (self.dragSnapshotMatches()) split_resize.ratioAt(
+        self.drag_nodes[0..self.drag_node_len],
+        @intFromEnum(handle),
+        start,
+        end,
+        pos,
+        self.stackGapPx(),
+    ) else split_geometry.dragRatio(start, end, pos);
 
     // T533: the dragged divider exchanges space with its two adjacent PANES,
     // so every other boundary in the tab holds its absolute position. `plan`
@@ -8857,7 +8901,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
         start,
         end,
         new_ratio,
-        self.scale,
+        self.stackGapPx(),
         &adjustments,
     ) else 0;
 
@@ -9372,7 +9416,7 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
         @intFromEnum(target),
         start,
         end,
-        self.scale,
+        self.stackGapPx(),
         sign * @as(i32, rs.amount),
         &adjustments,
     ) else 0;
@@ -9382,10 +9426,12 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
         // itself, which is still right for a single split and is what this did
         // before the gesture existed.
         const solo = split_resize.nudgeRatio(
+            &.{},
+            0,
             start,
             end,
             ratio,
-            self.scale,
+            self.stackGapPx(),
             sign * @as(i32, rs.amount),
         );
         tree.resizeInPlace(target, @floatCast(solo));

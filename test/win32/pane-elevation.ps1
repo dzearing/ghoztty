@@ -102,8 +102,10 @@ function Round-Away([double]$v) { [int][math]::Round($v, [MidpointRounding]::Awa
 # pane_elevation.zig mirrored: the margin/gap, and the rim inset.
 function Get-MarginPx([double]$scale) { [math]::Max((Round-Away (10.0 * $scale)), 1) }
 function Get-InsetPx([double]$scale) { [math]::Max([int][math]::Ceiling(0.5 * $scale), 1) }
-# split_geometry.bandPx: the flat band.
+# split_geometry.bandPx: the flat line; flatGutterPx: the 6 DIP gutter it
+# runs down the middle of (T2125).
 function Get-BandPx([double]$scale) { [math]::Max((Round-Away (2.0 * $scale)), 2) }
+function Get-GutterPx([double]$scale) { [math]::Max((Round-Away (6.0 * $scale)), (Get-BandPx $scale) + 2) }
 
 # The ocean desk on a dark theme: dark, blue above red, and neither the black
 # terminal nor a neutral divider gray.
@@ -796,9 +798,9 @@ $top = $g.Top
 $A = $g.Panes | Sort-Object Top | Select-Object -First 1
 $B = $g.Panes | Sort-Object Top | Select-Object -Last 1
 $cs = Get-ClientScreen $top
-$band = Get-BandPx $g.Scale
+$gutter = Get-GutterPx $g.Scale
 Assert ([int]($cs.Right - $A.Right) -eq 0) 'flat: the pane runs to the right edge'
-Assert ([int]($B.Top - $A.Bottom) -eq $band) "flat: the panes are the classic ${band}px band apart"
+Assert ([int]($B.Top - $A.Bottom) -eq $gutter) "flat: the panes are the 6 DIP gutter apart (${gutter}px, T2125)"
 $hits = Get-TestWindowRegionHits -Window ([IntPtr]$A.Hwnd) -Points @(0, 0)
 Assert ($null -eq $hits) 'flat: the pane child has no window region'
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue

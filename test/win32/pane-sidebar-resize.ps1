@@ -121,8 +121,9 @@ try {
     $sb = Get-Sidebar $top
     Assert "setup: the 68 DIP rail is up ($($sb.Width))" ($null -ne $sb -and (Near $sb.Width (Px 68)))
     if ($null -eq $sb) { return }
-    # The rail card's trailing edge: 12 DIP margin + 44 DIP card.
-    $ex = $sb.Left + (Px 56); $ey = $sb.Top + (Px 300)
+    # Just inside the rail card's trailing edge (12 DIP margin + 44 DIP
+    # card): the band never reaches past the card (T2125).
+    $ex = $sb.Left + (Px 56) - 1; $ey = $sb.Top + (Px 300)
     $from = Get-LogCount
     $ok = Invoke-EdgeDrag $top $sb.Hwnd $ex $ey @(20, 40)
     Assert "the press reached the rail" $ok

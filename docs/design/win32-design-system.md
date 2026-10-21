@@ -649,11 +649,20 @@ fails without anyone having to remember the rule.
 | Property | Value |
 |---|---|
 | Visible band | **2 DIP** (not 1 — a 1 DIP line disappears at 100% and reads as an artifact) |
-| Grab band | +-4 DIP either side of the visible band, invisible |
+| Gutter (flat style) | **6 DIP** between panes, the band centred in it, the rest terminal background (T2125, Mac's `flatGap`) |
+| Grab zone | **The gutter, and nothing else** — never over a pane (T2125). Stack grips and the pane sidebar's edge follow the same rule |
 | Rest color | 3:1 against both panes it separates — **enforced**, see below |
 | **Hover** | Lighten by 25 per channel in dark themes, darken by 25 in light |
 | Drag | Same as hover, held for the duration of the drag |
-| Cursor | `SIZEWE` / `SIZENS` over the grab band |
+| Cursor | `SIZEWE` / `SIZENS` over the gutter |
+
+**Resizers live in the gutters** (T2125, Mac 2811a3043). Until then the band
+was the whole gap (2 DIP) and a ~9 DIP invisible grab band reached into the
+panes either side, which the panes made reachable by answering
+`HTTRANSPARENT`. Mac moved every resizer into a real gutter so a click just
+inside a pane's edge is the pane's; the flat gutter widened to 6 DIP so there
+is something to grab. The hero/carousel divider still uses the old reach
+(`split_geometry.grabHalfPx`) — it is not a split gutter.
 
 **Hover is a color change, not only a cursor change.** A divider that reacts
 only with the cursor gives no feedback to a user who is looking at the divider
