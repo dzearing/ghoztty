@@ -495,3 +495,12 @@ as the digest that showed them.
 - This pane's environment, in a side pane (a searchable list of the pane's environment variables)
 - One pane cannot eat all your memory (a per-pane scrollback memory ceiling, with a sidebar note when it trims)
 - A huge diff opens on its first screen (diff pane shows the first changed file at once and fills in as you scroll)
+
+## 2026-10-20
+
+- Peek at a folded pane (hovering a stacked-row strip shows a live preview without sliding the pane in)
+- A folded pane tells you when it finishes (new angle on busy glow: a strip carries the busy light and lights up on finish or a question)
+- Middle-click a strip to close it (like a browser tab, with the busy-pane confirmation)
+- The focus glow in your Windows accent colour (focus glow and busy light follow the Windows accent setting, live)
+- Respect Windows Focus sessions (new angle on a quiet hour: alerts wait as badges during Focus, show when it ends)
+- Warn before a sign-in runs out (account menu warns a day before the Ghoztty sign-in expires and offers renewal)
