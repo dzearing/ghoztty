@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-22T01:32:16-07:00",
-    "commit":  "9b8160e14",
+    "generated":  "2026-10-22T02:31:39-07:00",
+    "commit":  "7b37a3030",
     "uncommitted":  [
 
                     ],
@@ -970,7 +970,7 @@
                   "test/win32/activity-truncated.ps1":  "c8cd7bf4650037d2e2d4369d4b89d9faf0ab8e85c9e03a7ccc7fe26d7028098c",
                   "test/win32/agent-adopt.ps1":  "b3580813b668d36f3ffd7c5f06d750c7d0e97cb9533d2287b357e93c7faf99e5",
                   "test/win32/agent-attach-refused.ps1":  "2de13066482cdbe911b725de7b08dbfa81c52285d21f88aa8dbc7fa2d9d84d67",
-                  "test/win32/agent-autostart.ps1":  "db0f16db13fdeb3538e2d1953c78fbd235d04b9448192213b876ed14f572c66b",
+                  "test/win32/agent-autostart.ps1":  "4afaaba65feefc03ca22f1b6aab72344dd3039077cbc6518204e6e21af2a17a2",
                   "test/win32/agent-first-answer.ps1":  "9c9f092829b9334f23e2bbd700cd98339d2946cce8757548fa9a32b5191e9a3d",
                   "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
                   "test/win32/agent-instance-lineage.ps1":  "9018a5e80676e5dd0959be65c4550e1ea3ad2aa740f1c36e1de51880f3a17837",
@@ -1271,9 +1271,9 @@
                   "test/win32/session-persistence.ps1":  "ac557216858d9022e3d8ab84e4545430ade6867f2007ef49d004cbf8d07881b4",
                   "test/win32/session-reattach.ps1":  "e73d5a463b113d82d9196dce29fa52efed19c5d8fd2e74f9b313df71d0e1c7fd",
                   "test/win32/session-reattach-zombie.ps1":  "ea9ea8399c40fcc7989bf7a11f5721c7227e6b607bfe29e6df56dd44773b322c",
-                  "test/win32/session-reboot-tui.ps1":  "bd8cbdf7e31963cfa22fa849312d03b69153e492b0280314f90fc21c3351f494",
+                  "test/win32/session-reboot-tui.ps1":  "2724a7bca0bb95bc8ef5d86ed8497138c06ea82d2100429f8b9f182f6cb4cf4f",
                   "test/win32/session-relaunch.ps1":  "9576d96d4157c48be3470cc55083a18aa686acf5bd19c2d82e4178c7c5dabd09",
-                  "test/win32/session-relaunch-notify.ps1":  "f9deea35cee0c5722ca2105b82fcc52edc883a0dc03b5beeaabf968a350bb61b",
+                  "test/win32/session-relaunch-notify.ps1":  "633cc011ffcf3af60e8abecf613def92152df7c05b22af5e628db2ad0d6dd6c3",
                   "test/win32/session-restore-maximized.ps1":  "0932e8a5349195cd276f262fb1248934ed099eef6e1b9ec9ea5c74aa428c4731",
                   "test/win32/session-resume-offset.ps1":  "801d7a280b290b75edee978b12ae4fbe0b32e0e5d019ce25f1a3bc24a5d2c865",
                   "test/win32/sessions-agent-build.ps1":  "dece3962aa9ead6958aacd2fdef71048d5fd3fcc3798c1aac534a4d4f27950a0",
