@@ -1,4 +1,4 @@
-# T2102 acceptance: when a stack's run changes, the cards on show GLIDE to
+# T2102 + T2105 acceptance: when a stack's run changes, the cards on show GLIDE to
 # their new slots (Mac's carousel slide, 86b7e3410), and no terminal is
 # resized mid-slide.
 #
@@ -22,6 +22,12 @@
 #       pane window's client size is what its ConPTY is sized from)
 #   S3) it settles on show with focus, two on show (the T2109 result still
 #       holds at the end of the motion)
+#   S4) T2105 (Mac 89848fd59): a pane that tucks away keeps the size it last
+#       had on show - shrinking the window from four on show to two leaves
+#       each tucked pane's window at its four-up size, while the panes on
+#       show (the positive control) do resize
+#   S5) T2105: a window resize with panes tucked resizes the panes on show
+#       (control) and none of the tucked ones
 #
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
 # before T2102) and keeps S1 as written: it MUST fail.
@@ -167,6 +173,9 @@ try {
     $c4 = @(Wait-Shown $top 4)
     if ($c4.Count -ne 4) { Write-TestAssertedNothing -Reason "four panes never came up on show (got $($c4.Count))" }
     $names = @($null, 's1', 's2', 's3')
+    Start-Sleep -Milliseconds 600
+    $fourUp = @{}
+    foreach ($q in @(Get-Panes $top)) { $fourUp[[string]$q.Hwnd] = "$($q.Right - $q.Left)x$($q.Bottom - $q.Top)" }
     [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 900 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
     Start-Sleep -Milliseconds 800
     # The window resize itself must not slide; let anything it started end.
@@ -180,6 +189,18 @@ try {
         if (-not $all[$i].Visible -and $names[$i]) { $tucked += [pscustomobject]@{ Pane = $all[$i]; Name = $names[$i] } }
     }
     if ($tucked.Count -eq 0) { Write-TestAssertedNothing -Reason 'no named pane was tucked' }
+
+    # ---- S4: a pane tucks away at the size it had on show (T2105) ----------
+    $heldOk = $true
+    foreach ($q in $all) {
+        $was = $fourUp[[string]$q.Hwnd]
+        $is = "$($q.Right - $q.Left)x$($q.Bottom - $q.Top)"
+        Say ("      pane {0} ({1}): four-up {2}, now {3}" -f $q.Hwnd, $(if ($q.Visible) { 'on show' } else { 'tucked' }), $was, $is)
+        if (-not $q.Visible -and $is -ne $was) { $heldOk = $false }
+    }
+    $shownMoved = @($all | Where-Object { $_.Visible -and $fourUp[[string]$_.Hwnd] -ne "$($_.Right - $_.Left)x$($_.Bottom - $_.Top)" }).Count
+    Assert ($shownMoved -ge 1) "S4: control - the narrower row resized the panes on show ($shownMoved of 2)"
+    Assert $heldOk 'S4: every tucked pane kept the size it last had on show'
     # The tucked pane furthest from the run travels furthest.
     $t = $tucked[-1]
     $p = $t.Pane
@@ -243,6 +264,21 @@ try {
     Assert (@($after | Where-Object Visible).Count -eq 2) "S3: still two on show ($(@($after | Where-Object Visible).Count))"
     $focused = Focused-Pane-Name
     Assert ($focused -eq $t.Name) "S3: the clicked pane has focus (+list says '$focused')"
+
+    # ---- S5: a window resize never resizes a tucked pane (T2105) ------------
+    Say '== resize the window to 820 DIP with two tucked'
+    $pre = @{}
+    foreach ($q in $after) { $pre[[string]$q.Hwnd] = "$($q.Right - $q.Left)x$($q.Bottom - $q.Top)" }
+    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 820 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 640 -Scale $script:scale))
+    Start-Sleep -Milliseconds ([math]::Max(800, $slideMs + 300))
+    $resized = @(Get-Panes $top)
+    $tuckedNow = @($resized | Where-Object { -not $_.Visible })
+    $tuckedSame = @($tuckedNow | Where-Object { $pre[[string]$_.Hwnd] -eq "$($_.Right - $_.Left)x$($_.Bottom - $_.Top)" }).Count
+    $shownChanged = @($resized | Where-Object { $_.Visible -and $pre[[string]$_.Hwnd] -ne "$($_.Right - $_.Left)x$($_.Bottom - $_.Top)" }).Count
+    Say ("      after the resize: {0}" -f (Format-Cols $resized))
+    Assert ($tuckedNow.Count -eq 2) "S5: still two tucked ($($tuckedNow.Count))"
+    Assert ($shownChanged -ge 1) "S5: control - the resize resized the panes on show ($shownChanged)"
+    Assert ($tuckedNow.Count -gt 0 -and $tuckedSame -eq $tuckedNow.Count) "S5: no tucked pane was resized ($tuckedSame of $($tuckedNow.Count) unchanged)"
 
     Complete-TestBody
 } catch {

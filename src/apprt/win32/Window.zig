@@ -7711,10 +7711,11 @@ fn winRect(r: pane_stack_grid.PxRect) w32.RECT {
 }
 
 /// Place every visible pane where `grid` puts it. A card tucked behind its
-/// stack's run is hidden but keeps the full size of the slot it would come
-/// forward into - the same treatment as a stashed pane - so bringing it on
-/// show is a move, never a ConPTY resize. What shows of it is its strip,
-/// which the window paints (T2109).
+/// stack's run is hidden, at its tucked place, and held at the size it last
+/// had on show (T2105; `planStackSlide` keeps the size): a row reflowing
+/// around it never resizes a program nobody can see, and on glass nothing of
+/// it lies under a card on show. What shows of it is its strip, which the
+/// window paints (T2109). Brought forward, it takes its slot's size once.
 fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_grid.Grid, hdwp: *?w32.HDWP) void {
     var it = tree.iterator();
     while (it.next()) |entry| {
@@ -7726,7 +7727,9 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         view.setVisible(shown);
         // Mid-slide a card is where the slide has it (T2102), at the size it
         // slid from: a move, so its terminal is not resized until the end.
-        const rect = if (shown) self.stackSlideRect(id) orelse p.rect else p.rect;
+        const rect = if (shown)
+            self.stackSlideRect(id) orelse p.rect
+        else if (view.stack_held) |s| pane_stack_slide.heldRect(p.rect, s) else p.rect;
         if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, winRect(rect), shown);
     }
 }
@@ -7747,7 +7750,18 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
         if (pane_stash.isStashed(entry.view)) continue;
         const id = pane_stack_grid.viewId(entry.view);
         const p = grid.placement(id) orelse continue;
-        now[n] = .{ .id = id, .rect = p.rect, .tucked = p.is_tucked };
+        // A tucked card is held at its last size on show (T2105), and slides
+        // forward from there; a card on show holds nothing.
+        var at = p.rect;
+        if (p.is_tucked) {
+            const last: ?pane_stack_slide.Placed = for (self.stack_placed[0..self.stack_placed_len]) |b| {
+                if (b.id == id) break b;
+            } else null;
+            const s = pane_stack_slide.hold(entry.view.stack_held, last, p.rect);
+            entry.view.stack_held = s;
+            at = pane_stack_slide.heldRect(p.rect, s);
+        } else entry.view.stack_held = null;
+        now[n] = .{ .id = id, .rect = at, .tucked = p.is_tucked };
         n += 1;
     }
     const rect = self.gridRect();

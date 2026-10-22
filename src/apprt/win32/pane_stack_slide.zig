@@ -61,6 +61,32 @@ pub const Placed = struct {
     tucked: bool,
 };
 
+/// A card's width and height, in pixels.
+pub const Size = struct {
+    w: i32,
+    h: i32,
+};
+
+/// The size a tucked card's pane is held at (T2105; Mac `PaneCardView`'s
+/// `frozenSize` for a tucked card, 89848fd59): the size it last had on show,
+/// so a row reflowing around it - a window resize, a card coming or going -
+/// never resizes a program nobody can see. `held` is what the card was held
+/// at already, `last` its placement in the previous layout, `slot` the slot
+/// the layout gives it now. A card that has never been on show takes its
+/// slot's size, once.
+pub fn hold(held: ?Size, last: ?Placed, slot: PxRect) Size {
+    if (held) |s| return s;
+    if (last) |b| if (!b.tucked) return .{ .w = b.rect.width(), .h = b.rect.height() };
+    return .{ .w = slot.width(), .h = slot.height() };
+}
+
+/// Where a tucked card's (hidden) pane sits: at its tucked place, at its held
+/// size. Bringing it forward slides it from here at that size, and it takes
+/// its slot's size once, when the slide ends.
+pub fn heldRect(slot: PxRect, s: Size) PxRect {
+    return .{ .left = slot.left, .top = slot.top, .right = slot.left + s.w, .bottom = slot.top + s.h };
+}
+
 /// One card's slide: from where it was on screen to its slot.
 pub const Card = struct {
     id: Id,
@@ -273,4 +299,34 @@ test "runsChanged: a resize or a new pane alone is not a slide" {
         .{ .id = 3, .rect = r(900, 0, 400, 600), .tucked = true },
     };
     try testing.expect(!runsChanged(&a, &b));
+}
+
+test "hold: a tucked card keeps the size it last had on show" {
+    // On show at 400 wide, then tucked into a 450-wide slot: held at 400.
+    const shown: Placed = .{ .id = 1, .rect = r(400, 0, 400, 600), .tucked = false };
+    const s = hold(null, shown, r(780, 0, 450, 600));
+    try testing.expectEqual(Size{ .w = 400, .h = 600 }, s);
+    // The row reflows around it (a window resize): still 400, whatever the
+    // slot says, and it sits at its tucked place.
+    const tucked: Placed = .{ .id = 1, .rect = heldRect(r(780, 0, 450, 600), s), .tucked = true };
+    const again = hold(s, tucked, r(700, 0, 380, 520));
+    try testing.expectEqual(s, again);
+    try testing.expectEqual(r(700, 0, 400, 600), heldRect(r(700, 0, 380, 520), again));
+    // Never on show: it takes its slot's size, once.
+    try testing.expectEqual(Size{ .w = 380, .h = 520 }, hold(null, null, r(700, 0, 380, 520)));
+}
+
+test "plan: a held card comes forward at its held size and resizes at the end" {
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 450, 600), .tucked = false },
+        .{ .id = 2, .rect = heldRect(r(440, 0, 450, 600), .{ .w = 375, .h = 600 }), .tucked = true },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 450, 600), .tucked = true },
+        .{ .id = 2, .rect = r(10, 0, 450, 600), .tucked = false },
+    };
+    const s = plan(&before, &after, null, 0, duration_ms);
+    try testing.expectEqual(@as(usize, 1), s.len);
+    try testing.expectEqual(@as(i32, 375), s.rectAt(2, duration_ms / 2).?.width());
+    try testing.expectEqual(r(10, 0, 450, 600), s.rectAt(2, duration_ms).?);
 }

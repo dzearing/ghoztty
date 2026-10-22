@@ -39,6 +39,7 @@ const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const Window = @import("Window.zig");
 const session_disconnect = @import("session_disconnect.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
+const pane_stack_slide = @import("pane_stack_slide.zig");
 
 
 pub const Kind = enum { terminal, viewer };
@@ -72,6 +73,11 @@ card_region_key: u64 = 0,
 /// none. `Window.syncGlassBackdrops` owns it, so a paint that moved nothing
 /// re-sends nothing.
 glass_backdrop_key: u64 = 0,
+
+/// While the pane is tucked into a stacked row, the card size it is held at:
+/// the size it last had on show (T2105). Null while it is on show.
+/// `Window.planStackSlide` owns it; `pane_stack_slide.hold` is the rule.
+stack_held: ?pane_stack_slide.Size = null,
 
 /// Wrap an existing Surface as a terminal pane. Takes one reference on the
 /// surface, which is released when this PaneView is freed. The surface's
