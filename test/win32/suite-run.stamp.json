@@ -1,8 +1,8 @@
 {
     "guard":  "suite-run",
     "script":  "test/win32/suite-run.ps1",
-    "generated":  "2026-10-22T12:06:59-07:00",
-    "commit":  "d4f28422a",
+    "generated":  "2026-10-22T12:46:36-07:00",
+    "commit":  "c274b0d53",
     "uncommitted":  [
                         "test/win32/soak.ps1"
                     ],
@@ -11,7 +11,7 @@
                   "scripts/lib/RunVerdict.ps1":  "a23842bebc540f3c3e7fb0477bad5816d3720e9adf91bfedd74a9ad0b5d6da07",
                   "scripts/suite-run.ps1":  "a3d3fe27a24da50d510364295f68b1c2698a3e20212bd0b201b3d6f141d82c4a",
                   "test/win32/lib/ModalSweep.ps1":  "ad1fde46a8704161d73608cf0ebcf58c1a0251d82fbea3967f79281065f91649",
-                  "test/win32/soak.ps1":  "78eb5aeb7a2d693147c7abe921b1b74942f4f3a68ddf5b1efe7c7ab160862b58",
+                  "test/win32/soak.ps1":  "9883f47e527d3abd86cd9e3fbd2ac818f73a0606f43218933745900f7f4b2316",
                   "test/win32/suite-run.ps1":  "9e49f88ca3b7c0b31396ef572b516c40db82cf50959a35573f2211db85351735"
               }
 }

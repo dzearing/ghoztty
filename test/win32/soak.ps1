@@ -364,7 +364,13 @@ $null = Invoke-NativeExact -FilePath $exe -Arguments @(
     '--shell=cmd',
     "--command=powershell -nop -ExecutionPolicy Bypass -File `"$altscrScript`"")
 Start-Sleep -Milliseconds 800
-& $exe +split --target=soak-stream --name=soak-grow --direction=down --shell=cmd `
+# T2163: `--pane`, not `--target`. `--target` names a WINDOW, so
+# `--target=soak-stream` resolved to the soak window and split its focused pane
+# - the probe, which already had soak-altscr under it. That made a column of
+# three in a 600-DIP-tall window, and the stacked-panes layout (T2108) tucked
+# soak-altscr out of sight: hidden on purpose, so its renderer presented
+# nothing for the rest of the run, which read as a frozen pane.
+& $exe +split --pane=soak-stream --name=soak-grow --direction=down --shell=cmd `
     "--command=for /l %i in (1,1,150000) do @echo SOAKGROW %i abcdefghijklmnopqrstuvwxyz0123456789" | Out-Null
 Start-Sleep -Seconds 2
 
@@ -419,13 +425,24 @@ foreach ($l in $leaves) { if ($l.id) { $paneNames[[string]$l.id] = [string]$l.na
 $loadedPanes = $named
 Assert ($leaves.Count -eq 4) "layout: 4 leaves in soak window (probe pane: $probePane)"
 
+# T2163: every pane must be ON SHOW. A pane the stacked-panes layout tucked
+# away is hidden by design and presents no frames, so grading it would score
+# the layout rather than the renderer - which is exactly how a mis-targeted
+# split read as "the renderer stops after a split" for two full soaks. Abort
+# with the layout in the report instead of spending 30 minutes on it.
+$tucked = @($leaves | Where-Object { $_.minimized -eq $true } | ForEach-Object { $_.name })
+if ($tucked.Count -gt 0) {
+    Abort-Soak "pane(s) tucked out of sight by the stacked-panes layout, so they cannot render: $($tucked -join ', ')"
+}
+Rep "layout: all 4 panes on show (none tucked)"
+
 # T1160: prove the alt-screen generator is RUNNING before spending 30 minutes
 # grading it. "no telemetry from this pane" at minute 30 has two causes that
 # read the same: a generator that never started (the T1601 shape), and a
-# renderer that stopped presenting while the generator ran on (T2163 - the
-# pane goes silent the moment soak-grow is split). Checking the generator here
-# separates them: a dead generator aborts in seconds with the pane's screen in
-# the report, so a missing-telemetry FAIL later is always the renderer's.
+# renderer that stopped presenting while the generator ran on. Checking the
+# generator here separates them: a dead generator aborts in seconds with the
+# pane's screen in the report, and the tucked-pane check above rules out the
+# layout hiding it (T2163), so a missing-telemetry FAIL later is the renderer's.
 $altscrAlive = $false
 $altscrScreen = ''
 $altscrDeadline = (Get-Date).AddSeconds(30)

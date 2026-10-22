@@ -104,7 +104,12 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
 - `--direction`: Split direction. Default: `right`.
 - `--target`: Named window to split in. Default: **the pane the command was
   invoked from** (see Caller anchoring), falling back to the most recently
-  focused window.
+  focused window. A **pane** name here resolves to that pane's window and splits
+  the window's *active* pane, not the named one.
+- `--pane`: Named pane to split off — the exact pane, whatever has focus. Use
+  this, not `--target`, to split a specific pane: `--target=<pane>` silently
+  splitting a different pane once built a three-high column that the
+  stacked-panes layout then tucked out of sight (T2163).
 - `--name`: Register the new pane with a name for later targeting.
 - `--focus`: Move keyboard focus to the new pane, raise its window, and activate Ghoztty. Without it the pane that had focus keeps it.
 - `--view`: Open a **viewer** pane (see `docs/claude/viewers.md`) instead of a terminal — a file, a local **HTML page**, a website, or a **git diff** (`git-status:` / `git-diff:<revspec>`, see Git diff panes in that doc). Mutually exclusive with `--command`/`-e`. Works with `--pane` targeting, including splitting off an existing viewer pane.
