@@ -141,6 +141,15 @@ try {
     $cw = $null
     for ($t = 0; $t -lt 25 -and -not $cw; $t++) { $cw = Get-Win 'cw'; if (-not $cw) { Start-Sleep -Milliseconds 200 } }
     if (-not $cw) { Write-Host 'SETUP FAIL: cw window not registered'; exit 1 }
+    # Wide enough for three panes side by side at the stacked-panes minimum
+    # (T2108: 300 DIP each). The default window is narrower than that, so the
+    # row stacked c3 into a strip and its banner never showed: "saw 2" was a
+    # pane folded away, not a banner lost (T1122's turn; T2139 is the twin).
+    foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow')) {
+        $dpi = Get-TestWindowDpi -Window ([IntPtr]$w.Hwnd)
+        $scale = if ($dpi -gt 0) { $dpi / 96.0 } else { 1.0 }
+        [void](Set-TestWindowSize -Window ([IntPtr]$w.Hwnd) -Width ([int][math]::Round(1300 * $scale, [MidpointRounding]::AwayFromZero)) -Height ([int][math]::Round(700 * $scale, [MidpointRounding]::AwayFromZero)))
+    }
     & $exe +split --target=cw --direction=right --name=c2 | Out-Null
     & $exe +split --target=c2 --direction=right --name=c3 | Out-Null
     & $exe +set-banner --target=cw 'left pane' | Out-Null

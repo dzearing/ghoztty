@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-21T22:48:22-07:00",
-    "commit":  "258c7bc04",
+    "generated":  "2026-10-21T23:08:44-07:00",
+    "commit":  "1aacaa729",
     "uncommitted":  [
-                        "test/win32/pane-stack-slide.ps1"
+                        "test/win32/close-overlays.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -97,7 +97,7 @@
                   "test/win32/cli-unknown-flag.ps1":  "113c82da658e4244469714ea10631d50b0f9b08f3c13ec11df628965ff719109",
                   "test/win32/close-confirm-idle.ps1":  "006f7f5177a180e8f9cf47b15041d806c9119e868e095e5632a69b49c49a836b",
                   "test/win32/close-glyph-white.ps1":  "6d6b3cc1c05e01ad16553375b1b4fbaa06ced25c674d0138108c41f692652238",
-                  "test/win32/close-overlays.ps1":  "a4c466324bb3fb0aabea45e49625abe8109c6053ea2ac8b58d2e87b09e9a1045",
+                  "test/win32/close-overlays.ps1":  "fbae579f29000563f149741bf923913019bde41ae2ebfdcf9d6ccdf92a9b1d79",
                   "test/win32/close-undo.ps1":  "fed06626d7e7ddb4c092063d142e7f87a7468cde565a355445e6bec932ed6938",
                   "test/win32/color-contrast.ps1":  "a0d85f63a9efea20b550fb7fe4add84e412859a53a40eca2937b5e08353c698f",
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
