@@ -2574,13 +2574,14 @@ pub fn gridRect(self: *const Window) w32.RECT {
     return rect;
 }
 
-/// The rect hero mode lays its pane, divider and carousel out in. With glass
-/// panes it is the grid's, inside the margin: Mac pads the whole content,
-/// hero included, and the hero pane is then a glass card on the desk like a
-/// focused pane (T2104, Mac 89848fd59). Otherwise the hero is its own
-/// edge-to-edge presentation over `surfaceRect`, with no desk round it.
+/// The rect hero mode lays its pane, divider and carousel out in: the grid's,
+/// inside the elevated style's margin. Mac pads the whole content, hero
+/// included, so an elevated hero sits on the desk whether its panes are
+/// glass (a glass card, T2104, Mac 89848fd59) or solid (no card - Mac's
+/// `HeroPaneView` raises one only on glass - with the desk round it, T2149).
+/// The flat style has no margin, so its hero stays edge to edge.
 pub fn heroRect(self: *const Window) w32.RECT {
-    return if (self.paneGlass()) self.gridRect() else self.surfaceRect();
+    return self.gridRect();
 }
 
 /// A card's slot, shrunk to where its pane's child window goes: one rim
@@ -7027,8 +7028,15 @@ pub fn layoutSplits(self: *Window) void {
         if (self.visibleLeafCount(self.active_tab) > 1) {
             if (!self.paneGlass()) {
                 // The carousel is its own presentation: no cards, no regions.
+                // An elevated (solid) hero still sits inside the margin on the
+                // desk (T2149), which moved with it and is repainted here.
+                self.applied_pane_style = self.paneStyle();
                 self.applyCardRegions(false, .redraw);
                 self.layoutHero(self.heroRect());
+                if (self.applied_pane_style == .elevated) if (self.hwnd) |hwnd| if (w32.GetDC(hwnd)) |dc| {
+                    self.paintAlphaCorrect(dc, paintMovedBands);
+                    _ = w32.ReleaseDC(hwnd, dc);
+                };
                 return;
             }
             // Glass (T2104): the hero pane is a card on the desk, cut and
@@ -8039,10 +8047,11 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
 /// Paint divider lines between split panes in the active tab.
 fn paintDividers(self: *Window, hdc: w32.HDC) void {
     if (self.tab_count == 0) return;
-    // A glass hero tab's pane is a card on the desk (T2104); any other hero
-    // tab is the carousel's to paint.
+    // An elevated hero tab sits on the desk (T2104 glass, as a card; T2149
+    // solid, without one); the carousel paints its own band, and a flat
+    // hero tab is the carousel's to paint whole.
     if (self.tab_hero_active[self.active_tab]) {
-        if (self.paneGlass()) self.paintPaneDesk(hdc);
+        if (self.paneStyle() == .elevated) self.paintPaneDesk(hdc);
         return;
     }
     // The elevated style has no divider line: the gap IS the divider, and
@@ -8456,8 +8465,8 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     // their own slice of it under the tabs and the title: the blit stops at
     // the chrome's bottom edge so it never paints over them.
     const desk_dc = self.desk_hdc orelse hdc;
-    // In a glass hero tab (T2104) the carousel lays its own band over the
-    // desk, and a running slide owns the hero card's pixels: the desk paint
+    // In an elevated hero tab (T2104/T2149) the carousel lays its own band over
+    // the desk, and a running slide owns the hero pane's pixels: the desk paint
     // stays off both, or a layout's `GetDC` pass would wipe them until the
     // next WM_PAINT.
     const hero_split: ?hero_math.Split = if (self.tab_count > 0 and self.tab_hero_active[self.active_tab])

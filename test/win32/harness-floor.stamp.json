@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-22T10:15:20-07:00",
-    "commit":  "44fcecfd7",
+    "generated":  "2026-10-22T10:24:12-07:00",
+    "commit":  "ac3a3e61a",
     "uncommitted":  [
-                        "test/win32/hero-mode.ps1",
-                        "test/win32/split-divider.ps1"
+                        "test/win32/pane-elevation.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -167,7 +166,7 @@
                   "test/win32/harness-floor.ps1":  "78b92e36c1ce07a9da43b380a464389a724a5e61132b37a723ed0c0603cf7562",
                   "test/win32/harness-process-leak.ps1":  "b46c6e53003f25b41da789d1b52d215d9864b2ce6020edf9cac7e6ada45f6b53",
                   "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
-                  "test/win32/hero-mode.ps1":  "6ccd1230811880a125394423859028ce2c8a8a6446a500a5a719d71940beb1e4",
+                  "test/win32/hero-mode.ps1":  "29f7be3bc123b6a7c39639a77e3d5e4b7b12f2873ba23fa1782c6a1d1a86f9f4",
                   "test/win32/hero-nav.ps1":  "77fbfdd2679c7db44743b69d3a1b7e961ef56c057ee39933b4e90d5b754010f4",
                   "test/win32/hero-viewer-tile.ps1":  "8c4c0f82ad898502a7169e2248deb7dda1662b0c5dd3063aa86955d8f33f00fe",
                   "test/win32/history-guard-flavor.ps1":  "1d9bdcea796adecd76f31f1920d575ffcf59d4b800e8328aaaf18ce47efe46d2",
@@ -312,7 +311,7 @@
                   "test/win32/pane-banner.ps1":  "e6d14fb0d90c1f3a91c080e35344a21c86d3ca1508d6fecc29434fc6bd05a3ea",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
-                  "test/win32/pane-elevation.ps1":  "b3381d40ba6ad5d995526b49f9fe508376384468cefdd02e68b8f4e23016ad1e",
+                  "test/win32/pane-elevation.ps1":  "28a2a0f4065ad4ff6d3b0542d13a99fffa8fb525d8b760d76ab76a043005a4e1",
                   "test/win32/pane-grab-handle.ps1":  "d0abccbdc04d0e399b5fda02f14e3d701d8f6e99ed1d54f217023af089745c6c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
@@ -330,7 +329,7 @@
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
                   "test/win32/pane-stack-grid.ps1":  "ba993d5e638c8dc7505d0d07fffb8780e80d2056e13f18e36a8df9568aad40e0",
                   "test/win32/pane-stack-slide.ps1":  "6a439b85b56642ad6704b932454cc1d44c24ec75c506616c2257525944550bd8",
-                  "test/win32/pane-stack-strip.ps1":  "61fc0f6d7d7e5307f70f79c7a6ae5b547fe210bdf3e0838bd579a4c1123e3713",
+                  "test/win32/pane-stack-strip.ps1":  "92efb9fdd1d76f19955cefd1da555fa263fb5b8286e27c5ccbb1102e4b5919c4",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "438b373dc1659658869eac28217f2fdfdc230025c8c752ceb44d0a288090d9cd",
@@ -411,7 +410,7 @@
                   "test/win32/soak-daemon.ps1":  "266cee53040004b1a1c4189de4a94d25521563339cda9927632decdc1006b1ac",
                   "test/win32/split-dim.ps1":  "a863ae465cd6447b8b63ae38c057a0e5ec8c319d8d7c41be7058a7f10acdfa07",
                   "test/win32/split-dim-viewer.ps1":  "f45535282b14c9c829db5e3e8bf943252988f8488ccbcbf80ca57a7278f4ec6d",
-                  "test/win32/split-divider.ps1":  "b9cc35cc3995da33bfc4bf8963d6e6926d402d2d8cf93dee2b27d21b0daf16da",
+                  "test/win32/split-divider.ps1":  "7ee973f1f7adea90074f9531f4dabec6ba1df4584ee0e92bcd78dceb0c55f7b9",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",

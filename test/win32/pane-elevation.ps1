@@ -437,6 +437,49 @@ foreach ($case in @(
     Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 }
 
+# Solid hero (T2149): Mac pads the whole content by PaneElevation.margin, hero
+# included, and HeroPaneView raises a card only on glass. So with solid panes
+# the hero pane sits a margin (no rim) inside the bottom edge, with no rounded
+# cut, and the desk shows below it and right of the carousel. The flat style
+# has no margin, so its hero stays edge to edge and the carousel band reaches
+# the right edge.
+foreach ($case in @(
+        @{ Label = 'solid hero'; Args = @('--macos-pane-glass=false'); Elevated = $true },
+        @{ Label = 'flat hero'; Args = @('--macos-pane-style=flat'); Elevated = $false })) {
+    $g = Start-Gui $case.Label ($common + $case.Args) -Split
+    $launched += $script:GhozttyTestDesktopPids
+    $top = $g.Top
+    $m = Get-MarginPx $g.Scale
+    # Negative control: the pre-T2149 solid hero, edge to edge over the surface.
+    $want = if ($case.Elevated -and -not $NegativeControl) { $m } else { 0 }
+    $pane0 = Get-Panes $top | Sort-Object Top | Select-Object -First 1
+    [void](Send-TestKeys -Window $top -Target ([IntPtr]$pane0.Hwnd) -Modifiers @('ctrl', 'shift') -Key 'Space')
+    Start-Sleep -Milliseconds 1500
+    $hv = @(Get-Panes $top)
+    Assert ($hv.Count -eq 1) "$($case.Label): ctrl+shift+space leaves one visible pane (saw $($hv.Count))"
+    if ($hv.Count -eq 1) {
+        $h = $hv[0]
+        $cs = Get-ClientScreen $top
+        $hb = [int]($cs.Bottom - $h.Bottom)
+        Assert ($hb -eq $want) "$($case.Label): the hero pane sits $($want)px inside the bottom edge (saw $hb)"
+        if ($case.Elevated) {
+            $hw = $h.Right - $h.Left; $hh = $h.Bottom - $h.Top
+            $hits = Get-TestWindowRegionHits -Window ([IntPtr]$h.Hwnd) -Points @(0, 0, ($hw - 1), ($hh - 1))
+            Assert (($null -eq $hits) -or ($hits[0] -and $hits[1])) "$($case.Label): the hero pane is not cut to a card (square corners, as Mac)"
+        }
+        $shot = Get-TestWindowPixels -Window $top -Sync
+        try {
+            $below = Get-TestPixel -Shot $shot -X ([int]($h.Left + ($h.Right - $h.Left) / 4)) -Y ([int]($cs.Bottom - [math]::Ceiling($m / 2)))
+            $right = Get-TestPixel -Shot $shot -X ([int]($cs.Right - [math]::Ceiling($m / 2))) -Y ([int](($h.Top + $h.Bottom) / 2))
+            $wantDesk = $case.Elevated -and -not $NegativeControl
+            Write-Host "      $($case.Label): below hero = $($below.R),$($below.G),$($below.B); right margin = $($right.R),$($right.G),$($right.B)"
+            Assert (((Test-DeskPixel $below) -eq $wantDesk) -and ((Test-DeskPixel $right) -eq $wantDesk)) "$($case.Label): the margin below the hero and right of the carousel is $(if ($wantDesk) { 'the desk' } else { 'not the desk' })"
+        } finally { Close-TestWindowPixels $shot }
+    }
+    Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) "$($case.Label): no crash"
+    Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+}
+
 # ---------------------------------------------------------------------------
 # Run 1b0: the title bar over glass panes is the desk (T1886; Mac 8174d96fc
 # runs the gradient up under a cleared titlebar). The parent's own paint
