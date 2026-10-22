@@ -30,6 +30,10 @@
 #      lane b 'stopped' and its claimed task, and does not itself read stopped;
 #      the dashboard's lanes field says the same. Negative control: with lane b
 #      never having run the loop, neither lists a lane b.
+#   F. The morning block (go.md steps 0.5-0.7) has one owner (T2115): lane b
+#      and lane c refuse with LANE REFUSED (exit 3) while lane a holds the
+#      loop; lane a owns it; lane b takes it when lane a is free or stopped.
+#      Negative control: the lane-b run pinned to lane a is not refused.
 #
 # Hermetic: the fixture, its ledger and every log/state file live under
 # $env:TEMP. The real lock, ledger, watermark and installs are never written.
@@ -282,6 +286,33 @@ try {
     } else {
         Assert 'E6 node is on PATH for the dashboard check' $false
     }
+
+    # --- F. the morning block has one owner (T2115) ------------------------------
+    "F. only one lane writes the morning digest, triage, intake and ideas"
+    $r = Lane-Run $laneB 'morning-owner.ps1' @()
+    Assert 'F1 with lane a never having run the loop, lane b takes the block (exit 0)' (
+        $r.Code -eq 0 -and $r.Out -match 'MORNING OWNER lane b - lane a is absent') $r.Out
+    # Lane a is running the loop: a held lock whose owner is THIS process, so the
+    # liveness probe (pid + name + start time) answers alive.
+    $me = Get-Process -Id $PID
+    $now = (Get-Date).ToString('o')
+    $lockA = @{ claude_pid = $PID; claude_name = $me.ProcessName; claude_start = $me.StartTime.ToString('o')
+        heartbeat = $now; acquired_at = $now; pane_id = 'fixture-pane' } | ConvertTo-Json
+    [IO.File]::WriteAllText((Join-Path $mainRoot 'temp\go-loop.lock.json'), $lockA, (New-Object Text.UTF8Encoding($false)))
+    $r = Lane-Run $laneB 'morning-owner.ps1' @()
+    Assert 'F2 while lane a holds the loop, lane b refuses with LANE REFUSED (exit 3)' (
+        $r.Code -eq 3 -and $r.Out -match 'LANE REFUSED lane b does not write the morning block') $r.Out
+    $r = Lane-Run $laneC 'morning-owner.ps1' @()
+    Assert 'F3 and so does lane c' ($r.Code -eq 3 -and $r.Out -match 'LANE REFUSED lane c') $r.Out
+    $r = Lane-Run $mainRoot 'morning-owner.ps1' @()
+    Assert 'F4 lane a itself owns the block (exit 0)' ($r.Code -eq 0 -and $r.Out -match 'MORNING OWNER lane a' -and $r.Out -notmatch 'LANE REFUSED') $r.Out
+    $r = Lane-Run $laneB 'morning-owner.ps1' @() @{ GHOZTTY_LOOP_LANE = 'a' }
+    Assert 'F5 negative control: the same lane-b run pinned to lane a is not refused' (
+        $r.Code -eq 0 -and $r.Out -notmatch 'LANE REFUSED') $r.Out
+    $null = Set-LoopStop -Path (Join-Path $mainRoot 'temp\go-loop.stop.json') -Reason 'stop lane a only'
+    $r = Lane-Run $laneB 'morning-owner.ps1' @()
+    Assert 'F6 with lane a stopped by request, lane b takes the block so the morning read still happens' (
+        $r.Code -eq 0 -and $r.Out -match 'MORNING OWNER lane b - lane a is stopped') $r.Out
     Complete-TestBody
 }
 finally {

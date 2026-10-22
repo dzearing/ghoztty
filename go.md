@@ -146,6 +146,19 @@ Concretely, in order, with no stops in between:
    **5am or later** and today's file does not exist, write it now; then carry
    on with the turn. Rules:
 
+   - **Ask first whether the morning block is THIS lane's job** (T2115) —
+     steps 0.5-0.7 are one block a day with one owner:
+
+     ```
+     powershell -NoProfile -File scripts\morning-owner.ps1
+     ```
+
+     Exit **0** (`MORNING OWNER ...`): write it. Exit **3** (`LANE REFUSED
+     ...`): lane a is running the loop and owns it — skip steps 0.5-0.7 and go
+     to step 1. Lane a always owns it; another lane takes it only while lane a
+     is stopped, free or stale. On 2026-10-21 both lanes wrote the whole block
+     and lane A's 40 minutes were thrown away at push-rebase. Acceptance:
+     section F of `test\win32\loop-lanes.ps1`.
    - **The check that says whether you owe one** (T1223) is the `digest=`
      field on `scripts\go-loop-health.ps1`: `present`, `missing` (past 05:00,
      the loop turned today, no file — and the run reads DEGRADED), or

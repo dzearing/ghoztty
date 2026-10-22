@@ -3703,6 +3703,7 @@ $GuardTable = @(
             'scripts\upgrade-ghoztty-windows.ps1',
             'scripts\launch-upgrade.ps1',
             'scripts\deliver-windows-build.ps1',
+            'scripts\morning-owner.ps1',
             'scripts\task-dashboard.js',
             'test\win32\loop-lanes.ps1'
         )
