@@ -1,0 +1,6 @@
+{
+    "guard":  "ghoztty-cleanup",
+    "task":  "T2060",
+    "reason":  "H5 skips on box state (no ghost ARP entry), so a green run cannot stamp; 48 assertions passed 2026-10-22",
+    "at":  "2026-10-22T12:52:14-07:00"
+}

@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-22T12:03:41-07:00",
-    "commit":  "2b3fe3012",
+    "generated":  "2026-10-22T12:50:22-07:00",
+    "commit":  "93cf763aa",
     "uncommitted":  [
-                        "test/win32/fullscreen-exit.ps1"
+                        "test/win32/gate-negatives.ps1",
+                        "test/win32/guard-due.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -153,13 +154,13 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
-                  "test/win32/gate-negatives.ps1":  "a866595fe5246d6a62dac5d62d626260174fbaca29eff9d8b23f330029c05b1f",
+                  "test/win32/gate-negatives.ps1":  "78c3e6a07633712f529aafafb30486b85a7bfeb08cd1ea38f651f8520f8a3f79",
                   "test/win32/ghoztty-cleanup.ps1":  "6c920aaa49bd05d3c18f496991a51af7796075f695d86c2c4f856cc115299085",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
                   "test/win32/go-loop-guard.ps1":  "a73c8de8707176fe469a7dca58bc85a791fca7ea8f2d6c09bb7586c1a296e4d0",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
-                  "test/win32/guard-due.ps1":  "c85573dcf6e581152c9e72dbb43fd71e58b0ef40fe4c5dec08b9d357c22e8827",
+                  "test/win32/guard-due.ps1":  "c00ebefa0e0f0bd51a9bb0dc2b02a5bc46e522b19da60b606a6a4ff6d350483d",
                   "test/win32/gui-launch-command.ps1":  "8e90681b56d560d7779cccbeb8ba4c3c652d48b42fbc2546a0e35ac4662c69aa",
                   "test/win32/gui-postmortem.ps1":  "b0595f3b54b8326445756b773988528e7702572014b7e730c06e29cdd68eb30c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",

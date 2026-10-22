@@ -161,6 +161,20 @@ $Registry = @(
     [pscustomobject]@{ Label = 'GUARD DUE'; Kind = 'gate'; Demo = 'test\win32\guard-due.ps1'
         Marker = 'GUARD DUE go-loop'; Via = 'scripts\guard-due.ps1'
     }
+    # T1165. An ack hands ONE red guard to the open task that owns it, so the
+    # gate stops counting that row while every other row stays armed. GUARD
+    # ACKED is the report; the two ways an ack could excuse what it should
+    # not - outliving its task, or being written against a closed or missing
+    # one - are gates, driven red in section R of the guard-due harness
+    # (R5/R6 for an expired ack, R7/R8 for the refusals, R16/R17 through
+    # validate and the guard-ack verb).
+    [pscustomobject]@{ Label = 'GUARD ACKED'; Kind = 'status'; Via = 'scripts\guard-due.ps1' }
+    [pscustomobject]@{ Label = 'ACK EXPIRED'; Kind = 'gate'; Demo = 'test\win32\guard-due.ps1'
+        Marker = 'ACK EXPIRED'; Via = 'scripts\guard-due.ps1'
+    }
+    [pscustomobject]@{ Label = 'ACK REFUSED'; Kind = 'gate'; Demo = 'test\win32\guard-due.ps1'
+        Marker = 'ACK REFUSED'; Via = 'scripts\guard-due.ps1'
+    }
     [pscustomobject]@{ Label = 'UNPUSHED WORK'; Kind = 'gate'; Demo = $Loop
         Marker = 'UNPUSHED WORK'; Via = 'scripts\git-commit-guard.ps1'
     }

@@ -83,12 +83,13 @@
   scripts\parity-tasks.ps1 set-order T500 -Order 2.5   # inject without renumbering
   scripts\parity-tasks.ps1 set-tags T503 -Tags infra,docs
   scripts\parity-tasks.ps1 set-tags T503 -Tags polish -Add
+  scripts\parity-tasks.ps1 guard-ack T1164 -Guard suite-run   # T1165: one red guard, owned
   scripts\parity-tasks.ps1 similar -Title "the viewer pane flakes on a cold cache"
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('list', 'next', 'show', 'new', 'set-status', 'set-priority', 'set-order', 'set-tags', 'note', 'ack-stranded', 'stale-scan', 'similar', 'validate', 'ledger')]
+    [ValidateSet('list', 'next', 'show', 'new', 'set-status', 'set-priority', 'set-order', 'set-tags', 'note', 'ack-stranded', 'guard-ack', 'stale-scan', 'similar', 'validate', 'ledger')]
     [string]$Command,
 
     [Parameter(Position = 1)]
@@ -189,6 +190,11 @@ param(
     # this box at all); it PRINTS that it was used, so a commit made under it
     # can be explained rather than silently excused.
     [switch]$NoGuardDue,
+
+    # `guard-ack <Tid> -Guard <name>` (T1165): the ONE guard being handed to
+    # that task. The narrow alternative to -NoGuardDue for a harness that runs
+    # fine and is genuinely red for a defect already filed.
+    [string]$Guard,
 
     # `validate` also asks scripts\git-commit-guard.ps1 whether this branch is
     # ahead of its upstream (T1057) - a commit that never left the box is
@@ -1739,6 +1745,28 @@ switch ($Command) {
         Write-Host ("{0} now owns {1} stranded path(s); validate passes while it stays open" -f $tid, @($snap.paths).Count)
     }
 
+    'guard-ack' {
+        # T1165: the guard-due twin of ack-stranded. guard-due.ps1 does the
+        # refusing and writes the ack; this verb adds the receipt in the task,
+        # so whoever picks the task up sees which guard is waiting on it.
+        $tid = Get-TaskId $Id
+        if (-not $Guard) { throw "guard-ack: name the one guard being handed to $tid (-Guard <name>)." }
+        $dueScript = Join-Path $PSScriptRoot 'guard-due.ps1'
+        $guardRepo = $RepoRoot
+        if ($env:GHOZTTY_GUARD_DUE_REPO) { $guardRepo = $env:GHOZTTY_GUARD_DUE_REPO }
+        $dueArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $dueScript, 'ack', '-Repo', $guardRepo,
+            '-Guard', $Guard, '-Task', $tid)
+        if ($Summary) { $dueArgs += @('-Reason', $Summary) }
+        $ackOut = @(& powershell @dueArgs 2>&1 | ForEach-Object { $_.ToString() })
+        $ackCode = $LASTEXITCODE
+        foreach ($line in $ackOut) { Write-Host $line }
+        if ($ackCode -ne 0) { exit $ackCode }
+        $taskPath = Join-Path (Join-Path $guardRepo 'docs\design\windows-parity-tasks') "$tid.md"
+        Add-ProgressNote -Path $taskPath -SessionId $Session -NoteText (
+            "owns the red of acceptance guard '$Guard' (guard-ack): validate passes on that guard while this task is open" +
+            $(if ($Summary) { " - $Summary" } else { '' }))
+    }
+
     'stale-scan' {
         # The sweep, as a report (T404). Ranks this seat's open todos by how
         # much the code they name has moved since they were filed, so "which of
@@ -2035,6 +2063,8 @@ switch ($Command) {
                 if ($excused.Count -gt 0) {
                     foreach ($line in $excused) { Write-Host ("  excused: {0}" -f $line.Trim()) }
                     Write-Host "  (say which of these cannot run here, and why, in the commit body)"
+                    # T1165: the hatch switches off EVERY row to excuse these.
+                    Write-Host "  (a harness that runs and is red for a FILED defect wants the narrower tool, which leaves every other guard armed: parity-tasks.ps1 guard-ack <Tid> -Guard <name>)"
                 } else {
                     Write-Host "  nothing was actually due - the hatch was not needed"
                 }
@@ -2051,7 +2081,14 @@ switch ($Command) {
             if ($LASTEXITCODE -ne 0) {
                 foreach ($line in ($dueOut -split "`r?`n")) { if ($line.Trim()) { Write-Host $line } }
                 Write-Host "  (an unrun harness is a problem here: run it, or fix what it catches, before committing)"
+                Write-Host "  (red for a defect already filed? hand that one guard to its task: parity-tasks.ps1 guard-ack <Tid> -Guard <name>)"
                 $problems++
+            } else {
+                # T1165: a pass that rests on an ack says so, so the commit it
+                # gates can be read back as "red and owned", not "all green".
+                foreach ($line in ($dueOut -split "`r?`n")) {
+                    if ($line -match '^GUARD ACKED|^  owned by ') { Write-Host $line }
+                }
             }
         }
 

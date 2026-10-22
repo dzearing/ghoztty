@@ -832,7 +832,11 @@ Concretely, in order, with no stops in between:
    been run since the code it covers changed (step 3). Run that harness; the
    `-NoGuardDue` hatch exists for a harness that genuinely cannot run on this
    box and prints that it was used, so a commit made under it can be explained
-   rather than silently excused.
+   rather than silently excused. A harness that RUNS and is red for a defect
+   already filed wants the narrower tool (T1165): `parity-tasks.ps1 guard-ack
+   <Tid> -Guard <name>` hands that one guard to the open task, every other
+   guard stays enforced, and the ack expires (`ACK EXPIRED`, red again) the
+   moment the task closes.
 
    Since T847 `validate` also fails on STRANDED WORK — paths that step 0's
    claim found already dirty and that are still dirty now. Resolve them the way

@@ -64,6 +64,17 @@
   or skipped - or if it does not exist - the line disappears and the row reads
   as an ordinary due guard again.
 
+  ACKS (T1165). A known-blocked row still FAILS validate; an ack does not.
+  `ack -Guard <name> -Task T<id>` (or `parity-tasks.ps1 guard-ack T<id> -Guard
+  <name>`, which also journals it into the task) hands one due guard to the
+  open task that owns its red. `check` then prints `GUARD ACKED <name> (T<id>)`
+  instead of `GUARD DUE`, and that row alone stops counting - every other row
+  is still enforced, which is what `-NoGuardDue` could not do. The ack is a
+  committed file in docs\design\windows-parity-guard-acks\, verified on every
+  check: once its task closes (or never existed) the row is `GUARD DUE` again
+  with an `ACK EXPIRED` line naming the task. A green run's `update` deletes
+  it. `unack -Guard <name>` removes one by hand.
+
   WIRED INTO (both deliberately different in force):
     * scripts\go-loop-exec.ps1 claim - go.md step 0, every turn. Reports, never
       fails: a claim that can exit nonzero over a stale stamp would wedge the
@@ -95,11 +106,16 @@
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('check', 'update', 'list', 'stamp-ci', 'uncovered')]
+    [ValidateSet('check', 'update', 'list', 'stamp-ci', 'uncovered', 'ack', 'unack')]
     [string]$Action = 'check',
 
     # Limit to one harness by name. Omitted => every row in the table.
     [string]$Guard,
+
+    # --- ack only (T1165) -------------------------------------------------
+    # The OPEN task that owns this guard's red, and an optional line on why.
+    [string]$Task,
+    [string]$Reason,
 
     [string]$Repo,
     [switch]$Json,
@@ -6018,7 +6034,18 @@ function Get-KnownBlocker($row) {
       is closed, or that does not exist, yields $null and the row reads as an
       ordinary due guard again.
     #>
-    $id = [string]$row.KnownBlockedBy
+    $t = Get-TaskInfo ([string]$row.KnownBlockedBy)
+    if ($null -eq $t -or -not $t.Open) { return $null }
+    return $t
+}
+
+function Get-TaskInfo([string]$id) {
+    <#
+      A task's status and title, read from its own file's frontmatter - the one
+      reader behind both T938's known-blocked pointer and T1165's ack, so the
+      two can never disagree about whether a task is still open. $null when
+      there is no such file; `Open` is false for done/skipped (or no status).
+    #>
     if (-not $id) { return $null }
     $file = Join-Path $Repo ("docs\design\windows-parity-tasks\{0}.md" -f $id)
     if (-not (Test-Path -LiteralPath $file)) { return $null }
@@ -6030,8 +6057,37 @@ function Get-KnownBlocker($row) {
         if ($line -match '^status:\s*"?(.*?)"?\s*$') { $status = $Matches[1] }
         elseif ($line -match '^title:\s*"?(.*?)"?\s*$') { $title = $Matches[1] }
     }
-    if (-not $status -or $status -match '^(done|skipped)') { return $null }
-    return [pscustomobject]@{ Id = $id; Status = $status; Title = $title }
+    $open = [bool]($status -and $status -notmatch '^(done|skipped)')
+    return [pscustomobject]@{ Id = $id; Status = $status; Title = $title; Open = $open }
+}
+
+<#
+  T1165. An ACK hands one DUE guard to the open task that owns its red, so
+  `validate` stops failing on THAT guard while every other row stays armed. The
+  only way past before was `-NoGuardDue`, which switched off all ~300 rows to
+  excuse one - and three turns on 2026-08-23 walked past fork-identity that way.
+
+  The ack is a committed file per guard (it travels with the tree, like the
+  stamp, so the other lane and the other seat see the same answer), and it is
+  VERIFIED on every check, never trusted: once its task is done or skipped, or
+  if the id does not exist, the guard reads `GUARD DUE` again with an
+  `ACK EXPIRED` line naming the task, and fails the gate - an ack must not
+  outlive its reason. A green run of the harness deletes the ack along with
+  writing the stamp, so a fixed guard never carries a stale one.
+#>
+function Get-AckPath($row) {
+    return Join-Path $Repo ("docs\design\windows-parity-guard-acks\{0}.json" -f $row.Name)
+}
+
+function Read-Ack($row) {
+    $path = Get-AckPath $row
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        return ([System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8) | ConvertFrom-Json)
+    } catch {
+        # An unreadable ack is an ack to nothing: it must expire, not excuse.
+        return [pscustomobject]@{ task = '(unreadable ack file)' }
+    }
 }
 
 function Get-GuardState($row) {
@@ -6286,6 +6342,56 @@ switch ($Action) {
             } else {
                 "STAMP UNCHANGED {0} ({1} files)" -f $row.Name, @($r.Files).Count
             }
+            # T1165: a green run is the end of the red an ack excused, so the
+            # ack goes with it - a fixed guard must not carry one into the next
+            # time it breaks.
+            $ackPath = Get-AckPath $row
+            if (Test-Path -LiteralPath $ackPath) {
+                Remove-Item -LiteralPath $ackPath -Force
+                "ACK CLEARED {0}: a green run replaced it" -f $row.Name
+            }
+        }
+        exit 0
+    }
+
+    'ack' {
+        # T1165. Hand ONE due guard to the open task that owns its red. Every
+        # refusal below is a way an ack could excuse something it should not:
+        # a task that cannot resolve it, a guard with nothing to excuse, or a
+        # blanket ack across the whole table.
+        if (-not $Guard) { "ACK REFUSED: name the one guard (-Guard <name>); an ack never covers the whole table"; exit 2 }
+        if (-not $Task) { "ACK REFUSED: name the open task that owns the red (-Task T<id>)"; exit 2 }
+        $row = $rows[0]
+        $t = Get-TaskInfo $Task
+        if ($null -eq $t) { "ACK REFUSED: no task {0} - an ack must name a filed task" -f $Task; exit 2 }
+        if (-not $t.Open) { "ACK REFUSED: {0} is closed ({1}) - the ack must name a task that will actually clear the red" -f $Task, $t.Status; exit 2 }
+        if ($row.Advisory) { "ACK REFUSED: {0} is advisory and never fails validate - there is nothing to ack" -f $row.Name; exit 3 }
+        $st = Get-GuardState $row
+        if ($st.Kind -ne 'due') { "ACK REFUSED: {0} is {1}, not due - there is nothing to ack" -f $row.Name, $st.Kind; exit 3 }
+        $doc = [ordered]@{
+            guard  = $row.Name
+            task   = $t.Id
+            reason = $(if ($Reason) { $Reason } else { '' })
+            at     = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
+        }
+        $path = Get-AckPath $row
+        $parent = Split-Path -Parent $path
+        if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+        [System.IO.File]::WriteAllText($path, ((ConvertTo-Json -InputObject $doc) -replace "`r`n", "`n") + "`n",
+            (New-Object System.Text.UTF8Encoding($false)))
+        "ACKED {0} -> {1} ({2}): {3}" -f $row.Name, $t.Id, $t.Status, $t.Title
+        "  validate passes on this guard while {0} stays open; commit {1}" -f $t.Id, ($path.Substring($Repo.TrimEnd('\').Length + 1))
+        exit 0
+    }
+
+    'unack' {
+        if (-not $Guard) { "ACK REFUSED: name the one guard (-Guard <name>)"; exit 2 }
+        $path = Get-AckPath $rows[0]
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force
+            "UNACKED {0}" -f $rows[0].Name
+        } else {
+            "UNACKED {0} (it had no ack)" -f $rows[0].Name
         }
         exit 0
     }
@@ -6637,6 +6743,28 @@ switch ($Action) {
                 $st | Add-Member -NotePropertyName KnownBlockedBy -NotePropertyValue $(if ($kb) { $kb.Id } else { '' })
                 $st | Add-Member -NotePropertyName KnownBlockedStatus -NotePropertyValue $(if ($kb) { $kb.Status } else { '' })
                 $st | Add-Member -NotePropertyName KnownBlockedTitle -NotePropertyValue $(if ($kb) { $kb.Title } else { '' })
+                # T1165: an ack is only read for a row that would otherwise
+                # count - a current row needs none, and an advisory row never
+                # fails anything. AckedBy is set only while the task is OPEN;
+                # AckExpired names the task of an ack that no longer holds.
+                $ackBy = ''; $ackStatus = ''; $ackTitle = ''; $ackExpired = ''; $ackExpiredStatus = ''
+                if ($st.Kind -eq 'due' -and -not $st.Advisory) {
+                    $ack = Read-Ack $row
+                    if ($null -ne $ack) {
+                        $at = Get-TaskInfo ([string]$ack.task)
+                        if ($null -ne $at -and $at.Open) {
+                            $ackBy = $at.Id; $ackStatus = $at.Status; $ackTitle = $at.Title
+                        } else {
+                            $ackExpired = [string]$ack.task
+                            $ackExpiredStatus = if ($null -eq $at) { 'no such task' } else { $at.Status }
+                        }
+                    }
+                }
+                $st | Add-Member -NotePropertyName AckedBy -NotePropertyValue $ackBy
+                $st | Add-Member -NotePropertyName AckedStatus -NotePropertyValue $ackStatus
+                $st | Add-Member -NotePropertyName AckedTitle -NotePropertyValue $ackTitle
+                $st | Add-Member -NotePropertyName AckExpired -NotePropertyValue $ackExpired
+                $st | Add-Member -NotePropertyName AckExpiredStatus -NotePropertyValue $ackExpiredStatus
                 $st
             })
         # The table's own integrity, before its verdicts (T1227): a row whose
@@ -6651,7 +6779,9 @@ switch ($Action) {
             # JSON for whoever parses it, and still reach a caller that merges
             # the two (2>&1, which is how the acceptance harness reads it).
             foreach ($line in (Write-TableFaults $faults)) { [Console]::Error.WriteLine($line) }
-            exit ([int]((@($states | Where-Object { $_.Kind -eq 'due' }).Count + $faults.Count) -gt 0))
+            # A row acked to an open task (T1165) is reported but does not
+            # count - the same rule the text report below applies.
+            exit ([int]((@($states | Where-Object { $_.Kind -eq 'due' -and -not $_.AckedBy }).Count + $faults.Count) -gt 0))
         }
         Write-TableFaults $faults
         $due = $faults.Count
@@ -6684,12 +6814,26 @@ switch ($Action) {
             # box cannot answer, and its enforcement lives elsewhere. The word
             # is in the line so a reader can never mistake one for a gate that
             # let something through.
-            $tag = if ($s.Advisory) { ' (advisory)' } else { $due++; '' }
+            # T1165: a row acked to an OPEN task reads GUARD ACKED, not GUARD
+            # DUE, and does not count - "it is red and owned" is a different
+            # sentence from "nobody ran it", and only the second fails the gate.
+            $head = 'GUARD DUE'
+            if ($s.AckedBy) { $head = 'GUARD ACKED'; $tag = " ($($s.AckedBy))" }
+            elseif ($s.Advisory) { $tag = ' (advisory)' }
+            else { $due++; $tag = '' }
             if ($s.Reason -eq 'no-stamp') {
-                "GUARD DUE{0} {1}: no stamp - {2} has never recorded a green run over this code" -f $tag, $s.Name, $s.Script
+                "{0}{1} {2}: no stamp - {3} has never recorded a green run over this code" -f $head, $tag, $s.Name, $s.Script
             } else {
-                "GUARD DUE{0} {1}: {2} has not been run since these changed:" -f $tag, $s.Name, $s.Script
+                "{0}{1} {2}: {3} has not been run since these changed:" -f $head, $tag, $s.Name, $s.Script
                 foreach ($f in $s.Findings) { "    {0,-8} {1}" -f $f.Kind, $f.Path }
+            }
+            if ($s.AckedBy) {
+                "  owned by {0} ({1}): {2}" -f $s.AckedBy, $s.AckedStatus, $s.AckedTitle
+                "    acked - validate passes on this guard while {0} stays open; every other guard is still enforced" -f $s.AckedBy
+            }
+            if ($s.AckExpired) {
+                "  ACK EXPIRED: this guard was acked to {0}, which is {1} - an ack must not outlive its reason" -f $s.AckExpired, $s.AckExpiredStatus
+                "    run the harness, or re-ack it to the open task that owns the red: parity-tasks.ps1 guard-ack <Tid> -Guard {0}" -f $s.Name
             }
             # RunArgs is how a row says "this harness needs more than its bare
             # name to clear ME" - the packaging row wants -RequireDocker, which

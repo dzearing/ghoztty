@@ -1,14 +1,14 @@
 {
     "guard":  "parity-tasks-lanes",
     "script":  "test/win32/parity-tasks-lanes.ps1",
-    "generated":  "2026-10-17T19:20:01-07:00",
-    "commit":  "df2a80465",
+    "generated":  "2026-10-22T12:38:40-07:00",
+    "commit":  "93cf763aa",
     "uncommitted":  [
                         "scripts/parity-tasks.ps1"
                     ],
     "files":  {
                   "scripts/lib/LoopLedger.ps1":  "d473aada7d6a60479f88f6bb979da5c4098021bc4bb0610e5e16cd0a8506dd62",
-                  "scripts/parity-tasks.ps1":  "75d4e55ce9e55d88806b639228104004a767b9a3be327a6b8caa71269b5ec7c5",
+                  "scripts/parity-tasks.ps1":  "d58ee20858dbdf5d01cc82feb974a135374589b2e594b7bbe67af7814a3b6daf",
                   "test/win32/parity-tasks-lanes.ps1":  "438b373dc1659658869eac28217f2fdfdc230025c8c752ceb44d0a288090d9cd"
               }
 }

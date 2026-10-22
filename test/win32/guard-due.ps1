@@ -1197,6 +1197,142 @@ $lex
         ($liveTotal -ge 300 -and $outQ -match 'LIB COVERAGE \d+ of \d+ shared test libraries' -and $outQ -notmatch 'EXEMPT STALE') `
         ((@($outQ -split "`n" | Select-Object -First 1) + @($outQ -split "`n" | Where-Object { $_ -match 'STALE' })) -join '; ')
 
+    # --- R. an ack hands ONE red guard to the open task that owns it (T1165) -
+    # The only way past a guard that runs and is red for a FILED defect used to
+    # be -NoGuardDue, which switched off every row to excuse one. An ack names
+    # the guard and the task, holds only while that task is open, and leaves
+    # every other row enforced. Check-level arms run against the spliced
+    # two-row table from section O; the validate arms run the real
+    # parity-tasks.ps1 against the go-loop-shaped fixture.
+    Write-Host "`n-- R. guard acks --"
+
+    function Invoke-KbAck([string[]]$AckArgs) {
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+            (Join-Path $KbFixture 'scripts\guard-due.ps1')) + $AckArgs + @('-Repo', $KbFixture)
+        $out = & powershell.exe @a 2>&1
+        return [pscustomobject]@{ Exit = $LASTEXITCODE; Text = (@($out) -join "`n") }
+    }
+    function Set-KbTaskId([string]$id, [string]$status) {
+        Set-KbFile ("docs\design\windows-parity-tasks\{0}.md" -f $id) (
+            "---`nid: $id`ntitle: `"Fixture owner $id`"`nstatus: `"$status`"`n---`n`n# $id`n")
+    }
+    $kbAckFile = Join-Path $KbFixture 'docs\design\windows-parity-guard-acks\kb-plain.json'
+    Set-KbTaskId 'T9001' 'todo'
+    Set-KbTaskId 'T9002' 'done'
+
+    $ra = Invoke-KbAck @('ack', '-Guard', 'kb-plain', '-Task', 'T9001')
+    Check 'R1 ack hands a due guard to an open task and writes the ack file' `
+        ($ra.Exit -eq 0 -and $ra.Text -match 'ACKED kb-plain -> T9001' -and (Test-Path -LiteralPath $kbAckFile)) "exit=$($ra.Exit): $($ra.Text)"
+    $rc = Invoke-KbDue 'kb-plain'
+    Check 'R2 the acked guard reads GUARD ACKED, names its owner, and exits 0' `
+        ($rc.Exit -eq 0 -and $rc.Text -match 'GUARD ACKED \(T9001\) kb-plain: no stamp' -and
+         $rc.Text -match 'owned by T9001 \(todo\): Fixture owner T9001' -and $rc.Text -notmatch 'GUARD DUE') "exit=$($rc.Exit): $($rc.Text)"
+    $rall = Invoke-KbAck @('check')
+    Check 'R3 an UNRELATED due guard in the same tree still fails the check (GUARD DUE beside GUARD ACKED)' `
+        ($rall.Exit -eq 1 -and $rall.Text -match 'GUARD DUE kb-blocked' -and $rall.Text -match 'GUARD ACKED \(T9001\) kb-plain') "exit=$($rall.Exit): $($rall.Text)"
+    $rj = Invoke-KbDue 'kb-plain' -Json
+    Check 'R4 -Json carries the owner and exits 0 for an acked-only table' `
+        ($rj.Exit -eq 0 -and $rj.Text -match '"AckedBy":\s*"T9001"') "exit=$($rj.Exit): $($rj.Text)"
+
+    # The ack must not outlive its reason.
+    Set-KbTaskId 'T9001' 'done'
+    $rc = Invoke-KbDue 'kb-plain'
+    Check 'R5 once the owning task closes the guard is GUARD DUE again with ACK EXPIRED naming the task, exit 1' `
+        ($rc.Exit -eq 1 -and $rc.Text -match 'GUARD DUE kb-plain' -and
+         $rc.Text -match 'ACK EXPIRED: this guard was acked to T9001, which is done') "exit=$($rc.Exit): $($rc.Text)"
+    Remove-Item -LiteralPath (Join-Path $KbFixture 'docs\design\windows-parity-tasks\T9001.md') -Force
+    $rc = Invoke-KbDue 'kb-plain'
+    Check 'R6 an ack whose task does not exist is ACK EXPIRED (no such task), exit 1' `
+        ($rc.Exit -eq 1 -and $rc.Text -match 'ACK EXPIRED: this guard was acked to T9001, which is no such task') "exit=$($rc.Exit): $($rc.Text)"
+
+    # The refusals.
+    $ra = Invoke-KbAck @('ack', '-Guard', 'kb-blocked', '-Task', 'T9002')
+    Check 'R7 ACK REFUSED for a task that is already closed' `
+        ($ra.Exit -eq 2 -and $ra.Text -match 'ACK REFUSED: T9002 is closed \(done\)') "exit=$($ra.Exit): $($ra.Text)"
+    $ra = Invoke-KbAck @('ack', '-Guard', 'kb-blocked', '-Task', 'T9999')
+    Check 'R8 ACK REFUSED for an id that does not exist' `
+        ($ra.Exit -eq 2 -and $ra.Text -match 'ACK REFUSED: no task T9999') "exit=$($ra.Exit): $($ra.Text)"
+    $ra = Invoke-KbAck @('ack', '-Task', 'T9002')
+    Check 'R9 ACK REFUSED without a guard: an ack never covers the whole table' `
+        ($ra.Exit -eq 2 -and $ra.Text -match 'ACK REFUSED: name the one guard') "exit=$($ra.Exit): $($ra.Text)"
+    Set-KbTaskId 'T9003' 'in-progress'
+    $ra = Invoke-KbAck @('ack', '-Guard', 'kb-blocked', '-Task', 'T9003')
+    Invoke-KbAck @('update', '-Guard', 'kb-plain', '-IgnoreRunState') | Out-Null
+    $ra = Invoke-KbAck @('ack', '-Guard', 'kb-plain', '-Task', 'T9003')
+    Check 'R10 ACK REFUSED for a guard that is not due (nothing to excuse)' `
+        ($ra.Exit -eq 3 -and $ra.Text -match 'ACK REFUSED: kb-plain is current, not due') "exit=$($ra.Exit): $($ra.Text)"
+
+    # A green run clears the ack along with writing the stamp.
+    $kbBlockedAck = Join-Path $KbFixture 'docs\design\windows-parity-guard-acks\kb-blocked.json'
+    $hadAck = Test-Path -LiteralPath $kbBlockedAck
+    $ru = Invoke-KbAck @('update', '-Guard', 'kb-blocked', '-IgnoreRunState')
+    Check 'R11 a green run (update) deletes the guard''s ack and says ACK CLEARED' `
+        ($hadAck -and $ru.Text -match 'ACK CLEARED kb-blocked' -and -not (Test-Path -LiteralPath $kbBlockedAck)) "had=${hadAck}: $($ru.Text)"
+    Set-KbFile 'scripts\plain-one.ps1' "# fixture v2`n"
+    Invoke-KbAck @('ack', '-Guard', 'kb-plain', '-Task', 'T9003') | Out-Null
+    $ru = Invoke-KbAck @('unack', '-Guard', 'kb-plain')
+    $rc = Invoke-KbDue 'kb-plain'
+    Check 'R12 unack removes the ack by hand and the guard is plainly due again' `
+        ($ru.Text -match 'UNACKED kb-plain' -and $rc.Exit -eq 1 -and $rc.Text -match 'GUARD DUE kb-plain' -and
+         $rc.Text -cnotmatch 'ACK') "exit=$($rc.Exit): $($ru.Text) / $($rc.Text)"
+
+    # The teeth, where the turn meets them: the real parity-tasks.ps1 validate
+    # and its guard-ack verb, against the go-loop-shaped fixture.
+    $FixTasks = Join-Path $Fixture 'docs\design\windows-parity-tasks'
+    New-Item -ItemType Directory -Force -Path $FixTasks | Out-Null
+    function Set-FixTask([string]$status) {
+        Set-FixtureFile 'docs\design\windows-parity-tasks\T9101.md' (
+            "---`nid: T9101`ntitle: `"Fixture owner of the go-loop red`"`nstatus: `"$status`"`n---`n`n# T9101`n`n## Progress log`n`n- claimed`n")
+    }
+    function Invoke-GuardAck([string]$TaskId, [string]$GuardName) {
+        $old = $env:GHOZTTY_GUARD_DUE_REPO
+        $env:GHOZTTY_GUARD_DUE_REPO = $Fixture
+        try {
+            $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Tasks guard-ack $TaskId -Guard $GuardName 2>&1
+            return [pscustomobject]@{ Exit = $LASTEXITCODE; Text = (@($out) -join "`n") }
+        } finally {
+            if ($null -eq $old) { Remove-Item Env:\GHOZTTY_GUARD_DUE_REPO -ErrorAction SilentlyContinue }
+            else { $env:GHOZTTY_GUARD_DUE_REPO = $old }
+        }
+    }
+    Set-FixTask 'todo'
+    Invoke-Due update | Out-Null
+    Set-FixtureFile 'scripts\go-loop-lock.ps1' "# fake lock R - red for a filed defect`n"
+    # Every row the edit made due is handed to the fixture task, so the gate's
+    # verdict below is about acks alone, whatever the live table looks like.
+    $dueRows = @()
+    try {
+        $dueRows = @((Invoke-Due check -Json).Lines | Where-Object { $_ -is [string] } | Out-String | ConvertFrom-Json |
+            ForEach-Object { $_ } | Where-Object { $_.Kind -eq 'due' -and -not $_.Advisory } | ForEach-Object { $_.Name })
+    } catch { $dueRows = @() }
+    $acked = 0
+    foreach ($n in $dueRows) { if ((Invoke-GuardAck 'T9101' $n).Exit -eq 0) { $acked++ } }
+    $rg = Invoke-GuardAck 'T9101' 'go-loop'
+    $taskText = [System.IO.File]::ReadAllText((Join-Path $FixTasks 'T9101.md'))
+    Check 'R13 guard-ack acks through guard-due and journals the receipt into the task' `
+        ($dueRows -contains 'go-loop' -and $acked -eq $dueRows.Count -and $rg.Exit -eq 0 -and
+         $taskText -match "owns the red of acceptance guard 'go-loop' \(guard-ack\)") "due=$($dueRows -join ','); acked=$acked; $($rg.Text)"
+    $r = Invoke-Validate -GuardRepo $Fixture
+    Check 'R14 validate passes the guard gate with go-loop still red, reporting it GUARD ACKED' `
+        ($r.Text -match 'GUARD ACKED \(T9101\) go-loop' -and $r.Text -notmatch 'unrun harness is a problem here') $r.Text
+    Invoke-Due unack -Guard 'go-loop' | Out-Null
+    $r = Invoke-Validate -GuardRepo $Fixture
+    Check 'R15 an unacked guard still FAILS validate while the other acks hold (no blanket excuse)' `
+        ($r.Exit -ne 0 -and $r.Text -match 'GUARD DUE go-loop' -and $r.Text -match 'unrun harness is a problem here' -and
+         ($dueRows.Count -lt 2 -or $r.Text -match 'GUARD ACKED \(T9101\)')) $r.Text
+    Invoke-GuardAck 'T9101' 'go-loop' | Out-Null
+    Set-FixTask 'done'
+    $r = Invoke-Validate -GuardRepo $Fixture
+    Check 'R16 closing the owning task FAILS validate again, ACK EXPIRED naming the closed task' `
+        ($r.Exit -ne 0 -and $r.Text -match 'ACK EXPIRED: this guard was acked to T9101, which is done' -and
+         $r.Text -match 'unrun harness is a problem here') $r.Text
+    $rg = Invoke-GuardAck 'T9101' 'go-loop'
+    Check 'R17 guard-ack relays ACK REFUSED for a closed task and exits nonzero' `
+        ($rg.Exit -ne 0 -and $rg.Text -match 'ACK REFUSED: T9101 is closed') "exit=$($rg.Exit): $($rg.Text)"
+    $r = Invoke-Validate -GuardRepo $Fixture -NoGuardDue
+    Check 'R18 the -NoGuardDue hatch points at guard-ack as the narrower tool' `
+        ($r.Text -match 'GUARD DUE CHECK SKIPPED' -and $r.Text -match 'narrower tool.*guard-ack <Tid> -Guard <name>') $r.Text
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {
