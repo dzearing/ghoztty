@@ -2566,6 +2566,19 @@ $GuardTable = @(
             'test\win32\deny-sh-from-powershell.ps1'
         )
     },
+    # The dashboard keep-alive launcher runs //B every 5 minutes and reports
+    # nothing, so a clone path committed back into it (T1199) would start the
+    # wrong checkout's dashboard - or none - in silence.
+    [pscustomobject]@{
+        Name   = 'dashboard-keepalive'
+        Script = 'test\win32\dashboard-keepalive.ps1'
+        Stamp  = 'test\win32\dashboard-keepalive.stamp.json'
+        Covers = @(
+            'scripts\dashboard-keepalive.vbs',
+            'scripts\task-dashboard.ps1',
+            'test\win32\dashboard-keepalive.ps1'
+        )
+    },
     # The vendored agent assets (T866) rot silently: main edits its copy of a
     # skill or hook script and nothing here goes red until someone re-runs the
     # drift compare, and a banner-script or +json edit that breaks the jq-free

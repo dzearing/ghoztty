@@ -22,12 +22,20 @@
 ' argument with its inner quotes backslash-escaped, and anything else silently
 ' loses everything after the first space (the trap T440 documents). A launcher
 ' that needs no arguments cannot fall into it.
+'
+' Self-locating (T1199): the dashboard it starts is the task-dashboard.ps1
+' sitting next to THIS file, so a second clone or worktree starts its own
+' dashboard. A committed clone path here started D:\git\ghoztty's dashboard from
+' every other checkout - or nothing, where that clone did not exist - and a
+' //B launcher says nothing either way. test\win32\dashboard-keepalive.ps1
+' goes red if a drive path comes back.
 Option Explicit
-Dim shell, repo, cmd
+Dim shell, fso, here, cmd
 Set shell = CreateObject("WScript.Shell")
-repo = "D:\git\ghoztty"
-cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & repo & _
-      "\scripts\task-dashboard.ps1"" -Port 7788 -NoPane"
+Set fso = CreateObject("Scripting.FileSystemObject")
+here = fso.GetParentFolderName(WScript.ScriptFullName)
+cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & here & _
+      "\task-dashboard.ps1"" -Port 7788 -NoPane"
 ' 0 = hidden window, False = do not wait. The task is a tick, not a session:
 ' it should return immediately and let the launched check run on its own.
 shell.Run cmd, 0, False

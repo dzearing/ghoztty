@@ -1,0 +1,15 @@
+{
+    "guard":  "dashboard-keepalive",
+    "script":  "test/win32/dashboard-keepalive.ps1",
+    "generated":  "2026-10-22T15:41:35-07:00",
+    "commit":  "2874d1c45",
+    "uncommitted":  [
+                        "scripts/dashboard-keepalive.vbs",
+                        "test/win32/dashboard-keepalive.ps1"
+                    ],
+    "files":  {
+                  "scripts/dashboard-keepalive.vbs":  "e0761179030aad4e3840e1938ec3cd2ffb5264342a29b7e4a6e84c2ded33fdc1",
+                  "scripts/task-dashboard.ps1":  "616fa636356bdfa1dc07aafe573f5aaf3b9a421ee6bbdc4c4404367845564fd7",
+                  "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429"
+              }
+}

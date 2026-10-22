@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-22T15:52:44-07:00",
-    "commit":  "7539b29d4",
+    "generated":  "2026-10-22T15:54:43-07:00",
+    "commit":  "2874d1c45",
     "uncommitted":  [
 
                     ],
@@ -1066,6 +1066,7 @@
                   "test/win32/daily-publish.ps1":  "eccff5616c9023dacbe70ec3aa3623db00b16c1123de1516e757fb5974cd9352",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
+                  "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
                   "test/win32/deliver-windows-build.ps1":  "15c2564c8d36bdf0966076a094502ccd040e8e7b5c116a6db74e50288a8421eb",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
                   "test/win32/desktop-launch-audit.ps1":  "3cacc5fce5628dd8501cdc2315698e7974c8b28d35159f7c67685f3e99ec57e1",
@@ -1104,7 +1105,7 @@
                   "test/win32/gate-negatives.ps1":  "78c3e6a07633712f529aafafb30486b85a7bfeb08cd1ea38f651f8520f8a3f79",
                   "test/win32/ghoztty-cleanup.ps1":  "6c920aaa49bd05d3c18f496991a51af7796075f695d86c2c4f856cc115299085",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
-                  "test/win32/go-loop-guard.ps1":  "f79b34c0665c3ffee27807789d23cbb31fafb453fae7c4e22909319110728a43",
+                  "test/win32/go-loop-guard.ps1":  "e2a1604ab08b0364009309ab23c640e16443c3184423c2360cc7d8e0577f8509",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "c00ebefa0e0f0bd51a9bb0dc2b02a5bc46e522b19da60b606a6a4ff6d350483d",
