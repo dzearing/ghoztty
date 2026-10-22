@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-22T07:46:30-07:00",
-    "commit":  "0b11620bc",
+    "generated":  "2026-10-22T08:12:09-07:00",
+    "commit":  "d3b695ff0",
     "uncommitted":  [
-
+                        "test/win32/viewer-panes.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -415,7 +415,7 @@
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",
-                  "test/win32/stack-collapse-carry.ps1":  "707673385d69adc61c66363757209f3e5d75a057ca79622fe7ebdb0f29eab289",
+                  "test/win32/stack-collapse-carry.ps1":  "53fa5986270614a4b357c592efbdd87f41876e9422e207dbd7cc87b3af04546d",
                   "test/win32/stack-collapse-drag.ps1":  "8225600e90181f93462160e1969d509910e4f5ae7d495a8166718077c1aa2053",
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79",
@@ -478,7 +478,7 @@
                   "test/win32/viewer-image.ps1":  "c977a62c86f11afb58b49d73f2fcaaa11a3d839c115caac49fdab6e0a4e4754d",
                   "test/win32/viewer-narrow-pane.ps1":  "820fe92dc44471e20ed746fb91e83a92f10ab714b1963cd9abe59eb5f04c9c45",
                   "test/win32/viewer-nav-pin.ps1":  "0484ea216296c7270a8ea1d117f8c555b2d1861cf92ca9af290a751ca6476438",
-                  "test/win32/viewer-panes.ps1":  "d86657ddbe1a50a26f4ad5a221c1ce60c4b6aff2c65edeca92866f792b4b5540",
+                  "test/win32/viewer-panes.ps1":  "d357fd8f59c863ec614b2f0e82a9951568da625b50cbe2e7591be2cc4d645372",
                   "test/win32/viewer-popup.ps1":  "026091bd991f9e035761626527cdc873d5af02d5376f941b003448bb6faa7f6d",
                   "test/win32/viewer-restore.ps1":  "25317e0bc91348dd4a2794f73083f1da5c08f46b1a3896cac22536a7faf7e28c",
                   "test/win32/viewer-toc-emphasis.ps1":  "337dbba50bb5b54ae0a3d67f9a4db9a43e483cda7068abfb5f3f130c09e6fb77",

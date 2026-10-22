@@ -270,6 +270,66 @@ pub fn pageOwns(vk: u16, mods: input.Mods) bool {
     };
 }
 
+/// Whether a chord pressed in one of a viewer's own text fields — the address
+/// bar or the find card's query — may be offered to the app's keybind table
+/// (T2116). On Mac a menu key equivalent (Cmd+D, Cmd+W) fires from a focused
+/// text field; on Windows the EDIT would otherwise swallow it.
+///
+/// What stays with the field: anything without ctrl, alt or Win (typing,
+/// arrows, shift-selection), the page's own editing chords (`pageOwns`),
+/// ctrl+shift arrows/Home/End — word and line SELECTION in an edit, which the
+/// page leaves to tab navigation but a caret in a field does not — the legacy
+/// ctrl+Insert copy, alt+Backspace undo, and zoom, which Mac scopes to focused
+/// content and the field is chrome. The pane-scoped chords are answered before
+/// this is asked (`paneChord`), so they are excluded too.
+pub fn fieldOffers(vk: u16, mods: input.Mods) bool {
+    if (!mods.ctrl and !mods.alt and !mods.super) return false;
+    if (pageOwns(vk, mods)) return false;
+    if (zoomAction(vk, mods) != null) return false;
+    if (paneChord(vk, mods) != null) return false;
+    const ctrl_shift = mods.ctrl and mods.shift and !mods.alt and !mods.super;
+    const ctrl_only = mods.ctrl and !mods.shift and !mods.alt and !mods.super;
+    const alt_only = mods.alt and !mods.ctrl and !mods.shift and !mods.super;
+    return switch (vk) {
+        // VK_LEFT/UP/RIGHT/DOWN, HOME, END: select by word / to the end.
+        0x25, 0x26, 0x27, 0x28, 0x24, 0x23 => !ctrl_shift,
+        0x2D => !ctrl_only, // VK_INSERT: ctrl+Insert copies
+        0x08 => !alt_only, // VK_BACK: alt+Backspace undoes
+        else => true,
+    };
+}
+
+test "fieldOffers: app chords leave the field, text editing stays" {
+    const ctrl: input.Mods = .{ .ctrl = true };
+    const ctrl_shift: input.Mods = .{ .ctrl = true, .shift = true };
+    try testing.expect(fieldOffers(0x44, ctrl)); // ctrl+d: split
+    try testing.expect(fieldOffers(0x57, ctrl)); // ctrl+w: close
+    try testing.expect(fieldOffers(0x54, ctrl_shift)); // ctrl+shift+t
+    try testing.expect(fieldOffers(0x09, ctrl)); // ctrl+tab
+    try testing.expect(fieldOffers(0x31, .{ .alt = true })); // alt+1
+    // Typing and selection never leave.
+    try testing.expect(!fieldOffers(0x44, .{})); // 'd'
+    try testing.expect(!fieldOffers(0x44, .{ .shift = true })); // 'D'
+    try testing.expect(!fieldOffers(0x25, .{ .shift = true })); // shift+left
+    try testing.expect(!fieldOffers(0x2E, .{})); // Delete
+    // The field's own editing chords.
+    for ([_]u16{ 0x41, 0x43, 0x56, 0x58, 0x59, 0x5A, 0x25, 0x27, 0x08, 0x2E, 0x24, 0x23 }) |vk| {
+        try testing.expect(!fieldOffers(vk, ctrl));
+    }
+    for ([_]u16{ 0x25, 0x26, 0x27, 0x28, 0x24, 0x23 }) |vk| {
+        try testing.expect(!fieldOffers(vk, ctrl_shift));
+    }
+    try testing.expect(!fieldOffers(0x5A, ctrl_shift)); // redo
+    try testing.expect(!fieldOffers(0x2D, ctrl)); // ctrl+Insert
+    try testing.expect(!fieldOffers(0x08, .{ .alt = true })); // alt+Backspace
+    // Zoom is content-only; the pane chords are answered first.
+    try testing.expect(!fieldOffers(0xBB, ctrl));
+    try testing.expect(!fieldOffers(0x30, ctrl));
+    try testing.expect(!fieldOffers(0x52, ctrl)); // ctrl+r
+    try testing.expect(!fieldOffers(0x4C, ctrl)); // ctrl+l
+    try testing.expect(!fieldOffers(0x46, ctrl)); // ctrl+f
+}
+
 /// Whether an action has a native handler for a focused viewer in
 /// `Window.performViewerBindingAction` (T394). See `nativeTag`.
 ///

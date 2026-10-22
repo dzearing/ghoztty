@@ -6057,6 +6057,28 @@ fn chordState(self: *ViewerPane) window_chord.State {
 /// working.
 pub fn claimAccel(self: *ViewerPane, vk: u16, extended: bool, mods: inputpkg.Mods) bool {
     if (!self.claimsChord(vk, extended, mods)) return false;
+    return self.postAccel(vk, extended, mods);
+}
+
+/// A chord pressed in this pane's address or find field that the field's own
+/// routes (`handleEditKey`, `handleEditChord`) did not take: does the APP's
+/// keybind table want it (T2116)? Mac's menu key equivalents fire from a
+/// focused text field; an EDIT would swallow them. `viewer_accel.fieldOffers`
+/// keeps the field's editing chords and zoom with the field, and the rest goes
+/// through the same claim and delivery as a chord pressed at the page.
+pub fn claimFieldChord(self: *ViewerPane, vk: u16, lparam: isize) bool {
+    const mods = accelMods();
+    if (!viewer_accel.fieldOffers(vk, mods)) return false;
+    const extended = (lparam & (1 << 24)) != 0;
+    if (window_chord.classify(vk, mods, self.chordState()) == null and
+        !self.bindingChord(vk, extended, mods, false)) return false;
+    log.info("viewer field chord pane={s} vk=0x{x}", .{ self.paneId(), vk });
+    return self.postAccel(vk, extended, mods);
+}
+
+/// Hand a claimed chord to `WM_APP_VIEWER_ACCEL`, one queue hop away: the
+/// action may free this pane, and the caller is still inside its own handler.
+fn postAccel(self: *ViewerPane, vk: u16, extended: bool, mods: inputpkg.Mods) bool {
     const hwnd = self.hwnd orelse return false;
     const wparam: usize = @as(usize, vk) | (@as(usize, @intFromBool(extended)) << 16);
     const lparam: isize = @as(u16, @bitCast(mods));

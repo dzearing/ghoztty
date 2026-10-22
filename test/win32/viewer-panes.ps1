@@ -1194,14 +1194,14 @@ try {
     Assert ($null -ne $t161top -and $t161top -ne [IntPtr]::Zero) 'T161 window created'
 
     if ($t161ok -and $t161top -ne [IntPtr]::Zero) {
-        # Room for three panes at the stacked-panes engine's 300 DIP minimum
+        # Room for four panes at the stacked-panes engine's 300 DIP minimum
         # (T2108). A new +split takes no focus, so in the default 800 DIP
         # window the viewer is the pane that gets tucked, hidden behind its
         # strip, and no Chromium child is on show to find (T2134).
         $t161scale = [int](Get-TestWindowDpi -Window $t161top) / 96.0
         if ($t161scale -le 0) { $t161scale = 1.0 }
         [void](Set-TestWindowPos -Window $t161top -X 0 -Y 0 `
-            -Width (Get-TestChromeDip -Dip 1400 -Scale $t161scale) `
+            -Width (Get-TestChromeDip -Dip 1700 -Scale $t161scale) `
             -Height (Get-TestChromeDip -Dip 700 -Scale $t161scale))
         Start-Sleep -Milliseconds 600
 
@@ -1300,6 +1300,47 @@ try {
                 if (-not $split161) { Start-Sleep -Milliseconds 200 }
             }
             Assert $split161 "T2087 ctrl+d from a viewer split the window ($panes161 -> $(Get-PaneCount 't161') panes)"
+
+            # ctrl+d with the caret IN the address field splits too (T2116):
+            # Mac's menu key equivalents fire from a focused text field, and
+            # the field's own editing chords stay with it. ctrl+a is the
+            # control: End collapses the selection ctrl+l made, so a full
+            # selection afterwards can only have come from ctrl+a reaching
+            # the EDIT. EM_GETSEL packs start/end into the low/high words.
+            Focus-TestWindow -Window $t161top -Child $t161host | Out-Null
+            Start-Sleep -Milliseconds 400
+            Assert (Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers ctrl -Key L) 'T2116 ctrl+l injected at the viewer'
+            Assert (Wait-T161AddressFocused $t161top $t161host) 'T2116 ctrl+l focused the address field'
+            $t2116edit = [IntPtr](Get-TestFocusedWindow -Window $t161top)
+            $t2116len = ([string](Get-TestControlText -Control $t2116edit)).Length
+            Assert ($t2116len -gt 0) "T2116 the address field holds the page url ($t2116len chars)"
+            function Get-T2116Sel {
+                $r = [int64](Invoke-TestMessage -Window $t2116edit -Message 0x00B0)
+                return @(($r -band 0xFFFF), (($r -shr 16) -band 0xFFFF))
+            }
+            Assert (Send-TestKeys -Window $t161top -Target $t2116edit -Key End) 'T2116 End injected at the address field'
+            $sel = @(0, 0)
+            for ($t = 0; $t -lt 15; $t++) {
+                $sel = Get-T2116Sel
+                if ($sel[0] -eq $t2116len -and $sel[1] -eq $t2116len) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            Assert ($sel[0] -eq $t2116len -and $sel[1] -eq $t2116len) "T2116 CONTROL: End collapsed the selection to the caret (sel $($sel[0])..$($sel[1]))"
+            Assert (Send-TestKeys -Window $t161top -Target $t2116edit -Modifiers ctrl -Key A) 'T2116 ctrl+a injected at the address field'
+            for ($t = 0; $t -lt 15; $t++) {
+                $sel = Get-T2116Sel
+                if ($sel[0] -eq 0 -and $sel[1] -eq $t2116len) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            Assert ($sel[0] -eq 0 -and $sel[1] -eq $t2116len) "T2116 ctrl+a in the address field still selects the whole address (sel $($sel[0])..$($sel[1]) of $t2116len)"
+            $panes2116 = Get-PaneCount 't161'
+            Assert (Send-TestKeys -Window $t161top -Target $t2116edit -Modifiers ctrl -Key D) 'T2116 ctrl+d injected at the address field'
+            $split2116 = $false
+            for ($t = 0; $t -lt 25 -and -not $split2116; $t++) {
+                $split2116 = ((Get-PaneCount 't161') -eq ($panes2116 + 1))
+                if (-not $split2116) { Start-Sleep -Milliseconds 200 }
+            }
+            Assert $split2116 "T2116 ctrl+d from the address field split the window ($panes2116 -> $(Get-PaneCount 't161') panes)"
 
             Assert (-not ($app.Process -and $app.Process.HasExited)) 'T161 app alive after all viewer chords'
         }

@@ -2198,6 +2198,10 @@ pub fn run(self: *App) !void {
                 }
                 if (ViewerNavBar.owningEdit(msg.hwnd.?)) |nav| {
                     if (nav.handleEditChord(vk)) continue :loop;
+                    // Then the app's keybinds (T2116): ctrl+d splits from the
+                    // field as it does from the page, the way Mac's menu key
+                    // equivalents fire from a focused text field.
+                    if (nav.pane.claimFieldChord(vk, msg.lParam)) continue :loop;
                 }
                 // A viewer pane's find field (T1184): Enter/Shift-Enter step
                 // matches and Escape closes the card, none of which an EDIT
@@ -2207,6 +2211,7 @@ pub fn run(self: *App) !void {
                 if (ViewerFindBar.owningEdit(msg.hwnd.?)) |bar| {
                     if (bar.handleEditKey(vk)) continue :loop;
                     if (bar.handleEditChord(vk)) continue :loop;
+                    if (bar.pane.claimFieldChord(vk, msg.lParam)) continue :loop;
                 }
                 // Check if this edit is a tab rename edit
                 if (vk == w32.VK_RETURN or vk == w32.VK_ESCAPE) {
@@ -2278,11 +2283,14 @@ pub fn run(self: *App) !void {
         // address-bar alias) is the one such chord we claim; everything else
         // falls through so alt-menu access keeps working.
         if (msg.message == w32.WM_SYSKEYDOWN and msg.hwnd != null) {
+            const sys_vk: u16 = @intCast(msg.wParam & 0xFFFF);
             if (ViewerNavBar.owningEdit(msg.hwnd.?)) |nav| {
-                if (nav.handleEditChord(@intCast(msg.wParam & 0xFFFF))) continue :loop;
+                if (nav.handleEditChord(sys_vk)) continue :loop;
+                if (nav.pane.claimFieldChord(sys_vk, msg.lParam)) continue :loop;
             }
             if (ViewerFindBar.owningEdit(msg.hwnd.?)) |bar| {
-                if (bar.handleEditChord(@intCast(msg.wParam & 0xFFFF))) continue :loop;
+                if (bar.handleEditChord(sys_vk)) continue :loop;
+                if (bar.pane.claimFieldChord(sys_vk, msg.lParam)) continue :loop;
             }
         }
 
