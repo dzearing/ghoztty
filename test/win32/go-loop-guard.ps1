@@ -604,19 +604,39 @@ if ($ready) {
         # rate); the C-c and the +close below are what end it.
         Remove-Item $state -Force -ErrorAction SilentlyContinue
         Ghoz @('+send-keys', "--target=$($pane.id)", 'for /l %i in (1,1,99999999) do @echo busy %i', 'Enter') | Out-Null
-        Start-Sleep -Seconds 2
-        # And SAY whether the pane was producing, rather than inferring it from
-        # the verdict. Without this the arm cannot tell "the watchdog correctly
-        # left a busy pane alone" from "the producer died and the watchdog was
-        # wrong about a static one" - which is exactly the confusion that made
-        # the old red unreadable.
-        $bA = (Ghoz @('+read', "--name=$($pane.id)", '--lines=20')).Out
-        Start-Sleep -Seconds 3
-        $bB = (Ghoz @('+read', "--name=$($pane.id)", '--lines=20')).Out
-        Assert 'J3b the pane really is still producing (the arm below measures nothing otherwise)' ($bA -ne $bB)
-        $r = Dog-Run @('-GhozttyExe', $Exe, '-ProbeGapSeconds', 3)
-        Assert 'J4 a pane that is still producing output is not nudged' ($r.Out -match 'ACTION none')
-        Assert 'J5 and the watchdog says why' ($r.Out -match 'still producing output')
+        # Wait for the producer to be RUNNING rather than assuming two seconds
+        # is enough (T1174). On a loaded box - several harnesses and a build in
+        # flight - cmd had not started echoing inside that window, the pane read
+        # static, and J4/J5 went red over a watchdog that was right. Poll for
+        # the loop's own output; a pane that never gets going inside the budget
+        # is a box too slow to measure this on, so the arm reports SKIP (not
+        # measured) instead of FAIL (broken).
+        $busySeen = $false
+        for ($i = 0; $i -lt 60; $i++) {
+            $bA = (Ghoz @('+read', "--name=$($pane.id)", '--lines=20')).Out
+            if ($bA -match 'busy \d+') { $busySeen = $true; break }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $busySeen) {
+            "  SKIP J3b-J5 (the busy loop never produced output inside 30s; box too loaded to measure)"
+            $script:skipped++
+        } else {
+            # And SAY whether the pane was producing, rather than inferring it
+            # from the verdict. Without this the arm cannot tell "the watchdog
+            # correctly left a busy pane alone" from "the producer died and the
+            # watchdog was wrong about a static one" - which is exactly the
+            # confusion that made the old red unreadable. Polled for the same
+            # reason as above: a changed tail is the evidence, not the clock.
+            $bB = $bA
+            for ($i = 0; $i -lt 20 -and $bB -eq $bA; $i++) {
+                Start-Sleep -Milliseconds 500
+                $bB = (Ghoz @('+read', "--name=$($pane.id)", '--lines=20')).Out
+            }
+            Assert 'J3b the pane really is still producing (the arm below measures nothing otherwise)' ($bA -ne $bB)
+            $r = Dog-Run @('-GhozttyExe', $Exe, '-ProbeGapSeconds', 3)
+            Assert 'J4 a pane that is still producing output is not nudged' ($r.Out -match 'ACTION none')
+            Assert 'J5 and the watchdog says why' ($r.Out -match 'still producing output')
+        }
         Ghoz @('+send-keys', "--target=$($pane.id)", 'C-c') | Out-Null
         Ghoz @('+close', '--target=go-loop-live') | Out-Null
     }

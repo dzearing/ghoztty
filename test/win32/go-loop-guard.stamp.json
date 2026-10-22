@@ -1,13 +1,9 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-10-20T22:24:31-07:00",
-    "commit":  "e66b7a782",
+    "generated":  "2026-10-22T14:12:41-07:00",
+    "commit":  "601251486",
     "uncommitted":  [
-                        "scripts/go-loop-health.ps1",
-                        "scripts/go-loop-watchdog.ps1",
-                        "scripts/lib/UserAlert.ps1",
-                        "scripts/loop-session.ps1",
                         "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
@@ -24,6 +20,6 @@
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/loop-session.ps1":  "39189157a285514dc8e68c86a5f844d688463d1124c90e882623373045895ade",
                   "scripts/stamp-merge.ps1":  "9cac1de32cf4554fbc4070e374cbe163e5b34cf164564499b002c0b3b6a67f3a",
-                  "test/win32/go-loop-guard.ps1":  "a73c8de8707176fe469a7dca58bc85a791fca7ea8f2d6c09bb7586c1a296e4d0"
+                  "test/win32/go-loop-guard.ps1":  "e2a1604ab08b0364009309ab23c640e16443c3184423c2360cc7d8e0577f8509"
               }
 }
