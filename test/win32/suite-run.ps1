@@ -662,6 +662,27 @@ exit 0
         (((Get-Verdict $sN4 'j-garbled.ps1') -eq 'stall') -and ($rowN4.Count -eq 1) -and ([int]$rowN4[0].Timeout -eq 5)) `
         $(if ($rowN4.Count) { "timeout $($rowN4[0].Timeout)" } else { '(no row)' })
 
+    # T1166: ...and says so. Falling back was right; falling back SILENTLY made a
+    # lost declaration indistinguishable from none - agent-lineage-suites.ps1
+    # carried `# suite-timeout-sec 900` (no colon) and was capped at the global
+    # number with nothing anywhere naming it.
+    $listN15 = & powershell -NoProfile -ExecutionPolicy Bypass -File $Runner `
+        list -Repo $Fixture -Include 'j-garbled.ps1,i-slow.ps1' | Out-String
+    Check 'N15 list names a declaration that does not parse' `
+        ($listN15 -match "WARNING: timeout declaration does not parse \(line \d+: '# suite-timeout-sec: soon'") $listN15
+    Check 'N16 and only that one - a declaration that parsed carries no warning' `
+        (([regex]::Matches($listN15, 'WARNING:')).Count -eq 1) $listN15
+    $hdrN17 = & powershell -NoProfile -ExecutionPolicy Bypass -File $Runner `
+        run -Repo $Fixture -Include 'j-garbled.ps1' -OutDir (Join-Path $Fixture 'runN17') -TimeoutSec 5 -DryRun | Out-String
+    Check 'N17 the run header names it too' `
+        ($hdrN17 -match 'WARNING: j-garbled\.ps1 timeout declaration does not parse') $hdrN17
+    # The shipping suite: every script that tried to declare a cap has one.
+    $realList = & powershell -NoProfile -ExecutionPolicy Bypass -File $Runner `
+        list -Repo $Repo | Out-String
+    $realBad = @($realList -split "`r?`n" | Where-Object { $_ -match 'WARNING: timeout declaration' })
+    Check 'N18 no shipping test\win32 script carries an unparseable timeout declaration' `
+        ($realBad.Count -eq 0 -and $realList -match 'agent-lineage-suites\.ps1\s+\(declares 900s\)') ($realBad -join ' | ')
+
     # The real subject: soak.ps1 declares one, so the suite stops scoring it a
     # stall. Read from the SHIPPING script, not a fixture - a declaration this
     # harness proves in the abstract and the actual file has lost is the whole

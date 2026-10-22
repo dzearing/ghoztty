@@ -1,11 +1,12 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-22T12:40:24-07:00",
-    "commit":  "93cf763aa",
+    "generated":  "2026-10-22T13:16:14-07:00",
+    "commit":  "fc540f26e",
     "uncommitted":  [
-                        "scripts/guard-due.ps1",
-                        "scripts/parity-tasks.ps1"
+                        "scripts/lib/AcceptanceParallel.ps1",
+                        "scripts/lib/RunVerdict.ps1",
+                        "scripts/suite-run.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "de0387b596e8e31885fa64f769bc9c784b10f9acd938b785c17855ac6ccaac81",
@@ -44,7 +45,7 @@
                   "scripts/launch-upgrade.ps1":  "b40fbe903eface94ada0064617d4371c35459af628fa8c26e894fb2df12bff92",
                   "scripts/ledger-dupes.ps1":  "925bdaab83d54c0917554c09d98a48f3fb90e26c6e1c89be2d2570d6dbb224e2",
                   "scripts/lib/AcceptanceFresh.ps1":  "6cca87511a61fdad80d2a407552895a85edd2134a0e0426cd6fa0f37ad055f8b",
-                  "scripts/lib/AcceptanceParallel.ps1":  "d4a82e68eecc0a1b868a3ef32ff20a9b18ad30ff33daa27388732261acb390b2",
+                  "scripts/lib/AcceptanceParallel.ps1":  "9f730473709deed41b83534e0a12395658024bcd6872fb54c75869c148991528",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
                   "scripts/lib/CacheHeal.ps1":  "6cfed7ef0813d88fdbe457354757834a6e557c2172437f4d5022de79656f22f3",
                   "scripts/lib/CommitHeadroom.ps1":  "d0b9c51ed47e8c8fb890aaf75789ef824d5f6f4b4f906b942a6e9d0ad1873223",
@@ -65,7 +66,7 @@
                   "scripts/lib/MachineLock.ps1":  "f9e8529b949b37f2f85c50dd87f551556454e85a7425de4899594fd07c828cd7",
                   "scripts/lib/NativeArgv.ps1":  "49faad6cbe0907079281ac45a3e96f140fd6162f4c1729e82b145105137933b5",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
-                  "scripts/lib/RunVerdict.ps1":  "a23842bebc540f3c3e7fb0477bad5816d3720e9adf91bfedd74a9ad0b5d6da07",
+                  "scripts/lib/RunVerdict.ps1":  "ed6bb40ba6413b29c93c3dfffddd61dbe0fd36068ae92429442ae07dd4a7cb4e",
                   "scripts/lib/StampMerge.ps1":  "c1397eeccbf3039c88b7d576b1c1948db4370987ebf053e8b9b6f50a6bf76926",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/lib/WebViewLane.ps1":  "14ff86074a34aef73316a5c94032bf32bd42845d7e831170366034700898a579",
@@ -85,7 +86,7 @@
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",
                   "scripts/stamp-merge.ps1":  "9cac1de32cf4554fbc4070e374cbe163e5b34cf164564499b002c0b3b6a67f3a",
-                  "scripts/suite-run.ps1":  "a3d3fe27a24da50d510364295f68b1c2698a3e20212bd0b201b3d6f141d82c4a",
+                  "scripts/suite-run.ps1":  "37a35a2020e6a63ee95c9ecf64ebdb45e765fb5421c971281b632fd717ea9698",
                   "scripts/t470-ring-measure.ps1":  "427dc0cada150aadb214a007e32238f1d75d3751ad40a02260b325157672f143",
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
                   "scripts/task-dashboard.ps1":  "616fa636356bdfa1dc07aafe573f5aaf3b9a421ee6bbdc4c4404367845564fd7",

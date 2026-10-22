@@ -269,6 +269,7 @@ function Get-SuiteScript {
             Class    = $(if ($gui) { 'gui' } else { 'cli' })
             Lines    = ($text -split "`n").Count
             Declared = (Get-ScriptTimeout -Text $text)
+            TimeoutProblem = (Get-ScriptTimeoutProblem -Text $text)
         }
     }
 
@@ -815,6 +816,7 @@ if ($Action -eq 'list') {
     foreach ($r in $rows) {
         $note = $(if ($r.Declared -gt 0) { "  (declares $($r.Declared)s)" } else { '' })
         '{0,-4} {1}{2}' -f $r.Class, $r.Name, $note
+        if ($r.TimeoutProblem) { "     WARNING: $($r.TimeoutProblem)" }
     }
     $gui = @($rows | Where-Object { $_.Class -eq 'gui' }).Count
     ''
@@ -1115,6 +1117,10 @@ if ($declared.Count -gt 0) {
             "$($_.Name) ${cap}s$note"
         })
     "  per-script timeout: $($shown -join ', ')"
+}
+# T1166: a declaration that did not parse is named, not mistaken for none.
+foreach ($r in @($rows | Where-Object { $_.TimeoutProblem })) {
+    Write-Host "  WARNING: $($r.Name) $($r.TimeoutProblem)" -ForegroundColor Yellow
 }
 if ($Resume) { "  resuming: $($done.Count) already recorded" }
 ''

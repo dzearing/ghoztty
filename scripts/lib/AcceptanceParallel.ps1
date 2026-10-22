@@ -674,7 +674,11 @@ function Invoke-AcceptanceRun {
     foreach ($j in $Jobs) {
         $abs = Join-Path $Repo $j.Script
         $cls = Get-AcceptanceScriptClass -Path $abs -RepoLiteral $RepoLiteral
-        $declared = Get-ScriptTimeout -Text ([IO.File]::ReadAllText($abs))
+        $srcText = [IO.File]::ReadAllText($abs)
+        $declared = Get-ScriptTimeout -Text $srcText
+        # T1166: a declaration that did not parse is named, not mistaken for none.
+        $problem = Get-ScriptTimeoutProblem -Text $srcText
+        if ($problem) { Write-Host "  WARNING: $($j.Script) $problem" -ForegroundColor Yellow }
         $cap = $(if ($declared -gt 0) { $declared } else { $TimeoutSec })
         if ($MaxTimeoutSec -gt 0 -and $cap -gt $MaxTimeoutSec) { $cap = $MaxTimeoutSec }
         $item = [pscustomobject]@{

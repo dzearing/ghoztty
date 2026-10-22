@@ -199,6 +199,13 @@ try {
     Check 'A11 a timeout declared in a real comment counts (CRLF too); one inside a here-string does not' `
         ((Get-ScriptTimeout -Text $real) -eq 1200 -and (Get-ScriptTimeout -Text $hs) -eq 0) `
         ("real=$(Get-ScriptTimeout -Text $real) herestring=$(Get-ScriptTimeout -Text $hs)")
+    # T1166: and one that TRIED and did not parse is named, rather than read as
+    # no declaration - agent-lineage-suites.ps1 lost its 900s to a missing colon.
+    $typo = "# suite-timeout-sec 900`r`n'ALL PASS'`r`n"
+    $tp = Get-ScriptTimeoutProblem -Text $typo
+    Check 'A12 an unparseable declaration is reported; a good one, a here-string and silence are not' `
+        ($tp -match "line 1: '# suite-timeout-sec 900'" -and -not (Get-ScriptTimeoutProblem -Text $real) -and
+        -not (Get-ScriptTimeoutProblem -Text $hs) -and -not (Get-ScriptTimeoutProblem -Text "'ALL PASS'`n")) "problem=$tp"
 
     # ---- B: worker root ------------------------------------------------------------
     $w1 = Join-Path $wbase 'w1'; $w2 = Join-Path $wbase 'w2'

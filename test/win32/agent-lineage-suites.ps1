@@ -43,7 +43,7 @@
 #   powershell -NoProfile -File test\win32\agent-lineage-suites.ps1 -SkipSuites
 #
 # @lineage-safe - every `local-agent-debug` match is fixture text for arm A's pure naming checks; the lineage is cleared only (B1) to exercise a refusal that throws before any process is enumerated, and (after B, after C) so that C and each of D's two suites mint a PRIVATE lineage - the C bystander agent is launched under its own explicit `t691by<pid>` lineage, and session-open.ps1 / session-close.ps1 call Set-GhozttyTestAgentLineage at their top before launching anything
-# suite-timeout-sec 900
+# suite-timeout-sec: 900
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',

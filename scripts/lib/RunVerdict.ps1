@@ -119,3 +119,32 @@ function Get-ScriptTimeout {
     if ($v -le 0) { return 0 }
     return $v
 }
+
+<#
+Why a script that TRIED to declare a timeout did not get one, or '' when it
+either declared one that parsed or never tried (T1166).
+
+Get-ScriptTimeout's 0 means two different things - "declares nothing" and
+"declares something this reader cannot read" - and they used to be the same
+silence. soak.ps1 lost its 2400s to a CRLF rewrite and went back to a 600s kill
+scored `stall` with nothing saying why, and agent-lineage-suites.ps1 sat at the
+global cap for its whole life behind `# suite-timeout-sec 900` (no colon). An
+attempt is any line comment that OPENS with the key, spelled loosely (case,
+`_`, a missing `-sec`), so a typo is caught rather than read as no declaration.
+A block comment or a string that merely mentions the key is not an attempt -
+the same rule as the reader above.
+#>
+function Get-ScriptTimeoutProblem {
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    if ((Get-ScriptTimeout -Text $Text) -gt 0) { return '' }
+    $tokens = $null; $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$errors)
+    foreach ($t in $tokens) {
+        if ($t.Kind -ne [System.Management.Automation.Language.TokenKind]::Comment) { continue }
+        if ($t.Text -notmatch '(?i)^[ \t]*#[ \t]*suite[-_ ]?timeout') { continue }
+        $shown = $t.Text.Trim()
+        return "timeout declaration does not parse (line $($t.Extent.StartLineNumber): '$shown'; want '# suite-timeout-sec: <seconds>') - it gets the run's cap instead"
+    }
+    return ''
+}
