@@ -4,13 +4,15 @@
     depends on the host it ran under.
 
 .DESCRIPTION
-    Four sections:
+    Five sections:
 
       A. The BEHAVIOUR the rule exists for, measured live rather than quoted:
          a native command's stderr through `2>&1 | Out-String` arrives as a
          formatted ErrorRecord block whose size tracks the host's buffer
          width, while the same capture stringified per record arrives as the
-         command's own text at any width.
+         command's own text at any width. Needs a host at least 40 columns
+         wide; a narrower one (no real console) SKIPS this section by name
+         rather than scoring the host as a regression, and is not stamped.
 
       B. The analyzer (`lib\StderrCaptureAudit.ps1`) against fixtures, both
          directions: each host-dependent shape is named, and each of the two
@@ -23,6 +25,11 @@
 
       D. The regrowth story is WRITTEN DOWN: docs\claude\testing.md names the
          rule, so the harness audit has something to point at.
+
+      E. Section A's host gate, both directions (T1144): below its width
+         floor the formatter genuinely cannot render what A measures, and at
+         the floor it can, so the gate neither scores a narrow host red nor
+         skips one that could have answered.
 
     `-TeethCheck` proves the section-C assertion can fail: it injects a
     synthesized violator and requires the sweep to go red. Run it after any
@@ -81,6 +88,34 @@ if ($null -eq $git) {
 }
 $gitExe = $git.Source
 
+# T1144 - this section measures the FORMATTER, and the formatter writes to the
+# host's buffer width. Called from a host with no real console (a tool or CI
+# runner that redirects output) the width reads as 1, git's message is wrapped
+# a few characters a line, and A1/A2 scored FAILURE over a product nothing was
+# wrong with. Measured with `Out-String -Width`: every condition below holds
+# from width 20 and A1 breaks at 15, so the floor is twice the measured
+# minimum. A narrower host skips THIS section by name; B-D score the test tree,
+# not the host, and run regardless. Section E proves the floor both ways.
+#
+# The width is read off the formatter itself - where it wraps a 1000-character
+# information record - not off $Host.UI.RawUI: a runspace with no console has
+# no RawUI at all and still formats at a default 120, so the RawUI reading
+# skipped a host that could have answered.
+$script:T883MinWidth = 40
+function Get-T883HostWidth([int]$Width = 0) {
+    $rec = { Write-Host ('W' * 1000) }
+    $text = if ($Width -gt 0) { & $rec 6>&1 | Out-String -Width $Width } else { & $rec 6>&1 | Out-String }
+    [int](($text -split '\r?\n') | Measure-Object -Property Length -Maximum).Maximum
+}
+function Test-T883HostCanFormat([int]$Width) { $Width -ge $script:T883MinWidth }
+
+$hostWidth = Get-T883HostWidth
+$script:skippedA = 0
+if (-not (Test-T883HostCanFormat $hostWidth)) {
+    $script:skippedA += 8
+    Write-Host "  SKIP section A (8 assertions): this host's formatter renders at most $hostWidth columns, narrower than the $($script:T883MinWidth) columns the formatter needs to render what A measures - run it from a real console. B-D still score; the guard is not stamped."
+} else {
+
 $plain = (& $gitExe --nosuchflag 2>&1 | Out-String)
 $strung = (& $gitExe --nosuchflag 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
 
@@ -129,6 +164,8 @@ Assert 'A7 an information-stream capture is wrapped by the formatter' `
     ($infoPlain.TrimEnd() -match '\r?\n' -and $infoPlain -notmatch 'X{300} END')
 Assert 'A8 and survives whole once stringified' `
     ($infoStrung.TrimEnd() -notmatch '\r?\n' -and $infoStrung -match 'X{300} END')
+
+}  # end of the T1144 host-width gate
 
 # ===========================================================================
 Write-Host ''
@@ -235,17 +272,43 @@ $doc = if (Test-Path -LiteralPath $testingDoc) { Get-Content -LiteralPath $testi
 Assert 'D1 testing.md names the host-dependent capture rule' ($doc -match 'ForEach-Object \{ \$_\.ToString\(\) \}')
 Assert 'D2 and points at this harness by name' ($doc -match 'stderr-capture-audit')
 
+# ===========================================================================
+Write-Host ''
+Write-Host '== E: the section-A host gate, both directions (T1144)'
+# ===========================================================================
+
+# `Out-String -Width` drives the same formatter at a chosen width, so the floor
+# is checked against the real thing on any host, including one that skipped A.
+$narrow = (& $gitExe --nosuchflag 2>&1 | Out-String -Width 10)
+Assert 'E1 below the floor the formatter really cannot carry what A measures' `
+    ($narrow -notmatch 'unknown option')
+$atFloor = (& $gitExe --nosuchflag 2>&1 | Out-String -Width $script:T883MinWidth)
+$atFloorStrung = (& $gitExe --nosuchflag 2>&1 | ForEach-Object { $_.ToString() } |
+    Out-String -Width $script:T883MinWidth)
+Assert 'E2 at the floor it can, so the gate never skips a host that could answer' `
+    ($atFloor -match 'unknown option' -and $atFloor -match 'CategoryInfo' -and
+     $atFloor.Length -gt $atFloorStrung.Length)
+Assert 'E3 the gate skips a console-less host (width 1) and an unreadable one (0)' `
+    (-not (Test-T883HostCanFormat 1) -and -not (Test-T883HostCanFormat 0))
+Assert 'E4 and runs section A under an ordinary console' (Test-T883HostCanFormat 120)
+$w10 = Get-T883HostWidth -Width 10
+$w60 = Get-T883HostWidth -Width 60
+Assert "E5 the width probe reads the formatter's own wrap point (10 -> $w10, 60 -> $w60)" `
+    ($w10 -ge 9 -and $w10 -le 10 -and $w60 -ge 59 -and $w60 -le 60)
+
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can
 # answer "has this scan been run against the test tree as it now stands?". Never
 # under -TeethCheck: that mode's C1 scores a synthesized violator and never asks
-# the real sweep anything, so it must not vouch for the tree.
+# the real sweep anything, so it must not vouch for the tree. Nor when section A
+# was skipped (T1144): an unmeasured section is not a green one.
 Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
-if ($script:fail -eq 0 -and -not $TeethCheck) {
+if ($script:fail -eq 0 -and -not $TeethCheck -and $script:skippedA -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard stderr-capture -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''
-Write-TestVerdict -Label 'T883 ACCEPTANCE' -Pass $script:pass -Fail $script:fail -MinPass 18
+Write-TestVerdict -Label 'T883 ACCEPTANCE' -Pass $script:pass -Fail $script:fail `
+    -Skipped $script:skippedA -MinPass ($(if ($script:skippedA -gt 0) { 14 } else { 22 }))
