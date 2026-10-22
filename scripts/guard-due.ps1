@@ -729,6 +729,11 @@ $GuardTable = @(
             'test\win32\lib\BrowserLeak.ps1',
             'src\apprt\win32\ViewerPane.zig',
             'src\apprt\win32\viewer_content.zig',
+            # T2134: viewer placement lives in Window.zig, and the stacked-panes
+            # layout there tucked T161's viewer for a day with nothing re-running
+            # this; viewer_accel.zig is the T161 chord routing itself.
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\viewer_accel.zig',
             'src\apprt\win32\IpcHandlers.zig',
             'src\cli\list.zig',
             'src\cli\reload.zig'

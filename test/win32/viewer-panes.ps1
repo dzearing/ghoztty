@@ -471,7 +471,9 @@ try {
     # path) got all the way to the injection.
     $applog = ''
     for ($t = 0; $t -lt 25; $t++) {
-        $applog = (Get-Content $errlog -Raw -ErrorAction SilentlyContinue)
+        # One string, always: a read that came back as a collection made
+        # -match return an array, and Assert's [bool] cond threw (T2134).
+        $applog = (@(Get-Content $errlog -Raw -ErrorAction SilentlyContinue) -join "`n")
         if ($applog -match 'viewer file error') { break }
         Start-Sleep -Milliseconds 200
     }
@@ -1192,6 +1194,17 @@ try {
     Assert ($null -ne $t161top -and $t161top -ne [IntPtr]::Zero) 'T161 window created'
 
     if ($t161ok -and $t161top -ne [IntPtr]::Zero) {
+        # Room for three panes at the stacked-panes engine's 300 DIP minimum
+        # (T2108). A new +split takes no focus, so in the default 800 DIP
+        # window the viewer is the pane that gets tucked, hidden behind its
+        # strip, and no Chromium child is on show to find (T2134).
+        $t161scale = [int](Get-TestWindowDpi -Window $t161top) / 96.0
+        if ($t161scale -le 0) { $t161scale = 1.0 }
+        [void](Set-TestWindowPos -Window $t161top -X 0 -Y 0 `
+            -Width (Get-TestChromeDip -Dip 1400 -Scale $t161scale) `
+            -Height (Get-TestChromeDip -Dip 700 -Scale $t161scale))
+        Start-Sleep -Milliseconds 600
+
         # POSITIVE CONTROL: ctrl+d on the TERMINAL is still the global
         # split-right. Proves chord delivery works before any negative below.
         Focus-TestWindow -Window $t161top | Out-Null
@@ -1223,6 +1236,14 @@ try {
                 if ($widget.Count -ge 1) { $t161chrome = [IntPtr][int64]$widget[0].Hwnd; $t161host = [IntPtr][int64]$h.Hwnd }
             }
             if ($t161chrome -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 200 }
+        }
+        if ($t161chrome -eq [IntPtr]::Zero) {
+            # Say whether the viewer was tucked (hidden) or merely empty.
+            foreach ($h in @(Get-TestChildWindows -Window $t161top -Class '*')) {
+                if ($h.Class -in 'GhozttyViewer', 'GhozttyTerminal') {
+                    Write-Host ("  (T161 {0} visible={1} {2}x{3})" -f $h.Class, $h.Visible, $h.Width, $h.Height)
+                }
+            }
         }
         Assert ($t161chrome -ne [IntPtr]::Zero) 'T161 found the Chromium input child under the viewer host'
 

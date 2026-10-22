@@ -363,14 +363,20 @@ try {
     $script:CLICK_PRODUCER_PATTERN = '^__no_producer__$'
     $blind = Get-ClickCoordSweep -Roots $roots -Context $blindCtx -Repo $Repo
     $blindSites = $script:ClickCoordSweepSites
+    $blindForwarded = $script:ClickCoordSweepForwarded
 } finally {
     $script:CLICK_ORIGIN_MEMBERS = $saveOrigin
     $script:CLICK_PRODUCER_PATTERN = $savePattern
 }
 $blindFailed = @($blind | Where-Object { $_.Kind -in @('no-evidence', 'block-param') }).Count
-if ($blindSites -gt 0) {
-    $ratio = [math]::Round(100.0 * $blindFailed / $blindSites)
-    Assert "E1 blind, $blindFailed of $blindSites coordinate argument(s) fail ($ratio%; the rest sit inside wrappers)" ($ratio -ge 80)
+# A site inside a wrapper's body is judged at the wrapper's callers, so it
+# never fails itself and is not in the denominator. Counting it held a scoped
+# sweep to a whole-tree share: pane-stack-strip.ps1 alone, 6 of its 20 sites
+# in one wrapper, read 70% blind with every judged site failing (T2134).
+$blindJudged = $blindSites - $blindForwarded
+if ($blindJudged -gt 0) {
+    $ratio = [math]::Round(100.0 * $blindFailed / $blindJudged)
+    Assert "E1 blind, $blindFailed of $blindJudged judged coordinate argument(s) fail ($ratio%; $blindForwarded more sit inside wrappers)" ($ratio -ge 80)
 } elseif ($scope.Scoped) {
     Write-Host '      (the changed scripts click nothing - nothing to blind)'
     Assert 'E1 blind, the changed scripts still judge no site' ($sweepSites -eq 0)

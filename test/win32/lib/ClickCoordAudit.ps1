@@ -554,6 +554,7 @@ function Get-ClickCoordFindings {
     if ($null -eq $Context) { $Context = New-ClickCoordContext }
     $lines = @($Text)
     $script:ClickCoordLastSites = 0
+    $script:ClickCoordLastForwarded = 0
     $script:ClickCoordLastWrappers = @()
     $sinks = Get-ClickCoordBuiltinSinks
     foreach ($k in $Context.Sinks.Keys) { $sinks[$k] = $Context.Sinks[$k] }
@@ -573,6 +574,7 @@ function Get-ClickCoordFindings {
     $index = New-ClickFileIndex $ast $ScreenVars
     $table = Get-ClickSinkTable $index $sinks $Context
     $sites = 0
+    $forwardedSites = 0
     foreach ($sk in $table.Keys) {
         if (-not $index.Calls.ContainsKey($sk)) { continue }
         $sink = $table[$sk]
@@ -589,7 +591,7 @@ function Get-ClickCoordFindings {
                     $fname, $pname = $fp.Split('|')
                     if ($table.ContainsKey($fname) -and @($table[$fname].Coords | Where-Object { $_ -ieq $pname }).Count -gt 0) { $forwarded = $true }
                 }
-                if ($forwarded) { continue }
+                if ($forwarded) { $forwardedSites++; continue }
                 $ln = $c.Extent.StartLineNumber
                 if (Test-ClickCoordExempt $lines $ln) { continue }
                 $kind = 'no-evidence'
@@ -603,6 +605,8 @@ function Get-ClickCoordFindings {
     }
     if ($null -ne $ScreenVarHits) { foreach ($k in $index.ScreenVarHits.Keys) { $ScreenVarHits[$k] = $true } }
     $script:ClickCoordLastSites = $sites
+    # Sites inside a wrapper's body, judged at the wrapper's callers instead.
+    $script:ClickCoordLastForwarded = $forwardedSites
     $script:ClickCoordLastWrappers = @($table.Keys | Where-Object { -not $sinks.ContainsKey($_) } | ForEach-Object { $table[$_].Name })
     return , @($out.ToArray() | Sort-Object Line, Param)
 }
@@ -659,6 +663,7 @@ function Get-ClickCoordSweep {
     )
     $all = New-Object System.Collections.ArrayList
     $sites = 0
+    $forwarded = 0
     $wrappers = New-Object System.Collections.ArrayList
     $files = New-Object System.Collections.ArrayList
     foreach ($r in $Roots) {
@@ -674,11 +679,13 @@ function Get-ClickCoordSweep {
         $text = [System.IO.File]::ReadAllLines($file.FullName)
         foreach ($x in (Get-ClickCoordFindings -Path $file.FullName -Text $text -Context $Context -ScreenVars $sv -ScreenVarHits $hits)) { [void]$all.Add($x) }
         $sites += $script:ClickCoordLastSites
+        $forwarded += $script:ClickCoordLastForwarded
         foreach ($w in @($script:ClickCoordLastWrappers)) { [void]$wrappers.Add("$rel|$w") }
         if ($null -ne $ScreenVarHits) { foreach ($k in $hits.Keys) { $ScreenVarHits["$rel|$k"] = $true } }
     }
     # What the sweep read, for the acceptance's scope assertions.
     $script:ClickCoordSweepSites = $sites
+    $script:ClickCoordSweepForwarded = $forwarded
     $script:ClickCoordSweepFiles = $files.Count
     $script:ClickCoordSweepWrappers = $wrappers.ToArray()
     return , $all.ToArray()
