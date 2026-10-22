@@ -4266,6 +4266,20 @@ fn toDropRect(r: w32.RECT, origin: w32.POINT) pane_drop.Rect {
 /// rearrange header and by any sticky banner, and a drop target is the whole
 /// slot, header included. Returns the number written.
 fn collectPaneSlots(self: *Window, out: []PaneSlot) usize {
+    return self.collectSlots(out, false);
+}
+
+/// `collectPaneSlots` plus every tucked card's STRIP, for the drop resolver
+/// alone (T2142, Mac `PaneDragSession.candidate`): a tucked pane shows only its
+/// strip, and that is what a drop can land on - a pane dropped on the middle
+/// of it swaps in for it and stays folded there. Strips come after the panes on
+/// show, and never overlap them. Everything else that walks the slots (the
+/// grab handle, the headers) is about panes on show and keeps skipping them.
+fn collectDropSlots(self: *Window, out: []PaneSlot) usize {
+    return self.collectSlots(out, true);
+}
+
+fn collectSlots(self: *Window, out: []PaneSlot, strips: bool) usize {
     if (self.tab_count == 0) return 0;
     if (self.tab_hero_active[self.active_tab]) return 0;
     const tree = self.tab_trees[self.active_tab];
@@ -4294,6 +4308,17 @@ fn collectPaneSlots(self: *Window, out: []PaneSlot) usize {
         if (p.is_tucked) continue;
         // A sliding card's desk card goes with it (T2102).
         out[n] = .{ .view = entry.view, .rect = winRect(self.stackSlideRect(id) orelse p.rect) };
+        n += 1;
+    }
+    if (!strips) return n;
+    var tucked = tree.iterator();
+    while (tucked.next()) |entry| {
+        if (n >= out.len) break;
+        if (pane_stash.isStashed(entry.view)) continue;
+        const p = grid.placement(pane_stack_grid.viewId(entry.view)) orelse continue;
+        if (!p.is_tucked) continue;
+        const tab = p.tab orelse continue;
+        out[n] = .{ .view = entry.view, .rect = winRect(tab) };
         n += 1;
     }
     return n;
@@ -4637,7 +4662,7 @@ fn dropCandidateFor(
     stash_rows: []pane_drop.Rect,
 ) ?pane_drop.Candidate {
     if (win.hwnd == null) return null;
-    const n = win.collectPaneSlots(slots);
+    const n = win.collectDropSlots(slots);
     const origin = win.clientOrigin();
     for (slots[0..n], 0..) |slot, i| {
         rects[i] = .{ .id = slot.view.paneId(), .rect = toDropRect(slot.rect, origin) };
@@ -5255,6 +5280,8 @@ fn commitRearrangeDrop(
     }
 
     const tree = &self.tab_trees[source_tab];
+    // The pane a swap traded places with (T2142).
+    var swapped_with: ?*PaneView = null;
     const new_tree: SplitTree(PaneView) = switch (drop) {
         .split => |sp| blk: {
             const other = self.paneById(source_tab, &sp.pane) orelse return;
@@ -5275,10 +5302,13 @@ fn commitRearrangeDrop(
             const other = self.paneById(source_tab, &sp.pane) orelse return;
             const other_handle = self.findHandle(source_tab, other) orelse return;
             if (other_handle == at) return;
-            break :blk tree.swap(alloc, at, other_handle) catch |err| {
+            const swapped = tree.swap(alloc, at, other_handle) catch |err| {
                 log.err("rearrange swap failed: {}", .{err});
                 return;
             };
+            self.noteStackSwap(view, other);
+            swapped_with = other;
+            break :blk swapped;
         },
         .top_level => |sp| blk: {
             // A window with one pane has no top level to insert at: the pane
@@ -5316,8 +5346,28 @@ fn commitRearrangeDrop(
     self.tab_trees[source_tab] = new_tree;
     old_tree.deinit();
 
-    self.tab_active_pane[source_tab] = view;
-    self.finishRearrangeDrop(view);
+    // Dropped in a strip's place, the pane is folded there, and the caret goes
+    // to the pane that came out of the strip: focusing the dragged pane would
+    // bring it straight back out (Mac `PaneMoveCoordinator.swap`).
+    const focus = if (swapped_with) |other|
+        (if (self.isStackMinimized(source_tab, view)) other else view)
+    else
+        view;
+    if (focus != view) log.info("pane drop swapped into a strip's place; still folded", .{});
+    self.tab_active_pane[source_tab] = focus;
+    self.finishRearrangeDropFocusing(view, focus);
+}
+
+/// Two panes are about to trade places in this window's trees (a rearrange
+/// swap, T2142): a collapsed row keeps its shape with the other pane in it,
+/// wherever that came from (`PaneStackState.swap`, Mac
+/// `PaneMoveCoordinator.swap`). Called once the swapped tree is built and
+/// BEFORE it is installed, so the rows noted first are the ones the swap is
+/// measured from, and the next layout sees the trade as already made.
+fn noteStackSwap(self: *Window, a: *PaneView, b: *PaneView) void {
+    self.noteStackRows();
+    self.stackState().swap(pane_stack_grid.viewId(a), pane_stack_grid.viewId(b)) catch |err|
+        log.warn("stacked rows not carried over a swap: {}", .{err});
 }
 
 /// Stash the dragged pane in a pane sidebar, at `index` in its stash (T1844,
@@ -5508,6 +5558,7 @@ fn commitCrossTabDrop(
 
     var new_src: SplitTree(PaneView) = undefined;
     var new_dst: SplitTree(PaneView) = undefined;
+    var swapped = false;
 
     switch (drop) {
         .split => |sp| {
@@ -5536,6 +5587,9 @@ fn commitCrossTabDrop(
             };
             new_src = r.a;
             new_dst = r.b;
+            // One stack state serves every tab of the window (T2142).
+            self.noteStackSwap(view, other);
+            swapped = true;
         },
         .top_level => |sp| {
             var leaf: SplitTree(PaneView) = SplitTree(PaneView).init(alloc, view) catch |err| {
@@ -5570,8 +5624,15 @@ fn commitCrossTabDrop(
     old_dst.deinit();
 
     // A stash drop (T1844) stashes the pane where it landed, and the tab
-    // keeps the pane it had in front.
-    if (stash_at) |i| pane_stash.markAt(self.tab_trees[dest_tab], view, i) else self.tab_active_pane[dest_tab] = view;
+    // keeps the pane it had in front. So does a swap into a strip's place
+    // (T2142): the pane is folded there, and the tab's caret stays where it is
+    // (Mac's cross-controller swap, `focus: !minimized`).
+    const folded = swapped and self.isStackMinimized(dest_tab, view);
+    if (stash_at) |i| {
+        pane_stash.markAt(self.tab_trees[dest_tab], view, i);
+    } else if (!folded) {
+        self.tab_active_pane[dest_tab] = view;
+    }
 
     // The source tab may have just lost its last pane - that is what carrying
     // a tab's only pane into another tab MEANS, and the empty slot has to go.
@@ -5588,7 +5649,14 @@ fn commitCrossTabDrop(
         // over the pane that replaced it until the next tab switch.
         if (source_tab != self.active_tab) self.setTabSurfacesVisible(source_tab, false);
     }
-    if (stash_at != null) self.finishStashDrop() else self.finishRearrangeDrop(view);
+    if (stash_at != null) {
+        self.finishStashDrop();
+    } else if (folded) {
+        log.info("pane drop swapped into a strip's place in another tab; still folded", .{});
+        self.finishRearrangeDropFocusing(view, self.tab_active_pane[dest_tab]);
+    } else {
+        self.finishRearrangeDrop(view);
+    }
 }
 
 /// Move a live pane into ANOTHER top-level window (T1538).
@@ -5670,6 +5738,10 @@ fn commitCrossWindowDrop(
             new_src = r.a;
             new_dst = r.b;
             swapped_in = other;
+            // Each window's collapsed rows keep their shape with the other
+            // pane in them (T2142, Mac swaps both controllers' states).
+            self.noteStackSwap(view, other);
+            dest.noteStackSwap(view, other);
         },
         .top_level => |sp| {
             var leaf: SplitTree(PaneView) = SplitTree(PaneView).init(alloc, view) catch |err| {
@@ -5706,10 +5778,24 @@ fn commitCrossWindowDrop(
     if (swapped_in) |other| adoptPane(other, self);
 
     // A stash drop (T1844): stashed where it landed, behind the panes the
-    // window already had in front.
-    if (stash_at) |i| pane_stash.markAt(dest.tab_trees[dest_tab], view, i) else dest.tab_active_pane[dest_tab] = view;
+    // window already had in front. A swap into a strip's place (T2142) leaves
+    // the pane folded there, and the destination's caret where it is (Mac
+    // `focus: !minimized`).
+    const folded = swapped_in != null and dest.isStackMinimized(dest_tab, view);
+    if (stash_at) |i| {
+        pane_stash.markAt(dest.tab_trees[dest_tab], view, i);
+    } else if (!folded) {
+        dest.tab_active_pane[dest_tab] = view;
+    }
     self.collapseAfterRelocation(source_tab, swapped_in orelse view);
-    if (stash_at != null) dest.finishStashDrop() else dest.finishRearrangeDrop(view);
+    if (stash_at != null) {
+        dest.finishStashDrop();
+    } else if (folded) {
+        log.info("pane drop swapped into a strip's place in another window; still folded", .{});
+        dest.finishRearrangeDropFocusing(view, dest.tab_active_pane[dest_tab]);
+    } else {
+        dest.finishRearrangeDrop(view);
+    }
     dest.raiseForDrop();
 }
 
@@ -5933,6 +6019,13 @@ fn firstLeaf(self: *Window, tab: usize) ?*PaneView {
 /// The shared tail of every rearrange commit: re-lay the window out, persist
 /// it, and put the keyboard back on the pane the user was carrying.
 fn finishRearrangeDrop(self: *Window, view: *PaneView) void {
+    self.finishRearrangeDropFocusing(view, view);
+}
+
+/// `finishRearrangeDrop`, with the caret going to `focus` rather than to the
+/// pane that moved - a pane swapped into a strip's place stays folded, and
+/// focusing it would bring it back out (T2142).
+fn finishRearrangeDropFocusing(self: *Window, view: *PaneView, focus: *PaneView) void {
     // Placed anywhere but the stash, a stashed pane is restored in the same
     // commit that placed it (T1844, Mac's `PaneMoveCoordinator.apply` rule),
     // so a restore-by-drag is one step.
@@ -5940,7 +6033,7 @@ fn finishRearrangeDrop(self: *Window, view: *PaneView) void {
     self.layoutSplits();
     self.app.markLayoutDirty(); // T110: a rearranged layout must survive restore
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
-    if (view.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
+    if (focus.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
 }
 
 fn showDropPreview(self: *Window, hl: drop_highlight.Highlight, over_other_window: bool) void {

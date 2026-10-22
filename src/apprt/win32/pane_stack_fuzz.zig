@@ -22,8 +22,8 @@
 //! `noteFocus` / `noteStacks` at every layout, in that order. Where the two
 //! controllers differ, this follows the win32 one: a close hands the caret to
 //! the closed pane's neighbour, an undo focuses the pane it brings back unless
-//! it comes back as a strip, and a swap of two panes on show leaves the state
-//! alone (a strip is not a swap target on Windows yet - T2128). A divider drag
+//! it comes back as a strip, and a swap - with a pane on show or a strip
+//! (T2142) - trades the two in the state before the tree changes. A divider drag
 //! that does not squeeze its row moves no ratio here: the window would, and a
 //! ratio decides nothing about which panes are strips.
 //!
@@ -689,11 +689,13 @@ fn runSeed(gpa: Allocator, seed: u64, verbose: bool) Fail!void {
                     return f.fail("undoing the close of {d} did not bring the row back: {any} -> {any}", .{ pane.id, before, after });
             },
             7 => {
-                // Swap two panes on show of one row (a rearrange drop on the
-                // center of a pane).
+                // Swap two panes of one row, on show or strips (a rearrange
+                // drop on the center of a pane, or of a strip - T2142). The
+                // state trades them first, as `Window.noteStackSwap` does
+                // before the swapped tree is installed.
                 var choices: std.ArrayListUnmanaged([2]Id) = .empty;
                 for (rows_before) |row| for (row, 0..) |x, i| for (row[i + 1 ..]) |y| {
-                    if (x.len != 1 or y.len != 1 or has(before, x[0]) or has(before, y[0])) continue;
+                    if (x.len != 1 or y.len != 1) continue;
                     try choices.append(a, .{ x[0], y[0] });
                 };
                 if (choices.items.len == 0) continue;
@@ -701,12 +703,22 @@ fn runSeed(gpa: Allocator, seed: u64, verbose: bool) Fail!void {
                 const first = rng.next() % 2;
                 const dragged = f.viewById(pair[first]).?;
                 const other = f.viewById(pair[1 - first]).?;
-                f.replaceTree(try f.tree.swap(gpa, f.handleOf(dragged).?, f.handleOf(other).?));
-                try f.focus(dragged);
+                const swapped = try f.tree.swap(gpa, f.handleOf(dragged).?, f.handleOf(other).?);
+                try f.state.swap(pair[first], pair[1 - first]);
+                f.replaceTree(swapped);
+                // The pane dragged takes focus where it lands on show; dropped
+                // into a strip's place it stays a strip, and the pane that
+                // came out of the strip takes focus instead.
+                const minimized = try f.tucked(a);
+                if (!has(minimized, dragged.id)) {
+                    try f.focus(dragged);
+                } else if (!has(minimized, other.id)) {
+                    try f.focus(other);
+                } else try f.relayout();
                 try f.note("swap {d} {d}", .{ dragged.id, other.id });
                 const after = try f.tucked(a);
-                if (!std.mem.eql(Id, after, before))
-                    return f.fail("a swap of two panes on show changed the strips: {any} -> {any}", .{ before, after });
+                if (after.len != before.len)
+                    return f.fail("a swap changed how many panes are strips: {any} -> {any}", .{ before, after });
             },
             8 => {
                 // Bring a stashed pane back, focused or not.

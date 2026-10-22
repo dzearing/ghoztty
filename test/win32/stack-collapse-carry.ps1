@@ -18,6 +18,10 @@
 #   C) ctrl+shift+z: s1 is back on show and every pane's window is where it
 #      was before the close, strips included
 #   D) +split P right: the new pane is on show and s2, s3, s4 are still strips
+#   E) T2142: P, on show, dragged by its rearrange header onto the middle of
+#      s2's strip swaps with it and stays folded there: P and s2 trade tree
+#      places, P is a strip, s2 is on show and has the caret, and as many
+#      panes are strips as before (Mac `aPaneDroppedOnAStripTakesItsPlace`)
 #
 # -NegativeControl inverts claim B to "a strip came on show when s1 closed" -
 # the answer before T2083, when a close re-laid the row out from scratch - and
@@ -63,7 +67,9 @@ function Stop-RepoInstances { [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700) }
 
 # A long undo, so a slow box cannot run it out between B and C.
 $appArgs = @('--config-default-files=false', '--session-persistence=false', '--undo-timeout=60s',
-    "--macos-pane-style=$PaneStyle")
+    "--macos-pane-style=$PaneStyle",
+    # E drags a pane on show by its rearrange header (T1531's chord).
+    '--keybind=ctrl+shift+f9=toggle_rearrange_mode')
 
 function Px([double]$Dip) { Get-TestChromeDip -Dip $Dip -Scale $script:scale }
 
@@ -323,6 +329,45 @@ try {
     Assert ($still.Count -eq 3) "D: s2, s3, s4 are still strips after the split ($($tuckedD -join ','))"
     $fD = Focused-Pane-Name
     Assert ($shownD -contains $fD) "D: the caret is on a pane on show ('$fD')"
+
+    # ---- E: drop a pane on show onto a strip ---------------------------------------
+    Say '== E: drag P by its rearrange header onto the middle of s2''s strip'
+    $hF = [IntPtr](Get-TestFocusedWindow -Window $top)
+    if (-not (Send-TestKeys -Window $top -Target $hF -Modifiers ctrl, shift -Key F9)) {
+        Write-TestAssertedNothing -Reason 'the rearrange-mode chord was not delivered'
+    }
+    Start-Sleep -Milliseconds 1200
+    $orderE = @(Get-Leaves | ForEach-Object Name)
+    $tuckedE0 = @(Get-TuckedNames $top)
+    $mE = Get-Named $top
+    $pE = $mE['P']; $s2E = $mE['s2']
+    if (-not $pE.Visible -or $s2E.Visible) { Write-TestAssertedNothing -Reason "E needs P on show and s2 a strip (P visible=$($pE.Visible), s2 visible=$($s2E.Visible))" }
+    # The header band sits directly above the pane's own window (T1530); a
+    # strip is the leading 36 DIP of its tucked card (T2109).
+    $gx = $pE.Left + [int](($pE.Right - $pE.Left) / 3)
+    $gy = $pE.Top - [int]((Px 24) / 2)
+    $sx = $s2E.Left + [int](Px 18)
+    $sy = [int](($s2E.Top + $s2E.Bottom) / 2)
+    $expectE = @($orderE | ForEach-Object { if ($_ -eq 'P') { 's2' } elseif ($_ -eq 's2') { 'P' } else { $_ } })
+    Say ("      tree {0}; header ({1},{2}) -> strip ({3},{4}); expect {5}" -f ($orderE -join ','), $gx, $gy, $sx, $sy, ($expectE -join ','))
+    [void](Send-TestMouse -Window $top -Target $top -X $gx -Y $gy -Action down -HoldMs 0)
+    Start-Sleep -Milliseconds 120
+    for ($s = 1; $s -le 8; $s++) {
+        [void](Send-TestMouse -Window $top -Target $top -X ([int]($gx + ($sx - $gx) * $s / 8)) -Y ([int]($gy + ($sy - $gy) * $s / 8)) -Action move -HoldMs 0)
+        Start-Sleep -Milliseconds 60
+    }
+    Start-Sleep -Milliseconds 150
+    [void](Send-TestMouse -Window $top -Target $top -X $sx -Y $sy -Action up -HoldMs 0)
+    Start-Sleep -Milliseconds 1200
+    $orderE2 = @(Get-Leaves | ForEach-Object Name)
+    Assert (($orderE2 -join ',') -eq ($expectE -join ',')) "E: P and s2 traded places (tree $($orderE2 -join ','))"
+    $tuckedE = @(Get-TuckedNames $top)
+    Say ("      strips: {0}; panes: {1}" -f ($tuckedE -join ', '), (Format-Cols (Get-Panes $top)))
+    Assert ($tuckedE -contains 'P') "E: P is folded into s2's place ($($tuckedE -join ','))"
+    Assert ($tuckedE -notcontains 's2') "E: s2, which was the strip, is on show ($($tuckedE -join ','))"
+    Assert ($tuckedE.Count -eq $tuckedE0.Count) "E: as many strips as before ($($tuckedE.Count) vs $($tuckedE0.Count))"
+    $fE = Wait-Focused 's2'
+    Assert ($fE -eq 's2') "E: the pane that came out of the strip has the caret ('$fE')"
 
     Complete-TestBody
 } catch {
