@@ -8149,34 +8149,26 @@ fn flatLine(self: *const Window, gutter: w32.RECT, d: pane_stack_layout.Directio
 /// lands on (`Grid.stripAt`). The name is read on every paint, so a
 /// `+set-banner` (whose layout pass repaints here) or a title change
 /// (`onPaneTitleChanged`) shows at once.
+///
+/// In the elevated style the band itself is the desk's to paint
+/// (`paintPaneDesk`, T2121), so its leading corners can be the card's
+/// antialiased curve; only the name is laid on here.
 fn paintStackStrips(self: *Window, hdc: w32.HDC) void {
-    if (self.tab_count == 0) return;
-    if (self.tab_hero_active[self.active_tab]) return;
-    const tree = self.tab_trees[self.active_tab];
-    if (tree.zoomed != null) return;
-    var grid = self.stackGrid() orelse return;
-    defer grid.deinit();
-    var ids: [MAX_DRAG_NODES]pane_stack_grid.Id = undefined;
-    var n: usize = 0;
-    var it = tree.iterator();
-    while (it.next()) |entry| {
-        if (n >= ids.len) break;
-        if (pane_stash.isStashed(entry.view)) continue;
-        const id = pane_stack_grid.viewId(entry.view);
-        const p = grid.placement(id) orelse continue;
-        if (p.tab == null) continue;
-        ids[n] = id;
-        n += 1;
-    }
+    var strips: [MAX_DRAG_NODES]TuckedStrip = undefined;
+    const n = self.tuckedStrips(&strips);
     if (n == 0) return;
-    pane_stack_layout.paintOrder(ids[0..n], &grid.result);
 
-    const cfg_bg = self.app.config.background;
-    const bg: color_math.Rgb = .{ .r = cfg_bg.r, .g = cfg_bg.g, .b = cfg_bg.b };
+    const bg = self.stripBackground();
     const light = color_math.isLight(bg);
-    const strip_rgb = pane_stack_strip.stripRgb(bg);
+    const elevated = self.paneStyle() == .elevated;
+    // The hovered strip's card has a lighter scrim (T2121; Mac
+    // `PaneCardView.updateScrim`), which the strip lightens with.
+    const strip_rgb = pane_stack_strip.stripRgb(bg, false);
+    const hover_rgb = pane_stack_strip.stripRgb(bg, true);
     const brush = w32.CreateSolidBrush(w32.RGB(strip_rgb.r, strip_rgb.g, strip_rgb.b)) orelse return;
     defer _ = w32.DeleteObject(brush);
+    const hover_brush = w32.CreateSolidBrush(w32.RGB(hover_rgb.r, hover_rgb.g, hover_rgb.b)) orelse return;
+    defer _ = w32.DeleteObject(hover_brush);
     // One face turned to read down a tall strip, one level for a short one.
     const across = self.stripFont(0);
     defer if (across) |f| {
@@ -8189,18 +8181,66 @@ fn paintStackStrips(self: *Window, hdc: w32.HDC) void {
     const old_mode = w32.SetBkMode(hdc, w32.TRANSPARENT);
     defer _ = w32.SetBkMode(hdc, old_mode);
 
+    for (strips[0..n]) |s| {
+        const hovered = if (self.strip_hover) |h| h == s.view else false;
+        if (!elevated) {
+            var band: w32.RECT = .{ .left = s.tab.left, .top = s.tab.top, .right = s.tab.right, .bottom = s.tab.bottom };
+            _ = w32.FillRect(hdc, &band, if (hovered) hover_brush else brush);
+        }
+        const ink = pane_stack_strip.inkRgb(if (hovered) hover_rgb else strip_rgb, light, hovered);
+        const font = (if (s.axis == .horizontal) down else across) orelse continue;
+        self.paintStripLabel(hdc, s.view, s.tab, s.axis, font, ink);
+    }
+}
+
+/// A tucked pane's strip, in window pixels.
+const TuckedStrip = struct {
+    view: *PaneView,
+    tab: pane_stack_strip.Rect,
+    axis: pane_stack_layout.Direction,
+};
+
+/// Every tucked pane's strip in the active tab, bottom first in the engine's
+/// paint order (T2109). None in a hero tab or a zoomed one.
+fn tuckedStrips(self: *Window, out: []TuckedStrip) usize {
+    if (self.tab_count == 0) return 0;
+    if (self.tab_hero_active[self.active_tab]) return 0;
+    const tree = self.tab_trees[self.active_tab];
+    if (tree.zoomed != null) return 0;
+    var grid = self.stackGrid() orelse return 0;
+    defer grid.deinit();
+    var ids: [MAX_DRAG_NODES]pane_stack_grid.Id = undefined;
+    var n: usize = 0;
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (n >= ids.len or n >= out.len) break;
+        if (pane_stash.isStashed(entry.view)) continue;
+        const id = pane_stack_grid.viewId(entry.view);
+        const p = grid.placement(id) orelse continue;
+        if (p.tab == null) continue;
+        ids[n] = id;
+        n += 1;
+    }
+    if (n == 0) return 0;
+    pane_stack_layout.paintOrder(ids[0..n], &grid.result);
+    var m: usize = 0;
     for (ids[0..n]) |id| {
         const p = grid.placement(id) orelse continue;
-        const tab_px = p.tab orelse continue;
-        const axis = p.tab_axis orelse .horizontal;
-        var band = winRect(tab_px);
-        _ = w32.FillRect(hdc, &band, brush);
-        const view: *PaneView = @ptrFromInt(id);
-        const hovered = if (self.strip_hover) |h| h == view else false;
-        const ink = pane_stack_strip.inkRgb(strip_rgb, light, hovered);
-        const font = (if (axis == .horizontal) down else across) orelse continue;
-        self.paintStripLabel(hdc, view, .{ .left = tab_px.left, .top = tab_px.top, .right = tab_px.right, .bottom = tab_px.bottom }, axis, font, ink);
+        const t = p.tab orelse continue;
+        out[m] = .{
+            .view = @ptrFromInt(id),
+            .tab = .{ .left = t.left, .top = t.top, .right = t.right, .bottom = t.bottom },
+            .axis = p.tab_axis orelse .horizontal,
+        };
+        m += 1;
     }
+    return m;
+}
+
+/// The pane colour a strip is resolved over: the terminal background.
+fn stripBackground(self: *Window) color_math.Rgb {
+    const cfg_bg = self.app.config.background;
+    return .{ .r = cfg_bg.r, .g = cfg_bg.g, .b = cfg_bg.b };
 }
 
 /// The strip label's face (Mac's 11 pt semibold), turned `escapement`
@@ -8433,7 +8473,27 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         _ = w32.ExcludeClipRect(desk_dc, sp.divider.left, sp.carousel.top, sp.carousel.right, sp.carousel.bottom);
         if (self.hero_slide != null) _ = w32.ExcludeClipRect(desk_dc, sp.hero.left, sp.hero.top, sp.hero.right, sp.hero.bottom);
     }
-    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..n], .{
+    // The tucked panes' strips (T2121): laid on the desk, so their leading
+    // corners are a card's antialiased curve (Mac `PaneStackTabFace`'s
+    // `UnevenRoundedRectangle`); `paintStackStrips` lays the names on after.
+    var tucked: [MAX_DRAG_NODES]TuckedStrip = undefined;
+    const nt = self.tuckedStrips(&tucked);
+    var bands: [MAX_DRAG_NODES]pane_stack_strip.Band = undefined;
+    const strip_bg = self.stripBackground();
+    for (tucked[0..nt], 0..) |s, i| {
+        const hovered = if (self.strip_hover) |hv| hv == s.view else false;
+        bands[i] = .{
+            .tab = .{
+                .left = s.tab.left - area.left,
+                .top = s.tab.top - area.top,
+                .right = s.tab.right - area.left,
+                .bottom = s.tab.bottom - area.top,
+            },
+            .axis = s.axis,
+            .rgb = pane_stack_strip.stripRgb(strip_bg, hovered),
+        };
+    }
+    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..n], bands[0..nt], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,

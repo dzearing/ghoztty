@@ -15,7 +15,11 @@
 #
 # Claims:
 #   D1) every tucked pane's leading edge is painted in the strip colour the
-#       default background (#282c34) gives, a band at least 8 DIP wide
+#       default background (#282c34) gives, a band at least 8 DIP wide; its
+#       leading corners are the card's rounded curve in the elevated style and
+#       square in the flat one, its trailing corner square in both (T2121)
+#   D7) T2121: hovering a strip lightens its card's scrim - 45% to 20% - so the
+#       strip reads the lighter colour, and goes back when the pointer leaves
 #   D2) the strip's label follows the banner title: a long `## ...` title set
 #       with +set-banner runs further down the strip than a short one
 #   D3) a click on a tucked pane's strip brings that pane on show (its window
@@ -60,6 +64,7 @@ $root = Join-Path $env:TEMP "ghoztty-pane-stack-strip-$PID"
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
+. (Join-Path $PSScriptRoot 'lib\HoverCapture.ps1')
 
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
@@ -119,11 +124,16 @@ function Focused-Pane-Name {
 }
 
 # Mac's strip over a pane of background `bg`, as `pane_stack_strip.stripRgb`
-# resolves it: 35% toward black (dark theme), laid at 82% over the pane.
-function Get-ExpectedStrip([int[]]$bg) {
+# resolves it: 35% toward black (dark theme), laid at 82% over the pane under
+# the card's scrim - black at 45%, lightened to 20% while the strip is hovered
+# (T2121). Rounded half away from zero, as Zig's @round is.
+function Get-ExpectedStrip([int[]]$bg, [switch]$Hovered) {
+    $scrim = if ($Hovered) { 0.2 } else { 0.45 }
+    $aw = [MidpointRounding]::AwayFromZero
     return @($bg | ForEach-Object {
-        $base = [math]::Round($_ * 0.65)
-        [int][math]::Round($_ * 0.18 + $base * 0.82)
+        $base = [math]::Round($_ * 0.65, $aw)
+        $under = [math]::Round($_ * (1 - $scrim), $aw)
+        [int][math]::Round($under * 0.18 + $base * 0.82, $aw)
     })
 }
 function Test-Near($c, [int[]]$rgb, [int]$tol = 4) {
@@ -134,19 +144,33 @@ function Test-Near($c, [int[]]$rgb, [int]$tol = 4) {
 function Get-Shot([IntPtr]$top) { return Get-TestWindowPixels -Window $top -Sync }
 
 # The strip of tucked pane `$p` in `$shot`: its width along a row near the top
-# of the card (above where any label is), and the strip colour there.
+# of the card (above where any label is), and the strip colour there. The row
+# is read from past the leading corner's curve (`$script:cornerPx`, the card
+# radius in the elevated style, T2121), so the desk showing round it is not
+# taken for the strip's end.
 function Measure-Strip($shot, $p) {
     $y = $p.Top + 4
-    $c0 = Get-TestPixel -Shot $shot -X ($p.Left + 2) -Y $y
+    $x0 = $p.Left + $script:cornerPx + 2
+    $c0 = Get-TestPixel -Shot $shot -X $x0 -Y $y
     $w = 0
     if ($null -ne $c0) {
         $rgb = @([int]$c0.R, [int]$c0.G, [int]$c0.B)
-        for ($x = $p.Left; $x -lt $p.Right; $x++) {
-            if (-not (Test-Near (Get-TestPixel -Shot $shot -X $x -Y $y) $rgb 6)) { break }
-            $w++
-        }
+        $x = $x0
+        while ($x -lt $p.Right -and (Test-Near (Get-TestPixel -Shot $shot -X $x -Y $y) $rgb 6)) { $x++ }
+        $w = $x - $p.Left
     }
     return [pscustomobject]@{ Color = $c0; Width = $w }
+}
+
+# The colour of the strip of tucked pane `$p` mid-way down it, beside the
+# label (which runs down the strip's middle): the pixel 3 px in from its
+# trailing edge.
+function Get-StripMid($shot, $p, [int]$width) {
+    return Get-TestPixel -Shot $shot -X ($p.Left + $width - 3) -Y ($p.Top + [int](($p.Bottom - $p.Top) / 2))
+}
+function Format-Rgb($c) {
+    if ($null -eq $c) { return 'off-capture' }
+    return 'rgb({0},{1},{2})' -f $c.R, $c.G, $c.B
 }
 
 # How far down the strip its label runs: the rows (first to last) holding a
@@ -271,6 +295,9 @@ try {
     }
     if ($dpi -le 0) { $dpi = 96 }
     $script:scale = $dpi / 96.0
+    # The strip's leading-corner radius: the card's 11 DIP in the elevated
+    # style (`pane_elevation.radiusPx`), square in the flat one.
+    $script:cornerPx = if ($PaneStyle -eq 'elevated') { [int][math]::Round(11 * $script:scale, [MidpointRounding]::AwayFromZero) } else { 0 }
     [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 1500 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
     Start-Sleep -Seconds 2
     & $exe +split --direction=right --name=s1 | Out-Null
@@ -314,8 +341,68 @@ try {
                 Assert $isStrip ("D1: tucked pane at x={0} shows the strip colour rgb({1}) (got {2})" -f $t.Pane.Left, ($expected -join ','), $got)
             }
             Assert ($m.Width -ge $minW) "D1: its strip is at least 8 DIP wide ($($m.Width) px, floor $minW px)"
+            if ($NegativeControl) { continue }
+            # T2121: the leading corners are the card's curve in the elevated
+            # style - the desk shows at the very corner - and square in the
+            # flat one; the trailing corner is square in both.
+            $lead = Get-TestPixel -Shot $shot -X ($t.Pane.Left + 1) -Y ($t.Pane.Top + 1)
+            $leadLow = Get-TestPixel -Shot $shot -X ($t.Pane.Left + 1) -Y ($t.Pane.Bottom - 2)
+            $trail = Get-TestPixel -Shot $shot -X ($t.Pane.Left + $m.Width - 2) -Y ($t.Pane.Top + 1)
+            if ($PaneStyle -eq 'elevated') {
+                # Nearer the desk in the gap beside the strip than the strip:
+                # the desk's dark top is only a few levels off the strip, so a
+                # bare "not the strip colour" would be a coin toss there.
+                $gapX = $t.Pane.Left - [int][math]::Floor(4 * $script:scale)
+                $deskTop = Get-TestPixel -Shot $shot -X $gapX -Y ($t.Pane.Top + 1)
+                $deskLow = Get-TestPixel -Shot $shot -X $gapX -Y ($t.Pane.Bottom - 2)
+                $nearDesk = {
+                    param($c, $desk)
+                    if ($null -eq $c -or $null -eq $desk) { return $false }
+                    $dd = [math]::Abs($c.R - $desk.R) + [math]::Abs($c.G - $desk.G) + [math]::Abs($c.B - $desk.B)
+                    $ds = [math]::Abs($c.R - $expected[0]) + [math]::Abs($c.G - $expected[1]) + [math]::Abs($c.B - $expected[2])
+                    return ($dd -lt $ds)
+                }
+                Assert ((& $nearDesk $lead $deskTop) -and (& $nearDesk $leadLow $deskLow)) ("D1: its leading corners are rounded - the desk shows there (top {0} vs desk {1}, bottom {2} vs desk {3})" -f (Format-Rgb $lead), (Format-Rgb $deskTop), (Format-Rgb $leadLow), (Format-Rgb $deskLow))
+            } else {
+                Assert ((Test-Near $lead $expected) -and (Test-Near $leadLow $expected)) ("D1: its leading corners are square in the flat style (top {0}, bottom {1})" -f (Format-Rgb $lead), (Format-Rgb $leadLow))
+            }
+            Assert (Test-Near $trail $expected) "D1: its trailing corner is square ($(Format-Rgb $trail))"
         }
     } finally { Close-TestWindowPixels -Shot $shot }
+
+    # ---- D7: hovering a strip lightens its card's scrim (T2121) ----------------
+    if (-not $NegativeControl) {
+        Say '== D7: strip hover'
+        $h = $tucked[0]
+        $hw = $strips[$h.Pane.Hwnd].Width
+        $hoverExp = Get-ExpectedStrip @(0x28, 0x2c, 0x34) -Hovered
+        $shot = Get-Shot $top
+        try { $rest = Get-StripMid $shot $h.Pane $hw } finally { Close-TestWindowPixels -Shot $shot }
+        # A posted move cannot be photographed hovered off the input desktop
+        # (the leave drains before the paint); `capture-hover` moves, paints
+        # and photographs on one stack (T282).
+        $my = $h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 2)
+        $hot = Get-TestHoverCapture -Hwnd $top -X ($h.Pane.Left + [int]($hw / 2)) -Y ($h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 3))
+        $lit = $null
+        if ($hot) {
+            $lit = $hot.Bitmap.GetPixel($h.Pane.Left + $hw - 3 - $hot.Left, $my - $hot.Top)
+            Close-TestHoverCapture $hot
+        }
+        # Off every strip: over the first pane on show.
+        $away = @($all | Where-Object Visible)[0]
+        $cold = Get-TestHoverCapture -Hwnd $top -X ($away.Left + [int](($away.Right - $away.Left) / 2)) -Y ($away.Top + [int](($away.Bottom - $away.Top) / 2))
+        $back = $null
+        if ($cold) {
+            $back = $cold.Bitmap.GetPixel($h.Pane.Left + $hw - 3 - $cold.Left, $my - $cold.Top)
+            Close-TestHoverCapture $cold
+        }
+        Say ("      at rest {0}, hovered {1} (changed={5}), elsewhere {2}; expected rgb({3}) -> rgb({4}) {6}" -f (Format-Rgb $rest), (Format-Rgb $lit), (Format-Rgb $back), ($expected -join ','), ($hoverExp -join ','), $(if ($hot) { $hot.Changed }), (Get-LastHoverCaptureError))
+        Assert ($null -ne $hot -and $hot.Changed) "D7: hovering the strip changes the frame (changed=$(if ($hot) { $hot.Changed }))"
+        Assert (Test-Near $rest $expected 1) "D7: at rest the strip is rgb($($expected -join ',')) ($(Format-Rgb $rest))"
+        Assert (Test-Near $lit $hoverExp 1) "D7: hovered, it lightens to rgb($($hoverExp -join ',')) with its scrim ($(Format-Rgb $lit))"
+        Assert ($null -ne $lit -and $null -ne $rest -and ($lit.R + $lit.G + $lit.B) -gt ($rest.R + $rest.G + $rest.B)) 'D7: the hovered strip is lighter than at rest'
+        Assert (Test-Near $back $expected 1) "D7: hovering a pane on show leaves the strip at rest ($(Format-Rgb $back))"
+    }
 
     # ---- D2: the label follows the banner title --------------------------------
     Say '== D2: strip label from +set-banner'

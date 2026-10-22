@@ -37,6 +37,7 @@ const pane_elevation = @import("pane_elevation.zig");
 const desk_palette = @import("desk_palette.zig");
 const busy_light = @import("busy_light.zig");
 const color_math = @import("color_math.zig");
+const pane_stack_strip = @import("pane_stack_strip.zig");
 
 const log = std.log.scoped(.pane_desk);
 
@@ -189,6 +190,9 @@ pub fn paint(
     w: i32,
     h: i32,
     cards: []const pane_elevation.Card,
+    /// The strips of the panes tucked into a stack (T2121), bottom first:
+    /// laid on the desk with their leading corners rounded like a card's.
+    strips: []const pane_stack_strip.Band,
     style: pane_elevation.CardStyle,
     variant: ?desk_palette.Variant,
     lights: []const Light,
@@ -202,6 +206,8 @@ pub fn paint(
     const comp = self.ensureComp(w, h) orelse return;
     @memcpy(comp.pixels(), desk.pixels());
     pane_elevation.paintCards(comp.pixels(), @intCast(w), @intCast(h), cards, style);
+    const radius = pane_elevation.radiusPx(style.scale);
+    for (strips) |s| pane_stack_strip.paintBand(comp.pixels(), @intCast(w), @intCast(h), s.tab, s.axis, s.rgb, radius);
     self.syncLights(comp, lights, style.scale);
     for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
     if (opacity) |o| {

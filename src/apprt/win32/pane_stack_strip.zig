@@ -15,6 +15,7 @@ const std = @import("std");
 const testing = std.testing;
 const color_math = @import("color_math.zig");
 const Rgb = color_math.Rgb;
+const desk_palette = @import("desk_palette.zig");
 const Direction = @import("pane_stack_layout.zig").Direction;
 
 /// The label's size and weight: Mac's 11 pt semibold.
@@ -27,14 +28,27 @@ pub const label_inset_dip: f32 = 12;
 const black: Rgb = .{ .r = 0, .g = 0, .b = 0 };
 const white: Rgb = .{ .r = 255, .g = 255, .b = 255 };
 
+/// The scrim that dims a tucked card (Mac `PaneCardView.updateScrim`): black
+/// at 45% on a dark theme and 16% on a light one, lightened to 20% / 6% while
+/// the card's strip is hovered (T2121).
+pub fn scrimAlpha(light: bool, hovered: bool) f64 {
+    return if (light)
+        (if (hovered) 0.06 else 0.16)
+    else
+        (if (hovered) 0.2 else 0.45);
+}
+
 /// The strip's fill over a pane of background `bg`: the background darkened
 /// (6% toward black on a light theme, 35% on a dark one), laid at 85% / 82%
-/// over the pane's own colour. GDI has no alpha for a flat fill, so the blend
-/// is resolved here into the opaque colour it reads as.
-pub fn stripRgb(bg: Rgb) Rgb {
+/// over the pane's own colour as the card's scrim dims it - so the strip
+/// lightens with the scrim while it is hovered (T2121). GDI has no alpha for
+/// a flat fill, so the layers are resolved here into the opaque colour they
+/// read as.
+pub fn stripRgb(bg: Rgb, hovered: bool) Rgb {
     const light = color_math.isLight(bg);
     const base = color_math.mix(bg, black, if (light) 0.06 else 0.35);
-    return color_math.mix(bg, base, if (light) 0.85 else 0.82);
+    const under = color_math.mix(bg, black, scrimAlpha(light, hovered));
+    return color_math.mix(under, base, if (light) 0.85 else 0.82);
 }
 
 /// The label's ink on `strip`: black at 65% on a light theme, white at 75% on
@@ -60,6 +74,88 @@ pub const Rect = struct {
         return r.bottom - r.top;
     }
 };
+
+/// One strip as the desk composite paints it (`PaneDesk.paint`): where, which
+/// way its stack runs, and its resolved colour.
+pub const Band = struct {
+    tab: Rect,
+    axis: Direction,
+    rgb: Rgb,
+};
+
+/// Paint a strip's band into a desk composite (`PaneDesk`; 0x00RRGGBB with
+/// coverage in the alpha byte, `desk_palette.coverage`), in the elevated
+/// style (T2121): its two LEADING corners - top and bottom of a tall strip's
+/// left edge, left and right of a short strip's top - are the card's
+/// `radius`, antialiased against what is already there, as Mac's
+/// `UnevenRoundedRectangle` cuts them. The trailing edge is square: the card
+/// it belongs to goes on under the card in front. `tab` is in buffer pixels
+/// and is clipped to the buffer; `radius` 0 paints a plain band.
+pub fn paintBand(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, rgb: Rgb, radius: i32) void {
+    const x0: i32 = @max(tab.left, 0);
+    const y0: i32 = @max(tab.top, 0);
+    const x1: i32 = @min(tab.right, @as(i32, @intCast(w)));
+    const y1: i32 = @min(tab.bottom, @as(i32, @intCast(h)));
+    if (x1 <= x0 or y1 <= y0) return;
+    // Never more than half the side the two corners share, nor more than
+    // the other side, as SwiftUI clamps an uneven rectangle's radii.
+    const shared, const other = switch (axis) {
+        .horizontal => .{ tab.height(), tab.width() },
+        .vertical => .{ tab.width(), tab.height() },
+    };
+    const rad: i32 = @max(0, @min(radius, @min(@divTrunc(shared, 2), other)));
+    const src: desk_palette.Rgbf = .{
+        .r = @floatFromInt(rgb.r),
+        .g = @floatFromInt(rgb.g),
+        .b = @floatFromInt(rgb.b),
+    };
+    const solid = desk_palette.packRgb(rgb.r, rgb.g, rgb.b) | 0xFF00_0000;
+    var y = y0;
+    while (y < y1) : (y += 1) {
+        const row = @as(usize, @intCast(y)) * w;
+        var x = x0;
+        while (x < x1) : (x += 1) {
+            const i = row + @as(usize, @intCast(x));
+            const a = bandCoverage(tab, axis, rad, x, y);
+            if (a <= 0) continue;
+            if (a >= 1) {
+                buf[i] = solid;
+                continue;
+            }
+            const dst = buf[i];
+            buf[i] = desk_palette.withCoverage(
+                desk_palette.Rgbf.lerp(desk_palette.Rgbf.unpack(dst), src, a).pack(),
+                desk_palette.coverOver(desk_palette.coverage(dst), a),
+            );
+        }
+    }
+}
+
+/// How much of pixel (x, y) the band covers, 0..1: all of it off the leading
+/// corner squares, and inside one the antialiased quarter circle of radius
+/// `rad` (pixel centre, half a pixel either side of the curve).
+pub fn bandCoverage(tab: Rect, axis: Direction, rad: i32, x: i32, y: i32) f32 {
+    if (rad <= 0) return 1;
+    const left_corner = x < tab.left + rad;
+    const in_corner = switch (axis) {
+        // A tall strip: top-left and bottom-left.
+        .horizontal => left_corner and (y < tab.top + rad or y >= tab.bottom - rad),
+        // A short strip: top-left and top-right.
+        .vertical => y < tab.top + rad and (left_corner or x >= tab.right - rad),
+    };
+    if (!in_corner) return 1;
+    const r: f32 = @floatFromInt(rad);
+    const px: f32 = @as(f32, @floatFromInt(x)) + 0.5;
+    const py: f32 = @as(f32, @floatFromInt(y)) + 0.5;
+    const l: f32 = @floatFromInt(tab.left);
+    const t: f32 = @floatFromInt(tab.top);
+    const rt: f32 = @floatFromInt(tab.right);
+    const b: f32 = @floatFromInt(tab.bottom);
+    const cx = if (px < l + r) l + r else rt - r;
+    const cy = if (py < t + r) t + r else b - r;
+    const d = @sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy)) - r;
+    return std.math.clamp(0.5 - d, 0, 1);
+}
 
 /// The length the label may run along a strip, in pixels: the strip's long
 /// side less the inset at each end. 0 when the strip is too short for any.
@@ -145,12 +241,16 @@ fn isLow(c: u16) bool {
 test "pane_stack_strip: the strip is darker than the pane on both themes, and the ink reads on it" {
     const dark_bg: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
     const light_bg: Rgb = .{ .r = 0xfa, .g = 0xfa, .b = 0xfa };
-    const ds = stripRgb(dark_bg);
-    const ls = stripRgb(light_bg);
+    const ds = stripRgb(dark_bg, false);
+    const ls = stripRgb(light_bg, false);
     try testing.expect(color_math.luminance(ds) < color_math.luminance(dark_bg));
     try testing.expect(color_math.luminance(ls) < color_math.luminance(light_bg));
-    // A light theme's strip is only a shade darker (Mac's 6% x 85%).
-    try testing.expectEqual(@as(u8, 237), ls.r);
+    // Mac's layers over #282c34: the 82% strip over the pane under a 45%
+    // scrim.
+    try testing.expectEqual(Rgb{ .r = 25, .g = 28, .b = 33 }, ds);
+    // A light theme's strip is only a shade or two darker (6% x 85% over a
+    // 16% scrim).
+    try testing.expectEqual(@as(u8, 231), ls.r);
     // Dark ink on light, light ink on dark; the hovered ink is the stronger.
     const dl = inkRgb(ds, false, false);
     const dh = inkRgb(ds, false, true);
@@ -158,6 +258,69 @@ test "pane_stack_strip: the strip is darker than the pane on both themes, and th
     const ll = inkRgb(ls, true, false);
     const lh = inkRgb(ls, true, true);
     try testing.expect(ll.r < ls.r and lh.r < ll.r);
+}
+
+test "pane_stack_strip: hovering a strip lightens its card's scrim, so the strip lightens with it" {
+    const dark_bg: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
+    const light_bg: Rgb = .{ .r = 0xfa, .g = 0xfa, .b = 0xfa };
+    // Mac's numbers: 45% -> 20% dark, 16% -> 6% light.
+    try testing.expectEqual(@as(f64, 0.45), scrimAlpha(false, false));
+    try testing.expectEqual(@as(f64, 0.2), scrimAlpha(false, true));
+    try testing.expectEqual(@as(f64, 0.16), scrimAlpha(true, false));
+    try testing.expectEqual(@as(f64, 0.06), scrimAlpha(true, true));
+    const dh = stripRgb(dark_bg, true);
+    try testing.expectEqual(Rgb{ .r = 27, .g = 30, .b = 35 }, dh);
+    const d = stripRgb(dark_bg, false);
+    try testing.expect(color_math.luminance(dh) > color_math.luminance(d));
+    try testing.expect(color_math.luminance(stripRgb(light_bg, true)) > color_math.luminance(stripRgb(light_bg, false)));
+    // Still darker than the pane itself.
+    try testing.expect(color_math.luminance(dh) < color_math.luminance(dark_bg));
+}
+
+test "pane_stack_strip: an elevated band rounds its leading corners only, antialiased" {
+    const w = 60;
+    const h = 120;
+    const desk: u32 = desk_palette.packRgb(10, 200, 10);
+    var buf = [_]u32{desk} ** (w * h);
+    const rgb: Rgb = .{ .r = 25, .g = 28, .b = 33 };
+    const solid = desk_palette.packRgb(25, 28, 33) | 0xFF00_0000;
+    // A tall strip at x 10..40, y 10..110, radius 12.
+    const tab: Rect = .{ .left = 10, .top = 10, .right = 40, .bottom = 110 };
+    paintBand(&buf, w, h, tab, .horizontal, rgb, 12);
+    // The very corner pixels of the leading edge are desk; the trailing
+    // edge's corners are band.
+    try testing.expectEqual(desk, buf[10 * w + 10]);
+    try testing.expectEqual(desk, buf[109 * w + 10]);
+    try testing.expectEqual(solid, buf[10 * w + 39]);
+    try testing.expectEqual(solid, buf[109 * w + 39]);
+    // Mid-edge and inside: band.
+    try testing.expectEqual(solid, buf[60 * w + 10]);
+    try testing.expectEqual(solid, buf[10 * w + 25]);
+    // Outside the tab: untouched.
+    try testing.expectEqual(desk, buf[60 * w + 9]);
+    try testing.expectEqual(desk, buf[60 * w + 40]);
+    // Somewhere on the top-left curve a pixel is a blend, partly covered.
+    var blended = false;
+    for (10..22) |yy| for (10..22) |xx| {
+        const c = desk_palette.coverage(buf[yy * w + xx]);
+        if (c > 0 and c < 1) blended = true;
+    };
+    try testing.expect(blended);
+
+    // A short strip: top-left and top-right round, the bottom stays square.
+    var buf2 = [_]u32{desk} ** (w * h);
+    const across: Rect = .{ .left = 5, .top = 5, .right = 55, .bottom = 35 };
+    paintBand(&buf2, w, h, across, .vertical, rgb, 12);
+    try testing.expectEqual(desk, buf2[5 * w + 5]);
+    try testing.expectEqual(desk, buf2[5 * w + 54]);
+    try testing.expectEqual(solid, buf2[34 * w + 5]);
+    try testing.expectEqual(solid, buf2[34 * w + 54]);
+
+    // Radius 0 is a plain band; a band off the buffer is clipped, not a crash.
+    var buf3 = [_]u32{desk} ** (w * h);
+    paintBand(&buf3, w, h, .{ .left = -5, .top = -5, .right = 20, .bottom = 20 }, .horizontal, rgb, 0);
+    try testing.expectEqual(solid, buf3[0]);
+    try testing.expectEqual(desk, buf3[20 * w + 20]);
 }
 
 test "pane_stack_strip: a tall strip's label runs down its middle; a short one's starts after the inset" {
