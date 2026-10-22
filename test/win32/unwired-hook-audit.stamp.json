@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-22T04:35:44-07:00",
-    "commit":  "8e9e9aa0a",
+    "generated":  "2026-10-22T05:40:45-07:00",
+    "commit":  "46967dd4e",
     "uncommitted":  [
 
                     ],
@@ -1075,6 +1075,7 @@
                   "test/win32/docs-routing.ps1":  "98d25cb8eaba89f37cb2fe892dc86cee04a2cec771acc0c588e39d69446ccf11",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
                   "test/win32/drag-perf.ps1":  "a38388c599a62ca131caee78821d1fc41261531856665b8cdf753f1a149be0ec",
+                  "test/win32/echo-marker-audit.ps1":  "d896ea0055d1564eeba5ce6fc2bceda25aa0d32d3ccacd848d85c75d130d98f1",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
                   "test/win32/fail-transcript.ps1":  "f7d7a25707b4a7f754e7f8f62d0a86763480a6598867a59e332358410bebb778",
@@ -1334,7 +1335,7 @@
                   "test/win32/update-real-msi.ps1":  "0637cd0a218dbe97f9d49cb4ee6c9361886b07426d595d06918a4f2768d75317",
                   "test/win32/upgrade-no-fork.ps1":  "143d6dff31342a184839b8de623c483f8f4c1dda1bd4f696a7c9c714cfa42d22",
                   "test/win32/upgrade-resume-readiness.ps1":  "bd269e2436e29adb7d451c03c05450c2f5ca345f59dc66f230e06238c39ca70a",
-                  "test/win32/upgrade-staleness.ps1":  "2055c77212c20a49fa9ac6502d722d0660fff4e39e1b2891e751052724ff5127",
+                  "test/win32/upgrade-staleness.ps1":  "e39c0994bb5d400f3eb8351d560ee1b0ee892982edff6f721a2a67fc56d49ce6",
                   "test/win32/upstream-remote.ps1":  "483ebecd3ff0e427c13addaa2c1afe0e2229e27778ad080d365e3868e7f6c2c4",
                   "test/win32/upstream-stage.ps1":  "18d15337939a38f04528f533b73e5e578d73bfab95254d3a31e133030b8a485e",
                   "test/win32/url-scheme.ps1":  "33fe6b3246d5e2ca17e5f68af88fac03d4eb50f8b2210c801fc7c2f0303909a6",

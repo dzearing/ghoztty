@@ -222,9 +222,27 @@ $script:deliveryFailure = ''
 # one greppable line instead of a correlation exercise across the log.
 $script:appAnswered = $false
 $script:installedCommit = ''
+# T1145: what was promised, for the running-instance check. Set by the post-swap
+# read-back; empty on every path that never reached it.
+$script:wantCommit = ''
 function Complete-Upgrade([string]$note) {
+    # T1145: an instance answering +list is not yet THIS build answering it. The
+    # kill only reaches processes under the install dir, so a portable copy can
+    # keep the endpoint and the relaunch joins it; until this check the log then
+    # read POST-SWAP OK / APP-REFRESH OK / UPGRADE OK over a terminal that was
+    # still the old build. Asked only when an instance answered and the swap
+    # verified - otherwise there is no claim about the running build to test.
+    $runningTag = ''
+    if ($script:appAnswered -and -not $script:deliveryFailure -and $script:wantCommit) {
+        $inst = Resolve-GhozttyRunningInstance -Exe $cliExe
+        $rv = Get-RunningInstanceVerdict -Instance $inst -Want $script:wantCommit -InstalledExe $oldExe
+        $runningTag = $rv.Tag
+        Log $rv.Line
+    }
     if ($AppOnly) {
-        if ($script:appAnswered) {
+        if ($runningTag -eq 'ELSEWHERE') {
+            Log 'APP-REFRESH ELSEWHERE: an app answered +list, but it is not the build this run installed (RUNNING INSTANCE line above)'
+        } elseif ($script:appAnswered) {
             Log ("APP-REFRESH OK: the restarted app answered +list, and $oldExe reports " +
                 "'$(if ($script:installedCommit) { $script:installedCommit } else { '<unread>' })' (agent untouched)")
         } else {
@@ -236,6 +254,12 @@ function Complete-Upgrade([string]$note) {
         # "UPGRADE OK" must never match a failure line.
         Log "UPGRADE FAILED: $($script:deliveryFailure) ($note)"
         exit 1
+    }
+    if ($runningTag -eq 'ELSEWHERE') {
+        # Its own verdict and its own exit code: the bits ARE installed (so not
+        # FAILED), and the user is NOT running them (so never the success tag).
+        Log "UPGRADE NOT RUNNING: installed and verified, but the endpoint is held by another build ($note)"
+        exit 2
     }
     Log "UPGRADE OK ($note)"
     exit 0
@@ -563,6 +587,7 @@ if ($installedInfo.NotExecutable) {
     Log "POST-SWAP VERIFY UNKNOWN: could not read the installed exe's commit ($($installedInfo.Why)); wanted '$want'"
 } elseif (Test-CommitsMatch $installedInfo.Commit $want) {
     Log "POST-SWAP VERIFY OK: $oldExe now reports '$($installedInfo.Commit)'"
+    $script:wantCommit = $want
 } else {
     $script:deliveryFailure = "POST-SWAP VERIFY FAILED: $oldExe reports '$($installedInfo.Commit)' but the delivery is for '$want'"
     Log "POST-SWAP VERIFY FAILED: $oldExe reports '$($installedInfo.Commit)', wanted '$want'. The copy returned success and did NOT take - this run is NOT a successful delivery."

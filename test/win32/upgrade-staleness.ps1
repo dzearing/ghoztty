@@ -376,6 +376,54 @@ Assert "A56 the launcher stamps the staging build with it" `
 Assert "A57 the stamp's build metadata is HEAD, not the baseline tag's commit" `
     ($launcherSrc -match '\$headShort = Get-RepoHeadCommit')
 
+# --- A58-A70: which build OWNS THE ENDPOINT after the swap (T1145) -----------
+# The kill reaches only processes under the install dir. A portable copy of the
+# same lineage keeps the IPC endpoint, the relaunched exe joins it (T1120), and
+# until T1145 the run then logged POST-SWAP OK, APP-REFRESH OK and UPGRADE OK
+# over a terminal still running the old build. The reader is the inverse of
+# A31-A35: it must read the Running Instance block and ONLY that block. The
+# $twoBinaries fixture names different commits in the two blocks, so a reader
+# that grabs the wrong one cannot pass.
+$ri = Get-RunningInstanceFromVersionText $twoBinaries
+Assert "A58 the running instance is present in a two-binary payload" $ri.Present
+AssertEq "A59 THE INVERSE OF A31: its commit is the running app's, not the probed binary's" '2929e42c0' $ri.Commit
+AssertEq "A60 and it names the exe the endpoint owner runs from" `
+    'C:\Users\David\AppData\Local\Programs\Ghoztty\ghoztty.exe' $ri.Exe
+AssertEq "A61 and its pid" 50828 $ri.Pid
+AssertEq "A62 the pre-T805 block (no parenthetical) reads the same" '2929e42c0' `
+    (Get-RunningInstanceFromVersionText $twoBinariesLegacy).Commit
+$riNone = Get-RunningInstanceFromVersionText "Version (this binary)`r`n  - version: 1.4.0-b-+2699f0dd5`r`nRunning Instance (the app running now, not this binary)`r`n  - none detected`r`n"
+Assert "A63 'none detected' is not an instance" (-not $riNone.Present)
+Assert "A63b and says so" ($riNone.Why -match 'none detected')
+Assert "A64 no block at all is not an instance either" `
+    (-not (Get-RunningInstanceFromVersionText "Version (this binary)`r`n  - version: 1.4.0-b-+2699f0dd5`r`n").Present)
+# The verdict. The 2026-08-22 shape: the delivered install is the dev install,
+# the endpoint is held by a portable copy of an OLDER commit.
+$devExe = 'C:\Users\x\AppData\Local\ghoztty\dev-install\ghoztty.exe'
+$portable = @{ Present = $true; Commit = '2929e42c0'; Exe = 'D:\Users\x\Desktop\Ghoztty-portable-x64\Ghoztty\ghoztty.exe'; Pid = 7; Why = '' }
+$v = Get-RunningInstanceVerdict -Instance $portable -Want '2699f0dd5' -InstalledExe $devExe
+AssertEq "A65 THE T1145 ORACLE: an older portable holding the endpoint is ELSEWHERE" 'ELSEWHERE' $v.Tag
+Assert "A66 and the line names the process that kept it" ($v.Line -match [regex]::Escape('Ghoztty-portable-x64'))
+Assert "A66b and the commit it carries" ($v.Line -match '2929e42c0')
+$vSame = Get-RunningInstanceVerdict -Instance (@{ Present = $true; Commit = '2699f0dd5'; Exe = $devExe; Pid = 9; Why = '' }) `
+    -Want '2699f0dd5ab' -InstalledExe $devExe
+AssertEq "A67 the delivered build answering is OK (abbreviation lengths may differ)" 'OK' $vSame.Tag
+$vPortSame = Get-RunningInstanceVerdict -Instance (@{ Present = $true; Commit = '2699f0dd5'; Exe = $portable.Exe; Pid = 9; Why = '' }) `
+    -Want '2699f0dd5' -InstalledExe $devExe
+AssertEq "A68 a portable carrying the SAME commit is the right build - OK" 'OK' $vPortSame.Tag
+Assert "A68b but the line says where it runs from" ($vPortSame.Line -match 'rather than the install')
+AssertEq "A69 no answer is UNKNOWN, never OK" 'UNKNOWN' `
+    (Get-RunningInstanceVerdict -Instance $riNone -Want '2699f0dd5' -InstalledExe $devExe).Tag
+AssertEq "A69b and neither is a null instance" 'UNKNOWN' `
+    (Get-RunningInstanceVerdict -Instance $null -Want '2699f0dd5' -InstalledExe $devExe).Tag
+# The wiring: the verdict reaches the run's last line, under its own tag, and
+# the success tag is never printed over it.
+$upgradeSrc = Get-Content -LiteralPath (Join-Path $Repo 'scripts\upgrade-ghoztty-windows.ps1') -Raw
+Assert "A70 the upgrade's verdict site asks the running instance" `
+    ($upgradeSrc -match 'Get-RunningInstanceVerdict -Instance')
+Assert "A70b and an ELSEWHERE ends as UPGRADE NOT RUNNING with a nonzero exit, before UPGRADE OK" `
+    ($upgradeSrc -match "(?s)'ELSEWHERE'\)\s*\{[^}]*UPGRADE NOT RUNNING[^}]*exit 2\s*\}\s*Log ""UPGRADE OK")
+
 if ($PureOnly) {
     # The pure run has reached the end of the body it set out to run, so say so
     # (T1039). Without this the scorer read every green -PureOnly sweep as "the
@@ -993,6 +1041,13 @@ if (-not $haveAgent) {
         ($null -ne $gProc -and $gProc.Path -eq $gInstalledExe)
     Assert "G7 the resume typing really was skipped (that half keeps working)" `
         (-not ($gLogText -match 'upgrade-resume'))
+    # T1145's positive control: against a real relaunched app the endpoint
+    # question gets a real answer, and it is the delivered build. Without this
+    # the A65 oracle could pass over a probe that never reads anything.
+    Assert "G8 the run asked the endpoint which build answers it, and it is the delivered one" `
+        ($gLogText -match "RUNNING INSTANCE OK: the endpoint is answered by '$exeCommit")
+    Assert "G9 and so the verdict is the success tag, not UPGRADE NOT RUNNING" `
+        (($gLogText -match 'UPGRADE OK \(') -and -not ($gLogText -match 'UPGRADE NOT RUNNING'))
 
     # Teardown: the relaunched app, its private local agent, and the decoy.
     if ($gProc) { Stop-Process -Id $gAppPid -Force -ErrorAction SilentlyContinue }

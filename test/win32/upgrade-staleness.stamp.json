@@ -1,16 +1,18 @@
 {
     "guard":  "upgrade-staleness",
     "script":  "test/win32/upgrade-staleness.ps1",
-    "generated":  "2026-10-16T13:32:26-07:00",
-    "commit":  "161784011",
+    "generated":  "2026-10-22T03:03:24-07:00",
+    "commit":  "3dde54ee6",
     "uncommitted":  [
+                        "scripts/delivery-version.ps1",
+                        "scripts/upgrade-ghoztty-windows.ps1",
                         "test/win32/upgrade-staleness.ps1"
                     ],
     "files":  {
-                  "scripts/delivery-version.ps1":  "8678da54a8fca38a64a140258485920abbf0f282dbf07da0e51512acea3df4a0",
+                  "scripts/delivery-version.ps1":  "0e13b53aff9be9cf6c7c4c35cbe4fc3293dccf5fef434bef769806b966eb62ce",
                   "scripts/launch-upgrade.ps1":  "b40fbe903eface94ada0064617d4371c35459af628fa8c26e894fb2df12bff92",
-                  "scripts/upgrade-ghoztty-windows.ps1":  "49e2426fad831e6745c7862602bf3a43b773daf259aef37f99b33e6ff45fc069",
+                  "scripts/upgrade-ghoztty-windows.ps1":  "bd57f9fcdc3e2ab23070ead8ade6460496557477d3d1a09060748c30a23c1b10",
                   "test/win32/lib/ModalSweep.ps1":  "ad1fde46a8704161d73608cf0ebcf58c1a0251d82fbea3967f79281065f91649",
-                  "test/win32/upgrade-staleness.ps1":  "2055c77212c20a49fa9ac6502d722d0660fff4e39e1b2891e751052724ff5127"
+                  "test/win32/upgrade-staleness.ps1":  "e39c0994bb5d400f3eb8351d560ee1b0ee892982edff6f721a2a67fc56d49ce6"
               }
 }

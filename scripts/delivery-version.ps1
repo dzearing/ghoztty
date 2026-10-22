@@ -293,7 +293,10 @@ function Invoke-GhozttyVersionText {
     param(
         [Parameter(Mandatory = $true)][string]$Exe,
         [int]$TimeoutSec = 20,
-        [string]$VersionArg = '+version'
+        [string]$VersionArg = '+version',
+        # The bound on the `Running Instance` query (see below). Only a caller
+        # that wants THAT block (Resolve-GhozttyRunningInstance) raises it.
+        [int]$IpcTimeoutMs = 2000
     )
     if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) {
         return @{ Text = ''; Why = "exe not found: $Exe"; NotExecutable = $false }
@@ -319,7 +322,7 @@ function Invoke-GhozttyVersionText {
     # query hard: a timeout there costs a `- query failed` line the parsers skip
     # past, and `+version` still exits 0 carrying its own version.
     $prevIpcTimeout = $env:GHOZTTY_IPC_TIMEOUT_MS
-    $env:GHOZTTY_IPC_TIMEOUT_MS = '2000'
+    $env:GHOZTTY_IPC_TIMEOUT_MS = [string]$IpcTimeoutMs
     $prevErrorMode = Set-GhozttyQuietErrorMode
     try {
         $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
@@ -371,6 +374,102 @@ function Resolve-GhozttyExeCommit {
         Why           = $why
         SignIn        = (Get-SignInBakeFromVersionText $r.Text)
         NotExecutable = [bool]$r.NotExecutable
+    }
+}
+
+# The APP THAT OWNS THE ENDPOINT, out of a `+version` payload (tracker T1145).
+# Pure. Returns @{ Present; Commit; Exe; Pid; Why }.
+#
+# Everything above reads the `Version (this binary)` block and is careful never
+# to look at `Running Instance`. This is the one reader that wants the other
+# block, because the question it answers is different: not "what is on disk"
+# but "what is the user's terminal running now". A swap only kills processes
+# under the install dir, so a portable copy of the same lineage can keep the IPC
+# endpoint, the freshly installed exe joins IT (T1120: join, never prompt, when
+# unattended), and every line about the file reads as a delivery that worked.
+#
+# Anchored on the block heading, and on the `<label> :` shape with its space
+# before the colon - the same single space `Get-CommitFromVersionText` relies on
+# to stay OUT of this block (A33). `Present` is $false for `none detected`,
+# `query failed`, `no version support` and a payload with no block at all; Why
+# carries which, and none of them is ever treated as a verdict about the build.
+function Get-RunningInstanceFromVersionText {
+    param([AllowEmptyString()][AllowNull()][string]$Text)
+    $none = @{ Present = $false; Commit = ''; Exe = ''; Pid = 0; Why = '' }
+    if (-not $Text) { $none.Why = 'no +version output'; return $none }
+    $lines = @($Text -split "`r?`n")
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*Running Instance\b') { $start = $i; break }
+    }
+    if ($start -lt 0) { $none.Why = 'no Running Instance block'; return $none }
+    $commit = ''; $exe = ''; $procId = 0; $note = ''
+    for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+        $l = $lines[$i]
+        # The block ends at the first line that is not one of its bullets.
+        if ($l -notmatch '^\s+-\s') { break }
+        if ($l -match '^\s+-\s+commit\s+:\s*([0-9a-fA-F]{7,40})\b') { $commit = $Matches[1].ToLowerInvariant() }
+        elseif ($l -match '^\s+-\s+exe\s+:\s*(.+?)\s*$') { $exe = $Matches[1] }
+        elseif ($l -match '^\s+-\s+pid\s+:\s*(\d+)') { $procId = [int]$Matches[1] }
+        elseif (-not $note -and $l -match '^\s+-\s+([^:]+?)\s*$') { $note = $Matches[1] }
+    }
+    if (-not $commit -and -not $exe) {
+        $none.Why = if ($note) { "running instance: $note" } else { 'Running Instance block carries no commit' }
+        return $none
+    }
+    return @{ Present = $true; Commit = $commit; Exe = $exe; Pid = $procId; Why = '' }
+}
+
+# Ask the endpoint which build answers it. `$Exe` is only the client doing the
+# asking; its OWN identity is irrelevant here. The IPC bound is raised from the
+# file-identity probes' 2s because this query is the whole point of the call.
+function Resolve-GhozttyRunningInstance {
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [int]$TimeoutSec = 20,
+        [int]$IpcTimeoutMs = 8000
+    )
+    $r = Invoke-GhozttyVersionText -Exe $Exe -TimeoutSec $TimeoutSec -IpcTimeoutMs $IpcTimeoutMs
+    $info = Get-RunningInstanceFromVersionText $r.Text
+    if (-not $info.Present -and $r.Why) { $info.Why = $r.Why }
+    return $info
+}
+
+# Does the running instance carry the build a delivery installed? Pure.
+# Returns @{ Tag; Line }: Tag is OK, ELSEWHERE or UNKNOWN.
+#
+# Judged on the COMMIT, not the path: a portable copy that already carries the
+# delivered commit holding the endpoint is the user running the right build,
+# and the line says where it runs from so that is not a surprise either. A
+# different commit is ELSEWHERE - the run installed the new build and the
+# user's terminal is still the old one, which is the outcome a delivery must
+# never narrate as done. No answer is UNKNOWN, never OK.
+function Get-RunningInstanceVerdict {
+    param(
+        $Instance,
+        [AllowEmptyString()][string]$Want,
+        [AllowEmptyString()][string]$InstalledExe
+    )
+    if (-not $Instance -or -not $Instance.Present -or -not $Instance.Commit) {
+        $why = if ($Instance -and $Instance.Why) { $Instance.Why } else { 'no answer' }
+        return @{ Tag = 'UNKNOWN'; Line = "RUNNING INSTANCE UNKNOWN: could not ask the endpoint which build answers it ($why)" }
+    }
+    $where = if ($Instance.Exe) { "$($Instance.Exe)" } else { '<exe unreported>' }
+    $samePath = $false
+    if ($Instance.Exe -and $InstalledExe) {
+        $norm = { param($p) try { $p = [IO.Path]::GetFullPath($p) } catch { }; $p.TrimEnd('\', '/') }
+        $samePath = ((& $norm $Instance.Exe) -ieq (& $norm $InstalledExe))
+    }
+    if (Test-CommitsMatch $Instance.Commit $Want) {
+        $tail = if ($samePath -or -not $InstalledExe) { '' } else { " - from $where rather than the install it was delivered to, but carrying the same build" }
+        return @{ Tag = 'OK'; Line = "RUNNING INSTANCE OK: the endpoint is answered by '$($Instance.Commit)' (pid $($Instance.Pid))$tail" }
+    }
+    return @{
+        Tag  = 'ELSEWHERE'
+        Line = ("RUNNING INSTANCE ELSEWHERE: the endpoint is answered by $where carrying '$($Instance.Commit)' " +
+            "(pid $($Instance.Pid)), not the delivered '$Want'. The new build is installed but the terminal is still " +
+            'the old one: that process kept the endpoint, so the relaunch joined it. Close it (or restart Ghoztty from ' +
+            'the delivered install) to run the new build.')
     }
 }
 
