@@ -419,6 +419,30 @@ foreach ($l in $leaves) { if ($l.id) { $paneNames[[string]$l.id] = [string]$l.na
 $loadedPanes = $named
 Assert ($leaves.Count -eq 4) "layout: 4 leaves in soak window (probe pane: $probePane)"
 
+# T1160: prove the alt-screen generator is RUNNING before spending 30 minutes
+# grading it. "no telemetry from this pane" at minute 30 has two causes that
+# read the same: a generator that never started (the T1601 shape), and a
+# renderer that stopped presenting while the generator ran on (T2163 - the
+# pane goes silent the moment soak-grow is split). Checking the generator here
+# separates them: a dead generator aborts in seconds with the pane's screen in
+# the report, so a missing-telemetry FAIL later is always the renderer's.
+$altscrAlive = $false
+$altscrScreen = ''
+$altscrDeadline = (Get-Date).AddSeconds(30)
+while ((Get-Date) -lt $altscrDeadline) {
+    $altscrScreen = (& $exe +read --name=soak-altscr --lines=40 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+    if ($altscrScreen -match 'altscr churn line|primary interlude') { $altscrAlive = $true; break }
+    Start-Sleep -Seconds 2
+}
+if (-not $altscrAlive) {
+    Rep "soak-altscr screen after 30s (last 15 lines):"
+    ($altscrScreen -split "`n" | Select-Object -Last 15) | ForEach-Object { Rep "    | $_" }
+    $altLeaf = @($leaves | Where-Object { $_.name -eq 'soak-altscr' })[0]
+    if ($altLeaf) { Rep "soak-altscr leaf: id $($altLeaf.id) pid $($altLeaf.pid) title '$($altLeaf.title)'" }
+    Abort-Soak 'soak-altscr load generator produced no output within 30s of setup'
+}
+Rep "soak-altscr generator confirmed running"
+
 # Baseline +read latency on the (still small) grow pane, for the end-of-run
 # big-scrollback comparison.
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
