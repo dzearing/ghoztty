@@ -20,6 +20,13 @@
 #       with +set-banner runs further down the strip than a short one
 #   D3) a click on a tucked pane's strip brings that pane on show (its window
 #       visible), keeps two on show, and focuses it (+list --json)
+#   D4) T2120: a strip pressed and dragged over the middle of a card on show
+#       does nothing - same tree order, same focus (a press that travelled is
+#       not the D3 click)
+#   D5) T2120: a strip dropped in a gap between two other items of its row
+#       moves the pane there (tree order from +list), same HWND
+#   D6) T2120: a strip dropped at the screen's right edge opens a window of
+#       its own over the right half of the work area, holding that pane
 #
 # -NegativeControl inverts D1 to "the leading edge is NOT the strip colour" -
 # the answer before T2109, when nothing was painted there - and MUST fail.
@@ -162,6 +169,67 @@ function Measure-Ink($shot, $p, [int]$width, [int[]]$strip) {
     return $last - $first + 1
 }
 
+# The row's items as a strip drag sees them (T2120, `Window.bladeGeometry`),
+# in tree order: a pane on show is its card, a tucked one its strip. Lead and
+# Trail are the item's left and right edges, in screen pixels.
+function Get-StripRow([IntPtr]$top, $nameOf) {
+    $panes = @(Get-Panes $top)
+    $shot = Get-Shot $top
+    try {
+        $order = Get-LeafOrder
+        $out = @()
+        foreach ($n in $order) {
+            $p = @($panes | Where-Object { $nameOf[$_.Hwnd] -eq $n })[0]
+            if ($null -eq $p) { continue }
+            $w = if ($p.Visible) { $p.Right - $p.Left } else { (Measure-Strip $shot $p).Width }
+            $out += [pscustomobject]@{
+                Name = $n; Hwnd = $p.Hwnd; Visible = $p.Visible
+                Left = $p.Left; Top = $p.Top; Right = $p.Right; Bottom = $p.Bottom
+                StripW = $w; Lead = $p.Left; Trail = $p.Left + $w
+            }
+        }
+        return $out
+    } finally { Close-TestWindowPixels -Shot $shot }
+}
+
+# The selected tab's panes in tree order, by name ('P' for the first one).
+function Get-LeafOrder {
+    $j = List-Json
+    foreach ($tab in @($j.data.windows[0].tabs | ForEach-Object { $_ })) {
+        if (-not $tab.selected) { continue }
+        $acc = New-Object System.Collections.ArrayList
+        Add-Leaves $tab.splits $acc
+        return @($acc)
+    }
+    return @()
+}
+function Add-Leaves($node, $acc) {
+    if ($null -eq $node) { return }
+    if ($node.type -eq 'leaf') {
+        # The first pane was never named, so +list names it by its id.
+        $n = [string]$node.terminal.name
+        [void]$acc.Add($(if ($n -in @('s1', 's2', 's3')) { $n } else { 'P' }))
+        return
+    }
+    Add-Leaves $node.left $acc
+    Add-Leaves $node.right $acc
+}
+
+# Press at (x0, y0), travel in steps to (x1, y1), release there.
+function Drag-Strip([IntPtr]$top, [int]$x0, [int]$y0, [int]$x1, [int]$y1) {
+    [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y0 -Action down -HoldMs 0)
+    Start-Sleep -Milliseconds 120
+    for ($s = 1; $s -le 8; $s++) {
+        $x = [int]($x0 + ($x1 - $x0) * $s / 8)
+        $y = [int]($y0 + ($y1 - $y0) * $s / 8)
+        [void](Send-TestMouse -Window $top -Target $top -X $x -Y $y -Action move -HoldMs 0)
+        Start-Sleep -Milliseconds 60
+    }
+    Start-Sleep -Milliseconds 150
+    [void](Send-TestMouse -Window $top -Target $top -X $x1 -Y $y1 -Action up -HoldMs 0)
+    Start-Sleep -Milliseconds 900
+}
+
 # -----------------------------------------------------------------------------
 
 $savedLocalAppData = $env:LOCALAPPDATA
@@ -214,7 +282,9 @@ try {
     if ($c4.Count -ne 4) { Write-TestAssertedNothing -Reason "four panes never came up on show (got $($c4.Count))" }
     # Tree order is left to right, and a tucked card keeps its slot's place.
     $names = @($null, 's1', 's2', 's3')
-    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 900 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
+    # Off the screen's edges: a strip dragged within 12 DIP of one tiles to it
+    # (D6), which D4 and D5 must not do by accident.
+    [void](Set-TestWindowPos -Window $top -X 200 -Y 60 -Width (Get-TestChromeDip -Dip 900 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
     Start-Sleep -Milliseconds 800
     $shown = @(Wait-Shown $top 2)
     Start-Sleep -Milliseconds 600
@@ -279,6 +349,70 @@ try {
     Assert (@($after | Where-Object Visible).Count -eq 2) "D3: still two on show ($(@($after | Where-Object Visible).Count))"
     $focused = Focused-Pane-Name
     Assert ($focused -eq $t.Name) "D3: the clicked pane has focus (+list says '$focused')"
+
+    # ---- D4-D6: a strip is a drag source (T2120) -------------------------------
+    # Every pane keeps its HWND across a rearrange, so the HWND names it; the
+    # tree order is read back from +list.
+    $nameOf = @{}
+    for ($i = 0; $i -lt $all.Count; $i++) { $nameOf[$all[$i].Hwnd] = if ($names[$i]) { $names[$i] } else { 'P' } }
+    $rows = Get-StripRow $top $nameOf
+    $d = @($rows | Where-Object { -not $_.Visible })[0]
+    if ($null -eq $d) { Write-TestAssertedNothing -Reason 'no pane was tucked after D3' }
+    $order0 = Get-LeafOrder
+    $focus0 = Focused-Pane-Name
+    $midY = $d.Top + [int](($d.Bottom - $d.Top) / 2)
+    $px = $d.Left + [int]($d.StripW / 2)
+    Say ("      row: {0}; dragging {1}'s strip; tree {2}" -f (($rows | ForEach-Object { "$($_.Name)[$($_.Lead)-$($_.Trail)]" }) -join ' '), $d.Name, ($order0 -join ','))
+
+    Say '== D4: a strip dropped over the middle of a card does nothing'
+    $card = @($rows | Where-Object Visible)[0]
+    Drag-Strip $top $px $midY ($card.Left + [int](($card.Right - $card.Left) / 2)) $midY
+    $order4 = Get-LeafOrder
+    Assert (($order4 -join ',') -eq ($order0 -join ',')) "D4: the tree order is unchanged ($($order4 -join ','))"
+    Assert (@(Get-Panes $top).Count -eq 4) "D4: still four panes ($(@(Get-Panes $top).Count))"
+    $focus4 = Focused-Pane-Name
+    Assert ($focus4 -eq $focus0) "D4: a press that travelled is not a click - focus stays on '$focus0' ('$focus4')"
+
+    Say '== D5: a strip dropped in a gap of its row moves there'
+    # The slots are the gaps between the OTHER items, plus the two ends; the
+    # one where the strip already is changes nothing. Take an inner gap that
+    # is not that one.
+    $others = @($rows | Where-Object { $_.Hwnd -ne $d.Hwnd })
+    $own = [array]::IndexOf(@($rows | ForEach-Object { $_.Hwnd }), $d.Hwnd)
+    $k = if ($own -ne 1) { 1 } else { 2 }
+    $gapX = [int](($others[$k - 1].Left + $others[$k - 1].StripW + $others[$k].Left) / 2)
+    $expect = @($others[0..($k - 1)] | ForEach-Object { $_.Name }) + @($d.Name) + @($others[$k..($others.Count - 1)] | ForEach-Object { $_.Name })
+    Say ("      drop at x={0} (between {1} and {2}); expect {3}" -f $gapX, $others[$k - 1].Name, $others[$k].Name, ($expect -join ','))
+    Drag-Strip $top $px $midY $gapX $midY
+    $order5 = Get-LeafOrder
+    Assert (($order5 -join ',') -eq ($expect -join ',')) "D5: $($d.Name) moved between $($others[$k - 1].Name) and $($others[$k].Name) (tree $($order5 -join ','))"
+    $after5 = @(Get-Panes $top)
+    Assert ($after5.Count -eq 4 -and @($after5 | Where-Object { $_.Hwnd -eq $d.Hwnd }).Count -eq 1) "D5: the same four panes, $($d.Name) still its own window ($($after5.Count))"
+
+    Say '== D6: a strip dropped at a screen edge tiles a window of its own'
+    $rows = Get-StripRow $top $nameOf
+    $d = @($rows | Where-Object { -not $_.Visible })[0]
+    if ($null -eq $d) { Write-TestAssertedNothing -Reason 'no pane was tucked after D5' }
+    $wa = Get-TestWorkArea
+    $midY = $d.Top + [int](($d.Bottom - $d.Top) / 2)
+    Drag-Strip $top ($d.Left + [int]($d.StripW / 2)) $midY ($wa.Right - 3) $midY
+    $deadline = (Get-Date).AddSeconds(8)
+    do {
+        $tops = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow')
+        if ($tops.Count -ge 2) { break }
+        Start-Sleep -Milliseconds 300
+    } while ((Get-Date) -lt $deadline)
+    Assert ($tops.Count -eq 2) "D6: a second window opened ($($tops.Count))"
+    $new = @($tops | Where-Object { $_.Hwnd -ne [int64]$top })[0]
+    if ($new) {
+        $half = $wa.Left + [int]($wa.Width / 2)
+        Say ("      new window {0}-{1}; work area {2}-{3}" -f $new.Left, $new.Right, $wa.Left, $wa.Right)
+        $tol = Get-TestChromeDip -Dip 12 -Scale $script:scale
+        Assert ([math]::Abs($new.Left - $half) -le $tol -and [math]::Abs($new.Right - $wa.Right) -le $tol) "D6: it covers the right half of the screen ($($new.Left)-$($new.Right) vs $half-$($wa.Right))"
+        $moved = @(Get-TestChildWindows -Window ([IntPtr]$new.Hwnd) -Class 'GhozttyTerminal')
+        Assert ($moved.Count -eq 1 -and $moved[0].Hwnd -eq $d.Hwnd) "D6: it holds the dragged pane $($d.Name), the same window ($($moved.Count))"
+        Assert (@(Get-Panes $top).Count -eq 3) "D6: three panes stay behind ($(@(Get-Panes $top).Count))"
+    }
 
     Complete-TestBody
 } catch {

@@ -4117,6 +4117,12 @@ pub const RearrangeDrag = struct {
 
     active: bool = false,
 
+    /// The drag started on a tucked pane's strip (T2120, Mac `isBlade`): it
+    /// resolves to a strip's targets (`pane_drop.resolveBlade`), not a pane's,
+    /// arms no tab dwell, and a press that never travels is a click that
+    /// brings the pane forward (T2109).
+    blade: bool = false,
+
     /// The tab button the pointer is currently resting on, and therefore the
     /// tab the dwell timer will switch to when it fires (T1537). Null when the
     /// pointer is not on a tab button at all.
@@ -4175,7 +4181,18 @@ pub const RearrangeDrag = struct {
         /// Released on the pane sidebar: stash it there, at this index in
         /// the stash (T1844).
         stash: struct { index: usize },
+        /// A strip released in a slot of its own row (T2120): beside the
+        /// row's item made of exactly the panes `beside[0..n]`, on `side`.
+        reorder: struct { beside: [MAX_BESIDE]pane_id.Buf, n: usize, side: pane_drop.Side },
+        /// A strip released at a screen's edge (T2120): a window of its own
+        /// covering this half of the screen.
+        tile: drop_highlight.Rect,
     };
+
+    /// The most panes one row item (a column) may hold and still be a
+    /// strip's reorder slot. A bigger column is not a slot - the failure that
+    /// costs nothing - rather than a buffer that grows on every mouse move.
+    pub const MAX_BESIDE: usize = 16;
 };
 
 /// How many OTHER windows one drag resolves against, and how much of each is
@@ -4291,8 +4308,14 @@ fn ownedDrop(
         .new_window => null,
         .stash => |sp| if (honoured) .{ .stash = .{ .index = sp.index } } else null,
         // A strip's own targets (T2128): only `pane_drop.resolveBlade` makes
-        // them, and no drag here resolves through it yet (T2120).
-        .reorder, .tile => null,
+        // them, for a drag started on a strip (T2120).
+        .reorder => |sp| blk: {
+            if (sp.beside.len == 0 or sp.beside.len > RearrangeDrag.MAX_BESIDE) break :blk null;
+            var beside: [RearrangeDrag.MAX_BESIDE]pane_id.Buf = undefined;
+            for (sp.beside, 0..) |id, i| beside[i] = copyPaneId(id) orelse break :blk null;
+            break :blk .{ .reorder = .{ .beside = beside, .n = sp.beside.len, .side = sp.side } };
+        },
+        .tile => |frame| .{ .tile = frame },
     };
 }
 
@@ -4480,6 +4503,15 @@ pub fn beginGrabHandleDrag(self: *Window, view: *PaneView, pt: w32.POINT) void {
     var c = pt;
     _ = w32.ScreenToClient(hwnd, &c);
     self.beginRearrangeDrag(view, c.x, c.y);
+}
+
+/// A press on a tucked pane's strip (T2120, Mac `PaneStackTabView` as a drag
+/// source): arm a strip drag at window point (x, y). Nothing moves until the
+/// pointer passes the threshold; a release before that is the strip's click.
+pub fn beginStripDrag(self: *Window, view: *PaneView, x: i32, y: i32) void {
+    if (self.rearrange_drag != null) return;
+    self.beginRearrangeDrag(view, x, y);
+    if (self.rearrange_drag) |*d| d.blade = true;
 }
 
 /// Every window's sidebar shows its empty drop slot while a drag is live,
@@ -4771,7 +4803,17 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
 
     const origin = self.clientOrigin();
     const point: pane_drop.Point = .{ .x = x + origin.x, .y = y + origin.y };
-    const target = pane_drop.resolve(
+    // A strip has targets of its own (T2120): the slots of the row it is
+    // folded into, and the screens' edges. Mac falls back to a pane's targets
+    // when the row cannot be read, and so does this.
+    var blade_buf: BladeBuffers = undefined;
+    const blade: ?pane_drop.BladeDrag = if (d.blade) self.bladeGeometry(d.view, &blade_buf) else null;
+    const target = if (blade) |b| pane_drop.resolveBlade(
+        point,
+        cands[0..n],
+        b,
+        self.dropMetrics(),
+    ) else pane_drop.resolve(
         point,
         cands[0..n],
         d.view.paneId(),
@@ -4784,7 +4826,17 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     var over_other_window = false;
 
     if (target) |t| resolved: {
-        if (t.window()) |ref| {
+        if (t == .tile) {
+            // A window of its own over that half of the screen - refused, as
+            // a pop-out is, for the tab's last pane.
+            if (!pane_relocate.popOutAllowed(
+                self.leafCount(d.source_tab),
+                self.tab_count,
+            )) break :resolved;
+            d.drop = ownedDrop(t, true);
+            d.highlight = drop_highlight.forTarget(t, .{ .window = 0, .content_rect = t.tile, .scale = self.scale });
+            over_other_window = true;
+        } else if (t.window()) |ref| {
             // A drop into a window — this one or another. Both the commit and
             // the preview are answered against THAT window's geometry.
             const i = blk: {
@@ -4883,7 +4935,101 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
         }
         break :blk null;
     };
-    self.armTabDwell(d, hovered);
+    // A strip has no tab-strip targets, so nothing to dwell on either.
+    self.armTabDwell(d, if (d.blade) null else hovered);
+}
+
+/// The stack buffers one strip drag's row geometry is built in, on the
+/// mouse-move's stack: the row's items and their panes, the slots between
+/// them, and the monitors' work areas.
+const BladeBuffers = struct {
+    items: [pane_drop.max_row_items]pane_drop.RowItem,
+    item_ids: [MAX_DRAG_NODES][]const u8,
+    slots: [pane_drop.max_row_items + 1]pane_drop.Slot,
+    slot_ids: [MAX_DRAG_NODES][]const u8,
+    screens: [MAX_SCREENS]pane_drop.Rect,
+};
+
+const MAX_SCREENS: usize = 16;
+
+/// Where the strip of `view` can be dragged to (Mac
+/// `PaneDragSession.bladeGeometry`): the slots of the row it is folded into,
+/// read off the cards and strips on screen, and every monitor's work area.
+/// Null when the pane is not folded into a row on screen, or one of the row's
+/// items shows nowhere - the drag then has a pane's targets.
+fn bladeGeometry(self: *Window, view: *PaneView, buf: *BladeBuffers) ?pane_drop.BladeDrag {
+    var grid = self.stackGrid() orelse return null;
+    defer grid.deinit();
+    const stack = self.stackState().stackMinimizing(pane_stack_grid.viewId(view)) orelse return null;
+    const origin = self.clientOrigin();
+    var n_items: usize = 0;
+    var n_ids: usize = 0;
+    for (stack.items) |item| {
+        if (n_items >= buf.items.len) break;
+        var rect: ?pane_drop.Rect = null;
+        const start = n_ids;
+        for (item) |id| {
+            // Only a pane the grid placed, which is what proves the id still
+            // names a live view of this tab: it is the view's address.
+            const p = grid.placement(id) orelse continue;
+            const on_screen: pane_stack_grid.PxRect = p.tab orelse
+                if (p.is_tucked) continue else (self.stackSlideRect(id) orelse p.rect);
+            const r = toDropRect(winRect(on_screen), origin);
+            rect = if (rect) |u| .{
+                .left = @min(u.left, r.left),
+                .top = @min(u.top, r.top),
+                .right = @max(u.right, r.right),
+                .bottom = @max(u.bottom, r.bottom),
+            } else r;
+            if (n_ids >= buf.item_ids.len) return null;
+            const v: *PaneView = @ptrFromInt(id);
+            buf.item_ids[n_ids] = v.paneId();
+            n_ids += 1;
+        }
+        buf.items[n_items] = .{ .rect = rect orelse return null, .panes = buf.item_ids[start..n_ids] };
+        n_items += 1;
+    }
+    const slots = pane_drop.bladeSlots(
+        buf.items[0..n_items],
+        if (stack.direction == .horizontal) .horizontal else .vertical,
+        view.paneId(),
+        self.dropMetrics(),
+        &buf.slots,
+        &buf.slot_ids,
+    );
+    return .{
+        .window = self.dropWindowRef(),
+        .slots = slots,
+        .screens = buf.screens[0..workAreas(&buf.screens)],
+    };
+}
+
+/// Every monitor's work area, in screen coordinates. Returns how many were
+/// written.
+fn workAreas(out: []pane_drop.Rect) usize {
+    const List = struct {
+        out: []pane_drop.Rect,
+        n: usize = 0,
+
+        fn proc(mon: ?w32.HMONITOR, _: ?w32.HDC, _: *w32.RECT, data: isize) callconv(.winapi) i32 {
+            const list: *@This() = @ptrFromInt(@as(usize, @bitCast(data)));
+            if (list.n >= list.out.len) return 0;
+            var mi: w32.MONITORINFO = undefined;
+            mi.cbSize = @sizeOf(w32.MONITORINFO);
+            if (mon == null or w32.GetMonitorInfoW(mon.?, &mi) == 0) return 1;
+            list.out[list.n] = .{
+                .left = mi.rcWork.left,
+                .top = mi.rcWork.top,
+                .right = mi.rcWork.right,
+                .bottom = mi.rcWork.bottom,
+            };
+            list.n += 1;
+            return 1;
+        }
+    };
+    var list: List = .{ .out = out };
+    _ = w32.EnumDisplayMonitors(null, null, &List.proc, @bitCast(@intFromPtr(&list)));
+    return list.n;
 }
 
 /// A tab button a dwell can switch to: which window, and which of its tabs.
@@ -5012,6 +5158,12 @@ fn endRearrangeDrag(self: *Window, commit: bool) void {
     // re-lays the window anyway; a cancel leaves the panes where they were,
     // so this repaint is the only thing that un-lights the header.
     if (d.active) self.repaintRearrangeHeaders();
+    // A strip pressed and released without travelling is a click (T2109):
+    // the pane comes forward.
+    if (commit and !d.active and d.blade) {
+        if (self.paneInActiveTab(d.view)) self.bringForward(d.view);
+        return;
+    }
     if (!commit or !d.active) return;
     const drop = d.drop orelse return;
     self.commitRearrangeDrop(d.view, d.source_tab, drop, d.dest);
@@ -5047,6 +5199,19 @@ fn commitRearrangeDrop(
     // The pane sidebar (T1844): stash, wherever the sidebar is.
     if (drop == .stash) {
         self.commitStashDrop(view, source_tab, at, drop.stash.index, dest_window);
+        return;
+    }
+
+    // A strip's own drops (T2120): a window over half a screen, and a move
+    // along the row it is folded into.
+    if (drop == .tile) {
+        self.commitPopOutDrop(view, source_tab, at, drop.tile);
+        return;
+    }
+    if (drop == .reorder) {
+        if (dest_window != null) return;
+        const r = drop.reorder;
+        self.commitReorderDrop(view, source_tab, at, r.beside[0..r.n], r.side);
         return;
     }
 
@@ -5125,7 +5290,7 @@ fn commitRearrangeDrop(
             };
         },
         // All handled above, before the same-tab path is even chosen.
-        .new_tab, .new_window, .stash => unreachable,
+        .new_tab, .new_window, .stash, .reorder, .tile => unreachable,
     };
 
     // Swap-then-release (T1356), the rule every other tree mutation follows.
@@ -5183,6 +5348,66 @@ fn commitStashDrop(
         pane_stash.stashIndex(self.tab_trees[source_tab], view),
         pane_stash.stashedCount(self.tab_trees[source_tab]),
     });
+}
+
+/// Move a dragged strip along the row it is folded into (T2120, Mac
+/// `PaneMoveCoordinator.reorder`): out of where it is, and in beside the row's
+/// item made of exactly the panes `beside`, on `side`, halving that item's
+/// space. A pane that lands among the folded strips stays one, and keeps the
+/// caret where it was; one that lands among the cards on show is focused, as
+/// any other drop's pane is.
+fn commitReorderDrop(
+    self: *Window,
+    view: *PaneView,
+    tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    beside: []const pane_id.Buf,
+    side: pane_drop.Side,
+) void {
+    if (tab != self.active_tab) return;
+    if (at == .root) return;
+    const alloc = self.app.core_app.alloc;
+    // The pane as a tree of its own FIRST, so the removal below never takes
+    // its last reference.
+    var leaf = SplitTree(PaneView).init(alloc, view) catch |err| {
+        log.err("strip reorder leaf failed: {}", .{err});
+        return;
+    };
+    defer leaf.deinit();
+    var without = self.tab_trees[tab].remove(alloc, at) catch |err| {
+        log.err("strip reorder remove failed: {}", .{err});
+        return;
+    };
+    defer without.deinit();
+    // Found in the tree WITHOUT the pane: a column the strip was one pane of
+    // is named by the panes left in it.
+    var names: [RearrangeDrag.MAX_BESIDE][]const u8 = undefined;
+    for (beside, 0..) |*id, i| names[i] = id;
+    const index = pane_relocate.nodeWithPanes(without, names[0..beside.len], PaneView.paneId) orelse {
+        log.warn("strip reorder: the slot's item is not in the tree; ignoring the drop", .{});
+        return;
+    };
+    const item: SplitTree(PaneView).Node.Handle = @enumFromInt(index);
+    const moved = without.split(alloc, item, dropDirection(side), 0.5, &leaf) catch |err| {
+        log.err("strip reorder insert failed: {}", .{err});
+        return;
+    };
+
+    // Swap-then-release (T1356), the rule every other tree mutation follows.
+    var old_tree = self.tab_trees[tab];
+    self.tab_trees[tab] = moved;
+    old_tree.deinit();
+
+    if (self.isStackMinimized(tab, view)) {
+        log.info("strip reorder: moved within its row, still folded", .{});
+        self.layoutSplits();
+        self.app.markLayoutDirty(); // T110
+        if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+        return;
+    }
+    log.info("strip reorder: moved within its row, on show", .{});
+    self.tab_active_pane[tab] = view;
+    self.finishRearrangeDrop(view);
 }
 
 /// Move the dragged pane into a TAB OF ITS OWN, at `index` in the strip
@@ -5316,7 +5541,7 @@ fn commitCrossTabDrop(
             };
         },
         // All handled by the caller, which never reaches this path with one.
-        .new_tab, .new_window, .stash => unreachable,
+        .new_tab, .new_window, .stash, .reorder, .tile => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];
@@ -5449,7 +5674,7 @@ fn commitCrossWindowDrop(
                 return;
             };
         },
-        .new_tab, .new_window, .stash => unreachable,
+        .new_tab, .new_window, .stash, .reorder, .tile => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];
@@ -14314,9 +14539,10 @@ pub fn windowWndProc(
                 window.startDividerDrag(hit.handle, hit.layout);
                 return 0;
             }
-            // A tucked pane's strip brings it forward (T2109).
+            // A tucked pane's strip: a click brings it forward (T2109), a
+            // press that travels picks the pane up (T2120).
             if (window.stackStripAt(x, y)) |view| {
-                window.bringForward(view);
+                window.beginStripDrag(view, x, y);
                 return 0;
             }
             // A stack grip drags (T2124). After the strips: a grip's band is

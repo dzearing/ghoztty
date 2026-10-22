@@ -14,6 +14,7 @@
 //! window against the drop point.
 
 const std = @import("std");
+const pane_id = @import("pane_id.zig");
 
 /// What the source window must do once the pane is out of its tree.
 ///
@@ -130,9 +131,94 @@ pub fn newWindowFrame(point: Point, w: i32, h: i32, work: Rect, scale: f32) Rect
     return .{ .left = left, .top = top, .right = left + width, .bottom = top + height };
 }
 
+/// The node of `tree` whose leaves are EXACTLY the panes `ids`, by node index,
+/// or null when no node is (T2120, Mac `node(exactly:)`): the row item a
+/// dragged strip is dropped beside. `tree` is a `SplitTree` or anything with
+/// its `nodes` shape; `idOf(view)` names a leaf, compared the way every pane
+/// id is (`pane_id.eql`).
+pub fn nodeWithPanes(tree: anytype, ids: []const []const u8, comptime idOf: anytype) ?usize {
+    if (tree.nodes.len == 0 or ids.len == 0) return null;
+    return nodeWithPanesFrom(tree, 0, ids, idOf);
+}
+
+fn nodeWithPanesFrom(tree: anytype, i: usize, ids: []const []const u8, comptime idOf: anytype) ?usize {
+    const counted = leavesIn(tree, i, ids, idOf);
+    if (counted.all and counted.n == ids.len) return i;
+    return switch (tree.nodes[i]) {
+        .leaf => null,
+        .split => |s| nodeWithPanesFrom(tree, s.left.idx(), ids, idOf) orelse
+            nodeWithPanesFrom(tree, s.right.idx(), ids, idOf),
+    };
+}
+
+const Counted = struct { n: usize, all: bool };
+
+/// How many leaves are under node `i`, and whether every one is in `ids`.
+fn leavesIn(tree: anytype, i: usize, ids: []const []const u8, comptime idOf: anytype) Counted {
+    switch (tree.nodes[i]) {
+        .leaf => |v| {
+            for (ids) |id| if (pane_id.eql(idOf(v), id)) return .{ .n = 1, .all = true };
+            return .{ .n = 1, .all = false };
+        },
+        .split => |s| {
+            const l = leavesIn(tree, s.left.idx(), ids, idOf);
+            const r = leavesIn(tree, s.right.idx(), ids, idOf);
+            return .{ .n = l.n + r.n, .all = l.all and r.all };
+        },
+    }
+}
+
 // -------------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------------
+
+const FakeView = struct { id: []const u8 };
+const FakeHandle = enum(u16) {
+    _,
+    fn idx(self: FakeHandle) usize {
+        return @intFromEnum(self);
+    }
+};
+const FakeNode = union(enum) {
+    leaf: *const FakeView,
+    split: struct { left: FakeHandle, right: FakeHandle },
+};
+const FakeTree = struct { nodes: []const FakeNode };
+
+fn fakeId(v: *const FakeView) []const u8 {
+    return v.id;
+}
+
+fn fh(i: u16) FakeHandle {
+    return @enumFromInt(i);
+}
+
+// a | (column(b, c) | d)
+const fake_views = [_]FakeView{ .{ .id = "A" }, .{ .id = "B" }, .{ .id = "C" }, .{ .id = "D" } };
+const fake_nodes = [_]FakeNode{
+    .{ .split = .{ .left = fh(1), .right = fh(2) } },
+    .{ .leaf = &fake_views[0] },
+    .{ .split = .{ .left = fh(3), .right = fh(6) } },
+    .{ .split = .{ .left = fh(4), .right = fh(5) } },
+    .{ .leaf = &fake_views[1] },
+    .{ .leaf = &fake_views[2] },
+    .{ .leaf = &fake_views[3] },
+};
+const fake_tree: FakeTree = .{ .nodes = &fake_nodes };
+
+test "nodeWithPanes names a lone pane's leaf, and a column by all its panes" {
+    try std.testing.expectEqual(@as(?usize, 6), nodeWithPanes(fake_tree, &.{"D"}, fakeId));
+    try std.testing.expectEqual(@as(?usize, 3), nodeWithPanes(fake_tree, &.{ "c", "b" }, fakeId));
+    try std.testing.expectEqual(@as(?usize, 0), nodeWithPanes(fake_tree, &.{ "A", "B", "C", "D" }, fakeId));
+}
+
+test "nodeWithPanes finds no node for a set that is not one item" {
+    // B and D are not a node of their own: C sits between them.
+    try std.testing.expectEqual(@as(?usize, null), nodeWithPanes(fake_tree, &.{ "B", "D" }, fakeId));
+    // Part of a column is not the column.
+    try std.testing.expectEqual(@as(?usize, null), nodeWithPanes(fake_tree, &.{ "B", "X" }, fakeId));
+    try std.testing.expectEqual(@as(?usize, null), nodeWithPanes(fake_tree, &.{}, fakeId));
+}
 
 test "a pane leaving a tab that still has panes only re-lays that tab out" {
     try std.testing.expectEqual(SourceAftermath.keep_tab, sourceAftermath(2, 1));
