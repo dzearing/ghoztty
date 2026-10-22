@@ -1610,14 +1610,16 @@ it:
   so there is no native range left to break, and the switch went with the
   RichEdit (T1704).
 
-**A Debug pane's SCREEN runs about 12 KB/s, so never wait on it for a burst**
-(T1116, T1142). Measured on 2026-08-23 with 20000 numbered lines (180 KB) piped
-into a pane and `+read` polled for the highest line the app had reached: the app
-ingests **12–15 KB/s** on a Debug build and **~1 MB/s** on a ReleaseFast one — a
-~65x gap that is Debug codegen of the terminal parse path, not a defect in
-anything the user runs (a release pane tracks its child to inside one poll
-interval at 4.5 MB, against conhost's 1.9 MB/s on the identical payload). Two
-consequences for harness authors, and the first one has already cost a turn:
+**A Debug pane's SCREEN keeps up now, but do not wait on it for a burst anyway**
+(T1116, T1142, T1169). On 2026-08-23 a Debug pane ingested only **12-15 KB/s**,
+and T1142 blamed Debug codegen. T1169 found the real cost: the terminal's slow
+integrity checks (`slow_runtime_safety`), which walk whole pages and the whole
+page list on nearly every write. The app, agent and libghostty now build without
+them unless you pass **`-Dslow-runtime-safety=true`**, and a default Debug pane
+ingests **~1.6 MB/s** on a 4.5 MB flood (conhost does 1.9 MB/s). Test binaries
+keep the checks in Debug, since every integrity violation ever caught came from
+one. If you rebuild with the flag to hunt a corruption, the old 12 KB/s comes
+back with it. What still holds for harness authors:
 
 - **The two pane paths differ in who absorbs the backlog, not in speed.** A
   local (`termio.Exec`) pane's ConPTY back-pressures the child down to the app's
@@ -1628,13 +1630,15 @@ consequences for harness authors, and the first one has already cost a turn:
   to through an agent pane, which is exactly how T1116's marker got evicted from
   the very ring its assertion was about. Drive volume off the ring or the
   snapshot file, never off the app's screen.
-- **Budget for it.** A 180 KB burst costs ~18 s of Debug wall clock before the
-  screen agrees it happened; scale the timeout to the payload, not to intuition.
+- **Budget for it.** A 180 KB burst reaches the screen in ~0.3 s on the default
+  Debug build and ~18 s on a `-Dslow-runtime-safety=true` one; scale the timeout
+  to the payload and the build, not to intuition.
 
 The standing measurement is `test\win32\pane-ingest-lag.ps1` (guard
 `pane-ingest-lag`), which asserts the backlog DRAINS — a catch-up bound, an
 ingest floor, and the pane still LIVE afterwards — with regression headroom over
-the Debug numbers rather than a claim about how fast the product is. Its
+the Debug numbers rather than a claim about how fast the product is. Its 100 KB/s
+floor goes red if the slow checks come back into the artifacts by default. Its
 `-NegativeControl` hunts for a line the payload never contains, so the catch-up
 arms must go red while the setup arms stay green.
 

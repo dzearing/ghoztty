@@ -60,6 +60,10 @@ snap: bool = false,
 windows_console: bool = false,
 windows_file_version: [4]u16 = .{ 0, 1, 0, 0 },
 windows_update_check: bool = false,
+/// Whether the terminal's slow integrity checks run inside the runnable
+/// artifacts (app, agent, libghostty). Test binaries ignore this and keep
+/// them on in Debug. See `-Dslow-runtime-safety` (T1169).
+artifact_slow_runtime_safety: bool = false,
 emit_bench: bool = false,
 emit_docs: bool = false,
 emit_exe: bool = false,
@@ -213,6 +217,21 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
             "win-v* release channel (T24). Default false so dev/portable " ++
             "builds never phone home or nag; the MSI release pipeline " ++
             "(dist/windows-installer/build-msi.sh --semver) sets it.",
+    ) orelse false;
+
+    // T1169: the terminal's slow integrity checks walk whole pages and the
+    // whole page list on nearly every write, which caps a Debug pane at
+    // ~18 KB/s of output against ~580 KB/s without them - the runnable
+    // artifact every acceptance script drives was paying that. Every
+    // integrity violation this project has ever caught came from a TEST
+    // binary (T238, T317, T442, T443), so the tests keep the checks in
+    // Debug and the app, agent and libghostty drop them unless asked.
+    config.artifact_slow_runtime_safety = b.option(
+        bool,
+        "slow-runtime-safety",
+        "Run the terminal's slow integrity checks inside the app, agent and " ++
+            "libghostty. Default false: they slow a pane's output ~30x. Test " ++
+            "binaries always run them in Debug regardless (T1169).",
     ) orelse false;
 
     config.sentry = b.option(

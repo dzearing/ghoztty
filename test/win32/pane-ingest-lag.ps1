@@ -24,6 +24,22 @@
 #     ReleaseFast     local (4.5 MB burst)     7.2 s / 7.2 s  ~1.0 MB/s
 #     conhost         (4.5 MB, same payload)   2.3 s          ~1.9 MB/s
 #
+# T1169 (2026-10-22) found the Debug number was NOT codegen. It was the
+# terminal's slow integrity checks (`slow_runtime_safety`), which walk whole
+# pages and the whole page list on nearly every write. The runnable artifacts
+# now build without them unless `-Dslow-runtime-safety=true` is passed; test
+# binaries keep them in Debug. Re-measured on the default Debug build:
+#
+#     build                    path     payload   child / app done   rate
+#     Debug (T1169)            agent     180 KB     0.32 s / 0.32 s   child-limited
+#     Debug (T1169)            local     180 KB     0.28 s / 0.28 s   child-limited
+#     Debug (T1169)            agent     4.5 MB     2.78 s / 2.78 s   ~1.6 MB/s
+#     Debug (T1169)            local     4.5 MB     2.76 s / 2.76 s   ~1.6 MB/s
+#     Debug -Dslow-runtime-safety=true   agent   180 KB   11.1 s     ~16 KB/s
+#
+# The paragraph below is the 2026-08-23 reading and is kept as history; its
+# "Debug codegen" diagnosis was wrong, its path analysis still holds.
+#
 # So the lag is a DEBUG-BUILD shape, not a shipped defect: a release pane tracks
 # its child to inside one poll interval at 4.5 MB, and the ~65x gap is Debug
 # codegen of the terminal parse path - it reproduces identically on the LOCAL
@@ -85,19 +101,21 @@ $tmp = Join-Path $env:TEMP "ghoztty-ingest-lag-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
 # --- bounds (see the table above) -------------------------------------------
-# The app must drain its backlog, not stall: measured 12.2 s (agent) and 0.9 s
-# (local) of catch-up after the child finished, on the slowest build we ship a
-# harness against.
-$catchupBoundSec = 90
+# Re-calibrated for T1169. The app must drain its backlog, not stall: measured
+# 0.3 s to the last line on Debug (it was 12.2 s with the slow checks on).
+$catchupBoundSec = 30
 # The child must not be paced by the app on the agent path: measured 1.1 s
 # against an app that needed 12.2 s. This goes red if the ring starts blocking
 # the producer for a burst this size.
 $childBoundSec = 20
 # A local pane has no ring, so its screen is never far behind its child:
-# measured 0.9 s.
-$localGapBoundSec = 15
-# App-side ingest floor: measured 12-15 KB/s on Debug.
-$rateFloor = 4000
+# measured under 0.1 s (0.9 s with the slow checks on).
+$localGapBoundSec = 5
+# App-side ingest floor: measured 555-633 KB/s on Debug, child-limited at this
+# payload. 100 KB/s is 5x headroom and still 6x above the ~16 KB/s a build with
+# the slow checks back on measures, so A4/B4 go red if they return to the
+# artifacts by default (T1169).
+$rateFloor = 100000
 
 # ---------------------------------------------------------------------------
 # One CLI verb through cmd.exe with a real redirect (ghoztty.exe is

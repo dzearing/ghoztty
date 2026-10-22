@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-22T13:18:10-07:00",
-    "commit":  "4b257e34c",
+    "generated":  "2026-10-22T14:06:38-07:00",
+    "commit":  "38ef885de",
     "uncommitted":  [
 
                     ],
@@ -393,7 +393,7 @@
                   "src/build/BuildTestSweep.zig":  "5c2aa1125bda9cc7b3d3d2eedb06f5e6e8c10053a18be5403c0efaf4d6868079",
                   "src/build/combine_archives.zig":  "8f3326f65a5791af0e0bb8d18fc840d6d8d3a033b1ab90a22b10edad5b10893b",
                   "src/build/CombineArchivesStep.zig":  "31be7eee49915ea374e808982c0eb1d1c1bea972a313fb06a55286c3c0abcba0",
-                  "src/build/Config.zig":  "14f72d1a8948a6247922d4e2bd234110639d93711aaf9635bba5ff9d8ac88cce",
+                  "src/build/Config.zig":  "1cfd8ea88cdaeb947f947c1125ca6ce1d1f957f2a3da54348ed7e7be66da40f1",
                   "src/build/drive_check.zig":  "a355ce6d3af9b9e1ee61dd60d0595bae80a6074f833734a736c2455f3ad70425",
                   "src/build/GhosttyAgent.zig":  "a9b57f7c0bbfd9341121f41e72eaae80e16b821e280501edc60d2d8498f03cd7",
                   "src/build/GhosttyBench.zig":  "50387a0b268b3d9ac437bc2dc12abe3d94e84597f9b0d2f45ebc5541d0429676",
@@ -432,7 +432,7 @@
                   "src/build/pdb_msf_fix.zig":  "e90443915c6fbb98a6f1585b02943478edb567532c088e2b2ec7707f435475a9",
                   "src/build/pdb_msf_fix_main.zig":  "ac6c129f6cdb6d62295dcc38089bce879fb3b8dcb41799391d518176e591dab0",
                   "src/build/PdbMsfFix.zig":  "0bf4bb7adcfa9982b0062271889ab9e962f9e60fbdf9ba4477e6f763aca12f49",
-                  "src/build/SharedDeps.zig":  "f13f9a9456955e3711230741e1104b47b58c7056b75a1ac67eea097e0b5252f9",
+                  "src/build/SharedDeps.zig":  "5384fb12cad730189c60b5059e80a56e91d4f33604e2091981085c4fec06a5e1",
                   "src/build/TestFilterGuard.zig":  "88e9802a8c6064127f974506f46180be56c8a86ea1b64b0884e87083224f40da",
                   "src/build/UnicodeTables.zig":  "42426166176fa7f37bebc00dbb69d2c28658330dcf53d86843df1fed6cefa0c0",
                   "src/build/uucode_config.zig":  "668ee0c8ce90c607cc50b7a3b42fc103e7682b8f1e35fcffdc301d1a5585bd4c",
@@ -1196,7 +1196,7 @@
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
                   "test/win32/pane-ingest-ab.ps1":  "8a1c931c42ef7e346459a13bbd3c4a8e31a581ca00247520423b3d2bca6e984b",
-                  "test/win32/pane-ingest-lag.ps1":  "567b1c56f72b20c1404ad98663e8f5e86796a3934b273141714886d1c514c9b4",
+                  "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
                   "test/win32/pane-sidebar.ps1":  "378ae6fdbda66eb800ca434d083c0ec28791dadcbbcb8a0c6fe5bb76af5dcb16",
                   "test/win32/pane-sidebar-actions.ps1":  "bf8f75825a1dd767fd755bdc8d58e790b08076b1eb85ff8a341f5386968aad6c",
                   "test/win32/pane-sidebar-activity.ps1":  "1b0a5053db2c58cd2065c75a6e52e22c83185bf3146aeabb5c4224740d801455",

@@ -135,8 +135,14 @@ pub fn add(
     // Every exe gets build options populated
     step.root_module.addOptions("build_options", self.options);
 
-    // Every exe needs the terminal options
-    self.config.terminalOptions(.ghostty).add(b, step.root_module);
+    // Every exe needs the terminal options. A runnable artifact only runs
+    // the slow integrity checks when asked; test binaries keep the Debug
+    // default, since they are where those checks catch things (T1169).
+    var terminal_options = self.config.terminalOptions(.ghostty);
+    if (!step.kind.isTest()) {
+        terminal_options.slow_runtime_safety = self.config.artifact_slow_runtime_safety;
+    }
+    terminal_options.add(b, step.root_module);
 
     // C imports for locale constants and functions
     {
