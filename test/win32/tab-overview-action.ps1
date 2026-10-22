@@ -97,9 +97,12 @@ function Get-HeroLeaf([IntPtr]$top) {
     $visible = @($leaves | Where-Object Visible)
     if ($visible.Count -ne 1) { return $null }
     $hero = $visible[0]
-    # The grid (and so the hero) starts after the pane sidebar's column (T1828).
-    $sbar = @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Where-Object Visible | Select-Object -First 1
-    $col = if ($sbar) { $sbar.Width } else { 0 }
+    # The hero starts where the pane GRID starts, measured from the normal
+    # layout before any overview opened, as hero-mode.ps1 does: right of the
+    # pane sidebar (T1828), and on glass inside the window margin too, since
+    # the hero is a card on the desk there (T2104). The sidebar's width alone
+    # put the edge a margin too far left and read every glass hero as closed.
+    $col = $script:GridLeft
     if ($hero.Left - $col -gt 2) { return $null }
     if ($hero.Width -lt [int](0.6 * ($c.Width - $col))) { return $null }
     # Every hidden leaf is sized to the hero rect, which is what tells hero
@@ -167,6 +170,8 @@ try {
     $terms = @((Get-Leaves $top) | Where-Object { $_.Kind -eq 'GhozttyTerminal' })
     Assert ($terms.Count -eq 2) "setup: two terminal leaves (got $($terms.Count))"
     if ($terms.Count -ne 2) { Write-TestAssertedNothing -Reason 'the split never produced two panes' }
+    $script:GridLeft = [int](@($terms | ForEach-Object { $_.Left }) | Measure-Object -Minimum).Minimum
+    Write-Host "      grid-left=$($script:GridLeft) (the hero's left edge in an open overview)"
     $focused = [IntPtr](Get-TestFocusedWindow -Window $top)
 
     # Positive control: a chord posted at the focused pane reaches binding

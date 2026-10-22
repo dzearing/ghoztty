@@ -1,14 +1,14 @@
 {
     "guard":  "tab-overview-action",
     "script":  "test/win32/tab-overview-action.ps1",
-    "generated":  "2026-10-21T07:43:17-07:00",
-    "commit":  "a54ecfb2a",
+    "generated":  "2026-10-22T08:20:37-07:00",
+    "commit":  "13e6d083e",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_accel.zig"
+                        "test/win32/tab-overview-action.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/hero_math.zig":  "0fe6e40d9970a894ce17974f9da7344b9429c0bb93de623e643b7cc9f3dff1e0",
-                  "src/apprt/win32/viewer_accel.zig":  "33a26843a4ed92bc3fd417e6154c8dd541fa47809783d44ba1a986f15e1cde26",
-                  "test/win32/tab-overview-action.ps1":  "901c7fca766740c2439244200dad732fd42f9ed25b1ce269adcc113ca6fa71cb"
+                  "src/apprt/win32/viewer_accel.zig":  "f7855138490f3ffe20019be11cb9fb6dba5e4e69068a659e536b11e090cf6baa",
+                  "test/win32/tab-overview-action.ps1":  "e20977448b9d6f5a30acf7e71cfa6cae58389f9e719eab6884dcab83f5de8938"
               }
 }
