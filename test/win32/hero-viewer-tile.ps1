@@ -100,7 +100,8 @@ function Get-ClientSize([IntPtr]$top) {
 }
 
 # Tile rects around the SELECTED tile, mirroring hero_math.zig (splitRects ->
-# tileLayout -> stripTop -> tileRect) at scale 1.0. Client coordinates.
+# tileLayout -> stripTop -> tileRect) at the window's own scale (the test desktop
+# is not always 96 dpi). Client coordinates.
 #
 # Indexed by OFFSET from the selection, not by leaf index, and deliberately so.
 # The strip is built from `SplitTree.iterator()`, which walks the node ARRAY,
@@ -109,13 +110,19 @@ function Get-ClientSize([IntPtr]$top) {
 # asserting the wrong tile. What the selection-relative form pins is the thing
 # this task is actually about: the selected tile is centered, and its
 # neighbour slot is a painted tile rather than a hole.
-function Get-TileRects($hero, $client, [int]$fromOffset, [int]$toOffset) {
-    $bandW = 6
-    $carLeft = $hero.Right + $bandW
-    $carW = $client[0] - $carLeft
-    $carTop = $hero.Top
-    $carH = $client[1] - $carTop
-    $ar = $hero.Width / [double]$hero.Height
+function Get-TileRects($hero, $client, [int]$fromOffset, [int]$toOffset, [double]$scale) {
+    # Zig's @round is half-away-from-zero; .NET's default is banker's.
+    $away = { param($v) [int][math]::Round($v, [MidpointRounding]::AwayFromZero) }
+    $bandW = [math]::Max((& $away (6.0 * $scale)), 2)
+    # Glass panes, the default here (T2104): the hero is a card inside the
+    # elevated margin, and the pane's child sits one rim inside that card.
+    $rim = [math]::Max([int][math]::Ceiling(0.5 * $scale), 1)
+    $margin = [math]::Max((& $away (10.0 * $scale)), 1)
+    $carLeft = $hero.Right + $rim + $bandW
+    $carW = $client[0] - $margin - $carLeft
+    $carTop = $hero.Top - $rim
+    $carH = $client[1] - $margin - $carTop
+    $ar = ($hero.Width + 2 * $rim) / [double]($hero.Height + 2 * $rim)
     $tw = 0.88 * $carW
     $th = $tw / $ar
     if ($th -gt (0.70 * $carH)) {
@@ -124,7 +131,7 @@ function Get-TileRects($hero, $client, [int]$fromOffset, [int]$toOffset) {
         if ($tw -gt (0.88 * $carW)) { $tw = 0.88 * $carW; $th = $tw / $ar }
     }
     $tw = [int][Math]::Round($tw); $th = [int][Math]::Round($th)
-    $gap = 8
+    $gap = [math]::Max((& $away (8.0 * $scale)), 1)
     $mid = $carTop + [int][Math]::Truncate($carH / 2)
     # The selected tile is centered vertically; every other slot is a whole
     # tile + gap away from it.
@@ -285,7 +292,7 @@ try {
     Start-Sleep -Seconds 3
 
     # --- Claim A: every tile is painted -------------------------------------
-    $tiles = Get-TileRects $hero $client -1 1
+    $tiles = Get-TileRects $hero $client -1 1 ((Get-TestWindowDpi -Window $top) / 96.0)
     $shot = Get-TestWindowPixels -Window $top -Sync
     try {
         $mSel = Measure-Tile $shot $top $tiles[0]
@@ -295,6 +302,8 @@ try {
             [System.Drawing.Imaging.ImageFormat]::Png)
     } finally { Close-TestWindowPixels -Shot $shot }
 
+    Write-Host ("      predicted tiles (client): " + ((-1, 0, 1 | ForEach-Object { $t = $tiles[$_]; "$_=($($t.Left),$($t.Top),$($t.Right),$($t.Bottom))" }) -join " ") +
+        " hero=($($hero.Left),$($hero.Top),$($hero.Right),$($hero.Bottom)) client=$($client -join "x")")
     Write-Host ("      selected tile (terminal): colors=$($mSel.Colors) borderMax=$($mSel.BorderMax)")
     Write-Host ("      slot above:               colors=$($mUp.Colors) borderMax=$($mUp.BorderMax)")
     Write-Host ("      slot below:               colors=$($mDown.Colors) borderMax=$($mDown.BorderMax)")

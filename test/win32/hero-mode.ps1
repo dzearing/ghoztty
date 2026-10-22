@@ -294,6 +294,14 @@ function Get-ExpectedGrabIntoHeroPx([int]$dpi) {
     $half = [math]::Max([int][math]::Round(4.5 * $dpi / 96.0, [MidpointRounding]::AwayFromZero), 4)
     $half - [math]::Floor((Get-ExpectedGrabPx $dpi) / 2)
 }
+# Glass panes, the default this run launches with (T2104): the hero is a
+# card inside the elevated margin, and its child window sits one rim inside
+# that card - so the divider starts a rim right of the child, and the
+# carousel column stops at the margin rather than at the client edge.
+function Get-HeroRimPx([int]$dpi) { [math]::Max([int][math]::Ceiling(0.5 * $dpi / 96.0), 1) }
+function Get-HeroMarginPx([int]$dpi) {
+    [math]::Max([int][math]::Round(10.0 * $dpi / 96.0, [MidpointRounding]::AwayFromZero), 1)
+}
 $WM_NCHITTEST = 0x0084
 $HTTRANSPARENT = -1
 $HTCLIENT = 1
@@ -634,15 +642,18 @@ Assert (($null -ne $big2) -and ($big2.Hwnd -ne $big.Hwnd)) 'ctrl+alt+down/up mov
 # height; selected tile centered. Clicking one tile-step ABOVE the center
 # selects the previous leaf.
 if ($null -ne $big2) {
-    $carouselLeft = $big2.Right + 8
-    $carouselW = $client[0] - $carouselLeft
-    $carouselH = $client[1] - $big2.Top
+    $dpiC = Get-TestWindowDpi -Window $top
+    $rimC = Get-HeroRimPx $dpiC
+    $marginC = Get-HeroMarginPx $dpiC
+    $carouselLeft = $big2.Right + $rimC + 8
+    $carouselW = $client[0] - $marginC - $carouselLeft
+    $carouselH = $client[1] - $marginC - ($big2.Top - $rimC)
     $ar = $big2.Width / [double]$big2.Height
     $thumbW = [int](0.88 * $carouselW)
     $thumbH = [int]($thumbW / $ar)
     if ($thumbH -gt [int](0.7 * $carouselH)) { $thumbH = [int](0.7 * $carouselH) }
     $cx = $carouselLeft + [int]($carouselW / 2)
-    $cy = $big2.Top + [int]($carouselH / 2) - ($thumbH + 8)
+    $cy = ($big2.Top - $rimC) + [int]($carouselH / 2) - ($thumbH + 8)
     $s = To-Screen $top $cx $cy
     # Posted at the TOP-LEVEL window: the carousel has no child HWND of its
     # own, so that is the window a real click there would be routed to.
@@ -738,15 +749,18 @@ $big4 = $res4.Hero
 
 if ($null -ne $big4) {
     # Shared tile geometry (mirror of hero_math.zig, as in the click test).
-    $carouselLeft = $big4.Right + 8
-    $carouselW = $client[0] - $carouselLeft
-    $carouselH = $client[1] - $big4.Top
+    $dpiC = Get-TestWindowDpi -Window $top
+    $rimC = Get-HeroRimPx $dpiC
+    $marginC = Get-HeroMarginPx $dpiC
+    $carouselLeft = $big4.Right + $rimC + 8
+    $carouselW = $client[0] - $marginC - $carouselLeft
+    $carouselH = $client[1] - $marginC - ($big4.Top - $rimC)
     $ar = $big4.Width / [double]$big4.Height
     $thumbW = [int](0.88 * $carouselW)
     $thumbH = [int]($thumbW / $ar)
     if ($thumbH -gt [int](0.7 * $carouselH)) { $thumbH = [int](0.7 * $carouselH) }
     $ccx = $carouselLeft + [int]($carouselW / 2)
-    $ccy = $big4.Top + [int]($carouselH / 2)
+    $ccy = ($big4.Top - $rimC) + [int]($carouselH / 2)
     $ccs = To-Screen $top $ccx $ccy
 
     # (a) Animated click-swap: poll for the mid-slide state (0 visible
@@ -983,7 +997,8 @@ if ($null -ne $big4) {
     # Just past the zone, and deep inside, the pane keeps its own clicks.
     if ($null -ne $big5) {
         $dpiG = Get-TestWindowDpi -Window $top
-        $into = Get-ExpectedGrabIntoHeroPx $dpiG
+        # Measured from the card's edge; the child starts a rim inside it.
+        $into = (Get-ExpectedGrabIntoHeroPx $dpiG) - (Get-HeroRimPx $dpiG)
         $midYG = [int](($big5.Top + $big5.Bottom) / 2)
         Assert ($into -ge 1) "grab zone: reaches ${into}px into the hero pane at ${dpiG} dpi"
         $sIn = To-Screen $top ($big5.Right - $into) $midYG
@@ -1008,7 +1023,8 @@ if ($null -ne $big4) {
     # delivers, and the two moves straddle the 80ms leaf-resize throttle.
     if ($null -ne $big5) {
         $midY = [int](($big5.Top + $big5.Bottom) / 2)
-        $divX = $big5.Right - (Get-ExpectedGrabIntoHeroPx (Get-TestWindowDpi -Window $top))
+        $dpiD = Get-TestWindowDpi -Window $top
+        $divX = $big5.Right - ((Get-ExpectedGrabIntoHeroPx $dpiD) - (Get-HeroRimPx $dpiD))
         $dragX = $divX - 150
         $sDown = To-Screen $top $divX $midY
         $sMove = To-Screen $top $dragX $midY

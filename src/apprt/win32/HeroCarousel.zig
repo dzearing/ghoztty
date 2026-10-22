@@ -95,7 +95,7 @@ pub fn geometry(win: *Window) ?Geometry {
     const count = win.visibleLeafCount(tab);
     if (count == 0) return null;
 
-    const split = splitRects(win, win.surfaceRect());
+    const split = splitRects(win, win.heroRect());
     const hero_w: f32 = @floatFromInt(@max(split.hero.width(), 1));
     const hero_h: f32 = @floatFromInt(@max(split.hero.height(), 1));
     const layout = hero_math.tileLayout(split.carousel, hero_w / hero_h, win.scale);
@@ -160,13 +160,17 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     }
 
     // Background: window background darkened ~30% toward black (Mac:
-    // black @ 0.3 alpha over the window background).
+    // black @ 0.3 alpha over the window background). On glass the window
+    // background is the desk (T2104), so the band is the desk under that same
+    // shade, and the divider's band is the bare desk Mac leaves clear.
     const back = bandBackdrop(win);
-    const bg_color = w32.RGB(back.r, back.g, back.b);
-    var full: w32.RECT = .{ .left = 0, .top = 0, .right = rw, .bottom = rh };
-    if (w32.CreateSolidBrush(bg_color)) |brush| {
-        _ = w32.FillRect(mem_dc, &full, brush);
-        _ = w32.DeleteObject(@ptrCast(brush));
+    if (!paintGlassBand(win, hdc_screen, mem_dc, region, geo.split.divider.width())) {
+        const bg_color = w32.RGB(back.r, back.g, back.b);
+        var full: w32.RECT = .{ .left = 0, .top = 0, .right = rw, .bottom = rh };
+        if (w32.CreateSolidBrush(bg_color)) |brush| {
+            _ = w32.FillRect(mem_dc, &full, brush);
+            _ = w32.DeleteObject(@ptrCast(brush));
+        }
     }
 
     // Divider: the visible mark, centered in the 6 DIP grab band.
@@ -237,6 +241,52 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     }
 
     _ = w32.BitBlt(hdc_screen, region.left, region.top, rw, rh, mem_dc, 0, 0, w32.SRCCOPY);
+}
+
+/// Mac's carousel shade: black at 0.3 over whatever is behind the band.
+pub const BAND_SHADE_ALPHA: u8 = 77;
+
+/// Copy the glass desk under client rect `region` into `dc` at (0, 0) - the
+/// desk the window paint blits, so the two meet without a seam.
+fn blitDesk(win: *Window, dc: w32.HDC, region: w32.RECT) bool {
+    const g = win.glassDesk() orelse return false;
+    _ = w32.BitBlt(
+        dc,
+        0,
+        0,
+        region.right - region.left,
+        region.bottom - region.top,
+        g.desk.dc,
+        region.left - g.area.left,
+        region.top - g.area.top,
+        w32.SRCCOPY,
+    );
+    return true;
+}
+
+/// The glass band (T2104): the desk under `region`, shaded by
+/// `BAND_SHADE_ALPHA` of black right of the divider's `divider_w` band.
+/// False when the panes are not glass, and the caller fills the solid band.
+fn paintGlassBand(win: *Window, hdc_screen: w32.HDC, dc: w32.HDC, region: w32.RECT, divider_w: i32) bool {
+    if (!blitDesk(win, dc, region)) return false;
+    const w = region.right - region.left - divider_w;
+    const h = region.bottom - region.top;
+    if (w <= 0 or h <= 0) return true;
+    const black_dc = w32.CreateCompatibleDC(hdc_screen) orelse return true;
+    defer _ = w32.DeleteDC(black_dc);
+    const bmp = w32.CreateCompatibleBitmap(hdc_screen, 1, 1) orelse return true;
+    const old = w32.SelectObject(black_dc, bmp);
+    defer {
+        _ = w32.SelectObject(black_dc, old);
+        _ = w32.DeleteObject(bmp);
+    }
+    var px: w32.RECT = .{ .left = 0, .top = 0, .right = 1, .bottom = 1 };
+    const brush = w32.CreateSolidBrush(w32.RGB(0, 0, 0)) orelse return true;
+    _ = w32.FillRect(black_dc, &px, brush);
+    _ = w32.DeleteObject(@ptrCast(brush));
+    const bf: w32.BLENDFUNCTION = .{ .SourceConstantAlpha = BAND_SHADE_ALPHA, .AlphaFormat = 0 };
+    _ = w32.AlphaBlend(dc, divider_w, 0, w, h, black_dc, 0, 0, 1, 1, bf);
+    return true;
 }
 
 /// One thumbnail tile: rounded-clipped snapshot (dimmed unless selected,
@@ -345,7 +395,7 @@ pub fn paintSlide(win: *Window, hdc_screen: w32.HDC) void {
     const tab = win.active_tab;
     if (!win.tab_hero_active[tab]) return;
 
-    const split = splitRects(win, win.surfaceRect());
+    const split = splitRects(win, win.heroRect());
     const hero = split.hero;
     const w = hero.width();
     const h = hero.height();
@@ -364,12 +414,15 @@ pub fn paintSlide(win: *Window, hdc_screen: w32.HDC) void {
         _ = w32.DeleteObject(mem_bmp);
     }
 
-    // Background fill (visible in the inter-slot gap mid-slide).
-    const bg = win.app.config.background;
-    var full: w32.RECT = .{ .left = 0, .top = 0, .right = w, .bottom = h };
-    if (w32.CreateSolidBrush(w32.RGB(bg.r, bg.g, bg.b))) |brush| {
-        _ = w32.FillRect(mem_dc, &full, brush);
-        _ = w32.DeleteObject(@ptrCast(brush));
+    // Background fill (visible in the inter-slot gap mid-slide): the desk
+    // on glass (T2104), where the gap between two cards is the desk.
+    if (!blitDesk(win, mem_dc, .{ .left = hero.left, .top = hero.top, .right = hero.right, .bottom = hero.bottom })) {
+        const bg = win.app.config.background;
+        var full: w32.RECT = .{ .left = 0, .top = 0, .right = w, .bottom = h };
+        if (w32.CreateSolidBrush(w32.RGB(bg.r, bg.g, bg.b))) |brush| {
+            _ = w32.FillRect(mem_dc, &full, brush);
+            _ = w32.DeleteObject(@ptrCast(brush));
+        }
     }
 
     // Strip slot distance: hero height + 40px (scaled) gap, Mac parity.

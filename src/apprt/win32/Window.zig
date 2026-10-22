@@ -2148,11 +2148,10 @@ fn stripClientWidth(self: *const Window, client_w: i32) i32 {
 /// runs the window's height. Only when the window is ONE surface - the
 /// desk under the chrome (glass, T1886) - since nothing else could fill the
 /// strip left of the tabs; and only on the merged row, the one place the
-/// strip is (one tab is no strip, T234). A hero tab's bar is solid, so it
-/// keeps the full-width strip too.
+/// strip is (one tab is no strip, T234). A hero tab is on the desk as well
+/// (T2104), so entering hero mode does not move the tabs.
 pub fn sidebarBesideTabs(self: *const Window) bool {
     if (!self.mergedChrome() or !self.paneGlass()) return false;
-    if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) return false;
     return self.paneSidebarMode() != .hidden;
 }
 
@@ -2486,15 +2485,12 @@ pub fn deskBackdrop(self: *Window) ?PaneDesk.Backdrop {
 /// (`chrome_glass`). False when the chrome is not glass, and the caller
 /// paints the solid bar as before.
 fn glassChromeBand(self: *Window, pixels: []u32, w: i32, h: i32, y: i32, pal: chrome_theme.Palette) bool {
-    if (!self.paneGlass()) return false;
-    // A hero tab's content is the carousel, not the desk.
-    if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) return false;
+    // A hero tab is on the desk too (T2104), so its bar is glass like any other.
     if (w <= 0 or h <= 0) return false;
-    const area = self.deskRect();
+    const g = self.glassDesk() orelse return false;
+    const area = g.area;
+    const d = g.desk;
     if (y < area.top) return false;
-    const bg = self.app.config.background;
-    const is_light = color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
-    const d = self.pane_desk.backdrop(area.right - area.left, area.bottom - area.top, is_light, self.desk_variant) orelse return false;
     _ = chrome_glass.fillBand(
         pixels,
         @intCast(w),
@@ -2507,6 +2503,19 @@ fn glassChromeBand(self: *Window, pixels: []u32, w: i32, h: i32, y: i32, pal: ch
         pal.bar,
     );
     return true;
+}
+
+/// The whole glass desk (T1886) and the client rect it is laid out over, or
+/// null when the panes are not glass. The cached bitmap the desk paint blits,
+/// so a painter that lays its own slice of it (the glass title bar, the hero
+/// carousel's band) cannot disagree with the desk beside it.
+pub fn glassDesk(self: *Window) ?struct { desk: PaneDesk.Backdrop, area: w32.RECT } {
+    if (!self.paneGlass()) return null;
+    const area = self.deskRect();
+    const bg = self.app.config.background;
+    const is_light = color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
+    const d = self.pane_desk.backdrop(area.right - area.left, area.bottom - area.top, is_light, self.desk_variant) orelse return null;
+    return .{ .desk = d, .area = area };
 }
 
 /// Give the window its own gradient, or (null) the ocean back (T1832). Only
@@ -2552,7 +2561,7 @@ pub fn paneGlass(self: *const Window) bool {
 /// `PaneElevation.margin`). Every walk of the split tree - placement, paint,
 /// hit test, drag and the rearrange slots - starts here, never at
 /// `surfaceRect`, or a band would be computed where no pane was put. Hero
-/// mode lays out its own presentation from `surfaceRect` and is unaffected.
+/// mode lays out its own presentation from `heroRect`.
 pub fn gridRect(self: *const Window) w32.RECT {
     var rect = self.surfaceRect();
     const m = pane_elevation.marginPx(self.paneStyle(), self.scale);
@@ -2563,6 +2572,15 @@ pub fn gridRect(self: *const Window) w32.RECT {
         rect.bottom -= m;
     }
     return rect;
+}
+
+/// The rect hero mode lays its pane, divider and carousel out in. With glass
+/// panes it is the grid's, inside the margin: Mac pads the whole content,
+/// hero included, and the hero pane is then a glass card on the desk like a
+/// focused pane (T2104, Mac 89848fd59). Otherwise the hero is its own
+/// edge-to-edge presentation over `surfaceRect`, with no desk round it.
+pub fn heroRect(self: *const Window) w32.RECT {
+    return if (self.paneGlass()) self.gridRect() else self.surfaceRect();
 }
 
 /// A card's slot, shrunk to where its pane's child window goes: one rim
@@ -6221,7 +6239,7 @@ fn resetPointerTransients(self: *Window) void {
 fn heroInvalidateAnimRegions(self: *Window, slide: bool, recenter: bool) void {
     const hwnd = self.hwnd orelse return;
     if (!slide and !recenter) return;
-    const split = HeroCarousel.splitRects(self, self.surfaceRect());
+    const split = HeroCarousel.splitRects(self, self.heroRect());
     if (slide) {
         var r: w32.RECT = .{
             .left = split.hero.left,
@@ -6258,7 +6276,7 @@ fn heroInvalidateCarousel(self: *Window) void {
 pub fn heroHitDivider(self: *Window, x: i32, y: i32) bool {
     if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return false;
     if (self.visibleLeafCount(self.active_tab) <= 1) return false;
-    const split = HeroCarousel.splitRects(self, self.surfaceRect());
+    const split = HeroCarousel.splitRects(self, self.heroRect());
     return hero_math.dividerGrab(split, split_geometry.grabHalfPx(self.scale)).contains(x, y);
 }
 
@@ -6370,7 +6388,7 @@ fn heroInvalidateTile(self: *Window, index: isize) void {
 
 fn heroInvalidateDivider(self: *Window) void {
     const hwnd = self.hwnd orelse return;
-    const split = HeroCarousel.splitRects(self, self.surfaceRect());
+    const split = HeroCarousel.splitRects(self, self.heroRect());
     var r: w32.RECT = .{
         .left = split.divider.left,
         .top = split.divider.top,
@@ -6385,7 +6403,7 @@ fn heroInvalidateDivider(self: *Window) void {
 fn heroStartDividerDrag(self: *Window, x: i32) void {
     self.hero_divider_drag = true;
     self.hero_drag_resize_ms = 0;
-    const div = HeroCarousel.splitRects(self, self.surfaceRect()).divider;
+    const div = HeroCarousel.splitRects(self, self.heroRect()).divider;
     self.hero_drag_grab_dx = x - @divTrunc(div.left + div.right, 2);
     if (self.hwnd) |h| _ = w32.SetCapture(h);
     self.heroInvalidateDivider();
@@ -6398,7 +6416,7 @@ fn heroStartDividerDrag(self: *Window, x: i32) void {
 fn heroUpdateDividerDrag(self: *Window, x: i32) void {
     if (!self.hero_divider_drag) return;
     const tab = self.active_tab;
-    const rect = self.surfaceRect();
+    const rect = self.heroRect();
     const w: f32 = @floatFromInt(@max(rect.right - rect.left, 1));
     const band: f32 = @floatFromInt(HeroCarousel.splitRects(self, rect).divider.width());
     // The band center rides the cursor, offset by where it was grabbed; the
@@ -6559,6 +6577,25 @@ fn heroOnSnapReady(self: *Window, leaf_hwnd_int: usize) void {
 /// read-only badge, key-state pill) is re-glued by `updateDimOverlays`, which
 /// `layoutSplits` runs on the way out — so a caller that reaches this function
 /// directly, bypassing `layoutSplits`, owes that call itself (T1324).
+fn heroSlot(split: hero_math.Split) w32.RECT {
+    return .{ .left = split.hero.left, .top = split.hero.top, .right = split.hero.right, .bottom = split.hero.bottom };
+}
+
+/// The cards the desk paints, cuts and lights: the grid's slots, or - in a
+/// glass hero tab (T2104; Mac 89848fd59 wraps `HeroPaneView` in the same
+/// `PaneCard`) - the one hero pane's. Kept apart from `collectPaneSlots`,
+/// whose other callers are drop targets and hit tests that hero mode, having
+/// no grid, must keep answering with nothing.
+fn deskSlots(self: *Window, out: []PaneSlot) usize {
+    if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return self.collectPaneSlots(out);
+    if (!self.paneGlass() or out.len == 0) return 0;
+    const tab = self.active_tab;
+    if (self.visibleLeafCount(tab) <= 1) return 0;
+    const view = self.leafAt(tab, self.tab_hero_index[tab]) orelse return 0;
+    out[0] = .{ .view = view, .rect = heroSlot(HeroCarousel.splitRects(self, self.heroRect())) };
+    return 1;
+}
+
 fn layoutHero(self: *Window, rect: w32.RECT) void {
     // A re-layout mid-animation (window resize, tab ops) invalidates the
     // animation's captured geometry — finish instantly and lay out the
@@ -6570,8 +6607,12 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
     const hero_index: usize = self.tab_hero_index[tab];
 
     const split = HeroCarousel.splitRects(self, rect);
-    const hero_w = @max(split.hero.width(), 1);
-    const hero_h = @max(split.hero.height(), 1);
+    // With glass panes the hero is a card (T2104): every leaf goes one rim
+    // inside it, the same box a grid pane's child gets, so the rim and the
+    // rounded corners the desk paints show round it.
+    const hero = if (self.paneGlass()) self.cardInner(heroSlot(split)) else heroSlot(split);
+    const hero_w = @max(hero.right - hero.left, 1);
+    const hero_h = @max(hero.bottom - hero.top, 1);
 
     // One batch for every leaf: the hero swap moves ALL of them to the hero
     // rect and flips which one is shown, and doing that a window at a time
@@ -6589,7 +6630,7 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
             entry.view.setVisible(false);
             if (entry.view.hwnd()) |h| {
                 const inset = entry.view.bannerLayoutInset(@intCast(hero_w), hero_h);
-                placePane(&hdwp, h, split.hero.left, split.hero.top + inset, @intCast(hero_w), @intCast(@max(hero_h - inset, 1)), false);
+                placePane(&hdwp, h, hero.left, hero.top + inset, @intCast(hero_w), @intCast(@max(hero_h - inset, 1)), false);
             }
             continue;
         }
@@ -6604,8 +6645,8 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
             placePane(
                 &hdwp,
                 h,
-                split.hero.left,
-                split.hero.top + inset,
+                hero.left,
+                hero.top + inset,
                 @intCast(hero_w),
                 @intCast(@max(hero_h - inset, 1)),
                 leaf_i == hero_index,
@@ -6891,9 +6932,21 @@ pub fn layoutSplits(self: *Window) void {
     const tree = self.tab_trees[self.active_tab];
     if (self.tab_hero_active[self.active_tab]) {
         if (self.visibleLeafCount(self.active_tab) > 1) {
-            // The carousel is its own presentation: no cards, no regions.
-            self.applyCardRegions(false, .redraw);
-            self.layoutHero(self.surfaceRect());
+            if (!self.paneGlass()) {
+                // The carousel is its own presentation: no cards, no regions.
+                self.applyCardRegions(false, .redraw);
+                self.layoutHero(self.heroRect());
+                return;
+            }
+            // Glass (T2104): the hero pane is a card on the desk, cut and
+            // painted the way the grid's are, from `deskSlots`.
+            self.applied_pane_style = .elevated;
+            self.layoutHero(self.heroRect());
+            self.cutCardRegions();
+            if (self.hwnd) |hwnd| if (w32.GetDC(hwnd)) |dc| {
+                self.paintAlphaCorrect(dc, paintMovedBands);
+                _ = w32.ReleaseDC(hwnd, dc);
+            };
             return;
         }
         self.tab_hero_active[self.active_tab] = false;
@@ -7148,7 +7201,7 @@ pub fn syncBusyLights(self: *Window) void {
     var lit: usize = 0;
     if (self.paneStyle() == .elevated) {
         var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
-        const n = self.collectPaneSlots(&slots);
+        const n = self.deskSlots(&slots);
         var h = std.hash.Wyhash.init(0);
         for (slots[0..n]) |slot| {
             const r = busyReportFor(slot.view, now) orelse continue;
@@ -7405,7 +7458,7 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
     if (self.tab_count == 0) return;
     const parent = self.hwnd orelse return;
     var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
-    const n = if (elevated) self.collectPaneSlots(&slots) else 0;
+    const n = if (elevated) self.deskSlots(&slots) else 0;
     const d = 2 * pane_elevation.childRadiusPx(self.scale);
     // Glass panes put their banner strips on the desk too (T1884).
     const banner_glass = if (elevated) self.bannerGlass() else null;
@@ -7893,7 +7946,12 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
 /// Paint divider lines between split panes in the active tab.
 fn paintDividers(self: *Window, hdc: w32.HDC) void {
     if (self.tab_count == 0) return;
-    if (self.tab_hero_active[self.active_tab]) return;
+    // A glass hero tab's pane is a card on the desk (T2104); any other hero
+    // tab is the carousel's to paint.
+    if (self.tab_hero_active[self.active_tab]) {
+        if (self.paneGlass()) self.paintPaneDesk(hdc);
+        return;
+    }
     // The elevated style has no divider line: the gap IS the divider, and
     // everything the window owns around the panes is the desk (T1831).
     if (self.paneStyle() == .elevated) return self.paintPaneDesk(hdc);
@@ -8196,7 +8254,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     const h = area.bottom - area.top;
     if (w <= 0 or h <= 0) return;
     var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
-    const n = self.collectPaneSlots(&slots);
+    const n = self.deskSlots(&slots);
     var cards: [MAX_DRAG_NODES]pane_elevation.Card = undefined;
     const pal = self.chromePalette();
     for (slots[0..n], 0..) |slot, i| {
@@ -8265,11 +8323,23 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     // their own slice of it under the tabs and the title: the blit stops at
     // the chrome's bottom edge so it never paints over them.
     const desk_dc = self.desk_hdc orelse hdc;
-    const saved = if (area.top < self.chromeHeight()) w32.SaveDC(desk_dc) else 0;
+    // In a glass hero tab (T2104) the carousel lays its own band over the
+    // desk, and a running slide owns the hero card's pixels: the desk paint
+    // stays off both, or a layout's `GetDC` pass would wipe them until the
+    // next WM_PAINT.
+    const hero_split: ?hero_math.Split = if (self.tab_count > 0 and self.tab_hero_active[self.active_tab])
+        HeroCarousel.splitRects(self, self.heroRect())
+    else
+        null;
+    const saved = if (area.top < self.chromeHeight() or hero_split != null) w32.SaveDC(desk_dc) else 0;
     defer if (saved != 0) {
         _ = w32.RestoreDC(desk_dc, saved);
     };
-    if (saved != 0) _ = w32.IntersectClipRect(desk_dc, area.left, self.chromeHeight(), area.right, area.bottom);
+    if (saved != 0) _ = w32.IntersectClipRect(desk_dc, area.left, @max(area.top, self.chromeHeight()), area.right, area.bottom);
+    if (hero_split) |sp| {
+        _ = w32.ExcludeClipRect(desk_dc, sp.divider.left, sp.carousel.top, sp.carousel.right, sp.carousel.bottom);
+        if (self.hero_slide != null) _ = w32.ExcludeClipRect(desk_dc, sp.hero.left, sp.hero.top, sp.hero.right, sp.hero.bottom);
+    }
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..n], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),

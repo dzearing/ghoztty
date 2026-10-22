@@ -190,6 +190,8 @@ function Get-ColorDistance($a, $b) {
     return [math]::Abs($a.R - $b.R) + [math]::Abs($a.G - $b.G) + [math]::Abs($a.B - $b.B)
 }
 
+function Get-ExpectDistance($c, $want) { [math]::Abs($c.R - $want[0]) + [math]::Abs($c.G - $want[1]) + [math]::Abs($c.B - $want[2]) }
+
 # The client rect in SCREEN coordinates (Get-TestChildWindows reports screen).
 function Get-ClientScreen([IntPtr]$top) {
     Get-TestWindowRect -Window $top -Client
@@ -354,6 +356,68 @@ foreach ($ix in 0, 1) {
         Assert ((Test-GlassPixel $ss.Left) -and (Test-GlassPixel $ss.Right)) "glass: after a split, pane #$ix shows the desk through it"
     }
 }
+
+# Glass hero (T2104; Mac 89848fd59): the hero pane is the same glass card a
+# focused pane is - inside the margin, cut round, its sheet over the desk at
+# the HERO rect - and the carousel band is the desk under Mac's black @ 0.3,
+# where the solid band on this black terminal would be black.
+$m = Get-MarginPx $g.Scale
+$pane0 = Get-Panes $top | Sort-Object Top | Select-Object -First 1
+[void](Send-TestKeys -Window $top -Target ([IntPtr]$pane0.Hwnd) -Modifiers @('ctrl', 'shift') -Key 'Space')
+Start-Sleep -Milliseconds 1500
+$hv = @(Get-Panes $top)
+Assert ($hv.Count -eq 1) "glass hero: ctrl+shift+space leaves one visible pane (saw $($hv.Count))"
+if ($hv.Count -eq 1) {
+    $h = $hv[0]
+    $cs = Get-ClientScreen $top
+    $hb = [int]($cs.Bottom - $h.Bottom)
+    Assert ($hb -eq $m + $i) "glass hero: the hero card sits margin+rim ($($m + $i)px) inside the bottom edge (saw $hb)"
+    $hw = $h.Right - $h.Left; $hh = $h.Bottom - $h.Top
+    $hits = Get-TestWindowRegionHits -Window ([IntPtr]$h.Hwnd) -Points @(0, 0, ($hw - 1), ($hh - 1), [int]($hw / 2), [int]($hh / 2))
+    Assert (($null -ne $hits) -and (-not $hits[0]) -and (-not $hits[1]) -and $hits[2]) 'glass hero: the hero pane is cut to a rounded card'
+    $targets = @(Get-TestWindowPaneTargets -Window $top -Exe $exe)
+    $heroShot = $null
+    foreach ($t in $targets) {
+        $s = Get-TestPaneCapture -Target $t
+        if ($null -eq $s) { continue }
+        if ($s.Width -eq $hw -and $s.Height -eq $hh -and $null -eq $heroShot) { $heroShot = $s } else { Close-TestPaneCapture $s }
+    }
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try {
+        $ey = [int]($hh * 0.9)
+        # The divider's band left of its line is the bare desk (Mac leaves it clear).
+        $d = Get-TestPixel -Shot $shot -X ([int]($h.Right + $i + 1)) -Y ([int]($h.Top + $ey))
+        if ($null -eq $heroShot -or $null -eq $d -or -not (Test-DeskPixel $d)) {
+            $script:skipped++; Write-Host 'SKIP  glass hero sheet: no hero capture or no desk beside it'
+        } else {
+            $e = $heroShot.Bitmap.GetPixel($hw - 3, $ey)
+            $want = Get-GlassExpect $d
+            $diff = Get-ExpectDistance $e $want
+            Write-Host "      hero edge = $($e.R),$($e.G),$($e.B); desk beside it = $($d.R),$($d.G),$($d.B); sheet over it = $($want -join ','); off by $diff"
+            Assert ($diff -le 12) 'glass hero: the hero pane is 40% black over the desk at the hero rect - no seam against the desk beside it'
+        }
+        # The carousel's right padding (tiles are 88% wide, centred) against
+        # the bare margin just outside it, at the same height.
+        $cy = [int](($h.Top + $h.Bottom) / 2)
+        $band = Get-TestPixel -Shot $shot -X ([int]($cs.Right - $m - 3)) -Y $cy
+        $desk = Get-TestPixel -Shot $shot -X ([int]($cs.Right - [math]::Floor($m / 2))) -Y $cy
+        if ($null -eq $band -or $null -eq $desk -or -not (Test-DeskPixel $desk)) {
+            $script:skipped++; Write-Host 'SKIP  glass hero band: no desk in the margin'
+        } else {
+            $shade = @([int]($desk.R * 0.7), [int]($desk.G * 0.7), [int]($desk.B * 0.7))
+            $bd = Get-ExpectDistance $band $shade
+            Write-Host "      carousel band = $($band.R),$($band.G),$($band.B); margin desk = $($desk.R),$($desk.G),$($desk.B); 30% shade = $($shade -join ','); off by $bd"
+            if ($NegativeControl) {
+                Assert (($band.R + $band.G + $band.B) -le 6) 'glass hero: the carousel band is the solid black band (negative control)'
+            } else {
+                Assert ($bd -le 12) 'glass hero: the carousel band is the desk under a 30% black shade, not a solid fill'
+            }
+        }
+    } finally {
+        Close-TestWindowPixels $shot
+        if ($null -ne $heroShot) { Close-TestPaneCapture $heroShot }
+    }
+}
 Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'glass: no crash'
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
@@ -483,7 +547,6 @@ function Get-GlassHeadExpect($desk, $bar) {
     for ($k = 0; $k -lt 3; $k++) { $out += ConvertTo-Srgb (0.3 * (ConvertTo-Lin $sheet[$k]) + 0.7 * (ConvertTo-Lin $bc[$k])) }
     return $out
 }
-function Get-ExpectDistance($c, $want) { [math]::Abs($c.R - $want[0]) + [math]::Abs($c.G - $want[1]) + [math]::Abs($c.B - $want[2]) }
 
 function Get-BandProbes([string]$label, [string[]]$extra) {
     $g = Start-Gui $label ($common + $extra + @('--keybind=ctrl+shift+f9=toggle_rearrange_mode'))
