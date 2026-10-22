@@ -513,3 +513,11 @@ as the digest that showed them.
 - Rename a pane from its strip (double-click a folded strip's title to rename in place)
 - Folded panes cost nothing while idle (a folded pane stops drawing and rewrapping)
 - A folded pane slides back in instantly (keeps its last picture while folded, so unfolding never waits on a redraw)
+
+## 2026-10-22
+
+- A strip shows the pane's last line (a folded strip's title is followed by the last line the pane printed)
+- Keep this pane on show (mark a pane so a stacked row folds every other pane before it)
+- Drop a folder on a pane's edge (new angle on drop-a-file-for-its-path: dropping a folder on an edge opens a split with a shell in that folder)
+- A stuck program never freezes the window (a program that stops reading output stalls only its pane, which says so)
+- The first key after the PC wakes is instant (panes repaint their last frame at once after sleep and catch up in the background)
