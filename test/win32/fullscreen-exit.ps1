@@ -19,7 +19,8 @@
 #      has no cursor to move.
 #   D. Clicking the chip leaves full screen with the frame and the exact
 #      rect restored.
-#   E. ctrl+enter still toggles (the binding is the user's decision, D-filed).
+#   E. ctrl+enter does NOT toggle (T2161, D99): it reaches the shell, and F11
+#      still does.
 #   F. A MAXIMIZED window comes back maximized, with its normal rect intact.
 #   G. WM_DISPLAYCHANGE while full screen re-covers the monitor. While
 #      maximized it leaves the caption alone.
@@ -43,6 +44,7 @@ $errlog = Join-Path $env:TEMP 'ghoztty-fullscreen-exit-stderr.log'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -208,12 +210,71 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # E. ctrl+enter still toggles both ways.
+    # E. ctrl+enter is the PROGRAM's key (T2161, D99): it leaves the window
+    #    framed and reaches the program. The pane runs a key reporter (a named
+    #    window, because +read needs a name) that prints every key it reads
+    #    with its modifiers, the way Claude Code reads them; the oracle is the
+    #    reporter's line for Enter WITH Control. cmd.exe cannot be the oracle:
+    #    its line editor ignores ctrl+enter in any console, so "the echo ran"
+    #    could never pass.
     # -----------------------------------------------------------------------
-    Assert (Send-TestKeys -Window $top -Target $pane -Key Enter -Modifiers ctrl) 'E: ctrl+enter delivered'
-    Assert (Wait-Framed $top $false) 'E: ctrl+enter entered full screen'
-    Assert (Send-TestKeys -Window $top -Target $pane -Key F11) 'E: F11 delivered'
-    Assert (Wait-Framed $top $true) 'E: F11 left full screen'
+    $fsEnter0 = Get-LogCount 'fullscreen enter'
+    $ceName = "fsce$PID"
+    $ceOut = Join-Path $env:TEMP "fullscreen-exit-ce-$PID.txt"
+    $ceScript = Join-Path $env:TEMP "fullscreen-exit-keys-$PID.ps1"
+    Set-Content -Path $ceScript -Encoding ASCII -Value @(
+        'Write-Host "KEYREPORTER READY"'
+        'while ($true) { $k = [Console]::ReadKey($true); Write-Host ("KEYSEEN " + $k.Key + "+" + ($k.Modifiers -replace ", ", "+")) }'
+    )
+    $before = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | ForEach-Object { [int64]$_.Hwnd })
+    [void](Invoke-LivenessCli $exe "+new-window --target=$ceName `"--command=powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ceScript`"" $ceOut 15)
+    $ceTop = [IntPtr]::Zero
+    for ($t = 0; $t -lt 50 -and $ceTop -eq [IntPtr]::Zero; $t++) {
+        $new = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' |
+            Where-Object { $before -notcontains [int64]$_.Hwnd })
+        if ($new.Count -ge 1) { $ceTop = [IntPtr]$new[0].Hwnd } else { Start-Sleep -Milliseconds 100 }
+    }
+    Assert ($ceTop -ne [IntPtr]::Zero) 'E: setup: the named key-reporter window opened'
+    if ($ceTop -ne [IntPtr]::Zero) {
+        $cePanes = @(Get-TestChildWindows -Window $ceTop -Class 'GhozttyTerminal')
+        $cePane = if ($cePanes.Count -ge 1) { [IntPtr]$cePanes[0].Hwnd } else { [IntPtr]::Zero }
+        function Read-Ce {
+            if ((Invoke-LivenessCli $exe "+read --name=$ceName --lines=200" $ceOut 12) -ne 0) { return '' }
+            try { return [string](Get-Content $ceOut -Raw) } catch { return '' }
+        }
+        $txt = ''
+        for ($t = 0; $t -lt 30 -and $txt -notmatch 'KEYREPORTER READY'; $t++) {
+            $txt = Read-Ce; if ($txt -notmatch 'KEYREPORTER READY') { Start-Sleep -Milliseconds 300 }
+        }
+        Assert ($txt -match 'KEYREPORTER READY') 'E: setup: the key reporter is reading keys'
+        Assert (Send-TestKeys -Window $ceTop -Target $cePane -Key Enter -Modifiers ctrl) 'E: ctrl+enter delivered'
+        Start-Sleep -Milliseconds 800
+        Assert (Test-Framed $ceTop) 'E: ctrl+enter did NOT enter full screen'
+        Assert ((Get-LogCount 'fullscreen enter') -eq $fsEnter0) 'E: no full-screen entry was logged'
+        # Positive control on the oracle: a plain Enter must be reported too,
+        # and WITHOUT Control - so the Control line is not the reporter's
+        # default.
+        Assert (Send-TestKeys -Window $ceTop -Target $cePane -Key Enter) 'E: control: plain enter delivered'
+        $seen = $false; $plain = $false
+        for ($t = 0; $t -lt 20 -and -not ($seen -and $plain); $t++) {
+            $txt = Read-Ce
+            $seen = $txt -match 'KEYSEEN Enter\+[A-Za-z+]*Control'
+            $plain = $txt -match 'KEYSEEN Enter\+0'
+            if (-not ($seen -and $plain)) { Start-Sleep -Milliseconds 400 }
+        }
+        if (-not ($seen -and $plain)) {
+            Write-Host "INFO  E: last +read output: $(($txt).Trim() -replace '\s+', ' ')"
+        }
+        $ctlLabel = 'E: the program received ctrl+enter (KEYSEEN Enter+Control)'
+        if ($NegativeControl) { $seen = -not $seen; $ctlLabel += ' [NEGATED]' }
+        Assert $seen $ctlLabel
+        Assert $plain 'E: control: the program saw a plain enter WITHOUT Control'
+        Assert (Send-TestKeys -Window $ceTop -Target $cePane -Key F11) 'E: F11 still delivered in that window'
+        Assert (Wait-Framed $ceTop $false) 'E: F11 still enters full screen there'
+        Assert (Send-TestKeys -Window $ceTop -Target $cePane -Key F11) 'E: F11 delivered to leave'
+        Assert (Wait-Framed $ceTop $true) 'E: F11 left full screen'
+    }
+    Remove-Item $ceOut, $ceScript -ErrorAction SilentlyContinue
 
     # -----------------------------------------------------------------------
     # F. Maximized in, maximized out, normal rect intact.

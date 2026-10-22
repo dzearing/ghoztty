@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-22T11:01:19-07:00",
-    "commit":  "914607103",
+    "generated":  "2026-10-22T12:03:41-07:00",
+    "commit":  "2b3fe3012",
     "uncommitted":  [
-
+                        "test/win32/fullscreen-exit.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -152,7 +152,7 @@
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
-                  "test/win32/fullscreen-exit.ps1":  "42c2cf7649451430672620c75d7574796370fc7eb2dc7db507ed5ccc13cd98d1",
+                  "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/gate-negatives.ps1":  "a866595fe5246d6a62dac5d62d626260174fbaca29eff9d8b23f330029c05b1f",
                   "test/win32/ghoztty-cleanup.ps1":  "6c920aaa49bd05d3c18f496991a51af7796075f695d86c2c4f856cc115299085",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
@@ -311,7 +311,7 @@
                   "test/win32/pane-banner.ps1":  "e6d14fb0d90c1f3a91c080e35344a21c86d3ca1508d6fecc29434fc6bd05a3ea",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
-                  "test/win32/pane-elevation.ps1":  "b3381d40ba6ad5d995526b49f9fe508376384468cefdd02e68b8f4e23016ad1e",
+                  "test/win32/pane-elevation.ps1":  "28a2a0f4065ad4ff6d3b0542d13a99fffa8fb525d8b760d76ab76a043005a4e1",
                   "test/win32/pane-grab-handle.ps1":  "d0abccbdc04d0e399b5fda02f14e3d701d8f6e99ed1d54f217023af089745c6c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",

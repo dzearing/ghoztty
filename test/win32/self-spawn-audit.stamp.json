@@ -1,11 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-22T10:44:18-07:00",
-    "commit":  "914607103",
+    "generated":  "2026-10-22T11:45:49-07:00",
+    "commit":  "2b3fe3012",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_feedback_layout.zig",
-                        "src/apprt/win32/ViewerFeedbackBar.zig"
+                        "src/config/Config.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -371,7 +370,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "b6fb6cf636e168d3a58e2f2336a856e589a0ff4fb26d330896456b76a556f98a",
-                  "src/apprt/win32/Window.zig":  "809e4b0a713e3b16ebcb5319d5aadb8e0a0426b570a58893be026cdda307bd09",
+                  "src/apprt/win32/Window.zig":  "7aaec519a7a718a831fbc4db8e8c7fd2b74febbac74fc8b93ef776b4021ee776",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -498,7 +497,7 @@
                   "src/config/ClipboardCodepointMap.zig":  "fcd1560f302af18ff1f94329b0ade3e025a64e88f8715ef4d73498f3a9173b4e",
                   "src/config/command.zig":  "7a9e6da3d47433a0c2245c4bc65bd7965bbcffd25cae635409718c6a367ed6ca",
                   "src/config/conditional.zig":  "ba7912c4a8bf02a3e39339799febd8dd6c3545f6d6d26641152a4580913c48f8",
-                  "src/config/Config.zig":  "229b5224498398c23daee2b15616ae24b0b16c4f7d6850ddc06b880f584ead64",
+                  "src/config/Config.zig":  "b7bc40620bdafc67611274456259a4b092cb7f7b4cccf3698c6b342d56c8a373",
                   "src/config/edit.zig":  "9fc0369523151068529c72200c5c8a8fddcfa448d68fcc8fd33ff77a793def7c",
                   "src/config/ErrorList.zig":  "8913d3844831b9d021466f3513f7f2c9a24c3264519b50ec6ef5179b59c32537",
                   "src/config/file_load.zig":  "96e8165c5a365808b7407d61f7073aa074189bcd96b3daa0a43d37f5e3d4c94f",

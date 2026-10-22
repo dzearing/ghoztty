@@ -1,11 +1,10 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-10-22T10:42:20-07:00",
-    "commit":  "914607103",
+    "generated":  "2026-10-22T11:43:41-07:00",
+    "commit":  "2b3fe3012",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_feedback_layout.zig",
-                        "src/apprt/win32/ViewerFeedbackBar.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -302,7 +301,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "b6fb6cf636e168d3a58e2f2336a856e589a0ff4fb26d330896456b76a556f98a",
-                  "src/apprt/win32/Window.zig":  "809e4b0a713e3b16ebcb5319d5aadb8e0a0426b570a58893be026cdda307bd09",
+                  "src/apprt/win32/Window.zig":  "7aaec519a7a718a831fbc4db8e8c7fd2b74febbac74fc8b93ef776b4021ee776",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",

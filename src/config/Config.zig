@@ -7376,12 +7376,18 @@ pub const Keybinds = struct {
             );
         }
 
-        // Toggle fullscreen
-        try self.set.put(
-            alloc,
-            .{ .key = .{ .physical = .enter }, .mods = inputpkg.ctrlOrSuper(.{}) },
-            .{ .toggle_fullscreen = {} },
-        );
+        // Toggle fullscreen. Not on Windows (T2161, D99): there ctrlOrSuper
+        // makes this ctrl+enter, a key terminal programs (Claude Code among
+        // them) use, so binding it swallowed the keystroke and dropped the
+        // window into full screen by accident. Mac's cmd+enter reaches no
+        // terminal program; F11 is the Windows full-screen key (below).
+        if (comptime builtin.target.os.tag != .windows) {
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .physical = .enter }, .mods = inputpkg.ctrlOrSuper(.{}) },
+                .{ .toggle_fullscreen = {} },
+            );
+        }
 
         // Toggle zoom a split
         try self.set.put(
@@ -7462,9 +7468,9 @@ pub const Keybinds = struct {
 
             // F11 toggles full screen, the Windows convention (Edge,
             // Explorer, Windows Terminal), the way Mac adds Cmd+Ctrl+F
-            // "common to Mac programs" beside Cmd+Enter (T2011). It is put
-            // AFTER ctrl+enter on purpose: the reverse map keeps the last
-            // trigger, so the menu and the full-screen notice teach F11.
+            // "common to Mac programs" beside Cmd+Enter (T2011). Since
+            // T2161 it is the only default full-screen key here: ctrl+enter
+            // goes to the program.
             try self.set.put(
                 alloc,
                 .{ .key = .{ .physical = .f11 } },
@@ -11156,8 +11162,9 @@ test "default keybinds: windows shift+insert pastes from the standard clipboard"
     try testing.expect(leaf.flags.performable);
 }
 
-// T2011: F11 is the Windows full-screen key, beside the inherited
-// ctrl+enter, and it is the trigger the menu and the entry notice name.
+// T2011: F11 is the Windows full-screen key, and it is the trigger the menu
+// and the entry notice name. T2161 (D99): ctrl+enter is no longer bound, so
+// it reaches the terminal program instead of toggling full screen.
 test "default keybinds: windows f11 toggles fullscreen and is the taught trigger" {
     if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
 
@@ -11172,12 +11179,18 @@ test "default keybinds: windows f11 toggles fullscreen and is the taught trigger
     }) orelse return error.TestExpectedBinding;
     try testing.expectEqual(inputpkg.Binding.Action.toggle_fullscreen, entry.value_ptr.leaf.action);
 
-    // ctrl+enter still toggles too, until the user decides otherwise.
-    const legacy = cfg.keybind.set.get(.{
+    // ctrl+enter is unbound, so the keystroke goes to the program.
+    try testing.expect(cfg.keybind.set.get(.{
         .key = .{ .physical = .enter },
         .mods = .{ .ctrl = true },
+    }) == null);
+
+    // ctrl+shift+enter is still split zoom, untouched by this.
+    const zoom = cfg.keybind.set.get(.{
+        .key = .{ .physical = .enter },
+        .mods = .{ .ctrl = true, .shift = true },
     }) orelse return error.TestExpectedBinding;
-    try testing.expectEqual(inputpkg.Binding.Action.toggle_fullscreen, legacy.value_ptr.leaf.action);
+    try testing.expectEqual(inputpkg.Binding.Action.toggle_split_zoom, zoom.value_ptr.leaf.action);
 
     const taught = cfg.keybind.set.getTrigger(.toggle_fullscreen) orelse return error.TestExpectedBinding;
     try testing.expectEqual(inputpkg.Key.f11, taught.key.physical);
