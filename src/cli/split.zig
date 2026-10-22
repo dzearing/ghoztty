@@ -96,9 +96,23 @@ pub const Options = struct {
 /// and activate Ghoztty. Splits the user makes themselves (Cmd-D, the menu)
 /// are unaffected.
 ///
-/// This command is idempotent: if `--name` is specified and a pane with
-/// that name already exists, no new split is created and the command
-/// succeeds (the existing pane is focused only with `--focus`).
+/// This command is idempotent by `--name`: re-running the same split does
+/// not create a second pane. Pane names are one namespace across EVERY
+/// window, so the existing pane may be in another window. What happens:
+///
+///   * Created: prints `created pane '<name>' in window '<window>'`.
+///   * The pane already exists and is what was asked for (a terminal, or a
+///     viewer showing the same `--view`, or one it was opened with): no
+///     split is created, the command succeeds and prints `pane '<name>'
+///     already exists in <window>; reused it, no split created`. The
+///     existing pane is focused only with `--focus`.
+///   * The pane exists but is NOT what was asked for (a different `--view`,
+///     or a terminal where a viewer was asked for, or the reverse), or the
+///     name belongs to a window: nothing changes, the command FAILS (exit 1)
+///     and stderr names the pane, its window and what it shows. Pick another
+///     `--name`, or `+close --target=<name>` first.
+///
+/// The one-line result goes to stdout; errors go to stderr.
 ///
 /// Flags:
 ///
@@ -107,8 +121,9 @@ pub const Options = struct {
 ///     Overrides the calling pane as the anchor.
 ///
 ///   * `--name=<name>`: Register this split pane with a name for later
-///     targeting. If a pane with this name already exists, no split is
-///     created (and the existing pane is focused only with `--focus`).
+///     targeting. If a pane with this name already exists in any window,
+///     it is reused when it matches the request and the command fails
+///     when it does not (see above).
 ///
 ///   * `--focus`: Move keyboard focus to the new (or existing `--name`)
 ///     pane, raise its window, and activate Ghoztty. Off by default.

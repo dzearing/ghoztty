@@ -4,7 +4,7 @@ A fork of [Ghostty](https://github.com/ghostty-org/ghostty) that adds CLI-driven
 
 ## CLI Window Management
 
-IPC commands communicate with a running Ghoztty instance over a Unix domain socket. All commands are idempotent — named targets that already exist are reused instead of recreated (and focused only with `--focus`).
+IPC commands communicate with a running Ghoztty instance over a Unix domain socket. All commands are idempotent — named targets that already exist are reused instead of recreated (and focused only with `--focus`), as long as they match the request; a `+split --name` that names a different pane fails instead of silently reusing it (see `+split`).
 
 ### Focus: programmatic surfaces stay in the background
 
@@ -82,7 +82,24 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
 - `--target`: Named window to split in. Default: **the pane the command was
   invoked from** (see Caller anchoring), falling back to the most recently
   focused window.
-- `--name`: Register the new pane with a name for later targeting.
+- `--name`: Register the new pane with a name for later targeting. Pane names
+  are **one namespace across every window** (and shared with window names), so
+  the name may already be held by a pane in another window. Re-running the same
+  split reuses it; anything else fails rather than doing nothing:
+  - **Matches** (a terminal again, or a viewer showing that `--view` or opened
+    with it): no split, exit 0, stdout says `pane '<n>' already exists in
+    <window>; reused it, no split created`.
+  - **Doesn't match** (another `--view`, a terminal where a viewer stands or the
+    reverse, or the name is a window's): exit 1, stderr names the pane, its
+    window and what it shows. Nothing is retargeted — the pane belongs to
+    whatever opened it, often another agent. Use another `--name`, or `+close`
+    it first.
+  - **Created**: stdout says `created pane '<n>' in window '<w>'`. A `--target`
+    that names nothing now fails too (it used to exit 0 and do nothing).
+
+  The line comes from the response's additive `message` field; a CLI older than
+  the app ignores it. Policy: `SplitNameCollision`; tests:
+  `SplitNameCollisionTests`.
 - `--view`: Open a **viewer** pane (see Viewer Panes below) instead of a terminal — a file (markdown, HTML rendered as a live page, code, or an **image**), a website, or a **git diff** (`git-status:` / `git-diff:<revspec>`, see Git diff panes). Mutually exclusive with `--command`/`-e`. Works with `--pane` targeting, including splitting off an existing viewer pane.
 
 ### `ghoztty +close`
