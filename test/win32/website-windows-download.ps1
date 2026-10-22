@@ -71,6 +71,20 @@ function Skip($name, $why) {
     if ($RequireNetwork) { "  FAIL $name ($why)"; $script:failures++ }
     else { "  SKIP $name ($why)"; $script:skipped++ }
 }
+# T1201: is this clone's origin/gh-pages the sha origin has now? Read-only --
+# ls-remote updates no ref. State: current | stale | unknown (with Why).
+function Get-GhPagesFreshness($repo) {
+    $local = (& git -C $repo rev-parse -q --verify 'refs/remotes/origin/gh-pages' 2>$null | Select-Object -First 1)
+    if (-not $local) { return @{ State = 'unknown'; Why = 'no local origin/gh-pages' } }
+    $prev = $env:GIT_TERMINAL_PROMPT; $env:GIT_TERMINAL_PROMPT = '0'
+    try { $ls = & git -C $repo ls-remote origin 'refs/heads/gh-pages' 2>$null; $lsRc = $LASTEXITCODE }
+    finally { $env:GIT_TERMINAL_PROMPT = $prev }
+    $remote = if ($lsRc -eq 0 -and "$ls" -match '^([0-9a-f]{40})') { $Matches[1] } else { $null }
+    if (-not $remote) { return @{ State = 'unknown'; Why = "ls-remote origin gh-pages failed (rc=$lsRc)" } }
+    $short = { param($s) $s.Substring(0, 9) }
+    if ($remote -eq $local.Trim()) { return @{ State = 'current'; Local = (& $short $local); Remote = (& $short $remote) } }
+    return @{ State = 'stale'; Local = (& $short $local); Remote = (& $short $remote) }
+}
 
 $indexPath = Join-Path $Repo 'relay\deploy\ghpages\index.html'
 $cssPath   = Join-Path $Repo 'relay\deploy\ghpages\landing\styles.css'
@@ -480,15 +494,49 @@ if (-not $interp) {
         $o = & $interp $mirrorPy sync --repo $sr --ref gh-pages --no-fetch 2>&1; $rc = $LASTEXITCODE
         $o2 = & $interp $mirrorPy check --repo $sr --ref gh-pages --no-fetch 2>&1
         Assert "F7 sync refreshes stamps without --force, and check then reads OK (rc=$rc)" ($rc -eq 0 -and "$o" -match 'SYNC WROTE' -and "$o2" -match 'MIRROR OK')
+
+        # T1201: the freshness probe F8 trusts, against a bare origin on disk.
+        # A clone whose origin moved on must read STALE, a fetch must make it
+        # CURRENT, and a dead remote must read UNKNOWN -- never 'current'.
+        $fo = Join-Path $fw 'origin.git'
+        $null = & git init -q --bare $fo 2>&1
+        $null = & git -C $sr push -q $fo gh-pages 2>&1
+        $fc = Join-Path $fw 'clone'
+        $null = & git clone -q $fo $fc 2>&1
+        $fr = Get-GhPagesFreshness $fc
+        Assert "F9 a just-cloned origin/gh-pages reads current ($($fr.State))" ($fr.State -eq 'current')
+        [IO.File]::WriteAllText((Join-Path $sr 'index.html'), ($pageEdit + "<p>later</p>`n"), $utf8)
+        $null = & git -C $sr -c user.name=t -c user.email=t@t commit -q -am later 2>&1
+        $null = & git -C $sr push -q $fo gh-pages 2>&1
+        $fr = Get-GhPagesFreshness $fc
+        Assert "F10 after origin moves, the unfetched ref reads stale ($($fr.State) $($fr.Local)->$($fr.Remote))" ($fr.State -eq 'stale' -and $fr.Local -ne $fr.Remote)
+        $null = & git -C $fc fetch -q origin gh-pages 2>&1
+        $fr = Get-GhPagesFreshness $fc
+        Assert "F11 a fetch makes it current again ($($fr.State))" ($fr.State -eq 'current')
+        $null = & git -C $fc remote set-url origin (Join-Path $fw 'no-such.git') 2>&1
+        $fr = Get-GhPagesFreshness $fc
+        Assert "F12 an unreachable origin reads unknown, not current ($($fr.State): $($fr.Why))" ($fr.State -eq 'unknown')
     } finally {
         Remove-Item -LiteralPath $fw -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     # The real mirror against whatever origin/gh-pages this clone already has
     # (no fetch: this script is read-only apart from its temp dir).
+    #
+    # T1201: that local ref goes stale the moment a release pushes gh-pages,
+    # and a page edit landed there then reads as MIRROR DRIFT -- which accuses
+    # the mirror for the clone's lag (T1179's turn hunted line endings over
+    # it). So ask the remote for its sha first, read-only, and when the ref is
+    # behind, or cannot be confirmed current, name the REF rather than the
+    # mirror. A check that names the wrong culprit is worse than a skip.
+    $ghpFresh = Get-GhPagesFreshness $Repo
     $o = & $interp $mirrorPy check --repo $Repo --no-fetch 2>&1; $rc = $LASTEXITCODE
     if ($rc -eq 2) {
         Skip 'F8 mirror vs deployed gh-pages index.html' 'origin/gh-pages not fetched'
+    } elseif ($ghpFresh.State -eq 'stale') {
+        Skip 'F8 mirror vs deployed gh-pages index.html' "local origin/gh-pages is STALE ($($ghpFresh.Local) here, $($ghpFresh.Remote) on origin) - run 'git fetch origin gh-pages'; the mirror was not judged"
+    } elseif ($rc -ne 0 -and $ghpFresh.State -eq 'unknown') {
+        Skip 'F8 mirror vs deployed gh-pages index.html' "drift reported against a local origin/gh-pages that could not be confirmed current ($($ghpFresh.Why)) - fetch it and re-run before blaming the mirror"
     } elseif ($rc -eq 0) {
         "  PASS F8 mirror vs deployed gh-pages index.html: $(($o | Select-Object -First 1))"
     } else {
