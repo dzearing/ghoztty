@@ -22,8 +22,17 @@
 #
 # Only touches ghoztty processes running from $ExePath. Safe to run beside
 # the detached soak (different exe, different pipe, different log).
+#
+# T1126: the SUBJECT is the release staging build, because latency measured on
+# a Debug build says nothing about what the user feels. That build is the one
+# `scripts\launch-upgrade.ps1` stages (the command is printed below when it is
+# missing), and it used to be a `zig-out-prof` dir that nothing has built since
+# July. A release-lineage exe derives the user's endpoints, so the run holds all
+# three isolating knobs (`-ReleaseSandbox`) instead of being refused by the
+# build-mode gate - that refusal was scored as a FAILURE on every Debug suite
+# run, which is a script that cannot run reading as a product that broke.
 param(
-    [string]$ExePath = 'D:\git\ghoztty\zig-out-prof\bin\ghoztty.exe',
+    [string]$ExePath = 'D:\git\ghoztty\zig-out-release\bin\ghoztty.exe',
     [int]$SeekKeys = 60,
     [int]$LatencyProbes = 8
 )
@@ -297,12 +306,20 @@ function LatencyProbe([string]$pane, [string]$token, [int]$budgetMs) {
     return @{ Ms = $ms; Why = 'ok' }
 }
 
-if (-not (Test-Path $ExePath)) { Rep "ABORT: exe not found: $ExePath"; exit 1 }
+# T1126: no subject build is a box that cannot answer the question, not a
+# regression - a declared SKIP that names the command which builds it.
+if (-not (Test-Path $ExePath)) {
+    Write-Host "SKIP ALL: no release build to profile at $ExePath - build it with:"
+    Write-Host '    zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dstrip=false --prefix zig-out-release'
+    exit 0
+}
 $exe = $ExePath
-$env:GHOZTTY_PIPE_SUFFIX = "-prof$PID"
 $env:GHOZTTY_PERF = '1'
 $realLocalAppData = $env:LOCALAPPDATA
-$env:LOCALAPPDATA = $fakeLocal
+# T1126: all three knobs - the pipe suffix, a private agent lineage, and this
+# run's own LOCALAPPDATA ($fakeLocal, so $profLog is unchanged).
+. (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+[void](Set-GhozttyTestIsolation -Tag 'prof' -ReleaseSandbox -SandboxRoot $fakeLocal)
 try {
 
 $exeItem = Get-Item $exe
@@ -322,7 +339,9 @@ Rep "isolated log: $profLog"
 # a declared SKIP, not a red that reads as a latency regression.
 . (Join-Path $PSScriptRoot 'lib\DesktopCapability.ps1')
 Assert-TestDesktopCapability -Name real-input, foreground -Interactive
-Reset-GhozttyTestState -Exe $exe -SettleMs 500 | Out-Null
+# -AllowReleaseBuild, said out loud: the subject IS the release build, and the
+# gate behind it checks the three knobs above rather than taking this on trust.
+Reset-GhozttyTestState -Exe $exe -SettleMs 500 -AllowReleaseBuild | Out-Null
 
 & $exe +new-window --target=prof --shell=cmd | Out-Null
 Start-Sleep -Seconds 3

@@ -206,7 +206,12 @@ public class SoakDrv {
 }
 '@
 
-if (-not (Test-Path $ExePath)) { Rep "ABORT: exe not found: $ExePath"; exit 1 }
+# T1126: no release build is a box that cannot answer, not a failure.
+if (-not (Test-Path $ExePath)) {
+    Write-Host "SKIP ALL: no release build to soak at $ExePath - build it with:"
+    Write-Host '    zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dstrip=false --prefix zig-out-release'
+    exit 0
+}
 $exe = $ExePath
 # T1158 bystander baseline. Read the USER'S session roster while the env is
 # still theirs - $exe is a release build, so with no GHOZTTY_AGENT_INSTANCE set

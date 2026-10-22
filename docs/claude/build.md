@@ -153,6 +153,17 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   missing (acceptance: `test\win32\build-mode-guard.ps1` section D);
   `GHOZTTY_TEST_ALLOW_RELEASE=1` is the opt-in for a script whose subject really
   is the release build, and it is held to the same bar.
+- **The release-subject scripts** (T1126) are the ones whose default exe is
+  `zig-out-release\bin\ghoztty.exe`: `log-append.ps1` (the file sink is
+  compiled out of Debug), `profile-latency.ps1` (latency on a Debug build means
+  nothing) and `soak.ps1`. Each holds `-ReleaseSandbox`, and each prints
+  `SKIP ALL: no release build ...` with the build command when that exe is
+  absent, so a Debug suite run scores them SKIP or PASS and never FAIL. To run
+  them green, build the staging release first (the same command
+  `scripts\launch-upgrade.ps1` runs) and run them as usual:
+  `zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dstrip=false --prefix zig-out-release`.
+  `build-mode-guard.ps1` section I finds every such script from its source and
+  fails one that lacks either half.
 - **And build it BEFORE you run an acceptance script, not after** (T1028). The
   same pre-flight now also refuses a `zig-out` exe that is OLDER than the sources
   it would measure: a stale exe that still passes exits 0, and exiting 0 stamps

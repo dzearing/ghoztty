@@ -70,6 +70,15 @@ function Assert($name, $cond) {
 }
 function Say($m) { Write-Host $m }
 
+# T1126: the subject is a release build, and a box without one cannot answer
+# the question - a declared SKIP naming the command, not a red that reads as a
+# broken log sink (or a build-mode refusal of an exe that is not there).
+if (-not (Test-Path $Exe)) {
+    Write-Host "SKIP ALL: no release build at $Exe - build it with:"
+    Write-Host '    zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dstrip=false --prefix zig-out-release'
+    exit 0
+}
+
 $root = Join-Path $env:TEMP "ghoztty-log-append-$PID"
 $saved = @{ lad = $env:LOCALAPPDATA; pipe = $env:GHOZTTY_PIPE_SUFFIX }
 New-Item -ItemType Directory -Force (Join-Path $root 'ghoztty') | Out-Null

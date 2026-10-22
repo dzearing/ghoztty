@@ -322,6 +322,45 @@ if (Test-Path $realAgent) {
 }
 
 # ============================================================================
+"== I: a script whose subject is a release build sandboxes it and skips without one"
+# ============================================================================
+# T1126: profile-latency.ps1 defaulted to a release exe, set one knob of three,
+# and so met the build-mode refusal on every Debug suite run - scored as a
+# FAILURE, which kept the suite from ever reading all-green. Its siblings
+# (log-append, soak) already held all three. The rule, read from the source:
+# a script whose -Exe/-ExePath DEFAULT is a release-lineage dir must call
+# `-ReleaseSandbox`, and must print `SKIP ALL:` when that build is absent.
+function Get-ReleaseSubjectGap([string]$Text) {
+    if ($Text -notmatch "(?m)^\s*\[string\]\`$Exe(Path)?\s*=\s*'[^']*\\zig-out-(release|prof)[\\']") { return $null }
+    $gaps = @()
+    if ($Text -notmatch '-ReleaseSandbox') { $gaps += 'no -ReleaseSandbox' }
+    if ($Text -notmatch 'SKIP ALL: no release build') { $gaps += 'no SKIP ALL for a missing build' }
+    # An object, not an array: PS 5.1 unrolls an empty array return into $null,
+    # and @($null).Count is 1 - an in-scope clean script would read as one gap.
+    return [pscustomobject]@{ Gaps = @($gaps) }
+}
+$okText = "param(`n    [string]`$Exe = 'D:\x\zig-out-release\bin\ghoztty.exe'`n)`nWrite-Host `"SKIP ALL: no release build at `$Exe`"`nSet-GhozttyTestIsolation -Tag t -ReleaseSandbox"
+$badText = "param(`n    [string]`$ExePath = 'D:\x\zig-out-prof\bin\ghoztty.exe'`n)`n# one knob of three, nothing else"
+$debugText = "param(`n    [string]`$Exe = 'D:\x\zig-out\bin\ghoztty.exe'`n)"
+Assert "I1 negative control: profile-latency's old shape is caught on both counts" `
+    ((Get-ReleaseSubjectGap $badText).Gaps.Count -eq 2)
+Assert "I2 a sandboxed, skipping release script passes" ((Get-ReleaseSubjectGap $okText).Gaps.Count -eq 0)
+Assert "I3 a debug-default script is not in scope" ($null -eq (Get-ReleaseSubjectGap $debugText))
+$releaseSubjects = @()
+$releaseGaps = @()
+foreach ($f in Get-ChildItem -LiteralPath (Join-Path $Repo 'test\win32') -Filter '*.ps1') {
+    $g = Get-ReleaseSubjectGap (Get-Content -LiteralPath $f.FullName -Raw)
+    if ($null -eq $g) { continue }
+    $releaseSubjects += $f.Name
+    foreach ($x in $g.Gaps) { $releaseGaps += "$($f.Name): $x" }
+}
+"  release-subject scripts: $($releaseSubjects -join ', ')"
+foreach ($x in $releaseGaps) { "    GAP $x" }
+Assert "I4 the scan found the known release subjects (profile-latency, log-append, soak)" `
+    ((@('profile-latency.ps1', 'log-append.ps1', 'soak.ps1') | Where-Object { $releaseSubjects -notcontains $_ }).Count -eq 0)
+Assert "I5 every release-subject script sandboxes and skips" ($releaseGaps.Count -eq 0)
+
+# ============================================================================
 "== G: the reason -Doptimize=Debug is not optional is written down"
 # ============================================================================
 # The trap is reachable by anyone who builds without that flag, so the note
