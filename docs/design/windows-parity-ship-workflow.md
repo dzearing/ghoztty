@@ -139,7 +139,10 @@ powershell -NoProfile -File scripts\ship-feature.ps1 done -Slug banner-fade
 - `pr` — a dirty tree (a PR must describe committed work) and a branch with no
   commits of its own (a PR over nothing is a notification people learn to
   ignore). Re-running it on a branch that already has an open PR pushes and says
-  so rather than opening a second one.
+  so rather than opening a second one. It does not refuse a thin description,
+  but it NOTES one: the dashboard's **Reviews** view (T1182) shows the
+  reviewer the body's `## What it does` paragraph and its `## What to test`
+  list, and says plainly when either is missing — so write both.
 - `done` — a dirty tree, unpushed commits, or a PR that is still open. `-Force`
   is the abandon path and prints that it was used.
 

@@ -243,6 +243,75 @@ try {
 
     $go = Get-Content $GoMd -Raw
     Assert 'D5 go.md digest step reaches pr-health.ps1' ($go -match 'scripts\\pr-health\.ps1 -Format markdown')
+
+    # =====================================================================
+    Say ''
+    Say 'E - the review read (-Detail, T1182): what it does, what to test, what is inside'
+    # =====================================================================
+    # Bodies are built as objects and serialized, so the newlines, fences and
+    # brackets reach the subject exactly as GitHub would send them.
+    $nl = "`n"
+    $bodyNamed = (@(
+        'Intro line that is not the summary.', '',
+        '## What it does', '',
+        'The banner fades out when it collapses,', 'instead of vanishing.', '',
+        'A second paragraph that is not part of the summary.', '',
+        '```', '## What to test', '- a fenced line that is not a test step', '```', '',
+        '## What to test', '',
+        '- [ ] collapse a banner and watch it fade',
+        '- [x] reopen it',
+        '1. resize the pane mid-fade', '',
+        'Generated with [Claude Code](https://claude.com/claude-code)'
+    ) -join $nl)
+    $bodyPlain = (@('Fixes the copy menu on wide panes.', '', '- not a test list, just notes', '', '### Testing', '', '* run the copy harness') -join $nl)
+    $commits = @(@{ oid = '0123456789abcdef0123456789abcdef01234567'; messageHeadline = 'banner: fade on collapse' }, @{ oid = 'fedcba9876543210fedcba9876543210fedcba98'; messageHeadline = 'test: fade harness' })
+    $files = @(@{ path = 'src/apprt/win32/Banner.zig'; additions = 40; deletions = 3 }, @{ path = 'test/win32/banner-fade.ps1'; additions = 120; deletions = 0 })
+    $detailPrs = @(
+        @{ number = 40; title = 'Banner fades'; url = 'https://github.com/dzearing/ghoztty/pull/40'; headRefName = 'feature/banner-fade'; createdAt = '2026-10-15T12:00:00Z'; updatedAt = '2026-10-17T10:00:00Z'; isDraft = $false; reviewDecision = 'REVIEW_REQUIRED'; mergeable = 'MERGEABLE'; mergeStateStatus = 'BLOCKED'; statusCheckRollup = @(@{ __typename = 'CheckRun'; name = 'build-test'; status = 'COMPLETED'; conclusion = 'SUCCESS' }); body = $bodyNamed; commits = $commits; files = $files; additions = 160; deletions = 3 },
+        @{ number = 41; title = 'Copy menu'; url = 'https://github.com/dzearing/ghoztty/pull/41'; headRefName = 'feature/copy'; createdAt = '2026-10-15T12:00:00Z'; updatedAt = '2026-10-17T10:00:00Z'; isDraft = $false; reviewDecision = ''; mergeable = 'MERGEABLE'; mergeStateStatus = 'CLEAN'; statusCheckRollup = @(); body = $bodyPlain; commits = @($commits[0]); files = @($files[0]); additions = 40; deletions = 3 },
+        @{ number = 42; title = 'Empty body'; url = 'https://github.com/dzearing/ghoztty/pull/42'; headRefName = 'feature/empty'; createdAt = '2026-10-15T12:00:00Z'; updatedAt = '2026-10-17T10:00:00Z'; isDraft = $true; reviewDecision = ''; mergeable = 'MERGEABLE'; mergeStateStatus = 'DRAFT'; statusCheckRollup = @(); body = ''; commits = @(); files = @(); additions = 0; deletions = 0 }
+    )
+    $detailFile = Write-Fixture 'detail.json' (ConvertTo-Json -InputObject $detailPrs -Depth 6)
+    $r = Invoke-Subject @('-PrsJsonFile', $detailFile, '-Now', $Now, '-Format', 'json', '-Detail')
+    $p = Get-Json $r
+    Assert 'E0 the detail json parses, exit 0' ($null -ne $p -and $r.Code -eq 0) "code=$($r.Code) text=$($r.Text)"
+    if ($p) {
+        $x = (Find-Pr $p 40).Review
+        Assert 'E1 a "## What it does" section is the summary, its first paragraph only, joined' ($x.Summary -eq 'The banner fades out when it collapses, instead of vanishing.') "summary=$($x.Summary)"
+        $tests = @($x.ToTest | ForEach-Object { $_ })
+        Assert 'E2 "## What to test" items are the test steps, checkbox and numbering stripped' (($tests -join '|') -eq 'collapse a banner and watch it fade|reopen it|resize the pane mid-fade') "tests=$($tests -join '|')"
+        Assert 'E3 a heading inside a code fence is not a section' (-not (($tests -join '|') -match 'fenced')) "tests=$($tests -join '|')"
+        $cs = @($x.Commits | ForEach-Object { $_ })
+        Assert 'E4 commits carry a short sha and the headline' ($cs.Count -eq 2 -and $cs[0].Sha -eq '012345678' -and $cs[0].Headline -eq 'banner: fade on collapse') "commits=$($cs | ConvertTo-Json -Compress)"
+        $fs = @($x.Files | ForEach-Object { $_ })
+        Assert 'E5 files carry their path and line counts' ($fs.Count -eq 2 -and $fs[1].Path -eq 'test/win32/banner-fade.ps1' -and $fs[1].Additions -eq 120 -and $x.Additions -eq 160) "files=$($fs | ConvertTo-Json -Compress)"
+        Assert 'E6 the generated-with boilerplate is not in the body' (-not ($x.Body -match 'Generated with')) "body tail=$($x.Body.Substring([math]::Max(0, $x.Body.Length - 80)))"
+        $y = (Find-Pr $p 41).Review
+        Assert 'E7 no named summary: the first prose paragraph, not a bullet' ($y.Summary -eq 'Fixes the copy menu on wide panes.') "summary=$($y.Summary)"
+        # PS 5.1 collapses a one-element array to a scalar in ConvertTo-Json
+        # only through the pipeline; the payload must still read as a list.
+        Assert 'E8 a single test step under "### Testing" is still a one-item list' ($r.Text -match '"ToTest":\s*\[\s*"run the copy harness"\s*\]') 'ToTest for #41 is not a JSON list'
+        Assert 'E9 a single commit and file are still lists' ($r.Text -match '"Commits":\s*\[\s*\{' -and @($y.Files | ForEach-Object { $_ }).Count -eq 1)
+        $z = (Find-Pr $p 42).Review
+        Assert 'E10 an empty body says nothing rather than inventing a summary or steps' ($z.Summary -eq '' -and @($z.ToTest | ForEach-Object { $_ }).Count -eq 0) "summary=$($z.Summary)"
+        # 40 green + awaiting review; 41 and 42 have no checks at all, which is
+        # never green (A12) - a draft included.
+        $bands = '{0}|{1}|{2}' -f (Find-Pr $p 40).Band, (Find-Pr $p 41).Band, (Find-Pr $p 42).Band
+        Assert 'E11 the verdicts are unchanged by -Detail' ($bands -eq 'HEALTHY|NEEDS A TURN|NEEDS A TURN') "bands=$bands"
+    }
+    $plain = Get-Json (Invoke-Subject @('-PrsJsonFile', $detailFile, '-Now', $Now, '-Format', 'json'))
+    Assert 'E12 without -Detail the payload carries no review fields (the digest read stays small)' ($plain -and -not (Find-Pr $plain 40).PSObject.Properties['Review'])
+    $src = Get-Content $Subject -Raw
+    # GitHub refuses the whole query when PRs x commits x authors passes
+    # 500,000 nodes - the live 100-PR detail read did exactly that.
+    Assert 'E13 the detail read asks GitHub for at most 25 PRs' ($src -match '\$DetailLimit = 25' -and $src -match "if \(\`$Detail\) \{ \`$DetailLimit \}")
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        $r = Invoke-Subject @('-Format', 'json', '-Detail')
+        $p = Get-Json $r
+        Assert 'E14 a live detail read is a verdict GitHub accepted, not a refused query' ($p -and $p.verdict -ne 'UNKNOWN') "verdict=$($p.verdict) why=$($p.why)"
+    } else {
+        Skip 'E14 live detail read' 'gh is not installed'
+    }
 }
 catch {
     Write-Host "  FAIL harness crashed: $($_.Exception.Message)" -ForegroundColor Red

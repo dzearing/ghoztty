@@ -1,18 +1,16 @@
 {
     "guard":  "ship-workflow",
     "script":  "test/win32/ship-workflow.ps1",
-    "generated":  "2026-10-17T19:49:59-07:00",
-    "commit":  "332dedff3",
+    "generated":  "2026-10-22T14:44:49-07:00",
+    "commit":  "1bd691480",
     "uncommitted":  [
                         "docs/design/windows-parity-ship-workflow.md",
-                        "scripts/pr-review.ps1",
-                        "scripts/ship-feature.ps1",
-                        "test/win32/ship-workflow.ps1"
+                        "scripts/ship-feature.ps1"
                     ],
     "files":  {
-                  "docs/design/windows-parity-ship-workflow.md":  "3431f67b6536bd8243067c1823a14142ee603da76395757860236682a75806ad",
+                  "docs/design/windows-parity-ship-workflow.md":  "e2a802fe1f9bbe03adfece0e5801eee4d0639ab43eca56a9352596e32050cb7a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
-                  "scripts/ship-feature.ps1":  "5352d1b5a8f1ea1c0db81a36f7bed23f07a4e7e07194ae69058a858a6f55a0a0",
+                  "scripts/ship-feature.ps1":  "b53f3d8a44440cf33b6e2ce3c40819ca0695ffa48b1226b7545eddf8cac45915",
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6"
               }

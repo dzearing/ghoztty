@@ -46,6 +46,21 @@
     Formats: `text` (default; one line per PR plus a `PR HEALTH` verdict line)
     and `markdown` (paste into today's digest under `## Commentary`).
 
+    -Detail (T1182) is the dashboard's review read: `json` grows, per PR, what
+    a reviewer needs to approve it without reading the diff -
+
+      Summary  what the PR does, in plain words: the body's `## What it does`
+               (or Summary / In plain terms) section, else its first paragraph
+      ToTest   the list items under `## What to test` (or How to test / Test
+               plan / Testing). Empty means the PR never said - shown as such,
+               never invented
+      Commits  each commit's short sha and headline
+      Files    each changed path with its added / deleted line counts
+      Body     the whole description, for the expandable detail
+
+    `scripts\ship-feature.ps1 pr` scaffolds a body with both headings, so a
+    PR opened the house way is readable here from its first minute.
+
     ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
 
 .EXAMPLE
@@ -77,7 +92,12 @@ param(
     [int]$StaleDays = 3,
 
     # The clock the ages are measured against. Tests pin it.
-    [string]$Now
+    [string]$Now,
+
+    # T1182: carry the review detail (plain summary, what to test, commits,
+    # files, body) in the json. Off by default so the digest's call stays the
+    # small one.
+    [switch]$Detail
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,6 +105,8 @@ $ErrorActionPreference = 'Stop'
 $nowUtc = if ($Now) { ([datetime]::Parse($Now, [Globalization.CultureInfo]::InvariantCulture)).ToUniversalTime() } else { (Get-Date).ToUniversalTime() }
 
 $Fields = 'number,title,url,headRefName,createdAt,updatedAt,isDraft,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup'
+$DetailLimit = 25
+if ($Detail) { $Fields += ',body,commits,files,additions,deletions' }
 
 # Check-run conclusions that mean the build said no. Same set as
 # ci-status.ps1, so a run the claim calls red is a PR check this calls red.
@@ -154,7 +176,12 @@ function Get-Prs {
         if (-not (Test-Path -LiteralPath $PrsJsonFile)) { return @{ Ok = $false; Why = "PR file not found: $PrsJsonFile"; Prs = @() } }
         $text = [System.IO.File]::ReadAllText($PrsJsonFile, [System.Text.Encoding]::UTF8)
     } else {
-        $r = Invoke-GhBounded @('pr', 'list', '--repo', $ForkRepo, '--state', 'open', '--limit', '100', '--json', $Fields)
+        # The detail read asks for every PR's commits, and GitHub prices that
+        # as PRs x commits x authors: at 100 PRs it refuses the whole query
+        # ("exceeds the maximum limit of 500,000" nodes, 2026-10-22). 25 open
+        # PRs is more review than a morning holds.
+        $limit = if ($Detail) { $DetailLimit } else { 100 }
+        $r = Invoke-GhBounded @('pr', 'list', '--repo', $ForkRepo, '--state', 'open', '--limit', "$limit", '--json', $Fields)
         if (-not $r.Ok) { return @{ Ok = $false; Why = $r.Why; Prs = @() } }
         $text = $r.Out
     }
@@ -192,6 +219,88 @@ function Format-Age([double]$days) {
     return ('{0}d' -f [math]::Floor($days))
 }
 
+# --- T1182: the review read of a PR description ---------------------------
+# Headings that name each part. Matched case-insensitively against an ATX
+# heading's text, so `## What it does`, `### Summary:` and `## Test plan` all
+# land; anything else is just more of the description.
+$SummaryHeads = '^(what (it|this( pr)?) does|summary|in plain terms|overview)\b'
+$TestHeads = '^(what to test|how to test|to test|test plan|testing)\b'
+$BoilerplateLine = 'Generated with \[Claude Code\]|^Co-Authored-By:'
+
+# The body as sections: @{ Head = <heading text or ''>; Lines = <lines> }. The
+# text before the first heading is the section with an empty Head.
+function Split-BodySections([string]$body) {
+    $sections = @()
+    $cur = @{ Head = ''; Lines = @() }
+    $fence = $false
+    foreach ($line in ($body -split "`r?`n")) {
+        if ($line -match '^\s*(```|~~~)') { $fence = -not $fence }
+        if (-not $fence -and $line -match '^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$') {
+            $sections += $cur
+            $cur = @{ Head = $Matches[1].Trim(); Lines = @() }
+            continue
+        }
+        if ($line -match $BoilerplateLine) { continue }
+        $cur.Lines += $line
+    }
+    $sections += $cur
+    return $sections
+}
+
+# The first paragraph of a run of lines: consecutive non-blank lines, joined.
+function Get-FirstParagraph([string[]]$lines) {
+    $para = @()
+    foreach ($l in $lines) {
+        if ($l.Trim()) { $para += $l.Trim() }
+        elseif ($para.Count -gt 0) { break }
+    }
+    $text = ($para -join ' ').Trim()
+    if ($text.Length -gt 600) { $text = $text.Substring(0, 597).TrimEnd() + '...' }
+    return $text
+}
+
+function Get-ReviewDetail($pr) {
+    $body = if ($pr.body) { ([string]$pr.body).Trim() } else { '' }
+    $body = ((($body -split "`r?`n") | Where-Object { $_ -notmatch $BoilerplateLine }) -join "`n").Trim()
+    $sections = @(Split-BodySections $body)
+    $named = @($sections | Where-Object { $_.Head -match $SummaryHeads } | Select-Object -First 1)
+    $summary = ''
+    if ($named.Count -gt 0) { $summary = Get-FirstParagraph $named[0].Lines }
+    if (-not $summary) {
+        # No named section: the first paragraph anywhere that is not a test list.
+        foreach ($sec in $sections) {
+            if ($sec.Head -match $TestHeads) { continue }
+            $summary = Get-FirstParagraph @($sec.Lines | Where-Object { $_ -notmatch '^\s*([-*+]|\d+[.)])\s' })
+            if ($summary) { break }
+        }
+    }
+    $toTest = @()
+    foreach ($sec in @($sections | Where-Object { $_.Head -match $TestHeads })) {
+        foreach ($l in $sec.Lines) {
+            if ($l -match '^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+?)\s*$') { $toTest += $Matches[1] }
+        }
+    }
+    $commits = @(@($pr.commits | Where-Object { $null -ne $_ }) | ForEach-Object {
+        [pscustomobject]@{
+            Sha      = ([string]$_.oid).Substring(0, [math]::Min(9, ([string]$_.oid).Length))
+            Headline = [string]$_.messageHeadline
+        }
+    })
+    $files = @(@($pr.files | Where-Object { $null -ne $_ }) | ForEach-Object {
+        [pscustomobject]@{ Path = [string]$_.path; Additions = [int]$_.additions; Deletions = [int]$_.deletions }
+    })
+    if ($body.Length -gt 20000) { $body = $body.Substring(0, 20000) + "`n`n(description truncated)" }
+    return [pscustomobject]@{
+        Summary   = $summary
+        ToTest    = @($toTest)
+        Commits   = $commits
+        Files     = $files
+        Additions = [int]$pr.additions
+        Deletions = [int]$pr.deletions
+        Body      = $body
+    }
+}
+
 function Get-PrHealth($pr) {
     $checks = Get-CheckVerdict $pr.statusCheckRollup
     $created = ([datetime]$pr.createdAt).ToUniversalTime()
@@ -220,7 +329,7 @@ function Get-PrHealth($pr) {
         elseif ($checks.State -eq 'PENDING' -or $pr.isDraft) { 'IN FLIGHT' }
         else { 'HEALTHY' }
 
-    [pscustomobject]@{
+    $row = [pscustomobject]@{
         Number   = [int]$pr.number
         Title    = [string]$pr.title
         Url      = [string]$pr.url
@@ -233,6 +342,8 @@ function Get-PrHealth($pr) {
         Band     = $band
         Reasons  = @($reasons)
     }
+    if ($Detail) { $row | Add-Member -NotePropertyName Review -NotePropertyValue (Get-ReviewDetail $pr) }
+    return $row
 }
 
 $bandRank = @{ 'NEEDS A TURN' = 0; 'IN FLIGHT' = 1; 'HEALTHY' = 2 }
@@ -251,7 +362,7 @@ $verdict = if (-not $got.Ok) { 'UNKNOWN' }
 
 switch ($Format) {
     'json' {
-        [pscustomobject]@{ verdict = $verdict; why = $got.Why; repo = $ForkRepo; prs = $rows } | ConvertTo-Json -Depth 5
+        [pscustomobject]@{ verdict = $verdict; why = $got.Why; repo = $ForkRepo; prs = $rows } | ConvertTo-Json -Depth 6
     }
     'markdown' {
         if (-not $got.Ok) {

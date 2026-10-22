@@ -144,7 +144,7 @@
           'view host is empty - the page threw before rendering');
         check('C2 the shell reports no server error', !document.querySelector('#err .err'),
           document.querySelector('#err') ? document.querySelector('#err').textContent : '');
-        check('C3 the nav offers every view', document.querySelectorAll('#nav button').length === 4,
+        check('C3 the nav offers every view', document.querySelectorAll('#nav button').length === 5,
           'got ' + document.querySelectorAll('#nav button').length + ' nav buttons');
 
         /* --- the two-step unblock (T564) --------------------------------- */
@@ -295,6 +295,50 @@
           }, 'digest');
         }).then(function (ok) {
           check('C29 the digest view renders its body', !!ok, 'digest host is empty');
+        });
+      })
+      .then(function () {
+        /* --- the Reviews view (T1182) ------------------------------------- */
+        var navBtn = byText('#nav button', 'Reviews');
+        var badge = navBtn && navBtn.querySelector('.badge');
+        check('C42 the nav has a Reviews entry badged with the open-PR count',
+          !!badge && badge.textContent === '2', navBtn ? navBtn.textContent : 'no Reviews button');
+        if (navBtn) navBtn.click();
+        return waitFor(function () {
+          return document.querySelectorAll('#view .pr').length === 2 ? true : null;
+        }, 'pr cards').then(function (ok) {
+          check('C43 every open PR is a card, the one needing a turn first', !!ok &&
+            document.querySelectorAll('#view .pr')[0].textContent.indexOf('#91') >= 0,
+            document.querySelectorAll('#view .pr').length + ' cards');
+          var good = byText('#view .pr', '#90');
+          var bad = byText('#view .pr', '#91');
+          var does = good && good.querySelector('.pr-does');
+          check('C44 what it does is in plain words, not a commit list',
+            !!does && does.textContent.indexOf('fades it out instead of making it vanish') >= 0,
+            does ? does.textContent : 'no .pr-does');
+          var steps = good ? good.querySelectorAll('.pr-test li') : [];
+          check('C45 what to test is a checklist of the PR\'s own steps',
+            steps.length === 2 && steps[0].textContent === 'collapse a banner and watch it fade', steps.length + ' steps');
+          check('C46 a PR that never said what to test, or what it does, says so',
+            !!bad && !!bad.querySelector('.pr-test-none') && !!bad.querySelector('.pr-does.muted') &&
+            bad.textContent.indexOf('checks failing: build-test') >= 0, bad ? bad.textContent : 'no #91 card');
+          var inside = good && good.querySelector('details');
+          check('C47 what is inside is collapsed until asked for, and names its size',
+            !!inside && !inside.open && inside.textContent.indexOf('2 commits, 2 files') >= 0,
+            inside ? inside.textContent : 'no details');
+          if (!inside) return null;
+          inside.querySelector('summary').click();
+          // The 5-second poll re-renders the whole view; an expanded section
+          // that snaps shut under the reader is the bug this guards.
+          return sleep(150).then(function () {
+            renderView();
+            var again = byText('#view .pr', '#90');
+            var d2 = again && again.querySelector('details');
+            check('C48 an expanded section survives the re-render, with the commits and files inside',
+              !!d2 && d2.open && d2.textContent.indexOf('banner: fade on collapse') >= 0 &&
+              d2.textContent.indexOf('test/win32/banner-fade.ps1') >= 0, d2 ? d2.textContent : 'gone');
+          });
+        }).then(function () {
           go('activity');
           return sleep(200);
         });

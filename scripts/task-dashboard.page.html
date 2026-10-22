@@ -466,6 +466,30 @@ dialog.taskdlg footer { padding: 10px 14px; border-top: 1px solid var(--hairline
 .loop-task { font-size: 13px; margin-top: 8px; }
 .loop-task.muted, .dec-why.muted { color: var(--muted); font-size: 12px; }
 .chip.warn { background: rgba(250, 178, 25, .18); color: var(--ink); }
+/* Reviews view (T1182): one card per open PR, read the way it gets approved. */
+.pr { border-top: 1px solid var(--hairline); padding: 14px 0 4px; }
+.pr:first-of-type { border-top: 0; padding-top: 4px; }
+.pr-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.pr-title { font-size: 14px; font-weight: 600; color: var(--ink); text-decoration: none; }
+.pr-title:hover { text-decoration: underline; }
+.pr-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.pr-band { font-weight: 600; }
+.pr-band.needs { background: rgba(208, 59, 59, .14); color: var(--critical); }
+.pr-band.flight { background: rgba(250, 178, 25, .18); color: var(--ink); }
+.pr-band.ok { background: rgba(12, 163, 12, .14); color: var(--done); }
+.pr-reasons { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.pr-sec { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: 12px 0 4px; }
+.pr-does { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.pr-does.muted, .pr-test-none { color: var(--muted); font-size: 12px; }
+.pr-test { list-style: none; margin: 0; padding: 0; }
+.pr-test li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--ink-2); padding: 2px 0; }
+.pr-test li::before { content: ''; width: 13px; height: 13px; flex: none; margin-top: 3px; border: 1px solid var(--axis); border-radius: 3px; }
+.pr-list { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--ink-2); }
+.pr-list li { padding: 1px 0; overflow-wrap: anywhere; }
+.pr-list code { font-size: 11px; color: var(--muted); }
+.pr-add { color: var(--done); }
+.pr-del { color: var(--critical); }
+.pr-body { margin-top: 6px; font-size: 13px; }
 .dec.blocked-dec::before { background: var(--critical); }
 pre.cmd { margin: 10px 0 0; padding: 9px 11px; background: var(--surface-2); border-radius: 6px; font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
 
@@ -542,7 +566,7 @@ var $ = function (s, r) { return (r || document).querySelector(s); };
 var themeParam = /[?&]theme=(light|dark)/.exec(location.search);
 if (themeParam) document.documentElement.setAttribute('data-theme', themeParam[1]);
 
-var VIEWS = ['activity', 'digest', 'data', 'tasks'];
+var VIEWS = ['activity', 'digest', 'reviews', 'data', 'tasks'];
 var state = {
   data: null, sig: '', busy: false, pageVersion: null,
   sort: { key: 'order', dir: 1 }, // the work queue, head first
@@ -556,6 +580,9 @@ var state = {
   digestDate: null,  // which digest is being read; null = newest
   digestTab: null,   // which category tab is open; null = first present
   digestCache: {},   // date -> body, so flipping between days does not refetch
+  prs: null,         // the Reviews view's open-PR list (T1182), fetched on its own
+  prsAt: 0, prsLoading: false,
+  prOpen: {},        // which PR <details> are expanded, kept across re-renders
   shown: PAGE_SIZE, // timeline paging
   decIdx: 0        // which open decision "Needs your call" is showing
 };
@@ -2227,6 +2254,118 @@ function renderTasks() {
 }
 
 /* ===========================================================================
+   REVIEWS view — open pull requests, read the way a reviewer approves one
+   (T1182): what it does in plain words, what to test, and what is inside.
+   =========================================================================== */
+var PR_BAND = {
+  'NEEDS A TURN': { label: 'Needs a turn', cls: 'needs' },
+  'IN FLIGHT': { label: 'In flight', cls: 'flight' },
+  'HEALTHY': { label: 'Ready for review', cls: 'ok' }
+};
+var PR_CHECKS = { RED: 'checks failing', PENDING: 'checks running', GREEN: 'checks green', NONE: 'no checks ran' };
+
+/* The list is fetched on its own, not carried in the poll payload: it is a
+   GitHub round trip, and the server caches it for a few minutes. */
+function loadPrs(force) {
+  if (state.prsLoading) return;
+  state.prsLoading = true;
+  fetch('api/prs' + (force ? '?refresh=1' : ''), { cache: 'no-store' })
+    .then(function (r) {
+      // The page reloads itself when the server's files change, but the node
+      // process serving it does not: a server started before this view existed
+      // answers 404 here until somebody restarts it.
+      if (r.status === 404) {
+        return { verdict: 'UNKNOWN', prs: [], why: 'this dashboard server was started before the Reviews view existed - restart it ' +
+          '(powershell -File scripts\\task-dashboard.ps1 -Stop, then run it again)' };
+      }
+      return r.json();
+    })
+    .then(function (j) { state.prs = j; })
+    .catch(function () {
+      state.prs = { verdict: 'UNKNOWN', why: 'the dashboard server did not answer', prs: [] };
+    })
+    .then(function () {
+      state.prsLoading = false;
+      state.prsAt = Date.now();
+      if (state.view === 'reviews') renderView();
+    });
+}
+
+/* A <details> that the 5-second re-render would otherwise snap shut. */
+function prDetails(key, summary, kids) {
+  return h('details', { class: 'tv', open: state.prOpen[key] ? '' : null,
+    ontoggle: function (e) { state.prOpen[key] = e.target.open; } },
+    [h('summary', { text: summary })].concat(kids));
+}
+
+function prCard(p) {
+  var band = PR_BAND[p.band] || PR_BAND.HEALTHY;
+  var files = p.files || [], commits = p.commits || [], tests = p.toTest || [];
+  var kids = [
+    h('div', { class: 'pr-head' }, [
+      h('span', { class: 'chip pr-band ' + band.cls, text: band.label }),
+      h('a', { class: 'pr-title', href: p.url, target: '_blank', rel: 'noopener', text: '#' + p.number + ' ' + p.title })
+    ]),
+    h('div', { class: 'pr-meta', text: [p.branch, 'open ' + p.age, PR_CHECKS[p.checks] || p.checks, p.waiting,
+      '+' + p.additions + ' / -' + p.deletions + ' in ' + files.length + ' file' + (files.length === 1 ? '' : 's')]
+      .filter(Boolean).join(' · ') })
+  ];
+  if (p.reasons && p.reasons.length) {
+    kids.push(h('div', { class: 'pr-reasons' }, p.reasons.map(function (r) { return h('span', { class: 'chip warn', text: r }); })));
+  }
+  kids.push(h('div', { class: 'pr-sec', text: 'What it does' }));
+  kids.push(p.summary
+    ? h('div', { class: 'pr-does', text: p.summary })
+    : h('div', { class: 'pr-does muted', text: 'The description does not say. Read the commits below, or ask for a summary before approving.' }));
+  kids.push(h('div', { class: 'pr-sec', text: 'What to test' }));
+  kids.push(tests.length
+    ? h('ul', { class: 'pr-test' }, tests.map(function (t) { return h('li', { text: t }); }))
+    : h('div', { class: 'pr-test-none', text: 'No test steps given. A "## What to test" list in the description shows up here; ask for one before approving.' }));
+  kids.push(prDetails(p.number + ':inside', "What's inside: " + commits.length + ' commit' + (commits.length === 1 ? '' : 's') +
+    ', ' + files.length + ' file' + (files.length === 1 ? '' : 's'), [
+    h('div', { class: 'pr-sec', text: 'Commits' }),
+    commits.length
+      ? h('ul', { class: 'pr-list' }, commits.map(function (c) { return h('li', null, [h('code', { text: c.sha }), ' ', c.headline]); }))
+      : h('div', { class: 'empty', text: 'None listed.' }),
+    h('div', { class: 'pr-sec', text: 'Files' }),
+    files.length
+      ? h('ul', { class: 'pr-list' }, files.map(function (f) {
+          return h('li', null, [f.path, ' ', h('span', { class: 'pr-add', text: '+' + f.additions }), ' ',
+            h('span', { class: 'pr-del', text: '-' + f.deletions })]);
+        }))
+      : h('div', { class: 'empty', text: 'None listed.' })
+  ]));
+  if (p.body) kids.push(prDetails(p.number + ':body', 'Full description', [h('div', { class: 'pr-body' }, [mdRender(p.body)])]));
+  return h('div', { class: 'pr', 'data-anim-key': 'pr:' + p.number }, kids);
+}
+
+function reviewsView(d) {
+  var s = state.prs;
+  if (!s || Date.now() - (state.prsAt || 0) > 60000) loadPrs(false);
+  var refreshBtn = h('button', { type: 'button', class: 'btn', text: state.prsLoading ? 'Checking…' : 'Check GitHub now',
+    disabled: state.prsLoading ? '' : null, onclick: function () { loadPrs(true); renderView(); } });
+  var body;
+  if (!s) {
+    body = [h('div', { class: 'loading', text: 'Asking GitHub for open pull requests…' })];
+  } else if (s.verdict === 'UNKNOWN') {
+    body = [h('div', { class: 'empty pr-unknown', text: 'Could not ask GitHub: ' + (s.why || 'no reason given') +
+      '. This is not "nothing to review" — the list is simply unknown right now.' })];
+  } else if (!s.prs.length) {
+    body = [h('div', { class: 'empty pr-none', text: 'No pull requests are waiting for review on ' + (s.repo || 'the fork') + '.' })];
+  } else {
+    body = s.prs.map(prCard);
+  }
+  var needs = s && s.prs ? s.prs.filter(function (p) { return p.band === 'NEEDS A TURN'; }).length : 0;
+  var sub = !s || s.verdict === 'UNKNOWN' ? 'Open pull requests on the fork.'
+    : s.prs.length + ' open' + (needs ? ', ' + needs + ' need a turn first' : '') +
+      (s.fetchedAt ? ' · checked ' + fTime(s.fetchedAt) : '');
+  return [h('section', { class: 'card', 'data-anim-key': 'card:reviews' }, [
+    h('div', { class: 'card-head' }, [h('h2', { text: 'Review candidates' }), refreshBtn]),
+    h('div', { class: 'sub', text: sub })
+  ].concat(body))];
+}
+
+/* ===========================================================================
    Shell
    =========================================================================== */
 function go(view) {
@@ -2245,9 +2384,11 @@ function renderNav() {
   var d = state.data;
   var nav = $('#nav');
   nav.innerHTML = '';
-  [['activity', 'Activity'], ['digest', 'Daily digest'], ['data', 'Data'], ['tasks', 'Tasks']].forEach(function (v) {
+  [['activity', 'Activity'], ['digest', 'Daily digest'], ['reviews', 'Reviews'], ['data', 'Data'], ['tasks', 'Tasks']].forEach(function (v) {
     var badge = null;
     if (v[0] === 'activity' && d && d.openDecisions) badge = h('span', { class: 'badge', text: String(d.openDecisions) });
+    // Open PRs, from the server's cached read - a count to review, not an alarm.
+    if (v[0] === 'reviews' && d && d.reviews && d.reviews.open) badge = h('span', { class: 'badge', text: String(d.reviews.open) });
     nav.appendChild(h('button', {
       type: 'button', 'aria-current': state.view === v[0] ? 'page' : null,
       onclick: function () { go(v[0]); }
@@ -2274,7 +2415,7 @@ function renderView() {
   }
   host.innerHTML = '';
   var nodes = state.view === 'data' ? dataView(d) : state.view === 'tasks' ? tasksView(d)
-    : state.view === 'digest' ? digestView(d) : activityView(d);
+    : state.view === 'digest' ? digestView(d) : state.view === 'reviews' ? reviewsView(d) : activityView(d);
   nodes.forEach(function (n) { host.appendChild(n); });
   if (state.view === 'tasks') renderTasks();
   if (state.view === 'data') drawAll();
@@ -2375,7 +2516,8 @@ function signature(d) {
     d.activity.length, d.series.length, d.daily.map(function (x) { return x.count; }),
     // The loop card's reboot rows (T931): the first probe lands a poll or two
     // after the page does, and a new outage must show without a task moving.
-    d.boot && [d.boot.link1, d.boot.boots, d.boot.outages, (d.boot.broken || []).length]
+    d.boot && [d.boot.link1, d.boot.boots, d.boot.outages, (d.boot.broken || []).length],
+    d.reviews && [d.reviews.open, d.reviews.needs]
   ]);
 }
 

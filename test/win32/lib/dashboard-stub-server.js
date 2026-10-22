@@ -24,6 +24,7 @@
  *   GET  /api/commit?sha=  a commit message, so the event dialog can finish loading
  *   POST /api/status       recorded, answered {ok:true} - NOTHING is written
  *   POST /api/resolve      likewise
+ *   GET  /api/prs          two open PRs for the Reviews view (T1182)
  *   GET  /api/_posted      the recorded POSTs, so the harness can assert that a
  *                          click produced a real request rather than only DOM text
  *   GET  /api/_unblock     flips the fixture's loop from blocked to working, so
@@ -166,6 +167,31 @@ const BOOT_REVIVES = Object.assign({}, BOOT_SIGNIN_OFF, {
 });
 payload.boot = BOOT_SIGNIN_OFF;
 
+/* Two open pull requests for the Reviews view (T1182), in the shape the real
+   server's /api/prs serves (test/win32/task-dashboard.ps1 section H proves that
+   shape against the real pr-health.ps1). One says what it does and what to
+   test; the other says neither and is red, so both the happy path and the
+   "the PR never said" path render. The nav badge reads payload.reviews. */
+const PRS = {
+  verdict: 'NEEDS ATTENTION', why: '', repo: 'dzearing/ghoztty', fetchedAt: Date.now(),
+  prs: [
+    { number: 91, title: 'The copy menu works on wide panes', url: 'https://github.com/dzearing/ghoztty/pull/91',
+      branch: 'feature/copy-menu', age: '1d', idle: '2h', checks: 'RED', waiting: 'awaiting review',
+      band: 'NEEDS A TURN', reasons: ['checks failing: build-test'], failing: ['build-test'],
+      summary: '', toTest: [], commits: [{ sha: 'fedcba987', headline: 'copy: widen menu' }],
+      files: [{ path: 'src/apprt/win32/Menu.zig', additions: 5, deletions: 2 }], additions: 5, deletions: 2, body: '' },
+    { number: 90, title: 'The banner fades when it collapses', url: 'https://github.com/dzearing/ghoztty/pull/90',
+      branch: 'feature/banner-fade', age: '2d', idle: '3h', checks: 'GREEN', waiting: 'awaiting review',
+      band: 'HEALTHY', reasons: [], failing: [],
+      summary: 'Collapsing a status banner now fades it out instead of making it vanish.',
+      toTest: ['collapse a banner and watch it fade', 'reopen it from the pane menu'],
+      commits: [{ sha: '012345678', headline: 'banner: fade on collapse' }, { sha: '123456789', headline: 'test: fade harness' }],
+      files: [{ path: 'src/apprt/win32/Banner.zig', additions: 40, deletions: 3 }, { path: 'test/win32/banner-fade.ps1', additions: 120, deletions: 0 }],
+      additions: 160, deletions: 3, body: '## What it does\n\nCollapsing a status banner now fades it out.\n\n## What to test\n\n- collapse a banner' },
+  ],
+};
+payload.reviews = { verdict: PRS.verdict, open: 2, needs: 1 };
+
 /* The negative control for that bar, served rather than simulated: after
    GET /api/_unblock the SAME payload comes back with no `blocked` field, so
    the page's own fetch-and-render path is what has to make the bar go away.
@@ -226,6 +252,7 @@ const server = http.createServer(async (req, res) => {
     blockedNow = false;
     return send(res, 200, 'application/json', JSON.stringify({ ok: true, blocked: false }));
   }
+  if (url === '/api/prs') return send(res, 200, 'application/json', JSON.stringify(PRS));
   if (url === '/api/_posted') return send(res, 200, 'application/json', JSON.stringify(posted));
   if (url === '/api/task') {
     return send(res, 200, 'application/json', JSON.stringify({

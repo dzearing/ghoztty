@@ -955,6 +955,84 @@ function bootStateSync() {
 }
 
 /**
+ * Pull requests waiting for review (T1182), for the Reviews view.
+ *
+ * The read is `pr-health.ps1 -Format json -Detail`, never a second GitHub
+ * client here: that script already owns the verdicts (red / in flight /
+ * healthy), the `--repo` rule and a hard timeout, and the review fields - the
+ * plain summary and the what-to-test list - are parsed out of the PR body by
+ * the same code the digest trusts. Asynchronous and cached, the same shape as
+ * bootState(): a GitHub round trip is seconds, and the poll must never wait
+ * on it (T1660).
+ *
+ * GHOZTTY_PRS_JSON names a `gh pr list --json` capture; it is handed to the
+ * script as -PrsJsonFile, so a harness exercises the real parse and the real
+ * spawn without asking GitHub anything.
+ */
+const PRS_TTL = 3 * 60 * 1000;
+let prsCache = { at: 0, state: null, waiters: [] };
+
+const asList = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+
+/** pr-health's json, normalised: PS 5.1 hands a one-element array back as a scalar. */
+function shapePrs(out) {
+  let j;
+  try { j = JSON.parse(String(out || '').replace(/^﻿/, '')); } catch { return null; }
+  if (!j || typeof j !== 'object' || !j.verdict) return null;
+  return {
+    verdict: j.verdict,
+    why: j.why || '',
+    repo: j.repo || '',
+    prs: asList(j.prs).map((p) => {
+      const r = p.Review || {};
+      return {
+        number: p.Number, title: p.Title || '', url: p.Url || '', branch: p.Branch || '',
+        age: p.Age || '', idle: p.Idle || '', checks: p.Checks || 'NONE', waiting: p.Waiting || '',
+        band: p.Band || '', reasons: asList(p.Reasons), failing: asList(p.Failing),
+        summary: r.Summary || '', toTest: asList(r.ToTest),
+        commits: asList(r.Commits).map((c) => ({ sha: c.Sha || '', headline: c.Headline || '' })),
+        files: asList(r.Files).map((f) => ({ path: f.Path || '', additions: f.Additions || 0, deletions: f.Deletions || 0 })),
+        additions: r.Additions || 0, deletions: r.Deletions || 0, body: r.Body || '',
+      };
+    }),
+  };
+}
+
+function prsArgs() {
+  const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+    path.join(REPO, 'scripts', 'pr-health.ps1'), '-Format', 'json', '-Detail'];
+  if (process.env.GHOZTTY_PRS_JSON) args.push('-PrsJsonFile', process.env.GHOZTTY_PRS_JSON);
+  return args;
+}
+
+/** Calls back with the cached answer, refreshing it first when it is old (or `force`). */
+function prsState(force, cb) {
+  const fresh = prsCache.state && Date.now() - prsCache.at < PRS_TTL;
+  if (fresh && !force) return cb(prsCache.state);
+  prsCache.waiters.push(cb);
+  if (prsCache.waiters.length > 1) return; // one spawn answers every caller waiting on it
+  execFile('powershell', prsArgs(), { cwd: REPO, encoding: 'utf8', timeout: 60000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+    (_err, stdout) => {
+      const s = shapePrs(stdout);
+      // The script answers UNKNOWN itself for every GitHub failure; a null here
+      // means the script did not run at all, which is the same "not measured".
+      prsCache.state = s || { verdict: 'UNKNOWN', why: 'the PR report did not run', repo: '', prs: [] };
+      prsCache.state.fetchedAt = Date.now();
+      prsCache.at = Date.now();
+      const ws = prsCache.waiters;
+      prsCache.waiters = [];
+      ws.forEach((w) => w(prsCache.state));
+    });
+}
+
+/** The nav badge's count, from whatever is cached - never a fetch of its own. */
+function prsSummary() {
+  const s = prsCache.state;
+  if (!s) return null;
+  return { verdict: s.verdict, open: s.prs.length, needs: s.prs.filter((p) => p.band === 'NEEDS A TURN').length };
+}
+
+/**
  * Is the loop's supervisor itself alive? (T440.)
  *
  * The watchdog died at 09:14 on 2026-08-03 and nothing noticed for thirteen
@@ -1278,6 +1356,10 @@ function freshenPayload(p) {
   p.watchdog = watchdogState();
   p.lanes = lanesState();
   p.boot = bootState();
+  // The nav badge reads the cache; a poll only ever STARTS a refresh behind
+  // itself, once the cache is old enough that the count could be wrong.
+  if (!prsCache.state || now - prsCache.at > PRS_TTL) prsState(false, () => {});
+  p.reviews = prsSummary();
   if (p.series.length) p.series[p.series.length - 1].ts = now;
   for (const t of p.tasks) {
     if (t.touchedAt == null) continue;
@@ -1408,6 +1490,7 @@ function buildPayload() {
     watchdog,
     lanes: lanesState(),
     boot: bootState(),
+    reviews: prsSummary(),
     decisions,
     openDecisions: decisions.filter((d) => d.status !== 'resolved').length,
     activity,
@@ -1620,6 +1703,12 @@ function serve(port) {
           return send(res, 404, 'application/json; charset=utf-8', JSON.stringify({ error: 'no such commit' }));
         }
         return send(res, 200, 'application/json; charset=utf-8', JSON.stringify({ sha, body: msg.trim() }));
+      }
+      // Open PRs for the Reviews view (T1182). `?refresh=1` skips the cache, for
+      // the view's own refresh button.
+      if (url === '/api/prs') {
+        const force = new URL(req.url, 'http://x').searchParams.get('refresh') === '1';
+        return prsState(force, (s) => send(res, 200, 'application/json; charset=utf-8', JSON.stringify(s)));
       }
       if (url === '/api/digest') {
         const date = new URL(req.url, 'http://x').searchParams.get('date') || '';

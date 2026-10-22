@@ -67,6 +67,9 @@
   powershell -NoProfile -File scripts\ship-feature.ps1 new -Slug banner-fade
   powershell -NoProfile -File scripts\ship-feature.ps1 list
   powershell -NoProfile -File scripts\ship-feature.ps1 pr -Slug banner-fade -Title "..." -Body "..."
+
+  Give -Body a '## What it does' paragraph (plain words) and a '## What to
+  test' list: the dashboard's Reviews view shows both to the reviewer (T1182).
   powershell -NoProfile -File scripts\ship-feature.ps1 done -Slug banner-fade
 #>
 [CmdletBinding()]
@@ -362,6 +365,14 @@ switch ($Command) {
         $url = (($created.Text) -split "`r?`n" | Where-Object { $_ -match '^https?://' } | Select-Object -First 1)
         Write-Result "PR OPENED $($url.Trim())"
         Write-Result "  base $Trunk  head $branch  repo $ForkRepo"
+        # T1182: the dashboard's Reviews view reads these two headings out of
+        # the description; without them the reviewer is told the PR never said.
+        foreach ($want in @(@{ Re = '(?im)^\s{0,3}#{1,6}\s+(what (it|this( pr)?) does|summary|in plain terms|overview)\b'; Name = '## What it does' },
+                            @{ Re = '(?im)^\s{0,3}#{1,6}\s+(what to test|how to test|to test|test plan|testing)\b'; Name = '## What to test' })) {
+            if (-not ($Body -match $want.Re)) {
+                Write-Result "  NOTE the description has no '$($want.Name)' section; the dashboard's Reviews view will say so. Add it with: gh pr edit --repo $ForkRepo --body-file <file>"
+            }
+        }
         exit 0
     }
 

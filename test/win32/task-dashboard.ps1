@@ -117,6 +117,7 @@ try {
     Assert 'A2 page fetches /api/commit for the full message' ($html -match '/api/commit\?sha=')
     Assert 'A3 timeline cards have a whole-card hover state' ($html -match '\.ev:hover')
     Assert 'A4 timeline cards are keyboard-openable' ($html -match "openEvent\(a\)")
+    Assert 'A4b the Reviews view is in the nav and reads /api/prs (T1182)' ($html -match "\['reviews', 'Reviews'\]" -and $html -match "fetch\('api/prs'")
 
     # The inline script must PARSE - a syntax error takes the whole dashboard
     # down to a blank page while the server keeps answering 200.
@@ -386,10 +387,22 @@ try {
             }
             Write-FxTask 'T9001' 'todo'
             Write-FxTask 'T9002' 'done'
+            # Section H's open PR (T1182): ONE pull request, so the PS 5.1
+            # one-element-array collapse is crossed on the way through node.
+            $prBody = "## What it does`n`nThe banner fades when it collapses.`n`n## What to test`n`n- [ ] collapse a banner`n"
+            $prFx = @(@{ number = 77; title = 'Banner fades'; url = 'https://github.com/dzearing/ghoztty/pull/77'; headRefName = 'feature/fade';
+                createdAt = '2026-10-20T12:00:00Z'; updatedAt = (Get-Date).ToUniversalTime().ToString('o'); isDraft = $false; reviewDecision = 'REVIEW_REQUIRED';
+                mergeable = 'MERGEABLE'; mergeStateStatus = 'BLOCKED'; body = $prBody; additions = 12; deletions = 1;
+                statusCheckRollup = @(@{ __typename = 'CheckRun'; name = 'build-test'; status = 'COMPLETED'; conclusion = 'SUCCESS' });
+                commits = @(@{ oid = 'abcdef0123456789abcdef0123456789abcdef01'; messageHeadline = 'banner: fade' });
+                files = @(@{ path = 'src/apprt/win32/Banner.zig'; additions = 12; deletions = 1 }) })
+            $prFile = Join-Path $fxDir 'prs.json'
+            [System.IO.File]::WriteAllText($prFile, (ConvertTo-Json -InputObject $prFx -Depth 6))
             $env:GHOZTTY_TASK_DIR = $fxDir
+            $env:GHOZTTY_PRS_JSON = $prFile
             $fxSrv = Start-Process -FilePath $node.Source -ArgumentList ('"' + $dash + '" --port ' + $fxPort) `
                 -WorkingDirectory $Repo -WindowStyle Hidden -PassThru
-            Remove-Item Env:GHOZTTY_TASK_DIR -ErrorAction SilentlyContinue
+            Remove-Item Env:GHOZTTY_TASK_DIR, Env:GHOZTTY_PRS_JSON -ErrorAction SilentlyContinue
             $fxBase = "http://127.0.0.1:$fxPort"
             $fxUp = $false
             foreach ($i in 1..60) {
@@ -413,10 +426,32 @@ try {
                 Assert 'G3 a cache-hit answer still carries a fresh generatedAt' `
                     ($null -ne $again -and $again.generatedAt -gt $after.generatedAt) `
                     "after=$($after.generatedAt) again=$($again.generatedAt)"
+
+                # --- section H: /api/prs, the Reviews view's read (T1182) ---
+                # The server spawns the real pr-health.ps1 -Detail against the
+                # capture, so the parse, the spawn and the shaping are all live.
+                $pr = $null
+                $pRaw = (Get-Http "$fxBase/api/prs" 90).Body
+                try { $pr = $pRaw | ConvertFrom-Json } catch {}
+                # @() OUTSIDE the if: an if-expression unrolls its result, and a
+                # one-element answer would come back as a bare object.
+                $one = @(if ($pr) { $pr.prs | ForEach-Object { $_ } })
+                Assert 'H1 /api/prs answers a verdict with the open PR' ($pr -and $pr.verdict -eq 'OK' -and $one.Count -eq 1 -and $one[0].number -eq 77) "body=$pRaw"
+                if ($one.Count -eq 1) {
+                    Assert 'H2 the plain summary comes from the "What it does" section' ($one[0].summary -eq 'The banner fades when it collapses.') "summary=$($one[0].summary)"
+                    Assert 'H3 a single test step and a single commit arrive as LISTS' ($pRaw -match '"toTest":\["collapse a banner"\]' -and $pRaw -match '"commits":\[\{') "body=$pRaw"
+                    Assert 'H4 the band and the file counts ride along' ($one[0].band -eq 'HEALTHY' -and @($one[0].files).Count -eq 1 -and $one[0].additions -eq 12)
+                }
+                $sw = [Diagnostics.Stopwatch]::StartNew()
+                $cached = (Get-Http "$fxBase/api/prs" 30).Body
+                $sw.Stop()
+                Assert 'H5 a second read is served from the cache, not a fresh spawn' ($cached -eq $pRaw -and $sw.ElapsedMilliseconds -lt 1500) ("{0}ms" -f $sw.ElapsedMilliseconds)
+                $withBadge = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+                Assert 'H6 /api/data carries the open-PR count for the nav badge' ($withBadge -and $withBadge.reviews -and $withBadge.reviews.open -eq 1 -and $withBadge.reviews.needs -eq 0) "reviews=$($withBadge.reviews | ConvertTo-Json -Compress)"
             }
         }
     } finally {
-        Remove-Item Env:GHOZTTY_TASK_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:GHOZTTY_TASK_DIR, Env:GHOZTTY_PRS_JSON -ErrorAction SilentlyContinue
         if ($fxSrv -and -not $fxSrv.HasExited) { Stop-Process -Id $fxSrv.Id -Force -ErrorAction SilentlyContinue }
         Remove-Item $fxDir -Recurse -Force -ErrorAction SilentlyContinue
     }
