@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-close",
     "script":  "test/win32/viewer-close.ps1",
-    "generated":  "2026-10-21T23:53:58-07:00",
-    "commit":  "6610935f9",
+    "generated":  "2026-10-22T00:03:45-07:00",
+    "commit":  "006c2dc16",
     "uncommitted":  [
 
                     ],

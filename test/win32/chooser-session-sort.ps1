@@ -54,6 +54,7 @@ if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 $env:GHOZTTY_PIPE_SUFFIX = "-t602$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChooserCursor.ps1')  # Step-ChooserCursor (T1139)
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
 # guard-stamping child below reads the same state and refuses to write.
@@ -260,8 +261,21 @@ try {
 
     Write-Host ''
     Write-Host '5. keyboard navigation still works over the sorted list'
-    Send-TestControlKey -Control $chooser -Key Right | Out-Null
-    Start-Sleep -Milliseconds 300
+    # Read the landing back rather than assuming Right arrived (T1139): the
+    # roster is fetched asynchronously, and a Right that beats it is a no-op
+    # whose Return then falls through to the machine row. Right enters at the
+    # top of the DISPLAYED order, so it must land on the row the CPU sort just
+    # named first.
+    $cpuFirst = $null
+    if ($cpu -and $cpu -match 'first=([0-9a-fA-F]+)') { $cpuFirst = $Matches[1] }
+    $filter = ConvertTo-TestHwnd (Get-ChooserFilterField -Chooser $chooser)
+    $landed = $null
+    for ($try = 0; $try -lt 3 -and -not $landed; $try++) {
+        $landed = Step-ChooserCursor -Chooser $chooser -Filter $filter -Log $errlog -Key 'Right'
+        if (-not $landed) { Start-Sleep -Milliseconds 500 }
+    }
+    Assert ($landed -and $landed -eq $cpuFirst) `
+        "Right lands on the first row of the sorted roster (landed=$landed first=$cpuFirst)"
     Send-TestControlKey -Control $chooser -Key Enter | Out-Null
     # Every fixture session is open in one of our own panes, so Return on the
     # cursored row focuses it rather than double-attaching (T330 divergence).

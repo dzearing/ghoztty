@@ -50,6 +50,7 @@ if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 $env:GHOZTTY_PIPE_SUFFIX = "-t333$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChooserCursor.ps1')  # Walk-ChooserCursorToEnd (T1139)
 
 $script:pass = 0
 $script:fail = 0
@@ -211,9 +212,15 @@ try {
     # --- Park the cursor at the bottom -------------------------------------
     Write-Host ''
     Write-Host '2. the cursor walks to the last row and the region follows it'
-    Send-ChooserKey $chooser $filter 'Right' | Out-Null
-    for ($i = 1; $i -lt $rows.Count; $i++) { Send-ChooserKey $chooser $filter 'Down' | Out-Null }
-    Start-Sleep -Milliseconds 800
+    # Each step is read back from the app's own cursor line (T1139, the shared
+    # walk in lib\ChooserCursor.ps1): a Right that lands before the roster is
+    # there to enter, or a Down that never arrives, is reported as a short walk
+    # instead of reading as a scroll regression in the pixel below.
+    $walk = Walk-ChooserCursorToEnd -Chooser $chooser -Filter $filter -Log $errlog -MaxRows ($rows.Count + 2)
+    Assert ($null -ne $walk.Id) 'Right entered the roster (the app logged a cursor landing)'
+    Assert ($walk.Total -ge 8 -and $walk.Rows -eq $walk.Total) `
+        "the walk visited every displayed row and stopped on the last ($($walk.Rows) of $($walk.Total))"
+    Start-Sleep -Milliseconds 400
 
     $parked = Sample $chooser $probeX $probeY
     $parkLift = -999

@@ -110,3 +110,48 @@ function Walk-ChooserCursorToId {
     }
     return $null
 }
+
+<#
+Walk the keyboard cursor to the LAST displayed roster row.
+
+    $walk = Walk-ChooserCursorToEnd -Chooser $c -Filter $f -Log $log -MaxRows 16
+    # $walk.Id = the last row's id ($null when the walk never entered the list)
+    # $walk.Rows = how many distinct rows the cursor visited, the top included
+    # $walk.Total = how many rows the app says it is displaying
+
+Resets to the top the way Walk-ChooserCursorToId does, then presses Down until
+a landing repeats the previous id (the last row clamps). A caller that knows
+the roster's size compares `.Rows` with it, so a walk that stalled part way
+reads as a short walk rather than as a cursor sitting on the last row (T1139).
+#>
+function Walk-ChooserCursorToEnd {
+    param(
+        [Parameter(Mandatory)] $Chooser,
+        [Parameter(Mandatory)] $Filter,
+        [Parameter(Mandatory)] [string]$Log,
+        [int]$MaxRows = 16,
+        [int]$EnterRetries = 3
+    )
+    Step-ChooserCursor -Chooser $Chooser -Filter $Filter -Log $Log -Key 'Left' | Out-Null
+    $cur = $null
+    for ($try = 0; $try -lt $EnterRetries; $try++) {
+        $cur = Step-ChooserCursor -Chooser $Chooser -Filter $Filter -Log $Log -Key 'Right'
+        if ($null -ne $cur -and $cur -ne '') { break }
+        Start-Sleep -Milliseconds 500
+    }
+    if ($null -eq $cur -or $cur -eq '') { return [pscustomobject]@{ Id = $null; Rows = 0; Total = 0 } }
+    $rows = 1
+    for ($i = 0; $i -lt $MaxRows; $i++) {
+        $next = Step-ChooserCursor -Chooser $Chooser -Filter $Filter -Log $Log -Key 'Down'
+        if ($null -eq $next -or $next -eq '' -or $next -eq $cur) { break }
+        $cur = $next
+        $rows++
+    }
+    # The app's own count of displayed rows, from the last landing line ("row N
+    # of M"): the agent's `+sessions` count is not the roster's, since the
+    # roster filters and sorts what it shows.
+    $total = 0
+    $m = @(Select-String -Path $Log -Pattern 'chooser roster: cursor on session id=[0-9a-fA-F]+ \(row \d+ of (\d+)\)' -ErrorAction SilentlyContinue)
+    if ($m.Count -gt 0) { $total = [int]$m[-1].Matches[0].Groups[1].Value }
+    return [pscustomobject]@{ Id = $cur; Rows = $rows; Total = $total }
+}
