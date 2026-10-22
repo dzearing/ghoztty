@@ -1443,6 +1443,20 @@ coordinates on purpose and is exempt by name. Exemption:
 `# click-coord: <reason>`; a point parsed from the app's log is declared
 screen-space in the audit's `$Declared` list instead.
 
+**A marker you type is on screen before the command runs** (T1143). The shell
+echoes the command line, so `+send-keys "echo $m"` followed by a wait for `$m`
+is satisfied by the echo the instant the keys land - T1116's flood wait scored
+a flood that had not started. That is fine when the question is "is the pane
+live" or "did the scrollback come back", and wrong when it is "did the command
+run" or "has it finished". For the second kind, type the marker in halves the
+command joins (`'x' + '$head' + '$tail'`, holder-volume.ps1) so only the OUTPUT
+holds it whole, or ask for something only the output has (a line of its own,
+`"$m\s*$"`, or a literal the command adds, `"READY-$tag"`).
+`test\win32\echo-marker-audit.ps1` sweeps for a wait whose needle is nothing but
+typed text; the 2026-10-22 sites were read and are presence checks, held as a
+per-file baseline. A new one splits its marker or says why the echo is enough:
+`# echo-marker: <reason>` on the wait's line or the one above.
+
 **A test sandbox can have an agent of its own** (T167). The local agent's
 single-instance guard is per-user and per-LINEAGE, and the lineage is a
 compile-time fact (`local-debug` for every debug build), so a debug agent

@@ -1,0 +1,16 @@
+{
+    "guard":  "echo-marker",
+    "script":  "test/win32/echo-marker-audit.ps1",
+    "generated":  "2026-10-22T02:50:43-07:00",
+    "commit":  "5d474a935",
+    "uncommitted":  [
+                        "test/win32/echo-marker-audit.baseline.json",
+                        "test/win32/echo-marker-audit.ps1",
+                        "test/win32/lib/EchoMarkerAudit.ps1"
+                    ],
+    "files":  {
+                  "test/win32/echo-marker-audit.baseline.json":  "058e25fa65c7961da826c66ffd82d9ef4975dc95edd4c19b981de1c2b1a24134",
+                  "test/win32/echo-marker-audit.ps1":  "d896ea0055d1564eeba5ce6fc2bceda25aa0d32d3ccacd848d85c75d130d98f1",
+                  "test/win32/lib/EchoMarkerAudit.ps1":  "c3173a1b9bd3306c35d53473404f5a4abb0913630bc582d12add94651d07b37a"
+              }
+}

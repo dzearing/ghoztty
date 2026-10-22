@@ -5684,6 +5684,21 @@ $GuardTable = @(
         )
     },
 
+    # T1143 - the echo-marker sweep: a wait for a marker the same script typed,
+    # which the shell's echo of the command line satisfies before the command
+    # has run (T1116). Its own family; the corpus-wide net (a new script with a
+    # new wait) is the harness-floor row, as for every floor member.
+    [pscustomobject]@{
+        Name   = 'echo-marker'
+        Script = 'test\win32\echo-marker-audit.ps1'
+        Stamp  = 'test\win32\echo-marker-audit.stamp.json'
+        Covers = @(
+            'test\win32\echo-marker-audit.ps1',
+            'test\win32\lib\EchoMarkerAudit.ps1',
+            'test\win32\echo-marker-audit.baseline.json'
+        )
+    },
+
     # T1034 - the unwired-hook sweep. A hook documented "called by X" loses its
     # caller when the CALLER changes, anywhere in the tree (signalFrameDrawn's
     # would have been in src\renderer), so all of `src\` is covered, and the

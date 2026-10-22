@@ -1,0 +1,30 @@
+{
+    "note":  "Per-file counts of echo-marker-audit findings: waits for a marker the same script typed into the pane, where the echo of the typed line satisfies the wait. Every site here was read by the T1143 sweep (2026-10-22) and is a presence check (pane is live, scrollback came back), not proof a command ran. May only go DOWN; a new site splits its marker or carries # echo-marker: \u003creason\u003e. See docs/design/windows-parity-tasks/T1143.md.",
+    "generated":  "2026-10-22",
+    "files":  {
+                  "test\\win32\\agent-handoff.ps1":  2,
+                  "test\\win32\\agent-recovery.ps1":  1,
+                  "test\\win32\\agent-upgrade.ps1":  1,
+                  "test\\win32\\app-restart.ps1":  1,
+                  "test\\win32\\chooser-restore-all-remote.ps1":  2,
+                  "test\\win32\\chooser-resume-remote.ps1":  2,
+                  "test\\win32\\go-loop-guard.ps1":  3,
+                  "test\\win32\\holder-adopt.ps1":  2,
+                  "test\\win32\\holder-durable.ps1":  4,
+                  "test\\win32\\holder-volume.ps1":  4,
+                  "test\\win32\\ipc-command-keepalive.ps1":  2,
+                  "test\\win32\\ipc-read-race.ps1":  1,
+                  "test\\win32\\new-window-cwd.ps1":  1,
+                  "test\\win32\\pane-banner.ps1":  3,
+                  "test\\win32\\pane-id.ps1":  1,
+                  "test\\win32\\restore-dead-sessions.ps1":  1,
+                  "test\\win32\\session-open.ps1":  1,
+                  "test\\win32\\session-persistence.ps1":  1,
+                  "test\\win32\\session-reattach.ps1":  2,
+                  "test\\win32\\session-relaunch.ps1":  2,
+                  "test\\win32\\session-relaunch-notify.ps1":  13,
+                  "test\\win32\\session-shell-exit.ps1":  1,
+                  "test\\win32\\session-snapshot-reattach.ps1":  5,
+                  "test\\win32\\session-vanished.ps1":  2
+              }
+}
