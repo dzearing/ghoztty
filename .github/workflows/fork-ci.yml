@@ -187,9 +187,35 @@ jobs:
       # across two invocations of the SAME script -- --build-only, then
       # --skip-build over the zig-out it produced -- so the build flags still
       # live in exactly one place.
+      #
+      # A poisoned Zig cache is healed here rather than read as a red tree
+      # (T2117). setup-zig restores the previous run's .zig-cache and saves
+      # this run's afterwards, so one bad artifact is handed from run to run:
+      # on 2026-10-21 six pushes in a row -- one of them docs-only -- died in
+      # `compile lib glslang` with `failed to link with LLD:
+      # UnableToWriteArchive` over a 375 MB restored cache, and the chain
+      # broke only because one run happened to save a 189-byte one. So on
+      # exactly that signature, wipe the restored cache and build once more
+      # from cold; the post step then saves the clean cache and the next run
+      # inherits it. The match stays narrow on purpose: a real compile or link
+      # error must stay red on the first attempt, not cost a cold rebuild.
       - name: Cross-compile the Windows exe
         if: steps.detect.outputs.present == 'true'
         run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/windows-cross-build.log"
+          if dist/windows-installer/build-release-artifacts.sh --semver 0.0.0 --build-only 2>&1 | tee "$log"; then
+            exit 0
+          fi
+          if ! grep -q 'UnableToWriteArchive' "$log"; then
+            exit 1
+          fi
+          echo "::warning::restored Zig cache is poisoned (LLD UnableToWriteArchive) - wiping it and rebuilding cold (T2117)"
+          for d in "${ZIG_GLOBAL_CACHE_DIR:-}" "${ZIG_LOCAL_CACHE_DIR:-}" "$GITHUB_WORKSPACE/.zig-cache"; do
+            if [ -n "$d" ] && [ -d "$d" ]; then
+              find "$d" -mindepth 1 -delete
+            fi
+          done
           dist/windows-installer/build-release-artifacts.sh --semver 0.0.0 --build-only
 
       - name: Build and install msitools 0.106 (wixl, msiinfo, msibuild)

@@ -554,6 +554,17 @@ Assert "E5 windows-cross publishes nothing" ($jobM.Success -and
 Assert "E6 windows-cross detects the win32 tree" ($jobM.Success -and
     $jobM.Value -match 'src/apprt/win32')
 
+# E12 (T2117): a poisoned restored Zig cache is wiped and the compile retried,
+# and ONLY on the LLD UnableToWriteArchive signature -- six pushes read red on
+# 2026-10-21 over one bad cached artifact, and a broad retry would turn every
+# real compile error into a cold rebuild before it went red.
+$compileM = [regex]::Match($forkCi, '(?ms)- name: Cross-compile the Windows exe.*?(?=\r?\n      - name: )')
+Assert "E12 windows-cross heals a poisoned Zig cache on UnableToWriteArchive" ($compileM.Success -and
+    $compileM.Value -match "grep -q 'UnableToWriteArchive'" -and
+    $compileM.Value -match 'ZIG_GLOBAL_CACHE_DIR' -and
+    $compileM.Value -match 'set -o pipefail' -and
+    ([regex]::Matches($compileM.Value, 'build-release-artifacts\.sh --semver 0\.0\.0 --build-only')).Count -eq 2)
+
 # E7: the runbook expects CI to have proven the build, not the release.
 Assert "E7 release.md points at the windows-cross job" ($releaseMd -match 'windows-cross')
 
