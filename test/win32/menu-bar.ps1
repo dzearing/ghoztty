@@ -654,8 +654,6 @@ $m = Wait-Menu $g.Pid 1200
 Assert ($m -eq [IntPtr]::Zero) 'A(T260): the strip has no menu button on a caption window'
 if ($m -ne [IntPtr]::Zero) { Close-Menu $g }
 Assert ((Tab-Count) -eq $tabsAtStripRight) 'A(T260): ...and clicking there opens no tab either'
-# Same drag band, same modal loop to clear (see the T1110 note below).
-[void](Invoke-TestMessage -Window $g.Top -Message 0x001F)  # WM_CANCELMODE
 
 # It is a button, not "the strip": the bare strip between the "+" and the
 # strip's right end is dead space, and the "+" is its own hit box.
@@ -681,15 +679,14 @@ $routePlus = Get-TestMouseRoute -Window $g.Top -X ($crA.Left + $geo.PlusX) -Y ($
 Assert ($routeDead.Code -eq 2) "A: bare strip is the window's drag band, so those clicks went non-client (HTCAPTION, got $($routeDead.Code))"
 Assert ($routePlus.Code -eq 1) "A: the ""+"" is client area, so its click is a real button press (HTCLIENT, got $($routePlus.Code))"
 
-# ...and because they were non-client HTCAPTION, DefWindowProc may have entered
-# its modal SC_MOVE loop on them - a loop that pumps its own messages and eats
-# whatever is queued behind it, including the "+" click below. A real user ends
-# that loop by lifting a real button; a POSTED WM_NCLBUTTONUP does not reliably
-# do it. So end it here, explicitly, before the one click in this section whose
-# whole point is that it lands. This is the T1094 sweep's three FAILs: no tab
-# opened, and section D then read Close Tab and tab cycling as grayed - which is
-# the RIGHT answer for the one tab that was really there.
-[void](Invoke-TestMessage -Window $g.Top -Message 0x001F)  # WM_CANCELMODE
+# ...and because they were non-client HTCAPTION, DefWindowProc could enter its
+# modal SC_MOVE loop on them - a loop that pumps its own messages and eats
+# whatever is queued behind it, including the "+" click below. That was the
+# T1094 sweep's three FAILs: no tab opened, and section D then read Close Tab
+# and tab cycling as grayed - the RIGHT answer for the one tab really there.
+# This script used to send WM_CANCELMODE here by hand (T1110); since T1141 a
+# whole Send-TestMouse click never leaves that loop behind, for every script,
+# and test\win32\caption-click-modal.ps1 is the demonstration.
 
 Click-Client $g.Top $geo.PlusX $geo.PlusY
 Start-Sleep -Milliseconds 900

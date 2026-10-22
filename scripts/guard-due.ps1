@@ -4834,6 +4834,21 @@ $GuardTable = @(
             'test\win32\test-desktop-harness.ps1'
         )
     },
+    # A whole click never leaves a modal move/size loop behind (T1141). The
+    # cancel lives in lib\TestDesktop.ps1's click path and every GUI script
+    # leans on it, so the one harness that constructs the stale-held-button
+    # state (and goes red without the cancel) runs whenever that library or the
+    # caption hit test it aims at changes. About thirty seconds.
+    [pscustomobject]@{
+        Name   = 'caption-click-modal'
+        Script = 'test\win32\caption-click-modal.ps1'
+        Stamp  = 'test\win32\caption-click-modal.stamp.json'
+        Covers = @(
+            'test\win32\lib\TestDesktop.ps1',
+            'src\apprt\win32\caption_layout.zig',
+            'test\win32\caption-click-modal.ps1'
+        )
+    },
     # The P1-P3 floor's fixture gate (T1285). The floor is what CLAUDE.md names
     # as the bar for every change, and on 2026-09-02 it scored sixteen product
     # failures for an app that had simply stopped answering - its fixture verbs

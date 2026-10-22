@@ -375,6 +375,7 @@ public class GhozttyTestDesktop {
     [DllImport("user32.dll")] static extern uint MapVirtualKeyW(uint code, uint mapType);
     [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
     [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint tid, ref GUITHREADINFO info);
+    [DllImport("user32.dll")] static extern uint GetDoubleClickTime();
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
@@ -451,6 +452,7 @@ public class GhozttyTestDesktop {
     const uint WM_NCRBUTTONDOWN = 0x00A4, WM_NCRBUTTONUP = 0x00A5, WM_NCRBUTTONDBLCLK = 0x00A6;
     const uint WM_NCMBUTTONDOWN = 0x00A7, WM_NCMBUTTONUP = 0x00A8, WM_NCMBUTTONDBLCLK = 0x00A9;
     const int HTERROR = -2, HTTRANSPARENT = -1, HTNOWHERE = 0, HTCLIENT = 1;
+    const uint WM_CANCELMODE = 0x001F, GUI_INMOVESIZE = 0x0002;
     const uint PW_RENDERFULLCONTENT = 2;
 
     // ================= worker thread =================
@@ -1052,6 +1054,20 @@ public class GhozttyTestDesktop {
             info.cbSize = (uint)Marshal.SizeOf(typeof(GUITHREADINFO));
             if (!GetGUIThreadInfo(tid, ref info)) return 0L;
             return info.hwndActive.ToInt64();
+        });
+    }
+
+    // GUITHREADINFO.flags of `top`'s GUI thread (T1141): GUI_INMOVESIZE (0x2)
+    // says the thread is inside DefWindowProc's modal SC_MOVE / SC_SIZE loop,
+    // which is the one state a click cannot be seen to be lost to. -1 when the
+    // thread cannot be read.
+    public long GuiFlags(IntPtr top) {
+        return (long)Run(delegate() {
+            uint pid; uint tid = GetWindowThreadProcessId(top, out pid);
+            var info = new GUITHREADINFO();
+            info.cbSize = (uint)Marshal.SizeOf(typeof(GUITHREADINFO));
+            if (!GetGUIThreadInfo(tid, ref info)) return -1L;
+            return (long)info.flags;
         });
     }
 
@@ -1970,6 +1986,55 @@ public class GhozttyTestDesktop {
         return res.ToInt32();
     }
 
+    // Hit codes whose button-down DefWindowProc answers with a MODAL loop
+    // (T1141): HTCAPTION (2) starts SC_MOVE; HTGROWBOX (4) and the eight
+    // sizing edges HTLEFT..HTBOTTOMRIGHT (10-17) start SC_SIZE. Deliberately
+    // NOT HTSYSMENU or the min/max/close buttons: their press tracks and acts
+    // on release, and cancelling it would delete the very click being sent.
+    static bool StartsModalLoop(int code) {
+        return code == 2 || code == 4 || (code >= 10 && code <= 17);
+    }
+
+    // End a modal move/size loop that a COMPLETE posted click started
+    // (T1141). Measured on this harness: the loop starts only when the app's
+    // key state says the left button is HELD - posted messages never set that
+    // bit, so it takes a stale one - and it starts about a double-click
+    // interval after the down, not at it (433ms on a 500ms setting). Once it
+    // has started, the posted WM_NCLBUTTONUP does not end it: it pumps its own
+    // messages and eats the next click a script sends, which that script
+    // reports as "nothing happened". MouseEvent therefore clears a stale held
+    // bit before a whole click (so the loop cannot start) and calls this only
+    // when the bit is STILL held, which costs the wait nothing in the ordinary
+    // case. WM_CANCELMODE is what Windows itself uses to abandon a mode:
+    // DefWindowProc releases capture and the loop exits. It is SENT only
+    // while GUITHREADINFO says the loop is running, to the hwnd it names as
+    // moving - never blind, because a cancel outside the loop would release
+    // whatever capture the app holds for its own hover tracking.
+    // GHOZTTY_TEST_MOUSE_KEEP_MODAL=1 skips this, which is the pre-T1141
+    // harness and the negative control's lever.
+    void EndModalLoop(IntPtr top, IntPtr dst) {
+        if (Environment.GetEnvironmentVariable("GHOZTTY_TEST_MOUSE_KEEP_MODAL") == "1") return;
+        uint pid; uint tid = GetWindowThreadProcessId(top, out pid);
+        long window = (long)GetDoubleClickTime() + 500;
+        bool cancelled = false;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < window) {
+            Thread.Sleep(20);
+            var info = new GUITHREADINFO();
+            info.cbSize = (uint)Marshal.SizeOf(typeof(GUITHREADINFO));
+            if (!GetGUIThreadInfo(tid, ref info)) return;
+            if ((info.flags & GUI_INMOVESIZE) == 0) {
+                if (cancelled) return;
+                continue;
+            }
+            IntPtr moving = (info.hwndMoveSize != IntPtr.Zero) ? info.hwndMoveSize : dst;
+            IntPtr res;
+            // SMTO_ABORTIFHUNG: the loop pumps, so a sent message is answered.
+            SendMessageTimeoutW(moving, WM_CANCELMODE, IntPtr.Zero, IntPtr.Zero, 0x0002, 1000, out res);
+            cancelled = true;
+        }
+    }
+
     // The routing decision, exposed so a script can assert it directly
     // (Get-TestMouseRoute) rather than inferring it from an effect.
     public int MouseRoute(IntPtr top, IntPtr target, int sx, int sy) {
@@ -2004,13 +2069,25 @@ public class GhozttyTestDesktop {
             uint pid; uint tid = GetWindowThreadProcessId(top, out pid);
             uint cur = GetCurrentThreadId();
             bool attached = AttachThreadInput(cur, tid, true);
+            IntPtr dst = (target == IntPtr.Zero) ? top : target;
+            bool endLoop = false;
             try {
-                IntPtr dst = (target == IntPtr.Zero) ? top : target;
                 var ks = new byte[256];
                 bool haveMods = (mods != null && mods.Length > 0);
                 GetKeyboardState(ks);
                 ClearMods(ks);
                 if (haveMods) ApplyMods(ks, mods, true);
+                // A whole click is a press AND a release, so no button is held
+                // once it is over; a stale held bit is what lets a posted
+                // caption down start a modal loop (T1141, EndModalLoop).
+                if (action == 3 || action == 4) { ks[0x01] &= 0x7F; ks[0x02] &= 0x7F; ks[0x04] &= 0x7F; }
+                // T1141's repro lever: leave VK_LBUTTON "held" in the shared
+                // key state. That is the ONLY condition under which a posted
+                // caption down starts DefWindowProc's move loop (measured: with
+                // the bit clear the loop never starts, with it set it starts
+                // every time and the posted up does not end it), so it is how
+                // caption-click-modal.ps1 constructs the state it guards.
+                if (Environment.GetEnvironmentVariable("GHOZTTY_TEST_MOUSE_STALE_LBUTTON") == "1") ks[0x01] = 0x80;
                 SetKeyboardState(ks);
 
                 SetCursorPos(sx, sy);
@@ -2087,12 +2164,20 @@ public class GhozttyTestDesktop {
                     if (action == 2) {
                         PostMessageW(dst, up, upWp, lp);
                     }
+                    // A whole click never leaves a modal loop behind (T1141).
+                    // A bare `down` does, on purpose: that is a caption DRAG,
+                    // and its loop belongs to the move/up that follow.
+                    endLoop = nc && (action == 3 || action == 4) && StartsModalLoop(hit)
+                        && (ks[0x01] & 0x80) != 0;
                 }
 
                 if (haveMods) { ApplyMods(ks, mods, false); SetKeyboardState(ks); }
                 Thread.Sleep(40);
-                return true;
             } finally { if (attached) AttachThreadInput(cur, tid, false); }
+            // After the detach, not inside it: measured, the loop does not
+            // begin while this thread's input is still attached to the app's.
+            if (endLoop) EndModalLoop(top, dst);
+            return true;
         });
     }
 
@@ -3885,7 +3970,13 @@ Two consequences worth knowing:
   * HTNOWHERE / HTTRANSPARENT / HTERROR keep the client delivery, because all
     three mean "not me" and this harness posts to the hwnd you NAME.
   * A down on HTCAPTION hands DefWindowProc a window-drag, exactly as a real
-    press on the title area does. Aim at a button, or expect a move loop.
+    press on the title area does (a sizing edge, a window-size). With
+    -Action down that modal loop is LEFT RUNNING - it is the drag the script
+    asked for, and its move/up follow. A whole click or doubleclick ends it
+    before returning (T1141): the loop pumps its own messages and would eat
+    the script's next click, which then reads as "nothing happened". Ask
+    Test-TestInMoveSize to see the state; GHOZTTY_TEST_MOUSE_KEEP_MODAL=1
+    restores the old leave-it-running click.
 #>
 function Send-TestMouse {
     param(
@@ -3947,6 +4038,25 @@ function Get-TestMouseRoute {
         Code      = $code
         NonClient = ($code -ne 1 -and $code -ne 0 -and $code -ne -1 -and $code -ne -2)
     }
+}
+
+<#
+Is $Window's GUI thread inside DefWindowProc's modal move/size loop right now
+(T1141)? GUITHREADINFO's GUI_INMOVESIZE bit, read without attaching, so it is
+safe to poll.
+
+    Test-TestInMoveSize -Window $top   # $false after any Send-TestMouse click
+
+That loop pumps its own messages and eats the clicks queued behind it, and a
+script that loses a click to it reports the CONSEQUENCE - nothing happened -
+rather than the loss. A $true here after a plain `-Action click` is a harness
+defect; after `-Action down` on a caption it is the drag a script asked for.
+#>
+function Test-TestInMoveSize {
+    param([Parameter(Mandatory = $true)][IntPtr]$Window, $Desktop)
+    $f = (Resolve-TestDesktop $Desktop).GuiFlags($Window)
+    if ($f -lt 0) { return $false }
+    return (($f -band 0x2) -ne 0)
 }
 
 <#
