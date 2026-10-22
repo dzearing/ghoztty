@@ -1,12 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-21T20:09:44-07:00",
-    "commit":  "836152870",
+    "generated":  "2026-10-21T21:49:25-07:00",
+    "commit":  "6e5c7e4b2",
     "uncommitted":  [
-                        "test/win32/click-coord-audit.ps1",
-                        "test/win32/lib/ClickCoordAudit.ps1",
-                        "test/win32/viewer-panes.ps1"
+                        "test/win32/pane-stack-grid.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -325,7 +323,7 @@
                   "test/win32/pane-sidebar-resize.ps1":  "55787f9e4ec5f13d78d25831c0e2bb4ee4cc98408135a94681e2365e05325720",
                   "test/win32/pane-sidebar-scroll.ps1":  "5aa2f6aa4e7f30afde28ff9a030d6938b9ab8218497fa37eba0f1c2d47369956",
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
-                  "test/win32/pane-stack-grid.ps1":  "26fea1e6b122b57a9f179cee38343f3b414e1b743dc6e7f810b6ad52238423c0",
+                  "test/win32/pane-stack-grid.ps1":  "ba993d5e638c8dc7505d0d07fffb8780e80d2056e13f18e36a8df9568aad40e0",
                   "test/win32/pane-stack-slide.ps1":  "99b5a46d9de8597cf3f1c0c4ff07d2fd610b4090463a200bd40e309ae193882e",
                   "test/win32/pane-stack-strip.ps1":  "61fc0f6d7d7e5307f70f79c7a6ae5b547fe210bdf3e0838bd579a4c1123e3713",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",

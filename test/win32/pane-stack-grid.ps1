@@ -20,6 +20,9 @@
 #      bringing one forward is a move rather than a terminal resize
 #   C) widened back to 1500 DIP, the four come back at the widths of claim A:
 #      the minimum never rewrote the ratios the user made
+#   and at each of A, B and C, `+list` (T2103) marks exactly the tucked panes
+#   minimized - none, two, none - in --json and in the text listing, and
+#   never the focused pane
 #
 # -NegativeControl inverts claim A to "some pane is under 300 DIP" - the
 # answer the per-split layout gave - and MUST fail.
@@ -88,6 +91,40 @@ function Wait-Shown([IntPtr]$top, [int]$n, [int]$timeoutSec = 20) {
         Start-Sleep -Milliseconds 300
     } while ((Get-Date) -lt $deadline)
     return @(Get-VisiblePanes $top)
+}
+
+# Every terminal leaf `+list --json` reports (T2103), as objects with Name,
+# Focused and Minimized.
+function Get-ListLeaves {
+    $raw = (& $exe +list --json) -join "`n"
+    $out = New-Object System.Collections.ArrayList
+    try { $doc = $raw | ConvertFrom-Json } catch { return }
+    $walk = {
+        param($node)
+        if ($null -eq $node) { return }
+        if ($node.type -eq 'leaf') {
+            $t = $node.terminal
+            [void]$out.Add([pscustomobject]@{ Name = $t.name; Focused = [bool]$t.focused; Minimized = ($t.minimized -eq $true) })
+        } else {
+            & $walk $node.left
+            & $walk $node.right
+        }
+    }
+    $doc.data.windows | ForEach-Object { $_.tabs | ForEach-Object { & $walk $_.splits } }
+    return $out.ToArray()
+}
+
+# `+list` must mark exactly the hidden panes minimized, never the focused one,
+# and the text listing must say so as often as the JSON does (T2103).
+function Assert-ListMinimized([string]$claim, [int]$expect) {
+    $leaves = @(Get-ListLeaves)
+    $min = @($leaves | Where-Object Minimized)
+    Say ("      +list: {0}" -f (($leaves | ForEach-Object { "$($_.Name)$(if ($_.Minimized) { '[min]' })$(if ($_.Focused) { '*' })" }) -join ' '))
+    Assert ($leaves.Count -eq 4) "${claim}: +list --json reports four panes (got $($leaves.Count))"
+    Assert ($min.Count -eq $expect) "${claim}: +list --json marks $expect pane(s) minimized (got $($min.Count))"
+    Assert (@($min | Where-Object Focused).Count -eq 0) "${claim}: the focused pane is never reported minimized"
+    $text = @((& $exe +list) | Where-Object { $_ -match '\[minimized\]' })
+    Assert ($text.Count -eq $expect) "${claim}: the text listing tags $expect line(s) [minimized] (got $($text.Count))"
 }
 
 function Format-Cols($cols) {
@@ -175,6 +212,7 @@ try {
     for ($i = 1; $i -lt $wide.Count; $i++) { if ($wide[$i].Left -lt $wide[$i - 1].Right) { $overlap = $true } }
     Assert (-not $overlap) 'A: the four panes sit side by side without overlapping'
     $wideWidths = @($wide | ForEach-Object { $_.Width })
+    Assert-ListMinimized 'A' 0
 
     # ---- B: narrow - a run of two, the rest tucked -----------------------------
     Say '== B: 900 DIP wide'
@@ -193,6 +231,7 @@ try {
     $smallTuck = @($tucked | Where-Object { $_.Width -lt $minPx })
     Assert ($tucked.Count -gt 0 -and $smallTuck.Count -eq 0) `
         ("B: every tucked pane keeps a slot of at least 300 DIP ({0} px)" -f (($tucked | ForEach-Object { $_.Width }) -join ', '))
+    Assert-ListMinimized 'B' 2
 
     # ---- C: wide again - the layout the user made comes back -------------------
     Say '== C: back to 1500 DIP'
@@ -204,6 +243,7 @@ try {
         for ($i = 0; $i -lt 4; $i++) { $drift = [math]::Max($drift, [math]::Abs($again[$i].Width - $wideWidths[$i])) }
         Assert ($drift -le 2) "C: every pane is back at its claim-A width (max drift $drift px)"
     }
+    Assert-ListMinimized 'C' 0
 
     Complete-TestBody
 } catch {

@@ -28,6 +28,7 @@ const PaneView = @import("PaneView.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
 const pane_stash = @import("pane_stash.zig");
+const pane_stack_grid = @import("pane_stack_grid.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree(PaneView);
 const tab_strip = @import("tab_strip_layout.zig");
 const w32 = @import("win32.zig");
@@ -2157,12 +2158,15 @@ fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                 arena,
                 window.tab_titles[i][0..window.tab_title_lens[i]],
             );
+            var grid = window.stackGridForTab(i);
+            defer if (grid) |*g| g.deinit();
             const node = try buildNode(
                 ctx,
                 arena,
                 &window.tab_trees[i],
                 .root,
                 window.tab_active_pane[i],
+                if (grid) |*g| g else null,
             );
             try tabs.append(arena, .{
                 .id = try std.fmt.allocPrint(arena, "{d}", .{i}),
@@ -2267,6 +2271,8 @@ fn buildNode(
     tree: *const SplitTree,
     handle: SplitTree.Node.Handle,
     active_pane: *PaneView,
+    /// The tab's stacked layout, for `minimized` (T2103); null reports none.
+    grid: ?*const pane_stack_grid.Grid,
 ) Allocator.Error!*const apprt.ipc.List.Node {
     const node = try arena.create(apprt.ipc.List.Node);
 
@@ -2301,6 +2307,7 @@ fn buildNode(
                     .pane_type = "viewer",
                     .url = if (viewer.location) |loc| try arena.dupe(u8, loc) else null,
                     .stashed = pane_stash.isStashed(pane),
+                    .minimized = isMinimized(grid, pane),
                 } };
                 return node;
             };
@@ -2391,6 +2398,8 @@ fn buildNode(
                     // T1827: stashed out of the layout but still a live,
                     // targetable pane - `+list` marks it, as Mac does.
                     .stashed = pane_stash.isStashed(pane),
+                    // T2103: folded into a stacked row's strip.
+                    .minimized = isMinimized(grid, pane),
                     // main eb8162e59: the activity state's machine token,
                     // written for every terminal pane as Mac does.
                     .state = surface.activity_state.token(),
@@ -2413,8 +2422,8 @@ fn buildNode(
                     .vertical => "vertical",
                 },
                 .ratio = @floatCast(split.ratio),
-                .left = try buildNode(ctx, arena, tree, split.left, active_pane),
-                .right = try buildNode(ctx, arena, tree, split.right, active_pane),
+                .left = try buildNode(ctx, arena, tree, split.left, active_pane, grid),
+                .right = try buildNode(ctx, arena, tree, split.right, active_pane, grid),
             } };
         },
     }
@@ -2426,6 +2435,14 @@ fn buildNode(
 /// answer; this used to be a private copy here that returned 0 for EVERY
 /// remote pane, which with session-persistence on (the default) is every local
 /// pane — so `+list --pid` could not find a pane it was run from inside.
+/// Whether `pane` is a strip in its tab's stacked layout (T2103). A stashed
+/// pane has no place in the grid, and so is never also minimized.
+fn isMinimized(grid: ?*const pane_stack_grid.Grid, pane: *PaneView) bool {
+    const g = grid orelse return false;
+    const p = g.placement(pane_stack_grid.viewId(pane)) orelse return false;
+    return p.is_tucked;
+}
+
 fn surfaceShellPid(surface: *Surface) u32 {
     return surface.shellPid();
 }

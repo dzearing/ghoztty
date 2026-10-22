@@ -561,6 +561,11 @@ ghoztty +restore --target=<pane> [--focus]
 - A stashed pane stays fully targetable — `+send-keys`, `+read`, `+set-banner`,
   `+set-state`, `+close`, `+reload` — and `+list` marks it `[stashed]`
   (`--json`: `"stashed": true`, absent otherwise, like `banner`).
+- A pane folded into a stacked row's strip (a row too narrow for every pane
+  at the 300 DIP minimum) is still running and targetable, and `+list` marks
+  it `[minimized]` (`--json`: `"minimized": true`, absent otherwise). A
+  background tab reports the strips it shows when selected. Windows since
+  T2103; the Mac half is T2148.
 - `+split` anchored at a stashed pane, and `ghoztty://focus/<stashed pane>` /
   the `--focus` idempotent hits, **restore it first**: a new pane beside an
   invisible one would be invisible, and raising a pane you can't see raises

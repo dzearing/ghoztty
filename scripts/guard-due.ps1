@@ -564,7 +564,10 @@ $GuardTable = @(
             'src\apprt\win32\pane_stack_layout.zig',
             'src\apprt\win32\pane_stack_grid.zig',
             'src\apprt\win32\pane_stack_state.zig',
-            'src\apprt\win32\Window.zig'
+            'src\apprt\win32\Window.zig',
+            # +list's minimized field (T2103).
+            'src\apprt\ipc\list.zig',
+            'src\cli\list.zig'
         )
     },
     # A tucked pane's strip (T2109): painted in the strip colour, named by the

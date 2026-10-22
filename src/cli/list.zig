@@ -385,6 +385,12 @@ fn formatTerminal(stdout: *std.Io.Writer, terminal_val: std.json.Value) !void {
         try stdout.writeAll("  [stashed]");
     }
 
+    // Folded into a stacked row's strip: running, but not on show until
+    // focused.
+    if (jsonBool(term.get("minimized"))) {
+        try stdout.writeAll("  [minimized]");
+    }
+
     // Activity state, only when it is worth a glance. Printed with the same
     // human label the window title uses (`needs_input` reads as "question");
     // `--json` carries the machine token.

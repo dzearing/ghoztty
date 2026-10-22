@@ -1,10 +1,10 @@
 {
     "guard":  "test-wait-oracle",
     "script":  "test/win32/test-wait-oracle.ps1",
-    "generated":  "2026-10-17T08:08:09-07:00",
-    "commit":  "b7d180176",
+    "generated":  "2026-10-21T20:51:58-07:00",
+    "commit":  "6e5c7e4b2",
     "uncommitted":  [
-
+                        "src/cli/list.zig"
                     ],
     "files":  {
                   "src/cli/action.zig":  "dedb0dfe145e8d39dfb53af30225e6c8a170a02e1d79a9c224de1779f0efb654",
@@ -20,7 +20,7 @@
                   "src/cli/ghostty.zig":  "85048b74f8795c4f500ca8dd98fa52a24e92a94808ef1b16df34070b4cf6094d",
                   "src/cli/help.zig":  "ad8647deba3db716e751701821bdf3d958235b7bb8bea1a3f60642dd0ab4e528",
                   "src/cli/json.zig":  "3e9d5025af34529c2cc57d433306195a1c55b4c582dc385379ce9b6748e0f251",
-                  "src/cli/list.zig":  "e51ba193ff48e9d09675791d8cdf81f43a8fe5ed8e884028bb560742c7221a2d",
+                  "src/cli/list.zig":  "ab3fe334c82169e54dba87cc728b18bbf3a6272b1d9ac55562fe9f442b17ef24",
                   "src/cli/list_actions.zig":  "71a293e3ddd367680c048d09333eed9c4d0b6fc99eddaaceaa1010bd128869fa",
                   "src/cli/list_colors.zig":  "ac649fb765789173c9b73a797d9de094ca587edf144874a8e5ca71770ec9aff6",
                   "src/cli/list_fonts.zig":  "7e25bc361e6c81ee9a61231b45713417c33eedd190d2fbf9d538c1db0aee1715",

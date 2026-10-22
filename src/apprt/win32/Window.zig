@@ -7518,14 +7518,30 @@ fn stackGrid(self: *Window) ?pane_stack_grid.Grid {
 
 fn stackGridOf(self: *Window, comptime panes: pane_stack_grid.Panes) ?pane_stack_grid.Grid {
     if (self.tab_count == 0) return null;
+    return self.stackGridOfTab(self.active_tab, panes);
+}
+
+/// Tab `tab`'s grid as it lays out on show, for `+list`'s `minimized` field
+/// (T2103): a background tab reports the strips it will show when selected.
+/// Null as `stackGrid` is. Caller deinits.
+pub fn stackGridForTab(self: *Window, tab: usize) ?pane_stack_grid.Grid {
+    if (tab >= self.tab_count) return null;
+    return self.stackGridOfTab(tab, .visible);
+}
+
+fn stackGridOfTab(self: *Window, tab: usize, comptime panes: pane_stack_grid.Panes) ?pane_stack_grid.Grid {
     self.noteStackRows();
-    if (self.tab_hero_active[self.active_tab]) return null;
-    const tree = self.tab_trees[self.active_tab];
+    if (self.tab_hero_active[tab]) return null;
+    const tree = self.tab_trees[tab];
     if (tree.zoomed != null) return null;
     const gpa = self.app.core_app.alloc;
     const state = self.stackState();
-    const focus = pane_stack_grid.viewId(self.tab_active_pane[self.active_tab]);
-    if (state.recency.first() != focus) state.noteFocus(focus);
+    // Only the active tab's focus is noted: a background tab's was noted when
+    // it was last on show, and a read must not reorder the stacks.
+    if (tab == self.active_tab) {
+        const focus = pane_stack_grid.viewId(self.tab_active_pane[tab]);
+        if (state.recency.first() != focus) state.noteFocus(focus);
+    }
     var built = pane_stack_grid.buildWith(gpa, tree, pane_stack_grid.viewId, panes) catch return null;
     defer built.deinit(gpa);
     const r = self.gridRect();

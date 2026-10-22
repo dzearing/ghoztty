@@ -68,6 +68,10 @@ pub const List = struct {
         /// encoder does (`stashed == true ? true : nil`); win32 reports it
         /// since T1827.
         stashed: bool = false,
+        /// True when the pane is minimized into a stacked row's strip (T2103,
+        /// main 86b7e3410's stacked panes): still running and targetable, but
+        /// not on show until focused. Written only when true, like `stashed`.
+        minimized: bool = false,
         /// The pane's activity state as its machine token (`idle` / `busy` /
         /// `needs_input`), main eb8162e59. Mac writes it for every terminal
         /// pane and never for a viewer; null omits it the same way.
@@ -412,6 +416,10 @@ pub const List = struct {
             try jws.objectField("stashed");
             try jws.write(true);
         }
+        if (term.minimized) {
+            try jws.objectField("minimized");
+            try jws.write(true);
+        }
         if (term.state) |state| {
             try jws.objectField("state");
             try jws.write(state);
@@ -466,6 +474,31 @@ test "List: banner is additive (T35)" {
             "\"banner\":\"**PR #1**\\nline2\"}}}]}]}}",
         json,
     );
+}
+
+test "List: minimized is additive and sits after stashed (T2103)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var term: List.Terminal = List.empty_terminal;
+    term.stashed = true;
+    term.minimized = true;
+    term.state = "idle";
+    const leaf: List.Node = .{ .leaf = term };
+    const tabs = [_]List.Tab{.{ .id = "0", .title = "t", .index = 0, .selected = true, .splits = &leaf }};
+    const windows = [_]List.Window{.{ .id = "1", .title = "t", .target = null, .focused = true, .tabs = &tabs }};
+    const json = try (List{ .windows = &windows }).serializeResponse(alloc);
+    defer alloc.free(json);
+    try testing.expect(std.mem.indexOf(u8, json, "\"stashed\":true,\"minimized\":true,\"state\":\"idle\"") != null);
+
+    // Off, the key is not written at all: an older client sees the old shape.
+    term.minimized = false;
+    const off_leaf: List.Node = .{ .leaf = term };
+    const off_tabs = [_]List.Tab{.{ .id = "0", .title = "t", .index = 0, .selected = true, .splits = &off_leaf }};
+    const off_windows = [_]List.Window{.{ .id = "1", .title = "t", .target = null, .focused = true, .tabs = &off_tabs }};
+    const off = try (List{ .windows = &off_windows }).serializeResponse(alloc);
+    defer alloc.free(off);
+    try testing.expect(std.mem.indexOf(u8, off, "minimized") == null);
 }
 
 test "List: readonly is additive (T574)" {
@@ -1211,6 +1244,7 @@ test "List: the JSON shape still matches the Mac Swift encoder (T370)" {
         .banner = "**PR #1**",
         .readonly = true,
         .stashed = true,
+        .minimized = true,
         .state = "busy",
         .session_id = "s1",
     } };
@@ -1262,13 +1296,13 @@ test "List: the JSON shape still matches the Mac Swift encoder (T370)" {
     const term = leaf.get("terminal").?.object;
 
     // `build` (T52), `chrome` (T231), `connection` (T609), `background_tint`
-    // (T67) and `session_id` (T332) are win32-only on purpose; the Mac half of
-    // each is filed separately. Everything else must match name for name and
-    // position for position.
+    // (T67), `session_id` (T332) and `minimized` (T2103, Mac half T2148) are
+    // win32-only on purpose; the Mac half of each is filed separately.
+    // Everything else must match name for name and position for position.
     try expectMacShape(alloc, swift, "struct ListStateData", data.keys(), &.{"build"});
     try expectMacShape(alloc, swift, "struct WindowData", window.keys(), &.{ "chrome", "connection" });
     try expectMacShape(alloc, swift, "struct TabData", tab.keys(), &.{});
-    try expectMacShape(alloc, swift, "struct TerminalData", term.keys(), &.{ "background_tint", "session_id" });
+    try expectMacShape(alloc, swift, "struct TerminalData", term.keys(), &.{ "background_tint", "minimized", "session_id" });
 
     // The Swift enum encodes its leaf case then its split case, so the two
     // shapes this encoder writes concatenate into the same sequence.
