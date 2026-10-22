@@ -73,9 +73,16 @@
 # Only touches ghoztty processes running from this repo's zig-out*.
 #
 #   powershell -NoProfile -File test\win32\viewer-feedback-capture.ps1
+#
+# NEGATIVE CONTROL (T1136): -NegativeControl stops section B's drag 60x40
+# SHORT of the 160x120 the oracle still expects, so the run MUST fail - on the
+# reported rect and on report.json's pixel size. A size oracle that stayed green
+# there would be reading a number this script chose rather than the picture the
+# app filed. A negative-control run never stamps the guard.
 param(
     [string]$ExePath,
-    [switch]$Interactive
+    [switch]$Interactive,
+    [switch]$NegativeControl
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -593,6 +600,7 @@ try {
     $y1 = $script:vsY + 140
     $x2 = $x1 + 160
     $y2 = $y1 + 120
+    if ($NegativeControl) { $x2 -= 60; $y2 -= 40 }  # the oracle still wants 160x120
     [void](Send-TestMouse -Window $view.Top -Target $overlay -X $x1 -Y $y1 -Action down)
     Start-Sleep -Milliseconds 200
     [void](Send-TestMouse -Window $view.Top -Target $overlay -X ($x1 + 80) -Y ($y1 + 60) -Action move)
@@ -945,7 +953,7 @@ Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the 
 # can answer "has this harness been run against the selector as it now stands?".
 # Red leaves the stamp alone - red stays due.
 Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
-if ($script:fail -eq 0) {
+if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard viewer-feedback-capture -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
 }
