@@ -2068,6 +2068,21 @@ $GuardTable = @(
             'test\win32\install-walkthrough.ps1'
         )
     },
+    # What Apps & Features shows, read off the machine (T1210). Every other
+    # check of T1205's version split reads the recipe; this one reads the
+    # Uninstall key Windows wrote and the cached MSI it installed from, and its
+    # first run found Windows ignoring the property (T2168). Arm C reads the
+    # user's real install, read-only, so it is red until that fix ships.
+    [pscustomobject]@{
+        Name   = 'arp-version'
+        Script = 'test\win32\arp-version.ps1'
+        Stamp  = 'test\win32\arp-version.stamp.json'
+        Covers = @(
+            'scripts\arp-version-check.ps1',
+            'scripts\lib\ArpVersion.ps1',
+            'test\win32\arp-version.ps1'
+        )
+    },
     # "Which Ghoztty am I running?" has ONE answer per surface (T1205). Windows
     # cannot replace a running image, so the file on disk and the process in
     # front of the user are routinely different builds - and the About box used

@@ -102,6 +102,7 @@ $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 . (Join-Path $PSScriptRoot 'lib\ThrowawayProduct.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $Repo 'scripts\lib\ArpVersion.ps1')
 
 $script:passes = 0
 $script:failures = 0
@@ -193,13 +194,32 @@ function Get-MsiTableColumn {
     return $out
 }
 
+# The ProductVersion Windows REGISTERED for the product - the Uninstall key's
+# `Version` DWORD, decoded. This is the sequencing number every "which build is
+# installed" check below asks about. It used to read DisplayVersion, which only
+# equalled ProductVersion because Windows was ignoring the package's display
+# number (T1210/T2168); once that is fixed DisplayVersion is the release semver
+# and cannot tell a predecessor from its successor. B4b asks about the display
+# number separately.
 function Get-ArpEntryVersion {
     param([Parameter(Mandatory = $true)][string]$Name)
     foreach ($e in @(Get-ThrowawayUninstallEntries -Identity $Name)) {
         $p = Get-ItemProperty $e.PSPath -ErrorAction SilentlyContinue
-        if ($p) { return [string]$p.DisplayVersion }
+        if ($p -and $null -ne $p.Version) { return (ConvertFrom-ArpVersionDword -Value $p.Version) }
     }
     return ''
+}
+
+# The registry half of the display check: where the entry is and what it says.
+function Get-ArpEntryRow {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    foreach ($e in @(Get-ThrowawayUninstallEntries -Identity $Name)) {
+        $p = Get-ItemProperty $e.PSPath -ErrorAction SilentlyContinue
+        if ($p) {
+            return [pscustomobject]@{ Where = [string]$e.Name; DisplayVersion = [string]$p.DisplayVersion; Version = $p.Version }
+        }
+    }
+    return $null
 }
 
 function Test-UserPathHas {
@@ -413,8 +433,21 @@ Assert 'B2 all three executables are on disk' `
      (Test-Path (Join-Path $installDir 'ghoztty-agent.exe')))
 Assert 'B3 the fallback OpenGL came with them (T1252: without it there is no terminal over RDP)' `
     (Test-Path (Join-Path $installDir 'gl\opengl32.dll'))
-Assert 'B4 it registered in Apps & Features at the version it installed' `
+Assert 'B4 it registered in Apps & Features at the ProductVersion it installed' `
     ((Get-ArpEntryVersion -Name $Identity) -eq $firstVer)
+# T1210: and the number a PERSON sees there is the package's display number
+# (the release semver), with the sequencing number left alone. Each line names
+# the surface it read, so a red one says which side disagreed.
+$arpRow = Get-ArpEntryRow -Name $Identity
+$arp = if ($arpRow) {
+    Get-ArpVersionVerdict -DisplayVersion $arpRow.DisplayVersion -VersionDword $arpRow.Version `
+        -PackageDisplay (Get-MsiProperty -Msi $firstPkg -Name 'ARPDISPLAYVERSION') `
+        -PackageProduct (Get-MsiProperty -Msi $firstPkg -Name 'ProductVersion') `
+        -RegistryWhere $arpRow.Where -PackageWhere $firstPkg
+} else { $null }
+if ($arp) { $arp.Lines | ForEach-Object { Write-Host "      $_" } }
+Assert 'B4b Apps & Features shows the package''s display number, and ProductVersion is unchanged (T1210)' `
+    ($null -ne $arp -and $arp.Ok)
 Assert 'B5 the install directory is on the user PATH' (Test-UserPathHas -Dir $installDir)
 Assert 'B6 a Start Menu shortcut exists' (Test-Path -LiteralPath $shortcut)
 

@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-22T16:16:27-07:00",
-    "commit":  "f0b2789a1",
+    "generated":  "2026-10-22T16:41:54-07:00",
+    "commit":  "90215f5cd",
     "uncommitted":  [
 
                     ],
@@ -992,6 +992,7 @@
                   "test/win32/agent-user-env.ps1":  "6bb44600b96dca3b342a128736b63e28e9955c5517c2c87eba6e0c0d8d5b3fd1",
                   "test/win32/app-restart.ps1":  "55cb4a73f57cde520c5c0ca3d041242b11d8b5d534d2a8808d5d62a093a2dd4f",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
+                  "test/win32/arp-version.ps1":  "87426e86486e82ae5a37777099cad9dcac40aaa87bad3f942d48fc3f8ea8f69e",
                   "test/win32/asserted-nothing.ps1":  "4acb45ce3ac039d212d093e4cf0a77519092bbd9be896995feeeb07547e5c5c6",
                   "test/win32/auto-launch-cwd.ps1":  "b2cf0f9fddd259e1c4cee954cece20a5d5daf242821d1ccd1f80d572e6a75704",
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
@@ -1066,6 +1067,7 @@
                   "test/win32/daily-publish.ps1":  "eccff5616c9023dacbe70ec3aa3623db00b16c1123de1516e757fb5974cd9352",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
+                  "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
                   "test/win32/deliver-windows-build.ps1":  "15c2564c8d36bdf0966076a094502ccd040e8e7b5c116a6db74e50288a8421eb",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
                   "test/win32/desktop-launch-audit.ps1":  "3cacc5fce5628dd8501cdc2315698e7974c8b28d35159f7c67685f3e99ec57e1",
@@ -1130,7 +1132,7 @@
                   "test/win32/install-ownership.ps1":  "0c574d3d71e1b8b86c3ff21fbd54eb8dd8a5341a117ad83ea969480ec9e188ad",
                   "test/win32/install-prepare.ps1":  "ea23f3d11ebd6f3e08001d961084ffac716bfde439a96f3511ce7a6db0fe2972",
                   "test/win32/install-restart.ps1":  "8f8cee604017e48ce388a3e99de40b3cd497758553c10baff866109c17780437",
-                  "test/win32/install-walkthrough.ps1":  "e913d1a8f4deb7dd67b4046b2cb977ab269237da788f8408adf1183e9ad375bf",
+                  "test/win32/install-walkthrough.ps1":  "0249735a9ac11f7fb4fb7a315bf5c48ecaf9d8d55875a8c50a1b3902ea789534",
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
                   "test/win32/ipc-command-keepalive.ps1":  "323e4bf749e4088eb5b1e82337f75ec0f87bc4c0cc9ccdad00679e416a7dc786",
                   "test/win32/ipc-fake-server.ps1":  "9d8e13d29c266916b1f65168c58d3b9b93b8a172ad32b6d5174fbcfeee78cfeb",
