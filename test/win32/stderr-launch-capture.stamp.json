@@ -1,8 +1,8 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-10-22T03:09:39-07:00",
-    "commit":  "3dde54ee6",
+    "generated":  "2026-10-22T05:29:15-07:00",
+    "commit":  "46967dd4e",
     "uncommitted":  [
 
                     ],

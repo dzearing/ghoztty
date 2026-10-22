@@ -379,27 +379,52 @@ function Invoke-AppArm($tag, $instance) {
     } catch { Write-Host "  (launch failed: $_)" }
     Restore-GhozttyAgentLineage -Saved $savedInst
     $env:LOCALAPPDATA = $savedLad
-    if ($null -eq $app) { return @{ port = $false; alive = 0; pid = 0 } }
+    if ($null -eq $app) { return @{ port = $false; alive = 0; pid = 0; seen = 'app did not launch' } }
     $script:mine.Add([int]$app.Pid)
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 40000
-    if ($top -eq [IntPtr]::Zero) { return @{ port = $false; alive = 0; pid = [int]$app.Pid } }
+    if ($top -eq [IntPtr]::Zero) { return @{ port = $false; alive = 0; pid = [int]$app.Pid; seen = 'no window' } }
 
     $port = Wait-PortFile (Join-Path $agentDir 'port.json') 20
     $alive = 0
+    $seen = 'no roster read'
     if ($port) {
+        # POLL the roster; never read it once (T1148). port.json is written by
+        # the agent as it starts, and that is BEFORE the app has connected and
+        # asked it for the pane's session - the window is already up, the agent
+        # is already published, and the session is still a round trip away. A
+        # single read taken the moment port.json appeared found an EMPTY roster
+        # (`exit=0 rows=0`: agent up and answering, session not yet created)
+        # whenever the box was loaded - 4 of 9 runs while lane B was running its
+        # own acceptance, 1 of 4 under a 32-core CPU burn, 0 of 16 on an idle
+        # box (measured 2026-10-22) - and failed D2 with "got 0 alive".
+        # The question D2 asks is "does a live session come to back the pane",
+        # so it waits for one, bounded, and names what it last saw if none does.
         $out = Join-Path $root "roster-$tag.json"
-        if ((Run-Cli @('+sessions', '--json') $out $instance $lad 25) -eq 0) {
-            $raw = Out-Text $out
-            if (-not [string]::IsNullOrWhiteSpace($raw)) {
-                try {
-                    $obj = $raw | ConvertFrom-Json
-                    $rows = if ($obj -is [System.Array]) { $obj } else { @($obj) }
-                    $alive = @($rows | Where-Object { $_.alive }).Count
-                } catch {}
+        $deadline = (Get-Date).AddSeconds(20)
+        $polls = 0
+        $t0 = Get-Date
+        while ($true) {
+            $polls++
+            $rows = @()
+            $code = Run-Cli @('+sessions', '--json') $out $instance $lad 25
+            if ($code -eq 0) {
+                $raw = Out-Text $out
+                if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                    try {
+                        $obj = $raw | ConvertFrom-Json
+                        $rows = @($obj | ForEach-Object { $_ })
+                    } catch {}
+                }
             }
+            $alive = @($rows | Where-Object { $_.alive }).Count
+            $seen = "exit=$code rows=$($rows.Count) alive=$alive"
+            if ($alive -ge 1 -or (Get-Date) -ge $deadline) { break }
+            Start-Sleep -Milliseconds 500
         }
+        $ms = [int]((Get-Date) - $t0).TotalMilliseconds
+        Write-Host "  ($tag roster: $seen after $polls poll(s), ${ms}ms)"
     }
-    return @{ port = $port; alive = $alive; pid = [int]$app.Pid }
+    return @{ port = $port; alive = $alive; pid = [int]$app.Pid; seen = $seen }
 }
 
 # D1 - the trap, reproduced: the app's own agent is refused because A1 already
@@ -419,7 +444,7 @@ if ($TeethCheck) { Say "  (teeth check: D2 reuses lineage $lineA - its two posit
 $d2 = Invoke-AppArm 'own' $lineE
 Assert "D2 the GUI came up" ($d2.pid -ne 0)
 Assert "D2 with its own lineage, the sandbox's agent published port.json" ($d2.port)
-Assert "D2 the pane is backed by a LIVE session (got $($d2.alive) alive)" ($d2.alive -ge 1)
+Assert "D2 the pane is backed by a LIVE session within 20s (got $($d2.alive) alive; last read: $($d2.seen))" ($d2.alive -ge 1)
 Assert "D2 left every other agent on the box running" `
     ((-not $a1.HasExited) -and (-not $b.HasExited) -and (-not $c.HasExited) -and (-not $d.HasExited))
 Complete-TestBody  # T1039: the run reached the end of its body

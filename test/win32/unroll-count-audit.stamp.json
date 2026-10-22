@@ -1,11 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-22T03:11:33-07:00",
-    "commit":  "3dde54ee6",
+    "generated":  "2026-10-22T05:31:06-07:00",
+    "commit":  "46967dd4e",
     "uncommitted":  [
-                        "scripts/delivery-version.ps1",
-                        "scripts/upgrade-ghoztty-windows.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "de0387b596e8e31885fa64f769bc9c784b10f9acd938b785c17855ac6ccaac81",
@@ -22,7 +21,7 @@
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
                   "scripts/deliver-windows-build.ps1":  "177c6421716f590b0b3a89ec32990512482a977657161155aa773db266b99aac",
                   "scripts/delivery-manifest.ps1":  "e985781584ffa1b524cf12bc0ed8b01cd952b8f18391e1a3fd2d229c15388a34",
-                  "scripts/delivery-version.ps1":  "0e13b53aff9be9cf6c7c4c35cbe4fc3293dccf5fef434bef769806b966eb62ce",
+                  "scripts/delivery-version.ps1":  "8678da54a8fca38a64a140258485920abbf0f282dbf07da0e51512acea3df4a0",
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",
                   "scripts/fetch-symbols.ps1":  "ef40b9f0b393b5662331bb7fdca267fe87d2dcf64f6ce9b83e99a3d7cc39c35a",
                   "scripts/floor-lane.ps1":  "5862c35e43e85b89dfcb917e77b32fb461b7b22a2fc84aeceee976513fb1b312",
@@ -90,7 +89,7 @@
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
                   "scripts/task-dashboard.ps1":  "616fa636356bdfa1dc07aafe573f5aaf3b9a421ee6bbdc4c4404367845564fd7",
                   "scripts/test-binary-soak.ps1":  "2cc93833d651a51bc19eba0446827b48a75738f3ad4700f199e4cf522566fc2e",
-                  "scripts/upgrade-ghoztty-windows.ps1":  "bd57f9fcdc3e2ab23070ead8ade6460496557477d3d1a09060748c30a23c1b10",
+                  "scripts/upgrade-ghoztty-windows.ps1":  "49e2426fad831e6745c7862602bf3a43b773daf259aef37f99b33e6ff45fc069",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",
                   "scripts/upstream-stage.ps1":  "a51dc2a35a5f4e1dcec4f5e7e16b2b895ec39af1b6a25bea056c780dba6aa81f",
                   "scripts/verify-release-assets.ps1":  "215cbd6d59eec0582b4c0f49b5e65fcccaddef9a537cee7dab17c36b143f4241",

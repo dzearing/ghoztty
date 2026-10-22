@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-22T05:38:05-07:00",
-    "commit":  "3dde54ee6",
+    "generated":  "2026-10-22T06:18:06-07:00",
+    "commit":  "46967dd4e",
     "uncommitted":  [
-                        "test/win32/upgrade-staleness.ps1"
+                        "test/win32/agent-instance-lineage.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -25,7 +25,7 @@
                   "test/win32/agent-autostart.ps1":  "4afaaba65feefc03ca22f1b6aab72344dd3039077cbc6518204e6e21af2a17a2",
                   "test/win32/agent-first-answer.ps1":  "9c9f092829b9334f23e2bbd700cd98339d2946cce8757548fa9a32b5191e9a3d",
                   "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
-                  "test/win32/agent-instance-lineage.ps1":  "9018a5e80676e5dd0959be65c4550e1ea3ad2aa740f1c36e1de51880f3a17837",
+                  "test/win32/agent-instance-lineage.ps1":  "5a4c8c30c32b132c81d5317991cbf0874f41a9cb2d340854dce8c96fd078e6b9",
                   "test/win32/agent-integrations.ps1":  "201c7424c1271d20322417b8f0881665be453f2dd6e9611f3fcf10f105310169",
                   "test/win32/agent-job-escape.ps1":  "a6865bdcc2ab5d0c98c316fc436599c5e325220d45290dbedab91bc18b1e03fc",
                   "test/win32/agent-job-report.ps1":  "cb2d781c08f461ada4719405be41efa795c3393c98ca7dcd0612b146cf9ebfef",
@@ -420,7 +420,7 @@
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79",
                   "test/win32/stash-restore.ps1":  "872e2e0c8b6b8ce06145cc783a37ddffc32b24e7e2bfb5cb9a624f037a2f6809",
-                  "test/win32/stderr-capture-audit.ps1":  "bd7dfb5347d974e8b9b2cb2e1cfc25cc91eefe68bf13f185ff1ce414a54c9a53",
+                  "test/win32/stderr-capture-audit.ps1":  "928dd559d8e1df45f9fce6baa0071a920d997aca8977790161b1c41c34368efe",
                   "test/win32/stderr-launch-capture.ps1":  "7c95a6330bbc5d8e441a55cd8a63ef764d4a6a6fefad6b91f0726db02985746b",
                   "test/win32/suite-run.ps1":  "9e49f88ca3b7c0b31396ef572b516c40db82cf50959a35573f2211db85351735",
                   "test/win32/tab-color.ps1":  "af75bcd47eeb68cf93ee056b7aa4e14e147314ab8b4adc3a9c0eb27dfb43f967",
@@ -455,7 +455,7 @@
                   "test/win32/update-real-msi.ps1":  "0637cd0a218dbe97f9d49cb4ee6c9361886b07426d595d06918a4f2768d75317",
                   "test/win32/upgrade-no-fork.ps1":  "143d6dff31342a184839b8de623c483f8f4c1dda1bd4f696a7c9c714cfa42d22",
                   "test/win32/upgrade-resume-readiness.ps1":  "bd269e2436e29adb7d451c03c05450c2f5ca345f59dc66f230e06238c39ca70a",
-                  "test/win32/upgrade-staleness.ps1":  "e39c0994bb5d400f3eb8351d560ee1b0ee892982edff6f721a2a67fc56d49ce6",
+                  "test/win32/upgrade-staleness.ps1":  "2055c77212c20a49fa9ac6502d722d0660fff4e39e1b2891e751052724ff5127",
                   "test/win32/upstream-remote.ps1":  "483ebecd3ff0e427c13addaa2c1afe0e2229e27778ad080d365e3868e7f6c2c4",
                   "test/win32/upstream-stage.ps1":  "18d15337939a38f04528f533b73e5e578d73bfab95254d3a31e133030b8a485e",
                   "test/win32/url-scheme.ps1":  "33fe6b3246d5e2ca17e5f68af88fac03d4eb50f8b2210c801fc7c2f0303909a6",
