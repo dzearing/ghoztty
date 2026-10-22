@@ -32,6 +32,8 @@
 #      `split-divider-color`, and it changes color under the pointer.
 #   9. Divider drag narrows the hero (all leaves re-sized to the new hero
 #      rect); double-clicking the divider resets the ratio to 0.25.
+#  10. T2130: a divider drag whose capture is lost mid-drag ends there - the
+#      button-less moves after it do not go on resizing the hero.
 #
 # T218 batch 6: migrated onto the BACKGROUND test desktop
 # (test/win32/lib/TestDesktop.ps1), so the run never takes the user's
@@ -303,6 +305,7 @@ function Get-HeroMarginPx([int]$dpi) {
     [math]::Max([int][math]::Round(10.0 * $dpi / 96.0, [MidpointRounding]::AwayFromZero), 1)
 }
 $WM_NCHITTEST = 0x0084
+$WM_CANCELMODE = 0x001F
 $HTTRANSPARENT = -1
 $HTCLIENT = 1
 # The pane's own WM_NCHITTEST answer at a SCREEN point (lparam is screen
@@ -1058,6 +1061,36 @@ if ($null -ne $big4) {
             Start-Sleep -Milliseconds 500
             $reset = Get-Panes $top
             $resR = Assert-HeroLayout $reset $client 'divider double-click resets the ratio'
+
+            # (g) T2130: a drag whose capture is taken away (WM_CANCELMODE -
+            # what Windows sends for Alt+Tab or a system dialog - releases it)
+            # ends where it stands. Before the fix it stayed armed and the
+            # button-less moves after it went on narrowing the hero.
+            $heroG = Get-Visible (Get-Panes $top)
+            if ($heroG.Count -eq 1) {
+                $w0 = $heroG[0].Width
+                $sG = To-Screen $top $divX $midY
+                [void](Send-TestMouse -Window $top -Target $top -X $sG[0] -Y $sG[1] -Action down)
+                Start-Sleep -Milliseconds 60
+                $sG1 = To-Screen $top ($divX - 100) $midY
+                [void](Send-TestMouse -Window $top -Target $top -X $sG1[0] -Y $sG1[1] -Action move)
+                Start-Sleep -Milliseconds 150
+                [void](Invoke-TestMessage -Window $top -Message ([uint32]$WM_CANCELMODE) -WParam ([IntPtr]0) -LParam ([IntPtr]0))
+                Start-Sleep -Milliseconds 300
+                $w1 = (Get-Visible (Get-Panes $top))[0].Width
+                Assert ($w1 -le ($w0 - 60)) "T2130 control: the hero drag narrowed the hero before the capture was lost ($w0 -> $w1)"
+                $sG2 = To-Screen $top ($divX - 250) $midY
+                [void](Send-TestMouse -Window $top -Target $top -X $sG2[0] -Y $sG2[1] -Action move)
+                Start-Sleep -Milliseconds 150
+                [void](Send-TestMouse -Window $top -Target $top -X $sG2[0] -Y $sG2[1] -Action move)
+                Start-Sleep -Milliseconds 300
+                $w2 = (Get-Visible (Get-Panes $top))[0].Width
+                Assert ([math]::Abs($w2 - $w1) -le 2) "T2130: moves after the capture was lost leave the hero divider where it was ($w1 -> $w2)"
+                [void](Send-TestMouse -Window $top -Target $top -X $sG2[0] -Y $sG2[1] -Action up)
+                Start-Sleep -Milliseconds 150
+            } else {
+                Assert $false "T2130 setup: exactly one visible pane before the capture-loss drag (got $($heroG.Count))"
+            }
         }
     }
 

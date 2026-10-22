@@ -14779,6 +14779,12 @@ pub fn windowWndProc(
             // no snapshot to cancel to that the user would recognise, and a
             // drag left armed would go on resizing with no button held.
             if (window.grip_drag != null) window.endGripDrag();
+            // The divider drags the same way (T2130): the ratio already
+            // follows the pointer live, so the drag ends where it stands.
+            // Both end functions clear their flag before ReleaseCapture, so
+            // the WM_CAPTURECHANGED that re-enters here is a no-op.
+            if (window.hero_divider_drag) window.heroEndDividerDrag();
+            if (window.dragging_split) window.endDividerDrag();
             return 0;
         },
         w32.WM_LBUTTONDOWN => {

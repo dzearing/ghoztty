@@ -3,6 +3,8 @@
 # gutter is Mac's 6 DIP with the 2 DIP line down its middle, and the divider
 # takes the mouse in that gutter and nowhere else - the panes keep the hit on
 # their own edge pixels, and a press one pixel inside a pane does not resize.
+# T2130 acceptance (run 2 tail): a divider drag whose capture is lost mid-drag
+# (WM_CANCELMODE) ends there; later button-less moves do not resize.
 # T155 acceptance (tail): exactly ONE divider line, centred in a clean gutter,
 # after drags and after repeated small window resizes.
 # T734 acceptance (T155 section): the CROSS-PANE scan T228 had to retire - a
@@ -139,6 +141,7 @@ $conf = Join-Path $env:TEMP 'ghoztty-split-divider-test.conf'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $WM_NCHITTEST = 0x0084
+$WM_CANCELMODE = 0x001F
 $HTTRANSPARENT = -1
 $HTCLIENT = 1
 
@@ -568,6 +571,31 @@ $gFirst = $d.A.Bottom
 Invoke-DividerDrag -Top $top -X0 $d.X -Y0 $gFirst -X1 $d.X -Y1 ($gFirst - 80)
 $d = Get-DividerLine $top
 Assert ($d.Y -lt $before - 40) "T2125: a drag from the gutter's first pixel resized (line $before -> $($d.Y))"
+
+# T2130: a drag whose capture is taken away (Alt+Tab, a system dialog, a menu)
+# never sees its button-up. WM_CANCELMODE is what Windows itself sends to
+# abandon a mode - DefWindowProc releases the capture, which delivers
+# WM_CAPTURECHANGED - so it is the real interruption, not a stand-in for it.
+# Before the fix the drag stayed armed and the button-less moves after it went
+# on resizing. Control: the mid-drag move DID resize, so a frozen line is the
+# cancel's doing and not a drag that never started.
+$before = $d.Y
+$gLast = $d.B.Top - 1
+[void](Send-TestMouse -Window $top -Target $top -X $d.X -Y $gLast -Action down)
+[void](Send-TestMouse -Window $top -Target $top -X $d.X -Y ($gLast + 40) -Action move)
+Start-Sleep -Milliseconds 250
+$mid = (Get-DividerLine $top).Y
+Assert ($mid -gt $before + 20) "T2130 control: the drag resized before the capture was lost (line $before -> $mid)"
+[void](Invoke-TestMessage -Window $top -Message ([uint32]$WM_CANCELMODE) -WParam ([IntPtr]0) -LParam ([IntPtr]0))
+Start-Sleep -Milliseconds 150
+[void](Send-TestMouse -Window $top -Target $top -X $d.X -Y ($gLast + 120) -Action move)
+[void](Send-TestMouse -Window $top -Target $top -X $d.X -Y ($gLast + 140) -Action move)
+Start-Sleep -Milliseconds 250
+$d = Get-DividerLine $top
+Assert ([math]::Abs($d.Y - $mid) -le 1) "T2130: moves after the capture was lost leave the divider where it was (line $mid -> $($d.Y))"
+# No up was owed, but a stray one must land as nothing.
+[void](Send-TestMouse -Window $top -Target $top -X $d.X -Y ($gLast + 140) -Action up)
+Start-Sleep -Milliseconds 150
 
 # ---------------------------------------------------------------------------
 # T233: the band is 2 DIP, and HOVER IS A COLOR CHANGE, not just a cursor.
