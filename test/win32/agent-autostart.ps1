@@ -43,6 +43,8 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T1140: the one reboot shape (app + manager + every PTY holder).
+. (Join-Path $PSScriptRoot 'lib\RebootShape.ps1')
 
 # T675: suppress the app's startup job self-escape - this harness tracks the
 # pids it launches, and a pane-launched app would otherwise hand its work to
@@ -82,14 +84,6 @@ function Stop-TestProcs {
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
-}
-
-function Stop-GuiOnly {
-    # T351: the shared, path-exact kill (lib\CleanSlate.ps1). -AppOnly is the
-    # point of this helper - the agent (and its PTYs) stay up - and exact-exe is
-    # what the private copy's '*zig-out*' filter got wrong: that also matched a
-    # detached instance running from zig-out-release (T53b).
-    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 800)
 }
 
 # T1238: on the TEST DESKTOP. The `cmd /c "... > file"` dance this replaced
@@ -210,38 +204,27 @@ Assert "A7 one live agent session before the reboot proxy" ($null -ne $rows -and
 # ============================================================================
 "== B: reboot proxy -> Run command restarts agent, session tombstones back"
 # ============================================================================
-# Reboot analog: everything dies. Kill the GUI first (no CLOSE is sent — app
-# death never ends sessions), then the agent itself.
-Stop-GuiOnly
+# Reboot analog: everything dies - the GUI (no CLOSE is sent: app death never
+# ends sessions), the agent, and its per-session PTY holders.
+#
+# T1108: the holders are the part that bit. Since T909 a session's ConPTY, shell
+# and kill-on-close job live in a separate `--pty-host` holder that escapes the
+# agent's job (T905), so killing the GUI and the agent pid alone left it running
+# with a live shell, and this section measured RE-ADOPTION (T906, covered by
+# `test\win32\holder-adopt.ps1`) instead of the reboot floor it is named for: B6
+# saw a legitimately alive session where the proxy promised a corpse. The kill
+# is lib\RebootShape.ps1's Stop-RebootShape (T1140), the one copy of that lesson.
 $portFile = Join-Path $aStateDir 'port.json'
 $oldAgentPid = 0
 try { $oldAgentPid = [int]((Get-Content $portFile -Raw | ConvertFrom-Json).pid) } catch {}
 Assert "B1 agent alive before the proxy kill" ($oldAgentPid -gt 0 -and $null -ne (Get-Process -Id $oldAgentPid -ErrorAction SilentlyContinue))
-Stop-Process -Id $oldAgentPid -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 800
+$reboot = Stop-RebootShape -Exe $Exe -SettleMs 800
 Assert "B2 agent dead after the proxy kill" ($null -eq (Get-Process -Id $oldAgentPid -ErrorAction SilentlyContinue))
-
-# T1108: a reboot takes EVERYTHING with it, per-session holders included. Since
-# T909 a session's ConPTY, shell and kill-on-close job live in a separate
-# `--pty-host` holder process that deliberately escapes the agent's job (T905),
-# so the two kills above leave it running with a live shell. That is the whole
-# point of holders - and it is exactly what a reboot is not. Leaving them up
-# made this section measure RE-ADOPTION (T906, covered end to end by
-# `test\win32\holder-adopt.ps1`) instead of the reboot floor it is named for:
-# the restarted agent dialed the surviving holder, picked the same shell back
-# up, and B6 saw a legitimately alive session where the proxy promised a
-# corpse. The agent is already dead, so every repo-path agent process still
-# standing here IS a holder.
-$agentPath = Get-GhozttyAgentPath -Exe $Exe
-function Count-Holders { @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
-        Where-Object { $_.ExecutablePath -eq $agentPath }).Count }
-# Counted BEFORE the kill so the section proves it is not vacuous: with holders
-# on there is one here, and a run reporting 0 is the tell that the mechanism
-# under test was switched off (GHOZTTY_AGENT_PTY_HOLDER) rather than exercised.
-$holdersBefore = Count-Holders
-[void](Stop-RepoGhoztty -Exe $Exe -AgentOnly -SettleMs 800)
-Assert "B2b surviving holders died too (a reboot leaves nothing running)" ((Count-Holders) -eq 0)
-"  holders alive after the agent kill, before the reboot proxy finished them: $holdersBefore"
+Assert "B2b surviving holders died too (a reboot leaves nothing running)" ($reboot.Survivors -eq 0)
+# Not vacuous: A7 saw one live session, so with holders on (the default) there
+# was a holder to kill. 0 is the tell that GHOZTTY_AGENT_PTY_HOLDER switched the
+# mechanism under test off rather than exercising it.
+Assert "B2c the reboot proxy had a PTY holder to kill ($($reboot.HoldersBefore))" ($reboot.HoldersBefore -ge 1)
 
 # Execute the Run-key command VERBATIM, the way winlogon/Explorer does at
 # sign-in: a raw command line through CreateProcess (Win32_Process.Create).

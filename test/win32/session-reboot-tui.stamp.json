@@ -1,9 +1,10 @@
 {
     "guard":  "session-reboot-tui",
     "script":  "test/win32/session-reboot-tui.ps1",
-    "generated":  "2026-10-16T11:35:46-07:00",
-    "commit":  "161784011",
+    "generated":  "2026-10-22T00:23:59-07:00",
+    "commit":  "4ec940402",
     "uncommitted":  [
+                        "test/win32/lib/RebootShape.ps1",
                         "test/win32/session-reboot-tui.ps1"
                     ],
     "files":  {
@@ -13,6 +14,7 @@
                   "src/termio/session_notice.zig":  "3e45dd25c959c1b10ec5d004d1f555293b481ecb7e0a89ff7e3667ee75776f3f",
                   "src/termio/session_snapshot.zig":  "72d2abd34fd2df726b6ae44aa88ed1b22c84cdb1b17253f9136597e278052ada",
                   "test/win32/lib/PaneLiveness.ps1":  "d6e189f9d6336ccf01f67a4c971f82c2ef65833f99250200e7f7655ac54f52fd",
-                  "test/win32/session-reboot-tui.ps1":  "bd8cbdf7e31963cfa22fa849312d03b69153e492b0280314f90fc21c3351f494"
+                  "test/win32/lib/RebootShape.ps1":  "6f38d632f286dc5514f3e7973f82bcb7481953e17a20aa8215f631b8521a5c45",
+                  "test/win32/session-reboot-tui.ps1":  "2724a7bca0bb95bc8ef5d86ed8497138c06ea82d2100429f8b9f182f6cb4cf4f"
               }
 }

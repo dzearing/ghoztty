@@ -26,7 +26,7 @@
 # the state a reboot catches a Claude Code pane in. Then the REBOOT shape: the
 # app, the session manager AND its PTY holders all die (since T909 the holders
 # outlive a manager on purpose, so killing the manager alone is an upgrade, not
-# a reboot - see session-relaunch-notify.ps1's Stop-AgentAndHolders). The app
+# a reboot - see lib\RebootShape.ps1). The app
 # relaunches on the default `restore` policy and every pane must show:
 #
 #   H  the dead session's history: every conversation line once, in order, the
@@ -71,6 +71,8 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T1140: the one reboot shape (app + manager + every PTY holder).
+. (Join-Path $PSScriptRoot 'lib\RebootShape.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
@@ -103,17 +105,9 @@ $PLACEHOLDER_LOG = 'attaching at the placeholder'
 function Stop-TestProcs {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
 }
-function Stop-AppOnly {
-    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 900)
-}
-# THE reboot shape: the manager and every PTY holder (same image, same path), so
-# the next launch finds dead-but-relaunchable tombstones. Path-exact, so the
-# user's installed agent is never touched.
-function Stop-AgentAndHolders {
-    [void](Stop-RepoGhoztty -Exe $Exe -AgentOnly -SettleMs 900)
-    return @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
-        Where-Object { $_.ExecutablePath -eq $AgentExe }).Count
-}
+# THE reboot shape is lib\RebootShape.ps1's Stop-RebootShape (T1140): the app,
+# the manager and every PTY holder, so the next launch finds dead-but-relaunchable
+# tombstones.
 
 function Run-CliArgs($argv, $out, $timeoutSec = 15) {
     # persistence: on (default) - session persistence IS this script's subject.
@@ -485,9 +479,11 @@ Start-Sleep -Seconds 2
 # ============================================================================
 Say "== reboot: app, session manager and PTY holders all die"
 # ============================================================================
-Stop-AppOnly
-$left = Stop-AgentAndHolders
-Assert "K1 no session manager or PTY holder survived the reboot shape ($left)" ($left -eq 0)
+$reboot = Stop-RebootShape -Exe $Exe
+Assert "K1 no session manager or PTY holder survived the reboot shape ($($reboot.Survivors))" ($reboot.Survivors -eq 0)
+# Non-vacuous: three live panes means three holders with holders on (the
+# default); 0 means an inherited GHOZTTY_AGENT_PTY_HOLDER=0 bypassed the path.
+Assert "K1b the reboot shape had PTY holders to kill ($($reboot.HoldersBefore))" ($reboot.HoldersBefore -ge 1)
 Start-Sleep -Seconds 2
 
 $appPid2 = Start-App 'restore' $launchArgs

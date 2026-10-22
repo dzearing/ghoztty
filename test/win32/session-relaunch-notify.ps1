@@ -97,6 +97,8 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T1140: the one reboot shape (app + manager + every PTY holder).
+. (Join-Path $PSScriptRoot 'lib\RebootShape.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
@@ -162,37 +164,13 @@ function Stop-TestProcs {
     Stop-MarkerPings
     Start-Sleep -Milliseconds 700
 }
-# THE reboot shape, and since T909 it is no longer "kill the agent".
-#
-# A persistent session's ConPTY now lives in its own holder process
-# (`ghoztty-agent --pty-host --spec ...`, src\remote\agent\pty_holder_child.zig)
-# precisely SO THAT it outlives the session manager: an agent that crashes or is
-# upgraded comes back and ADOPTS its holders, and the panes re-attach to sessions
-# that never died. That is the point of T909/T911 and it is right - but it means
-# killing the agent pid alone no longer produces the dead-but-relaunchable
-# tombstones this whole script is about. Measured on 2026-08-18: every notice arm
-# scored FAIL against a correct build, because the restored panes had re-attached
-# to LIVE sessions and there was nothing to notify about.
-#
-# A reboot takes the holders too, so this takes the holders too: every
-# ghoztty-agent process launched from the repo zig-out, the manager and its
-# holders alike. The `zig-out` filter is what keeps the user's installed agent -
-# which owns their real sessions - out of it.
-function Stop-AgentAndHolders($agentPid) {
-    if ($agentPid) { Stop-Process -Id $agentPid -Force -ErrorAction SilentlyContinue }
-    # T351: the shared, path-exact kill (lib\CleanSlate.ps1). Holders are the same
-    # image at the same path, so -AgentOnly takes the manager and its holders
-    # together - which is the point - and leaves the app alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -AgentOnly -SettleMs 900)
-    return @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
-        Where-Object { $_.CommandLine -like '*zig-out*' }).Count
-}
-function Stop-AppOnly {
-    # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
-    # copy - the filter this replaced also matched a detached instance running from
-    # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 900)
-}
+# THE reboot shape is lib\RebootShape.ps1's Stop-RebootShape (T1140): the app,
+# the session manager AND every `--pty-host` holder. Since T909 killing the
+# manager alone is an upgrade, not a reboot - the holders outlive it and the
+# restored panes re-attach to LIVE sessions, so there is nothing to notify about
+# (measured 2026-08-18: every notice arm FAILED against a correct build). The
+# private copy this replaced also counted survivors by a `*zig-out*` command
+# line, which sees the other loop lane's agents too.
 # THE oracle for "did the recorded command run?": count live pings carrying this
 # run's unique -n value.
 function Count-MarkerPings($mark) {
@@ -497,7 +475,7 @@ function Start-App($title, $extraArgs = @()) {
 # Since T909 that is no longer the same thing as the agent-upgrade shape: a
 # holder-backed session survives its manager on purpose, so an upgrade now ends
 # with the panes re-attached and alive, and nothing to notify about. See
-# Stop-AgentAndHolders.
+# Stop-RebootShape (lib\RebootShape.ps1).
 function Build-AndKill($cwdA, $withBanners = $false) {
     $appPid = Start-App 'build' @("--working-directory=$cwdA")
     Assert "setup: the GUI came up" ($appPid -ne 0)
@@ -590,10 +568,14 @@ function Build-AndKill($cwdA, $withBanners = $false) {
     # one. Keyed by `pane_id`, the only identity that survives a restore.
     $script:preKillOffsets = Snapshot-Offsets (Read-Manifest $script:tmp)
 
-    Stop-AppOnly
-    $ownersLeft = Stop-AgentAndHolders $agent
-    Assert "setup: no session manager or PTY holder survived the reboot shape ($ownersLeft)" `
-        ($ownersLeft -eq 0)
+    $reboot = Stop-RebootShape -Exe $Exe
+    Assert "setup: no session manager or PTY holder survived the reboot shape ($($reboot.Survivors))" `
+        ($reboot.Survivors -eq 0)
+    # Non-vacuous: the panes above are live sessions, so with holders on (the
+    # default) there were holders to kill. 0 means GHOZTTY_AGENT_PTY_HOLDER=0
+    # was inherited and the reboot path was never exercised.
+    Assert "setup: the reboot shape had PTY holders to kill ($($reboot.HoldersBefore))" `
+        ($reboot.HoldersBefore -ge 1)
     Start-Sleep -Seconds 2
     # Killing the agent SHOULD take its ConPTY children with it. Sweep anyway:
     # a survivor would silently satisfy (or spoil) the "did it run again?" oracle
@@ -944,8 +926,7 @@ Assert "D5 the agent recorded the LAST KNOWN cwd, not the spawn cwd" $sawDeep
 $agentD = Wait-AgentPid $tmp 25
 Assert "D6 an agent is running for this run" ($agentD -ne 0)
 Start-Sleep -Seconds 3   # let the session-layout manifest debounce out
-Stop-AppOnly
-Stop-AgentAndHolders $agentD | Out-Null
+[void](Stop-RebootShape -Exe $Exe)
 Start-Sleep -Seconds 2
 
 $appPidD2 = Start-App 'cwdrestore'
@@ -1101,8 +1082,7 @@ Assert "F5 the agent sampled the TYPED foreground command into sessions.json" $s
 $agentF = Wait-AgentPid $tmp 25
 Assert "F6 an agent is running for this run" ($agentF -ne 0)
 Start-Sleep -Seconds 3   # let the session-layout manifest debounce out
-Stop-AppOnly
-Stop-AgentAndHolders $agentF | Out-Null
+[void](Stop-RebootShape -Exe $Exe)
 Start-Sleep -Seconds 2
 Stop-MarkerPings
 Start-Sleep -Milliseconds 800

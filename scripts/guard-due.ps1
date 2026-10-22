@@ -1094,7 +1094,9 @@ $GuardTable = @(
             'src\apprt\win32\LocalAgent.zig',
             'src\apprt\win32\source_checkout.zig',
             'src\os\source_checkout.zig',
-            'src\remote\agent\session_meta.zig'
+            'src\remote\agent\session_meta.zig',
+            # T1140: section B's reboot proxy is the shared helper now.
+            'test\win32\lib\RebootShape.ps1'
         )
     },
     # Suite LINEAGE ISOLATION (T691): the only harness that measures whether an
@@ -1614,6 +1616,8 @@ $GuardTable = @(
             # get told they died anyway. Rarely edited, so the twelve-minute run
             # this makes due is not a per-turn cost.
             'src\remote\agent\holder_adopt.zig',
+            # T1140: every reboot arm kills through the shared helper.
+            'test\win32\lib\RebootShape.ps1',
             'test\win32\session-relaunch-notify.ps1'
         )
     },
@@ -1655,6 +1659,8 @@ $GuardTable = @(
             'src\termio\session_notice.zig',
             'src\remote\inbound_ring.zig',
             'test\win32\lib\PaneLiveness.ps1',
+            # T1140: the reboot shape it is named for.
+            'test\win32\lib\RebootShape.ps1',
             'test\win32\session-reboot-tui.ps1'
         )
     },
