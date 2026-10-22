@@ -235,7 +235,12 @@ try {
     $dpi = Get-TestWindowDpi -Window $top
     if ($dpi -gt 0) { $script:scale = $dpi / 96.0 }
     "  (window dpi $dpi, scale $($script:scale))"
-    [void](Set-TestWindowSize -Window $top -Width (Px 1400) -Height (Px 800))
+    # Wide enough for all five panes at the stacked-panes minimum (T2108:
+    # 300 DIP each) beside the pinned 240 DIP sidebar - 1400 DIP stacked the
+    # row, so "on screen" counted what was on show, not what was in the grid
+    # (T2139). 1850 DIP leaves ~100 DIP for gutters and chrome and still fits
+    # a 1920-wide screen at 100%.
+    [void](Set-TestWindowSize -Window $top -Width (Px 1850) -Height (Px 800))
     Start-Sleep -Milliseconds 600
 
     $leaves = @(Get-Leaves)
@@ -259,6 +264,8 @@ try {
     $sb = Get-Sidebar $top
     Assert "setup: pinned, the rows line lists all five rows" ($null -ne $rows -and $rows.Mode -eq 'expanded' -and $rows.Items.Count -eq 5)
     if ($null -eq $rows -or $rows.Items.Count -lt 5) { return }
+    Assert "setup: all five panes on show beside the pinned sidebar (none stacked)" `
+        (Wait-Until { (@(Get-Panes $top | Where-Object Visible)).Count -eq 5 })
 
     "== 1: right-click a grid row -> Stash Pane / Move to New Window / Close Pane"
     $rowP = Row $rows $idP
