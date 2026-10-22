@@ -1,9 +1,10 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-10-22T14:12:41-07:00",
-    "commit":  "601251486",
+    "generated":  "2026-10-22T15:30:35-07:00",
+    "commit":  "7539b29d4",
     "uncommitted":  [
+                        "scripts/go-loop-watchdog.ps1",
                         "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
@@ -15,11 +16,11 @@
                   "scripts/go-loop-health.ps1":  "3f4b3294e34bd948e96cd860738e6e9c848cc698f74396e309c969b71eeced82",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
-                  "scripts/go-loop-watchdog.ps1":  "335d13ed39dada019b1156bb6b53da7a33f22a0e14b4d686212cbf5636c2054d",
+                  "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
                   "scripts/lib/StampMerge.ps1":  "c1397eeccbf3039c88b7d576b1c1948db4370987ebf053e8b9b6f50a6bf76926",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/loop-session.ps1":  "39189157a285514dc8e68c86a5f844d688463d1124c90e882623373045895ade",
                   "scripts/stamp-merge.ps1":  "9cac1de32cf4554fbc4070e374cbe163e5b34cf164564499b002c0b3b6a67f3a",
-                  "test/win32/go-loop-guard.ps1":  "e2a1604ab08b0364009309ab23c640e16443c3184423c2360cc7d8e0577f8509"
+                  "test/win32/go-loop-guard.ps1":  "f79b34c0665c3ffee27807789d23cbb31fafb453fae7c4e22909319110728a43"
               }
 }

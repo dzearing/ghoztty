@@ -2303,6 +2303,26 @@ if ($restarted) {
 }
 Assert 'X11 a new watchdog process is alive after the re-exec' $xAlive
 
+# The re-exec goes through wscript, never a direct powershell child (T1198): a
+# direct `Start-Process powershell -WindowStyle Hidden` gets a console that
+# Windows Terminal draws as a real, focus-stealing window. A direct child's
+# parent is the old watchdog; a windowless one's is the (already exited)
+# wscript.exe. The replacement must also carry the fixture's own switches - it
+# used to get -Repo alone, i.e. the LIVE watchdog's mutex and log.
+$xRelaunchOk = $false; $xArgsOk = $false
+if ($xAlive) {
+    $xNew = @($live)[0]
+    $xRelaunchOk = ($xNew.ParentProcessId -ne $xProc.Id) -and
+        (Test-Path -LiteralPath (Join-Path $xRepo 'temp\go-loop-watchdog-relaunch.vbs'))
+    $xArgsOk = $xNew.CommandLine.Contains($xMutex) -and $xNew.CommandLine.Contains($xLog)
+}
+Assert 'X11a the replacement was started windowless (via wscript), not as a direct powershell child' $xRelaunchOk
+Assert 'X11b the replacement carries the original switches (fixture mutex and log)' $xArgsOk
+$xDirect = @(Get-Content -LiteralPath (Join-Path $Repo 'scripts\go-loop-watchdog.ps1') |
+    Where-Object { $_ -notmatch '^\s*#' -and $_ -match "Start-Process\s+(-FilePath\s+)?'?powershell" })
+Assert 'X11c the watchdog never starts powershell directly (both detached starts are windowless)' `
+    ($xDirect.Count -eq 0)
+
 # Tear down every fixture watchdog, parent and replacement alike.
 foreach ($p in @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -and $_.CommandLine.Contains($xWd) })) {
