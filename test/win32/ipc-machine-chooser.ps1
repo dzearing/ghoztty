@@ -703,12 +703,21 @@ try {
         }
     }
 
-    # The detail pane names the selected machine, and it FOLLOWS the selection:
+    # The chooser names the selected machine, and it FOLLOWS the selection:
     # arrowing onto the relay device must repaint it.
-    $dx0 = $orgX + (Get-TestChromeDip -Dip 300.0 -Scale $scale)
-    $dx1 = $orgX + (Get-TestChromeDip -Dip 620.0 -Scale $scale)
-    $dy0 = $orgY + (Get-TestChromeDip -Dip 60.0 -Scale $scale)
-    $dy1 = $orgY + (Get-TestChromeDip -Dip 110.0 -Scale $scale)
+    #
+    # Since T602 the name lives in the header BAND (glyph at DIP 16, name and
+    # subtitle beside it, band above the rule at DIP 52), not in the detail
+    # column. This used to sample DIP 300-620 x 60-110, which after T602 holds
+    # only the detail pane's action row - "New Window" and nothing that depends
+    # on the selection - so both claims below were measuring a button, and the
+    # second went red as soon as nothing else in that strip happened to change
+    # (T2118). The region stops at DIP 420, short of the Share checkbox and the
+    # account control, which do not follow the selection either.
+    $dx0 = $orgX + (Get-TestChromeDip -Dip 16.0 -Scale $scale)
+    $dx1 = $orgX + (Get-TestChromeDip -Dip 420.0 -Scale $scale)
+    $dy0 = $orgY + (Get-TestChromeDip -Dip 4.0 -Scale $scale)
+    $dy1 = $orgY + (Get-TestChromeDip -Dip 50.0 -Scale $scale)
     $headDrawn = Measure-DrawnPixels $shot $dx0 $dy0 $dx1 $dy1 32 32 32 12
     Assert ($headDrawn -ge 40) "the detail pane renders the machine's identity ($headDrawn drawn pixels)"
     $sigLocal = Get-RegionSignature $shot $dx0 $dy0 $dx1 $dy1
