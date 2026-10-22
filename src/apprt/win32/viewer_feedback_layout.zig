@@ -278,19 +278,30 @@ pub const Layout = struct {
 
         // Actions are pinned to the pill's BOTTOM trailing corner, so they
         // stay put as the pill grows upward (Mac's `.bottom` alignment).
-        var buttons: [button_count]Rect = undefined;
+        //
+        // An action that does not fit WHOLE inside the pill's padding is
+        // dropped — an EMPTY rect, which paints nothing and answers no hit —
+        // rather than parked past the pill's leading edge, where it would be
+        // painted outside the pane (T1153; the nav strip's rule, D83). The
+        // walk runs trailing-first, so a narrowing pane loses the snapshot
+        // action before it loses send.
+        var buttons: [button_count]Rect = @splat(.{});
         const btn_bottom = pill.bottom - pill_pad;
+        const floor = pill.left + pill_pad;
         var right = pill.right - pill_pad;
+        var lead = right;
         var i: usize = button_count;
         while (i > 0) {
             i -= 1;
             const left = right - m.target;
+            if (left < floor) break;
             buttons[i] = .{
                 .left = left,
                 .top = btn_bottom - m.target,
                 .right = right,
                 .bottom = btn_bottom,
             };
+            lead = left;
             right = left - pill_pad;
         }
 
@@ -299,7 +310,7 @@ pub const Layout = struct {
         // under the buttons.
         const text_left = pill.left + px(text_lead_dip, in.scale);
         const text_right = @max(
-            buttons[0].left - px(text_gap_dip, in.scale),
+            lead - px(text_gap_dip, in.scale),
             text_left,
         );
         // Centered in the content band while it is shorter than the actions,
@@ -365,6 +376,17 @@ pub const Layout = struct {
 
     pub fn button(self: *const Layout, which: Button) Rect {
         return self.buttons[@intFromEnum(which)];
+    }
+
+    /// `enabled` with every action the layout dropped turned off, so the Tab
+    /// walk skips a button that is not on screen the same way it skips a
+    /// disabled one — a focus ring on nothing is the same dead end (T1153).
+    pub fn reachable(self: *const Layout, enabled: [button_count]bool) [button_count]bool {
+        var out = enabled;
+        for (self.buttons, 0..) |b, idx| {
+            if (b.width() <= 0) out[idx] = false;
+        }
+        return out;
     }
 
     /// Hit test against the buttons' HIT boxes (grown past the paint, per the
@@ -764,6 +786,79 @@ test "a violently narrow pane never inverts the text rect" {
             try testing.expect(l.bar_h > 0);
         }
     }
+}
+
+test "no action is ever placed outside the pill, at any pane width" {
+    // T1153: walk the band one physical pixel at a time from nothing to well
+    // past the width at which both actions fit, the way T1130's nav strip
+    // tests do. Every painted action is whole and inside the pill's padding;
+    // a dropped one is empty and answers no click.
+    for (scales) |scale| {
+        const m = icon_button.Metrics.init(scale);
+        const pill_pad = px(pill_pad_dip, scale);
+        var saw_dropped = false;
+        var saw_both = false;
+        var width: i32 = 0;
+        while (width <= px(240.0, scale)) : (width += 1) {
+            const l = Layout.init(.{
+                .scale = scale,
+                .width = width,
+                .lines = 1,
+                .line_h = lineAt(scale),
+            });
+            var painted: usize = 0;
+            for (l.buttons, 0..) |b, idx| {
+                if (b.width() <= 0) {
+                    saw_dropped = true;
+                    try testing.expect(b.isEmpty());
+                    try testing.expect(!l.reachable(.{ true, true })[idx]);
+                    continue;
+                }
+                painted += 1;
+                try testing.expectEqual(m.target, b.width());
+                try testing.expect(b.left >= l.pill.left + pill_pad);
+                try testing.expect(b.right <= l.pill.right - pill_pad);
+                try testing.expect(b.left >= 0);
+                try testing.expect(b.right <= width);
+                // The text never runs under a painted action (an EMPTY text
+                // rect, which a pane this narrow gets, paints nothing).
+                if (l.text.width() > 0) try testing.expect(l.text.right <= b.left);
+            }
+            // Send is the last action to go: a pane with room for one keeps
+            // the action that delivers the report.
+            if (painted == 1) try testing.expect(l.button(.send).width() > 0);
+            if (painted == button_count) saw_both = true;
+            // The text rect stays inside the pill and never inverts.
+            try testing.expect(l.text.right >= l.text.left);
+            if (l.text.width() > 0) {
+                try testing.expect(l.text.left >= l.pill.left);
+                try testing.expect(l.text.right <= l.pill.right);
+            }
+            // A click anywhere in the band lands on a painted action or on
+            // nothing — never on a dropped one.
+            var x: i32 = -m.hit_pad;
+            while (x < width + m.hit_pad) : (x += 1) {
+                if (l.hitButton(scale, x, @divTrunc(l.pill.top + l.pill.bottom, 2))) |hit| {
+                    try testing.expect(l.button(hit).width() > 0);
+                }
+            }
+        }
+        try testing.expect(saw_dropped);
+        try testing.expect(saw_both);
+    }
+}
+
+test "the Tab walk skips an action the layout dropped" {
+    const scale: f32 = 1.0;
+    const m = icon_button.Metrics.init(scale);
+    // Room for exactly one action: the pill's padding, one square, padding.
+    const width = 2 * px(pad_dip, scale) + 2 * px(pill_pad_dip, scale) + m.target;
+    const l = Layout.init(.{ .scale = scale, .width = width, .lines = 1, .line_h = lineAt(scale) });
+    try testing.expectEqual(@as(i32, 0), l.button(.snapshot).width());
+    try testing.expect(l.button(.send).width() > 0);
+    const reach = l.reachable(.{ true, true });
+    try testing.expectEqual(Stop.send, nextStop(.text, false, reach, false));
+    try testing.expectEqual(Stop.text, nextStop(.send, false, reach, false));
 }
 
 test "hit testing answers on the hit box, not the paint" {

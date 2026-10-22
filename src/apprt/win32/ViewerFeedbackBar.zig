@@ -1705,7 +1705,7 @@ fn walkFocus(self: *ViewerFeedbackBar, back: bool) void {
     self.focusStop(layout_mod.nextStop(
         self.key_focus,
         back,
-        self.enabledActions(),
+        self.currentLayout().reachable(self.enabledActions()),
         self.images > 0,
     ));
     // The strip reports its own focus, so the acceptance oracle can see the
