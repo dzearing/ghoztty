@@ -172,6 +172,16 @@ pub const App = struct {
             return false;
         }
 
+        // On success the server may say what it did (`+split`: created, or
+        // reused and in which window), so a caller is never left guessing.
+        if (parsed.value.message) |msg| {
+            var out_buf: [256]u8 = undefined;
+            var stdout_writer = std.fs.File.stdout().writerStreaming(&out_buf);
+            const stdout = &stdout_writer.interface;
+            stdout.print("{s}\n", .{msg}) catch {};
+            stdout.flush() catch {};
+        }
+
         return true;
     }
 

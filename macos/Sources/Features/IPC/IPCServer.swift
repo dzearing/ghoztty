@@ -623,16 +623,24 @@ class IPCServer {
         }
         let tintColor: Color? = tintNSColor.map { Color($0) }
 
-        // Idempotent: if --name exists and pane is alive, it is the answer.
-        // Focusing it is the caller's choice (`--focus`), as for `+new-window
-        // --target=`.
-        if let name = parsed.name {
+        // Idempotent: if --name exists and already is what was asked for, it
+        // is the answer — and the reply says so, and where. A request it does
+        // not satisfy fails instead (see `SplitNameCollision`). Focusing a
+        // reused pane is the caller's choice (`--focus`), as for `+new-window
+        // --target=`. `--from-focused` ignores `--name`.
+        if let name = parsed.name, !parsed.fromFocused {
             pruneStaleTargets()
-            if let entry = resolveTarget(name), entry.isAlive {
-                if parsed.focus.movesKeyboardFocus {
-                    DispatchQueue.main.async { _ = Self.bringForward(entry) }
+            if let entry = resolveTarget(name), entry.isAlive,
+               let existing = describeExisting(entry, anchor: splitAnchorController(parsed)) {
+                switch SplitNameCollision.decide(name: name, existing: existing, requestedView: parsed.view) {
+                case .conflict(let error):
+                    return IPCResponse(success: false, error: error)
+                case .reuse(let message):
+                    if parsed.focus.movesKeyboardFocus {
+                        DispatchQueue.main.async { _ = Self.bringForward(entry) }
+                    }
+                    return IPCResponse(success: true, message: message)
                 }
-                return .ok
             }
         }
 
@@ -683,7 +691,10 @@ class IPCServer {
                     Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
                 }
             }
-            return .ok
+            let windowName = Self.onMain { TerminalController.preferredParent?.windowName }
+            return IPCResponse(
+                success: true,
+                message: windowName.map { "created a split in window '\($0)'" } ?? "created a split in the focused window")
         }
 
         // No explicit anchor: split off the pane this command was invoked FROM
@@ -815,7 +826,7 @@ class IPCServer {
                 }
             }
 
-            return .ok
+            return IPCResponse(success: true, message: Self.createdMessage(parsed, in: Self.onMain { controller.windowName }))
         }
 
         let directionStr = parsed.splitDirection ?? "right"
@@ -823,22 +834,19 @@ class IPCServer {
             return IPCResponse(success: false, error: "invalid direction: \(directionStr)")
         }
 
-        DispatchQueue.main.async { [weak self] in
-            let controller: TerminalController?
+        // Resolve the window NOW rather than on the main queue later, so a
+        // missing one fails the command instead of logging into the void, and
+        // the reply can name the window the split went into.
+        if parsed.target != nil { pruneStaleTargets() }
+        guard let controller = splitAnchorController(parsed) else {
             if let target = parsed.target {
-                self?.pruneStaleTargets()
-                controller = self?.resolveTarget(target)?.controller
-                if controller == nil {
-                    Self.logger.warning("IPC: target '\(target)' not found")
-                }
-            } else {
-                controller = TerminalController.preferredParent
+                return IPCResponse(success: false, error: "target '\(target)' not found")
             }
+            return IPCResponse(success: false, error: "no Ghoztty window to split")
+        }
+        let createdMessage = Self.createdMessage(parsed, in: Self.onMain { controller.windowName })
 
-            guard let controller else {
-                Self.logger.warning("IPC: no controller found for split")
-                return
-            }
+        DispatchQueue.main.async { [weak self] in
 
             // The window's focused pane may be a VIEWER, which has no
             // SurfaceView at all. Anchor on the PANE so `--target=<window>`
@@ -943,7 +951,60 @@ class IPCServer {
             }
         }
 
-        return .ok
+        return IPCResponse(success: true, message: createdMessage)
+    }
+
+    /// The window a `+split` lands in, resolved when the command is handled:
+    /// the `--pane` (or calling) pane's window, else `--target`, else the
+    /// focused window — the same precedence `handleSplit` splits by. Nil
+    /// when that names nothing. Callable from the IPC queue or main.
+    private func splitAnchorController(_ parsed: ParsedArguments) -> TerminalController? {
+        if let pane = parsed.pane ?? callerAnchorPane(parsed) {
+            return resolveTarget(pane)?.controller
+        }
+        if let target = parsed.target {
+            return resolveTarget(target)?.controller
+        }
+        return Self.onMain { TerminalController.preferredParent }
+    }
+
+    /// What holds a name `+split --name=` asked for, for `SplitNameCollision`.
+    private func describeExisting(
+        _ entry: TargetEntry,
+        anchor: TerminalController?
+    ) -> SplitNameCollision.Existing? {
+        Self.onMain {
+            guard let controller = entry.controller else { return nil }
+            let kind: SplitNameCollision.Existing.Kind
+            switch entry {
+            case .window:
+                kind = .window
+            case .pane:
+                kind = .terminal
+            case .viewerPane(_, let ref):
+                guard let viewer = ref.value?.viewerView else { return nil }
+                kind = .viewer(location: viewer.location, homeLocation: viewer.homeLocation)
+            }
+            return SplitNameCollision.Existing(
+                kind: kind,
+                windowName: controller.windowName,
+                inAnchorWindow: controller === anchor)
+        }
+    }
+
+    /// The reply to a `+split` that creates a pane.
+    static func createdMessage(_ parsed: ParsedArguments, in windowName: String) -> String {
+        var message = parsed.name.map { "created pane '\($0)'" } ?? "created a split"
+        message += " in window '\(windowName)'"
+        if let view = parsed.view { message += ", showing \(view)" }
+        return message
+    }
+
+    /// Run `body` on the main thread and return its result, from the IPC
+    /// queue or from main itself.
+    private static func onMain<T>(_ body: @MainActor () -> T) -> T {
+        if Thread.isMainThread { return MainActor.assumeIsolated(body) }
+        return DispatchQueue.main.sync { MainActor.assumeIsolated(body) }
     }
 
     /// Create a viewer split pane and register its name. Main thread only.

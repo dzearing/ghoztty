@@ -9,11 +9,16 @@ struct IPCResponse: Encodable {
     let success: Bool
     let error: String?
     let data: IPCData?
+    /// One human-readable line saying what the command did, which the CLI
+    /// prints to stdout on success (`+split`: created, or reused and where).
+    /// Additive: an older CLI ignores it, and an older app never sends it.
+    let message: String?
 
-    init(success: Bool, error: String? = nil, data: IPCData? = nil) {
+    init(success: Bool, error: String? = nil, data: IPCData? = nil, message: String? = nil) {
         self.success = success
         self.error = error
         self.data = data
+        self.message = message
     }
 
     static let ok = IPCResponse(success: true)
