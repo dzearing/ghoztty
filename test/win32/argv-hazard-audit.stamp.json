@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-22T15:59:27-07:00",
-    "commit":  "2874d1c45",
+    "generated":  "2026-10-22T16:10:26-07:00",
+    "commit":  "371f4a314",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "de0387b596e8e31885fa64f769bc9c784b10f9acd938b785c17855ac6ccaac81",
@@ -35,7 +35,7 @@
                   "scripts/go-loop-health.ps1":  "3f4b3294e34bd948e96cd860738e6e9c848cc698f74396e309c969b71eeced82",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
-                  "scripts/go-loop-watchdog.ps1":  "335d13ed39dada019b1156bb6b53da7a33f22a0e14b4d686212cbf5636c2054d",
+                  "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
                   "scripts/guard-due.ps1":  "8c1c339f3598103283d4c858ae625281229c6d8e861e0e4e9357635755fced59",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
