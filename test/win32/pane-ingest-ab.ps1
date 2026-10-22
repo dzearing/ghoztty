@@ -60,6 +60,15 @@ param(
     # and the agent path measures 0.89x - the relay's cost only exists once the
     # burst outlasts every buffer in the chain. A cheaper run measures nothing.
     [int]$Chunks = 400000,
+    # WHICH output shape. `stream` (the default) is T1458's Claude-Code-shaped
+    # stream of small writes. `type` is T1167's: one `type` of a big file of
+    # numbered lines, i.e. a build log or a `cat` - few, large writes, which is
+    # the shape a pipe-buffer or read-size limit would show up in and the
+    # stream shape would not. Both are timed by the writer's own clock.
+    [ValidateSet('stream', 'type')]
+    [string]$Shape = 'stream',
+    # Lines in the `type` payload. 500,000 is T1167's 4.5 MB.
+    [int]$TypeLines = 500000,
     [int]$WaitSeconds = 300,
     # Measure an OPTIMIZED build. A ReleaseFast `zig-out` derives the same IPC
     # and agent endpoints as the user's installed release, so it can only be
@@ -185,8 +194,20 @@ function Test-AgentBacked($pane) {
 # harness launched it. Byte for byte the same file in all three terminals.
 $workload = Join-Path $tmp 'workload.ps1'
 @'
-param([int]$Chunks = 4000, [string]$OutFile = '')
+param([int]$Chunks = 4000, [string]$OutFile = '', [string]$TypeFile = '')
 $ErrorActionPreference = 'Stop'
+if ($TypeFile) {
+    # T1167's shape: cmd's own `type` of one big file, inheriting this console,
+    # so the bytes reach the terminal exactly as they would from a user's shell.
+    $bytes = (Get-Item $TypeFile).Length
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    Start-Process -FilePath $env:ComSpec -ArgumentList '/c', 'type', $TypeFile -NoNewWindow -Wait
+    $sw.Stop()
+    $ms = $sw.ElapsedMilliseconds
+    [Console]::Out.Write("`nWORKLOAD_DONE ELAPSED_MS=$ms TYPE`n")
+    if ($OutFile) { "ELAPSED_MS=$ms BYTES=$bytes" | Set-Content -Encoding ascii $OutFile }
+    return
+}
 # Pre-build every chunk so the loop pays for terminal work, not for PowerShell
 # string formatting - without this the emitter dominates and every terminal
 # looks identical no matter what it does.
@@ -216,6 +237,16 @@ $out.Write("`nWORKLOAD_DONE ELAPSED_MS=$ms CHUNKS=$Chunks`n")
 if ($OutFile) { "ELAPSED_MS=$ms BYTES=$bytes" | Set-Content -Encoding ascii $OutFile }
 '@ | Set-Content -Encoding ascii $workload
 
+# The `type` payload: L0000001..LNNNNNNN, one per line - T1142/T1167's file.
+$typeArg = ''
+if ($Shape -eq 'type') {
+    $typeFile = Join-Path $tmp 'type-payload.txt'
+    $sb = [System.Text.StringBuilder]::new()
+    for ($i = 1; $i -le $TypeLines; $i++) { [void]$sb.AppendLine(('L{0:D6}' -f $i)) }
+    [System.IO.File]::WriteAllText($typeFile, $sb.ToString())
+    $typeArg = " -TypeFile `"$typeFile`""
+}
+
 <#
 Write the .cmd shim a terminal runs. No arguments and no quoting for the caller
 to mangle: every value is baked in when the file is written, which is what makes
@@ -226,7 +257,7 @@ function New-RunShim([string]$tag) {
     $stamp = Join-Path $tmp "elapsed-$tag.txt"
     @(
         '@echo off',
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$workload`" -Chunks $Chunks -OutFile `"$stamp`""
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$workload`" -Chunks $Chunks -OutFile `"$stamp`"$typeArg"
     ) | Set-Content -Encoding ascii $shim
     # The pane is driven with `--keys-file`, whose bytes are sent VERBATIM. A
     # Windows path typed as a positional argument is not: `+send-keys` runs key
@@ -422,7 +453,8 @@ $agentRun = $null
 $conhost = $null
 
 try {
-    "== setup: {0} chunks{1}" -f $Chunks, $(
+    "== setup: {0}{1}" -f $(
+        if ($Shape -eq 'type') { "type of $TypeLines lines" } else { "$Chunks chunks" }), $(
         if ($NegativeControl) { ' (NEGATIVE CONTROL - watching a stamp nothing writes)' } else { '' })
 
     Reset-GhozttyTestState -Exe $Exe -SettleMs 1000 -AllowReleaseBuild:$ReleaseSandbox | Out-Null
