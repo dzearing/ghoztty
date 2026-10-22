@@ -854,13 +854,17 @@ $GuardTable = @(
     # modules and cannot see a WINDOW placed outside its parent, and the P1-P3
     # floor never squeezes a pane - which is how a contents card 88px past its
     # own pane went unnoticed. Covers the two layout modules the containment
-    # depends on as well as the script.
+    # depends on as well as the script - and the pane minimum (T2157): the
+    # widths this harness sizes its panes to are only reachable while the
+    # stacked-panes floor allows them, and T2108's 300 DIP floor turned two
+    # sections red while this row still read CURRENT.
     [pscustomobject]@{
         Name   = 'viewer-narrow-pane'
         Script = 'test\win32\viewer-narrow-pane.ps1'
         Stamp  = 'test\win32\viewer-narrow-pane.stamp.json'
         Covers = @(
             'test\win32\viewer-narrow-pane.ps1',
+            'src\apprt\win32\pane_stack_layout.zig',
             'src\apprt\win32\viewer_toc_layout.zig',
             'src\apprt\win32\viewer_nav_layout.zig',
             'src\apprt\win32\ViewerTOCPanel.zig',

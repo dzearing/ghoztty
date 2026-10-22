@@ -385,15 +385,29 @@ try {
 '@
     Invoke-Verb @('+close', '--target=vc') | Out-Null
     Start-Sleep -Milliseconds 800
-    $r = Invoke-Verb @('+split', '--target=vnp', "--view=$htmlFile", '--name=vh')
-    Assert ($r.Code -eq 0) 'E: +split --view=<html file> succeeded'
+    # The bar is narrowed by the WINDOW's width, not a split ratio (T2157).
+    # Since T2108 no split pane goes under 300 DIP while its row fits, and the
+    # "..." only takes the leading slot somewhere near 120 DIP, so a ratio can
+    # no longer reach the band this section is about: every ratio from 72 to
+    # 92 measured the same 373px bar. A window whose single pane is the viewer
+    # has no row to protect - the pane is the window - so its width walks the
+    # bar through every band.
+    $r = Invoke-Verb @('+new-window', '--target=vnh', "--view=$htmlFile")
+    Assert ($r.Code -eq 0) 'E: +new-window --view=<html file> succeeded'
     Start-Sleep -Seconds 4
-    $w3 = Wait-Win 'vnp'
-    $leaves3 = @(Get-Leaves $w3.tabs[0].splits)
-    $term3 = @($leaves3 | Where-Object { $_.type -ne 'viewer' })
+    $w3 = Wait-Win 'vnh'
+    $leaves3 = @()
+    if ($w3) { $leaves3 = @(Get-Leaves $w3.tabs[0].splits) }
     $view3 = @($leaves3 | Where-Object { $_.type -eq 'viewer' })
-    if ($term3.Count -ne 1 -or $view3.Count -ne 1) {
-        Assert $false "E: expected one terminal + one live-page viewer, got $($leaves3.Count) leaves"
+    $htmlTop = [IntPtr]::Zero
+    foreach ($t in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow')) {
+        if ([IntPtr]$t.Hwnd -eq $top) { continue }
+        if (@(Get-TestChildWindows -Window ([IntPtr]$t.Hwnd) -Class 'GhozttyViewer').Count -ge 1) {
+            $htmlTop = [IntPtr]$t.Hwnd
+        }
+    }
+    if ($leaves3.Count -ne 1 -or $view3.Count -ne 1 -or $htmlTop -eq [IntPtr]::Zero) {
+        Assert $false "E: expected a window whose one pane is the live-page viewer, got $($leaves3.Count) leaves"
     } else {
         # The layout's own numbers, in DIP, so the pixel maths below is scale
         # aware. These are READ from the module, not re-derived: a change to
@@ -404,10 +418,10 @@ try {
         $slotPx = $targetPx + $padPx
         $topPx = [int][Math]::Round((36 * $scale - $targetPx) / 2)
 
-        function Set-HtmlRatio([int]$leftPercent) {
-            $layout = '{"direction":"horizontal","ratio":' + $leftPercent +
-                ',"left":{"pane":"' + $term3[0].name + '"},"right":{"pane":"' + $view3[0].name + '"}}'
-            [void](Invoke-Verb @('+rearrange', '--target=vnp', ('--layout=' + ($layout -replace '"', '\"'))))
+        function Set-HtmlWidth([int]$dip) {
+            [void](Set-TestWindowPos -Window $htmlTop -X 0 -Y 0 `
+                -Width ([int][Math]::Round($dip * $scale, [MidpointRounding]::AwayFromZero)) `
+                -Height ([int][Math]::Round(500 * $scale, [MidpointRounding]::AwayFromZero)))
             Start-Sleep -Milliseconds 1200
         }
 
@@ -483,22 +497,26 @@ try {
 
         # Wide -> narrow, so the monotone claim is checked on the way back up.
         $bands = @()
-        foreach ($ratio in @(55, 72, 80, 86, 92)) {
-            Set-HtmlRatio $ratio
-            $mb = Measure-NavBar $top
-            if ($null -eq $mb) { Assert $false "E[$ratio]: the live page's nav bar is on screen to measure"; continue }
-            Write-Host ("      ratio $ratio -> bar $($mb.BarWidth)px, edit $($mb.EditWidth)px, " +
+        # Window widths in DIP: a full strip, a shed strip with a field, the
+        # "..." with a field, and the "..." alone (a field cannot pay for itself
+        # below ~120 DIP). Whatever the OS minimum track width clamps the last
+        # one to is still inside the "..."-only band.
+        foreach ($wDip in @(700, 420, 260, 170, 90)) {
+            Set-HtmlWidth $wDip
+            $mb = Measure-NavBar $htmlTop
+            if ($null -eq $mb) { Assert $false "E[$wDip]: the live page's nav bar is on screen to measure"; continue }
+            Write-Host ("      window $wDip DIP -> bar $($mb.BarWidth)px, edit $($mb.EditWidth)px, " +
                 "inked slot boxes $($mb.Slots), lead-slot ink $($mb.LeadRows) rows")
             $bands += $mb
 
-            Assert (Inside $mb.BarRect $mb.Host) "E[$ratio]: the nav bar is inside the viewer pane"
+            Assert (Inside $mb.BarRect $mb.Host) "E[$wDip]: the nav bar is inside the viewer pane"
             # 1. Something is always reachable: the leading slot always carries
             #    a control, however narrow the pane gets.
             Assert ($mb.LeadRows -gt 0) `
-                "E[$ratio]: a control is painted in the leading slot ($($mb.LeadRows) ink rows)"
+                "E[$wDip]: a control is painted in the leading slot ($($mb.LeadRows) ink rows)"
             # 2. Legible or absent - never a stub.
             Assert ($mb.EditWidth -eq 0 -or $mb.EditWidth -ge $fieldMinPx) `
-                "E[$ratio]: the address field is legible (${fieldMinPx}px min) or absent, not a $($mb.EditWidth)px stub"
+                "E[$wDip]: the address field is legible (${fieldMinPx}px min) or absent, not a $($mb.EditWidth)px stub"
         }
 
         Assert ($bands.Count -eq 5) "E: all five width bands were measured (got $($bands.Count))"
@@ -511,7 +529,7 @@ try {
                 if ($bands[$i].Slots -gt $bands[$i - 1].Slots) { $monoSlots = $false }
                 if ($bands[$i].EditWidth -gt $bands[$i - 1].EditWidth) { $monoEdit = $false }
             }
-            Assert $monoWidth 'E: the five ratios really did narrow the pane (negative control for the two below)'
+            Assert $monoWidth 'E: the five window widths really did narrow the bar (negative control for the two below)'
             Assert $monoSlots 'E: narrowing never ADDS ink to the strip'
             Assert $monoEdit 'E: narrowing never widens the address field'
             # And the squeeze did something: a run where every band measured
@@ -531,6 +549,9 @@ try {
         }
         Write-Host "      band captures written to $env:TEMP\ghoztty-vnp-band-*.png"
     }
+    # Closed before F, whose probe search takes any other window with a viewer.
+    [void](Invoke-Verb @('+close', '--target=vnh'))
+    Start-Sleep -Milliseconds 800
     Remove-Item $htmlFile -ErrorAction SilentlyContinue
 
     # -----------------------------------------------------------------------
@@ -570,7 +591,8 @@ try {
 
         # The card has to be in the GUTTER layout to be measured without a
         # cursor: that is the one presentation where it is on screen with no
-        # toggle. The threshold is 720 DIP of PANE, so the window is stretched
+        # toggle. The threshold is 720 DIP of PANE, so the window is stretched (1300 DIP:
+        # the terminal keeps its 300 DIP floor, T2108)
         # and the viewer given most of it.
         $wf = Wait-Win 'vnf'
         $probeWin = [IntPtr]::Zero
@@ -581,7 +603,7 @@ try {
             }
         }
         if ($probeWin -ne [IntPtr]::Zero) {
-            $wantW = [int][Math]::Round(1100 * $scale)
+            $wantW = [int][Math]::Round(1300 * $scale)
             [void](Set-TestWindowPos -Window $probeWin -X 0 -Y 0 -Width $wantW -Height 900)
             Start-Sleep -Milliseconds 800
         }
@@ -618,6 +640,19 @@ try {
             }
         }
         Assert ($tocH -ne [IntPtr]::Zero) 'F: the probe document built a contents card to measure'
+        # The precondition, named (T2157): below 720 DIP the card is the
+        # compact one, which is hidden until toggled and photographs as a black
+        # 300px slab - so a pane that fell short read as "the card does not
+        # paint". It fell short at 1100 DIP once the terminal beside it stopped
+        # shrinking at 300 DIP (T2108).
+        if ($probeTop -ne [IntPtr]::Zero) {
+            $probeHosts = @(Get-TestChildWindows -Window $probeTop -Class 'GhozttyViewer')
+            if ($probeHosts.Count -eq 1) {
+                $probeDip = (Rect-Width (Get-Rect ([IntPtr]$probeHosts[0].Hwnd))) / $scale
+                Assert ($probeDip -ge 720) ("F: the probe pane is wide enough for the gutter card " +
+                    "($([int]$probeDip) DIP, threshold 720)")
+            }
+        }
 
         # Where the band IS, from the app rather than from a DIP constant: the
         # header's height is a FONT metric at this scale, so a script cannot

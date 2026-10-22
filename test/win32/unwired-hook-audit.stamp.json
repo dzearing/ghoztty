@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-22T05:40:45-07:00",
-    "commit":  "46967dd4e",
+    "generated":  "2026-10-22T07:12:04-07:00",
+    "commit":  "d12557cca",
     "uncommitted":  [
 
                     ],
@@ -973,7 +973,7 @@
                   "test/win32/agent-autostart.ps1":  "4afaaba65feefc03ca22f1b6aab72344dd3039077cbc6518204e6e21af2a17a2",
                   "test/win32/agent-first-answer.ps1":  "9c9f092829b9334f23e2bbd700cd98339d2946cce8757548fa9a32b5191e9a3d",
                   "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
-                  "test/win32/agent-instance-lineage.ps1":  "9018a5e80676e5dd0959be65c4550e1ea3ad2aa740f1c36e1de51880f3a17837",
+                  "test/win32/agent-instance-lineage.ps1":  "5a4c8c30c32b132c81d5317991cbf0874f41a9cb2d340854dce8c96fd078e6b9",
                   "test/win32/agent-integrations.ps1":  "201c7424c1271d20322417b8f0881665be453f2dd6e9611f3fcf10f105310169",
                   "test/win32/agent-job-escape.ps1":  "a6865bdcc2ab5d0c98c316fc436599c5e325220d45290dbedab91bc18b1e03fc",
                   "test/win32/agent-job-report.ps1":  "cb2d781c08f461ada4719405be41efa795c3393c98ca7dcd0612b146cf9ebfef",
@@ -1356,7 +1356,7 @@
                   "test/win32/viewer-find.ps1":  "1c91b74ae75373354a59c2c35607ba444781de367929bc0fbe758f95d7260c75",
                   "test/win32/viewer-html.ps1":  "ca16fd4e3837cb63a78fa4763c7e78399ac3b97bcab9872a62741e414e147929",
                   "test/win32/viewer-image.ps1":  "c977a62c86f11afb58b49d73f2fcaaa11a3d839c115caac49fdab6e0a4e4754d",
-                  "test/win32/viewer-narrow-pane.ps1":  "fbcdcb2e4ca131f154aecba7cc8bc749d288fb0772a71e0bddd0230806683e11",
+                  "test/win32/viewer-narrow-pane.ps1":  "820fe92dc44471e20ed746fb91e83a92f10ab714b1963cd9abe59eb5f04c9c45",
                   "test/win32/viewer-nav-pin.ps1":  "0484ea216296c7270a8ea1d117f8c555b2d1861cf92ca9af290a751ca6476438",
                   "test/win32/viewer-panes.ps1":  "d86657ddbe1a50a26f4ad5a221c1ce60c4b6aff2c65edeca92866f792b4b5540",
                   "test/win32/viewer-popup.ps1":  "026091bd991f9e035761626527cdc873d5af02d5376f941b003448bb6faa7f6d",
