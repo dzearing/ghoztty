@@ -521,3 +521,12 @@ as the digest that showed them.
 - Drop a folder on a pane's edge (new angle on drop-a-file-for-its-path: dropping a folder on an edge opens a split with a shell in that folder)
 - A stuck program never freezes the window (a program that stops reading output stalls only its pane, which says so)
 - The first key after the PC wakes is instant (panes repaint their last frame at once after sleep and catch up in the background)
+
+## 2026-10-23
+
+- Flip through a folder of pictures (arrow keys in an image pane step to the previous/next picture in the same folder)
+- See what changed in a picture (a branch diff shows a changed image old and new side by side with a slider)
+- Phone photos stand the right way up (image pane honours camera rotation; one key turns a quarter turn)
+- The palette flags commands that interrupt you (restart, close-all, sign-out marked and sorted below safe matches)
+- Uninstall asks what to keep (settings and saved sessions kept or removed; nothing else left behind)
+- A huge picture opens at once (screen-sized version first, full detail as you zoom)
