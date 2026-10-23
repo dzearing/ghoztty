@@ -18,6 +18,13 @@
 //!   watches the byte count rather than the clock, and after ten seconds of
 //!   no movement the panel says "Stalled" instead of continuing to imply
 //!   progress. This is the criterion the one-shot balloon failed hardest.
+//! - **Let the user change their mind** (T1244). A Cancel button stops the
+//!   transfer — it closes the connection out from under the worker's read, so
+//!   it works on a stalled link too — and the panel says "Download cancelled",
+//!   not "failed". Nothing is staged and the app does not quit; the offer is
+//!   still up, so the balloon can start the download again. The close box is
+//!   still only a dismissal of the report: closing a window is not the same
+//!   sentence as pressing Cancel.
 //! - **Stay out of the way when there is nothing to watch.** The
 //!   `auto-update = download` default has the package on disk before the user
 //!   ever clicks, and that path never constructs this window — clicking there
@@ -52,6 +59,10 @@ const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyUpdateProgress
 /// that a 40 MB download costs a few hundred repaints of a 420x110 window.
 const TICK_MS: u32 = 150;
 const TIMER_ID: usize = 1;
+
+/// The Cancel button's control id. IDCANCEL, so it is the id a dialog's
+/// Cancel conventionally carries.
+const ID_CANCEL: u16 = @intCast(w32.IDCANCEL);
 
 /// How long the panel stays up after the download ends, so "Download
 /// complete." and (more importantly) a failure are readable rather than a
@@ -88,6 +99,9 @@ title: [:0]u16,
 scale: f32,
 fonts: Fonts,
 tracker: model.StallTracker = .{},
+/// The Cancel button (T1244). Null when it could not be created — the panel
+/// then reports exactly as it did before it had one.
+cancel_btn: ?w32.HWND = null,
 /// Monotonic-ish millisecond clock for the stall tracker and the linger.
 /// `std.time.milliTimestamp` is wall clock, which is what every other timing
 /// in this app uses and is fine for a ten-second window.
@@ -113,10 +127,14 @@ closing: bool = false,
 const Fonts = struct {
     body: ?*anyopaque,
     caption: ?*anyopaque,
+    /// Body size at normal weight — the confirm dialog's button face, so the
+    /// two windows' buttons read as the same control.
+    button: ?*anyopaque,
 
     fn deinit(self: Fonts) void {
         if (self.body) |f| _ = w32.DeleteObject(f);
         if (self.caption) |f| _ = w32.DeleteObject(f);
+        if (self.button) |f| _ = w32.DeleteObject(f);
     }
 };
 
@@ -129,6 +147,8 @@ pub const Layout = struct {
     title: w32.RECT,
     track: w32.RECT,
     status: w32.RECT,
+    /// The Cancel button, right-aligned under the status line (T1244).
+    cancel: w32.RECT,
 };
 
 pub fn layoutFor(scale: f32, title_h: i32, status_h: i32) Layout {
@@ -139,9 +159,14 @@ pub fn layoutFor(scale: f32, title_h: i32, status_h: i32) Layout {
     const title_top = margin;
     const track_top = title_top + title_h + gap;
     const status_top = track_top + bar_h + gap;
+    // The confirm dialog's button metrics, so Cancel here is the same size
+    // as the Later the user clicked past to get here.
+    const btn_w = px(88, scale);
+    const btn_h = px(28, scale);
+    const btn_top = status_top + status_h + gap;
     return .{
         .client_w = client_w,
-        .client_h = status_top + status_h + margin,
+        .client_h = btn_top + btn_h + margin,
         .title = .{
             .left = margin,
             .top = title_top,
@@ -159,6 +184,12 @@ pub fn layoutFor(scale: f32, title_h: i32, status_h: i32) Layout {
             .top = status_top,
             .right = client_w - margin,
             .bottom = status_top + status_h,
+        },
+        .cancel = .{
+            .left = client_w - margin - btn_w,
+            .top = btn_top,
+            .right = client_w - margin,
+            .bottom = btn_top + btn_h,
         },
     };
 }
@@ -214,6 +245,22 @@ pub fn create(
         ),
         .caption = w32.CreateFontW(
             -type_ramp.caption(scale).height,
+            0,
+            0,
+            0,
+            type_ramp.weight_normal,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            std.unicode.utf8ToUtf16LeStringLiteral(type_ramp.face),
+        ),
+        .button = w32.CreateFontW(
+            -type_ramp.body(scale).height,
             0,
             0,
             0,
@@ -287,6 +334,29 @@ pub fn create(
     // The caption follows the same surface the body does (T563).
     system_colors.applyPanelChrome(hwnd, self.pal());
 
+    // Cancel (T1244). A failed create is not fatal: the panel still reports,
+    // which is all it did before the button existed.
+    if (w32.CreateWindowExW(
+        0,
+        std.unicode.utf8ToUtf16LeStringLiteral("BUTTON"),
+        std.unicode.utf8ToUtf16LeStringLiteral("Cancel"),
+        w32.WS_CHILD | w32.WS_VISIBLE_STYLE | w32.WS_TABSTOP,
+        l.cancel.left,
+        l.cancel.top,
+        l.cancel.right - l.cancel.left,
+        l.cancel.bottom - l.cancel.top,
+        hwnd,
+        @ptrFromInt(@as(usize, ID_CANCEL)),
+        hinstance,
+        null,
+    )) |btn| {
+        _ = w32.SetWindowTheme(btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+        if (fonts.button) |f| _ = w32.SendMessageW(btn, w32.WM_SETFONT, @intFromPtr(f), 1);
+        self.cancel_btn = btn;
+    } else {
+        log.warn("update progress: the Cancel button could not be created", .{});
+    }
+
     // SW_SHOWNA: the panel reports, it does not steal the caret from the
     // terminal the user is still typing in.
     _ = w32.ShowWindow(hwnd, w32.SW_SHOWNA);
@@ -304,6 +374,21 @@ pub fn close(self: *UpdateProgress) void {
     if (self.closing) return;
     self.closing = true;
     _ = w32.DestroyWindow(self.hwnd);
+}
+
+/// The Cancel button (T1244). Asks the worker to stop and, when it is blocked
+/// in a read, closes the connection under it so the stop is immediate rather
+/// than at the socket's timeout. Only meaningful while the download runs; a
+/// second click, or one after the end, does nothing.
+fn requestCancel(self: *UpdateProgress) void {
+    if (self.shared.snapshot().outcome != .running) return;
+    if (self.shared.abort.isRequested()) return;
+    log.info("update progress: cancel requested by the user", .{});
+    if (self.shared.abort.request()) |h| {
+        _ = w32.InternetCloseHandle(@ptrFromInt(h));
+    }
+    if (self.cancel_btn) |b| _ = w32.EnableWindow(b, 0);
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
 
 /// The single teardown, reached from WM_NCDESTROY however the window died.
@@ -329,6 +414,8 @@ fn onTick(self: *UpdateProgress) bool {
         self.tracker.observe(snap.received, now);
     } else if (self.ended_ms == 0) {
         self.ended_ms = now;
+        // Nothing left to cancel.
+        if (self.cancel_btn) |b| _ = w32.EnableWindow(b, 0);
     }
     self.logProgress(snap, self.tracker.idleMs(now));
 
@@ -421,7 +508,8 @@ fn paint(self: *UpdateProgress, hdc: w32.HDC, client: w32.RECT) void {
         _ = w32.FillRect(mem_dc, &l.track, tb);
     }
     const stalled = snap.outcome == .running and idle >= model.stall_after_ms;
-    const fill_color = if (stalled or snap.outcome == .failed) p.secondary else p.accent;
+    const muted = stalled or snap.cancelling or snap.outcome == .failed or snap.outcome == .cancelled;
+    const fill_color = if (muted) p.secondary else p.accent;
     if (w32.CreateSolidBrush(system_colors.cr(fill_color))) |fb| {
         defer _ = w32.DeleteObject(fb);
         var run = l.track;
@@ -434,7 +522,7 @@ fn paint(self: *UpdateProgress, hdc: w32.HDC, client: w32.RECT) void {
             // No Content-Length: a marquee chip, held still while stalled so
             // the animation cannot contradict the sentence under it.
             const chip = @max(px(24, self.scale), @divTrunc(track_w, 5));
-            const x = if (stalled) 0 else model.marqueeX(track_w, chip, self.tick);
+            const x = if (stalled or snap.cancelling) 0 else model.marqueeX(track_w, chip, self.tick);
             run.left = l.track.left + x;
             run.right = run.left + chip;
         }
@@ -502,6 +590,24 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             if (wparam == TIMER_ID) _ = self.onTick();
             return 0;
         },
+        w32.WM_COMMAND => {
+            const notification: u16 = @intCast((wparam >> 16) & 0xFFFF);
+            const control_id: u16 = @intCast(wparam & 0xFFFF);
+            if (notification == w32.BN_CLICKED and control_id == ID_CANCEL) {
+                self.requestCancel();
+                return 0;
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        // The button sits on the panel's own surface, not the system face.
+        w32.WM_CTLCOLORBTN => {
+            const hdc: w32.HDC = @ptrFromInt(wparam);
+            const p = self.pal();
+            _ = w32.SetTextColor(hdc, system_colors.cr(p.text));
+            _ = w32.SetBkColor(hdc, system_colors.cr(p.bg));
+            if (bg_brush.get(system_colors.cr(p.bg))) |b| return @bitCast(@intFromPtr(@as(*const anyopaque, @ptrCast(b))));
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
         w32.WM_ERASEBKGND => return 1, // paint() fills the whole client
         w32.WM_PAINT => {
             var ps: w32.PAINTSTRUCT = undefined;
@@ -558,7 +664,11 @@ test "layout: rows stack without overlapping, at every scale" {
 
         try testing.expect(l.title.bottom <= l.track.top);
         try testing.expect(l.track.bottom <= l.status.top);
-        try testing.expect(l.status.bottom < l.client_h);
+        try testing.expect(l.status.bottom <= l.cancel.top);
+        try testing.expect(l.cancel.bottom < l.client_h);
+        // Cancel is right-aligned on the same margin as everything else.
+        try testing.expectEqual(l.status.right, l.cancel.right);
+        try testing.expect(l.cancel.left > l.status.left);
         // Equal side margins.
         try testing.expectEqual(l.title.left, l.track.left);
         try testing.expectEqual(l.client_w - l.title.right, l.title.left);

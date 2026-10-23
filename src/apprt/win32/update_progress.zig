@@ -14,6 +14,10 @@
 //! the count; one that has stopped does not, and after `stall_after_ms` of no
 //! movement the panel says so instead of continuing to imply progress.
 //!
+//! It also carries the user's way OUT (T1244): `Abort` is the Cancel button's
+//! side of the handoff, and the one in-flight connection handle that makes a
+//! cancel take effect now rather than at the next 256 KiB read.
+//!
 //! `UpdateProgress.zig` owns the window, the timer and the paint.
 
 const std = @import("std");
@@ -24,6 +28,50 @@ pub const Outcome = enum(u32) {
     running = 0,
     ok = 1,
     failed = 2,
+    /// The user pressed Cancel (T1244). Its own state rather than a flavour
+    /// of `failed`: nothing went wrong, and the panel must not say it did.
+    cancelled = 3,
+};
+
+/// The Cancel half of the handoff (T1244). The GUI thread asks; the worker
+/// notices. Asking alone would leave a read that is blocked on a quiet socket
+/// blocked until the socket times out — the exact stretch a user reaches for
+/// Cancel in — so the worker also PUBLISHES the connection handle it is
+/// reading from, and the request takes it and closes it. WinINet documents
+/// closing a handle as the way to abort a blocking call on it; the read fails,
+/// and the worker, seeing the request, reports a cancel instead of a failure.
+///
+/// The handle is closed exactly once, by whichever side swaps it out of
+/// `handle` first. Both sides use sequentially consistent ordering so that
+/// either the request sees the published handle, or the worker sees the
+/// request on its next check — never neither.
+pub const Abort = struct {
+    requested: std.atomic.Value(bool) = .{ .raw = false },
+    handle: std.atomic.Value(usize) = .{ .raw = 0 },
+
+    /// GUI thread. Records the request and returns the in-flight handle for
+    /// the caller to close, or null when there is none to take (not attached
+    /// yet, already detached, or a second click).
+    pub fn request(self: *Abort) ?usize {
+        self.requested.store(true, .seq_cst);
+        const h = self.handle.swap(0, .seq_cst);
+        return if (h == 0) null else h;
+    }
+
+    pub fn isRequested(self: *const Abort) bool {
+        return self.requested.load(.seq_cst);
+    }
+
+    /// Worker. Publish the handle a blocking read is about to wait on.
+    pub fn attach(self: *Abort, h: usize) void {
+        self.handle.store(h, .seq_cst);
+    }
+
+    /// Worker. Take the handle back. True when the worker still owns it and
+    /// must close it itself; false when a cancel already closed it.
+    pub fn detach(self: *Abort) bool {
+        return self.handle.swap(0, .seq_cst) != 0;
+    }
 };
 
 /// The cross-thread handoff: the worker publishes bytes as they arrive, the
@@ -44,6 +92,7 @@ pub const Shared = struct {
     total: std.atomic.Value(u64) = .{ .raw = 0 },
     outcome: std.atomic.Value(u32) = .{ .raw = @intFromEnum(Outcome.running) },
     refs: std.atomic.Value(u32) = .{ .raw = 2 },
+    abort: Abort = .{},
 
     pub fn report(self: *Shared, received: u64, total: u64) void {
         self.total.store(total, .monotonic);
@@ -61,6 +110,7 @@ pub const Shared = struct {
             .received = self.received.load(.monotonic),
             .total = if (total == 0) null else total,
             .outcome = std.meta.intToEnum(Outcome, raw) catch .running,
+            .cancelling = self.abort.isRequested(),
         };
     }
 
@@ -75,6 +125,8 @@ pub const Snapshot = struct {
     received: u64,
     total: ?u64,
     outcome: Outcome,
+    /// Cancel was pressed and the worker has not answered yet.
+    cancelling: bool = false,
 };
 
 /// No bytes for this long, and the panel stops implying the download is
@@ -168,8 +220,8 @@ pub fn formatBytes(buf: []u8, n: u64) []const u8 {
 }
 
 /// The sentence under the bar. This is the whole of the panel's language, so
-/// the three states it has to keep apart live in one place: moving, stopped,
-/// and over.
+/// the states it has to keep apart live in one place: moving, stopped,
+/// stopping on request, and over.
 pub fn statusLine(buf: []u8, snap: Snapshot, idle_ms: i64) []const u8 {
     switch (snap.outcome) {
         .ok => return std.fmt.bufPrint(buf, "Download complete.", .{}) catch "Download complete.",
@@ -178,7 +230,17 @@ pub fn statusLine(buf: []u8, snap: Snapshot, idle_ms: i64) []const u8 {
             "The download failed. Ghoztty will keep the build you have.",
             .{},
         ) catch "The download failed.",
+        // Says what the user did, and what they keep — never "failed".
+        .cancelled => return std.fmt.bufPrint(
+            buf,
+            "Download cancelled. Ghoztty will keep the build you have.",
+            .{},
+        ) catch "Download cancelled.",
         .running => {},
+    }
+
+    if (snap.cancelling) {
+        return std.fmt.bufPrint(buf, "Cancelling the download…", .{}) catch "Cancelling…";
     }
 
     var got_buf: [32]u8 = undefined;
@@ -346,6 +408,62 @@ test "statusLine: terminal states replace the numbers" {
     }, 0));
     const failed = statusLine(&buf, .{ .received = 1, .total = 9, .outcome = .failed }, 99_000);
     try testing.expect(std.mem.startsWith(u8, failed, "The download failed."));
+}
+
+test "statusLine: a cancel is not a failure" {
+    var buf: [160]u8 = undefined;
+    const done = statusLine(&buf, .{ .received = 1, .total = 9, .outcome = .cancelled }, 0);
+    try testing.expectEqualStrings("Download cancelled. Ghoztty will keep the build you have.", done);
+    try testing.expect(std.mem.indexOf(u8, done, "failed") == null);
+
+    // Between the click and the worker's answer, even over a stall.
+    var buf2: [160]u8 = undefined;
+    const pending = statusLine(&buf2, .{
+        .received = 2 * 1024 * 1024,
+        .total = 12 * 1024 * 1024,
+        .outcome = .running,
+        .cancelling = true,
+    }, 30_000);
+    try testing.expectEqualStrings("Cancelling the download…", pending);
+}
+
+test "Abort: a request takes the published handle exactly once" {
+    var a: Abort = .{};
+    try testing.expect(!a.isRequested());
+    a.attach(0x1234);
+    try testing.expectEqual(@as(?usize, 0x1234), a.request());
+    try testing.expect(a.isRequested());
+    // A second click has nothing left to close.
+    try testing.expectEqual(@as(?usize, null), a.request());
+    // And the worker must not close what the cancel already closed.
+    try testing.expect(!a.detach());
+}
+
+test "Abort: a request before the worker attaches leaves the close to the worker" {
+    var a: Abort = .{};
+    try testing.expectEqual(@as(?usize, null), a.request());
+    a.attach(0x99);
+    // The worker sees the request on its next check, and still owns the close.
+    try testing.expect(a.isRequested());
+    try testing.expect(a.detach());
+}
+
+test "Abort: an uncancelled download closes its own handle" {
+    var a: Abort = .{};
+    a.attach(0x42);
+    try testing.expect(a.detach());
+    try testing.expect(!a.isRequested());
+    // After the worker is done, a late click finds nothing to close.
+    try testing.expectEqual(@as(?usize, null), a.request());
+}
+
+test "Shared: the snapshot carries a pending cancel" {
+    var shared: Shared = .{};
+    try testing.expect(!shared.snapshot().cancelling);
+    _ = shared.abort.request();
+    try testing.expect(shared.snapshot().cancelling);
+    shared.finish(.cancelled);
+    try testing.expectEqual(Outcome.cancelled, shared.snapshot().outcome);
 }
 
 test "Shared: publish and snapshot across the two sides" {

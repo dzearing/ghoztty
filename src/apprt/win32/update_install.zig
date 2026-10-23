@@ -48,6 +48,7 @@ const internal_os = @import("../../os/main.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const job_spawn = @import("job_spawn.zig");
 const update_apply = @import("update_apply.zig");
+const update_progress = @import("update_progress.zig");
 const w32 = @import("win32.zig");
 
 const log = std.log.scoped(.win32_update_install);
@@ -105,6 +106,16 @@ pub fn stagingDir(arena: Allocator) ![]const u8 {
 pub const Progress = struct {
     ctx: *anyopaque,
     report: *const fn (ctx: *anyopaque, received: u64, total: u64) void,
+    /// The user's Cancel (T1244). When set, the transfer publishes its
+    /// connection into it so a cancel can close the socket out from under a
+    /// blocked read, and every exit checks it: a cancelled download returns
+    /// `error.Cancelled` and stages nothing, however far it had got.
+    abort: ?*update_progress.Abort = null,
+
+    fn cancelled(self: Progress) bool {
+        const a = self.abort orelse return false;
+        return a.isRequested();
+    }
 
     fn emit(self: Progress, received: u64, total: u64) void {
         self.report(self.ctx, received, total);
@@ -127,6 +138,9 @@ pub fn download(
     const dest = try std.fmt.allocPrint(arena, "{s}\\{s}", .{ dir, name });
 
     const body = try fetch(arena, url, progress);
+    // The last moment a cancel can still mean "stage nothing" (T1244): the
+    // final read may have landed just as the user pressed it.
+    if (progress) |p| if (p.cancelled()) return error.Cancelled;
     if (!update_apply.looksLikeMsi(body)) {
         log.warn("update download: {d} bytes from {s} is not an MSI package", .{ body.len, url });
         return error.NotAPackage;
@@ -174,13 +188,32 @@ fn fetch(arena: Allocator, url: []const u8, progress: ?Progress) ![]u8 {
         // path serves its canned package this way, and a panel that only ever
         // works over the network is a panel nothing on this box can check.
         if (progress) |p| p.emit(body.len, body.len);
+        if (progress) |p| if (p.cancelled()) return error.Cancelled;
         return body;
     }
 
     const agent = std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty-Update/1.0");
     const inet = w32.InternetOpenW(agent, w32.INTERNET_OPEN_TYPE_PRECONFIG, null, null, 0) orelse
         return error.InternetOpenFailed;
-    defer _ = w32.InternetCloseHandle(inet);
+
+    // Cancel closes a handle from the GUI thread to abort whatever blocking
+    // call the worker is in (T1244), so each close below is owned by whichever
+    // side takes the handle back first - never both. Two phases: the SESSION
+    // handle while the request is being opened (a server that accepts and
+    // never answers holds `InternetOpenUrlW`, and closing the session ends
+    // it), then the request handle for the reads.
+    const abort: ?*update_progress.Abort = if (progress) |p| p.abort else null;
+    var own_inet = true;
+    defer if (own_inet) {
+        _ = w32.InternetCloseHandle(inet);
+    };
+    if (abort) |a| {
+        a.attach(@intFromPtr(inet));
+        if (a.isRequested()) {
+            own_inet = a.detach();
+            return error.Cancelled;
+        }
+    }
 
     var url_buf: [2048]u16 = undefined;
     if (url.len >= url_buf.len) return error.UrlTooLong;
@@ -190,9 +223,19 @@ fn fetch(arena: Allocator, url: []const u8, progress: ?Progress) ![]u8 {
     // No INTERNET_FLAG_SECURE: the scheme decides, exactly as the releases-list
     // fetch in App.zig does. The asset URL comes from the same https feed.
     const flags = w32.INTERNET_FLAG_NO_CACHE_WRITE | w32.INTERNET_FLAG_RELOAD;
-    const conn = w32.InternetOpenUrlW(inet, @ptrCast(&url_buf), null, 0, flags, 0) orelse
-        return error.InternetOpenUrlFailed;
-    defer _ = w32.InternetCloseHandle(conn);
+    const opened = w32.InternetOpenUrlW(inet, @ptrCast(&url_buf), null, 0, flags, 0);
+    if (abort) |a| if (!a.detach()) {
+        // Cancel closed the session, and closing a WinINet handle closes the
+        // handles opened under it, so `opened` is already gone too.
+        own_inet = false;
+        return error.Cancelled;
+    };
+    const conn = opened orelse return error.InternetOpenUrlFailed;
+    if (abort) |a| a.attach(@intFromPtr(conn));
+    defer {
+        const ours = if (abort) |a| a.detach() else true;
+        if (ours) _ = w32.InternetCloseHandle(conn);
+    }
 
     // Content-Length, so the bar can be determinate. A server that will not
     // say leaves this 0 and the panel shows an indeterminate bar — the read
@@ -218,11 +261,20 @@ fn fetch(arena: Allocator, url: []const u8, progress: ?Progress) ![]u8 {
         const dst = body.unusedCapacitySlice();
         var bytes_read: u32 = 0;
         const want: u32 = @intCast(@min(dst.len, max_package_bytes - body.items.len));
-        if (w32.InternetReadFile(conn, dst.ptr, want, &bytes_read) == 0) return error.ReadFailed;
+        if (progress) |p| if (p.cancelled()) return error.Cancelled;
+        if (w32.InternetReadFile(conn, dst.ptr, want, &bytes_read) == 0) {
+            // A read that fails because Cancel closed its handle is the
+            // user's answer, not a network fault.
+            if (progress) |p| if (p.cancelled()) return error.Cancelled;
+            return error.ReadFailed;
+        }
         if (bytes_read == 0) break;
         body.items.len += bytes_read;
         if (progress) |p| p.emit(body.items.len, total);
     }
+    // A closed handle can also end the loop as an empty read, which would
+    // otherwise be judged against the Content-Length as a cut-off transfer.
+    if (progress) |p| if (p.cancelled()) return error.Cancelled;
 
     // A connection that dies mid-transfer ends the loop exactly the way a
     // finished one does — `InternetReadFile` succeeds and reports 0 bytes —

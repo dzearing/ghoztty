@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-23T13:49:18-07:00",
-    "commit":  "a92fb40ab",
+    "generated":  "2026-10-23T15:22:45-07:00",
+    "commit":  "0ac70b89d",
     "uncommitted":  [
-                        "test/win32/update-consent.ps1"
+                        "test/win32/update-graceful.ps1",
+                        "test/win32/update-progress.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -459,8 +460,8 @@
                   "test/win32/update-check.ps1":  "d5833014b3945bf2ac1de9935627695dcdbfd4ed6381a8b21ee85a3235a9bffd",
                   "test/win32/update-consent.ps1":  "ffb7dcd7d1d3df0010fa627dc98e1dd3d6da014703124651dd9f160612bbd687",
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
-                  "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",
-                  "test/win32/update-progress.ps1":  "eb5f961ca43ee0a2e75f3d00cc7c0f7d84cd908ef50c7c0cfa98dfb6dee96f42",
+                  "test/win32/update-graceful.ps1":  "d36ca938cd4e11724893428c3482c0389db25fabb2bc862cbe6cce131d83c31b",
+                  "test/win32/update-progress.ps1":  "7dd2371ca5de45bf6d765616871b240036a713a3e0adfc367fdef8a49e087198",
                   "test/win32/update-real-msi.ps1":  "3f0bf280faaaea41c2402906e1e0f74f5e89a9463fb6d46d290738c6dde6a0fa",
                   "test/win32/upgrade-no-fork.ps1":  "143d6dff31342a184839b8de623c483f8f4c1dda1bd4f696a7c9c714cfa42d22",
                   "test/win32/upgrade-resume-readiness.ps1":  "bd269e2436e29adb7d451c03c05450c2f5ca345f59dc66f230e06238c39ca70a",

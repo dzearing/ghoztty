@@ -125,6 +125,12 @@ $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 # a published package, and a published package contains a release build.
 $env:GHOZTTY_TEST_ALLOW_RELEASE = '1'
 
+# A RELEASE build registers the user's own ghoztty:// handler wherever it runs
+# from, and the sandbox moves LOCALAPPDATA but not HKCU\Software\Classes - so
+# left on, this run re-points the user's links at the GhozttyT1209Test install
+# the teardown deletes (seen 2026-10-23 by acceptance-parallel's state check).
+$env:GHOZTTY_URL_SCHEME = 'off'
+
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $work = Join-Path $env:TEMP 'ghoztty-t1209'
 New-Item -ItemType Directory -Force $work | Out-Null

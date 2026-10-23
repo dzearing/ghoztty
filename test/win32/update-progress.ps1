@@ -20,6 +20,10 @@
 #      background, before the user clicks anything) shows NO panel: there is
 #      nobody waiting on it, and chrome for an unprompted background transfer
 #      is chrome the user did not ask for.
+#   5. CANCEL (T1244; section 6 below) stops a transfer blocked on a stalled
+#      read, says "cancelled" rather than "failed", stages nothing, keeps the
+#      app up, and leaves the offer in place - the balloon starts it again,
+#      and a cancel during that second download's connect phase stops it too.
 #
 # Nothing here touches GitHub or the user's installed Ghoztty: the release
 # feed is a file:// JSON, the asset is served from 127.0.0.1 by this script,
@@ -397,6 +401,88 @@ Assert ((Get-AppLog) -match 'update download failed: error\.NotAPackage') `
     'it ran to completion and failed the PACKAGE check, not the length check'
 Assert ((Get-AppLog) -notmatch 'the transfer was cut short') `
     'an unknown length was never treated as a short read'
+
+Stop-AssetServer
+Stop-DebugGhoztty
+
+# ------------------------------------------- 6: the user can change their mind
+Write-Host '== 6: Cancel stops the download, says so, and leaves the offer up (T1244)'
+$port6 = Get-FreePort
+# 2 MB arrives, then the server holds the connection open for 90s. The server
+# is single-threaded, so a SECOND connection made during that hang is accepted
+# by the OS and never answered - which puts the second download's cancel in
+# the connect phase, where no read is in flight to fail.
+Assert (Start-AssetServer -Port $port6 -TotalBytes (12 * 1024 * 1024) -ChunkBytes (64 * 1024) `
+        -DelayMs 10 -StopAfterBytes (2 * 1024 * 1024) -HangSeconds 90) `
+    'asset server listening (cancel scenario)'
+$assetUrl6 = "http://127.0.0.1:$port6/download/win-v9.9.9/Ghoztty-9.9.9-x64.msi"
+$feed6 = New-Feed 'cancel.json' $assetUrl6
+
+# The panel's Cancel: BN_CLICKED (0) in the high word, IDCANCEL (2) in the
+# low - what the button itself sends its parent.
+function Invoke-PanelCancel {
+    $p = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyUpdateProgress')
+    if ($p.Count -eq 0) { return $false }
+    return (Send-TestRawMessage -Window ([IntPtr]$p[-1].Hwnd) -Message ([uint32]$WM_COMMAND) `
+            -WParam ([IntPtr]2) -LParam ([IntPtr]::Zero))
+}
+function Get-Count([string]$Pattern) { ([regex]::Matches((Get-AppLog), $Pattern)).Count }
+
+Assert (Start-App $feed6 @('--auto-update=check')) 'app up for the cancel scenario'
+Assert (Wait-Log 'showing update balloon for win-v9\.9\.9') 'the app offered the release (cancel scenario)'
+Assert (Invoke-ConsentedDownload) 'consented to the download the user will cancel'
+Assert (Wait-PanelWindow) 'the progress panel appeared (cancel scenario)'
+# Wait for the stall, so the cancel lands on a read that is BLOCKED: only
+# closing the connection under it can end that read before the 90s hang does.
+Assert (Wait-Log 'update progress: Stalled' 25000) 'the transfer stalled with a read blocked on the socket'
+
+$sw = [Diagnostics.Stopwatch]::StartNew()
+Assert (Invoke-PanelCancel) 'Cancel clicked on the panel'
+$cancelled = Wait-Log 'update download cancelled by the user' 8000
+$sw.Stop()
+Assert $cancelled "the blocked download stopped on Cancel ($($sw.ElapsedMilliseconds) ms; the server would have held it 90s)"
+Assert (Wait-Log 'update progress: Download cancelled\. Ghoztty will keep the build you have' 5000) `
+    'the panel said CANCELLED'
+Start-Sleep -Milliseconds 1500
+$log6 = Get-AppLog
+Assert ($log6 -notmatch 'update download failed') 'a cancel was not reported as a failed download'
+Assert ($log6 -notmatch 'update progress: The download failed') 'the panel never said "failed"'
+Assert (@(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyConfirmDialog').Count -eq 0) `
+    'no "could not be downloaded" window was raised over the cancel'
+Assert ($log6 -notmatch 'update download: staged') 'nothing was staged'
+Assert (@(Get-ChildItem $staging -Filter *.msi -ErrorAction SilentlyContinue).Count -eq 0) `
+    'the staging directory holds no package'
+Assert ($log6 -notmatch 'applier armed') 'no installer was armed'
+Assert ($null -ne (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue)) 'the app is still running - it did not quit to install'
+Assert ($log6 -match 'user deferred win-v9\.9\.9') 'the cancel was recorded as a deferral of the offer'
+
+# The panel lingers on its last sentence, then goes.
+for ($t = 0; $t -lt 8000; $t += 250) {
+    if (@(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyUpdateProgress').Count -eq 0) { break }
+    Start-Sleep -Milliseconds 250
+}
+Assert (@(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyUpdateProgress').Count -eq 0) `
+    'the cancelled panel closed itself'
+
+# The offer survived: the balloon starts the download again. A download still
+# marked in flight would answer "still downloading" and raise no dialog.
+$panelLinesBefore = Get-Count 'update progress: '
+Assert (Invoke-ConsentedDownload) 'the balloon offered the update AGAIN and the dialog was OKed'
+Assert (Wait-PanelWindow) 'a second download started, with its own panel'
+Assert (Wait-Log 'update progress: 0 bytes downloaded' 5000) `
+    'the second download is waiting on a server that has not answered'
+Assert ((Get-Count 'update progress: ') -gt $panelLinesBefore) 'the second panel is reporting'
+
+$sw2 = [Diagnostics.Stopwatch]::StartNew()
+Assert (Invoke-PanelCancel) 'Cancel clicked while the connection was still being opened'
+$deadline = 8000
+while ($sw2.ElapsedMilliseconds -lt $deadline -and (Get-Count 'update download cancelled by the user') -lt 2) {
+    Start-Sleep -Milliseconds 100
+}
+$sw2.Stop()
+Assert ((Get-Count 'update download cancelled by the user') -eq 2) `
+    "a cancel during the connect phase stopped it too ($($sw2.ElapsedMilliseconds) ms)"
+Assert ((Get-AppLog) -notmatch 'update download failed') 'neither cancel read as a failure'
 
 Stop-AssetServer
 

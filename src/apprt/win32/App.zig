@@ -9770,13 +9770,20 @@ const UPDATE_URL = "https://api.github.com/repos/dzearing/ghoztty/releases?per_p
 /// wparam == 0 carries manual-check feedback instead: lparam 0 = up to
 /// date, 1 = check failed, 2 = a download failed (only posted for checks the
 /// user asked for, or for a download the user consented to) — or
-/// `update_refresh_code`, which is not feedback at all (T1674).
+/// `update_refresh_code`, which is not feedback at all (T1674), or
+/// `update_cancelled_code`, the user's Cancel on that download (T1244).
 const WM_APP_UPDATE_AVAILABLE: u32 = w32.WM_APP + 2;
 
 /// wparam == 0 lparam for "an automatic check re-found the offer already on
 /// screen": nothing to say, but the badge is repainted so its colour catches up
 /// with how long the offer has been outstanding (T1674).
 const update_refresh_code: isize = 4;
+
+/// wparam == 0 lparam for "the user pressed Cancel on a consented download"
+/// (T1244). Not a failure, so it raises no failure window: the panel has
+/// already said "Download cancelled", and the offer stays up so the balloon
+/// can start the download again.
+const update_cancelled_code: isize = 5;
 
 /// What a completed update check hands the GUI thread. Heap-allocated and
 /// handed over by pointer rather than assembled from wparam/lparam widths:
@@ -10374,7 +10381,14 @@ fn updateDownloadThread(app: *App, version: []u8, url: []u8, shared: *update_pro
     const staged: []u8 = update_install.download(alloc, url, version, .{
         .ctx = shared,
         .report = reportUpdateProgress,
+        .abort = &shared.abort,
     }) catch |err| {
+        if (err == error.Cancelled) {
+            log.info("update download cancelled by the user; nothing staged", .{});
+            shared.finish(.cancelled);
+            postUpdateFeedback(app, update_cancelled_code);
+            return;
+        }
         log.warn("update download failed: {}", .{err});
         shared.finish(.failed);
         postUpdateFeedback(app, 2);
@@ -10561,6 +10575,13 @@ fn noteUpdateDeferred(self: *App) void {
 /// "Check for Updates…", or they consented to a download — so all three land
 /// in a window (T1565). The automatic arm never reaches this function.
 fn showUpdateFeedback(self: *App, code: isize) void {
+    if (code == update_cancelled_code) {
+        // The user changed their mind (T1244). The download is over, so the
+        // balloon may start another; the offer itself was never consumed.
+        self.update_download_inflight = false;
+        self.noteUpdateDeferred();
+        return;
+    }
     if (code == 0) {
         var body_utf8: [256]u8 = undefined;
         const body = std.fmt.bufPrint(
