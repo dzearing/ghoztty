@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-23T07:15:42-07:00",
-    "commit":  "771593eae",
+    "generated":  "2026-10-23T07:34:36-07:00",
+    "commit":  "39aa7fa02",
     "uncommitted":  [
-
+                        "test/win32/pane-stack-strip.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -332,7 +332,7 @@
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
                   "test/win32/pane-stack-grid.ps1":  "ba993d5e638c8dc7505d0d07fffb8780e80d2056e13f18e36a8df9568aad40e0",
                   "test/win32/pane-stack-slide.ps1":  "6a439b85b56642ad6704b932454cc1d44c24ec75c506616c2257525944550bd8",
-                  "test/win32/pane-stack-strip.ps1":  "92efb9fdd1d76f19955cefd1da555fa263fb5b8286e27c5ccbb1102e4b5919c4",
+                  "test/win32/pane-stack-strip.ps1":  "aa1393ef9fccee12deae56d6434928cdec110bbe12d67afe3c1a35d25979fb0f",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "576b87de1a7a6f1982cc28067614390510ebc9de6304a154587680ec6025b6a6",
@@ -416,7 +416,6 @@
                   "test/win32/split-dim-viewer.ps1":  "f45535282b14c9c829db5e3e8bf943252988f8488ccbcbf80ca57a7278f4ec6d",
                   "test/win32/split-divider.ps1":  "b9cc35cc3995da33bfc4bf8963d6e6926d402d2d8cf93dee2b27d21b0daf16da",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
-                  "test/win32/split-name-collision.ps1":  "ad60c25905ebdb1b3e437da8b2923eb064fbb82fcac245e86efabf803af76889",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",

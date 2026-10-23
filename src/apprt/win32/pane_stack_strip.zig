@@ -16,6 +16,7 @@ const testing = std.testing;
 const color_math = @import("color_math.zig");
 const Rgb = color_math.Rgb;
 const desk_palette = @import("desk_palette.zig");
+const pane_elevation = @import("pane_elevation.zig");
 const Direction = @import("pane_stack_layout.zig").Direction;
 
 /// The label's size and weight: Mac's 11 pt semibold.
@@ -45,11 +46,65 @@ pub fn scrimAlpha(light: bool, hovered: bool) f64 {
 /// a flat fill, so the layers are resolved here into the opaque colour they
 /// read as.
 pub fn stripRgb(bg: Rgb, hovered: bool) Rgb {
+    return stripOver(bg, bg, hovered);
+}
+
+/// The strip's fill where the pane under it shows `pane`: `stripRgb`'s
+/// layers with the scrim laid over that pixel rather than over the flat
+/// background. They differ on a glass pane (T2160), whose card is a sheet
+/// of `bg` over the desk, so the desk tints the strip through it as it does
+/// on Mac.
+pub fn stripOver(pane: Rgb, bg: Rgb, hovered: bool) Rgb {
     const light = color_math.isLight(bg);
     const base = color_math.mix(bg, black, if (light) 0.06 else 0.35);
-    const under = color_math.mix(bg, black, scrimAlpha(light, hovered));
+    const under = color_math.mix(pane, black, scrimAlpha(light, hovered));
     return color_math.mix(under, base, if (light) 0.85 else 0.82);
 }
+
+/// A strip on a glass pane (T2160): the pane's background, the sheet the
+/// tucked card shows (`Window.glassSheetFor` - the thin one, faded, since a
+/// tucked pane is never the focused one), and whether it is hovered.
+pub const Glass = struct {
+    bg: Rgb,
+    sheet: pane_elevation.Sheet,
+    hovered: bool,
+};
+
+/// `stripOver` a glass sheet, per desk channel value, as byte tables: every
+/// layer - the sheet's linear-light mix, the scrim, the strip - works on
+/// each channel alone, so one lookup per channel is the whole answer.
+pub const GlassLut = struct {
+    r: [256]u8,
+    g: [256]u8,
+    b: [256]u8,
+
+    pub fn init(glass: Glass) GlassLut {
+        var l: GlassLut = undefined;
+        for (0..256) |i| {
+            const c: u32 = @intCast(i);
+            const s = pane_elevation.sheetMix((c << 16) | (c << 8) | c, glass.bg, glass.sheet);
+            const out = stripOver(.{
+                .r = @truncate(s >> 16),
+                .g = @truncate(s >> 8),
+                .b = @truncate(s),
+            }, glass.bg, glass.hovered);
+            l.r[i] = out.r;
+            l.g[i] = out.g;
+            l.b[i] = out.b;
+        }
+        return l;
+    }
+
+    /// The strip over desk pixel `desk` (0x00RRGGBB; the alpha byte is
+    /// ignored).
+    pub fn at(l: *const GlassLut, desk: u32) Rgb {
+        return .{
+            .r = l.r[(desk >> 16) & 0xFF],
+            .g = l.g[(desk >> 8) & 0xFF],
+            .b = l.b[desk & 0xFF],
+        };
+    }
+};
 
 /// The label's ink on `strip`: black at 65% on a light theme, white at 75% on
 /// a dark one, stronger while the strip is hovered.
@@ -81,6 +136,9 @@ pub const Band = struct {
     tab: Rect,
     axis: Direction,
     rgb: Rgb,
+    /// Set on a glass pane (T2160): the band is resolved per pixel over the
+    /// sheet on the desk under it, and `rgb` is only the label's reference.
+    glass: ?Glass = null,
 };
 
 /// Paint a strip's band into a desk composite (`PaneDesk`; 0x00RRGGBB with
@@ -92,6 +150,34 @@ pub const Band = struct {
 /// it belongs to goes on under the card in front. `tab` is in buffer pixels
 /// and is clipped to the buffer; `radius` 0 paints a plain band.
 pub fn paintBand(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, rgb: Rgb, radius: i32) void {
+    paintWith(buf, w, h, tab, axis, radius, Solid{ .rgb = rgb });
+}
+
+/// `paintBand` on a glass pane (T2160): each pixel is the strip over the
+/// sheet on `desk` there (the bare desk, `w` x `h` like `buf`), rather than
+/// one colour resolved over the opaque background.
+pub fn paintGlassBand(buf: []u32, desk: []const u32, w: usize, h: usize, tab: Rect, axis: Direction, glass: Glass, radius: i32) void {
+    std.debug.assert(desk.len >= w * h);
+    const lut = GlassLut.init(glass);
+    paintWith(buf, w, h, tab, axis, radius, OverDesk{ .lut = &lut, .desk = desk });
+}
+
+const Solid = struct {
+    rgb: Rgb,
+    fn at(self: Solid, _: usize) Rgb {
+        return self.rgb;
+    }
+};
+
+const OverDesk = struct {
+    lut: *const GlassLut,
+    desk: []const u32,
+    fn at(self: OverDesk, i: usize) Rgb {
+        return self.lut.at(self.desk[i]);
+    }
+};
+
+fn paintWith(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, radius: i32, source: anytype) void {
     const x0: i32 = @max(tab.left, 0);
     const y0: i32 = @max(tab.top, 0);
     const x1: i32 = @min(tab.right, @as(i32, @intCast(w)));
@@ -104,12 +190,6 @@ pub fn paintBand(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, rgb
         .vertical => .{ tab.width(), tab.height() },
     };
     const rad: i32 = @max(0, @min(radius, @min(@divTrunc(shared, 2), other)));
-    const src: desk_palette.Rgbf = .{
-        .r = @floatFromInt(rgb.r),
-        .g = @floatFromInt(rgb.g),
-        .b = @floatFromInt(rgb.b),
-    };
-    const solid = desk_palette.packRgb(rgb.r, rgb.g, rgb.b) | 0xFF00_0000;
     var y = y0;
     while (y < y1) : (y += 1) {
         const row = @as(usize, @intCast(y)) * w;
@@ -118,10 +198,16 @@ pub fn paintBand(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, rgb
             const i = row + @as(usize, @intCast(x));
             const a = bandCoverage(tab, axis, rad, x, y);
             if (a <= 0) continue;
+            const rgb = source.at(i);
             if (a >= 1) {
-                buf[i] = solid;
+                buf[i] = desk_palette.packRgb(rgb.r, rgb.g, rgb.b) | 0xFF00_0000;
                 continue;
             }
+            const src: desk_palette.Rgbf = .{
+                .r = @floatFromInt(rgb.r),
+                .g = @floatFromInt(rgb.g),
+                .b = @floatFromInt(rgb.b),
+            };
             const dst = buf[i];
             buf[i] = desk_palette.withCoverage(
                 desk_palette.Rgbf.lerp(desk_palette.Rgbf.unpack(dst), src, a).pack(),
@@ -321,6 +407,69 @@ test "pane_stack_strip: an elevated band rounds its leading corners only, antial
     paintBand(&buf3, w, h, .{ .left = -5, .top = -5, .right = 20, .bottom = 20 }, .horizontal, rgb, 0);
     try testing.expectEqual(solid, buf3[0]);
     try testing.expectEqual(desk, buf3[20 * w + 20]);
+}
+
+test "pane_stack_strip: on glass the strip is resolved over the sheet, so the desk tints it" {
+    const bg: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
+    // Over a desk pixel that is the background itself, glass changes
+    // nothing: the sheet over it is the background.
+    const thin = pane_elevation.sheetFor(true, 0);
+    const lut = GlassLut.init(.{ .bg = bg, .sheet = thin, .hovered = false });
+    const same = lut.at(desk_palette.packRgb(bg.r, bg.g, bg.b));
+    try testing.expectEqual(stripRgb(bg, false), same);
+    // Over a blue desk the strip leans blue, and over a red one red: the
+    // opaque strip is the same colour on both.
+    const blue = lut.at(desk_palette.packRgb(20, 60, 160));
+    const red = lut.at(desk_palette.packRgb(160, 40, 30));
+    try testing.expect(blue.b > same.b and blue.b > red.b);
+    try testing.expect(red.r > same.r and red.r > blue.r);
+    // Still a dark band: darker than the sheet it sits on.
+    const sheet = pane_elevation.sheetMix(desk_palette.packRgb(20, 60, 160), bg, thin);
+    try testing.expect(color_math.luminance(blue) < color_math.luminance(.{
+        .r = @truncate(sheet >> 16),
+        .g = @truncate(sheet >> 8),
+        .b = @truncate(sheet),
+    }));
+    // Hovered lightens it, as on an opaque pane.
+    const hl = GlassLut.init(.{ .bg = bg, .sheet = thin, .hovered = true });
+    try testing.expect(color_math.luminance(hl.at(desk_palette.packRgb(20, 60, 160))) > color_math.luminance(blue));
+    // The table is the per-pixel layers exactly.
+    const d: u32 = desk_palette.packRgb(90, 120, 200);
+    const s = pane_elevation.sheetMix(d, bg, thin);
+    try testing.expectEqual(stripOver(.{
+        .r = @truncate(s >> 16),
+        .g = @truncate(s >> 8),
+        .b = @truncate(s),
+    }, bg, false), lut.at(d));
+}
+
+test "pane_stack_strip: a glass band follows the desk under each pixel and keeps the rounded corners" {
+    const w = 40;
+    const h = 60;
+    const bg: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
+    // A desk that runs from blue at the top to red at the bottom.
+    var desk: [w * h]u32 = undefined;
+    for (0..h) |y| for (0..w) |x| {
+        const t: u32 = @intCast(y * 255 / (h - 1));
+        desk[y * w + x] = desk_palette.packRgb(@intCast(t), 40, @intCast(255 - t)) | 0xFF00_0000;
+    };
+    var buf = desk;
+    const glass: Glass = .{ .bg = bg, .sheet = pane_elevation.sheetFor(true, 0), .hovered = false };
+    const tab: Rect = .{ .left = 5, .top = 5, .right = 25, .bottom = 55 };
+    paintGlassBand(&buf, &desk, w, h, tab, .horizontal, glass, 8);
+    const lut = GlassLut.init(glass);
+    // Inside: the strip over that row's desk, opaque; the rows differ.
+    const top = lut.at(desk[10 * w + 15]);
+    const bottom = lut.at(desk[50 * w + 15]);
+    try testing.expectEqual(desk_palette.packRgb(top.r, top.g, top.b) | 0xFF00_0000, buf[10 * w + 15]);
+    try testing.expectEqual(desk_palette.packRgb(bottom.r, bottom.g, bottom.b) | 0xFF00_0000, buf[50 * w + 15]);
+    try testing.expect(top.b > bottom.b and bottom.r > top.r);
+    // The leading corner is still desk, the trailing one band.
+    try testing.expectEqual(desk[5 * w + 5], buf[5 * w + 5]);
+    const tr = lut.at(desk[5 * w + 24]);
+    try testing.expectEqual(desk_palette.packRgb(tr.r, tr.g, tr.b) | 0xFF00_0000, buf[5 * w + 24]);
+    // Outside the tab: untouched.
+    try testing.expectEqual(desk[30 * w + 30], buf[30 * w + 30]);
 }
 
 test "pane_stack_strip: a tall strip's label runs down its middle; a short one's starts after the inset" {

@@ -8500,6 +8500,9 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             },
             .axis = s.axis,
             .rgb = pane_stack_strip.stripRgb(strip_bg, hovered),
+            // A glass card's strip is laid over its sheet (T2160): the
+            // tucked pane's, which is never the focused one's.
+            .glass = if (glass) .{ .bg = strip_bg, .sheet = self.glassSheetFor(s.view), .hovered = hovered } else null,
         };
     }
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..n], bands[0..nt], .{

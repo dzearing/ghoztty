@@ -207,7 +207,14 @@ pub fn paint(
     @memcpy(comp.pixels(), desk.pixels());
     pane_elevation.paintCards(comp.pixels(), @intCast(w), @intCast(h), cards, style);
     const radius = pane_elevation.radiusPx(style.scale);
-    for (strips) |s| pane_stack_strip.paintBand(comp.pixels(), @intCast(w), @intCast(h), s.tab, s.axis, s.rgb, radius);
+    for (strips) |s| {
+        // On glass the band sits over the tucked card's sheet, so the desk
+        // under it tints it (T2160).
+        if (s.glass) |g|
+            pane_stack_strip.paintGlassBand(comp.pixels(), desk.pixels(), @intCast(w), @intCast(h), s.tab, s.axis, g, radius)
+        else
+            pane_stack_strip.paintBand(comp.pixels(), @intCast(w), @intCast(h), s.tab, s.axis, s.rgb, radius);
+    }
     self.syncLights(comp, lights, style.scale);
     for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
     if (opacity) |o| {

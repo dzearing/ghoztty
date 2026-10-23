@@ -18,6 +18,10 @@
 #       default background (#282c34) gives, a band at least 8 DIP wide; its
 #       leading corners are the card's rounded curve in the elevated style and
 #       square in the flat one, its trailing corner square in both (T2121)
+#       T2160: with -Glass (glass panes on, the elevated style) the strip is
+#       laid over the tucked card's glass sheet, so the desk tints it: each
+#       strip reads the colour the desk beside it predicts, and the opaque
+#       colour would not be
 #   D7) T2121: hovering a strip lightens its card's scrim - 45% to 20% - so the
 #       strip reads the lighter colour, and goes back when the pointer leaves
 #   D2) the strip's label follows the banner title: a long `## ...` title set
@@ -32,6 +36,9 @@
 #   D6) T2120: a strip dropped at the screen's right edge opens a window of
 #       its own over the right half of the work area, holding that pane
 #
+# The elevated leg pins `macos-pane-glass=false` (its default is on), so it
+# keeps checking the opaque colour; -Glass is the glass leg (T2160).
+#
 # -NegativeControl inverts D1 to "the leading edge is NOT the strip colour" -
 # the answer before T2109, when nothing was painted there - and MUST fail.
 #
@@ -40,11 +47,14 @@
 # repo's zig-out. Runs on the BACKGROUND test desktop.
 #
 #   powershell -NoProfile -File test\win32\pane-stack-strip.ps1
+#   powershell -NoProfile -File test\win32\pane-stack-strip.ps1 -PaneStyle elevated
+#   powershell -NoProfile -File test\win32\pane-stack-strip.ps1 -Glass
 param(
     [string]$ExePath,
     [string]$AgentExe,
     [switch]$NegativeControl,
     [ValidateSet('flat', 'elevated')][string]$PaneStyle = 'flat',
+    [switch]$Glass,
     [switch]$Interactive
 )
 
@@ -74,7 +84,9 @@ function Say($m) { Write-Host $m }
 
 function Stop-RepoInstances { [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700) }
 
-$appArgs = @('--config-default-files=false', '--session-persistence=false', "--macos-pane-style=$PaneStyle")
+# Glass panes exist only in the elevated style (`Window.paneGlass`).
+if ($Glass) { $PaneStyle = 'elevated' }
+$appArgs = @('--config-default-files=false', '--session-persistence=false', "--macos-pane-style=$PaneStyle", "--macos-pane-glass=$(([string][bool]$Glass).ToLower())")
 
 function Start-App {
     $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs
@@ -136,6 +148,47 @@ function Get-ExpectedStrip([int[]]$bg, [switch]$Hovered) {
         [int][math]::Round($under * 0.18 + $base * 0.82, $aw)
     })
 }
+# T2160: the strip on a glass pane over desk pixel `desk`, as
+# `pane_stack_strip.GlassLut` resolves it - the tucked card's thin sheet
+# (`GLASS_UNFOCUSED_TINT` 15% of the background over the desk, in linear
+# light, quantised to 4096 steps as `pane_elevation.mixChannel` is), faded
+# back toward the desk by the dim wash (1 - unfocused-split-opacity 0.7, as a
+# byte), then the scrim and the 82% strip over that. Each channel alone.
+function ConvertTo-Linear([double]$c) {
+    $c = $c / 255.0
+    if ($c -le 0.04045) { return $c / 12.92 }
+    return [math]::Pow(($c + 0.055) / 1.055, 2.4)
+}
+function ConvertTo-Srgb([double]$l) {
+    $aw = [MidpointRounding]::AwayFromZero
+    # Double literals: [math]::Max(0, $l) binds the Int32 overload and
+    # truncates the light to 0.
+    $l = [math]::Round([math]::Min(1.0, [math]::Max(0.0, $l)) * 4095, $aw) / 4095
+    $c = if ($l -le 0.0031308) { $l * 12.92 } else { 1.055 * [math]::Pow($l, 1 / 2.4) - 0.055 }
+    return [int][math]::Round([math]::Min(1.0, [math]::Max(0.0, $c)) * 255, $aw)
+}
+function Get-ExpectedGlassStrip([int[]]$bg, $desk, [switch]$Hovered) {
+    if ($null -eq $desk) { return $null }
+    $aw = [MidpointRounding]::AwayFromZero
+    $t = 0.15
+    $fade = [math]::Round(0.3 * 255, $aw) / 255.0
+    $scrim = if ($Hovered) { 0.2 } else { 0.45 }
+    $d = @([int]$desk.R, [int]$desk.G, [int]$desk.B)
+    $out = @()
+    for ($i = 0; $i -lt 3; $i++) {
+        $m = ConvertTo-Srgb ((ConvertTo-Linear $d[$i]) * (1 - $t) + (ConvertTo-Linear $bg[$i]) * $t)
+        $sheet = [math]::Round($m * (1 - $fade) + $d[$i] * $fade, $aw)
+        $base = [math]::Round($bg[$i] * 0.65, $aw)
+        $under = [math]::Round($sheet * (1 - $scrim), $aw)
+        $out += [int][math]::Round($under * 0.18 + $base * 0.82, $aw)
+    }
+    return $out
+}
+# The desk beside tucked pane `$p` at row `$y`: in the gap before its strip.
+function Get-DeskBeside($shot, $p, [int]$y) {
+    return Get-TestPixel -Shot $shot -X ($p.Left - [int][math]::Floor(4 * $script:scale)) -Y $y
+}
+
 function Test-Near($c, [int[]]$rgb, [int]$tol = 4) {
     if ($null -eq $c) { return $false }
     return ([math]::Abs($c.R - $rgb[0]) -le $tol -and [math]::Abs($c.G - $rgb[1]) -le $tol -and [math]::Abs($c.B - $rgb[2]) -le $tol)
@@ -148,15 +201,21 @@ function Get-Shot([IntPtr]$top) { return Get-TestWindowPixels -Window $top -Sync
 # is read from past the leading corner's curve (`$script:cornerPx`, the card
 # radius in the elevated style, T2121), so the desk showing round it is not
 # taken for the strip's end.
+#
+# On glass (T2160) the strip is within a few levels of the desk's dark top,
+# so the width is read on a row near the strip's foot instead, where the desk
+# beyond it is far off the strip colour; the colour is still the top row's.
 function Measure-Strip($shot, $p) {
     $y = $p.Top + 4
     $x0 = $p.Left + $script:cornerPx + 2
     $c0 = Get-TestPixel -Shot $shot -X $x0 -Y $y
+    $wy = if ($Glass) { $p.Bottom - $script:cornerPx - 4 } else { $y }
+    $cw = Get-TestPixel -Shot $shot -X $x0 -Y $wy
     $w = 0
-    if ($null -ne $c0) {
-        $rgb = @([int]$c0.R, [int]$c0.G, [int]$c0.B)
+    if ($null -ne $cw) {
+        $rgb = @([int]$cw.R, [int]$cw.G, [int]$cw.B)
         $x = $x0
-        while ($x -lt $p.Right -and (Test-Near (Get-TestPixel -Shot $shot -X $x -Y $y) $rgb 6)) { $x++ }
+        while ($x -lt $p.Right -and (Test-Near (Get-TestPixel -Shot $shot -X $x -Y $wy) $rgb 6)) { $x++ }
         $w = $x - $p.Left
     }
     return [pscustomobject]@{ Color = $c0; Width = $w }
@@ -335,7 +394,20 @@ try {
             $strips[$t.Pane.Hwnd] = $m
             $got = if ($m.Color) { 'rgb({0},{1},{2})' -f $m.Color.R, $m.Color.G, $m.Color.B } else { 'off-capture' }
             $isStrip = Test-Near $m.Color $expected
-            if ($NegativeControl) {
+            # The colour this strip should read: on glass, its own (T2160).
+            $ref = $expected
+            if ($Glass -and -not $NegativeControl) {
+                # T2160: over the sheet, so the desk beside it predicts it.
+                $deskAt = Get-DeskBeside $shot $t.Pane ($t.Pane.Top + 4)
+                $glassExp = Get-ExpectedGlassStrip @(0x28, 0x2c, 0x34) $deskAt
+                $apart = if ($glassExp) { [math]::Abs($glassExp[0] - $expected[0]) + [math]::Abs($glassExp[1] - $expected[1]) + [math]::Abs($glassExp[2] - $expected[2]) } else { 0 }
+                Say ("      glass: desk beside {0} -> expected rgb({1}); opaque would be rgb({2}), {3} levels apart" -f (Format-Rgb $deskAt), ($glassExp -join ','), ($expected -join ','), $apart)
+                Assert (Test-Near $m.Color $glassExp 1) ("D1: on glass the tucked pane at x={0} shows the strip over the sheet, rgb({1}) (got {2})" -f $t.Pane.Left, ($glassExp -join ','), $got)
+                # The check can tell glass from opaque only where they differ.
+                Assert ($apart -ge 4) "D1: the desk there puts the glass strip $apart levels from the opaque one (at least 4, or the check above proves nothing)"
+                Assert (-not (Test-Near $m.Color $expected 1)) "D1: and it is not the opaque strip rgb($($expected -join ',')) ($got)"
+                if ($glassExp) { $ref = $glassExp }
+            } elseif ($NegativeControl) {
                 Assert (-not $isStrip) "NEGATIVE: tucked pane at x=$($t.Pane.Left) is NOT the strip colour ($got)"
             } else {
                 Assert $isStrip ("D1: tucked pane at x={0} shows the strip colour rgb({1}) (got {2})" -f $t.Pane.Left, ($expected -join ','), $got)
@@ -359,14 +431,14 @@ try {
                     param($c, $desk)
                     if ($null -eq $c -or $null -eq $desk) { return $false }
                     $dd = [math]::Abs($c.R - $desk.R) + [math]::Abs($c.G - $desk.G) + [math]::Abs($c.B - $desk.B)
-                    $ds = [math]::Abs($c.R - $expected[0]) + [math]::Abs($c.G - $expected[1]) + [math]::Abs($c.B - $expected[2])
+                    $ds = [math]::Abs($c.R - $ref[0]) + [math]::Abs($c.G - $ref[1]) + [math]::Abs($c.B - $ref[2])
                     return ($dd -lt $ds)
                 }
                 Assert ((& $nearDesk $lead $deskTop) -and (& $nearDesk $leadLow $deskLow)) ("D1: its leading corners are rounded - the desk shows there (top {0} vs desk {1}, bottom {2} vs desk {3})" -f (Format-Rgb $lead), (Format-Rgb $deskTop), (Format-Rgb $leadLow), (Format-Rgb $deskLow))
             } else {
                 Assert ((Test-Near $lead $expected) -and (Test-Near $leadLow $expected)) ("D1: its leading corners are square in the flat style (top {0}, bottom {1})" -f (Format-Rgb $lead), (Format-Rgb $leadLow))
             }
-            Assert (Test-Near $trail $expected) "D1: its trailing corner is square ($(Format-Rgb $trail))"
+            Assert (Test-Near $trail $ref $(if ($Glass) { 1 } else { 4 })) "D1: its trailing corner is square ($(Format-Rgb $trail) vs rgb($($ref -join ',')))"
         }
     } finally { Close-TestWindowPixels -Shot $shot }
 
@@ -376,8 +448,21 @@ try {
         $h = $tucked[0]
         $hw = $strips[$h.Pane.Hwnd].Width
         $hoverExp = Get-ExpectedStrip @(0x28, 0x2c, 0x34) -Hovered
+        $restExp = $expected
+        $tol = 1
         $shot = Get-Shot $top
-        try { $rest = Get-StripMid $shot $h.Pane $hw } finally { Close-TestWindowPixels -Shot $shot }
+        try {
+            $rest = Get-StripMid $shot $h.Pane $hw
+            if ($Glass) {
+                # T2160: both read over the sheet on the desk at that row.
+                $deskMid = Get-DeskBeside $shot $h.Pane ($h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 2))
+                $restExp = Get-ExpectedGlassStrip @(0x28, 0x2c, 0x34) $deskMid
+                $hoverExp = Get-ExpectedGlassStrip @(0x28, 0x2c, 0x34) $deskMid -Hovered
+                # Read straight off the desk beside it, so as tight as the
+                # opaque check: 2 would already admit the opaque strip.
+                $tol = 1
+            }
+        } finally { Close-TestWindowPixels -Shot $shot }
         # A posted move cannot be photographed hovered off the input desktop
         # (the leave drains before the paint); `capture-hover` moves, paints
         # and photographs on one stack (T282).
@@ -396,12 +481,13 @@ try {
             $back = $cold.Bitmap.GetPixel($h.Pane.Left + $hw - 3 - $cold.Left, $my - $cold.Top)
             Close-TestHoverCapture $cold
         }
-        Say ("      at rest {0}, hovered {1} (changed={5}), elsewhere {2}; expected rgb({3}) -> rgb({4}) {6}" -f (Format-Rgb $rest), (Format-Rgb $lit), (Format-Rgb $back), ($expected -join ','), ($hoverExp -join ','), $(if ($hot) { $hot.Changed }), (Get-LastHoverCaptureError))
+        if ($Glass) { Say ("      glass: desk beside the strip's middle {0}" -f (Format-Rgb $deskMid)) }
+        Say ("      at rest {0}, hovered {1} (changed={5}), elsewhere {2}; expected rgb({3}) -> rgb({4}) {6}" -f (Format-Rgb $rest), (Format-Rgb $lit), (Format-Rgb $back), ($restExp -join ','), ($hoverExp -join ','), $(if ($hot) { $hot.Changed }), (Get-LastHoverCaptureError))
         Assert ($null -ne $hot -and $hot.Changed) "D7: hovering the strip changes the frame (changed=$(if ($hot) { $hot.Changed }))"
-        Assert (Test-Near $rest $expected 1) "D7: at rest the strip is rgb($($expected -join ',')) ($(Format-Rgb $rest))"
-        Assert (Test-Near $lit $hoverExp 1) "D7: hovered, it lightens to rgb($($hoverExp -join ',')) with its scrim ($(Format-Rgb $lit))"
+        Assert (Test-Near $rest $restExp $tol) "D7: at rest the strip is rgb($($restExp -join ',')) ($(Format-Rgb $rest))"
+        Assert (Test-Near $lit $hoverExp $tol) "D7: hovered, it lightens to rgb($($hoverExp -join ',')) with its scrim ($(Format-Rgb $lit))"
         Assert ($null -ne $lit -and $null -ne $rest -and ($lit.R + $lit.G + $lit.B) -gt ($rest.R + $rest.G + $rest.B)) 'D7: the hovered strip is lighter than at rest'
-        Assert (Test-Near $back $expected 1) "D7: hovering a pane on show leaves the strip at rest ($(Format-Rgb $back))"
+        Assert (Test-Near $back $restExp $tol) "D7: hovering a pane on show leaves the strip at rest ($(Format-Rgb $back))"
     }
 
     # ---- D2: the label follows the banner title --------------------------------
