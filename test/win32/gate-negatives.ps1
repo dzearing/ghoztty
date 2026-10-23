@@ -114,6 +114,7 @@ function Say([string]$m) { Write-Host $m }
 $Self = 'test\win32\gate-negatives.ps1'
 $Loop = 'test\win32\go-loop-guard.ps1'
 $Seat = 'test\win32\parity-tasks-seat.ps1'
+$Lanes = 'test\win32\parity-tasks-lanes.ps1'
 $Registry = @(
     # --- go-loop-exec.ps1 claim, its own reports ---------------------------
     [pscustomobject]@{ Label = 'STRANDED WORK'; Kind = 'gate'; Demo = $Loop; Marker = 'STRANDED WORK' }
@@ -225,6 +226,8 @@ $Registry = @(
     [pscustomobject]@{ Label = 'DANGLING DEP'; Kind = 'gate'; Demo = $Self; Marker = 'DANGLING DEP' }
     [pscustomobject]@{ Label = 'DEP CYCLE'; Kind = 'gate'; Demo = $Self; Marker = 'DEP CYCLE' }
     [pscustomobject]@{ Label = 'ODD SEAT'; Kind = 'gate'; Demo = $Seat; Marker = 'ODD SEAT' }
+    # T2175. A typo'd `lane:` hides the task from every lane's `next`.
+    [pscustomobject]@{ Label = 'ODD LANE'; Kind = 'gate'; Demo = $Lanes; Marker = 'ODD LANE' }
     [pscustomobject]@{ Label = 'ODD PRIORITY'; Kind = 'gate'; Demo = $Seat; Marker = 'ODD PRIORITY' }
     [pscustomobject]@{ Label = 'ODD TAG'; Kind = 'gate'; Demo = $Seat; Marker = 'ODD TAG' }
     [pscustomobject]@{ Label = 'NO PROGRESS LOG'; Kind = 'gate'; Demo = $Seat; Marker = 'NO PROGRESS LOG' }

@@ -508,6 +508,12 @@ Concretely, in order, with no stops in between:
    skipped rather than handed to you. Do not take one; if you find a task you
    cannot validate here, mark it `seat: mac` and re-run `next`.
 
+   **And for this LANE** (T2175): a task carrying `lane: "a"` (delivery,
+   publishing - work a lane-scoped script refuses elsewhere) is skipped by every
+   other lane's `next` and listed as `Skipped ... for another lane`. A lane-b
+   turn handed lane-A-only work marks it `lane: "a"`, sets it back to `todo`
+   and re-runs `next`; without the field it would just be handed out again.
+
    Step 6 moves it to `done`; if you abandon it instead, set it back to `todo`
    rather than leaving it in progress. A task left in-progress whose file then
    goes untouched shows as **stale** on the dashboard and gets offered up for

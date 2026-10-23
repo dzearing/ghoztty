@@ -1,14 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-22T20:50:52-07:00",
-    "commit":  "96d1ada1b",
+    "generated":  "2026-10-22T21:24:24-07:00",
+    "commit":  "7e4d41b97",
     "uncommitted":  [
-                        "scripts/deliver-windows-build.ps1",
-                        "scripts/delivery-manifest.ps1",
-                        "scripts/install-ownership.ps1",
-                        "scripts/launch-upgrade.ps1",
-                        "scripts/upgrade-ghoztty-windows.ps1"
+                        "scripts/parity-tasks.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "de0387b596e8e31885fa64f769bc9c784b10f9acd938b785c17855ac6ccaac81",
@@ -79,7 +75,7 @@
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
                   "scripts/parity-decisions.ps1":  "2475b9be8aa438a4f5b0cbe1f977253e14a669de074547c869246b83b44d5030",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
-                  "scripts/parity-tasks.ps1":  "d58ee20858dbdf5d01cc82feb974a135374589b2e594b7bbe67af7814a3b6daf",
+                  "scripts/parity-tasks.ps1":  "efd892a1dd2e86003778090ec2e9f1798f40b6bbbf9c2f1bf29634c1e66c5231",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
                   "scripts/publish-windows-release.ps1":  "1cd6f75ffc5deddbb6699b4dfe84e1b8fad40ebb5271f802f1a31ee28613069a",

@@ -36,6 +36,10 @@
 #      up and recovered with a warning; a held mutex is a bounded, named wait
 #      that claims nothing; a -TaskDir run with no GHOZTTY_LOOP_LEDGER never
 #      writes the default ledger.
+#   G. Lane-scoped tasks (T2175): a task carrying `lane: "a"` is never handed
+#      to lane b, fresh or as a resume, and the skip is named; lane a gets it;
+#      without the field lane b does (negative control); a lane that is not
+#      one letter is a validate failure.
 #
 # Hermetic: fixtures, ledger and gate files live under $env:TEMP; the real task
 # dir and the real ledger (%LOCALAPPDATA%\ghoztty\loop-ledger.json) are never
@@ -96,7 +100,7 @@ function Task-Run {
 }
 
 function New-FixtureTask {
-    param([string]$Dir, [string]$Id, [string]$Status = 'todo', [switch]$WithLog)
+    param([string]$Dir, [string]$Id, [string]$Status = 'todo', [switch]$WithLog, [string]$Lane)
     $lines = @(
         '---'
         "id: $Id"
@@ -105,6 +109,9 @@ function New-FixtureTask {
         ('status: ' + (ConvertTo-Json $Status -Compress))
         'commits: []'
         'priority: "P1"'
+    )
+    if ($Lane) { $lines += ('lane: ' + (ConvertTo-Json $Lane -Compress)) }
+    $lines += @(
         '---'
         ''
         "# $Id - lane fixture"
@@ -494,6 +501,31 @@ try {
     $null = Task-Run @('set-status', 'T1', '-Status', 'done') $dirB 'b' @{ GHOZTTY_LOOP_LEDGER_NO_RESERVE = '1' }
     $r = Task-Run @('next', '-Claim') $dirA 'a'
     Assert 'F11 negative control: with release-at-done the other lane IS handed the finished task' ($r.Out -match 'NEXT: T1\b') $r.Out
+
+    "G. Lane-scoped tasks (T2175)"
+    # T1 is a lane-a-only task (a delivery): lane b must never be handed it,
+    # by a fresh claim or by a resume, and must say why it skipped it.
+    Reset-Lanes
+    foreach ($d in @($dirA, $dirB)) { New-FixtureTask -Dir $d -Id 'T1' -Lane 'a' }
+    $r = Task-Run @('next', '-Claim') $dirB 'b'
+    Assert 'G1 lane b skips a lane-a task, says so, and claims the next one' (
+        $r.Out -match 'NEXT: T2\b' -and $r.Out -match 'Skipped 1 todo\(s\) for another lane \(this lane=b\): T1\(lane a\)' -and
+        (Get-FileStatus $dirB 'T1') -eq 'todo') $r.Out
+    $r = Task-Run @('next', '-Claim') $dirA 'a'
+    Assert 'G2 lane a is handed its own lane-a task' ($r.Out -match 'NEXT: T1\b') $r.Out
+    Reset-Lanes
+    New-FixtureTask -Dir $dirB -Id 'T1' -Lane 'a' -Status 'in-progress' -WithLog
+    $r = Task-Run @('next', '-Claim') $dirB 'b'
+    Assert 'G3 lane b does not RESUME a stale lane-a task' ($r.Out -notmatch 'RESUME: T1\b' -and $r.Out -match 'NEXT: T2\b') $r.Out
+    # Negative control: the same todo with no lane field IS handed to lane b,
+    # so G1 is the field's doing and can go red.
+    Reset-Lanes
+    $r = Task-Run @('next', '-Claim') $dirB 'b'
+    Assert 'G4 negative control: without lane: the task goes to lane b' ($r.Out -match 'NEXT: T1\b') $r.Out
+    Reset-Lanes
+    New-FixtureTask -Dir $dirA -Id 'T3' -Lane 'lane-a'
+    $r = Task-Run @('validate') $dirA 'a'
+    Assert 'G5 validate names a lane that is not one letter' ($r.Out -match "ODD LANE: T3 = 'lane-a'") $r.Out
     Complete-TestBody
 }
 finally {

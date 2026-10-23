@@ -247,6 +247,18 @@ if (-not (Test-Path $TaskDir)) {
 # real loop skip the real T3.
 . (Join-Path $PSScriptRoot 'lib\LoopLedger.ps1')
 $LedgerOn = [bool](Get-LedgerPath) -and -not ($TaskDirGiven -and -not $env:GHOZTTY_LOOP_LEDGER)
+# The worktree's lane LETTER (a, b, ...), which a task's `lane:` field names.
+# Not Get-ThisLane: the ledger's lane name can be a full worktree path.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+$script:ThisLaneId = $null
+function Get-ThisLaneId {
+    if (-not $script:ThisLaneId) { $script:ThisLaneId = Get-LoopLaneId -Repo $RepoRoot }
+    return $script:ThisLaneId
+}
+function Test-LaneMatch {
+    param([string]$TaskLane)
+    return (-not $TaskLane) -or ($TaskLane -eq (Get-ThisLaneId))
+}
 $script:ThisLane = $null
 function Get-ThisLane {
     if (-not $script:ThisLane) { $script:ThisLane = Get-LedgerLane -Root $RepoRoot }
@@ -363,6 +375,12 @@ function ConvertFrom-Frontmatter {
         # one that never did. Absent means no, which keeps the field optional
         # forever and every pre-T1315 file valid.
         UserReport   = ((& $unquote (& $get 'user-report')) -match '^(?i:true)$')
+        # The one loop LANE that can do this task (`lane: "a"`), for work a
+        # lane-scoped script refuses anywhere else - delivery, publishing.
+        # Absent means any lane. Before it, T2174 (deliver; lane b exits 6) was
+        # the head of lane b's queue, and handing it back to `todo` as its own
+        # Validation said to just made the next `next -Claim` hand it out again.
+        Lane         = (& $unquote (& $get 'lane')).ToLowerInvariant()
         Path         = $Path
     }
 }
@@ -998,10 +1016,14 @@ switch ($Command) {
         # other seat has a queue, and that answer must not depend on where in
         # the file order this seat's next task happens to sit.
         $otherSeat = @()
+        $otherLane = @()
         foreach ($t in $tasks) {
             if ($t.Status -notmatch '^todo') { continue }
             if (-not (Test-SeatMatch $t.Seat $wantSeat)) {
                 $otherSeat += ("{0}({1})" -f $t.Id, $t.Seat)
+            }
+            elseif (-not (Test-LaneMatch $t.Lane)) {
+                $otherLane += ("{0}(lane {1})" -f $t.Id, $t.Lane)
             }
         }
 
@@ -1070,7 +1092,7 @@ switch ($Command) {
             else { Write-Host ("HELD BY OTHER LANE: {0} (lane {1})" -f $HeldId, $HeldClaim.lane) }
         }
         $inflight = @()
-        foreach ($t in @($ordered | Where-Object { $_.Status -match '^in-progress' -and (Test-SeatMatch $_.Seat $wantSeat) })) {
+        foreach ($t in @($ordered | Where-Object { $_.Status -match '^in-progress' -and (Test-SeatMatch $_.Seat $wantSeat) -and (Test-LaneMatch $_.Lane) })) {
             if ($heldElsewhere.ContainsKey($t.Id)) { & $sayHeld $t.Id $heldElsewhere[$t.Id]; $heldNames += $t.Id; continue }
             $inflight += $t
         }
@@ -1117,6 +1139,7 @@ switch ($Command) {
         foreach ($t in $ordered) {
             if ($t.Status -notmatch '^todo') { continue }
             if (-not (Test-SeatMatch $t.Seat $wantSeat)) { continue }
+            if (-not (Test-LaneMatch $t.Lane)) { continue }
             # T1981: another lane claimed this todo; its status flip just has
             # not reached this worktree yet.
             if ($heldElsewhere.ContainsKey($t.Id)) { & $sayHeld $t.Id $heldElsewhere[$t.Id]; $heldNames += $t.Id; continue }
@@ -1177,6 +1200,9 @@ switch ($Command) {
                 if ($otherSeat.Count -gt 0) {
                     Write-Host ("Skipped {0} todo(s) for another seat (this seat={1}): {2}" -f $otherSeat.Count, $wantSeat, ($otherSeat -join ', '))
                 }
+                if ($otherLane.Count -gt 0) {
+                    Write-Host ("Skipped {0} todo(s) for another lane (this lane={1}): {2}" -f $otherLane.Count, (Get-ThisLaneId), ($otherLane -join ', '))
+                }
                 exit 0
             }
             $blocked += ("{0}(needs {1})" -f $t.Id, ($unmet -join ','))
@@ -1184,6 +1210,7 @@ switch ($Command) {
         Write-Host ("No ready task for seat={0}: every todo has unmet deps, is another seat's, or nothing is todo." -f $wantSeat)
         if ($blocked.Count -gt 0) { Write-Host ("Blocked: {0}" -f ($blocked -join ', ')) }
         if ($otherSeat.Count -gt 0) { Write-Host ("Other seat: {0}" -f ($otherSeat -join ', ')) }
+        if ($otherLane.Count -gt 0) { Write-Host ("Other lane: {0}" -f ($otherLane -join ', ')) }
         if ($heldNames.Count -gt 0) { Write-Host ("Held by another lane: {0}" -f ($heldNames -join ', ')) }
         exit 1
     }
@@ -1985,6 +2012,10 @@ switch ($Command) {
             # is exactly the silent stall this field exists to end.
             if ($ValidSeats -notcontains $t.Seat) {
                 Write-Host ("ODD SEAT: {0} = '{1}' (want one of: {2})" -f $t.Id, $t.Seat, ($ValidSeats -join ', ')); $problems++
+            }
+            # Same silent stall for a lane: no worktree is lane 'lane-a'.
+            if ($t.Lane -and $t.Lane -notmatch '^[a-z]$') {
+                Write-Host ("ODD LANE: {0} = '{1}' (want a single lane letter, e.g. a)" -f $t.Id, $t.Lane); $problems++
             }
             # Priority is optional (untriaged is a real state), but a value
             # outside the set is not: it reads as untriaged, so a deliberate
