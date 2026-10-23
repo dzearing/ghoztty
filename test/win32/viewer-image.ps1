@@ -39,15 +39,21 @@
 # the page. Neither line can be produced by any other path, and a source view
 # produces neither.
 #
-# NOT asserted here, deliberately: the GESTURES. A double-click, a ctrl+wheel
-# notch and a pinch cannot be delivered on this desktop at all, and a harness
-# that pretended to would be asserting its own fake. What decides those is
-# arithmetic - `Geometry.doubleClickZoom`, `.stepped`, `.clamp` - and it is
-# asserted exhaustively without a browser in the none lane, in
-# `src\apprt\win32\viewer_image.zig` ("double-click toggles fit and 100%, and
-# still toggles when they coincide" is the fit==100% case the task names). What
-# THIS script proves is the other half: that the numbers those rules produce
-# actually reach a picture on screen.
+#   - the GESTURES (T1233, section L): a double-click toggles fit and 100%, a
+#     ctrl+wheel notch zooms in and out, ctrl+= / ctrl+0 zoom the picture, and
+#     each zoom keeps the pixel under the pointer under it. A plain wheel pans
+#     and a sub-step ctrl+wheel decides nothing - the controls.
+#
+# How a gesture gets in. SendInput is dead on this desktop, so section L
+# drives the page over the DevTools protocol (lib\WebViewCdp.ps1):
+# `Input.dispatchMouseEvent` enters the renderer's own input pipeline, so the
+# page's listeners see a real `dblclick` / ctrl `wheel`, and everything from
+# there on is the product. The arithmetic that DECIDES each zoom -
+# `Geometry.doubleClickZoom`, `.stepped`, `.clamp` - is asserted exhaustively
+# in the none lane (`src\apprt\win32\viewer_image.zig`); this proves the
+# gesture reaches it and the answer reaches the picture. Not reached: the OS
+# half (a touchpad driver turning a pinch into ctrl+wheel), which no harness
+# on this box can produce.
 #
 # -NegativeControl inverts the two load-time assertions in section B and MUST
 # fail with exactly TWO failures, so a run that scores anything else is
@@ -75,6 +81,11 @@ $env:GHOZTTY_PIPE_SUFFIX = "-vimg$PID"
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1233: the DevTools driver for section L, armed before the launch below - the
+# runtime reads the switch when the app's browser process starts.
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
+$cdpPort = Enable-WebViewCdp
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
 # guard-stamping child below reads the same state and refuses to write.
@@ -194,6 +205,33 @@ function Near([double]$a, [double]$b, [double]$tol = 0.002) {
     return ([Math]::Abs($a - $b) -le $tol)
 }
 
+# Open a viewer in a NEW top-level window and return the window, its
+# viewer host and the Chromium input child the chord is posted at.
+function Open-ViewerTop([string]$target, [string]$path) {
+    $before = @(Get-TestWindows -ProcessId $appPid | ForEach-Object { $_.Hwnd })
+    $rr = Invoke-Verb @('+new-window', "--target=$target", "--view=$path")
+    $top = [IntPtr]::Zero; $chrome = [IntPtr]::Zero; $viewHost = [IntPtr]::Zero
+    for ($t = 0; $t -lt 50 -and $chrome -eq [IntPtr]::Zero; $t++) {
+        $new = @(Get-TestWindows -ProcessId $appPid | Where-Object { $before -notcontains $_.Hwnd })
+        if ($new.Count -ge 1) {
+            $top = [IntPtr]$new[0].Hwnd
+            foreach ($h in @(Get-TestChildWindows -Window $top -Class 'GhozttyViewer')) {
+                $widget = @(Get-TestChildWindows -Window ([IntPtr][int64]$h.Hwnd) -Class '*' |
+                    Where-Object { $_.Class -eq 'Chrome_WidgetWin_1' })
+                if ($widget.Count -ge 1) {
+                    $chrome = [IntPtr][int64]$widget[0].Hwnd
+                    $viewHost = [IntPtr][int64]$h.Hwnd
+                }
+            }
+        }
+        if ($chrome -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 200 }
+    }
+    $lf = Get-OnlyPane $target
+    return [pscustomobject]@{
+        Code = $rr.Code; Top = $top; Chrome = $chrome; Host = $viewHost
+        Pane = if ($lf) { $lf.id } else { $null }
+    }
+}
 # --- the pictures under test -----------------------------------------------
 $dir = Join-Path $env:TEMP ('ghoztty-t1183-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $dir | Out-Null
@@ -209,6 +247,17 @@ try {
     $g.Dispose()
     $big.Save($bigPath, [System.Drawing.Imaging.ImageFormat]::Png)
 } finally { $big.Dispose() }
+
+# Section L's own picture (T1233), with a name no other pane carries, because
+# the DevTools page is found by the <img>'s alt text.
+$gesturePath = Join-Path $dir 'gesture.png'
+$gesture = New-Object System.Drawing.Bitmap 4000, 3000
+try {
+    $g = [System.Drawing.Graphics]::FromImage($gesture)
+    $g.Clear([System.Drawing.Color]::SlateGray)
+    $g.Dispose()
+    $gesture.Save($gesturePath, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally { $gesture.Dispose() }
 
 # A 16x16 icon: smaller than any pane, so fit would be an enormous upscale -
 # and must not be.
@@ -466,33 +515,6 @@ try {
             return @(Select-String -Path $errlog -Pattern ('viewer image copy pane=' + [regex]::Escape($paneId) + ' ') |
                 ForEach-Object { $_.Line })
         }
-        # Open a viewer in a NEW top-level window and return the window, its
-        # viewer host and the Chromium input child the chord is posted at.
-        function Open-ViewerTop([string]$target, [string]$path) {
-            $before = @(Get-TestWindows -ProcessId $appPid | ForEach-Object { $_.Hwnd })
-            $rr = Invoke-Verb @('+new-window', "--target=$target", "--view=$path")
-            $top = [IntPtr]::Zero; $chrome = [IntPtr]::Zero; $viewHost = [IntPtr]::Zero
-            for ($t = 0; $t -lt 50 -and $chrome -eq [IntPtr]::Zero; $t++) {
-                $new = @(Get-TestWindows -ProcessId $appPid | Where-Object { $before -notcontains $_.Hwnd })
-                if ($new.Count -ge 1) {
-                    $top = [IntPtr]$new[0].Hwnd
-                    foreach ($h in @(Get-TestChildWindows -Window $top -Class 'GhozttyViewer')) {
-                        $widget = @(Get-TestChildWindows -Window ([IntPtr][int64]$h.Hwnd) -Class '*' |
-                            Where-Object { $_.Class -eq 'Chrome_WidgetWin_1' })
-                        if ($widget.Count -ge 1) {
-                            $chrome = [IntPtr][int64]$widget[0].Hwnd
-                            $viewHost = [IntPtr][int64]$h.Hwnd
-                        }
-                    }
-                }
-                if ($chrome -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 200 }
-            }
-            $lf = Get-OnlyPane $target
-            return [pscustomobject]@{
-                Code = $rr.Code; Top = $top; Chrome = $chrome; Host = $viewHost
-                Pane = if ($lf) { $lf.id } else { $null }
-            }
-        }
         function Send-Copy($v, [string]$key = 'C') {
             Focus-TestWindow -Window $v.Top -Child $v.Host | Out-Null
             Start-Sleep -Milliseconds 400
@@ -579,6 +601,183 @@ try {
                 else { [Windows.Forms.Clipboard]::Clear() }
             } catch { }
         }
+    }
+
+    # --- L. the GESTURES, delivered into the page (T1233) --------------------
+    # SendInput is dead on this desktop (T233), but the DevTools protocol's
+    # Input.dispatchMouseEvent is delivered by the browser into the renderer's
+    # own input pipeline: hit-testing, the click counter that turns two clicks
+    # into a `dblclick`, and a `wheel` carrying ctrlKey all happen there, and
+    # the page's listeners cannot tell it from a mouse. So this drives
+    # everything from the listener on - image.js's handler, the anchor, the
+    # message to native, `applyImageMessage`, and the scale pushed back - and
+    # reads the pane's own `event=` line plus the page's geometry back.
+    $gw = Open-ViewerTop 't1233gest' $gesturePath
+    $gPane = $gw.Pane
+    Assert ($gw.Code -eq 0 -and $gPane) 'L: the gesture pane opened'
+    $g0 = Wait-Loaded $errlog $gPane
+    Assert ($null -ne $g0 -and $g0.Fitting) 'L: ...fitted, which is where a double-click starts from'
+
+    $gc = $null
+    try {
+        # The page whose picture is gesture.png. Every pane is a target on the
+        # one port, so the probe keys on the <img> rather than on a URL.
+        $probe = "(function(){var i=document.querySelector('img.viewer-image');" +
+            "return !!i && i.alt==='gesture.png';})()"
+        $deadline = (Get-Date).AddSeconds(15)
+        while (-not $gc -and (Get-Date) -lt $deadline) {
+            foreach ($t in @(Get-CdpTargets -Port $cdpPort)) {
+                $c = $null
+                try {
+                    $c = Connect-Cdp -WebSocketUrl $t.webSocketDebuggerUrl
+                    if ((Invoke-CdpEval $c $probe) -eq $true) { $gc = $c; break }
+                } catch {}
+                Close-Cdp $c
+            }
+            if (-not $gc) { Start-Sleep -Milliseconds 250 }
+        }
+        Assert ($null -ne $gc) "L: the gesture pane's page answered on the DevTools port ($cdpPort)"
+        if (-not $gc) { throw 'no DevTools session on the gesture pane' }
+
+        # Where the picture sits, in the stage's frame (which is the client
+        # frame: the stage is fixed to the page's edges).
+        $geoJs = "(function(){var s=document.querySelector('.viewer-image-stage');" +
+            "var i=document.querySelector('img.viewer-image');var b=s.getBoundingClientRect();" +
+            "var r=i.getBoundingClientRect();return JSON.stringify({sx:b.left,sy:b.top," +
+            "vw:s.clientWidth,vh:s.clientHeight,sl:s.scrollLeft,st:s.scrollTop," +
+            "il:r.left,it:r.top,iw:r.width,ih:r.height});})()"
+        function Get-GestureGeo { return ([string](Invoke-CdpEval $gc $geoJs) | ConvertFrom-Json) }
+        # The fraction of the picture under a client point - what a zoom
+        # anchored at that point must leave under it.
+        function Get-Under($geo, [double]$x, [double]$y) {
+            return [pscustomobject]@{ U = ($x - $geo.il) / $geo.iw; V = ($y - $geo.it) / $geo.ih }
+        }
+        function Get-EventCount([string]$ev) {
+            return @(Get-ImageStates $errlog $gPane | Where-Object { $_.Event -eq $ev }).Count
+        }
+        # The next `$ev` decision after `$before` of them, once the page has
+        # also APPLIED it (the <img> box is natural * scale) - or $null.
+        function Wait-Gesture([string]$ev, [int]$before) {
+            for ($t = 0; $t -lt 40; $t++) {
+                $hit = @(Get-ImageStates $errlog $gPane | Where-Object { $_.Event -eq $ev })
+                if ($hit.Count -gt $before) {
+                    $d = $hit[-1]
+                    $geo = Get-GestureGeo
+                    if ([Math]::Abs($geo.iw - $d.NatW * $d.Scale) -le 1) {
+                        return [pscustomobject]@{ State = $d; Geo = $geo }
+                    }
+                }
+                Start-Sleep -Milliseconds 125
+            }
+            return $null
+        }
+        function Send-Mouse([string]$type, [double]$x, [double]$y, [int]$clicks) {
+            [void](Invoke-Cdp $gc 'Input.dispatchMouseEvent' @{
+                type = $type; x = $x; y = $y; button = 'left'; buttons = 1; clickCount = $clicks })
+        }
+        function Send-DoubleClick([double]$x, [double]$y) {
+            [void](Invoke-Cdp $gc 'Input.dispatchMouseEvent' @{ type = 'mouseMoved'; x = $x; y = $y })
+            Send-Mouse 'mousePressed' $x $y 1; Send-Mouse 'mouseReleased' $x $y 1
+            Send-Mouse 'mousePressed' $x $y 2; Send-Mouse 'mouseReleased' $x $y 2
+        }
+        function Send-Wheel([double]$x, [double]$y, [double]$dy, [switch]$Ctrl) {
+            [void](Invoke-Cdp $gc 'Input.dispatchMouseEvent' @{
+                type = 'mouseWheel'; x = $x; y = $y; deltaX = 0; deltaY = $dy
+                modifiers = $(if ($Ctrl) { 2 } else { 0 }) })
+        }
+        # One image pixel of slack, as a fraction of the picture.
+        $slackU = 1.5 / 4000; $slackV = 1.5 / 3000
+
+        # L1. double-click a point off-centre: fit -> 100%, anchored there.
+        $geo = Get-GestureGeo
+        $px = $geo.sx + $geo.vw * 0.3; $py = $geo.sy + $geo.vh * 0.35
+        $under = Get-Under $geo $px $py
+        $n = Get-EventCount 'toggle'
+        Send-DoubleClick $px $py
+        $r1 = Wait-Gesture 'toggle' $n
+        Assert ($null -ne $r1) 'L1: a double-click reached the pane as event=toggle, and the page applied it'
+        if ($r1) {
+            Assert ((Near $r1.State.Zoom 1) -and -not $r1.State.Fitting) `
+                "L1: ...toggling a fitted picture to 100% (zoom=$($r1.State.Zoom) fitting=$($r1.State.Fitting))"
+            $after = Get-Under $r1.Geo $px $py
+            Assert ([Math]::Abs($after.U - $under.U) -le $slackU -and [Math]::Abs($after.V - $under.V) -le $slackV) `
+                ("L1: ...and the pixel under the pointer stayed under it " +
+                 "(before $([Math]::Round($under.U,4)),$([Math]::Round($under.V,4)) after $([Math]::Round($after.U,4)),$([Math]::Round($after.V,4)))")
+        }
+
+        # L2. one ctrl+wheel notch toward the user: zoom in, anchored.
+        $geo = Get-GestureGeo
+        $px = $geo.sx + $geo.vw * 0.6; $py = $geo.sy + $geo.vh * 0.4
+        $under = Get-Under $geo $px $py
+        $prevZoom = if ($r1) { $r1.State.Zoom } else { 1 }
+        $n = Get-EventCount 'zoom_in'
+        Send-Wheel $px $py -120 -Ctrl
+        $r2 = Wait-Gesture 'zoom_in' $n
+        Assert ($null -ne $r2) 'L2: a ctrl+wheel notch reached the pane as event=zoom_in, and the page applied it'
+        if ($r2) {
+            Assert ($r2.State.Zoom -gt $prevZoom) "L2: ...zooming in ($prevZoom -> $($r2.State.Zoom))"
+            $after = Get-Under $r2.Geo $px $py
+            Assert ([Math]::Abs($after.U - $under.U) -le $slackU -and [Math]::Abs($after.V - $under.V) -le $slackV) `
+                ("L2: ...and the pixel under the pointer stayed under it " +
+                 "(before $([Math]::Round($under.U,4)),$([Math]::Round($under.V,4)) after $([Math]::Round($after.U,4)),$([Math]::Round($after.V,4)))")
+            $prevZoom = $r2.State.Zoom
+        }
+
+        # L3. the controls: a PLAIN wheel pans and decides no zoom, and a
+        # ctrl+wheel nudge below one step's travel decides none either. These
+        # are what make L1/L2 evidence: the oracle can see a gesture NOT zoom.
+        $before = @(Get-ImageStates $errlog $gPane).Count
+        $geo = Get-GestureGeo
+        Send-Wheel $px $py 120
+        Send-Wheel $px $py -10 -Ctrl
+        Start-Sleep -Milliseconds 1500
+        $geo2 = Get-GestureGeo
+        Assert (@(Get-ImageStates $errlog $gPane).Count -eq $before) `
+            'L3: a plain wheel and a sub-step ctrl+wheel decide no zoom'
+        Assert ($geo2.st -gt $geo.st) "L3: ...and the plain wheel panned the picture (scrollTop $($geo.st) -> $($geo2.st))"
+
+        # L4. a notch away from the user zooms back out (the -10 above is
+        # still banked, so this proves the bank does not swallow a real step).
+        $n = Get-EventCount 'zoom_out'
+        Send-Wheel $px $py 120 -Ctrl
+        $r4 = Wait-Gesture 'zoom_out' $n
+        Assert ($null -ne $r4 -and $r4.State.Zoom -lt $prevZoom) `
+            "L4: a ctrl+wheel notch away zooms out ($prevZoom -> $(if ($r4) { $r4.State.Zoom } else { '-' }))"
+
+        # L5. the keyboard chords take the same road (imageZoomChord ->
+        # window.__viewer.imageZoom -> report): ctrl+= in, ctrl+0 back to 100%.
+        Focus-TestWindow -Window $gw.Top -Child $gw.Host | Out-Null
+        Start-Sleep -Milliseconds 400
+        $n = Get-EventCount 'zoom_in'
+        Send-TestViewerChord -Window $gw.Top -Target $gw.Chrome -Key 'bb' -Modifiers ctrl | Out-Null
+        $r5 = Wait-Gesture 'zoom_in' $n
+        Assert ($null -ne $r5) 'L5: ctrl+= at an image pane zooms the PICTURE (event=zoom_in)'
+        $n = Get-EventCount 'reset'
+        Send-TestViewerChord -Window $gw.Top -Target $gw.Chrome -Key '0' -Modifiers ctrl | Out-Null
+        $r6 = Wait-Gesture 'reset' $n
+        Assert ($r6 -and (Near $r6.State.Zoom 1)) `
+            "L5: ctrl+0 resets the picture to 100% (zoom=$(if ($r6) { $r6.State.Zoom } else { '-' }))"
+
+        # L6. a second double-click goes back to best-fit.
+        $geo = Get-GestureGeo
+        $n = Get-EventCount 'toggle'
+        Send-DoubleClick ($geo.sx + $geo.vw / 2) ($geo.sy + $geo.vh / 2)
+        $r7 = Wait-Gesture 'toggle' $n
+        Assert ($r7 -and $r7.State.Fitting -and (Near $r7.State.Zoom $r7.State.Fit)) `
+            "L6: a second double-click returns to best-fit (zoom=$(if ($r7) { $r7.State.Zoom } else { '-' }))"
+
+        # L7. and the toggle still toggles after the round trip: a best-fit
+        # measured while the zoomed picture had scrollbars up is a fit the
+        # pane no longer has, and a third double-click would only nudge it.
+        $n = Get-EventCount 'toggle'
+        Send-DoubleClick ($geo.sx + $geo.vw / 2) ($geo.sy + $geo.vh / 2)
+        $r8 = Wait-Gesture 'toggle' $n
+        Assert ($r8 -and (Near $r8.State.Zoom 1) -and -not $r8.State.Fitting) `
+            "L7: a third double-click goes to 100% again (zoom=$(if ($r8) { $r8.State.Zoom } else { '-' }))"
+        Assert ($r1 -and $r7 -and (Near $r7.State.Fit $g0.Fit)) `
+            "L7: ...and best-fit is the same number at load and after a zoom (load $($g0.Fit), after $(if ($r7) { $r7.State.Fit } else { '-' }))"
+    } finally {
+        Close-Cdp $gc
     }
 
     # --- J. the app survived all of it ---------------------------------------

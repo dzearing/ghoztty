@@ -71,9 +71,15 @@ window.__viewerImage = (function () {
      * Measuring
      * ------------------------------------------------------------------ */
 
+    /* The room a FITTED picture gets: the stage's whole box. Not
+     * `clientWidth`, which is net of whatever scrollbars the current zoom put
+     * up - a fit computed against that is too small once it lands and the
+     * scrollbars go, and the next double-click reads the picture as not
+     * fitted and only nudges it (T1233). */
     function viewport() {
       if (!stage) return { vw: 0, vh: 0 };
-      return { vw: stage.clientWidth, vh: stage.clientHeight };
+      const box = stage.getBoundingClientRect();
+      return { vw: box.width, vh: box.height };
     }
 
     function dpr() {
@@ -156,6 +162,11 @@ window.__viewerImage = (function () {
       img.style.visibility = "visible";
       img.style.width = naturalWidth() * scale + "px";
       img.style.height = naturalHeight() * scale + "px";
+      /* Nothing scrolls at best-fit, by definition - and a scrollbar the
+       * rounding of the last pixel conjures up shrinks the viewport the fit
+       * was computed for, so the next gesture reads a fitted picture as not
+       * fitted (T1233). */
+      stage.style.overflow = fit ? "hidden" : "";
       /* Hard pixels from 2x up: the only reason to magnify a screenshot that
        * far is to look at individual pixels, and a bilinear smear of them
        * answers no question anyone had. Below that, smooth. */
@@ -165,12 +176,14 @@ window.__viewerImage = (function () {
         centerScroll();
         return;
       }
-      /* Keep the pointed-at point under the pointer: its offset in the
-       * document scales with the picture, so the scroll has to make up the
-       * difference. */
-      const ratio = scale / previous;
-      stage.scrollLeft = (stage.scrollLeft + anchor.x) * ratio - anchor.x;
-      stage.scrollTop = (stage.scrollTop + anchor.y) * ratio - anchor.y;
+      /* Keep the pointed-at point under the pointer: find where that point
+       * of the picture landed at the new size and scroll by the difference.
+       * Measured off the picture rather than the stage, because a picture
+       * smaller than the pane sits centered with a margin that a zoom past
+       * the pane's edge takes away (T1233). The browser clamps at the edges. */
+      const box = img.getBoundingClientRect();
+      stage.scrollLeft += box.left + anchor.u * box.width - anchor.x;
+      stage.scrollTop += box.top + anchor.v * box.height - anchor.y;
     }
 
     /* A picture smaller than the pane is centered by the stage's own flexbox;
@@ -181,12 +194,18 @@ window.__viewerImage = (function () {
       stage.scrollTop = 0;
     }
 
-    /* Where a gesture landed, relative to the stage's own top-left. That is
-     * the frame the scroll adjustment above works in. */
+    /* Where a gesture landed: the client point, and which point of the
+     * picture is under it, as a fraction of the picture's box. */
     function anchorFrom(event) {
-      if (!stage) return null;
-      const box = stage.getBoundingClientRect();
-      return { x: event.clientX - box.left, y: event.clientY - box.top };
+      if (!img) return null;
+      const box = img.getBoundingClientRect();
+      if (!(box.width > 0) || !(box.height > 0)) return null;
+      return {
+        x: event.clientX,
+        y: event.clientY,
+        u: (event.clientX - box.left) / box.width,
+        v: (event.clientY - box.top) / box.height,
+      };
     }
 
     /* ------------------------------------------------------------------
@@ -252,6 +271,11 @@ window.__viewerImage = (function () {
        * intrinsic size is not the size this pane means, and one frame of it is
        * a visible lurch on anything bigger than the pane. */
       img.style.visibility = "hidden";
+      /* Hidden still takes room: a picture laid out at its intrinsic size
+       * puts scrollbars up, and the viewport measured at `load` would be the
+       * pane minus those scrollbars - a best-fit that stops fitting the moment
+       * it lands (T1233). */
+      stage.style.overflow = "hidden";
       img.src = url;
       /* A cached image can be complete before the listener above ever runs. */
       if (img.complete && img.naturalWidth > 0) onLoad();

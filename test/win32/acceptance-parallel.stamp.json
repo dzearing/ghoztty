@@ -1,8 +1,8 @@
 {
     "guard":  "acceptance-parallel",
     "script":  "test/win32/acceptance-parallel.ps1",
-    "generated":  "2026-10-23T03:14:22-07:00",
-    "commit":  "ddbc96822",
+    "generated":  "2026-10-23T03:53:41-07:00",
+    "commit":  "4ca221e3a",
     "uncommitted":  [
 
                     ],
