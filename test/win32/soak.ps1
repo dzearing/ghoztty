@@ -152,6 +152,41 @@ function Test-LoadedPaneFps {
     return @($out)
 }
 
+# --- Window roster (T1214) -----------------------------------------------------
+# The auto-launch below starts the app with its own STARTUP window before the
+# `+new-window --target=soak` lands, so the instance holds two windows and the
+# soak used only one. The extra window's idle pane then ran for the whole soak:
+# 1486 of 7924 samples on 2026-08-31, listed in the report as `other`, while the
+# layout assertion walked only the soak window and said 4. These two answer
+# "what is in this instance that this run did not mean to open", from one
+# `+list --json` roster, so setup can close it and the assertions can see it.
+function Get-StrayWindows {
+    param($ListJson, [string]$Target)
+    # `$null -ne $_`: an absent `windows` pipes one $null, which is not a window.
+    return @($ListJson.data.windows | Where-Object { ($null -ne $_) -and ($_.target -ne $Target) })
+}
+
+# Every pane leaf in one roster window, across its tabs.
+function Get-WindowLeaves {
+    param($Window)
+    $out = New-Object System.Collections.ArrayList
+    $stack = New-Object System.Collections.Stack
+    foreach ($t in @($Window.tabs)) { if ($null -ne $t.splits) { $stack.Push($t.splits) } }
+    while ($stack.Count -gt 0) {
+        $n = $stack.Pop()
+        if ($null -ne $n.terminal) { [void]$out.Add($n.terminal) }
+        if ($null -ne $n.left) { $stack.Push($n.left) }
+        if ($null -ne $n.right) { $stack.Push($n.right) }
+    }
+    return @($out)
+}
+
+# One line naming each stray window and how many panes it holds.
+function Format-StrayWindows {
+    param([object[]]$Strays)
+    return (@($Strays | ForEach-Object { "$($_.target) ($(@(Get-WindowLeaves $_).Count) pane)" }) -join ', ')
+}
+
 # What each load generator is expected to sustain. Used by the run and by
 # -SelfTest, so the negative control grades against the same numbers the real
 # verdict does.
@@ -191,6 +226,23 @@ if ($SelfTest) {
 
     $short = Test-LoadedPaneFps -Rows (Measure-PaneFps @{ 'soak-stream' = @(60) * 10; 'soak-altscr' = @(60) * 10; 'soak-grow' = @(60) * 10 }) -Floors $floors
     Assert (@($short | Where-Object { $_.Graded }).Count -eq 0) 'selftest: too few samples is reported, not graded'
+
+    # T1214: the roster audit, against a fabricated `+list --json`. The second
+    # roster is the 2026-08-31 shape - the auto-launch's startup window beside
+    # the soak window - and must come back as one stray naming it.
+    $soakWin = [pscustomobject]@{ target = 'soak'; tabs = @([pscustomobject]@{ splits = [pscustomobject]@{
+        left = [pscustomobject]@{ terminal = [pscustomobject]@{ name = 'probe' } }
+        right = [pscustomobject]@{ left = [pscustomobject]@{ terminal = [pscustomobject]@{ name = 'soak-stream' } }
+            right = [pscustomobject]@{ terminal = [pscustomobject]@{ name = 'soak-grow' } } } } }) }
+    $startWin = [pscustomobject]@{ target = 'window-1'; tabs = @([pscustomobject]@{ splits = [pscustomobject]@{
+        terminal = [pscustomobject]@{ name = 'p-startup' } } }) }
+    $clean = [pscustomobject]@{ data = [pscustomobject]@{ windows = @($soakWin) } }
+    $extra = [pscustomobject]@{ data = [pscustomobject]@{ windows = @($startWin, $soakWin) } }
+    Assert (@(Get-StrayWindows $clean 'soak').Count -eq 0) 'selftest: a roster holding only the soak window has no stray'
+    $es = @(Get-StrayWindows $extra 'soak')
+    Assert ($es.Count -eq 1 -and $es[0].target -eq 'window-1') 'selftest: an injected extra window turns the roster check RED and is named'
+    Assert ((Format-StrayWindows $es) -eq 'window-1 (1 pane)') 'selftest: the stray is reported with its pane count'
+    Assert (@(Get-WindowLeaves $soakWin).Count -eq 3) 'selftest: leaves are counted across nested splits'
 
     Rep ""
     Rep "=== selftest: $($script:pass) passed, $($script:fail) failed"
@@ -350,6 +402,31 @@ if ($gui.Count -ne 1) { Rep "ABORT: expected 1 soak GUI process, got $($gui.Coun
 $proc = Get-Process -Id $gui[0].ProcessId
 Rep "gui pid: $($proc.Id)"
 
+# T1214: close what the auto-launch opened that this run did not ask for. The
+# app comes up with its own startup window and only then takes the
+# `+new-window`, so before this the soak carried a fifth, idle pane in a window
+# nothing measured and nothing closed - `+close --target=soak` never reached it
+# and it went only because the teardown killed the process. Done now, before
+# any load starts, so its pane never reaches the telemetry; and proved by
+# reading the roster back, not by trusting the close.
+$startRaw = Get-GhozttyListRaw -Exe $exe
+$startBrace = $startRaw.IndexOf('{')
+if ($startBrace -lt 0) { Abort-Soak "+list --json produced no JSON at startup: $startRaw" }
+$startStrays = @(Get-StrayWindows ($startRaw.Substring($startBrace) | ConvertFrom-Json) 'soak')
+if ($startStrays.Count -eq 0) {
+    Rep 'startup roster: only the soak window (no startup window to close)'
+} else {
+    Rep "startup roster: closing what the auto-launch opened beside the soak window: $(Format-StrayWindows $startStrays)"
+    foreach ($s in $startStrays) { & $exe +close "--target=$($s.target)" 2>$null | Out-Null }
+    Start-Sleep -Seconds 1
+    $afterRaw = Get-GhozttyListRaw -Exe $exe
+    $afterBrace = $afterRaw.IndexOf('{')
+    if ($afterBrace -lt 0) { Abort-Soak "+list --json produced no JSON after closing the startup window: $afterRaw" }
+    $left = @(Get-StrayWindows ($afterRaw.Substring($afterBrace) | ConvertFrom-Json) 'soak')
+    if ($left.Count -gt 0) { Abort-Soak "the startup window would not close: $(Format-StrayWindows $left)" }
+    Rep 'startup roster: closed; the instance now holds only the soak window'
+}
+
 & $exe +split --target=soak --name=soak-stream --direction=right --shell=cmd `
     "--command=for /l %i in (1,1,2000000) do @type $streamFile" | Out-Null
 Start-Sleep -Milliseconds 800
@@ -424,6 +501,10 @@ $paneNames = @{}
 foreach ($l in $leaves) { if ($l.id) { $paneNames[[string]$l.id] = [string]$l.name } }
 $loadedPanes = $named
 Assert ($leaves.Count -eq 4) "layout: 4 leaves in soak window (probe pane: $probePane)"
+# T1214: and nothing beside it. The line above walks only the soak window, so
+# it said 4 for a whole month while the instance held a fifth pane elsewhere.
+$rosterStrays = @(Get-StrayWindows $listJson 'soak')
+Assert ($rosterStrays.Count -eq 0) "layout: the instance holds only the soak window (strays: $(if ($rosterStrays.Count) { Format-StrayWindows $rosterStrays } else { 'none' }))"
 
 # T2163: every pane must be ON SHOW. A pane the stacked-panes layout tucked
 # away is hidden by design and presents no frames, so grading it would score
@@ -600,10 +681,15 @@ if ($procAlive) {
         # probe pane.
         $paneRows = Measure-PaneFps $fpsByPane
         foreach ($r in $paneRows) {
-            $tag = if ($loadedPanes -contains $r.Pane) { 'LOADED' } elseif ($r.Pane -eq $probePane) { 'idle probe' } else { 'other' }
+            $tag = if ($loadedPanes -contains $r.Pane) { 'LOADED' } elseif ($r.Pane -eq $probePane) { 'idle probe' } else { 'NOT OURS' }
             Rep ("  pane {0,-14} {1,-11} samples {2,5}  min {3,3}  median {4,3}  p90 {5,3}  max {6,3}  fps<=1 share {7}" -f `
                 $r.Pane, $tag, $r.Samples, $r.Min, $r.Median, $r.P90, $r.Max, $r.IdleShare)
         }
+        # T1214: every pane in the telemetry is one this run created. A row
+        # keyed by a raw id is a pane the roster never named - the shape the
+        # startup window's pane had, pooled into every number above.
+        $notOurs = @($paneRows | Where-Object { ($loadedPanes -notcontains $_.Pane) -and ($_.Pane -ne $probePane) })
+        Assert ($notOurs.Count -eq 0) "telemetry lists only the panes this run created (not ours: $(if ($notOurs.Count) { ($notOurs | ForEach-Object { "$($_.Pane) x$($_.Samples)" }) -join ', ' } else { 'none' }))"
 
         if ($fpsByPane.Count -gt 0) {
             # `soak-grow` finishes its 150k lines and then goes idle, at which
@@ -669,6 +755,27 @@ if ($procAlive) {
 & $exe +close --target=soak 2>$null | Out-Null
 Start-Sleep -Seconds 2
 if ($procAlive) {
+    # T1214: the close is shown to have closed everything this run opened,
+    # BEFORE the kill below can paper over it: either the app quit with its
+    # last window, or it answers with an empty roster.
+    $proc.Refresh()
+    if ($proc.HasExited) {
+        Assert $true 'teardown: +close --target=soak closed the last window and the app exited on its own'
+    } else {
+        $endRaw = Get-GhozttyListRaw -Exe $exe
+        $endBrace = $endRaw.IndexOf('{')
+        # Every window is a stray once the soak window is meant to be gone, so
+        # this is the same audit against a target nothing holds.
+        # (Not `$x = if ... { @() }`: an assignment from `if` unrolls an empty
+        # array to $null, which would read as "no JSON".)
+        $endWins = @()
+        if ($endBrace -ge 0) { $endWins = @(Get-StrayWindows ($endRaw.Substring($endBrace) | ConvertFrom-Json) '') }
+        if ($endBrace -lt 0) {
+            Assert $false "teardown: +list after the close produced no JSON: $endRaw"
+        } else {
+            Assert ($endWins.Count -eq 0) "teardown: +close --target=soak leaves no window behind (left: $(if ($endWins.Count) { Format-StrayWindows $endWins } else { 'none' }))"
+        }
+    }
     $proc.Refresh()
     if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
 }
