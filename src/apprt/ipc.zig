@@ -339,6 +339,11 @@ pub const read_tail = @import("ipc/read_tail.zig");
 /// in-app paths that short-circuit one, so a link cannot mean two things.
 pub const url_scheme = @import("ipc/url_scheme.zig");
 
+/// What `+split --name=` does when the name is already held: reuse a pane
+/// that matches the request, fail one that does not (T2184; the Mac's
+/// `SplitNameCollision.swift`). One wording for both servers.
+pub const split_name_collision = @import("ipc/split_name_collision.zig");
+
 /// The build identity a launch carries when it hands its window to the
 /// instance already running, and the notice shown when the two builds differ
 /// (T1022 / D79). Lives beside the transport in `os/` — the wire field is the
@@ -351,6 +356,7 @@ test {
     _ = segments;
     _ = read_tail;
     _ = url_scheme;
+    _ = split_name_collision;
     _ = @import("ipc/list.zig");
 }
 
@@ -365,12 +371,14 @@ pub const Errors = error{
 };
 
 /// The JSON response the IPC server sends for every request:
-/// `{"success": <bool>, "error": <optional string>, ...}`. Unknown fields
-/// (e.g. the `data` payload of a `+read` response) are ignored by
-/// `parseResponse`.
+/// `{"success": <bool>, "error": <optional string>, "message": <optional
+/// string>, ...}`. `message` is one line saying what a successful command did,
+/// printed to stdout (older apps never send it). Unknown fields (e.g. the
+/// `data` payload of a `+read` response) are ignored by `parseResponse`.
 pub const Response = struct {
     success: bool = false,
     @"error": ?[]const u8 = null,
+    message: ?[]const u8 = null,
 };
 
 /// Parse the raw JSON response body from the IPC server. On failure the
@@ -409,6 +417,20 @@ test "parseResponse: failure carries the server's error text" {
     try testing.expectEqualStrings(
         "pane 'd1' not found in registry",
         parsed.value.@"error".?,
+    );
+}
+
+test "parseResponse: success carries the server's message" {
+    const testing = std.testing;
+    const parsed = try parseResponse(
+        testing.allocator,
+        "{\"success\":true,\"message\":\"created pane 'w' in window 'window-2'\"}",
+    );
+    defer parsed.deinit();
+    try testing.expect(parsed.value.success);
+    try testing.expectEqualStrings(
+        "created pane 'w' in window 'window-2'",
+        parsed.value.message.?,
     );
 }
 

@@ -710,6 +710,22 @@ $GuardTable = @(
             'src\apprt\win32\background_zorder.zig'
         )
     },
+    # `+split --name=` reuses a pane that matches the request and fails one
+    # that does not, and every success says where (T2184, main c2057a810): the
+    # policy and its wording (`ipc\split_name_collision.zig`), the server
+    # (`IpcHandlers.zig`), and the client that prints the line
+    # (`os\ipc_client.zig`).
+    [pscustomobject]@{
+        Name   = 'split-name-collision'
+        Script = 'test\win32\split-name-collision.ps1'
+        Stamp  = 'test\win32\split-name-collision.stamp.json'
+        Covers = @(
+            'test\win32\split-name-collision.ps1',
+            'src\apprt\ipc\split_name_collision.zig',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\os\ipc_client.zig'
+        )
+    },
     # A background window gets the focused window's frame (T1966, main
     # ec6c793d7): the creation size/cascade and the maximize-by-style first
     # show (`Window.zig`), its rect rule (`window_placement.zig`), and the

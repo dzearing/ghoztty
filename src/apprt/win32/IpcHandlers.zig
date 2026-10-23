@@ -143,6 +143,7 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
 // normalization, layout validation) lives in apprt/ipc/args.zig where it
 // is unit tested in the none-runtime build.
 const verb_args = apprt.ipc.args;
+const split_name_collision = apprt.ipc.split_name_collision;
 
 // The `+send-keys` `--segments=` wire format, shared with the CLI that
 // writes it (src/cli/send_keys.zig) so encoder and decoder cannot drift.
@@ -837,18 +838,23 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // First thing, as on the Mac (IPCServer.swift:572).
     if (try viewArgResponse(ctx, args)) |response| return response;
 
-    // Idempotent: an existing live pane under --name is focused, not
-    // recreated.
-    if (args.name) |name| {
+    // Idempotent: if --name is held and already is what was asked for, it is
+    // the answer - and the reply says so, and where. A request it does not
+    // satisfy fails instead, naming what holds the name (T2184, Mac
+    // c2057a810; policy in `apprt.ipc.split_name_collision`). Focusing a
+    // reused pane is the caller's choice (`--focus`, T1797). `--from-focused`
+    // ignores `--name`, as on the Mac.
+    if (args.name) |name| check: {
+        if (args.from_focused) break :check;
         if (app.ipcLookup(name)) |entry| {
-            switch (entry) {
-                .pane => {
-                    if (args.focus) focusTarget(entry); // T1797
-                    return try ctx.alloc.dupe(u8, "{\"success\":true}");
-                },
-                // A window under this name: fall through and let the later
-                // registration no-op (existing registration wins).
-                .window => {},
+            if (describeExisting(entry, splitAnchorWindow(app, args))) |existing| {
+                switch (try split_name_collision.decide(arena, name, existing, nonEmpty(args.view))) {
+                    .conflict => |msg| return try errorResponse(ctx.alloc, "{s}", .{msg}),
+                    .reuse => |msg| {
+                        if (args.focus) focusTarget(entry); // T1797
+                        return try messageResponse(ctx.alloc, msg);
+                    },
+                }
             }
         }
     }
@@ -890,7 +896,10 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             app.ipc_session_await.add(pv.paneId()); // T1612
             if (args.focus) focusTarget(.{ .pane = pv });
         }
-        return try ctx.alloc.dupe(u8, "{\"success\":true}");
+        return try messageResponse(
+            ctx.alloc,
+            try std.fmt.allocPrint(arena, "created a split in window '{s}'", .{window.ipc_name orelse ""}),
+        );
     }
 
     // Resolve where to split: --pane names the exact surface; --target
@@ -955,7 +964,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
             if (args.name) |name| app.ipcRegister(name, .{ .pane = pane }) catch {};
             if (args.focus) focusTarget(.{ .pane = pane });
-            return try ctx.alloc.dupe(u8, "{\"success\":true}");
+            return try messageResponse(ctx.alloc, try createdMessage(arena, args, window));
         }
     }
 
@@ -1077,7 +1086,84 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         if (args.focus) focusTarget(.{ .pane = pv });
     }
 
-    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    return try messageResponse(ctx.alloc, try createdMessage(arena, args, window));
+}
+
+/// The window a `+split` lands in: the `--pane` pane's window, else
+/// `--target`'s, else the calling pane's, else the foreground window - the
+/// precedence `handleSplit` splits by. Null when that names nothing (the split
+/// itself then fails with the reason). GUI thread only.
+fn splitAnchorWindow(app: *App, args: VerbArgs) ?*Window {
+    if (args.pane) |pane_name| {
+        return switch (app.ipcLookup(pane_name) orelse return null) {
+            .pane => |pane| pane.parentWindow(),
+            .window => null,
+        };
+    }
+    if (args.target) |target| {
+        return switch (app.ipcLookup(target) orelse return null) {
+            .window => |w| w,
+            .pane => |pane| pane.parentWindow(),
+        };
+    }
+    if (callerAnchorPaneView(app, args)) |caller| return caller.parentWindow();
+    return frontWindow(app);
+}
+
+/// What holds a name `+split --name=` asked for, for `split_name_collision`.
+/// Null for a viewer with nothing loaded yet - nothing to compare against, so
+/// the name stays the existing pane's and the split goes ahead, as on the Mac.
+fn describeExisting(entry: App.IpcTarget, anchor: ?*Window) ?split_name_collision.Existing {
+    const holder: *Window = switch (entry) {
+        .window => |w| w,
+        .pane => |pane| pane.parentWindow(),
+    };
+    const kind: split_name_collision.Existing.Kind = switch (entry) {
+        .window => .window,
+        .pane => |pane| if (pane.viewer()) |viewer| kind: {
+            const home: ?[]const u8 = if (viewer.home_location) |h| h else null;
+            const location: []const u8 = if (viewer.location) |l| l else home orelse return null;
+            break :kind .{ .viewer = .{ .location = location, .home_location = home } };
+        } else .terminal,
+    };
+    return .{
+        .kind = kind,
+        .window_name = holder.ipc_name orelse "",
+        .in_anchor_window = anchor == holder,
+    };
+}
+
+/// The reply to a `+split` that creates a pane (Mac `createdMessage`).
+fn createdMessage(arena: Allocator, args: VerbArgs, window: *Window) Allocator.Error![]const u8 {
+    const what = if (args.name) |n|
+        try std.fmt.allocPrint(arena, "created pane '{s}'", .{n})
+    else
+        "created a split";
+    const view = nonEmpty(args.view);
+    return std.fmt.allocPrint(arena, "{s} in window '{s}'{s}{s}", .{
+        what,
+        window.ipc_name orelse "",
+        if (view != null) ", showing " else "",
+        view orelse "",
+    });
+}
+
+/// `{"success":true,"message":<msg>}`: a success the CLI reports on stdout
+/// (T2184; the Mac's `IPCResponse.message`).
+fn messageResponse(alloc: Allocator, message: []const u8) Allocator.Error![]u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    errdefer out.deinit();
+    var jws: std.json.Stringify = .{ .writer = &out.writer };
+    write: {
+        jws.beginObject() catch break :write;
+        jws.objectField("success") catch break :write;
+        jws.write(true) catch break :write;
+        jws.objectField("message") catch break :write;
+        jws.write(message) catch break :write;
+        jws.endObject() catch break :write;
+        return try out.toOwnedSlice();
+    }
+    return error.OutOfMemory;
 }
 
 /// T1612: whether every pane in `list` lets the reply go out — gone, a viewer,

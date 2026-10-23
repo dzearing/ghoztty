@@ -729,6 +729,10 @@ pub fn sendActionWithHandoff(
             // `+new-window --target=` focusing an existing window and
             // dropping the create-only flags). Absent from older servers.
             note: ?[]const u8 = null,
+            // T2184 (main c2057a810): one line saying what a successful
+            // command did (`+split`: created, or reused and where), printed to
+            // STDOUT so a caller can read it. Absent from older servers.
+            message: ?[]const u8 = null,
         },
         alloc,
         resp_buf,
@@ -752,6 +756,16 @@ pub fn sendActionWithHandoff(
     if (parsed.value.note) |msg| {
         stderr.print("{s}\n", .{msg}) catch {};
         stderr.flush() catch {};
+    }
+
+    // A message says what was done; it is the command's output, not a
+    // diagnostic, so it goes to stdout (the same rule as the Mac CLI).
+    if (parsed.value.message) |msg| {
+        var out_buf: [256]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writerStreaming(&out_buf);
+        const stdout = &stdout_writer.interface;
+        stdout.print("{s}\n", .{msg}) catch {};
+        stdout.flush() catch {};
     }
 
     return true;

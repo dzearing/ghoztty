@@ -110,7 +110,27 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
   this, not `--target`, to split a specific pane: `--target=<pane>` silently
   splitting a different pane once built a three-high column that the
   stacked-panes layout then tucked out of sight (T2163).
-- `--name`: Register the new pane with a name for later targeting.
+- `--name`: Register the new pane with a name for later targeting. Pane names
+  are **one namespace across every window** (and shared with window names), so
+  the name may already be held by a pane in another window. Re-running the same
+  split reuses it; anything else fails rather than doing nothing (T2184, main
+  c2057a810 — identical on both platforms, wording included):
+  - **Matches** (a terminal again, or a viewer showing that `--view` or opened
+    with it): no split, exit 0, stdout says `pane '<n>' already exists in
+    <window>; reused it, no split created`. On Windows a local path matches
+    regardless of case and slash direction, since it names the same file.
+  - **Doesn't match** (another `--view`, a terminal where a viewer stands or the
+    reverse, or the name is a window's): exit 1, stderr names the pane, its
+    window and what it shows. Nothing is retargeted — the pane belongs to
+    whatever opened it, often another agent. Use another `--name`, or `+close`
+    it first.
+  - **Created**: stdout says `created pane '<n>' in window '<w>'` (plus
+    `, showing <view>` for a viewer). A `--target` that names nothing fails.
+
+  The line travels in the response's additive `message` field, which the CLI
+  prints to stdout; a CLI older than the app ignores it. Policy and wording:
+  `src/apprt/ipc/split_name_collision.zig` (Mac: `SplitNameCollision.swift`);
+  acceptance: `test/win32/split-name-collision.ps1`.
 - `--focus`: Move keyboard focus to the new pane, raise its window, and activate Ghoztty. Without it the pane that had focus keeps it.
 - `--view`: Open a **viewer** pane (see `docs/claude/viewers.md`) instead of a terminal — a file, a local **HTML page**, a website, or a **git diff** (`git-status:` / `git-diff:<revspec>`, see Git diff panes in that doc). Mutually exclusive with `--command`/`-e`. Works with `--pane` targeting, including splitting off an existing viewer pane.
 
@@ -593,8 +613,9 @@ order. Not yet on Windows: the sidebar to SEE the stash in (T1828) - use
 - `+new-window --target=<name>` registers a **window**
 - `+split --name=<name>` registers a **pane**
 - `+new-window --name=<name>` registers a **pane** too (T968): the window's
-  first pane, or with `--split` the inline split pane. It is idempotent like
-  `+split --name` — a live pane already under that name is focused instead of
+  first pane, or with `--split` the inline split pane. It is idempotent, by
+  the name alone (on both platforms it has not taken `+split --name`'s
+  match-or-fail rule) — a live pane already under that name is focused instead of
   a second window opening (unless `--target` is also given, which decides
   first). It used to be accepted and silently dropped for a window without
   `--split`, so the next `--target=<name>` answered `not found`.

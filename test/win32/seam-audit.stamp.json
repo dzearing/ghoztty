@@ -1,12 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-23T04:30:14-07:00",
-    "commit":  "ecfdeb418",
+    "generated":  "2026-10-23T06:00:46-07:00",
+    "commit":  "ce8662eca",
     "uncommitted":  [
-                        "src/apprt/win32/image_copy.zig",
-                        "src/apprt/win32/viewer_image.zig",
-                        "src/apprt/win32/ViewerPane.zig"
+                        "src/apprt/win32/IpcHandlers.zig",
+                        "src/cli/split.zig",
+                        "src/os/ipc_client.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -125,7 +125,7 @@
                   "src/apprt/win32/ipc_hover.zig":  "07bbf74a9a035867d9843abcdf41c7c968b561c5868d6821ea149e613eced8be",
                   "src/apprt/win32/ipc_session_await.zig":  "1da78151a2f721f464a27e2637fbadc77488a217366ecfb46e77be722379e95b",
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
-                  "src/apprt/win32/IpcHandlers.zig":  "0fe25cf5d9e3f7b4504ea5fa1bd4f09234b132455463e48a158e7dccf7c1fe5f",
+                  "src/apprt/win32/IpcHandlers.zig":  "e0fa629fc54dc931a1bf2859cffd6c51bc925a7dfc2f611dac519502f345bff4",
                   "src/apprt/win32/IpcRegistry.zig":  "f4a9bb81d5df8664ced8f7b7f5a0aa7a718a71530df0e06949578df09ede6581",
                   "src/apprt/win32/IpcServer.zig":  "e25ea9c45c17bf8338488b21927dd4d05d86fcb0f3737a23b7f4049030bb047a",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",
@@ -342,7 +342,7 @@
                   "src/cli/set_state.zig":  "0d20fe8ccd6fe87235c260df2997785acd3a972240e8d38eecd345c05bce019a",
                   "src/cli/show_config.zig":  "4b35c3bc443a8f8a5d1946e9fd2392319c5b68908451127e15d6d0f151ae27bc",
                   "src/cli/show_face.zig":  "a381cd98b116998969e36ea89fdad3ca33e90f7d39684690135e24cf637b424c",
-                  "src/cli/split.zig":  "6fe6ffdb10ccf12fcf5d3c479f9df63cb05c31e39ec3bccb1c664aad05d08e66",
+                  "src/cli/split.zig":  "637e499c8c69f6cfd02c6d5cc03a43b41dfd81018797c948b3aefb5de509312c",
                   "src/cli/ssh_cache.zig":  "331150de56825aaa082a6cbce92e0cde7422be640bf9668498dffb63916bb6d3",
                   "src/cli/stash.zig":  "ee96f3424f0285a3a70f9e96b56426ddabf0f4d8a3d145a21e44587da7609b1f",
                   "src/cli/stdio.zig":  "8069587b67bc632e80b562c741c9b426de224b3e135c965a22546077a482e7e3",
@@ -365,7 +365,7 @@
                   "src/os/hostname.zig":  "b402e461f30d22a5f8227af8591f505c0e76ccaaaf816c7b81b8ce6c7468823b",
                   "src/os/i18n.zig":  "133cfac2158e97441381ec012d76dba5f2ff3f4c09793da129d75e2299c462c4",
                   "src/os/i18n_locales.zig":  "90f6fcf72fc67cfa0223d7786f18467fd58529807a5b00ffd557d11ad447afc2",
-                  "src/os/ipc_client.zig":  "7f0e8cc2d08ba9df201b58617b1e57a30848275cd18c3cce60f768eb00571b9a",
+                  "src/os/ipc_client.zig":  "6a52ae1621a75ae642b122ccb71180ec66a91e4838c91bbc66167c6242e247d5",
                   "src/os/ipc_handoff.zig":  "83ed1a0b6464bff5ff9364c56c5c796afe0c821cb8c9220372436dd7b821ffc3",
                   "src/os/ipc_timeout.zig":  "f42ab6296917c0c8de044e00c43bca6ab8b6725f88655a9350757a5f15fdf259",
                   "src/os/kernel_info.zig":  "af3e484e231296b27ef7c2a76f4608c61a37bf5af01b968d3dbbf565d18de0e4",
