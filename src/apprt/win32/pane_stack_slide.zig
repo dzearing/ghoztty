@@ -140,7 +140,7 @@ pub const Slide = struct {
     /// is not sliding. See `cardAt`.
     pub fn cardRectAt(self: *const Slide, id: Id, elapsed_ms: f64) ?PxRect {
         const c = self.find(id) orelse return null;
-        return cardAt(c, self.progress(elapsed_ms));
+        return cardAt(c, self.progress(elapsed_ms), self.resize);
     }
 
     pub fn done(self: *const Slide, elapsed_ms: f64) bool {
@@ -191,9 +191,11 @@ pub fn at(c: Card, t: f64, resize: bool) PxRect {
 /// card is what is SEEN of it: a pane that shrinks is cut to its new card at
 /// once rather than covering its neighbours for the whole slide - which hid a
 /// pane unfolding beside it until the very end, so the unfold looked instant -
-/// and one that grows shows its card's backdrop beyond it.
-pub fn cardAt(c: Card, t: f64) PxRect {
-    const p = at(c, t);
+/// and one that grows shows its card's backdrop beyond it. A `resize` slide
+/// (a drag's, T2186) resizes the pane on the way, so card and pane agree.
+pub fn cardAt(c: Card, t: f64, resize: bool) PxRect {
+    const p = at(c, t, resize);
+    if (resize) return p;
     return .{ .left = p.left, .top = p.top, .right = p.left + c.to.width(), .bottom = p.top + c.to.height() };
 }
 
@@ -344,7 +346,7 @@ test "cardAt: an unfold cuts the widening neighbour to its new card at once (T21
         .{ .id = 1, .rect = r(0, 0, 450, 600), .tucked = false },
         .{ .id = 2, .rect = r(450, 0, 450, 600), .tucked = false },
     };
-    const s = plan(&before, &after, null, 0, duration_ms);
+    const s = plan(&before, &after, null, 0, duration_ms, false);
     try testing.expectEqual(@as(usize, 2), s.len);
     const t = duration_ms / 4;
     // A's pane is held at 900 (no resize mid-slide) - and before T2187 that
@@ -364,6 +366,9 @@ test "cardAt: an unfold cuts the widening neighbour to its new card at once (T21
     // At the end card and pane agree.
     try testing.expectEqual(s.rectAt(1, duration_ms).?, s.cardRectAt(1, duration_ms).?);
     try testing.expectEqual(r(450, 0, 450, 600), s.cardRectAt(2, duration_ms).?);
+    // A drag's slide resizes the pane on the way: its card is the pane.
+    const g = plan(&before, &after, null, 0, gesture_duration_ms, true);
+    try testing.expectEqual(g.rectAt(1, t).?, g.cardRectAt(1, t).?);
 }
 
 test "plan: a slide mid-slide starts from where the cards are on screen" {
