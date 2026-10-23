@@ -1,0 +1,14 @@
+{
+    "guard":  "arp-version",
+    "script":  "test/win32/arp-version.ps1",
+    "generated":  "2026-10-22T20:12:15-07:00",
+    "commit":  "34c5d7d72",
+    "uncommitted":  [
+
+                    ],
+    "files":  {
+                  "scripts/arp-version-check.ps1":  "5b54ae7cb88d3517dc9c5d250e95c44d7a02a34fdc31ac57656d09b17d088615",
+                  "scripts/lib/ArpVersion.ps1":  "5b9278d673eb6a8fe4f75170c45c6a927c5e57763867d2696c2852b387c45f43",
+                  "test/win32/arp-version.ps1":  "35b1b1cad7d318cf499f6d957d96dfbbd70cba7c8ddb4c1ad746f9ef47673c15"
+              }
+}

@@ -227,7 +227,11 @@ function Invoke-AgentButton([IntPtr]$dlg, [string]$caption) {
     return (Send-TestRawMessage -Window $dlg -Message 0x0111 -WParam ([IntPtr][int]$b[0].Id))
 }
 
-# Open the palette, type "agent", Enter — opens "Set Up Agent Integrations…".
+# Open the palette, type "set up agent", Enter — opens "Set Up Agent
+# Integrations…". The query must match that row alone (T2171): the palette
+# lists matches alphabetically, and since T1804 a bare "agent" also finds
+# "Restart Ghoztty and Background Sessions" by its keywords, which sorts first,
+# so Enter asked to restart instead and no window ever opened.
 function Invoke-PaletteAgentSetup($g) {
     $surface = Get-TestChildWindow -Window $g.Top -Class 'GhozttyTerminal'
     if ($surface -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: surface not found'; return $false }
@@ -242,7 +246,7 @@ function Invoke-PaletteAgentSetup($g) {
     if ($popup -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: palette popup did not open'; return $false }
     $edit = Find-TestWindowEx -Parent $popup -Class 'EDIT'
     if ($edit -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: palette edit not found'; return $false }
-    if (-not (Send-TestControlText -Control $edit -Text 'agent')) { Write-Host 'SETUP FAIL: palette query not typed'; return $false }
+    if (-not (Send-TestControlText -Control $edit -Text 'set up agent')) { Write-Host 'SETUP FAIL: palette query not typed'; return $false }
     Start-Sleep -Milliseconds 200
     if (-not (Send-TestControlKey -Control $edit -Key Enter)) { Write-Host 'SETUP FAIL: palette Enter not posted'; return $false }
     Start-Sleep -Milliseconds 200
