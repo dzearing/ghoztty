@@ -43,9 +43,11 @@
 # replaced never did.
 #
 # -NegativeControl inverts the narrow-pane containment assertion and section
-# F's header claim, and MUST fail with exactly FOUR failures - one per width in
-# section B, plus the header - so a run that scores anything else is measuring
-# something other than what those assertions name.
+# F's header claim, and claims section E's strip gains nothing when it is
+# widened back out. It MUST fail with exactly FIVE failures - one per width in
+# section B, the header, and the widening (T1235: proof that E's settle wait
+# left its slot count able to see a width change) - so a run that scores
+# anything else is measuring something other than what those assertions name.
 param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
@@ -422,7 +424,9 @@ try {
             [void](Set-TestWindowPos -Window $htmlTop -X 0 -Y 0 `
                 -Width ([int][Math]::Round($dip * $scale, [MidpointRounding]::AwayFromZero)) `
                 -Height ([int][Math]::Round(500 * $scale, [MidpointRounding]::AwayFromZero)))
-            Start-Sleep -Milliseconds 1200
+            # Only long enough for the resize to be delivered; whether the bar
+            # has finished changing is Measure-NavBarSettled's question.
+            Start-Sleep -Milliseconds 300
         }
 
         # One measurement of the nav bar: its rect, its EDIT's width, which
@@ -495,6 +499,45 @@ try {
             }
         }
 
+        # One measurement the bar has STOPPED changing under (T1235). A fixed
+        # sleep after the resize let one band in three come back with more ink
+        # than the band before it: the strip is painted from its width and from
+        # state the pane pushes (contents, feedback, reveal), and a push that
+        # lands between two bands reads as narrowing ADDING a control. So a
+        # band is taken only once three captures in a row, spread over half a
+        # second, agree on every number the assertions read - and a band that
+        # never settles says so instead of being scored on whichever frame the
+        # clock happened to pick.
+        function Measure-NavBarSettled([IntPtr]$topHwnd) {
+            $deadline = (Get-Date).AddSeconds(8)
+            $last = $null; $key = $null; $same = 0; $reads = 0
+            while ((Get-Date) -lt $deadline) {
+                $m = Measure-NavBar $topHwnd
+                $reads++
+                $k = if ($m) { "$($m.BarWidth)/$($m.EditWidth)/$($m.Slots)/$($m.LeadRows)" } else { 'none' }
+                if ($k -eq $key) { $same++ } else { $key = $k; $same = 1 }
+                $last = $m
+                if ($m -and $same -ge 3) {
+                    $m | Add-Member -NotePropertyName Settled -NotePropertyValue $true
+                    $m | Add-Member -NotePropertyName Reads -NotePropertyValue $reads
+                    return $m
+                }
+                Start-Sleep -Milliseconds 250
+            }
+            if ($last) {
+                $last | Add-Member -NotePropertyName Settled -NotePropertyValue $false
+                $last | Add-Member -NotePropertyName Reads -NotePropertyValue $reads
+            }
+            return $last
+        }
+
+        # The page itself first: the widest band is the reference every other
+        # band is compared against, so it is taken only after the freshly
+        # opened viewer has finished pushing its state into the bar.
+        Set-HtmlWidth 700
+        $warm = Measure-NavBarSettled $htmlTop
+        Assert ($warm -and $warm.Settled) 'E: the freshly opened viewer''s nav bar settles before the first band'
+
         # Wide -> narrow, so the monotone claim is checked on the way back up.
         $bands = @()
         # Window widths in DIP: a full strip, a shed strip with a field, the
@@ -503,11 +546,13 @@ try {
         # one to is still inside the "..."-only band.
         foreach ($wDip in @(700, 420, 260, 170, 90)) {
             Set-HtmlWidth $wDip
-            $mb = Measure-NavBar $htmlTop
+            $mb = Measure-NavBarSettled $htmlTop
             if ($null -eq $mb) { Assert $false "E[$wDip]: the live page's nav bar is on screen to measure"; continue }
             Write-Host ("      window $wDip DIP -> bar $($mb.BarWidth)px, edit $($mb.EditWidth)px, " +
-                "inked slot boxes $($mb.Slots), lead-slot ink $($mb.LeadRows) rows")
+                "inked slot boxes $($mb.Slots), lead-slot ink $($mb.LeadRows) rows " +
+                "(settled=$($mb.Settled) after $($mb.Reads) reads)")
             $bands += $mb
+            Assert $mb.Settled "E[$wDip]: the nav bar's measurement settled (three agreeing captures)"
 
             Assert (Inside $mb.BarRect $mb.Host) "E[$wDip]: the nav bar is inside the viewer pane"
             # 1. Something is always reachable: the leading slot always carries
@@ -531,6 +576,16 @@ try {
             }
             Assert $monoWidth 'E: the five window widths really did narrow the bar (negative control for the two below)'
             Assert $monoSlots 'E: narrowing never ADDS ink to the strip'
+            if ($NegativeControl) {
+                # The settle wait must not have made the slot count deaf to
+                # width (T1235): widen the narrowest bar back out and claim it
+                # gained nothing. A counter that still reacts makes this fail.
+                Write-Host 'NEGATIVE CONTROL: asserting WIDENING adds no ink to the strip - this run MUST fail'
+                Set-HtmlWidth 700
+                $back = Measure-NavBarSettled $htmlTop
+                Assert ($back -and $back.Slots -le $bands[-1].Slots) `
+                    "E: widening from the narrowest band adds no ink (negative control; $($back.Slots) vs $($bands[-1].Slots))"
+            }
             Assert $monoEdit 'E: narrowing never widens the address field'
             # And the squeeze did something: a run where every band measured
             # the same bar would pass everything above and prove nothing.
