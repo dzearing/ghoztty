@@ -4307,8 +4307,9 @@ fn collectSlots(self: *Window, out: []PaneSlot, strips: bool) usize {
         const id = pane_stack_grid.viewId(entry.view);
         const p = grid.placement(id) orelse continue;
         if (p.is_tucked) continue;
-        // A sliding card's desk card goes with it (T2102).
-        out[n] = .{ .view = entry.view, .rect = winRect(self.stackSlideRect(id) orelse p.rect) };
+        // A sliding card's desk card goes with it (T2102), at the size it
+        // slides to (T2187): its pane may be held bigger, cut to the card.
+        out[n] = .{ .view = entry.view, .rect = winRect(self.stackSlideCardRect(id) orelse p.rect) };
         n += 1;
     }
     if (!strips) return n;
@@ -7519,6 +7520,12 @@ fn placePane(
 /// pane, the grid and the hidden stashed slots all come through here, so a
 /// stashed pane is held at exactly the size it will come back at.
 fn placeLeaf(self: *Window, hdwp: *?w32.HDWP, view: *PaneView, h: w32.HWND, slot: w32.RECT, show: bool) void {
+    const r = self.leafRect(view, slot);
+    placePane(hdwp, h, r.left, r.top, @intCast(r.right - r.left), @intCast(r.bottom - r.top), show);
+}
+
+/// Where `placeLeaf` puts `view`'s child window for card `slot`.
+fn leafRect(self: *Window, view: *PaneView, slot: w32.RECT) w32.RECT {
     const inner = self.cardInner(slot);
     const header = self.rearrangeHeaderInset(slot);
     const top = inner.top + header;
@@ -7526,7 +7533,17 @@ fn placeLeaf(self: *Window, hdwp: *?w32.HDWP, view: *PaneView, h: w32.HWND, slot
     const inset = view.bannerLayoutInset(inner.right - inner.left, avail);
     const w = @max(inner.right - inner.left, 1);
     const ht = @max(avail - inset, 1);
-    placePane(hdwp, h, inner.left, top + inset, @intCast(w), @intCast(ht), show);
+    return .{ .left = inner.left, .top = top + inset, .right = inner.left + w, .bottom = top + inset + ht };
+}
+
+/// How much of a sliding pane's window shows (T2187): mid-slide a pane that
+/// changes size is held at its old size, and its card - already at the new
+/// size - is what is seen of it. Null when `view` is not sliding, or its
+/// window fits its card.
+fn slideClip(self: *Window, view: *PaneView, window: pane_stack_slide.Size) ?pane_stack_slide.Size {
+    const card = self.stackSlideCardRect(pane_stack_grid.viewId(view)) orelse return null;
+    const r = self.leafRect(view, winRect(card));
+    return pane_stack_slide.clip(window, .{ .w = r.right - r.left, .h = r.bottom - r.top });
 }
 
 /// Cut every pane's card region for the size the batch just gave it, BEFORE
@@ -7582,6 +7599,9 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
             // A banner with no header above it is the card's top, so its
             // strip takes the card's top corners (T1851).
             var banner_corner: i32 = 0;
+            // Mid-slide, a pane held bigger than its card is cut to the card
+            // in either style (T2187), so it never covers a pane sliding in.
+            var cut: ?pane_stack_slide.Size = null;
             // Only a pane the grid placed in a card is in `slots`; a stashed,
             // hidden-by-zoom or other-tab pane keeps (or gets back) no region.
             for (slots[0..n]) |slot| {
@@ -7593,6 +7613,10 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 _ = w32.ScreenToClient(parent, &pt);
                 cw = wr.right - wr.left;
                 ch = wr.bottom - wr.top;
+                if (tab == self.active_tab) if (self.slideClip(entry.view, .{ .w = cw, .h = ch })) |c| {
+                    cw = c.w;
+                    ch = c.h;
+                };
                 // A header or banner above the pane: the band carries the
                 // card's top curve, the pane's own top corners stay square.
                 square_top = pt.y > self.cardInner(slot.rect).top;
@@ -7600,6 +7624,14 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                     (@as(u64, @intCast(@max(ch, 0))) << 2) |
                     (@as(u64, @intFromBool(square_top)) << 1) | 1;
                 break;
+            }
+            if (!elevated and tab == self.active_tab) {
+                var wr: w32.RECT = undefined;
+                if (w32.GetWindowRect(h, &wr) != 0) {
+                    cut = self.slideClip(entry.view, .{ .w = wr.right - wr.left, .h = wr.bottom - wr.top });
+                    // Bit 0 clear: a flat cut never matches an elevated key.
+                    if (cut) |c| key = (@as(u64, @intCast(c.w)) << 33) | (@as(u64, @intCast(c.h)) << 2) | 2;
+                }
             }
             if (entry.view.surface()) |s| {
                 s.setBannerCardCorner(banner_corner);
@@ -7610,6 +7642,11 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
             entry.view.card_region_key = key;
             if (key == 0) {
                 _ = w32.SetWindowRgn(h, null, @intFromBool(redraw == .redraw));
+                continue;
+            }
+            if (cut) |c| {
+                const rect_rgn = w32.CreateRectRgn(0, 0, c.w, c.h) orelse continue;
+                if (w32.SetWindowRgn(h, rect_rgn, @intFromBool(redraw == .redraw)) == 0) _ = w32.DeleteObject(rect_rgn);
                 continue;
             }
             // Square top: the rounded rect starts a whole corner ABOVE the
@@ -8016,13 +8053,22 @@ fn stackSlideElapsedMs(self: *Window) f64 {
     return @as(f64, @floatFromInt(now.since(start))) / std.time.ns_per_ms;
 }
 
-/// Where the slide under way has card `id` right now, or null when it is not
-/// sliding (or the slide is over): it sits at its slot.
+/// Where the slide under way has card `id`'s pane right now, or null when it
+/// is not sliding (or the slide is over): it sits at its slot.
 fn stackSlideRect(self: *Window, id: pane_stack_grid.Id) ?pane_stack_grid.PxRect {
     const s = &(self.stack_slide orelse return null);
     const elapsed = self.stackSlideElapsedMs();
     if (s.done(elapsed)) return null;
     return s.rectAt(id, elapsed);
+}
+
+/// The card that card `id` shows right now: where its pane is, at the size it
+/// slides to (`pane_stack_slide.cardAt`). Null when it is not sliding.
+fn stackSlideCardRect(self: *Window, id: pane_stack_grid.Id) ?pane_stack_grid.PxRect {
+    const s = &(self.stack_slide orelse return null);
+    const elapsed = self.stackSlideElapsedMs();
+    if (s.done(elapsed)) return null;
+    return s.cardRectAt(id, elapsed);
 }
 
 fn endStackSlide(self: *Window) void {

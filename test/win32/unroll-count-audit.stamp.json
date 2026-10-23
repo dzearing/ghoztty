@@ -1,8 +1,8 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-23T08:23:22-07:00",
-    "commit":  "c270339bf",
+    "generated":  "2026-10-23T08:57:56-07:00",
+    "commit":  "456c0460c",
     "uncommitted":  [
                         "scripts/guard-due.ps1"
                     ],
@@ -37,7 +37,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "24d0a3fac00efd1e4f1d3c9b74631a3e6daf1d8a59b4a8837dc574f5f16f9d3d",
+                  "scripts/guard-due.ps1":  "8da1d328b9985fe7c0b60f1fcb5965b9eb68fde59565b5ab0ea8114ff6e710d2",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "cda274a862bd12af712f6f6a2f018142f82cce573faded7954a6e1befb93608b",

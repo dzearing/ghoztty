@@ -630,6 +630,18 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # An unfold slides into view (T2187): a pane held at its old size mid-slide
+    # is cut to its new card, so it never covers the pane coming back.
+    [pscustomobject]@{
+        Name   = 'pane-stack-unfold'
+        Script = 'test\win32\pane-stack-unfold.ps1'
+        Stamp  = 'test\win32\pane-stack-unfold.stamp.json'
+        Covers = @(
+            'test\win32\pane-stack-unfold.ps1',
+            'src\apprt\win32\pane_stack_slide.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The collapse gesture (T2124): a divider or stack grip dragged past a
     # pane's minimum folds panes into strips and back. `stack_drag.zig` is the
     # drag's state machine; the window turns pointer pixels into its steps.

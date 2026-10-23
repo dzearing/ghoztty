@@ -136,6 +136,13 @@ pub const Slide = struct {
         return std.math.clamp(elapsed_ms / self.duration_ms, 0, 1);
     }
 
+    /// The card that card `id` shows `elapsed_ms` into the slide, or null when it
+    /// is not sliding. See `cardAt`.
+    pub fn cardRectAt(self: *const Slide, id: Id, elapsed_ms: f64) ?PxRect {
+        const c = self.find(id) orelse return null;
+        return cardAt(c, self.progress(elapsed_ms));
+    }
+
     pub fn done(self: *const Slide, elapsed_ms: f64) bool {
         return elapsed_ms >= self.duration_ms;
     }
@@ -176,6 +183,25 @@ pub fn at(c: Card, t: f64, resize: bool) PxRect {
         .right = x + c.from.width(),
         .bottom = y + c.from.height(),
     };
+}
+
+/// The card `c` shows at linear progress `t` (T2187; Mac `PaneCardView.apply`'s
+/// resizing slide): at the same place as its pane (`at`), but already at its
+/// slot's size. Its pane is held at the old size until the slide ends, so the
+/// card is what is SEEN of it: a pane that shrinks is cut to its new card at
+/// once rather than covering its neighbours for the whole slide - which hid a
+/// pane unfolding beside it until the very end, so the unfold looked instant -
+/// and one that grows shows its card's backdrop beyond it.
+pub fn cardAt(c: Card, t: f64) PxRect {
+    const p = at(c, t);
+    return .{ .left = p.left, .top = p.top, .right = p.left + c.to.width(), .bottom = p.top + c.to.height() };
+}
+
+/// What of a held pane window shows inside its card: `window` cut to `card`,
+/// or null when the window already fits (nothing to cut).
+pub fn clip(window: Size, card: Size) ?Size {
+    if (window.w <= card.w and window.h <= card.h) return null;
+    return .{ .w = @max(@min(window.w, card.w), 1), .h = @max(@min(window.h, card.h), 1) };
 }
 
 fn lerp(a: i32, b: i32, e: f64) i32 {
@@ -305,6 +331,39 @@ test "plan: a card that changes size holds its old size until the end" {
     try testing.expectEqual(@as(i32, 400), near_end.width());
     // One size change in the whole slide, at its end.
     try testing.expectEqual(r(100, 0, 500, 600), at(c, 1, false));
+}
+
+test "cardAt: an unfold cuts the widening neighbour to its new card at once (T2187)" {
+    // A | B with B folded: A fills the row. B unfolds; A keeps its place and
+    // goes from 900 to 450 wide, B slides in from the row's edge.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 900, 600), .tucked = false },
+        .{ .id = 2, .rect = heldRect(r(880, 0, 450, 600), .{ .w = 375, .h = 600 }), .tucked = true },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 450, 600), .tucked = false },
+        .{ .id = 2, .rect = r(450, 0, 450, 600), .tucked = false },
+    };
+    const s = plan(&before, &after, null, 0, duration_ms);
+    try testing.expectEqual(@as(usize, 2), s.len);
+    const t = duration_ms / 4;
+    // A's pane is held at 900 (no resize mid-slide) - and before T2187 that
+    // was all there was of it, covering B everywhere B could be.
+    try testing.expectEqual(@as(i32, 900), s.rectAt(1, t).?.width());
+    // Its card is 450 from the first frame, so B's way in is not under it.
+    const card_a = s.cardRectAt(1, t).?;
+    try testing.expectEqual(r(0, 0, 450, 600), card_a);
+    const card_b = s.cardRectAt(2, t).?;
+    try testing.expect(card_b.left > 450 and card_b.left < 880);
+    try testing.expect(card_a.right <= card_b.left);
+    try testing.expectEqual(@as(i32, 450), card_b.width());
+    // The cut: A's 900-wide window shows 450 of itself; B's 375-wide window
+    // fits its 450 card and is not cut.
+    try testing.expectEqual(Size{ .w = 450, .h = 600 }, clip(.{ .w = 900, .h = 600 }, .{ .w = card_a.width(), .h = 600 }).?);
+    try testing.expectEqual(@as(?Size, null), clip(.{ .w = 375, .h = 600 }, .{ .w = card_b.width(), .h = 600 }));
+    // At the end card and pane agree.
+    try testing.expectEqual(s.rectAt(1, duration_ms).?, s.cardRectAt(1, duration_ms).?);
+    try testing.expectEqual(r(450, 0, 450, 600), s.cardRectAt(2, duration_ms).?);
 }
 
 test "plan: a slide mid-slide starts from where the cards are on screen" {
