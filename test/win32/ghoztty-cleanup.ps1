@@ -304,6 +304,51 @@ $e = Invoke-Screen -ScriptArgs @('keep', 'install-release') -Env $envD
 Assert 'E1 exits 2 (not viable), not 0' ($e.Code -eq 2) "code=$($e.Code)"
 Assert 'E2 says why' ($e.Text -match 'needs -Reason') ''
 
+# ------------------------------------------------------------------- E2 -----
+
+# T2168: one product writes two Uninstall keys under one ProductCode - Windows'
+# own registration, hidden (SystemComponent=1) and carrying the Version DWORD,
+# and the HKCU entry a person sees, with the release number and an
+# InstallLocation. That is ONE item with ONE uninstall command, and it is not
+# "another install's files": the exe's FILEVERSION (yy.m.d.NN) is the
+# registered ProductVersion (yy.m.dNN) even though the shown number is semver.
+Head 'E2 - a hidden registration and its listed entry are one product'
+$envE2 = New-Sandbox
+$H_Hidden = "$TestHive\UninstallHidden"
+$pairCode = '{22222222-2168-4000-8000-000000002168}'
+$pairExeDir = Join-Path $Sandbox 'Programs\GhozttyPair'
+New-Item -ItemType Directory -Path $pairExeDir -Force | Out-Null
+# A real versioned PE to stand in for the installed exe: the screen reads its
+# FILEVERSION (yy.m.d.NN), which a plain file does not have. The repo's own
+# build carries one, and the registration is derived from it the way the MSI
+# derives ProductVersion: yy.m.dNN, packed major<<24 | minor<<16 | build.
+$pe = Join-Path $Repo 'zig-out\bin\ghoztty.exe'
+if (-not (Test-Path -LiteralPath $pe)) { throw "E2 needs a built $pe (zig build -Doptimize=Debug)" }
+Copy-Item -LiteralPath $pe -Destination (Join-Path $pairExeDir 'ghoztty.exe') -Force
+$fv = (Get-Item -LiteralPath $pe).VersionInfo
+$build = $fv.FileBuildPart * 100 + $fv.FilePrivatePart
+$regVer = '{0}.{1}.{2}' -f $fv.FileMajorPart, $fv.FileMinorPart, $build
+$dword = ($fv.FileMajorPart -shl 24) -bor ($fv.FileMinorPart -shl 16) -bor $build
+New-Item -Path "$H_Hidden\$pairCode" -Force | Out-Null
+New-ItemProperty -Path "$H_Hidden\$pairCode" -Name 'DisplayName' -Value 'Ghoztty' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$H_Hidden\$pairCode" -Name 'DisplayVersion' -Value $regVer -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$H_Hidden\$pairCode" -Name 'Version' -Value ([int32]$dword) -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path "$H_Hidden\$pairCode" -Name 'SystemComponent' -Value 1 -PropertyType DWord -Force | Out-Null
+New-Item -Path "$H_Uninstall\$pairCode" -Force | Out-Null
+New-ItemProperty -Path "$H_Uninstall\$pairCode" -Name 'DisplayName' -Value 'Ghoztty' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$H_Uninstall\$pairCode" -Name 'DisplayVersion' -Value '1.43.3' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path "$H_Uninstall\$pairCode" -Name 'InstallLocation' -Value ($pairExeDir + '\') -PropertyType String -Force | Out-Null
+$saveUninst = $H_Uninstall
+$H_Uninstall = "$saveUninst;$H_Hidden"
+$e2 = Invoke-Screen -ScriptArgs @('inventory', '-NoProcessScan') -Env $envE2
+$H_Uninstall = $saveUninst
+$pairHits = ([regex]::Matches($e2.Text, ('arp-' + [regex]::Escape($pairCode)))).Count
+Assert 'E2a the pair is listed as ONE item' ($pairHits -eq 1) "found $pairHits (registered $regVer)"
+Assert 'E2b it offers its one uninstall command' ($e2.Text -match [regex]::Escape('msiexec /x ' + $pairCode)) ''
+Assert 'E2c it is not mistaken for another install''s files' `
+    ($e2.Text -notmatch ('registration says 1\.43\.3 but')) ''
+Remove-Item -LiteralPath $H_Hidden -Recurse -Force -ErrorAction SilentlyContinue
+
 # ------------------------------------------------------------------- F ------
 
 Head 'F - -DryRun removes nothing'

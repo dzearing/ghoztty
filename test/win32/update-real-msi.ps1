@@ -64,6 +64,8 @@ $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 # test\win32\update-graceful.ps1, which drives the same machinery through the
 # graceful close-and-reopen this harness stubs out.
 . (Join-Path $PSScriptRoot 'lib\ThrowawayProduct.ps1')
+# The registered-ProductVersion decode D reads (T2168).
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\ArpVersion.ps1')
 # -ReleaseSandbox, not a bare suffix: everything this script launches is a
 # RELEASE build (it is a published package), so without the sandbox it would
 # dial the agent that owns the user's live sessions and stage its package into
@@ -277,19 +279,23 @@ if (-not $staged) {
     Assert ($verAfter -eq $newVer) "D: the installed build now reports $newVer (got '$verAfter')"
 
     $entries = @(Get-ThrowawayUninstallEntries -Identity $Identity)
-    $displayed = if ($entries.Count -gt 0) {
-        (Get-ItemProperty $entries[0].PSPath -ErrorAction SilentlyContinue).DisplayVersion
-    } else { '' }
     Assert ($entries.Count -eq 1) "D: still ONE product in Apps & Features (an upgrade, not a second install) - found $($entries.Count)"
-    # Apps & Features shows the MSI's numeric ProductVersion (yy.m.dNN), not
-    # the semver - these packages carry no ARPDISPLAYVERSION - so the check is
-    # that the REGISTERED product moved from the old package's number to the
-    # new one's. Anything else means the update installed beside the old
-    # product rather than over it.
+    # The check is that the REGISTERED product moved from the old package's
+    # ProductVersion (yy.m.dNN) to the new one's. Anything else means the
+    # update installed beside the old product rather than over it. Read from
+    # the registration's Version DWORD, never DisplayVersion: since T2168 the
+    # entry a person sees shows the release number, which is not the number
+    # upgrades are decided on, and the DWORD lives on Windows' own (hidden)
+    # registration.
+    $registered = ''
+    foreach ($e in @(Get-ThrowawayUninstallEntries -Identity $Identity -IncludeHidden)) {
+        $p = Get-ItemProperty $e.PSPath -ErrorAction SilentlyContinue
+        if ($p -and $null -ne $p.Version) { $registered = ConvertFrom-ArpVersionDword -Value $p.Version; break }
+    }
     $prodOld = Get-MsiProperty -Msi $msiOld -Name 'ProductVersion'
     $prodNew = Get-MsiProperty -Msi $msiNew -Name 'ProductVersion'
     Assert ($prodOld -ne $prodNew) "D: the two packages have different ProductVersions ($prodOld / $prodNew)"
-    Assert ($displayed -eq $prodNew) "D: the registered product is now $prodNew, was $prodOld (got '$displayed')"
+    Assert (Test-ArpVersionEqual $registered $prodNew) "D: the registered product is now $prodNew, was $prodOld (got '$registered')"
 }
 
 # ================================================= E. nothing left behind

@@ -154,6 +154,39 @@ Assert ($r.Code -eq 3 -and $r.Text -match 'NOT INSTALLED') "B6 no such product e
 $r = Invoke-Check @('-DisplayName', $fixtureName, '-Roots', $fixtureUninst, '-Package', (Join-Path $work 'missing.msi'))
 Assert ($r.Code -eq 1 -and $r.Text -match 'no cached package') "B7 an entry with no package to hold it against fails, never passes (exit $($r.Code))"
 
+# T2168's shape: Windows' own registration hidden (SystemComponent=1) and
+# carrying the Version DWORD, plus the listed entry the package writes itself
+# with the release number, both under one ProductCode in two different roots.
+$fixtureHidden = "$fixtureRoot\UninstallHidden"
+$hkey = "$fixtureHidden\$fixtureCode"
+New-Item -Path $hkey -Force | Out-Null
+New-ItemProperty -Path $hkey -Name DisplayName -Value $fixtureName -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $hkey -Name DisplayVersion -Value '26.10.2290' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $hkey -Name Version -Value $dw -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path $hkey -Name SystemComponent -Value 1 -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path $key -Name DisplayVersion -Value '1.43.3' -PropertyType String -Force | Out-Null
+Remove-ItemProperty -Path $key -Name Version -ErrorAction SilentlyContinue
+
+$grouped = @(Group-ArpProducts -Entries @(Find-ArpEntries -DisplayName $fixtureName -Roots @($fixtureUninst, $fixtureHidden)))
+Assert ($grouped.Count -eq 1 -and $grouped[0].Shown.Count -eq 1 -and $grouped[0].DisplayVersion -eq '1.43.3' -and
+        (ConvertFrom-ArpVersionDword -Value $grouped[0].Version) -eq '26.10.2290') `
+    "B8 the two keys pair into ONE product: display from the listed key, Version from the hidden one ($($grouped.Count) product(s))"
+
+$r = Invoke-Check @('-DisplayName', $fixtureName, '-Roots', "$fixtureUninst;$fixtureHidden", '-Package', $msiOk)
+Assert ($r.Code -eq 0 -and $r.Text -match 'ARP VERSION OK: 1 installed' -and $r.Text -match 'OK    listed') `
+    "B9 the T2168 shape (hidden registration + listed release number) exits 0 as one product (exit $($r.Code))"
+
+Remove-ItemProperty -Path $hkey -Name SystemComponent
+$r = Invoke-Check @('-DisplayName', $fixtureName, '-Roots', "$fixtureUninst;$fixtureHidden", '-Package', $msiOk)
+Assert ($r.Code -eq 1 -and $r.Text -match 'FAIL  listed: Apps & Features lists it 2 times') `
+    "B10 Windows' entry left visible beside ours is a duplicate line in the list and exits 1 (exit $($r.Code))"
+
+New-ItemProperty -Path $hkey -Name SystemComponent -Value 1 -PropertyType DWord -Force | Out-Null
+New-ItemProperty -Path $key -Name SystemComponent -Value 1 -PropertyType DWord -Force | Out-Null
+$r = Invoke-Check @('-DisplayName', $fixtureName, '-Roots', "$fixtureUninst;$fixtureHidden", '-Package', $msiOk)
+Assert ($r.Code -eq 1 -and $r.Text -match 'FAIL  listed: every key for it is hidden') `
+    "B11 a product with every key hidden is one nobody can find to remove, and exits 1 (exit $($r.Code))"
+
 Write-Host '--- C. live, read-only: the installed Ghoztty ---'
 $live = @(Find-ArpEntries -DisplayName 'Ghoztty')
 if ($live.Count -eq 0) {

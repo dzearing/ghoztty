@@ -23,7 +23,8 @@
       msi      opens through the Windows Installer COM API (no Docker, no
                msitools); its File table carries ghoztty.exe, ghoztty.com and
                ghoztty-agent.exe at one shared, non-empty version; the
-               ARPDISPLAYVERSION it shows in Apps & Features is the tag's
+               number it shows in Apps & Features is the tag's (its own HKCU
+               entry formats ARPDISPLAYVERSION; Windows' entry is hidden)
       cross    the ZIP's binaries and the MSI's File table carry the same
                build, and that build is the commit the tag points at - the two
                downloads are one release, not two
@@ -114,11 +115,15 @@ function Read-MsiTables([string]$Path) {
     $db = $null
     $files = @{}
     $props = @{}
+    # T2168: the HKCU Apps & Features entry the package writes itself (Name ->
+    # Value), since Windows Installer never reads ARPDISPLAYVERSION.
+    $arp = @{}
     try {
         $db = $installer.OpenDatabase($Path, 0)   # msiOpenDatabaseModeReadOnly
         foreach ($q in @(
                 @{ sql = 'SELECT FileName, Version FROM File'; into = $files; long = $true },
-                @{ sql = 'SELECT Property, Value FROM Property'; into = $props; long = $false })) {
+                @{ sql = 'SELECT Property, Value FROM Property'; into = $props; long = $false },
+                @{ sql = "SELECT Name, Value FROM Registry WHERE Root=1 AND ``Key``='Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]'"; into = $arp; long = $false })) {
             $view = $db.OpenView($q.sql)
             try {
                 [void]$view.Execute()
@@ -141,7 +146,7 @@ function Read-MsiTables([string]$Path) {
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
     }
-    return @{ files = $files; props = $props }
+    return @{ files = $files; props = $props; arp = $arp }
 }
 
 # ------------------------------------------------------------ collect assets
@@ -339,7 +344,14 @@ try {
 
         $arp = $null
         if ($msi.props.ContainsKey('ARPDISPLAYVERSION')) { $arp = $msi.props['ARPDISPLAYVERSION'] }
-        Check "msi: Apps & Features will show $version" ($arp -eq $version) "ARPDISPLAYVERSION=$arp"
+        Check "msi: ARPDISPLAYVERSION is $version" ($arp -eq $version) "ARPDISPLAYVERSION=$arp"
+        # T2168: that property is only a value - Windows Installer never reads
+        # it. What Apps & Features shows is the entry the package writes itself,
+        # with Windows' own entry (which shows ProductVersion) hidden.
+        Check "msi: Windows' own Apps & Features entry is hidden" ($msi.props['ARPSYSTEMCOMPONENT'] -eq '1') `
+            "ARPSYSTEMCOMPONENT=$($msi.props['ARPSYSTEMCOMPONENT'])"
+        Check "msi: Apps & Features will show $version" ($msi.arp['DisplayVersion'] -eq '[ARPDISPLAYVERSION]') `
+            "the listed entry's DisplayVersion row is '$($msi.arp['DisplayVersion'])'"
     }
 
     # ----------------------------------------------------------------- cross

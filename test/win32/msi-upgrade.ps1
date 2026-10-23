@@ -60,10 +60,14 @@ $uninstRoots = @(
     'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
 )
 
+# The entries Apps & Features LISTS: since T2168 Windows' own registration is
+# hidden (SystemComponent=1) and the visible one is the package's HKCU entry,
+# both named by the ProductCode.
 function Get-TestUninstallEntries {
     foreach ($root in $uninstRoots) {
         Get-ChildItem $root -ErrorAction SilentlyContinue | Where-Object {
-            (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -eq $TestName
+            $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            $p -and $p.DisplayName -eq $TestName -and [int]($p.PSObject.Properties['SystemComponent'] | ForEach-Object { $_.Value }) -ne 1
         }
     }
 }

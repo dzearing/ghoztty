@@ -28,6 +28,9 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\ArpVersion.ps1')
 
 $findArgs = @{ DisplayName = $DisplayName }
+# `;` separates roots too: `powershell -File` cannot bind an array, so a child
+# process passes several roots as one argument.
+$Roots = @($Roots | ForEach-Object { $_ -split ';' } | Where-Object { $_ })
 if ($Roots.Count -gt 0) { $findArgs.Roots = $Roots }
 $entries = @(Find-ArpEntries @findArgs)
 if ($entries.Count -eq 0) {
@@ -35,11 +38,22 @@ if ($entries.Count -eq 0) {
     exit 3
 }
 
+# One verdict per PRODUCT, not per key: since T2168 a product is a hidden
+# registration plus the listed entry, both under its ProductCode.
+$products = @(Group-ArpProducts -Entries $entries)
 $bad = 0
-foreach ($e in $entries) {
+foreach ($e in $products) {
     $pkg = if ($Package) { $Package } else { Get-ArpLocalPackage -ProductCode $e.ProductCode }
     Write-Host "$DisplayName $($e.ProductCode)"
     Write-Host "  registry: $($e.Where)"
+    $listedOk = ($e.Shown.Count -eq 1)
+    if ($listedOk) {
+        Write-Host "  OK    listed: Apps & Features lists exactly one entry for it ($($e.DisplayWhere))"
+    } elseif ($e.Shown.Count -eq 0) {
+        Write-Host "  FAIL  listed: every key for it is hidden (SystemComponent=1), so Apps & Features does not list it at all"
+    } else {
+        Write-Host "  FAIL  listed: Apps & Features lists it $($e.Shown.Count) times ($(@($e.Shown | ForEach-Object { $_.Where }) -join ', '))"
+    }
     if (-not $pkg -or -not (Test-Path -LiteralPath $pkg)) {
         $bad++
         Write-Host "  FAIL  package: Windows Installer has no cached package for $($e.ProductCode) ('$pkg'), so there is nothing to hold DisplayVersion '$($e.DisplayVersion)' against"
@@ -51,12 +65,13 @@ foreach ($e in $entries) {
         -PackageProduct (Get-ArpPackageProperty -Package $pkg -Name 'ProductVersion') `
         -RegistryWhere 'registry' -PackageWhere 'the package'
     foreach ($l in $v.Lines) { Write-Host "  $l" }
-    if (-not $v.Ok) { $bad++ }
+    if (-not $v.Ok -or -not $listedOk) { $bad++ }
 }
 
+$noun = if ($products.Count -eq 1) { 'product' } else { 'products' }
 if ($bad -gt 0) {
-    Write-Host "ARP VERSION MISMATCH: $bad of $($entries.Count) installed '$DisplayName' entr$(if ($entries.Count -eq 1) { 'y' } else { 'ies' }) disagree with the package"
+    Write-Host "ARP VERSION MISMATCH: $bad of $($products.Count) installed '$DisplayName' $noun disagree with the package"
     exit 1
 }
-Write-Host "ARP VERSION OK: $($entries.Count) installed '$DisplayName' entr$(if ($entries.Count -eq 1) { 'y' } else { 'ies' }) agree with the package"
+Write-Host "ARP VERSION OK: $($products.Count) installed '$DisplayName' $noun agree with the package"
 exit 0

@@ -19,8 +19,13 @@
 # So the verdict below is made from three surfaces, and every line it prints
 # names which one it read and where:
 #
-#   registry  the Uninstall key Windows wrote: DisplayVersion (what a person
-#             sees) and Version (a DWORD, the registered ProductVersion).
+#   registry  the Uninstall keys for the product: DisplayVersion from the one
+#             Apps & Features lists (what a person sees) and Version (a DWORD,
+#             the registered ProductVersion) from Windows' own registration.
+#             Since T2168 those are two keys - Windows' entry is hidden and the
+#             package writes the listed one itself, because Windows Installer
+#             never reads ARPDISPLAYVERSION - and Group-ArpProducts pairs them.
+#             The CLI adds a fourth check, `listed`: exactly one shown entry.
 #   package   the cached MSI Windows installed from (its LocalPackage):
 #             ARPDISPLAYVERSION and ProductVersion from its Property table.
 #
@@ -146,8 +151,38 @@ function Find-ArpEntries {
                     ProductCode    = $k.PSChildName
                     DisplayVersion = [string]$p.DisplayVersion
                     Version        = $p.Version
+                    Hidden         = ([int]($p.PSObject.Properties['SystemComponent'] | ForEach-Object { $_.Value }) -eq 1)
                 }
             }
+        }
+    }
+    return $out
+}
+
+# One row per product out of Find-ArpEntries' keys (T2168). Since T2168 a
+# package writes two keys under one ProductCode: Windows' own registration,
+# hidden from the list (SystemComponent=1) but still carrying the `Version`
+# DWORD, and the HKCU entry a person sees, carrying the release number. A
+# pre-T2168 package writes only the first, unhidden. Either way:
+#
+#   Shown           the keys Apps & Features LISTS for the product - exactly
+#                   one is right; two is a duplicate line in the list, zero is
+#                   a product nobody can find to remove.
+#   DisplayVersion  what the listed key shows ('' when none is listed).
+#   Version         the registration's DWORD, from whichever key carries it.
+function Group-ArpProducts {
+    param([object[]]$Entries = @())
+    $out = @()
+    foreach ($g in @($Entries | Group-Object -Property ProductCode)) {
+        $shown = @($g.Group | Where-Object { -not $_.Hidden })
+        $reg = @($g.Group | Where-Object { $null -ne $_.Version -and "$($_.Version)" -ne '' } | Select-Object -First 1)
+        $out += [pscustomobject]@{
+            ProductCode    = $g.Name
+            Shown          = $shown
+            DisplayVersion = $(if ($shown.Count -gt 0) { [string]$shown[0].DisplayVersion } else { '' })
+            Version        = $(if ($reg.Count -gt 0) { $reg[0].Version } else { $null })
+            Where          = (@($g.Group | ForEach-Object { $_.Where + $(if ($_.Hidden) { ' (hidden)' } else { '' }) }) -join ', ')
+            DisplayWhere   = $(if ($shown.Count -gt 0) { $shown[0].Where } else { '' })
         }
     }
     return $out

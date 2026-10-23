@@ -203,21 +203,34 @@ function Get-MsiTableColumn {
 # number separately.
 function Get-ArpEntryVersion {
     param([Parameter(Mandatory = $true)][string]$Name)
-    foreach ($e in @(Get-ThrowawayUninstallEntries -Identity $Name)) {
+    # -IncludeHidden: since T2168 the Version DWORD lives on Windows' own
+    # registration, which the package hides from the list.
+    foreach ($e in @(Get-ThrowawayUninstallEntries -Identity $Name -IncludeHidden)) {
         $p = Get-ItemProperty $e.PSPath -ErrorAction SilentlyContinue
         if ($p -and $null -ne $p.Version) { return (ConvertFrom-ArpVersionDword -Value $p.Version) }
     }
     return ''
 }
 
-# The registry half of the display check: where the entry is and what it says.
+# The registry half of the display check: the entry a person sees and what it
+# says, with the Version DWORD from the registration (hidden since T2168, and
+# the same key on a pre-T2168 package).
 function Get-ArpEntryRow {
     param([Parameter(Mandatory = $true)][string]$Name)
     foreach ($e in @(Get-ThrowawayUninstallEntries -Identity $Name)) {
         $p = Get-ItemProperty $e.PSPath -ErrorAction SilentlyContinue
         if ($p) {
-            return [pscustomobject]@{ Where = [string]$e.Name; DisplayVersion = [string]$p.DisplayVersion; Version = $p.Version }
+            return [pscustomobject]@{ Where = [string]$e.Name; DisplayVersion = [string]$p.DisplayVersion; Version = (Get-ArpEntryDword -Name $Name) }
         }
+    }
+    return $null
+}
+
+function Get-ArpEntryDword {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    foreach ($e in @(Get-ThrowawayUninstallEntries -Identity $Name -IncludeHidden)) {
+        $p = Get-ItemProperty $e.PSPath -ErrorAction SilentlyContinue
+        if ($p -and $null -ne $p.Version) { return $p.Version }
     }
     return $null
 }

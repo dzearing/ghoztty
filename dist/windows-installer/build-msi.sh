@@ -341,8 +341,23 @@ template = """<?xml version="1.0" encoding="utf-8"?>
     <Property Id="MSIINSTALLPERUSER" Value="1"/>
     <Property Id="ARPCOMMENTS" Value="Build @STAMP@"/>
     <!-- T1205: what Apps & Features SHOWS, which is not what the installer
-         SEQUENCES on. See DISPLAY_VERSION in build-msi.sh. -->
+         SEQUENCES on. See DISPLAY_VERSION in build-msi.sh.
+
+         T2168: Windows Installer does NOT read this property. RegisterProduct
+         always writes DisplayVersion from ProductVersion, so on 2026-10-22 a
+         win-v1.43.3 install read 26.10.2290 in Apps and Features with this
+         row sitting in the package. It is kept as an ordinary property: the
+         hand-written Apps and Features entry (C_ArpEntry) formats it into
+         DisplayVersion, and RestartApp passes it to the app.
+
+         So the entry Windows writes is hidden (ARPSYSTEMCOMPONENT) and the
+         one a person sees is C_ArpEntry: HKCU, keyed by the same ProductCode,
+         so every script that runs `msiexec /x` on an Uninstall key name still
+         names the right product. Windows keeps its own entry as the product
+         registration (Version, LocalPackage and ProductInfo still read it);
+         it is only taken out of the list. -->
     <Property Id="ARPDISPLAYVERSION" Value="@DISPLAY_VERSION@"/>
+    <Property Id="ARPSYSTEMCOMPONENT" Value="1"/>
     <!-- T1300: Apps and Features offers the repair, so neither ARPNOMODIFY nor
          ARPNOREPAIR is set, and the Property read-back below fails the build if
          either comes back.
@@ -433,6 +448,37 @@ template = """<?xml version="1.0" encoding="utf-8"?>
                              Type="string" KeyPath="yes"/>
               <RemoveFolder Id="RemoveInstallDir" On="uninstall"/>
             </Component>
+            <!-- T2168: the Apps and Features entry a person sees. See
+                 ARPSYSTEMCOMPONENT above for why it is hand-written.
+
+                 Every value is formatted from a property rather than written
+                 literally, so scripts/msi-test-identity.ps1 rewriting
+                 ProductName, ProductCode and ARPDISPLAYVERSION keeps the
+                 entry coherent for a throwaway identity.
+
+                 Modify runs msiexec /I on the product, which is the T1300
+                 maintenance path (Repair / Cancel). NoRepair: Control Panel
+                 offers Repair only on entries it reads as Windows Installer
+                 products, and this one is not marked as such, so Change is
+                 the repair there too. The KeyPath is a stable value under the
+                 product key: the Uninstall key name moves with ProductCode on
+                 every build, and a component's key path must not. -->
+            <Component Id="C_ArpEntry" Guid="@ARPENTRY_GUID@">
+              <RegistryValue Root="HKCU"
+                             Key="Software\\dzearing\\@PRODUCT_NAME@"
+                             Name="ArpEntry" Value="1"
+                             Type="integer" KeyPath="yes"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="DisplayName" Value="[ProductName]" Type="string"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="DisplayVersion" Value="[ARPDISPLAYVERSION]" Type="string"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="Publisher" Value="[Manufacturer]" Type="string"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="Comments" Value="[ARPCOMMENTS]" Type="string"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="DisplayIcon" Value="[INSTALLDIR]ghoztty.exe,0" Type="string"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="InstallLocation" Value="[INSTALLDIR]" Type="string"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="UninstallString" Value="MsiExec.exe /X[ProductCode]" Type="string"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="ModifyPath" Value="MsiExec.exe /I[ProductCode]" Type="string"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="EstimatedSize" Value="@ESTIMATED_SIZE_KB@" Type="integer"/>
+              <RegistryValue Root="HKCU" Key="@ARP_KEY@" Name="NoRepair" Value="1" Type="integer"/>
+            </Component>
             <!-- User PATH entry so `ghoztty` resolves from any shell (T70).
                  Removed automatically on uninstall (Permanent=no). The app
                  also self-heals this entry on launch (PathInstaller.zig),
@@ -470,6 +516,7 @@ template = """<?xml version="1.0" encoding="utf-8"?>
 @REFS@
       <ComponentRef Id="C_InstallDirCleanup"/>
       <ComponentRef Id="C_UserPathEntry"/>
+      <ComponentRef Id="C_ArpEntry"/>
       <ComponentRef Id="C_StartMenuShortcut"/>
     </Feature>
 
@@ -748,6 +795,24 @@ xml = xml.replace("@MSI_CA_DLL@", escape(msi_ca_dll))
 xml = xml.replace("@CLEANUP_GUID@", guid("__installdir_cleanup__"))
 xml = xml.replace("@SHORTCUT_GUID@", guid("__startmenu_shortcut__"))
 xml = xml.replace("@PATHENV_GUID@", guid("__user_path_entry__"))
+xml = xml.replace("@ARPENTRY_GUID@", guid("__arp_entry__"))
+xml = xml.replace("@ARP_KEY@", "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\[ProductCode]")
+# EstimatedSize (KB) for the hand-written Apps & Features entry (T2168).
+# Windows Installer computes it for the entry it writes; ours has to say it.
+def tree_bytes(path):
+    if not path or not os.path.exists(path):
+        return 0
+    if os.path.isfile(path):
+        return os.path.getsize(path)
+    total = 0
+    for root, _dirs, names in os.walk(path):
+        for name in names:
+            fp = os.path.join(root, name)
+            if not os.path.islink(fp):
+                total += os.path.getsize(fp)
+    return total
+size_kb = sum(tree_bytes(p) for p in (exe, com_exe, agent_exe, share, gl)) // 1024
+xml = xml.replace("@ESTIMATED_SIZE_KB@", str(max(size_kb, 1)))
 xml = xml.replace("@PRODUCT_NAME@", PRODUCT_NAME)
 xml = xml.replace("@UPGRADE_CODE@", UPGRADE_CODE)
 # Parse what we just generated, BEFORE wixl sees it. wixl reports a broken
@@ -1221,7 +1286,9 @@ PYEOF
 echo "==> verify no-reboot + restart-manager wiring (Property table)"
 msiinfo export "$OUT" Property > "$WORK/Property.idt" || {
   echo "error: the MSI has no Property table" >&2; exit 1; }
-python3 - "$WORK/Property.idt" "$DISPLAY_VERSION" <<'PYEOF'
+msiinfo export "$OUT" Registry > "$WORK/Registry.idt" || {
+  echo "error: the MSI has no Registry table" >&2; exit 1; }
+python3 - "$WORK/Property.idt" "$DISPLAY_VERSION" "$WORK/Registry.idt" <<'PYEOF'
 import sys
 
 def rows(path):
@@ -1276,6 +1343,35 @@ if want_display:
             f"{want_display!r}"
         )
 
+# T2168: the property above is only a VALUE. Windows Installer never reads it -
+# what reaches Apps & Features is the hand-written entry, and the entry Windows
+# writes from ProductVersion has to be hidden or it shows beside ours (or, as
+# on 2026-10-22, instead of the release number entirely). So read back both
+# halves: the hide flag, and the Registry rows that carry the number.
+if props.get("ARPSYSTEMCOMPONENT", "") != "1":
+    errs.append(
+        "ARPSYSTEMCOMPONENT is not 1 - Windows' own Apps & Features entry, which "
+        "always shows the yy.m.dNN ProductVersion, would be listed"
+    )
+arp_key = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\[ProductCode]"
+arp = {}
+for r in rows(sys.argv[3]) if len(sys.argv) > 3 else []:
+    # Registry, Root, Key, Name, Value, Component_
+    if len(r) >= 5 and r[1] == "1" and r[2] == arp_key:
+        arp[r[3]] = r[4]
+want_rows = {
+    "DisplayName": "[ProductName]",
+    "DisplayVersion": "[ARPDISPLAYVERSION]",
+    "UninstallString": "MsiExec.exe /X[ProductCode]",
+    "ModifyPath": "MsiExec.exe /I[ProductCode]",
+}
+for name, value in want_rows.items():
+    if arp.get(name) != value:
+        errs.append(
+            f"Apps & Features entry (HKCU {arp_key}) has {name}={arp.get(name)!r}, "
+            f"expected {value!r}"
+        )
+
 # T1300: Apps and Features offers the repair. On Windows 11 Settings the only
 # verb that can reach it is Modify, so ARPNOMODIFY hides it there, and
 # ARPNOREPAIR hides Control Panel's Repair button.
@@ -1293,7 +1389,7 @@ if errs:
 print("no-reboot ok: REBOOT=ReallySuppress, Restart Manager left enabled")
 print("repair entry ok: neither ARPNOMODIFY nor ARPNOREPAIR is set")
 if want_display:
-    print(f"display version ok: Apps & Features will show {want_display}")
+    print(f"display version ok: the HKCU Apps & Features entry carries {want_display}; Windows' own entry is hidden")
 PYEOF
 
 echo "==> validate"

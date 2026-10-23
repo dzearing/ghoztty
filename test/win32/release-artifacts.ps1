@@ -199,11 +199,15 @@ Assert "A19 on-box script asks for the FILEVERSION rule instead of restating it"
 # yy.m.dNN sequencing number (T1205). The user installed Ghoztty-1.35.0-x64.msi
 # and Apps & Features read "26.8.3108" - a number that matches neither the file
 # they downloaded, the website, nor the release tag, so "am I on the new build?"
-# had no answer anywhere. ARPDISPLAYVERSION is the one property that separates
-# the two: Windows displays it, and upgrade sequencing never looks at it.
+# had no answer anywhere. ARPDISPLAYVERSION carries the release number, but
+# Windows does NOT display it (T2168): RegisterProduct writes DisplayVersion
+# from ProductVersion whatever the package says, and a win-v1.43.3 install
+# read 26.10.2290. So Windows' own entry is hidden (A22b) and the package
+# writes the entry a person sees, formatting ARPDISPLAYVERSION into it (A22c).
 # Static because the live proof is the package read-back inside build-msi.sh
-# itself (section B), which needs Docker; these three keep the wiring from
-# being deleted on a Docker-less box.
+# itself (section B), which needs Docker, and scripts\arp-version-check.ps1
+# against a real install; these keep the wiring from being deleted on a
+# Docker-less box.
 Assert "A20 MSI derives a display version from the release semver" `
     ($msiSh -match 'DISPLAY_VERSION="\$\{SEMVER:-\$PRODUCT_VERSION\}"')
 Assert "A21 MSI sets ARPDISPLAYVERSION from it" `
@@ -211,6 +215,14 @@ Assert "A21 MSI sets ARPDISPLAYVERSION from it" `
      ($msiSh -match 's/@DISPLAY_VERSION@/\$DISPLAY_VERSION/g'))
 Assert "A22 MSI reads the display version back out of the compiled package" `
     ($msiSh -match 'ARPDISPLAYVERSION" not in props')
+Assert "A22b MSI hides Windows' own Apps & Features entry, and reads the flag back" `
+    (($msiSh -match 'Property Id="ARPSYSTEMCOMPONENT" Value="1"') -and
+     ($msiSh -match 'props.get\("ARPSYSTEMCOMPONENT", ""\) != "1"'))
+Assert "A22c MSI writes the listed entry under the ProductCode, showing ARPDISPLAYVERSION, and reads its rows back" `
+    (($msiSh -match '<ComponentRef Id="C_ArpEntry"/>') -and
+     ($msiSh -match 'Name="DisplayVersion" Value="\[ARPDISPLAYVERSION\]"') -and
+     ($msiSh -match 'Uninstall\\\\\[ProductCode\]') -and
+     ($msiSh -match '"DisplayVersion": "\[ARPDISPLAYVERSION\]"'))
 
 # ============================================================================
 "== B: packaging (the artifacts are really built and read back)"

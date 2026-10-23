@@ -134,12 +134,29 @@ function Get-ThrowawayPackage {
 }
 
 function Get-ThrowawayUninstallEntries {
-    param([Parameter(Mandatory = $true)][string]$Identity)
+    <#
+      The Apps & Features entries a PERSON sees for the product: keys marked
+      SystemComponent=1 are hidden from that list and left out (T2168).
+
+      Since T2168 a package writes two keys under one ProductCode: Windows'
+      own registration, hidden, which still carries the `Version` DWORD (the
+      registered ProductVersion), and the visible HKCU entry showing the
+      release number. -IncludeHidden returns both, for a caller that wants the
+      registration rather than the list - the Version DWORD, or every product
+      code to uninstall. Both keys are named by the ProductCode, so either
+      kind of caller can `msiexec /x` the key name.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Identity,
+        [switch]$IncludeHidden
+    )
     $out = @()
     foreach ($root in $script:ThrowawayUninstallRoots) {
         foreach ($k in @(Get-ChildItem $root -ErrorAction SilentlyContinue)) {
             $p = Get-ItemProperty $k.PSPath -ErrorAction SilentlyContinue
-            if ($p -and $p.DisplayName -eq $Identity) { $out += $k }
+            if (-not $p -or $p.DisplayName -ne $Identity) { continue }
+            if (-not $IncludeHidden -and [int]($p.PSObject.Properties['SystemComponent'] | ForEach-Object { $_.Value }) -eq 1) { continue }
+            $out += $k
         }
     }
     # Returned plain, and every caller wraps the call in `@(...)`: `return ,@()`
@@ -223,8 +240,9 @@ function Remove-ThrowawayProduct {
         [Parameter(Mandatory = $true)][string]$RealLocalAppData
     )
     [void](Assert-ThrowawayInstallDir -InstallDir $InstallDir -RealLocalAppData $RealLocalAppData)
-    foreach ($e in @(Get-ThrowawayUninstallEntries -Identity $Identity)) {
-        $code = Split-Path $e.PSPath -Leaf
+    $codes = @(Get-ThrowawayUninstallEntries -Identity $Identity -IncludeHidden |
+        ForEach-Object { Split-Path $_.PSPath -Leaf } | Sort-Object -Unique)
+    foreach ($code in $codes) {
         Start-Process msiexec.exe -ArgumentList @('/x', $code, '/qn') -Wait | Out-Null
     }
     if (Test-Path $InstallDir) {

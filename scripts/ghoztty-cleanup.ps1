@@ -125,6 +125,9 @@ if ($Rest.Count -gt 2) {
 }
 
 if (-not $DevRoot) { $DevRoot = Split-Path $PSScriptRoot -Parent }
+# `;` separates roots too: `powershell -File` cannot bind an array, so the
+# harness passes several fixture roots as one argument.
+$UninstallKeyPaths = @($UninstallKeyPaths | ForEach-Object { $_ -split ';' } | Where-Object { $_ })
 if (-not $KeepFile) {
     $KeepFile = Join-Path $DevRoot 'temp\ghoztty-cleanup-keep.json'
 }
@@ -334,8 +337,37 @@ function Add-Installs($running) {
     }
 }
 
+# A DWORD off an Uninstall key, $null when absent. Through PSObject.Properties
+# because this script runs under StrictMode 2, where reading a value the key
+# does not have throws instead of answering $null.
+function Get-ArpDword($props, [string]$name) {
+    $prop = $props.PSObject.Properties[$name]
+    if ($null -eq $prop -or $null -eq $prop.Value -or "$($prop.Value)" -eq '') { return $null }
+    return [int64]$prop.Value
+}
+
 function Add-Arp {
     param($running)
+    # Since T2168 one product writes TWO keys under its ProductCode: Windows'
+    # own registration, hidden from the list (SystemComponent=1), and the HKCU
+    # entry a person sees. They are one product and one `msiexec /x`, so a
+    # hidden key is reported only when no visible key names the same code -
+    # which is then a registration with nothing in the list to remove it by.
+    # The registered ProductVersion (yy.m.dNN) per code, from whichever key
+    # carries the `Version` DWORD - Windows' own, hidden since T2168.
+    $visibleCodes = @{}
+    $registeredByCode = @{}
+    foreach ($root in $UninstallKeyPaths) {
+        foreach ($s in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+            $p = Get-ItemProperty -LiteralPath $s.PSPath -ErrorAction SilentlyContinue
+            if (-not $p -or [string]$p.DisplayName -notmatch 'hoztty') { continue }
+            if ((Get-ArpDword $p 'SystemComponent') -ne 1) { $visibleCodes[$s.PSChildName] = $true }
+            if ($null -ne (Get-ArpDword $p 'Version')) {
+                $u = ([int64](Get-ArpDword $p 'Version')) -band [int64]4294967295
+                $registeredByCode[$s.PSChildName] = ('{0}.{1}.{2}' -f (($u -shr 24) -band 255), (($u -shr 16) -band 255), ($u -band 65535))
+            }
+        }
+    }
     foreach ($root in $UninstallKeyPaths) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         $subs = Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue
@@ -347,6 +379,7 @@ function Add-Arp {
             if ($name -notmatch 'hoztty') { continue }
 
             $code = $s.PSChildName
+            if ((Get-ArpDword $props 'SystemComponent') -eq 1 -and $visibleCodes.ContainsKey($code)) { continue }
             $ver = ''
             if ($props.PSObject.Properties['DisplayVersion']) { $ver = [string]$props.DisplayVersion }
             $loc = ''
@@ -365,7 +398,16 @@ function Add-Arp {
                 $locExe = Join-Path ($loc.TrimEnd('\')) 'ghoztty.exe'
                 if (Test-Path -LiteralPath $locExe) {
                     $i = Get-GhozttyExeInfo $locExe
-                    if ($ver -and $i.Version -and ($i.Version -notlike ("*" + $ver + "*"))) {
+                    # The exe's FILEVERSION is yy.m.d.NN; the registered
+                    # ProductVersion is the same number as yy.m.dNN. Since T2168
+                    # the visible entry's DisplayVersion is the release semver,
+                    # which no FILEVERSION ever contains, so the registration is
+                    # what an exe is held against when there is one.
+                    $owns = $false
+                    if ($i.Version -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)$' -and $registeredByCode.ContainsKey($code)) {
+                        $owns = ('{0}.{1}.{2}' -f [int]$Matches[1], [int]$Matches[2], ([int]$Matches[3] * 100 + [int]$Matches[4])) -eq $registeredByCode[$code]
+                    }
+                    if (-not $owns -and $ver -and $i.Version -and ($i.Version -notlike ("*" + $ver + "*"))) {
                         $protected = $true
                         $why = ("registration says {0} but {1} holds {2} - uninstalling it would delete another install's files from a shared path" -f $ver, $loc, $i.Version)
                     }
