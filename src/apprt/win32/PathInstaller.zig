@@ -3,25 +3,40 @@
 //! ~/.local/bin link + profile PATH entry on every launch. Here the
 //! master GUI instance checks on a background thread whether the
 //! directory it is running from is on the user PATH
-//! (HKCU\Environment\Path) and appends it when missing, then broadcasts
+//! (HKCU\Environment\Path) and puts it there when missing, then broadcasts
 //! WM_SETTINGCHANGE so shells launched afterwards see it. Idempotent:
 //! an entry present in any spelling (case, trailing "\", quotes, or an
 //! unexpanded %VAR% form) is detected and left alone.
 //!
-//! Deliberately narrower than the Mac flow: it only acts when this
-//! process runs from the canonical install directory
-//! (%LOCALAPPDATA%\Programs\Ghoztty — where the MSI also writes its own
-//! Environment PATH entry), so dev builds (zig-out) and portable unpacks
-//! never touch the user PATH. `GHOZTTY_PATH_SELFHEAL=0`/`off` disables
-//! the check entirely; `force` skips the install-location gate (test
-//! hook for path-selfheal.ps1, which must exercise the flow with a
-//! zig-out build).
+//! The entry is ONE OWNED value that the last launch re-points (T2169), the
+//! way the Mac link follows whichever bundle launched. The directory written
+//! is recorded under `HKCU\Software\Ghoztty` (`PathEntry`, `PathEntry-debug`
+//! for the debug lineage); the next launch from a different copy drops that
+//! recorded entry and writes its own, placed AHEAD of the installed release's
+//! entry so `ghoztty` resolves to the copy launched last. The installed
+//! release's directory is the MSI's own Environment entry: it is never
+//! removed, and a launch from it simply drops the recorded portable entry.
+//! Entries nobody recorded (a dir the user added by hand) are left alone.
+//!
+//! Gates, as on Mac: any real copy heals — the installed release and a
+//! portable unpack — but build output and a copy an archive tool extracted
+//! into TEMP do not (`install_location.SelfHealGate.not_build_output`), and
+//! a Debug build never does (Mac's `#if DEBUG` guard), since it runs beside
+//! the user's real install. `GHOZTTY_PATH_SELFHEAL=0`/`off` disables the
+//! check entirely; `force` skips both gates (test hook for path-selfheal.ps1,
+//! which must exercise the flow with a zig-out debug build).
 const std = @import("std");
+const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const path_env = @import("../../os/path_env.zig");
 const install_location = @import("install_location.zig");
 
 const log = std.log.scoped(.win32_path_installer);
+
+/// Where the owned entry is recorded. Lineage-suffixed like the agent's Run
+/// value, so a debug build under `force` never moves the release record.
+const owner_key = "Software\\Ghoztty";
+const owner_value = if (builtin.mode == .Debug) "PathEntry-debug" else "PathEntry";
 
 /// Run the self-heal on a detached background thread. Registry access is
 /// fast, but the WM_SETTINGCHANGE broadcast can block on unresponsive
@@ -50,11 +65,21 @@ fn ensureOnPath(arena: std.mem.Allocator) !void {
     }
     const force = if (heal_env) |v| std.ascii.eqlIgnoreCase(v, "force") else false;
 
+    // A Debug build runs next to the user's real install: never touch the
+    // CLI setup unless a test opts in (Mac: `checkCommandLineToolOnLaunch`).
+    if (builtin.mode == .Debug and !force) return;
+
     const exe_dir = try std.fs.selfExeDirPathAlloc(arena);
 
-    // Location gate: only the installed release heals the PATH, because an
-    // append ACCUMULATES — the rule is `install_location.SelfHealGate` (T1213).
-    if (!force and !install_location.selfHealAllowed(arena, .installed_release, exe_dir)) return;
+    // Location gate: the entry is owned and re-pointed, so any real copy may
+    // write it — the rule is `install_location.SelfHealGate` (T1213, T2169).
+    if (!force and !install_location.selfHealAllowed(arena, .not_build_output, exe_dir)) return;
+
+    const install_dir: []const u8 = blk: {
+        const local = std.process.getEnvVarOwned(arena, "LOCALAPPDATA") catch break :blk "";
+        break :blk try std.fs.path.join(arena, &.{ local, install_location.install_subdir });
+    };
+    const previous = readOwned(arena);
 
     var key: w32.HKEY = undefined;
     const subkey = std.unicode.utf8ToUtf16LeStringLiteral("Environment");
@@ -95,29 +120,25 @@ fn ensureOnPath(arena: std.mem.Allocator) !void {
     // Never rewrite a value of a type we don't understand.
     if (vtype != w32.REG_SZ and vtype != w32.REG_EXPAND_SZ) return;
 
-    if (path_env.contains(raw, exe_dir)) return;
+    const new_value = try path_env.repoint(arena, raw, .{
+        .dir = exe_dir,
+        .previous = previous,
+        .install_dir = install_dir,
+    }, Expander{ .arena = arena });
 
-    // The entry may be present in %VAR% form (e.g. the MSI could be asked
-    // to write %LOCALAPPDATA%-relative values, or the user wrote one):
-    // compare against the expanded value too before concluding absence.
-    if (raw.len > 0) {
-        const raw_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, raw);
-        const need = w32.ExpandEnvironmentStringsW(raw_w, null, 0);
-        if (need > 0) {
-            const ebuf = try arena.alloc(u16, need);
-            const written = w32.ExpandEnvironmentStringsW(raw_w, ebuf.ptr, need);
-            if (written > 0 and written <= need) {
-                const expanded = try std.unicode.utf16LeToUtf8Alloc(
-                    arena,
-                    ebuf[0 .. written - 1],
-                );
-                if (path_env.contains(expanded, exe_dir)) return;
-            }
-        }
-    }
+    // The record follows the launch even when the PATH already agreed, so a
+    // copy that was put there some other way is still the one dropped next.
+    // The install's entry is the MSI's, never recorded. Written only once the
+    // PATH says the same thing: a record of an entry the PATH never got would
+    // forget the one it still has.
+    const owned: []const u8 = if (install_dir.len > 0 and path_env.eqlDir(exe_dir, install_dir)) "" else exe_dir;
+    const record_changed = !std.mem.eql(u8, previous orelse "", owned);
 
-    const new_value = try path_env.append(arena, raw, exe_dir);
-    const new_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, new_value);
+    const value = new_value orelse {
+        if (record_changed) writeOwned(arena, owned);
+        return;
+    };
+    const new_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, value);
     if (w32.RegSetValueExW(
         key,
         value_name,
@@ -126,8 +147,9 @@ fn ensureOnPath(arena: std.mem.Allocator) !void {
         @ptrCast(new_w.ptr),
         @intCast((new_w.len + 1) * 2),
     ) != w32.ERROR_SUCCESS) return error.RegSetFailed;
+    if (record_changed) writeOwned(arena, owned);
 
-    log.info("PATH self-heal: added {s} to the user PATH", .{exe_dir});
+    log.info("PATH self-heal: user PATH now resolves ghoztty from {s}", .{exe_dir});
 
     // Nudge Explorer (and anything else listening) so terminals launched
     // from the shell see the new PATH without a sign-out. Timeout-guarded:
@@ -141,4 +163,82 @@ fn ensureOnPath(arena: std.mem.Allocator) !void {
         1000,
         null,
     );
+}
+
+/// `%VAR%` expansion of one PATH entry against this process's environment,
+/// for `path_env.repoint`. The entry itself when there is nothing to expand
+/// or the expansion fails.
+const Expander = struct {
+    arena: std.mem.Allocator,
+
+    pub fn expand(self: Expander, entry: []const u8) []const u8 {
+        if (std.mem.indexOfScalar(u8, entry, '%') == null) return entry;
+        const entry_w = std.unicode.utf8ToUtf16LeAllocZ(self.arena, entry) catch return entry;
+        const need = w32.ExpandEnvironmentStringsW(entry_w, null, 0);
+        if (need == 0) return entry;
+        const buf = self.arena.alloc(u16, need) catch return entry;
+        const written = w32.ExpandEnvironmentStringsW(entry_w, buf.ptr, need);
+        if (written == 0 or written > need) return entry;
+        return std.unicode.utf16LeToUtf8Alloc(self.arena, buf[0 .. written - 1]) catch entry;
+    }
+};
+
+/// The entry an earlier launch recorded as owned; null when none is (an
+/// absent key or value, or the empty string an install launch leaves).
+fn readOwned(arena: std.mem.Allocator) ?[]const u8 {
+    var key: w32.HKEY = undefined;
+    if (w32.RegOpenKeyExW(
+        w32.HKEY_CURRENT_USER,
+        std.unicode.utf8ToUtf16LeStringLiteral(owner_key),
+        0,
+        w32.KEY_QUERY_VALUE,
+        &key,
+    ) != w32.ERROR_SUCCESS) return null;
+    defer _ = w32.RegCloseKey(key);
+
+    const name = std.unicode.utf8ToUtf16LeStringLiteral(owner_value);
+    var vtype: u32 = 0;
+    var size: u32 = 0;
+    if (w32.RegQueryValueExW(key, name, null, &vtype, null, &size) != w32.ERROR_SUCCESS) return null;
+    if (vtype != w32.REG_SZ or size < 2) return null;
+    const buf = arena.alloc(u16, (size + 1) / 2) catch return null;
+    var got: u32 = @intCast(buf.len * 2);
+    if (w32.RegQueryValueExW(key, name, null, &vtype, @ptrCast(buf.ptr), &got) != w32.ERROR_SUCCESS) return null;
+    var wide: []const u16 = buf[0 .. got / 2];
+    while (wide.len > 0 and wide[wide.len - 1] == 0) wide = wide[0 .. wide.len - 1];
+    const s = std.unicode.utf16LeToUtf8Alloc(arena, wide) catch return null;
+    return if (path_env.normalize(s).len == 0) null else s;
+}
+
+/// Record `dir` as the owned entry ("" records none). Best effort: a failed
+/// write only means the next launch cannot drop this entry, which is the
+/// pre-T2169 behavior, so it is logged rather than surfaced.
+fn writeOwned(arena: std.mem.Allocator, dir: []const u8) void {
+    var key: w32.HKEY = undefined;
+    if (w32.RegCreateKeyExW(
+        w32.HKEY_CURRENT_USER,
+        std.unicode.utf8ToUtf16LeStringLiteral(owner_key),
+        0,
+        null,
+        0,
+        w32.KEY_SET_VALUE,
+        null,
+        &key,
+        null,
+    ) != w32.ERROR_SUCCESS) {
+        log.warn("PATH self-heal: could not open HKCU\\{s} to record the owned entry", .{owner_key});
+        return;
+    }
+    defer _ = w32.RegCloseKey(key);
+    const dir_w = std.unicode.utf8ToUtf16LeAllocZ(arena, dir) catch return;
+    if (w32.RegSetValueExW(
+        key,
+        std.unicode.utf8ToUtf16LeStringLiteral(owner_value),
+        0,
+        w32.REG_SZ,
+        @ptrCast(dir_w.ptr),
+        @intCast((dir_w.len + 1) * 2),
+    ) != w32.ERROR_SUCCESS) {
+        log.warn("PATH self-heal: could not record the owned entry", .{});
+    }
 }

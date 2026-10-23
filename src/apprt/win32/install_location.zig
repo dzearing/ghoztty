@@ -109,22 +109,73 @@ pub fn autoUpdateCheckEnabled(arena: std.mem.Allocator) bool {
 /// uses" in `docs/design/windows-registration-sites.md`. In short:
 pub const SelfHealGate = enum {
     /// The written value names exactly ONE exe and replaces whatever was there
-    /// — the `ghoztty://` handler command, the agent's `Run` value. The last
-    /// copy launched wins, and launching the copy you want puts it back, so
-    /// any real copy may write it: the installed release AND a portable
-    /// unpack. Only build output is refused (`source_checkout`, T1124/T1146).
+    /// — the `ghoztty://` handler command, the agent's `Run` value, the user
+    /// PATH entry (an OWNED value the last launch re-points, T2169) — or is an
+    /// offer whose answer every copy shares (the first-run integration). The
+    /// last copy launched wins, and launching the copy you want puts it back,
+    /// so any real copy may write it: the installed release AND a portable
+    /// unpack. Refused: build output (`source_checkout`, T1124/T1146), and a
+    /// copy an archive tool extracted into TEMP to run it
+    /// (`isTemporaryExtraction`), which is gone as soon as the preview closes.
     /// This is the Mac behavior: its CLI link follows whichever non-temporary
     /// bundle launched.
     not_build_output,
 
-    /// The write ACCUMULATES or is SPENT ONCE — appending to the user PATH
-    /// (every copy would add an entry nothing ever removes, and the earliest
-    /// one keeps winning), and the first-run integration offer (its answer is
-    /// remembered for every copy, and the hooks it installs reach `ghoztty`
-    /// through that PATH). Only the installed release may do it, so a portable
-    /// unpack is refused today — see T2169 for making it first-class.
+    /// The write is about the installed release ITSELF, so only the canonical
+    /// install folder may make it. No launch-time self-heal uses it since
+    /// T2169 moved the PATH entry and the integration offer to
+    /// `.not_build_output`; the gate stays for the next write that genuinely
+    /// accumulates.
     installed_release,
 };
+
+/// Whether `exe_dir` is a copy an archive tool extracted into `temp_dir` just
+/// to run it (T2169) — the Windows counterpart of the Mac refusal of a mounted
+/// DMG or an App Translocation path. Double-clicking `ghoztty.exe` inside a zip
+/// in Explorer runs it from `%TEMP%\Temp<n>_<name>.zip\...`; 7-Zip uses
+/// `%TEMP%\7zO<hex>\` and WinRAR `%TEMP%\Rar$EX<...>\`. Each is deleted when
+/// the preview closes, so anything registered against it dangles.
+///
+/// Only the FIRST component under `temp_dir` is examined: a portable unpacked
+/// on purpose somewhere under TEMP is a real copy.
+pub fn isTemporaryExtraction(exe_dir: []const u8, temp_dir: []const u8) bool {
+    const temp = path_env.normalize(temp_dir);
+    if (temp.len == 0) return false;
+    const dir = path_env.normalize(exe_dir);
+    if (dir.len <= temp.len + 1) return false;
+    if (!eqlPathIgnoreSep(dir[0..temp.len], temp)) return false;
+    const sep = dir[temp.len];
+    if (sep != '\\' and sep != '/') return false;
+
+    const rest = dir[temp.len + 1 ..];
+    const end = std.mem.indexOfAny(u8, rest, "\\/") orelse rest.len;
+    const first = rest[0..end];
+
+    if (startsWithIgnoreCase(first, "7zO")) return true;
+    if (startsWithIgnoreCase(first, "Rar$")) return true;
+    // Explorer: `Temp<digits>_<archive name>.zip`.
+    if (!startsWithIgnoreCase(first, "Temp")) return false;
+    var i: usize = 4;
+    while (i < first.len and std.ascii.isDigit(first[i])) i += 1;
+    if (i == 4 or i >= first.len or first[i] != '_') return false;
+    return std.ascii.endsWithIgnoreCase(first, ".zip");
+}
+
+fn startsWithIgnoreCase(s: []const u8, prefix: []const u8) bool {
+    return s.len >= prefix.len and std.ascii.eqlIgnoreCase(s[0..prefix.len], prefix);
+}
+
+/// Runtime form of `isTemporaryExtraction`: reads `%TEMP%` (then `%TMP%`).
+/// Neither readable means no extraction can be recognised, and the answer is
+/// false — the other half of the gate still refuses build output.
+fn inTemporaryExtraction(arena: std.mem.Allocator, exe_dir: []const u8) bool {
+    const temp = std.process.getEnvVarOwned(arena, "TEMP") catch
+        std.process.getEnvVarOwned(arena, "TMP") catch return false;
+    // Freed although the caller's is usually an arena: the unit tests pass a
+    // leak-checking allocator through `selfHealAllowedIn`.
+    defer arena.free(temp);
+    return isTemporaryExtraction(exe_dir, temp);
+}
 
 /// Whether a self-heal under `gate` may write from an exe in `exe_dir`, on a
 /// machine whose `%LOCALAPPDATA%` is `local_app_data`.
@@ -143,7 +194,8 @@ pub fn selfHealAllowedIn(
     local_app_data: []const u8,
 ) bool {
     return switch (gate) {
-        .not_build_output => !source_checkout.inSourceCheckout(arena, exe_dir),
+        .not_build_output => !source_checkout.inSourceCheckout(arena, exe_dir) and
+            !inTemporaryExtraction(arena, exe_dir),
         .installed_release => isInstallDir(exe_dir, local_app_data),
     };
 }
@@ -177,7 +229,7 @@ test "selfHealAllowedIn: the installed release passes both gates" {
     try testing.expect(selfHealAllowedIn(alloc, .not_build_output, install, tmp));
 }
 
-test "selfHealAllowedIn: a portable unpack owns last-launch-wins writes only" {
+test "selfHealAllowedIn: a portable unpack passes the last-launch-wins gate only" {
     const alloc = testing.allocator;
     const tmp = std.process.getEnvVarOwned(alloc, "TEMP") catch return error.SkipZigTest;
     defer alloc.free(tmp);
@@ -186,6 +238,41 @@ test "selfHealAllowedIn: a portable unpack owns last-launch-wins writes only" {
 
     try testing.expect(selfHealAllowedIn(alloc, .not_build_output, portable, tmp));
     try testing.expect(!selfHealAllowedIn(alloc, .installed_release, portable, tmp));
+}
+
+test "selfHealAllowedIn: a copy run out of a zip preview registers nothing" {
+    const alloc = testing.allocator;
+    const tmp = std.process.getEnvVarOwned(alloc, "TEMP") catch return error.SkipZigTest;
+    defer alloc.free(tmp);
+    const preview = try std.fs.path.join(alloc, &.{ tmp, "Temp1_Ghoztty-portable-x64.zip", "Ghoztty" });
+    defer alloc.free(preview);
+
+    try testing.expect(!selfHealAllowedIn(alloc, .not_build_output, preview, tmp));
+    try testing.expect(!selfHealAllowedIn(alloc, .installed_release, preview, tmp));
+}
+
+test "isTemporaryExtraction: Explorer, 7-Zip and WinRAR previews" {
+    const temp = "C:\\Users\\D\\AppData\\Local\\Temp";
+    try testing.expect(isTemporaryExtraction(temp ++ "\\Temp1_Ghoztty-portable-x64.zip\\Ghoztty", temp));
+    try testing.expect(isTemporaryExtraction(temp ++ "\\Temp23_ghoztty.ZIP", temp));
+    try testing.expect(isTemporaryExtraction(temp ++ "\\7zO8A1B2C3D\\Ghoztty", temp));
+    try testing.expect(isTemporaryExtraction(temp ++ "\\Rar$EXa12345.6789\\Ghoztty", temp));
+    // Case, trailing separators and slash direction do not matter.
+    try testing.expect(isTemporaryExtraction("c:/users/d/appdata/local/temp/temp1_g.zip/Ghoztty/", temp ++ "\\"));
+}
+
+test "isTemporaryExtraction: a folder unpacked on purpose is a real copy" {
+    const temp = "C:\\Users\\D\\AppData\\Local\\Temp";
+    // Under TEMP, but not an archive tool's name.
+    try testing.expect(!isTemporaryExtraction(temp ++ "\\Ghoztty-portable-x64\\Ghoztty", temp));
+    try testing.expect(!isTemporaryExtraction(temp ++ "\\Temp_ghoztty.zip", temp));
+    try testing.expect(!isTemporaryExtraction(temp ++ "\\Temp1_ghoztty", temp));
+    try testing.expect(!isTemporaryExtraction(temp ++ "\\Templates\\Temp1_g.zip", temp));
+    // TEMP itself, a sibling sharing its prefix, and elsewhere entirely.
+    try testing.expect(!isTemporaryExtraction(temp, temp));
+    try testing.expect(!isTemporaryExtraction(temp ++ "2\\Temp1_g.zip", temp));
+    try testing.expect(!isTemporaryExtraction("D:\\Desktop\\Temp1_g.zip\\Ghoztty", temp));
+    try testing.expect(!isTemporaryExtraction(temp ++ "\\Temp1_g.zip", ""));
 }
 
 test "selfHealAllowedIn: build output passes neither gate" {

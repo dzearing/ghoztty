@@ -33,8 +33,9 @@
 //! build whose exe sits under a source checkout (an ancestor directory holding
 //! `build.zig`) never claims it. A portable unpack and the installed release are
 //! both outside a checkout and register exactly as before — the gate excludes
-//! build output, not unusual install locations. Same shape as
-//! `PathInstaller`'s canonical-install gate, and the same `force` escape hatch.
+//! build output, not unusual install locations. The same
+//! `install_location.SelfHealGate.not_build_output` gate as `PathInstaller`,
+//! and the same `force` escape hatch.
 //!
 //! ## Who shows the failure
 //!

@@ -49,18 +49,27 @@ The deciding question is **who owns the thing being written**:
 
 | Gate | Use it when the write… | Who may write | Sites |
 |------|------------------------|---------------|-------|
-| `.not_build_output` | **names one exe and replaces what was there** — the last copy launched wins, and launching the copy you want puts it back | the installed release **and** a portable unpack; never build output | `url_scheme` (the `ghoztty://` handler), `LocalAgent` (the agent `Run` value) |
-| `.installed_release` | **accumulates, or is spent once** — a PATH append adds an entry nothing ever removes (and the earliest entry keeps winning, so a later copy would not even get the CLI); the first-run offer's answer is remembered for every copy, and the hooks it installs reach `ghoztty` through that PATH | the installed release only | `PathInstaller` (user PATH), `AgentIntegration` (first-run Claude offer) |
+| `.not_build_output` | **names one exe and replaces what was there** — the last copy launched wins, and launching the copy you want puts it back — or is an offer whose one answer every copy shares | the installed release **and** a portable unpack; never build output, never a copy an archive tool extracted into `%TEMP%` to run it | `url_scheme` (the `ghoztty://` handler), `LocalAgent` (the agent `Run` value), `PathInstaller` (the owned user-PATH entry), `AgentIntegration` (first-run Claude offer) |
+| `.installed_release` | **is about the installed release itself** — a write that would accumulate if every copy made it | the installed release only | none since T2169; kept for the next write that genuinely accumulates |
 
 `.not_build_output` is the Mac behavior: the Mac app re-points its
 `~/.local/bin/ghoztty` link at whichever bundle launched, refusing only a
 temporary location (a mounted DMG, an App Translocation path) and Debug builds.
-`.installed_release` is a Windows-only narrowing forced by the PATH mechanism,
-not a preference, and the portable copy the user runs pays for it: it never puts
-itself on PATH and never offers the Claude integration. **That is a parity gap,
-not a design** — T2169 makes the PATH entry a single owned value that the last
-launch re-points (the Mac shape), after which both sites move to
-`.not_build_output`.
+The Windows temporary locations are an Explorer zip preview
+(`%TEMP%\Temp<n>_<name>.zip\`), 7-Zip's `%TEMP%\7zO…\` and WinRAR's
+`%TEMP%\Rar$…\` (`install_location.isTemporaryExtraction`), and `PathInstaller`
+and `AgentIntegration` refuse a Debug build unless their seam says `force`.
+
+Until T2169 the PATH self-heal and the first-run offer sat behind
+`.installed_release`, because the PATH write was an APPEND: every copy would
+have added an entry nothing removes, and the earliest one kept winning. T2169
+made it ONE owned value instead: the directory written is recorded at
+`HKCU\Software\Ghoztty\PathEntry` (`PathEntry-debug` for the debug lineage), the
+next launch from another copy drops that recorded entry and writes its own
+AHEAD of the installed release's entry, and a launch from the install drops the
+recorded entry and leaves the MSI's own. Entries nobody recorded are never
+touched. So the copy launched last owns `ghoztty`, as on Mac, and both sites
+moved to `.not_build_output`.
 
 The agent's `adopt.zig` cannot import the win32 apprt and asks
 `source_checkout.inSourceCheckout` directly; that is the same answer as
@@ -82,8 +91,8 @@ registration added without a row goes red.
 |---|------|----------------|------|------|
 | 1 | `src/apprt/win32/url_scheme.zig` (`register`) | `HKCU\Software\Classes\ghoztty[-debug]` — the `ghoztty://` protocol handler, `shell\open\command` naming this exe | **location** (`inSourceCheckout`) + build-mode lineage in the class name | `GHOZTTY_URL_SCHEME` |
 | 2 | `src/apprt/win32/LocalAgent.zig` (`ensureAutostart` / `writeAutostart`) | `HKCU\...\CurrentVersion\Run` — the agent Windows starts at sign-in | **location** (`inSourceCheckout`) + build-mode (debug uses a lineage-suffixed value name and only under a hook) | `GHOZTTY_AGENT_AUTOSTART` |
-| 3 | `src/apprt/win32/PathInstaller.zig` (`ensureOnPath`) | `HKCU\Environment\Path` — the directory the `ghoztty` CLI resolves from, plus a `WM_SETTINGCHANGE` broadcast | **canonical install only** (stricter than the checkout rule) | `GHOZTTY_PATH_SELFHEAL` |
-| 4 | `src/apprt/win32/AgentIntegration.zig` (`setupEnabled` → `agent_integration_service.install` → `BannerScriptInstaller`, `HookComponent`, `SkillComponent`) | `%USERPROFILE%\.config\ghoztty\hooks\*.sh` and the coding agent's own hook/skill config under `%USERPROFILE%` | **canonical install only** for the automatic first-run offer | `GHOZTTY_CLAUDE_SETUP` |
+| 3 | `src/apprt/win32/PathInstaller.zig` (`ensureOnPath`) | `HKCU\Environment\Path` — the ONE owned entry the `ghoztty` CLI resolves from, re-pointed by the last launch, plus a `WM_SETTINGCHANGE` broadcast; and its record at `HKCU\Software\Ghoztty\PathEntry[-debug]` | **location** (`inSourceCheckout` + temporary extraction) + build-mode (Debug only under `force`) | `GHOZTTY_PATH_SELFHEAL` |
+| 4 | `src/apprt/win32/AgentIntegration.zig` (`setupEnabled` → `agent_integration_service.install` → `BannerScriptInstaller`, `HookComponent`, `SkillComponent`) | `%USERPROFILE%\.config\ghoztty\hooks\*.sh` and the coding agent's own hook/skill config under `%USERPROFILE%` | **location** (`inSourceCheckout` + temporary extraction) + build-mode (Debug only under `force`) for the automatic first-run offer | `GHOZTTY_CLAUDE_SETUP` |
 | 5 | `src/remote/agent/adopt.zig` (`maybeStart`) | uninstalls the standalone **Ghoztty Agent** MSI product (`msiexec /x`) and rewrites `HKCU\...\Run\GhozttyAgent` | **location** (`inSourceCheckout`) + build-mode — location gate added by T1151 | both `GHOSTTY_ADOPT_INSTALL_DIR` and `GHOSTTY_ADOPT_UNINSTALL_CMD` |
 
 ### Deliberately ungated, with the reason

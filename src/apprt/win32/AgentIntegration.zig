@@ -20,10 +20,10 @@
 //! outcome. First-run and migration success stay SILENT (Mac parity);
 //! failures report once, actionably.
 //!
-//! First-run gating is the `.installed_release` gate of
-//! `install_location.SelfHealGate` (T70, T1213): only the canonical install
-//! (%LOCALAPPDATA%\Programs\Ghoztty) prompts, so dev builds and portable
-//! unpacks never nag (T2169 tracks the portable half). Test hooks:
+//! First-run gating is the `.not_build_output` gate of
+//! `install_location.SelfHealGate` (T70, T1213, T2169): the installed release
+//! and a portable unpack both prompt (once, shared), while build output, a
+//! copy run out of a zip preview, and any Debug build never nag. Test hooks:
 //! GHOZTTY_CLAUDE_SETUP (`0`/`off` disables, `force` skips the location
 //! gate), GHOZTTY_AGENT_HOME (sandbox home for
 //! the probe, the installs and the migration — when set, the probe consults
@@ -34,6 +34,7 @@
 //! "accepted"/"declined" — declining is remembered, and both are written
 //! BEFORE the work so a crash mid-dialog can never turn into a nag.
 const std = @import("std");
+const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const App = @import("App.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
@@ -704,10 +705,16 @@ fn setupEnabled(arena: std.mem.Allocator) bool {
         if (std.ascii.eqlIgnoreCase(v, "force")) return true;
     }
 
-    // The offer is SPENT ONCE for every copy, so only the installed release
-    // makes it — the rule is `install_location.SelfHealGate` (T1213).
+    // A Debug build runs beside the user's real install and would answer
+    // their one-time offer for them (Mac's `#if DEBUG` guard).
+    if (builtin.mode == .Debug) return false;
+
+    // The offer is spent ONCE for every copy, and since T2169 every real
+    // copy puts itself on PATH, so the hooks it installs reach `ghoztty` from
+    // a portable unpack too: whichever real copy launches first makes it —
+    // the rule is `install_location.SelfHealGate` (T1213, T2169).
     const exe_dir = std.fs.selfExeDirPathAlloc(arena) catch return false;
-    return install_location.selfHealAllowed(arena, .installed_release, exe_dir);
+    return install_location.selfHealAllowed(arena, .not_build_output, exe_dir);
 }
 
 fn statePath(arena: std.mem.Allocator, name: []const u8) ?[]const u8 {

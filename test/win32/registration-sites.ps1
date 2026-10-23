@@ -195,10 +195,13 @@ Assert 'B2 the agent Run key asks the location question (.not_build_output)' `
     (Holds 'src\apprt\win32\LocalAgent.zig' 'selfHealAllowed(arena, .not_build_output')
 Assert 'B3 the MSI adoption asks the location question (T1151)' `
     (Holds 'src\remote\agent\adopt.zig' 'inSourceCheckout')
-Assert 'B4 the PATH self-heal acts only from the canonical install (.installed_release)' `
-    (Holds 'src\apprt\win32\PathInstaller.zig' 'selfHealAllowed(arena, .installed_release')
-Assert 'B5 the first-run agent integration acts only from the canonical install (.installed_release)' `
-    ((Holds 'src\apprt\win32\AgentIntegration.zig' 'selfHealAllowed(arena, .installed_release') -and
+# T2169: the PATH entry became ONE owned value the last launch re-points, and
+# the integration offer follows it, so both moved to the last-launch-wins gate -
+# a portable unpack is first-class, as a Mac app run outside /Applications is.
+Assert 'B4 the PATH self-heal acts from any real copy (.not_build_output)' `
+    (Holds 'src\apprt\win32\PathInstaller.zig' 'selfHealAllowed(arena, .not_build_output')
+Assert 'B5 the first-run agent integration acts from any real copy (.not_build_output)' `
+    ((Holds 'src\apprt\win32\AgentIntegration.zig' 'selfHealAllowed(arena, .not_build_output') -and
      (Holds 'src\apprt\win32\AgentIntegration.zig' 'setupEnabled'))
 
 # The seams, spelled the same way at every site, are what let a gate be
@@ -265,6 +268,11 @@ function Snapshot-Registrations {
             $out["run:$n"] = [string]$props.$n
         }
     }
+    # T2169: the PATH self-heal's record of the entry it owns.
+    $owner = 'HKCU:\Software\Ghoztty'
+    $out['path-owner'] = if (Test-Path $owner) {
+        [string](Get-ItemProperty $owner -Name PathEntry -ErrorAction SilentlyContinue).PathEntry
+    } else { '<absent>' }
     $env_ = 'HKCU:\Environment'
     $out['path'] = if (Test-Path $env_) {
         [string](Get-ItemProperty $env_ -Name Path -ErrorAction SilentlyContinue).Path
