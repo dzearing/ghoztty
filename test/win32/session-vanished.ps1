@@ -36,25 +36,28 @@
 #   E. The other half, which matters just as much: a session whose shell IS
 #      running is never swept. A fresh pane stays alive and interactive across
 #      several sweep intervals.
+#   F. The state ONLY the sweep can rescue (T1226), with the sweep switched OFF
+#      (GHOZTTY_AGENT_VANISH_SWEEP=0) as the control: a detached session whose
+#      holder is SUSPENDED - still alive, pipe still open, unable to report an
+#      exit or a loss - and whose shell is then killed. Nothing else in the
+#      agent notices, so the session must still read as running 25 s later.
+#   G. The same state with the sweep ON: the session is closed out, and the
+#      roster is still answering (so the drop is not a wedged query).
 #
-# WHAT THIS SCRIPT DOES NOT PROVE, measured rather than assumed
+# WHAT D DOES NOT PROVE, measured rather than assumed
 #
-# It does not prove the SWEEP is what dropped the session. On 2026-08-31 this
-# script was run against the same build with the sweep's off switch thrown
-# (GHOZTTY_AGENT_VANISH_SWEEP=0) and section D still passed: killing the holder
-# from OUTSIDE also tears the session down through the holder-loss path, which
-# is a different mechanism reaching the same answer. The state the field bug
-# needs - a session alive with no reader of any kind - is not reachable by
-# killing processes from a script, so an inverted assertion here would have been
-# a lie dressed as a control, and it was removed rather than kept green.
-#
-# So read this harness for what it measures: the user-visible OUTCOME in both
-# directions, which is a real regression guard for either mechanism breaking.
-# The sweep's own rules - two strikes, a pid the table cannot see, a session
-# younger than the snapshot, a failed snapshot - are pinned by unit tests in
-# `src\remote\agent\session.zig` against a synthetic process table, where the
-# state IS constructible. A follow-up task owns building the no-reader state on
-# box (the agent-handoff path is the likeliest route to it).
+# D does not prove the SWEEP is what dropped the session. On 2026-08-31 this
+# script was run against the same build with the sweep's off switch thrown and
+# section D still passed: killing the holder from OUTSIDE also tears the session
+# down through the holder-loss path, which is a different mechanism reaching the
+# same answer. So D is read for the user-visible OUTCOME, a regression guard for
+# either mechanism breaking. F and G are the sweep's own box-level proof: a
+# suspended holder is neither exited nor lost, so `reapExited` gets no answer
+# from it and no reader EOFs, and F shows the session staying "running" forever
+# without the sweep. That state is also the realistic one for a HUNG holder.
+# The sweep's finer rules - two strikes, a pid the table cannot see, a session
+# younger than the snapshot, a failed snapshot - stay pinned by unit tests in
+# `src\remote\agent\session.zig` against a synthetic process table.
 #
 # Hermetic: a per-run $env:LOCALAPPDATA, a private IPC endpoint (lib\Isolation),
 # GHOSTTY_LOCAL_AGENT_BIN pinned to the agent under test, and only processes
@@ -120,6 +123,16 @@ function Get-TestAgents {
 function Get-TestHolders {
     return (Get-TestAgentProcs | Where-Object { $_.CommandLine -match '--pty-host' })
 }
+# The holder serving one session: the --pty-host process that is its shell's
+# parent (the holder is what creates the shell on its pseudoconsole). 0 if none.
+function Get-HolderOf([int]$shellPid) {
+    $sh = Get-CimInstance Win32_Process -Filter "ProcessId=$shellPid" -ErrorAction SilentlyContinue
+    if ($null -eq $sh) { return 0 }
+    foreach ($h in (Get-TestHolders)) {
+        if ([int]$h.ProcessId -eq [int]$sh.ParentProcessId) { return [int]$h.ProcessId }
+    }
+    return 0
+}
 function Count-TestAgents { return @(Get-TestAgents).Count }
 function Count-TestHolders { return @(Get-TestHolders).Count }
 function Test-Alive([int]$procId) {
@@ -134,6 +147,34 @@ function Wait-Gone([int]$procId, [int]$timeoutSec) {
     }
     return $false
 }
+# Suspend a process (T1226). Same shape as agent-recovery-tabs.ps1's block. A
+# suspended holder is the one box-level way to a session that is alive, has no
+# reader that can answer, and whose holder never reports loss: its pipe stays
+# open, its exit poller never runs, and its process never exits.
+if (-not ('GhozttyVanishNative' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class GhozttyVanishNative {
+    [DllImport("ntdll.dll")] static extern int NtSuspendProcess(IntPtr h);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(int access, bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+
+    const int PROCESS_SUSPEND_RESUME = 0x0800;
+
+    public static int Suspend(int pid) {
+        IntPtr h = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid);
+        if (h == IntPtr.Zero) return -1;
+        int rc = NtSuspendProcess(h);
+        CloseHandle(h);
+        return rc;
+    }
+}
+'@
+}
+# Stop-Process on a suspended process still terminates it, so Stop-Everything
+# needs nothing extra for a holder this script left suspended.
 function Stop-Everything {
     foreach ($p in (Get-TestApps)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
     foreach ($p in (Get-TestAgents)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
@@ -278,6 +319,52 @@ function Wait-ShellPid([string]$sessionId, [string]$tag, [int]$timeoutSec = 45) 
     return 0
 }
 
+# Build the state only the sweep can rescue (T1226), on a FRESH app + agent so
+# the agent inherits whatever GHOZTTY_AGENT_VANISH_SWEEP the caller set: a
+# detached session whose holder is SUSPENDED - alive, pipe open, unable to
+# report anything - and whose shell is then killed. `reapExited` asks the
+# holder child, which is neither exited nor lost; no reader EOFs; nothing else
+# polls. Returns the session id, or $null when a premise failed (asserted).
+function New-NoReaderSession([string]$arm) {
+    Stop-Everything
+    $app = Start-TestApp "t1226-$arm"
+    Assert "$arm premise: the app is up" ($app -gt 0)
+    if ($app -le 0) { return $null }
+    $name = "t1226$arm"
+    $first = $null
+    foreach ($lf in (All-Leaves (Get-Tree "$arm-l"))) { if (-not $first) { $first = $lf.id } }
+    if ($first) {
+        Run-Cli "+split --pane=$first --name=$name --direction=right" "$tmp\split-$arm.txt" 20 | Out-Null
+    } else {
+        Run-Cli "+new-window --name=$name" "$tmp\newwin-$arm.txt" 20 | Out-Null
+    }
+    $lf = Wait-NamedLeaf $name "$arm-n"
+    Assert "$arm premise: the pane is agent-backed" ($null -ne $lf)
+    if ($null -eq $lf) { return $null }
+    $sid = [string]$lf.session_id
+    $sh = Wait-ShellPid $sid "$arm-p"
+    Assert "$arm premise: the session reports a live shell pid" ($sh -gt 0)
+    if ($sh -le 0) { return $null }
+
+    foreach ($p in (Get-TestApps)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    Assert "$arm premise: the app is gone (nobody is attached)" (Wait-Gone $app 20)
+
+    $holder = Get-HolderOf $sh
+    Assert "$arm premise: the holder serving the shell was found (its parent)" ($holder -gt 0)
+    if ($holder -le 0) { return $null }
+    $rc = [GhozttyVanishNative]::Suspend($holder)
+    Assert "$arm premise: the holder (pid $holder) was suspended (rc=$rc)" ($rc -eq 0)
+    if ($rc -ne 0) { return $null }
+
+    Stop-Process -Id $sh -Force -ErrorAction SilentlyContinue
+    Assert "$arm premise: the shell (pid $sh) left the process table" (Wait-Gone $sh 20)
+    # The holder must still EXIST for the state to be the no-reader one: a
+    # holder that died would hand the session to the holder-loss path instead.
+    Assert "$arm premise: the suspended holder is still alive" (Test-Alive $holder)
+    Assert "$arm premise: the session manager is still running" ((Count-TestAgents) -ge 1)
+    return $sid
+}
+
 $root = Join-Path $env:TEMP "ghoztty-session-vanished-$PID"
 $tmp = Join-Path $root 'run'
 $savedLocalAppData = $env:LOCALAPPDATA
@@ -419,6 +506,34 @@ try {
             Assert 'E5 and it is still interactive (the shell echoed a typed marker)' (
                 Wait-PaneHas $pane2 'live' $live 30)
         }
+    }
+
+    # ========================================================================
+    Say '== F: control - the no-reader state with the sweep OFF stays "running"'
+    # ========================================================================
+    # Without this arm, G could pass by some other route the way D does. With
+    # the sweep switched off the session must STILL be reported running well
+    # past G's expected answer, which is what makes G the sweep's own proof.
+    $env:GHOZTTY_AGENT_VANISH_SWEEP = '0'
+    $offId = New-NoReaderSession 'F'
+    if ($null -ne $offId) {
+        Start-Sleep -Seconds $LiveWatchSec
+        Assert "F1 with the sweep off, nothing else notices: still reported running after ${LiveWatchSec}s" (
+            Test-ReportedRunning $offId 'f1')
+    }
+    Remove-Item env:GHOZTTY_AGENT_VANISH_SWEEP -ErrorAction SilentlyContinue
+
+    # ========================================================================
+    Say '== G: the same state with the sweep ON is closed out by the sweep'
+    # ========================================================================
+    $onId = New-NoReaderSession 'G'
+    if ($null -ne $onId) {
+        $swept = Wait-NotRunning $onId 'g1' $SweepTimeoutSec
+        Assert "G1 the sweep closed out the no-reader session (within ${SweepTimeoutSec}s)" $swept
+        # Test-ReportedRunning reads an unanswered roster query as "not
+        # running", so prove the roster is answering: G1 must not be a wedge.
+        Assert 'G2 and the session manager still answers the roster (G1 is not a failed query)' (
+            (Run-Cli '+sessions --json' "$tmp\sess-g2.json" 15) -eq 0)
     }
 
     Complete-TestBody  # T1039: the run reached the end of its body
