@@ -151,7 +151,7 @@ fn globalCopy(bytes: []const u8) ?*anyopaque {
 
 // --------------------------------------------------------------------- WIC
 
-const Decoded = struct {
+pub const Decoded = struct {
     bgra: []u8,
     width: u32,
     height: u32,
@@ -161,7 +161,30 @@ const Decoded = struct {
 
 /// Decode the first frame of `path` to top-down straight-alpha BGRA, turned
 /// upright per its EXIF orientation.
-fn decode(alloc: Allocator, path: []const u8) ?Decoded {
+///
+/// Also the image viewer's decoder for what Chromium cannot draw (T1234,
+/// `viewer_image.Route.wic`), which is why it is public: the pane and ctrl+C
+/// then agree on what the picture is, orientation included.
+pub fn decode(alloc: Allocator, path: []const u8) ?Decoded {
+    var why: Failure = .other;
+    return decodeWhy(alloc, path, &why);
+}
+
+/// Why a decode came back empty — the one distinction a caller acts on.
+pub const Failure = enum {
+    /// No installed codec recognised the file at all
+    /// (`WINCODEC_ERR_COMPONENTNOTFOUND`). For a real HEIF file that means
+    /// the HEIF Image Extensions are not installed; for anything else it means
+    /// the bytes are not a picture.
+    no_codec,
+    /// A codec claimed the file and could not decode it, or anything else.
+    other,
+};
+
+/// `decode`, saying why on failure. `why` is written only when the result is
+/// null.
+pub fn decodeWhy(alloc: Allocator, path: []const u8, why: *Failure) ?Decoded {
+    why.* = .other;
     const wpath = std.unicode.wtf8ToWtf16LeAllocZ(alloc, path) catch return null;
     defer alloc.free(wpath);
 
@@ -174,7 +197,7 @@ fn decode(alloc: Allocator, path: []const u8) ?Decoded {
         &factory_ptr,
     );
     if (com.failed(created)) {
-        log.warn("image copy: WIC factory unavailable hr=0x{x}", .{@as(u32, @bitCast(created))});
+        log.warn("image decode: WIC factory unavailable hr=0x{x}", .{@as(u32, @bitCast(created))});
         return null;
     }
     const factory: *IWICImagingFactory = @ptrCast(@alignCast(factory_ptr.?));
@@ -192,14 +215,15 @@ fn decode(alloc: Allocator, path: []const u8) ?Decoded {
     if (com.failed(opened) or decoder == null) {
         // SVG lands here (no vector codec), as does a format this machine has
         // no codec for (HEIF without the store extension).
-        log.warn("image copy: no decoder for {s} hr=0x{x}", .{ path, @as(u32, @bitCast(opened)) });
+        log.warn("image decode: no decoder for {s} hr=0x{x}", .{ path, @as(u32, @bitCast(opened)) });
+        if (@as(u32, @bitCast(opened)) == WINCODEC_ERR_COMPONENTNOTFOUND) why.* = .no_codec;
         return null;
     }
     defer _ = decoder.?.vtable.Release(decoder.?);
 
     var frame: ?*IWICBitmapFrameDecode = null;
     if (com.failed(decoder.?.vtable.GetFrame(decoder.?, 0, &frame)) or frame == null) {
-        log.warn("image copy: {s} has no first frame", .{path});
+        log.warn("image decode: {s} has no first frame", .{path});
         return null;
     }
     defer _ = frame.?.vtable.Release(frame.?);
@@ -218,7 +242,7 @@ fn decode(alloc: Allocator, path: []const u8) ?Decoded {
         WICBitmapPaletteTypeCustom,
     );
     if (com.failed(init)) {
-        log.warn("image copy: cannot convert {s} to BGRA hr=0x{x}", .{ path, @as(u32, @bitCast(init)) });
+        log.warn("image decode: cannot convert {s} to BGRA hr=0x{x}", .{ path, @as(u32, @bitCast(init)) });
         return null;
     }
 
@@ -226,7 +250,7 @@ fn decode(alloc: Allocator, path: []const u8) ?Decoded {
     var height: u32 = 0;
     if (com.failed(converter.?.vtable.GetSize(converter.?, &width, &height))) return null;
     if (!image_clipboard.sizeOk(width, height)) {
-        log.warn("image copy: {s} is {d}x{d}, past the copy ceiling", .{ path, width, height });
+        log.warn("image decode: {s} is {d}x{d}, past the size ceiling", .{ path, width, height });
         return null;
     }
 
@@ -235,7 +259,7 @@ fn decode(alloc: Allocator, path: []const u8) ?Decoded {
     const bgra = alloc.alloc(u8, total) catch return null;
     const copied = converter.?.vtable.CopyPixels(converter.?, null, stride, @intCast(total), bgra.ptr);
     if (com.failed(copied)) {
-        log.warn("image copy: decoding {s} failed hr=0x{x}", .{ path, @as(u32, @bitCast(copied)) });
+        log.warn("image decode: decoding {s} failed hr=0x{x}", .{ path, @as(u32, @bitCast(copied)) });
         alloc.free(bgra);
         return null;
     }
@@ -272,6 +296,7 @@ const GUID = w32.GUID;
 const HRESULT = w32.HRESULT;
 
 const GENERIC_READ: u32 = 0x80000000;
+const WINCODEC_ERR_COMPONENTNOTFOUND: u32 = 0x88982F50;
 const VT_UI2: u16 = 18;
 
 /// `PROPVARIANT`: a type tag, three reserved words, then a 16-byte union on
@@ -456,6 +481,11 @@ test "decode refuses a file that is not a picture" {
     const path = try tmp.dir.realpathAlloc(alloc, "x.png");
     defer alloc.free(path);
     try testing.expect(decode(alloc, path) == null);
+    // Nothing recognised those bytes at all - the same answer a HEIF file
+    // gets on a machine without the extension (T1234).
+    var why: Failure = .other;
+    try testing.expect(decodeWhy(alloc, path, &why) == null);
+    try testing.expectEqual(Failure.no_codec, why);
 }
 
 /// `jpeg` with an EXIF APP1 segment carrying Orientation = `tag` spliced in

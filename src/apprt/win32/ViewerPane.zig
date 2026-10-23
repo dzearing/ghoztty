@@ -95,6 +95,7 @@ const pane_id_mod = @import("pane_id.zig");
 const banner_link = @import("banner_link.zig");
 const clipboard_open = @import("clipboard_open.zig");
 const image_copy = @import("image_copy.zig");
+const image_clipboard = @import("image_clipboard.zig");
 const utf16_text = @import("utf16_text.zig");
 const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const PaneView = @import("PaneView.zig");
@@ -326,6 +327,14 @@ image_geometry: viewer_image.Geometry = .{},
 /// hard the response says not to cache — which would make `+reload` on an
 /// image do nothing at all.
 image_revision: u64 = 0,
+/// How the picture's bytes reach the page (T1234): the file itself, or pixels
+/// decoded here for a format Chromium cannot draw. Set from the extension on
+/// open; moved to `.wic` once if the page fails a `.browser` picture.
+image_route: viewer_image.Route = .browser,
+/// The error card's title when the last serve could not produce a picture
+/// for a reason more specific than "cannot display" — a missing codec. Static
+/// text, never freed.
+image_failure: ?[]const u8 = null,
 
 /// The bundled viewer assets directory (`…/share/ghostty/viewer`), resolved
 /// once when the pane starts. Owned. Null on an installation whose resources
@@ -4456,10 +4465,18 @@ fn renderFileContent(self: *ViewerPane) void {
 /// computed yet: nobody has measured the picture, and that answer arrives as
 /// the page's `loaded` message.
 fn startImage(self: *ViewerPane, alloc: Allocator, path: []const u8) void {
+    self.image_route = viewer_image.route(content.extension(path));
+    self.loadImage(alloc, path);
+}
+
+/// Hand the page a fresh revision of the picture under the current route.
+/// Also the WIC retry's re-load, which keeps the route it was just given.
+fn loadImage(self: *ViewerPane, alloc: Allocator, path: []const u8) void {
     self.image_revision +%= 1;
     self.image_zoom = 1;
     self.image_fitting = true;
     self.image_geometry = .{};
+    self.image_failure = null;
 
     const url = content.imageUrl(alloc, self.image_revision) catch return;
     defer alloc.free(url);
@@ -4478,9 +4495,25 @@ fn applyImageMessage(self: *ViewerPane, alloc: Allocator, msg: bridge.Image) voi
     if (self.mode != .image) return;
 
     if (msg.event == .failed) {
+        // One second chance (T1234): a raster the browser could not draw is
+        // retried through WIC, so the picture shows whenever this machine can
+        // show it anywhere.
+        if (self.file_path) |path| {
+            if (viewer_image.fallback(self.image_route, content.extension(path))) |next| {
+                log.info("viewer image retry pane={s} route={s}", .{ self.paneId(), @tagName(next) });
+                self.image_route = next;
+                self.loadImage(alloc, path);
+                return;
+            }
+        }
         // Same card every other file mode falls through to, rather than the
-        // blank matte an undecodable file would otherwise leave.
-        self.injectError(alloc, content.error_not_image, self.file_path orelse self.location orelse "");
+        // blank matte an undecodable file would otherwise leave — titled with
+        // the codec to install when that is what is missing.
+        self.injectError(
+            alloc,
+            self.image_failure orelse content.error_not_image,
+            self.file_path orelse self.location orelse "",
+        );
         return;
     }
 
@@ -4723,23 +4756,73 @@ fn serveImage(
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
     };
-    const bytes = std.fs.cwd().readFileAlloc(alloc, path, content.max_file_bytes) catch {
+    const file = std.fs.cwd().readFileAlloc(alloc, path, content.max_file_bytes) catch {
         log.warn("viewer image is unreadable: {s}", .{path});
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
     };
-    defer alloc.free(bytes);
-    const mime = content.mimeType(content.extension(path));
+    defer alloc.free(file);
+
+    // What the page is handed, per route (T1234). `owned` is set when the
+    // bytes are a transcode rather than a slice of the file.
+    var owned: ?[]u8 = null;
+    defer if (owned) |o| alloc.free(o);
+    var why: image_copy.Failure = .other;
+    var served: ?[]const u8 = null;
+    var mime: []const u8 = "image/png";
+    switch (self.image_route) {
+        .browser => {
+            served = file;
+            mime = content.mimeType(content.extension(path));
+        },
+        .icns => served = viewer_image.icnsBestPng(file),
+        .wic => {
+            owned = transcodeImage(alloc, path, &why);
+            served = owned;
+            mime = "image/bmp";
+        },
+    }
+    const bytes = served orelse {
+        // A 404 fires the `<img>`'s `error`, which comes back as `failed` and
+        // puts the card up — titled with the codec to install when the file is
+        // a real HEIF/AVIF AND no installed codec recognised it. A corrupt
+        // photo on a machine that has the extension gets the plain card, not
+        // an instruction to install what is already there.
+        if (why == .no_codec) {
+            if (viewer_image.missingCodec(file[0..@min(file.len, 32)])) |codec| {
+                self.image_failure = codec.title();
+            }
+        }
+        log.warn("viewer image cannot be decoded: {s} route={s}", .{ path, @tagName(self.image_route) });
+        self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
+        return;
+    };
     // The acceptance script's proof that the picture was FETCHED rather than
     // rendered as text: a source view never asks for the file a second time
     // through the page's own origin. The MIME rides along because
     // `application/octet-stream` is a download, not a picture, and that is the
-    // failure an extension the table forgot would produce.
+    // failure an extension the table forgot would produce; the route says
+    // whether the browser or this side decoded it.
     log.info(
-        "viewer image served pane={s} rev={d} bytes={d} mime={s}",
-        .{ self.paneId(), self.image_revision, bytes.len, mime },
+        "viewer image served pane={s} rev={d} bytes={d} mime={s} route={s}",
+        .{ self.paneId(), self.image_revision, bytes.len, mime, @tagName(self.image_route) },
     );
     self.respond(env, a, alloc, bytes, mime, 200, ok_reason, .no_store);
+}
+
+/// Decode `path` through WIC and wrap the pixels as a `.bmp` (T1234), turned
+/// upright per its EXIF orientation exactly as ctrl+C copies it. Null when
+/// this machine has no codec for it or the file is not a picture.
+///
+/// On the UI thread, which is where the resource request arrives and which
+/// already has COM up. A phone photo decodes in a few hundred milliseconds —
+/// the same cost ctrl+C on the same pane already pays.
+fn transcodeImage(alloc: Allocator, path: []const u8, why: *image_copy.Failure) ?[]u8 {
+    const decoded = image_copy.decodeWhy(alloc, path, why) orelse return null;
+    defer alloc.free(decoded.bgra);
+    const dib = image_clipboard.dibV5(alloc, decoded.bgra, decoded.width, decoded.height) catch return null;
+    defer alloc.free(dib);
+    return viewer_image.bmpFile(alloc, dib) catch null;
 }
 
 fn servePageResource(

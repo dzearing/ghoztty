@@ -109,6 +109,14 @@ ghoztty +close --target=doc
   path does is predictable from the path; `.svg` is on it because it is a
   picture, and reading its source is what an editor is for.
 
+  Mac decodes every one of those through ImageIO. On Windows the page is
+  Chromium, which cannot draw `.heic`/`.heif`, `.tif`/`.tiff` or `.icns`, so
+  the pane decodes those itself (T1234, `viewer_image.Route`): HEIF and TIFF
+  through WIC (the codecs Photos uses; HEIF needs the Store's HEIF Image
+  Extensions, and a HEIC nothing can decode gets a card that says exactly
+  that), `.icns` by serving its largest embedded PNG. Any other raster the page
+  fails on gets one WIC retry before the error card.
+
   Three rules decide everything a person can argue about, and they are the same
   on both platforms:
 

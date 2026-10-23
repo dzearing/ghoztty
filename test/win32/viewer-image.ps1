@@ -25,6 +25,10 @@
 #     verbatim as the "PNG" format, and a text pane keeps the page's own copy.
 #     A phone photo with an EXIF orientation copies upright, the way the
 #     pane shows it (T1910).
+#   - formats Chromium cannot draw are decoded by the pane (T1234): a .tiff is
+#     served as WIC-decoded pixels and drawn at its real size, an .icns as its
+#     largest embedded PNG, and a HEIC nothing can decode gets the card that
+#     names the HEIF Image Extensions only on a box that lacks them.
 #
 # ORACLE, and why it is the log. This runs on the background test desktop,
 # where CopyFromScreen and SendInput are dead (T233), so nothing out here can
@@ -185,8 +189,8 @@ function Get-ImageServed($errlog, $paneId) {
     if (-not (Test-Path $errlog) -or -not $paneId) { return @() }
     $out = @()
     foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
-        if ($line -match "viewer image served pane=$([regex]::Escape($paneId)) rev=(\d+) bytes=(\d+) mime=(\S+)") {
-            $out += [pscustomobject]@{ Rev = [int]$Matches[1]; Bytes = [int]$Matches[2]; Mime = $Matches[3] }
+        if ($line -match "viewer image served pane=$([regex]::Escape($paneId)) rev=(\d+) bytes=(\d+) mime=(\S+)(?: route=(\S+))?") {
+            $out += [pscustomobject]@{ Rev = [int]$Matches[1]; Bytes = [int]$Matches[2]; Mime = $Matches[3]; Route = $Matches[4] }
         }
     }
     return $out
@@ -307,6 +311,52 @@ Set-Content -LiteralPath $svgPath -Encoding UTF8 -Value @'
 # A `.png` that is not one: the error-card path.
 $corruptPath = Join-Path $dir 'broken.png'
 Set-Content -LiteralPath $corruptPath -Value 'this is not a picture' -Encoding ASCII
+
+# T1234: formats Chromium has no decoder for, which the pane decodes itself.
+# A TIFF (WIC's built-in codec), served to the page as decoded pixels.
+$tiffPath = Join-Path $dir 'scan.tiff'
+$tif = New-Object System.Drawing.Bitmap 640, 480
+try {
+    $g = [System.Drawing.Graphics]::FromImage($tif)
+    $g.Clear([System.Drawing.Color]::SlateBlue)
+    $g.Dispose()
+    $tif.Save($tiffPath, [System.Drawing.Imaging.ImageFormat]::Tiff)
+} finally { $tif.Dispose() }
+
+# An .icns holding a 32px and a 128px PNG (in that order) behind an RLE entry
+# that is not a PNG: the pane must show the 128px one.
+function Get-PngBytes([int]$size) {
+    $bmp = New-Object System.Drawing.Bitmap $size, $size
+    $ms = New-Object System.IO.MemoryStream
+    try {
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.Clear([System.Drawing.Color]::Goldenrod)
+        $g.Dispose()
+        $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+        return , $ms.ToArray()
+    } finally { $bmp.Dispose(); $ms.Dispose() }
+}
+function Get-BigEndian([int]$n) {
+    # Each element parenthesised: the comma binds tighter than -band.
+    return [byte[]]@((($n -shr 24) -band 0xFF), (($n -shr 16) -band 0xFF), (($n -shr 8) -band 0xFF), ($n -band 0xFF))
+}
+function Get-IcnsEntry([string]$kind, [byte[]]$data) {
+    return [byte[]]([Text.Encoding]::ASCII.GetBytes($kind) + (Get-BigEndian ($data.Length + 8)) + $data)
+}
+$icnsBody = [byte[]]((Get-IcnsEntry 'is32' ([Text.Encoding]::ASCII.GetBytes('rle-bitmap'))) +
+    (Get-IcnsEntry 'ic05' (Get-PngBytes 32)) + (Get-IcnsEntry 'ic07' (Get-PngBytes 128)))
+$icnsPath = Join-Path $dir 'app.icns'
+[IO.File]::WriteAllBytes($icnsPath,
+    [byte[]]([Text.Encoding]::ASCII.GetBytes('icns') + (Get-BigEndian ($icnsBody.Length + 8)) + $icnsBody))
+
+# A HEIC container no codec can decode: a real `ftyp heic` box and garbage
+# after it. Which card it gets depends on whether this box has the HEIF Image
+# Extensions - the oracle reads that rather than assuming it.
+$heicPath = Join-Path $dir 'phone.heic'
+[IO.File]::WriteAllBytes($heicPath, [byte[]](
+    [byte[]](0, 0, 0, 24) + [Text.Encoding]::ASCII.GetBytes('ftypheic') + [byte[]](0, 0, 0, 0) +
+    [Text.Encoding]::ASCII.GetBytes('mif1heic') + [Text.Encoding]::ASCII.GetBytes('not really a photo')))
+$heifInstalled = [bool](Get-AppxPackage -Name 'Microsoft.HEIFImageExtension' -ErrorAction SilentlyContinue)
 
 # The control: a text file in the same directory, opened in the same run.
 $txtPath = Join-Path $dir 'notes.txt'
@@ -464,6 +514,43 @@ try {
         'I: a .txt pane never fetched a picture'
     Assert (@(Get-ImageStates $errlog $txtPane).Count -eq 0) `
         'I: ...and never decided an image zoom'
+
+    # --- L. what Chromium cannot draw, the pane decodes itself (T1234) -------
+    # Mac shows a TIFF, an .icns and an iPhone HEIC through ImageIO. A WebView2
+    # page has no decoder for any of them, so the pane hands it pixels instead.
+    $r = Invoke-Verb @('+new-window', '--target=t1234tif', "--view=$tiffPath")
+    Assert ($r.Code -eq 0) "+new-window --view=<file>.tiff exits 0 (got $($r.Code))"
+    $tifLeaf = Get-OnlyPane 't1234tif'
+    $tifPane = if ($tifLeaf) { $tifLeaf.id } else { $null }
+    $tserved = @(Wait-ImageServed $errlog $tifPane)
+    Assert ($tserved.Count -ge 1 -and $tserved[0].Route -eq 'wic' -and $tserved[0].Mime -eq 'image/bmp') `
+        "L1: a .tiff is decoded on the host and served as pixels (got route='$(if ($tserved.Count) { $tserved[0].Route } else { '-' })' mime='$(if ($tserved.Count) { $tserved[0].Mime } else { '-' })')"
+    $tst = Wait-Loaded $errlog $tifPane
+    Assert ($tst -and $tst.NatW -eq 640 -and $tst.NatH -eq 480) `
+        "L1: ...and the page DREW it, at its real 640x480 (page reports $(if ($tst) { "$($tst.NatW)x$($tst.NatH)" } else { 'nothing - no picture' }))"
+
+    $r = Invoke-Verb @('+new-window', '--target=t1234icns', "--view=$icnsPath")
+    Assert ($r.Code -eq 0) "+new-window --view=<file>.icns exits 0 (got $($r.Code))"
+    $icnsLeaf = Get-OnlyPane 't1234icns'
+    $icnsPane = if ($icnsLeaf) { $icnsLeaf.id } else { $null }
+    $cserved = @(Wait-ImageServed $errlog $icnsPane)
+    Assert ($cserved.Count -ge 1 -and $cserved[0].Route -eq 'icns' -and $cserved[0].Mime -eq 'image/png') `
+        "L2: an .icns is served as its embedded PNG (got route='$(if ($cserved.Count) { $cserved[0].Route } else { '-' })' mime='$(if ($cserved.Count) { $cserved[0].Mime } else { '-' })')"
+    $cst = Wait-Loaded $errlog $icnsPane
+    Assert ($cst -and $cst.NatW -eq 128 -and $cst.NatH -eq 128) `
+        "L2: ...the LARGEST one, 128x128, drawn by the page (page reports $(if ($cst) { "$($cst.NatW)x$($cst.NatH)" } else { 'nothing - no picture' }))"
+
+    $r = Invoke-Verb @('+new-window', '--target=t1234heic', "--view=$heicPath")
+    Assert ($r.Code -eq 0) "+new-window --view=<file>.heic exits 0 (got $($r.Code))"
+    $wantTitle = if ($heifInstalled) { 'Cannot display this image' } else { 'Windows needs the HEIF Image Extensions to show this image' }
+    $heicCard = $null
+    for ($t = 0; $t -lt 60 -and -not $heicCard; $t++) {
+        $m = Select-String -Path $errlog -Pattern ('viewer file error: (.+) \(' + [regex]::Escape($heicPath) + '\)') |
+            Select-Object -Last 1
+        if ($m) { $heicCard = $m.Matches[0].Groups[1].Value } else { Start-Sleep -Milliseconds 250 }
+    }
+    Assert ($heicCard -eq $wantTitle) `
+        "L3: an undecodable .heic gets the card for THIS box (HEIF extension installed=$heifInstalled): want '$wantTitle', got '$heicCard'"
 
     # --- K. ctrl+C at an image pane copies the PICTURE (T1872) ---------------
     # Mac's image pane answers Cmd-C with the image itself; before T1872 the

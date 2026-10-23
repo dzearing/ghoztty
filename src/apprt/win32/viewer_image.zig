@@ -49,6 +49,148 @@ pub fn isImage(ext: []const u8) bool {
     return false;
 }
 
+/// How the picture's bytes reach the page (T1234).
+///
+/// Mac decodes every row of `extensions` through ImageIO with nothing extra
+/// installed. A WebView2 page does not: Chromium has no HEIF, TIFF or ICNS
+/// decoder at all, so handing it those bytes is a guaranteed error card for a
+/// photo straight off an iPhone. Those formats are decoded on THIS side
+/// instead, and the page is handed pixels it can draw.
+pub const Route = enum {
+    /// The file's own bytes, with the MIME its extension names.
+    browser,
+    /// Decoded through WIC — the system codec registry Photos and Explorer
+    /// use — and served as a BMP of the decoded pixels. TIFF is built in;
+    /// HEIF needs the HEIF Image Extensions, which `missingCodec` names.
+    wic,
+    /// The largest PNG an `.icns` carries (`icnsBestPng`). WIC has no ICNS
+    /// codec, but every icon set made since macOS 10.7 stores its sizes as
+    /// PNG.
+    icns,
+};
+
+/// The route a file of this extension takes when it opens.
+pub fn route(ext: []const u8) Route {
+    const host = [_][]const u8{ "heic", "heif", "tif", "tiff" };
+    for (host) |e| {
+        if (std.ascii.eqlIgnoreCase(ext, e)) return .wic;
+    }
+    if (std.ascii.eqlIgnoreCase(ext, "icns")) return .icns;
+    return .browser;
+}
+
+/// Where to go when the page could not draw what `current` served — the
+/// second chance before the error card, or null for none.
+///
+/// A raster the browser fails on (an AVIF this WebView2 build has no decoder
+/// for, a `.png` that is really a TIFF) gets one retry through WIC, so the
+/// picture shows whenever this machine can show it anywhere. Vector art does
+/// not: WIC has no SVG codec, and a retry that cannot succeed only delays the
+/// card.
+pub fn fallback(current: Route, ext: []const u8) ?Route {
+    if (current != .browser) return null;
+    if (std.ascii.eqlIgnoreCase(ext, "svg")) return null;
+    return .wic;
+}
+
+/// A codec this machine is missing, named so the card can say what to
+/// install instead of "Cannot display this image".
+pub const Codec = enum {
+    heif,
+    av1,
+
+    /// The error card's title. Names the Store package by the name the Store
+    /// shows, because that is what the person will search for.
+    pub fn title(self: Codec) []const u8 {
+        return switch (self) {
+            .heif => "Windows needs the HEIF Image Extensions to show this image",
+            .av1 => "Windows needs the AV1 Video Extension to show this image",
+        };
+    }
+};
+
+/// Which codec a file NEEDS, read from its content: an ISO-BMFF `ftyp` box
+/// whose major brand is a HEIF or AVIF one. The pane asks only once WIC has
+/// said that NO installed codec recognised the file, so a hit means "this is
+/// a real HEIF/AVIF file and nothing here can decode it" — the missing
+/// extension — while a file that is merely corrupt or misnamed, or a corrupt
+/// HEIF on a machine that has the codec, gets the generic card rather than a
+/// wrong instruction to go and install something.
+pub fn missingCodec(head: []const u8) ?Codec {
+    if (head.len < 12) return null;
+    if (!std.mem.eql(u8, head[4..8], "ftyp")) return null;
+    const brand = head[8..12];
+    const heif = [_][]const u8{ "heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1" };
+    for (heif) |b| {
+        if (std.mem.eql(u8, brand, b)) return .heif;
+    }
+    if (std.mem.eql(u8, brand, "avif") or std.mem.eql(u8, brand, "avis")) return .av1;
+    return null;
+}
+
+/// The largest PNG image inside an `.icns` file, as a slice of `bytes`, or
+/// null when it carries none (a pre-10.7 icon set of RLE bitmaps only).
+///
+/// The format is a `icns` magic and a big-endian total length, then a run of
+/// `<type:4><length:4 BE, header included><data>` entries. Which types hold a
+/// PNG varies by year (`ic07`..`ic14`, and some `icp4`..`icp6`), so the data
+/// is recognised by its own signature rather than by a type table that would
+/// go stale. "Largest" is by the IHDR width, so a 1024px `ic10` beats the
+/// 16px `icp4` beside it however the file orders them.
+pub fn icnsBestPng(bytes: []const u8) ?[]const u8 {
+    if (bytes.len < 8 or !std.mem.eql(u8, bytes[0..4], "icns")) return null;
+    const total = @min(bytes.len, std.mem.readInt(u32, bytes[4..8], .big));
+    const png_sig = [_]u8{ 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+
+    var best: ?[]const u8 = null;
+    var best_w: u32 = 0;
+    var at: usize = 8;
+    while (at + 8 <= total) {
+        const len = std.mem.readInt(u32, bytes[at + 4 ..][0..4], .big);
+        // A length shorter than its own header would loop forever; one past
+        // the end is a truncated file. Either way, stop with what was found.
+        if (len < 8 or at + len > total) break;
+        const data = bytes[at + 8 .. at + len];
+        // Signature, then the IHDR chunk: length(4) "IHDR"(4) width(4 BE).
+        if (data.len >= 24 and std.mem.eql(u8, data[0..8], &png_sig) and
+            std.mem.eql(u8, data[12..16], "IHDR"))
+        {
+            const w = std.mem.readInt(u32, data[16..20], .big);
+            if (best == null or w > best_w) {
+                best = data;
+                best_w = w;
+            }
+        }
+        at += len;
+    }
+    return best;
+}
+
+/// A `.bmp` file for a packed DIB (`image_clipboard.dibV5`'s output): the
+/// 14-byte `BITMAPFILEHEADER` in front of it. Caller frees.
+///
+/// BMP rather than a PNG re-encode for the `wic` route on purpose: the pixels
+/// never leave this process, so compression buys nothing, and the hand-written
+/// encoder in `png_encode.zig` would spend seconds on a 12-megapixel phone
+/// photo that a header costs nothing to wrap. Chromium honours a BITMAPV5
+/// alpha mask, so a TIFF with transparency stays transparent.
+pub fn bmpFile(alloc: std.mem.Allocator, dib: []const u8) error{ BadDib, OutOfMemory }![]u8 {
+    if (dib.len < 4) return error.BadDib;
+    const header = std.mem.readInt(u32, dib[0..4], .little);
+    if (header < 40 or header > dib.len) return error.BadDib;
+    const file_header = 14;
+    const out = try alloc.alloc(u8, file_header + dib.len);
+    out[0] = 'B';
+    out[1] = 'M';
+    std.mem.writeInt(u32, out[2..6], @intCast(out.len), .little);
+    std.mem.writeInt(u32, out[6..10], 0, .little); // two reserved words
+    // Pixels start after both headers. BI_BITFIELDS masks live inside a
+    // V4/V5 header, so nothing sits between the header and the pixels.
+    std.mem.writeInt(u32, out[10..14], file_header + header, .little);
+    @memcpy(out[file_header..], dib);
+    return out;
+}
+
 /// Vector art has no pixel grid, so 100% cannot mean "one image pixel per
 /// device pixel" for it — it means the drawing's intrinsic size, as in every
 /// other vector viewer.
@@ -208,6 +350,114 @@ test "isImage carries the Mac extension table, case-insensitively" {
     // Not a prefix match: `.pn` and `.pngx` are not pictures.
     try testing.expect(!isImage("pn"));
     try testing.expect(!isImage("pngx"));
+}
+
+test "route: formats Chromium cannot draw are decoded on the host (T1234)" {
+    // What a WebView2 page draws natively goes as the file's own bytes.
+    for ([_][]const u8{ "png", "apng", "jpg", "jpeg", "jpe", "jfif", "gif", "webp", "avif", "bmp", "ico", "svg" }) |e| {
+        try testing.expectEqual(Route.browser, route(e));
+    }
+    // An iPhone photo and a scan go through WIC, in any case.
+    try testing.expectEqual(Route.wic, route("heic"));
+    try testing.expectEqual(Route.wic, route("HEIC"));
+    try testing.expectEqual(Route.wic, route("heif"));
+    try testing.expectEqual(Route.wic, route("tif"));
+    try testing.expectEqual(Route.wic, route("TIFF"));
+    try testing.expectEqual(Route.icns, route("icns"));
+    // Every row of the table has a route that is not a guaranteed failure:
+    // nothing in `extensions` is left for a browser with no decoder for it.
+    for (extensions) |e| _ = route(e);
+}
+
+test "fallback: one WIC retry for a raster the browser failed, none for vectors or a host route" {
+    try testing.expectEqual(@as(?Route, .wic), fallback(.browser, "avif"));
+    try testing.expectEqual(@as(?Route, .wic), fallback(.browser, "png"));
+    try testing.expectEqual(@as(?Route, null), fallback(.browser, "svg"));
+    try testing.expectEqual(@as(?Route, null), fallback(.browser, "SVG"));
+    // Already decoded on the host: a second try cannot do better.
+    try testing.expectEqual(@as(?Route, null), fallback(.wic, "heic"));
+    try testing.expectEqual(@as(?Route, null), fallback(.icns, "icns"));
+}
+
+test "missingCodec names the extension only for a real HEIF/AVIF container" {
+    const heic = "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic";
+    try testing.expectEqual(@as(?Codec, .heif), missingCodec(heic));
+    try testing.expectEqual(@as(?Codec, .heif), missingCodec("\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00"));
+    try testing.expectEqual(@as(?Codec, .av1), missingCodec("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00"));
+    // An MP4 is an ISO-BMFF file too, and not a picture this card is about.
+    try testing.expectEqual(@as(?Codec, null), missingCodec("\x00\x00\x00\x18ftypisom\x00\x00\x00\x00"));
+    // A corrupt or misnamed file: the generic card, never "go install X".
+    try testing.expectEqual(@as(?Codec, null), missingCodec("this is not a picture"));
+    try testing.expectEqual(@as(?Codec, null), missingCodec("short"));
+    try testing.expect(std.mem.indexOf(u8, Codec.heif.title(), "HEIF Image Extensions") != null);
+}
+
+/// A minimal PNG header for `icnsBestPng` to recognise: the signature and an
+/// IHDR chunk whose width is `w`. Not a decodable picture, which the function
+/// never needs.
+fn fakePng(comptime w: u32) [24]u8 {
+    var b: [24]u8 = .{ 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 'I', 'H', 'D', 'R' } ++ [_]u8{0} ** 8;
+    std.mem.writeInt(u32, b[16..20], w, .big);
+    return b;
+}
+
+fn icnsEntry(comptime kind: *const [4]u8, comptime data: []const u8) [8 + data.len]u8 {
+    var b: [8 + data.len]u8 = undefined;
+    @memcpy(b[0..4], kind);
+    std.mem.writeInt(u32, b[4..8], 8 + data.len, .big);
+    @memcpy(b[8..], data);
+    return b;
+}
+
+fn icnsFile(comptime body: []const u8) [8 + body.len]u8 {
+    var b: [8 + body.len]u8 = undefined;
+    @memcpy(b[0..4], "icns");
+    std.mem.writeInt(u32, b[4..8], 8 + body.len, .big);
+    @memcpy(b[8..], body);
+    return b;
+}
+
+test "icnsBestPng takes the widest PNG, wherever it sits in the file" {
+    const small = comptime fakePng(16);
+    const big = comptime fakePng(1024);
+    const mid = comptime fakePng(256);
+    // An old RLE bitmap entry first, which is not a PNG and must be stepped over.
+    const body = comptime icnsEntry("is32", "rle-bitmap-bytes") ++ icnsEntry("icp4", &small) ++
+        icnsEntry("ic10", &big) ++ icnsEntry("ic08", &mid);
+    const file = comptime icnsFile(&body);
+    const got = icnsBestPng(&file) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(u32, 1024), std.mem.readInt(u32, got[16..20], .big));
+    try testing.expectEqual(@as(usize, 24), got.len);
+
+    // No PNG at all: null, so the pane shows the card.
+    const legacy = comptime icnsFile(&icnsEntry("is32", "rle-bitmap-bytes"));
+    try testing.expect(icnsBestPng(&legacy) == null);
+    // Not an icns, and a truncated or self-referential entry, never loop or read past the end.
+    try testing.expect(icnsBestPng("PNG?") == null);
+    var bad = comptime icnsFile(&icnsEntry("ic10", &big));
+    std.mem.writeInt(u32, bad[12..16], 4, .big); // entry length shorter than its header
+    try testing.expect(icnsBestPng(&bad) == null);
+    var long = comptime icnsFile(&icnsEntry("ic10", &big));
+    std.mem.writeInt(u32, long[12..16], 9999, .big); // entry runs past the file
+    try testing.expect(icnsBestPng(&long) == null);
+}
+
+test "bmpFile puts a BITMAPFILEHEADER in front of a V5 DIB" {
+    const alloc = testing.allocator;
+    var dib = [_]u8{0} ** (124 + 4);
+    std.mem.writeInt(u32, dib[0..4], 124, .little);
+    const bmp = try bmpFile(alloc, &dib);
+    defer alloc.free(bmp);
+    try testing.expectEqualStrings("BM", bmp[0..2]);
+    try testing.expectEqual(@as(u32, 14 + 128), std.mem.readInt(u32, bmp[2..6], .little));
+    // Pixels start right after both headers.
+    try testing.expectEqual(@as(u32, 14 + 124), std.mem.readInt(u32, bmp[10..14], .little));
+    try testing.expectEqualSlices(u8, &dib, bmp[14..]);
+    // A buffer that cannot be a DIB is refused rather than wrapped.
+    try testing.expectError(error.BadDib, bmpFile(alloc, "x"));
+    var tiny = [_]u8{0} ** 8;
+    std.mem.writeInt(u32, tiny[0..4], 124, .little);
+    try testing.expectError(error.BadDib, bmpFile(alloc, &tiny));
 }
 
 test "unitScale: 100% is one image pixel per device pixel, and 1.0 for vectors" {
