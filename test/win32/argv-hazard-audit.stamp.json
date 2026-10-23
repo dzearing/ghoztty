@@ -1,11 +1,9 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-23T12:45:40-07:00",
-    "commit":  "364a617c9",
+    "generated":  "2026-10-23T13:52:43-07:00",
+    "commit":  "a92fb40ab",
     "uncommitted":  [
-                        "scripts/ci-status.ps1",
-                        "scripts/go-loop-exec.ps1",
                         "scripts/guard-due.ps1"
                     ],
     "files":  {
@@ -39,7 +37,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "885dc47dfd7f439568777df49aed5ae911ad0fc773bf46b2b48177ad93dc733c",
+                  "scripts/guard-due.ps1":  "c9f575fbb0614d5fcbdc9718748e1ce08f0801613ffcc37da408ca9719b069d6",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "cda274a862bd12af712f6f6a2f018142f82cce573faded7954a6e1befb93608b",

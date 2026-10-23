@@ -2374,6 +2374,24 @@ $GuardTable = @(
             'test\win32\update-progress.ps1'
         )
     },
+    # The CONSENT step of the update (T1242): the balloon click, the "Install
+    # and Restart" / "Later" dialog, and the arm that only "Install and
+    # Restart" may reach. update-apply starts after the click and
+    # update-progress clicks through on the `check` path only, so neither says
+    # anything if "Later" started installing or the staged path stopped arming.
+    # `ConfirmDialog.zig` is in because its button ids ARE the answer.
+    [pscustomobject]@{
+        Name   = 'update-consent'
+        Script = 'test\win32\update-consent.ps1'
+        Stamp  = 'test\win32\update-consent.stamp.json'
+        Covers = @(
+            'src\apprt\win32\update_install.zig',
+            'src\apprt\win32\tray_notify.zig',
+            'src\apprt\win32\ConfirmDialog.zig',
+            'test\win32\update-consent.ps1',
+            'test\win32\lib\ApplierSandbox.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'website-windows-links'
         Script = 'test\win32\website-windows-download.ps1'

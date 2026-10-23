@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-23T13:17:39-07:00",
-    "commit":  "d53310a9f",
+    "generated":  "2026-10-23T13:49:18-07:00",
+    "commit":  "a92fb40ab",
     "uncommitted":  [
-
+                        "test/win32/update-consent.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -155,13 +155,13 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
-                  "test/win32/gate-negatives.ps1":  "7cb03bdf9489b5b6336b0006a3f4930abed39629e721db62c2966491d6c4af6e",
+                  "test/win32/gate-negatives.ps1":  "802be8f9463f6db4290d5fcd7b24e6021564d29c11b3dbfdc4c915014ee6a2fb",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
-                  "test/win32/go-loop-guard.ps1":  "f79b34c0665c3ffee27807789d23cbb31fafb453fae7c4e22909319110728a43",
+                  "test/win32/go-loop-guard.ps1":  "65043854a0628800359bc7790e471b8261d0e2e372bee8a21db16dfc7e90164a",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
-                  "test/win32/guard-due.ps1":  "c00ebefa0e0f0bd51a9bb0dc2b02a5bc46e522b19da60b606a6a4ff6d350483d",
+                  "test/win32/guard-due.ps1":  "ab38059342784f2a702e8e7fd621acf9c4912c1b593d761a813b30b0d3bcdbb1",
                   "test/win32/gui-launch-command.ps1":  "8e90681b56d560d7779cccbeb8ba4c3c652d48b42fbc2546a0e35ac4662c69aa",
                   "test/win32/gui-postmortem.ps1":  "b0595f3b54b8326445756b773988528e7702572014b7e730c06e29cdd68eb30c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
@@ -457,6 +457,7 @@
                   "test/win32/update-apply.ps1":  "2d80136d99f86428f034a5878f870efceabcbe98d3e6360c144bdbc06cb3d768",
                   "test/win32/update-auto-apply.ps1":  "d8ce62a5b4deb188abfd7c9ee7b27901797885e8e140909aaa4d1973e3520903",
                   "test/win32/update-check.ps1":  "d5833014b3945bf2ac1de9935627695dcdbfd4ed6381a8b21ee85a3235a9bffd",
+                  "test/win32/update-consent.ps1":  "ffb7dcd7d1d3df0010fa627dc98e1dd3d6da014703124651dd9f160612bbd687",
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",
                   "test/win32/update-progress.ps1":  "eb5f961ca43ee0a2e75f3d00cc7c0f7d84cd908ef50c7c0cfa98dfb6dee96f42",
