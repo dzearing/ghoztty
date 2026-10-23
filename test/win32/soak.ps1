@@ -6,7 +6,7 @@
 # Load mix (all --shell=cmd panes in one named window):
 #   soak-stream : endless `type` of an 8MB file  -> sustained visible stream
 #   soak-altscr : PS loop toggling ESC[?1049h/l  -> alt-screen churn (TUI-like)
-#   soak-grow   : 150k numbered lines            -> big scrollback, then idle
+#   soak-grow   : 150k-line passes, repeated     -> big scrollback, for the whole run
 #   (original)  : idle cmd prompt                -> input-latency probe target
 #
 # Sampled every 15s: WorkingSet, PrivateBytes, Handles, Threads, GDI/USER
@@ -61,6 +61,17 @@ $appLog = $null
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\NativeArgv.ps1')
 
 function Rep($m) { $m | Tee-Object -FilePath $report -Append | Write-Host }
+
+# A native call whose stderr is redirected (`2>$null`, `2>&1`) runs under
+# `Continue`. Under this file's `Stop`, PowerShell 5.1 makes ANY stderr line
+# from such a call terminating - including the CLI's "Waiting for Ghoztty to
+# answer" progress note, which it prints on its way to succeeding. T1215: the
+# 30-minute run on 2026-10-22 died on exactly that at the teardown `+close`,
+# after every assertion had passed, and skipped the kill and desktop teardown.
+function Invoke-Tolerant([scriptblock]$Body) {
+    $ErrorActionPreference = 'Continue'
+    & $Body
+}
 
 # The verdict goes through the shared scorer (T271), so a zero-assertion run -
 # a `-SelfTest` whose grading helpers all threw, or a soak that reached the end
@@ -187,6 +198,29 @@ function Format-StrayWindows {
     return (@($Strays | ForEach-Object { "$($_.target) ($(@(Get-WindowLeaves $_).Count) pane)" }) -join ', ')
 }
 
+# --- Scrollback-growth generator (T1215) ----------------------------------------
+# `soak-grow` used to print ONE run of 150k lines. By 2026-08-31 the box printed
+# that inside a 5-minute run, and the grader rightly skips a pane that finished
+# (its tail is idle samples), so the pane was never graded at all. It now repeats
+# the 150k-line pass, with a pass count scaled to -Minutes so generously that a
+# pass would have to take under a second for the loop to run out: one pass per
+# second of the run. It still stops eventually - an unbounded loop in a pane the
+# teardown might miss is worse - and the already-finished exclusion stays, for
+# the run that somehow outpaces it.
+function Get-GrowPasses([int]$Minutes) { return [Math]::Max(60, $Minutes * 60) }
+
+# Which pass the grow pane's tail has reached, and whether it printed the very
+# last line of the very last pass. `SOAKGROW <pass> <line>`.
+function Get-GrowProgress {
+    param([string]$Tail, [int]$Passes)
+    $last = @([regex]::Matches($Tail, 'SOAKGROW (\d+) (\d+)'))
+    $pass = if ($last.Count) { [int]$last[-1].Groups[1].Value } else { 0 }
+    return [pscustomobject]@{
+        Pass = $pass
+        Done = ($Tail -match "SOAKGROW $Passes 150000\b")
+    }
+}
+
 # What each load generator is expected to sustain. Used by the run and by
 # -SelfTest, so the negative control grades against the same numbers the real
 # verdict does.
@@ -226,6 +260,27 @@ if ($SelfTest) {
 
     $short = Test-LoadedPaneFps -Rows (Measure-PaneFps @{ 'soak-stream' = @(60) * 10; 'soak-altscr' = @(60) * 10; 'soak-grow' = @(60) * 10 }) -Floors $floors
     Assert (@($short | Where-Object { $_.Graded }).Count -eq 0) 'selftest: too few samples is reported, not graded'
+
+    # T1215: soak-grow is graded now, so its floor has to be able to fail too.
+    $growDrop = Measure-PaneFps @{ 'soak-stream' = $fast; 'soak-altscr' = $paced; 'soak-grow' = $slow; 'probe' = $idle }
+    $gv = Test-LoadedPaneFps -Rows $growDrop -Floors $floors
+    Assert ((@($gv | Where-Object { $_.Pane -eq 'soak-grow' })[0]).Pass -eq $false) 'selftest: the grow pane dropping to 8 fps is RED'
+    Assert ((Get-GrowPasses 5) -ge 300 -and (Get-GrowPasses 30) -ge 1800) 'selftest: the grow pass count scales with -Minutes'
+    $mid = Get-GrowProgress -Tail "SOAKGROW 3 149999 x`nSOAKGROW 3 150000 x`nSOAKGROW 4 1 x" -Passes 1800
+    Assert ($mid.Pass -eq 4 -and -not $mid.Done) 'selftest: a grow pane between passes reads as still loading, on the pass it reached'
+    $end = Get-GrowProgress -Tail "SOAKGROW 1800 149999 x`nSOAKGROW 1800 150000 x" -Passes 1800
+    Assert ($end.Done) 'selftest: the last line of the last pass reads as finished'
+    Assert (-not (Get-GrowProgress -Tail 'SOAKGROW 18000 150000 x' -Passes 1800).Done) 'selftest: a longer pass number is not mistaken for the last pass'
+
+    # T1215: the teardown hazard. A native progress note on stderr is
+    # terminating under `Stop` (negative control), and survivable through
+    # Invoke-Tolerant, which also leaves the caller's `Stop` in force.
+    $threw = $false
+    try { & cmd.exe /c 'echo Waiting for Ghoztty to answer 1>&2' 2>$null | Out-Null } catch { $threw = $true }
+    Assert $threw 'selftest: a stderr note through 2>$null is terminating under Stop (negative control)'
+    $threw = $false
+    try { Invoke-Tolerant { & cmd.exe /c 'echo Waiting for Ghoztty to answer 1>&2' 2>$null | Out-Null } } catch { $threw = $true }
+    Assert (-not $threw -and $ErrorActionPreference -eq 'Stop') 'selftest: Invoke-Tolerant survives the stderr note and restores Stop'
 
     # T1214: the roster audit, against a fabricated `+list --json`. The second
     # roster is the 2026-08-31 shape - the auto-launch's startup window beside
@@ -391,7 +446,7 @@ $gui = @($gui | Where-Object {
 # here down goes through this instead.
 function Abort-Soak([string]$why) {
     Rep "ABORT: $why"
-    & $exe +close --target=soak 2>$null | Out-Null
+    Invoke-Tolerant { & $exe +close --target=soak 2>$null | Out-Null }
     Start-Sleep -Seconds 1
     try { [void](Stop-RepoGhoztty -Exe $exe -SettleMs 1500) } catch { Rep "  (teardown: $_)" }
     try { Remove-TestDesktop | Out-Null } catch { }
@@ -417,7 +472,7 @@ if ($startStrays.Count -eq 0) {
     Rep 'startup roster: only the soak window (no startup window to close)'
 } else {
     Rep "startup roster: closing what the auto-launch opened beside the soak window: $(Format-StrayWindows $startStrays)"
-    foreach ($s in $startStrays) { & $exe +close "--target=$($s.target)" 2>$null | Out-Null }
+    foreach ($s in $startStrays) { Invoke-Tolerant { & $exe +close "--target=$($s.target)" 2>$null | Out-Null } }
     Start-Sleep -Seconds 1
     $afterRaw = Get-GhozttyListRaw -Exe $exe
     $afterBrace = $afterRaw.IndexOf('{')
@@ -447,8 +502,10 @@ Start-Sleep -Milliseconds 800
 # three in a 600-DIP-tall window, and the stacked-panes layout (T2108) tucked
 # soak-altscr out of sight: hidden on purpose, so its renderer presented
 # nothing for the rest of the run, which read as a frozen pane.
+$growPasses = Get-GrowPasses $Minutes
+# argv-audit: $growPasses is an [int] from Get-GrowPasses - digits only, nothing argv can split or strip.
 & $exe +split --pane=soak-stream --name=soak-grow --direction=down --shell=cmd `
-    "--command=for /l %i in (1,1,150000) do @echo SOAKGROW %i abcdefghijklmnopqrstuvwxyz0123456789" | Out-Null
+    "--command=for /l %j in (1,1,$growPasses) do @for /l %i in (1,1,150000) do @echo SOAKGROW %j %i abcdefghijklmnopqrstuvwxyz0123456789" | Out-Null
 Start-Sleep -Seconds 2
 
 # The window's original (unnamed) pane is the latency-probe target: it is
@@ -528,7 +585,7 @@ $altscrAlive = $false
 $altscrScreen = ''
 $altscrDeadline = (Get-Date).AddSeconds(30)
 while ((Get-Date) -lt $altscrDeadline) {
-    $altscrScreen = (& $exe +read --name=soak-altscr --lines=40 2>&1 | ForEach-Object { $_.ToString() }) -join "`n"
+    $altscrScreen = (Invoke-Tolerant { & $exe +read --name=soak-altscr --lines=40 2>&1 | ForEach-Object { $_.ToString() } }) -join "`n"
     if ($altscrScreen -match 'altscr churn line|primary interlude') { $altscrAlive = $true; break }
     Start-Sleep -Seconds 2
 }
@@ -613,8 +670,9 @@ if ($procAlive) {
     $growTail = & $exe +read --name=soak-grow --lines=50 | Out-String
     $sw.Stop()
     $readBigMs = $sw.ElapsedMilliseconds
-    $growDone = $growTail -match 'SOAKGROW 150000'
-    Rep "big-scrollback +read latency: ${readBigMs}ms (baseline ${readBaselineMs}ms; grow finished: $growDone)"
+    $growProgress = Get-GrowProgress -Tail $growTail -Passes $growPasses
+    $growDone = $growProgress.Done
+    Rep "big-scrollback +read latency: ${readBigMs}ms (baseline ${readBaselineMs}ms; grow finished: $growDone, pass $($growProgress.Pass) of $growPasses)"
 
     $listOk = $true
     & $exe +list | Out-Null
@@ -692,16 +750,16 @@ if ($procAlive) {
         Assert ($notOurs.Count -eq 0) "telemetry lists only the panes this run created (not ours: $(if ($notOurs.Count) { ($notOurs | ForEach-Object { "$($_.Pane) x$($_.Samples)" }) -join ', ' } else { 'none' }))"
 
         if ($fpsByPane.Count -gt 0) {
-            # `soak-grow` finishes its 150k lines and then goes idle, at which
-            # point its own samples become idle samples like the probe's. Grade
-            # it only while it is still loading at the end of the run; the same
-            # cannot happen to stream/altscr, which are endless loops by
-            # construction.
+            # `soak-grow` repeats its 150k-line pass for the whole run (T1215),
+            # but it is bounded: if it ever does finish, its tail samples are
+            # idle samples like the probe's. Grade it only while it is still
+            # loading at the end of the run; the same cannot happen to
+            # stream/altscr, which are endless loops by construction.
             $grade = @{}
             foreach ($k in $script:PaneFpsFloors.Keys) { $grade[$k] = $script:PaneFpsFloors[$k] }
             if ($growDone) {
                 $grade.Remove('soak-grow')
-                Rep '  (soak-grow finished its 150k lines and went idle - not graded)'
+                Rep "  (soak-grow finished all $growPasses passes and went idle - not graded)"
             }
 
             $verdicts = Test-LoadedPaneFps -Rows $paneRows -Floors $grade
@@ -752,7 +810,9 @@ if ($procAlive) {
 }
 
 # --- Teardown ------------------------------------------------------------------
-& $exe +close --target=soak 2>$null | Out-Null
+# Invoke-Tolerant: soak-grow is still loading here (T1215), so the app can be
+# slow to answer and the CLI's progress note lands on stderr.
+Invoke-Tolerant { & $exe +close --target=soak 2>$null | Out-Null }
 Start-Sleep -Seconds 2
 if ($procAlive) {
     # T1214: the close is shown to have closed everything this run opened,
