@@ -1,14 +1,14 @@
 {
     "guard":  "upgrade-no-fork",
     "script":  "test/win32/upgrade-no-fork.ps1",
-    "generated":  "2026-10-22T03:08:08-07:00",
-    "commit":  "3dde54ee6",
+    "generated":  "2026-10-22T20:57:34-07:00",
+    "commit":  "96d1ada1b",
     "uncommitted":  [
                         "scripts/upgrade-ghoztty-windows.ps1"
                     ],
     "files":  {
                   "scripts/loop-session.ps1":  "39189157a285514dc8e68c86a5f844d688463d1124c90e882623373045895ade",
-                  "scripts/upgrade-ghoztty-windows.ps1":  "bd57f9fcdc3e2ab23070ead8ade6460496557477d3d1a09060748c30a23c1b10",
+                  "scripts/upgrade-ghoztty-windows.ps1":  "8728d104ebc58a0e702f93a101a31f70d3de1e4ab6e88c4d2524ad1ffaa50547",
                   "test/win32/upgrade-no-fork.ps1":  "143d6dff31342a184839b8de623c483f8f4c1dda1bd4f696a7c9c714cfa42d22"
               }
 }

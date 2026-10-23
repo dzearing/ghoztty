@@ -42,6 +42,60 @@ function Get-DevInstallDir {
     Join-Path $env:LOCALAPPDATA 'ghoztty\dev-install'
 }
 
+# THE PORTABLE LOCATIONS (T1221). The same rule, asked of the other two copies
+# on this box: the Desktop portable and the network share - whose zip is the
+# thing a stranger downloads. They may hold PUBLISHED bytes only, so a repo
+# build (a staging prefix, zig-out-release, anything this loop compiled) is
+# refused there exactly the way it is refused at the install. What may write
+# them is `deliver-windows-build.ps1 -FromRelease`, which ships a published
+# release's own portable zip. The share's parent directory is in the list as
+# well as its portable folder because the loose agent and the zip live there.
+#
+# Fixed paths rather than parameters, for the same reason as the install: a
+# caller that could move them could move around the refusal.
+function Get-PublishedOnlyDirs {
+    @(
+        'D:\Users\David\Desktop\Ghoztty-portable-x64',
+        '\\homeassistant\share\ghoztty-windows'
+    )
+}
+
+# The shared path comparison: normalised, separator-trimmed, case-insensitive,
+# and never touching the filesystem (a sleeping NAS must give the same answer as
+# an awake one).
+function Test-PathIsUnder {
+    param([string]$Path, [string]$Root)
+    if (-not $Path -or -not $Root) { return $false }
+    $norm = {
+        param($p)
+        try { $p = [IO.Path]::GetFullPath($p) } catch { }
+        $p.TrimEnd('\', '/')
+    }
+    $a = & $norm $Path
+    $b = & $norm $Root
+    if ($a -eq $b) { return $true }
+    return $a.StartsWith($b + '\', [StringComparison]::OrdinalIgnoreCase)
+}
+
+# True when $Path is one of the portable locations or anything inside them.
+function Test-IsPublishedOnlyPath {
+    param([string]$Path)
+    foreach ($root in Get-PublishedOnlyDirs) {
+        if (Test-PathIsUnder -Path $Path -Root $root) { return $true }
+    }
+    return $false
+}
+
+function Get-PublishedOnlyRefusal {
+    param([string]$Path, [string]$Who = 'this script')
+    @(
+        "REFUSED: $Who will not write a repo build into $Path.",
+        "The Desktop portable and the network share hold published releases only - the share's zip is what a stranger downloads (task T1221, the D85 rule applied to the other two copies).",
+        "To refresh them, ship a published release: scripts\deliver-windows-build.ps1 -FromRelease latest",
+        "To run what you just built, use zig-out\bin\ghoztty.exe, or the dev install ($(Get-DevInstallDir))."
+    ) -join "`n"
+}
+
 # True when $Path is the user's install or anything inside it.
 #
 # Compared as normalised, trailing-separator-free, case-insensitive paths, and
@@ -51,17 +105,7 @@ function Get-DevInstallDir {
 function Test-IsUserInstallPath {
     param([string]$Path)
     if (-not $Path) { return $false }
-    $install = Get-UserInstallDir
-    if (-not $install) { return $false }
-    $norm = {
-        param($p)
-        try { $p = [IO.Path]::GetFullPath($p) } catch { }
-        $p.TrimEnd('\', '/')
-    }
-    $a = & $norm $Path
-    $b = & $norm $install
-    if ($a -eq $b) { return $true }
-    return $a.StartsWith($b + '\', [StringComparison]::OrdinalIgnoreCase)
+    return Test-PathIsUnder -Path $Path -Root (Get-UserInstallDir)
 }
 
 # The refusal message, as a function so every caller says the same thing and the

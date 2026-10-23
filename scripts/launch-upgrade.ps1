@@ -324,6 +324,12 @@ if (-not $NoDeliver) {
         }
         if ($deliverCode -eq 0) {
             $deliveredExtras = $true
+        } elseif ($deliverCode -eq 3) {
+            # T1221: the portable locations take published releases only, and
+            # this is a repo build. Not a failure - the rule working - and the
+            # child's mirror would refuse the same places, so it is told to skip.
+            Write-Host 'locations 2/3 not delivered: they hold published releases only (T1221); refresh them with deliver-windows-build.ps1 -FromRelease latest'
+            $deliveredExtras = $true
         } else {
             Write-Host ("DELIVERY TO LOCATIONS 2/3 FAILED (exit $deliverCode). The installed release upgrade continues " +
                 'and the child will mirror them best-effort, but read the lines above before calling this delivery done.')

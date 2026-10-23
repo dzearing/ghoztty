@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-22T20:06:38-07:00",
-    "commit":  "34c5d7d72",
+    "generated":  "2026-10-22T20:49:37-07:00",
+    "commit":  "96d1ada1b",
     "uncommitted":  [
 
                     ],
@@ -1068,7 +1068,7 @@
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
-                  "test/win32/deliver-windows-build.ps1":  "15c2564c8d36bdf0966076a094502ccd040e8e7b5c116a6db74e50288a8421eb",
+                  "test/win32/deliver-windows-build.ps1":  "25ee9d9e074fea510a40307910032162405b7aa8d69b5c032dd1bf9bafa049aa",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
                   "test/win32/desktop-launch-audit.ps1":  "3cacc5fce5628dd8501cdc2315698e7974c8b28d35159f7c67685f3e99ec57e1",
                   "test/win32/desk-variant.ps1":  "da9faf809bdd7995944d552b6406ee3736229a7821f246530dbdd42a61d7a17d",

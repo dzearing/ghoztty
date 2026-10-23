@@ -79,8 +79,9 @@ Concretely, in order, with no stops in between:
      and once a day, because until now all of them only ran as part of a
      *delivery* and the 2026-08-10 debug-build-in-both-portables state went
      unnoticed for seventeen hours. It reports and never refuses: what it names
-     is fixed by a delivery, which needs a release build and is therefore a
-     task. Ask it directly with
+     is fixed by a delivery - since T1221 that is `deliver-windows-build.ps1
+     -FromRelease latest` from lane A, because those places take published
+     releases only and the audit fails on an unpublished build. Ask it directly with
      `scripts\deliver-windows-build.ps1 -VerifyOnly` (nothing is written, ever),
      and `deliver=` on `scripts\go-loop-health.ps1` carries the same verdict for
      a reader that is not a turn. Acceptance: section G of
@@ -1305,7 +1306,9 @@ the fix is the message.
   updater may replace it, with a published build. The Desktop portable
   (`D:\Users\David\Desktop\Ghoztty-portable-x64`) and the share copy
   (`\\homeassistant\share\ghoztty-windows`) are still scripted delivery
-  targets, and they are what `deliver-windows-build.ps1` proves below. A fix
+  targets, and they are what `deliver-windows-build.ps1` proves below - but
+  since T1221 they take PUBLISHED releases only (`-FromRelease latest`; a repo
+  build is refused, see `docs/claude/build.md`). A fix
   that only lives in zig-out still does not exist as far as the user can tell
   (the T49 lesson) — the answer to that is now a release, not a swap.
 

@@ -192,6 +192,28 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   control). Why it needs a guard rather than a note: a swap that comes back
   succeeds — the terminal keeps working, and the only symptom is a version
   number describing bytes nobody ever released.
+- **The portable copies hold published releases only, too** (T1221). The Desktop
+  portable (`D:\Users\David\Desktop\Ghoztty-portable-x64`) and the network share
+  (`\\homeassistant\share\ghoztty-windows`) answer the D85 question the same
+  way the install does, and the share's `Ghoztty-portable-x64.zip` is the
+  strongest case of all: it is what a stranger downloads. So a repo build is
+  **refused** there (exit 3, `Get-PublishedOnlyDirs` in
+  `scripts\install-ownership.ps1`): `deliver-windows-build.ps1` refuses it before
+  staging anything, and `upgrade-ghoztty-windows.ps1`'s mirror refuses it per
+  location. The one way in is a published release:
+
+  ```powershell
+  powershell -NoProfile -File scripts\deliver-windows-build.ps1 -FromRelease latest   # or a win-v* tag
+  ```
+
+  which downloads that release's portable zip, delivers its binaries with every
+  read-back the script already makes, and publishes **the zip itself, byte for
+  byte** (SHA-256 checked) as the share's download - nothing is rebuilt. The
+  audit (`-VerifyOnly`, which the claim runs daily) FAILS when the build the
+  portable locations agree on is not one a `win-v*` tag carries, and holds them
+  to the release's file set rather than a repo build's (no `.pdb`, no
+  `ghostty-vt.dll`). Lane A alone delivers. Acceptance: section I of
+  `test\win32\deliver-windows-build.ps1`.
 - **A debug build announces itself** (T43): its whole caption/tab band is
   tinted warning amber and its title carries `" [DEBUG]"`, so a dev instance is
   never mistaken for the user's installed release. Gated on `Debug`/
@@ -275,7 +297,8 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   (`scripts\publish-windows-release.ps1`, then the in-app updater — see the
   install-ownership rule above). `scripts/launch-upgrade.ps1` (never a
   hand-rolled `Start-Process`) still drives a delivery to the dev install and
-  the portable locations; `go.md` has the full protocol and the staleness gates.
+  nowhere else (the portable locations take
+  published releases only, T1221); `go.md` has the full protocol and the staleness gates.
 
 - **Symbols for a shipped build** (T1936): the packages carry no `.pdb`, so
   every `win-v*` release publishes `Ghoztty-symbols-<version>-x64.zip`, a

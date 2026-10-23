@@ -107,12 +107,24 @@ param(
     # Delete all but the newest N backup generations in every location. Absent
     # (the default) only REPORTS what a prune would remove: deleting is a
     # user-gated action, so this script offers it rather than doing it.
-    [int]$PruneBackups = -1
+    [int]$PruneBackups = -1,
+    # Ship a PUBLISHED release instead of a repo build (T1221): `latest` or a
+    # `win-v*` tag. Its portable zip is downloaded from GitHub and becomes the
+    # staging prefix, and that same zip - byte for byte - becomes the share's
+    # download. This is the only way a write reaches the Desktop portable or the
+    # share (scripts\install-ownership.ps1, Get-PublishedOnlyDirs).
+    [string]$FromRelease = '',
+    [string]$ReleaseRepo = 'dzearing/ghoztty',
+    # The commits published releases carry, as `<sha>=<tag>`, for the audit's
+    # published check. Empty = ask origin for its `win-v*` tags. A test seam:
+    # the hermetic harness hands in a list instead of reaching the network.
+    [string[]]$PublishedCommits = @()
 )
 
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'delivery-version.ps1')
 . (Join-Path $PSScriptRoot 'delivery-manifest.ps1')
+. (Join-Path $PSScriptRoot 'install-ownership.ps1')
 # Lane A alone delivers (T1984). -DryRun and -VerifyOnly write nothing, so every
 # lane may still ask what is sitting in the install locations.
 . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
@@ -185,8 +197,32 @@ function Complete-Audit {
     exit 0
 }
 
+# The commits that published releases carry (T1221), as objects with Commit and
+# Tag. From -PublishedCommits when given, else from origin's `win-v*` tags -
+# peeled, since an annotated tag's own object id is not the commit. $null (not
+# an empty list) when the question could not be answered, so "no network" is
+# never read as "nothing is published".
+function Get-PublishedReleaseCommits {
+    if ($PublishedCommits.Count) {
+        return @($PublishedCommits | ForEach-Object {
+                $p = $_ -split '=', 2
+                [pscustomobject]@{ Commit = $p[0].Trim().ToLowerInvariant(); Tag = $(if ($p.Count -gt 1) { $p[1].Trim() } else { '' }) }
+            })
+    }
+    $repo = Split-Path $PSScriptRoot -Parent
+    $lines = @(git -C $repo ls-remote --tags origin 'refs/tags/win-v*' 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $byTag = @{}
+    foreach ($l in $lines) {
+        if ($l -notmatch '^([0-9a-f]{40})\s+refs/tags/(\S+?)(\^\{\})?$') { continue }
+        # The peeled line wins over the tag object's own line.
+        if ($Matches[3] -or -not $byTag.ContainsKey($Matches[2])) { $byTag[$Matches[2]] = $Matches[1] }
+    }
+    return @($byTag.GetEnumerator() | ForEach-Object { [pscustomobject]@{ Commit = $_.Value; Tag = $_.Key } })
+}
+
 function Invoke-Audit {
-    $fileSet = @(Get-DeliveryFileSet -AppOnly:$AppOnly)
+    $fileSet = @(Get-DeliveryFileSet -Published -AppOnly:$AppOnly)
     $places = @(@($Targets) + @($LooseAgentDir) | Where-Object { $_ } | Select-Object -Unique)
 
     # Pass one: read every reachable location. Nothing is judged yet, because
@@ -299,6 +335,25 @@ function Invoke-Audit {
             }
         }
         if ($stamps.Count -and $agentsAgree) { Ok "ghoztty-agent.exe $($stamps[0].Agent) in $($stamps.Count) location(s)" }
+
+        # T1221: the portable locations hold published releases only, so the
+        # build they agree on must be one a release carries. Asked only where
+        # the rule applies (or a test hands in the list) - a sandbox audit has
+        # no business reaching the network.
+        $ruled = @($found | Where-Object { Test-IsPublishedOnlyPath $_.Dir })
+        if ($ruled.Count -or $PublishedCommits.Count) {
+            $pub = Get-PublishedReleaseCommits
+            if ($null -eq $pub) {
+                Say "  note: could not list the published releases, so whether +$script:auditExpect was published is unknown"
+            } else {
+                $hit = @($pub | Where-Object { Test-CommitsMatch $_.Commit $script:auditExpect })[0]
+                if ($hit) { Ok "+$script:auditExpect is the published release $($hit.Tag)" }
+                else {
+                    Bad ("+$script:auditExpect is not a published release - the portable locations hold published bytes only (T1221); " +
+                        'refresh them with scripts\deliver-windows-build.ps1 -FromRelease latest')
+                }
+            }
+        }
     }
 
     # The published archive, against the RULE rather than against a rebuild:
@@ -340,6 +395,55 @@ if ($VerifyOnly) {
     Invoke-Audit
 }
 
+# ---- published only, where the rule applies (T1221) ---------------------------
+#
+# D85 settled that the user's terminal only ever runs something that was
+# actually published; the Desktop portable and the share are the same question
+# asked of the other two copies, and the share's zip is the artifact a stranger
+# installs. So a repo build is refused there - before anything is staged or
+# written, DryRun included, since a dry run of a refused delivery describes
+# something that will not happen.
+$script:shipsRelease = $false
+$script:releaseZip = ''
+if ($FromRelease) {
+    $tag = $FromRelease.Trim()
+    if ($tag -eq 'latest') {
+        $tag = (gh release list --repo $ReleaseRepo --limit 50 --json tagName,isDraft,isPrerelease 2>$null |
+                ConvertFrom-Json | ForEach-Object { $_ } |
+                Where-Object { $_.tagName -like 'win-v*' -and -not $_.isDraft -and -not $_.isPrerelease } |
+                Select-Object -First 1).tagName
+        if (-not $tag) { Say "ABORT: could not find the latest published win-v* release on $ReleaseRepo"; exit 2 }
+    }
+    $work = Join-Path $env:TEMP "ghoztty-deliver-$tag-$Suffix"
+    $null = New-Item -ItemType Directory -Force -Path $work
+    Say "== release $tag ($ReleaseRepo)"
+    gh release download $tag --repo $ReleaseRepo --pattern 'Ghoztty-portable-*-x64.zip' --dir $work --clobber 2>&1 | ForEach-Object { Say "   $_" }
+    $script:releaseZip = @(Get-ChildItem -LiteralPath $work -Filter 'Ghoztty-portable-*-x64.zip' -File | Select-Object -First 1 -ExpandProperty FullName)[0]
+    if (-not $script:releaseZip) { Say "ABORT: release $tag has no portable zip to deliver (or it could not be downloaded)"; exit 2 }
+    # The release zip is `Ghoztty\<binaries>` + `Ghoztty\gl\` + `Ghoztty\share\`;
+    # the staging shape this script reads is `bin\<binaries>`, `bin\gl\`, `share\`.
+    $x = Join-Path $work 'x'
+    Remove-Item -LiteralPath $x -Recurse -Force -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    try { [IO.Compression.ZipFile]::ExtractToDirectory($script:releaseZip, $x) }
+    catch { Say "ABORT: the release zip could not be extracted: $($_.Exception.Message)"; exit 2 }
+    $root = Join-Path $x $ZipRoot
+    if (-not (Test-Path -LiteralPath (Join-Path $root 'ghoztty.exe') -PathType Leaf)) { Say "ABORT: the release zip has no $ZipRoot\ghoztty.exe"; exit 2 }
+    $Staging = Join-Path $work 'staging'
+    Remove-Item -LiteralPath $Staging -Recurse -Force -ErrorAction SilentlyContinue
+    $null = New-Item -ItemType Directory -Force -Path $Staging
+    if (Test-Path -LiteralPath (Join-Path $root 'share')) { Move-Item -LiteralPath (Join-Path $root 'share') -Destination (Join-Path $Staging 'share') }
+    Move-Item -LiteralPath $root -Destination (Join-Path $Staging 'bin')
+    $script:shipsRelease = $true
+} elseif (-not $VerifyOnly) {
+    $ruled = @(@($Targets) + @($LooseAgentDir) + @($(if (-not $NoZip) { $ZipPath })) |
+            Where-Object { $_ -and (Test-IsPublishedOnlyPath $_) })
+    if ($ruled.Count) {
+        Say (Get-PublishedOnlyRefusal -Path ($ruled -join ', ') -Who 'deliver-windows-build.ps1')
+        exit 3
+    }
+}
+
 # ---- the staging prefix must be a real release build ------------------------
 if (-not (Test-Path -LiteralPath $Staging -PathType Container)) {
     Say "ABORT: staging directory not found: $Staging"
@@ -351,7 +455,7 @@ if (-not (Test-Path -LiteralPath $stagingBin -PathType Container)) {
     exit 2
 }
 
-$fileSet = @(Get-DeliveryFileSet -AppOnly:$AppOnly)
+$fileSet = @(Get-DeliveryFileSet -AppOnly:$AppOnly -Published:$script:shipsRelease)
 $missing = @($fileSet | Where-Object { -not (Test-Path -LiteralPath (Join-Path $stagingBin $_) -PathType Leaf) })
 if ($missing.Count) {
     Say "ABORT: staging is incomplete, missing: $($missing -join ', ')"
@@ -622,7 +726,30 @@ if ($NoZip -or -not $ZipPath) {
     Say "== portable zip $ZipPath"
     $zipSrc = $ZipSource
     if (-not $zipSrc) { $zipSrc = @($Targets | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) })[0] }
-    if (-not $zipSrc) {
+    if ($script:shipsRelease) {
+        # T1221: the download IS the published asset, byte for byte - nothing is
+        # rebuilt, so there is no assembled shape to gate; the release's own
+        # shape is checked where it is made (test\win32\release-artifacts.ps1).
+        if (-not (Test-Path -LiteralPath (Split-Path $ZipPath -Parent) -PathType Container)) {
+            Skip "the portable zip ($(Split-Path $ZipPath -Parent) is not reachable)"
+        } elseif ($DryRun) {
+            Say "  dry  would publish $(Split-Path $script:releaseZip -Leaf) verbatim"
+        } else {
+            try {
+                if (Test-Path -LiteralPath $ZipPath -PathType Leaf) {
+                    Copy-Item -LiteralPath $ZipPath "$ZipPath.bak-$Suffix" -Force -ErrorAction Stop
+                }
+                Copy-Item -LiteralPath $script:releaseZip $ZipPath -Force -ErrorAction Stop
+                $want = (Get-FileHash -LiteralPath $script:releaseZip -Algorithm SHA256).Hash
+                $got = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash
+                if ($want -ne $got) { Bad "the published zip's SHA-256 is $got, not the release asset's $want" }
+                else {
+                    Ok ("published the release asset verbatim ({0:N1} MB, sha256 {1})" -f ((Get-Item -LiteralPath $ZipPath).Length / 1MB), $want.Substring(0, 12).ToLowerInvariant())
+                    $script:deliveredCount++
+                }
+            } catch { Bad "the portable zip could not be published: $($_.Exception.Message)" }
+        }
+    } elseif (-not $zipSrc) {
         Skip 'the portable zip (no portable directory to build it from)'
     } elseif (-not (Test-Path -LiteralPath (Split-Path $ZipPath -Parent) -PathType Container)) {
         Skip "the portable zip ($(Split-Path $ZipPath -Parent) is not reachable)"

@@ -576,6 +576,66 @@ if (-not $staleStamp -or (Test-AgentStampsMatch $staleStamp $stagedStamp)) {
 }
 
 # ============================================================================
+"== I: the portable locations hold PUBLISHED releases only (T1221)"
+# ============================================================================
+#
+# D85 settled that the user's terminal only runs something that was actually
+# published; T1221 asks the same of the Desktop portable and the share, whose
+# zip is the thing a stranger downloads. The rule is a refusal plus an audit,
+# and both have to be seen saying no.
+
+. (Join-Path $Repo 'scripts\install-ownership.ps1')
+. (Join-Path $Repo 'scripts\delivery-version.ps1')
+$realDesk = 'D:\Users\David\Desktop\Ghoztty-portable-x64\Ghoztty'
+$realZip = '\\homeassistant\share\ghoztty-windows\Ghoztty-portable-x64.zip'
+Assert "I1 the Desktop portable is a published-only path" (Test-IsPublishedOnlyPath $realDesk)
+Assert "I2 so is the share's download, spelled in any case" (Test-IsPublishedOnlyPath $realZip.ToUpperInvariant())
+Assert "I3 a sandbox is not" (-not (Test-IsPublishedOnlyPath $p1))
+Assert "I4 nor is a sibling that merely shares the prefix" (-not (Test-IsPublishedOnlyPath 'D:\Users\David\Desktop\Ghoztty-portable-x64-old'))
+$pubSet = @(Get-DeliveryFileSet -Published)
+Assert "I5 the published set is what a release zip carries: no .pdb" (-not ($pubSet | Where-Object { $_ -like '*.pdb' }))
+Assert "I6 and still the .com and the agent" ($pubSet -contains 'ghoztty.com' -and $pubSet -contains 'ghoztty-agent.exe')
+
+# The refusal, with a DryRun on top: if the gate were broken a dry run still
+# writes nothing, so proving it can never touch the real portable.
+$out = & $deliver -Staging $Staging -Targets @($realDesk) -LooseAgentDir '' -NoZip -DryRun *>&1 | ForEach-Object { "$_" }
+$code = $LASTEXITCODE
+AssertEq "I7 a repo build aimed at the Desktop portable is REFUSED" 3 $code
+Assert "I8 naming the rule and the way to ship a release" ((($out -join "`n") -match 'published releases only') -and (($out -join "`n") -match '-FromRelease'))
+$out = & $deliver -Staging $Staging -Targets @($p1) -LooseAgentDir '' -ZipPath $realZip -DryRun *>&1 | ForEach-Object { "$_" }
+AssertEq "I9 so is one that would only replace the share's zip" 3 $LASTEXITCODE
+
+# The audit's half: the build the locations agree on must be a published one.
+$held = (Resolve-GhozttyExeCommit -Exe (Join-Path $p1 'ghoztty.exe')).Commit
+$r = Invoke-Audit @{ PublishedCommits = @('0000000000000000000000000000000000000000=win-v0.0.0') }
+AssertEq "I10 an audit of an UNPUBLISHED build FAILS" 1 $r.Code
+Assert "I11 saying it is not a published release" ($r.Text -match 'is not a published release')
+$r = Invoke-Audit @{ PublishedCommits = @("$held=win-v9.9.9") }
+AssertEq "I12 and passes once a release carries that commit" 0 $r.Code
+Assert "I13 naming the release" ($r.Text -match 'is the published release win-v9\.9\.9')
+
+# End to end from a real release, when GitHub can be asked.
+$ghOk = $false
+try { $null = & gh release list --repo dzearing/ghoztty --limit 1 2>$null; $ghOk = ($LASTEXITCODE -eq 0) } catch { }
+if (-not $ghOk) {
+    "  SKIP I14-I18 (gh cannot list releases on this box)"
+    $script:skipped++
+} else {
+    $r = Invoke-Deliver @{ FromRelease = 'latest' }
+    AssertEq "I14 -FromRelease latest delivers" 0 $r.Code
+    Assert "I15 publishing the release's own zip verbatim" ($r.Text -match 'published the release asset verbatim')
+    $zn = @(Get-ZipNames $zipPath)
+    Assert "I16 so the share's download carries no repo-only file" (-not ($zn | Where-Object { $_ -like '*ghostty-vt.dll' -or $_ -like '*.pdb' }))
+    $rel = $r.Text -match '== release (win-v\S+)'
+    $tagName = if ($rel) { $Matches[1] } else { '' }
+    $relCommit = (& git -C $Repo ls-remote --tags origin "refs/tags/$tagName^{}" 2>$null | Select-Object -First 1) -replace '\s.*$', ''
+    if (-not $relCommit) { $relCommit = (& git -C $Repo ls-remote --tags origin "refs/tags/$tagName" 2>$null | Select-Object -First 1) -replace '\s.*$', '' }
+    Assert "I17 the delivered exe is the release's commit ($tagName)" (Test-CommitsMatch (Resolve-GhozttyExeCommit -Exe (Join-Path $p1 'ghoztty.exe')).Commit $relCommit)
+    $r = Invoke-Audit @{ PublishedCommits = @("$relCommit=$tagName") }
+    AssertEq "I18 and the audit, held to the published file set, is green over it" 0 $r.Code
+}
+
+# ============================================================================
 if (-not $Keep) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
 
 # A clean green FULL run stamps the covered files (T783) so scripts\guard-due.ps1

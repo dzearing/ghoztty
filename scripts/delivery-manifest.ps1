@@ -31,14 +31,27 @@
 # both REQUIRES ghoztty-agent.exe and versions it alongside ghoztty.exe, so the
 # in-app updater installs the agent from the same build as the app (T913,
 # asserted by A14a/A14b2 in test\win32\release-artifacts.ps1).
+#
+# -Published is the set a published release's portable zip carries (T1221),
+# which is what the portable locations hold now that they take releases only:
+# no .pdb (the symbols ship as their own asset) and none of the two DLLs a repo
+# build leaves beside the exe. It is also the yardstick the audit holds those
+# locations to, so a portable refreshed from a release is not "missing" a .pdb.
 function Get-DeliveryFileSet {
-    param([switch]$AppOnly)
+    param([switch]$AppOnly, [switch]$Published)
+    if ($Published) {
+        if ($AppOnly) { return @('ghoztty.exe', 'ghoztty.com') }
+        return @('ghoztty.exe', 'ghoztty.com', 'ghoztty-agent.exe')
+    }
     # ghoztty.com is NOT optional (T245): PATHEXT resolves .COM before .EXE, so
     # it is the binary a shell actually runs, and a location that has a fresh
     # .exe beside a stale .com is running last week's CLI.
     $app = @('ghoztty.exe', 'ghoztty.com', 'ghoztty.pdb', 'ghostty-vt.dll')
     if ($AppOnly) { return $app }
-    return $app + @('ghoztty-agent.exe', 'ghoztty-agent.pdb', 'ghoztty-agent-ca.dll')
+    # No ghoztty-agent-ca.dll (T1221): it is an MSI custom action that only
+    # `zig build agent` installs, so a default release build never has one and
+    # requiring it refused every staging prefix but a stale one.
+    return $app + @('ghoztty-agent.exe', 'ghoztty-agent.pdb')
 }
 
 # The CONTENT TREES a delivery mirrors, as (source under the staging prefix,
@@ -69,7 +82,7 @@ function Get-DeliveryTreeSet {
 function Get-BackupFileSet {
     param([switch]$All)
     if ($All) { return Get-DeliveryFileSet }
-    return @('ghoztty.exe', 'ghoztty.com', 'ghostty-vt.dll', 'ghoztty-agent.exe', 'ghoztty-agent-ca.dll')
+    return @('ghoztty.exe', 'ghoztty.com', 'ghostty-vt.dll', 'ghoztty-agent.exe')
 }
 
 # Does this relative path belong in the portable zip?

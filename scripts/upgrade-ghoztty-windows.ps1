@@ -119,6 +119,8 @@ param(
     # can tell. Never fatal: a sleeping NAS must not fail a delivery.
     # The exe-bearing directory of each, NOT the wrapper folder: both portables
     # nest one level (`Ghoztty-portable-x64\Ghoztty\ghoztty.exe`).
+    # T1221: these two defaults are published-only locations now, so the mirror
+    # refuses them and logs why; the list stays so that refusal is visible.
     [string[]]$ExtraInstallDirs = @(
         'D:\Users\David\Desktop\Ghoztty-portable-x64\Ghoztty',
         '\\homeassistant\share\ghoztty-windows\Ghoztty-portable-x64\Ghoztty'
@@ -684,6 +686,13 @@ if ($script:deliveryFailure) {
         # exactly where the user's install would come back in quietly.
         if (Test-IsUserInstallPath -Path $dir) {
             Log "extra install '$dir': REFUSED - that is the user's installed Ghoztty, which only the in-app updater may replace (D85/T1218)"
+            continue
+        }
+        # T1221: and the portable locations take published releases only, which
+        # a staging prefix never is. They are refreshed by
+        # `deliver-windows-build.ps1 -FromRelease`, not by this mirror.
+        if (Test-IsPublishedOnlyPath -Path $dir) {
+            Log "extra install '$dir': REFUSED - the portable locations hold published releases only; refresh them with deliver-windows-build.ps1 -FromRelease latest (T1221)"
             continue
         }
         if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
