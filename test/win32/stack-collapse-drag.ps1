@@ -108,6 +108,17 @@ function Find-FocusedLeaf($node) {
     foreach ($p in $node.PSObject.Properties) { Find-FocusedLeaf $p.Value }
 }
 
+# T2185: the pane popups (the unfocused dim wash is the one that leaked) that
+# are on screen but reach outside the window. A folded pane is held at its
+# last width, which runs past the window's right edge, and a popup is not
+# clipped by the window the way the pane child is.
+function Get-StrayPopups([int]$procId, [IntPtr]$top) {
+    $w = Get-TestWindowRect -Window $top
+    return @(Get-TestWindows -ProcessId $procId -Class 'GhozttyDimOverlay' | Where-Object {
+            $_.Visible -and ($_.Left -lt $w.Left -or $_.Top -lt $w.Top -or $_.Right -gt $w.Right -or $_.Bottom -gt $w.Bottom)
+        })
+}
+
 # Move the held pointer to screen x in a few steps, then settle.
 function Move-To([IntPtr]$top, [int]$fromX, [int]$toX, [int]$y) {
     $steps = 6
@@ -193,6 +204,8 @@ try {
     # The last split made s2 the focused pane; it is the one that folds.
     Assert ($focus0 -eq 's2') "A: precondition - s2 had the caret before the drag ('$focus0')"
     Assert ($focusA -eq 's1') "A: the caret left the folded pane for s1, the nearest on show ('$focusA')"
+    $strayA = @(Get-StrayPopups $app.Pid $top)
+    Assert ($strayA.Count -eq 0) ("A: no pane popup reaches outside the window while folded (T2185; got {0}: {1})" -f $strayA.Count, (($strayA | ForEach-Object { "$($_.Class) $($_.Left)-$($_.Right)" }) -join ' | '))
 
     Move-To $top $xFold1 $xFold2 $y
     $b = @(Get-VisiblePanes $top)
@@ -226,6 +239,10 @@ try {
     $e = @(Get-VisiblePanes $top)
     Say ("      after release: {0} on show ({1})" -f $e.Count, (($e | ForEach-Object { "$($_.Left)-$($_.Right)" }) -join ' | '))
     Assert ($e.Count -eq 2) "E: the fold sticks once the drag is released - two on show (got $($e.Count))"
+    # The caret is in s1, so the folded s2 is unfocused: its wash is the one
+    # that used to land past the window's right edge, over the desktop.
+    $strayE = @(Get-StrayPopups $app.Pid $top)
+    Assert ($strayE.Count -eq 0) ("E: no pane popup reaches outside the window after the release (T2185; got {0}: {1})" -f $strayE.Count, (($strayE | ForEach-Object { "$($_.Class) $($_.Left)-$($_.Right)" }) -join ' | '))
 
     # ---- F: the edge grip brings the strip back --------------------------------
     if ($e.Count -eq 2) {

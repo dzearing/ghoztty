@@ -39,11 +39,19 @@ pub const DimState = struct {
     /// one here, and a click into the web content does not always move the
     /// tab's active pane, so the dim could strand on a pane being used.
     viewer: bool,
+    /// The pane is not on show: folded into a stack's strip (T2124) or
+    /// otherwise hidden by the layout. Its wash is a popup, which the window
+    /// does not clip, and a folded pane is held at its last width - so a wash
+    /// over one landed past the window's right edge, out over the desktop
+    /// (T2185). Mac dims a folded card with its own scrim, which the strip
+    /// paint already carries here.
+    hidden: bool = false,
 };
 
 pub fn shouldDim(state: DimState) bool {
     return state.alpha > 0 and state.active_tab and state.is_split and
-        !state.zoomed and !state.hero and !state.focused_pane and !state.viewer;
+        !state.zoomed and !state.hero and !state.focused_pane and !state.viewer and
+        !state.hidden;
 }
 
 /// A screen-space placement of the overlay, in the units `SetWindowPos`
@@ -299,4 +307,21 @@ test "Placement.eql: a move and a resize are both changes" {
     b = a;
     b.height = 401;
     try testing.expect(!Placement.eql(a, b));
+}
+
+test "shouldDim: a pane folded out of sight never dims (T2185)" {
+    const s: DimState = .{
+        .alpha = 77,
+        .active_tab = true,
+        .is_split = true,
+        .zoomed = false,
+        .hero = false,
+        .focused_pane = false,
+        .viewer = false,
+    };
+    // Positive control: the same pane on show dims.
+    try testing.expect(shouldDim(s));
+    var folded = s;
+    folded.hidden = true;
+    try testing.expect(!shouldDim(folded));
 }

@@ -7197,6 +7197,14 @@ pub fn updateDimOverlays(self: *Window) void {
                 .hero = self.tab_hero_active[tab],
                 .focused_pane = entry.view == self.tab_active_pane[tab],
                 .viewer = entry.view.kind == .viewer,
+                // Read after the layout batch has landed, so a pane that
+                // just folded already reads hidden (T2185). The pane's own
+                // style bit, not `IsWindowVisible`: a window not yet shown
+                // would read every pane hidden.
+                .hidden = if (entry.view.hwnd()) |h|
+                    w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0
+                else
+                    true,
             });
             if (dim) {
                 entry.view.showDimOverlay(color, alpha, desk_wash, &hdwp);
