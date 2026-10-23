@@ -450,10 +450,17 @@ function Reset-GhozttyTestState {
     $runValuesSwept = 0
     try { $runValuesSwept = [int](Remove-LeakedAgentRunValue) } catch {}
 
+    # T1229: and the sandbox directories a KILLED run left. Only a sandbox whose
+    # owner process is gone is a candidate, so a run going on beside this one
+    # (the other loop lane, an acceptance-parallel worker) keeps its state.
+    $sandboxesSwept = 0
+    try { $sandboxesSwept = [int](Remove-LeakedSandboxDir) } catch {}
+
     return [pscustomobject]@{
         Killed          = $killed
         ManifestCleared = $cleared
         LayoutsCleared  = $layoutsCleared
         RunValuesSwept  = $runValuesSwept
+        SandboxesSwept  = $sandboxesSwept
     }
 }

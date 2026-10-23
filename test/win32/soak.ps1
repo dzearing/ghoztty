@@ -370,6 +370,15 @@ $userSessionsBefore = @(Get-UserSessionIds)
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'soak' -ReleaseSandbox -SandboxRoot (Join-Path $outDir 'sandbox'))
 $env:GHOZTTY_PERF = '1'
+
+# T1229: the sandbox above is deleted when this run exits; the report beside it
+# is what a run is FOR, so it stays - but not forever. Keep the newest
+# $keepReports run directories and drop the rest, oldest first.
+$keepReports = 20
+$oldRuns = @(Get-ChildItem -LiteralPath (Split-Path $outDir -Parent) -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^\d{8}-\d{6}$' } | Sort-Object Name -Descending | Select-Object -Skip $keepReports)
+foreach ($r in $oldRuns) { try { [void](Remove-SandboxDir -Path $r.FullName) } catch { } }
+if ($oldRuns.Count) { Rep "pruned $($oldRuns.Count) soak report dir(s) beyond the newest $keepReports" }
 # Now that LOCALAPPDATA is the sandbox, this is the log THIS run's app writes.
 # It used to be the user's own `ghoztty.log`, so the GHOZTTY_PERF slice below
 # was reading the user's live terminal's telemetry interleaved with the soak's.

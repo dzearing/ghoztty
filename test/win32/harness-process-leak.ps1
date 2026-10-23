@@ -40,6 +40,11 @@
 #                teeth, R10/R11 prove the SUITE entry point arms it rather than
 #                only the library, R13 proves the user's own entry is untouched,
 #                and R14 is the standing arm that must stay at zero.
+#   S (sandbox)  the FILESYSTEM twin (T1229): a -ReleaseSandbox run deletes its
+#                private LOCALAPPDATA at exit, throw included; the sweep takes
+#                only a sandbox whose owner is gone (owner mark = pid + start
+#                time; unmarked legacy dirs after a day), never walks into a
+#                junction, and S14 is the standing arm that must stay at zero.
 #   E (sweep)    right now, on this box, no ghoztty process is running out of
 #                %TEMP% at all. This is the standing arm that must stay at zero;
 #                a failure names the pid, the path and the age in hours.
@@ -396,6 +401,117 @@ $runLeaks = @(Get-LeakedAgentRunValue)
 foreach ($l in $runLeaks) { Say ("      leaked autostart: $($l.Name) -> $($l.Command)") }
 Assert ($runLeaks.Count -eq 0) `
     "R14 no leaked agent autostart entry is in HKCU's Run key ($($runLeaks.Count) found)"
+
+# ---------------------------------------------------------------------------
+Say '== S: the SANDBOX DIRECTORY leak - a run never leaves its state dir behind (T1229)'
+# ---------------------------------------------------------------------------
+# The filesystem twin of R. `-ReleaseSandbox` gives a run a whole private
+# LOCALAPPDATA under %TEMP%, and nothing removed it: 148 default roots and 40
+# soak sandboxes were on this box on 2026-10-22, the oldest from July. The
+# sweep may only take a sandbox whose OWNER is gone - runs overlap here - so
+# the classifier is tested on all four shapes before anything is deleted.
+$sTemp = Join-Path $root 's-temp'
+New-Item -ItemType Directory -Force $sTemp | Out-Null
+function New-SandboxFixture([string]$Name, [string]$Mark) {
+    $d = Join-Path $sTemp $Name
+    New-Item -ItemType Directory -Force (Join-Path $d 'ghoztty') | Out-Null
+    Set-Content -LiteralPath (Join-Path $d 'ghoztty\ghoztty.log') -Value 'fixture' -Encoding ASCII
+    if ($Mark) { [IO.File]::WriteAllText((Join-Path $d '.ghoztty-sandbox-owner'), $Mark) }
+    return $d
+}
+$deadProc = Start-Process cmd.exe -ArgumentList '/c', 'exit' -WindowStyle Hidden -PassThru
+$null = $deadProc.Handle
+[void]$deadProc.WaitForExit(10000)
+$deadPid = $deadProc.Id
+$deadStart = $deadProc.StartTime.ToFileTimeUtc()
+$deadProc.Dispose()
+$myStart = (Get-Process -Id $PID).StartTime.ToFileTimeUtc()
+
+$sLive = New-SandboxFixture 'ghoztty-sandbox-slive1' "pid=$PID`r`nstart=$myStart`r`n"
+$sDead = New-SandboxFixture 'ghoztty-sandbox-sdead1' "pid=$deadPid`r`nstart=$deadStart`r`n"
+$sReuse = New-SandboxFixture 'ghoztty-sandbox-sreuse1' "pid=$PID`r`nstart=12345`r`n"
+$sFresh = New-SandboxFixture 'ghoztty-sandbox-sfresh1' ''
+$sOld = New-SandboxFixture 'ghoztty-sandbox-sold1' ''
+$old = (Get-Date).AddDays(-2)
+Get-ChildItem -LiteralPath $sOld -Recurse -Force | ForEach-Object { $_.LastWriteTime = $old }
+(Get-Item -LiteralPath $sOld).LastWriteTime = $old
+
+Assert (-not (Test-SandboxDirLeaked -Path $sLive)) 'S1 a sandbox whose owner is running is NOT a leak'
+Assert (Test-SandboxDirLeaked -Path $sDead) 'S2 one whose owner has exited IS'
+Assert (Test-SandboxDirLeaked -Path $sReuse) 'S3 and so is one whose pid now belongs to a process that started at another time (pid reuse)'
+Assert (-not (Test-SandboxDirLeaked -Path $sFresh)) 'S4 an unmarked (pre-T1229) sandbox written recently is NOT - it may be a live run on older code'
+Assert (Test-SandboxDirLeaked -Path $sOld) 'S5 an unmarked one untouched for a day IS'
+
+$sSeen = @(Get-LeakedSandboxDir -TempRoot $sTemp | ForEach-Object { Split-Path $_.Path -Leaf })
+Assert (($sSeen -contains 'ghoztty-sandbox-sold1') -and ($sSeen -contains 'ghoztty-sandbox-sreuse1') -and
+        -not ($sSeen -contains 'ghoztty-sandbox-slive1') -and -not ($sSeen -contains 'ghoztty-sandbox-sfresh1')) `
+    "S6 the sweep NAMES exactly the dead ones ($($sSeen -join ', '))"
+$sSwept = [int](Remove-LeakedSandboxDir -TempRoot $sTemp)
+Assert ($sSwept -ge 2 -and -not (Test-Path $sOld) -and -not (Test-Path $sReuse)) "S7 and removes them ($sSwept)"
+Assert ((Test-Path $sLive) -and (Test-Path $sFresh)) 'S8 TEETH: while the live and the recent ones are left exactly where they are'
+
+# S9: the delete never walks INTO a junction - Remove-Item -Recurse does, and
+# would take the junction's target with it.
+$jTarget = Join-Path $root 's-junction-target'
+New-Item -ItemType Directory -Force $jTarget | Out-Null
+Set-Content -LiteralPath (Join-Path $jTarget 'keep.txt') -Value 'must survive' -Encoding ASCII
+$sJunc = New-SandboxFixture 'ghoztty-sandbox-sjunc1' ''
+cmd /c mklink /J "$(Join-Path $sJunc 'link')" "$jTarget" | Out-Null
+[void](Remove-SandboxDir -Path $sJunc)
+Assert ((-not (Test-Path $sJunc)) -and (Test-Path (Join-Path $jTarget 'keep.txt'))) `
+    'S9 deleting a sandbox with a junction inside removes the sandbox and leaves the junction target intact'
+
+$sRefused = $false
+try { [void](Remove-SandboxDir -Path $env:TEMP) } catch { $sRefused = $true }
+Assert $sRefused 'S10 TEETH: deleting %TEMP% itself is REFUSED, not attempted'
+
+# S11-S13: the failure path through the SUITE entry point. A child isolates,
+# writes into its sandbox and dies of a throw: the armed delete leaves nothing.
+# The same child with GHOZTTY_TEST_KEEP_SANDBOX=1 keeps it - which is what makes
+# S11 a measurement - and the clean-slate sweep then collects it, since its
+# owner is gone.
+$sChild = Join-Path $root 'sandbox-child.ps1'
+$sChildBody = @'
+param([string]$Lib, [string]$SandboxRoot)
+. $Lib
+Set-GhozttyTestIsolation -Tag 'sdir' -ReleaseSandbox -SandboxRoot $SandboxRoot -Quiet | Out-Null
+Set-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'ghoztty\state.txt') -Value 'x' -Encoding ASCII
+throw 'deliberate mid-run failure (this is the point of the test)'
+'@
+Set-Content -LiteralPath $sChild -Value $sChildBody -Encoding ASCII
+function Invoke-SandboxChild([string]$SandboxRoot, [string]$Keep) {
+    $prevKeep = $env:GHOZTTY_TEST_KEEP_SANDBOX
+    $env:GHOZTTY_TEST_KEEP_SANDBOX = $Keep
+    try {
+        $p = Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $sChild,
+            '-Lib', (Join-Path $PSScriptRoot 'lib\Isolation.ps1'), '-SandboxRoot', $SandboxRoot)
+        # exitcode-audit: the oracle is the directory below, not this exit code;
+        # the child is EXPECTED to die of a throw.
+        $null = $p.Handle
+        if (-not $p.WaitForExit(30000)) { try { $p.Kill() } catch {} }
+    } finally { $env:GHOZTTY_TEST_KEEP_SANDBOX = $prevKeep }
+    Start-Sleep -Milliseconds 400
+}
+$sArmed = Join-Path $sTemp 'ghoztty-sandbox-sarmed1'
+Invoke-SandboxChild -SandboxRoot $sArmed -Keep ''
+Assert (-not (Test-Path $sArmed)) 'S11 a -ReleaseSandbox run deletes its sandbox at exit even when it THROWS'
+$sKept = Join-Path $sTemp 'ghoztty-sandbox-skept1'
+Invoke-SandboxChild -SandboxRoot $sKept -Keep '1'
+Assert (Test-Path (Join-Path $sKept 'ghoztty\state.txt')) 'S12 TEETH: the same run with GHOZTTY_TEST_KEEP_SANDBOX=1 leaves it'
+Assert (Test-Path (Join-Path $sKept '.ghoztty-sandbox-owner')) 'S12b and owner-marked'
+[void](Remove-LeakedSandboxDir -TempRoot $sTemp)
+Assert (-not (Test-Path $sKept)) 'S13 which the clean-slate sweep collects once its owner is gone'
+
+# S14 is the standing arm, and the one that would have caught the 188: right
+# now, on this box, no sandbox with a dead owner is left in %TEMP%. The sweep
+# runs first, exactly as Reset-GhozttyTestState runs it (the R12/R14 shape), so
+# what is asserted is that nothing survives the backstop.
+$sBox = [int](Remove-LeakedSandboxDir)
+Say "      swept $sBox leaked sandbox dir(s) from %TEMP%"
+$sLeft = @(Get-LeakedSandboxDir)
+foreach ($l in $sLeft) { Say ("      leaked sandbox: $($l.Path) age=$($l.AgeHours)h") }
+Assert ($sLeft.Count -eq 0) "S14 no sandbox directory with a dead owner is left in %TEMP% ($($sLeft.Count) found)"
 
 # ---------------------------------------------------------------------------
 Say '== E: the standing sweep - nothing on this box runs ghoztty out of %TEMP%'

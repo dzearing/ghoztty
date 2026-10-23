@@ -45,6 +45,12 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+# The marker above only keeps acceptance-parallel's own workers off this run;
+# the timing lock is what keeps the OTHER loop lane off it too. This script
+# never loads CleanSlate.ps1 (it launches no app), so it takes the lock itself
+# (section H of test\win32\machine-lock.ps1).
+. (Join-Path $RepoRoot 'scripts\lib\MachineLock.ps1')
+Invoke-TimingLockForCaller
 
 $script:Failures = 0
 $script:Passes = 0

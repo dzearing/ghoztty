@@ -504,3 +504,210 @@ function Register-AgentRunKeyTeardown {
         -Action (Get-AgentRunKeyTeardownBlock -Instance $Instance) | Out-Null
     return $Instance
 }
+
+# ---------------------------------------------------------------------------
+# THE FILESYSTEM HALF OF THE SAME LEAK (T1229)
+#
+# `-ReleaseSandbox` gives a run a private LOCALAPPDATA - a whole terminal state
+# directory under %TEMP% - and until T1229 nothing removed it. On 2026-10-22
+# there were 148 `ghoztty-sandbox-*` roots and 40 soak sandboxes on this box,
+# the oldest from mid-July. The autostart half above was guarded (section R of
+# test\win32\harness-process-leak.ps1); this half had no sweep at all, so it
+# accumulated where nobody looked.
+#
+# Same two ends as the autostart answer: the delete is armed on
+# PowerShell.Exiting where the sandbox is MINTED (lib\Isolation.ps1), and the
+# clean slate sweeps whatever a KILLED run left. The sweep may only take a
+# sandbox whose owner is provably gone, because acceptance runs overlap (two
+# loop lanes, acceptance-parallel's workers): so every sandbox now carries an
+# owner mark - pid plus process start time, since a pid alone is reused - and a
+# sandbox from before the mark existed is a leak only once it is a day old.
+
+$script:HarnessSandboxOwnerFile = '.ghoztty-sandbox-owner'
+$script:HarnessSandboxLegacyHours = 24
+
+function Get-HarnessProcessStartMark {
+    <#
+    .SYNOPSIS
+    A process's start time as a UTC file time, or $null when it cannot be read
+    (gone, or not ours to open).
+    #>
+    param([int]$ProcessId)
+    try { return [string]((Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToFileTimeUtc()) }
+    catch { return $null }
+}
+
+function Write-SandboxOwnerMark {
+    <#
+    .SYNOPSIS
+    Stamp $Root as owned by this PowerShell process.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $mark = Join-Path $Root $script:HarnessSandboxOwnerFile
+    $start = Get-HarnessProcessStartMark -ProcessId $PID
+    [IO.File]::WriteAllText($mark, "pid=$PID`r`nstart=$start`r`n")
+    return $mark
+}
+
+function Test-SandboxDirLeaked {
+    <#
+    .SYNOPSIS
+    Is this sandbox directory a leak - i.e. is its owner provably gone?
+
+    .DESCRIPTION
+    With an owner mark: leaked when no process has that pid, or the process
+    that does started at a different moment (the pid was reused). A process we
+    cannot read is treated as the owner - a wrong "alive" costs a directory, a
+    wrong "dead" deletes a live run's state.
+    Without a mark (written before T1229): leaked once nothing in it has been
+    written for -LegacyHours.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [int]$LegacyHours = $script:HarnessSandboxLegacyHours
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    $mark = Join-Path $Path $script:HarnessSandboxOwnerFile
+    if (Test-Path -LiteralPath $mark) {
+        $text = ''
+        try { $text = [IO.File]::ReadAllText($mark) } catch { return $false }
+        $mPid = [regex]::Match($text, 'pid=(\d+)')
+        $mStart = [regex]::Match($text, 'start=(\d+)')
+        if (-not $mPid.Success) { return $false }
+        $p = $null
+        try { $p = Get-Process -Id ([int]$mPid.Groups[1].Value) -ErrorAction Stop } catch { return $true }
+        $now = $null
+        try { $now = [string]$p.StartTime.ToFileTimeUtc() } catch { return $false }
+        return ($mStart.Success -and $mStart.Groups[1].Value -ne $now)
+    }
+    $newest = (Get-Item -LiteralPath $Path).LastWriteTimeUtc
+    foreach ($f in @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue)) {
+        if ($f.LastWriteTimeUtc -gt $newest) { $newest = $f.LastWriteTimeUtc }
+    }
+    return (([DateTime]::UtcNow - $newest).TotalHours -ge $LegacyHours)
+}
+
+function Get-SandboxDirCandidate {
+    <#
+    .SYNOPSIS
+    Every sandbox directory the suite creates somewhere it can enumerate: the
+    default `%TEMP%\ghoztty-sandbox-<tag><pid>` roots and the soak's
+    `%TEMP%\ghoztty-soak\<stamp>\sandbox`. (A script that passes its own
+    -SandboxRoot owns that directory; the exit-time delete still covers it.)
+    #>
+    param([string]$TempRoot = $env:TEMP)
+    $found = @()
+    $found += @(Get-ChildItem -LiteralPath $TempRoot -Directory -Filter 'ghoztty-sandbox-*' -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.FullName })
+    $soak = Join-Path $TempRoot 'ghoztty-soak'
+    if (Test-Path -LiteralPath $soak) {
+        $found += @(Get-ChildItem -LiteralPath $soak -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName 'sandbox' } |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+    }
+    return @($found)
+}
+
+function Get-LeakedSandboxDir {
+    <#
+    .SYNOPSIS
+    Every enumerable sandbox directory whose owner is gone - the directories a
+    run left behind. Returns Path + AgeHours so a failure can NAME them.
+    #>
+    param(
+        [string]$TempRoot = $env:TEMP,
+        [int]$LegacyHours = $script:HarnessSandboxLegacyHours
+    )
+    $out = @()
+    foreach ($d in @(Get-SandboxDirCandidate -TempRoot $TempRoot)) {
+        if (-not (Test-SandboxDirLeaked -Path $d -LegacyHours $LegacyHours)) { continue }
+        $age = [Math]::Round(([DateTime]::UtcNow - (Get-Item -LiteralPath $d).CreationTimeUtc).TotalHours, 1)
+        $out += [pscustomobject]@{ Path = $d; AgeHours = $age }
+    }
+    return @($out)
+}
+
+function Get-SandboxDirTeardownBlock {
+    <#
+    .SYNOPSIS
+    The sandbox delete, as a scriptblock with the root BAKED IN as a literal.
+    Emits 1 when the directory is gone afterwards, else 0.
+
+    .DESCRIPTION
+    Same two rules as Get-HarnessTeardownBlock: literals only, and nothing that
+    needs module auto-loading - so it is [IO.Directory]::Delete, which removes a
+    junction inside the tree without walking into its target (the Remove-Item
+    -Recurse trap). A few short retries, because the app's log handle can still
+    be closing when the host exits.
+    #>
+    param([Parameter(Mandatory = $true)][string]$NormalizedRoot)
+    $rootLit = $NormalizedRoot.TrimEnd('\').Replace("'", "''")
+    $lines = @(
+        "`$r = '$rootLit'"
+        'for ($i = 0; $i -lt 4 -and [IO.Directory]::Exists($r); $i++) {'
+        '  try { [IO.Directory]::Delete($r, $true) } catch { Start-Sleep -Milliseconds 300 }'
+        '}'
+        'if ([IO.Directory]::Exists($r)) { 0 } else { 1 }'
+    )
+    return [scriptblock]::Create($lines -join "`n")
+}
+
+function Remove-SandboxDir {
+    <#
+    .SYNOPSIS
+    Delete one sandbox directory now. Root-checked (a proper subdirectory of
+    %TEMP% or the repo, never either base). Returns 1 if it is gone, else 0.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $norm = Assert-HarnessScratchRoot -Root $Path
+    return [int](& (Get-SandboxDirTeardownBlock -NormalizedRoot $norm))
+}
+
+function Remove-LeakedSandboxDir {
+    <#
+    .SYNOPSIS
+    The crash backstop: delete every sandbox directory whose owner is gone.
+    Returns the count removed. A live run's sandbox is never a candidate.
+    #>
+    param(
+        [string]$TempRoot = $env:TEMP,
+        [int]$LegacyHours = $script:HarnessSandboxLegacyHours
+    )
+    $removed = 0
+    foreach ($l in @(Get-LeakedSandboxDir -TempRoot $TempRoot -LegacyHours $LegacyHours)) {
+        try { $removed += Remove-SandboxDir -Path $l.Path } catch {}
+    }
+    return [int]$removed
+}
+
+function Register-SandboxDirTeardown {
+    <#
+    .SYNOPSIS
+    Mark $Root as this process's, and delete it when this PowerShell exits -
+    failure path included.
+
+    .DESCRIPTION
+    Armed by lib\Isolation.ps1 the moment it creates a -ReleaseSandbox root.
+    `GHOZTTY_TEST_KEEP_SANDBOX=1` at arming time keeps it for a run whose state
+    you want to read afterwards; the owner mark still lets a later sweep collect
+    it once that process is gone.
+
+    Idempotent: arming the same root twice arms one handler.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $norm = Assert-HarnessScratchRoot -Root $Root
+    [void](Write-SandboxOwnerMark -Root $norm)
+    if ($env:GHOZTTY_TEST_KEEP_SANDBOX -eq '1') { return $norm }
+
+    if (-not $global:GhozttyHarnessSandboxRoots) {
+        $global:GhozttyHarnessSandboxRoots = New-Object System.Collections.ArrayList
+    }
+    $already = @($global:GhozttyHarnessSandboxRoots | Where-Object { $_ -eq $norm })
+    if ($already.Count -gt 0) { return $norm }
+    [void]$global:GhozttyHarnessSandboxRoots.Add($norm)
+
+    Register-EngineEvent -SourceIdentifier PowerShell.Exiting `
+        -Action (Get-SandboxDirTeardownBlock -NormalizedRoot $norm) | Out-Null
+    return $norm
+}

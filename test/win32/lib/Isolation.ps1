@@ -122,6 +122,11 @@ function Set-GhozttyTestIsolation {
         New-Item -ItemType Directory -Force (Join-Path $root 'ghoztty') | Out-Null
         $env:LOCALAPPDATA = $root
 
+        # T1229: and the directory itself is as temporary as the autostart -
+        # deleted at exit, owner-marked so the clean slate can collect it after
+        # a killed run without ever taking a live run's.
+        [void](Register-SandboxDirTeardown -Root $root)
+
         if (-not $Quiet) {
             "  [isolation] GHOZTTY_AGENT_INSTANCE=$instance"
             "  [isolation] LOCALAPPDATA=$root"
