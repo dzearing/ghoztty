@@ -21,13 +21,18 @@
 # Sections:
 #   A  auto-launch honors --working-directory: the IPC pane's REPORTED and ACTUAL
 #      cwd are the requested directory, launched from C:\Windows\System32.
-#   B  the auto-launched INSTANCE started there too: its startup window - which
-#      nobody passed a directory to - is in the requested directory, not System32.
-#      (Defect 1's oracle: before the fix this pane was in System32.)
+#   B  the auto-launched INSTANCE opened exactly ONE window (T2162 - before it,
+#      a blank startup window `window-1` sat beside the requested one), and it
+#      was started with the requested directory and `--initial-window=false`.
+#      Until T2162 B's oracle was that startup window's shell cwd; the window no
+#      longer exists, so B reads the launched command line instead.
 #   C  the recorded cwd survives an AGENT restart: kill app AND agent, relaunch
 #      the app from System32, and the auto-RELAUNCHed pane comes back in the
 #      recorded directory. (Defect 2's oracle: before the fix it landed wherever
 #      the relaunching process was - System32.)
+#   D  +list reports the recorded cwd across an APP-only restart (T166).
+#   E  `--initial-window=false` with NOTHING asking for a window still opens one
+#      once the grace period ends (T2162) - the app never sits invisible.
 #
 # Non-interactive; asserts and exits nonzero on any failure. Fully hermetic: a
 # per-run $env:LOCALAPPDATA + per-run GHOSTTY_LOCAL_AGENT_BIN, and it ONLY ever
@@ -134,24 +139,12 @@ function Pane-In($tree, $target) {
     }
     return $null
 }
-# The first pane of the window that is NOT $target - the startup window, which
-# nobody passed a directory to (section B's subject).
-function Pane-NotIn($tree, $target) {
-    foreach ($w in (Windows-Of $tree)) {
-        if ($w.target -eq $target) { continue }
-        foreach ($t in @($w.tabs)) {
-            $leaf = Find-Leaf $t.splits
-            if ($null -ne $leaf) { return $leaf }
-        }
-    }
-    return $null
-}
 function Wait-WindowCount($tmp, $tag, $target, $timeoutSec = 40) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     $tree = $null
     while ((Get-Date) -lt $deadline) {
         $tree = Get-Tree $tmp $tag
-        if ((Windows-Of $tree).Count -ge $target) { return $tree }
+        if (@(Windows-Of $tree).Count -ge $target) { return $tree }
         Start-Sleep -Milliseconds 700
     }
     return $tree
@@ -244,9 +237,8 @@ $codeA = Run-CliFrom $launcherDir "+new-window --target=alc --working-directory=
     "$tmp\new-window.txt" 60
 Assert "A1 +new-window auto-launched an instance and succeeded (exit 0)" ($codeA -eq 0)
 
-$treeA = Wait-WindowCount $tmp 'a' 2 40
-Assert "A2 two windows exist: the startup window plus the requested one" `
-    ((Windows-Of $treeA).Count -ge 2)
+$treeA = Wait-WindowCount $tmp 'a' 1 40
+Assert "A2 the requested window exists" (@(Windows-Of $treeA).Count -ge 1)
 Assert-GhozttyIsolated -Exe $Exe
 
 $paneA = Pane-In $treeA 'alc'
@@ -260,19 +252,27 @@ Assert "A6 the shell is not in the launcher's directory" ((Norm $shellA) -ne (No
 # ============================================================================
 "== B: the auto-launched INSTANCE started in the requested directory"
 # ============================================================================
-# The startup window is built by the app's own startup path - nobody passes it a
-# directory, so it lands in the app process's cwd. Before T132 that was the
-# CLI's cwd (System32) no matter what the request asked for.
-$startup = Pane-NotIn $treeA 'alc'
-Assert "B1 the startup window exists and has a pane" ($null -ne $startup)
-$startupTarget = $null
-foreach ($w in (Windows-Of $treeA)) { if ($w.target -ne 'alc') { $startupTarget = $w.target; break } }
-Assert "B2 the startup window is addressable" ($null -ne $startupTarget)
+# T2162: the instance was launched to serve this request, so the request's
+# window is the ONLY one. Wait past the deferred startup window's grace period
+# (5s, `startup_window.zig`) before counting: a fallback that fired anyway would
+# show up as a second window here.
+Start-Sleep -Seconds 7
+$treeB = Get-Tree $tmp 'b'
+AssertEq "B1 exactly one window after the cold auto-launch (no stray window-1)" 1 `
+    @(Windows-Of $treeB).Count
+Assert "B2 that one window is the requested 'alc'" ($null -ne (Pane-In $treeB 'alc'))
 
-$shellB = Shell-Cwd $tmp 'b' $startupTarget 30
-AssertEq "B3 the startup window's shell is in the requested directory" (Norm $workDir) (Norm $shellB)
-Assert "B4 the startup window did NOT inherit the launcher's directory" `
-    ((Norm $shellB) -ne (Norm $launcherDir))
+# The launched instance itself: started in the requested directory (T132's
+# `--working-directory`, which also reaches the agent it spawns) and told not to
+# open a window of its own. CLI processes carry a `+verb`; the app does not.
+$exeNorm = Norm $Exe
+$launched = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe'" |
+    Where-Object { (Norm $_.ExecutablePath) -eq $exeNorm -and $_.CommandLine -notmatch ' \+' })
+AssertEq "B3 one auto-launched instance is running" 1 $launched.Count
+$cmdB = if ($launched.Count -ge 1) { [string]$launched[0].CommandLine } else { '' }
+Assert "B4 it was launched with --initial-window=false" ($cmdB -match '--initial-window=false')
+Assert "B5 it was launched with the requested --working-directory" `
+    ($cmdB.ToLowerInvariant().Contains(('--working-directory=' + $workDir).ToLowerInvariant()))
 
 # ============================================================================
 "== C: the recorded cwd survives an AGENT restart (RELAUNCH lands there)"
@@ -289,8 +289,8 @@ Assert "C1 app and agent are both stopped" `
 # Relaunch FROM System32: a fresh agent spawns as this app's child and inherits
 # that cwd, so a session with no recorded cwd respawns there. That is the trap.
 Launch-From $tmp $launcherDir
-$treeC = Wait-WindowCount $tmp 'c' 2 60
-Assert "C2 restore rebuilt the windows after the agent restart" ((Windows-Of $treeC).Count -ge 2)
+$treeC = Wait-WindowCount $tmp 'c' 1 60
+Assert "C2 restore rebuilt the windows after the agent restart" (@(Windows-Of $treeC).Count -ge 1)
 
 $paneC = Pane-In $treeC 'alc'
 Assert "C3 the named window came back" ($null -ne $paneC)
@@ -339,8 +339,8 @@ Assert "D0 pane reports a live pid before the app restart" `
 Assert "D1 the agent survived the app kill" ((Count-TestProcs 'ghoztty-agent.exe') -ge 1)
 
 Launch-From $tmp $launcherDir
-$treeD = Wait-WindowCount $tmp 'd' 2 60
-Assert "D2 restore rebuilt the windows after the app restart" ((Windows-Of $treeD).Count -ge 2)
+$treeD = Wait-WindowCount $tmp 'd' 1 60
+Assert "D2 restore rebuilt the windows after the app restart" (@(Windows-Of $treeD).Count -ge 1)
 
 $paneD = Wait-PaneWd $tmp 'd3-' 'alc' $workDir 30
 Assert "D3 the named window came back" ($null -ne $paneD)
@@ -348,6 +348,25 @@ AssertEq "D4 +list reports the recorded directory after re-ATTACH" `
     (Norm $workDir) (Norm $paneD.working_directory)
 Assert "D5 the shell pid survived the re-attach (same process)" `
     ($null -ne $paneD -and [int]$paneD.pid -eq [int]$paneD0.pid -and [int]$paneD.pid -gt 0)
+
+# ============================================================================
+"== E: initial-window=false with no request still opens a window (T2162)"
+# ============================================================================
+# A fresh state dir, so there is no manifest to restore: the deferred startup
+# window is the only thing that can put a window on screen.
+Stop-TestProcs
+$tmpE = Join-Path $root 'state-e'
+New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmpE) | Out-Null
+$env:LOCALAPPDATA = $tmpE
+# persistence: on (default), into a fresh throwaway $env:LOCALAPPDATA - no manifest, so restore opens nothing and the grace timer is the only source of a window.
+[void](Start-OnTestDesktop -Exe $Exe -Arguments @('--initial-window=false') -WorkingDirectory $workDir)
+Start-Sleep -Seconds 2
+$treeE0 = Get-Tree $tmpE 'e0'
+Assert "E1 the app answers +list during the grace period" ($null -ne $treeE0)
+AssertEq "E2 no window yet inside the grace period" 0 @(Windows-Of $treeE0).Count
+$treeE = Wait-WindowCount $tmpE 'e' 1 30
+AssertEq "E3 the deferred startup window opened once the grace period ended" 1 `
+    @(Windows-Of $treeE).Count
 
 # ---- teardown --------------------------------------------------------------
 Stop-TestProcs

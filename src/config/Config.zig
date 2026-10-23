@@ -2645,7 +2645,13 @@ keybind: Keybinds = .{},
 /// is run. Note that if `quit-after-last-window-closed` is `true` and
 /// `quit-after-last-window-closed-delay` is set, setting `initial-window` to
 /// `false` will mean that Ghostty will quit after the configured delay if no
-/// window is ever created. Only implemented on Linux and macOS.
+/// window is ever created. Only implemented on Linux, macOS and Windows.
+///
+/// On Windows, `false` defers the window rather than dropping it: an app
+/// with no window has nothing to click, so if nothing else opens one within
+/// a few seconds (a `ghoztty +new-window` request, a restored session) the
+/// usual blank window opens after all. `ghoztty +new-window` passes this
+/// when it has to start Ghoztty, so it gets one window rather than two.
 @"initial-window": bool = true,
 
 /// The duration that undo operations remain available. After this

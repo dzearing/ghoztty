@@ -788,6 +788,10 @@ test {
     // after a late session restore (T1003). Pure std.
     _ = @import("apprt/win32/restore_placeholder.zig");
 
+    // Pure win32 rule for whether a launch opens its blank startup window now,
+    // later, or never (`initial-window`, T2162). Pure std.
+    _ = @import("apprt/win32/startup_window.zig");
+
     // Pure win32 non-destructive agent-upgrade policy: is the running agent
     // older than the one we ship, and may it be restarted now or only after a
     // confirmation (T147). Pure std, same no-OS-imports deal.

@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-23T10:37:19-07:00",
+    "generated":  "2026-10-23T10:56:56-07:00",
     "commit":  "8b9ce1a89",
     "uncommitted":  [
-
+                        "test/win32/auto-launch-cwd.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -46,7 +46,7 @@
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
                   "test/win32/arp-version.ps1":  "35b1b1cad7d318cf499f6d957d96dfbbd70cba7c8ddb4c1ad746f9ef47673c15",
                   "test/win32/asserted-nothing.ps1":  "4acb45ce3ac039d212d093e4cf0a77519092bbd9be896995feeeb07547e5c5c6",
-                  "test/win32/auto-launch-cwd.ps1":  "b2cf0f9fddd259e1c4cee954cece20a5d5daf242821d1ccd1f80d572e6a75704",
+                  "test/win32/auto-launch-cwd.ps1":  "89143d743d16d05c3dd1d07e0b53f11ddf9c5b0088aaf3ffb333c37ba5c44471",
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791",
                   "test/win32/banner-resize-repaint.ps1":  "499fac53076f7641063f8ce3dab59a859ee9a947ce44ca6f2b05b08767c677f8",

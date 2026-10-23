@@ -77,6 +77,9 @@ it after a bare `--`, which stops flag parsing.
 ### `ghoztty +new-window`
 
 Create a terminal window, or find an existing `--target`. Auto-launches Ghoztty if no instance is running.
+The launched app opens only the requested window, not a blank startup window beside it: on Windows
+the launch passes `--initial-window=false`, which defers the blank window for a few seconds and opens it
+only if nothing else did (T2162). (Mac currently refuses instead of launching: T2189.)
 
 ```
 ghoztty +new-window --target=<name> --name=<pane-name> --working-directory=<path> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --title=<title> --split=right|down|left|up --split-command=<cmd> --focus -e <args...>

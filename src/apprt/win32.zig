@@ -154,6 +154,7 @@ test {
     _ = @import("win32/resolve_defer.zig");
     _ = @import("win32/persistence_notice.zig");
     _ = @import("win32/restore_placeholder.zig");
+    _ = @import("win32/startup_window.zig");
     // Low-power rendering (T1951): who can see a window (the coverage maths)
     // and what a session event means for it.
     _ = @import("win32/occlusion.zig");

@@ -99,6 +99,7 @@ const restore_retry = @import("restore_retry.zig");
 const resolve_defer = @import("resolve_defer.zig");
 const persistence_notice = @import("persistence_notice.zig");
 const restore_placeholder = @import("restore_placeholder.zig");
+const startup_window_rule = @import("startup_window.zig");
 const RemoteReconnect = @import("RemoteReconnect.zig");
 const agent_upgrade = @import("agent_upgrade.zig");
 const release_notes_bundle = @import("release_notes_bundle.zig");
@@ -322,6 +323,9 @@ const UPDATE_AUTO_APPLY_TIMER_ID: usize = msg_timer.update_auto_apply;
 
 /// The deferred quit a `handoff-quit` request arms (T1070).
 const HANDOFF_QUIT_TIMER_ID: usize = msg_timer.handoff_quit;
+
+/// The deferred startup window's grace period (T2162). See `run`.
+const STARTUP_FALLBACK_TIMER_ID: usize = msg_timer.startup_fallback;
 /// Long enough for the listener thread to write the reply, short enough that
 /// the launch waiting on this process barely notices.
 const HANDOFF_QUIT_DELAY_MS: u32 = 150;
@@ -713,6 +717,13 @@ restore_agent_unasked: bool = false,
 /// (`restore_placeholder.zig`). Cleared when the window goes away on its own,
 /// so it never dangles.
 restore_placeholder_window: ?*Window = null,
+
+/// True while `STARTUP_FALLBACK_TIMER_ID` is armed: this launch skipped its
+/// blank startup window (`initial-window = false`, which the `+new-window`
+/// auto-launch passes) and opens one when the grace period ends only if nothing
+/// else did (T2162, `startup_window.zig`). The config diagnostics that normally
+/// show over the startup window wait for that moment too.
+startup_fallback_armed: bool = false,
 
 /// Non-zero while a destructive agent refresh is tearing the app's terminals
 /// down and rebuilding them (T229). The app deliberately has zero — or
@@ -2024,14 +2035,35 @@ pub fn run(self: *App) !void {
     // error, `main_ghostty`'s reporter and the dialog, which is the whole
     // chain that used to be a silent exit. Unset (every real launch) leaves
     // the code below byte-identical.
+    //
+    // `initial-window = false` (T2162) defers this window rather than dropping
+    // it: the `+new-window` auto-launch passes it so the caller gets the one
+    // window it asked for, not that one plus a stray blank `window-1`. A grace
+    // timer opens the blank window after all if nothing else has, because a
+    // Windows app with no window is the invisible start T1177 refuses.
     const force_no_window = self.startupFailSeam("no-window");
-    if (startup_window == null and !restored and !force_no_window) {
-        startup_window = try self.createWindow(.{});
-        // T1003: when the restore is still waiting on the agent, this window is
-        // a stand-in for the ones it will rebuild. Remember it so the deferred
-        // pass can put it away if the user never touched it. A launch-command
-        // window never takes this branch: it is the user's, not a stand-in.
-        if (self.restore_retry_armed) self.restore_placeholder_window = startup_window;
+    switch (startup_window_rule.plan(
+        self.config.@"initial-window",
+        startup_window != null or restored,
+        force_no_window,
+    )) {
+        .create => {
+            startup_window = try self.createWindow(.{});
+            // T1003: when the restore is still waiting on the agent, this window is
+            // a stand-in for the ones it will rebuild. Remember it so the deferred
+            // pass can put it away if the user never touched it. A launch-command
+            // window never takes this branch: it is the user's, not a stand-in.
+            if (self.restore_retry_armed) self.restore_placeholder_window = startup_window;
+        },
+        .deferred => if (self.msg_hwnd) |mh| {
+            self.startup_fallback_armed = true;
+            _ = w32.SetTimer(mh, STARTUP_FALLBACK_TIMER_ID, startup_window_rule.grace_ms, null);
+            log.info("initial-window=false: deferring the startup window {d}ms", .{startup_window_rule.grace_ms});
+        } else {
+            // No message window means no timer to keep the promise with.
+            startup_window = try self.createWindow(.{});
+        },
+        .none => {},
     }
 
     // Restore's windows were created after the launch-command window and are
@@ -2049,7 +2081,7 @@ pub fn run(self: *App) !void {
     // and the process then sat in a message loop with nothing on screen. There
     // is no error to propagate here, so this MAKES one: `main_ghostty` turns it
     // into a dialog naming the failure instead of an exit nobody sees.
-    if (self.windows.items.len == 0) {
+    if (self.windows.items.len == 0 and !self.startup_fallback_armed) {
         log.err("startup finished with no window; refusing to run headless", .{});
         return error.NoStartupWindow;
     }
@@ -2074,8 +2106,10 @@ pub fn run(self: *App) !void {
     // first restored window when restore suppressed it.
     const diag_owner: ?*Window = startup_window orelse
         (if (self.windows.items.len > 0) self.windows.items[0] else null);
-    if (diag_owner) |w| self.showConfigErrorsIfAny(&self.config, w);
-    self.showStartupWarningsIfAny(diag_owner);
+    if (!self.startup_fallback_armed) {
+        if (diag_owner) |w| self.showConfigErrorsIfAny(&self.config, w);
+        self.showStartupWarningsIfAny(diag_owner);
+    }
 
     // T145: start watching the shared local-agent link, now that the startup
     // windows (restored or blank) have resolved a connection. From here a dead
@@ -4833,6 +4867,23 @@ fn tickRestoreRetry(self: *App) void {
         .{self.carried_layout_windows.count()},
     );
     self.cancelRestoreRetry();
+}
+
+/// The deferred startup window's grace period ended (T2162): open the blank
+/// window now if nothing else did, then show the startup diagnostics `run`
+/// held back, over whichever window is first. GUI thread.
+fn finishDeferredStartup(self: *App) void {
+    if (!self.startup_fallback_armed) return;
+    self.startup_fallback_armed = false;
+    if (startup_window_rule.fallbackNeeded(self.windows.items.len)) {
+        log.info("initial-window=false: no window was requested; opening the startup window", .{});
+        _ = self.createWindow(.{}) catch |err| {
+            log.err("deferred startup window failed: {}", .{err});
+        };
+    }
+    const owner: ?*Window = if (self.windows.items.len > 0) self.windows.items[0] else null;
+    if (owner) |w| self.showConfigErrorsIfAny(&self.config, w);
+    self.showStartupWarningsIfAny(owner);
 }
 
 /// Close the launch's stand-in window once the deferred restore has rebuilt the
@@ -7960,6 +8011,10 @@ pub fn performIpc(
 /// Returns the new process's handle (T755) so the caller can tell "still
 /// starting" from "already dead" while it waits. The caller owns it and must
 /// `CloseHandle` it.
+/// The argument that keeps an auto-launched instance from opening a blank
+/// window beside the requested one (T2162).
+const auto_launch_initial_window_arg = "--initial-window=false";
+
 fn autoLaunchInstance(alloc: Allocator, cwd: ?[]const u8) apprt.ipc.Errors!std.os.windows.HANDLE {
     const windows = std.os.windows;
 
@@ -7982,10 +8037,15 @@ fn autoLaunchInstance(alloc: Allocator, cwd: ?[]const u8) apprt.ipc.Errors!std.o
     // Quoted, mutable (CreateProcessW may rewrite lpCommandLine), NUL-
     // terminated wide command line.
     var cmd_utf8_buf: [2 * std.fs.max_path_bytes + 128]u8 = undefined;
+    //
+    // `--initial-window=false` (T2162): this instance exists to serve the
+    // request we are about to re-send, so it must not open its own blank window
+    // beside the one asked for. It still opens one if the request never lands
+    // (`startup_window.zig`).
     const cmd_utf8 = (if (cwd_arg) |a|
-        std.fmt.bufPrint(&cmd_utf8_buf, "\"{s}\" {s}", .{ exe, a })
+        std.fmt.bufPrint(&cmd_utf8_buf, "\"{s}\" {s} {s}", .{ exe, auto_launch_initial_window_arg, a })
     else
-        std.fmt.bufPrint(&cmd_utf8_buf, "\"{s}\"", .{exe})) catch
+        std.fmt.bufPrint(&cmd_utf8_buf, "\"{s}\" {s}", .{ exe, auto_launch_initial_window_arg })) catch
         return error.IPCFailed;
     var cmd_w: [2 * std.fs.max_path_bytes + 129]u16 = undefined;
     const cmd_len = std.unicode.utf8ToUtf16Le(cmd_w[0 .. cmd_w.len - 1], cmd_utf8) catch
@@ -13128,6 +13188,13 @@ fn msgWndProc(
         _ = w32.KillTimer(hwnd, UPDATE_MANUAL_TIMER_ID);
         log.info("scripted manual update check (GHOZTTY_UPDATE_MANUAL_MS)", .{});
         app.startUpdateCheck(.manual);
+        return 0;
+    }
+
+    // The deferred startup window's grace period (T2162). One-shot.
+    if (msg == w32.WM_TIMER and wparam == STARTUP_FALLBACK_TIMER_ID) {
+        _ = w32.KillTimer(hwnd, STARTUP_FALLBACK_TIMER_ID);
+        app.finishDeferredStartup();
         return 0;
     }
 

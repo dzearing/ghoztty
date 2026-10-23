@@ -97,6 +97,10 @@ pub const visibility: usize = 22;
 /// (T1070, `App.scheduleHandoffQuit`). Deferred so the IPC reply leaves first.
 pub const handoff_quit: usize = 23;
 
+/// One-shot: the deferred startup window's grace period (T2162,
+/// `startup_window.zig`). Armed only when `initial-window = false`.
+pub const startup_fallback: usize = 24;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

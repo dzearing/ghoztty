@@ -1,6 +1,6 @@
 {
     "note":  "Per-file counts of unroll-count-audit findings not yet fixed. May only go DOWN, and the run that lowers one rewrites this file with -UpdateBaseline. See docs/design/windows-parity-tasks/T1617.md.",
-    "generated":  "2026-09-25",
+    "generated":  "2026-10-23",
     "files":  {
                   "scripts\\agent-stamp-inputs.ps1":  1,
                   "scripts\\lib\\DataBreak.ps1":  1,
@@ -9,7 +9,6 @@
                   "scripts\\upgrade-ghoztty-windows.ps1":  4,
                   "test\\win32\\activity-monitor.ps1":  4,
                   "test\\win32\\agent-recovery.ps1":  9,
-                  "test\\win32\\auto-launch-cwd.ps1":  4,
                   "test\\win32\\banner-resize-repaint.ps1":  10,
                   "test\\win32\\build-locked-artifact.ps1":  9,
                   "test\\win32\\chooser-menu.ps1":  1,
