@@ -224,6 +224,11 @@ pub const Item = struct {
     /// fixed stack buffer per user entry, and that buffer is what capped the
     /// palette at 64 config commands.
     user: bool = false,
+    /// The search found this row only by a hidden keyword, not by its title
+    /// (T2173). Such a row sorts behind every row whose title holds the
+    /// query: Mac's palette searches titles alone, so a keyword is a way to
+    /// FIND a row, never a reason to rank it first.
+    keyword_only: bool = false,
 
     /// Whether this row's history key is `want`.
     pub fn keyIs(self: Item, want: []const u8) bool {
@@ -236,10 +241,13 @@ pub const Item = struct {
 
 /// Order `items` the way the palette shows them, writing indices into `out`
 /// (`out.len >= items.len`) and returning how many of them are RECENT — the
-/// front of `out`, in recency order. The remainder is sorted by title.
+/// front of `out`, in recency order. The remainder is sorted by title, with
+/// the keyword-only matches (T2173) as a band of their own at the very end.
 ///
 /// Mac assembles the same two groups (`commandSections`) and, when a query
-/// is present, flattens them in exactly this order.
+/// is present, flattens them in exactly this order. It has no keywords, so
+/// the trailing band is the one Windows addition: a recent row found only by
+/// a keyword stays in that band rather than jumping ahead of a title match.
 pub fn arrange(items: []const Item, history: *const History, out: []u16) usize {
     std.debug.assert(out.len >= items.len);
     for (items, 0..) |_, i| out[i] = @intCast(i);
@@ -247,6 +255,7 @@ pub fn arrange(items: []const Item, history: *const History, out: []u16) usize {
 
     std.mem.sort(u16, out[0..n], items, struct {
         fn lt(ctx: []const Item, a: u16, b: u16) bool {
+            if (ctx[a].keyword_only != ctx[b].keyword_only) return !ctx[a].keyword_only;
             return titleOrder(ctx[a].title, ctx[b].title) == .lt;
         }
     }.lt);
@@ -257,6 +266,7 @@ pub fn arrange(items: []const Item, history: *const History, out: []u16) usize {
     for (0..history.recentCount()) |r| {
         const want = history.recentKey(r);
         const found: ?usize = for (out[placed..n], placed..) |idx, j| {
+            if (items[idx].keyword_only) continue;
             if (items[idx].keyIs(want)) break j;
         } else null;
         const j = found orelse continue;
@@ -592,6 +602,47 @@ test "arrange: a user row matches its prefixed key without composing it (T1752)"
     h2.record("Deploy", 1);
     try testing.expectEqual(@as(usize, 1), arrange(&items, &h2, &out));
     try testing.expect(!items[out[0]].user);
+}
+
+test "arrange: a keyword-only match sorts behind every title match (T2173)" {
+    // Typing `agent`: the restart row is found only by its keyword, and must
+    // not outrank the row whose title says Agent.
+    const items = [_]Item{
+        .{ .title = "Restart Ghoztty and Background Sessions", .key = "restart_app_and_agent", .keyword_only = true },
+        .{ .title = "Set Up Agent Integrations", .key = "claude_integration" },
+        .{ .title = "Agent Status", .key = "agent_status" },
+    };
+    var out: [3]u16 = undefined;
+    const h: History = .{};
+    try testing.expectEqual(@as(usize, 0), arrange(&items, &h, &out));
+    try testing.expectEqualStrings("Agent Status", items[out[0]].title);
+    try testing.expectEqualStrings("Set Up Agent Integrations", items[out[1]].title);
+    try testing.expectEqualStrings("Restart Ghoztty and Background Sessions", items[out[2]].title);
+}
+
+test "arrange: keyword-only matches stay alphabetical among themselves (T2173)" {
+    const items = [_]Item{
+        .{ .title = "Restart Ghoztty and Background Sessions", .key = "restart_app_and_agent", .keyword_only = true },
+        .{ .title = "Restart Ghoztty", .key = "restart_app", .keyword_only = true },
+    };
+    var out: [2]u16 = undefined;
+    const h: History = .{};
+    _ = arrange(&items, &h, &out);
+    try testing.expectEqualStrings("Restart Ghoztty", items[out[0]].title);
+    try testing.expectEqualStrings("Restart Ghoztty and Background Sessions", items[out[1]].title);
+}
+
+test "arrange: a recent keyword-only match does not jump ahead of a title match (T2173)" {
+    const items = [_]Item{
+        .{ .title = "Restart Ghoztty and Background Sessions", .key = "restart_app_and_agent", .keyword_only = true },
+        .{ .title = "Set Up Agent Integrations", .key = "claude_integration" },
+    };
+    var h: History = .{};
+    h.record("restart_app_and_agent", 1);
+    var out: [2]u16 = undefined;
+    try testing.expectEqual(@as(usize, 0), arrange(&items, &h, &out));
+    try testing.expectEqualStrings("Set Up Agent Integrations", items[out[0]].title);
+    try testing.expectEqualStrings("Restart Ghoztty and Background Sessions", items[out[1]].title);
 }
 
 test "arrange: an empty palette is a no-op" {

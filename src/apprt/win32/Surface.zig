@@ -3204,7 +3204,8 @@ fn positionCommandPalette(self: *Surface) void {
 
 /// Filter palette entries by a case-insensitive substring match, then order
 /// them the way Mac's `commandSections` does (T891): the ten most recently
-/// used first in recency order, everything else alphabetically. With no
+/// used first in recency order, everything else alphabetically, and a row
+/// found only by a hidden keyword behind all of those (T2173). With no
 /// filter the two groups carry "Recent" / "All Commands" headers; with a
 /// filter the same order is shown flat, which is what Mac's query path does.
 fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
@@ -3233,7 +3234,11 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
             continue;
         }
         idxs[n] = idx;
-        items[n] = .{ .title = self.paletteEntryName(idx), .key = @tagName(entry.id) };
+        items[n] = .{
+            .title = self.paletteEntryName(idx),
+            .key = @tagName(entry.id),
+            .keyword_only = commands.keywordOnly(entry, filter),
+        };
         n += 1;
     }
     // The config's command-palette-entry list: Ghostty's defaults, then the

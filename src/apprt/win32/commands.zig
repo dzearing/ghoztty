@@ -223,6 +223,14 @@ pub fn matches(c: Command, filter: []const u8) bool {
     return c.keywords.len != 0 and std.ascii.indexOfIgnoreCase(c.keywords, filter) != null;
 }
 
+/// Whether `filter` finds `c` only through its keywords, not its name
+/// (T2173) - the palette ranks those rows behind every title match. False
+/// for an empty filter, which ranks nothing.
+pub fn keywordOnly(c: Command, filter: []const u8) bool {
+    if (filter.len == 0) return false;
+    return std.ascii.indexOfIgnoreCase(c.name, filter) == null and matches(c, filter);
+}
+
 /// Whether `c` belongs to the palette's pinned section (T1754): Mac's
 /// `updateOptions`, a section of its own ABOVE "Recent" and "All Commands".
 /// Its rows keep registry order, never sort in with the rest and never enter
@@ -679,6 +687,18 @@ test "the restart commands are found by restart and by relaunch (T1804)" {
     }
     // The lossless one sorts first, so the cheaper row is the one seen first.
     try std.testing.expect(index(.restart_app) < index(.restart_app_and_agent));
+}
+
+test "agent finds the restart row by keyword only, and the setup row by title (T2173)" {
+    try std.testing.expect(keywordOnly(get(.restart_app_and_agent), "agent"));
+    try std.testing.expect(!keywordOnly(get(.claude_integration), "agent"));
+    try std.testing.expect(matches(get(.claude_integration), "agent"));
+    // A title match is never keyword-only, even when a keyword matches too.
+    try std.testing.expect(!keywordOnly(get(.restart_app), "restart"));
+    // Relaunch still finds both restart rows, through the keyword band.
+    try std.testing.expect(keywordOnly(get(.restart_app), "relaunch"));
+    try std.testing.expect(keywordOnly(get(.restart_app_and_agent), "relaunch"));
+    try std.testing.expect(!keywordOnly(get(.restart_app), ""));
 }
 
 test "keywords never make an ordinary command match a stray word" {

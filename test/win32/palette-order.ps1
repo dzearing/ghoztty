@@ -620,14 +620,17 @@ if ($null -ne $pal10d) {
 # ---------------------------------------------------------------------
 # O9: a command whose action Windows does not perform is not a row (T1753).
 # One launch carries two config entries that differ ONLY in their action - a
-# text send (performed) and undo (acknowledged and dropped on win32). The same
-# keystrokes are sent for each, so O9a is the positive control for O9b/O9c:
+# text send (performed) and show_on_screen_keyboard (acknowledged and dropped
+# on win32). The same keystrokes are sent for each, so O9a is the positive
+# control for O9b/O9c:
 # the only difference between a run and no run is whether the action is
 # supported. O9c is a Ghostty default, "Toggle Secure Input", which is
-# macOS-only and used to be a row that did nothing.
+# macOS-only and used to be a row that did nothing. O9b used undo until
+# T1825 made close undo real on win32, which left it scoring a supported row
+# as a defect (found by T2173).
 # ---------------------------------------------------------------------
 $okTitle = 'ZzqT1753Text'
-$badTitle = 'ZzqT1753Undo'
+$badTitle = 'ZzqT1753Osk'
 function Start-O9Palette([string]$Tag) {
     Stop-DebugGhoztty
     $script:appPid = 0
@@ -636,7 +639,7 @@ function Start-O9Palette([string]$Tag) {
     $script:app = Start-OnTestDesktop -Exe $Exe -StdErr $log -Arguments @(
         '--session-persistence=false',
         "--command-palette-entry=title:$okTitle,action:text:x",
-        "--command-palette-entry=title:$badTitle,action:undo")
+        "--command-palette-entry=title:$badTitle,action:show_on_screen_keyboard")
     $script:appPid = $script:app.Pid
     Start-Sleep -Seconds 3
     if ($script:app.Process -and $script:app.Process.HasExited) { return $null }
@@ -663,7 +666,7 @@ if ($null -ne $pal9a) {
         "O9a Enter ran the supported entry (got: $($ran9a -join ', '))"
 }
 
-Write-Host '== O9b: the same entry with an unsupported action (undo) is not a row'
+Write-Host '== O9b: the same entry with an unsupported action (show_on_screen_keyboard) is not a row'
 $pal9b = Start-O9Palette 'o9b'
 Assert ($null -ne $pal9b) 'O9b the palette opened'
 if ($null -ne $pal9b) {

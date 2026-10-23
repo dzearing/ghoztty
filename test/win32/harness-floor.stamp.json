@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-23T10:56:56-07:00",
-    "commit":  "8b9ce1a89",
+    "generated":  "2026-10-23T11:47:12-07:00",
+    "commit":  "653380ef1",
     "uncommitted":  [
-                        "test/win32/auto-launch-cwd.ps1"
+                        "test/win32/palette-order.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -310,7 +310,7 @@
                   "test/win32/palette-close-crash.ps1":  "a22d78896b8a333e0dec14c230101606f0c13b48dbf1bb7ff7b79a44e2e63707",
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
-                  "test/win32/palette-order.ps1":  "731a1befc660ba2625618e809ab7e30eb0106959586260c3d78eedc6da12bced",
+                  "test/win32/palette-order.ps1":  "1aa851b76eaafbb3d721aece4d5f934a9a142e0d9d23ac8b1645d38b86727580",
                   "test/win32/pane-banner.ps1":  "e6d14fb0d90c1f3a91c080e35344a21c86d3ca1508d6fecc29434fc6bd05a3ea",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
