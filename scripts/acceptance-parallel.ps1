@@ -38,6 +38,15 @@
   with nothing launched. Without this every worker met the same stale exe and
   the turn read a page of red rows about one cause.
 
+  THE MACHINE IS LEFT AS IT WAS FOUND (T1230): a snapshot of every durable
+  surface a run could change - startup programs, the user PATH, the ghoztty://
+  handler, scheduled tasks, the Start Menu, the installed product, test hives
+  (test\win32\lib\PersistentState.ps1 lists them and why) - is taken before
+  the first script starts and compared after the last one ends. A difference
+  that is still there after a settle delay is printed as PERSISTENT STATE
+  CHANGED and turns the run RED (exit 1). -NoStateCheck skips the comparison
+  and says so.
+
   -FailFast stops starting scripts at the first red (running ones finish, the
   red is still confirmed alone) and names every script it never ran. `due`
   orders the most specific harness first, so the changed feature's own
@@ -70,6 +79,8 @@ param(
     [switch]$FailFast,
     [switch]$NoRebuild,
     [switch]$List,
+    [switch]$NoStateCheck,
+    [int]$StateSettleSeconds = 15,
     [switch]$Json,
     [string]$Repo
 )
@@ -81,6 +92,7 @@ if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 $Repo = (Resolve-Path $Repo).Path
 . (Join-Path $PSScriptRoot 'lib\AcceptanceParallel.ps1')
 . (Join-Path $PSScriptRoot 'lib\AcceptanceFresh.ps1')
+. (Join-Path $PSScriptRoot '..\test\win32\lib\PersistentState.ps1')
 
 function Resolve-ApScript {
     param([string]$Name)
@@ -147,6 +159,10 @@ if (-not $fresh.Ok) { exit 4 }
 if (-not $LogDir) { $LogDir = Join-Path $env:TEMP ("ghoztty-acceptance-parallel\" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
 "ACCEPTANCE {0}: {1} script(s), width {2}, logs {3}" -f $Action, $jobs.Count, $Width, $LogDir
 
+# T1230: the before-half of the persistent-state arm, taken after the rebuild
+# (a build writes nothing durable) and before any script can.
+$stateBefore = if ($NoStateCheck) { $null } else { Get-PersistentStateSnapshot }
+
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $results = Invoke-AcceptanceRun -Repo $Repo -Jobs $jobs -Width $Width -LogDir $LogDir -TimeoutSec $TimeoutSec -NoConfirm:$NoConfirm -FailFast:$FailFast -OnResult {
     param($r)
@@ -160,6 +176,7 @@ $final = @(Get-AcceptanceFinal -Results $results)
 $ranSeq = @($final | ForEach-Object { $_.Seq })
 $notRun = @(for ($i = 0; $i -lt $jobs.Count; $i++) { if ($ranSeq -notcontains $i) { Split-Path -Leaf $jobs[$i].Script } })
 $overlap = @(Test-AcceptanceOverlap -Results $results)
+$stateChanges = @(if ($stateBefore) { Invoke-PersistentStateCheck -Before $stateBefore -SettleSeconds $StateSettleSeconds })
 $busy = ($results | ForEach-Object { ($_.Ended - $_.Started).TotalSeconds } | Measure-Object -Sum).Sum
 
 $summary = [pscustomobject]@{
@@ -172,6 +189,8 @@ $summary = [pscustomobject]@{
     final = $final; runs = @($results | Select-Object Seq, Name, Class, Slot, Phase, Kind, Line, ExitCode,
             @{ n = 'Started'; e = { $_.Started.ToString('o') } }, @{ n = 'Ended'; e = { $_.Ended.ToString('o') } }, Log)
     scheduleViolations = $overlap
+    stateCheck = $(if ($NoStateCheck) { 'skipped' } else { 'ran' })
+    stateChanges = @($stateChanges | ForEach-Object { Format-PersistentStateChange $_ })
 }
 $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $LogDir 'summary.json') -Encoding UTF8
 
@@ -179,11 +198,14 @@ foreach ($f in @($final | Where-Object { $_.ParallelSensitive })) {
     "PARALLEL-SENSITIVE {0}: {1} beside other scripts, {2} alone - add '# @parallel-unsafe' (or '# @timing-sensitive' if it measures time) to its header, or fix what it shares" -f $f.Name, $f.PoolKind, $f.AloneKind
 }
 foreach ($v in $overlap) { "SCHEDULE VIOLATION: $v" }
+if ($NoStateCheck) { "PERSISTENT STATE: not checked (-NoStateCheck)" }
+foreach ($c in $stateChanges) { "PERSISTENT STATE CHANGED: $(Format-PersistentStateChange $c)" }
 
 $red = @($final | Where-Object { $_.Kind -notin @('pass', 'skip') })
 $counts = ($final | Group-Object Kind | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '
 if ($notRun.Count -gt 0) { $counts += " not-run=$($notRun.Count)" }
-"ACCEPTANCE {0}: {1} in {2:N0}s wall ({3:N0}s of script time, width {4}) - {5}" -f $(if ($red.Count -eq 0 -and $overlap.Count -eq 0 -and $notRun.Count -eq 0) { 'GREEN' } else { 'RED' }),
+if ($stateChanges.Count -gt 0) { $counts += " state-changes=$($stateChanges.Count)" }
+"ACCEPTANCE {0}: {1} in {2:N0}s wall ({3:N0}s of script time, width {4}) - {5}" -f $(if ($red.Count -eq 0 -and $overlap.Count -eq 0 -and $notRun.Count -eq 0 -and $stateChanges.Count -eq 0) { 'GREEN' } else { 'RED' }),
     $final.Count, $clock.Elapsed.TotalSeconds, $busy, $Width, $counts
 foreach ($r in $red) {
     "  RED {0} ({1}): {2}" -f $r.Name, $r.Kind, $r.Line
@@ -193,4 +215,7 @@ foreach ($r in $red) {
 }
 if ($notRun.Count -gt 0) { "  NOT RUN (-FailFast stopped at the first red): {0}" -f ($notRun -join ', ') }
 if ($overlap.Count -gt 0) { exit 3 }
-exit ([int]($red.Count -gt 0 -or $notRun.Count -gt 0))
+if ($stateChanges.Count -gt 0) {
+    "  The run changed durable state on this machine (above): a script wrote outside its sandbox or did not put back what it changed. Find the writer, fix its isolation or teardown, and restore the item (T1230)."
+}
+exit ([int]($red.Count -gt 0 -or $notRun.Count -gt 0 -or $stateChanges.Count -gt 0))

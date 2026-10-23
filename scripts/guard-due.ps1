@@ -5396,6 +5396,21 @@ $GuardTable = @(
             'test\win32\lib\CleanSlate.ps1'
         )
     },
+    # The persistent-state arm (T1230): every acceptance run snapshots the
+    # durable surfaces a script could change - startup entries, the user PATH,
+    # the ghoztty:// class, scheduled tasks, Start Menu, the installed product -
+    # and goes red when one moved. Its own acceptance shows the arm each kind of
+    # change and checks the runner still carries it; nothing else reads it.
+    [pscustomobject]@{
+        Name   = 'persistent-state'
+        Script = 'test\win32\persistent-state.ps1'
+        Stamp  = 'test\win32\persistent-state.stamp.json'
+        Covers = @(
+            'test\win32\lib\PersistentState.ps1',
+            'test\win32\persistent-state.ps1',
+            'scripts\acceptance-parallel.ps1'
+        )
+    },
     # The honesty of every OTHER row in this table (T1039). A harness whose body
     # unwinds mid-run used to print ALL PASS and then STAMP - recording every
     # file it covers as freshly proven while a whole section measured nothing -

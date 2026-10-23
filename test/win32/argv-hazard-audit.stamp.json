@@ -1,13 +1,14 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-22T21:24:24-07:00",
-    "commit":  "7e4d41b97",
+    "generated":  "2026-10-22T22:32:17-07:00",
+    "commit":  "cc69dd753",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1"
+                        "scripts/acceptance-parallel.ps1",
+                        "scripts/guard-due.ps1"
                     ],
     "files":  {
-                  "scripts/acceptance-parallel.ps1":  "de0387b596e8e31885fa64f769bc9c784b10f9acd938b785c17855ac6ccaac81",
+                  "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
                   "scripts/agent-stamp-inputs.ps1":  "0763da8ff3ca2fee6baf1225486039bae3f38e141fe85e51baffa3cf537d7b61",
                   "scripts/arp-version-check.ps1":  "5b54ae7cb88d3517dc9c5d250e95c44d7a02a34fdc31ac57656d09b17d088615",
                   "scripts/blur-backdrop-probe.ps1":  "161435ffccf4a2e759d1f24887ced73c4c7c44da9d473a24eccbd977dc4cc38f",
@@ -37,7 +38,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "3224cc9722ddf90ab1de1290123bca673ad714269405dfa383740a23704126e4",
+                  "scripts/guard-due.ps1":  "069b8ec729bc3859b3917fcc7594a9222712daa7d265b02c42796d53e7f9bd35",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "cda274a862bd12af712f6f6a2f018142f82cce573faded7954a6e1befb93608b",

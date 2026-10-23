@@ -63,6 +63,12 @@
        finds and kills (positive control); and a worker killed mid-run, a hung
        one past its declared timeout, and their neighbour are all scored
        promptly.
+    I  T1230. A run that leaves durable state behind is RED: a fixture that
+       passes but leaves a lineage-suffixed startup entry in the real Run key
+       turns the runner's verdict and exit code red and names the entry (its
+       own row stays PASS); -NoStateCheck lets it through and says so; a clean
+       script stays GREEN with no state line (positive control). The entry is
+       removed by this harness, and its suffix is one the clean slate sweeps.
 
   The "app" here is a renamed copy of ping.exe started with no window, and the
   scripts are fixtures written into a throwaway repo under %TEMP%, so the run
@@ -616,10 +622,40 @@ onexistent\ghoztty-agent.exe') } finally { $rk.Close() }
     Check 'H5 the neighbour is scored, and the whole run ends well inside either script''s 90s' `
         ($ok -and $ok.Kind -eq 'pass' -and $hr.Count -eq 3 -and $hClock.Elapsed.TotalSeconds -lt 45) `
         ("rows=$($hr.Count) ok=$($ok.Kind) wall=$([int]$hClock.Elapsed.TotalSeconds)s")
+
+    # ---- I: a run that leaves durable state behind is RED (T1230) -------------------
+    # The fixture passes on its own terms and leaves a lineage-suffixed startup
+    # entry in the user's real Run key - the T1168 shape. The suffix is one the
+    # clean slate sweeps, so even a harness killed here leaves nothing for long.
+    Set-FixtureAge $false
+    $script:t1230Value = "GhozttyAgent-t1230probe$tag"
+    Write-Fixture (Join-Path $fake 'test\win32\ileak.ps1') ("`$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run')`n" +
+        "`$k.SetValue('$script:t1230Value', 'C:\t1230\ghoztty-agent.exe'); `$k.Close()`n'ALL PASS'`n")
+    $r = Invoke-Runner "run -Scripts ileak.ps1 -Width 1 -NoRebuild -StateSettleSeconds 1"
+    Check 'I1 a passing script that leaves a startup entry behind turns the run RED (exit 1) and names the entry' `
+        ($r.Code -eq 1 -and $r.Text -match "PERSISTENT STATE CHANGED: run ADDED $([regex]::Escape($script:t1230Value))" -and
+        $r.Text -match 'ACCEPTANCE RED' -and $r.Text -match 'state-changes=1') ("exit=$($r.Code) :: $($r.Text)")
+    Check 'I2 the script row itself is still PASS - the red is the machine, not the script' ($r.Text -match 'PASS\s+ileak\.ps1') $r.Text
+    $rk = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run', $true)
+    try { $rk.DeleteValue($script:t1230Value, $false) } finally { $rk.Close() }
+    $r = Invoke-Runner "run -Scripts ileak.ps1 -Width 1 -NoRebuild -NoStateCheck"
+    Check 'I3 -NoStateCheck lets the same run through and says the check was skipped' `
+        ($r.Code -eq 0 -and $r.Text -match 'PERSISTENT STATE: not checked \(-NoStateCheck\)') ("exit=$($r.Code) :: $($r.Text)")
+    $rk = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run', $true)
+    try { $rk.DeleteValue($script:t1230Value, $false) } finally { $rk.Close() }
+    $r = Invoke-Runner "run -Scripts probe.ps1 -Width 1 -NoRebuild"
+    Check 'I4 positive control: a script that leaves nothing behind is GREEN with no state line' `
+        ($r.Code -eq 0 -and $r.Text -match 'ACCEPTANCE GREEN' -and $r.Text -notmatch 'PERSISTENT STATE') ("exit=$($r.Code) :: $($r.Text)")
 }
 catch { Write-Host "FAIL  the harness threw: $($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)"; $script:Failures++ }
 finally {
     Remove-Item Env:AP_FIXTURE_LOG -ErrorAction SilentlyContinue
+    if ($script:t1230Value) {
+        try {
+            $rk = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run', $true)
+            if ($rk) { try { $rk.DeleteValue($script:t1230Value, $false) } finally { $rk.Close() } }
+        } catch {}
+    }
     try { Remove-FakeTree } catch { Write-Host "FAIL  teardown: $($_.Exception.Message)"; $script:Failures++ }
 }
 

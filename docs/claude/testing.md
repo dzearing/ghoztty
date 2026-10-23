@@ -1506,6 +1506,17 @@ with a **real connection** before its listener is closed: on Windows
 close-then-`join()` is an indefinite hang (`TestPage`/`ReloadPage` in
 `ViewerPane.zig`, `keepalive.zig`, `link_control.zig`).
 
+**And the machine is measured, not trusted** (T1230). Every
+`acceptance-parallel.ps1` run snapshots the durable surfaces a script could
+change — ghoztty startup entries, the user PATH, the `ghoztty://` class,
+scheduled tasks, Start Menu/Startup entries, the installed product, fixture
+hives — before the first script and after the last, and a change that survives
+a settle re-check turns the run RED as `PERSISTENT STATE CHANGED: …`. The
+surface list, what each is compared on, and why the release state dir is left
+out are in `test\win32\lib\PersistentState.ps1`. A script that must change one
+of them puts it back before it exits; a red here means find the writer, not
+reach for `-NoStateCheck`.
+
 On Windows, behavior that unit tests cannot reach is covered by non-interactive
 PowerShell acceptance scripts in `test/win32/` (80+ of them). The standing
 regression floor is P1–P3, which must stay ALL PASS:

@@ -1,0 +1,16 @@
+{
+    "guard":  "persistent-state",
+    "script":  "test/win32/persistent-state.ps1",
+    "generated":  "2026-10-22T23:26:48-07:00",
+    "commit":  "cc69dd753",
+    "uncommitted":  [
+                        "scripts/acceptance-parallel.ps1",
+                        "test/win32/lib/PersistentState.ps1",
+                        "test/win32/persistent-state.ps1"
+                    ],
+    "files":  {
+                  "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
+                  "test/win32/lib/PersistentState.ps1":  "f5256d10c2866031a73ccc1fc247f9f670836e2dfdab53ad2432dbd0189019e9",
+                  "test/win32/persistent-state.ps1":  "e8e10a48df6586dde45f0fef13d3343059bd89eb7c277f6f55805416ff5ec7ce"
+              }
+}
