@@ -1,18 +1,16 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-10-22T20:49:25-07:00",
-    "commit":  "96d1ada1b",
+    "generated":  "2026-10-23T12:43:49-07:00",
+    "commit":  "364a617c9",
     "uncommitted":  [
-                        "scripts/deliver-windows-build.ps1",
-                        "scripts/launch-upgrade.ps1",
-                        "scripts/upgrade-ghoztty-windows.ps1"
+                        "scripts/go-loop-exec.ps1"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "44bdce30b404b4f8da2bb69527ae66f389d5aaa4b47e0c89f623bfefbbe78a2a",
                   "scripts/deliver-windows-build.ps1":  "7246739997be71d01b58307c789f90a4277b6b38dad68c094663fd1b9d1db3c5",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "e65ddcb0f8d3c875848b955cacc1a7d019423281995c77537e1a35d5f98970f1",
+                  "scripts/go-loop-exec.ps1":  "99cc6dca5594620dd3264fc80cbfbdd331426e35c1c0a1650e9b1daeed2ad237",
                   "scripts/go-loop-health.ps1":  "3f4b3294e34bd948e96cd860738e6e9c848cc698f74396e309c969b71eeced82",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
                   "scripts/launch-upgrade.ps1":  "669c0fd1ae6da4ae6614c889838feb108e3abc3157a3dc4fde6d3b01875e501b",

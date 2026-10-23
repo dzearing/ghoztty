@@ -212,6 +212,10 @@ $Registry = @(
     [pscustomobject]@{ Label = 'CI OK'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI UNKNOWN'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI NO VERDICT'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
+    # T1236. The claim clears a due CI-evidence row from a green run over these
+    # exact bytes and commits the stamp. Informational: it can only REMOVE a due
+    # line, never add a refusal. Demonstrated by S11-S15 of go-loop-guard.ps1.
+    [pscustomobject]@{ Label = 'STAMPED FROM'; Kind = 'status'; Via = 'scripts\guard-due.ps1' }
 
     # --- parity-tasks.ps1 validate -----------------------------------------
     [pscustomobject]@{ Label = 'BAD FRONTMATTER'; Kind = 'gate'; Demo = $Self; Marker = 'BAD FRONTMATTER' }

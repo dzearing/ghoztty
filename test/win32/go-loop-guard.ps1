@@ -1385,6 +1385,51 @@ if ($null -eq $paneS) {
 
     $r = SClaim $paneS.id
     Assert 'S10 a clean tree claims clean' ($r.Out -match 'tree clean at claim')
+
+    # T1236: a due CI-evidence row (the MSI packaging row) is cleared BY THE
+    # CLAIM from the build machine's answer - and only from a green run over
+    # exactly these bytes. The run list comes from a file through the same
+    # env var guard-due's stamp-ci reads, so the rules are the shipped ones.
+    $msi = Join-Path $sRepo 'dist\windows-installer\build-msi.sh'
+    New-Item -ItemType Directory -Force (Split-Path -Parent $msi) | Out-Null
+    [System.IO.File]::WriteAllText($msi, "# fixture msi v1`n", (New-Object System.Text.UTF8Encoding $false))
+    git -C $sRepo add -A 2>$null
+    git -C $sRepo -c user.email='t@t' -c user.name='t' commit -q -m 'msi v1' 2>$null
+    $msiSha1 = (git -C $sRepo rev-parse HEAD 2>$null | Out-String).Trim()
+    [System.IO.File]::WriteAllText($msi, "# fixture msi v2`n", (New-Object System.Text.UTF8Encoding $false))
+    git -C $sRepo add -A 2>$null
+    git -C $sRepo -c user.email='t@t' -c user.name='t' commit -q -m 'msi v2' 2>$null
+    $msiSha2 = (git -C $sRepo rev-parse HEAD 2>$null | Out-String).Trim()
+    $sStamp = Join-Path $sRepo 'test\win32\release-artifacts-packaging.stamp.json'
+    $sRuns = Join-Path $root 'stranded-runs.json'
+    function Set-SRuns([string]$sha, [string]$job) {
+        $runs = @([pscustomobject]@{ databaseId = 9; headSha = $sha; workflowName = 'Fork CI'
+                status = 'completed'; conclusion = 'success'; url = 'https://example.invalid/9'
+                jobs = @([pscustomobject]@{ name = 'windows-cross'; conclusion = $job }) })
+        [System.IO.File]::WriteAllText($sRuns, (ConvertTo-Json -Depth 6 -InputObject $runs), (New-Object System.Text.UTF8Encoding $false))
+    }
+    $env:GHOZTTY_GUARD_CI_RUNS_JSON = $sRuns
+    try {
+        Set-SRuns $msiSha1 'success'
+        $r = SClaim $paneS.id
+        Assert 'S11 a green run over OTHER bytes: the claim stamps nothing and still exits 0' `
+            ($r.Code -eq 0 -and $r.Out -match 'CI EVIDENCE REJECTED release-artifacts-packaging' -and -not (Test-Path $sStamp))
+        Set-SRuns $msiSha2 'failure'
+        $r = SClaim $paneS.id
+        Assert 'S12 a red packaging job: the claim stamps nothing and still exits 0' `
+            ($r.Code -eq 0 -and $r.Out -match "job 'windows-cross' concluded failure" -and -not (Test-Path $sStamp))
+        Set-SRuns $msiSha2 'success'
+        $r = SClaim $paneS.id
+        Assert 'S13 a green run over exactly these bytes: the claim stamps the row' `
+            ($r.Code -eq 0 -and $r.Out -match 'STAMPED FROM CI release-artifacts-packaging' -and (Test-Path $sStamp))
+        $last = (git -C $sRepo log -1 --format='%s' --name-only 2>$null | Out-String)
+        Assert 'S14 and commits the stamp, so it is never stranded work' `
+            ($last -match 'cleared from CI at claim \(T1236\)' -and $last -match 'release-artifacts-packaging\.stamp\.json' -and
+             $r.Out -notmatch 'STRANDED WORK')
+        $r = SClaim $paneS.id
+        Assert 'S15 a current row costs nothing next turn: no stamp-ci line at all' `
+            ($r.Code -eq 0 -and $r.Out -notmatch 'CI EVIDENCE|STAMPED FROM CI|STAMP UNCHANGED|STAMP REFUSED')
+    } finally { Remove-Item Env:GHOZTTY_GUARD_CI_RUNS_JSON -ErrorAction SilentlyContinue }
     Ghoz @('+close', "--target=$($paneS.id)") | Out-Null
 }
 

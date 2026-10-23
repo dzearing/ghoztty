@@ -126,8 +126,15 @@ param(
     # command resolves to it (go.md, step 6.9).
     [string]$Nwo = 'dzearing/ghoztty',
 
-    # The branch whose runs are enumerated. Defaults to the repo's current one.
+    # The branch whose runs are enumerated. Defaults to the branch the current
+    # one PUSHES to (its upstream), else its own name: lane b's local `lane-b`
+    # tracks `users/dzearing/windows-amd64`, and CI has never seen `lane-b`.
     [string]$Branch,
+
+    # T1236. Only the CI rows that are DUE right now, and silence (exit 0) when
+    # there are none - the shape `go-loop-exec.ps1 claim` asks with every turn,
+    # so a current row never costs a `gh` call.
+    [switch]$DueOnly,
 
     # Read the run list from a file instead of calling gh, in the shape
     # `gh run list --json ...` returns (each run may carry its own `jobs`
@@ -6528,6 +6535,10 @@ switch ($Action) {
         if (-not $RunsJsonFile -and $env:GHOZTTY_GUARD_CI_RUNS_JSON) { $RunsJsonFile = $env:GHOZTTY_GUARD_CI_RUNS_JSON }
 
         $ciRows = @($rows | Where-Object { $null -ne $_.CiEvidence })
+        if ($DueOnly) {
+            $ciRows = @($ciRows | Where-Object { (Get-GuardState $_).Kind -eq 'due' })
+            if ($ciRows.Count -eq 0) { exit 0 }
+        }
         if ($ciRows.Count -eq 0) {
             "ERROR no selected guard declares CiEvidence (known: {0})" -f (
                 (@($GuardTable | Where-Object { $null -ne $_.CiEvidence } | ForEach-Object { $_.Name })) -join ', ')
@@ -6570,7 +6581,13 @@ switch ($Action) {
         }
 
         $branch = $Branch
-        if (-not $branch) { $branch = Get-GitOut @('rev-parse', '--abbrev-ref', 'HEAD') }
+        if (-not $branch) {
+            $local = Get-GitOut @('rev-parse', '--abbrev-ref', 'HEAD')
+            if ($local -and $local -ne 'HEAD') {
+                $branch = Get-GitOut @('for-each-ref', '--format=%(upstream:lstrip=3)', "refs/heads/$local")
+            }
+            if (-not $branch) { $branch = $local }
+        }
 
         $runs = @()
         if ($RunsJsonFile) {
@@ -6691,6 +6708,8 @@ switch ($Action) {
                 if ($w.Written) {
                     "STAMPED FROM CI {0} ({1} files) <- {2} {3} at {4}" -f $row.Name, @($w.Files).Count, $ev.Workflow, $ev.Job, $short
                     if ($run.url) { "  run: {0}" -f [string]$run.url }
+                    # The path the caller has to commit (the claim does, T1236).
+                    "  stamp: {0}" -f $row.Stamp
                 } else {
                     "STAMP UNCHANGED {0} (already stamped from this run)" -f $row.Name
                 }

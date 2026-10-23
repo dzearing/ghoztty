@@ -189,7 +189,17 @@ function Get-FailingJobs {
 $head = $Sha
 if (-not $head) { $head = Get-GitValue @('rev-parse', 'HEAD') }
 $branch = $Branch
-if (-not $branch) { $branch = Get-GitValue @('rev-parse', '--abbrev-ref', 'HEAD') }
+if (-not $branch) {
+    # The branch this one PUSHES to, not its local name (T1236): lane b works on
+    # a local `lane-b` that tracks `users/dzearing/windows-amd64`, and every
+    # build CI runs is filed under the pushed name - asking about `lane-b` read
+    # `CI UNKNOWN` on every turn there, which validate passes.
+    $local = Get-GitValue @('rev-parse', '--abbrev-ref', 'HEAD')
+    if ($local -and $local -ne 'HEAD') {
+        $branch = Get-GitValue @('for-each-ref', '--format=%(upstream:lstrip=3)', "refs/heads/$local")
+    }
+    if (-not $branch) { $branch = $local }
+}
 
 $lines = @()
 $verdict = 'unknown'

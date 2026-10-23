@@ -651,6 +651,41 @@ try {
     Check 'K10 a row with no CI evidence cannot be stamped from CI' `
         ($rk5.Exit -eq 2 -and $rk5.Text -match 'no selected guard declares CiEvidence') "exit=$($rk5.Exit): $($rk5.Text)"
 
+    # K11-K13 (T1236): the claim's shape. `-DueOnly` is silent over a current
+    # row - every turn asks, so a current row must not cost a gh call - and
+    # asks CI about the branch this one PUSHES to: lane b's local `lane-b`
+    # tracks the shared trunk, and CI has never built a branch called lane-b.
+    function Invoke-StampCiDue([string]$RunsFile) {
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Due, 'stamp-ci', '-DueOnly',
+            '-Repo', $CiFixture, '-RunsJsonFile', $RunsFile, '-IgnoreRunState')
+        $out = & powershell.exe @a 2>&1
+        return [pscustomobject]@{ Exit = $LASTEXITCODE; Text = (@($out) -join "`n") }
+    }
+    Set-CiFile 'dist\windows-installer\build-msi.sh' "# fake msi builder v2 - packaging rule changed`n"
+    $rk = Invoke-StampCiDue $runsFile
+    Check 'K11 -DueOnly over a CURRENT row says nothing and exits 0' `
+        ($rk.Exit -eq 0 -and -not $rk.Text.Trim()) "exit=$($rk.Exit): $($rk.Text)"
+
+    & git -C $CiFixture checkout -q -b lane-x 2>$null | Out-Null
+    & git -C $CiFixture config remote.origin.url 'https://example.invalid/fixture.git' 2>$null | Out-Null
+    & git -C $CiFixture config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' 2>$null | Out-Null
+    & git -C $CiFixture config branch.lane-x.remote origin 2>$null | Out-Null
+    & git -C $CiFixture config branch.lane-x.merge 'refs/heads/users/fixture/trunk' 2>$null | Out-Null
+    Set-CiFile 'dist\windows-installer\build-msi.sh' "# fake msi builder v4 - due again`n"
+    $noneFile = Set-CiRuns @()
+    $rk = Invoke-StampCiDue $noneFile
+    Check 'K12 -DueOnly over a DUE row does ask, and names the PUSHED branch, not the local one' `
+        ($rk.Exit -eq 1 -and $rk.Text -match "no successful 'Fork CI' run on users/fixture/trunk") "exit=$($rk.Exit): $($rk.Text)"
+    # Set-CiRuns always rewrites the same runs.json, so K12's empty list has to
+    # be replaced by K4's green run before this arm means anything.
+    $runsFile = Set-CiRuns @(
+        [pscustomobject]@{ databaseId = 4; headSha = $ciSha2; workflowName = 'Fork CI'
+            status = 'completed'; conclusion = 'success'; url = 'https://example.invalid/4'
+            jobs = @([pscustomobject]@{ name = 'windows-cross'; conclusion = 'success' }) })
+    $rk = Invoke-StampCiDue $runsFile
+    Check 'K13 a green run over other bytes still stamps nothing under -DueOnly' `
+        ($rk.Exit -eq 1 -and $rk.Text -match 'CI EVIDENCE REJECTED' -and $rk.Text -notmatch 'stamp:') "exit=$($rk.Exit): $($rk.Text)"
+
     # --- L. the table's own integrity ---------------------------------------
     # T1227. Every arm above measures what the table SAYS about the tree; these
     # measure whether the table can say anything at all. A `Covers` entry that

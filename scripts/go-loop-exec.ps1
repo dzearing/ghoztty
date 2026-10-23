@@ -428,6 +428,32 @@ switch ($Action) {
         }
 
         $dueScript = Join-Path $PSScriptRoot 'guard-due.ps1'
+        # T1236: a due row that the build machine CAN answer (`CiEvidence`,
+        # today the MSI packaging row) is cleared here from CI's answer, before
+        # the report below reads it - T1189 added `stamp-ci`, but it only ran
+        # when a turn remembered to, which is the shape that let twelve turns
+        # pass `-NoGuardDue`. The claim is the right moment because the run that
+        # proves this code is the one the PREVIOUS turn's push started. The
+        # content check inside stamp-ci is untouched: a run that built other
+        # bytes stamps nothing. A stamp it does write is committed (and pushed)
+        # here through the commit guard, so it is never stranded work. Never
+        # fatal, like everything else in this block.
+        if (Test-Path -LiteralPath $dueScript) {
+            # -IgnoreRunState: the evidence here is the CI run, never the calling
+            # process, so a claim made from inside a scored harness run (which
+            # exports GHOZTTY_TEST_BODY=pending) must not be refused for it.
+            $ciStampOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $dueScript stamp-ci -DueOnly -IgnoreRunState -Repo $Repo 2>&1 | Out-String
+            foreach ($line in ($ciStampOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
+            $newStamps = @([regex]::Matches($ciStampOut, '(?m)^\s*stamp:\s*(\S+)\s*$') | ForEach-Object { $_.Groups[1].Value })
+            $commitGuard = Join-Path $PSScriptRoot 'git-commit-guard.ps1'
+            if ($newStamps.Count -gt 0 -and $ciStampOut -match 'STAMPED FROM CI' -and (Test-Path -LiteralPath $commitGuard)) {
+                # One line and comma-joined: `-File` binds every argument as one
+                # string, and git-commit-guard splits -Paths on commas itself.
+                $msg = 'chore(guard): advisory guard stamp cleared from CI at claim (T1236)'
+                $cOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $commitGuard commit -Repo $Repo -Paths ($newStamps -join ',') -Message $msg 2>&1 | Out-String
+                foreach ($line in ($cOut -split "`r?`n")) { if ($line.Trim()) { "    $($line.Trim())" } }
+            }
+        }
         if (Test-Path -LiteralPath $dueScript) {
             $dueOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $dueScript check -Repo $Repo 2>&1 | Out-String
             foreach ($line in ($dueOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }

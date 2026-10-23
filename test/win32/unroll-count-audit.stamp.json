@@ -1,10 +1,12 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-23T10:30:31-07:00",
-    "commit":  "8b9ce1a89",
+    "generated":  "2026-10-23T12:45:40-07:00",
+    "commit":  "364a617c9",
     "uncommitted":  [
-                        "test/win32/unroll-count-audit.baseline.json"
+                        "scripts/ci-status.ps1",
+                        "scripts/go-loop-exec.ps1",
+                        "scripts/guard-due.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -13,7 +15,7 @@
                   "scripts/blur-backdrop-probe.ps1":  "161435ffccf4a2e759d1f24887ced73c4c7c44da9d473a24eccbd977dc4cc38f",
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",
-                  "scripts/ci-status.ps1":  "c273364f2c71a956e9d63876b8a0b9218388503f0a1ae7853617649403911286",
+                  "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
                   "scripts/control-char-scan.ps1":  "5d86caddd7c8b44be9b3148dd5994881a8f8fa8eb1a07d2fe5414b0dd6428ba8",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
@@ -32,12 +34,12 @@
                   "scripts/ghoztty-cleanup.ps1":  "0535db22311b9640e47102124f856a2690dd446d9b87461ba2749f9418d29ffc",
                   "scripts/git-commit-guard.ps1":  "362105b3677ccb7e401ba858ca7dad11ba6a12d4abd77c9c07cf6f3b24af55bf",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "e65ddcb0f8d3c875848b955cacc1a7d019423281995c77537e1a35d5f98970f1",
+                  "scripts/go-loop-exec.ps1":  "99cc6dca5594620dd3264fc80cbfbdd331426e35c1c0a1650e9b1daeed2ad237",
                   "scripts/go-loop-health.ps1":  "3f4b3294e34bd948e96cd860738e6e9c848cc698f74396e309c969b71eeced82",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "6b1aa747daf8aba0ae10c603728aaa32bdcae37bf8ff938d12ca0822a8bd567c",
+                  "scripts/guard-due.ps1":  "885dc47dfd7f439568777df49aed5ae911ad0fc773bf46b2b48177ad93dc733c",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "cda274a862bd12af712f6f6a2f018142f82cce573faded7954a6e1befb93608b",
