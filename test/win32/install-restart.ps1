@@ -262,12 +262,25 @@ if (-not $py) {
                 "s72${t}l0",
                 "Property${t}Property",
                 "MSIINSTALLPERUSER${t}1",
-                "REBOOT${t}ReallySuppress"
+                "REBOOT${t}ReallySuppress",
+                "ARPSYSTEMCOMPONENT${t}1"
+            ) -join "`r`n"
+            # T2168: the Apps & Features entry the package writes itself.
+            $arpKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]'
+            $goodRegistry = @(
+                "Registry${t}Root${t}Key${t}Name${t}Value${t}Component_",
+                "s72${t}i2${t}l255${t}L255${t}L0${t}s72",
+                "Registry${t}Registry",
+                "r1${t}1${t}${arpKey}${t}DisplayName${t}[ProductName]${t}C_ArpEntry",
+                "r2${t}1${t}${arpKey}${t}DisplayVersion${t}[ARPDISPLAYVERSION]${t}C_ArpEntry",
+                "r3${t}1${t}${arpKey}${t}UninstallString${t}MsiExec.exe /X[ProductCode]${t}C_ArpEntry",
+                "r4${t}1${t}${arpKey}${t}ModifyPath${t}MsiExec.exe /I[ProductCode]${t}C_ArpEntry"
             ) -join "`r`n"
 
-            function RunVerifier($body) {
+            function RunVerifier($body, $registry = $goodRegistry) {
                 $f = Put ("prop-" + [guid]::NewGuid().ToString('N') + '.idt') $body
-                & $py $vp $f 2>&1 | Out-Null
+                $rf = Put ("reg-" + [guid]::NewGuid().ToString('N') + '.idt') $registry
+                & $py $vp $f '""' $rf 2>&1 | Out-Null
                 return $LASTEXITCODE
             }
 
@@ -285,6 +298,12 @@ if (-not $py) {
                 ((RunVerifier ($goodProps + "`r`nARPNOMODIFY${t}1")) -ne 0)
             Assert 'E7 an MSI that hides Control Panel''s Repair button is rejected' `
                 ((RunVerifier ($goodProps + "`r`nARPNOREPAIR${t}1")) -ne 0)
+            # T2168: Windows' own entry shows ProductVersion and must be hidden,
+            # and the entry the package writes must show ARPDISPLAYVERSION.
+            Assert 'E8 an MSI that leaves Windows'' own Apps & Features entry listed is rejected' `
+                ((RunVerifier (($goodProps -split "`r`n" | Where-Object { $_ -notmatch '^ARPSYSTEMCOMPONENT' }) -join "`r`n")) -ne 0)
+            Assert 'E9 an MSI whose listed entry shows the sequencing number is rejected' `
+                ((RunVerifier $goodProps ($goodRegistry -replace '\[ARPDISPLAYVERSION\]', '[ProductVersion]')) -ne 0)
         } finally {
             Remove-Item -LiteralPath $tmpE -Recurse -Force -ErrorAction SilentlyContinue
         }

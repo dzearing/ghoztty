@@ -111,7 +111,7 @@ function Invoke-MsiSql($Db, [string]$Sql) {
     [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($v)
 }
 function New-Msi {
-    param([string]$Path, [hashtable]$Files, [hashtable]$Props)
+    param([string]$Path, [hashtable]$Files, [hashtable]$Props, [hashtable]$ArpRows = @{})
     if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
     $installer = New-Object -ComObject WindowsInstaller.Installer
     $db = $installer.OpenDatabase($Path, 3)   # msiOpenDatabaseModeCreate
@@ -125,6 +125,17 @@ function New-Msi {
         }
         foreach ($k in $Props.Keys) {
             Invoke-MsiSql $db ("INSERT INTO ``Property`` (``Property``, ``Value``) VALUES ('{0}', '{1}')" -f $k, $Props[$k])
+        }
+        # T2168: the Apps & Features entry the package writes itself. Only
+        # created when there are rows, so a package with no Registry table at
+        # all stays a case the reader must survive.
+        if ($ArpRows.Count -gt 0) {
+            Invoke-MsiSql $db 'CREATE TABLE `Registry` (`Registry` CHAR(72) NOT NULL, `Root` SHORT NOT NULL, `Key` CHAR(255) NOT NULL LOCALIZABLE, `Name` CHAR(255) LOCALIZABLE, `Value` LONGCHAR LOCALIZABLE, `Component_` CHAR(72) NOT NULL PRIMARY KEY `Registry`)'
+            $i = 0
+            foreach ($k in $ArpRows.Keys) {
+                $i++
+                Invoke-MsiSql $db ("INSERT INTO ``Registry`` (``Registry``, ``Root``, ``Key``, ``Name``, ``Value``, ``Component_``) VALUES ('r{0}', 1, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]', '{1}', '{2}', 'C_ArpEntry')" -f $i, $k, $ArpRows[$k])
+            }
         }
         [void]$db.Commit()
     } finally {
@@ -145,9 +156,13 @@ function Get-GoodMsiFiles {
 }
 function Get-GoodMsiProps {
     return @{
-        ARPDISPLAYVERSION = $Version
-        ARPCOMMENTS       = "Build 20261017-$($Commit.Substring(0, 9))"
+        ARPDISPLAYVERSION  = $Version
+        ARPSYSTEMCOMPONENT = '1'
+        ARPCOMMENTS        = "Build 20261017-$($Commit.Substring(0, 9))"
     }
+}
+function Get-GoodArpRows {
+    return @{ DisplayName = '[ProductName]'; DisplayVersion = '[ARPDISPLAYVERSION]' }
 }
 
 # One release directory per case: the assets, plus the release.json that stands
@@ -158,6 +173,7 @@ function New-Release {
         [hashtable]$ZipEntries = (Get-GoodZipEntries),
         [hashtable]$MsiFiles = (Get-GoodMsiFiles),
         [hashtable]$MsiProps = (Get-GoodMsiProps),
+        [hashtable]$ArpRows = (Get-GoodArpRows),
         [string]$ReportedCommit = $Commit,
         [scriptblock]$Mutate = $null
     )
@@ -167,7 +183,7 @@ function New-Release {
     $zip = Join-Path $dir "Ghoztty-portable-$Version-x64.zip"
     $msi = Join-Path $dir "Ghoztty-$Version-x64.msi"
     New-Zip -Path $zip -Entries $ZipEntries
-    New-Msi -Path $msi -Files $MsiFiles -Props $MsiProps
+    New-Msi -Path $msi -Files $MsiFiles -Props $MsiProps -ArpRows $ArpRows
     $assets = @(Get-ChildItem -LiteralPath $dir -File | ForEach-Object { @{ name = $_.Name; size = $_.Length } })
     if ($Mutate) { & $Mutate $dir $zip $msi }
     $json = @{ assets = $assets; commit = $ReportedCommit } | ConvertTo-Json -Depth 4
@@ -207,6 +223,8 @@ function Assert-Broken {
 $good = New-Release
 $r = Invoke-Checker -Release $good
 AssertEq 'A1 good release -> exit 0' 0 $r.Exit
+# A red A1 says nothing on its own; show which checks the checker failed.
+if ($r.Exit -ne 0) { @($r.Text -split "`n" | Where-Object { $_ -match 'BROKEN|error' }) | Select-Object -First 8 | ForEach-Object { "      checker: $($_.Trim())" } }
 Assert 'A2 the verdict line says OK' ($r.Text -match "(?m)^OK \d+ check\(s\) passed")
 Assert 'A3 sizes were checked against the reported listing' ($r.Text -match 'bytes GitHub reports')
 Assert 'A4 the tagged commit was compared' ($r.Text -match 'ok\s+cross: the MSI was built from the tagged commit')
@@ -248,7 +266,17 @@ $f = Get-GoodMsiFiles; $f.Remove('GHOZTT~2.EXE|ghoztty-agent.exe')
 Assert-Broken 'B9' 'an MSI that does not install the agent' (New-Release -MsiFiles $f) 'msi: installs ghoztty-agent\.exe'
 
 $p = Get-GoodMsiProps; $p['ARPDISPLAYVERSION'] = '9.9.8'
-Assert-Broken 'B10' 'Apps & Features showing the wrong version' (New-Release -MsiProps $p) 'msi: Apps & Features will show 9\.9\.9'
+Assert-Broken 'B10' 'a display number that is not the tag' (New-Release -MsiProps $p) 'msi: ARPDISPLAYVERSION is 9\.9\.9'
+
+# T2168: the property alone never reached Apps & Features. Windows' own entry
+# must be hidden, and the package's entry must carry the property.
+$p = Get-GoodMsiProps; $p.Remove('ARPSYSTEMCOMPONENT')
+Assert-Broken 'B10b' 'Windows'' own entry (ProductVersion) left listed' (New-Release -MsiProps $p) 'msi: Windows'' own Apps & Features entry is hidden'
+
+$r = Get-GoodArpRows; $r['DisplayVersion'] = '[ProductVersion]'
+Assert-Broken 'B10c' 'a listed entry showing the sequencing number' (New-Release -ArpRows $r) 'msi: Apps & Features will show 9\.9\.9'
+
+Assert-Broken 'B10d' 'a package with no Apps & Features entry of its own (pre-T2168)' (New-Release -ArpRows @{}) 'msi: Apps & Features will show 9\.9\.9'
 
 $f = Get-GoodMsiFiles
 foreach ($k in @($f.Keys)) { if ($f[$k]) { $f[$k] = '1.2.3.4' } }

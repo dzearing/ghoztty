@@ -1,17 +1,16 @@
 {
     "guard":  "verify-release-assets",
     "script":  "test/win32/verify-release-assets.ps1",
-    "generated":  "2026-10-18T00:08:04-07:00",
-    "commit":  "13544c3e0",
+    "generated":  "2026-10-22T17:15:03-07:00",
+    "commit":  "d850eeb47",
     "uncommitted":  [
-                        "scripts/daily-publish.ps1",
                         "scripts/verify-release-assets.ps1",
                         "test/win32/verify-release-assets.ps1"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "44bdce30b404b4f8da2bb69527ae66f389d5aaa4b47e0c89f623bfefbbe78a2a",
                   "scripts/delivery-manifest.ps1":  "e985781584ffa1b524cf12bc0ed8b01cd952b8f18391e1a3fd2d229c15388a34",
-                  "scripts/verify-release-assets.ps1":  "215cbd6d59eec0582b4c0f49b5e65fcccaddef9a537cee7dab17c36b143f4241",
-                  "test/win32/verify-release-assets.ps1":  "a312bcbecac74e1f5d757eb1efec9bde94ba847cc8f63562ec92b58096f5ef94"
+                  "scripts/verify-release-assets.ps1":  "4f075bfd776d7419c10dae0199af0002aee1db11da50bcb29a2e4b39f3f80a09",
+                  "test/win32/verify-release-assets.ps1":  "f7f34687c3a45c4c3ac1285b95e1c533c1b15936c1f73401c972d3e77115a12f"
               }
 }

@@ -123,7 +123,17 @@ function Read-MsiTables([string]$Path) {
         foreach ($q in @(
                 @{ sql = 'SELECT FileName, Version FROM File'; into = $files; long = $true },
                 @{ sql = 'SELECT Property, Value FROM Property'; into = $props; long = $false },
-                @{ sql = "SELECT Name, Value FROM Registry WHERE Root=1 AND ``Key``='Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]'"; into = $arp; long = $false })) {
+                @{ sql = "SELECT Name, Value FROM Registry WHERE Root=1 AND ``Key``='Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]'"; into = $arp; long = $false; optional = $true })) {
+            # A package with no Registry table has no entry of its own - an
+            # empty answer the checks below report, not an unreadable package.
+            if ($q.ContainsKey('optional')) {
+                $t = $db.OpenView("SELECT ``Name`` FROM ``_Tables`` WHERE ``Name``='Registry'")
+                [void]$t.Execute()
+                $has = $null -ne $t.Fetch()
+                [void]$t.Close()
+                [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($t)
+                if (-not $has) { continue }
+            }
             $view = $db.OpenView($q.sql)
             try {
                 [void]$view.Execute()
