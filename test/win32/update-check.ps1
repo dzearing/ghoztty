@@ -47,6 +47,9 @@
 #  14. the badge's colour ESCALATES on a window nobody touches (T1674): a
 #      suppressed re-check repaints, so crossing the two-day line mid-run turns
 #      the dot amber with no input at all
+#  15. "Later" DEFERS, it does not dismiss (T1232): a real click on the offer
+#      dialog's Later leaves the menu dot, the "Install Update" row and the
+#      on-disk offer in place, and the next launch still shows it waiting
 param([string]$ExePath)
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -494,6 +497,95 @@ $amberAt = $log14.IndexOf('update badge painted stale for win-v9.9.9')
 Assert ($refreshAt -ge 0) 'idle: a suppressed re-check past the line refreshed the badge at the new rung'
 Assert ($amberAt -gt $refreshAt -and $refreshAt -ge 0) 'idle: and the amber dot was PAINTED after that refresh, with nobody touching the window'
 Assert (([regex]::Matches($log14, 'showing update balloon for win-v9\.9\.9')).Count -le 1) 'idle: the refresh repainted without re-announcing the offer'
+Remove-Item $offerPath -ErrorAction SilentlyContinue
+
+# -- 15. "Later" is a deferral, not a dismissal (T1232) --------------------
+# The offer dialog's Later button is the decline a user actually makes. If it
+# put the offer away, the menu dot and its "Install Update" row would go with
+# it, and somebody who said "not now" - or who never saw the balloon and only
+# met the dialog through Check for Updates - would be back to needing a
+# command name to find the update again. So: answer the dialog with a real
+# click on Later, and the offer must still be up, still on disk, and still
+# there at the next launch.
+#
+# The oracle is the app's own read-back of the state the dot, the menu row and
+# the palette all read (`pendingUpdate()`), logged at the moment Later is
+# taken: `affordance=up` or `affordance=gone`. Not a sentence that is true by
+# construction - a Later that cleared the offer prints `gone`.
+function Get-DialogButtons([IntPtr]$Dlg) {
+    return @(Get-TestChildWindows -Window $Dlg -Class 'Button' | ForEach-Object {
+        [pscustomobject]@{ Ctl = $_; Text = (Get-TestControlText -Control ([IntPtr]$_.Hwnd)) }
+    })
+}
+function Wait-ErrLog([string]$path, [string]$pattern, [int]$timeoutMs) {
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if (Test-Path $path) {
+            # Shared read: the app still holds its stderr open for writing, and
+            # ReadAllText's exclusive-read open fails against that.
+            $t = ''
+            try {
+                $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+                try { $t = (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+            } catch { $t = '' }
+            if ($t -match $pattern) { return $true }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $false
+}
+Remove-Item $offerPath -ErrorAction SilentlyContinue
+Kill-RepoInstances
+$errFile15 = Join-Path $env:TEMP 'ghoztty-t24-later.err.txt'
+Remove-Item $errFile15 -ErrorAction SilentlyContinue
+$env:GHOZTTY_UPDATE_URL = $manualUrl
+$env:GHOZTTY_UPDATE_MANUAL_MS = '4000'
+$log15 = ''
+$laterClicked = $false
+$dlg15 = [IntPtr]::Zero
+$laterBtn15 = $null
+$alive15 = $false
+try {
+    $app15 = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false') -StdErr $errFile15
+    $proc15 = $app15.Process
+    $dlg15 = Wait-TestWindow -ProcessId $proc15.Id -Class 'GhozttyConfirmDialog' -TimeoutMs 20000
+    if ($dlg15 -ne [IntPtr]::Zero) {
+        $buttons15 = Get-DialogButtons $dlg15
+        Write-Host "  buttons: $(($buttons15 | ForEach-Object { $_.Text }) -join ' | ')"
+        $laterBtn15 = $buttons15 | Where-Object { $_.Text -eq 'Later' } | Select-Object -First 1
+        if ($laterBtn15) {
+            $h15 = [IntPtr]$laterBtn15.Ctl.Hwnd
+            $r15 = Get-TestWindowRect -Window $h15
+            Send-TestMouse -Window $dlg15 -Target $h15 `
+                -X ([int](($r15.Left + $r15.Right) / 2)) -Y ([int](($r15.Top + $r15.Bottom) / 2)) `
+                -Button left -Action click | Out-Null
+            $laterClicked = Wait-ErrLog $errFile15 'user deferred win-v9\.9\.9' 10000
+        }
+    }
+    Start-Sleep -Milliseconds 800
+    $alive15 = -not $proc15.HasExited
+    Stop-Process -Id $proc15.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+} finally {
+    Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:GHOZTTY_UPDATE_MANUAL_MS -ErrorAction SilentlyContinue
+}
+if (Test-Path $errFile15) { $log15 = [IO.File]::ReadAllText($errFile15) }
+
+Assert ($dlg15 -ne [IntPtr]::Zero) 'later: the offer dialog came up (positive control for the scripted check)'
+Assert ($null -ne $laterBtn15) 'later: the offer dialog has a "Later" button'
+Assert $alive15 'later: the app is still running after Later'
+Assert $laterClicked 'later: the click reached the app as a deferral'
+Assert ($log15 -match 'user deferred win-v9\.9\.9; affordance=up') 'later: after Later the dot and the "Install Update" row are still up'
+Assert ($log15 -notmatch 'user dismissed the offer') 'later: Later did not take the dismiss path'
+Assert (Test-Path $offerPath) 'later: the offer is still on disk after Later'
+# ...and someone who declined it yesterday still finds it today, with no
+# balloon and no check: a fresh launch with no feed restores it.
+$log15b = Run-Scenario 'later-restore' ''
+Assert ($log15b -match 'restored pending update offer win-v9\.9\.9') 'later: the next launch still shows the declined update waiting'
+# Negative control (T1133): the run that left the dialog unanswered (scenario
+# 7) never logs a deferral, so the assertion above is about the click.
+Assert ($log7 -notmatch 'user deferred') 'later (negative control): no deferral is logged when nobody answers'
 Remove-Item $offerPath -ErrorAction SilentlyContinue
 
 

@@ -10468,7 +10468,30 @@ fn showManualUpdateOffer(self: *App, found: *UpdateFound) void {
         .info,
         std.unicode.utf8ToUtf16LeStringLiteral("Open Download Page"),
         std.unicode.utf8ToUtf16LeStringLiteral("Later"),
-    ) == .ok) self.openUpdateReleasePage();
+    ) == .ok) self.openUpdateReleasePage() else self.noteUpdateDeferred();
+}
+
+/// The user answered an update offer with "Later" (T1232). That is a deferral,
+/// not a dismissal: it must leave the menu dot, the "Install Update" row and
+/// the on-disk offer exactly as they were, so somebody who declines - or who
+/// never saw the balloon at all - can still find the update in the window
+/// without knowing a command name. Only "Cancel or Skip Update"
+/// (`dismissUpdate`) puts the offer away.
+///
+/// The line reports the affordance's ACTUAL state, read back through
+/// `pendingUpdate()` - the one function the dot, the menu row and the palette
+/// all read - so a regression that clears it on Later shows up as
+/// `affordance=gone` rather than as a sentence that is true by construction.
+fn noteUpdateDeferred(self: *App) void {
+    if (self.pendingUpdate()) |pending| {
+        log.info("update: user deferred win-v{s}; affordance=up (urgency={t})", .{
+            pending.version, pending.urgency,
+        });
+    } else {
+        log.info("update: user deferred win-v{s}; affordance=gone", .{
+            self.update_latest_ver orelse "?",
+        });
+    }
 }
 
 /// Show manual-check feedback: code 0 = up to date, 2 = a download the user
@@ -10648,7 +10671,7 @@ pub fn offerUpdate(self: *App) bool {
         },
     );
     if (result != .ok) {
-        log.info("update: user deferred win-v{s}", .{ver});
+        self.noteUpdateDeferred();
         return true;
     }
 
