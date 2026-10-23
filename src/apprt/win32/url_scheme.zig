@@ -61,7 +61,7 @@ const internal_os = @import("../../os/main.zig");
 const App = @import("App.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
-const source_checkout = @import("source_checkout.zig");
+const install_location = @import("install_location.zig");
 
 /// The shared grammar: `handles`, `parse`, and the failure wording.
 pub const grammar = apprt.ipc.url_scheme;
@@ -158,7 +158,7 @@ fn register(arena: std.mem.Allocator) !void {
     // acceptance script exercises this path without a release build in hand.
     if (mode != .force and (!build_config.is_debug or mode == .gate)) {
         const exe_dir = std.fs.path.dirname(exe) orelse exe;
-        if (inSourceCheckout(arena, exe_dir)) {
+        if (!install_location.selfHealAllowed(arena, .not_build_output, exe_dir)) {
             log.info(
                 "url scheme: {s}:// not registered from a source checkout ({s})",
                 .{ registeredScheme(), exe_dir },
@@ -223,11 +223,6 @@ fn envMode(arena: std.mem.Allocator) Mode {
     const v = std.process.getEnvVarOwned(arena, "GHOZTTY_URL_SCHEME") catch return .default;
     return parseMode(v);
 }
-
-/// Does this exe sit inside a source checkout? Shared with the agent autostart
-/// gate (T1146), which asks the identical question about the identical hazard —
-/// see `source_checkout.zig`.
-pub const inSourceCheckout = source_checkout.inSourceCheckout;
 
 fn createKey(arena: std.mem.Allocator, path: []const u8, out: *w32.HKEY) !void {
     const path_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, path);

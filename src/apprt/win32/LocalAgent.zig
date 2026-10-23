@@ -49,7 +49,7 @@ const agent_upgrade = @import("agent_upgrade.zig");
 const gui_pump = @import("gui_pump.zig");
 const job_object = @import("job_object.zig");
 const job_spawn = @import("job_spawn.zig");
-const source_checkout = @import("source_checkout.zig");
+const install_location = @import("install_location.zig");
 const w32 = @import("win32.zig");
 
 const log = std.log.scoped(.win32_local_agent);
@@ -905,7 +905,9 @@ extern "kernel32" fn QueryFullProcessImageNameW(
 ///    Windows start the agent that owns the user's live sessions out of a
 ///    scratch directory that development rebuilds and deletes — and unlike the
 ///    `ghoztty://` registration T1124 fixed, this entry survives a reboot. Same
-///    question, same answer: `source_checkout.inSourceCheckout`.
+///    question, same answer: the `.not_build_output` gate of
+///    `install_location.SelfHealGate` (T1213) — a Run value names one exe
+///    and the last launch wins, so a portable unpack may write it.
 ///
 /// `GHOZTTY_AGENT_AUTOSTART` spells the hatches: `0`/`off` disables entirely,
 /// `force` skips both gates, and `gate` skips only the build-mode gate — the
@@ -935,7 +937,7 @@ fn ensureAutostart(self: *LocalAgent) void {
             log.warn("agent autostart: exe path unreadable, not writing Run key err={}", .{err});
             return;
         };
-        if (source_checkout.inSourceCheckout(arena, exe_dir)) {
+        if (!install_location.selfHealAllowed(arena, .not_build_output, exe_dir)) {
             log.info(
                 "agent autostart: no Run key written from a source checkout ({s})",
                 .{exe_dir},

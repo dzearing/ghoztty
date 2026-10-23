@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-22T19:40:19-07:00",
+    "generated":  "2026-10-22T19:56:39-07:00",
     "commit":  "4f2a4268f",
     "uncommitted":  [
-                        "test/win32/soak.ps1"
+                        "test/win32/registration-sites.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -358,7 +358,7 @@
                   "test/win32/rearrange-tab-drop.ps1":  "80e105f9602c48519bc13fc86cbeef5db1ce492d81e9c200ba06ae3bd018f9fd",
                   "test/win32/rearrange-viewer.ps1":  "ee522f1930125af3207f34809aaf274f7d85e981e312a7cf575e1580d4c6a9ff",
                   "test/win32/rearrange-window-drop.ps1":  "233039d655e86f5b3db3e415a22b07989fcccb9461014124fe32c1e320665baa",
-                  "test/win32/registration-sites.ps1":  "097f3ad7cf63fca685beb9eda6d4d2037f74a48ef14d417c8d868451ed9d04e1",
+                  "test/win32/registration-sites.ps1":  "7d552e9a9a69f5b6ce2b9dd2e8e47dfc48741d09d53651553968324a7f269cc2",
                   "test/win32/relaunch-guard.ps1":  "57d4631599209336af68e48649fb30ad1da5246958c47a42a1604648586b9af9",
                   "test/win32/relay-account.ps1":  "e2c8ca01022c00c5abd022db7c96966cb8e421f928ede841aa98b1d2510043be",
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
@@ -408,7 +408,7 @@
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
                   "test/win32/single-instance-join.ps1":  "5b182fa1d110e5a2eb1cba34f90e80e4ff8dd811838b6d5c4c69de85c2f648f0",
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
-                  "test/win32/soak.ps1":  "3ec95046026d6c833eec88a31d442f7c381c4133708aa6f2fa6df09ba7122657",
+                  "test/win32/soak.ps1":  "9883f47e527d3abd86cd9e3fbd2ac818f73a0606f43218933745900f7f4b2316",
                   "test/win32/soak-daemon.ps1":  "266cee53040004b1a1c4189de4a94d25521563339cda9927632decdc1006b1ac",
                   "test/win32/split-dim.ps1":  "a863ae465cd6447b8b63ae38c057a0e5ec8c319d8d7c41be7058a7f10acdfa07",
                   "test/win32/split-dim-viewer.ps1":  "f45535282b14c9c829db5e3e8bf943252988f8488ccbcbf80ca57a7278f4ec6d",

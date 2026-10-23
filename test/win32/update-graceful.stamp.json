@@ -1,8 +1,8 @@
 {
     "guard":  "update-graceful",
     "script":  "test/win32/update-graceful.ps1",
-    "generated":  "2026-10-22T17:27:20-07:00",
-    "commit":  "d850eeb47",
+    "generated":  "2026-10-22T18:34:41-07:00",
+    "commit":  "bbfffbf77",
     "uncommitted":  [
 
                     ],

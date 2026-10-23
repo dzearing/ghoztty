@@ -19,6 +19,7 @@
 const std = @import("std");
 const w32 = @import("win32.zig");
 const path_env = @import("../../os/path_env.zig");
+const install_location = @import("install_location.zig");
 
 const log = std.log.scoped(.win32_path_installer);
 
@@ -51,15 +52,9 @@ fn ensureOnPath(arena: std.mem.Allocator) !void {
 
     const exe_dir = try std.fs.selfExeDirPathAlloc(arena);
 
-    if (!force) {
-        // Location gate: only the canonical install heals the PATH.
-        const local = std.process.getEnvVarOwned(arena, "LOCALAPPDATA") catch return;
-        const canonical = try std.fs.path.join(
-            arena,
-            &.{ local, "Programs", "Ghoztty" },
-        );
-        if (!path_env.eqlDir(exe_dir, canonical)) return;
-    }
+    // Location gate: only the installed release heals the PATH, because an
+    // append ACCUMULATES — the rule is `install_location.SelfHealGate` (T1213).
+    if (!force and !install_location.selfHealAllowed(arena, .installed_release, exe_dir)) return;
 
     var key: w32.HKEY = undefined;
     const subkey = std.unicode.utf8ToUtf16LeStringLiteral("Environment");

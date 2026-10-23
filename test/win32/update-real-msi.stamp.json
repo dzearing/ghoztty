@@ -1,8 +1,8 @@
 {
     "guard":  "update-real-msi",
     "script":  "test/win32/update-real-msi.ps1",
-    "generated":  "2026-10-22T17:25:01-07:00",
-    "commit":  "d850eeb47",
+    "generated":  "2026-10-22T18:33:50-07:00",
+    "commit":  "bbfffbf77",
     "uncommitted":  [
 
                     ],

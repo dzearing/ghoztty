@@ -32,7 +32,39 @@ already used that name.
 Several sites carry a **stricter** gate instead: they act only from the
 canonical install directory `%LOCALAPPDATA%\Programs\Ghoztty`
 (`install_location.isInstallDir`). That implies the checkout rule — build
-output is never the canonical install — so it satisfies this inventory.
+output is never the canonical install — so it satisfies this inventory. Which
+of the two a site uses is not a matter of taste; the next section is the rule.
+
+## Which gate a self-heal uses (T1213)
+
+The launch-time self-heals ask ONE function,
+`install_location.selfHealAllowed(arena, gate, exe_dir)`
+(`src/apprt/win32/install_location.zig`), and name the gate they want. Before
+T1213 each spelled its own check, and two of them meant "installed in the usual
+place" while the other two meant "at least not a scratch build" — with nothing
+written down, the next self-heal would have copied whichever neighbour its
+author read first.
+
+The deciding question is **who owns the thing being written**:
+
+| Gate | Use it when the write… | Who may write | Sites |
+|------|------------------------|---------------|-------|
+| `.not_build_output` | **names one exe and replaces what was there** — the last copy launched wins, and launching the copy you want puts it back | the installed release **and** a portable unpack; never build output | `url_scheme` (the `ghoztty://` handler), `LocalAgent` (the agent `Run` value) |
+| `.installed_release` | **accumulates, or is spent once** — a PATH append adds an entry nothing ever removes (and the earliest entry keeps winning, so a later copy would not even get the CLI); the first-run offer's answer is remembered for every copy, and the hooks it installs reach `ghoztty` through that PATH | the installed release only | `PathInstaller` (user PATH), `AgentIntegration` (first-run Claude offer) |
+
+`.not_build_output` is the Mac behavior: the Mac app re-points its
+`~/.local/bin/ghoztty` link at whichever bundle launched, refusing only a
+temporary location (a mounted DMG, an App Translocation path) and Debug builds.
+`.installed_release` is a Windows-only narrowing forced by the PATH mechanism,
+not a preference, and the portable copy the user runs pays for it: it never puts
+itself on PATH and never offers the Claude integration. **That is a parity gap,
+not a design** — T2169 makes the PATH entry a single owned value that the last
+launch re-points (the Mac shape), after which both sites move to
+`.not_build_output`.
+
+The agent's `adopt.zig` cannot import the win32 apprt and asks
+`source_checkout.inSourceCheckout` directly; that is the same answer as
+`.not_build_output`, and `install_location` computes that gate by calling it.
 
 Three launch-time self-heals spell their escape hatches the same way, on
 purpose: `off`/`0` disables, `force` skips every gate, `gate` skips only the
@@ -76,8 +108,11 @@ supposed to keep their own state.
 
 ## When you add a registration
 
-1. Ask the location question at the site, with `inSourceCheckout` — do not
-   invent a second mechanism.
+1. Ask the location question at the site with
+   `install_location.selfHealAllowed`, choosing the gate by the ownership rule
+   above — do not invent a second mechanism, and do not spell a path compare
+   or a checkout walk at the site. (The agent, which cannot reach the apprt,
+   uses `source_checkout.inSourceCheckout`.)
 2. Give it an env seam using the `off` / `force` / `gate` vocabulary, so the
    refusal can be demonstrated without a release build at the user's endpoints.
 3. Add a row above.

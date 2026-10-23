@@ -26,6 +26,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_config = @import("../../build_config.zig");
 const path_env = @import("../../os/path_env.zig");
+const source_checkout = @import("source_checkout.zig");
 
 /// The install directory's tail, under `%LOCALAPPDATA%`.
 pub const install_subdir = "Programs\\Ghoztty";
@@ -100,7 +101,120 @@ pub fn autoUpdateCheckEnabled(arena: std.mem.Allocator) bool {
     return isInstalledRelease(arena);
 }
 
+/// Which location a launch-time self-heal must be running from before it may
+/// write something that outlives the process (T1213).
+///
+/// The deciding question is who OWNS the thing being written, and the full
+/// rule — with the table of which site uses which — is "Which gate a self-heal
+/// uses" in `docs/design/windows-registration-sites.md`. In short:
+pub const SelfHealGate = enum {
+    /// The written value names exactly ONE exe and replaces whatever was there
+    /// — the `ghoztty://` handler command, the agent's `Run` value. The last
+    /// copy launched wins, and launching the copy you want puts it back, so
+    /// any real copy may write it: the installed release AND a portable
+    /// unpack. Only build output is refused (`source_checkout`, T1124/T1146).
+    /// This is the Mac behavior: its CLI link follows whichever non-temporary
+    /// bundle launched.
+    not_build_output,
+
+    /// The write ACCUMULATES or is SPENT ONCE — appending to the user PATH
+    /// (every copy would add an entry nothing ever removes, and the earliest
+    /// one keeps winning), and the first-run integration offer (its answer is
+    /// remembered for every copy, and the hooks it installs reach `ghoztty`
+    /// through that PATH). Only the installed release may do it, so a portable
+    /// unpack is refused today — see T2169 for making it first-class.
+    installed_release,
+};
+
+/// Whether a self-heal under `gate` may write from an exe in `exe_dir`, on a
+/// machine whose `%LOCALAPPDATA%` is `local_app_data`.
+///
+/// This is the ONE answer the launch-time self-heals ask (`url_scheme`,
+/// `LocalAgent`, `PathInstaller`, `AgentIntegration`), so a new one picks a
+/// gate by owner rather than by whichever neighbour its author read first.
+/// `exe_dir` is the caller's: `url_scheme` asks about the PRODUCT exe it will
+/// register, not the running one (T980). The agent's `adopt.zig` cannot
+/// import the apprt and asks `source_checkout` directly — the same answer as
+/// `.not_build_output`.
+pub fn selfHealAllowedIn(
+    arena: std.mem.Allocator,
+    gate: SelfHealGate,
+    exe_dir: []const u8,
+    local_app_data: []const u8,
+) bool {
+    return switch (gate) {
+        .not_build_output => !source_checkout.inSourceCheckout(arena, exe_dir),
+        .installed_release => isInstallDir(exe_dir, local_app_data),
+    };
+}
+
+/// Runtime form of `selfHealAllowedIn`: reads `%LOCALAPPDATA%` itself. An
+/// unreadable one fails CLOSED for `.installed_release` — every one of these
+/// writes outlives the process, so a location that cannot be checked is
+/// treated as one that is not allowed.
+pub fn selfHealAllowed(
+    arena: std.mem.Allocator,
+    gate: SelfHealGate,
+    exe_dir: []const u8,
+) bool {
+    const local = std.process.getEnvVarOwned(arena, "LOCALAPPDATA") catch "";
+    return selfHealAllowedIn(arena, gate, exe_dir, local);
+}
+
 const testing = std.testing;
+
+test "selfHealAllowedIn: the installed release passes both gates" {
+    // Under TEMP, not `testing.tmpDir` (inside this checkout, where every path
+    // has our `build.zig` as an ancestor) — the same reason as
+    // source_checkout's own test.
+    const alloc = testing.allocator;
+    const tmp = std.process.getEnvVarOwned(alloc, "TEMP") catch return error.SkipZigTest;
+    defer alloc.free(tmp);
+    const install = try std.fs.path.join(alloc, &.{ tmp, install_subdir });
+    defer alloc.free(install);
+
+    try testing.expect(selfHealAllowedIn(alloc, .installed_release, install, tmp));
+    try testing.expect(selfHealAllowedIn(alloc, .not_build_output, install, tmp));
+}
+
+test "selfHealAllowedIn: a portable unpack owns last-launch-wins writes only" {
+    const alloc = testing.allocator;
+    const tmp = std.process.getEnvVarOwned(alloc, "TEMP") catch return error.SkipZigTest;
+    defer alloc.free(tmp);
+    const portable = try std.fs.path.join(alloc, &.{ tmp, "Ghoztty-portable-x64", "Ghoztty" });
+    defer alloc.free(portable);
+
+    try testing.expect(selfHealAllowedIn(alloc, .not_build_output, portable, tmp));
+    try testing.expect(!selfHealAllowedIn(alloc, .installed_release, portable, tmp));
+}
+
+test "selfHealAllowedIn: build output passes neither gate" {
+    const alloc = testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const tmp = std.process.getEnvVarOwned(arena, "TEMP") catch return error.SkipZigTest;
+    const name = try std.fmt.allocPrint(arena, "ghoztty-t1213-{d}", .{std.time.nanoTimestamp()});
+    const repo = try std.fs.path.join(arena, &.{ tmp, name });
+    const bin = try std.fs.path.join(arena, &.{ repo, "zig-out", "bin" });
+    try std.fs.cwd().makePath(bin);
+    defer std.fs.deleteTreeAbsolute(repo) catch {};
+    const marker = try std.fs.path.join(arena, &.{ repo, "build.zig" });
+    (try std.fs.createFileAbsolute(marker, .{})).close();
+
+    try testing.expect(!selfHealAllowedIn(arena, .not_build_output, bin, tmp));
+    try testing.expect(!selfHealAllowedIn(arena, .installed_release, bin, tmp));
+}
+
+test "selfHealAllowedIn: an unreadable LOCALAPPDATA fails closed for the install gate" {
+    try testing.expect(!selfHealAllowedIn(
+        testing.allocator,
+        .installed_release,
+        "C:\\Users\\David\\AppData\\Local\\Programs\\Ghoztty",
+        "",
+    ));
+}
 
 test "isInstallDir: the installed release" {
     try testing.expect(isInstallDir(

@@ -185,17 +185,20 @@ function Holds($relPath, $pattern) {
     return (Select-String -Path $full -Pattern $pattern -SimpleMatch -Quiet)
 }
 
-Assert 'B1 url_scheme asks the location question' `
-    (Holds 'src\apprt\win32\url_scheme.zig' 'inSourceCheckout')
-Assert 'B2 the agent Run key asks the location question' `
-    (Holds 'src\apprt\win32\LocalAgent.zig' 'source_checkout.inSourceCheckout')
+# T1213: the four launch-time self-heals name their gate on the one shared
+# function, chosen by who owns the write (the doc's "Which gate a self-heal
+# uses"). Each site is pinned to the gate the rule gives it, so a site that
+# flips gate - or goes back to spelling its own check - goes red here.
+Assert 'B1 url_scheme asks the location question (.not_build_output)' `
+    (Holds 'src\apprt\win32\url_scheme.zig' 'selfHealAllowed(arena, .not_build_output')
+Assert 'B2 the agent Run key asks the location question (.not_build_output)' `
+    (Holds 'src\apprt\win32\LocalAgent.zig' 'selfHealAllowed(arena, .not_build_output')
 Assert 'B3 the MSI adoption asks the location question (T1151)' `
     (Holds 'src\remote\agent\adopt.zig' 'inSourceCheckout')
-Assert 'B4 the PATH self-heal acts only from the canonical install' `
-    ((Holds 'src\apprt\win32\PathInstaller.zig' 'Programs') -and
-     (Holds 'src\apprt\win32\PathInstaller.zig' 'LOCALAPPDATA'))
-Assert 'B5 the first-run agent integration acts only from the canonical install' `
-    ((Holds 'src\apprt\win32\AgentIntegration.zig' 'Programs') -and
+Assert 'B4 the PATH self-heal acts only from the canonical install (.installed_release)' `
+    (Holds 'src\apprt\win32\PathInstaller.zig' 'selfHealAllowed(arena, .installed_release')
+Assert 'B5 the first-run agent integration acts only from the canonical install (.installed_release)' `
+    ((Holds 'src\apprt\win32\AgentIntegration.zig' 'selfHealAllowed(arena, .installed_release') -and
      (Holds 'src\apprt\win32\AgentIntegration.zig' 'setupEnabled'))
 
 # The seams, spelled the same way at every site, are what let a gate be
@@ -219,6 +222,27 @@ Assert 'C2 the win32 spelling is a re-export, not a second copy' `
      -not (Holds 'src\apprt\win32\source_checkout.zig' 'pub fn inSourceCheckout'))
 Assert 'C3 os/main.zig exports it (so its unit tests run in the none lane)' `
     (Holds 'src\os\main.zig' 'source_checkout')
+
+# T1213: the self-heal gate maps each owner to exactly one predicate, and no
+# self-heal site keeps a private copy of either. A hand-rolled
+# `"Programs", "Ghoztty"` join or a direct checkout walk at a site is the
+# drift this task closed.
+$gateFile = 'src\apprt\win32\install_location.zig'
+Assert 'C4 the self-heal gate is defined once, with both owners' `
+    ((Holds $gateFile 'pub fn selfHealAllowed(') -and
+     (Holds $gateFile '.not_build_output => !source_checkout.inSourceCheckout(') -and
+     (Holds $gateFile '.installed_release => isInstallDir('))
+$selfHealSites = @(
+    'src\apprt\win32\url_scheme.zig',
+    'src\apprt\win32\LocalAgent.zig',
+    'src\apprt\win32\PathInstaller.zig',
+    'src\apprt\win32\AgentIntegration.zig'
+)
+$privateCopies = @($selfHealSites | Where-Object {
+        (Holds $_ '"Programs", "Ghoztty"') -or (Holds $_ 'inSourceCheckout(')
+    })
+Assert 'C5 no self-heal site spells its own location check' ($privateCopies.Count -eq 0) `
+    "(private copies in: $($privateCopies -join ', ') - call install_location.selfHealAllowed)"
 
 # ---------------------------------------------------------------------------
 # D. BEHAVIOR - the user's real registrations survive a launch untouched

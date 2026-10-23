@@ -20,10 +20,12 @@
 //! outcome. First-run and migration success stay SILENT (Mac parity);
 //! failures report once, actionably.
 //!
-//! First-run gating mirrors PathInstaller (T70): only the canonical install
+//! First-run gating is the `.installed_release` gate of
+//! `install_location.SelfHealGate` (T70, T1213): only the canonical install
 //! (%LOCALAPPDATA%\Programs\Ghoztty) prompts, so dev builds and portable
-//! unpacks never nag. Test hooks: GHOZTTY_CLAUDE_SETUP (`0`/`off` disables,
-//! `force` skips the location gate), GHOZTTY_AGENT_HOME (sandbox home for
+//! unpacks never nag (T2169 tracks the portable half). Test hooks:
+//! GHOZTTY_CLAUDE_SETUP (`0`/`off` disables, `force` skips the location
+//! gate), GHOZTTY_AGENT_HOME (sandbox home for
 //! the probe, the installs and the migration — when set, the probe consults
 //! ONLY that home so the box's real installs cannot leak in),
 //! GHOZTTY_CLAUDE_EXE (claude path override for the migration's uninstall),
@@ -41,6 +43,7 @@ const runtime_probe = @import("runtime_probe.zig");
 const RuntimeIntegration = @import("RuntimeIntegration.zig");
 const migration = @import("claude_plugin_migration.zig");
 const path_env = @import("../../os/path_env.zig");
+const install_location = @import("install_location.zig");
 
 const log = std.log.scoped(.win32_claude);
 
@@ -701,13 +704,10 @@ fn setupEnabled(arena: std.mem.Allocator) bool {
         if (std.ascii.eqlIgnoreCase(v, "force")) return true;
     }
 
+    // The offer is SPENT ONCE for every copy, so only the installed release
+    // makes it — the rule is `install_location.SelfHealGate` (T1213).
     const exe_dir = std.fs.selfExeDirPathAlloc(arena) catch return false;
-    const local = std.process.getEnvVarOwned(arena, "LOCALAPPDATA") catch return false;
-    const canonical = std.fs.path.join(
-        arena,
-        &.{ local, "Programs", "Ghoztty" },
-    ) catch return false;
-    return path_env.eqlDir(exe_dir, canonical);
+    return install_location.selfHealAllowed(arena, .installed_release, exe_dir);
 }
 
 fn statePath(arena: std.mem.Allocator, name: []const u8) ?[]const u8 {

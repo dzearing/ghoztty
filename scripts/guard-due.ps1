@@ -339,6 +339,7 @@ $GuardTable = @(
             'docs\design\windows-registration-sites.md',
             'src\os\source_checkout.zig',
             'src\apprt\win32\source_checkout.zig',
+            'src\apprt\win32\install_location.zig',
             'src\apprt\win32\url_scheme.zig',
             'src\apprt\win32\LocalAgent.zig',
             'src\apprt\win32\PathInstaller.zig',
