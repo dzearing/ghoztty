@@ -14,6 +14,16 @@
 //! A slide that starts while one is under way starts every card from where it
 //! is on screen, so a second click mid-slide never snaps anything back.
 //!
+//! A card that goes BEHIND the run slides too (T2186): from where it was on
+//! show to its tucked place at the stack's edge, at the size it is held at,
+//! and is hidden only when the slide ends - so a fold reads as the card
+//! tucking itself away, not as a pane vanishing. And a slide a drag started (a
+//! fold or an unfold under the hand) is a `resize` slide: the cards on show
+//! pass through every width between the old layout and the new one, the way
+//! the drag itself resizes them on every move, instead of holding their old
+//! size and snapping when the slide ends. While a drag is under way the
+//! slide's targets follow the hand (`Slide.retarget`).
+//!
 //! Pure, so the tests need no window: the curve, which cards slide, and where
 //! each one is at a given moment.
 
@@ -101,6 +111,8 @@ pub const Slide = struct {
     cards: [max_cards]Card = undefined,
     len: usize = 0,
     duration_ms: f64 = duration_ms,
+    /// A drag's slide: sizes move with positions (see `at`).
+    resize: bool = false,
 
     pub fn items(self: *const Slide) []const Card {
         return self.cards[0..self.len];
@@ -115,7 +127,7 @@ pub const Slide = struct {
     /// sliding (it sits at its slot). See `at` for the shape.
     pub fn rectAt(self: *const Slide, id: Id, elapsed_ms: f64) ?PxRect {
         const c = self.find(id) orelse return null;
-        return at(c, self.progress(elapsed_ms));
+        return at(c, self.progress(elapsed_ms), self.resize);
     }
 
     /// Linear progress, 0..1.
@@ -127,14 +139,35 @@ pub const Slide = struct {
     pub fn done(self: *const Slide, elapsed_ms: f64) bool {
         return elapsed_ms >= self.duration_ms;
     }
+
+    /// Point every sliding card at where the layout puts it NOW (T2186): a
+    /// drag goes on reshaping the row while the fold's slide runs, and the
+    /// cards head for the hand's layout rather than the one at the fold.
+    /// `now` holds each card's current placement (a tucked card's held rect).
+    pub fn retarget(self: *Slide, now: []const Placed) void {
+        for (self.cards[0..self.len]) |*c| {
+            for (now) |p| if (p.id == c.id) {
+                c.to = p.rect;
+                break;
+            };
+        }
+    }
 };
 
 /// Where `c` is at linear progress `t`. Its origin moves along the curve; its
 /// size is the size it slid FROM until the slide is over, and its slot's
 /// size only then - so a card that changes size resizes once, at the end.
-pub fn at(c: Card, t: f64) PxRect {
+/// With `resize` (a drag's slide, T2186) every edge moves along the curve, so
+/// the size passes through each width on the way.
+pub fn at(c: Card, t: f64, resize: bool) PxRect {
     if (t >= 1) return c.to;
     const e = ease(t);
+    if (resize) return .{
+        .left = lerp(c.from.left, c.to.left, e),
+        .top = lerp(c.from.top, c.to.top, e),
+        .right = lerp(c.from.right, c.to.right, e),
+        .bottom = lerp(c.from.bottom, c.to.bottom, e),
+    };
     const x = lerp(c.from.left, c.to.left, e);
     const y = lerp(c.from.top, c.to.top, e);
     return .{
@@ -169,21 +202,28 @@ pub fn runsChanged(before: []const Placed, after: []const Placed) bool {
 /// `elapsed_ms` in) when it has one, else its last placement - so a slide
 /// that interrupts another carries on from there. A card that comes forward
 /// from behind the run starts at its tucked card's rect, which lies under the
-/// run at its stack's edge. Cards that go behind the run do not slide: they
-/// are hidden at once and their strips take their place.
+/// run at its stack's edge. A card that goes behind the run (on show before,
+/// tucked after) slides to its tucked rect and is hidden when the slide ends
+/// (T2186); a card that stays tucked does not slide. `resize`: a drag's slide
+/// (see `at`).
 pub fn plan(
     before: []const Placed,
     after: []const Placed,
     current: ?*const Slide,
     elapsed_ms: f64,
     duration: f64,
+    resize: bool,
 ) Slide {
-    var out: Slide = .{ .duration_ms = duration };
+    var out: Slide = .{ .duration_ms = duration, .resize = resize };
     for (after) |a| {
-        if (a.tucked) continue;
+        const last: ?Placed = for (before) |b| {
+            if (b.id == a.id) break b;
+        } else null;
+        // Tucked now: it slides only if it was on show (it is going away).
+        if (a.tucked) if (last) |b| if (b.tucked) continue;
         const from = blk: {
             if (current) |cur| if (cur.rectAt(a.id, elapsed_ms)) |rect| break :blk rect;
-            for (before) |b| if (b.id == a.id) break :blk b.rect;
+            if (last) |b| break :blk b.rect;
             break :blk null;
         } orelse continue;
         if (std.meta.eql(from, a.rect)) continue;
@@ -234,12 +274,15 @@ test "plan: a strip click slides the cards on show to their new slots" {
         .{ .id = 4, .rect = r(430, 0, 400, 600), .tucked = false },
     };
     try testing.expect(runsChanged(&before, &after));
-    const s = plan(&before, &after, null, 0, duration_ms);
-    // Only the cards on show afterwards slide; the tucked ones are hidden.
-    try testing.expectEqual(@as(usize, 2), s.len);
-    try testing.expectEqual(@as(Id, 3), s.cards[0].id);
-    try testing.expectEqual(r(780, 0, 400, 600), s.cards[0].from);
-    try testing.expectEqual(@as(Id, 4), s.cards[1].id);
+    const s = plan(&before, &after, null, 0, duration_ms, false);
+    // The cards on show afterwards slide, and so does card 2, going behind
+    // the run (T2186); card 1 is already at its tucked place.
+    try testing.expectEqual(@as(usize, 3), s.len);
+    try testing.expectEqual(@as(Id, 2), s.cards[0].id);
+    try testing.expectEqual(r(20, 0, 400, 600), s.rectAt(2, duration_ms).?);
+    try testing.expectEqual(@as(Id, 3), s.cards[1].id);
+    try testing.expectEqual(r(780, 0, 400, 600), s.cards[1].from);
+    try testing.expectEqual(@as(Id, 4), s.cards[2].id);
     // Mid-slide each card is between its two places, at its own size: a
     // move, never a resize.
     const mid = s.rectAt(4, duration_ms / 2).?;
@@ -255,13 +298,13 @@ test "plan: a strip click slides the cards on show to their new slots" {
 
 test "plan: a card that changes size holds its old size until the end" {
     const c: Card = .{ .id = 1, .from = r(0, 0, 400, 600), .to = r(100, 0, 500, 600) };
-    const mid = at(c, 0.5);
+    const mid = at(c, 0.5, false);
     try testing.expectEqual(@as(i32, 400), mid.width());
     try testing.expect(mid.left > 0 and mid.left < 100);
-    const near_end = at(c, 0.999);
+    const near_end = at(c, 0.999, false);
     try testing.expectEqual(@as(i32, 400), near_end.width());
     // One size change in the whole slide, at its end.
-    try testing.expectEqual(r(100, 0, 500, 600), at(c, 1));
+    try testing.expectEqual(r(100, 0, 500, 600), at(c, 1, false));
 }
 
 test "plan: a slide mid-slide starts from where the cards are on screen" {
@@ -273,7 +316,7 @@ test "plan: a slide mid-slide starts from where the cards are on screen" {
         .{ .id = 1, .rect = r(5, 0, 400, 600), .tucked = true },
         .{ .id = 2, .rect = r(20, 0, 400, 600), .tucked = false },
     };
-    const first = plan(&before, &after, null, 0, duration_ms);
+    const first = plan(&before, &after, null, 0, duration_ms, false);
     const where = first.rectAt(2, 100).?;
     // Back again, 100 ms in: card 1 comes forward from its tucked rect, and
     // card 2 is tucked (no slide); but were card 2 to stay on show, it would
@@ -282,10 +325,12 @@ test "plan: a slide mid-slide starts from where the cards are on screen" {
         .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
         .{ .id = 2, .rect = r(400, 0, 400, 600), .tucked = false },
     };
-    const second = plan(&after, &again, &first, 100, duration_ms);
+    const second = plan(&after, &again, &first, 100, duration_ms, false);
     try testing.expectEqual(@as(usize, 2), second.len);
     try testing.expectEqual(where, second.rectAt(2, 0).?);
-    try testing.expectEqual(r(5, 0, 400, 600), second.rectAt(1, 0).?);
+    // Card 1 was sliding behind the run (T2186): it comes back from where
+    // that slide had it, not from its tucked place.
+    try testing.expectEqual(first.rectAt(1, 100).?, second.rectAt(1, 0).?);
 }
 
 test "runsChanged: a resize or a new pane alone is not a slide" {
@@ -325,8 +370,69 @@ test "plan: a held card comes forward at its held size and resizes at the end" {
         .{ .id = 1, .rect = r(0, 0, 450, 600), .tucked = true },
         .{ .id = 2, .rect = r(10, 0, 450, 600), .tucked = false },
     };
-    const s = plan(&before, &after, null, 0, duration_ms);
+    const s = plan(&before, &after, null, 0, duration_ms, false);
+    // Card 2 comes forward; card 1 goes behind the run but is already at its
+    // tucked place.
     try testing.expectEqual(@as(usize, 1), s.len);
     try testing.expectEqual(@as(i32, 375), s.rectAt(2, duration_ms / 2).?.width());
     try testing.expectEqual(r(10, 0, 450, 600), s.rectAt(2, duration_ms).?);
+}
+
+test "plan: a fold under a drag - the folding card tucks away, the others pass through every width" {
+    // P | s1 | s2, the root divider dragged right until s2 folds (T2186):
+    // P grows, s1 is pushed right and narrows, s2 tucks at the right edge.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 490, 600), .tucked = false },
+        .{ .id = 2, .rect = r(500, 0, 490, 600), .tucked = false },
+        .{ .id = 3, .rect = r(1000, 0, 490, 600), .tucked = false },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 1000, 600), .tucked = false },
+        .{ .id = 2, .rect = r(1010, 0, 470, 600), .tucked = false },
+        .{ .id = 3, .rect = r(1480, 0, 490, 600), .tucked = true },
+    };
+    try testing.expect(runsChanged(&before, &after));
+    const s = plan(&before, &after, null, 0, gesture_duration_ms, true);
+    try testing.expectEqual(@as(usize, 3), s.len);
+    // P widens through the slide - no 490 -> 1000 jump at its end.
+    var last_w: i32 = 490;
+    var steps: usize = 0;
+    var t: f64 = 16;
+    while (t < gesture_duration_ms) : (t += 16) {
+        const w = s.rectAt(1, t).?.width();
+        try testing.expect(w >= last_w and w <= 1000);
+        if (w != last_w) steps += 1;
+        last_w = w;
+    }
+    try testing.expect(steps >= 5);
+    // s2 slides to its tucked place at its own size, and is there at the end.
+    const mid = s.rectAt(3, gesture_duration_ms / 2).?;
+    try testing.expect(mid.left > 1000 and mid.left < 1480);
+    try testing.expectEqual(@as(i32, 490), mid.width());
+    try testing.expectEqual(r(1480, 0, 490, 600), s.rectAt(3, gesture_duration_ms).?);
+    // A click's slide (no resize) still holds sizes, as T2102 has it.
+    const click = plan(&before, &after, null, 0, duration_ms, false);
+    try testing.expectEqual(@as(i32, 490), click.rectAt(1, duration_ms / 2).?.width());
+}
+
+test "retarget: the slide heads for the hand's layout" {
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 490, 600), .tucked = false },
+        .{ .id = 2, .rect = r(500, 0, 490, 600), .tucked = false },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 980, 600), .tucked = false },
+        .{ .id = 2, .rect = r(980, 0, 490, 600), .tucked = true },
+    };
+    var s = plan(&before, &after, null, 0, gesture_duration_ms, true);
+    // The drag moves on: P's slot is a little wider now.
+    const moved = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 990, 600), .tucked = false },
+        .{ .id = 2, .rect = r(990, 0, 490, 600), .tucked = true },
+    };
+    s.retarget(&moved);
+    try testing.expectEqual(r(0, 0, 990, 600), s.rectAt(1, gesture_duration_ms).?);
+    try testing.expectEqual(r(990, 0, 490, 600), s.rectAt(2, gesture_duration_ms).?);
+    // A retarget never adds a card the slide does not carry.
+    try testing.expectEqual(@as(usize, 2), s.len);
 }

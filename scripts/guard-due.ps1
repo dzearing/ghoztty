@@ -645,6 +645,21 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # The collapse gesture's motion (T2186): a fold under a drag slides - the
+    # folding pane tucks away under the run, the others grow through every
+    # width - and the unfold slides back. The slide's numbers are
+    # `pane_stack_slide.zig`; the drag that starts it is `stack_drag.zig`.
+    [pscustomobject]@{
+        Name   = 'stack-fold-slide'
+        Script = 'test\win32\stack-fold-slide.ps1'
+        Stamp  = 'test\win32\stack-fold-slide.stamp.json'
+        Covers = @(
+            'test\win32\stack-fold-slide.ps1',
+            'src\apprt\win32\pane_stack_slide.zig',
+            'src\apprt\win32\stack_drag.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # A collapsed row carried across a tree change (T2083/T2119): a pane on
     # show closed, undone, or split leaves the strips as strips and the caret
     # on a pane on show. `CloseUndo.zig` saves the stack state with the tree.

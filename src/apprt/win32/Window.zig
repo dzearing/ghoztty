@@ -7885,12 +7885,15 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         if (pane_stash.isStashed(view)) continue;
         const id = pane_stack_grid.viewId(view);
         const p = grid.placement(id) orelse continue;
-        const shown = !p.is_tucked;
-        view.setVisible(shown);
         // Mid-slide a card is where the slide has it (T2102), at the size it
-        // slid from: a move, so its terminal is not resized until the end.
-        const rect = if (shown)
-            self.stackSlideRect(id) orelse p.rect
+        // slid from: a move, so its terminal is not resized until the end. A
+        // card going behind the run stays on show until its slide is over
+        // (T2186), and is hidden at its tucked place then.
+        const sliding = self.stackSlideRect(id);
+        const shown = !p.is_tucked or sliding != null;
+        view.setVisible(shown);
+        const rect = sliding orelse if (!p.is_tucked)
+            p.rect
         else if (view.stack_held) |s| pane_stack_slide.heldRect(p.rect, s) else p.rect;
         if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, winRect(rect), shown);
     }
@@ -7936,15 +7939,22 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
         if (App.clientAreaAnimationsEnabled()) {
             const elapsed = self.stackSlideElapsedMs();
             const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
-            const next = pane_stack_slide.plan(before, now[0..n], current, elapsed, self.stackSlideDurationMs());
+            // A drag's fold or unfold resizes on the way, as the drag does
+            // on every move (T2186).
+            const next = pane_stack_slide.plan(before, now[0..n], current, elapsed, self.stackSlideDurationMs(), self.stackGesturing());
             if (next.len > 0) {
                 self.stack_slide = next;
                 self.stack_slide_start = std.time.Instant.now() catch null;
                 if (self.stack_slide_start != null) {
+                    self.orderStackCards(tree, grid);
                     if (self.hwnd) |h| _ = w32.SetTimer(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS, null);
                 } else self.endStackSlide();
             } else self.endStackSlide();
         } else self.endStackSlide();
+    } else if (self.stack_slide) |*s| {
+        // The drag goes on under a slide: the cards head for where the hand
+        // has the layout now, not where it was at the fold (T2186).
+        s.retarget(now[0..n]);
     }
     @memcpy(self.stack_placed[0..n], now[0..n]);
     self.stack_placed_len = n;
@@ -7959,7 +7969,45 @@ fn stackSlideDurationMs(self: *Window) f64 {
     if (std.process.parseEnvVarInt("GHOZTTY_STACK_SLIDE_MS", u32, 10)) |ms| {
         return @floatFromInt(ms);
     } else |_| {}
-    return if (self.dragging_split) pane_stack_slide.gesture_duration_ms else pane_stack_slide.duration_ms;
+    return if (self.stackGesturing()) pane_stack_slide.gesture_duration_ms else pane_stack_slide.duration_ms;
+}
+
+/// A divider or stack-grip drag is reshaping the row (Mac
+/// `PaneStackState.isGesturing`).
+fn stackGesturing(self: *const Window) bool {
+    return self.dragging_split or self.grip_drag != null;
+}
+
+/// Stack the pane windows in the layout's paint order, bottom first (T2186,
+/// T2132; Mac `PaneStageView` orders its card views the same way), so a card
+/// sliding over or under its neighbour passes on the side the layout paints
+/// it: a card tucking away goes under the run, not across it. Only the panes
+/// are reordered among themselves - the topmost stays where it is and the
+/// rest go beneath it - so no other child window changes place.
+fn orderStackCards(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_grid.Grid) void {
+    _ = self;
+    var ids: [pane_stack_slide.max_cards]pane_stack_grid.Id = undefined;
+    var n: usize = 0;
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (n == ids.len) break;
+        if (pane_stash.isStashed(entry.view)) continue;
+        const id = pane_stack_grid.viewId(entry.view);
+        if (grid.placement(id) == null) continue;
+        ids[n] = id;
+        n += 1;
+    }
+    if (n < 2) return;
+    pane_stack_layout.paintOrder(ids[0..n], &grid.result);
+    var above: ?w32.HWND = null;
+    var i = n;
+    while (i > 0) {
+        i -= 1;
+        const view: *PaneView = @ptrFromInt(ids[i]);
+        const h = view.hwnd() orelse continue;
+        if (above) |a| _ = w32.SetWindowPos(h, a, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE | w32.SWP_NOOWNERZORDER);
+        above = h;
+    }
 }
 
 fn stackSlideElapsedMs(self: *Window) f64 {
