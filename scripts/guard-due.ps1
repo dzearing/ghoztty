@@ -2104,6 +2104,22 @@ $GuardTable = @(
             'test\win32\ipc-version.ps1'
         )
     },
+    # The stale-build notification itself (T1211): the timer's decision, its
+    # once-per-file dedupe, the About box's Restart/Later offer, and a restart
+    # that cannot be set up leaving the window alive. ipc-version.ps1 covers
+    # the sentence; this covers everything a user would actually be shown.
+    [pscustomobject]@{
+        Name   = 'stale-build-notify'
+        Script = 'test\win32\stale-build-notify.ps1'
+        Stamp  = 'test\win32\stale-build-notify.stamp.json'
+        Covers = @(
+            'src\apprt\win32\provenance.zig',
+            'src\apprt\win32\image_freshness.zig',
+            'src\apprt\win32\tray_notify.zig',
+            'src\apprt\win32\relaunch_guard.zig',
+            'test\win32\stale-build-notify.ps1'
+        )
+    },
     # The app never just stops (T1686). The exit ledger is the only witness a
     # vanished terminal leaves, and its failure modes are silent both ways: a
     # missing `exit` record makes every clean quit look like a disappearance,

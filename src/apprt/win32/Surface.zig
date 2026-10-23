@@ -3681,6 +3681,7 @@ pub fn showAboutDialog(self: *Surface) void {
                 .links = links,
             },
         );
+        log.info("about: newer build on disk, user chose {s}", .{if (r == .ok) "restart" else "later"});
         if (r == .ok) self.app.restartIntoInstalledBuild();
         return;
     }

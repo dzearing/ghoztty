@@ -434,6 +434,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = msiexec's real exit code."
         },
+        "GHOZTTY_STALE_BUILD_CHECK_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped stale-build cadence (15s first, then 60s). T1211."
+        },
         "GHOZTTY_UPDATE_RECHECK_MS": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

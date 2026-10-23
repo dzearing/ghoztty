@@ -1045,7 +1045,7 @@ pub fn init(
     // window most likely to be stale is one that has been open a long time
     // and the answer must not wait a full cadence to arrive.
     if (self.msg_hwnd) |mh| {
-        _ = w32.SetTimer(mh, STALE_BUILD_CHECK_TIMER_ID, STALE_BUILD_FIRST_MS, null);
+        _ = w32.SetTimer(mh, STALE_BUILD_CHECK_TIMER_ID, self.staleBuildCheckMs(STALE_BUILD_FIRST_MS), null);
     }
 
     // "Has a newer release been published?" (T1171). Repeating, so it needs no
@@ -9886,6 +9886,15 @@ pub fn startUpdateCheck(self: *App, trigger: UpdateTrigger) void {
 /// How long between automatic re-checks (T1171). Debug builds honor
 /// GHOZTTY_UPDATE_RECHECK_MS so the acceptance script can watch a second tick
 /// arrive; release builds always use `UPDATE_RECHECK_MS`.
+/// The stale-build check's cadence: `default_ms`, or GHOZTTY_STALE_BUILD_CHECK_MS
+/// for both the first fire and the repeat (Debug only, T1211). It exists for
+/// test\win32\stale-build-notify.ps1, which has to watch several ticks - the
+/// dedupe is a claim about the SECOND tick - and cannot wait a minute for each.
+fn staleBuildCheckMs(self: *App, default_ms: u32) u32 {
+    const v = orphanEnvMs(self.core_app.alloc, "GHOZTTY_STALE_BUILD_CHECK_MS", default_ms);
+    return @intCast(std.math.clamp(v, 500, std.math.maxInt(u32)));
+}
+
 fn updateRecheckIntervalMs(self: *App) u32 {
     const v = orphanEnvMs(
         self.core_app.alloc,
@@ -10875,6 +10884,7 @@ fn checkStaleBuild(self: *App) void {
     var arena_state = std.heap.ArenaAllocator.init(self.core_app.alloc);
     defer arena_state.deinit();
     const prov = provenance.collect(arena_state.allocator()) catch return;
+    log.debug("stale-build check: newer_build_installed={}", .{prov.newer_build_installed});
     if (!prov.newer_build_installed) return;
 
     // Remember the FILE's timestamp, not a bool: a second upgrade landing
@@ -10888,12 +10898,16 @@ fn checkStaleBuild(self: *App) void {
         "newer build installed on disk (running build started {s}, exe written {s})",
         .{ prov.started, prov.exe_modified },
     );
-    _ = self.showTrayBalloon(
+    const shown = self.showTrayBalloon(
         NOTIF_STALE_UID,
         NOTIF_STALE_TIMER_ID,
         "Ghoztty Was Updated",
         "This window is still running the older build.\nClick to restart into the new one.",
     );
+    // The outcome, not just the attempt (T1211): the shell may refuse the
+    // balloon, and this line is what a harness - or a person reading the log
+    // after "it never told me" - can see.
+    log.info("stale-build balloon: shown={}", .{shown});
 }
 
 /// The on-disk mtime of `exe` in nanoseconds, or 0 when it cannot be read.
@@ -10926,12 +10940,13 @@ fn staleBuildOnDiskNs(exe: []const u8) i128 {
 /// the exit instead.
 pub fn restartIntoInstalledBuild(self: *App) void {
     if (self.restartApp(.app)) return;
-    _ = self.showTrayBalloon(
+    const shown = self.showTrayBalloon(
         NOTIF_STALE_UID,
         NOTIF_STALE_TIMER_ID,
         "Ghoztty",
         "Could not restart automatically.\nQuit and reopen Ghoztty to use the new build.",
     );
+    log.warn("restart into the installed build failed; this window keeps running (balloon shown={})", .{shown});
 }
 
 /// The palette's and the File menu's "Restart Ghoztty" / "Restart Ghoztty and
@@ -13046,7 +13061,7 @@ fn msgWndProc(
     // Timer ID 12: "is a newer build on disk?" (T1205). Repeating; the launch
     // arm fires sooner, so the first tick re-arms at the full cadence.
     if (msg == w32.WM_TIMER and wparam == STALE_BUILD_CHECK_TIMER_ID) {
-        _ = w32.SetTimer(hwnd, STALE_BUILD_CHECK_TIMER_ID, STALE_BUILD_CHECK_MS, null);
+        _ = w32.SetTimer(hwnd, STALE_BUILD_CHECK_TIMER_ID, app.staleBuildCheckMs(STALE_BUILD_CHECK_MS), null);
         app.checkStaleBuild();
         return 0;
     }
