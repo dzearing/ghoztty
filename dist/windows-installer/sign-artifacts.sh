@@ -10,10 +10,10 @@
 # machine and it should just work.
 #
 # WHY IT IS A SCRIPT AND NOT SIX LINES OF YAML. The same rule
-# build-release-artifacts.sh follows: CI and the on-box publish path
-# (scripts/publish-windows-release.ps1) must not be able to drift. A signing
-# step that lives only in release-windows.yml is a step the manual path never
-# runs, which is how one channel ships signed bits and the other does not.
+# build-release-artifacts.sh follows: every caller that packages a release
+# must sign the same way. A signing step that lives only in release-windows.yml
+# is a step any other packager skips, which is how one channel ships signed
+# bits and the other does not.
 #
 # WHY THE ABSENT-CERTIFICATE PATH EXITS 0. The certificate itself is the
 # user's to obtain - it needs payment and identity validation, neither of

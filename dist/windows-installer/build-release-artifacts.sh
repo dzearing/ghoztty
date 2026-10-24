@@ -3,13 +3,13 @@
 # artifacts for one version (T38).
 #
 # This is the single definition of "what a Windows release ships", shared by
-# the two callers that ship it:
+# its callers:
 #
-#   * .github/workflows/release-windows.yml -- fires on the same vX.Y.Z tag
-#     push that builds the macOS DMG, so one release produces both
-#     platforms' artifacts at the same version.
-#   * scripts/publish-windows-release.ps1 -- the on-box manual path
-#     (cross-checks and publishes from the Windows machine).
+#   * .github/workflows/release-windows.yml -- fires on a vX.Y.Z or win-v*
+#     tag push, and is the ONLY thing that builds a release (T1328 retired
+#     the on-box path that packaged inside the msitools Docker image).
+#   * .github/workflows/fork-ci.yml -- compiles and packages the same thing
+#     on every push, so a release-time break is found before release time.
 #
 # Both end up with byte-identical artifact SETS because the layout, the
 # names, and the build flags live here and nowhere else.

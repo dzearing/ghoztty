@@ -1,13 +1,13 @@
 {
     "guard":  "verify-release-clean",
     "script":  "test/win32/verify-release-clean.ps1",
-    "generated":  "2026-10-17T23:43:48-07:00",
-    "commit":  "13544c3e0",
+    "generated":  "2026-10-24T14:13:45-07:00",
+    "commit":  "128d1afdf",
     "uncommitted":  [
                         "scripts/daily-publish.ps1"
                     ],
     "files":  {
-                  "scripts/daily-publish.ps1":  "44bdce30b404b4f8da2bb69527ae66f389d5aaa4b47e0c89f623bfefbbe78a2a",
+                  "scripts/daily-publish.ps1":  "fdd6c6920122fd7b3052cc45b98fb3e9587aa018b42fadce2fdbee92e9d17ccb",
                   "scripts/verify-release-clean.ps1":  "ee41494c52f72b6d60caf4ee8750f3fc760ab4330481a7a16c4b4f1d8830c39b",
                   "test/win32/verify-release-clean.ps1":  "756fee5cbd0b8a1ad8d3d01987658087b62efb6dd8327de4cb9aef10d5107dd3"
               }

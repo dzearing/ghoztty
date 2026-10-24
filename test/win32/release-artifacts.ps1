@@ -1,34 +1,35 @@
 ﻿# Every release ships Windows too, and ships BOTH Windows artifacts (T38).
 #
-# Before this, the Windows terminal was published by hand from this box
-# (scripts\publish-windows-release.ps1) and the macOS app was published by a
-# tag push. The two drifted exactly as far as you would expect: the Mac
+# Before this, the Windows terminal was published by hand from this box (an
+# on-box packaging script, retired in T1328) and the macOS app was published by
+# a tag push. The two drifted exactly as far as you would expect: the Mac
 # channel was at v1.28.0 and the Windows channel at win-v1.4.1 - 24 releases
 # where a Windows user saw nothing. So the artifacts are now built by
-# .github/workflows/release-windows.yml on the SAME tag push that builds the
-# DMG, from the same script the on-box path runs.
+# .github/workflows/release-windows.yml on a tag push, and that is the ONLY
+# place a release is built: the on-box publisher only pushes the tag.
 #
 # What this asserts, in the order the release actually happens:
 #
 #   A  pure/static: the tag trigger cannot diverge from release.yml, the tag
 #      the workflow publishes is the one the app's update check scans for,
-#      and the artifact NAMES agree across all three places that write them
-#      (workflow, shared script, on-box script). Plus: the on-box script
-#      PARSES - a UTF-8 em dash in a BOM-less .ps1 decodes to a cp1252 smart
-#      quote under PS 5.1 and closed a string, which made the whole publish
-#      script unparseable under `powershell -File` from the day it was
-#      written until T38. A parse gate is the only thing that catches that.
+#      and the artifact NAMES agree across the places that write them
+#      (workflow, shared script, build-msi.sh). A release has exactly ONE
+#      definition (T1328): nothing on this box packages one, and the on-box
+#      publisher - which only pushes the tag - PARSES: a UTF-8 em dash in a
+#      BOM-less .ps1 decodes to a cp1252 smart quote under PS 5.1 and closed a
+#      string, which made the old publish script unparseable under
+#      `powershell -File` until T38. A parse gate is the only thing that
+#      catches that.
 #   B  live packaging: the FILEVERSION rule has exactly one live definition
 #      (asked of build-msi.sh through Git Bash; the msitools-local image only
 #      under -RequireDocker or when there is no bash, T1329), and the portable
 #      ZIP really contains the MSI's payload under a single Ghoztty/ root, twin
 #      included (ZIP half - needs only bash + python3, so it runs here).
 #   C  the documented process points at the automated one.
-#   D  -Full only: the whole on-box publish, -DryRun, end to end. Off by
-#      default because it runs a multi-minute ReleaseFast build.
+#   (D, the on-box -DryRun publish end to end, went with that publish in T1328.)
 #
 # Read-only apart from zig-out artifact files and a temp dir; never launches
-# the app, never publishes anything (D stops at -DryRun).
+# the app, never publishes anything.
 #
 # isolation: none - no ghoztty binary is ever run here. The packaging sections
 # BUILD artifacts and read their bytes back (entry sets, PE headers), which
@@ -40,8 +41,7 @@ param(
     [string]$Repo = 'D:\git\ghoztty',
     # Docker not running is a SKIP by default (section B is the only part
     # that needs it); -RequireDocker turns those skips into failures.
-    [switch]$RequireDocker,
-    [switch]$Full
+    [switch]$RequireDocker
 )
 
 $ErrorActionPreference = 'Continue'
@@ -65,8 +65,11 @@ $macWf = Get-Content -LiteralPath (Join-Path $Repo '.github\workflows\release.ym
 $shared = Get-Content -LiteralPath (Join-Path $Repo 'dist\windows-installer\build-release-artifacts.sh') -Raw
 $zipSh = Get-Content -LiteralPath (Join-Path $Repo 'dist\windows-installer\build-portable-zip.sh') -Raw
 $msiSh = Get-Content -LiteralPath (Join-Path $Repo 'dist\windows-installer\build-msi.sh') -Raw
-$ps1Path = Join-Path $Repo 'scripts\publish-windows-release.ps1'
+# The on-box publisher. Since T1328 it is the ONLY one, and it builds nothing.
+$retiredPath = Join-Path $Repo 'scripts\publish-windows-release.ps1'
+$ps1Path = Join-Path $Repo 'scripts\publish-windows-tag.ps1'
 $ps1 = Get-Content -LiteralPath $ps1Path -Raw
+$ps1Code = ($ps1 -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
 
 # ============================================================================
 "== A: the release cannot ship one platform (pure)"
@@ -113,15 +116,33 @@ AssertEq "A5 update_check scans win-v" 'win-v' $prefix
 Assert "A6 the workflow publishes that prefix" ($wf -match ('TAG=' + [regex]::Escape($prefix) + '\$VERSION'))
 Assert "A7 published with --latest=false (Mac latest flow untouched)" ($wf -match '--latest=false')
 
-# A8-A11: the artifact names. Three writers, one convention: version + arch.
+# A8-A11: the artifact names. The writers that remain, one convention:
+# version + arch.
 Assert "A8 workflow names both artifacts"  (($wf -match 'Ghoztty-\$VERSION-x64\.msi') -and ($wf -match 'Ghoztty-portable-\$VERSION-x64\.zip'))
 Assert "A9 shared script names both"       (($shared -match 'Ghoztty-\$SEMVER-x64\.msi') -and ($shared -match 'Ghoztty-portable-\$SEMVER-x64\.zip'))
-Assert "A10 on-box script names both"      (($ps1 -match 'Ghoztty-\$Version-x64\.msi') -and ($ps1 -match 'Ghoztty-portable-\$Version-x64\.zip'))
 Assert "A11 build-msi.sh default matches"  ($msiSh -match 'Ghoztty-\$SEMVER-x64\.msi')
 
-# A12: one definition of the artifact set - both publishers call it.
+# A10, A12, A13: ONE definition of how a release is produced (T1328). There used
+# to be two - the workflow, and an on-box script that packaged inside the
+# msitools Docker image - and only the first ever ran, so the second could rot
+# silently. Now the retired script is absent, the workflow runs the shared
+# script, and no script on this box runs it (or Docker) to package a release.
+Assert "A10 the on-box packaging publisher is retired" (-not (Test-Path -LiteralPath $retiredPath))
 Assert "A12 workflow runs the shared script" ($wf -match 'build-release-artifacts\.sh')
-Assert "A13 on-box script runs the shared script" ($ps1 -match 'build-release-artifacts\.sh')
+$packagingRun = 'bash[^\r\n]*build-release-artifacts\.sh|build-release-artifacts\.sh[''"]?\s+--'
+# Positive control: the retired publisher's own call line is what A13 exists to
+# refuse, so the pattern has to match it, or a green A13 says nothing.
+Assert "A13a the pattern catches the retired publisher's packaging call" (
+    'Invoke-InImage bash dist/windows-installer/build-release-artifacts.sh --skip-build `' -match $packagingRun)
+$onBoxPackagers = @(Get-ChildItem -LiteralPath (Join-Path $Repo 'scripts') -Filter '*.ps1' -File | Where-Object {
+        $code = ((Get-Content -LiteralPath $_.FullName) | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        # An INVOCATION (bash ... or the script followed by its flags), not a
+        # mention: guard-due.ps1 lists the path as a file its rows cover.
+        $code -match $packagingRun
+    } | ForEach-Object { $_.Name })
+Assert "A13 no on-box script runs the release packaging (found: $($onBoxPackagers -join ', '))" ($onBoxPackagers.Count -eq 0)
+Assert "A13b the on-box publisher builds and packages nothing" (
+    ($ps1Code -notmatch '\bdocker\b') -and ($ps1Code -notmatch 'zig build') -and ($ps1Code -notmatch 'gh release (create|upload)'))
 
 # A14-A15: the agent sibling ships in BOTH layouts (T89h). The MSI has
 # enforced this since T89h; the ZIP is new and needs the same gate.
@@ -178,23 +199,22 @@ Assert "A15d MSI versions the console twin like its siblings" ($msiSh -match 'wa
 # A16-A17: the parse gate, and the trap that made it necessary.
 $errs = $null
 $null = [System.Management.Automation.PSParser]::Tokenize($ps1, [ref]$errs)
-Assert "A16 publish-windows-release.ps1 parses under PS 5.1" (-not $errs -or $errs.Count -eq 0)
+Assert "A16 publish-windows-tag.ps1 parses under PS 5.1" (-not $errs -or $errs.Count -eq 0)
 $nonAscii = @([regex]::Matches($ps1, '[^\x00-\x7F]'))
-Assert "A17 publish-windows-release.ps1 is ASCII (no BOM-less mojibake)" ($nonAscii.Count -eq 0)
+Assert "A17 publish-windows-tag.ps1 is ASCII (no BOM-less mojibake)" ($nonAscii.Count -eq 0)
 
 # A18: -First on a native pipeline tears the command down mid-stream (go.md).
 # Comment lines are stripped first - the script explains the trap in a
 # comment, and matching that would fail the file for documenting itself.
-$ps1Code = ($ps1 -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
 Assert "A18 no Select-Object -First on a native pipeline" ($ps1Code -notmatch 'Select-Object -First')
 
-# A19: the on-box script ASKS build-msi.sh for the yy.m.d.NN rule instead of
-# restating it (four private copies of a shared datum is how T257's rounding
-# bug survived four scripts). This is a regex over the script's own text and
-# needs no Docker; it lived inside section B's Docker branch until T898, which
-# meant a Docker-less run silently stopped covering publish-windows-release.ps1
-# while the guard row that watches it went on being stamped.
-Assert "A19 on-box script asks for the FILEVERSION rule instead of restating it" ($ps1 -match '--print-file-version')
+# A19: no script on this box restates the yy.m.d.NN FILEVERSION rule (four
+# private copies of a shared datum is how T257's rounding bug survived four
+# scripts). The retired on-box packager used to ASK build-msi.sh for it; with it
+# gone, build-msi.sh is the rule's only home and the on-box publisher must not
+# grow a copy.
+Assert "A19 the on-box publisher carries no FILEVERSION rule of its own" (
+    ($ps1Code -notmatch 'windows-file-version') -and ($ps1Code -notmatch 'print-file-version'))
 
 # A20-A22: what Apps & Features SHOWS is the marketing version, not the
 # yy.m.dNN sequencing number (T1205). The user installed Ghoztty-1.35.0-x64.msi
@@ -718,8 +738,9 @@ Assert "G1 the signing script exists" (Test-Path -LiteralPath $signShPath)
 $signSh = if (Test-Path -LiteralPath $signShPath) { Get-Content -LiteralPath $signShPath -Raw } else { '' }
 
 # It lives in the SHARED build script, not in the workflow: a signing step
-# only CI runs is a step scripts\publish-windows-release.ps1 never runs, and
-# then one channel ships signed bits and the other does not.
+# only one caller runs is a step another caller can skip, and then one channel
+# ships signed bits and the other does not (fork-ci and the release both reach
+# it through the shared script).
 Assert "G2 the shared build script signs the payload" `
     ($shared -match 'sign-artifacts\.sh')
 # Before the packages are cut. The MSI and the portable ZIP are built FROM
@@ -909,29 +930,6 @@ if (-not $bash) {
     Remove-Item -LiteralPath $signWork -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# ============================================================================
-if ($Full) {
-    "== D: the on-box publish, end to end (-DryRun)"
-    # ============================================================================
-    $log = Join-Path $env:TEMP "ghoztty-release-artifacts-$PID.log"
-    # Stringified into the log rather than `*> $log` (T883): D2-D6 below are
-    # text oracles, and a PowerShell file redirection formats the child's
-    # merged streams through the host on the way to disk - wrapped to the
-    # buffer width, or blank in a host that cannot format at all.
-    powershell -NoProfile -File (Join-Path $Repo 'scripts\publish-windows-release.ps1') `
-        -DryRun -BuildNum 99 2>&1 | ForEach-Object { $_.ToString() } |
-        Set-Content -LiteralPath $log -Encoding utf8
-    $code = $LASTEXITCODE
-    $text = Get-Content -LiteralPath $log -Raw
-    AssertEq "D1 dry-run publish exits 0" 0 $code
-    Assert "D2 version defaulted to the newest macOS tag" ($text -match '-Version defaulted to the newest macOS release tag')
-    Assert "D3 exe carries the release semver" ($text -match 'exe reports \d+\.\d+\.\d+\+')
-    Assert "D4 MSI produced" ($text -match 'artifact: .*Ghoztty-\d+\.\d+\.\d+-x64\.msi')
-    Assert "D5 portable ZIP produced" ($text -match 'artifact: .*Ghoztty-portable-\d+\.\d+\.\d+-x64\.zip')
-    Assert "D6 stopped before publishing" ($text -match 'DRY RUN: skipping gh release create')
-    Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
-}
-
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1
 # can answer "has this harness been run against the release wiring as it now
 # stands?". Red leaves both stamps alone: red stays due.
@@ -945,7 +943,7 @@ if ($Full) {
 #
 #   release-artifacts (wiring)     stamped by any run with zero FAILURES.
 #     Sections A, C, E and F prove the workflows, the shared artifact and
-#     msitools scripts, the on-box publish script and this harness end to end,
+#     msitools scripts, the on-box tag publisher and this harness end to end,
 #     and not one of them touches Docker. A skipped section B says nothing
 #     about them.
 #   release-artifacts-zip          stamped when section B actually BUILT a ZIP

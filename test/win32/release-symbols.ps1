@@ -120,8 +120,11 @@ try {
     $wf = Get-Content -Raw (Join-Path $repo '.github\workflows\release-windows.yml')
     Assert 'F4 release-windows.yml uploads it onto an existing release' ($wf -match 'gh release upload "\$TAG" "\$MSI" "\$ZIP" "\$SYMBOLS"')
     Assert 'F5 ... and attaches it to a new one' ($wf -match '"\$MSI" "\$ZIP" "\$SYMBOLS"\s*\r?\n\s*fi')
-    $pub = Get-Content -Raw (Join-Path $repo 'scripts\publish-windows-release.ps1')
-    Assert 'F6 the on-box -Local publish attaches it too' ($pub -match '@notesArgs \$msi \$zip \$symbols')
+    # F6: the release workflow is the ONLY publisher that attaches assets. The
+    # on-box -Local publish used to attach the symbols zip too; it was retired in
+    # T1328, so there is no second upload list left to fall out of step with F4/F5.
+    Assert 'F6 no on-box publisher is left to attach assets' `
+        (-not (Test-Path -LiteralPath (Join-Path $repo 'scripts\publish-windows-release.ps1')))
 
     if ($have) {
         Skip 'A-E' "no debug build to package (missing: $($have -join ', ')) - run zig build -Dapp-runtime=win32 -Doptimize=Debug"

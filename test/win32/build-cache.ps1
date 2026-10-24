@@ -457,8 +457,8 @@ Assert 'F18 and its disk pre-flight covers that directory too' ($lane -match '\$
 $fresh = Get-Content -LiteralPath (Join-Path $repo 'test\win32\lib\BuildFresh.ps1') -Raw
 Assert 'F19 the acceptance rebuild scratches there as well' ($fresh -match 'Push-BuildTempEnv')
 Assert 'F20 and restores what it replaced' ($fresh -match 'Pop-BuildTempEnv')
-$publish = Get-Content -LiteralPath (Join-Path $repo 'scripts\publish-windows-release.ps1') -Raw
-Assert 'F21 so does the release build' ($publish -match 'Push-BuildTempEnv')
+# F21 retired with the on-box release build (T1328): a release is built only by
+# CI now, on a runner whose %TEMP% is not this box's C:.
 $upgrade = Get-Content -LiteralPath (Join-Path $repo 'scripts\launch-upgrade.ps1') -Raw
 Assert 'F22 and the staging build the delivery makes' ($upgrade -match 'Push-BuildTempEnv')
 $databreak = Get-Content -LiteralPath (Join-Path $repo 'scripts\crash-databreak.ps1') -Raw

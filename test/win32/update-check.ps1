@@ -16,8 +16,8 @@
 #   3. feed win-v0.0.1 (older)        -> "up to date"
 #   4. no env override -> flavor-dependent (probed via `+version`'s
 #      "update check: on/off" line): dev builds must stay silent (gate);
-#      channel builds (-Dwindows-update-check, e.g. zig-out right after a
-#      publish-windows-release.ps1 run) must check the real channel.
+#      channel builds (-Dwindows-update-check, e.g. a published release's
+#      exe) must check the real channel.
 #   5. real GitHub channel            -> check completes against the live
 #      releases list (available or up-to-date, whichever matches HEAD's
 #      version vs the published win-v tag)

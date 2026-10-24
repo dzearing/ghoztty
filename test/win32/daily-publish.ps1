@@ -28,9 +28,10 @@
 #   C  the preconditions, each one named in the reason when it is missing.
 #   D  the watermark reader: this script's JSON, the older bare date, garbage.
 #   E  live -Check: decides out loud, stamps nothing, publishes nothing.
-#   F  live SKIP paths: Docker down no longer stops the default publish (the
-#      whole of T1292), and under -Local it is still a skip with the reason
-#      named, exit 0, watermark untouched, publish script never invoked.
+#   F  live SKIP paths: Docker down does not stop a publish (the whole of
+#      T1292), an unpushed HEAD is a skip with the reason named, exit 0,
+#      watermark untouched, publish script never invoked - and the retired
+#      on-box packaging path (-Local, T1328) cannot be reached at all.
 #   G  live -NoPublish: stamps the day and reports the tag it would publish.
 #   H  a real publish run stamps `tagged`, not `published`: CI has not built the
 #      tag yet, and claiming otherwise is what hid a three-day outage.
@@ -254,39 +255,25 @@ Assert 'B10 the chosen version is never one that already has a release' (
 
 # ---- C. preconditions ----------------------------------------------------
 #
-# The -Local arm is the pre-T1292 packaging path and keeps the old pair. The
-# default tag arm is the point of the task: Docker down must NOT be able to stop
-# a publish, because Docker is deliberately down on this box and asking for it
-# every evening is what shipped nothing for three days.
+# One precondition is left, and it is the one the loop arranges for itself: the
+# commit must be on the remote, because CI builds the tag. Docker and gh were
+# preconditions of the on-box packaging path, retired in T1328 - and asking for
+# Docker every evening on a box where it is deliberately down is what shipped
+# nothing for three days (T1292). C6 is the receipt that they cannot come back
+# as a parameter somebody passes by habit.
 "== C. preconditions =="
-$c1 = Test-PublishPreconditions -DockerUp $true -GhAuthenticated $true -HeadPushed $true -Mode 'local'
-Assert 'C1 everything present is a go' $c1.Ok
+$c1 = Test-PublishPreconditions -HeadPushed $true
+Assert 'C1 a pushed HEAD is a go' $c1.Ok
 AssertEq 'C1 with no reason to name' '' $c1.Reason
 
-$c2 = Test-PublishPreconditions -DockerUp $false -GhAuthenticated $true -HeadPushed $true -Mode 'local'
-Assert 'C2 Docker down blocks the LOCAL packaging publish' (-not $c2.Ok)
-AssertMatch 'C2 and is named' 'Docker' $c2.Reason
-
-$c3 = Test-PublishPreconditions -DockerUp $true -GhAuthenticated $false -HeadPushed $true -Mode 'local'
-Assert 'C3 an unauthenticated gh blocks the local publish' (-not $c3.Ok)
-AssertMatch 'C3 and is named' 'gh' $c3.Reason
-
-$c4 = Test-PublishPreconditions -DockerUp $true -GhAuthenticated $true -HeadPushed $false -Mode 'local'
+$c4 = Test-PublishPreconditions -HeadPushed $false
 Assert 'C4 an unpushed HEAD blocks the publish' (-not $c4.Ok)
 AssertMatch 'C4 and is named' 'remote branch' $c4.Reason
 
-$c5 = Test-PublishPreconditions -DockerUp $false -GhAuthenticated $false -HeadPushed $false -Mode 'local'
-Assert 'C5 every missing precondition is named, not just the first' (
-    $c5.Reason -match 'Docker' -and $c5.Reason -match 'gh' -and $c5.Reason -match 'remote branch'
+$c6Params = @((Get-Command Test-PublishPreconditions).Parameters.Keys)
+Assert 'C6 Docker and gh are not preconditions at all any more (T1292/T1328)' (
+    ($c6Params -notcontains 'DockerUp') -and ($c6Params -notcontains 'GhAuthenticated') -and ($c6Params -notcontains 'Mode')
 )
-
-$c6 = Test-PublishPreconditions -DockerUp $false -GhAuthenticated $false -HeadPushed $true
-Assert 'C6 in the default tag mode a down Docker cannot stop the publish (T1292)' $c6.Ok
-AssertEq 'C6 and nothing is named as missing' '' $c6.Reason
-
-$c7 = Test-PublishPreconditions -DockerUp $true -GhAuthenticated $true -HeadPushed $false
-Assert 'C7 tag mode still refuses a commit the remote does not have' (-not $c7.Ok)
-AssertMatch 'C7 and says which' 'remote branch' $c7.Reason
 
 # ---- D. the watermark reader --------------------------------------------
 "== D. watermark reader =="
@@ -471,16 +458,20 @@ try {
     Assert 'F0 and nothing in the log calls Docker a reason to skip' ($f0.Text -notmatch 'SKIP.*Docker')
     Remove-Item -LiteralPath $watermark -Force -ErrorAction SilentlyContinue
 
-    $f1 = Invoke-Decider -Extra @('-Local') -DockerCode 1 -GhCode 0
-    AssertEq 'F1 under -Local, Docker down is a skip, not a failure' 0 $f1.Exit
-    AssertMatch 'F1 with Docker named in the log' 'SKIP.*Docker' $f1.Text
+    $f1 = Invoke-Decider -Extra @('-AssumeUnpushed') -DockerCode 0 -GhCode 0
+    AssertEq 'F1 an unpushed HEAD is a skip, not a failure' 0 $f1.Exit
+    AssertMatch 'F1 with the reason named in the log' 'SKIP.*remote branch' $f1.Text
     Assert 'F1 and the watermark untouched, so a later push can publish' (-not (Test-Path -LiteralPath $watermark))
     Assert 'F1 and nothing published' (-not (Test-Path -LiteralPath $ranMarker))
 
-    $f2 = Invoke-Decider -Extra @('-Local') -DockerCode 0 -GhCode 1
-    AssertEq 'F2 under -Local, an unauthenticated gh is a skip, not a failure' 0 $f2.Exit
-    AssertMatch 'F2 with gh named in the log' 'SKIP.*gh' $f2.Text
+    # T1328: the on-box packaging path is gone, not merely defaulted away from.
+    # A habit-typed -Local must fail to bind rather than quietly tag a release.
+    $f2 = Invoke-Decider -Extra @('-Local') -DockerCode 0 -GhCode 0
+    Assert 'F2 -Local is no longer a parameter: the call is refused' ($f2.Exit -ne 0 -and $f2.Exit -ne 10)
     Assert 'F2 and the watermark untouched' (-not (Test-Path -LiteralPath $watermark))
+    Assert 'F2 and nothing published' (-not (Test-Path -LiteralPath $ranMarker))
+    Assert 'F2 and the retired publisher is not in the tree to be reached by hand' (
+        -not (Test-Path -LiteralPath (Join-Path $Repo 'scripts\publish-windows-release.ps1')))
 
     "== G. live -NoPublish =="
     $g = Invoke-Decider -Extra @('-NoPublish') -DockerCode 0 -GhCode 0
@@ -696,7 +687,7 @@ try {
     # A request the threshold filed that hit a SKIP is left standing, exactly
     # like a hand-filed one, so the next push still ships it.
     Set-PublishedAt 'HEAD~3'
-    $q4 = Invoke-Decider -Extra @('-StrandedThreshold', '3', '-Local') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
+    $q4 = Invoke-Decider -Extra @('-StrandedThreshold', '3', '-AssumeUnpushed') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
     AssertEq 'Q4 a threshold publish that cannot run is a skip' 0 $q4.Exit
     Assert 'Q4 and the request survives for the next push' (Test-Path -LiteralPath $requestFile)
     Assert 'Q4 and nothing was published' (-not (Test-Path -LiteralPath $ranMarker))

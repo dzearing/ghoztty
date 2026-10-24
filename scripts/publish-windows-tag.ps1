@@ -1,8 +1,8 @@
 # publish-windows-tag.ps1 -- publish a Windows release by pushing its tag (T1292).
 #
-# THE PROBLEM THIS EXISTS FOR. The other publish path,
-# scripts\publish-windows-release.ps1, builds the MSI on this box with wixl
-# inside the msitools Docker image. wixl does not run on Windows, so that path
+# THE PROBLEM THIS EXISTS FOR. The old publish path (an on-box script that
+# built the MSI on this box with wixl inside the msitools Docker image; retired
+# in T1328, so this is now the ONLY publisher). wixl does not run on Windows, so that path
 # needs Docker Desktop -- and Docker Desktop is deliberately kept DOWN on this
 # machine (its WSL2 backend once took 28 GB and buried the box), which is why
 # every script here says starting it is the user's call. The daily publish was
@@ -27,9 +27,9 @@
 #   scripts\publish-windows-tag.ps1 -Version 1.36.2
 #   scripts\publish-windows-tag.ps1 -Version 1.36.2 -DryRun   # everything but the push
 #
-# It is interface-compatible with publish-windows-release.ps1 for the arguments
-# daily-publish.ps1 passes (-Version, -DryRun), so the two are interchangeable
-# behind that script's -PublishScript seam.
+# It takes the arguments daily-publish.ps1 passes (-Version, -DryRun); that
+# script's -PublishScript seam exists for its acceptance test's stand-in, not for
+# a second way to produce a release (T1328).
 #
 # ORIGIN, ALWAYS, BY NAME. This repo has `upstream` (ghostty-org/ghostty) as a
 # remote and this branch's work is never offered to it (CLAUDE.md, D80). A bare
@@ -77,7 +77,7 @@ $short = (git rev-parse --short HEAD).Trim()
 
 # The tag must point at a commit the remote already has: CI checks the tag out
 # and builds it, and a tag on a local-only commit is a release of code nobody
-# else can see. This is the same rule publish-windows-release.ps1 enforces.
+# else can see.
 $remoteHas = @(git branch -r --contains HEAD 2>$null)
 if (-not $remoteHas.Count) {
     Fail "HEAD ($short) is not on any remote branch -- push the branch first; a release tag must point at a pushed commit"

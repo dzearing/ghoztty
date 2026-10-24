@@ -3,8 +3,8 @@
 # T1218 / decision D85 (2026-08-31): what this launches is a DEV delivery now.
 # The user's installed Ghoztty is no longer swapped by anything in this repo -
 # only the in-app updater replaces it, and only with a published release. To get
-# today's work to the user, publish it (scripts\publish-windows-release.ps1);
-# this path exists for a dev install the loop owns.
+# today's work to the user, publish it (scripts\daily-publish.ps1, which pushes the
+# release tag for CI to build); this path exists for a dev install the loop owns.
 #
 # The delivery at a task boundary is fire-and-forget by necessity: nothing in
 # the Claude session's process tree can swap the exe out from under its own GUI,

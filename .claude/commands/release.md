@@ -106,7 +106,7 @@ A GitHub workflow runs from the tree of the ref that triggered it, and `main` ha
 
 Either trigger publishes `Ghoztty-X.Y.Z-x64.msi` + `Ghoztty-portable-X.Y.Z-x64.zip` to a `win-vX.Y.Z` release (`--latest=false`, so the Mac latest/Sparkle flow is untouched). The separate release tag is a contract with shipped binaries: installed Windows builds find updates by scanning the releases list for the newest `win-v` tag (`src/apprt/win32/update_check.zig`).
 
-They are separate workflows so a Windows failure cannot interrupt the signing/notarization pipeline. Both artifacts are defined by `dist/windows-installer/build-release-artifacts.sh`, which the on-box path (`scripts/publish-windows-release.ps1`) runs too, so a hand publish and CI cannot drift.
+They are separate workflows so a Windows failure cannot interrupt the signing/notarization pipeline. Both artifacts are defined by `dist/windows-installer/build-release-artifacts.sh`, and the workflow is the only thing that runs it to build a release: there is no on-box packaging path (retired in T1328), so a hand publish and CI cannot drift.
 
 **The release does not prove the Windows build — it expects to find it already green** (T578). `fork-ci.yml`'s `windows-cross` job runs that same `build-release-artifacts.sh` (exe + MSI + portable ZIP, msitools from the shared `dist/windows-installer/install-msitools.sh`) on every push to `users/dzearing/windows-amd64`, so a broken cross-compile is red on the commit that broke it. Before tagging, glance at the branch's latest Fork CI run (`gh run list --repo dzearing/ghoztty --branch users/dzearing/windows-amd64 --workflow "Fork CI" --limit 1`); a red `windows-cross` there means the release tag would fail the same way, and the fix belongs on the commit, not in the release.
 
@@ -145,7 +145,7 @@ gh run list --repo dzearing/ghoztty --branch win-vX.Y.Z --limit 5
 
 The Windows run is listed by its **tag**, not by `--workflow release-windows.yml`: that flag resolves a workflow by filename against the **default branch**, and this one is not on main yet, so it answers `HTTP 404: workflow release-windows.yml not found on the default branch` even while a run of it is in progress. That 404 is not evidence of a missing run — check the tag.
 
-Monitor them until completion. If one fails, check logs with `gh run view <id> --repo dzearing/ghoztty --log-failed` and fix the issue. They are independent: a Windows failure leaves the DMG release valid, and re-running the Windows half means moving the tag (`git tag -f win-vX.Y.Z <fixed-sha> && git push -f origin win-vX.Y.Z`) — `gh workflow run` needs the workflow on the default branch, so it is unavailable for the same reason the `--workflow` lookup is. The on-box fallback, from a Windows machine at the tagged commit, is `scripts\publish-windows-release.ps1` (it defaults `-Version` to the newest `vX.Y.Z` tag).
+Monitor them until completion. If one fails, check logs with `gh run view <id> --repo dzearing/ghoztty --log-failed` and fix the issue. They are independent: a Windows failure leaves the DMG release valid, and re-running the Windows half means moving the tag (`git tag -f win-vX.Y.Z <fixed-sha> && git push -f origin win-vX.Y.Z`) — `gh workflow run` needs the workflow on the default branch, so it is unavailable for the same reason the `--workflow` lookup is. There is no on-box packaging fallback (T1328): a Windows release is only ever built by this workflow, so a red run is fixed and the tag moved, never side-stepped by packaging locally.
 
 ### Step 6: Publish Release
 

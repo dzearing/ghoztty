@@ -359,7 +359,6 @@ try {
     Set-RelFile 'dist\windows-installer\install-msitools.sh'     "# fake msitools install v1`n"
     Set-RelFile 'dist\windows-installer\build-msi.sh'            "# fake msi builder v1`n"
     Set-RelFile 'dist\windows-installer\build-portable-zip.sh'   "# fake zip builder v1`n"
-    Set-RelFile 'scripts\publish-windows-release.ps1'            "# fake on-box publish v1`n"
     Set-RelFile 'test\win32\release-artifacts.ps1'               "# fake harness v1`n"
 
     Invoke-Due update -Guard 'release-artifacts' -AtRepo $RelFixture | Out-Null

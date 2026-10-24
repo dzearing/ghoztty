@@ -940,8 +940,9 @@ Concretely, in order, with no stops in between:
      this it ran `publish-windows-release.ps1`, which packages with wixl inside
      the msitools **Docker** image - a precondition this box is forbidden to
      satisfy, so the publish asked for it every evening, logged a polite SKIP and
-     shipped nothing for three days while nineteen tasks closed. `-Local`
-     reinstates the packaging path for a box that wants it.
+     shipped nothing for three days while nineteen tasks closed. That script and
+     its `-Local` switch are gone since T1328: the CI tag build is the only
+     definition of a release, so there is no second one to drift.
 
      **The daily cadence is the FLOOR, not the ceiling** (T1294). One publish per
      day strands everything that lands after it: on 2026-09-03 the release went
@@ -1004,10 +1005,9 @@ Concretely, in order, with no stops in between:
      never squats on a Mac minor that has not shipped, and the version is
      derived from the releases that EXIST, so it cannot collide with one.
 
-     **A publish that cannot run is a SKIP, never a failure.** In the default
-     tag mode that is one condition - HEAD must already be on the remote, which
-     the commit guard sees to; under `-Local` it is the old pair, Docker Desktop
-     up and `gh` authenticated. The reason is named in the log, the watermark is
+     **A publish that cannot run is a SKIP, never a failure.** That is one
+     condition - HEAD must already be on the remote, which the commit guard sees
+     to. The reason is named in the log, the watermark is
      NOT consumed - so a later push the same day still publishes - and the turn
      carries on. `-Check` asks the question without doing anything; `-Force`
      publishes a second time in a day on purpose.

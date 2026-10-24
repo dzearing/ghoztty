@@ -115,7 +115,7 @@ function Get-InstallOwnershipRefusal {
     @(
         "REFUSED: $Who will not write the user's installed Ghoztty ($Path).",
         "The installed app is the product; only the in-app updater may replace it, and only with a published release (decision D85, task T1218).",
-        "To ship today's work to the user, PUBLISH it: scripts\publish-windows-release.ps1 - the terminal then offers the update like it does for every other user.",
+        "To ship today's work to the user, PUBLISH it: scripts\daily-publish.ps1 (-Request when somebody is waiting on it) - CI builds the release and the terminal then offers the update like it does for every other user.",
         "To run what you just built, use zig-out\bin\ghoztty.exe, or point -InstallDir at the dev install ($(Get-DevInstallDir))."
     ) -join "`n"
 }

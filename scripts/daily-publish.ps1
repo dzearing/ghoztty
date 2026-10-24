@@ -44,8 +44,9 @@
 # forbidden to satisfy: it wrote a polite SKIP into a temp log and shipped
 # nothing, for three days, while nineteen tasks closed. A step whose failure mode
 # is "nothing happens" is the worst kind, so the dependency is gone rather than
-# excused. -Local reinstates the old path for a box that genuinely wants to
-# package locally.
+# excused. The old path itself was retired in T1328: a release has exactly one
+# definition, the tag build in .github/workflows/release-windows.yml, and there
+# is no on-box packaging route left to drift from it.
 #
 # AND AN ON-DEMAND RULE, because one publish per day strands everything that
 # lands after it (T1294). On 2026-09-03 the day's release went out at 09:28, the
@@ -79,8 +80,7 @@
 #
 # SKIPS ARE NOT FAILURES. What a publish needs that this loop cannot arrange is
 # now down to one thing: HEAD must already be on the remote (it always is, since
-# the commit guard pushes). Under -Local the old pair comes back - Docker
-# Desktop up, `gh` authenticated. A missing precondition is a SKIP with the
+# the commit guard pushes). A missing precondition is a SKIP with the
 # reason named in the log, the watermark is NOT consumed (so a later push the
 # same day can still publish), and the loop carries on. The one thing that must
 # never happen is a publish attempt stalling the turn.
@@ -121,7 +121,7 @@
 # their Windows build corresponds to; the daily walk never squats on a Mac minor
 # the Mac seat has not released yet; MSI upgrade ordering stays monotonic; and
 # the chosen version can never collide with an existing release, because it is
-# derived from the set of releases that exist. `publish-windows-release.ps1`
+# derived from the set of releases that exist. `publish-windows-tag.ps1`
 # refuses an existing tag as a second line of defence.
 #
 # WATERMARK. %LOCALAPPDATA%\ghoztty\daily-publish, one JSON object recording the
@@ -201,12 +201,12 @@ param(
     # Passed through to the publish script (everything but the release itself).
     # Still stamps, so a dry run consumes the day deliberately.
     [switch]$DryRun,
-    # Publish by building and packaging on this box (the pre-T1292 path):
-    # scripts\publish-windows-release.ps1, which needs Docker Desktop up and gh
-    # authenticated. The default is the tag push, which needs neither.
-    [switch]$Local,
-    # Empty = publish-windows-tag.ps1, or publish-windows-release.ps1 under
-    # -Local.
+    # Test seam: behave as if HEAD were not on the remote, so the one live SKIP
+    # a publish has left (T1328) can be exercised without an unpushed commit.
+    [switch]$AssumeUnpushed,
+    # Empty = publish-windows-tag.ps1. There is no on-box packaging mode any
+    # more (T1328): -Local and publish-windows-release.ps1 were retired so that
+    # a release has exactly one definition, the CI tag build.
     [string]$PublishScript = '',
     # T1294. Record that work is WAITING on a publish, and stop. Nothing is
     # published by this call: the next task-boundary run (go.md step 6.5, which
@@ -401,7 +401,7 @@ function Resolve-DailyPublishVersion {
     $winNewest = Newest $win
 
     if ($null -eq $macNewest -and $null -eq $winNewest) {
-        return [pscustomobject]@{ Version = ''; Why = 'no vX.Y.Z or win-vX.Y.Z release tag found - pass -Version to publish-windows-release.ps1 by hand' }
+        return [pscustomobject]@{ Version = ''; Why = 'no vX.Y.Z or win-vX.Y.Z release tag found - pass -Version to publish-windows-tag.ps1 by hand' }
     }
     if ($null -eq $winNewest) {
         return [pscustomobject]@{ Version = $macNewest.Text; Why = "first Windows release for the Mac line v$($macNewest.Text)" }
@@ -413,24 +413,16 @@ function Resolve-DailyPublishVersion {
     return [pscustomobject]@{ Version = $next; Why = "daily patch walk on win-v$($winNewest.Text)" }
 }
 
-# What a publish needs before it is worth starting. In the default TAG mode that
-# is one thing, and it is one the loop arranges for itself: the commit being
-# released must already be on the remote, because CI builds the tag. Docker and
-# gh are preconditions of the -Local packaging path ONLY - keeping them in the
-# default set is what made this script structurally unable to ship (T1292).
+# What a publish needs before it is worth starting. That is one thing, and it is
+# one the loop arranges for itself: the commit being released must already be on
+# the remote, because CI builds the tag. Docker and gh were preconditions of the
+# retired on-box packaging path (T1328) - keeping them in the set is what made
+# this script structurally unable to ship (T1292), so they are gone with it.
 function Test-PublishPreconditions {
     param(
-        [bool]$DockerUp,
-        [bool]$GhAuthenticated,
-        [bool]$HeadPushed,
-        # 'tag' (CI builds the pushed tag) or 'local' (this box packages).
-        [string]$Mode = 'tag'
+        [bool]$HeadPushed
     )
     $missing = @()
-    if ($Mode -eq 'local') {
-        if (-not $DockerUp) { $missing += 'Docker Desktop is not running (wixl packages the MSI inside the msitools image, and starting Docker is the user''s call)' }
-        if (-not $GhAuthenticated) { $missing += 'gh is not authenticated (`gh auth login`) - the release cannot be created' }
-    }
     if (-not $HeadPushed) { $missing += 'HEAD is not on any remote branch - the release tag must point at a pushed commit' }
     return [pscustomobject]@{
         Ok     = ($missing.Count -eq 0)
@@ -497,9 +489,8 @@ if ($env:GHOZTTY_DAILY_PUBLISH_DOTSOURCE -eq '1') { return }
 
 # ---- side effects --------------------------------------------------------
 
-$mode = if ($Local) { 'local' } else { 'tag' }
 if (-not $PublishScript) {
-    $PublishScript = Join-Path $PSScriptRoot $(if ($Local) { 'publish-windows-release.ps1' } else { 'publish-windows-tag.ps1' })
+    $PublishScript = Join-Path $PSScriptRoot 'publish-windows-tag.ps1'
 }
 
 $log = Join-Path $env:TEMP 'ghoztty-daily-publish.log'
@@ -743,14 +734,13 @@ if (-not $d.Due) {
     exit 0
 }
 
-# Preconditions BEFORE the watermark. A skip must not consume the day: Docker
-# coming up an hour later should still get the work published tonight.
-$dockerUp = (Invoke-Probe { docker info }) -eq 0
-$ghOk = (Invoke-Probe { gh auth status }) -eq 0
+# Preconditions BEFORE the watermark. A skip must not consume the day: a push
+# an hour later should still get the work published tonight.
 $headPushed = $false
 try { $headPushed = [bool](@(git branch -r --contains HEAD 2>$null).Count) } catch { $headPushed = $false }
+if ($AssumeUnpushed) { $headPushed = $false }
 
-$pre = Test-PublishPreconditions -DockerUp $dockerUp -GhAuthenticated $ghOk -HeadPushed $headPushed -Mode $mode
+$pre = Test-PublishPreconditions -HeadPushed $headPushed
 if (-not $pre.Ok) {
     Log "SKIP: due ($($d.Why)) but $($pre.Reason). Nothing published; the watermark is untouched, so a later push today can still publish."
     exit 0
@@ -848,7 +838,7 @@ if ($code -eq 0) {
     # finishes, and the confirmation pass at the top of the next run is what
     # turns this into 'published' or 'failed'. Claiming 'published' here is the
     # exact lie this task existed to remove.
-    $result = if ($DryRun) { 'dry-run' } elseif ($mode -eq 'tag') { 'tagged' } else { 'published' }
+    $result = if ($DryRun) { 'dry-run' } else { 'tagged' }
     Stamp $result "win-v$($v.Version)" | Out-Null
     if ($result -eq 'tagged') {
         Log "TAGGED win-v$($v.Version) ($hash). Release (Windows) builds it; the next run confirms the release exists."

@@ -1,16 +1,16 @@
 {
     "guard":  "daily-publish",
     "script":  "test/win32/daily-publish.ps1",
-    "generated":  "2026-10-17T23:41:15-07:00",
-    "commit":  "13544c3e0",
+    "generated":  "2026-10-24T14:03:02-07:00",
+    "commit":  "128d1afdf",
     "uncommitted":  [
                         "scripts/daily-publish.ps1",
+                        "scripts/publish-windows-tag.ps1",
                         "test/win32/daily-publish.ps1"
                     ],
     "files":  {
-                  "scripts/daily-publish.ps1":  "44bdce30b404b4f8da2bb69527ae66f389d5aaa4b47e0c89f623bfefbbe78a2a",
-                  "scripts/publish-windows-release.ps1":  "1cd6f75ffc5deddbb6699b4dfe84e1b8fad40ebb5271f802f1a31ee28613069a",
-                  "scripts/publish-windows-tag.ps1":  "d72d5cdf2189a2fd31a213d7e18107c7e313c139c2368e2696e82474b4cfa4a3",
-                  "test/win32/daily-publish.ps1":  "eccff5616c9023dacbe70ec3aa3623db00b16c1123de1516e757fb5974cd9352"
+                  "scripts/daily-publish.ps1":  "fdd6c6920122fd7b3052cc45b98fb3e9587aa018b42fadce2fdbee92e9d17ccb",
+                  "scripts/publish-windows-tag.ps1":  "8f55c46c6de05261d252468afd35246dfa18b97aea63f079a6f7d235f6b7e055",
+                  "test/win32/daily-publish.ps1":  "e3a8a4576ea7b7607e9902786b4744984b9c78fe45ec3f3ea975c11281dd255c"
               }
 }

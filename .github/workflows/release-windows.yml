@@ -63,9 +63,10 @@ name: Release (Windows)
 # vX.Y.Z release instead would make every installed build blind to updates.
 #
 # Everything the artifacts are made of lives in
-# dist/windows-installer/build-release-artifacts.sh, which the on-box manual
-# path (scripts/publish-windows-release.ps1) runs too -- so CI and a hand
-# publish cannot drift apart. Nothing here needs a Windows runner: the exe
+# dist/windows-installer/build-release-artifacts.sh. This workflow is the ONLY
+# place a Windows release is built (T1328 retired the on-box manual path that
+# packaged in Docker): the box publishes by pushing the tag
+# (scripts/publish-windows-tag.ps1). Nothing here needs a Windows runner: the exe
 # cross-compiles for x86_64-windows-gnu and the MSI is built with wixl.
 concurrency:
   group: ${{ github.workflow }}

@@ -180,7 +180,8 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   chose the other thing — *"the terminal should only ever run something that was
   actually published"* — so the exception is gone. The in-app updater taking a
   **published release** is the one path that writes those bytes; the way to get
-  today's work to the user is `scripts\publish-windows-release.ps1`, and their
+  today's work to the user is `scripts\daily-publish.ps1` (it pushes the release
+  tag; CI builds the release), and their
   terminal then offers the update like it does for every other user.
 
   This is enforced, not merely documented: `scripts\install-ownership.ps1` holds
@@ -294,7 +295,7 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
 
   `-Dstrip=false` is load-bearing: a stripped release build produces
   undebuggable crash dumps. What ships to the USER is a published release
-  (`scripts\publish-windows-release.ps1`, then the in-app updater — see the
+  (`scripts\daily-publish.ps1` pushes the tag, CI builds it, then the in-app updater — see the
   install-ownership rule above). `scripts/launch-upgrade.ps1` (never a
   hand-rolled `Start-Process`) still drives a delivery to the dev install and
   nowhere else (the portable locations take

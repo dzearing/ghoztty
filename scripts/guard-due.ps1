@@ -1626,7 +1626,6 @@ $GuardTable = @(
         Stamp  = 'test\win32\daily-publish.stamp.json'
         Covers = @(
             'scripts\daily-publish.ps1',
-            'scripts\publish-windows-release.ps1',
             'scripts\publish-windows-tag.ps1',
             'test\win32\daily-publish.ps1'
         )
@@ -1866,7 +1865,6 @@ $GuardTable = @(
             'dist\windows-installer\build-release-artifacts.sh',
             'dist\windows-installer\install-msitools.sh',
             'dist\windows-installer\sign-artifacts.sh',
-            'scripts\publish-windows-release.ps1',
             'test\win32\release-artifacts.ps1'
         )
     },
@@ -2003,7 +2001,6 @@ $GuardTable = @(
             'dist\windows-installer\build-release-artifacts.sh',
             'scripts\fetch-symbols.ps1',
             '.github\workflows\release-windows.yml',
-            'scripts\publish-windows-release.ps1',
             'test\win32\release-symbols.ps1'
         )
     },
@@ -5399,7 +5396,6 @@ $GuardTable = @(
             # out, and the leak-sweep row covers it for its contract arms (T1005).
             'scripts\floor-lane.ps1',
             'test\win32\lib\BuildFresh.ps1',
-            'scripts\publish-windows-release.ps1',
             'scripts\launch-upgrade.ps1',
             'scripts\crash-databreak.ps1'
         )

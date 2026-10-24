@@ -118,7 +118,7 @@ if (-not $TeethCheck) {
     Assert 'A12 an empty path is not a violation' (-not (Test-IsUserInstallPath -Path ''))
     # The refusal has to tell the reader what to do instead, or it is a wall.
     $refusal = Get-InstallOwnershipRefusal -Path $userInstall -Who 'x'
-    Assert 'A13 the refusal names the publish path' ($refusal -match 'publish-windows-release\.ps1')
+    Assert 'A13 the refusal names the publish path' ($refusal -match 'daily-publish\.ps1')
     Assert 'A14 and the updater rule' ($refusal -match 'in-app updater')
     Assert 'A15 and the decision that set it' ($refusal -match 'D85')
 }
@@ -140,7 +140,7 @@ if (-not $TeethCheck) {
     $code = $LASTEXITCODE
     AssertEq 'B1 it exits 3 (nothing delivered)' 3 $code
     Assert 'B2 and says whose install it refused' ($out -match [regex]::Escape($userInstall))
-    Assert 'B3 and points at publishing instead' ($out -match 'publish-windows-release\.ps1')
+    Assert 'B3 and points at publishing instead' ($out -match 'daily-publish\.ps1')
     Assert 'B4 and names the decision' ($out -match 'D85')
     $env:GHOZTTY_LOOP_LANE = $savedLane
     # The default is the other half of the guarantee: a bare run must not even
@@ -202,7 +202,7 @@ $checks = [ordered]@{
     'D5 go.md no longer tells a turn to run the morning refresh' =
         { param($t) $t['gomd'] -notmatch 'morning-refresh\.ps1' }
     'D6 go.md points at publishing as the delivery path' =
-        { param($t) $t['gomd'] -match 'publish-windows-release\.ps1' }
+        { param($t) $t['gomd'] -match 'daily-publish\.ps1' }
     'E1 the upgrade script no longer names the user install anywhere' =
         { param($t) $t['upgrade'] -notmatch 'LOCALAPPDATA\\Programs\\Ghoztty' }
     'E2 it dot-sources the ownership rule' =

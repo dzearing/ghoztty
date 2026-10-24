@@ -9,7 +9,7 @@
 # kill/swap/verify/resume machinery pointed at an install the loop owns
 # (`%LOCALAPPDATA%\ghoztty\dev-install` by default). The rule and the refusal
 # both live in scripts\install-ownership.ps1; the way to get today's work to the
-# user is scripts\publish-windows-release.ps1.
+# user is scripts\daily-publish.ps1 (CI builds the release from the tag it pushes).
 #
 # Designed to be launched DETACHED from a Claude Code session running inside
 # the very Ghoztty instance being upgraded (nothing in that process tree can
