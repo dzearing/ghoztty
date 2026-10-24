@@ -2544,6 +2544,13 @@ $GuardTable = @(
             'src\remote\agent\link_control.zig',
             'src\remote\ws_client.zig',
             'src\cli\sessions.zig',
+            # The CLIENT half of the same wire (T1307). `+sessions` reads the
+            # roster through connection.zig, which frames it with protocol.zig,
+            # so this run is the end-to-end proof that a relay-opened session
+            # is decoded by the client the app uses. T403's whole diff was
+            # these two files and left no relay harness due.
+            'src\remote\connection.zig',
+            'src\remote\protocol.zig',
             'test\win32\lib\FakeAgentRelay.ps1',
             'test\win32\agent-relay-session-e2e.ps1'
         )
