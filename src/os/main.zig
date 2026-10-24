@@ -82,6 +82,7 @@ pub const getKernelInfo = kernel_info.getKernelInfo;
 
 test {
     _ = cli_launch;
+    _ = desktop;
     _ = file;
     _ = i18n;
     _ = ipc_client;
