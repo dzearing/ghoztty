@@ -324,6 +324,52 @@ if ($holdersBefore.Count -gt 0) {
 # The holders are stopped by now, so this launch is that next one - and it is
 # the only thing that can prove the leftovers are temporary rather than
 # permanent.
+#
+# That launch sweeps ONCE, at startup, so polling after it re-reads a directory
+# nothing will touch again: whatever still held a leftover at the instant it
+# started stays there for good (T1248). The applier has exited by now (D waited
+# on its pid), but "exited" is not "released" - 2 of 4 runs on 2026-09-01 found
+# ghoztty-updater.exe still in place and passed on an immediate re-run. So wait
+# until nothing holds any leftover BEFORE launching. An exclusive read-write
+# open fails while any handle is open or the file is still mapped as an image,
+# and it changes nothing on disk, so the sweep is still the only thing that can
+# delete it.
+function Get-HeldFiles([string[]]$Paths) {
+    $held = @()
+    foreach ($p in $Paths) {
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        try {
+            $fs = [IO.File]::Open($p, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            $fs.Dispose()
+        } catch { $held += (Split-Path $p -Leaf) }
+    }
+    # A joined string, not an array: an empty array returned from a function
+    # does not survive the trip back intact.
+    return ($held -join ', ')
+}
+
+# The probe's own control: a file this script holds open must read as held, or
+# a probe that can only ever say "released" would make the wait a no-op.
+$probeFile = Join-Path $work 't1248-probe.bin'
+[IO.File]::WriteAllBytes($probeFile, [byte[]](1, 2, 3))
+$probeLock = [IO.File]::Open($probeFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+try {
+    Assert ((Get-HeldFiles @($probeFile)) -eq 't1248-probe.bin') 'E: the release probe reads a file that is still open as held (control)'
+} finally { $probeLock.Dispose() }
+Assert ((Get-HeldFiles @($probeFile)) -eq '') 'E: the release probe reads the same file as released once it is closed (control)'
+Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
+
+$leftovers = @()
+foreach ($f in @(Get-ChildItem $stagingDir -File -ErrorAction SilentlyContinue)) { $leftovers += $f.FullName }
+foreach ($f in @(Get-ChildItem $installDir -Filter '*.old-*' -File -Recurse -ErrorAction SilentlyContinue)) { $leftovers += $f.FullName }
+$stillHeld = Get-HeldFiles $leftovers
+$heldDeadline = (Get-Date).AddSeconds(60)
+while ($stillHeld -and (Get-Date) -lt $heldDeadline) {
+    Start-Sleep -Milliseconds 250
+    $stillHeld = Get-HeldFiles $leftovers
+}
+if ($stillHeld) { Write-Host "  note: still held 60s after every holder exited: $stillHeld" -ForegroundColor Yellow }
+
 $again = Start-Process -FilePath $testExe -PassThru `
     -RedirectStandardError (Join-Path $work 'app-sweep.err.txt')   # T689
 $null = $again.Handle
@@ -338,7 +384,8 @@ Stop-ThrowawayInstances -InstallDir $installDir -RealLocalAppData $realLocalAppD
 $leftNames = @()
 foreach ($f in @(Get-ChildItem $stagingDir -File -ErrorAction SilentlyContinue)) { $leftNames += $f.Name }
 foreach ($f in @(Get-ChildItem $installDir -Filter '*.old-*' -File -Recurse -ErrorAction SilentlyContinue)) { $leftNames += $f.Name }
-Assert $clean "E: the next launch swept everything the update left ($($leftNames -join ', '))"
+$heldNote = if ($stillHeld) { "; still held when it launched: $stillHeld" } else { '' }
+Assert $clean "E: the next launch swept everything the update left ($($leftNames -join ', ')$heldNote)"
 
 # The whole reason a throwaway identity was worth building. If any of these
 # three moved, the test upgraded the user's terminal.
