@@ -1489,6 +1489,55 @@ struct PaneStackWindowTests {
         #expect(!handle.showsBar, "the bar stayed lit after the gutter moved out from under the pointer")
     }
 
+    /// Let go ON the gutter, then move away: the bar goes out. The drag's end
+    /// finds the pointer on the gutter as AppKit sends that gutter a late
+    /// mouse-exited, and the hover found from geometry turned the bar back on
+    /// after it — with AppKit taking the pointer to be outside, so it never
+    /// sent the exit that would put the bar out. It stayed lit until the
+    /// pointer crossed the gutter again. AppKit's tracking cannot be driven
+    /// by synthetic events, so this replays what it sent (recorded from a
+    /// real drag) and checks the area is re-armed to send that exit.
+    @Test func aGutterLetGoUnderThePointerGoesOutWhenThePointerLeaves() async throws {
+        let (controller, window, _) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        let handle = try #require(handles(window).first)
+        func enterExit(_ type: NSEvent.EventType) throws -> NSEvent {
+            try #require(NSEvent.enterExitEvent(
+                with: type, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+        }
+        let start = handle.convert(NSPoint(x: handle.bounds.midX, y: handle.bounds.midY), to: nil)
+        func event(_ type: NSEvent.EventType, _ x: CGFloat) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: x, y: start.y), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        handle.mouseEntered(with: try enterExit(.mouseEntered))
+        handle.tracksModally = false
+        handle.mouseDown(with: try event(.leftMouseDown, start.x))
+        handle.mouseDragged(with: try event(.leftMouseDragged, start.x + 80))
+        await settle(0.3)
+        handle.mouseDragged(with: try event(.leftMouseDragged, start.x + 80))
+        await settle(0.3)
+        // The gutter followed the pointer, which lets go on it.
+        let here = handle.convert(NSPoint(x: handle.bounds.midX, y: handle.bounds.midY), to: nil)
+        #expect(abs(here.x - (start.x + 80)) < 2, "the divider moved with the drag")
+        GutterBar.pointerOverride = here
+        defer { GutterBar.pointerOverride = nil }
+        handle.mouseUp(with: try event(.leftMouseUp, here.x))
+        handle.mouseExited(with: try enterExit(.mouseExited))
+        await settle(0.2)
+        #expect(handle.showsBar, "the pointer is on the gutter")
+        #expect(handle.trackingAssumesInside, "AppKit takes the pointer to be outside and would never send the exit")
+        #expect(handle.trackingAreas.count == 1, "re-arming replaces the area")
+
+        // The exit that area sends when the pointer leaves puts the bar out.
+        GutterBar.pointerOverride = CGPoint(x: here.x + 300, y: here.y)
+        handle.mouseExited(with: try enterExit(.mouseExited))
+        #expect(!handle.showsBar, "the bar stayed lit after the pointer left")
+    }
+
     // MARK: - Resizers live in the gutters
 
     /// Where every card shows, in window coordinates: a card on show is its

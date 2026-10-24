@@ -255,11 +255,6 @@ final class SidePanelResizeHandle: NSView, GutterBarOwner {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        addTrackingArea(NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect, .enabledDuringMouseDrag],
-            owner: self,
-            userInfo: nil))
         _ = bar
     }
 
@@ -287,8 +282,8 @@ final class SidePanelResizeHandle: NSView, GutterBarOwner {
         bar.moved()
     }
 
-    override func mouseEntered(with event: NSEvent) { bar.isHovered = true }
-    override func mouseExited(with event: NSEvent) { bar.isHovered = false }
+    override func mouseEntered(with event: NSEvent) { bar.pointerEntered() }
+    override func mouseExited(with event: NSEvent) { bar.pointerExited() }
 
     override func mouseDown(with event: NSEvent) {
         mouseDownX = event.locationInWindow.x
