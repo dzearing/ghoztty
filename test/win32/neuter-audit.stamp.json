@@ -1,10 +1,12 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-10-24T12:36:47-07:00",
-    "commit":  "a26169da4",
+    "generated":  "2026-10-24T14:11:51-07:00",
+    "commit":  "e3e2a4597",
     "uncommitted":  [
-
+                        "src/apprt/win32/GhosttyAssets.zig",
+                        "src/apprt/win32/skill_rewrite.zig",
+                        "src/apprt/win32/SkillComponent.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -95,7 +97,7 @@
                   "src/apprt/win32/fullscreen_exit.zig":  "df3be0c7f759b026eceff35fc5f8a7b48a055481191a759ba89464b8766e8a2d",
                   "src/apprt/win32/FullscreenExit.zig":  "bbe98dfa8637d165b314fe1e9ec4143729dfabbb9862e956391f54e198d6718c",
                   "src/apprt/win32/gdiplus_decode.zig":  "451370269c6bcd2d2d1bef9e03d36182810a22638b6b96a687ed5859712d89e2",
-                  "src/apprt/win32/GhosttyAssets.zig":  "12570d8bb96b01067c724c01c178db7a18e827c409d8d1861ddda2aeccc8a0bc",
+                  "src/apprt/win32/GhosttyAssets.zig":  "3c5f91a851bba252b8a1c992bd6f5751815b060e441009a6245f01e50eca61b5",
                   "src/apprt/win32/git_run.zig":  "29a352c8d3e47ac764a2361f9e500931145522dd0ef4d7e565cc144da41576f8",
                   "src/apprt/win32/gui_pump.zig":  "ac66102200ebf3a08b1992846ff7189d4ff80226cfdb6dc750db74501be02782",
                   "src/apprt/win32/help_tooltip.zig":  "718f236b302de3de196c0d366baaf2dc129d6ef6cc975bcdbdb314cbb53586e0",
@@ -228,7 +230,8 @@
                   "src/apprt/win32/SessionRoster.zig":  "14014897c5f2ed210acd3c3699fa179389cff0e1e16748561765f9d13364ad1e",
                   "src/apprt/win32/SessionRosterProbe.zig":  "97d287a7ceaf0131a0583b4a1e3ec77cd5234f010fae99c194c28dc5e8fb10c4",
                   "src/apprt/win32/ShareMachineRow.zig":  "563fd3175b8ee816706207a3a2151a32d76d3cf76661b49f9ed0365d34e5bebe",
-                  "src/apprt/win32/SkillComponent.zig":  "0b100dfca6ae0439091bd79254256bee80027f34d99da50ed2a68a6d926e90ca",
+                  "src/apprt/win32/skill_rewrite.zig":  "4ba9928d0520b73db4aaa40cab9575e867cb0bbf795fa89ec0a212aaae5ae608",
+                  "src/apprt/win32/SkillComponent.zig":  "b345c4ec0c2cbf100fbf1833cae895426d557c50552010b131aca69276e31dfb",
                   "src/apprt/win32/source_checkout.zig":  "f7a91595696674da68899cbdf06a056d2f9f365b13a3d7d4cab69797ec49b4da",
                   "src/apprt/win32/split_geometry.zig":  "89ed9cf26dd83d946f1fd48fa73cf2dedde6de7b3e3920ac907e3d509d3d5e17",
                   "src/apprt/win32/split_resize.zig":  "d3eae03a488e5b2375a45eb9d983cb85adc66553a588892cc0298abff66b3c1d",
