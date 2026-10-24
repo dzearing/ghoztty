@@ -5,8 +5,11 @@
 # go-loop-exec.ps1 claim (for the turn that owes it). They answer it here, in
 # one place, so the two can never disagree about what "owed" means.
 #
-# Three states:
-#   present  - today's file is on disk
+# Four states:
+#   present  - today's file is on disk with all three categories
+#   partial  - today's file is on disk but lacks one or more of the H2
+#              categories steps 0.5-0.7 each write (T1279); Field names them,
+#              e.g. `partial:task-triage,feature-ideas`
 #   missing  - past 05:00, the loop was turning today, and there is no file
 #   not-due  - before 05:00, or the loop did not turn today at all (a box that
 #              was off overnight, or a loop stopped on purpose, owes nothing;
@@ -27,12 +30,29 @@ function Get-DigestState {
         [datetime]$AsOf = [datetime]::MinValue,
         [switch]$Turning
     )
+    $sections = @(
+        [pscustomobject]@{ Heading = 'Commentary'; Slug = 'commentary' }
+        [pscustomobject]@{ Heading = 'Task triage'; Slug = 'task-triage' }
+        [pscustomobject]@{ Heading = 'Feature ideas'; Slug = 'feature-ideas' }
+    )
     if ($AsOf -eq [datetime]::MinValue) { $AsOf = Get-Date }
     $date = $AsOf.ToString('yyyy-MM-dd')
     $rel = "docs\design\windows-parity-digests\$date.md"
     $state = 'not-due'
-    if (Test-Path -LiteralPath (Join-Path $Repo $rel)) {
-        $state = 'present'
+    $missingSections = @()
+    $abs = Join-Path $Repo $rel
+    if (Test-Path -LiteralPath $abs) {
+        # T1279: the file is three steps' work (0.5 Commentary, 0.6 Task
+        # triage, 0.7 Feature ideas), each its own H2. Existence alone said
+        # `present` over the 2026-09-01 digest that held only Commentary.
+        $text = ''
+        try { $text = [System.IO.File]::ReadAllText($abs) } catch { $text = '' }
+        foreach ($s in $sections) {
+            if ($text -notmatch ('(?im)^##[ \t]+' + [regex]::Escape($s.Heading) + '[ \t]*\r?$')) {
+                $missingSections += $s
+            }
+        }
+        $state = if ($missingSections.Count -gt 0) { 'partial' } else { 'present' }
     } else {
         $dueAt = $AsOf.Date.AddHours(5)
         if ($AsOf -ge $dueAt) {
@@ -52,5 +72,13 @@ function Get-DigestState {
             if ($aliveToday) { $state = 'missing' }
         }
     }
-    return [pscustomobject]@{ State = $state; Date = $date; Path = $rel }
+    $field = $state
+    if ($state -eq 'partial') { $field = 'partial:' + (@($missingSections | ForEach-Object { $_.Slug }) -join ',') }
+    return [pscustomobject]@{
+        State    = $state
+        Field    = $field
+        Date     = $date
+        Path     = $rel
+        Missing  = @($missingSections | ForEach-Object { $_.Heading })
+    }
 }

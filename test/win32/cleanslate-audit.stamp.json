@@ -1,15 +1,14 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-10-24T00:28:28-07:00",
-    "commit":  "add9e2b8f",
+    "generated":  "2026-10-24T02:11:10-07:00",
+    "commit":  "7242247ea",
     "uncommitted":  [
-                        "test/win32/cleanslate-audit.ps1",
                         "test/win32/lib/CleanSlateAudit.ps1"
                     ],
     "files":  {
                   "test/win32/cleanslate-audit.ps1":  "9fd0a37fb42e576128937107ed4ce706e773e205432e66124509df9fa43ef479",
                   "test/win32/lib/CleanSlate.ps1":  "8802aadbd87990b0553c46fdf167ec938e740f110e517eee4d811218b83d1534",
-                  "test/win32/lib/CleanSlateAudit.ps1":  "e09451f38850dd7c658291cbab65d164f5627597bada0bb60532737945dcef7b"
+                  "test/win32/lib/CleanSlateAudit.ps1":  "e70b73f92c5a1102cdf0ce47a5fade709030b1cb4dda438e0a64155668f5b445"
               }
 }

@@ -2409,10 +2409,26 @@ Assert 'Y3 the check reports the miss and never writes one (backfill stays forbi
     (-not (Test-Path -LiteralPath $yFile))
 
 # Same fixture, file present: the positive control for Y1.
-Set-Content -LiteralPath $yFile -Encoding ascii -Value @('---', "date: `"$yToday`"", '---', '## Commentary', 'x')
+Set-Content -LiteralPath $yFile -Encoding ascii -Value @('---', "date: `"$yToday`"", '---', '## Commentary', 'x',
+    '## Task triage', 'x', '## Feature ideas', 'x')
 $y = YHealth "${yToday}T09:00:00"
 Assert 'Y4 a written digest reads present, and stops nagging' `
-    ($y -match 'digest=present' -and $y -notmatch 'digest is missing')
+    ($y -match 'digest=present' -and $y -notmatch 'digest is missing' -and $y -notmatch 'digest is incomplete')
+
+# T1279: the file is there but steps 0.6/0.7 never wrote their categories -
+# the 2026-09-01 digest, which read present. A heading inside a paragraph or
+# at H3 is not the category.
+Set-Content -LiteralPath $yFile -Encoding ascii -Value @('---', "date: `"$yToday`"", '---', '## Commentary',
+    'the ## Task triage tab comes later', '### Feature ideas')
+$y = YHealth "${yToday}T09:00:00"
+Assert 'Y7 a Commentary-only digest reads partial and names the absent categories' `
+    ($y -match 'digest=partial:task-triage,feature-ideas(\s|$)')
+# A note is what degrades a live run (the fixture has no live owner, so its
+# verdict is DOWN either way); Y4 is the same line with no such note.
+Assert 'Y8 ...and carries a note naming the headings to write' `
+    ($y -match 'digest is incomplete' -and $y -match '## Task triage, ## Feature ideas')
+Assert 'Y9 the check never writes the missing categories itself' `
+    ((Get-Content -LiteralPath $yFile -Raw) -notmatch '(?m)^## Task triage')
 
 # A day the loop never turned owes nothing - a box that was off overnight, or a
 # loop stopped on purpose, must not be reported as delinquent.

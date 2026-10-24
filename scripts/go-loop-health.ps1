@@ -281,7 +281,9 @@ try {
 # the same question on behalf of the turn that owes the digest.
 $digest = Get-DigestState -Repo $Repo -AsOf $DigestAsOf
 $digestRel = $digest.Path
-$digestState = $digest.State
+# `partial:<slugs>` (T1279) when the file is there but a morning step's H2
+# category is not - steps 0.6/0.7 skipped in silence read healthy before.
+$digestState = $digest.Field
 
 # --- the daily publish (T1292) ---------------------------------------------
 #
@@ -539,6 +541,10 @@ if (-not $dashboard) { $notes += "dashboard is not listening on $Port" }
 if ($inProgress.Count -gt 1) { $notes += "$($inProgress.Count) tasks claimed in-progress" }
 if ($digestState -eq 'missing') {
     $notes += "today's digest is missing - go.md step 0.5, write $digestRel (never backfill an older day)"
+} elseif ($digest.State -eq 'partial') {
+    $notes += ("today's digest is incomplete - $digestRel has no " +
+        ((@($digest.Missing) | ForEach-Object { "## $_" }) -join ', ') +
+        ' (go.md steps 0.5-0.7 each write one; finish them, never stub them)')
 }
 if ($publishState -eq 'never') {
     $notes += 'nothing has ever been published from this box - go.md step 6.5, scripts\daily-publish.ps1 -Check says whether one is due'
@@ -610,6 +616,7 @@ if ($Json) {
         open_decisions = $openDecisions
         digest         = $digestState
         digest_path    = $digestRel
+        digest_missing = @($digest.Missing)
         publish        = $publishState
         publish_tag    = $publishTag
         publish_date   = $publishDate

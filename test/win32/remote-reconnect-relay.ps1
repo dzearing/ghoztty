@@ -317,6 +317,7 @@ try {
     Check ($reaped -eq 0) "E and reaped nothing as an orphan ($reaped reaped)"
     # A field is not a working pane: drive the adopted shell and read it back.
     $marker = "t1278-adopted-$PID"
+    # argv-audit: the marker is "t1278-adopted-<pid>" - letters, digits, hyphens and this process's pid.
     & $Exe +send-keys --target=relwin "echo $marker" Enter 2>$null | ForEach-Object { $_ } | Out-Null
     $echoed = $false
     $deadline = (Get-Date).AddSeconds(15)

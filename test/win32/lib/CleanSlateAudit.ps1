@@ -254,7 +254,7 @@ function Get-ApplierTargetFindings {
     Every place a script arms the update applier at something that is not
     provably a scratch install directory.
     #>
-    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Text)
+    param([Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()][AllowEmptyString()][string[]]$Text)
 
     $lines = @($Text)
     $findings = @()

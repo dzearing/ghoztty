@@ -212,6 +212,10 @@ $Registry = @(
     # owns the morning block). Reported, never refused - the remedy is the turn
     # writing it - and demonstrated red/green/not-due in section C (C9-C11).
     [pscustomobject]@{ Label = 'DIGEST OWED'; Kind = 'gate'; Demo = $Self; Marker = 'DIGEST OWED' }
+    # T1279. Today's digest exists but lacks a step's H2 category (Task triage /
+    # Feature ideas). Reported, never refused, same as DIGEST OWED; red in C12,
+    # the all-three positive control is C11.
+    [pscustomobject]@{ Label = 'DIGEST INCOMPLETE'; Kind = 'gate'; Demo = $Self; Marker = 'DIGEST INCOMPLETE' }
     [pscustomobject]@{ Label = 'CI IN PROGRESS'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI OK'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI UNKNOWN'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
@@ -650,7 +654,8 @@ try {
     $green = New-RepoFixture 'repo-green'
     $digestDir = Join-Path $green 'docs\design\windows-parity-digests'
     New-Item -ItemType Directory -Force -Path $digestDir | Out-Null
-    Write-Ascii (Join-Path $digestDir "$DigestDay.md") @('---', "date: `"$DigestDay`"", '---', '', '## Commentary')
+    $digestFile = Join-Path $digestDir "$DigestDay.md"
+    Write-Ascii $digestFile @('---', "date: `"$DigestDay`"", '---', '', '## Commentary', '', '## Task triage', '', '## Feature ideas')
     [void](Invoke-GitIn $green @('add', '.'))
     [void](Invoke-GitIn $green @('commit', '-qm', 'digest'))
     $bare = Join-Path $Sandbox 'origin.git'
@@ -664,7 +669,17 @@ try {
     Check 'C8 ...and neither red line appears over a healthy repo' `
         ($r.Text -notmatch 'STRANDED WORK' -and $r.Text -notmatch 'UNPUSHED WORK') $r.Text
     Check 'C11 a written digest claims present, and DIGEST OWED stays silent' `
-        ($r.Text -match "digest present \($DigestDay\)" -and $r.Text -notmatch 'DIGEST OWED') $r.Text
+        ($r.Text -match "digest present \($DigestDay\)" -and $r.Text -notmatch 'DIGEST OWED' -and
+            $r.Text -notmatch 'DIGEST INCOMPLETE') $r.Text
+
+    # T1279: the 2026-09-01 shape - step 0.5 wrote Commentary, 0.6 and 0.7
+    # never ran. The file exists, so only the per-category scan can see it.
+    Write-Ascii $digestFile @('---', "date: `"$DigestDay`"", '---', '', '## Commentary')
+    $r = Invoke-Claim $green 'GATE-NEG-GREEN-0001'
+    Check 'C12 a Commentary-only digest is reported as DIGEST INCOMPLETE, naming both absent categories' `
+        ($r.Text -match 'DIGEST INCOMPLETE: .*## Task triage, ## Feature ideas' -and
+            $r.Text -notmatch "digest present") $r.Text
+    [void](Invoke-GitIn $green @('checkout', '-q', '--', '.'))
 
     # =======================================================================
     Say ''

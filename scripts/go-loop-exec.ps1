@@ -526,7 +526,7 @@ switch ($Action) {
         $digestAsOf = $DigestAsOf
         if ($digestAsOf -eq [datetime]::MinValue) { $digestAsOf = Get-Date }
         $digest = Get-DigestState -Repo $Repo -AsOf $digestAsOf -Turning
-        if ($digest.State -eq 'missing') {
+        if ($digest.State -eq 'missing' -or $digest.State -eq 'partial') {
             $ownerScript = Join-Path $PSScriptRoot 'morning-owner.ps1'
             $ownerOut = ''; $ownerCode = 0
             if (Test-Path -LiteralPath $ownerScript) {
@@ -534,7 +534,12 @@ switch ($Action) {
                 $ownerCode = $LASTEXITCODE
             }
             if ($ownerCode -eq 3) {
-                "  digest missing for $($digest.Date), and another lane owns the morning block - not this turn's to write"
+                "  digest $($digest.Field) for $($digest.Date), and another lane owns the morning block - not this turn's to write"
+            } elseif ($digest.State -eq 'partial') {
+                # T1279: the file exists, so DIGEST OWED stays silent - but a
+                # morning step whose H2 category is absent was skipped.
+                $absent = (@($digest.Missing) | ForEach-Object { "## $_" }) -join ', '
+                "  DIGEST INCOMPLETE: $($digest.Path) has no $absent - finish it before step 1 (go.md steps 0.5-0.7)"
             } else {
                 "  DIGEST OWED: $($digest.Path) does not exist and it is past 05:00 - write it before step 1 (go.md steps 0.5-0.7; never backfill an older day)"
             }
