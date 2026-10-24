@@ -258,8 +258,42 @@ public class DeskSpike {
     public static bool ChordSent = false;
     public static int SendInputAccepted = -1;
     public static int SendInputLastError = -1;
+    // T1280: what the input assertions are scored on, all read back over IPC
+    // for the window the keys were posted to (TopHwnd == its +list `id`).
+    public static long TopHwnd = 0;
+    public static string Pane = null;
+    public static bool PreHadToken = false;
+    public static int KeysLandedMs = -1;
+    public static int TabsBefore = -1, TabsAfter = -1, ChordLandedMs = -1;
 
     static void note(string s) { Log += s + "\n"; }
+
+    // The CLI, aimed by the inherited GHOZTTY_PIPE_SUFFIX at this run's app.
+    static string Cli(string exe, string args) {
+        var psi = new System.Diagnostics.ProcessStartInfo(exe, args);
+        psi.UseShellExecute = false; psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+        using (var p = System.Diagnostics.Process.Start(psi)) {
+            var err = p.StandardError.ReadToEndAsync();
+            string o = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(10000);
+            return o;
+        }
+    }
+
+    // The window whose +list `id` is `hwnd`: its first tab's pane name, and
+    // its tab count (one "splits" per tab). null when it is not listed.
+    static string PaneOf(string exe, long hwnd, out int tabs) {
+        tabs = -1;
+        string json = Cli(exe, "+list --json");
+        int at = json.IndexOf("{\"id\":\"" + hwnd + "\"");
+        if (at < 0) return null;
+        int end = json.IndexOf(",\"chrome\":", at);
+        string w = end < 0 ? json.Substring(at) : json.Substring(at, end - at);
+        tabs = System.Text.RegularExpressions.Regex.Matches(w, "\"splits\":").Count;
+        var m = System.Text.RegularExpressions.Regex.Match(w, "\"name\":\"([^\"]+)\"");
+        return m.Success ? m.Groups[1].Value : null;
+    }
 
     static void Key(ushort vk, bool up) {
         var i = new INPUT[1];
@@ -398,8 +432,9 @@ public class DeskSpike {
             bool att = AttachThreadInput(myTid, appTid, true);
             SetActiveWindow(top);
             SetFocus(top);
-            Thread.Sleep(150);
+            for (int i = 0; i < 40 && GetFocus() == IntPtr.Zero; i++) Thread.Sleep(50);
             note("AttachThreadInput=" + att + " GetFocus=" + GetFocus() + " GetActiveWindow=" + GetActiveWindow());
+            TopHwnd = top.ToInt64();
 
             // --- capture path 1: BitBlt off the desktop DC (== CopyFromScreen)
             if (WinW > 0 && WinH > 0) {
@@ -483,6 +518,20 @@ public class DeskSpike {
             Thread.Sleep(400);
             note("SendInput events accepted: " + sent + " of 12 (last error " + SendInputLastError + ")");
 
+            // T1280: every wait on the input path below is on something the
+            // app reports over IPC, never a fixed sleep. The window is found
+            // by its hwnd in +list (`id`), not as windows[0], so a second
+            // window can never answer for the one the keys were posted to.
+            string pane = null;
+            for (int i = 0; i < 75; i++) {
+                int tabs; pane = PaneOf(exe, top.ToInt64(), out tabs);
+                if (pane != null && Cli(exe, "+read --name=" + pane + " --lines=10").Trim().Length > 0) { TabsBefore = tabs; break; }
+                pane = null; Thread.Sleep(200);
+            }
+            Pane = pane;
+            note("app answers for window " + top + ": pane=" + pane + " tabs=" + TabsBefore);
+            if (pane != null) PreHadToken = Cli(exe, "+read --name=" + pane + " --lines=10").ToLower().Contains("spikeb");
+
             // --- input path 2: posted key messages. The terminal class skips
             // TranslateMessage (App.run) and calls ToUnicode itself, so a bare
             // WM_KEYDOWN is enough - posting WM_CHAR too would double every
@@ -491,13 +540,21 @@ public class DeskSpike {
                 PostMessageW(target, 0x0100 /*WM_KEYDOWN*/, (IntPtr)char.ToUpper(c), IntPtr.Zero);
                 PostMessageW(target, 0x0101 /*WM_KEYUP*/, (IntPtr)char.ToUpper(c), IntPtr.Zero);
             }
-            Thread.Sleep(800);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < 50 && pane != null; i++) {
+                if (Cli(exe, "+read --name=" + pane + " --lines=10").ToLower().Contains("spikeb")) { KeysLandedMs = (int)clock.ElapsedMilliseconds; break; }
+                Thread.Sleep(200);
+            }
+            note("posted keys landed after " + KeysLandedMs + "ms (-1 = not within 10s)");
 
             // --- input path 3: a MODIFIER CHORD by the same route. Posted
             // messages do not move the key state that the app reads back for
             // modifiers, so set it explicitly - legal here because
             // AttachThreadInput has merged our input queue with the app's, and
             // on a background desktop no raw-input thread overwrites it.
+            // The key state is held until the new tab is REPORTED: the app
+            // reads it when it dequeues the 'T', so clearing it on a timer
+            // (as this used to, 200ms later) races a busy app into a plain t.
             var ks = new byte[256];
             GetKeyboardState(ks);
             ks[0x11] = 0x80; ks[0xA2] = 0x80;   // VK_CONTROL, VK_LCONTROL
@@ -506,15 +563,20 @@ public class DeskSpike {
             PostMessageW(target, 0x0100, (IntPtr)0x11, IntPtr.Zero);
             PostMessageW(target, 0x0100, (IntPtr)0x10, IntPtr.Zero);
             PostMessageW(target, 0x0100, (IntPtr)0x54, IntPtr.Zero); // 'T'
-            Thread.Sleep(200);
+            clock.Restart();
+            for (int i = 0; i < 50 && pane != null; i++) {
+                int tabs; PaneOf(exe, top.ToInt64(), out tabs);
+                if (tabs > TabsBefore) { TabsAfter = tabs; ChordLandedMs = (int)clock.ElapsedMilliseconds; break; }
+                Thread.Sleep(200);
+            }
             PostMessageW(target, 0x0101, (IntPtr)0x54, IntPtr.Zero);
             PostMessageW(target, 0x0101, (IntPtr)0x10, IntPtr.Zero);
             PostMessageW(target, 0x0101, (IntPtr)0x11, IntPtr.Zero);
             ks[0x11] = 0; ks[0xA2] = 0; ks[0x10] = 0; ks[0xA0] = 0;
             SetKeyboardState(ks);
             ChordSent = true;
-            Thread.Sleep(1500);
-            note("post-chord GetFocus=" + GetFocus());
+            if (TabsAfter < 0) { int tabs; PaneOf(exe, top.ToInt64(), out tabs); TabsAfter = tabs; }
+            note("chord: tabs " + TabsBefore + " -> " + TabsAfter + " after " + ChordLandedMs + "ms (-1 = not within 10s); GetFocus=" + GetFocus());
             AttachThreadInput(myTid, appTid, false);
         } catch (Exception e) {
             note("EXCEPTION " + e.Message);
@@ -577,7 +639,14 @@ function Kill-SpikeInstances {
     [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500)
 }
 
-Kill-SpikeInstances
+# T1280: a FULL reset, not Kill-SpikeInstances. The -AppOnly kill left the
+# debug session-layout manifest and the agent's layout store in place, so the
+# launch below RESTORED whatever the previous script (or the previous spike)
+# left: measured 2026-10-24, the tab count before the chord climbed 2 -> 11
+# over successive runs, which made "the chord opened a tab" pass with no chord
+# at all, and a restored second window could be the one +list reported as
+# windows[0] - the shape of the 2026-09-02 red (no keys seen, tabs=1).
+Reset-GhozttyTestState -Exe $exe | Out-Null
 
 # Watch the INTERACTIVE desktop for the whole run: no ghoztty of ours may
 # ever become foreground there. This is the user's actual complaint, asserted.
@@ -601,39 +670,36 @@ if ($spikePid -gt 0) {
         "the window is NOT enumerable on the interactive desktop"
 }
 
-# P3: input reach - ctrl+shift+t on the background desktop must have made a
-# second tab. Read it back over the spike's own IPC endpoint.
-$tabs = -1
-$json = ''
-try {
-    $json = (& $exe +list --json 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
-    if ($json.Trim()) {
-        $tree = $json | ConvertFrom-Json
-        $tabs = @($tree.data.windows[0].tabs).Count
-    }
-} catch { Write-Host "list parse error: $_"; $tabs = -1 }
-# Read the pane back to see which input mechanism actually landed.
+# P3: input reach. Everything below is read back over the spike's own IPC
+# endpoint for the window the keys were POSTED to (T1280: by hwnd, never as
+# windows[0]), from a run that started on a clean slate.
+$pane = [DeskSpike]::Pane
 $paneText = ''
 try {
-    $pane = $tree.data.windows[0].tabs[0].splits.terminal.name
     if ($pane) { $paneText = (& $exe +read --name=$pane --lines=10 2>&1 |
         ForEach-Object { $_.ToString() } | Out-String) }
 } catch { Write-Host "read error: $_" }
 $sawSendInput = [bool]($paneText -match 'SPIKEA')
-$sawPost = [bool]($paneText -match 'spikeb')
 $si = [DeskSpike]::SendInputAccepted; $sierr = [DeskSpike]::SendInputLastError
+$tabsBefore = [DeskSpike]::TabsBefore; $tabsAfter = [DeskSpike]::TabsAfter
 
+# The clean slate, asserted: one fresh tab, and nothing of an earlier run's
+# typing on it - otherwise the two input assertions below could pass on
+# leftovers (they did, before T1280).
+Assert ($pane -and $tabsBefore -eq 1 -and -not [DeskSpike]::PreHadToken) `
+    "the app under test answers for the spike's window with one fresh tab (tabs=$tabsBefore, leftover token=$([DeskSpike]::PreHadToken))"
 # INPUT-1: SendInput is BLOCKED on a non-input desktop. Asserted, not assumed:
 # it is the single fact that decides the harness cannot just be relocated.
 Assert ($si -eq 0 -and $sierr -eq 5 -and -not $sawSendInput) `
     "SendInput is blocked on a background desktop (accepted=$si, err=$sierr = ACCESS_DENIED)"
 # INPUT-2: posted key messages DO reach the terminal there.
-Assert ($sawPost) "posted WM_KEYDOWN reaches the terminal on a background desktop"
+Assert ([DeskSpike]::KeysLandedMs -ge 0) `
+    "posted WM_KEYDOWN reaches the terminal on a background desktop (landed after $([DeskSpike]::KeysLandedMs)ms)"
 # INPUT-3: and a modifier chord survives the same route (key state set over
-# the attached input queue). ctrl+shift+t must have opened a second tab.
-Write-Host "tabs after the posted ctrl+shift+t: $tabs"
-Assert ([DeskSpike]::ChordSent -and $tabs -ge 2) `
-    "a posted ctrl+shift+t chord fires its keybind (tabs=$tabs, want >=2)"
+# the attached input queue). ctrl+shift+t must have opened exactly one tab.
+Write-Host "tabs around the posted ctrl+shift+t: $tabsBefore -> $tabsAfter"
+Assert ([DeskSpike]::ChordSent -and $tabsBefore -ge 1 -and $tabsAfter -eq ($tabsBefore + 1)) `
+    "a posted ctrl+shift+t chord fires its keybind (tabs $tabsBefore -> $tabsAfter, want +1)"
 
 # CAPTURE: the question the whole option was said to hang on.
 $bl = [DeskSpike]::BitBltMeanLum; $bd = [DeskSpike]::BitBltDistinct
