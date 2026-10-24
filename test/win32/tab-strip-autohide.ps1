@@ -45,7 +45,10 @@
 # Runs on the background test desktop (test/win32/lib/TestDesktop.ps1), so it
 # never takes the user's foreground. Only touches ghoztty processes running
 # from this repo's zig-out.
-param([string]$ExePath, [switch]$NegativeControl)
+# -ForceConfirm (T1288) launches section 3's window with
+# `confirm-close-surface = always`, so its ctrl+w raises the modal: the dialog
+# read-back MUST fail, by name. It is how that check was shown to have teeth.
+param([string]$ExePath, [switch]$NegativeControl, [switch]$ForceConfirm)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -55,6 +58,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-autohidetest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
+. (Join-Path $PSScriptRoot 'lib\PaneIdle.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -130,7 +134,7 @@ try {
     }
 
     # --- 1. one tab, default config: no strip --------------------------------
-    $auto = Start-Win @()
+    $auto = Start-Win $(if ($ForceConfirm) { @('--confirm-close-surface=always') } else { @() })
     $h = $auto.Top
     # Derived from the DIP constants rather than read out of the binary, but no
     # longer restated HERE - lib\ChromeGeometry.ps1 is the one copy (T257), and
@@ -251,6 +255,16 @@ try {
             $offBack = Pane-Offset $h
             if ($offBack -eq $capH) { break }
         }
+        # READ THE DIALOG BACK (T1288). `--confirm-close-surface=false` above is
+        # what keeps a still-starting shell from turning this ctrl+w into the
+        # modal (closeNeedsConfirm answers false for it), so no idle wait is
+        # owed here. But if that flag ever goes, the red below would blame the
+        # chord for a dialog nobody looked for - name it instead, then dismiss
+        # it so the modal cannot disable the window for the menu press.
+        $confirm = Get-CloseConfirmDialog -ProcessId $auto.Pid
+        Check ($confirm -eq [IntPtr]::Zero) `
+            'the tab close raised no confirmation dialog (confirm-close-surface=false)'
+        if ($confirm -ne [IntPtr]::Zero) { [void](Clear-CloseConfirmDialog -ProcessId $auto.Pid) }
         Check ($offBack -eq $capH) `
             "closing back to one tab hides the strip again (offset $offBack, capH $capH, refocused=$refocus)"
         # VISIBLE panes, deliberately not "child windows": a closed surface's
