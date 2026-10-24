@@ -6,7 +6,11 @@ const std = @import("std");
 const builtin = @import("builtin");
 const options = @import("build_options");
 const assert = std.debug.assert;
-const apprt = @import("apprt.zig");
+const apprt = struct {
+    // The one apprt type this file names, imported from its leaf so that
+    // reaching build_config does not reach apprt.zig (T1331).
+    const Runtime = @import("apprt/runtime.zig").Runtime;
+};
 const font = @import("font/main.zig");
 const rendererpkg = @import("renderer.zig");
 const BuildConfig = @import("build/Config.zig");

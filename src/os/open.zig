@@ -2,7 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const build_config = @import("../build_config.zig");
-const apprt = @import("../apprt.zig");
+// OpenUrl.Kind from its leaf: open.zig is reachable from almost every file
+// in src/, and apprt.zig from here would put the whole app in every test
+// binary, the session agent's included (T1331).
+const OpenUrlKind = @import("../apprt/open_url_kind.zig").Kind;
 
 const log = std.log.scoped(.@"os-open");
 
@@ -18,7 +21,7 @@ const log = std.log.scoped(.@"os-open");
 /// for your platform.
 pub fn open(
     alloc: Allocator,
-    kind: apprt.action.OpenUrl.Kind,
+    kind: OpenUrlKind,
     url: []const u8,
 ) !void {
     var exe: std.process.Child = switch (builtin.os.tag) {

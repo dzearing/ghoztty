@@ -483,6 +483,7 @@ test {
     _ = @import("CommandCore.zig");
     _ = @import("font/main.zig");
     _ = @import("apprt.zig");
+    _ = @import("apprt/unit_tests.zig");
     _ = @import("renderer.zig");
     _ = @import("termio.zig");
     _ = @import("input.zig");

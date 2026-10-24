@@ -956,29 +956,9 @@ pub const OpenUrl = struct {
     /// The URL.
     url: []const u8,
 
-    /// The type of the data at the URL to open. This is used as a hint to
-    /// potentially open the URL in a different way.
-    ///
-    /// Sync with: ghostty_action_open_url_kind_e
-    pub const Kind = enum(c_int) {
-        /// The type is unknown. This is the default and apprts should
-        /// open the URL in the most generic way possible. For example,
-        /// on macOS this would be the equivalent of `open` or on Linux
-        /// this would be `xdg-open`.
-        unknown,
-
-        /// The URL is known to be a text file. In this case, the apprt
-        /// should try to open the URL in a text editor or viewer or
-        /// some equivalent, if possible.
-        text,
-
-        /// The URL is known to contain HTML content.
-        html,
-
-        test "ghostty.h OpenUrl.Kind" {
-            try lib.checkGhosttyHEnum(Kind, "GHOSTTY_ACTION_OPEN_URL_KIND_");
-        }
-    };
+    /// The type of the data at the URL to open. Lives in its own leaf file
+    /// so `os/open.zig` can name it without importing `apprt.zig` (T1331).
+    pub const Kind = @import("open_url_kind.zig").Kind;
 
     // Sync with: ghostty_action_open_url_s
     pub const C = extern struct {
