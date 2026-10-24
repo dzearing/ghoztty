@@ -154,6 +154,42 @@ $faraway = @(
     '        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }')
 Assert 'A9 a distant exemption does not reach the kill' ((KindsOf $faraway) -eq 'private-kill')
 
+# T1260: the other spelling. Get-Process names the image without `.exe`, and its
+# objects carry `.Kill()` - update-real-msi.ps1 and update-graceful.ps1 both held
+# exactly this while B2 read "0 files".
+$dotKill = @(
+    'function Stop-Installed {',
+    '    foreach ($p in @(Get-Process -Name ghoztty, ''ghoztty-agent'' -ErrorAction SilentlyContinue)) {',
+    '        try { $p.Kill() } catch {}',
+    '    }',
+    '}')
+Assert 'A13 a Get-Process + .Kill() kill is a finding' ((KindsOf $dotKill) -eq 'private-kill')
+# The same query one helper call removed, which is how Stop-ThrowawayInstances
+# kills: the sweep has to follow it or a rename hides any kill.
+$viaHelper = @(
+    '    $names = @(''ghoztty'', ''ghoztty-agent'')',
+    '    foreach ($p in @(Get-ThrowawayProcesses -InstallDir $InstallDir -Names $names)) {',
+    '        try { $p.Kill() } catch {}',
+    '    }')
+Assert 'A14 a .Kill() through a Get-...Processes helper is a finding' ((KindsOf $viaHelper) -eq 'private-kill')
+# Our own child's handle is not a ghoztty query: a timed-out +version is killed
+# by the Process object Start-Process returned, and that stays legal.
+$ownChild = @(
+    '    $p = Start-Process $exe -ArgumentList ''+version'' -NoNewWindow -PassThru',
+    '    if (-not $p.WaitForExit(15000)) {',
+    '        try { $p.Kill() } catch {}',
+    '    }')
+Assert 'A15 killing a child this script started is not a finding' ((Findings $ownChild).Count -eq 0)
+# A CIM query that names 'ghoztty' only to exclude it (the chooser scripts' litter
+# kill) must stay silent: the bare-name form counts for Get-Process alone.
+$litterExcl = @(
+    '    foreach ($name in ($Names | Where-Object { $_ -notin @(''ghoztty'', ''ghoztty-agent'') })) {',
+    '        Get-CimInstance Win32_Process -Filter "Name=''$name.exe''" | ForEach-Object {',
+    '            try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}',
+    '        }',
+    '    }')
+Assert 'A16 a CIM litter kill that excludes ghoztty by name is not a finding' ((Findings $litterExcl).Count -eq 0)
+
 # ============================================================================
 "== B: the sweep - no acceptance script carries an unexplained ghoztty kill"
 # ============================================================================
@@ -216,6 +252,17 @@ if ($TeethCheck) {
     $teeth = @(Get-CleanSlateFindings -Text (Get-Content $fake))
     Remove-Item $fake -Force -ErrorAction SilentlyContinue
     Assert 'B5 (teeth) a synthesized violator is caught' ($teeth.Count -eq 1)
+
+    # T1260: and the .Kill() spelling, through the same file-read path the sweep uses.
+    @(
+        'function Stop-Installed {',
+        '    foreach ($p in @(Get-Process -Name ''ghoztty'' -ErrorAction SilentlyContinue)) {',
+        '        try { $p.Kill() } catch {}',
+        '    }',
+        '}') | Set-Content -Path $fake -Encoding UTF8
+    $teeth = @(Get-CleanSlateFindings -Text (Get-Content $fake))
+    Remove-Item $fake -Force -ErrorAction SilentlyContinue
+    Assert 'B6 (teeth) a synthesized .Kill() violator is caught' ($teeth.Count -eq 1)
 }
 
 # ============================================================================

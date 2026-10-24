@@ -24,7 +24,8 @@
 #
 # A `Get-CimInstance Win32_Process` query that names `ghoztty.exe` or
 # `ghoztty-agent.exe` and whose pipeline reaches `Stop-Process` within the next
-# few lines. Enumerations are NOT findings: plenty of scripts legitimately count
+# few lines. Since T1260 also a `Get-Process` (or `Get-<X>Process(es)` helper)
+# query naming `ghoztty`/`ghoztty-agent`, and a kill spelled `.Kill()`. Enumerations are NOT findings: plenty of scripts legitimately count
 # or inspect processes, and only the KILL is the shared datum.
 #
 # THE EXEMPTION, AND WHY IT IS A COMMENT RATHER THAN A LIST
@@ -43,8 +44,20 @@
 
 Set-StrictMode -Off
 
-$script:CleanSlateAuditQuery = 'Get-CimInstance\s+Win32_Process'
+# T1260: three query spellings, not one. `Get-Process` hands back objects with a
+# `.Kill()` of their own, and a helper named `Get-<Something>Process(es)` is the
+# same query one call removed - `Stop-ThrowawayInstances` killed through exactly
+# that and the sweep never saw it.
+$script:CleanSlateAuditQuery = 'Get-CimInstance\s+Win32_Process|\bGet-Process\b|\bGet-\w+Process(es)?\b'
 $script:CleanSlateAuditNames = "ghoztty\.exe|ghoztty-agent\.exe|ghoztty-agent%|ghoztty\.exe'\s+OR"
+# Get-Process takes the image name WITHOUT `.exe`, so for that family alone the
+# bare quoted names count too. Not for a CIM query: the chooser scripts name
+# 'ghoztty' beside one only to EXCLUDE it from a kill of their own litter.
+$script:CleanSlateAuditCim = 'Get-CimInstance\s+Win32_Process'
+$script:CleanSlateAuditBareNames = "['""]ghoztty(-agent)?['""]"
+# T1260: the kill has two spellings too. `$p.Kill()` on an object the query
+# returned is the same private kill as piping it into Stop-Process.
+$script:CleanSlateAuditKill = 'Stop-Process|\.Kill\(\)'
 # The reason is captured, not required by the pattern: a marker with an EMPTY
 # reason has to be seen to be reported, and a pattern that demanded `\S` would
 # simply not match it - leaving a rubber stamp indistinguishable from no stamp.
@@ -92,13 +105,15 @@ function Get-CleanSlateFindings {
             if ($Text[$j] -match '^\s*function\s' -or $Text[$j] -match '^\}') { $last = $j - 1; break }
         }
         $forward = ($Text[$i..$last] -join ' ')
-        if ($forward -notmatch 'Stop-Process') { continue }
+        if ($forward -notmatch $script:CleanSlateAuditKill) { continue }
 
         # The image name is not always on the query line: the commonest copy in
         # the corpus looped `foreach ($n in @('ghoztty.exe', 'ghoztty-agent.exe'))`
         # and filtered on `$n`, so the name sits a line or two ABOVE.
         $back = [Math]::Max(0, $i - 3)
-        if (($Text[$back..$last] -join ' ') -notmatch $script:CleanSlateAuditNames) { continue }
+        $names = $script:CleanSlateAuditNames
+        if ($line -notmatch $script:CleanSlateAuditCim) { $names += '|' + $script:CleanSlateAuditBareNames }
+        if (($Text[$back..$last] -join ' ') -notmatch $names) { continue }
 
         # T2053: a kill that picks its victims by `zig-out` in the COMMAND LINE
         # is not excusable. Every debug ghoztty on the box has that in its

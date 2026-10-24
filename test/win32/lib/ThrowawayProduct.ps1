@@ -227,6 +227,9 @@ function Stop-ThrowawayInstances {
     )
     [void](Assert-ThrowawayInstallDir -InstallDir $InstallDir -RealLocalAppData $RealLocalAppData)
     $names = if ($AppOnly) { @('ghoztty') } else { @('ghoztty', 'ghoztty-agent') }
+    # cleanslate-exempt: the exe here came through a real installer, so it lives
+    # outside the repo and Stop-RepoGhoztty refuses it by design; path-exact under
+    # an InstallDir that Assert-ThrowawayInstallDir has already proven is not the user's.
     foreach ($p in @(Get-ThrowawayProcesses -InstallDir $InstallDir -Names $names)) {
         try { $p.Kill() } catch {}
     }
