@@ -573,6 +573,17 @@ pub fn resize(
         self.renderer_state.mutex.lock();
         defer self.renderer_state.mutex.unlock();
 
+        // The resize clears a prompt the cursor is on for the shell to redraw
+        // (`Screen.resize`); hold the last frame until it has.
+        const old_rows = self.terminal.rows;
+        const old_cols = self.terminal.cols;
+        if ((grid_size.rows != old_rows or grid_size.columns != old_cols) and
+            self.atPromptLocked())
+        {
+            self.terminal.flags.awaiting_prompt_redraw = true;
+            self.terminal.prompt_redraw_output = null;
+        }
+
         // Update the size of our terminal state
         try self.terminal.resize(
             self.alloc,
@@ -672,6 +683,48 @@ fn sizeReportLocked(self: *Termio, td: *ThreadData, style: termio.Message.SizeRe
     );
 
     try self.queueWrite(td, writer.buffered(), false);
+}
+
+/// Whether the cursor is at a shell prompt on the primary screen, which a
+/// resize clears for the shell to redraw (`Screen.resize`). The caller holds
+/// the renderer state mutex.
+fn atPromptLocked(self: *Termio) bool {
+    return self.terminal.screens.active_key == .primary and
+        self.terminal.flags.shell_redraws_prompt != .false and
+        self.terminal.screens.active.cursor.semantic_content != .output;
+}
+
+/// How the IO thread paces a resize (`termio.Thread.handleResize`).
+pub const ResizePace = enum {
+    /// Debounced: a program is running, and may repaint on every SIGWINCH.
+    debounce,
+
+    /// At once: a shell at its prompt redraws one line.
+    now,
+
+    /// Once the shell has redrawn the prompt the last resize cleared. Sooner
+    /// would clear it again before the held frame is released, and hold it
+    /// for as long as the resizes keep coming.
+    after_redraw,
+};
+
+pub fn resizePace(self: *Termio) ResizePace {
+    self.renderer_state.mutex.lock();
+    defer self.renderer_state.mutex.unlock();
+    if (self.terminal.flags.awaiting_prompt_redraw) return .after_redraw;
+    return if (self.atPromptLocked()) .now else .debounce;
+}
+
+/// Stop holding the last frame for a prompt redraw that never came.
+pub fn releasePromptRedraw(self: *Termio) void {
+    {
+        self.renderer_state.mutex.lock();
+        defer self.renderer_state.mutex.unlock();
+        if (!self.terminal.flags.awaiting_prompt_redraw) return;
+        self.terminal.flags.awaiting_prompt_redraw = false;
+        self.terminal.prompt_redraw_output = null;
+    }
+    self.renderer_wakeup.notify() catch {};
 }
 
 /// Reset the synchronized output mode. This is usually called by timer
@@ -861,6 +914,12 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
         }
     } else {
         self.terminal_stream.nextSlice(buf);
+    }
+
+    // The shell is redrawing the prompt a resize cleared: the renderer
+    // shows it once this goes quiet.
+    if (self.terminal.flags.awaiting_prompt_redraw) {
+        self.terminal.prompt_redraw_output = std.time.Instant.now() catch null;
     }
 
     // If our stream handling caused messages to be sent to the mailbox

@@ -108,24 +108,25 @@ class BaseTerminalController: NSWindowController,
     /// has squashed a pane against its minimum. See `splitDidResize(_:)`.
     private var dividerDragOrigin: (tree: SplitTree<PaneView>, node: SplitTree<PaneView>.Node)?
 
-    /// The row a divider or stack-grip drag is in, as the drag found it, and
-    /// what the drag has done to it so far: a drag can collapse the row
-    /// (squeezing a pane well past its minimum), go on squeezing the next
-    /// pane and the next (`PaneLayout.chain`), and, still held, undo all of
-    /// it by coming back. See `splitDidResize(_:)` and `splitDidDragStack(_:)`.
+    /// The row a gutter drag (a divider, a grip between cards, a grip where
+    /// the run meets its strips) is in, as the drag found it. Every step makes
+    /// the row what `PaneLayout.dragged` says the gutter's position makes of
+    /// it — from this, never from the step before — so dragging back undoes
+    /// everything dragging forward did. See `splitDidResize(_:)` and
+    /// `splitDidDragStack(_:)`.
     private var rowDrag: RowDrag?
 
     private struct RowDrag {
         let row: PaneLayout.Row<UUID>
-        let origin: PaneStackState.Snapshot
-        /// The row index of the first item after the grip.
+        let direction: PaneLayout.Direction
+        /// The row index of the first item after the gutter.
         let boundary: Int
         /// Added to the gesture's position to measure it from the row's start.
         let offset: CGFloat
-        /// A widening drag's change, from a grip at the run's edge.
-        var change: PaneLayout.Restack?
-        /// What a squeezing drag has tucked away so far.
-        var squeeze: PaneLayout.Squeeze?
+        /// Each item's size when the drag began; nil for a strip.
+        let sizes: [CGFloat?]
+        /// The tree as the drag found it (its ratios as laid out on screen).
+        let tree: SplitTree<PaneView>
     }
 
     let heroModeState = HeroModeState()
@@ -2158,54 +2159,36 @@ class BaseTerminalController: NSWindowController,
         }
     }
 
-    /// A grip on a stacked row dragged (`TerminalSplitOperation.StackDrag`).
+    /// A grip on a stacked row dragged (`TerminalSplitOperation.StackDrag`):
+    /// between two cards on show, or where the run meets its strips, it is a
+    /// gutter of the row like any divider (`dragRow`).
     private func splitDidDragStack(_ drag: TerminalSplitOperation.StackDrag) {
         switch drag.gesture {
         case .began:
-            let boundary = if case .between(let slot) = drag.kind { drag.row.run.lowerBound + slot + 1 } else { 0 }
-            beginRowDrag(drag.row, boundary: boundary, offset: drag.position)
+            let boundary = switch drag.kind {
+            case .between(let slot): drag.row.run.lowerBound + slot + 1
+            case .expand(.leading): drag.row.run.lowerBound
+            case .expand(.trailing): drag.row.run.upperBound + 1
+            }
+            beginRowDrag(drag.row, direction: drag.direction, boundary: boundary, offset: drag.position,
+                         tree: surfaceTree)
         case .ended:
             endRowDrag()
         case .moved(let delta, _):
-            let past = PaneLayout.Metrics.restackDistance
-            switch drag.kind {
-            case .expand(let side):
-                let outward = side == .trailing ? delta : -delta
-                setRowDrag(outward > past ? .expand(side) : nil)
-            case .between(let slot):
-                // `delta` runs from where the drag began, so it applies to
-                // the sizes the row had then: added to each step's result,
-                // it would compound and the edge would run ahead of the hand.
-                let sizes = rowDrag?.row.sizes ?? drag.row.sizes
-                guard slot + 1 < sizes.count else { return }
-                let minimum = drag.direction == .horizontal
-                    ? PaneLayout.Metrics.minimumPaneSize.width
-                    : PaneLayout.Metrics.minimumPaneSize.height
-                // Resizing two slots never changes their sum.
-                let pair = sizes[slot] + sizes[slot + 1]
-                let leading = sizes[slot] + delta
-                // Squeezing a card next to the grip well past its minimum
-                // tucks the outermost card on that side away, then the next,
-                // and the next, as the pointer goes on.
-                if squeezeRow(at: delta, collapsing: pair - leading < minimum - past ? .trailing
-                              : leading < minimum - past ? .leading : nil,
-                              back: leading >= minimum && pair - leading >= minimum) { return }
-                guard pair >= 2 * minimum else { return }
-                var resized = sizes
-                resized[slot] = Swift.min(Swift.max(leading, minimum), pair - minimum)
-                resized[slot + 1] = pair - resized[slot]
-                let total = resized.reduce(0, +)
-                paneStackState.resize(drag.row, shares: resized.map { $0 / total })
-            }
+            dragRow(to: delta)
         }
     }
 
-    /// A row collapsed or widened by a drag (see `PaneLayout.Restack`), as
-    /// many times over as `times`. The caret never stays in a pane that just
-    /// tucked behind: it moves to the nearest pane still on show, the one the
-    /// room was made for.
+    /// A row collapsed or widened (see `PaneLayout.Restack`), as many times
+    /// over as `times`: what the strip-dropping and fuzzed tests drive.
     private func splitDidRestack(_ row: PaneLayout.Row<UUID>, _ change: PaneLayout.Restack, times: Int = 1) {
         paneStackState.restack(row, change, times: times)
+        keepFocusOnShow(row)
+    }
+
+    /// The caret never stays in a pane that just tucked behind: it moves to
+    /// the nearest pane still on show, the one the room was made for.
+    private func keepFocusOnShow(_ row: PaneLayout.Row<UUID>) {
         guard let pin = paneStackState.pin(for: row.key),
               let focused = focusedPane,
               let index = row.items.firstIndex(where: { $0.contains(focused.id) })
@@ -2219,63 +2202,61 @@ class BaseTerminalController: NSWindowController,
         Ghostty.moveFocus(to: pane)
     }
 
-    /// Begin a drag that may collapse `row`, on the grip before item
-    /// `boundary`; `offset` measures the gesture's positions from the row's
-    /// start.
-    private func beginRowDrag(_ row: PaneLayout.Row<UUID>?, boundary: Int = 0, offset: CGFloat = 0) {
-        rowDrag = row.map {
-            RowDrag(row: $0, origin: paneStackState.snapshot($0.key), boundary: boundary, offset: offset)
-        }
+    /// Begin a gutter drag in `row`, on the gutter before item `boundary`;
+    /// `offset` measures the gesture's positions from the row's start.
+    private func beginRowDrag(
+        _ row: PaneLayout.Row<UUID>, direction: PaneLayout.Direction, boundary: Int, offset: CGFloat,
+        tree: SplitTree<PaneView>
+    ) {
+        var sizes = [CGFloat?](repeating: nil, count: row.items.count)
+        for (k, i) in row.run.enumerated() where row.sizes.indices.contains(k) { sizes[i] = row.sizes[k] }
+        rowDrag = RowDrag(
+            row: row, direction: direction, boundary: boundary, offset: offset, sizes: sizes, tree: tree)
         paneStackState.isGesturing = true
     }
 
-    /// One step of a drag that can squeeze its row, with the pointer at
-    /// `position` (the gesture's own measure). `collapsing`: the side whose
-    /// first item the drag has just squeezed well past its minimum, nil if
-    /// not; `back`: the drag is back where that item fits again. Returns
-    /// whether the row is squeezed — the grip then follows the pointer
-    /// through the run, and the caller has nothing more to do.
-    private func squeezeRow(at position: CGFloat, collapsing: PaneLayout.Side?, back: Bool) -> Bool {
-        guard let drag = rowDrag else { return false }
-        let x = drag.offset + position
-        let past = PaneLayout.Metrics.restackDistance
-        let squeeze: PaneLayout.Squeeze?
-        if let current = drag.squeeze {
-            // The first item comes back by the drag's own measure; the ones
-            // after it by the chain's.
-            squeeze = current.count == 1 && back
-                ? nil
-                : PaneLayout.chain(drag.row, boundary: drag.boundary, at: x, current: current, past: past)
-        } else if let collapsing {
-            squeeze = PaneLayout.chain(
-                drag.row, boundary: drag.boundary, at: x, current: .init(side: collapsing, count: 1), past: past)
+    /// One step of a gutter drag, the pointer at `position` (the gesture's
+    /// own measure): the row as the gutter's position makes it.
+    private func dragRow(to position: CGFloat) {
+        guard let drag = rowDrag else { return }
+        // The tree changed shape under the drag (a pane closed, a split was
+        // added): replaying onto the stale snapshot would resurrect it.
+        guard drag.tree.structuralIdentity == surfaceTree.structuralIdentity else {
+            rowDrag = nil
+            return
+        }
+        let (run, sizes) = PaneLayout.dragged(
+            drag.row, boundary: drag.boundary, at: drag.offset + position, sizes: drag.sizes)
+        paneStackState.show(drag.row, run: run, sizes: sizes)
+        if run.count == drag.row.items.count {
+            // All on show: the tree's ratios size the row.
+            let total = sizes.reduce(0, +)
+            surfaceTree = drag.tree.applyingToVisible {
+                $0.settingRow(drag.row.items, along: drag.direction, shares: sizes.map { $0 / Swift.max(total, 1) })
+            }
         } else {
-            squeeze = nil
+            surfaceTree = drag.tree
         }
-        if squeeze != drag.squeeze {
-            paneStackState.restore(drag.row.key, drag.origin)
-            rowDrag?.squeeze = squeeze
-            if let squeeze { splitDidRestack(drag.row, .collapse(squeeze.side), times: squeeze.count) }
-        }
-        guard let squeeze else { return false }
-        paneStackState.resize(drag.row, shares: PaneLayout.squeezedShares(
-            drag.row, boundary: drag.boundary, squeeze: squeeze, at: x))
-        return true
+        keepFocusOnShow(drag.row)
     }
 
     private func endRowDrag() {
         rowDrag = nil
-        paneStackState.isGesturing = false
+        // A moment later, not now: the drag's last steps may not be drawn yet
+        // (a fast hand outruns the grid), and drawn after the drag is over
+        // they would slide like a click instead of gliding like the drag
+        // (`PaneStageView.apply`) — the content held at its old size, then
+        // snapped. A drag begun meanwhile keeps the flag.
+        rowDragGeneration += 1
+        let generation = rowDragGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, self.rowDragGeneration == generation, self.rowDrag == nil else { return }
+            self.paneStackState.isGesturing = false
+        }
     }
 
-    /// Put the dragged row in the state `change` makes of it as the drag
-    /// found it (nil: as the drag found it): a grip at the run's edge.
-    private func setRowDrag(_ change: PaneLayout.Restack?) {
-        guard let drag = rowDrag, drag.change != change else { return }
-        paneStackState.restore(drag.row.key, drag.origin)
-        rowDrag?.change = change
-        if let change { splitDidRestack(drag.row, change) }
-    }
+    /// Counts drag ends, so a late "the drag is over" never lands on the next.
+    private var rowDragGeneration = 0
 
     private func splitDidResize(_ resize: TerminalSplitOperation.Resize) {
         switch resize.gesture {
@@ -2285,49 +2266,35 @@ class BaseTerminalController: NSWindowController,
             // node of that displayed tree.
             let origin = resize.displayed.map { surfaceTree.adoptingDisplayedLayout($0) } ?? surfaceTree
             dividerDragOrigin = (origin, resize.node)
-            beginRowDrag(resize.row, boundary: resize.boundary, offset: resize.rowOffset)
+            if let row = resize.row, case .split(let split) = resize.node {
+                beginRowDrag(row, direction: split.direction.layoutDirection, boundary: resize.boundary,
+                             offset: resize.rowOffset, tree: origin)
+            }
 
         case .ended:
             dividerDragOrigin = nil
             endRowDrag()
 
         case .moved(let position, let dimension):
-            // Well past a pane's minimum, the pane on that side snaps away
-            // (`PaneLayout.Restack.collapse`) and the ratios are left as the
-            // drag found them; brought back to the minimum, it comes back.
-            if let origin = dividerDragOrigin, rowDrag != nil, case .split(let split) = origin.node {
-                let minimum = PaneLayout.Metrics.minimumPaneSize
-                let axis = split.direction.layoutDirection
-                let leading = PaneLayout.minimumExtent(split.left, along: axis, minimum: minimum, stacking: false)
-                let trailing = dimension - PaneLayout.minimumExtent(split.right, along: axis, minimum: minimum, stacking: false)
-                let past = PaneLayout.Metrics.restackDistance
-                let collapsing: PaneLayout.Side? = position < leading - past ? .leading
-                    : position > trailing + past ? .trailing : nil
-                if squeezeRow(at: position, collapsing: collapsing, back: position >= leading && position <= trailing) {
-                    surfaceTree = origin.tree
-                    return
-                }
+            // A divider is a gutter of its row: the row as its position
+            // makes it (`dragRow`), panes tucking away past their minimums
+            // and strips coming out where there is room.
+            if rowDrag != nil {
+                dragRow(to: position)
+                return
             }
 
-            // A drag reports an absolute position measured from the layout it started
-            // on, so replay it against that layout rather than against the previous
-            // frame's result: dragging past a pane's minimum and back then puts the
-            // squashed panes back exactly where they were.
+            // A divider in no row (none is, today): move it alone, replayed
+            // against the layout the drag started on.
             if let origin = dividerDragOrigin,
                origin.tree.structuralIdentity != surfaceTree.structuralIdentity {
-                // The tree changed shape under the drag (a pane closed, a split was
-                // added). Replaying onto the stale snapshot would resurrect it.
                 dividerDragOrigin = nil
             }
-
-            // With no drag behind it there is no snapshot, and the live tree is
-            // the right thing to move.
             let origin = dividerDragOrigin ?? (tree: surfaceTree, node: resize.node)
             do {
-                // The divider belongs to the rendered (visible) tree; move it
-                // there and lift the ratio back onto the full tree.
+                let laidOut = paneStackState.laidOutPin
                 surfaceTree = try origin.tree.applyingToVisible {
-                    try $0.movingDivider(of: origin.node, to: position, in: dimension)
+                    try $0.movingDivider(of: origin.node, to: position, in: dimension, laidOut: laidOut)
                 }
             } catch {
                 Ghostty.logger.warning("failed to move split divider: \(error)")

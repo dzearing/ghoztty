@@ -226,7 +226,7 @@ enum SidePanelRow {
 /// divider is one: the card's hosting view and the web view beside it are both
 /// AppKit, and they out-hit-test a SwiftUI gesture area — a SwiftUI handle here
 /// would be a target that only sometimes responds.
-final class SidePanelResizeHandle: NSView {
+final class SidePanelResizeHandle: NSView, GutterBarOwner {
     /// Total grab width, centered on the card's edge — about 3pt of slop on
     /// each side of a 1pt rim.
     static let grabWidth: CGFloat = 7
@@ -243,6 +243,28 @@ final class SidePanelResizeHandle: NSView {
     private var mouseDownX: CGFloat = 0
     private var startWidth: CGFloat = 0
 
+    /// What a person can drag shows itself, as a split divider does.
+    lazy var gutterBar = GutterBar(in: self)
+    private var bar: GutterBar { gutterBar }
+
+    /// Whether a bar shows, for tests.
+    var showsBar: Bool { bar.shows }
+
+    /// Where the bar that shows is, in window coordinates, for tests.
+    var barInWindow: CGRect? { bar.inWindow }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect, .enabledDuringMouseDrag],
+            owner: self,
+            userInfo: nil))
+        _ = bar
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .resizeLeftRight)
     }
@@ -252,18 +274,35 @@ final class SidePanelResizeHandle: NSView {
         // The handle moves with the card's edge; its cursor rect has to move
         // with it or the resize cursor is left behind at the old width.
         window?.invalidateCursorRects(for: self)
+        bar.layout()
     }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        bar.noteWindow()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        bar.moved()
+    }
+
+    override func mouseEntered(with event: NSEvent) { bar.isHovered = true }
+    override func mouseExited(with event: NSEvent) { bar.isHovered = false }
 
     override func mouseDown(with event: NSEvent) {
         mouseDownX = event.locationInWindow.x
         startWidth = widthAtDragStart?() ?? 0
+        bar.beginDrag()
     }
 
     override func mouseDragged(with event: NSEvent) {
         onDrag?(event.locationInWindow.x - mouseDownX, startWidth)
+        bar.drag(to: event.locationInWindow)
     }
 
     override func mouseUp(with event: NSEvent) {
+        bar.endDrag(at: event.locationInWindow)
         onDragEnded?()
     }
 }

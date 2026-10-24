@@ -56,7 +56,13 @@ extension Ghostty {
 
         /// The sticky pane banner (raw markdown-subset source text), set via
         /// IPC (+set-banner) or OSC 7778. Nil when no banner is shown.
-        @Published var paneBanner: String?
+        @Published var paneBanner: String? {
+            didSet { if paneBanner == nil { paneBannerCollapsed = false } }
+        }
+
+        /// Whether the pane banner is collapsed to its title row. Ephemeral
+        /// (never persisted); a cleared banner comes back expanded.
+        @Published var paneBannerCollapsed = false
 
         /// The exit code from the child process, or nil if still running.
         @Published private(set) var exitCode: UInt32?

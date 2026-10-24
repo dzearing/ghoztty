@@ -438,6 +438,75 @@ struct PaneSidebarWindowTests {
         }
     }
 
+    /// Pixels at window-point `x` over the window-point rows `ys` (y up), as
+    /// sRGB 0–255 triples.
+    private func samples(_ image: CGImage, x: CGFloat, ys: [CGFloat], in window: NSWindow) -> [[Double]] {
+        let scale = CGFloat(image.width) / window.frame.width
+        let rep = NSBitmapImageRep(cgImage: image)
+        return ys.compactMap { y in
+            guard let c = rep.colorAt(x: Int(x * scale), y: Int((window.frame.height - y) * scale))?
+                .usingColorSpace(.sRGB) else { return nil }
+            return [c.redComponent, c.greenComponent, c.blueComponent].map { Double($0) * 255 }
+        }
+    }
+
+    private func distance(_ a: [[Double]], _ b: [[Double]]) -> Double {
+        let pairs = zip(a, b)
+        return pairs.reduce(0.0) { $0 + (abs($1.0[0] - $1.1[0]) + abs($1.0[1] - $1.1[1]) + abs($1.0[2] - $1.1[2])) / 3 }
+            / Double(max(pairs.underestimatedCount, 1))
+    }
+
+    /// Glass panes: the pane banner is a pane of glass of its own, layered
+    /// on top — the desk's gradient reads through the card MORE than through
+    /// the pane around it (the pane's sheet thins out under the card), and
+    /// nothing lifts it toward grey. The card used to wash its area with
+    /// white and a sheen, ~17 levels lighter than the bare pane, the hue
+    /// washed out. Measured on the composited window: blank card pixels
+    /// against the same pixels with no banner, and both against the desk in
+    /// the gutter beside the pane.
+    @Test func bannerOnGlassLetsTheGradientThrough() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        try #require(ghostty.config.paneGlass, "needs the default elevated + glass pane style")
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.deskVariant = PaneDeskVariant(seed: 7)
+        controller.paneSidebarState.isHidden = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1200, height: 760))
+        await settle(2.5)
+        let view = try #require(a.surfaceView)
+        window.makeFirstResponder(view)
+        await settle(0.8)
+        let frame = view.convert(view.bounds, to: nil)
+
+        // Blank card: right of the short title and table, left of the
+        // chevron, between the card's top edge and its last row.
+        let ys = Array(stride(from: frame.maxY - 80, to: frame.maxY - 36, by: 4))
+        let xs: [CGFloat] = [frame.midX, frame.midX + 100]
+        func card(_ image: CGImage) -> [[Double]] { xs.flatMap { samples(image, x: $0, ys: ys, in: window) } }
+
+        let bare = card(try await captureComposited(window, "banner-glass-without"))
+        view.paneBanner = "## Glass banner\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+        await settle(1.5)
+        let shot = try await captureComposited(window, "banner-glass-with")
+        let banner = card(shot)
+        let desk = samples(shot, x: frame.minX - 5, ys: ys, in: window)
+        func mean(_ px: [[Double]]) -> [Double] { (0..<3).map { i in px.reduce(0.0) { $0 + $1[i] } / Double(max(px.count, 1)) } }
+        let deskMean = [mean(desk)]
+        let throughCard = distance([mean(banner)], deskMean), throughPane = distance([mean(bare)], deskMean)
+        let report = "desk \(mean(desk)) pane \(mean(bare)) card \(mean(banner)): card-desk \(throughCard) pane-desk \(throughPane), frame \(frame)"
+        try? report.write(toFile: "/tmp/pane-sidebar-snapshots/banner-glass.txt", atomically: true, encoding: .utf8)
+        #expect(banner.count == bare.count && !banner.isEmpty)
+        // More of the desk: the card's pixels are nearer the desk's color.
+        #expect(throughCard + 3 < throughPane, "the banner is no more see-through than the pane: \(report)")
+        // ...and no grey lift: the card is not lighter than the desk itself.
+        #expect(mean(banner).reduce(0, +) <= mean(desk).reduce(0, +) + 6, "the banner lifts the gradient toward grey: \(report)")
+    }
+
     /// Glass panes (the default): nothing paints over the window's gradient —
     /// not the terminal (the renderer drops its background), not a viewer's
     /// page, not the titlebar. Also writes the window as the WINDOW SERVER
@@ -609,17 +678,22 @@ struct PaneSidebarWindowTests {
 
         let host = try #require(h.controller.paneSidebarHost)
         let hostFrame = host.convert(host.bounds, to: nil)
-        #expect(abs(hostFrame.width - (240 + SidePanelResizeHandle.grabWidth / 2)) < 1,
-                "the column, plus the resize handle's outer half")
+        let elevated = h.controller.ghostty.config.macosPaneStyle == .elevated
+        let grip = PaneSidebarState.pinnedEdgeGrip(elevated: elevated)
+        #expect(abs(hostFrame.width - (240 + PaneSidebarState.pinnedEdgeReach(elevated: elevated))) < 1,
+                "the column, plus the gutter its resize grip lies in")
         #expect(abs(hostFrame.minX) < 1, "flush with the window's left edge")
         #expect(abs(host.cardRect.width - 240) < 1, "the panel fills its column, no card margin")
-        // The resize handle straddles the panel's edge, and BOTH halves take
-        // the mouse (the outer half used to fall outside the host).
+        // The resize grip takes the mouse over all of its span (past the
+        // panel too, which is outside the panel's own bounds), and the host
+        // nothing past it.
         let edgeX = host.frame.minX + host.cardRect.maxX
-        #expect(host.hitTest(NSPoint(x: edgeX - 2, y: host.frame.midY)) != nil, "inner half")
-        #expect(host.hitTest(NSPoint(x: edgeX + 2, y: host.frame.midY)) != nil, "outer half")
-        #expect(host.hitTest(NSPoint(x: edgeX + SidePanelResizeHandle.grabWidth, y: host.frame.midY)) == nil,
-                "nothing past the handle")
+        let y = host.frame.midY
+        #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + 1, y: y)) is SidePanelResizeHandle, "its start")
+        #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + grip.width - 1, y: y)) is SidePanelResizeHandle,
+                "its end")
+        #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + grip.width + 1, y: y)) == nil,
+                "nothing past the grip")
 
         // The grid starts where the column ends (plus the elevated margin).
         let leftPane = frameInWindow(h.panes[0])

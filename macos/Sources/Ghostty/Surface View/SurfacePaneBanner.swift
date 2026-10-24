@@ -46,6 +46,16 @@ extension Ghostty {
         /// concentric with it (`PaneElevation.nestedCardCornerRadius`).
         var cornerRadius: CGFloat = GlassCard.cornerRadius
 
+        /// Glass panes (`macos-pane-glass`): the card is the pane's own glass,
+        /// thinned (`PaneGlass.bannerTint`), with a rim and a shadow — no
+        /// wash, no sheen. Both are white, and
+        /// over a glass sheet a white lift is what greys the desk's hue into
+        /// a flat slab (measured: +17 levels, the hue washed out). A second
+        /// glass sheet is no better: Liquid Glass over the pane's glass greys
+        /// it further. Nothing else is needed for legibility — the text sits
+        /// on exactly the sheet terminal text does.
+        var isGlass: Bool = false
+
         /// Uniform inner padding of the card. Equal on all sides so the
         /// collapsed card — which shows only the title row — is vertically
         /// centered around a title that hasn't moved from its expanded spot.
@@ -68,8 +78,19 @@ extension Ghostty {
         private static let maxCellWidth: CGFloat = 360
 
         /// Collapsed state is per-pane and ephemeral; it resets when the
-        /// banner is cleared and set again.
-        @State private var collapsed: Bool
+        /// banner is cleared and set again. It lives on the pane
+        /// (`collapsedBinding`, the surface's `paneBannerCollapsed`) so it
+        /// survives SwiftUI rebuilding this view; the local copy is for
+        /// previews and harnesses that have no surface.
+        @State private var localCollapsed: Bool
+        var collapsedBinding: Binding<Bool>? = nil
+
+        private var collapsed: Bool {
+            get { collapsedBinding?.wrappedValue ?? localCollapsed }
+            nonmutating set {
+                if let collapsedBinding { collapsedBinding.wrappedValue = newValue } else { localCollapsed = newValue }
+            }
+        }
 
         /// The pane the banner belongs to. Passed to link runs so a clicked
         /// link opens relative to this pane (new window / side pane). nil in
@@ -81,14 +102,18 @@ extension Ghostty {
             background: Color? = nil,
             paneWidth: CGFloat = 0,
             cornerRadius: CGFloat = GlassCard.cornerRadius,
+            isGlass: Bool = false,
             initiallyCollapsed: Bool = false,
+            collapsed: Binding<Bool>? = nil,
             linkSurface: Ghostty.SurfaceView? = nil
         ) {
             self.text = text
             self.background = background
             self.paneWidth = paneWidth
             self.cornerRadius = cornerRadius
-            self._collapsed = State(initialValue: initiallyCollapsed)
+            self.isGlass = isGlass
+            self._localCollapsed = State(initialValue: initiallyCollapsed)
+            self.collapsedBinding = collapsed
             self.linkSurface = linkSurface
         }
 
@@ -128,7 +153,17 @@ extension Ghostty {
             .font(.system(size: 12))
             .padding(Self.innerPadding)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .modifier(GlassCardBackground(fill: cardFill, cornerRadius: cornerRadius))
+            // The body fading out on collapse must not spill past the card's
+            // shrinking edge onto the terminal rows it is uncovering.
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .modifier(GlassCardBackground(
+                fill: isGlass ? AnyShapeStyle(Color.clear) : cardFill,
+                cornerRadius: cornerRadius,
+                sheen: !isGlass))
+            // On glass the pane's sheet thins out under the card (`PaneCard`).
+            .anchorPreference(key: PaneBannerCardKey.self, value: .bounds) { bounds in
+                isGlass ? PaneBannerCard(bounds: bounds, cornerRadius: cornerRadius) : nil
+            }
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .onTapGesture {
                 guard collapsible else { return }
@@ -220,8 +255,13 @@ extension Ghostty {
         /// measurement copy's target height (see `body`), which ignores this
         /// animation, so the terminal reflows in one instant step instead of
         /// dragging the Metal surface through per-frame resizes.
+        /// The collapse/expand animation. The host animates the terminal's
+        /// reveal edge with this same curve so it tracks the card's edge.
+        static let toggleDuration: TimeInterval = 0.18
+        static let toggleAnimation: Animation = .easeInOut(duration: toggleDuration)
+
         private func toggleCollapsed() {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(Self.toggleAnimation) {
                 collapsed.toggle()
             }
         }

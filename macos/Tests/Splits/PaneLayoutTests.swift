@@ -481,9 +481,13 @@ struct PaneLayoutTests {
         #expect(kinds.contains(.expand(.trailing)), "where the run meets c")
         #expect(!kinds.contains(.expand(.leading)), "nothing is tucked before the run")
 
-        // Too narrow for a third card: nothing to widen into.
+        // Too narrow for a third card: the edge is a grip all the same
+        // (pulling it slides the run along), and so it is on a row that
+        // stacked for want of room, collapsed by nobody.
         let narrow = layout(node, width: 700, pins: [key(views): .init(start: 0, count: 2)])
-        #expect(!narrow.stackHandles.contains { if case .expand = $0.kind { true } else { false } })
+        #expect(narrow.stackHandles.map(\.kind).contains(.expand(.trailing)))
+        let unpinned = layout(node, width: 700)
+        #expect(unpinned.stackHandles.contains { if case .expand = $0.kind { true } else { false } })
     }
 
     @Test func theRunsSlotsAreTheUsersToSize() throws {
@@ -502,57 +506,81 @@ struct PaneLayoutTests {
         #expect(result.stackHandles.first { $0.kind == .between(slot: 0) }?.row.sizes == Array(widths.prefix(2)))
     }
 
-    // MARK: - A drag that goes on squeezing
+    // MARK: - A gutter dragged
 
-    /// a | b | c side by side in 1220pt (three 400pt panes, 10pt gutters),
-    /// the drag on the grip between a and b (boundary 1).
+    /// a | b | c side by side in 1220pt (three 400pt panes, 10pt gutters).
     private func threeAcross() -> PaneLayout.Row<UUID> {
         PaneLayout.Row(
             items: (0..<3).map { _ in [UUID()] }, run: 0...2, sizes: [400, 400, 400],
             start: 0, extent: 1220, minimums: [300, 300, 300], gap: 10, peek: 36)
     }
 
-    @Test func aDragGoesOnSqueezingOnePaneAfterAnother() {
+    @Test func aGutterDraggedResizesTheTwoBesideItFirst() {
         let row = threeAcross()
-        let first = PaneLayout.Squeeze(side: .trailing, count: 1)
-        // c tucked: the run is a b and the strip, 46pt with its gutter. b
-        // needs 300 between the pointer and the run's end (1174).
-        #expect(PaneLayout.chain(row, boundary: 1, at: 700, current: first, past: 48) == first)
-        // 48 past b's minimum, b tucks too: a is all that is on show.
-        #expect(PaneLayout.chain(row, boundary: 1, at: 1174 - 5 - 300 + 49, current: first, past: 48).count == 2)
-        // And no further: the run never empties.
-        #expect(PaneLayout.chain(row, boundary: 1, at: 1210, current: first, past: 48).count == 2)
-        // Back: b returns once it fits again at its minimum, in the run it
-        // comes back to (one strip, so the run ends at 1174).
-        let both = PaneLayout.Squeeze(side: .trailing, count: 2)
-        #expect(PaneLayout.chain(row, boundary: 1, at: 1174 - 5 - 300 + 10, current: both, past: 48) == both,
-                "between the minimum and the threshold, it stays")
-        #expect(PaneLayout.chain(row, boundary: 1, at: 1174 - 5 - 300, current: both, past: 48) == first)
-        // The first one's return is the drag's own (never below one here).
-        #expect(PaneLayout.chain(row, boundary: 1, at: 100, current: first, past: 48) == first)
+        // The gutter between a and b (at 405) to 455: a grows by 50, b gives
+        // it up, c keeps its size.
+        let r = PaneLayout.dragged(row, boundary: 1, at: 455, sizes: [400, 400, 400])
+        #expect(r.run == 0...2)
+        #expect(r.sizes == [450, 350, 400])
     }
 
-    @Test func aDragGoesOnSqueezingTowardTheLeadingSideToo() {
+    @Test func aGutterDraggedOnTucksPanesAwayOneAfterAnother() {
         let row = threeAcross()
-        // The grip between b and c (boundary 2), dragged left: a tucks, then b.
-        let first = PaneLayout.Squeeze(side: .leading, count: 1)
-        #expect(PaneLayout.chain(row, boundary: 2, at: 600, current: first, past: 48) == first)
-        #expect(PaneLayout.chain(row, boundary: 2, at: 46 + 5 + 300 - 49, current: first, past: 48).count == 2)
-        #expect(PaneLayout.Squeeze(side: .leading, count: 2).pin(of: row) == .init(start: 2, count: 1))
+        // b gives way first; past its minimum c gives way to its own, then — there being
+        // no room for both at their minimums — c tucks away (a strip of 36 and
+        // its gutter at the end), then b.
+        #expect(PaneLayout.dragged(row, boundary: 1, at: 500, sizes: [400, 400, 400]).sizes == [495, 305, 400])
+        let one = PaneLayout.dragged(row, boundary: 1, at: 700, sizes: [400, 400, 400])
+        #expect(one.run == 0...1, "c tucked")
+        #expect(one.sizes == [695, 1220 - 700 - 5 - 46])
+        let two = PaneLayout.dragged(row, boundary: 1, at: 800, sizes: [400, 400, 400])
+        #expect(two.run == 0...1, "b still fits, at 415 with c's strip")
+        // And at the edge, b too: its side is all strips, a has the rest.
+        let edge = PaneLayout.dragged(row, boundary: 1, at: 1210, sizes: [400, 400, 400])
+        #expect(edge.run == 0...0, "b tucked too")
+        let rest: CGFloat = 1220 - 82 - 10
+        #expect(edge.sizes == [rest])
+        // The row never empties: a can't tuck from this gutter too.
+        #expect(PaneLayout.dragged(row, boundary: 1, at: 0, sizes: [400, 400, 400]).run.count >= 1)
     }
 
-    @Test func aSqueezedRowsGripFollowsThePointer() {
+    @Test func aGutterDraggedNeverBringsStripsOutOnItsOtherSide() {
+        // a b on show, c d strips: the gutter between a and b dragged left
+        // tucks a away and grows b; c and d stay strips however far it goes.
+        let row = PaneLayout.Row(
+            items: (0..<4).map { _ in [UUID()] }, run: 0...1, sizes: [554, 554],
+            start: 0, extent: 1210, minimums: [300, 300, 300, 300], gap: 10, peek: 36)
+        let sizes: [CGFloat?] = [554, 554, nil, nil]
+        #expect(PaneLayout.dragged(row, boundary: 1, at: 559, sizes: sizes).run == 0...1)
+        let left = PaneLayout.dragged(row, boundary: 1, at: 305, sizes: sizes)
+        #expect(left.run == 0...1, "c stays a strip: \(left.run)")
+        #expect(left.sizes[1] > 554, "b grew")
+        let edge = PaneLayout.dragged(row, boundary: 1, at: 0, sizes: sizes)
+        #expect(edge.run == 1...1, "a tucked, b the only one on show")
+    }
+
+    @Test func aStripPulledOutBringsOutItsPaneAlone() {
+        // s0 s1 strips, a b on show: the grip between s1 and a pulled far
+        // right brings out s1 alone — s0 behind it stays a strip — and the
+        // panes on the other side tuck away to make room.
+        let row = PaneLayout.Row(
+            items: (0..<4).map { _ in [UUID()] }, run: 2...3, sizes: [554, 554],
+            start: 0, extent: 1210, minimums: [300, 300, 300, 300], gap: 10, peek: 36)
+        let sizes: [CGFloat?] = [nil, nil, 554, 554]
+        let pulled = PaneLayout.dragged(row, boundary: 2, at: 700, sizes: sizes)
+        #expect(pulled.run == 1...2, "s1 out, s0 still a strip, b tucked")
+        #expect(abs(pulled.sizes[0] - (700 - 5 - 46)) < 0.001, "s1 takes all of its side")
+        let far = PaneLayout.dragged(row, boundary: 2, at: 1200, sizes: sizes)
+        #expect(far.run == 1...1, "a tucked too; s0 never came out")
+    }
+
+    @Test func aGutterDraggedBackPutsTheRowBackExactly() {
         let row = threeAcross()
-        let squeeze = PaneLayout.Squeeze(side: .trailing, count: 1)
-        // The run is 1220 - 46 = 1174 wide less one gutter: a and b split it
-        // where the pointer is.
-        let shares = PaneLayout.squeezedShares(row, boundary: 1, squeeze: squeeze, at: 700)
-        let slots = shares.map { $0 * (1174 - 10) }
-        #expect(shares.count == 2)
-        #expect(abs(slots[0] - (700 - 5)) < 0.5, "\(slots)")
-        // Never under a minimum: past b's, b stays at it.
-        let pinned = PaneLayout.squeezedShares(row, boundary: 1, squeeze: squeeze, at: 1100).map { $0 * 1164 }
-        #expect(abs(pinned[1] - 300) < 0.5, "\(pinned)")
+        let sizes: [CGFloat?] = [400, 400, 400]
+        let there = PaneLayout.dragged(row, boundary: 1, at: 1000, sizes: sizes)
+        #expect(there.run != 0...2)
+        let back = PaneLayout.dragged(row, boundary: 1, at: 405, sizes: sizes)
+        #expect(back.run == 0...2 && back.sizes == [400, 400, 400])
     }
 
     @Test func aCollapseKeepsTheSizesOfThePanesStillOnShow() {

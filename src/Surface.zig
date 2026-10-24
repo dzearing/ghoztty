@@ -3346,6 +3346,58 @@ fn balancePaddingIfNeeded(self: *Surface) void {
     self.size.balancePadding(self.config.scaledPadding(x_dpi, y_dpi), self.config.window_padding_balance);
 }
 
+/// Apply the pending resize to the terminal now, not after the debounce.
+pub fn flushResize(self: *Surface) void {
+    self.queueIo(.{ .resize_flush = {} }, .unlocked);
+}
+
+/// How far, in pixels, the first row on screen will move down from the top
+/// of the view when the surface is resized to `height` pixels: the grid's own
+/// row-resize rules (`Screen.resize`, `PageList.resize`), applied to the
+/// current state before the resize happens. Growing pulls scrollback in at the
+/// top only with the cursor on the bottom row; shrinking trims blank rows
+/// below the cursor before it pushes rows into scrollback. A full-screen
+/// program on the alternate screen repaints itself, and is taken to lay out
+/// to the bottom (an agent's input box) — the rows move with the bottom edge.
+/// Lets the app animate a resize to where the content will actually land.
+pub fn predictResizeShift(self: *Surface, height: u32) i32 {
+    var size = self.size;
+    size.screen.height = height;
+    if (self.config.window_padding_balance != .false) balance: {
+        const content_scale = self.rt_surface.getContentScale() catch break :balance;
+        const x_dpi = content_scale.x * font.face.default_dpi;
+        const y_dpi = content_scale.y * font.face.default_dpi;
+        size.balancePadding(self.config.scaledPadding(x_dpi, y_dpi), self.config.window_padding_balance);
+    }
+    const old_rows: i32 = @intCast(self.size.grid().rows);
+    const new_rows: i32 = @intCast(size.grid().rows);
+    const pad: i32 = @as(i32, @intCast(size.padding.top)) - @as(i32, @intCast(self.size.padding.top));
+    const cell: i32 = @intCast(self.size.cell.height);
+
+    self.renderer_state.mutex.lock();
+    defer self.renderer_state.mutex.unlock();
+    const t = self.renderer_state.terminal;
+    const screen = t.screens.active;
+    const delta = new_rows - old_rows;
+    const rows: i32 = if (delta == 0) 0 else if (t.screens.active_key == .alternate) delta else if (delta > 0) grow: {
+        const cursor: i32 = @intCast(screen.cursor.y);
+        if (cursor < old_rows - 1) break :grow 0;
+        const history: i32 = @intCast(screen.pages.total_rows - screen.pages.rows);
+        break :grow @min(delta, history);
+    } else shrink: {
+        // Blank rows from the bottom up, stopping at text or the cursor.
+        var trimmed: i32 = 0;
+        var y: i32 = old_rows - 1;
+        while (y > @as(i32, @intCast(screen.cursor.y)) and trimmed < -delta) : (y -= 1) {
+            const pin = screen.pages.pin(.{ .active = .{ .y = @intCast(y) } }) orelse break;
+            if (terminal.Cell.hasTextAny(pin.cells(.all))) break;
+            trimmed += 1;
+        }
+        break :shrink delta + trimmed;
+    };
+    return rows * cell + pad;
+}
+
 /// Called to set the preedit state for character input. Preedit is used
 /// with dead key states, for example, when typing an accent character.
 /// This should be called with null to reset the preedit state.

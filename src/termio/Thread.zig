@@ -47,6 +47,13 @@ const Coalesce = struct {
 /// if the running program hasn't already.
 const sync_reset_ms = 1000;
 
+/// The longest a resize holds the last frame for the shell to redraw the
+/// prompt it cleared (`Terminal.flags.awaiting_prompt_redraw`).
+const prompt_redraw_ms = 250;
+
+/// How often a resize waiting on a prompt redraw checks whether it has come.
+const redraw_poll_ms = 4;
+
 /// The number of milliseconds between each movement during selection scrolling.
 const selection_scroll_ms = 15;
 
@@ -82,6 +89,11 @@ coalesce_data: Coalesce = .{},
 sync_reset: xev.Timer,
 sync_reset_c: xev.Completion = .{},
 sync_reset_cancel_c: xev.Completion = .{},
+
+/// Caps `Terminal.flags.awaiting_prompt_redraw` (see `prompt_redraw_ms`).
+prompt_redraw: xev.Timer,
+prompt_redraw_c: xev.Completion = .{},
+prompt_redraw_cancel_c: xev.Completion = .{},
 
 flags: packed struct {
     /// This is set to true only when an abnormal exit is detected. It
@@ -122,6 +134,9 @@ pub fn init(
     var sync_reset_h = try xev.Timer.init();
     errdefer sync_reset_h.deinit();
 
+    var prompt_redraw_h = try xev.Timer.init();
+    errdefer prompt_redraw_h.deinit();
+
     return Thread{
         .alloc = alloc,
         .loop = loop,
@@ -129,6 +144,7 @@ pub fn init(
         .scroll = scroll_h,
         .coalesce = coalesce_h,
         .sync_reset = sync_reset_h,
+        .prompt_redraw = prompt_redraw_h,
     };
 }
 
@@ -138,6 +154,7 @@ pub fn deinit(self: *Thread) void {
     self.scroll.deinit();
     self.coalesce.deinit();
     self.sync_reset.deinit();
+    self.prompt_redraw.deinit();
     self.stop.deinit();
     self.loop.deinit();
 }
@@ -341,6 +358,7 @@ fn drainMailbox(
             },
             .inspector => |v| self.flags.has_inspector = v,
             .resize => |v| self.handleResize(cb, v),
+            .resize_flush => self.flushResize(cb),
             .size_report => |v| try io.sizeReport(data, v),
             .clear_screen => |v| try io.clearScreen(data, v.history),
             .scroll_viewport => |v| io.scrollViewport(v),
@@ -398,6 +416,20 @@ fn startSynchronizedOutput(self: *Thread, cb: *CallbackData) void {
 fn handleResize(self: *Thread, cb: *CallbackData, resize: renderer.Size) void {
     self.coalesce_data.resize = resize;
 
+    switch (cb.io.resizePace()) {
+        .debounce => {},
+        .now => {
+            self.applyResize(cb);
+            return;
+        },
+        .after_redraw => {
+            // Already waiting (a poll, or a debounce from before the prompt).
+            if (self.coalesce_c.state() == .active) return;
+            self.armResize(cb, redraw_poll_ms);
+            return;
+        },
+    }
+
     // Trailing debounce, capped: each new resize pushes the deadline out to
     // `settle_ms` from now, but never past `max_ms` from the first pending one.
     const now = std.time.Instant.now() catch {
@@ -420,8 +452,57 @@ fn handleResize(self: *Thread, cb: *CallbackData, resize: renderer.Size) void {
     self.armResize(cb, @min(Coalesce.settle_ms, Coalesce.max_ms - waited_ms));
 }
 
+fn flushResize(self: *Thread, cb: *CallbackData) void {
+    // The armed timer finds nothing pending and does nothing.
+    self.applyResize(cb);
+}
+
+/// Apply the pending coalesced resize, if any.
+fn applyResize(self: *Thread, cb: *CallbackData) void {
+    const v = self.coalesce_data.resize orelse return;
+    self.coalesce_data.resize = null;
+    self.coalesce_data.pending_since = null;
+    cb.io.resize(&cb.data, v) catch |err| {
+        log.warn("error during resize err={}", .{err});
+    };
+    // Cap the hold on a cleared prompt (a no-op if it was not cleared). The
+    // loop's clock is cached; after an idle stretch it is seconds stale and
+    // the timer, measured from it, would fire at once.
+    self.loop.update_now();
+    self.prompt_redraw.reset(
+        &self.loop,
+        &self.prompt_redraw_c,
+        &self.prompt_redraw_cancel_c,
+        prompt_redraw_ms,
+        CallbackData,
+        cb,
+        promptRedrawCallback,
+    );
+}
+
+fn promptRedrawCallback(
+    cb_: ?*CallbackData,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = r catch |err| switch (err) {
+        // Re-armed by a later resize: that one's timer releases it.
+        error.Canceled => return .disarm,
+        else => {
+            log.warn("error during prompt redraw callback err={}", .{err});
+            return .disarm;
+        },
+    };
+    const cb = cb_ orelse return .disarm;
+    cb.io.releasePromptRedraw();
+    return .disarm;
+}
+
 fn armResize(self: *Thread, cb: *CallbackData, delay_ms: u64) void {
-    // `reset` cancels a timer that is already armed and re-arms it.
+    // `reset` cancels a timer that is already armed and re-arms it, measured
+    // from the loop's cached clock.
+    self.loop.update_now();
     self.coalesce.reset(
         &self.loop,
         &self.coalesce_c,
@@ -468,14 +549,13 @@ fn coalesceCallback(
 
     const cb = cb_ orelse return .disarm;
 
-    if (cb.self.coalesce_data.resize) |v| {
-        cb.self.coalesce_data.resize = null;
-        cb.self.coalesce_data.pending_since = null;
-        cb.io.resize(&cb.data, v) catch |err| {
-            log.warn("error during resize err={}", .{err});
-        };
+    // Still waiting on the shell's redraw (released by the renderer once it
+    // shows, or by the `prompt_redraw_ms` cap).
+    if (cb.self.coalesce_data.resize != null and cb.io.resizePace() == .after_redraw) {
+        cb.self.armResize(cb, redraw_poll_ms);
+        return .disarm;
     }
-
+    cb.self.applyResize(cb);
     return .disarm;
 }
 
