@@ -59,11 +59,29 @@
 # now read for its FilePath and ArgumentList keys, `$a['Key'] = ...` writes
 # included.
 #
+# THREE SPELLINGS OF "THE APP" THAT ARE NOT `$Exe` (T1267). cli-launch-cwd.ps1
+# had four launch sites and this audit saw one; update-apply.ps1 put three
+# windows on the user's desktop through a COPY of the exe. So:
+#
+#   * the `.com` twin is the app too - `$Com`, `$relCom`, a `ghoztty.com`
+#     literal - because it forwards to the GUI;
+#   * an ALIAS is the app - a variable assigned from a ghoztty reference
+#     (`$x = $Exe`, `Join-Path $d 'ghoztty-updater.exe'`) or the destination of
+#     `Copy-Item $Exe $applier`;
+#   * a STATIC-METHOD spawn is a launch - `[T506Spawn]::StartDetached($Exe,
+#     ...)`, `[Diagnostics.Process]::Start($Exe)` - unless the method's own C#
+#     in the same file sets `lpDesktop`, which is how a script's private
+#     CreateProcessW names the test desktop. That is read from the Add-Type
+#     source, not guessed from the method's name.
+#
 # WHAT THIS STILL CANNOT SEE, stated rather than implied: `Invoke-Expression`
-# and other interpreters handed a string, and a splat whose hashtable is built
-# at runtime rather than written as a literal (passed in, returned from a
-# function). A file whose SUBJECT is these patterns carries the
-# `# desktop-launch-audit:` marker below instead of being scanned.
+# and other interpreters handed a string, a splat whose hashtable is built at
+# runtime rather than written as a literal (passed in, returned from a
+# function), and a ProcessStartInfo assembled field by field. A textual rule
+# cannot be complete; the measurement that cannot be defeated by spelling is
+# running the script and asking the box (T2203). A file whose SUBJECT is these
+# patterns carries the `# desktop-launch-audit:` marker below instead of being
+# scanned.
 #
 # Declaration grammar, one entry per line, anywhere in `lib\TestDesktop.ps1`:
 #
@@ -161,24 +179,228 @@ function Get-DesktopLaunchAuditDeclarations {
 # Launch sites in one script.
 # ---------------------------------------------------------------------------
 
-# Does this command element name the ghoztty executable? Two shapes cover every
-# call site in the suite: a variable the script resolved once (`$Exe`,
-# `$GhozttyExe`, `$script:exe`) and a literal path.
+# Does this command element name the ghoztty executable? Three shapes cover
+# every call site in the suite: a variable the script resolved once (`$Exe`,
+# `$GhozttyExe`, `$script:exe`, the `$Com` twin), a literal path, and an alias
+# the script made of either (T1267, `Get-DesktopLaunchAuditAliases`).
+$script:DesktopLaunchAuditAliasSet = @{}
+# Names and literal paths a script filled with ANOTHER program while wearing
+# ours - `Copy-Item cmd.exe $fakeExe` - which is how the clean-slate and kill
+# tests build their decoys. A decoy is never the app, whatever it is called.
+$script:DesktopLaunchAuditDecoyNames = @{}
+$script:DesktopLaunchAuditDecoyPaths = @{}
+
+# `$Exe`, `$AppExe`, `$exePath`, `$Com`, `$relCom` - but not `$exeVersionText`,
+# which is a string about one. The suffix rule is what every launcher here uses.
+function Test-DesktopLaunchAuditExeName([string]$Name) {
+    $n = (($Name -split ':')[-1]).ToLowerInvariant()
+    if ($script:DesktopLaunchAuditDecoyNames.ContainsKey($n)) { return $false }
+    if ($n -match '(?i)(^|[^a-z])(exe|com)(path|)$') { return $true }
+    return $script:DesktopLaunchAuditAliasSet.ContainsKey($n)
+}
+
+# The app's own file names. Deliberately not `ghoztty-*.exe`: the relay test
+# binaries (`ghoztty-relay-e2e.exe`) wear the prefix and open no window. A COPY
+# under another name is caught by the Copy-Item alias rule instead.
+function Test-DesktopLaunchAuditExeLiteral([string]$Value) {
+    if ($Value -notmatch '(?i)ghoztty(-agent)?\.(exe|com)$') { return $false }
+    $k = $Value.ToLowerInvariant()
+    if ($script:DesktopLaunchAuditDecoyPaths.ContainsKey($k)) { return $false }
+    # The .com twin runs its sibling .exe, so a twin beside a decoy is a decoy.
+    if ($k.EndsWith('.com') -and
+        $script:DesktopLaunchAuditDecoyPaths.ContainsKey($k.Substring(0, $k.Length - 4) + '.exe')) { return $false }
+    return $true
+}
+
 function Test-DesktopLaunchAuditGhozttyRef($El) {
     if ($null -eq $El) { return $false }
     if ($El -is [System.Management.Automation.Language.VariableExpressionAst]) {
-        $n = $El.VariablePath.UserPath
-        # `$Exe`, `$AppExe`, `$exePath` - but not `$exeVersionText`, which is a
-        # string about one. The suffix rule is what every launcher here uses.
-        return ($n -match '(?i)(^|[^a-z])exe(path|)$')
+        return (Test-DesktopLaunchAuditExeName $El.VariablePath.UserPath)
     }
-    if ($El -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
-        return ($El.Value -match '(?i)ghoztty(-agent)?\.exe$')
-    }
-    if ($El -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
-        return ($El.Value -match '(?i)ghoztty(-agent)?\.exe$')
+    if ($El -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+        $El -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+        return (Test-DesktopLaunchAuditExeLiteral $El.Value)
     }
     return $false
+}
+
+# The variables a script made OUT of a ghoztty reference (T1267): update-apply.ps1
+# copied the exe to `$applier` and launched that, three windows the suffix rule
+# never saw. Three assignment shapes, iterated so an alias of an alias counts:
+#
+#   $x = $Exe                          (or a string literal naming the exe)
+#   $x = Join-Path $dir 'ghoztty-updater.exe'
+#   Copy-Item $Exe $x                  (positional or -Destination)
+#
+# A RHS that INVOKES the exe (`$v = & $Exe +version`) is output, not a path, and
+# is deliberately not an alias.
+function Get-DesktopLaunchAuditAliases($Ast) {
+    $set = @{}
+    $assigns = @($Ast.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true))
+    $copies = @($Ast.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -in @('Copy-Item', 'copy', 'cp', 'cpi') }, $true))
+    # Copy-Item's (source, destination) element pair, positional or named.
+    $copyPair = {
+        param($cp)
+        $els = @($cp.CommandElements)
+        $src = $null; $dst = $null; $pos = @()
+        for ($i = 1; $i -lt $els.Count; $i++) {
+            $el = $els[$i]
+            if ($el -is [System.Management.Automation.Language.CommandParameterAst]) {
+                $val = $el.Argument
+                if ($null -eq $val -and $el.ParameterName -match '(?i)^(Path|LiteralPath|Destination)$' -and
+                    ($i + 1) -lt $els.Count) { $val = $els[$i + 1]; $i++ }
+                if ($el.ParameterName -match '(?i)^(Path|LiteralPath)$') { $src = $val }
+                elseif ($el.ParameterName -match '(?i)^Destination$') { $dst = $val }
+                continue
+            }
+            $pos += $el
+        }
+        if ($null -eq $src -and $pos.Count -gt 0) { $src = $pos[0]; $pos = @($pos | Select-Object -Skip 1) }
+        if ($null -eq $dst -and $pos.Count -gt 0) { $dst = $pos[0] }
+        return @{ Src = $src; Dst = $dst }
+    }
+    $decoyNames = @{}
+    $decoyPaths = @{}
+    $saved = $script:DesktopLaunchAuditAliasSet
+    $savedDN = $script:DesktopLaunchAuditDecoyNames
+    $savedDP = $script:DesktopLaunchAuditDecoyPaths
+    $script:DesktopLaunchAuditDecoyNames = @{}
+    $script:DesktopLaunchAuditDecoyPaths = @{}
+    try {
+        for ($pass = 0; $pass -lt 4; $pass++) {
+            $script:DesktopLaunchAuditAliasSet = $set
+            $before = $set.Count
+            foreach ($as in $assigns) {
+                $left = $as.Left
+                if ($left -is [System.Management.Automation.Language.ConvertExpressionAst]) { $left = $left.Child }
+                if ($left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
+                $isRef = $false
+                $right = $as.Right
+                if ($right -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                    $isRef = Test-DesktopLaunchAuditGhozttyRef $right.Expression
+                } elseif ($right -is [System.Management.Automation.Language.PipelineAst] -and
+                          $right.PipelineElements.Count -eq 1 -and
+                          $right.PipelineElements[0] -is [System.Management.Automation.Language.CommandAst] -and
+                          $right.PipelineElements[0].GetCommandName() -eq 'Join-Path') {
+                    $last = @($right.PipelineElements[0].CommandElements)[-1]
+                    $t = Get-DesktopLaunchAuditStringText $last
+                    # The agent is a daemon: naming it makes no window.
+                    $isRef = ($null -ne $t -and $t -notmatch '(?i)ghoztty-agent' -and
+                              (Test-DesktopLaunchAuditExeLiteral $t))
+                }
+                if ($isRef) { $set[(($left.VariablePath.UserPath -split ':')[-1]).ToLowerInvariant()] = $true }
+            }
+            foreach ($cp in $copies) {
+                $pair = & $copyPair $cp
+                if ($pair.Dst -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    (Test-DesktopLaunchAuditGhozttyRef $pair.Src)) {
+                    $set[(($pair.Dst.VariablePath.UserPath -split ':')[-1]).ToLowerInvariant()] = $true
+                }
+            }
+            if ($set.Count -eq $before) { break }
+        }
+        # Decoys last, once the aliases have settled: a copy whose SOURCE is
+        # not the app fills its destination with something else.
+        $script:DesktopLaunchAuditAliasSet = $set
+        foreach ($cp in $copies) {
+            $pair = & $copyPair $cp
+            if ($null -eq $pair.Src -or $null -eq $pair.Dst) { continue }
+            if (Test-DesktopLaunchAuditGhozttyRef $pair.Src) { continue }
+            if ($pair.Dst -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $decoyNames[(($pair.Dst.VariablePath.UserPath -split ':')[-1]).ToLowerInvariant()] = $true
+            } else {
+                $t = Get-DesktopLaunchAuditStringText $pair.Dst
+                if ($null -ne $t) { $decoyPaths[$t.ToLowerInvariant()] = $true }
+            }
+        }
+    } finally {
+        $script:DesktopLaunchAuditAliasSet = $saved
+        $script:DesktopLaunchAuditDecoyNames = $savedDN
+        $script:DesktopLaunchAuditDecoyPaths = $savedDP
+    }
+    return @{ Aliases = $set; DecoyNames = $decoyNames; DecoyPaths = $decoyPaths }
+}
+
+# ---------------------------------------------------------------------------
+# The static-method spawn (T1267). `[T506Spawn]::StartDetached($Exe, ...)` is a
+# script's own CreateProcessW: the exe is an ARGUMENT, so neither the command
+# name nor the invocation rule fires, and cli-launch-cwd.ps1 opened a window on
+# the user's desktop that way. A static call is a spawn when its method name
+# says so and an argument is a ghoztty reference. It is NOT a finding when the
+# method's C# - the Add-Type source in the same file - assigns `lpDesktop`,
+# because that is the one way such a method names the test desktop.
+# ---------------------------------------------------------------------------
+function Test-DesktopLaunchAuditSpawnMethod([string]$Name) {
+    return ($Name -match '(?i)^(Start|Spawn|Launch|Run|Exec|CreateProcess)')
+}
+
+# A method "names a desktop" when its body assigns lpDesktop, or calls a
+# static method of the same source that does - test-desktop-spike.ps1's `Run`
+# starts a thread on `Body`, which is where the STARTUPINFO is filled.
+function Test-DesktopLaunchAuditMethodNamesDesktop([string]$Source, [string]$Method, [int]$Depth = 2) {
+    if ([string]::IsNullOrEmpty($Source)) { return $false }
+    $sig = '\bstatic\s+[\w<>\[\],\s]*?\b' + [regex]::Escape($Method) + '\s*\('
+    $m = [regex]::Match($Source, $sig)
+    if (-not $m.Success) { return $false }
+    # The body is the brace-balanced block after the signature - never "up to
+    # the next static", which for the last method runs on into the PowerShell
+    # that calls it.
+    $open = $Source.IndexOf('{', $m.Index + $m.Length)
+    if ($open -lt 0) { return $false }
+    $depthB = 0
+    $end = $Source.Length
+    for ($i = $open; $i -lt $Source.Length; $i++) {
+        $ch = $Source[$i]
+        if ($ch -eq '{') { $depthB++ }
+        elseif ($ch -eq '}') { $depthB--; if ($depthB -eq 0) { $end = $i; break } }
+    }
+    $body = $Source.Substring($open, $end - $open)
+    if ($body -match '\blpDesktop\s*=') { return $true }
+    if ($Depth -le 0) { return $false }
+    foreach ($c in [regex]::Matches($body, '\b(?<n>[A-Z]\w*)\s*\(')) {
+        $callee = $c.Groups['n'].Value
+        if ($callee -eq $Method) { continue }
+        if (Test-DesktopLaunchAuditMethodNamesDesktop -Source $Source -Method $callee -Depth ($Depth - 1)) { return $true }
+    }
+    return $false
+}
+
+function Get-DesktopLaunchAuditStaticSpawnSites($Ast, [string]$Source) {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($call in @($Ast.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $n.Static }, $true))) {
+        $member = Get-DesktopLaunchAuditStringText $call.Member
+        if ($null -eq $member -or -not (Test-DesktopLaunchAuditSpawnMethod $member)) { continue }
+        $args_ = @($call.Arguments)
+        $at = -1
+        for ($i = 0; $i -lt $args_.Count; $i++) {
+            if (Test-DesktopLaunchAuditGhozttyRef $args_[$i]) { $at = $i; break }
+        }
+        if ($at -lt 0) { continue }
+        if (Test-DesktopLaunchAuditMethodNamesDesktop -Source $Source -Method $member) { continue }
+        # The argv is the first string after the exe; flags, or nothing, are
+        # the app itself. A runtime-built argv cannot be read.
+        $kind = 'bare-launch'
+        $tok = ''
+        for ($i = $at + 1; $i -lt $args_.Count; $i++) {
+            $t = Get-DesktopLaunchAuditStringText $args_[$i]
+            if ($null -eq $t) { $kind = 'unknown'; $tok = '<expr>'; break }
+            $tok = ($t.Trim() -split '\s+', 2)[0]
+            $kind = Get-DesktopLaunchAuditKind $tok
+            break
+        }
+        if ($null -eq $kind) { continue }
+        [void]$out.Add([pscustomobject]@{
+            Line = $call.Extent.StartLineNumber; Kind = $kind
+            What = ("$($call.Expression.Extent.Text)::$member $tok").Trim()
+        })
+    }
+    # Unrolled on purpose: `return ,` of an EMPTY array counts as one site at
+    # an `@()` call site.
+    return $out.ToArray()
 }
 
 # The first real argument of an invocation, as text - $null when there is none.
@@ -275,14 +497,11 @@ function Get-DesktopLaunchAuditStringText($Node) {
 function Get-DesktopLaunchAuditCmdLineFirst([string]$Line) {
     if ([string]::IsNullOrEmpty($Line)) { return $null }
     if ($Line -notmatch '(?i)(^|\s)/[ck](\s|$)') { return $null }
-    $rx = '(?i)\$\{?(?<v>[A-Za-z0-9_:]+)\}?|(?<lit>[^\s"'']*ghoztty(-agent)?\.exe)'
+    $rx = '(?i)\$\{?(?<v>[A-Za-z0-9_:]+)\}?|(?<lit>[^\s"'']*ghoztty[\w-]*\.(exe|com))'
     foreach ($m in [regex]::Matches($Line, $rx)) {
         $isExe = $false
         if ($m.Groups['lit'].Success) { $isExe = $true }
-        else {
-            $n = ($m.Groups['v'].Value -split ':')[-1]
-            $isExe = ($n -match '(?i)(^|[^a-z])exe(path|)$')
-        }
+        else { $isExe = Test-DesktopLaunchAuditExeName $m.Groups['v'].Value }
         if (-not $isExe) { continue }
         $rest = $Line.Substring($m.Index + $m.Length).TrimStart(' ', "`t", '"', "'")
         if ($rest -eq '' -or $rest -match '^(\d?>|<|\||&)') { return '' }
@@ -463,6 +682,15 @@ function Get-DesktopLaunchAuditSites {
     $ast = [System.Management.Automation.Language.Parser]::ParseInput(
         $src, [ref]$tokens, [ref]$errors)
 
+    $savedAliases = $script:DesktopLaunchAuditAliasSet
+    $savedDN = $script:DesktopLaunchAuditDecoyNames
+    $savedDP = $script:DesktopLaunchAuditDecoyPaths
+    $names = Get-DesktopLaunchAuditAliases $ast
+    $script:DesktopLaunchAuditAliasSet = $names.Aliases
+    $script:DesktopLaunchAuditDecoyNames = $names.DecoyNames
+    $script:DesktopLaunchAuditDecoyPaths = $names.DecoyPaths
+    try {
+
     $harness = Get-DesktopLaunchAuditHarnessCommands
     foreach ($cmd in @($ast.FindAll({ param($n)
         $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
@@ -521,6 +749,17 @@ function Get-DesktopLaunchAuditSites {
                 continue
             }
             if ($null -eq $exeEl) { continue }
+            # T1267 - `Start-Process $Com -ArgumentList $CliArgs` inside a
+            # wrapper (ipc-timeout.ps1's Invoke-BoundedCli): score the wrapper's
+            # calls, exactly as the cmd wrapper is scored.
+            if ($argsText -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $resolved = Resolve-DesktopLaunchAuditParamSites -Ast $ast -Cmd $cmd `
+                    -VarName $argsText.VariablePath.UserPath
+                if ($null -ne $resolved) {
+                    foreach ($site in @($resolved)) { [void]$sites.Add($site) }
+                    continue
+                }
+            }
             $first = $null
             if ($null -ne $argsText) { $first = Get-DesktopLaunchAuditArgListFirst $argsText }
             $kind = Get-DesktopLaunchAuditKind $first
@@ -555,6 +794,20 @@ function Get-DesktopLaunchAuditSites {
         })
     }
 
+    # Shape 4 (T1267) - a static-method spawn of the exe. Merged in line order,
+    # so the first finding a report names is the first site in the file.
+    $static = @(Get-DesktopLaunchAuditStaticSpawnSites -Ast $ast -Source $src)
+    if ($static.Count -gt 0) {
+        $merged = @(@($sites) + $static | Sort-Object Line)
+        $sites = New-Object System.Collections.ArrayList
+        foreach ($x in $merged) { [void]$sites.Add($x) }
+    }
+
+    } finally {
+        $script:DesktopLaunchAuditAliasSet = $savedAliases
+        $script:DesktopLaunchAuditDecoyNames = $savedDN
+        $script:DesktopLaunchAuditDecoyPaths = $savedDP
+    }
     return $sites
 }
 

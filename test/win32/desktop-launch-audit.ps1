@@ -37,8 +37,10 @@
     violators into the swept directory - one bare `Start-Process $exe`, one raw
     `& $exe +new-window`, (T1860) a `cmd /c` wrapper called with
     `+new-window`, the shape ipc-relay.ps1 used, and (T1876) a splatted
-    `Start-Process @a` whose hashtable holds the exe - all on no list, and
-    requires the sweep to find each. Run it after any change to the analyzer.
+    `Start-Process @a` whose hashtable holds the exe, and (T1267) a script's
+    own CreateProcessW called as a static method plus a renamed copy of the
+    exe - all on no list, and requires the sweep to find each. Run it after
+    any change to the analyzer.
 
 .NOTES
     # persistence: launches no GUI - this scores scripts, it does not run them.
@@ -218,6 +220,81 @@ Assert 'B26 a table assigned in ANOTHER function is not this call''s table' (@($
 $s = Sites @('$p = @{ FilePath = ''cmd.exe''; ArgumentList = "/c `"`"$Exe`" +new-window`"" }', 'Start-Process @p')
 Assert 'B27 a splatted cmd.exe of +new-window is a launch' (@($s).Count -eq 1 -and @($s)[0].Kind -eq 'new-window')
 
+# T1267: cli-launch-cwd.ps1 before T1240 had FOUR launch sites and this audit
+# saw one. Its four arms, verbatim in shape - every one must be reported.
+$t1240 = @(
+    '[string]$Exe = ''D:\git\ghoztty\zig-out\bin\ghoztty.exe'''
+    '[string]$Com = ''D:\git\ghoztty\zig-out\bin\ghoztty.com'''
+    '$a = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `'
+    '    -ArgumentList "/c `"cd /d `"$workDir`" && `"$Com`" --session-persistence=false`""'
+    '$b = Start-Process -FilePath $Exe -WindowStyle Hidden -PassThru -WorkingDirectory $workDir'
+    '$c = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `'
+    '    -ArgumentList "/c `"cd /d `"$workDir`" && `"$Exe`" --session-persistence=false`""'
+    '$pidD = [T506Spawn]::StartDetached($Exe, ''--session-persistence=false'', $workDir)'
+)
+$s = Sites $t1240
+Assert "B28 all four pre-T1240 cli-launch-cwd arms are launches (got lines $(@($s | ForEach-Object { $_.Line }) -join ','))" (
+    (@($s | ForEach-Object { $_.Line }) -join ',') -eq '3,5,6,8')
+
+$s = Sites @('& $Com --session-persistence=false', '& "D:\x\ghoztty.com" +new-window', '& $relCom +list')
+Assert 'B29 the .com twin is the app: by variable, by literal, and quiet verbs still quiet' (
+    @($s).Count -eq 2 -and @($s)[1].Kind -eq 'new-window')
+
+# update-apply.ps1 copied the exe to $applier and launched the copy.
+$s = Sites @('$applier = Join-Path $work ''ghoztty-updater.exe''', 'Copy-Item $exe $applier -Force',
+             'Start-Process -FilePath $applier')
+Assert 'B30 a COPY of the exe under another name is the app' (@($s).Count -eq 1 -and @($s)[0].Line -eq 3)
+
+$s = Sites @('$sandboxExe = Join-Path $installDir ''ghoztty.exe''', '$x = $sandboxExe', '& $x +new-window')
+Assert 'B31 a Join-Path to ghoztty.exe, and an alias of that alias, are the app' (
+    @($s).Count -eq 1 -and @($s)[0].Kind -eq 'new-window')
+
+# The load-bearing negatives of the widening.
+$s = Sites @('$fakeExe = Join-Path $d ''ghoztty.exe''',
+             'Copy-Item (Join-Path $env:SystemRoot ''System32\cmd.exe'') $fakeExe -Force',
+             'Start-Process -FilePath $fakeExe -ArgumentList ''/c'', ''ping -n 9 127.0.0.1''',
+             'Copy-Item $Com "$tmp\ghoztty.com" -Force', 'Copy-Item "$env:SystemRoot\System32\cmd.exe" "$tmp\ghoztty.exe" -Force',
+             '& "$tmp\ghoztty.com" /c copy NUL $marker')
+Assert 'B32 a decoy (another program copied under our name), and a twin beside one, are not the app' (@($s).Count -eq 0)
+
+$s = Sites @('$agentExe = Join-Path $bin ''ghoztty-agent.exe''', 'Start-Process $agentExe',
+             'Start-Process -FilePath "$tmp\ghoztty-relay-e2e.exe" -PassThru', '$ver = & $Exe +version', 'Start-Process $ver')
+Assert 'B33 the agent, a relay binary, and the OUTPUT of the exe are not the app' (@($s).Count -eq 0)
+
+$s = Sites @('[Diagnostics.Process]::Start($Exe, ''+new-window'')', '[Diagnostics.Process]::Start($Exe, ''+list'')',
+             '[IO.File]::Exists($Exe)', '[Diagnostics.FileVersionInfo]::GetVersionInfo($Exe)')
+Assert 'B34 a static spawn is classified by its argv; a static non-spawn is not a launch' (
+    @($s).Count -eq 1 -and @($s)[0].Kind -eq 'new-window')
+
+# A script's own CreateProcessW that fills STARTUPINFO.lpDesktop names the
+# test desktop - directly, or one call down (test-desktop-spike.ps1's Run).
+$csharp = @(
+    'Add-Type @"'
+    'public static class S {'
+    '  public static int StartOnDesk(string exe, string a, string desk) { var si = new STARTUPINFO(); si.lpDesktop = desk; return 1; }'
+    '  public static void Run(string exe, string desk) { Body(exe, desk); }'
+    '  static void Body(string exe, string desk) { var si = new STARTUPINFO(); si.lpDesktop = "WinSta0\\" + desk; }'
+    '  public static int Start(string exe, string a) { return 1; }'
+    '}'
+    '"@'
+    '[S]::StartOnDesk($Exe, ''--x'', $d)'
+    '[S]::Run($Exe, ''ghoztty-spike'')'
+    '[S]::Start($Exe, ''--x'')'
+)
+$s = Sites $csharp
+Assert 'B35 a spawn method that sets lpDesktop (directly or one call down) is routed; one that does not is a launch' (
+    @($s).Count -eq 1 -and @($s)[0].Line -eq 11)
+
+$wrapSp = @(
+    'function Invoke-BoundedCli { param([string[]]$CliArgs, [int]$CapMs)'
+    '    $p = Start-Process $Com -ArgumentList $CliArgs -PassThru -WindowStyle Hidden }'
+    'Invoke-BoundedCli -CliArgs @(''+list'', ''--json'') -CapMs 1'
+    'Invoke-BoundedCli -CliArgs @(''+new-window'') -CapMs 1'
+)
+$s = Sites $wrapSp
+Assert 'B36 a Start-Process wrapper is scored at the CALL that passes +new-window' (
+    @($s).Count -eq 1 -and @($s)[0].Line -eq 4)
+
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'C. the quiet-verb list against the CLI'
@@ -299,7 +376,25 @@ try {
             '}'
             'Start-App teeth'
         )
-        $planted = @($v1, $v2, $v3, $v4)
+        # T1267: cli-launch-cwd.ps1's arm D before T1240 - the script's own
+        # CreateProcessW, with no lpDesktop - and update-apply.ps1's renamed
+        # copy of the exe, the two spellings the sweep could not see.
+        $v5 = Join-Path $Suite 'zz-desktop-launch-teeth-static.ps1'
+        Set-Content -LiteralPath $v5 -Encoding UTF8 -Value @(
+            '$Exe = "D:\git\ghoztty\zig-out\bin\ghoztty.exe"'
+            'Add-Type @"'
+            'public static class TeethSpawn { public static int StartDetached(string exe, string args, string cwd) { return 0; } }'
+            '"@'
+            '$pidD = [TeethSpawn]::StartDetached($Exe, ''--session-persistence=false'', $env:TEMP)'
+        )
+        $v6 = Join-Path $Suite 'zz-desktop-launch-teeth-copy.ps1'
+        Set-Content -LiteralPath $v6 -Encoding UTF8 -Value @(
+            '$exe = "D:\git\ghoztty\zig-out\bin\ghoztty.exe"'
+            '$applier = Join-Path $env:TEMP ''ghoztty-updater.exe'''
+            'Copy-Item $exe $applier -Force'
+            'Start-Process -FilePath $applier -ArgumentList ''--apply-update'''
+        )
+        $planted = @($v1, $v2, $v3, $v4, $v5, $v6)
     }
 
     $findings = @(Get-DesktopLaunchAuditSweep $Suite)
@@ -312,6 +407,8 @@ try {
         Assert 'E0b the planted +new-window is found' ($names -contains 'zz-desktop-launch-teeth-verb.ps1')
         Assert 'E0c the planted cmd /c wrapper launch is found' ($names -contains 'zz-desktop-launch-teeth-cmd.ps1')
         Assert 'E0d the planted splatted Start-Process is found' ($names -contains 'zz-desktop-launch-teeth-splat.ps1')
+        Assert 'E0e the planted static-method CreateProcessW spawn is found' ($names -contains 'zz-desktop-launch-teeth-static.ps1')
+        Assert 'E0f the planted renamed copy of the exe is found' ($names -contains 'zz-desktop-launch-teeth-copy.ps1')
         $bad = @($bad | Where-Object { (Split-Path $_.Path -Leaf) -notlike 'zz-desktop-launch-teeth-*' })
     }
 
