@@ -5864,6 +5864,21 @@ $GuardTable = @(
         )
     },
 
+    # T1281 - the pixel-oracle audit: a whole-capture aggregate (a mean, a
+    # count, a colour set over every pixel) has to say why the whole capture is
+    # the right region, because chrome alone satisfied one for a month (T1115).
+    # Its own family; the corpus-wide net is the harness-floor row.
+    [pscustomobject]@{
+        Name   = 'pixel-oracle'
+        Script = 'test\win32\pixel-oracle-audit.ps1'
+        Stamp  = 'test\win32\pixel-oracle-audit.stamp.json'
+        Covers = @(
+            'test\win32\pixel-oracle-audit.ps1',
+            'test\win32\lib\PixelOracleAudit.ps1',
+            'test\win32\pixel-oracle-audit.baseline.json'
+        )
+    },
+
     # T1034 - the unwired-hook sweep. A hook documented "called by X" loses its
     # caller when the CALLER changes, anywhere in the tree (signalFrameDrawn's
     # would have been in src\renderer), so all of `src\` is covered, and the

@@ -1,12 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-24T02:10:33-07:00",
-    "commit":  "7242247ea",
+    "generated":  "2026-10-24T03:22:13-07:00",
+    "commit":  "20feab098",
     "uncommitted":  [
-                        "scripts/go-loop-exec.ps1",
-                        "scripts/go-loop-health.ps1",
-                        "scripts/lib/DigestState.ps1"
+                        "scripts/guard-due.ps1",
+                        "scripts/lib/HarnessFloor.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -39,7 +38,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "3039316b17aea01c3350e133851190b779934b5a5010ef02eed28417ed807658",
+                  "scripts/guard-due.ps1":  "ce93b71466b7fba79e518d5977b182c8e886993e1c1d90c8595e7c1e228ed676",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "cda274a862bd12af712f6f6a2f018142f82cce573faded7954a6e1befb93608b",
@@ -60,7 +59,7 @@
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
                   "scripts/lib/EscapeDamage.ps1":  "87c096ced08379d50c3dbabbd65bcf6596c2812039dde1e4d00d66943a0baa84",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
-                  "scripts/lib/HarnessFloor.ps1":  "01c2f1653690c2ef146b6e32c1941d58132832b01a3d79815f955d682e9c3712",
+                  "scripts/lib/HarnessFloor.ps1":  "50e53fd92c1924bc161ba2867f386145baac253c6a25c15cc9cfb16238cb4a56",
                   "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",
                   "scripts/lib/LaneLeak.ps1":  "6726edfdc47336ad70d6664990d976a49ac455a1f7ca3225a1725c4a839ac654",
                   "scripts/lib/LaneSolo.ps1":  "10feea32628e97345f5aaa156128261e5b597cea97d462590d75b6420d3401d4",

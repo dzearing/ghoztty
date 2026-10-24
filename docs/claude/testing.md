@@ -1457,6 +1457,18 @@ typed text; the 2026-10-22 sites were read and are presence checks, held as a
 per-file baseline. A new one splits its marker or says why the echo is enough:
 `# echo-marker: <reason>` on the wait's line or the one above.
 
+**A pixel aggregate scores its subject, not the whole capture** (T1281). A mean,
+a lit-pixel count or a colour set taken over the full window mixes the subject
+with chrome, so the chrome alone can pass it - T1115's whole-window mean
+luminance did. Bound the walk to the subject's rect.
+`test\win32\pixel-oracle-audit.ps1` sweeps for a nested full-width x
+full-height walk that accumulates; the 2026-10-24 sites were read and are
+crops or shape searches, held as a per-file baseline
+(`docs/design/windows-parity-pixel-oracle-inventory.md` has the rest). A new one
+narrows its rect or says why the whole capture is the region:
+`# pixel-region: <reason>` (`// pixel-region:` in C#) on the walk's line or one
+of the two above.
+
 **A test sandbox can have an agent of its own** (T167). The local agent's
 single-instance guard is per-user and per-LINEAGE, and the lineage is a
 compile-time fact (`local-debug` for every debug build), so a debug agent

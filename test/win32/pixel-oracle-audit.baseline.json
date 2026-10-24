@@ -1,0 +1,10 @@
+{
+    "note":  "Per-file counts of pixel-oracle-audit findings: two nested full-axis loops whose body accumulates (a mean, a count, a colour set). Every site here was read by the T1281 sweep (2026-10-24) and is SOUND - its w/h are a crop\u0027s own size, or the capture is a window that is itself the subject. May only go DOWN; a new walk bounds its region or carries # pixel-region: \u003creason\u003e. See docs/design/windows-parity-tasks/T1281.md.",
+    "generated":  "2026-10-24",
+    "files":  {
+                  "test\\win32\\chooser-link-hover.ps1":  1,
+                  "test\\win32\\lib\\SelectionBar.ps1":  2,
+                  "test\\win32\\menu-bar.ps1":  2,
+                  "test\\win32\\pane-banner.ps1":  1
+              }
+}

@@ -86,6 +86,7 @@ marker with no reason waives nothing.
 | A DIP length is converted to pixels the way the app rounds it, half away from zero, not PowerShell's banker's rounding (T1020) | `dip-rounding-audit.ps1` | `# dip-audit: <reason>` |
 | A click is aimed in screen coordinates, so a client offset cannot miss silently and fail a feature that works (T1032) | `click-coord-audit.ps1` | `# click-coord: <reason>` |
 | A wait for a marker the script typed says whether the shell's echo of it is enough, so an echo cannot score a command that has not run (T1143) | `echo-marker-audit.ps1` | `# echo-marker: <reason>` |
+| A pixel aggregate scores its subject's region, or says why the whole capture is the region, so chrome alone cannot pass it (T1281) | `pixel-oracle-audit.ps1` | `# pixel-region: <reason>` (`//` in C#) |
 | An env seam a script sets is classified, so the shipped unset state is armed, a named gap, or knowingly out of reach (T796) | `seam-audit.ps1` | — add the seam to `seam-audit.registry.json` |
 | A script drives its own endpoints, never the user terminal's (T680) | `isolation-meta.ps1` | `# isolation: none\|shared - <reason>` |
 | A run refuses a release-lineage build before it launches anything (T350) | `build-mode-guard.ps1` | — call `Assert-GhozttyIsolatedBuild` |
