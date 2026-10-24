@@ -530,3 +530,12 @@ as the digest that showed them.
 - The palette flags commands that interrupt you (restart, close-all, sign-out marked and sorted below safe matches)
 - Uninstall asks what to keep (settings and saved sessions kept or removed; nothing else left behind)
 - A huge picture opens at once (screen-sized version first, full detail as you zoom)
+
+## 2026-10-24
+
+- See the fold coming (while dragging a divider, the pane about to fold shows its strip outline before release)
+- Animations follow your Windows setting (with Animation effects off, folds, slides and the busy light snap instead of moving)
+- Unfold the whole row back as it was (one key restores every folded pane in a row to its pre-fold width)
+- A cancelled update picks up where it stopped (resumable update download after Cancel or a dropped connection)
+- Turn a portable copy into a real install (portable menu offers Install Ghoztty, carrying settings and saved sessions)
+- Slides keep up on a big screen (fold/unfold paints at the monitor refresh rate with several 4K panes)
