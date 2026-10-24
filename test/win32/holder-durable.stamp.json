@@ -1,14 +1,14 @@
 {
     "guard":  "holder-durable",
     "script":  "test/win32/holder-durable.ps1",
-    "generated":  "2026-10-10T16:05:19-07:00",
-    "commit":  "9b5cb3ead",
+    "generated":  "2026-10-23T20:58:39-07:00",
+    "commit":  "5a9f311cf",
     "uncommitted":  [
-                        "src/remote/agent/ring_snapshot.zig"
+                        "test/win32/lib/RingSnapshot.ps1"
                     ],
     "files":  {
                   "src/remote/agent/ring_snapshot.zig":  "43d927ca2996eeecafac57a50952fc4de4c0fb5b07bf1368d10eecd4a05f4234",
                   "test/win32/holder-durable.ps1":  "7d42ae987bd4754e5cb9d4a041064eee0aa22f35d6cbc21313b2b1a9eda81be4",
-                  "test/win32/lib/RingSnapshot.ps1":  "97aaf7f3047095d13b76d6d5ef12610b1eaa449fdd122f6e5d68ae499baa7778"
+                  "test/win32/lib/RingSnapshot.ps1":  "fd4d7b91f60409df62a3a90461e03783dbf2b655aea98487152368ea4386912e"
               }
 }

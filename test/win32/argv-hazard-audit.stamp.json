@@ -1,13 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-23T19:54:20-07:00",
-    "commit":  "71449d091",
+    "generated":  "2026-10-23T20:56:18-07:00",
+    "commit":  "5a9f311cf",
     "uncommitted":  [
-                        "scripts/go-loop-exec.ps1",
-                        "scripts/go-loop-health.ps1",
-                        "scripts/guard-due.ps1",
-                        "scripts/lib/DigestState.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -95,7 +92,7 @@
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
                   "scripts/task-dashboard.ps1":  "616fa636356bdfa1dc07aafe573f5aaf3b9a421ee6bbdc4c4404367845564fd7",
                   "scripts/test-binary-soak.ps1":  "2cc93833d651a51bc19eba0446827b48a75738f3ad4700f199e4cf522566fc2e",
-                  "scripts/upgrade-ghoztty-windows.ps1":  "8728d104ebc58a0e702f93a101a31f70d3de1e4ab6e88c4d2524ad1ffaa50547",
+                  "scripts/upgrade-ghoztty-windows.ps1":  "448fa05a55bcce70e03893612266b159a85b0d1e4d644f6bc4424f6d41d19892",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",
                   "scripts/upstream-stage.ps1":  "a51dc2a35a5f4e1dcec4f5e7e16b2b895ec39af1b6a25bea056c780dba6aa81f",
                   "scripts/verify-release-assets.ps1":  "4f075bfd776d7419c10dae0199af0002aee1db11da50bcb29a2e4b39f3f80a09",
