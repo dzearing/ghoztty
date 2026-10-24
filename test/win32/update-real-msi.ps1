@@ -51,7 +51,13 @@ param(
     # The app's download refuses it, and C must report that as the failure it
     # is, early, instead of waiting out the whole poll. D and E skip, so a run
     # under this switch never stamps the guard.
-    [switch]$BreakDownload
+    [switch]$BreakDownload,
+    # Negative control for section E (T1303): plant a sidelined image the
+    # sweep cannot delete (held open without FILE_SHARE_DELETE) right before
+    # the next launch. E must then pass "the sweep ran" and FAIL "swept
+    # everything", naming the planted file - a real leak and a slow launch are
+    # two different verdicts. The run fails, so it never stamps the guard.
+    [switch]$PlantLeak
 )
 $ErrorActionPreference = 'Stop'
 
@@ -482,6 +488,12 @@ if ($stillHeld) { Write-Host "  note: still held 60s after every holder exited: 
 # download into the very directory being checked for emptiness (seen in
 # T1269's runs). A feed that offers no win-v release answers that question
 # with "nothing to offer".
+$leakLock = $null
+if ($PlantLeak) {
+    $leakFile = Join-Path $installDir 'ghoztty-agent.exe.old-1303'
+    [IO.File]::WriteAllBytes($leakFile, [byte[]](1, 2, 3))
+    $leakLock = [IO.File]::Open($leakFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+}
 $emptyFeed = Join-Path $work 'feed-empty.json'
 [IO.File]::WriteAllText($emptyFeed, '[{"tag_name":"v1.0.0","assets":[]}]')
 $env:GHOZTTY_UPDATE_URL = 'file:///' + ($emptyFeed -replace '\\', '/')
@@ -490,19 +502,70 @@ try {
 } finally {
     Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
 }
-$clean = $false
-for ($i = 0; $i -lt 30; $i++) {
+# Judge the sweep once it has RUN, not after a fixed window (T1303). A flat 30s
+# went red on a loaded box and green solo minutes later over the same code, so
+# "a real leak" and "a slow launch" read identically. The sweep runs on the GUI
+# thread inside App.init, before `run` creates the first window
+# (`update_install.sweep`, App.zig), so a window answering `+list --json` is
+# proof that it has finished - and the directories can be read once, as its
+# verdict. Same load-aware shape as C: base 60s, any sign of life (stderr
+# growth) buys another 60s, 240s cap.
+function Get-AppWindowCount([string]$Exe) {
+    $com = [IO.Path]::ChangeExtension($Exe, '.com')
+    $bin = if (Test-Path $com) { $com } else { $Exe }
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $raw = & $bin +list --json 2>&1 | ForEach-Object { $_.ToString() } | Out-String } catch { $raw = "$_" } finally { $ErrorActionPreference = $old }
+    $script:lastListRaw = "[$(Split-Path -Leaf $bin) rc=$LASTEXITCODE] $raw"
+    try { $j = $raw | ConvertFrom-Json } catch { return 0 }
+    # The envelope is `{ success, data: { windows: [...] } }`.
+    if ($null -eq $j -or $null -eq $j.data -or $null -eq $j.data.windows) { return 0 }
+    return @($j.data.windows | ForEach-Object { $_ }).Count
+}
+function Get-SweepLeftovers {
+    $n = @()
+    foreach ($f in @(Get-ChildItem $stagingDir -File -ErrorAction SilentlyContinue)) { $n += $f.Name }
+    foreach ($f in @(Get-ChildItem $installDir -Filter '*.old-*' -File -Recurse -ErrorAction SilentlyContinue)) { $n += $f.Name }
+    return ($n -join ', ')
+}
+$sweepLog = Join-Path $work 'app-sweep.err.txt'
+$swept = $false
+$sweepStop = ''
+$sweepStarted = Get-Date
+$sweepLastMove = $sweepStarted
+$sweepLastSig = ''
+while ($true) {
     Start-Sleep -Seconds 1
-    $stagedLeft = @(Get-ChildItem $stagingDir -File -ErrorAction SilentlyContinue)
-    $oldLeft = @(Get-ChildItem $installDir -Filter '*.old-*' -File -Recurse -ErrorAction SilentlyContinue)
-    if ($stagedLeft.Count -eq 0 -and $oldLeft.Count -eq 0) { $clean = $true; break }
+    if ((Get-AppWindowCount $testExe) -gt 0) { $swept = $true; break }
+    if ($again -and $again.Process -and $again.Process.HasExited) { $sweepStop = 'the app exited before opening a window'; break }
+    $sig = if (Test-Path $sweepLog) { (Get-Item $sweepLog).Length } else { 0 }
+    $now = Get-Date
+    if ("$sig" -ne $sweepLastSig) { $sweepLastSig = "$sig"; $sweepLastMove = $now }
+    $elapsed = ($now - $sweepStarted).TotalSeconds
+    if ($elapsed -ge 240) { $sweepStop = 'the 240s cap ran out while the app was still starting'; break }
+    if ($elapsed -ge 60 -and ($now - $sweepLastMove).TotalSeconds -ge 60) { $sweepStop = 'nothing moved for 60s'; break }
+}
+$sweepWaited = [int]((Get-Date) - $sweepStarted).TotalSeconds
+if (-not $swept) {
+    $rawHead = "$script:lastListRaw"
+    if ($rawHead.Length -gt 400) { $rawHead = $rawHead.Substring(0, 400) }
+    Write-Host "  note: last +list --json answer: $rawHead" -ForegroundColor Yellow
+}
+$leftAfter = Get-SweepLeftovers
+if ($leakLock) {
+    $leakLock.Dispose()
+    Remove-Item $leakFile -Force -ErrorAction SilentlyContinue
 }
 Stop-ThrowawayInstances -InstallDir $installDir -RealLocalAppData $realLocalAppData
-$leftNames = @()
-foreach ($f in @(Get-ChildItem $stagingDir -File -ErrorAction SilentlyContinue)) { $leftNames += $f.Name }
-foreach ($f in @(Get-ChildItem $installDir -Filter '*.old-*' -File -Recurse -ErrorAction SilentlyContinue)) { $leftNames += $f.Name }
 $heldNote = if ($stillHeld) { "; still held when it launched: $stillHeld" } else { '' }
-Assert $clean "E: the next launch swept everything the update left ($($leftNames -join ', ')$heldNote)"
+# Two different failures, named differently: a launch that never got past its
+# sweep says nothing about leaks, and must not be reported as one.
+$sweepWhy = if ($swept) { "window up after ${sweepWaited}s" } else { "$sweepStop after ${sweepWaited}s; not a leak verdict" }
+Assert $swept "E: the next launch reached its first window, so its sweep ran ($sweepWhy)"
+if ($swept) {
+    $leftNote = if ($leftAfter) { "left: $leftAfter$heldNote" } else { 'nothing left' }
+    Assert ($leftAfter -eq '') "E: the next launch swept everything the update left ($leftNote)"
+}
 
 # The whole reason a throwaway identity was worth building. If any of these
 # three moved, the test upgraded the user's terminal.
