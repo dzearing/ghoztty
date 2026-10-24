@@ -90,6 +90,22 @@
 # whole interior THROWS, after retrying long enough to rule out a window that
 # simply had not painted yet. -AllowUniform opts out, for measuring the limit.
 #
+# A LIVE WEB VIEW BLANKS ITS HOST, TOO (T1304, measured 2026-10-24). A
+# GhozttyViewer host with a working WebView2 does not hand back its OWN fill
+# for the region its Chromium child occupies: a -Sync capture of the host reads
+# #000000 there, not the configured background (viewer-error-card.ps1 section
+# C, a --background=1e1e1e pane: the row and the clearance band both #000000).
+# The likely mechanism (inferred, not traced): the host's paint is clipped
+# around its child window, and the child's out-of-process Chromium surface is
+# not in the copy, so PrintWindow's own blank shows through.
+# THE ASSERTION IT INVALIDATES: "the viewer host painted colour X"
+# (its background, a tint, a band beside the page) while the pane has a live
+# web view - that region of the capture is the child's, and it is black
+# whatever the host painted. Only a pane with NO child (a failed pane's error
+# card, a pane before navigation) shows the host's fill. Ask about a viewer
+# host's own painting with the child absent, or measure a transition rather
+# than a colour, as viewer-error-card.ps1 does.
+#
 # THE INVISIBLE HALF: OUTPUT VOLUME COLLAPSES TOO (T1239/T1266, measured
 # 2026-09-01 and 2026-10-23). The flat fill above is what "a background desktop
 # renders nothing" looks like; this is what it does to the BYTES, and nothing

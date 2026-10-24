@@ -198,11 +198,12 @@ function Get-PaintedColumn($Shot, [int]$X, [int]$Y0, [int]$Y1, [int[]]$Bg) {
 # The card-present oracle that survives a working WebView2. `Get-PaintedRun`
 # above compares against the pane background, which is the right question only
 # while the host's own fill is what the capture shows; with a runtime found,
-# `PrintWindow` brings the Chromium child's page along and about:blank paints
-# the whole row white, so "not the background" is true of every pixel and says
-# nothing. A rounded rect, by contrast, IS a pair of transitions at two known
-# x's - rim against what is outside, rim against the fill inside - and a page
-# of uniform white has neither.
+# the region the Chromium child occupies captures as PrintWindow's own blank -
+# #000000 across the whole row, measured (T1304; the CAPTURE LIMIT header in
+# lib\TestDesktop.ps1) - so "not the background" is true of every pixel and
+# says nothing. A rounded rect, by contrast, IS a pair of transitions at two
+# known x's - rim against what is outside, rim against the fill inside - and a
+# uniform black row has neither.
 function Get-CardEdgeTransitions($Shot, $Lay, [int]$Y) {
     $n = 0
     # Each pair built with the arithmetic in its OWN parentheses: in PowerShell

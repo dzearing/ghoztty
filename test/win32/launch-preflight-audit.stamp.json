@@ -1,14 +1,14 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-10-24T04:37:03-07:00",
-    "commit":  "8f48ef842",
+    "generated":  "2026-10-24T07:37:27-07:00",
+    "commit":  "11dd59686",
     "uncommitted":  [
                         "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
                   "test/win32/launch-preflight-audit.ps1":  "48099d9b4bdad7536379153e2e9eca0138daee304cdb496c6dd33c1cc27f67f0",
                   "test/win32/lib/BuildMode.ps1":  "44e0d8bcd7731f8cad283d2362abb7828b6a37ae54d8b119e70c98d50a1e575f",
-                  "test/win32/lib/TestDesktop.ps1":  "917b7598bdf60bd4e93ea51debb7411e13e0d7f0a484149e93f72e32a6278349"
+                  "test/win32/lib/TestDesktop.ps1":  "33491dfd1ca5311c8b2a5010d2799a340100fb04b19a2f51f986c4c0096e9b15"
               }
 }
