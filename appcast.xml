@@ -903,5 +903,24 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.44.0/Ghoztty-1.44.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="tFYOYUGayzT1HKMPRc2jHqvDGLzJgxUdSyAGSd322sBg61FujgMeHaJvIRwvdNC010V923I86g7YoUeWic4hAQ==" length="26676084" />
         </item>
+        <item>
+            <title>Version 1.44.1</title>
+            <sparkle:version>1.44.1</sparkle:version>
+            <sparkle:shortVersionString>1.44.1</sparkle:shortVersionString>
+            <pubDate>Sat, 24 Oct 2026 23:13:50 +0000</pubDate>
+            <description>{
+  "version": "1.44.1",
+  "sections": [
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Gutter highlight goes away after a drag", "text": "Letting go of a resize drag with the pointer still on the gutter, then moving away, no longer leaves the gutter's highlight bar lit. Before, it stayed on until you hovered the gutter and left again. This applies to split gutters and the viewer side panel's resize edge." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.44.1/Ghoztty-1.44.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="6d2JxiXjuxZ2hbwoNyMwT+YImjIuOITtWRs5Hm34gKtjBRmJcev1qENVEtyAcfapaz4TdL5dnL/dCdMm8m8CDw==" length="26685246" />
+        </item>
     </channel>
 </rss>
