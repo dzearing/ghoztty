@@ -265,6 +265,10 @@ $launcher = Join-Path $Repo 'scripts\launch-upgrade.ps1'
 function Invoke-InSandboxTemp([string[]]$Argv, [int]$TimeoutMs = 40000) {
     $savedTemp, $savedTmp = $env:TEMP, $env:TMP
     $env:TEMP, $env:TMP = $lRoot, $lRoot
+    # T1254: every run here targets a sandbox install; without this the T1984
+    # lane-a delivery gate refuses each one (exit 6) from any other lane.
+    $savedLane = $env:GHOZTTY_LOOP_LANE
+    $env:GHOZTTY_LOOP_LANE = 'a'
     try {
         $o = Join-Path $lRoot "child-$([guid]::NewGuid().ToString('N').Substring(0,8)).out"
         $e = "$o.err"
@@ -279,7 +283,7 @@ function Invoke-InSandboxTemp([string[]]$Argv, [int]$TimeoutMs = 40000) {
             Out    = (Get-Content -LiteralPath $o -Raw -ErrorAction SilentlyContinue)
             Err    = (Get-Content -LiteralPath $e -Raw -ErrorAction SilentlyContinue)
         }
-    } finally { $env:TEMP, $env:TMP = $savedTemp, $savedTmp }
+    } finally { $env:TEMP, $env:TMP = $savedTemp, $savedTmp; $env:GHOZTTY_LOOP_LANE = $savedLane }
 }
 function Get-LMarkerCount {
     if (-not (Test-Path -LiteralPath $lLog)) { return 0 }
@@ -400,6 +404,10 @@ Assert "L22 the hostile prompt reached the child intact through the file" `
 $spacedDir = Join-Path $lRoot 'staging with spaces'
 New-Item -ItemType Directory -Force $spacedDir | Out-Null
 $savedTemp, $savedTmp = $env:TEMP, $env:TMP
+# T1254: in-process, so outside Invoke-InSandboxTemp's lane seam; the stub
+# upgrade script is the only thing launched.
+$savedLane = $env:GHOZTTY_LOOP_LANE
+$env:GHOZTTY_LOOP_LANE = 'a'
 $env:TEMP, $env:TMP = $lRoot, $lRoot
 try {
     # NOT `*> file` (T883's class): Fail-Launch's [Console]::Error copy
@@ -423,7 +431,7 @@ try {
     & $launcher -Prompt $hostile -Staging $lStagingReal -UpgradeScript $stubOk -StartTimeoutSeconds 20 `
         -SkipBuild -ExpectedCommit $lStagedCommit *> $okOut
     $okCode = $LASTEXITCODE
-} finally { $env:TEMP, $env:TMP = $savedTemp, $savedTmp }
+} finally { $env:TEMP, $env:TMP = $savedTemp, $savedTmp; $env:GHOZTTY_LOOP_LANE = $savedLane }
 AssertEq "L27 the documented in-process call with free text succeeds" 0 $okCode
 Assert "L28 and the free text survived without a file of the caller's own" `
     ((Get-LLog) -match [regex]::Escape("stub read prompt: $hostile"))
@@ -689,8 +697,11 @@ function Invoke-Upgrade($tag, $extraArgs, $timeoutSec = 300) {
         if ($s -match '[\s&<>|]') { '"' + $s + '"' } else { $s }
     }
     Remove-Item $upgradeLog -Force -ErrorAction SilentlyContinue
+    $savedLane = $env:GHOZTTY_LOOP_LANE
+    $env:GHOZTTY_LOOP_LANE = 'a'   # sandbox target; see Invoke-InSandboxTemp (T1254)
     $p = Start-Process -FilePath powershell.exe -WindowStyle Hidden -PassThru `
         -WorkingDirectory 'C:\Windows\System32' -ArgumentList $quoted
+    $env:GHOZTTY_LOOP_LANE = $savedLane
     $null = $p.Handle   # before any wait, or ExitCode reads empty (lib\ExitCodeAudit.ps1)
     $code = $null
     if ($p.WaitForExit($timeoutSec * 1000)) { $code = $p.ExitCode }

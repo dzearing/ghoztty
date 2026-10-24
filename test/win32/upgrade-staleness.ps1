@@ -605,6 +605,12 @@ Set-Content -LiteralPath $stubOk -Encoding ascii -Value @(
 function Invoke-InSandboxTemp([string[]]$Argv, [string]$TempDir, [int]$TimeoutMs = 90000) {
     $savedTemp, $savedTmp = $env:TEMP, $env:TMP
     $env:TEMP, $env:TMP = $TempDir, $TempDir
+    # T1254: every run here targets a sandbox install, so the lane-a delivery
+    # refusal (T1984) protects nothing - and in lane B it refused every run
+    # (exit 6), leaving the harness unrunnable outside the main worktree. Same
+    # seam daily-publish.ps1 uses; the refusal itself is loop-lanes.ps1's to prove.
+    $savedLane = $env:GHOZTTY_LOOP_LANE
+    $env:GHOZTTY_LOOP_LANE = 'a'
     try {
         $o = Join-Path $TempDir "child-$([guid]::NewGuid().ToString('N').Substring(0,8)).out"
         $e = "$o.err"
@@ -618,7 +624,7 @@ function Invoke-InSandboxTemp([string[]]$Argv, [string]$TempDir, [int]$TimeoutMs
             Out  = (Get-Content -LiteralPath $o -Raw -ErrorAction SilentlyContinue)
             Err  = (Get-Content -LiteralPath $e -Raw -ErrorAction SilentlyContinue)
         }
-    } finally { $env:TEMP, $env:TMP = $savedTemp, $savedTmp }
+    } finally { $env:TEMP, $env:TMP = $savedTemp, $savedTmp; $env:GHOZTTY_LOOP_LANE = $savedLane }
 }
 function Get-MarkerCount([string]$Log) {
     if (-not (Test-Path -LiteralPath $Log)) { return 0 }
@@ -721,6 +727,32 @@ Assert "D12 the other install locations were left alone" ($dLogText -match 'skip
 Assert "D12b a delivery with no staged agent says so instead of vouching for one" `
     ($dLogText -match 'AGENT VERIFY SKIP: no ghoztty-agent\.exe in staging')
 
+# --- D12c the fallback graphics driver reaches the dev install (T1254) -------
+# Stand-ins, not Mesa: what is under test is that bin\gl\ is mirrored to gl\ -
+# the same tree deliver-windows-build.ps1 and the MSI ship - and mirrored with
+# /MIR, so a leftover from a previous Mesa is a DLL the loader can no longer find.
+$dGl = Join-Path $dStaging 'bin\gl'
+New-Item -ItemType Directory -Force $dGl | Out-Null
+Set-Content -LiteralPath (Join-Path $dGl 'opengl32.dll') -Encoding ascii -Value 'STAND-IN-MESA'
+Set-Content -LiteralPath (Join-Path $dGl 'LICENSE-Mesa.txt') -Encoding ascii -Value 'STAND-IN-LICENSE'
+$dInstallGl = Join-Path $dInstall 'gl'
+New-Item -ItemType Directory -Force $dInstallGl | Out-Null
+$dLeftover = Join-Path $dInstallGl 'leftover-from-old-mesa.dll'
+Set-Content -LiteralPath $dLeftover -Encoding ascii -Value 'OLD'
+Remove-Item -LiteralPath $dLog -Force -ErrorAction SilentlyContinue
+$dGlRun = Invoke-InSandboxTemp -TempDir $dRoot -Argv @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $upgrade,
+    '-Staging', $dStaging, '-InstallDir', $dInstall, '-WorkingDirectory', $Repo,
+    '-ExpectedCommit', $exeCommit, '-NoResume', '-NoExtraInstalls', '-DelaySeconds', '0')
+$dLogText = Get-Content -LiteralPath $dLog -Raw -ErrorAction SilentlyContinue
+AssertEq "D12c a delivery with a staged gl\ succeeds" 0 $dGlRun.Code
+Assert "D12d the log says gl\ was mirrored" ($dLogText -match 'gl\\ mirrored \(robocopy exit [0-7]\)')
+AssertEq "D12e THE POINT: the fallback driver is in the dev install's gl\" 'STAND-IN-MESA' `
+    ((Get-Content -LiteralPath (Join-Path $dInstallGl 'opengl32.dll') -Raw -ErrorAction SilentlyContinue) -as [string]).Trim()
+Assert "D12f with its licence beside it" (Test-Path -LiteralPath (Join-Path $dInstallGl 'LICENSE-Mesa.txt'))
+Assert "D12g and a previous Mesa's leftover is gone (mirrored, not merged)" (-not (Test-Path -LiteralPath $dLeftover))
+Assert "D12h nothing landed next to the exe (gl\ stays a subdirectory)" `
+    (-not (Test-Path -LiteralPath (Join-Path $dInstall 'opengl32.dll')))
+
 # --- D13 the post-swap gate itself, exercised live ---------------------------
 # -AllowStaleStaging lets the swap proceed while the delivery is declared to be
 # for a commit the staged exe does not carry. The bits then land fine and the
@@ -773,6 +805,7 @@ $bytes = [IO.File]::ReadAllBytes((Join-Path $dStaging 'bin\ghoztty.exe'))
 $peOff = [BitConverter]::ToInt32($bytes, 0x3C)
 $bytes[$peOff + 0x5C] = 2; $bytes[$peOff + 0x5D] = 0
 [IO.File]::WriteAllBytes($guiExe, $bytes)
+Copy-Item -LiteralPath $dGl -Destination (Join-Path $dGuiStaging 'bin') -Recurse -Force   # D24
 Set-Content -LiteralPath $mirrorExe -Encoding ascii -Value $sentinel
 Remove-Item -LiteralPath $dLog -Force -ErrorAction SilentlyContinue
 $null = Invoke-InSandboxTemp -TempDir $dRoot -Argv @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $upgrade,
@@ -783,6 +816,11 @@ Assert "D22 POSITIVE CONTROL: a release-subsystem exe is not refused" `
     (-not ($dLogText -match 'NOT PROPAGATED - staging ghoztty\.exe'))
 AssertEq "D23 and it reached the portable" (Get-FileHash -LiteralPath $guiExe).Hash `
     (Get-FileHash -LiteralPath $mirrorExe).Hash
+# T1254: the portable ships gl\ (build-portable-zip.sh requires it), so a mirror
+# that took the exe and not the driver would be the dev-install gap again.
+AssertEq "D24 the fallback driver reached the portable's gl\ too" 'STAND-IN-MESA' `
+    ((Get-Content -LiteralPath (Join-Path $dMirror 'gl\opengl32.dll') -Raw -ErrorAction SilentlyContinue) -as [string]).Trim()
+Assert "D25 and the mirror line names it" ($dLogText -match "extra install '[^']*': [^\r\n]*gl\\\(robocopy [0-7]\)")
 
 # ============================================================================
 "== E: the AGENT binary is read back too (T281)"

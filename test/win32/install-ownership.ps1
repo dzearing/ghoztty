@@ -130,6 +130,11 @@ if (-not $TeethCheck) {
     # Nothing destructive can happen here: the guard is the first statement
     # after the dot-sources, before any read, kill, copy or launch.
     $upgrade = Join-Path $Repo $paths['upgrade']
+    # T1254: the T1984 lane gate runs before the ownership refusal is acted on,
+    # so from any lane but a every live check here measured exit 6 instead.
+    # Lane a is the lane whose refusal this section proves.
+    $savedLane = $env:GHOZTTY_LOOP_LANE
+    $env:GHOZTTY_LOOP_LANE = 'a'
     $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $upgrade `
         -InstallDir $userInstall -NoResume 2>&1 | ForEach-Object { "$_" } | Out-String
     $code = $LASTEXITCODE
@@ -137,6 +142,7 @@ if (-not $TeethCheck) {
     Assert 'B2 and says whose install it refused' ($out -match [regex]::Escape($userInstall))
     Assert 'B3 and points at publishing instead' ($out -match 'publish-windows-release\.ps1')
     Assert 'B4 and names the decision' ($out -match 'D85')
+    $env:GHOZTTY_LOOP_LANE = $savedLane
     # The default is the other half of the guarantee: a bare run must not even
     # aim at the user's install. Read as source, because RUNNING a bare upgrade
     # would perform a real dev delivery.
@@ -153,6 +159,8 @@ if (-not $TeethCheck) {
     # -Prompt is deliberately omitted: the refusal must come BEFORE every other
     # validation, so the delivery cannot be half-set-up first.
     $launcher = Join-Path $Repo $paths['launcher']
+    $savedLane = $env:GHOZTTY_LOOP_LANE
+    $env:GHOZTTY_LOOP_LANE = 'a'   # see section B (T1254)
     # `powershell -File` re-tokenizes an argument list: a two-element array
     # written as `-ExtraArgs a, b` arrives as one bound value and one POSITIONAL
     # word, which PositionalBinding=$false rejects before the script runs. The
@@ -175,6 +183,7 @@ if (-not $TeethCheck) {
     $acode = $LASTEXITCODE
     AssertEq 'C5 the array spelling is refused too' 3 $acode
     Assert 'C6 and says the same thing' ($aout -match 'will not write')
+    $env:GHOZTTY_LOOP_LANE = $savedLane
 }
 
 # ============================================================================

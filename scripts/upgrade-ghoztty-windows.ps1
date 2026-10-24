@@ -542,12 +542,21 @@ if ($AppOnly) {
     Log 'no ghoztty-agent.exe in staging; kept existing'
 }
 
-$stagingShare = Join-Path $Staging 'share'
-if (Test-Path $stagingShare) {
-    robocopy $stagingShare (Join-Path $InstallDir 'share') /MIR /NFL /NDL /NJH /NJS | Out-Null
-    Log "share\ mirrored (robocopy exit $LASTEXITCODE)"
-} else {
-    Log 'no share\ in staging; kept existing'
+# T1254: the content trees come from the same list deliver-windows-build.ps1
+# mirrors (share\, and bin\gl\ -> gl\ since T1252), so the dev install carries
+# the fallback graphics driver a user's download does. Before this only share\
+# was named here, and the install the loop tests against had no gl\ at all.
+$treeSet = @(Get-DeliveryTreeSet)
+foreach ($tree in $treeSet) {
+    $src = Join-Path $Staging $tree.Source
+    if (Test-Path -LiteralPath $src -PathType Container) {
+        robocopy $src (Join-Path $InstallDir $tree.Dest) /MIR /NFL /NDL /NJH /NJS | Out-Null
+        # robocopy: < 8 is success (0 nothing to do, 1 copied, 2 extras, 3 both).
+        if ($LASTEXITCODE -lt 8) { Log "$($tree.Dest)\ mirrored (robocopy exit $LASTEXITCODE)" }
+        else { Log "WARNING: $($tree.Dest)\ could not be mirrored (robocopy exit $LASTEXITCODE)" }
+    } else {
+        Log "no $($tree.Source)\ in staging; kept existing $($tree.Dest)\"
+    }
 }
 
 # T89h: assert the agent's sessions survived the GUI kill + exe swap. The
@@ -733,10 +742,12 @@ if ($script:deliveryFailure) {
                     Log "extra install '$dir': $n FAILED ($($_.Exception.Message))"
                 }
             }
-            if (Test-Path -LiteralPath $stagingShare) {
+            foreach ($tree in $treeSet) {
+                $src = Join-Path $Staging $tree.Source
+                if (-not (Test-Path -LiteralPath $src -PathType Container)) { continue }
                 # /R:1 /W:1 so an unreachable share fails in seconds, not minutes.
-                robocopy $stagingShare (Join-Path $dir 'share') /MIR /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
-                $copied += "share\(robocopy $LASTEXITCODE)"
+                robocopy $src (Join-Path $dir $tree.Dest) /MIR /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+                $copied += "$($tree.Dest)\(robocopy $LASTEXITCODE)"
             }
             Log "extra install '$dir': $($copied -join ', ')"
 
