@@ -1,14 +1,17 @@
 {
     "guard":  "control-char-scan",
     "script":  "test/win32/control-char-scan.ps1",
-    "generated":  "2026-10-17T23:27:49-07:00",
-    "commit":  "3e83536de",
+    "generated":  "2026-10-23T20:20:20-07:00",
+    "commit":  "5f54bb5d5",
     "uncommitted":  [
-                        "scripts/githooks/pre-commit"
+                        "scripts/control-char-scan.ps1",
+                        "scripts/lib/EscapeDamage.ps1",
+                        "test/win32/control-char-scan.ps1"
                     ],
     "files":  {
-                  "scripts/control-char-scan.ps1":  "5d86caddd7c8b44be9b3148dd5994881a8f8fa8eb1a07d2fe5414b0dd6428ba8",
+                  "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
                   "scripts/githooks/pre-commit":  "e02c6918ce8e6ae30f3e627de81fc74fe7e1990f9e18b9919ca819d50bd0b2c2",
-                  "test/win32/control-char-scan.ps1":  "7b6cdf8e7f672db0630aef5f181b4a15086b896c9926abf457078dba1179205c"
+                  "scripts/lib/EscapeDamage.ps1":  "87c096ced08379d50c3dbabbd65bcf6596c2812039dde1e4d00d66943a0baa84",
+                  "test/win32/control-char-scan.ps1":  "70a206b8794ccbf250ac349adbb5a2303e850c9370117b31afbad1541c9692a9"
               }
 }

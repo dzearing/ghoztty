@@ -2667,6 +2667,20 @@ $GuardTable = @(
             'test\win32\deny-sh-from-powershell.ps1'
         )
     },
+    # T1263: the gate in front of Edit/Write that refuses a tool call whose
+    # arguments decoded a single backslash into a control byte - the writer of
+    # every file control-char-scan has ever found damaged.
+    [pscustomobject]@{
+        Name   = 'deny-escape-damage'
+        Script = 'test\win32\deny-escape-damage.ps1'
+        Stamp  = 'test\win32\deny-escape-damage.stamp.json'
+        Covers = @(
+            'scripts\hooks\deny-escape-damage.ps1',
+            'scripts\lib\EscapeDamage.ps1',
+            '.claude\settings.json',
+            'test\win32\deny-escape-damage.ps1'
+        )
+    },
     # The dashboard keep-alive launcher runs //B every 5 minutes and reports
     # nothing, so a clone path committed back into it (T1199) would start the
     # wrong checkout's dashboard - or none - in silence.
@@ -4762,6 +4776,7 @@ $GuardTable = @(
         Stamp  = 'test\win32\control-char-scan.stamp.json'
         Covers = @(
             'scripts\control-char-scan.ps1',
+            'scripts\lib\EscapeDamage.ps1',
             'scripts\githooks\pre-commit',
             'test\win32\control-char-scan.ps1'
         )

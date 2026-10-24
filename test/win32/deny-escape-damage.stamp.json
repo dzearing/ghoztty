@@ -1,0 +1,18 @@
+{
+    "guard":  "deny-escape-damage",
+    "script":  "test/win32/deny-escape-damage.ps1",
+    "generated":  "2026-10-23T20:20:12-07:00",
+    "commit":  "5f54bb5d5",
+    "uncommitted":  [
+                        ".claude/settings.json",
+                        "scripts/hooks/deny-escape-damage.ps1",
+                        "scripts/lib/EscapeDamage.ps1",
+                        "test/win32/deny-escape-damage.ps1"
+                    ],
+    "files":  {
+                  ".claude/settings.json":  "adeef8f32f0bff01a1d3e43f6666001bfe7a8d0bfa7be1beb7debc6abc28eac0",
+                  "scripts/hooks/deny-escape-damage.ps1":  "e287c6545f92e31d5d110962565434f8799209db94410e945f8e7e3dbfe48338",
+                  "scripts/lib/EscapeDamage.ps1":  "87c096ced08379d50c3dbabbd65bcf6596c2812039dde1e4d00d66943a0baa84",
+                  "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29"
+              }
+}

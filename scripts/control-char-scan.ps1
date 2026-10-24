@@ -18,7 +18,14 @@
   that quietly does not exist, which nothing reports as anything but not-found.
 
   What counts as damage: any byte below 0x20 other than tab (0x09), line feed
-  (0x0a) and carriage return (0x0d), plus DEL (0x7f).
+  (0x0a) and carriage return (0x0d), plus DEL (0x7f). Since T1263 also a
+  carriage return that is not half of a CRLF, and a tab glued between path
+  segments - the shapes a decoded `\r` / `\t` leaves (scripts\lib\EscapeDamage.ps1).
+
+  The writer, found in T1263, is the tool-call channel: an Edit/Write whose JSON
+  arguments carry one backslash has it decoded before the file is touched.
+  scripts\hooks\deny-escape-damage.ps1 refuses such a call at write time; this
+  scan is the commit-time net behind it.
 
   Scope: TRACKED files (git ls-files) whose extension is in the allowlist
   below. The allowlist rather than "every text file" is deliberate - the
@@ -69,17 +76,10 @@ if (-not (Test-Path -LiteralPath $Repo)) {
 # instead of the repo-relative one a reader can act on.
 $Repo = (Resolve-Path -LiteralPath $Repo).ProviderPath
 
-# Extensions whose files are prose or code, and therefore have no business
-# holding a control character. Keep this tight: every extension added here is a
-# promise that no legitimate file of that kind carries one.
-$AllowedExtensions = @(
-    '.md', '.ps1', '.psm1', '.psd1', '.zig', '.json', '.sh', '.bash',
-    '.yml', '.yaml', '.txt', '.bat', '.cmd', '.toml', '.css', '.js', '.html',
-    '.swift', '.c', '.h', '.py'
-)
-
-# tab, LF, CR are the three control characters a text file legitimately holds.
-$bad = [char[]](@(0..8) + @(11, 12) + @(14..31) + @(127) | ForEach-Object { [char]$_ })
+# What counts - the extension allowlist, the bad bytes, and since T1263 the
+# lone-CR and tab-in-path shapes a decoded `\r` / `\t` leaves - lives in one
+# place, shared with the write-time hook (scripts\hooks\deny-escape-damage.ps1).
+. (Join-Path $PSScriptRoot 'lib\EscapeDamage.ps1')
 
 function Get-ScanTargets {
     if ($Paths) {
@@ -105,8 +105,7 @@ function Get-ScanTargets {
     $out = New-Object System.Collections.Generic.List[string]
     foreach ($rel in $listed) {
         if (-not $rel) { continue }
-        $ext = [System.IO.Path]::GetExtension($rel)
-        if ($AllowedExtensions -notcontains $ext) { continue }
+        if (-not (Test-EscapeDamageExtension $rel)) { continue }
         $out.Add((Join-Path $Repo $rel))
     }
     return $out
@@ -128,30 +127,25 @@ foreach ($path in $targets) {
     } catch {
         continue
     }
-    # IndexOfAny is a native scan, so the common case (no hit) costs one pass
-    # over the bytes and nothing else. Only a file that HAS a hit pays for the
-    # line/column arithmetic below.
-    if ($text.IndexOfAny($bad) -lt 0) { continue }
+    # One native IndexOfAny pass and one regex pass in the common case (no
+    # hit); only a file that HAS a hit pays for the line/column arithmetic.
+    $hits = Find-EscapeDamage $text
+    if ($hits.Count -eq 0) { continue }
 
     $rel = $path
     if ($path.StartsWith($Repo, [System.StringComparison]::OrdinalIgnoreCase)) {
         $rel = $path.Substring($Repo.Length).TrimStart('\', '/')
     }
 
-    $line = 1
-    $col = 1
-    for ($i = 0; $i -lt $text.Length; $i++) {
-        $ch = $text[$i]
-        if ($ch -eq "`n") { $line++; $col = 1; continue }
-        if ($bad -contains $ch) {
-            $findings.Add([pscustomobject]@{
-                File = $rel
-                Line = $line
-                Col  = $col
-                Code = '0x{0:x2}' -f [int]$ch
-            })
-        }
-        $col++
+    foreach ($h in $hits) {
+        $findings.Add([pscustomobject]@{
+            File    = $rel
+            Line    = $h.Line
+            Col     = $h.Col
+            Code    = $h.Code
+            Kind    = $h.Kind
+            Context = Format-EscapeDamageContext $text $h.Index
+        })
     }
 }
 
@@ -164,12 +158,15 @@ if ($findings.Count -eq 0) {
 
 Write-Host ("CONTROL CHARACTERS IN {0} FILE(S) - a text file must not hold one (T1231):" -f (@($findings | Select-Object -ExpandProperty File -Unique)).Count)
 foreach ($f in $findings) {
-    Write-Host ("  {0}:{1}:{2}  {3}" -f $f.File, $f.Line, $f.Col, $f.Code)
+    $kind = if ($f.Kind -ne 'control') { " ($($f.Kind))" } else { '' }
+    Write-Host ("  {0}:{1}:{2}  {3}{4}  {5}" -f $f.File, $f.Line, $f.Col, $f.Code, $kind, $f.Context)
 }
 Write-Host ""
-Write-Host "  These are almost always a backslash escape that some tool interpreted:"
-Write-Host "  0x07 was '\a', 0x08 was '\b', 0x0c was '\f' - so 'zig-out\bin' is now"
-Write-Host "  'zig-out<0x08>in'. Restore the backslash the path was MEANT to have"
+Write-Host "  These are a backslash escape decoded on the way in - in practice a tool"
+Write-Host "  call whose JSON arguments carried ONE backslash before a, b, f, r or t"
+Write-Host "  (T1263): 0x07 was '\a', 0x08 '\b', 0x0c '\f', a lone 0x0d '\r', a tab"
+Write-Host "  inside a path '\t' - so 'zig-out\bin' is now 'zig-out<0x08>in'."
+Write-Host "  Restore the backslash the path was MEANT to have"
 Write-Host "  rather than deleting the byte, and never rewrite the whole file from"
 Write-Host "  PowerShell to do it (that re-encodes it); patch the one line."
 exit 1

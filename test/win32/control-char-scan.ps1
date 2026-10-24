@@ -118,6 +118,31 @@ try {
     # points at THIS assertion as the demonstration that it can fire.
     Assert 'A8 the report leads with CONTROL CHARACTERS' ($r.Text -match 'CONTROL CHARACTERS')
 
+    # T1263: the same decode turns `\r` into a CR and `\t` into a tab, both of
+    # which a text file may legitimately hold - so only the shape the decode
+    # leaves counts. Ten `test\win32\r...` paths sat in eight task files as
+    # `test\win32<CR>...` because the scan above was blind to them.
+    $shapes = @(
+        @{ Name = 'cr.md';    Kind = 'lone-cr';     Text = "see ``test\win32" + [char]13 + "esize-flicker.ps1`` here`r`n" },
+        @{ Name = 'tab1.ps1'; Kind = 'tab-in-path'; Text = "'test\win32" + [char]9 + "ranslucent-window.stamp.json'`r`n" },
+        @{ Name = 'tab2.md';  Kind = 'tab-in-path'; Text = "under src" + [char]9 + "est\fixtures today`r`n" }
+    )
+    foreach ($s in $shapes) {
+        $p = Join-Path $fixtureDir $s.Name
+        Write-Fixture $p $s.Text
+        $r = Invoke-Scan @($p)
+        Assert ("A9 {0} ({1}) is reported" -f $s.Name, $s.Kind) ($r.Code -eq 1 -and $r.Text -match [regex]::Escape($s.Kind)) `
+            "(exit $($r.Code)) $($r.Text.Trim())"
+    }
+    # ...and the legitimate uses of the same two bytes are not.
+    $legit = Join-Path $fixtureDir 'legit.md'
+    Write-Fixture $legit ("crlf line`r`n`tindent`r`ncol one`tcol two`r`nkey:`tC:\Users\x`r`n")
+    $r = Invoke-Scan @($legit)
+    Assert 'A10 CRLF, a leading tab and a tab between words are not findings' ($r.Code -eq 0) $r.Text.Trim()
+    $cr = Invoke-Scan @((Join-Path $fixtureDir 'cr.md'))
+    Assert 'A11 a finding shows its surroundings with the byte made visible' `
+        ($cr.Text -match [regex]::Escape('test\win32<0x0d>esize-flicker')) $cr.Text.Trim()
+
     # -----------------------------------------------------------------------
     ""
     "== B: the live tree is clean"
@@ -156,7 +181,16 @@ try {
         @{ File = 'docs\design\windows-parity-tasks\T308.md';  Needle = 'scripts\floor-lane.ps1 -Lane all' },
         @{ File = 'docs\design\windows-parity-tasks\T851.md';  Needle = "roster's attached flag" },
         @{ File = 'docs\design\windows-parity-tasks\T935.md';  Needle = 'scripts\floor-lane.ps1' },
-        @{ File = 'docs\design\windows-parity-tasks\T974.md';  Needle = 'scripts\floor-lane.ps1 -Lane all' }
+        @{ File = 'docs\design\windows-parity-tasks\T974.md';  Needle = 'scripts\floor-lane.ps1 -Lane all' },
+        # T1263: the lone-CR repairs.
+        @{ File = 'docs\design\windows-parity-tasks\T1031.md'; Needle = 'test\win32\resize-flicker.ps1' },
+        @{ File = 'docs\design\windows-parity-tasks\T1203.md'; Needle = 'test\win32\release-artifacts.ps1' },
+        @{ File = 'docs\design\windows-parity-tasks\T1212.md'; Needle = 'test\win32\release-artifacts.ps1' },
+        @{ File = 'docs\design\windows-parity-tasks\T1213.md'; Needle = 'test\win32\registration-sites.ps1' },
+        @{ File = 'docs\design\windows-parity-tasks\T1343.md'; Needle = 'test\win32\resize-flicker.ps1' },
+        @{ File = 'docs\design\windows-parity-tasks\T1517.md'; Needle = 'test\win32\relay-account.ps1' },
+        @{ File = 'docs\design\windows-parity-tasks\T1978.md'; Needle = 'test\win32\restore-dead-sessions.ps1' },
+        @{ File = 'docs\design\windows-parity-tasks\T2169.md'; Needle = 'test\win32\registration-sites.ps1' }
     )
     foreach ($e in $expected) {
         $p = Join-Path $Repo $e.File
