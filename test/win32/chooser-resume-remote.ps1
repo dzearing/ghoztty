@@ -37,6 +37,8 @@
 #   C  Return on the cursored row resumes THAT session: the app names the id and
 #      the device, the dial crosses the relay (counted on the far side), the
 #      pane really ATTACHes, and the chooser dismisses onto the new window
+#      C2 it is named from the far machine's layout record (T1296), and C3 its
+#      pane re-adopts the far pane's id, which the shell still carries (T1317)
 #   D  the ATTACH shape (the T331 risk): a resumed window does NOT take the
 #      machine's per-host default cwd, because an attach does not spawn and a
 #      cwd sent with it would describe a spawn that is not happening. The
@@ -525,6 +527,15 @@ try {
     $resumedTitle = if ($resumedPanes.Count -ge 1) { Get-WindowTitleForPane $resumedPanes[0] } else { '' }
     Assert ($resumedTitle -like "$T1296NAME*") `
         "C2 the resumed window came back with the name the user gave it ($resumedTitle)"
+
+    # C3 (T1317): the resumed pane answers to the id the FAR machine's pane had,
+    # because that is the value the still-running shell carries in
+    # $GHOZTTY_PANE_ID. Same single source as C2 - the far layout blobs - since
+    # this box's manifest is gone. A fresh id here is the reported defect.
+    $farPaneId = if ($markedPanes.Count -ge 1) { [string]$markedPanes[0] } else { '' }
+    $resumedPaneId = if ($resumedPanes.Count -ge 1) { [string]$resumedPanes[0] } else { '' }
+    Assert ($farPaneId.Length -gt 0 -and $resumedPaneId -eq $farPaneId) `
+        "C3 the resumed pane re-adopted the far pane's id, so its shell can still name itself ($resumedPaneId vs $farPaneId)"
     $resumedText = ''
     if ($resumedPanes.Count -ge 1) {
         Assert (Wait-PaneText $resumedPanes $MARK 'resumed') `

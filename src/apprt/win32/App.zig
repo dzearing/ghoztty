@@ -7160,6 +7160,10 @@ pub const RemoteOpenOptions = struct {
     /// opened, and sending them again would describe a spawn that is not
     /// happening.
     session_id: ?[]const u8 = null,
+    /// The pane id to ADOPT for an ATTACH (T1317): the id the session's
+    /// still-running shell carries in `$GHOZTTY_PANE_ID`, from the far
+    /// machine's layout record. Null mints a fresh one. Borrowed.
+    pane_id: ?[]const u8 = null,
     /// The window's own gradient (T1832): a window opened by hand, or with
     /// `--from-focused --color=random`, in the elevated style.
     desk_variant: ?desk_palette.Variant = null,
@@ -7205,6 +7209,7 @@ pub fn openDialedWindow(
     }
 
     const overrides: Surface.Overrides = .{
+        .pane_id = opts.pane_id,
         .remote = .{
             .connection = conn,
             .working_directory = opts.working_directory orelse defaults.workingDirectory(),
@@ -7720,6 +7725,10 @@ pub fn resumeRelaySession(
     device: []const u8,
     token: []const u8,
     session_id: []const u8,
+    /// The pane id the FAR machine's layout record has for this session
+    /// (T1317), or null: the resumed pane adopts it, exactly as
+    /// `resumeLocalSession` does with this box's record (T113).
+    pane_id: ?[]const u8,
     /// The name the FAR machine's layout record has for this session's window
     /// (T1296), or null when it has none.
     name: ?SessionRoster.WindowName,
@@ -7742,6 +7751,7 @@ pub fn resumeRelaySession(
     const pinned: ?[]const u8 = if (name) |n| (if (n.pinned) n.text else null) else null;
     const window = try self.openDialedWindow(.{ .relay = dialed }, .{
         .session_id = session_id,
+        .pane_id = pane_id,
         .machine = .{ .relay = .{ .base = relay_base, .device = device, .token = token } },
         .title = pinned,
     });

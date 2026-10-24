@@ -1141,12 +1141,14 @@ fn persistedTitleFor(self: *const SessionRoster, id: []const u8) ?[]const u8 {
 /// The pane id the saved layout recorded for `id`, or null. A resumed pane
 /// re-adopts it (T113): the shell we are ATTACHing to is still running with
 /// that value baked into `$GHOZTTY_PANE_ID`, so handing it a fresh one would
-/// break the pane's ability to name itself. Only meaningful for the LOCAL
-/// machine — the manifest is this box's.
+/// break the pane's ability to name itself.
+///
+/// Both machines (T1317): a REMOTE session's shell carries the id the FAR
+/// machine's pane gave it, so the answer comes from that machine's layout view,
+/// the same source `persistedWindowNameFor` reads. Before T1296 there was no
+/// such view, which is why this used to answer for the local box only.
 pub fn persistedPaneIdFor(self: *const SessionRoster, id: []const u8) ?[]const u8 {
-    if (self.target != .local) return null;
-    const parsed = self.manifest orelse return null;
-    for (parsed.value.windows) |win| {
+    for (self.layoutWindows()) |win| {
         for (win.tabs) |tab| {
             for (tab.nodes) |node| {
                 const leaf = node.leaf orelse continue;
@@ -2460,4 +2462,37 @@ test "the LOCAL arm answers the same question from this box's manifest (T1296)" 
     try testing.expectEqualStrings("build log", shell.text);
     try testing.expect(!shell.pinned);
     try testing.expect(roster.persistedWindowNameFor("zzzz") == null);
+}
+
+test "a remote roster hands a resumed pane the FAR machine's pane id (T1317)" {
+    const alloc = testing.allocator;
+    var roster: SessionRoster = .init(alloc);
+    defer roster.deinit();
+    roster.target = .{ .remote = "dev-remote" };
+
+    const blob =
+        \\{"id":"w0","active_tab":0,"tabs":[{"nodes":[
+        \\   {"leaf":{"session_id":"aaaa","pane_id":"1E5F0A2C-3D4B-4A6E-8F90-ABCDEF012345"}},
+        \\   {"leaf":{"session_id":"bbbb"}}],"active":true}]}
+    ;
+    const payload = try std.fmt.allocPrint(
+        alloc,
+        "{{\"layouts\":[{{\"key\":\"k0\",\"blob\":{f}}}]}}",
+        .{std.json.fmt(blob, .{})},
+    );
+    defer alloc.free(payload);
+    roster.layouts = try layout_blobs.decodeLayouts(alloc, payload);
+
+    // The far shell was baked with this id; the resumed pane answers to it.
+    try testing.expectEqualStrings(
+        "1E5F0A2C-3D4B-4A6E-8F90-ABCDEF012345",
+        roster.persistedPaneIdFor("aaaa").?,
+    );
+    // A leaf that recorded none, and a session no record mentions, mint fresh.
+    try testing.expect(roster.persistedPaneIdFor("bbbb") == null);
+    try testing.expect(roster.persistedPaneIdFor("zzzz") == null);
+
+    // And leaving the machine forgets them with its rows.
+    roster.clear();
+    try testing.expect(roster.persistedPaneIdFor("aaaa") == null);
 }

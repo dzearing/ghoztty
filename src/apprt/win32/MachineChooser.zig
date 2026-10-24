@@ -4395,12 +4395,20 @@ fn resumeRow(self: *MachineChooser, row: SessionRoster.VisibleRow) void {
             };
             var name_buf: [max_resume_name]u8 = undefined;
             const name = copyResumeName(&name_buf, self.roster.persistedWindowNameFor(r.session));
+            // The far pane's id (T1317), the remote twin of the local arm's
+            // T113 copy: the shell over there was baked with it.
+            var pane_buf: [64]u8 = undefined;
+            const pane_id: ?[]const u8 = if (self.roster.persistedPaneIdFor(r.session)) |p| blk: {
+                if (p.len == 0 or p.len > pane_buf.len) break :blk null;
+                @memcpy(pane_buf[0..p.len], p);
+                break :blk pane_buf[0..p.len];
+            } else null;
 
             const app = self.window.app;
             // Dial synchronously while the chooser is still alive (relay_base,
             // token and the ids are borrowed from it); close only on success,
             // exactly as `openSelection` does for a new remote window.
-            _ = app.resumeRelaySession(self.relay_base, r.device, tok, r.session, name) catch |err| {
+            _ = app.resumeRelaySession(self.relay_base, r.device, tok, r.session, pane_id, name) catch |err| {
                 log.warn("machine chooser: resume relay session failed err={}", .{err});
                 self.setHint(switch (err) {
                     error.DialFailed => "Couldn't reach that machine - is its agent running?",
