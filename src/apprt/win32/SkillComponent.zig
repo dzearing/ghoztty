@@ -40,12 +40,14 @@ fn skillSubPath(self: SkillComponent, alloc: Allocator, name: []const u8) Alloca
     });
 }
 
-/// The exact bytes an installed skill must hold: the bundled markdown plus
-/// the ownership marker line. Byte-identical to Mac's composition
-/// (`asset + "\n" + marker + "\n"`), so the two platforms' installs agree on
-/// what "current" means.
+/// The exact bytes an installed skill must hold: the markdown the Windows app
+/// installs plus the ownership marker line. Mac's composition
+/// (`asset + "\n" + marker + "\n"`), over the Windows wording of the asset
+/// (T1327), so an install from before that wording reads as outdated and is
+/// rewritten by the next upgrade.
 fn expectedText(alloc: Allocator, name: []const u8) (Allocator.Error || GhosttyAssets.Error)![]u8 {
-    const body = try GhosttyAssets.skillMarkdown(name);
+    const body = try GhosttyAssets.installedSkillMarkdown(alloc, name);
+    defer alloc.free(body);
     return std.mem.concat(alloc, u8, &.{ body, "\n", marker, "\n" });
 }
 
@@ -166,6 +168,26 @@ test "fresh install writes both skills marker-stamped and reports installed" {
         try testing.expect(std.mem.indexOf(u8, got, marker) != null);
         try testing.expect(std.mem.endsWith(u8, got, "\n" ++ marker ++ "\n"));
     }
+}
+
+test "the installed ghoztty skill is the Windows wording, not the Mac one" {
+    // T1327: the file an agent actually reads, read back off disk. The bundled
+    // asset is the Mac-worded shared document; what lands must carry none of
+    // its Mac-only phrases.
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c = testComponent(&tmp);
+    try c.install(alloc);
+
+    const got = try tmp.dir.readFileAlloc(alloc, ".claude/skills/ghoztty/SKILL.md", managed_file.max_managed_bytes);
+    defer alloc.free(got);
+    for (@import("skill_rewrite.zig").mac_only_phrases) |phrase| {
+        try testing.expect(std.mem.indexOf(u8, got, phrase) == null);
+    }
+    try testing.expect(std.mem.indexOf(u8, got, "Ctrl+Shift+B") != null);
+    const shared = try GhosttyAssets.skillMarkdown("ghoztty");
+    try testing.expect(std.mem.indexOf(u8, shared, "Cmd+R") != null); // the control
 }
 
 test "copilot component installs under .copilot, not .claude" {

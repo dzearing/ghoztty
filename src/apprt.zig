@@ -178,6 +178,8 @@ test {
     // Embedded agent-integration assets (T866): @embedFile only, no OS
     // imports, so the content checks run in every lane on both seats.
     _ = @import("apprt/win32/GhosttyAssets.zig");
+    // The Windows wording of the ghoztty skill (T1327), same lanes.
+    _ = @import("apprt/win32/skill_rewrite.zig");
 
     // Agent-runtime registry enum + hook-script layout (T867), pure logic in
     // every lane; the skill/script installers below are std.fs + the T865

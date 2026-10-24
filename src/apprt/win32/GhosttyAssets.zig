@@ -39,6 +39,7 @@
 //!
 //! No OS imports, so the unit tests run in every app-runtime lane.
 const std = @import("std");
+const skill_rewrite = @import("skill_rewrite.zig");
 
 pub const Error = error{UnknownAsset};
 
@@ -56,6 +57,16 @@ pub fn skillMarkdown(name: []const u8) Error![]const u8 {
     if (std.mem.eql(u8, name, "ghoztty")) return skill_ghoztty;
     if (std.mem.eql(u8, name, "process-feedback")) return skill_process_feedback;
     return Error.UnknownAsset;
+}
+
+/// The SKILL.md text the Windows app INSTALLS for a skill name: the bundled
+/// text, with the `ghoztty` skill's Mac-only phrases rewritten to the Windows
+/// build's inputs and shells (T1327, `skill_rewrite.zig`). The asset itself
+/// stays byte-identical to the Mac bundle resource. Caller owns the result.
+pub fn installedSkillMarkdown(alloc: std.mem.Allocator, name: []const u8) (std.mem.Allocator.Error || Error)![]u8 {
+    const text = try skillMarkdown(name);
+    if (std.mem.eql(u8, name, "ghoztty")) return skill_rewrite.applyWindows(alloc, text);
+    return alloc.dupe(u8, text);
 }
 
 /// The banner updater hook script (the jq-free Windows fork; see header).
