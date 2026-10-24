@@ -693,6 +693,50 @@ try {
     if ($NegativeControl) { $chromeOk = -not $chromeOk }
     Assert $chromeOk 'the uniform guard does NOT refuse a real ghoztty chrome window'
 
+    # --- P. what the SYNCHRONOUS capture reads, measured (T1287). The library
+    #     used to prefill -Sync captures with a magenta sentinel and promise to
+    #     refuse a window that left it untouched. PrintWindow(0) never lets one
+    #     survive: it repaints the window through WM_PAINT into its own surface
+    #     and copies the whole surface over ours, so a window that paints nothing
+    #     comes back solid BLACK. Two fixtures with no WM_PRINTCLIENT arm at all:
+    #       1. one whose WM_PAINT fills red captures red - the sync repaint is
+    #          WM_PAINT, so it needs no WM_PRINTCLIENT arm to pose;
+    #       2. one whose WM_PAINT paints nothing captures black, never sentinel,
+    #          and the UNIFORM guard is what refuses it - the only blank check
+    #          the synchronous path has.
+    #     (1) is the control for (2): the same fixture and route DO carry a fill.
+    $redH = [IntPtr]$td.PaintFixture($true, [uint32]255)       # COLORREF 0x0000FF = red
+    $blankH = [IntPtr]$td.PaintFixture($false, [uint32]0)
+    try {
+        Assert ($redH -ne [IntPtr]::Zero -and $blankH -ne [IntPtr]::Zero) "the paint fixtures exist on the test desktop ($($td.LastError))"
+        $redRgb = ''
+        try {
+            # -AllowUniform: one flat fill is this fixture's CORRECT output; the
+            # exact 255,0,0 pin is what a dead capture (black) cannot pass.
+            $rs = Get-TestWindowPixels -Window $redH -Sync -AllowUniform
+            try { $c = $rs.Bitmap.GetPixel([int]($rs.Width / 2), [int]($rs.Height / 2)); $redRgb = "$($c.R),$($c.G),$($c.B)" }
+            finally { Close-TestWindowPixels $rs }
+        } catch { $redRgb = "threw: $($_.Exception.Message)" }
+        Write-Host "capture: WM_PAINT-only red fixture reads $redRgb"
+        Assert ($redRgb -eq '255,0,0') "a window with NO WM_PRINTCLIENT arm captures its WM_PAINT fill under -Sync (got $redRgb)"
+
+        $blankRgb = ''
+        $bs = Get-TestWindowPixels -Window $blankH -Sync -AllowUniform
+        try { $c = $bs.Bitmap.GetPixel([int]($bs.Width / 2), [int]($bs.Height / 2)); $blankRgb = "$($c.R),$($c.G),$($c.B)" }
+        finally { Close-TestWindowPixels $bs }
+        Write-Host "capture: paints-nothing fixture reads $blankRgb"
+        Assert ($blankRgb -eq '0,0,0') "a window that paints nothing captures as PrintWindow's black, not a sentinel (got $blankRgb)"
+
+        $blankRefused = $false
+        try { Get-TestWindowPixels -Window $blankH -Sync -UniformTimeoutMs 300 | Out-Null }
+        catch { $blankRefused = ($_.Exception.Message -match 'UNIFORM') }
+        if ($NegativeControl) { $blankRefused = -not $blankRefused }
+        Assert $blankRefused 'the UNIFORM guard is what refuses a -Sync capture of a window that painted nothing'
+    } finally {
+        if ($redH -ne [IntPtr]::Zero) { [void]$td.CloseForeignWindow([long]$redH) }
+        if ($blankH -ne [IntPtr]::Zero) { [void]$td.CloseForeignWindow([long]$blankH) }
+    }
+
     $shot = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform -TornReason $surfaceLimit
     try {
         $surfColors = Get-TestDistinctColors -Shot $shot

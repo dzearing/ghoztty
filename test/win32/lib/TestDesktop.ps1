@@ -2316,6 +2316,81 @@ public class GhozttyTestDesktop {
         return (bool)Run(delegate() { return DestroyWindow(new IntPtr(h)); });
     }
 
+    // ================= a window that paints a known thing =================
+    // The fixture for what the synchronous capture actually reads (T1287). A
+    // visible popup on the test desktop, null background brush, NO
+    // WM_PRINTCLIENT arm, and a WM_PAINT that fills the client with `color`
+    // when `paints` and validates it untouched otherwise. Created on the
+    // worker thread, so PrintWindow from that thread reaches the WndProc
+    // directly and needs no pump.
+    delegate IntPtr PaintFixtureProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct WNDCLASSEXW {
+        public uint cbSize, style; public PaintFixtureProc lpfnWndProc;
+        public int cbClsExtra, cbWndExtra;
+        public IntPtr hInstance, hIcon, hCursor, hbrBackground;
+        public string lpszMenuName, lpszClassName; public IntPtr hIconSm;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PAINTSTRUCT {
+        public IntPtr hdc; public int fErase; public RECT rc; public int fRestore, fIncUpdate;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public byte[] reserved;
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClassExW(ref WNDCLASSEXW c);
+    [DllImport("user32.dll")] static extern IntPtr DefWindowProcW(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] static extern IntPtr BeginPaint(IntPtr h, out PAINTSTRUCT p);
+    [DllImport("user32.dll")] static extern bool EndPaint(IntPtr h, ref PAINTSTRUCT p);
+    [DllImport("user32.dll")] static extern bool UpdateWindow(IntPtr h);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandleW(IntPtr n);
+
+    static readonly PaintFixtureProc paintFixtureProc = PaintFixtureWndProc;
+    static readonly Dictionary<long, uint> paintFixtureColor = new Dictionary<long, uint>();
+    static bool paintFixtureRegistered;
+    const string PaintFixtureClass = "GhozttyTestPaintFixture";
+
+    static IntPtr PaintFixtureWndProc(IntPtr h, uint m, IntPtr w, IntPtr l) {
+        if (m == 0x0082) paintFixtureColor.Remove(h.ToInt64()); // WM_NCDESTROY: a reused handle starts blank
+        if (m == 0x0014) return new IntPtr(1);               // WM_ERASEBKGND: never
+        if (m == 0x000F) {                                   // WM_PAINT
+            PAINTSTRUCT ps;
+            IntPtr dc = BeginPaint(h, out ps);
+            uint color;
+            if (paintFixtureColor.TryGetValue(h.ToInt64(), out color)) {
+                RECT r; GetClientRect(h, out r);
+                IntPtr b = CreateSolidBrush(color);
+                FillRect(dc, ref r, b);
+                DeleteObject(b);
+            }
+            EndPaint(h, ref ps);
+            return IntPtr.Zero;
+        }
+        return DefWindowProcW(h, m, w, l);
+    }
+
+    public long PaintFixture(bool paints, uint color) {
+        return (long)Run(delegate() {
+            IntPtr inst = GetModuleHandleW(IntPtr.Zero);
+            if (!paintFixtureRegistered) {
+                WNDCLASSEXW wc = new WNDCLASSEXW();
+                wc.cbSize = (uint)Marshal.SizeOf(typeof(WNDCLASSEXW));
+                wc.lpfnWndProc = paintFixtureProc;
+                wc.hInstance = inst;
+                wc.lpszClassName = PaintFixtureClass;
+                if (RegisterClassExW(ref wc) == 0) { LastError = "RegisterClassExW failed: " + Marshal.GetLastWin32Error(); return 0L; }
+                paintFixtureRegistered = true;
+            }
+            // WS_POPUP|WS_VISIBLE, WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW: it is on
+            // the test desktop, and it never asks for activation anyway.
+            IntPtr h = CreateWindowExW(0x08000080, PaintFixtureClass, "ghoztty-test-paint",
+                                       0x90000000, 40, 40, 240, 160,
+                                       IntPtr.Zero, IntPtr.Zero, inst, IntPtr.Zero);
+            if (h == IntPtr.Zero) { LastError = "CreateWindowExW failed: " + Marshal.GetLastWin32Error(); return 0L; }
+            if (paints) paintFixtureColor[h.ToInt64()] = color;
+            UpdateWindow(h);
+            return h.ToInt64();
+        });
+    }
+
     // ================= capture =================
     // PrintWindow(PW_RENDERFULLCONTENT) is the ONLY capture that works on a
     // background desktop: DWM composes the input desktop only, so BitBlt off
@@ -2324,10 +2399,15 @@ public class GhozttyTestDesktop {
     // Image.FromHbitmap on the caller's side and freed by ReleaseCapture.
     public long[] CaptureWindow(IntPtr h) { return CaptureWindowMode(h, false); }
 
-    // The SYNCHRONOUS capture (T835). `PrintWindow` with no flags takes the
-    // WM_PRINT -> WM_PRINTCLIENT path, so the window itself draws the frame
-    // into our DC before the call returns and the bitmap is exactly what its
-    // paint produced. PW_RENDERFULLCONTENT instead asks DWM for a copy of the
+    // The SYNCHRONOUS capture (T835). `PrintWindow` with no flags makes the
+    // window repaint, inside the call, into a surface PrintWindow owns, and
+    // then copies that WHOLE surface into our DC - so the bitmap is exactly
+    // what its paint produced before the call returns. That repaint is
+    // WM_PAINT, not WM_PRINT/WM_PRINTCLIENT: T1287 measured popup, layered
+    // and child windows on a background desktop and none of them was sent
+    // either message, while a WM_PAINT-only red fill captured red and a
+    // WM_PRINTCLIENT-only green fill never appeared. PW_RENDERFULLCONTENT
+    // instead asks DWM for a copy of the
     // composited surface, and that copy is ASYNCHRONOUS: three back-to-back
     // captures of one unchanged banner overlay read its table's value text as
     // ending at 1062, 1283 and 1179 px while the app's own paint logged the
@@ -2342,11 +2422,14 @@ public class GhozttyTestDesktop {
     // and it is taken here because a wedged GUI is already a failed run, while
     // a torn capture is a green one that proves nothing.
     //
-    // It is OPT-IN because it only works on a window whose WndProc answers
-    // WM_PRINTCLIENT. When one does not, the client area comes back untouched:
-    // the bitmap is pre-filled with a sentinel and a capture that is still
-    // entirely sentinel FAILS rather than handing back a blank frame to assert
-    // against. Add the handler to that window instead of falling back quietly.
+    // What it CANNOT tell you is that the window painted nothing. A paint that
+    // leaves the client alone hands back PrintWindow's own blank surface -
+    // solid black - over every pixel we owned, so no prefill survives to be
+    // checked (this used to prefill a sentinel and promise to refuse an
+    // untouched capture; T1287 proved that branch unreachable and removed
+    // it). The blank arrives as a UNIFORM bitmap, and Get-TestWindowPixels'
+    // uniform guard is the check that refuses it; test-desktop-harness.ps1
+    // section P demonstrates both halves.
     public long[] CaptureWindowSync(IntPtr h) { return CaptureWindowMode(h, true); }
 
     long[] CaptureWindowMode(IntPtr h, bool sync) {
@@ -2359,43 +2442,13 @@ public class GhozttyTestDesktop {
             IntPtr hdcMem = CreateCompatibleDC(hdcWin);
             IntPtr hbmp = CreateCompatibleBitmap(hdcWin, w, ht);
             IntPtr old = SelectObject(hdcMem, hbmp);
-            if (sync) {
-                RECT all = new RECT(); all.left = 0; all.top = 0; all.right = w; all.bottom = ht;
-                IntPtr brush = CreateSolidBrush(SENTINEL);
-                FillRect(hdcMem, ref all, brush);
-                DeleteObject(brush);
-            }
             bool ok = PrintWindow(h, hdcMem, sync ? 0u : PW_RENDERFULLCONTENT);
-            bool blank = false;
-            if (ok && sync) blank = AllSentinel(hdcMem, w, ht);
             SelectObject(hdcMem, old);
             DeleteDC(hdcMem);
             ReleaseDC(h, hdcWin);
             if (!ok) { DeleteObject(hbmp); LastError = "PrintWindow failed"; return new long[] { 0, 0, 0, 0, 0 }; }
-            if (blank) {
-                DeleteObject(hbmp);
-                LastError = "WM_PRINTCLIENT drew nothing: this window cannot be captured synchronously";
-                return new long[] { 0, 0, 0, 0, 0 };
-            }
             return new long[] { hbmp.ToInt64(), w, ht, r.left, r.top };
         });
-    }
-
-    // A colour nothing in the chrome paints, so "still sentinel" means "not
-    // drawn" rather than "drawn this colour".
-    const uint SENTINEL = 0x00FF00FF;
-
-    static bool AllSentinel(IntPtr hdc, int w, int ht) {
-        for (int gy = 0; gy < 8; gy++) {
-            for (int gx = 0; gx < 8; gx++) {
-                int x = (int)((gx + 0.5) * w / 8.0);
-                int y = (int)((gy + 0.5) * ht / 8.0);
-                if (x >= w) x = w - 1;
-                if (y >= ht) y = ht - 1;
-                if (GetPixel(hdc, x, y) != SENTINEL) return false;
-            }
-        }
-        return true;
     }
 
     public void ReleaseCapture(long hbmp) {
@@ -4431,8 +4484,9 @@ function Get-TestWindowPixels {
         # T944: the asynchronous PW_RENDERFULLCONTENT capture is the TORN one
         # (see CaptureWindowSync), so taking it is a declared exception, never
         # a default. A probe either asks for -Sync or names, here, why the
-        # window it photographs cannot answer WM_PRINTCLIENT - a popup menu
-        # user32 paints, the renderer-drawn terminal surface. Neither is a
+        # window it photographs cannot pose for the synchronous repaint - a
+        # popup menu user32 paints, the renderer-drawn terminal surface (T1287:
+        # that repaint is WM_PAINT, not WM_PRINTCLIENT). Neither is a
         # refusal: a torn probe nobody explained reads exactly like one nobody
         # got to. printclient-audit.ps1 section C holds every call site to it.
         [string]$TornReason,
@@ -4452,9 +4506,9 @@ function Get-TestWindowPixels {
     if (-not $Sync -and [string]::IsNullOrWhiteSpace($TornReason)) {
         throw ("Get-TestWindowPixels: no -Sync and no -TornReason. The default capture is the " +
                "ASYNCHRONOUS one, which reads one unchanged window differently run to run (T835), " +
-               "so it is never taken silently (T944). Pass -Sync - and add a WM_PRINTCLIENT arm to " +
-               "the window class if it has none - or, for a window that is not ours to change, " +
-               "-TornReason '<which window, and why it cannot pose>'.")
+               "so it is never taken silently (T944). Pass -Sync (the window repaints through " +
+               "WM_PAINT inside the call - T1287) - or, for a window whose pixels that repaint " +
+               "cannot reproduce, -TornReason '<which window, and why it cannot pose>'.")
     }
     $td = Resolve-TestDesktop $Desktop
     if (-not $AllowTerminalSurface) {

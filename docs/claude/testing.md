@@ -1789,8 +1789,9 @@ What to do about it:
 
 **A CHILD CONTROL's pixels are not reliably part of a synchronous capture**
 (T1400). `Get-TestWindowPixels -Sync` photographs a window through
-`PrintWindow`, and what the window paints ITSELF — its `WM_PRINTCLIENT` — is
-deterministic: the same window, unmoved, gives byte-identical pixels every
+`PrintWindow`, and what the window paints ITSELF — its `WM_PAINT`, which that
+call re-runs into a surface of its own (T1287 measured that it sends no
+`WM_PRINTCLIENT`) — is deterministic: the same window, unmoved, gives byte-identical pixels every
 time. A child `WS_CHILD` control inside that window is not. `viewer-narrow-pane`
 measured the viewer nav bar and counted the address field's own background as
 ink; eight captures of one unmoved bar, at a constant width and with the

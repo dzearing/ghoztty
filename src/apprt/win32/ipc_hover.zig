@@ -23,9 +23,10 @@
 //!      `Send-TestMouse` routes it (T263) — sent, so the hover state and its
 //!      `InvalidateRect` happen on this stack,
 //!   3. `RedrawWindow(RDW_UPDATENOW)`, which SENDS `WM_PAINT` on this stack,
-//!   4. `PrintWindow` with no flags into a DIB section — the synchronous
-//!      `WM_PRINT` → `WM_PRINTCLIENT` path, so the window paints the captured
-//!      frame itself on this stack too.
+//!   4. `PrintWindow` with no flags into a DIB section — the window repaints
+//!      through `WM_PAINT` into PrintWindow's own surface, which is then copied
+//!      into ours, so the captured frame is painted on this stack too (T1287
+//!      measured that this path sends neither `WM_PRINT` nor `WM_PRINTCLIENT`).
 //!
 //! A posted message is only ever drained by the message loop, and the message
 //! loop is not reached between (2) and (4) — the thread is inside this
@@ -248,7 +249,7 @@ pub fn handle(alloc: Allocator, arguments: ?[]const []const u8) Allocator.Error!
     return error.OutOfMemory;
 }
 
-const CaptureError = error{ NoDc, PrintFailed, DrewNothing, BadPixels, EncodeFailed };
+const CaptureError = error{ NoDc, PrintFailed, BadPixels, EncodeFailed };
 
 /// One place that turns a capture failure into its own named refusal, so the
 /// three call sites in `handle` cannot drift into describing the same error
@@ -263,11 +264,6 @@ fn surfaceError(
     return switch (err) {
         error.NoDc => ipc_capture.errorResponse(alloc, "could not make a capture surface for hwnd {d}", .{hwnd_value}),
         error.PrintFailed => ipc_capture.errorResponse(alloc, "PrintWindow failed for hwnd {d}", .{hwnd_value}),
-        error.DrewNothing => ipc_capture.errorResponse(
-            alloc,
-            "hwnd {d} drew nothing under WM_PRINTCLIENT: it has no handler, so a hovered frame cannot be captured from it",
-            .{hwnd_value},
-        ),
         error.BadPixels => ipc_capture.errorResponse(alloc, "capture buffer did not match {d}x{d}", .{ size.w, size.h }),
         error.EncodeFailed => ipc_capture.errorResponse(alloc, "PNG encode failed for hwnd {d}", .{hwnd_value}),
     };
@@ -293,12 +289,19 @@ fn surfaceError(
 /// success, and `pane-banner.ps1` failing its two chevron-fill assertions with
 /// the hovered numbers exactly equal to the un-hovered ones.
 ///
-/// Flags of 0 takes the `WM_PRINT` → `WM_PRINTCLIENT` path instead: the window
-/// draws the frame itself, into our DC, before the call returns. DWM is not in
-/// it at all, which also means the guarantee now covers the pixels and not just
-/// the messages. Every window this action is aimed at answers `WM_PRINTCLIENT`
-/// already (`Window.zig`, `BannerOverlay.zig`) — and one that does not is
-/// refused loudly rather than photographed blank.
+/// Flags of 0 makes the window repaint instead: its `WM_PAINT` runs into a
+/// surface PrintWindow owns, which is copied whole into our DC before the call
+/// returns. DWM is not in it at all, which also means the guarantee now covers
+/// the pixels and not just the messages.
+///
+/// What it cannot report is a window that painted nothing: the copy overwrites
+/// every pixel with PrintWindow's own blank (black), so no prefill survives to
+/// be checked. This used to prefill a sentinel and refuse an untouched surface
+/// as `DrewNothing`; T1287 measured that the branch could never fire (popup,
+/// layered and child windows alike were sent neither `WM_PRINT` nor
+/// `WM_PRINTCLIENT`) and removed it rather than keep a refusal that cannot
+/// refuse. A blank frame is the caller's to catch — `TestDesktop.ps1`'s uniform
+/// guard is the one that does.
 ///
 /// Negative `biHeight` so the rows arrive in the order `png_encode` wants and
 /// nothing has to flip.
@@ -356,21 +359,12 @@ const Surface = struct {
     /// Take one frame. Reusable, so the probe can photograph the window before
     /// AND after the move without building a second surface.
     fn print(self: *Surface) CaptureError!void {
-        // Pre-fill so "nothing was drawn" has a colour. A window with no
-        // `WM_PRINTCLIENT` handler leaves the client area untouched under the
-        // synchronous path, and handing that back would be the T845 bug again
-        // with a different cause: an un-hovered-looking frame reported as a
-        // success.
-        hover_capture.fillSentinel(self.dib);
-
         if (w32.PrintWindow(self.hwnd, self.mem_dc, 0) == 0) return error.PrintFailed;
 
         // GDI batches; the DIB bits are not guaranteed written until the batch
         // is flushed, and reading them straight after the call is exactly the
         // case `GdiFlush` exists for.
         _ = w32.GdiFlush();
-
-        if (hover_capture.allSentinel(self.dib)) return error.DrewNothing;
     }
 
     fn encode(self: *const Surface, alloc: Allocator) (Allocator.Error || CaptureError)![]u8 {
