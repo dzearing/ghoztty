@@ -458,6 +458,35 @@ Assert (Test-TestCaptureUniform -Shot $bandShot -MaxStep 100000) `
     'and the count-bounded grid it replaced called that same capture UNIFORM (the red T1282 re-attributed)'
 $band.Dispose()
 
+# --- the same blind spot in the content floor (T1286) -----------------------
+# The same maximized window, now with something IN its band: ten 16x20 px marks
+# of distinct colors (title text and caption glyphs, abstracted so the sample
+# grid hits each one deterministically - 16 px wide is one column at MaxStep 16).
+# The old 48x48 grid steps 80x43 px, its rows land at y=8 and y=51, both
+# outside the band at 9..48, so it scored this good capture 1 distinct.
+$band = New-Object System.Drawing.Bitmap 3858, 2118
+$g = [System.Drawing.Graphics]::FromImage($band)
+$g.Clear([System.Drawing.Color]::FromArgb(0, 0, 0))
+$br = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(20, 20, 20))
+$g.FillRectangle($br, 9, 9, 3840, 40); $br.Dispose()
+for ($i = 0; $i -lt 10; $i++) {
+    $br = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(60 + $i * 18, 60 + $i * 18, 60 + $i * 18))
+    $g.FillRectangle($br, (100 + $i * 40), 20, 16, 20)
+    $br.Dispose()
+}
+$g.Dispose()
+$bandShot = New-FakeShot $band
+$bandC = Get-TestCaptureContent -Shot $bandShot
+$bandOld = Get-TestCaptureContent -Shot $bandShot -MaxStep 100000
+Write-Host "  maximized caption-band shot: distinct=$($bandC.Distinct) topShare=$([math]::Round($bandC.TopShare,3)) (count-bounded grid: $($bandOld.Distinct) / $([math]::Round($bandOld.TopShare,3)))"
+Assert ($bandC.Distinct -ge $floorD) `
+    "the content score sees a maximized window's caption band ($($bandC.Distinct) distinct >= the $floorD floor)"
+Assert ($bandOld.Distinct -lt $floorD) `
+    "and the count-bounded grid it replaced called that same capture collapsed ($($bandOld.Distinct) distinct)"
+Assert ($bandC.TopShare -gt $floorT) `
+    "TopShare stays an AREA fraction however dense the grid ($([math]::Round($bandC.TopShare,3)) > $floorT): floor big windows on Distinct"
+$band.Dispose()
+
 $flat.Dispose(); $near.Dispose(); $busy.Dispose()
 
 Kill-RepoInstances

@@ -4363,29 +4363,46 @@ these two numbers are.
   Distinct  - how many distinct colors the grid sampled.
   TopShare  - the fraction of samples that are the single most common color.
 
-A blank capture is `Distinct = 1, TopShare = 1.0`. Real window chrome over a
-surface PrintWindow could not read scores around 23 / 0.60 (measured on this
-box, 2026-09-02); a fully painted window of the same size scores 87 / 0.57. So
-a floor of `Distinct >= 8` with `TopShare <= 0.90` separates "the capture died"
-from "a known region of this window does not capture", which is a documented
-limit and must not read as a regression.
+A blank capture is `Distinct = 1, TopShare = 1.0`. hero-mode.ps1's live shots
+score 727 / 0.60 (the carousel) and 1038 / 0.11 (the T59b window), and the
+committed 1400x900 hero screenshot 151 / 0.57 (re-measured under the density
+bound below, 2026-10-24; the count-bounded grid read 23 / 0.60 and 87 / 0.57 on
+2026-09-02). So a floor of `Distinct >= 8` with `TopShare <= 0.90` separates
+"the capture died" from "a known region of this window does not capture",
+which is a documented limit and must not read as a regression.
+
+THE GRID IS DENSITY-BOUNDED here too (T1286), for the reason
+Test-TestCaptureUniform's is (T1282): a fixed 48x48 grid steps 80x43 px on a
+maximized 3858x2118 window and can put no sample row inside the 40 px caption
+band, so a window whose only painted region is that band scores 1 distinct - a
+healthy capture called dead. `-MaxStep` 16 caps the stride. Unlike the uniform
+guard this scan cannot stop early, so it costs every sample: about 32k on a
+maximized window, measured at under 50 ms.
+
+The two numbers are NOT equally size-independent. Distinct counts what is
+there, and density is what makes it see a thin region. TopShare is an AREA
+fraction: a maximized window whose glass is flat scores ~0.94 however densely it
+is sampled (caption-bar.ps1's maximized shot, 501 / 0.939, 2026-10-24), because
+the flat part really is 94% of the picture. Floor a big, mostly-uncapturable
+window on Distinct alone; the TopShare floor is calibrated for hero-sized ones.
 
 Sampled on a grid rather than every pixel: GetPixel is a per-call marshal, and
-2400 of them is milliseconds where 1.26M is a visible pause in every run.
+a few thousand of them is milliseconds where 8M is a visible pause in every run.
 #>
 function Get-TestCaptureContent {
     param(
         [Parameter(Mandatory = $true)]$Shot,
         [int]$Inset = 8,
-        [int]$Samples = 48
+        [int]$Samples = 48,
+        [int]$MaxStep = 16
     )
     $x1 = $Shot.Width - $Inset
     $y1 = $Shot.Height - $Inset
     if ($x1 -le $Inset -or $y1 -le $Inset) {
         return [pscustomobject]@{ Distinct = 0; TopShare = 1.0; Sampled = 0 }
     }
-    $stepX = [math]::Max(1, [int](($x1 - $Inset) / $Samples))
-    $stepY = [math]::Max(1, [int](($y1 - $Inset) / $Samples))
+    $stepX = [math]::Min($MaxStep, [math]::Max(1, [int](($x1 - $Inset) / $Samples)))
+    $stepY = [math]::Min($MaxStep, [math]::Max(1, [int](($y1 - $Inset) / $Samples)))
     $hist = @{}
     $n = 0
     for ($y = $Inset; $y -lt $y1; $y += $stepY) {

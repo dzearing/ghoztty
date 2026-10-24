@@ -563,7 +563,16 @@ try {
             $d = [math]::Abs($c.R - $mChrome.R) + [math]::Abs($c.G - $mChrome.G) + [math]::Abs($c.B - $mChrome.B)
             if ($d -gt 24) { $mEdge = $y; break }
         }
+        # T1286: the content score of the one real maximized capture in the
+        # suite. Its painted region is the caption band alone, so DISTINCT is
+        # the axis that has to see it; TopShare is an area fraction and reads
+        # the flat glass below as ~0.97 at this size by construction.
+        $mPng = Join-Path $env:TEMP 'caption-bar-maximized.png'
+        $mshot.Bitmap.Save($mPng, [System.Drawing.Imaging.ImageFormat]::Png)
+        $mContent = Get-TestCaptureContent -Shot $mshot
         Close-TestWindowPixels $mshot
+        Check ($mContent.Distinct -ge 8) `
+            "maximized: the capture content score sees the caption band ($($mContent.Distinct) distinct >= 8, top $([math]::Round($mContent.TopShare, 3)); saved $mPng)"
         Check ($mEdge -ge $expectCapH) `
             "maximized: the whole caption band is painted on screen (band bottom $mEdge >= $expectCapH)"
     } else {

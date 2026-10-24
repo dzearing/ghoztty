@@ -382,10 +382,11 @@ function Save-WindowShot([IntPtr]$top, [string]$path) {
 }
 
 # THE FLOOR, in one place so the assertion and the baseline gate cannot drift
-# apart. Calibrated on this box 2026-09-02: this window scores 23 distinct /
-# 0.60 top share with the terminal glass flat-filled, and 87 / 0.57 when the
-# glass captures too. A dead capture is 1 / 1.0. The floor is set to separate
-# those, not to police the known surface limit.
+# apart. Re-derived on this box 2026-10-24 under the density-bounded grid
+# (T1286): the carousel shot scores 727 distinct / 0.60 top share, the T59b
+# shot 1038 / 0.11, the committed screenshot 151 / 0.57 (2026-09-02's
+# count-bounded grid read 23 / 0.60 and 87 / 0.57). A dead capture is 1 / 1.0.
+# The floor is set to separate those, not to police the known surface limit.
 $script:shotFloorDistinct = 8
 $script:shotFloorTopShare = 0.90
 function Test-ShotHasContent($content) {
