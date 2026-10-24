@@ -1,10 +1,12 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-10-21T08:32:45-07:00",
-    "commit":  "3dc80e920",
+    "generated":  "2026-10-24T01:26:11-07:00",
+    "commit":  "c6e62c7b5",
     "uncommitted":  [
-                        "src/remote/agent/owner_veto.zig"
+                        "src/remote/agent/main.zig",
+                        "src/remote/agent/pty_child.zig",
+                        "src/remote/agent/pty_holder_child.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -30,7 +32,7 @@
                   "src/remote/agent/keepalive.zig":  "178584c3f9dfd67a8b00076c2ef4147631495461fec17fad8cd0a45d6cb9cb4e",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",
                   "src/remote/agent/link_control.zig":  "e3138c9c1326081092f25b9c090388fe58a3561c17734a83778df474ededd40a",
-                  "src/remote/agent/main.zig":  "161e7a9694c175c0823cee7b8ec694cf87e188e3850165e79ec67b8c409f6056",
+                  "src/remote/agent/main.zig":  "272f1cd366d477bf6fb13713ebace7a0a3db735374feb055bfcc07dd7c77f292",
                   "src/remote/agent/metrics.zig":  "c4f0863d8706b9b7d24057cff5b388f72cc606a30df05105b19a19f97a68a4d6",
                   "src/remote/agent/msi_ca.zig":  "fa0ef30b29983b3edf5995afbe9ac5d4c5909361ac76b33e0c43651787eb17fb",
                   "src/remote/agent/mux.zig":  "bb91f11b8e95720f71e322fe788d2b7fbeba605e99132ec0ce0f317003f49867",
@@ -38,8 +40,8 @@
                   "src/remote/agent/proc.zig":  "9b9661ba3efb488afc6db8b459f8be45de76f5679be914433e8c8814c47d1261",
                   "src/remote/agent/proc_control.zig":  "2d4d6f313adf91a24201f8d66441aa8dede7208c0d0f5d63d6cf3dd2af14d20e",
                   "src/remote/agent/proc_spawn.zig":  "b1a9eb9d9cef3e01b75813837285b80b0d3bfb4795aeb74f69f66458bfb8c8cd",
-                  "src/remote/agent/pty_child.zig":  "0b63576d67418e3293281f4b7f952a620b8608ae3377d4ad74483da65b722b1a",
-                  "src/remote/agent/pty_holder_child.zig":  "198095818b07ea25e60da88546b33affca04236e90a7bcebeca013845c90387f",
+                  "src/remote/agent/pty_child.zig":  "2318511e2383b4c38811c7dc43c2f55dda4ee491a1ca6fa171102ada353ed01b",
+                  "src/remote/agent/pty_holder_child.zig":  "043f40837ab957d3a764dba208386c3cd4a5d8fb033a4c7bd9f27edc1eae0d4e",
                   "src/remote/agent/pty_host.zig":  "3d8487a37eb3a3fb8155d9520d72186f63ca830385a4ef5c91b7132e897a5d8b",
                   "src/remote/agent/pty_host_proto.zig":  "a8ef76003f78d212f41503343106f5bbe6ec1ce38fbf4c661c545e8a4d6babd3",
                   "src/remote/agent/pty_host_smoke.zig":  "2c4491f7d4711c83c10ada943f1997a4453af86034d1e0f349022e8ebde0c8bf",

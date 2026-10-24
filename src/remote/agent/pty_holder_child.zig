@@ -127,6 +127,23 @@ pub fn enabledFor(value: ?[]const u8) bool {
         std.ascii.eqlIgnoreCase(t, "no"));
 }
 
+/// Whether a session this agent opens should be holder-backed: `enabledFor`,
+/// AND the agent records its sessions (`--sessions-file`) (T1278).
+///
+/// A holder exists to outlive the agent, and the only way anybody finds it
+/// again is the pipe name `sessions.json` records. An agent that records
+/// nothing — `--listen`/`--relay`/`--stdio` without `--sessions-file` — hands
+/// its successor no record to adopt from, so every holder it leaves behind is
+/// an orphan by construction: the next agent on the lineage reaps it (and logs
+/// `reaped orphaned holder ... no session record names it`), or, if none ever
+/// starts, its shell runs until the box reboots. The in-process child dies
+/// with the agent, which is the truthful outcome for a session nobody can come
+/// back to. The app's own agent always passes `--sessions-file`, so this
+/// changes nothing a user runs.
+pub fn wantedFor(value: ?[]const u8, recorded: bool) bool {
+    return recorded and enabledFor(value);
+}
+
 pub const replay_env_var = "GHOZTTY_AGENT_HOLDER_REPLAY_BYTES";
 
 /// How big a new holder's un-acked replay ring should be, given the value of
@@ -1268,6 +1285,20 @@ test "enabledFor: holders are the default and only an explicit off opts out (T90
     try testing.expect(enabledFor("11"));
     try testing.expect(enabledFor("00"));
     try testing.expect(enabledFor("nope"));
+}
+
+test "wantedFor: no holder for an agent that records nothing a successor could adopt (T1278)" {
+    // An agent without `--sessions-file` gets the in-process child, whatever
+    // the switch says: its holder could never be found again.
+    try testing.expect(!wantedFor(null, false));
+    try testing.expect(!wantedFor("1", false));
+    try testing.expect(!wantedFor("0", false));
+
+    // A recording agent follows the switch exactly as before.
+    try testing.expectEqual(enabledFor(null), wantedFor(null, true));
+    try testing.expectEqual(enabledFor("1"), wantedFor("1", true));
+    try testing.expect(!wantedFor("0", true));
+    if (is_windows) try testing.expect(wantedFor(null, true));
 }
 
 test "replayBytesFor: a typo keeps the default rather than shrinking the window (T969)" {

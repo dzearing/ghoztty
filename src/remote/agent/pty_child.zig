@@ -1043,6 +1043,12 @@ pub const PtySpawner = struct {
     /// Owns an EnvMap so child env (TERM + inherited) outlives the fork's arena.
     /// Kept for the spawner's lifetime; each child's `cmd.env` borrows it.
     env: *std.process.EnvMap,
+    /// Whether the agent this spawner serves records its sessions
+    /// (`--sessions-file`), which is what makes a holder that outlives it
+    /// findable again (T1278; `pty_holder_child.wantedFor`). The daemon modes
+    /// set it from their arguments; it defaults on so a spawner built anywhere
+    /// else keeps the holder default it always had.
+    recorded: bool = true,
 
     pub fn init(alloc: Allocator) !*PtySpawner {
         const self = try alloc.create(PtySpawner);
@@ -1102,7 +1108,10 @@ pub const PtySpawner = struct {
         // the OPEN. Losing the survive-an-agent-death property is a bad day;
         // handing the user a dead pane because a holder would not start is a
         // worse one, and the warning names which happened.
-        if (is_windows and pty_holder_child.enabledFor(self.env.get(pty_holder_child.env_var))) {
+        //
+        // An agent that records no sessions spawns in-process instead: nothing
+        // could ever re-adopt its holders, so they would only be orphans (T1278).
+        if (is_windows and pty_holder_child.wantedFor(self.env.get(pty_holder_child.env_var), self.recorded)) {
             if (self.spawnHolderBacked(open)) |res| {
                 return res;
             } else |err| {

@@ -1398,6 +1398,8 @@ fn runStdio(alloc: Allocator, encoding: protocol.TransferEncoding) !void {
 
     var spawner = try pty_child.PtySpawner.init(alloc);
     defer spawner.deinit();
+    // One connection, no record: a holder here could only be an orphan (T1278).
+    spawner.recorded = false;
 
     var store = session.SessionStore.init(
         alloc,
@@ -1475,6 +1477,8 @@ fn runListen(
 
     var spawner = try pty_child.PtySpawner.init(alloc);
     defer spawner.deinit();
+    // A holder outlives this agent only usefully when `--sessions-file` names it (T1278).
+    spawner.recorded = sessions_file != null;
 
     var store = session.SessionStore.init(
         alloc,
@@ -1628,6 +1632,8 @@ fn runListenUnix(
 
     var spawner = try pty_child.PtySpawner.init(alloc);
     defer spawner.deinit();
+    // A holder outlives this agent only usefully when `--sessions-file` names it (T1278).
+    spawner.recorded = sessions_file != null;
 
     var store = session.SessionStore.init(
         alloc,
@@ -1754,6 +1760,8 @@ fn runListenPipe(
 
     var spawner = try pty_child.PtySpawner.init(alloc);
     defer spawner.deinit();
+    // A holder outlives this agent only usefully when `--sessions-file` names it (T1278).
+    spawner.recorded = sessions_file != null;
 
     var store = session.SessionStore.init(
         alloc,
@@ -2475,6 +2483,8 @@ fn runRelay(
 
     var spawner = try pty_child.PtySpawner.init(alloc);
     defer spawner.deinit();
+    // Records nothing, so a holder could never be re-adopted (T1278).
+    spawner.recorded = false;
 
     var store = session.SessionStore.init(
         alloc,

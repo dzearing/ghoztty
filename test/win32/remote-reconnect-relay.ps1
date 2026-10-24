@@ -40,13 +40,26 @@
 #      `disconnected`/`self_healable:false`, and exactly ONE re-dial - and that
 #      one logged as `WebSocketUnauthorized`: retrying cannot sign anyone in,
 #      and the fix for the offline case must not have weakened that.
+#   E  THE AGENT CRASHES (T1278; scored between C and D, since D leaves the
+#      window terminal). The far agent records its sessions (`--sessions-file`,
+#      as every agent serving a relay window does in production) and is
+#      hard-killed under the window. Its PTY holder must outlive it, the
+#      restarted agent must ADOPT that holder rather than reap it as an orphan,
+#      and the window must come back on its own to the SAME session, with the
+#      shell answering. Until T1278 the restarted agent logged `reaped orphaned
+#      holder ... no session record names it`: the far agent here recorded
+#      nothing, yet still spawned holders nobody could ever find again.
 #
-# Why the drop is a RELAY outage rather than the agent being killed: an agent
-# that is killed and restarted comes back owning nothing, and the automatic
-# ladder answers a vanished session by going terminal ON PURPOSE (T611 - a grid
-# the user arranged is not replaced with empty shells unless they asked). That
-# path is `remote-reconnect-fresh.ps1`'s. Here the session must survive, so the
-# thing that goes away is the path to it.
+# B-D drop the RELAY rather than the agent because an agent that comes back
+# owning nothing makes the ladder go terminal ON PURPOSE (T611 - a grid the user
+# arranged is not replaced with empty shells unless they asked); that path is
+# `remote-reconnect-fresh.ps1`'s. E is the agent-crash case where the session
+# is NOT lost, which is what the holders exist for.
+#
+# E's TEETH-CHECK: `-NoSessionsFile` runs the far agent recording nothing. E's
+# reconnect must go red (nothing to adopt), and E's own holder check flips to
+# asserting that such an agent leaves NO orphan holder behind - the agent half
+# of the T1278 fix.
 #
 # TEETH-CHECK: re-run with `-TeethCheck`, which never brings the relay back -
 # arm C ("it comes back on its own") must go red, which is what says C is
@@ -69,7 +82,8 @@ param(
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
     [int]$RelayPort = 0,
     [int]$AgentPort = 0,
-    [switch]$TeethCheck
+    [switch]$TeethCheck,
+    [switch]$NoSessionsFile
 )
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -158,18 +172,35 @@ function Count-Dials() {
     return @(Select-String -Path $errlog -Pattern 'remote reconnect: relay dial device=' -ErrorAction SilentlyContinue).Count
 }
 
-function Start-FarAgent() {
+$Lineage = "t1276relrecon$PID"
+# T1278: the far agent records its sessions, the way every agent that serves a
+# relay window does in production (the app's own agent, which carries the
+# sharing uplink, is always launched with `--sessions-file`). Arm E restarts it
+# against this same file. `-NoSessionsFile` is E's teeth-check.
+$sessionsFile = Join-Path $tmp 'far\sessions.json'
+New-Item -ItemType Directory -Force (Split-Path $sessionsFile) | Out-Null
+
+function Start-FarAgent([string]$tag) {
     $saved = Get-GhozttyAgentLineage
-    $env:GHOZTTY_AGENT_INSTANCE = "t1276relrecon$PID"
+    $env:GHOZTTY_AGENT_INSTANCE = $Lineage
     # T1036: the agent answers for its own endpoints before it is launched.
     Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
+    $agentArgs = @('--listen', "127.0.0.1:$AgentPort", '--headless')
+    if (-not $NoSessionsFile) { $agentArgs += "--sessions-file=$sessionsFile" }
     $p = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
-        -ArgumentList '--listen', "127.0.0.1:$AgentPort", '--headless' `
-        -RedirectStandardOutput (Join-Path $tmp "agent-$([guid]::NewGuid().ToString('N').Substring(0,6)).out") `
-        -RedirectStandardError (Join-Path $tmp "agent-$([guid]::NewGuid().ToString('N').Substring(0,6)).err")
+        -ArgumentList $agentArgs `
+        -RedirectStandardOutput (Join-Path $tmp "$tag.out") `
+        -RedirectStandardError (Join-Path $tmp "$tag.err")
     $null = $p.Handle   # before any HasExited read (lib\ExitCodeAudit.ps1)
     Restore-GhozttyAgentLineage -Saved $saved
     return $p
+}
+
+# The PTY holders of THIS run's lineage still bound: the namespace the agent's
+# own orphan sweep enumerates (`~<lineage>~` is the T1594 lineage segment).
+function Get-LineageHolders() {
+    return @([System.IO.Directory]::GetFiles('\\.\pipe\') |
+        Where-Object { $_ -like "*pty-host*~$Lineage~*" })
 }
 
 Write-Host 'T1276 remote reconnect - the RELAY path'
@@ -180,7 +211,7 @@ try {
     # --- A: the fixture, and the control ------------------------------------
     Write-Host ''
     Write-Host 'A. a relay window over a loopback relay onto a real agent'
-    $script:agent = Start-FarAgent
+    $script:agent = Start-FarAgent 'agent1'
     Start-Sleep -Seconds 3
     if ($script:agent.HasExited) {
         Write-Host "  the far agent exited $($script:agent.ExitCode) at startup; nothing below could be measured"
@@ -247,6 +278,55 @@ try {
     $sid1 = Get-SessionId 'relwin'
     Check ($null -ne $sid1 -and $sid1 -eq $sid0) "C and re-ATTACHed the SAME session (was $sid0, now $sid1)"
 
+    # --- E: the far agent crashes and comes back ----------------------------
+    # Scored before D, because D leaves the window terminal on purpose.
+    Write-Host ''
+    Write-Host 'E. the far agent is hard-killed and restarted: the session survives it'
+    $holdersBefore = @(Get-LineageHolders)
+    if ($NoSessionsFile) {
+        Check ($holdersBefore.Count -eq 0) `
+            "E a recording-less agent spawned no holder ($($holdersBefore.Count) holder pipe(s) on lineage $Lineage)"
+    } else {
+        Check ($holdersBefore.Count -ge 1) `
+            "E the session is holder-backed ($($holdersBefore.Count) holder pipe(s) on lineage $Lineage)"
+    }
+    Stop-Process -Id $script:agent.Id -Force -ErrorAction SilentlyContinue
+    $script:agent.WaitForExit(10000) | Out-Null
+    Start-Sleep -Milliseconds 500
+    $holdersDead = @(Get-LineageHolders)
+    if ($NoSessionsFile) {
+        # The other half of T1278: an agent that records nothing must not
+        # leave a shell behind that no agent could ever find again.
+        Check ($holdersDead.Count -eq 0) `
+            "E a recording-less agent leaves no orphan holder behind ($($holdersDead.Count) left)"
+    } else {
+        Check ($holdersDead.Count -eq $holdersBefore.Count) `
+            "E the holder outlived the agent ($($holdersDead.Count) of $($holdersBefore.Count))"
+    }
+    $script:agent = Start-FarAgent 'agent2'
+    Start-Sleep -Seconds 3
+    Check (-not $script:agent.HasExited) 'E the restarted agent is running'
+    $conn = Wait-Conn 'relwin' { param($c) $c.state -ne 'reconnecting' } 90
+    Check ($conn.state -eq 'connected') "E the window came back with no click: $(Show-Conn $conn)"
+    $sid2 = Get-SessionId 'relwin'
+    Check ($null -ne $sid2 -and $sid2 -eq $sid0) "E holding the SAME session (was $sid0, now $sid2)"
+    $agent2Err = Join-Path $tmp 'agent2.err'
+    $adopted = Select-String -Path $agent2Err -Pattern 'holder sweep: 1 adopted' -Quiet -ErrorAction SilentlyContinue
+    Check ([bool]$adopted) 'E because the restarted agent ADOPTED the holder (holder sweep: 1 adopted)'
+    $reaped = @(Select-String -Path $agent2Err -Pattern 'reaped orphaned holder' -ErrorAction SilentlyContinue).Count
+    Check ($reaped -eq 0) "E and reaped nothing as an orphan ($reaped reaped)"
+    # A field is not a working pane: drive the adopted shell and read it back.
+    $marker = "t1278-adopted-$PID"
+    & $Exe +send-keys --target=relwin "echo $marker" Enter 2>$null | ForEach-Object { $_ } | Out-Null
+    $echoed = $false
+    $deadline = (Get-Date).AddSeconds(15)
+    while (-not $echoed -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 700
+        $screen = (& $Exe +read --name=relwin --lines=40 2>$null | ForEach-Object { $_.ToString() }) -join "`n"
+        $echoed = ([regex]::Matches($screen, [regex]::Escape($marker))).Count -ge 2
+    }
+    Check $echoed 'E the adopted shell answers through the new link (marker echoed back)'
+
     # --- D: a rejected bearer is still terminal, in one attempt -------------
     Write-Host ''
     Write-Host 'D. the relay rejects the bearer: terminal, in one attempt'
@@ -283,7 +363,7 @@ Write-Host "  logs: $tmp"
 # A green run stamps the covered files (T783) so guard-due can answer "has this
 # harness been run against the code as it now stands?". Red leaves the stamp
 # alone - red stays due - and a teeth-check is red by construction.
-if ($script:fail -eq 0 -and -not $TeethCheck) {
+if ($script:fail -eq 0 -and -not $TeethCheck -and -not $NoSessionsFile) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard remote-reconnect-relay -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }

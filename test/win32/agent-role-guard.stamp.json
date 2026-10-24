@@ -1,13 +1,13 @@
 {
     "guard":  "agent-role-guard",
     "script":  "test/win32/agent-role-guard.ps1",
-    "generated":  "2026-10-17T09:29:30-07:00",
-    "commit":  "8d1fedf00",
+    "generated":  "2026-10-24T01:29:27-07:00",
+    "commit":  "c6e62c7b5",
     "uncommitted":  [
-                        "test/win32/agent-role-guard.ps1"
+                        "src/remote/agent/pty_child.zig"
                     ],
     "files":  {
-                  "src/remote/agent/pty_child.zig":  "0b63576d67418e3293281f4b7f952a620b8608ae3377d4ad74483da65b722b1a",
+                  "src/remote/agent/pty_child.zig":  "2318511e2383b4c38811c7dc43c2f55dda4ee491a1ca6fa171102ada353ed01b",
                   "src/remote/agent/single_instance.zig":  "17b1519d6fc3a881da850f2b8d8ddc61c455bf1271f97d25936c907114f71dd6",
                   "src/remote/ws_client.zig":  "e5ebe28e8a2e5442c596a12fcaa6468d9646d9aaeaa08c40e5f1dce1e71370c2",
                   "test/win32/agent-role-guard.ps1":  "9aaed2aa420495a1dab9f9d77231b6c09f6b187ac6b2ab1262cdc33a89ad0826"

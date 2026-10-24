@@ -437,12 +437,15 @@ if ($null -ne $dropped -and $null -ne $dropped.connection) {
 # pass plus two slow re-dials, so a slow recovery reads as a recovery and not as
 # a failure.
 #
-# Which arm this box takes TODAY is the disconnected one, and T1278 is why: a
-# hard-killed `--listen` agent loses its session records, so the restarted agent
-# reaps the still-live PTY holder as an orphan and the ladder is told
-# `session_gone`. That is a real defect with its own task; it is NOT this
-# script's subject, and hard-coding either arm here would make the harness go
-# red the day T1278 is fixed and the window starts coming back instead.
+# Which arm this box takes is the disconnected one, by construction: the agent
+# here is a standalone `--relay` agent, which records no sessions, so since
+# T1278 it spawns its shells in-process and they die with it - the restarted
+# agent has nothing to re-attach and the ladder is told `session_gone`. (Before
+# T1278 it spawned a PTY holder anyway, which outlived it unrecorded and was
+# reaped as an orphan: the same verdict, plus a leaked shell.) The re-attach arm
+# for an agent that DOES record its sessions - the production shape - is scored
+# by section E of `remote-reconnect-relay.ps1`. Both arms stay written here so
+# this section is not coupled to which agent mode the fixture happens to use.
 $agent2 = Start-HarnessAgent 'agent2'
 Start-Sleep -Seconds 3
 Assert "restarted agent is running" (-not $agent2.HasExited)
@@ -500,7 +503,7 @@ if ($null -ne $settled -and $settled.state -eq 'connected') {
     # window has to say whether anything will ever bring it back, because that
     # is the difference between the status pill telling the user to wait and
     # telling them to act.
-    "  arm: DISCONNECTED after $([math]::Round($sw6b.Elapsed.TotalSeconds))s (T1278: the restarted agent reaps the holder)"
+    "  arm: DISCONNECTED after $([math]::Round($sw6b.Elapsed.TotalSeconds))s (a --relay agent records nothing to re-attach, T1278)"
     Assert "the verdict is 'disconnected', not some third state" ($settled.state -eq 'disconnected')
     Assert "and it says whether the window is self-healable" (
         $settled.PSObject.Properties.Name -contains 'self_healable' -and
