@@ -1193,11 +1193,17 @@ function loopCard(d) {
   }
   var inflight = d.tasks.filter(function (t) { return t.bucket === 'in_progress' && !t.stale; });
   var age = L.heartbeatAgeMs == null ? '?' : fDur(L.heartbeatAgeMs);
+  // T1298: alive is not the same as turning. Only a finished turn resets this
+  // clock, so it is the one number here a nudge cannot make look healthy.
+  var inert = L.running && L.turnStalled;
   var rows = [
     h('div', { class: 'loop-line' }, [
-      h('span', { class: 'dot-live' + (L.running ? '' : ' stale') }),
-      h('b', { text: L.running ? (L.checkpointStale ? 'Running — long turn' : 'Running') : 'Not running' }),
+      h('span', { class: 'dot-live' + (L.running && !inert ? '' : ' stale') }),
+      h('b', { text: !L.running ? 'Not running' : inert ? 'Alive, but not turning' : L.checkpointStale ? 'Running — long turn' : 'Running' }),
       h('span', { class: 'chip', text: 'turn ' + L.turn }),
+      L.turnAgeMs == null ? null : h('span', { class: 'chip' + (inert ? ' warn' : ''),
+        title: L.turnStarted ? 'this turn started ' + fDate(L.turnStarted) + ' ' + fTime(L.turnStarted) : '',
+        text: 'this turn ' + fDur(L.turnAgeMs) }),
       (function () {
         var since = inflight.length ? runningSince(inflight[0]) : null;
         return since ? h('span', { class: 'chip live-dur', 'data-since': String(since),
@@ -1215,7 +1221,12 @@ function loopCard(d) {
     rows.push(h('div', { class: 'loop-task muted',
       text: 'The loop is alive but no task is marked in progress, so this card cannot name it. go.md step 1 now asks the loop to mark a task when it picks it up; turns that started before that rule stay invisible here.' }));
   }
-  if (L.running && L.checkpointStale) {
+  if (inert) {
+    rows.push(h('div', { class: 'loop-task muted',
+      text: 'The session is alive and its window is marked, but no turn has finished in ' + fDur(L.turnAgeMs) +
+        ' — far longer than a healthy turn runs. The pane is probably sitting on an error, a question or unsent text. The command below prints what it last said.' }));
+    rows.push(h('div', { class: 'dec-note' }, [copyBtn('powershell -NoProfile -File scripts\\go-loop-health.ps1 -Postmortem')]));
+  } else if (L.running && L.checkpointStale) {
     rows.push(h('div', { class: 'loop-task muted',
       text: 'The lock is only refreshed at task boundaries, so ' + age + ' without one means a long turn, not a dead loop — the process is alive. Past 45 minutes the watchdog may re-enter anyway.' }));
   }

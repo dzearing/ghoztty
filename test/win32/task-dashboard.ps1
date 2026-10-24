@@ -20,7 +20,10 @@
     - a loop blocked by something only the user can clear reaches the payload
       with its reason and reset time (T1484), and a record belonging to a turn
       the loop has since completed does NOT - a stale "blocked" over a working
-      loop being worse than none at all.
+      loop being worse than none at all;
+    - a live loop whose current turn has run past the stall threshold reaches
+      the payload as stalled, with its turn age, while a fresh turn does not
+      (T1298) - alive and turning are different questions.
 
   The server is started on a port this script verified free first, because the
   server treats EADDRINUSE as "already serving" and exits 0 - a leftover
@@ -330,6 +333,45 @@ try {
         # And the page itself words the two differently.
         Assert 'F7 the block bar has a needs-you wording that names the remedy' `
             ($html -match 'B\.needsUser' -and $html -match 'Only you can clear this' -and $html -match 'B\.remedy')
+
+        # T1298: alive is not turning. The 2026-09-03 shape - a live pid, a
+        # marked window, a fresh heartbeat, and no turn finished for fourteen
+        # hours - has to reach the payload as a stalled turn. Staged with a
+        # fresh heartbeat on purpose: the liveness clocks all read fine, so only
+        # turn_started can say it.
+        function Write-LockFixture($turnStarted) {
+            $o = @{ state = 'held'; pane_id = 'FIXTURE'; claude_pid = $PID; turn = 12
+                    acquired = (Get-Date).AddDays(-1).ToString('o')
+                    heartbeat = (Get-Date).ToString('o') }
+            if ($turnStarted) { $o.turn_started = $turnStarted }
+            $o | ConvertTo-Json | Out-File -FilePath $lockFile -Encoding utf8
+        }
+        Write-WdFixture 'none' $false
+        Write-LockFixture ((Get-Date).AddHours(-14).ToString('o'))
+        $j = Get-LoopJson
+        $ageH = if ($j -and $null -ne $j.loop.turnAgeMs) { [double]$j.loop.turnAgeMs / 3600000 } else { -1 }
+        Assert 'F8 a live loop whose turn started 14h ago reads as stalled, with its age' `
+            ($null -ne $j -and $j.loop.running -eq $true -and $j.loop.turnStalled -eq $true -and
+             $ageH -gt 13.9 -and $ageH -lt 14.1) `
+            "running=$($j.loop.running) stalled=$($j.loop.turnStalled) ageH=$ageH"
+        # Negative control: the same live loop one minute into its turn.
+        Write-LockFixture ((Get-Date).AddMinutes(-1).ToString('o'))
+        $j = Get-LoopJson
+        Assert 'F9 a turn one minute old is not stalled' `
+            ($null -ne $j -and $j.loop.turnStalled -eq $false -and $null -ne $j.loop.turnAgeMs -and
+             [double]$j.loop.turnAgeMs -lt 300000) `
+            "stalled=$($j.loop.turnStalled) ageMs=$($j.loop.turnAgeMs)"
+        # A lock written before turn_started existed falls back to the
+        # heartbeat (Get-TurnAgeMinutes' rule), not to the day-old acquire.
+        Write-LockFixture $null
+        $j = Get-LoopJson
+        Assert 'F10 a lock without turn_started measures from the heartbeat' `
+            ($null -ne $j -and $j.loop.turnStalled -eq $false -and $null -ne $j.loop.turnAgeMs -and
+             [double]$j.loop.turnAgeMs -lt 300000) `
+            "stalled=$($j.loop.turnStalled) ageMs=$($j.loop.turnAgeMs)"
+        Assert 'F11 the loop card says "not turning" and hands over the postmortem command' `
+            ($html -match 'L\.turnStalled' -and $html -match 'Alive, but not turning' -and
+             $html -match 'go-loop-health\.ps1 -Postmortem' -and $html -match "'this turn '")
     } finally {
         Remove-Item $fix -Recurse -Force -ErrorAction SilentlyContinue
     }

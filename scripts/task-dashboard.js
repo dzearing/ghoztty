@@ -54,6 +54,7 @@ const DIGEST_DIR = process.env.GHOZTTY_DIGEST_DIR || path.join(REPO, ...REL_DIGE
 // (T1484): "the loop is blocked" is a state a test may never wait for on a live
 // box, so the harness stages it in a fixture pair rather than simulating it.
 const LOCK_FILE = process.env.GHOZTTY_LOOP_LOCK || path.join(REPO, 'temp', 'go-loop.lock.json');
+const TURN_STALE_MINUTES = 180;
 const WATCHDOG_FILE = process.env.GHOZTTY_WATCHDOG_STATE || path.join(REPO, 'temp', 'go-loop.watchdog.json');
 const PAGE = path.join(__dirname, 'task-dashboard.page.html');
 const CACHE = path.join(REPO, 'temp', 'task-dashboard-history.json');
@@ -746,6 +747,16 @@ function loopState() {
   if (!j || j.state === 'free') return null;
   const beat = j.heartbeat ? Date.parse(j.heartbeat) : null;
   const age = beat ? Date.now() - beat : null;
+  // The progress clock (T1298): how long the CURRENT turn has run, the same
+  // number `go-loop-health.ps1` reports as turn_age. Only a completed turn
+  // moves `turn_started`, so an alive-but-inert loop (2026-09-03: fourteen
+  // hours) shows here even while every liveness signal reads fine. Same
+  // fallbacks as Get-TurnAgeMinutes in go-loop-lock.ps1, and never the
+  // transcript, which a nudge can move.
+  const turnStart = [j.turn_started, j.heartbeat, j.acquired]
+    .map((s) => (s ? Date.parse(s) : NaN))
+    .filter((t) => !isNaN(t))[0];
+  const turnAge = turnStart == null ? null : Date.now() - turnStart;
   return {
     paneId: j.pane_id || null,
     claudePid: j.claude_pid || null,
@@ -761,6 +772,12 @@ function loopState() {
     running: pidAlive(j.claude_pid) || paneHoldsClaude(j),
     // Kept for the watchdog's own framing: past this it WILL re-enter.
     checkpointStale: age != null && age >= 45 * 60 * 1000,
+    turnStarted: turnStart == null ? null : turnStart,
+    turnAgeMs: turnAge,
+    // go-loop-health.ps1's -TurnStaleMinutes default, which the watchdog reads
+    // too (T1319): the board, the health check and the supervisor agree on
+    // what "not turning" means.
+    turnStalled: turnAge != null && turnAge >= TURN_STALE_MINUTES * 60 * 1000,
     // Why it is not turning, when the answer is one only the user can fix.
     blocked: loopBlocker(j),
   };

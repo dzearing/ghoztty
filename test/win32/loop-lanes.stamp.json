@@ -1,11 +1,10 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-10-24T02:00:44-07:00",
-    "commit":  "7242247ea",
+    "generated":  "2026-10-24T05:25:12-07:00",
+    "commit":  "85d0ad541",
     "uncommitted":  [
-                        "scripts/go-loop-exec.ps1",
-                        "scripts/go-loop-health.ps1"
+                        "scripts/task-dashboard.js"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "44bdce30b404b4f8da2bb69527ae66f389d5aaa4b47e0c89f623bfefbbe78a2a",
@@ -18,7 +17,7 @@
                   "scripts/lib/LoopLane.ps1":  "5a323edad01338d2719fcb162c838a68f80b66a01616d9abf8d44daf9e1b51a8",
                   "scripts/morning-owner.ps1":  "cdac0752bf2ff0f78cd5e94dcc8182129c0f282b7dc07a224e7c7e07362343ff",
                   "scripts/publish-windows-tag.ps1":  "d72d5cdf2189a2fd31a213d7e18107c7e313c139c2368e2696e82474b4cfa4a3",
-                  "scripts/task-dashboard.js":  "cd1518c62008e996af6041f4ea43b2aa233083c035ccdab1a8a48f6e9a7f62a0",
+                  "scripts/task-dashboard.js":  "dc06ace36a56af2fc30a1871eaa75265ca9eaddc356de76d070a70d910f522e9",
                   "scripts/upgrade-ghoztty-windows.ps1":  "448fa05a55bcce70e03893612266b159a85b0d1e4d644f6bc4424f6d41d19892",
                   "test/win32/loop-lanes.ps1":  "41606233b8e2bf5f95a1bc0cc894c69ff76ae56c6ea12d99971b09a156d716bb"
               }
