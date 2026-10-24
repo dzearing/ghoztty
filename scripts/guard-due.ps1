@@ -899,6 +899,22 @@ $GuardTable = @(
             'src\apprt\win32\ProcessTree.zig'
         )
     },
+    # The T48 deferred-SetFocus regression (T1309): the only thing that clicks
+    # real panes under an output flood and watches the GUI thread stay
+    # responsive. WM_APP_SETFOCUS is named by a dozen win32 files, but the
+    # dialogs only drain it in their own modal loops; the path the deadlock
+    # rode is deferSetFocus + the run-loop dispatch (App.zig) and the surface
+    # WndProc mouse handler that calls it (Surface.zig), so that is the row.
+    [pscustomobject]@{
+        Name   = 'focus-defer'
+        Script = 'test\win32\focus-defer.ps1'
+        Stamp  = 'test\win32\focus-defer.stamp.json'
+        Covers = @(
+            'test\win32\focus-defer.ps1',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Surface.zig'
+        )
+    },
     # The remote Disconnect offer (T1390): the only thing that watches a real
     # process survive a close. The unit lanes check the policy and the pin in
     # isolation, and neither can see the answer reach the agent - which is the

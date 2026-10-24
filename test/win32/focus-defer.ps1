@@ -279,6 +279,15 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+# A green run stamps the covered files (T1309) so guard-due can answer "has this
+# harness been run against the code as it now stands?". Red leaves the stamp
+# alone - red stays due - and so do both negative controls, whose whole point
+# is to score red.
+if ($script:fail -eq 0 -and -not $NegativeControl -and -not $NegativeControlBudget) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard focus-defer -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+
 Write-Host ''
 if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) assertions)"; exit 0 }
 else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red; exit 1 }
