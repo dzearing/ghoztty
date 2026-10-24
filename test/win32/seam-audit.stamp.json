@@ -1,12 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-24T14:10:25-07:00",
-    "commit":  "e3e2a4597",
+    "generated":  "2026-10-24T15:50:55-07:00",
+    "commit":  "3151bf3b4",
     "uncommitted":  [
-                        "src/apprt/win32/GhosttyAssets.zig",
-                        "src/apprt/win32/skill_rewrite.zig",
-                        "src/apprt/win32/SkillComponent.zig"
+                        "src/os/open.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -382,7 +380,7 @@
                   "src/os/macos.zig":  "cefd76843a9c885e902c029a26b29ae7621b4f952b289c03ac15a5107f7c6e0b",
                   "src/os/main.zig":  "2d4c097aac5557c65d4bd9c15f647f5934cfa5ddf3d9c83995b89e7089d0ce4c",
                   "src/os/mouse.zig":  "1985c8f2513d0bbf8ac6a63bce2517050a35ce947c2c24c2b9ca229e064f1b3c",
-                  "src/os/open.zig":  "cc7ae232542ab6dcec25913d89a183eb3ba42a501fed30b593930f88018c2300",
+                  "src/os/open.zig":  "99273e4cb84082de01dc87766a2d5724f0237a313a0f195431106548dedfa3fe",
                   "src/os/passwd.zig":  "1913a8c1626d68cbc322cd509f19655ac0a50554e994e44d1708595f82cb566b",
                   "src/os/path.zig":  "381e879ae7df0f160819cb2c484a1af627f1b2f70dcdc67e2d127a4e1b374dce",
                   "src/os/path_env.zig":  "ce0aa01b0c66df70eeaf0de464120d242c4ac4fcdf731ddcd6690a77b1a6c3bf",
