@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-23T15:24:42-07:00",
-    "commit":  "0ac70b89d",
+    "generated":  "2026-10-23T15:33:57-07:00",
+    "commit":  "936307e0d",
     "uncommitted":  [
 
                     ],
@@ -1006,7 +1006,7 @@
                   "test/win32/build-cache.ps1":  "aa1dfbbd1bfec1da2fe743c892488014f76609f5df8eaf0180cdbad0fea48fc2",
                   "test/win32/build-fresh-guard.ps1":  "0e567d9a72a4e5ff377b5c7d98281ddbfd5da0543d93e277cb99aeac351b09c2",
                   "test/win32/build-locked-artifact.ps1":  "e42a71b9730f428c28d7cc844a54d73d5730f696a9a3e315dc5cffaafe0869f5",
-                  "test/win32/build-mode-guard.ps1":  "37d79d4a3545b72b29bb24dd6dfc488367c3e1103947eed54232b02c69140e10",
+                  "test/win32/build-mode-guard.ps1":  "f2a0d9cee5c21a78df024c8140efbc7feb771efce150830efa6bc97809f9477e",
                   "test/win32/caller-anchor.ps1":  "e51f43169e0cb021ffbcc719cbf36be8882b65940a6c5c5a461cd7c679732135",
                   "test/win32/caption-bar.ps1":  "b0edf1325c212b30c35da7ae1261461a41f18d3cd40c298430711ea788c7e606",
                   "test/win32/caption-click-modal.ps1":  "f3e87c81c7fdf55c7c8a6886ccf7a82d202d04f3ab1393eefcdd251a697f585d",

@@ -127,9 +127,20 @@ function Set-GhozttyTestIsolation {
         # a killed run without ever taking a live run's.
         [void](Register-SandboxDirTeardown -Root $root)
 
+        # T2196: and the fourth thing a release build reaches outside the
+        # sandbox. A release build registers HKCU\Software\Classes\ghoztty at
+        # launch, pointed at its own exe, and HKCU classes are not under
+        # LOCALAPPDATA - so a sandboxed run hands the USER'S ghoztty:// links to
+        # a binary its teardown then deletes (update-graceful.ps1, 2026-10-23).
+        # A caller that already set the seam keeps its value: the scripts whose
+        # subject IS registration (url-scheme.ps1, registration-sites.ps1) set
+        # it per launch, after this call.
+        if (-not $env:GHOZTTY_URL_SCHEME) { $env:GHOZTTY_URL_SCHEME = 'off' }
+
         if (-not $Quiet) {
             "  [isolation] GHOZTTY_AGENT_INSTANCE=$instance"
             "  [isolation] LOCALAPPDATA=$root"
+            "  [isolation] GHOZTTY_URL_SCHEME=$($env:GHOZTTY_URL_SCHEME)"
         }
     }
 

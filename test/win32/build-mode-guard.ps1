@@ -194,6 +194,29 @@ Assert "D10c and it is run-unique, so two runs never share a lineage" `
 Assert "D10d an over-long tag is trimmed rather than pushed past the cap" `
     ($env:GHOZTTY_AGENT_INSTANCE.Length -le 24 -and $env:GHOZTTY_AGENT_INSTANCE -match "$PID`$")
 
+# T2196: HKCU classes are outside all three knobs, so -ReleaseSandbox also turns
+# the release build's ghoztty:// self-registration off - update-graceful.ps1
+# re-pointed the user's handler at an install its teardown deleted. A value the
+# caller set on purpose is kept, and the plain (debug-lineage) call leaves the
+# seam alone: a debug build registers ghoztty-debug://, never the user's.
+$savedScheme = $env:GHOZTTY_URL_SCHEME
+$classKey = 'HKCU:\Software\Classes\ghoztty\shell\open\command'
+$classBefore = (Get-ItemProperty -LiteralPath $classKey -ErrorAction SilentlyContinue).'(default)'
+Remove-Item Env:GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue
+[void](Set-GhozttyTestIsolation -Tag 'bmguard' -ReleaseSandbox -Quiet -SandboxRoot (Join-Path $tmp 'iso-sandbox3'))
+Assert "D10e -ReleaseSandbox turns the release build's ghoztty:// registration off" `
+    ($env:GHOZTTY_URL_SCHEME -eq 'off')
+$env:GHOZTTY_URL_SCHEME = 'gate'
+[void](Set-GhozttyTestIsolation -Tag 'bmguard' -ReleaseSandbox -Quiet -SandboxRoot (Join-Path $tmp 'iso-sandbox4'))
+Assert "D10f and a seam value the caller set on purpose is kept" ($env:GHOZTTY_URL_SCHEME -eq 'gate')
+Remove-Item Env:GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue
+[void](Set-GhozttyTestIsolation -Tag 'bmguard' -Quiet)
+Assert "D10g while the plain call does not touch it" ($null -eq $env:GHOZTTY_URL_SCHEME)
+$classAfter = (Get-ItemProperty -LiteralPath $classKey -ErrorAction SilentlyContinue).'(default)'
+Assert "D10h and the user's ghoztty:// handler is unchanged ($classAfter)" ($classAfter -eq $classBefore)
+if ($null -eq $savedScheme) { Remove-Item Env:GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue }
+else { $env:GHOZTTY_URL_SCHEME = $savedScheme }
+
 # Hand section E the partial state it is written against: a release exe with a
 # private suffix and nothing else, which is what -AllowReleaseBuild has to be
 # able to opt out of. T2005: "nothing else" means the lineage is UNSET here, not
