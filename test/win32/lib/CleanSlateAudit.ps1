@@ -172,3 +172,151 @@ function Get-CleanSlateAuditScripts {
     }
     return ($files | Where-Object { $skip -notcontains $_.Name } | Sort-Object FullName)
 }
+
+# ============================================================================
+# The applier's install directory (T1272)
+# ============================================================================
+#
+# THE RULE. A script that arms the real update applier (`GHOZTTY_UPDATE_APPLY =
+# "<pid>|<msi>|<install exe>"`) hands it an install directory whose job, on a
+# rejected package, is to RENAME `ghoztty.exe` ASIDE. Aimed at `zig-out\bin`,
+# that leaves the turn with no build (2026-09-01: update-apply.ps1, T1268; then
+# update-failure-visible.ps1, T1271). The third field must therefore come from a
+# scratch provider - `New-ApplierSandbox` (lib\ApplierSandbox.ps1) or
+# `Get-ThrowawayInstallDir` (the throwaway product install) - traced through the
+# script's own assignments.
+#
+# Kinds:
+#   repo-build-target  the trace reaches `zig-out`. No exemption excuses it.
+#   untraced-target    the trace reaches neither a provider nor the repo build;
+#                      excused by `# applier-target: <reason>` within the six
+#                      lines above the arming line (a reasonless marker is
+#                      itself a finding, as with cleanslate-exempt).
+#
+# A spec whose value is a bare variable with no assignment in the file (a
+# function parameter, as in update-failure-visible.ps1's Start-Applier) is
+# judged at its call sites: every double-quoted three-field `a|b|c` string in
+# the file. A value that is the variable itself saved and restored is not an
+# arming. Literals without three fields (a malformed-spec test) arm nothing.
+
+$script:ApplierProviders = 'New-ApplierSandbox|Get-ThrowawayInstallDir'
+
+function Get-ApplierVarAssignments {
+    param([string[]]$Lines, [string]$Name)
+    $pat = '(?i)^\s*(\[[^\]]+\]\s*)?\$' + [regex]::Escape($Name) + '\s*=(?!=)\s*(?<expr>.+?)\s*,?\s*$'
+    $out = @()
+    foreach ($l in $Lines) {
+        if ($l -match '^\s*#') { continue }
+        if ($l -match $pat) { $out += $Matches['expr'] }
+    }
+    return $out
+}
+
+function Resolve-ApplierTarget {
+    <#
+    .SYNOPSIS
+    Classify an expression as 'sandbox', 'repo' or 'unknown' by tracing the
+    variables it names through the file's assignments.
+    #>
+    param([string[]]$Lines, [string]$Expr, [int]$Depth = 0, [hashtable]$Seen = @{})
+
+    if ($Expr -match $script:ApplierProviders) { return 'sandbox' }
+    if ($Expr -match '(?i)zig-out') { return 'repo' }
+    if ($Depth -ge 6) { return 'unknown' }
+
+    $verdict = 'unknown'
+    $vars = [regex]::Matches($Expr, '\$(?!env:)(?<n>[A-Za-z_][A-Za-z0-9_]*)')
+    foreach ($m in $vars) {
+        $n = $m.Groups['n'].Value
+        if ($n -in @('PSScriptRoot', 'PID', 'true', 'false', 'null', '_')) { continue }
+        if ($Seen.ContainsKey($n.ToLower())) { continue }
+        $Seen[$n.ToLower()] = $true
+        foreach ($e in @(Get-ApplierVarAssignments -Lines $Lines -Name $n)) {
+            $r = Resolve-ApplierTarget -Lines $Lines -Expr $e -Depth ($Depth + 1) -Seen $Seen
+            if ($r -eq 'repo') { return 'repo' }
+            if ($r -eq 'sandbox') { $verdict = 'sandbox' }
+        }
+    }
+    return $verdict
+}
+
+function Get-ApplierSpecTarget {
+    # The third field of a "<pid>|<msi>|<exe>" string, or $null when it is not one.
+    param([string]$Spec)
+    $fields = @($Spec -split '\|')
+    if ($fields.Count -ne 3) { return $null }
+    return $fields[2]
+}
+
+function Get-ApplierTargetFindings {
+    <#
+    .SYNOPSIS
+    Every place a script arms the update applier at something that is not
+    provably a scratch install directory.
+    #>
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Text)
+
+    $lines = @($Text)
+    $findings = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        if ($line -match '^\s*#') { continue }
+        $rhs = $null
+        if ($line -match "GHOZTTY_UPDATE_APPLY['""]?\s*=(?!=)\s*(?<rhs>.+?)\s*;?\s*$") {
+            $rhs = $Matches['rhs']
+        } elseif ($line -match "SetEnvironmentVariable\(\s*['""]GHOZTTY_UPDATE_APPLY['""]\s*,\s*(?<rhs>.+?)\s*(,[^,]*)?\)") {
+            $rhs = $Matches['rhs']
+        }
+        if ($null -eq $rhs) { continue }
+        # `if ($x) { $env:GHOZTTY_UPDATE_APPLY = $saved }` - the brace closes the
+        # statement, not the value.
+        if ($rhs -notmatch '["'']$') { $rhs = $rhs -replace '\s*[;}]+\s*$', '' }
+
+        $specs = @()
+        if ($rhs -match '^"(?<s>[^"]*)"') {
+            $specs += $Matches['s']
+        } elseif ($rhs -match "^'(?<s>[^']*)'") {
+            $specs += $Matches['s']
+        } elseif ($rhs -match '^\$(?<v>[A-Za-z_][A-Za-z0-9_]*)$') {
+            $assigned = @(Get-ApplierVarAssignments -Lines $lines -Name $Matches['v'])
+            if ($assigned.Count -and (@($assigned | Where-Object { $_ -notmatch 'GHOZTTY_UPDATE_APPLY' }).Count -eq 0)) {
+                continue    # a saved value put back, not an arming
+            }
+            if ($assigned.Count) {
+                foreach ($a in $assigned) {
+                    if ($a -match '^"(?<s>[^"]*)"') { $specs += $Matches['s'] } else { $specs += "?|?|$a" }
+                }
+            } else {
+                # A parameter: judge the call sites.
+                foreach ($m in [regex]::Matches(($lines -join "`n"), '"(?<s>[^"\n]*\|[^"\n]*\|[^"\n]*)"')) {
+                    $specs += $m.Groups['s'].Value
+                }
+            }
+        } else {
+            $specs += "?|?|$rhs"
+        }
+
+        foreach ($spec in $specs) {
+            $target = Get-ApplierSpecTarget -Spec $spec
+            if ($null -eq $target) { continue }
+            $kind = switch (Resolve-ApplierTarget -Lines $lines -Expr $target) {
+                'repo' { 'repo-build-target' }
+                'sandbox' { $null }
+                default { 'untraced-target' }
+            }
+            if ($kind -eq 'untraced-target') {
+                $from = [Math]::Max(0, $i - 6)
+                $marker = @($lines[$from..$i] | Where-Object { $_ -match '#\s*applier-target:(?<why>.*)$' } |
+                    ForEach-Object { $null = $_ -match '#\s*applier-target:(?<why>.*)$'; $Matches['why'].Trim() })
+                if ($marker.Count) {
+                    $kind = if ($marker[-1]) { $null } else { 'empty-exemption' }
+                }
+            }
+            if ($kind) {
+                $findings += [pscustomobject]@{ Line = $i + 1; Kind = $kind; Text = $line.Trim(); Target = $target }
+            }
+        }
+    }
+    # Not `return ,`: an empty array returned that way counts as 1 at an @() call site.
+    return $findings
+}

@@ -21,6 +21,7 @@
 # B: the sweep - no acceptance script carries an unexplained ghoztty kill.
 # C: the shared helper does what the copies were doing, on real processes.
 # D: the kill WAITS for the processes to go, and says so when they do not.
+# E: no script arms the real update applier at the repo build (T1272).
 #
 # `-TeethCheck` proves section B can go red at all: it synthesizes a violator no
 # exemption covers and PASSES only if the assertion turns over. A green sweep
@@ -381,6 +382,85 @@ try {
     $_.ScriptStackTrace
 } finally {
     $script:CleanSlateProcQuery = $saved
+}
+
+# ============================================================================
+"== E: no script arms the update applier at the repo build (T1272)"
+# ============================================================================
+# T1268 and T1271 each found a harness handing the real applier zig-out\bin as
+# its install directory; on a rejected package the applier renames ghoztty.exe
+# aside and the rest of the turn has no build. lib\ApplierSandbox.ps1 is the
+# fix, and this is what makes using it a rule rather than a comment.
+function AKinds($lines) { return (@(Get-ApplierTargetFindings -Text $lines) | ForEach-Object { $_.Kind }) -join ',' }
+
+$preT1268 = @(
+    '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '$env:GHOZTTY_UPDATE_APPLY = "$deadPid|$applyMsi|$exe"')
+Assert 'E1 update-apply''s pre-T1268 shape (spec straight at the build) is a finding' ((AKinds $preT1268) -eq 'repo-build-target')
+$oneHop = @(
+    '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '$installExe = $exe',
+    '$env:GHOZTTY_UPDATE_APPLY = "$deadPid|$applyMsi|$installExe"')
+Assert 'E2 and through a renaming variable' ((AKinds $oneHop) -eq 'repo-build-target')
+$viaParam = @(
+    'param(',
+    '    [string]$Exe = ''D:\git\ghoztty\zig-out\bin\ghoztty.exe'',',
+    '    [switch]$KeepScratch',
+    ')',
+    'function Start-Applier($tag, $spec) {',
+    '    $env:GHOZTTY_UPDATE_APPLY = $spec',
+    '}',
+    '$appA = Start-Applier ''a'' "$(New-DeadPid)|$msiA|$Exe"')
+Assert 'E3 update-failure-visible''s pre-T1271 shape (spec via a parameter) is a finding' ((AKinds $viaParam) -eq 'repo-build-target')
+$sandboxed = @(
+    '$exe = Join-Path $repo ''zig-out\bin\ghoztty.exe''',
+    '$sandbox = New-ApplierSandbox -Exe $exe -Root $work',
+    '$installExe = $sandbox.Exe',
+    '$env:GHOZTTY_UPDATE_APPLY = "$deadPid|$applyMsi|$installExe"',
+    '$env:GHOZTTY_UPDATE_APPLY = "$deadPid|$applyMsi|$($sandbox.Exe)"')
+Assert 'E4 a sandbox copy is not a finding, though it was copied FROM the build' ((AKinds $sandboxed) -eq '')
+$throwaway = @(
+    '$installDir = Get-ThrowawayInstallDir -RealLocalAppData $realLocalAppData -Identity $Identity',
+    '$testExe = Join-Path $installDir ''ghoztty.exe''',
+    '$env:GHOZTTY_UPDATE_APPLY = "$($dead.Id)|$staged|$testExe"')
+Assert 'E5 a throwaway product install is not a finding' ((AKinds $throwaway) -eq '')
+$restore = @(
+    '$savedApply = $env:GHOZTTY_UPDATE_APPLY',
+    'if ($savedApply) { $env:GHOZTTY_UPDATE_APPLY = $savedApply }',
+    '$env:GHOZTTY_UPDATE_APPLY = ''this is not a spec''')
+Assert 'E6 a save/restore and a malformed-spec literal arm nothing' ((AKinds $restore) -eq '')
+$untraced = @(
+    '$target = Get-SomeDir',
+    '$env:GHOZTTY_UPDATE_APPLY = "$p|$m|$target"')
+Assert 'E7 a target traced to neither a scratch provider nor the build is a finding' ((AKinds $untraced) -eq 'untraced-target')
+Assert 'E8 which a reasoned applier-target marker excuses' `
+    ((AKinds (@('# applier-target: a dir this script created and owns') + $untraced)) -eq '')
+Assert 'E9 and a reasonless one does not' ((AKinds (@('# applier-target:') + $untraced)) -eq 'empty-exemption')
+Assert 'E10 no marker excuses the repo build' `
+    ((AKinds (@('# applier-target: trust me') + $preT1268)) -eq 'repo-build-target')
+
+$armers = @()
+$applierViolators = @()
+foreach ($s in $scripts) {
+    $lines = Get-Content $s.FullName
+    if (@($lines | Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'GHOZTTY_UPDATE_APPLY[''"]?\s*=(?!=)' }).Count) {
+        $armers += $s.Name
+    }
+    $found = @(Get-ApplierTargetFindings -Text $lines)
+    foreach ($f in $found) { "  ---> $($s.Name):$($f.Line) [$($f.Kind)] $($f.Text)" }
+    if ($found.Count) { $applierViolators += $s.Name }
+}
+# Four scripts arm it today; a sweep that found none would be judging nothing.
+Assert "E11 the sweep sees the scripts that arm the applier ($($armers -join ', '))" ($armers.Count -ge 4)
+Assert "E12 none of them aims it at anything but a scratch install ($($applierViolators -join ', '))" ($applierViolators.Count -eq 0)
+
+if ($TeethCheck) {
+    $fake = Join-Path $env:TEMP "applier-teeth-$PID.ps1"
+    $preT1268 | Set-Content -Path $fake -Encoding UTF8
+    $teeth = @(Get-ApplierTargetFindings -Text (Get-Content $fake))
+    Remove-Item $fake -Force -ErrorAction SilentlyContinue
+    Assert 'E13 (teeth) a synthesized repo-build arming is caught through the file-read path' `
+        ($teeth.Count -eq 1 -and $teeth[0].Kind -eq 'repo-build-target')
 }
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can
