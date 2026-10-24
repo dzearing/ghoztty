@@ -199,7 +199,7 @@ python3 dist/website/site-mirror.py sync     # fetches origin/gh-pages, copies t
 # commit the mirror on the working branch
 ```
 
-`site-mirror.py` (T1088) classifies the difference before it writes. Version numbers lagging (`MIRROR STAMPS`) is the normal state between releases — the daily Windows publish moves the live page and nothing writes back — so it is refreshed without ceremony and `test/win32/website-windows-download.ps1` section F passes on it. A **content** difference (`MIRROR DRIFT`: copy or markup that exists on one side only) is a real defect whose direction the files cannot tell you, so `sync` refuses it: deploy the mirror's change to `gh-pages`, or take the live page with `sync --force` once you know it is the right one. `python3 dist/website/site-mirror.py check` asks without writing.
+`site-mirror.py` (T1088) classifies the difference before it writes. Version numbers lagging (`MIRROR STAMPS`) is the normal state between releases — the daily Windows publish moves the live page and nothing writes back — so it is refreshed without ceremony and `test/win32/website-windows-download.ps1` section F passes on it. A **content** difference (`MIRROR DRIFT`: copy or markup that exists on one side only) is a real defect whose direction the files cannot tell you, so `sync` refuses it: deploy the mirror's change with `python3 dist/website/site-mirror.py publish --push` (a dry run without `--push`; it keeps the live page's version stamps and never force-pushes), or take the live page with `sync --force` once you know it is the right one. `python3 dist/website/site-mirror.py check` asks without writing.
 
 ### Step 8: Report
 

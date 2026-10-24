@@ -27,12 +27,27 @@ sides. That is loose on purpose and only safe because it is used to COMPARE,
 never to rewrite (update-windows-links.py finds its anchors by element id for
 exactly the opposite reason).
 
+The other direction is `publish` (T1270). Nothing else deploys the mirror's
+PROSE: release-windows.yml and release.yml only rewrite version stamps on the
+live page, so a copy edit made here used to sit as DRIFT until somebody
+hand-pushed gh-pages. `publish` takes the mirror's page, puts the deployed
+page's version stamps back into it (the mirror's are stale by construction,
+and shipping them would roll the download links back a release), and commits
+that onto gh-pages as a child of the live commit. It is a dry run unless
+--push is given, because DRIFT cannot say which side is right: --push is the
+author asserting that the mirror is. A push that loses a race is rejected,
+never forced, and the stamps are only re-applied when both pages carry the
+same number of them -- a prose edit that adds or drops a version number is
+refused rather than guessed at.
+
   python3 dist/website/site-mirror.py check   [--repo DIR] [--ref REF] [--no-fetch]
   python3 dist/website/site-mirror.py sync    [--repo DIR] [--ref REF] [--no-fetch] [--force]
+  python3 dist/website/site-mirror.py publish [--repo DIR] [--ref REMOTE/BRANCH] [--no-fetch] [--push]
   python3 dist/website/site-mirror.py compare <mirror.html> <live.html>
 
-Exit codes: 0 ok/stamps (sync: written or nothing to do), 1 drift (sync:
-refused), 2 could not answer (no ref, git failed).
+Exit codes: 0 ok/stamps (sync: written or nothing to do; publish: nothing to
+do, dry run, or pushed), 1 drift (sync: refused; publish: refused or the push
+was rejected), 2 could not answer (no ref, git failed).
 """
 
 import argparse
@@ -102,7 +117,8 @@ def report(verdict, rows, label):
         return
     print("MIRROR DRIFT {0} and the deployed page differ in content "
           "({1} line(s)). Decide which side is right: deploy the mirror's "
-          "change to gh-pages, or take the live page with "
+          "change with `python3 dist/website/site-mirror.py publish --push`, "
+          "or take the live page with "
           "`python3 dist/website/site-mirror.py sync --force`.".format(
               label, len(rows)))
     for line_no, a, b in rows[:MAX_SHOWN]:
@@ -113,9 +129,105 @@ def report(verdict, rows, label):
         print("  ... {0} more".format(len(rows) - MAX_SHOWN))
 
 
-def git(repo, *args):
+def git(repo, *args, **kw):
     return subprocess.run(["git", "-C", repo] + list(args),
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
+
+
+def restamp(mirror_text, live_text):
+    """The mirror's page carrying the live page's version stamps, or
+    (None, why) when the two do not carry the same number of them.
+
+    Positional on purpose: the n-th stamp in the mirror is the n-th on the
+    live page, which holds exactly when the prose edit did not add or remove a
+    version number -- and that is the case the count check refuses.
+    """
+    mirror_text = mirror_text.replace("\r\n", "\n")
+    mv, lv = VERSION_RE.findall(mirror_text), VERSION_RE.findall(live_text)
+    if len(mv) != len(lv):
+        return None, ("the mirror carries {0} version number(s) and the "
+                      "deployed page {1}").format(len(mv), len(lv))
+    it = iter(lv)
+    return VERSION_RE.sub(lambda _m: next(it), mirror_text), None
+
+
+def git_fail(step, p):
+    sys.stderr.write("site-mirror: git {0} failed: {1}\n".format(
+        step, p.stderr.decode("utf-8", "replace").strip()))
+    return 2
+
+
+def publish(a, mirror, live):
+    """Deploy the mirror's prose to gh-pages (see the module docstring)."""
+    mirror_text = read_file(mirror)
+    verdict, rows = classify(mirror_text, live)
+    if verdict != "drift":
+        print("PUBLISH nothing to do: the mirror carries no content the "
+              "deployed page lacks ({0})".format(verdict))
+        return 0
+    page, why = restamp(mirror_text, live)
+    if page is None:
+        print("PUBLISH REFUSED cannot carry the deployed stamps over: " + why +
+              ". Make the mirror's version numbers line up with the live "
+              "page's, then re-run; nothing was written")
+        return 1
+    stale = set(VERSION_RE.findall(mirror_text))
+    moved = sorted(set(v for v in VERSION_RE.findall(live) if v not in stale))
+    kept = "deployed stamps kept ({0})".format(", ".join(moved) or "none differed")
+    if not a.push:
+        print("PUBLISH DRY RUN would deploy the {0} content line(s) above to "
+              "{1}, {2}; nothing was written. Re-run with --push once the "
+              "mirror is the right side".format(len(rows), a.ref, kept))
+        return 0
+    if "/" not in a.ref:
+        sys.stderr.write("site-mirror: --push needs --ref REMOTE/BRANCH\n")
+        return 2
+    remote, branch = a.ref.split("/", 1)
+
+    base = git(a.repo, "rev-parse", "--verify", a.ref + "^{commit}")
+    if base.returncode != 0:
+        return git_fail("rev-parse", base)
+    base_sha = base.stdout.decode().strip()
+    tree = git(a.repo, "ls-tree", base_sha)
+    if tree.returncode != 0:
+        return git_fail("ls-tree", tree)
+    blob = git(a.repo, "hash-object", "-w", "--stdin", input=page.encode("utf-8"))
+    if blob.returncode != 0:
+        return git_fail("hash-object", blob)
+    # The live tree with only index.html's blob swapped: every other file on
+    # gh-pages (appcast.xml, landing/) rides along untouched.
+    entries = []
+    for line in tree.stdout.decode("utf-8").splitlines():
+        meta, name = line.split("\t", 1)
+        if name == "index.html":
+            mode, kind, _old = meta.split(" ")
+            meta = " ".join((mode, kind, blob.stdout.decode().strip()))
+        entries.append(meta + "\t" + name)
+    mk = git(a.repo, "mktree", input=("\n".join(entries) + "\n").encode("utf-8"))
+    if mk.returncode != 0:
+        return git_fail("mktree", mk)
+    ct = git(a.repo, "commit-tree", mk.stdout.decode().strip(), "-p", base_sha,
+             "-m", "site: publish the in-repo download page's copy "
+             "(site-mirror.py publish)")
+    if ct.returncode != 0:
+        return git_fail("commit-tree", ct)
+    commit = ct.stdout.decode().strip()
+    # Never forced: the parent is the live commit we read, so a page somebody
+    # pushed since makes this a non-fast-forward and the remote refuses it.
+    pp = git(a.repo, "push", "-q", remote,
+             "{0}:refs/heads/{1}".format(commit, branch))
+    if pp.returncode != 0:
+        tail = pp.stderr.decode("utf-8", "replace").strip().splitlines()
+        print("PUBLISH REJECTED {0} moved since it was read ({1}); nothing "
+              "was deployed and the mirror is unchanged. Fetch and re-run".format(
+                  a.ref, tail[-1] if tail else "push failed"))
+        return 1
+    git(a.repo, "update-ref", "refs/remotes/" + a.ref, commit)
+    with open(mirror, "w", encoding="utf-8", newline="\n") as f:
+        f.write(page)
+    print("PUBLISH PUSHED {0} to {1}, {2}; the mirror now matches it -- "
+          "commit it".format(commit[:9], a.ref, kept))
+    return 0
 
 
 def read_live(repo, ref, fetch):
@@ -138,12 +250,13 @@ def read_file(path):
 
 def main(argv):
     ap = argparse.ArgumentParser(prog="site-mirror.py")
-    ap.add_argument("action", choices=["check", "sync", "compare"])
+    ap.add_argument("action", choices=["check", "sync", "publish", "compare"])
     ap.add_argument("files", nargs="*")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--ref", default=DEFAULT_REF)
     ap.add_argument("--no-fetch", action="store_true")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--push", action="store_true")
     a = ap.parse_args(argv)
 
     if a.action == "compare":
@@ -159,6 +272,9 @@ def main(argv):
         return 2
     verdict, rows = classify(read_file(mirror), live)
     report(verdict, rows, MIRROR_PATH.replace(os.sep, "/"))
+
+    if a.action == "publish":
+        return publish(a, mirror, live)
 
     if a.action == "check":
         return 1 if verdict == "drift" else 0

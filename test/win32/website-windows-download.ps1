@@ -516,6 +516,50 @@ if (-not $interp) {
         $null = & git -C $fc remote set-url origin (Join-Path $fw 'no-such.git') 2>&1
         $fr = Get-GhPagesFreshness $fc
         Assert "F12 an unreachable origin reads unknown, not current ($($fr.State): $($fr.Why))" ($fr.State -eq 'unknown')
+
+        # T1270: publish, the mirror -> gh-pages direction nothing else
+        # covers. The live page on $fo is $pageEdit + 'later' (stamps 1.9.0 /
+        # 1.9.7); the mirror below carries a copy edit AND stale stamps
+        # (1.2.3 / 1.2.4), which is what a prose edit made between releases
+        # looks like. What must reach gh-pages is the mirror's copy with the
+        # LIVE stamps -- shipping the mirror's would roll the links back.
+        $fp = Join-Path $fw 'pub'
+        $null = & git clone -q $fo $fp 2>&1
+        $null = & git -C $fp config user.name t 2>&1
+        $null = & git -C $fp config user.email t@t 2>&1
+        $pm = Join-Path $fp 'relay\deploy\ghpages\index.html'
+        New-Item -ItemType Directory -Path (Split-Path $pm) -Force | Out-Null
+        $pageMirror = ($pageOld -replace 'Defender note', 'Defender may quarantine') + "<p>later, reworded</p>`n"
+        [IO.File]::WriteAllText($pm, $pageMirror, $utf8)
+        $liveOf = { (& git -C $fo show 'gh-pages:index.html' 2>$null) -join "`n" }
+        $shaOf  = { (& git -C $fo rev-parse gh-pages 2>$null | Select-Object -First 1) }
+        $sha0 = & $shaOf
+        $o = & $interp $mirrorPy publish --repo $fp --no-fetch 2>&1; $rc = $LASTEXITCODE
+        Assert "F13 publish without --push is a dry run: exit 0, names the stamps it keeps, origin untouched (rc=$rc)" ($rc -eq 0 -and "$o" -match 'PUBLISH DRY RUN' -and "$o" -match '1\.9\.7' -and (& $shaOf) -eq $sha0 -and [IO.File]::ReadAllText($pm) -ceq $pageMirror)
+
+        $o = & $interp $mirrorPy publish --repo $fp --no-fetch --push 2>&1; $rc = $LASTEXITCODE
+        $live = & $liveOf
+        $parent = (& git -C $fo rev-parse 'gh-pages^' 2>$null | Select-Object -First 1)
+        Assert "F14 publish --push deploys the mirror's copy with the LIVE stamps, as a child of the live commit (rc=$rc)" ($rc -eq 0 -and "$o" -match 'PUBLISH PUSHED' -and $live -match 'Defender may quarantine' -and $live -match 'later, reworded' -and $live -match '1\.9\.7' -and $live -notmatch '1\.2\.4' -and $parent -eq $sha0)
+        $o2 = & $interp $mirrorPy check --repo $fp --no-fetch 2>&1
+        Assert "F15 after the push the mirror matches the deployed page, and a second publish has nothing to do" ("$o2" -match 'MIRROR OK' -and "$(& $interp $mirrorPy publish --repo $fp --no-fetch --push 2>&1)" -match 'PUBLISH nothing to do')
+
+        [IO.File]::WriteAllText($pm, ([IO.File]::ReadAllText($pm) + "<p>now v2.0.0</p>`n"), $utf8)
+        $before = [IO.File]::ReadAllText($pm); $sha1 = & $shaOf
+        $o = & $interp $mirrorPy publish --repo $fp --no-fetch --push 2>&1; $rc = $LASTEXITCODE
+        Assert "F16 a copy edit that adds a version number is REFUSED, not guessed at (rc=$rc)" ($rc -eq 1 -and "$o" -match 'PUBLISH REFUSED' -and (& $shaOf) -eq $sha1 -and [IO.File]::ReadAllText($pm) -ceq $before)
+
+        # A rival push lands after our read: the publish must lose, not force.
+        [IO.File]::WriteAllText($pm, $before.Replace('<p>now v2.0.0</p>', '<p>now final</p>'), $utf8)
+        $fr2 = Join-Path $fw 'rival'
+        $null = & git clone -q -b gh-pages $fo $fr2 2>&1
+        [IO.File]::WriteAllText((Join-Path $fr2 'appcast.xml'), "<rss/>`n", $utf8)
+        $null = & git -C $fr2 add appcast.xml 2>&1
+        $null = & git -C $fr2 -c user.name=t -c user.email=t@t commit -q -m rival 2>&1
+        $null = & git -C $fr2 push -q origin gh-pages 2>&1
+        $shaR = & $shaOf; $before = [IO.File]::ReadAllText($pm)
+        $o = & $interp $mirrorPy publish --repo $fp --no-fetch --push 2>&1; $rc = $LASTEXITCODE
+        Assert "F17 a publish that lost a race is REJECTED: origin keeps the rival's commit, the mirror is unchanged (rc=$rc)" ($rc -eq 1 -and "$o" -match 'PUBLISH REJECTED' -and (& $shaOf) -eq $shaR -and [IO.File]::ReadAllText($pm) -ceq $before)
     } finally {
         Remove-Item -LiteralPath $fw -Recurse -Force -ErrorAction SilentlyContinue
     }
