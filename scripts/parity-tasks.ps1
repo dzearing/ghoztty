@@ -1847,7 +1847,7 @@ switch ($Command) {
             foreach ($p in $paths) { $exact[$p] = $true }
             $rows += [pscustomobject]@{
                 Task = $t; Filed = $filed; Paths = $paths; Exact = $exact
-                Hits = @(); Mentions = @()
+                Hits = @(); Mentions = @(); Cites = @()
             }
         }
         if (-not $earliest) { $earliest = (Get-Date).AddYears(-5) }
@@ -1898,17 +1898,36 @@ switch ($Command) {
         # A second pass rather than a wider format on the first: --name-only
         # and %b both emit bare lines after the header, and there is no way to
         # tell a body line from a path once they are mixed.
+        #
+        # Not every mention is somebody dealing with the task (T1308). Most
+        # are a commit CITING it - "drag-perf is red (known T1854)", "filed
+        # T2191", "triage reasons for T1680" - and counting those made the
+        # signal noise: on 2026-10-24 T1854 led the report at named=123,
+        # every one a guard-excuse line, and 45 of the 47 single-mention rows
+        # were filings and triage. So a mention is NAMED (ranked) only when
+        # the subject carries the id as its task tag - "... (T123)", the
+        # house style for the task a commit did - or a close verb attaches to
+        # the id itself: "card T6 was already fixed", "closes T6". Proximity, not
+        # the line: a body paragraph is one line, and "already tracked as
+        # T2060" or "a duplicate of T1412" (the survivor) sits beside a
+        # "closed" that is about some other card. Everything else is
+        # `cited=`: shown, not ranked.
+        $survivor = '(?<!\b(duplicate|duplicates|copy|superseded by|replaced by)( of)?\s+)'
+        $closeAfter = '\b[^.;:,()]{0,30}?\b(closed|fixed|done|superseded|absorbed|resolved|obsolete|skipped)\b'
+        $closeBefore = '(?i)\b(closes|closed|closing|fixes|fixed|fixing|supersedes|absorbs|resolves|resolved)\s+(the\s+)?'
         $rowById = @{}
         foreach ($r in $rows) { $rowById[$r.Task.Id] = $r }
         $msgLog = @(& git -C $root log ('--since=' + $earliest.ToString('yyyy-MM-ddTHH:mm:ss')) `
                 '--no-merges' ("--format=$marker%h %aI %as %s%n%b") 2>$null)
-        $curWhen = $null; $curLine = $null; $curIds = $null
+        $curWhen = $null; $curLine = $null; $curIds = $null; $inSubject = $false
         $flush = {
             if ($curLine -and $curIds) {
                 foreach ($id in $curIds.Keys) {
                     $r = $rowById[$id]
                     if (-not $r -or -not $r.Filed -or $curWhen -le $r.Filed) { continue }
-                    if ($r.Mentions -notcontains $curLine) { $r.Mentions += $curLine }
+                    if ($curIds[$id]) {
+                        if ($r.Mentions -notcontains $curLine) { $r.Mentions += $curLine }
+                    } elseif ($r.Cites -notcontains $curLine) { $r.Cites += $curLine }
                 }
             }
         }
@@ -1921,9 +1940,18 @@ switch ($Command) {
                 $curWhen = try { [datetime]::Parse($bits[1]) } catch { $null }
                 $curLine = "{0} {1} {2}" -f $bits[0], $bits[2], $bits[3]
                 $curIds = @{}
+                $line = if ($bits.Count -ge 4) { $bits[3] } else { '' }
+                $inSubject = $true
             }
             if (-not $curIds) { continue }
-            foreach ($m in [regex]::Matches($line, '\bT\d+\b')) { $curIds[$m.Value] = $true }
+            foreach ($m in [regex]::Matches($line, '\bT\d+\b')) {
+                $id = $m.Value
+                $strong = ($line -match ('(?i)' + $survivor + '\b' + $id + $closeAfter)) -or
+                    ($line -match ($closeBefore + $id + '\b')) -or
+                    ($inSubject -and $line -match ('\([^()]*\b' + $id + '\b[^()]*\)\s*$'))
+                $curIds[$id] = [bool]$curIds[$id] -or $strong
+            }
+            $inSubject = $false
         }
         & $flush
 
@@ -1932,19 +1960,20 @@ switch ($Command) {
         # the hit count on purpose: among tasks nobody has named, the one whose
         # claim about the code is oldest is the one most likely to have gone
         # false, and hit count only measures how busy its files are.
-        $ranked = @($rows | Where-Object { $_.Hits.Count -gt 0 -or $_.Mentions.Count -gt 0 } | Sort-Object `
+        $ranked = @($rows | Where-Object { $_.Hits.Count -gt 0 -or $_.Mentions.Count -gt 0 -or $_.Cites.Count -gt 0 } | Sort-Object `
             @{ Expression = { $_.Mentions.Count }; Descending = $true }, `
             @{ Expression = { $_.Filed } })
         $named = @($ranked | Where-Object { $_.Mentions.Count -gt 0 }).Count
-        Write-Host ("stale-scan: {0} open todo(s) for seat={1}. {2} were NAMED by a later commit; {3} name code that has moved since they were filed." -f `
-                $todos.Count, $wantSeat, $named, $ranked.Count)
+        $cited = @($ranked | Where-Object { $_.Mentions.Count -eq 0 -and $_.Cites.Count -gt 0 }).Count
+        Write-Host ("stale-scan: {0} open todo(s) for seat={1}. {2} were NAMED by a later commit (its task tag, or a close verb on the id); {3} more only cited; {4} listed in all." -f `
+                $todos.Count, $wantSeat, $named, $cited, $ranked.Count)
         Write-Host "Each line is a PROMPT TO VERIFY, not a verdict - the defect may still be entirely open."
         Write-Host ""
         foreach ($r in ($ranked | Select-Object -First $Top)) {
             $age = if ($r.Filed) { [int][math]::Floor(($now - $r.Filed).TotalDays) } else { 0 }
             $pri = if ($r.Task.Priority) { $r.Task.Priority } else { '--' }
-            Write-Host ("{0,-7} {1}  age={2,4}d  named={3,2}  touched={4,3}  {5}" -f `
-                    $r.Task.Id, $pri, $age, $r.Mentions.Count, $r.Hits.Count, $r.Task.Title)
+            Write-Host ("{0,-7} {1}  age={2,4}d  named={3,2}  cited={4,3}  touched={5,3}  {6}" -f `
+                    $r.Task.Id, $pri, $age, $r.Mentions.Count, $r.Cites.Count, $r.Hits.Count, $r.Task.Title)
             foreach ($h in ($r.Mentions | Select-Object -First 3)) { Write-Host ("     named by {0}" -f $h) }
         }
         if ($ranked.Count -gt $Top) {

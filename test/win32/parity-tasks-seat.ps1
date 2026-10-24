@@ -878,7 +878,11 @@ Q-Task 'T1' 'The defect is in `src/foo.zig`, near the top.'
 Q-Task 'T2' 'The defect is in `src/bar.zig`, which nobody has touched.'
 Q-Task 'T3' 'A prose-only card. No code path is named here at all.'
 Q-Task 'T4' 'Everything under `src/sub` is suspect.'
-Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'file four fixture tasks', '--quiet')
+#   T5 is only CITED by a later commit ("known red"), T6 is named by a body
+#   line that says it is already fixed (T1308: citing is not dealing with it).
+Q-Task 'T5' 'A prose-only card that later commits only cite.'
+Q-Task 'T6' 'A prose-only card a later commit body says is fixed.'
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'file six fixture tasks', '--quiet')
 
 # Backdate is not needed: the signal only requires the touching commit to be
 # strictly newer than the filing one, and git timestamps to the second - so
@@ -887,6 +891,10 @@ Start-Sleep -Seconds 2
 Q-Write 'src/foo.zig' "// foo, fixed`n"
 Q-Git @('add', '-A')
 Q-Git @('commit', '-m', 'repair the foo path while here (T3)', '--quiet')
+Q-Git @('commit', '--allow-empty', '--quiet', '-m', 'chore(tracker): T9 filed',
+    '-m', ("Guards excused:`n- drag-perf is red (known T5 line), already tracked; T9 is closed as a duplicate of T5.`n" +
+        "- a duplicate of T5 and is closed as skipped; a copy of T5 I filed, T9, is closed.`n" +
+        "- T6 was already fixed by abc1234."))
 
 $r = Task-Run -CmdArgs @('next') -Dir $qtasks
 # Two matches rather than one long one: Out-String wraps at the host width, so
@@ -902,11 +910,17 @@ Assert 'Q1b ...and says to check the defect still reproduces before building' (
     $r.Out -match 'CHECK FIRST')
 
 $r = Task-Run -CmdArgs @('stale-scan', '-Top', '10') -Dir $qtasks
-Assert 'Q2 stale-scan reports the task whose file moved' ($r.Out -match 'T1\s+P2\s+age=\s*\d+d\s+named=\s*0\s+touched=\s*1')
+Assert 'Q2 stale-scan reports the task whose file moved' ($r.Out -match 'T1\s+P2\s+age=\s*\d+d\s+named=\s*0\s+cited=\s*0\s+touched=\s*1')
 Assert 'Q3 ...and ranks the task a later commit NAMED above it' (
     $r.Out -match 'T3\s+P2\s+age=\s*\d+d\s+named=\s*1' -and
     $r.Out.IndexOf('T3 ') -lt $r.Out.IndexOf('T1 '))
 Assert 'Q3b ...naming the commit that mentioned it' ($r.Out -match 'named by \w+ \d{4}-\d\d-\d\d repair the foo path')
+Assert 'Q3c a task a commit only CITES ("known red") is cited=1, not named' (
+    $r.Out -match '(?m)^T5\s+P2\s+age=\s*\d+d\s+named=\s*0\s+cited=\s*1')
+Assert 'Q3d ...and does not rank above a task a commit named' (
+    $r.Out.IndexOf('T5 ') -gt $r.Out.IndexOf('T3 '))
+Assert 'Q3e a body line saying the task is already fixed counts as NAMED' (
+    $r.Out -match '(?m)^T6\s+P2\s+age=\s*\d+d\s+named=\s*1')
 Assert 'Q4 a task whose files nobody touched is not listed' ($r.Out -notmatch '(?m)^T2\s')
 # The trap that made the first cut of this report useless: ranked by raw hit
 # count, seventeen tasks naming `test\win32` sat at the top with 300+ touches
