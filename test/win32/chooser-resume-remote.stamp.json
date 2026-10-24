@@ -1,8 +1,8 @@
 {
     "guard":  "chooser-resume-remote",
     "script":  "test/win32/chooser-resume-remote.ps1",
-    "generated":  "2026-10-24T11:47:20-07:00",
-    "commit":  "30de0d08b",
+    "generated":  "2026-10-24T13:07:10-07:00",
+    "commit":  "a26169da4",
     "uncommitted":  [
 
                     ],

@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-24T08:56:58-07:00",
-    "commit":  "bb637cc0e",
+    "generated":  "2026-10-24T11:41:06-07:00",
+    "commit":  "a26169da4",
     "uncommitted":  [
-
+                        "scripts/go-loop-exec.ps1",
+                        "scripts/go-loop-pane-probe.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -32,10 +33,10 @@
                   "scripts/ghoztty-cleanup.ps1":  "0535db22311b9640e47102124f856a2690dd446d9b87461ba2749f9418d29ffc",
                   "scripts/git-commit-guard.ps1":  "362105b3677ccb7e401ba858ca7dad11ba6a12d4abd77c9c07cf6f3b24af55bf",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "fb2de9264fb47308b583db2bb655c8336c9e99c6ad3ae989a05300799a3c7322",
+                  "scripts/go-loop-exec.ps1":  "1bdb8052f543e668df74300cbf6d5b99a3615a0baf8d173a3b7a0dd4c753ec6d",
                   "scripts/go-loop-health.ps1":  "becaebfb01ef3286d90d76ec88c6e769dd1fd93ea8991b3c3aca4ca19bdcd467",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
-                  "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
+                  "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
                   "scripts/guard-due.ps1":  "5ff1bc96a06987d4f86489f78ca28b57fb38778831977258537f60d86c98e887",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",

@@ -155,7 +155,9 @@ function Get-PaneOccupant {
 # border character is outside \x20-\x7E, so both shapes flatten to leading
 # whitespace here. If a future chrome puts the marker at column 0 for real, this
 # reads as an EMPTY composer: a miss, never a false nudge, and the turn-age
-# backstop still fires. T1320 tracks checking it against a live TUI.
+# backstop still fires. Since T1320 the claim checks the shape against the
+# loop's own live pane every turn (Get-PaneComposerShape, below). Measured
+# again 2026-10-24 (v2.1.306, 92 columns): same rule, marker now `>` + U+00A0.
 $script:ComposerWindowLines = 12
 
 # Text the TUI puts in an empty composer itself. It is not pending input and
@@ -191,6 +193,63 @@ function Get-PaneComposerText {
     return ''
 }
 
+# --- do we still RECOGNISE the composer? (T1320) ----------------------------
+#
+# Get-PaneComposerText answers '' for an empty composer AND for a pane whose
+# composer it cannot find, and only the first of those is fine. If Claude Code's
+# chrome moves the marker - to column 0, behind a glyph the indent rule does not
+# expect - every pane reads as empty, the composer arm never fires again, and
+# every fixture above keeps passing because the fixtures are pictures this repo
+# drew. So the shape is its own question, with three answers:
+#
+#   recognised    an indented `>` marker sits in the bottom window
+#   unrecognised  the pane has text, and none of it is a composer we know
+#   blind         nothing came back to look at
+#
+# go-loop-exec.ps1 claim asks it of the loop's OWN pane every turn - a live
+# Claude Code TUI, mid tool call, which always has its composer drawn - and
+# reports `COMPOSER UNRECOGNISED` with the tail it saw. Reported, never
+# refused: a chrome change is the TUI's doing, and the remedy is teaching this
+# file the new shape, which no turn can do by being refused.
+function Get-PaneComposerShape {
+    param([AllowEmptyString()][string]$Tail)
+
+    if ([string]::IsNullOrWhiteSpace($Tail)) { return 'blind' }
+    $flat = ($Tail -replace '[^\x20-\x7E\r\n]', ' ')
+    $lines = @($flat -split "`r?`n")
+    if ($lines.Count -gt $script:ComposerWindowLines) {
+        $lines = @($lines | Select-Object -Last $script:ComposerWindowLines)
+    }
+    # The indent rule shared with both readers: a border sits to the marker's
+    # left in every chrome measured, and an EMPTY composer still counts.
+    foreach ($l in $lines) {
+        if ($l.TrimEnd() -match '^\s+>\s*(\S.*)?$') { return 'recognised' }
+    }
+    return 'unrecognised'
+}
+
+# The claim's report line(s) for one pane read. Pure, so the red line can be
+# demonstrated without a TUI whose chrome has actually drifted (T1133).
+function Format-PaneComposerReport {
+    param([string]$Shape, [AllowEmptyString()][string]$Tail, [string]$PaneId)
+
+    switch ($Shape) {
+        'recognised' { return @("  composer recognised (pane $PaneId; the stall catch can read it)") }
+        'blind' { return @("  composer not read (pane $PaneId answered nothing to +read)") }
+    }
+    $out = @("  COMPOSER UNRECOGNISED: pane $PaneId has no composer the stall catch knows, " +
+        'so an unsent continuation would read as empty and only the 180m backstop would ' +
+        'catch it - teach scripts\go-loop-pane-probe.ps1 the new shape (T1320). Its last lines:')
+    $flat = ($Tail -replace '[^\x20-\x7E\r\n]', '#')
+    $seen = @($flat -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 6)
+    foreach ($l in $seen) {
+        $l = $l.TrimEnd()
+        if ($l.Length -gt 120) { $l = $l.Substring(0, 117) + '...' }
+        $out += "    | $l"
+    }
+    return $out
+}
+
 # --- is the session WORKING? (T1370) ----------------------------------------
 #
 # The composer arm above answers "is there text nobody sent". On 2026-09-05 the
@@ -223,20 +282,14 @@ $script:WorkingSpinnerPattern = '\((?:\d+h\s+)?(?:\d+m\s+)?\d+s\b'
 function Get-PaneWorkingState {
     param([AllowEmptyString()][string]$Tail)
 
-    if ([string]::IsNullOrWhiteSpace($Tail)) { return 'unknown' }
+    # The composer marker is the proof there is a Claude TUI here at all - the
+    # same question Get-PaneComposerShape answers, so it is asked there.
+    if ((Get-PaneComposerShape -Tail $Tail) -ne 'recognised') { return 'unknown' }
     $flat = ($Tail -replace '[^\x20-\x7E\r\n]', ' ')
     $lines = @($flat -split "`r?`n")
     if ($lines.Count -gt $script:ComposerWindowLines) {
         $lines = @($lines | Select-Object -Last $script:ComposerWindowLines)
     }
-    # The composer marker is the proof there is a Claude TUI here at all. Same
-    # indent rule as Get-PaneComposerText - a border sits to its left in both
-    # chromes - except that an EMPTY composer counts, which is the whole point.
-    $sawComposer = $false
-    foreach ($l in $lines) {
-        if ($l.TrimEnd() -match '^\s+>\s*(\S.*)?$') { $sawComposer = $true; break }
-    }
-    if (-not $sawComposer) { return 'unknown' }
     # The spinner only counts where it lives, in the same bottom window. A
     # transcript line that happens to carry an elapsed time reads as working,
     # which is the harmless direction: it declines to nudge.
@@ -253,7 +306,7 @@ function Get-PaneWorkingState {
 function Read-PaneState {
     param([string]$PaneId, [string]$GhozttyExe, [int]$Lines = 20)
 
-    $blind = @{ Composer = ''; Working = 'unknown' }
+    $blind = @{ Composer = ''; Working = 'unknown'; Shape = 'blind'; Tail = '' }
     if (-not $PaneId) { return $blind }
     $out = ''
     # T663: the console twin, and `2>$null` rather than `2>&1` - a merged stderr
@@ -261,7 +314,9 @@ function Read-PaneState {
     try { $out = (& (Resolve-GhozttyCliExe $GhozttyExe) +read "--name=$PaneId" "--lines=$Lines" 2>$null | Out-String) } catch { return $blind }
     if ($LASTEXITCODE -ne 0) { return $blind }
     return @{ Composer = (Get-PaneComposerText -Tail $out)
-              Working  = (Get-PaneWorkingState -Tail $out) }
+              Working  = (Get-PaneWorkingState -Tail $out)
+              Shape    = (Get-PaneComposerShape -Tail $out)
+              Tail     = $out }
 }
 
 # The composer alone, for callers that want nothing else.

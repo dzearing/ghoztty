@@ -1,8 +1,8 @@
 {
     "guard":  "printclient-audit",
     "script":  "test/win32/printclient-audit.ps1",
-    "generated":  "2026-10-24T11:43:13-07:00",
-    "commit":  "30de0d08b",
+    "generated":  "2026-10-24T12:37:36-07:00",
+    "commit":  "a26169da4",
     "uncommitted":  [
 
                     ],

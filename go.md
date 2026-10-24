@@ -73,6 +73,13 @@ Concretely, in order, with no stops in between:
      turn's, and it prints that it was used. Ask directly with
      `scripts\ci-status.ps1 check`; acceptance is section E of
      `test\win32\gate-negatives.ps1`.
+   - **It also checks the stall catch can still READ a composer** (T1320):
+     it reads this turn's own Claude Code pane - the one live composer every
+     turn is guaranteed to have - and prints `composer recognised`, or
+     `COMPOSER UNRECOGNISED` with the lines it saw when a Claude Code update
+     has moved the marker. That line is never a refusal; it means teach
+     `scripts\go-loop-pane-probe.ps1` the new shape, because until then an
+     unsent `/rc` reads as an empty composer and only the 180m backstop fires.
    - **It also AUDITS the install locations** (T727): `DELIVER AUDIT ...` says
      what is sitting in the Desktop portable, the share and the published zip
      RIGHT NOW — every check `deliver-windows-build.ps1` makes, run read-only

@@ -1,13 +1,13 @@
 {
     "guard":  "process-family",
     "script":  "test/win32/process-family.ps1",
-    "generated":  "2026-10-20T22:01:38-07:00",
-    "commit":  "e66b7a782",
+    "generated":  "2026-10-24T11:39:07-07:00",
+    "commit":  "a26169da4",
     "uncommitted":  [
-                        "scripts/loop-session.ps1"
+                        "scripts/go-loop-pane-probe.ps1"
                     ],
     "files":  {
-                  "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
+                  "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
                   "scripts/loop-session.ps1":  "39189157a285514dc8e68c86a5f844d688463d1124c90e882623373045895ade",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",

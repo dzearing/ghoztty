@@ -224,6 +224,13 @@ $Registry = @(
     # exact bytes and commits the stamp. Informational: it can only REMOVE a due
     # line, never add a refusal. Demonstrated by S11-S15 of go-loop-guard.ps1.
     [pscustomobject]@{ Label = 'STAMPED FROM'; Kind = 'status'; Via = 'scripts\guard-due.ps1' }
+    # T1320. The loop's own live pane shows no composer the stall catch knows,
+    # so an unsent continuation would read as empty. Reported, never refused -
+    # the remedy is teaching the probe the new chrome - and driven red against a
+    # drifted chrome in BB38-BB41 of the loop guard.
+    [pscustomobject]@{ Label = 'COMPOSER UNRECOGNISED'; Kind = 'gate'; Demo = $Loop
+        Marker = 'COMPOSER UNRECOGNISED'; Via = 'scripts\go-loop-pane-probe.ps1'
+    }
 
     # --- parity-tasks.ps1 validate -----------------------------------------
     [pscustomobject]@{ Label = 'BAD FRONTMATTER'; Kind = 'gate'; Demo = $Self; Marker = 'BAD FRONTMATTER' }

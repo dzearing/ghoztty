@@ -650,6 +650,24 @@ switch ($Action) {
             foreach ($line in ($ciOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
         }
 
+        # T1320: does the stall catch still recognise a REAL composer? Its only
+        # tests render the box this repo believes Claude Code draws, so a chrome
+        # change that moves the marker would read every pane as empty with every
+        # arm still green. This pane is the loop's own Claude Code TUI, mid tool
+        # call, so its composer is on screen right now - the one live sample
+        # every turn is guaranteed to have. Reported, never refused (the remedy
+        # is teaching go-loop-pane-probe.ps1 the new shape); the red line is
+        # demonstrated in section BB of test\win32\go-loop-guard.ps1.
+        if ($PaneId) {
+            try {
+                . (Join-Path $PSScriptRoot 'go-loop-pane-probe.ps1')
+                $probe = Read-PaneState -PaneId $PaneId -GhozttyExe $GhozttyExe
+                Format-PaneComposerReport -Shape $probe.Shape -Tail $probe.Tail -PaneId $PaneId
+            } catch {
+                "  composer not read (the pane probe threw: $($_.Exception.Message))"
+            }
+        }
+
         $dupes = @()
         foreach ($w in $windows) {
             if ($mine -and $w.Id -eq $mine.Id) { continue }

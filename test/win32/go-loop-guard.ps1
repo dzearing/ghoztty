@@ -3102,6 +3102,50 @@ $bbBlind = Resolve-LoopStallVerdict -TurnAgeMinutes 152 -StaleMinutes 180 -Suspe
     -ComposerText '' -PaneState 'unknown'
 Assert 'BB34 a pane the probe could not classify is not nudged' (-not $bbBlind.Stalled)
 
+# --- BB35-BB42. do we still RECOGNISE the composer? (T1320) ----------------
+#
+# Every fixture above is a picture this repo drew, so a Claude Code chrome
+# change that moved the marker would read every live pane as an EMPTY composer
+# and leave all of them green. The shape is therefore its own answer -
+# recognised / unrecognised / blind - and the claim reports it off the loop's
+# own live pane every turn. These arms pin the classifier and the report line,
+# including the red one, against a chrome it must NOT recognise.
+#
+# The chrome measured off the loop's own pane 2026-10-24 (Claude Code v2.1.306,
+# 92 columns): the same full-width rule, but the marker is now `>` + U+00A0.
+$bbRule92 = ([string][char]0x2500) * 92
+# Every concatenated element is parenthesised: in an array literal the comma
+# binds tighter than `+`, which silently re-shapes the fixture otherwise.
+$bbLive1024 = (@(
+    ('  ' + ([string][char]0x2733) + ' Bootstrapping' + ([string][char]0x2026) + ' (1m 59s ' + ([string][char]0x00B7) + ' 2.3k tokens)'),
+    '  Tip: Use /btw to ask a quick side question without interrupting',
+    ("$bbRule92>" + ([string][char]0x00A0)),
+    "$bbRule92  ctx: 120k/1000k (12%) | files: 1 changed | v2.1.306",
+    '  users/dzearing/windows-amd64 | D:\git\ghoztty'
+) -join "`r`n")
+Assert 'BB35 the 2026-10-24 live chrome is recognised' ((Get-PaneComposerShape -Tail $bbLive1024) -eq 'recognised')
+Assert 'BB36 and its NBSP-marked composer reads as empty, not as text' ((Get-PaneComposerText -Tail $bbLive1024) -eq '')
+Assert 'BB37 the earlier fixtures are recognised too (box, rule)' `
+    ((Get-PaneComposerShape -Tail (BBPane '')) -eq 'recognised' -and (Get-PaneComposerShape -Tail $bbIdle) -eq 'recognised')
+# THE drift this task exists for: a chrome that puts its marker at column 0
+# (or behind a glyph the indent rule does not know). Text reads '' exactly as an
+# empty composer does - which is why the shape is a separate answer.
+$bbDrifted = (@(
+    '* Read(go.md)',
+    '',
+    (([string][char]0x276F) + ' /rc'),
+    '  ctx: 120k/1000k (12%) | v2.9.0'
+) -join "`r`n")
+Assert 'BB38 a drifted chrome reads as an empty composer (the silent miss)' ((Get-PaneComposerText -Tail $bbDrifted) -eq '')
+Assert 'BB39 ...and its shape says so: unrecognised, not recognised' ((Get-PaneComposerShape -Tail $bbDrifted) -eq 'unrecognised')
+Assert 'BB40 an empty read is blind, not unrecognised' ((Get-PaneComposerShape -Tail '') -eq 'blind')
+$bbRed = @(Format-PaneComposerReport -Shape 'unrecognised' -Tail $bbDrifted -PaneId 'P1')
+Assert 'BB41 the claim line for a drifted chrome is COMPOSER UNRECOGNISED, with the tail it saw' `
+    ($bbRed[0] -match '^  COMPOSER UNRECOGNISED: pane P1' -and ($bbRed -join "`n") -match '\| # /rc')
+$bbGreen = @(Format-PaneComposerReport -Shape 'recognised' -Tail $bbLive1024 -PaneId 'P1')
+Assert 'BB42 and the live chrome gets the quiet line, no COMPOSER UNRECOGNISED' `
+    ($bbGreen.Count -eq 1 -and $bbGreen[0] -match 'composer recognised' -and ($bbGreen -join "`n") -notmatch 'UNRECOGNISED')
+
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 
 # --- CC. an external blocker is NAMED, and repetition is counted (T1483) ----

@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-24T11:48:57-07:00",
-    "commit":  "30de0d08b",
+    "generated":  "2026-10-24T12:39:56-07:00",
+    "commit":  "a26169da4",
     "uncommitted":  [
 
                     ],
@@ -1070,7 +1070,7 @@
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
                   "test/win32/daily-publish.ps1":  "eccff5616c9023dacbe70ec3aa3623db00b16c1123de1516e757fb5974cd9352",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
-                  "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
+                  "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
                   "test/win32/deliver-windows-build.ps1":  "25ee9d9e074fea510a40307910032162405b7aa8d69b5c032dd1bf9bafa049aa",
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
@@ -1108,10 +1108,10 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
-                  "test/win32/gate-negatives.ps1":  "c1f668bc1e4424a5df6243f9412e60aced2df2c73d5413c153381502f69e8323",
+                  "test/win32/gate-negatives.ps1":  "925c265fb910963fbc8ba677311909b35cfcb1ec9022721a2ace206e4346d426",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
-                  "test/win32/go-loop-guard.ps1":  "74985a98ece28ef0e3b0ee63995d8e94b4f6af7065774a60e014d6d4eeec6a0b",
+                  "test/win32/go-loop-guard.ps1":  "0a4f5c0cff7650be0af50b6801df9c8019e36732d63bb1191403b5d9bc14cffc",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "ab38059342784f2a702e8e7fd621acf9c4912c1b593d761a813b30b0d3bcdbb1",
