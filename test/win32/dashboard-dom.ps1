@@ -127,12 +127,28 @@ try {
     # --- the fixture comes from the REAL payload builder --------------------
     # `--once` prints the same object /api/data serves, so the stub cannot be
     # serving a hand-written shape that has drifted from the real one.
-    $payload = & $node.Source $dash --once 2>$null
+    # The builder narrates a cold history cache on stderr ("building history
+    # from N commits"). Under 'Stop', PS 5.1 turns that first line into a
+    # terminating error that kills node BEFORE it writes the cache - so the
+    # next run is just as cold, and the harness stayed red for good once more
+    # than 20 tracker commits had landed since the cache was last written.
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { $payload = & $node.Source $dash --once 2>$null } finally { $ErrorActionPreference = $eap }
     $payloadText = ($payload -join "`n")
     Assert 'A1 the real builder produced a payload' `
         ($LASTEXITCODE -eq 0 -and $payloadText.Length -gt 1000) "exit=$LASTEXITCODE len=$($payloadText.Length)"
     if ($payloadText.Length -le 1000) { throw 'ABORT: no payload to serve; nothing else can be measured' }
     [System.IO.File]::WriteAllText($dataJson, $payloadText)
+
+    # T1322: the builder carries `user-report: true` through as userReport, one
+    # for one with the task files - the page's chip and filter read nothing else.
+    $taskDir = Join-Path $Repo 'docs\design\windows-parity-tasks'
+    $flagged = @(Get-ChildItem -Path $taskDir -Filter 'T*.md' | Where-Object {
+        [System.IO.File]::ReadAllText($_.FullName) -match '(?m)^user-report:\s*true\s*$'
+    }).Count
+    $carried = & $node.Source -e "const d=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log(d.tasks.filter(t=>t.userReport===true).length)" $dataJson
+    Assert 'A4 every task file marked user-report reaches the payload as one' `
+        ($flagged -gt 0 -and [int]"$carried" -eq $flagged) "files=$flagged payload=$carried"
 
     # --- serve it -----------------------------------------------------------
     $stubArgs = @('"' + $stub + '"', '--page', '"' + $page + '"', '--driver', '"' + $driver + '"',

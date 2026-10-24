@@ -244,6 +244,11 @@ function loadTasks() {
       // Optional — the pre-tag tracker has none — and shown on activity cards
       // and the detail view so user-facing work reads apart from internal.
       tags: Array.isArray(F.tags) ? F.tags.map(String) : [],
+      // `user-report: true` (T1315): a person reported this by hand, rather
+      // than the loop finding it. Closing one files a publish request; the
+      // board badges it and the Tasks view filters on it (T1322), so "what is
+      // open that somebody actually asked for" is a glance, not a grep.
+      userReport: F['user-report'] === true || /^true$/i.test(String(F['user-report'] || '')),
       // The task's `## Progress log`: timestamped journal lines the loop
       // appends as it works (go.md step 1), which is what makes a task whose
       // turn died resumable. Last few only — the full log is in /api/task.
@@ -687,6 +692,8 @@ function buildActivity(points, taskById, decisions) {
       completed: done.map((id) => ({ id, title: name(id) })),
       filed: filed.map((id) => ({ id, title: name(id) })),
       tags: [...tagSet],
+      // Any of the same tasks a person reported (T1322) - the card says so.
+      userReport: (done.length ? done : filed).some((id) => (taskById.get(id) || {}).userReport),
       durationMs: gap != null && gap > 0 && gap <= MAX_PLAUSIBLE_TURN_MS ? gap : null,
     });
   }

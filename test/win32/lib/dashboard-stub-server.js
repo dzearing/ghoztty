@@ -73,7 +73,7 @@ const payload = JSON.parse(fs.readFileSync(DATA, 'utf8'));
 const template = (payload.tasks && payload.tasks[0]) || {};
 function fixtureTask(over) {
   return Object.assign({}, template, {
-    order: null, deps: [], commits: [], tags: ['test'], seat: 'win',
+    order: null, deps: [], commits: [], tags: ['test'], seat: 'win', userReport: false,
     priority: 'P1', milestone: null, triageReason: null,
     plain: null, goals: [], progress: [], summary: 'Fixture task for the DOM harness.',
     completedAt: null, ready: false, stale: false, staleMs: null,
@@ -102,6 +102,9 @@ const STALE = fixtureTask({
   id: 'TX903', title: 'Fixture: an in-progress task nobody has touched in days',
   status: 'in-progress', bucket: 'in_progress',
   stale: true, staleMs: 4 * DAY, touchedAt: Date.now() - 4 * DAY,
+  // The one fixture a person reported (T1322): its chip and the origin filter
+  // are measured against this row and against TX901, which is not one.
+  userReport: true,
   statusSince: Date.now() - 4 * DAY,
   plain: 'A turn claimed this and died before it finished.',
   file: 'docs/design/windows-parity-tasks/TX903.md'

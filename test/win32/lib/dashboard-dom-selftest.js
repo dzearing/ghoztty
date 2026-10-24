@@ -281,6 +281,65 @@
         });
       })
       .then(function () {
+        /* --- a task a person reported is marked, and filterable (T1322) ---- */
+        go('activity');
+        return waitFor(function () { return rowFor('TX903'); }, 'reported in-flight row').then(function (row) {
+          check('C49 an in-flight task a user reported carries the user-report chip',
+            !!row && !!row.querySelector('.tag.ureport'), row ? 'row has no .ureport chip' : 'no row for TX903');
+          var plain = cardFor('TX901');
+          check('C50 a task nobody reported carries no such chip',
+            !!plain && !plain.querySelector('.tag.ureport'), plain ? 'TX901 card shows the chip' : 'no card for TX901');
+          go('tasks');
+          return waitFor(function () {
+            var b = document.querySelector('#tbody');
+            return b && b.children.length ? b : null;
+          }, 'task rows');
+        }).then(function (body) {
+          if (!body) { check('C51 the tasks table marks the reported row', false, 'no rows'); return null; }
+          var idOf = function (tr) { return tr.children[1] ? tr.children[1].textContent.trim() : ''; };
+          var rows = function () { return Array.prototype.slice.call(document.querySelector('#tbody').children); };
+          var find = function (id) { return rows().filter(function (tr) { return idOf(tr) === id; })[0] || null; };
+          var r903 = find('TX903'), r901 = find('TX901');
+          check('C51 the tasks table marks the reported row and only that one',
+            !!r903 && !!r903.querySelector('.tag.ureport') && !!r901 && !r901.querySelector('.tag.ureport'),
+            'TX903 chip=' + !!(r903 && r903.querySelector('.tag.ureport')) + ' TX901 chip=' + !!(r901 && r901.querySelector('.tag.ureport')));
+          var all = rows().length;
+          var origin = document.querySelector('select[aria-label="Any origin"]');
+          check('C52 the tasks view has an origin filter', !!origin);
+          if (!origin) return null;
+          origin.value = 'user';
+          origin.dispatchEvent(new Event('change', { bubbles: true }));
+          var only = rows();
+          check('C53 "Reported by a user" keeps only reported tasks',
+            only.length > 0 && only.length < all && !!find('TX903') && !find('TX901') &&
+              only.every(function (tr) { return !!tr.querySelector('.tag.ureport'); }),
+            'got ' + only.length + ' of ' + all + ' rows');
+          origin = document.querySelector('select[aria-label="Any origin"]');
+          origin.value = 'loop';
+          origin.dispatchEvent(new Event('change', { bubbles: true }));
+          var rest = rows();
+          check('C54 "Not a user report" leaves every reported task out',
+            rest.length > 0 && !find('TX903') && !!find('TX901') &&
+              rest.every(function (tr) { return !tr.querySelector('.tag.ureport'); }),
+            'got ' + rest.length + ' of ' + all + ' rows');
+          origin = document.querySelector('select[aria-label="Any origin"]');
+          origin.value = '';
+          origin.dispatchEvent(new Event('change', { bubbles: true }));
+          var back = find('TX903');
+          if (!back) { check('C55 the task dialog of a reported task carries the chip', false, 'filter did not reset'); return null; }
+          back.click();
+          return waitFor(function () {
+            var d = document.querySelector('dialog.taskdlg');
+            return d && d.open ? d : null;
+          }, 'reported task dialog').then(function (dlg) {
+            check('C55 the task dialog of a reported task carries the chip',
+              !!dlg && !!dlg.querySelector('.td-head .tag.ureport'), dlg ? 'no chip in the dialog head' : 'no dialog');
+            if (dlg) dlg.close();
+            return waitFor(function () { return !document.querySelector('dialog.taskdlg'); }, 'dialog gone');
+          });
+        });
+      })
+      .then(function () {
         /* --- the other two views render at all ---------------------------- */
         go('data');
         return waitFor(function () {

@@ -386,6 +386,10 @@ td.fin, td.when { white-space: nowrap; color: var(--muted); font-variant-numeric
 .tag.polish i { background: #9a6fd0; }
 .tag.perf i { background: var(--warning); }
 .tag.test i { background: var(--done); }
+/* A task a PERSON reported (T1322, `user-report: true`). Outlined and written
+   out, so it reads apart from the category chips without leaning on color. */
+.tag.ureport { color: var(--critical); background: transparent; border: 1px solid var(--critical); font-weight: 600; }
+.tag.ureport i { background: var(--critical); }
 
 /* Progress-log lines on the in-flight card */
 .prog-line { font-size: 12px; color: var(--ink-2); padding: 2px 0; display: flex; gap: 8px; align-items: baseline; }
@@ -574,7 +578,7 @@ var state = {
   /* statuses: null = every status shown; else a {bucket: bool} map (the
      status filter is a MULTISELECT — the user unchecks e.g. Done to hide it,
      or any subset; a single-value select could not express "all but done"). */
-  filters: { q: '', statuses: null, priority: '', seat: '', tag: '' },
+  filters: { q: '', statuses: null, priority: '', seat: '', tag: '', origin: '' },
   open: {},        // expanded task rows
   notes: {},       // in-progress decision notes, kept across re-renders
   digestDate: null,  // which digest is being read; null = newest
@@ -650,6 +654,11 @@ function tagChips(tags) {
   return (tags || []).map(function (tg) {
     return h('span', { class: 'tag ' + tg, title: TAG_TITLE[tg] || tg }, [h('i'), tg]);
   });
+}
+/* The "a person asked for this" chip (T1322), or null so it can ride in any
+   child list - h() skips nulls. */
+function reportChip(flag) {
+  return flag ? h('span', { class: 'tag ureport', title: 'Reported by a user - closing it ships a release' }, [h('i'), 'user report']) : null;
 }
 function taskById(id) {
   if (!state.data) return null;
@@ -976,7 +985,7 @@ function decisionCard(d) {
       h('span', { class: 'dec-id', text: d.id }),
       h('span', { class: 'dec-title', text: d.title }),
       d.task ? h('span', { class: 'chip link', title: 'Show this task', text: d.task,
-        onclick: function () { state.filters = { q: d.task, statuses: null, priority: '', seat: '', tag: '' }; go('tasks'); } }) : null,
+        onclick: function () { state.filters = { q: d.task, statuses: null, priority: '', seat: '', tag: '', origin: '' }; go('tasks'); } }) : null,
       h('span', { class: 'chip', text: d.kind })
     ]),
     d.why ? h('div', { class: 'dec-why', text: d.why }) : null,
@@ -1290,7 +1299,8 @@ function inflightRow(t) {
           title: 'Claimed ' + fDate(since) + ' ' + fTime(since),
           text: 'running ' + fClockDur(Date.now() - since) }) : null;
       })(),
-      t.stale ? h('span', { class: 'chip warn', text: 'stale — untouched ' + fDur(t.staleMs) } ) : null
+      t.stale ? h('span', { class: 'chip warn', text: 'stale — untouched ' + fDur(t.staleMs) } ) : null,
+      reportChip(t.userReport)
     ].concat(tagChips(t.tags))),
     h('div', {
       class: 'if-title ev-link', text: t.title, role: 'button', tabindex: '0',
@@ -1522,6 +1532,7 @@ function activityView(d) {
       chips.push(h('span', { class: 'lab', text: 'follow-ups filed' }));
       a.filed.forEach(function (c) { chips.push(taskChip(c)); });
     }
+    if (a.userReport) chips.push(reportChip(true));
     tagChips(a.tags).forEach(function (c) { chips.push(c); });
     // The whole card opens the event's own L2 (T505); task chips inside it
     // stopPropagation and open their task directly, as before.
@@ -1625,7 +1636,8 @@ function openEvent(a) {
     h('header', null, [
       h('div', { class: 'td-head' }, [
         h('span', { class: 'evk ' + kindCls }, [h('i'), kindLabel]),
-        a.sha ? h('code', { class: 'td-id', text: a.sha }) : null
+        a.sha ? h('code', { class: 'td-id', text: a.sha }) : null,
+        reportChip(a.userReport)
       ].concat(tagChips(a.tags))),
       h('button', { class: 'td-x', 'aria-label': 'Close', text: '×', onclick: function () { dlg.close(); } })
     ]),
@@ -1982,7 +1994,9 @@ function tasksView(d) {
       var known = Object.keys(TAG_TITLE).filter(function (k) { return present[k]; });
       var extra = Object.keys(present).filter(function (k) { return !TAG_TITLE[k]; }).sort();
       return known.concat(extra).map(function (k) { return [k, 'Tag: ' + k]; });
-    })())
+    })()),
+    // Who raised it (T1322): "what is open that a person actually asked for".
+    sel('origin', 'Any origin', [['user', 'Reported by a user'], ['loop', 'Not a user report']])
   ]);
   // Sortable: clicking a header toggles direction, clicking another switches
   // key. Newest-first is the default because a tracker is read for what just
@@ -2072,7 +2086,8 @@ function openTask(t) {
         h('span', { class: 'pri ' + (t.priority || 'none'), text: t.priority || '--' }),
         h('span', { class: 'pill ' + t.bucket }, [h('i'), STATUS_LABEL[t.bucket]]),
         h('code', { class: 'td-id', text: t.id }),
-        alivePill
+        alivePill,
+        reportChip(t.userReport)
       ].concat(tagChips(t.tags))),
       h('button', { class: 'td-x', 'aria-label': 'Close', text: '×', onclick: function () { dlg.close(); } })
     ]),
@@ -2192,6 +2207,7 @@ function renderTasks() {
     if (f.tag && (t.tags || []).indexOf(f.tag) < 0) return false;
     if (f.priority && (t.priority || 'untriaged') !== f.priority) return false;
     if (f.seat && t.seat !== f.seat) return false;
+    if (f.origin && !!t.userReport !== (f.origin === 'user')) return false;
     if (q && (t.id + ' ' + t.title + ' ' + t.summary).toLowerCase().indexOf(q) < 0) return false;
     return true;
   });
@@ -2245,7 +2261,7 @@ function renderTasks() {
       h('td', null, [h('span', { class: 'pri ' + (t.priority || 'none'), text: pri })]),
       h('td', null, [h('span', { class: 'pill ' + t.bucket }, [h('i'), STATUS_LABEL[t.bucket]])]),
       h('td', null, [
-        h('div', { class: 't-title' }, [document.createTextNode(t.title + ' ')].concat(tagChips(t.tags))),
+        h('div', { class: 't-title' }, [document.createTextNode(t.title + ' '), reportChip(t.userReport)].concat(tagChips(t.tags))),
         t.summary ? h('div', { class: 't-sum', text: t.summary }) : null,
         t.deps.length ? h('div', { class: 't-deps', text: 'deps: ' + t.deps.join(', ') }) : null
       ]),
@@ -2520,7 +2536,7 @@ function signature(d) {
       // Tags and the newest progress note are rendered on cards, so a change
       // to either must re-render — status+title alone would sit stale.
       var lastProg = t.progress && t.progress.length ? t.progress[t.progress.length - 1].text : '';
-      return t.id + t.status + t.title + (t.tags || []).join(',') + lastProg;
+      return t.id + t.status + t.title + (t.tags || []).join(',') + (t.userReport ? 'U' : '') + lastProg;
     }),
     d.decisions.map(function (x) { return x.id + x.status + x.answer; }),
     d.digests, d.digest && d.digest.body,
