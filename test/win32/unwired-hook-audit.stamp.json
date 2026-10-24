@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-24T06:20:43-07:00",
-    "commit":  "f6f13f0cb",
+    "generated":  "2026-10-24T06:59:58-07:00",
+    "commit":  "7270ff795",
     "uncommitted":  [
 
                     ],
@@ -1322,7 +1322,7 @@
                   "test/win32/tab-strip-autohide.ps1":  "c92b1ef02c00bfd41c313f35185f35f2116e93b13a9d260e421e57c6469a65cc",
                   "test/win32/tab-tooltip.ps1":  "eded1e0c052efa8032cb617e313b856ed098d22864f5237b3066cc881f87355e",
                   "test/win32/target-staleness.ps1":  "f839b289d37ee78c0a57d46ae0f2278545a7337dfca72a7744b34cb6b8c929de",
-                  "test/win32/task-dashboard.ps1":  "dbe2fc1d854273fdb1d6b260eeb693d3dc19129f149c978ba3be7b5127dbe1f6",
+                  "test/win32/task-dashboard.ps1":  "319c7c9a864da58e566df7ca5de615ab2793f163e8e934039375bc0dbe098af3",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
                   "test/win32/test-binary-soak.ps1":  "96c647eb2fcbdef023f99868ab73bec7341befc23f0a14f2a9eacd4aefa64f3c",
                   "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",
@@ -1346,7 +1346,7 @@
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
                   "test/win32/update-graceful.ps1":  "d36ca938cd4e11724893428c3482c0389db25fabb2bc862cbe6cce131d83c31b",
                   "test/win32/update-progress.ps1":  "7dd2371ca5de45bf6d765616871b240036a713a3e0adfc367fdef8a49e087198",
-                  "test/win32/update-real-msi.ps1":  "1d1ea1aa05d8ca826ba841fcd25fd912d9a9e1dbb85145ccce668f75cc60d3db",
+                  "test/win32/update-real-msi.ps1":  "2ac990a09b958bc7ddd077532590478c34ab0a30363bbe8720d3648fd03a66b2",
                   "test/win32/upgrade-no-fork.ps1":  "b7591fc94633df3249eb7236a80228977874f47784548097544b5395b964e61e",
                   "test/win32/upgrade-resume-readiness.ps1":  "bd269e2436e29adb7d451c03c05450c2f5ca345f59dc66f230e06238c39ca70a",
                   "test/win32/upgrade-staleness.ps1":  "1c1285e7ad8c4e5f8e4c54a4f2f07fdf601cffc4f7951f93867e7707f440edec",
