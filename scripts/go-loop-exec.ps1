@@ -68,6 +68,9 @@ param(
     [int]$HeldTimeoutSeconds = 150,
     [switch]$NoRecover,       # resume: clear the flag only, restart nothing (tests)
     [string]$StatePath,       # resume: the watchdog's rearm/beacon state (tests)
+    # claim: the instant the daily-digest check is judged against (T1262).
+    # Defaults to now; the harness passes one so "before 05:00" is reachable.
+    [datetime]$DigestAsOf = [datetime]::MinValue,
     [switch]$Json
 )
 
@@ -507,6 +510,36 @@ switch ($Action) {
         if (Test-Path -LiteralPath $auditScript) {
             $auditOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $auditScript -Repo $Repo 2>&1 | Out-String
             foreach ($line in ($auditOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
+        }
+
+        # T1262: does THIS turn owe today's digest? T1223 put the answer on
+        # go-loop-health.ps1, which a human or the supervisor reads - but the
+        # turn that owes the digest reads this report, and on 2026-09-01 the
+        # turn walked straight past go.md step 0.5. Asked through
+        # lib\DigestState.ps1 so health and claim cannot disagree, with
+        # -Turning because a claim IS a turn. Only the lane that owns the
+        # morning block (morning-owner.ps1, T2115) is told it owes one; any
+        # other lane is told who does. Reported, never refused: a claim that
+        # could fail over a missing digest would wedge the loop, and the remedy
+        # is the turn writing it, not a placeholder.
+        . (Join-Path $PSScriptRoot 'lib\DigestState.ps1')
+        $digestAsOf = $DigestAsOf
+        if ($digestAsOf -eq [datetime]::MinValue) { $digestAsOf = Get-Date }
+        $digest = Get-DigestState -Repo $Repo -AsOf $digestAsOf -Turning
+        if ($digest.State -eq 'missing') {
+            $ownerScript = Join-Path $PSScriptRoot 'morning-owner.ps1'
+            $ownerOut = ''; $ownerCode = 0
+            if (Test-Path -LiteralPath $ownerScript) {
+                $ownerOut = (& powershell -NoProfile -ExecutionPolicy Bypass -File $ownerScript -Repo $Repo 2>&1 | Out-String).Trim()
+                $ownerCode = $LASTEXITCODE
+            }
+            if ($ownerCode -eq 3) {
+                "  digest missing for $($digest.Date), and another lane owns the morning block - not this turn's to write"
+            } else {
+                "  DIGEST OWED: $($digest.Path) does not exist and it is past 05:00 - write it before step 1 (go.md steps 0.5-0.7; never backfill an older day)"
+            }
+        } else {
+            "  digest $($digest.State) ($($digest.Date))"
         }
 
         # T1823: a shell "open with" picker sitting on the user's desktop is a

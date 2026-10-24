@@ -107,6 +107,7 @@ if (-not $DeliverWatermark) { $DeliverWatermark = Join-Path $env:LOCALAPPDATA 'g
 # The lane overview (T1984). Functions only, both of them.
 . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
 . (Join-Path $PSScriptRoot 'lib\LoopLedger.ps1')
+. (Join-Path $PSScriptRoot 'lib\DigestState.ps1')
 $IsoFmt = 'yyyy-MM-ddTHH:mm:ssK'
 function Now-Iso { (Get-Date).ToString($IsoFmt) }
 
@@ -276,30 +277,11 @@ try {
 #   not-due  - before 05:00, or the loop did not turn today at all (a box that
 #              was off overnight, or a loop stopped on purpose, owes nothing;
 #              and the standing rule is never to backfill a missed day)
-$digestDate = $DigestAsOf.ToString('yyyy-MM-dd')
-$digestRel = "docs\design\windows-parity-digests\$digestDate.md"
-$digestState = 'not-due'
-if (Test-Path -LiteralPath (Join-Path $Repo $digestRel)) {
-    $digestState = 'present'
-} else {
-    $dueAt = $DigestAsOf.Date.AddHours(5)
-    if ($DigestAsOf -ge $dueAt) {
-        # "Did the loop turn today?" is answered from the lock history, not the
-        # live lock: the lock says who holds it NOW, and a loop that ran this
-        # morning and then died would read as owing nothing.
-        $aliveToday = $false
-        $histPath = Join-Path $Repo 'temp\go-loop-history.jsonl'
-        if (Test-Path -LiteralPath $histPath) {
-            foreach ($line in @(Get-Content -LiteralPath $histPath -Tail 500 -ErrorAction SilentlyContinue)) {
-                if (-not $line) { continue }
-                $at = $null
-                try { $at = [datetime]::Parse([string](($line | ConvertFrom-Json).at)) } catch { continue }
-                if ($at -ge $dueAt -and $at -le $DigestAsOf) { $aliveToday = $true; break }
-            }
-        }
-        if ($aliveToday) { $digestState = 'missing' }
-    }
-}
+# The answer lives in lib\DigestState.ps1 since T1262, because the claim asks
+# the same question on behalf of the turn that owes the digest.
+$digest = Get-DigestState -Repo $Repo -AsOf $DigestAsOf
+$digestRel = $digest.Path
+$digestState = $digest.State
 
 # --- the daily publish (T1292) ---------------------------------------------
 #

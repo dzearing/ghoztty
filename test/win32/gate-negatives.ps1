@@ -208,6 +208,10 @@ $Registry = @(
     # window no turn may close. Constructed-state demonstration (it CAN report):
     # test\win32\focus-pull-scan.ps1.
     [pscustomobject]@{ Label = 'FOCUS PULL'; Kind = 'status'; Via = 'scripts\focus-pull-scan.ps1' }
+    # T1262. Today's digest is owed by THIS turn (past 05:00, no file, this lane
+    # owns the morning block). Reported, never refused - the remedy is the turn
+    # writing it - and demonstrated red/green/not-due in section C (C9-C11).
+    [pscustomobject]@{ Label = 'DIGEST OWED'; Kind = 'gate'; Demo = $Self; Marker = 'DIGEST OWED' }
     [pscustomobject]@{ Label = 'CI IN PROGRESS'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI OK'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI UNKNOWN'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
@@ -598,10 +602,13 @@ try {
         Set-UpstreamOffline $at
         return $at
     }
+    # Every claim here is judged at a fixed instant, so the digest lines (T1262)
+    # do not depend on the hour this harness happens to run at.
+    $DigestDay = (Get-Date).ToString('yyyy-MM-dd')
     function Invoke-Claim {
-        param([string]$At, [string]$Pane)
+        param([string]$At, [string]$Pane, [string]$AsOf = "$($DigestDay)T10:00:00")
         return Invoke-Ps @('-File', $ExecScript, 'claim', '-Repo', $At, '-PaneId', $Pane,
-            '-GhozttyExe', $Stand, '-NoClose', '-NoSelfClose')
+            '-GhozttyExe', $Stand, '-NoClose', '-NoSelfClose', '-DigestAsOf', $AsOf)
     }
 
     $red = New-RepoFixture 'repo-red'
@@ -617,6 +624,15 @@ try {
         ($r.Text -match 'UPSTREAM PROBLEM') $r.Text
     Check 'C4 the claim never claims the tree is clean while it is not' `
         ($r.Text -notmatch 'tree clean at claim') $r.Text
+    # T1262: no digest file and 10:00 - the turn is told, by path, that it owes one.
+    Check 'C9 a missing digest past 05:00 is reported to the turn as DIGEST OWED, by path' `
+        ($r.Text -match "DIGEST OWED: docs\\design\\windows-parity-digests\\$DigestDay\.md") $r.Text
+
+    # ...and before 05:00 nothing is owed yet, so the red line must not appear.
+    # Same pane, so the lock reads it as the same slot rather than a rival.
+    $r = Invoke-Claim $red 'GATE-NEG-RED-0001' "$($DigestDay)T04:00:00"
+    Check 'C10 before 05:00 the same missing digest is not-due, not owed' `
+        ($r.Text -match "digest not-due \($DigestDay\)" -and $r.Text -notmatch 'DIGEST OWED') $r.Text
 
     # The teeth for C1: what claim REPORTS, validate must FAIL on. This is the
     # two-ended arrangement the loop depends on, measured end to end.
@@ -632,6 +648,11 @@ try {
     # The positive control: a clean, pushed repo must produce the green lines,
     # or the reds above prove only that the claim always complains.
     $green = New-RepoFixture 'repo-green'
+    $digestDir = Join-Path $green 'docs\design\windows-parity-digests'
+    New-Item -ItemType Directory -Force -Path $digestDir | Out-Null
+    Write-Ascii (Join-Path $digestDir "$DigestDay.md") @('---', "date: `"$DigestDay`"", '---', '', '## Commentary')
+    [void](Invoke-GitIn $green @('add', '.'))
+    [void](Invoke-GitIn $green @('commit', '-qm', 'digest'))
     $bare = Join-Path $Sandbox 'origin.git'
     [void](Invoke-GitIn $Sandbox @('init', '-q', '--bare', $bare))
     [void](Invoke-GitIn $green @('remote', 'add', 'origin', $bare))
@@ -642,6 +663,8 @@ try {
     Check 'C7 a pushed branch claims push clean' ($r.Text -match 'push clean') $r.Text
     Check 'C8 ...and neither red line appears over a healthy repo' `
         ($r.Text -notmatch 'STRANDED WORK' -and $r.Text -notmatch 'UNPUSHED WORK') $r.Text
+    Check 'C11 a written digest claims present, and DIGEST OWED stays silent' `
+        ($r.Text -match "digest present \($DigestDay\)" -and $r.Text -notmatch 'DIGEST OWED') $r.Text
 
     # =======================================================================
     Say ''

@@ -1,17 +1,18 @@
 {
     "guard":  "gate-negatives",
     "script":  "test/win32/gate-negatives.ps1",
-    "generated":  "2026-10-23T12:49:02-07:00",
-    "commit":  "364a617c9",
+    "generated":  "2026-10-23T19:47:39-07:00",
+    "commit":  "71449d091",
     "uncommitted":  [
-                        "scripts/ci-status.ps1",
                         "scripts/go-loop-exec.ps1",
+                        "scripts/lib/DigestState.ps1",
                         "test/win32/gate-negatives.ps1"
                     ],
     "files":  {
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
-                  "scripts/go-loop-exec.ps1":  "99cc6dca5594620dd3264fc80cbfbdd331426e35c1c0a1650e9b1daeed2ad237",
+                  "scripts/go-loop-exec.ps1":  "8df3ef9e123ba0cd1f03421fa1d72a39fa2311921703fca8f1ab7d385a9aed6d",
+                  "scripts/lib/DigestState.ps1":  "997fd841d1a19a0a5cea6b583d475510c9606bcac5b4d885bca4ae6f7f54ae60",
                   "scripts/parity-tasks.ps1":  "efd892a1dd2e86003778090ec2e9f1798f40b6bbbf9c2f1bf29634c1e66c5231",
-                  "test/win32/gate-negatives.ps1":  "802be8f9463f6db4290d5fcd7b24e6021564d29c11b3dbfdc4c915014ee6a2fb"
+                  "test/win32/gate-negatives.ps1":  "ea6a9676528634be631533e33f4ba8075fcbdc7b1ec605cd2d037508e81c024c"
               }
 }

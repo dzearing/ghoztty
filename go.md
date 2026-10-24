@@ -166,7 +166,12 @@ Concretely, in order, with no stops in between:
      `not-due`. It never writes one, because a generated digest would turn the
      light green and destroy the only thing the light measures. Before this
      the step had no enforcement at all: the 2026-09-01 miss surfaced because
-     the user asked for it, and 08-24 → 08-29 surfaced never.
+     the user asked for it, and 08-24 → 08-29 surfaced never. **Since T1262
+     step 0's claim asks the same question for you**: `DIGEST OWED: <path>`
+     means this turn owes today's file and writes it before step 1; a lane
+     that does not own the morning block is told so instead. Same answer as
+     `digest=` (one function, `scripts\lib\DigestState.ps1`); demonstrated in
+     section C of `test\win32\gate-negatives.ps1`.
    - **One file per day, today only — never backfill.** If the loop was down
      for three days, the next turn writes today's digest and nobody writes the
      missing two: a digest is a morning read, not a ledger, and a backfilled

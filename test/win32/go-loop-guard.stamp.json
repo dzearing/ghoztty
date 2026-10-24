@@ -1,22 +1,24 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-10-23T12:41:54-07:00",
-    "commit":  "364a617c9",
+    "generated":  "2026-10-23T19:58:15-07:00",
+    "commit":  "71449d091",
     "uncommitted":  [
                         "scripts/go-loop-exec.ps1",
-                        "test/win32/go-loop-guard.ps1"
+                        "scripts/go-loop-health.ps1",
+                        "scripts/lib/DigestState.ps1"
                     ],
     "files":  {
                   "scripts/git-commit-guard.ps1":  "362105b3677ccb7e401ba858ca7dad11ba6a12d4abd77c9c07cf6f3b24af55bf",
                   "scripts/githooks/post-commit":  "5d1b525a670c0a0346ab4ba430e884172f586afd273f3ca2ec41a2c3835dd1f8",
                   "scripts/githooks/pre-commit":  "e02c6918ce8e6ae30f3e627de81fc74fe7e1990f9e18b9919ca819d50bd0b2c2",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "99cc6dca5594620dd3264fc80cbfbdd331426e35c1c0a1650e9b1daeed2ad237",
-                  "scripts/go-loop-health.ps1":  "3f4b3294e34bd948e96cd860738e6e9c848cc698f74396e309c969b71eeced82",
+                  "scripts/go-loop-exec.ps1":  "8df3ef9e123ba0cd1f03421fa1d72a39fa2311921703fca8f1ab7d385a9aed6d",
+                  "scripts/go-loop-health.ps1":  "be88272830400b16d18e026919815ee3c5a0047972a72f493470ac3bf14b25ad",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
+                  "scripts/lib/DigestState.ps1":  "997fd841d1a19a0a5cea6b583d475510c9606bcac5b4d885bca4ae6f7f54ae60",
                   "scripts/lib/StampMerge.ps1":  "c1397eeccbf3039c88b7d576b1c1948db4370987ebf053e8b9b6f50a6bf76926",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/loop-session.ps1":  "39189157a285514dc8e68c86a5f844d688463d1124c90e882623373045895ade",

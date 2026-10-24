@@ -185,6 +185,7 @@ $GuardTable = @(
             'scripts\stamp-merge.ps1',
             'scripts\lib\StampMerge.ps1',
             'scripts\lib\UserAlert.ps1',
+            'scripts\lib\DigestState.ps1',
             'scripts\githooks\*',
             'test\win32\go-loop-guard.ps1'
         )
@@ -3906,6 +3907,7 @@ $GuardTable = @(
             'scripts\parity-tasks.ps1',
             'scripts\go-loop-exec.ps1',
             'scripts\ci-status.ps1',
+            'scripts\lib\DigestState.ps1',
             'test\win32\gate-negatives.ps1'
         )
     },
