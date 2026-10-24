@@ -29,6 +29,12 @@
 #   F4) at rest the layout is the T2124 answer: two on show, s2 hidden
 #   F5) dragging back unfolds s2 the same way: seen on show at 2+ positions
 #       strictly between its tucked place and its slot
+#   F6) at no sampled moment of the fold or the unfold does any popup the app
+#       shows reach outside the window (T2227). The folding pane slides out to
+#       its held rect past the window's right edge; the pane child is clipped
+#       by the window, but its popups (the unfocused dim wash, painted in the
+#       background colour) are not, and the user saw that wash bleed out over
+#       the desktop mid-slide. P is focused first so s2 carries the wash.
 #
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
 # before any slide) and keeps F1/F2 as written: they MUST fail.
@@ -117,12 +123,23 @@ function Move-To([IntPtr]$top, [int]$fromX, [int]$toX, [int]$y) {
     }
 }
 
-# Sample every pane window for $ms milliseconds.
+# T2227: every visible top-level the app shows other than the window itself
+# that reaches outside the window's rect - a pane popup the window does not
+# clip. One line each, for the failure message.
+function Get-StrayPopups([int]$procId, [IntPtr]$top) {
+    $w = Get-TestWindowRect -Window $top
+    return @(Get-TestWindows -ProcessId $procId -Class '*' | Where-Object {
+            $_.Visible -and $_.Hwnd -ne [int64]$top -and $_.Width -gt 0 -and $_.Height -gt 0 -and
+            ($_.Left -lt $w.Left -or $_.Top -lt $w.Top -or $_.Right -gt $w.Right -or $_.Bottom -gt $w.Bottom)
+        } | ForEach-Object { "$($_.Class) $($_.Left)-$($_.Right)" })
+}
+
+# Sample every pane window (and any stray popup) for $ms milliseconds.
 function Get-Samples([IntPtr]$top, [int]$ms) {
     $out = New-Object System.Collections.Generic.List[object]
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while ($sw.ElapsedMilliseconds -lt $ms) {
-        $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = @(Get-Panes $top) })
+        $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = @(Get-Panes $top); Stray = @(Get-StrayPopups $script:appPid $top) })
         Start-Sleep -Milliseconds 15
     }
     return $out
@@ -176,6 +193,7 @@ try {
     # ---- setup: P | s1 | s2 ----------------------------------------------------
     Say "== setup: P | s1 | s2, 1500 DIP wide, slide $slideMs ms"
     $app = Start-App
+    $script:appPid = [int]$app.Pid
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     Start-Sleep -Milliseconds 800
     $dpi = [int](Get-TestWindowDpi -Window $top)
@@ -205,6 +223,14 @@ try {
     # 900/1500 is short of it, where the drag has only resized.
     $xFold = [int]($gridLeft + $gridW * 1000 / 1500)
     $xNear = [int]($gridLeft + $gridW * 900 / 1500)
+
+    # Focus P, so s2 - the pane that folds - is an unfocused pane and carries
+    # the dim wash whose bleed T2227 is about.
+    [void](Send-TestMouse -Window $top -Target $top -X ([int](($c3[0].Left + $c3[0].Right) / 2)) -Y $y -Action click)
+    Start-Sleep -Milliseconds 600
+    $washes = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyDimOverlay' | Where-Object Visible)
+    Say ("      P focused; {0} dim wash(es) on show" -f $washes.Count)
+    Assert ($washes.Count -ge 2) "F6 precondition: with P focused, s1 and s2 carry the dim wash ($($washes.Count) on show)"
 
     # ---- the fold, held, sampled ---------------------------------------------
     Say '== drag the root divider up to the fold point, then over it in one move, and hold'
@@ -269,6 +295,11 @@ try {
         Assert ($both -ge 1 -and $s1Above -eq $both) "F3: mid-slide, s1 is above s2 in the z-order ($s1Above of $both samples)"
     }
 
+    # F6: nothing the app shows bleeds out of the window mid-fold.
+    $strayFold = @($fold | Where-Object { $_.Stray.Count -gt 0 })
+    $firstFold = if ($strayFold.Count -gt 0) { "at $($strayFold[0].Ms) ms: $($strayFold[0].Stray -join ' | ')" } else { '' }
+    Assert ($strayFold.Count -eq 0) "F6: no popup reaches outside the window during the fold ($($strayFold.Count) of $($fold.Count) samples) $firstFold"
+
     # F4: the T2124 layout at rest.
     $shown = @($rest | Where-Object Visible)
     Assert ($shown.Count -eq 2) "F4: at rest two panes are on show (got $($shown.Count))"
@@ -286,6 +317,10 @@ try {
     if (-not $NegativeControl) {
         Assert ($s2Coming.Count -ge 2) "F5: unfolding, s2 is seen at $($s2Coming.Count) positions on its way back (need 2+)"
     }
+    $strayBack = @($back | Where-Object { $_.Stray.Count -gt 0 })
+    $firstBack = if ($strayBack.Count -gt 0) { "at $($strayBack[0].Ms) ms: $($strayBack[0].Stray -join ' | ')" } else { '' }
+    Assert ($strayBack.Count -eq 0) "F6: no popup reaches outside the window during the unfold ($($strayBack.Count) of $($back.Count) samples) $firstBack"
+
     Assert (@($again | Where-Object Visible).Count -eq 3) "F5: all the way back, three on show ($(@($again | Where-Object Visible).Count))"
     [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action up -HoldMs 0)
     Start-Sleep -Milliseconds 400

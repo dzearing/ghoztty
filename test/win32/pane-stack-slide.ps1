@@ -28,6 +28,10 @@
 #       show (the positive control) do resize
 #   S5) T2105: a window resize with panes tucked resizes the panes on show
 #       (control) and none of the tucked ones
+#   S6) T2227: at no sampled moment of the strip-click slide does any popup
+#       the app shows (the unfocused dim wash, a scrollbar) reach outside the
+#       window - the window clips a card sliding past its edge, nothing clips
+#       the card's popups
 #
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
 # before T2102) and keeps S1 as written: it MUST fail.
@@ -95,6 +99,15 @@ function Wait-Shown([IntPtr]$top, [int]$n, [int]$timeoutSec = 20) {
         Start-Sleep -Milliseconds 300
     } while ((Get-Date) -lt $deadline)
     return @(Get-VisiblePanes $top)
+}
+# T2227: every visible top-level the app shows other than the window itself
+# that reaches outside the window's rect. One line each, for the message.
+function Get-StrayPopups([int]$procId, [IntPtr]$top) {
+    $w = Get-TestWindowRect -Window $top
+    return @(Get-TestWindows -ProcessId $procId -Class '*' | Where-Object {
+            $_.Visible -and $_.Hwnd -ne [int64]$top -and $_.Width -gt 0 -and $_.Height -gt 0 -and
+            ($_.Left -lt $w.Left -or $_.Top -lt $w.Top -or $_.Right -gt $w.Right -or $_.Bottom -gt $w.Bottom)
+        } | ForEach-Object { "$($_.Class) $($_.Left)-$($_.Right)" })
 }
 function Format-Cols($cols) {
     return (($cols | ForEach-Object { "$($_.Left)-$($_.Right)$(if (-not $_.Visible) { '(hidden)' })" }) -join ' | ')
@@ -216,7 +229,7 @@ try {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while ($sw.ElapsedMilliseconds -lt ($slideMs + 1200)) {
         $snap = @(Get-Panes $top)
-        $samples.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $snap })
+        $samples.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $snap; Stray = @(Get-StrayPopups ([int]$app.Pid) $top) })
         Start-Sleep -Milliseconds 15
     }
     Start-Sleep -Milliseconds 300
@@ -238,6 +251,11 @@ try {
     Say ("      positions strictly between: {0}" -f (($between.Keys | Sort-Object) -join ', '))
     Assert ($hi - $lo -gt (Get-TestChromeDip -Dip 40 -Scale $script:scale)) "S1: $($t.Name) moves a real distance ($lo..$hi px)"
     Assert ($between.Count -ge 2) "S1: $($t.Name) is seen at $($between.Count) positions on the way (need 2+): it slides, it does not jump"
+
+    # ---- S6: nothing bleeds out of the window mid-slide (T2227) -------------
+    $stray = @($samples | Where-Object { $_.Stray.Count -gt 0 })
+    $first = if ($stray.Count -gt 0) { "at $($stray[0].Ms) ms: $($stray[0].Stray -join ' | ')" } else { '' }
+    Assert ($stray.Count -eq 0) "S6: no popup reaches outside the window during the slide ($($stray.Count) of $($samples.Count) samples) $first"
 
     # ---- S2: one resize at most per pane ------------------------------------
     $hwnds = @($all | ForEach-Object { $_.Hwnd })

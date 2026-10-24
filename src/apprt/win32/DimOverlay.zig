@@ -17,6 +17,7 @@ const std = @import("std");
 const w32 = @import("win32.zig");
 const dim_math = @import("dim_math.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
+const pane_clip = @import("pane_clip.zig");
 
 const log = std.log.scoped(.win32_dim_overlay);
 
@@ -45,6 +46,11 @@ pub const DimOverlay = struct {
     /// The owner's region this wash was last clipped to (T1831); see
     /// `matchOwnerRegion`.
     region_key: u64 = 0,
+    /// Where this popup's top-left sits inside the owner (T2227): 0,0 unless
+    /// part of the owner is outside its window and the wash covers only the
+    /// part in view. The owner's card shape is shifted by it (`applyRegion`).
+    origin_x: i32 = 0,
+    origin_y: i32 = 0,
     /// On a glass pane the wash is the desk under the pane rather than the
     /// fill colour (T2086): the slice last cropped, `wash_w` x `wash_h`,
     /// top-down, and the key it was cropped for. Null with a solid wash.
@@ -203,6 +209,37 @@ pub const DimOverlay = struct {
         // coordinates, which is what a popup's SetWindowPos takes.
         var rect: w32.RECT = undefined;
         if (w32.GetWindowRect(self.owner, &rect) == 0) return false;
+
+        // The window clips the pane and nothing clips this popup (T2227): a
+        // folding card slides out past the window's edge, and its wash -
+        // painted in the background colour - went with it, over the desktop.
+        // So the wash covers only the part of the pane in view, and none of
+        // a pane that is wholly outside.
+        var ox: i32 = 0;
+        var oy: i32 = 0;
+        switch (pane_clip.ownerClip(self.owner)) {
+            .whole => {},
+            .none => {
+                if (self.shown) self.hide();
+                return false;
+            },
+            .part => |p| {
+                ox = p.left;
+                oy = p.top;
+                rect = .{
+                    .left = rect.left + p.left,
+                    .top = rect.top + p.top,
+                    .right = rect.left + p.right,
+                    .bottom = rect.top + p.bottom,
+                };
+            },
+        }
+        if (ox != self.origin_x or oy != self.origin_y) {
+            self.origin_x = ox;
+            self.origin_y = oy;
+            self.applyRegion();
+        }
+
         const placement: dim_math.Placement = .{
             .left = rect.left,
             .top = rect.top,
@@ -294,12 +331,25 @@ pub const DimOverlay = struct {
     pub fn matchOwnerRegion(self: *DimOverlay, key: u64) void {
         if (key == self.region_key) return;
         self.region_key = key;
-        if (key == 0) {
+        self.applyRegion();
+    }
+
+    /// The wash's window region: the owner's card shape (`region_key`,
+    /// T1831), in this popup's coordinates - shifted by `origin_x/_y` when
+    /// the popup covers only the part of the owner in view (T2227).
+    fn applyRegion(self: *DimOverlay) void {
+        if (self.region_key == 0) {
             _ = w32.SetWindowRgn(self.hwnd, null, 1);
             return;
         }
         const rgn = w32.CreateRectRgn(0, 0, 0, 0) orelse return;
-        if (w32.GetWindowRgn(self.owner, rgn) == 0 or w32.SetWindowRgn(self.hwnd, rgn, 1) == 0) {
+        if (w32.GetWindowRgn(self.owner, rgn) == 0) {
+            _ = w32.DeleteObject(rgn);
+            self.region_key = 0;
+            return;
+        }
+        if (self.origin_x != 0 or self.origin_y != 0) _ = w32.OffsetRgn(rgn, -self.origin_x, -self.origin_y);
+        if (w32.SetWindowRgn(self.hwnd, rgn, 1) == 0) {
             _ = w32.DeleteObject(rgn);
             self.region_key = 0;
         }

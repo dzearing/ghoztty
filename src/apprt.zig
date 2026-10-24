@@ -70,6 +70,9 @@ test {
     // Pure win32 unfocused-split dim logic (T74), same no-OS-imports deal.
     _ = @import("apprt/win32/dim_math.zig");
 
+    // Pure win32 pane-popup clipping (T2227), same no-OS-imports deal.
+    _ = @import("apprt/win32/pane_clip_math.zig");
+
     // Pure win32 bell title glyph and sound commands (T1890), same deal.
     _ = @import("apprt/win32/bell_math.zig");
 

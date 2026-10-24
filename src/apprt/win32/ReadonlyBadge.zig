@@ -27,6 +27,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const pane_clip = @import("pane_clip.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const badge = @import("readonly_badge.zig");
 const icon_paint = @import("icon_button_paint.zig");
@@ -130,7 +131,9 @@ pub const ReadonlyBadge = struct {
     /// the reposition call, and it runs on every layout/focus/tab-switch
     /// pass, so it must stay cheap when nothing moved.
     pub fn update(self: *ReadonlyBadge, scale: f32, pane_bg: color_math.Rgb) void {
-        if (w32.IsWindowVisible_(self.owner) == 0) {
+        // Hidden with its pane, and while the pane is partly outside its
+        // window (a folding card mid-slide, T2227).
+        if (!pane_clip.ownerWhollyInView(self.owner)) {
             self.hide();
             return;
         }

@@ -6,6 +6,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const w32 = @import("win32.zig");
+const pane_clip = @import("pane_clip.zig");
 const terminal = @import("../../terminal/main.zig");
 const Surface = @import("Surface.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
@@ -355,8 +356,11 @@ pub const Scrollbar = struct {
         // is still moved and sized, and `SWP_SHOWWINDOW` below would put its
         // scrollbar back over the neighbour that took its place. It is still
         // PLACED, hidden, so the owner's WM_SHOWWINDOW brings it back where
-        // the pane now is rather than where it last was.
-        if (w32.IsWindowVisible_(self.owner) == 0) {
+        // the pane now is rather than where it last was. The same holds while
+        // part of the pane lies outside its window (T2227): a folding card
+        // slides out past the edge, the window clips the pane and nothing
+        // clips this popup.
+        if (!pane_clip.ownerWhollyInView(self.owner)) {
             if (!Placement.eql(self.placed, placement) or self.shown) {
                 _ = w32.SetWindowPos(
                     self.hwnd,
@@ -407,11 +411,16 @@ pub const Scrollbar = struct {
 
     /// Show or hide the popup when the owner surface is shown/hidden.
     pub fn setOwnerVisible(self: *Scrollbar, visible: bool) void {
-        _ = w32.ShowWindow(self.hwnd, if (visible) w32.SW_SHOWNOACTIVATE else w32.SW_HIDE);
+        // Not over a pane that is partly outside its window (T2227): an
+        // unfolding card is shown at its tucked place, past the edge. Its
+        // clip, not its visibility - this runs on WM_SHOWWINDOW, before the
+        // owner reads visible. The move that brings it in view re-shows it.
+        const show = visible and pane_clip.ownerClip(self.owner) == .whole;
+        _ = w32.ShowWindow(self.hwnd, if (show) w32.SW_SHOWNOACTIVATE else w32.SW_HIDE);
         // A hidden popup owes the z-order heal again when it comes back:
         // `SWP_SHOWWINDOW` lifts it above unrelated windows, which is the
         // T142 case the heal exists for (T1345).
-        if (!visible) self.shown = false;
+        if (!show) self.shown = false;
     }
 
     /// Off screen now - the same as the owner being hidden. The uniform name

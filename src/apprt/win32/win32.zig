@@ -2072,6 +2072,9 @@ pub const HALFTONE: i32 = 4;
 pub extern "msimg32" fn AlphaBlend(hdcDest: HDC, xoriginDest: i32, yoriginDest: i32, wDest: i32, hDest: i32, hdcSrc: HDC, xoriginSrc: i32, yoriginSrc: i32, wSrc: i32, hSrc: i32, ftn: BLENDFUNCTION) callconv(.winapi) i32;
 pub extern "gdi32" fn CreateRoundRectRgn(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) callconv(.winapi) ?*anyopaque;
 pub extern "gdi32" fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) callconv(.winapi) ?*anyopaque;
+/// Move a region by `x`,`y` - a pane's dim wash covering only the part of
+/// the pane in view takes the card shape shifted to its own origin (T2227).
+pub extern "gdi32" fn OffsetRgn(hrgn: *anyopaque, x: i32, y: i32) callconv(.winapi) i32;
 /// `dst = src1 <mode> src2`; `dst` must already exist (any region). Returns
 /// the result's complexity, or `ERROR` (0). The pane sidebar's open card is
 /// the rail column OR its rounded card (T1842).

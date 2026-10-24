@@ -45,6 +45,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const pane_clip = @import("pane_clip.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const pill = @import("key_state_pill.zig");
 const key_state = @import("key_state.zig");
@@ -227,7 +228,9 @@ pub const KeyStateIndicator = struct {
         pane_bg: color_math.Rgb,
         model: *const key_state.Model,
     ) void {
-        if (model.isEmpty() or w32.IsWindowVisible_(self.owner) == 0) {
+        // A pane partly outside its window (a folding card mid-slide) has no
+        // pill either: the window clips the pane, not this popup (T2227).
+        if (model.isEmpty() or !pane_clip.ownerWhollyInView(self.owner)) {
             self.hide();
             return;
         }

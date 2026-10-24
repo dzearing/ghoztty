@@ -1,14 +1,14 @@
 {
     "guard":  "readonly-badge",
     "script":  "test/win32/readonly-badge.ps1",
-    "generated":  "2026-10-16T15:26:36-07:00",
-    "commit":  "31fb974a1",
+    "generated":  "2026-10-24T06:17:04-07:00",
+    "commit":  "f6f13f0cb",
     "uncommitted":  [
-                        "src/apprt/win32/readonly_badge.zig"
+                        "src/apprt/win32/ReadonlyBadge.zig"
                     ],
     "files":  {
                   "src/apprt/win32/readonly_badge.zig":  "640c3f5404192858ae4657cb81a1e4acfe503949be797906b05461bbf2e53307",
-                  "src/apprt/win32/ReadonlyBadge.zig":  "d5446f021cbf3137b41e2e9734cb045e137a408c0cfc577f4fa6f5e90c57bbac",
+                  "src/apprt/win32/ReadonlyBadge.zig":  "04ed91be7d180da0fc0f22038e17902bd4affd966bbe04f3757de08e1fccc7fe",
                   "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61"
               }
 }

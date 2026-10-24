@@ -26,6 +26,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const pane_clip = @import("pane_clip.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const chrome_reposition = @import("chrome_reposition.zig");
 const App = @import("App.zig");
@@ -512,10 +513,12 @@ pub const BannerOverlay = struct {
 
     /// Glue the strip into the band the window layout reserved above the
     /// owner pane (T101; screen coordinates). Hides when the owner is not
-    /// visible (hidden split, other tab, hero carousel). Idempotent —
+    /// visible (hidden split, other tab, hero carousel), or when part of it
+    /// lies outside its window - a folding card sliding past the edge
+    /// (T2227): the window clips the pane, never this popup. Idempotent —
     /// doubles as the reposition call.
     pub fn updatePosition(self: *BannerOverlay, scale: f32) void {
-        if (w32.IsWindowVisible_(self.owner) == 0) {
+        if (!pane_clip.ownerWhollyInView(self.owner)) {
             self.hide();
             return;
         }

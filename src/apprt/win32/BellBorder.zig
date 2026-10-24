@@ -17,6 +17,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const pane_clip = @import("pane_clip.zig");
 const bell_math = @import("bell_math.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 
@@ -100,7 +101,9 @@ pub const BellBorder = struct {
     pub fn update(self: *BellBorder, want: bool, scale: f32) void {
         // A pane on a background tab, behind a zoom or being torn down has
         // nothing to frame: gone at once, no fade (there is nothing to watch).
-        if (w32.IsWindowVisible_(self.owner) == 0) {
+        // Nor has one partly outside its window, mid-slide (T2227): the
+        // window clips the pane, not this frame.
+        if (!pane_clip.ownerWhollyInView(self.owner)) {
             self.hideNow();
             return;
         }
