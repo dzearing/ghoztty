@@ -1,13 +1,13 @@
 {
     "guard":  "one-installer",
     "script":  "test/win32/one-installer.ps1",
-    "generated":  "2026-10-21T05:14:20-07:00",
-    "commit":  "f106ba6b3",
+    "generated":  "2026-10-24T00:49:53-07:00",
+    "commit":  "2f0efb1cd",
     "uncommitted":  [
-                        "src/remote/agent/main.zig"
+
                     ],
     "files":  {
-                  ".claude/commands/release.md":  "e9b206196a9dbef2ba0aff7269bb72540d918a3bca5fb5bfcf70e55c7c5c7676",
+                  ".claude/commands/release.md":  "469ac7201daff036906d8f742285e5999faa8a0c6a5c6e478bf75af438c66582",
                   "relay/deploy/Caddyfile.example":  "68976c8bf26255febe085ecfb23896513d4ba93e4deb5a8296cd5c118bab5aa2",
                   "relay/deploy/ghpages/index.html":  "cdd9e0fbeac01c368266f63e00968efa40bf647e4b41daf7b3dfa67e35005f2b",
                   "relay/deploy/ghpages/landing/main.js":  "31620c4f632e63d7aa46efb2a2bbae280da1dc347f3c72392b2e1dd946281ae5",
