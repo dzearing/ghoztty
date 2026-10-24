@@ -7273,6 +7273,13 @@ fn glassSheetFor(self: *Window, view: *PaneView) pane_elevation.Sheet {
 
 /// Start the glow's move when the lit pane changes; the fade clock does the
 /// repainting. Idempotent, so it rides every `updateDimOverlays` trigger.
+///
+/// No paint here (T2232): at the fade's first instant the level is 0, so a
+/// paint now redraws the frame already on screen - and it is a whole desk
+/// repaint, synchronous, per focus change. A burst of clicks then spent ~15ms
+/// each of GUI-thread time painting nothing new, and every IPC request queued
+/// behind them waited tens of seconds. WM_TIMER is only generated once the
+/// queue is empty, so the tick paints once per burst, 16ms after the last one.
 fn syncFocusGlow(self: *Window) void {
     const target = self.focusGlowTarget();
     if (target == self.glow_to) return;
@@ -7281,7 +7288,6 @@ fn syncFocusGlow(self: *Window) void {
     self.glow_to = target;
     self.glow_t0_ms = std.time.milliTimestamp();
     _ = w32.SetTimer(hwnd, FOCUS_GLOW_TIMER_ID, FOCUS_GLOW_TICK_MS, null);
-    self.repaintPaneDesk();
 }
 
 fn focusGlowTick(self: *Window) void {

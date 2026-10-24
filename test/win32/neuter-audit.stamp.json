@@ -1,18 +1,10 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-10-24T06:18:51-07:00",
-    "commit":  "f6f13f0cb",
+    "generated":  "2026-10-24T08:59:12-07:00",
+    "commit":  "53d369262",
     "uncommitted":  [
-                        "src/apprt/win32/BannerOverlay.zig",
-                        "src/apprt/win32/BellBorder.zig",
-                        "src/apprt/win32/DimOverlay.zig",
-                        "src/apprt/win32/KeyStateIndicator.zig",
-                        "src/apprt/win32/pane_clip.zig",
-                        "src/apprt/win32/pane_clip_math.zig",
-                        "src/apprt/win32/ReadonlyBadge.zig",
-                        "src/apprt/win32/Scrollbar.zig",
-                        "src/apprt/win32/win32.zig"
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -312,7 +304,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "8dbde4ab91e9e22c262dd08d5775b58d55bf55e6857669ed2d7a62213599a96e",
-                  "src/apprt/win32/Window.zig":  "9185a675525e6b582b6d90ffb93da247646a51e52e6125b206bf492f0f4af87b",
+                  "src/apprt/win32/Window.zig":  "38693cf73f4ee9271f49057c4cbad803676b595fd0d49e7abbbb1c6a4fe8f929",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",

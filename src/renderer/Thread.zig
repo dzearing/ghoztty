@@ -379,7 +379,17 @@ fn drainMailbox(self: *Thread) !void {
     defer if (builtin.os.tag.isDarwin()) pool.deinit();
 
     while (self.mailbox.pop()) |message| {
-        log.debug("mailbox message={}", .{message});
+        // A pane backdrop carries its whole RGBA slice (T2232): formatting it
+        // wrote ~200 KB per message, so a Debug build's renderer fell behind
+        // a burst of focus changes, the 64-deep mailbox filled, and the GUI
+        // thread blocked in `push(.forever)` with IPC queued behind it.
+        switch (message) {
+            .pane_backdrop => |v| if (v) |b|
+                log.debug("mailbox message=pane_backdrop {d}x{d} opacity={d:.2}", .{ b.width, b.height, b.opacity })
+            else
+                log.debug("mailbox message=pane_backdrop null", .{}),
+            else => log.debug("mailbox message={}", .{message}),
+        }
         self.force_frame.store(true, .release);
         switch (message) {
             .crash => @panic("crash request, crashing intentionally"),
