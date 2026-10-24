@@ -145,10 +145,15 @@ killed_count: usize = 0,
 /// manifest (persistence off, or a first run).
 manifest: ?session_layout.Parsed = null,
 
-/// The REMOTE machine's own layout view (T1296): the blobs its agent holds,
+/// The machine's AGENT-side layout view (T1296): the blobs its agent holds,
 /// pulled with the roster and decoded into the same `session_layout.Window`
-/// shape the local manifest parses to. Null for the local target (the manifest
-/// above is that machine's layout view) and whenever the pull failed.
+/// shape the local manifest parses to. Null whenever the pull failed.
+///
+/// For a remote target it is the only layout view there is. For the local one
+/// it backs up the manifest above (T1318): the shape that leaves an orphan to
+/// resume is a launch that rebuilt nothing, and that launch rewrites the
+/// manifest with the windows it DID open — so the dead process's record of the
+/// orphan's window survives only in the blob it pushed to the agent.
 ///
 /// Why the roster carries it at all: everything a row can SAY about a session
 /// beyond its id — the window it belonged to, the name the user gave that
@@ -212,9 +217,8 @@ const Request = struct {
     /// makes it safe for the last lease to drop mid-RPC: the pool's own
     /// reference can go while this one keeps the transport alive.
     entry: ?*MachineConnectionPool.Entry = null,
-    /// Pull the machine's layout blobs alongside the roster (T1296). Only ever
-    /// set for a REMOTE target: the local machine's layout view is the on-disk
-    /// manifest, which costs no RPC at all.
+    /// Pull the machine's layout blobs alongside the roster (T1296; the local
+    /// target too since T1318, as the fallback behind its on-disk manifest).
     want_layouts: bool = false,
     /// `entry`'s pool-wide id, carried by VALUE so the reply can name the
     /// connection this fetch actually used (T859) without dereferencing an entry
@@ -371,9 +375,10 @@ pub fn fetch(
         // nothing.
         .warm = if (self.target == .local) app.local_agent.sharedConnectionIfLive() else null,
         .kill_id = null,
-        // T1296: a remote machine's layout view has to be asked for; the local
-        // one is already on this box's disk.
-        .want_layouts = self.target == .remote,
+        // T1296: a remote machine's layout view has to be asked for. The local
+        // one is on this box's disk, but asked for as well (T1318): an orphan's
+        // window is usually missing from a manifest the relaunch rewrote.
+        .want_layouts = true,
     };
     if (self.target == .remote) {
         // No credential at all is the signed-out case, and it gets the SAME
@@ -1069,22 +1074,49 @@ fn liveFor(app: *App, id: []const u8) chooser_sessions.Live {
     return .{};
 }
 
-/// The layout view for the machine this roster is pointed at (T1296): the
-/// on-disk manifest for the local one, the blobs pulled with the roster for a
-/// remote one. Empty when there is none — persistence off, a first run, an
+/// The layout views for the machine this roster is pointed at (T1296), most
+/// trusted first: for the local one the on-disk manifest, then the blobs its
+/// agent holds (T1318); for a remote one only the blobs pulled with the roster.
+/// Either slot is empty when there is none — persistence off, a first run, an
 /// agent too old to answer `GET_LAYOUTS`.
 ///
-/// One accessor rather than two call sites choosing, because every question
-/// asked of it ("what was this session's pane called", "what did the user name
-/// the window it lived in") has the same answer shape on both machines and only
-/// ever differed in where the record came from.
-fn layoutWindows(self: *const SessionRoster) []const session_layout.Window {
+/// The manifest leads because this process wrote it, so where both know a
+/// session it is the newer record. The agent's blobs are what is left of a
+/// process that is gone, which is exactly the case an orphan comes from.
+fn layoutViews(self: *const SessionRoster) [2][]const session_layout.Window {
+    const blobs: []const session_layout.Window =
+        if (self.layouts) |d| d.windows else &.{};
     if (self.target == .local) {
-        const parsed = self.manifest orelse return &.{};
-        return parsed.value.windows;
+        const manifest: []const session_layout.Window =
+            if (self.manifest) |p| p.value.windows else &.{};
+        return .{ manifest, blobs };
     }
-    const decoded = self.layouts orelse return &.{};
-    return decoded.windows;
+    return .{ blobs, &.{} };
+}
+
+const LeafRecord = struct {
+    window: *const session_layout.Window,
+    leaf: session_layout.Leaf,
+};
+
+/// The first layout record that names session `id`, searching the views in
+/// `layoutViews` order. One lookup rather than a loop per question, because
+/// every question asked of it ("what was this session's pane called", "what
+/// did the user name the window it lived in") has the same answer shape on
+/// both machines and only ever differed in where the record came from.
+fn findLeaf(self: *const SessionRoster, id: []const u8) ?LeafRecord {
+    for (self.layoutViews()) |view| {
+        for (view) |*win| {
+            for (win.tabs) |tab| {
+                for (tab.nodes) |node| {
+                    const leaf = node.leaf orelse continue;
+                    const sid = leaf.session_id orelse continue;
+                    if (std.mem.eql(u8, sid, id)) return .{ .window = win, .leaf = leaf };
+                }
+            }
+        }
+    }
+    return null;
 }
 
 /// The name the user would recognise for the window `id` lived in, or null.
@@ -1106,36 +1138,19 @@ pub const WindowName = struct {
 };
 
 pub fn persistedWindowNameFor(self: *const SessionRoster, id: []const u8) ?WindowName {
-    for (self.layoutWindows()) |win| {
-        for (win.tabs) |tab| {
-            for (tab.nodes) |node| {
-                const leaf = node.leaf orelse continue;
-                const sid = leaf.session_id orelse continue;
-                if (!std.mem.eql(u8, sid, id)) continue;
-                if (win.title_override) |t| {
-                    if (t.len > 0) return .{ .text = t, .pinned = true };
-                }
-                if (leaf.title) |t| {
-                    if (t.len > 0) return .{ .text = t, .pinned = false };
-                }
-                return null;
-            }
-        }
+    const rec = self.findLeaf(id) orelse return null;
+    if (rec.window.title_override) |t| {
+        if (t.len > 0) return .{ .text = t, .pinned = true };
+    }
+    if (rec.leaf.title) |t| {
+        if (t.len > 0) return .{ .text = t, .pinned = false };
     }
     return null;
 }
 
 fn persistedTitleFor(self: *const SessionRoster, id: []const u8) ?[]const u8 {
-    for (self.layoutWindows()) |win| {
-        for (win.tabs) |tab| {
-            for (tab.nodes) |node| {
-                const leaf = node.leaf orelse continue;
-                const sid = leaf.session_id orelse continue;
-                if (std.mem.eql(u8, sid, id)) return leaf.title;
-            }
-        }
-    }
-    return null;
+    const rec = self.findLeaf(id) orelse return null;
+    return rec.leaf.title;
 }
 
 /// The pane id the saved layout recorded for `id`, or null. A resumed pane
@@ -1145,19 +1160,11 @@ fn persistedTitleFor(self: *const SessionRoster, id: []const u8) ?[]const u8 {
 ///
 /// Both machines (T1317): a REMOTE session's shell carries the id the FAR
 /// machine's pane gave it, so the answer comes from that machine's layout view,
-/// the same source `persistedWindowNameFor` reads. Before T1296 there was no
-/// such view, which is why this used to answer for the local box only.
+/// the same source `persistedWindowNameFor` reads. A LOCAL one falls back from
+/// the manifest to the agent's blobs the same way that does (T1318).
 pub fn persistedPaneIdFor(self: *const SessionRoster, id: []const u8) ?[]const u8 {
-    for (self.layoutWindows()) |win| {
-        for (win.tabs) |tab| {
-            for (tab.nodes) |node| {
-                const leaf = node.leaf orelse continue;
-                const sid = leaf.session_id orelse continue;
-                if (std.mem.eql(u8, sid, id)) return leaf.pane_id;
-            }
-        }
-    }
-    return null;
+    const rec = self.findLeaf(id) orelse return null;
+    return rec.leaf.pane_id;
 }
 
 // ---------------------------------------------------------------------
@@ -2495,4 +2502,36 @@ test "a remote roster hands a resumed pane the FAR machine's pane id (T1317)" {
     // And leaving the machine forgets them with its rows.
     roster.clear();
     try testing.expect(roster.persistedPaneIdFor("aaaa") == null);
+}
+
+test "a LOCAL orphan the rewritten manifest forgot is named from the agent's blobs (T1318)" {
+    const alloc = testing.allocator;
+    var roster: SessionRoster = .init(alloc);
+    defer roster.deinit();
+    roster.target = .local;
+
+    // The relaunch that left the orphan rebuilt nothing, so its manifest holds
+    // only the one window it opened - a different session, named differently
+    // from the agent's record of it so the precedence below is observable.
+    const body =
+        \\{"version":1,"windows":[{"id":"w9","title_override":"Fresh window",
+        \\ "active_tab":0,"tabs":[{"nodes":[
+        \\   {"leaf":{"session_id":"bbbb","title":"pwsh","pane_id":"p-new"}}],"active":true}]}]}
+    ;
+    roster.manifest = try session_layout.parse(alloc, body);
+    const payload = try testLayoutsPayload(alloc);
+    defer alloc.free(payload);
+    roster.layouts = try layout_blobs.decodeLayouts(alloc, payload);
+
+    // The orphan lives only in the dead process's blob: the name it was given
+    // there still reaches the window a resume builds, pinned.
+    const named = roster.persistedWindowNameFor("aaaa").?;
+    try testing.expectEqualStrings("Deploy watch", named.text);
+    try testing.expect(named.pinned);
+
+    // Where both records know a session, the manifest this process wrote wins.
+    const fresh = roster.persistedWindowNameFor("bbbb").?;
+    try testing.expectEqualStrings("Fresh window", fresh.text);
+    try testing.expectEqualStrings("p-new", roster.persistedPaneIdFor("bbbb").?);
+    try testing.expect(roster.persistedWindowNameFor("zzzz") == null);
 }

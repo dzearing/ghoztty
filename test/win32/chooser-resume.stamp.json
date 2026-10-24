@@ -1,15 +1,16 @@
 {
     "guard":  "chooser-resume",
     "script":  "test/win32/chooser-resume.ps1",
-    "generated":  "2026-10-24T09:43:05-07:00",
-    "commit":  "8d607ee35",
+    "generated":  "2026-10-24T10:14:33-07:00",
+    "commit":  "c6c0d9d93",
     "uncommitted":  [
-                        "src/apprt/win32/SessionRoster.zig"
+                        "src/apprt/win32/SessionRoster.zig",
+                        "test/win32/chooser-resume.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_sessions.zig":  "257fbe807fd0801db1c36bc4e22f210f7bf715b0a928096d4e7262b73b9668fd",
-                  "src/apprt/win32/SessionRoster.zig":  "ac584ec8ff823c1081fc1d174a8d382ba10f021186b342f796a846ddb3150b15",
-                  "test/win32/chooser-resume.ps1":  "542fd8759923b1e727e4d36d1f54d3d3723d238ce120722891d47ff9e92f426a",
+                  "src/apprt/win32/SessionRoster.zig":  "e6225e8f1c6afcde409f2d958d41c86aa77c43b2f7094d7f088193d2acacee82",
+                  "test/win32/chooser-resume.ps1":  "81015fed237b2ff5cf75fb803f9d8774ee2f5596a5f38a2eb2377d6415e5c76c",
                   "test/win32/lib/ChooserCursor.ps1":  "899edb2b38d63abcb8af6734687abf41a0f9e5906e1cd3d9508cc2b1e7cb1023"
               }
 }

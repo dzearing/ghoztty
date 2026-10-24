@@ -213,6 +213,29 @@ function Walk-CursorToId($chooser, $filter, $log, [string[]]$TargetIds, [int]$Ma
         -TargetIds $TargetIds -MaxRows $MaxRows
 }
 
+# T1318: the window tree as `+list --json` reports it, and the display title
+# of every window - what the user reads off the title bar and out of Alt-Tab.
+function Get-ListTree {
+    $out = (& $Exe +list --json 2>$null | Out-String)
+    if (-not $out -or $out.Trim().Length -eq 0) { return $null }
+    try { $j = $out | ConvertFrom-Json } catch { return $null }
+    if ($null -ne $j -and $null -ne $j.data) { return $j.data }
+    return $j
+}
+
+function Get-WindowTitles {
+    $tree = Get-ListTree
+    if ($null -eq $tree) { return @{} }
+    $titles = @{}
+    foreach ($w in @($tree.windows)) { $titles[[string]$w.target] = [string]$w.title }
+    return $titles
+}
+
+# T1318: the user's own name for the fixture window. A local resume used to be
+# able to name its window only from this box's manifest, which the relaunch
+# that leaves an orphan rewrites with the windows it DID open.
+$T1318NAME = "T1318Resumed$($PID)"
+
 Write-Host 'T320 chooser session resume'
 Stop-RepoProcesses @('ghoztty', 'ghoztty-agent')
 Reset-AgentState
@@ -233,6 +256,17 @@ try {
     & $Exe +split --direction=right 2>$null | Out-Null
     $seeded = @(Wait-SessionCount -Count 2)
     Assert ($seeded.Count -ge 2) "the agent owns the app's panes (found $($seeded.Count))"
+
+    # T1318: name the window the orphans will come from. `+rename` pins the
+    # display title (the rename dialog's path), and the pin rides both the
+    # manifest and the layout blob this app pushes to the agent.
+    $firstTarget = @((Get-WindowTitles).Keys)[0]
+    # argv-audit: the target is the app's own window name from +list; the title is "T1318Resumed$($PID)" - letters, digits and this process's pid.
+    & $Exe +rename --target=$firstTarget --title=$T1318NAME 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    $namedBefore = (Get-WindowTitles)[$firstTarget]
+    Assert ($namedBefore -like "$T1318NAME*") `
+        "the fixture window really carries its user-set name before the app goes away ($namedBefore)"
 
     # Kill the APP only. The agent keeps the children alive - that is the whole
     # point of session persistence. The relaunch runs under GHOZTTY_RESTORE_SKIP
@@ -316,6 +350,7 @@ try {
     Start-Sleep -Milliseconds 400
 
     $before = @(Get-Sessions)
+    $titlesBefore = Get-WindowTitles
     Send-ChooserKey $chooser $filter 'Return' | Out-Null
     $attach = Wait-LogLine $errlog2 'resume session: attaching local session id=' 6000
     Assert ($null -ne $attach) 'Return on the cursored row resumes it'
@@ -327,6 +362,14 @@ try {
 
     Start-Sleep -Seconds 2
     Assert (-not (Test-TestWindowExists -Window $chooser)) 'the chooser dismissed itself onto the resumed window'
+
+    # T1318: the LOCAL half of T1296's loss. The manifest is gone (deleted
+    # above, and rewritten by the relaunch with only its own window), so the
+    # name can have come from nowhere but the dead app's blob in the agent.
+    $titlesAfter = Get-WindowTitles
+    $newTitles = @($titlesAfter.Keys | Where-Object { -not $titlesBefore.ContainsKey($_) } | ForEach-Object { $titlesAfter[$_] })
+    Assert ($newTitles.Count -eq 1 -and $newTitles[0] -like "$T1318NAME*") `
+        "the resumed window came back with the name the user gave it ($($newTitles -join ', '))"
 
     # The independent oracle: the agent, dialled directly, now reports a viewer
     # on that session. Nothing about this reading goes through the app.
