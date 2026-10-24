@@ -69,13 +69,6 @@ struct DividerHandle: NSViewRepresentable {
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
-            addTrackingArea(NSTrackingArea(
-                rect: .zero,
-                // During a drag too: a gutter under the pointer when the
-                // mouse comes up must know it is.
-                options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect, .enabledDuringMouseDrag],
-                owner: self,
-                userInfo: nil))
             _ = bar
         }
 
@@ -87,13 +80,16 @@ struct DividerHandle: NSViewRepresentable {
         /// Where the bar that shows is, in window coordinates, for tests.
         var barInWindow: CGRect? { bar.inWindow }
 
+        /// Whether the tracking area assumes the pointer inside, for tests.
+        var trackingAssumesInside: Bool { bar.trackingAssumesInside }
+
         override func mouseEntered(with event: NSEvent) {
-            bar.isHovered = true
+            bar.pointerEntered()
             onHoverChanged?(true)
         }
 
         override func mouseExited(with event: NSEvent) {
-            bar.isHovered = false
+            bar.pointerExited()
             onHoverChanged?(false)
         }
 
@@ -319,6 +315,14 @@ final class GutterBar {
     var isHovered = false { didSet { show() } }
 
     private unowned let view: NSView
+    /// The view's mouse-entered/exited tracking — during a drag too: a gutter
+    /// under the pointer when the mouse comes up must know it is.
+    private var trackingArea: NSTrackingArea?
+    /// Whether AppKit takes the pointer to be inside the tracking area. It
+    /// only sends mouse-exited when it does, so a hover found from geometry
+    /// (`noteWindow`) that AppKit does not agree with re-arms the area, or
+    /// the bar stays lit once the pointer leaves.
+    private var trackedInside = false
     private let hover = CALayer()
     /// The bar while a drag is under way, drawn on the window rather than on
     /// the view: a drag can take its view out of the window (a grip whose
@@ -349,6 +353,7 @@ final class GutterBar {
         }
         hover.opacity = 0
         view.layer?.addSublayer(hover)
+        track(assumingInside: false)
         // Above every layer AppKit puts beside it on the window, whatever
         // order it puts them in: the panes' layers, re-sorted as a card
         // slides out or back, covered the bar mid-drag.
@@ -356,6 +361,8 @@ final class GutterBar {
     }
 
     var shows: Bool { hover.opacity > 0 || dragging.superlayer != nil }
+
+    var trackingAssumesInside: Bool { trackingArea?.options.contains(.assumeInside) ?? false }
 
     /// The bar that shows, in window coordinates.
     var inWindow: CGRect? {
@@ -376,6 +383,34 @@ final class GutterBar {
         guard let window = view.window else { return }
         let pointer = Self.pointerOverride ?? window.mouseLocationOutsideOfEventStream
         isHovered = view.bounds.contains(view.convert(pointer, from: nil))
+        // A drag's end finds the pointer on the gutter it let go of, just as
+        // AppKit sends that gutter a late mouse-exited: hovered by geometry,
+        // outside by AppKit, which then never sends the exit that would put
+        // the bar out. An area that assumes the pointer inside sends it.
+        if isHovered != trackedInside { track(assumingInside: isHovered) }
+    }
+
+    /// AppKit's mouse-entered and mouse-exited, from the owner.
+    func pointerEntered() {
+        trackedInside = true
+        isHovered = true
+    }
+
+    func pointerExited() {
+        trackedInside = false
+        isHovered = false
+    }
+
+    private func track(assumingInside inside: Bool) {
+        if let trackingArea { view.removeTrackingArea(trackingArea) }
+        var options: NSTrackingArea.Options = [
+            .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect, .enabledDuringMouseDrag,
+        ]
+        if inside { options.insert(.assumeInside) }
+        let area = NSTrackingArea(rect: .zero, options: options, owner: view, userInfo: nil)
+        view.addTrackingArea(area)
+        trackingArea = area
+        trackedInside = inside
     }
 
     /// The gutter moved in its window (AppKit recomputes a view's tracking
