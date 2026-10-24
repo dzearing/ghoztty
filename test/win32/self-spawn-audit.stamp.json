@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-24T10:49:15-07:00",
-    "commit":  "70a5a4c5b",
+    "generated":  "2026-10-24T11:50:35-07:00",
+    "commit":  "30de0d08b",
     "uncommitted":  [
 
                     ],
@@ -295,7 +295,7 @@
                   "src/apprt/win32/session_disconnect.zig":  "48e500d2b9b46d62ba035fa218d792e4a6047d35065952cb3428ebc0c40db025",
                   "src/apprt/win32/session_layout.zig":  "5553b74f94f5c8f49f5600e654574f5a0e408f92096dea61c699128bbb0d4f9b",
                   "src/apprt/win32/SessionCpuProbe.zig":  "7df0891891508e68f8d022e8fa0245f3ac4e147a1db8f8f395b8e7e9f13e919f",
-                  "src/apprt/win32/SessionRoster.zig":  "ac584ec8ff823c1081fc1d174a8d382ba10f021186b342f796a846ddb3150b15",
+                  "src/apprt/win32/SessionRoster.zig":  "14014897c5f2ed210acd3c3699fa179389cff0e1e16748561765f9d13364ad1e",
                   "src/apprt/win32/SessionRosterProbe.zig":  "97d287a7ceaf0131a0583b4a1e3ec77cd5234f010fae99c194c28dc5e8fb10c4",
                   "src/apprt/win32/ShareMachineRow.zig":  "563fd3175b8ee816706207a3a2151a32d76d3cf76661b49f9ed0365d34e5bebe",
                   "src/apprt/win32/SkillComponent.zig":  "0b100dfca6ae0439091bd79254256bee80027f34d99da50ed2a68a6d926e90ca",

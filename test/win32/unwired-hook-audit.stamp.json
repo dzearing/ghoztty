@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-24T10:48:02-07:00",
-    "commit":  "70a5a4c5b",
+    "generated":  "2026-10-24T11:48:57-07:00",
+    "commit":  "30de0d08b",
     "uncommitted":  [
 
                     ],
@@ -296,7 +296,7 @@
                   "src/apprt/win32/session_disconnect.zig":  "48e500d2b9b46d62ba035fa218d792e4a6047d35065952cb3428ebc0c40db025",
                   "src/apprt/win32/session_layout.zig":  "5553b74f94f5c8f49f5600e654574f5a0e408f92096dea61c699128bbb0d4f9b",
                   "src/apprt/win32/SessionCpuProbe.zig":  "7df0891891508e68f8d022e8fa0245f3ac4e147a1db8f8f395b8e7e9f13e919f",
-                  "src/apprt/win32/SessionRoster.zig":  "ac584ec8ff823c1081fc1d174a8d382ba10f021186b342f796a846ddb3150b15",
+                  "src/apprt/win32/SessionRoster.zig":  "14014897c5f2ed210acd3c3699fa179389cff0e1e16748561765f9d13364ad1e",
                   "src/apprt/win32/SessionRosterProbe.zig":  "97d287a7ceaf0131a0583b4a1e3ec77cd5234f010fae99c194c28dc5e8fb10c4",
                   "src/apprt/win32/ShareMachineRow.zig":  "563fd3175b8ee816706207a3a2151a32d76d3cf76661b49f9ed0365d34e5bebe",
                   "src/apprt/win32/SkillComponent.zig":  "0b100dfca6ae0439091bd79254256bee80027f34d99da50ed2a68a6d926e90ca",
@@ -1026,7 +1026,7 @@
                   "test/win32/chooser-restore-all.ps1":  "bf4f0917887a2f7ddd279ec9419c89617de3ab2ebc237bdcf5916ea7df7f6dec",
                   "test/win32/chooser-restore-all-adopt.ps1":  "5834c0f6e3c287a04f1999c32ada81c03aa41a86479617299e674cb8a1b7bb26",
                   "test/win32/chooser-restore-all-remote.ps1":  "2648f0f9712f467dcbddd500ad1906ad1f79fefa70ac3e5c0101640b93ffef03",
-                  "test/win32/chooser-resume.ps1":  "542fd8759923b1e727e4d36d1f54d3d3723d238ce120722891d47ff9e92f426a",
+                  "test/win32/chooser-resume.ps1":  "81015fed237b2ff5cf75fb803f9d8774ee2f5596a5f38a2eb2377d6415e5c76c",
                   "test/win32/chooser-resume-remote.ps1":  "91087285ebb4512e99a335ec8e8bb54e217dd8c1dcc74ac030f45f837a0ef1d2",
                   "test/win32/chooser-roster-refetch.ps1":  "848be7636324f89435a1b4fec579d2190ccf0ba282634bebdccb1c4dd3ca6c9e",
                   "test/win32/chooser-selection.ps1":  "f5749642a82e6ccd66fdd846de7eaea9d32b02968f0c8499fb15738d57d7a829",
@@ -1070,7 +1070,7 @@
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
                   "test/win32/daily-publish.ps1":  "eccff5616c9023dacbe70ec3aa3623db00b16c1123de1516e757fb5974cd9352",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
-                  "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
+                  "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
                   "test/win32/deliver-windows-build.ps1":  "25ee9d9e074fea510a40307910032162405b7aa8d69b5c032dd1bf9bafa049aa",
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
