@@ -1,7 +1,7 @@
 {
     "guard":  "release-artifacts",
     "script":  "test/win32/release-artifacts.ps1",
-    "generated":  "2026-10-24T15:54:24-07:00",
+    "generated":  "2026-10-24T16:01:15-07:00",
     "commit":  "3151bf3b4",
     "uncommitted":  [
 

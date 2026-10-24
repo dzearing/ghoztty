@@ -37,7 +37,8 @@
 #      still true (an exempt module a lane runs is red).
 #   C. The negative control the rule is worth nothing without, in every run.
 #      It plants a test-bearing file nothing references under
-#      `src\apprt\win32\` and under `src\os\`, and requires sections B and D's
+#      `src\apprt\win32\`, `src\os\` and `src\remote\agent\` (the agent lane's
+#      own territory, T1332), and requires sections B and D's
 #      comparisons to go red NAMING them - then deletes them. `-TeethCheck`
 #      adds a real win32 rebuild over the plants, proving the lane itself stays
 #      green over a test that fails by construction (minutes, not routine).
@@ -248,9 +249,13 @@ Assert 'D6 no lane carries a module with no test block on disk' (@($tf.Extra).Co
 # the lane itself staying green over a failing test.
 $probeName = "zz_reach_probe_$PID"
 $probeBody = "test ""T1237 reach probe - must never run"" { try @import(""std"").testing.expect(false); }`n"
+# The third plant is the agent lane's own territory (T1332): `src\remote\agent\`
+# is reached by no other lane, so a sweep that stopped reading the agent binary
+# would still pass the first two and only this one would notice.
 $probes = @(
     (Join-Path $Repo "src\apprt\win32\$probeName.zig"),
-    (Join-Path $Repo "src\os\$probeName.zig")
+    (Join-Path $Repo "src\os\$probeName.zig"),
+    (Join-Path $Repo "src\remote\agent\$probeName.zig")
 )
 try {
     foreach ($p in $probes) { [System.IO.File]::WriteAllText($p, $probeBody) }
@@ -260,8 +265,8 @@ try {
         ("named: " + (@($cWin.Missing) -join ', '))
     $cTree = Get-SrcTestTree $Repo
     $cAll = Get-TreeReachFindings -WithTests @($cTree.WithTests) -InLanes @($inLanes)
-    Assert 'C2 the whole-tree sweep names both planted modules, and nothing else' `
-        (((@($cAll.Missing) | Sort-Object) -join ',') -eq "apprt.win32.$probeName,os.$probeName") `
+    Assert 'C2 the whole-tree sweep names all three planted modules, and nothing else' `
+        (((@($cAll.Missing) | Sort-Object) -join ',') -eq "apprt.win32.$probeName,os.$probeName,remote.agent.$probeName") `
         ("named: " + (@($cAll.Missing) -join ', '))
 
     if ($TeethCheck) {

@@ -116,7 +116,12 @@ Check '-Serial runs the floor exactly as before: four lanes, no --cache-dir or -
 # ---- arms 4-8: a planted red and a planted wedge -----------------------------
 
 $mixed = @{ lib = $slow; none = $red; win32 = $wedge; agent = $slow }
-$r = Invoke-Floor -Fake $mixed
+# The planted lanes draw no memory, but the scheduler sizes its concurrency from
+# the box's REAL free commit at -LaneCommitGB (16) a lane - so with under ~40 GB
+# free it ran them one at a time and the overlap arm below read peak=1 on a
+# correct floor. A token weight takes the box out of an arm about scheduling;
+# arm 12 is the one that exercises the budget, from the other end.
+$r = Invoke-Floor -Fake $mixed -Extra @('-LaneCommitGB', '0.01')
 $v = Get-Verdicts -Lines $r.Lines
 Check 'a wedged lane outranks a red one: the set exits 2 (STALL)' ($r.Code -eq 2) "exit=$($r.Code)"
 Check 'the summary scores each lane: lib PASS, none FAIL, win32 STALL, agent PASS' `

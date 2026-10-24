@@ -308,8 +308,6 @@
 #
 # Found by T1267's widened sweep (aliases of the exe), pending migration:
 # @user-desktop-launch: upgrade-no-fork.ps1 -- (T2201) pending migration: Run-Sandbox auto-launches its sandbox copy of the app with a cold +new-window from the caller's desktop.
-# @user-desktop-launch: update-real-msi.ps1 -- (T2202) pending migration: it starts the MSI-installed app bare with Start-Process.
-
 # T118: never inherit an IPC endpoint. A script started from one of the user's
 # own panes inherits $GHOZTTY_IPC_SOCKET naming the USER'S app, and the CLI
 # prefers a baked endpoint over the derivation - so leaving it set would aim
