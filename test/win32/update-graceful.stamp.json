@@ -1,11 +1,10 @@
 {
     "guard":  "update-graceful",
     "script":  "test/win32/update-graceful.ps1",
-    "generated":  "2026-10-23T15:13:23-07:00",
-    "commit":  "0ac70b89d",
+    "generated":  "2026-10-23T19:39:57-07:00",
+    "commit":  "5a80c3d4c",
     "uncommitted":  [
-                        "src/apprt/win32/update_install.zig",
-                        "test/win32/update-graceful.ps1"
+                        "test/win32/lib/ThrowawayProduct.ps1"
                     ],
     "files":  {
                   "dist/windows-installer/build-msi.sh":  "dc4ae4925631abf2594decdd6d3462b55d2f7c0416b40c2a3ec6c5f1e1d51011",
@@ -13,7 +12,7 @@
                   "src/apprt/win32/install_prepare.zig":  "661e30c9ca180ca97b65a87d98517d1b8acb38caa27678533309ea357d780462",
                   "src/apprt/win32/update_apply.zig":  "19f1258534432a483421c0f1cdca1d68cb151387e08e02061e34cce043ad908f",
                   "src/apprt/win32/update_install.zig":  "21edac189d6c107b6c6b65af8dc4f6b3ca56a80a8c487c4baa0a2332c5df3edd",
-                  "test/win32/lib/ThrowawayProduct.ps1":  "31fd12ec8aa3b4e3b96cfdc263773c000c4a2b441eefafe3930a7a332763ea89",
+                  "test/win32/lib/ThrowawayProduct.ps1":  "44251729c95f1c92ef33b4dff3b867356a29e4f64e2af6f849d1732cf4de2bae",
                   "test/win32/update-graceful.ps1":  "d36ca938cd4e11724893428c3482c0389db25fabb2bc862cbe6cce131d83c31b"
               }
 }

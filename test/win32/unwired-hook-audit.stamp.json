@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-23T18:49:58-07:00",
-    "commit":  "1763dd95c",
+    "generated":  "2026-10-23T19:33:01-07:00",
+    "commit":  "5a80c3d4c",
     "uncommitted":  [
 
                     ],
@@ -1038,7 +1038,7 @@
                   "test/win32/chrome-theme.ps1":  "d910d0060d4131b191be9c1567276f7c98747981c8f430b77cd543586dd4d051",
                   "test/win32/claude-fullscreen-env.ps1":  "af09ed9e96b5d9eda02e54f9cdbcd59e08b0ed9d3bd20143b9813da59059c0ac",
                   "test/win32/claude-integration.ps1":  "b882515bcc2870992c4f02c1cd04f8708126015212149f4102701191a39e6434",
-                  "test/win32/cleanslate-audit.ps1":  "78bcc00c4d312aa52084b00e523c26d8922cfe376d3427516fe64633e6dc1ab9",
+                  "test/win32/cleanslate-audit.ps1":  "0f482813725ad69ef8dd1055f98238537fad2daffafca3c2258912a3e177184a",
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
                   "test/win32/click-coord-audit.ps1":  "cd83fc5d9f26712fd0c66245cb9fc86a2879206235fc7ffc9a47f5b43534d7c0",
                   "test/win32/cli-focus-policy.ps1":  "ced06854134a16c61ce7b11f30904368de56bab4a959c74ea94dba872a4f319c",
