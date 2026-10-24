@@ -101,6 +101,7 @@ const persistence_notice = @import("persistence_notice.zig");
 const restore_placeholder = @import("restore_placeholder.zig");
 const startup_window_rule = @import("startup_window.zig");
 const RemoteReconnect = @import("RemoteReconnect.zig");
+const remote_reconnect = @import("remote_reconnect.zig");
 const agent_upgrade = @import("agent_upgrade.zig");
 const release_notes_bundle = @import("release_notes_bundle.zig");
 const job_escape = @import("job_escape.zig");
@@ -7753,7 +7754,8 @@ pub fn resumeRelaySession(
 /// transport) and open the new window with the parent pane's command + cwd
 /// inherited (Mac newWindowInheritingRemote semantics; the cwd is a bounded
 /// GET_CWD RPC on the parent's still-live connection). Relay windows resolve
-/// a fresh bearer token (account tier, then env) — signed out ⇒ error, like
+/// a fresh bearer token (account tier, then env), falling back to the bearer
+/// the parent was dialed with (T1277) — no credential anywhere ⇒ error, like
 /// the Mac's WP-B2 rule.
 pub fn openRemoteWindowFrom(
     self: *App,
@@ -7828,7 +7830,13 @@ pub fn openRemoteWindowFrom(
             return self.openDialedWindow(.{ .tcp = dialed }, opts);
         },
         .relay => |r| {
-            const token = IpcHandlers.resolveToken(arena) orelse {
+            // The store's renewable bearer first, then the one this window was
+            // dialed with (T1277, the T1276 rule): a `--token` window leaves the
+            // store empty, and that emptiness is not "signed out".
+            const token = remote_reconnect.chooseRelayToken(
+                IpcHandlers.resolveToken(arena),
+                r.token,
+            ) orelse {
                 log.warn("new window remote inherit: no relay credential (signed out)", .{});
                 return error.DialFailed;
             };

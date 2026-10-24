@@ -7,7 +7,8 @@
 #   powershell -NoProfile -File test\win32\ipc-relay.ps1
 #
 # Covers: relay dial + open window (happy path), terminal round-trip through
-# relay+agent (send-keys -> read), --command forwarded into the agent OPEN,
+# relay+agent (send-keys -> read), New Window on a --token relay window while
+# the app is signed out (T1277), --command forwarded into the agent OPEN,
 # tokenless refusal ("not signed in"), bad-token dial failure (Mac-parity
 # error), agent killed under a live window => GUI keeps answering IPC (no
 # hang/crash), agent RESTARTED under that dead window => the ladder settles on a
@@ -158,6 +159,14 @@ Stop-TestProcs
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'ipcrelay')
 Assert-GhozttyPrivateEndpoint -Exe $Exe
+# T1277: and an EMPTY restore. This run's isolated LOCALAPPDATA persists between
+# runs, and a run killed mid-way (Stop-TestProcs, or another harness's kill)
+# leaves its windows in the debug layout manifest and the agent's layout store,
+# so the next base launch restored them. They were noise for every section until
+# 2b, where a restored window held the active slot and `--from-focused` opened a
+# LOCAL window off it. Both sources are clear-able here: the agent is dead.
+[void](Clear-DebugSessionLayout)
+[void](Clear-DebugAgentLayouts)
 
 # T1837: and its own (empty) relay account. The app this run launches resolves
 # a relay credential from the account store FIRST - ahead of the env, and on
@@ -343,6 +352,33 @@ if ($code -ne 0) { Show-LastCli }
 Start-Sleep -Seconds 3
 $code = Run-Cli '+read --name=relwin --lines=40' 'read1.txt'
 Assert "remote output visible via +read" ((Get-Out 'read1.txt') -match 'relay-roundtrip-ok')
+
+"== 2b: New Window on a --token relay window works while the app is signed out (T1277)"
+# The app's account store is empty and GHOSTTY_RELAY_TOKEN is unset (above), so
+# the ONLY credential in the process is the bearer relwin was dialed with. New
+# Window used to resolve the store alone, answer "signed out" and refuse - on a
+# window whose own link was live. `--from-focused` is the keybind's IPC twin and
+# runs the same `openRemoteWindowFrom`; on this background desktop it resolves
+# to the last-created window, which is relwin (section 3 has not run yet). That
+# only holds because the setup clears the restore sources: a window restored
+# from an earlier run's layout takes the active slot and the verb goes local.
+$code = Run-Cli '+new-window --from-focused' 'newwin.txt' 30
+Assert "New Window from the relay window exits 0" ($code -eq 0)
+if ($code -ne 0) { Show-LastCli }
+Start-Sleep -Seconds 2
+Run-Cli '+list --json' 'list2bjson.txt' | Out-Null
+$j2b = $null
+try { $j2b = (Get-Out 'list2bjson.txt') | ConvertFrom-Json } catch { }
+$inherited = @()
+if ($j2b -and $j2b.data -and $j2b.data.windows) {
+    $inherited = @($j2b.data.windows | ForEach-Object { $_ } | Where-Object {
+        $_.target -notin @('relwin', 'relbase') -and
+        $_.PSObject.Properties.Name -contains 'connection' })
+}
+Assert "a second relay window exists, and it is connected" (
+    $inherited.Count -eq 1 -and $inherited[0].connection.state -eq 'connected')
+if ($inherited.Count -ne 1) { "    +list --json said: $((Get-Out 'list2bjson.txt').Trim())" }
+foreach ($w in $inherited) { Run-Cli "+close --target=$($w.target)" 'close2b.txt' | Out-Null }
 
 "== 3: --command runs through the remote shell"
 $code = Run-Cli "+new-remote-window --relay=$RelayBase --device=$($dev.id) --token=$DevToken --name=relcmd `"--command=echo relay-cmd-marker`"" 'opencmd.txt' 30

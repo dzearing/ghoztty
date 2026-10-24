@@ -1,10 +1,10 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-10-23T19:17:14-07:00",
-    "commit":  "1763dd95c",
+    "generated":  "2026-10-24T01:51:41-07:00",
+    "commit":  "2f0efb1cd",
     "uncommitted":  [
-
+                        "src/apprt/win32/App.zig"
                     ],
     "files":  {
                   "src/apprt/win32.zig":  "11f9a4eb4985f07d194f1ce497ba0b6910d482e6ffb547adca3ecabf6cb4027e",
@@ -33,7 +33,7 @@
                   "src/apprt/win32/agent_upgrade.zig":  "401b12129845032db916a20004897c1b11193349b4258db7b81e0dac795ca049",
                   "src/apprt/win32/AgentIntegration.zig":  "5d4a6fb2b1766789ebd425890ce6e4f71bda24ffa273d1dfd504226a01aacc16",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "bae8123be8ee78f13e7c5008ef66f2589e26eaf047e42163a3be94879952d92d",
-                  "src/apprt/win32/App.zig":  "2bb05cb599d4c3cdf1587b3e4ca8f9f601d41bdd863080988adbda28c664253b",
+                  "src/apprt/win32/App.zig":  "3047ef595874462218e300c9a87fb533a799cc27a87884763dde22588065ea9c",
                   "src/apprt/win32/app_restart.zig":  "e6de2b1d367b2e5832906b032b50b8f1fd3ff7f9cd59602b2e626b7f4a9ea73f",
                   "src/apprt/win32/background_zorder.zig":  "f365d4f6606a4f32c237ae49721ba46b6a7239e253fb205598df7a668e75d823",
                   "src/apprt/win32/banner_card.zig":  "0c5f77663c5464b0ff89692bb1de820cd982a27dc4caef5ce230bfde879d0700",
