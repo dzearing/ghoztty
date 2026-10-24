@@ -90,6 +90,25 @@
 # whole interior THROWS, after retrying long enough to rule out a window that
 # simply had not painted yet. -AllowUniform opts out, for measuring the limit.
 #
+# THE INVISIBLE HALF: OUTPUT VOLUME COLLAPSES TOO (T1239/T1266, measured
+# 2026-09-01 and 2026-10-23). The flat fill above is what "a background desktop
+# renders nothing" looks like; this is what it does to the BYTES, and nothing
+# turns red when it happens. A ConPTY re-renders what it forwards, and on the
+# input desktop that amplifies a scrolling flood: holder-volume.ps1's 20 KB of
+# payload reached the agent's ring as ~348 KB (~17x) there, and as ~27 KB here.
+# The echo storm T62 was written against ran "~60k writes/s" on the user's
+# desktop; on this one ipc-under-load.ps1 measured ~9k lines/s into the app.
+# So a script whose PREMISE is a volume of output - an overrun, a ring wrap, a
+# scrollback eviction, a load that latency bounds are held under - can keep
+# passing while it measures something much smaller than it says. The rule:
+# size and assert the premise from what ARRIVED, never from what was typed.
+# The meters already exist: the ring snapshot's stream offset
+# (`lib\RingSnapshot.ps1` Get-RingSnapshotEndOffset - every byte the agent
+# recorded, uncapped by the ring size; session-persistence.ps1 E5b), the ring's
+# reassembled length (holder-volume.ps1 B3/B3b), or a counter the flood prints,
+# read back off the pane (ipc-under-load.ps1's Measure-StormLines). Assert both
+# edges when the test needs a window, as holder-volume.ps1 does.
+#
 # THE ROUTE for a terminal-content probe (T214, decided 2026-08-01; route 0
 # added by T275, 2026-08-11). In order, and the first one that applies wins:
 #

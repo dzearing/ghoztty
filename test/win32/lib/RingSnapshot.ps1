@@ -56,6 +56,38 @@ function Read-RingSnapshotBytes([string]$basePath) {
     return , $out.ToArray()
 }
 
+# The STREAM offset one past the last byte the snapshot pair holds: how many
+# bytes the session has pushed through the agent since it started, as of the
+# last snapshot pass. Unlike the reassembled length above it is not capped by
+# the ring size, so the difference between two readings is the volume that
+# arrived in between - the measured number a volume-premise harness asserts
+# instead of counting the bytes it typed (T1266). 0 when the base is missing.
+function Get-RingSnapshotEndOffset([string]$basePath) {
+    $raw = $null
+    try { $raw = [IO.File]::ReadAllBytes($basePath) } catch { return [uint64]0 }
+    if ($raw.Length -lt 4) { return [uint64]0 }
+    $magic = [Text.Encoding]::ASCII.GetString($raw, 0, 4)
+    if ($magic -eq 'GRS2') { $hdr = 24 } elseif ($magic -eq 'GRS1') { $hdr = 20 } else { return [uint64]0 }
+    if ($raw.Length -lt $hdr) { return [uint64]0 }
+    $end = [uint64]([BitConverter]::ToUInt64($raw, 4) + [uint64]($raw.Length - $hdr))
+
+    $j = $null
+    try { $j = [IO.File]::ReadAllBytes($basePath + 'log') } catch { return $end }
+    if ($j.Length -lt 16) { return $end }
+    if ([Text.Encoding]::ASCII.GetString($j, 0, 4) -ne 'GRJ1') { return $end }
+    if ([BitConverter]::ToUInt64($j, 4) -ne $end) { return $end }
+    $pos = 16
+    while (($j.Length - $pos) -ge 20) {
+        $start = [BitConverter]::ToUInt64($j, $pos)
+        $len = [BitConverter]::ToUInt32($j, $pos + 8)
+        if (($j.Length - $pos - 20) -lt $len) { break }
+        if ($start -gt $end) { break }
+        if (($start + $len) -gt $end) { $end = [uint64]($start + $len) }
+        $pos += 20 + [int]$len
+    }
+    return $end
+}
+
 function Read-RingSnapshotText([string]$basePath) {
     return [Text.Encoding]::ASCII.GetString((Read-RingSnapshotBytes $basePath))
 }

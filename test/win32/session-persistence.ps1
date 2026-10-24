@@ -50,7 +50,11 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
-    [int]$Cycles = 3
+    [int]$Cycles = 3,
+    # T1266: the least each section-E storm must push through the agent while
+    # the IPC probes run (E5b). Measured off the ring, not counted in payload.
+    [int64]$StormFloorBytes = 2MB,
+    [int64]$EchoStormFloorBytes = 1MB
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -267,6 +271,7 @@ function Plant-Marker($pane, $marker, $tag) {
 # T652: the "attached is not alive" oracle. Read its header before adding an
 # assertion about a restored pane.
 . (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
+. (Join-Path $PSScriptRoot 'lib\RingSnapshot.ps1')
 function Test-RoundTrip($pane, $tag, $timeoutSec = 18) {
     # T652: delegated to the shared liveness oracle, so this script's arms move
     # with GHOZTTY_TEST_LIVENESS_BREAK like every other restore script's do -
@@ -732,6 +737,22 @@ Start-Sleep -Seconds 3
 $stormIds = @(Wait-AliveIds 'e-setup' 7 20)
 Assert "E1 storm panes are agent-backed (7 sessions alive)" ($stormIds.Count -eq 7)
 
+# T1266: the storms are a PREMISE, so they are measured, not assumed. Every
+# bound below is only as strong as the load it held under, and that load is not
+# the payload: a ConPTY re-renders what it forwards, and how much it re-renders
+# depends on whether anything is drawing (a holder-volume flood arrived at ~17x
+# its payload on the input desktop and ~1x on the test desktop). So the agent's
+# own count of the bytes each session pushed - the ring snapshot's stream offset
+# - is read before the probes and after them, and E5b asserts both storm panes
+# were really flooding across the window the probes ran in.
+$ringsDir = Join-Path (Get-GhozttyAgentStateDir -Root $script:tmp) 'rings'
+function Get-RingEndOffsets {
+    $m = @{}
+    foreach ($f in (Get-RingSnapshotFiles $ringsDir)) { $m[$f.BaseName] = Get-RingSnapshotEndOffset $f.FullName }
+    return $m
+}
+$ringsBefore = Get-RingEndOffsets
+
 # +list stays answering under the double storm (WM_APP_WAKEUP flood guard).
 # TIMEOUT-GUARDED (Run-Cli, 10s): a wedged GUI must be recorded as a failed
 # probe, never allowed to hang the run. An unguarded `& $Exe +list` here hung
@@ -756,6 +777,22 @@ Assert "E4 echo-storm +read latency $($sw.ElapsedMilliseconds)ms < 2000ms (T62 b
 
 # A quiet pane still round-trips input mid-storm.
 Assert "E5 quiet pane round-trips mid-storm" (Test-RoundTrip 'spC' 'e-quiet')
+
+# The window E2-E5 ran in, in what the agent RECORDED. A snapshot pass lags the
+# live stream by up to one volume threshold, which can only undercount, so a
+# reading that clears the floor is a floor that was really met.
+$ringsAfter = Get-RingEndOffsets
+$stormDeltas = @($ringsAfter.Keys | ForEach-Object {
+    $b = if ($ringsBefore.ContainsKey($_)) { $ringsBefore[$_] } else { [uint64]0 }
+    [int64]($ringsAfter[$_] - $b)
+} | Sort-Object -Descending)
+$floodTop = if ($stormDeltas.Count -ge 1) { $stormDeltas[0] } else { 0 }
+$floodNext = if ($stormDeltas.Count -ge 2) { $stormDeltas[1] } else { 0 }
+"  (agent recorded across E2-E5, busiest sessions first: $(($stormDeltas | Select-Object -First 3 | ForEach-Object { '{0:N0} B' -f $_ }) -join ', '))"
+Assert ("E5b premise: both storms really flooded the agent while the probes ran " +
+        "(busiest {0:N0} B >= {1:N0} B, next {2:N0} B >= {3:N0} B)" -f
+        $floodTop, $StormFloorBytes, $floodNext, $EchoStormFloorBytes) (
+    $floodTop -ge $StormFloorBytes -and $floodNext -ge $EchoStormFloorBytes)
 
 # Crash-kill + relaunch MID-STORM: restore + ATTACH must absorb two panes
 # replaying multi-MB rings while both floods keep writing.

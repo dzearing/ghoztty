@@ -15,7 +15,11 @@
 # release staging dir was a day old and predated the pool (the T49
 # stale-binary lesson, re-learned). Pass -ExePath to grade a release build.
 param(
-    [string]$ExePath = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
+    [string]$ExePath = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
+    # T1266: the least each storm must deliver INTO THE APP for the bounds it
+    # holds up to mean anything, measured off the pane (Measure-StormLines).
+    [int64]$StormFloorBps = 200KB,
+    [int64]$EchoFloorLps = 1000
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)  # T1993: this checkout, not lane A's
@@ -103,6 +107,35 @@ function Walk($node) {
 $probePane = ($leaves | Where-Object { $_.name -ne 'ipcload-storm' } | Select-Object -First 1).name
 if (-not $probePane) { Write-Host 'SETUP FAIL: probe pane not resolved'; exit 1 }
 
+# T1266: the storm is the PREMISE of every assertion below, so its strength is
+# measured, not assumed from the payload. How many bytes a ConPTY forwards for a
+# given payload depends on whether anything is drawing - a holder-volume flood
+# arrived at ~17x its payload on the input desktop and ~1x on this one - so the
+# only honest number is what the app actually took in. Read off the pane: the
+# storm's own line counter, sampled until the window is spent, every forward
+# step summed (the type storm's counter restarts each pass of the file, so a
+# step backwards is a wrap). A slow sample can only miss lines, never invent
+# them, so a reading that clears the floor is a floor that was really met.
+function Measure-StormLines([string]$Name, [string]$Pattern, [int]$Wrap, [double]$Seconds) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $last = -1
+    $lines = [int64]0
+    while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
+        $out = "$((Ghoz @('+read', "--name=$Name", '--lines=3')).Output)"
+        $hits = [regex]::Matches($out, $Pattern)
+        if ($hits.Count -gt 0) {
+            $n = [int64]$hits[$hits.Count - 1].Groups[1].Value
+            if ($last -ge 0) {
+                if ($n -ge $last) { $lines += $n - $last }
+                elseif ($Wrap -gt 0) { $lines += ($Wrap - $last) + $n }
+            }
+            $last = $n
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    return [pscustomobject]@{ Lines = $lines; Secs = $sw.Elapsed.TotalSeconds }
+}
+
 # Hammer +list while the storm runs.
 $ok = 0
 $bad = 0
@@ -120,6 +153,12 @@ Assert ($bad -eq 0) "+list answers under storm: $ok/40 ok$(if ($firstErr) { " (f
 # read here is its own bug).
 $tail = (Ghoz @('+read', '--name=ipcload-storm', '--lines=5')).Output
 Assert ($tail -match 'storm-payload') "storm still streaming and +read returns content mid-storm (len $($tail.Length))"
+
+# A storm-payload line is 75 bytes of text plus CRLF.
+$typeRate = Measure-StormLines 'ipcload-storm' 'storm-payload (\d+)' 25000 4
+$typeBps = [int64](($typeRate.Lines * 77) / [Math]::Max($typeRate.Secs, 0.001))
+Assert ($typeBps -ge $StormFloorBps) (
+    "premise: the type storm really floods the app ({0:N0} B/s taken in, floor {1:N0} B/s)" -f $typeBps, $StormFloorBps)
 
 # send-keys + read round-trip mid-storm, into the IDLE pane by name.
 $sendOk = 0
@@ -139,13 +178,19 @@ Assert ($probeTail -match 'LOADPROBE_5') 'probe echoes executed in the idle pane
 # renderer-mutex cycle and this +read starved 16-19s on the GUI thread
 # (whole app frozen). Bound: 2s.
 [void](Ghoz @('+split', '--target=ipcload', '--name=ipcload-echo', '--direction=down', '--shell=cmd',
-    '--command=for /l %i in (0,0,1) do @echo tiny-write-storm %i zzzzzzzzzzzzzzzzzzzzzzzzzzzz'))
+    '--command=for /l %i in (1,1,2000000000) do @echo tiny-write-storm %i zzzzzzzzzzzzzzzzzzzzzzzzzzzz'))
 Start-Sleep -Seconds 2
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $echoTail = (Ghoz @('+read', '--name=ipcload-echo', '--lines=5')).Output
 $sw.Stop()
 Assert ($echoTail -match 'tiny-write-storm') "echo-storm pane +read returns content (len $($echoTail.Length))"
 Assert ($sw.ElapsedMilliseconds -lt 2000) "echo-storm +read latency $($sw.ElapsedMilliseconds)ms < 2000ms (T62)"
+# T1266: the trigger T62 guards is the write COUNT, so that is the premise
+# measured - one echoed line is one write.
+$echoRate = Measure-StormLines 'ipcload-echo' 'tiny-write-storm (\d+)' 0 4
+$echoLps = [int64]($echoRate.Lines / [Math]::Max($echoRate.Secs, 0.001))
+Assert ($echoLps -ge $EchoFloorLps) (
+    "premise: the echo storm really is a write storm ({0:N0} lines/s taken in, floor {1:N0}/s)" -f $echoLps, $EchoFloorLps)
 
 # T111b: the server must keep ACCEPTING while a request is outstanding.
 # With a single pipe instance it could not: one client holding the instance
