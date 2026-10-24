@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-24T14:10:59-07:00",
-    "commit":  "e3e2a4597",
+    "generated":  "2026-10-24T14:32:31-07:00",
+    "commit":  "3f31b289e",
     "uncommitted":  [
 
                     ],
@@ -1109,10 +1109,10 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
-                  "test/win32/gate-negatives.ps1":  "c1f668bc1e4424a5df6243f9412e60aced2df2c73d5413c153381502f69e8323",
+                  "test/win32/gate-negatives.ps1":  "925c265fb910963fbc8ba677311909b35cfcb1ec9022721a2ace206e4346d426",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
-                  "test/win32/go-loop-guard.ps1":  "74985a98ece28ef0e3b0ee63995d8e94b4f6af7065774a60e014d6d4eeec6a0b",
+                  "test/win32/go-loop-guard.ps1":  "0a4f5c0cff7650be0af50b6801df9c8019e36732d63bb1191403b5d9bc14cffc",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "ab38059342784f2a702e8e7fd621acf9c4912c1b593d761a813b30b0d3bcdbb1",
@@ -1251,7 +1251,7 @@
                   "test/win32/relaunch-guard.ps1":  "57d4631599209336af68e48649fb30ad1da5246958c47a42a1604648586b9af9",
                   "test/win32/relay-account.ps1":  "e2c8ca01022c00c5abd022db7c96966cb8e421f928ede841aa98b1d2510043be",
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
-                  "test/win32/release-artifacts.ps1":  "7d08589c110bf12f8df298ca8beeeb9925d2804288574106295e7ec834c0dab5",
+                  "test/win32/release-artifacts.ps1":  "9b046e43aa56d5cdf6f141958bb0a32fe898e1ebad5f7288416c43f1fde09607",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "d530f73700139554c08af65fd9a0031160711c21d2e5903ae8b522019c54429b",
                   "test/win32/remote-disconnect.ps1":  "b028ff3675031fb478027e7b9010f1a39e6f3cf49fb56ca146a0d1bd580b2d59",

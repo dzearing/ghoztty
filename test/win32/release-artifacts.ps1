@@ -19,7 +19,8 @@
 #      script unparseable under `powershell -File` from the day it was
 #      written until T38. A parse gate is the only thing that catches that.
 #   B  live packaging: the FILEVERSION rule has exactly one live definition
-#      (MSI half - needs Docker and the msitools-local image), and the portable
+#      (asked of build-msi.sh through Git Bash; the msitools-local image only
+#      under -RequireDocker or when there is no bash, T1329), and the portable
 #      ZIP really contains the MSI's payload under a single Ghoztty/ root, twin
 #      included (ZIP half - needs only bash + python3, so it runs here).
 #   C  the documented process points at the automated one.
@@ -243,28 +244,8 @@ if ($dockerUp) {
 } else { $imageUp = $false }
 $ErrorActionPreference = $prev
 
-# -- B1: the MSI half. wixl/msitools is Linux-only tooling, so this one
-# genuinely needs Docker and the msitools-local image, and SKIPs without them.
-if (-not $dockerUp) {
-    Skip "B1 FILEVERSION single source" 'Docker is not running'
-} elseif (-not $imageUp) {
-    Skip "B1 FILEVERSION single source" 'msitools-local image missing'
-} else {
-    # The yy.m.d.NN rule has ONE live definition. The on-box script used to
-    # restate it in PowerShell; four private copies of a shared datum is how
-    # T257's rounding bug survived four scripts.
-    $printed = (docker run --rm -v "${repoUnix}:/repo" -w /repo msitools-local `
-            bash dist/windows-installer/build-msi.sh --print-file-version --build-num 7 |
-        Select-Object -Last 1).Trim()
-    # The container's `date` is UTC, and so is a CI runner's -- the host's
-    # local date only agrees with it for part of the day. Comparing the two
-    # made this assertion fail every evening after 17:00 PDT against a version
-    # string that was perfectly correct (measured 2026-08-21 23:12 local:
-    # expected 26.8.21.7, got 26.8.22.7).
-    $utc = (Get-Date).ToUniversalTime()
-    $expect = "{0}.{1}.{2}.7" -f [int]$utc.ToString('yy'), [int]$utc.Month, [int]$utc.Day
-    AssertEq "B1 FILEVERSION single source" $expect $printed
-}
+# -- B1 (the FILEVERSION rule) runs below, once Get-BashPath exists: it needs
+# bash and nothing else (T1329).
 
 # -- B2-B4: the portable ZIP half. This needs bash + python3 and NOTHING else
 # (build-portable-zip.sh says so in its own header, so it runs the same on a CI
@@ -306,13 +287,63 @@ function New-Python3Shim([string]$WorkDir) {
     return $shimDir
 }
 
+# -- B1: the yy.m.d.NN rule has ONE live definition. The on-box script used
+# to restate it in PowerShell; four private copies of a shared datum is how
+# T257's rounding bug survived four scripts. So ask build-msi.sh for it.
+#
+# This needs bash, not wixl: `--print-file-version` answers and exits before
+# build-msi.sh looks for a single msitools binary. Until T1329 it ran only
+# inside the msitools-local Docker image, so on this box - where Docker is
+# deliberately kept down - it was skipped on every run there has ever been,
+# and that one skip is what kept the packaging stamp below out of reach. Git
+# Bash is the local runner; the image is the fallback.
+#
+# Pinned to UTC on both routes: the container's `date` is UTC, and so is a CI
+# runner's, while the host's local date only agrees with it for part of the
+# day. Comparing the two made this assertion fail every evening after 17:00
+# PDT against a version string that was perfectly correct (measured
+# 2026-08-21 23:12 local: expected 26.8.21.7, got 26.8.22.7).
+#
+# -RequireDocker keeps its old meaning: the run is asked for BY the packaging
+# row, so it goes through the image and fails without it, and only that run
+# can write the packaging stamp locally (see the stamp policy at the bottom).
+$bash = Get-BashPath
+$b1InImage = $false
+$printed = $null
+if ($RequireDocker) {
+    if ($imageUp) {
+        $printed = (docker run --rm -v "${repoUnix}:/repo" -w /repo msitools-local `
+                bash dist/windows-installer/build-msi.sh --print-file-version --build-num 7 |
+            Select-Object -Last 1)
+        $b1InImage = $true
+    }
+} elseif ($bash) {
+    $printed = (& $bash -c "export TZ=UTC; cd '$repoUnix' && bash dist/windows-installer/build-msi.sh --print-file-version --build-num 7" 2>&1 |
+        Select-Object -Last 1)
+} elseif ($imageUp) {
+    $printed = (docker run --rm -v "${repoUnix}:/repo" -w /repo msitools-local `
+            bash dist/windows-installer/build-msi.sh --print-file-version --build-num 7 |
+        Select-Object -Last 1)
+    $b1InImage = $true
+}
+if ($null -eq $printed) {
+    $b1Why = 'no Git Bash and no msitools-local image'
+    if ($RequireDocker) {
+        $b1Why = $(if (-not $dockerUp) { 'Docker is not running' } else { 'msitools-local image missing' })
+    }
+    Skip "B1 FILEVERSION single source" $b1Why
+} else {
+    $utc = (Get-Date).ToUniversalTime()
+    $expect = "{0}.{1}.{2}.7" -f [int]$utc.ToString('yy'), [int]$utc.Month, [int]$utc.Day
+    AssertEq "B1 FILEVERSION single source" $expect ([string]$printed).Trim()
+}
+
 $zipRel = "zig-out/test-portable-$PID.zip"
 $zipPath = Join-Path $Repo ("zig-out\test-portable-$PID.zip")
 $work = Join-Path ([IO.Path]::GetTempPath()) "release-artifacts-$PID"
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $builtZip = $false
 $zipWhy = ''
-$bash = Get-BashPath
 if (-not (Test-Path -LiteralPath (Join-Path $Repo 'zig-out\bin\ghoztty.exe'))) {
     $zipWhy = 'zig-out/bin/ghoztty.exe missing (build first)'
 } elseif ($bash) {
@@ -922,10 +953,16 @@ if ($Full) {
 #     so it happens on any box with git installed. This is the row that would
 #     have caught a payload missing ghoztty.com; while it was welded to the
 #     Docker bar below, nothing on this box could go red over it (T1052).
-#   release-artifacts-packaging    stamped only by a run with zero skips too.
-#     Its file (build-msi.sh) is only really proved by section B compiling it
-#     under the msitools-local image, so a Docker-less run must not vouch for
-#     it. That bar is unchanged; what changed in T1189 is what a due row COSTS.
+#   release-artifacts-packaging    stamped only by a run with zero skips that
+#     ran B1 inside the msitools-local image (-RequireDocker). Be clear about
+#     what that is: nothing in THIS harness compiles the MSI - B1 asks
+#     build-msi.sh a question that exits before it touches wixl - so the
+#     compile proof for build-msi.sh is fork-ci's windows-cross job, and since
+#     T1236 the claim stamps this row from that job's green run on its own.
+#     Since T1329 a Docker-less run performs B1 through Git Bash instead of
+#     skipping it, and still does not vouch for this row: running the same
+#     question through bash is not more evidence about wixl than the image
+#     was. What changed in T1189 is what a due row COSTS.
 #     It is ADVISORY now (scripts\guard-due.ps1): reported by every claim,
 #     never failing the pre-commit gate, and clearable from the fork-ci run that
 #     compiled the same bytes -
@@ -942,8 +979,13 @@ if ($script:failures -eq 0) {
         "  ZIP stamp NOT updated (section B could not build a portable ZIP: $zipWhy)"
     }
     if ($script:skipped -eq 0) {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
-            update -Guard release-artifacts-packaging -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
+        if ($b1InImage) {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
+                update -Guard release-artifacts-packaging -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
+        } else {
+            "  packaging stamp NOT updated (B1 ran through Git Bash, not the msitools image; the"
+            "    claim clears it from fork-ci's windows-cross, which compiles the MSI: T1236)"
+        }
     } else {
         "  packaging stamp NOT updated ($($script:skipped) section(s) skipped; re-run with Docker up,"
         "    or clear it from CI: scripts\guard-due.ps1 stamp-ci -Guard release-artifacts-packaging)"
