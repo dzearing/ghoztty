@@ -16,6 +16,10 @@ const App = @import("../App.zig");
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.renderer_thread);
 
+/// How soon to look again at a prompt redraw in progress (see
+/// `renderCallback`).
+const prompt_redraw_retry_ms = 8;
+
 const DRAW_INTERVAL = 8; // 120 FPS
 const CURSOR_BLINK_INTERVAL = 600;
 
@@ -614,6 +618,19 @@ fn renderCallback(
         t.flags.cursor_blink_visible,
     ) catch |err|
         log.warn("error rendering err={}", .{err});
+
+    // A prompt redraw held back until the shell's output goes quiet
+    // (`Terminal.flags.awaiting_prompt_redraw`) needs another look once it
+    // has, whether or not more output wakes us.
+    const holding = holding: {
+        t.state.mutex.lock();
+        defer t.state.mutex.unlock();
+        break :holding t.state.terminal.flags.awaiting_prompt_redraw and
+            t.state.terminal.prompt_redraw_output != null;
+    };
+    if (holding and t.render_c.state() != .active) {
+        t.render_h.run(&t.loop, &t.render_c, prompt_redraw_retry_ms, Thread, t, renderCallback);
+    }
 
     // Draw
     t.drawFrame(false);

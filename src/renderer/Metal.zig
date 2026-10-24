@@ -61,6 +61,11 @@ max_texture_size: u32,
 /// We start an AutoreleasePool before `drawFrame` and end it afterwards.
 autorelease_pool: ?*objc.AutoreleasePool = null,
 
+/// Draw order of the frames begun so far: each frame takes the next number
+/// when it begins (under the renderer's draw mutex), and the layer refuses a
+/// frame older than the one it already shows. See `IOSurfaceLayer.setSurface`.
+frame_seq: u64 = 0,
+
 pub fn init(alloc: Allocator, opts: rendererpkg.Options) !Metal {
     comptime switch (builtin.os.tag) {
         .macos, .ios => {},
@@ -249,12 +254,13 @@ pub fn initTarget(self: *const Metal, width: usize, height: usize) !Target {
     });
 }
 
-/// Present the provided target.
-pub inline fn present(self: *Metal, target: Target, sync: bool) !void {
+/// Present the provided target. `seq` is the frame's draw order
+/// (`frame_seq` when it began).
+pub inline fn present(self: *Metal, target: Target, sync: bool, seq: u64) !void {
     if (sync) {
-        self.layer.setSurfaceSync(target.surface);
+        self.layer.setSurfaceSync(target.surface, seq);
     } else {
-        try self.layer.setSurface(target.surface);
+        try self.layer.setSurface(target.surface, seq);
     }
 }
 
@@ -397,14 +403,15 @@ pub fn initAtlasTexture(
 
 /// Begin a frame.
 pub inline fn beginFrame(
-    self: *const Metal,
+    self: *Metal,
     /// Once the frame has been completed, the `frameCompleted` method
     /// on the renderer is called with the health status of the frame.
     renderer: *Renderer,
     /// The target is presented via the provided renderer's API when completed.
     target: *Target,
 ) !Frame {
-    return try Frame.begin(.{ .queue = self.queue }, renderer, target);
+    self.frame_seq += 1;
+    return try Frame.begin(.{ .queue = self.queue, .seq = self.frame_seq }, renderer, target);
 }
 
 fn chooseDevice() error{NoMetalDevice}!objc.Object {

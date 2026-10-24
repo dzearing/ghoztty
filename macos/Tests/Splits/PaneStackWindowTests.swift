@@ -78,7 +78,7 @@ struct PaneStackWindowTests {
 
         // Click the leftmost tab: the first pane comes forward where it is,
         // and the cards after it slide right.
-        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
+        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { $0.isStrip }
         let leftmost = try #require(tabs.min { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX })
         #expect(leftmost.pane === panes[0])
         let point = leftmost.convert(NSPoint(x: leftmost.bounds.midX, y: leftmost.bounds.midY), to: nil)
@@ -88,34 +88,30 @@ struct PaneStackWindowTests {
             with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0,
             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)))
 
-        // Mid-slide, the card is on its way — on the render server, not
-        // already there — and nothing has been resized.
-        var sawMidway = false
+        // Mid-glide, the card is on its way, and nothing has been resized.
+        var placed: [CGFloat] = []
         var shot = 0
-        for _ in 0..<40 {
-            await settle(0.01)
+        for _ in 0..<60 {
+            await settle(0.008)
             // While the cards are still on their way, nothing has been resized
             // (the pane coming forward takes its slot's size once it is there).
-            if card(panes[1])?.layer?.animationKeys()?.isEmpty == false {
-                #expect(sizes() == before, "a slide never resizes a terminal mid-slide")
-            }
-            let target = try #require(card(panes[1])).frame.minX
-            if let shown = card(panes[1])?.layer?.presentation()?.frame.minX,
-               shown > x0 + 4, shown < target - 4 {
-                sawMidway = true
+            if cards.contains(where: \.isGliding) {
+                #expect(sizes() == before, "a glide never resizes a terminal mid-glide")
                 if shot < 2 { try await capture(window, "mid-\(shot)"); shot += 1 }
             }
+            if let x = card(panes[1])?.placedFrame?.minX { placed.append(x) }
             // A card hanging past the stack's end never shows past it.
             for c in cards {
-                guard let cardLayer = c.layer?.presentation(), let clip = c.clipLayer?.presentation() else { continue }
+                guard let cardLayer = c.layer, let clip = c.clipLayer else { continue }
                 let right = cardLayer.frame.minX + clip.frame.maxX
                 let paneRight = cardLayer.frame.maxX - PaneCardView.outset
                 if paneRight > stage.bounds.maxX {
-                    #expect(right <= stage.bounds.maxX + 0.5, "cut at the stack's edge mid-slide")
+                    #expect(right <= stage.bounds.maxX + 0.5, "cut at the stack's edge mid-glide: pane \(panes.firstIndex { $0.id == c.paneID } ?? -1) frame \(cardLayer.frame) clip \(clip.frame) stage \(stage.bounds) placed \(String(describing: c.placedFrame)) collapse \(c.collapse)")
                 }
             }
         }
-        #expect(sawMidway, "the cards slide")
+        let target = try #require(placed.last)
+        #expect(placed.contains { $0 > x0 + 4 && $0 < target - 4 }, "the cards glide: \(placed.map { Int($0) })")
 
         await settle(0.6)
         try await capture(window, "after")
@@ -136,6 +132,17 @@ struct PaneStackWindowTests {
     private func handles(_ window: NSWindow) -> [DividerHandle.DividerHandleView] {
         all(DividerHandle.DividerHandleView.self, in: window.contentView!)
             .sorted { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
+    }
+
+    /// The grips between two cards on show, left to right: not the ones
+    /// where a run meets its strips.
+    private func gripsBetweenCards(_ window: NSWindow) -> [DividerHandle.DividerHandleView] {
+        let strips = all(PaneStackTabView.self, in: window.contentView!).filter { $0.isStrip }
+            .map { $0.convert($0.bounds, to: nil).insetBy(dx: -12, dy: 0) }
+        return handles(window).filter { h in
+            let r = h.convert(h.bounds, to: nil)
+            return !strips.contains { $0.intersects(r) }
+        }
     }
 
     private func drag(_ handle: DividerHandle.DividerHandleView, by delta: CGFloat) {
@@ -160,7 +167,7 @@ struct PaneStackWindowTests {
         try await capture(window, "collapsed")
         let key = Set(panes.map(\.id))
         #expect(state.pin(for: key) == .init(start: 0, count: 2))
-        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
+        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { $0.isStrip }
         #expect(tabs.map { $0.pane?.id } == [panes[2].id], "the squeezed pane is a strip")
         #expect(panes[1].isFocusedPane, "the caret left the tucked pane for its neighbour")
 
@@ -178,18 +185,19 @@ struct PaneStackWindowTests {
         await settle(0.8)
         #expect(panes[2].isFocusedPane)
         #expect(state.pin(for: key) == nil)
-        #expect(all(PaneStackTabView.self, in: window.contentView!).allSatisfy { $0.isHidden })
+        #expect(all(PaneStackTabView.self, in: window.contentView!).allSatisfy { !$0.isStrip })
 
         // Collapse again, from the other side this time, and widen it back
         // with the grip where the run meets the minimized card.
         drag(try #require(handles(window).first), by: -500)
         await settle(0.8)
         #expect(state.pin(for: key) == .init(start: 1, count: 2))
-        // The grip where the run meets the tucked card widens the row again.
-        drag(try #require(handles(window).first), by: -200)
+        // The grip where the run meets the tucked card is its divider: pulled
+        // past a pane's minimum, it widens the row again.
+        drag(try #require(handles(window).first), by: 400)
         await settle(0.8)
         #expect(state.pin(for: key) == nil)
-        let left = all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
+        let left = all(PaneStackTabView.self, in: window.contentView!).filter { $0.isStrip }
         #expect(left.isEmpty, "\(left.map { t in "\(panes.firstIndex { $0.id == t.pane?.id } ?? -1) a=\(t.alphaValue) f=\(t.frame)" })")
         #expect(handles(window).count == 2, "side by side, with its dividers back")
     }
@@ -214,7 +222,7 @@ struct PaneStackWindowTests {
         func grid() -> [String] {
             panes.map { p in let s = ghostty_surface_size(p.surface!); return "\(s.columns)x\(s.rows)" }
         }
-        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
+        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { $0.isStrip }
             .sorted { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
         let strip = try #require(tabs.first)
         let point = strip.convert(NSPoint(x: strip.bounds.midX, y: strip.bounds.midY), to: nil)
@@ -235,9 +243,12 @@ struct PaneStackWindowTests {
         hit.mouseUp(with: try #require(NSEvent.mouseEvent(
             with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0,
             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)))
+        var moving = false, stopped: CFTimeInterval?
         while CACurrentMediaTime() - start < 1.0 {
             let g = grid()
             if g != changes.last?.1 { changes.append((CACurrentMediaTime() - start, g)) }
+            let gliding = all(PaneCardView.self, in: window.contentView!).contains(where: \.isGliding)
+            if gliding { moving = true } else if moving, stopped == nil { stopped = CACurrentMediaTime() - start }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
         let frames = await recorder.stop()
@@ -247,7 +258,8 @@ struct PaneStackWindowTests {
         #expect(controller.paneStackState.pin(for: key) == .init(start: 0, count: 3))
         #expect(changes.count == 2, "each terminal is resized once, all together:\n\(log)")
         if changes.count == 2 {
-            #expect(changes[1].0 >= PaneStageView.slideDuration - 0.02, "resized mid-slide:\n\(log)")
+            #expect(moving, "the cards glided")
+            #expect(changes[1].0 >= (stopped ?? 1) - 0.02, "resized mid-glide (it ended at \(stopped ?? -1)):\n\(log)")
             // The three on show all take the same slot size; the one still a
             // strip is never resized at all.
             let after = changes[1].1
@@ -278,7 +290,7 @@ struct PaneStackWindowTests {
             }
             return n
         }
-        let during = frames.filter { $0.0 - start >= 0 && $0.0 - start <= PaneStageView.slideDuration + 0.15 }
+        let during = frames.filter { $0.0 - start >= 0 && $0.0 - start <= (stopped ?? 0.4) + 0.15 }
         #expect(during.count >= 15, "the slide was recorded at \(during.count) frames")
         let baseline = frames.first.map { text($0.1) } ?? 0
         #expect(baseline > 100, "no text to watch in the still card")
@@ -306,7 +318,7 @@ struct PaneStackWindowTests {
         try await capture(window, "swapped")
         #expect(controller.surfaceTree.root?.leaves().map(\.id) == [panes[2].id, panes[1].id, panes[0].id])
         #expect(controller.paneStackState.pin(for: key) == .init(start: 0, count: 2))
-        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
+        let tabs = all(PaneStackTabView.self, in: window.contentView!).filter { $0.isStrip }
         #expect(tabs.map { $0.pane?.id } == [panes[0].id], "a took c's place as the strip")
         #expect(panes[2].isFocusedPane)
         _ = window
@@ -335,7 +347,7 @@ struct PaneStackWindowTests {
         let (controller, window, panes) = try await stackedWindow(count: 4, width: 1200)
         defer { controller.close() }
         let width = { (p: PaneView) in p.contentView.frame.width }
-        let grips = handles(window)
+        let grips = gripsBetweenCards(window)
         #expect(grips.count == 2, "a grip between each pair of cards on show")
         let before = panes.map(width)
 
@@ -347,7 +359,7 @@ struct PaneStackWindowTests {
         #expect(after.max()! - after.min()! >= 70, "one slot grew at another's expense: \(before) -> \(after) shares \(controller.paneStackState.shares)")
 
         // Squeeze the next card well past its minimum: the far card tucks.
-        drag(try #require(handles(window).first), by: 120)
+        drag(try #require(gripsBetweenCards(window).first), by: 120)
         await settle(0.8)
         let key = Set(panes.map(\.id))
         #expect(controller.paneStackState.pin(for: key)?.count == 2)
@@ -357,7 +369,7 @@ struct PaneStackWindowTests {
         let (controller, window, panes) = try await stackedWindow(count: 4, width: 1200)
         defer { controller.close() }
         // The card on show just before the grip.
-        let grip = try #require(handles(window).first)
+        let grip = try #require(gripsBetweenCards(window).first)
         let gripX = grip.convert(grip.bounds, to: nil).midX
         let frame = { (p: PaneView) in p.contentView.convert(p.contentView.bounds, to: nil) }
         let first = try #require(panes.filter { frame($0).maxX <= gripX }.max { frame($0).maxX < frame($1).maxX })
@@ -473,7 +485,7 @@ struct PaneStackWindowTests {
 
     /// The panes drawn as strips, in order.
     private func strips(_ window: NSWindow) -> [UUID?] {
-        all(PaneStackTabView.self, in: window.contentView!).filter { !$0.isHidden }
+        all(PaneStackTabView.self, in: window.contentView!).filter { $0.isStrip }
             .sorted {
                 let a = $0.convert($0.bounds, to: nil), b = $1.convert($1.bounds, to: nil)
                 return a.minX == b.minX ? a.minY > b.minY : a.minX < b.minX
@@ -629,13 +641,873 @@ struct PaneStackWindowTests {
         #expect(!controller.paneStackState.isGesturing)
     }
 
+    /// A terminal beside a viewer, the sidebar pinned, the divider dragged to
+    /// the window's edge so the terminal is a strip; then the grip between
+    /// the strip and the viewer pulled away from the strip, with real mouse
+    /// events, like the divider it stands in for. The terminal comes out
+    /// once it would be a pane's minimum wide, with its edge under the
+    /// pointer; pulled back under the minimum in the same drag, it goes back.
+    /// (The grip used to want a drag the other way, out over the strip, of
+    /// 48pt — more than the strip and its gutter span before the sidebar.)
+    @Test(arguments: [
+        ([200], false),
+        ([400], true),
+        ([400, 100], false),
+    ] as [([CGFloat], Bool)])
+    func aStripIsPulledBackOutByItsGutterLikeADivider(path: [CGFloat], comesOut: Bool) async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let terminal = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let doc = FileManager.default.temporaryDirectory.appendingPathComponent("strip-gutter.html")
+        try "<body style='background:orange'><h1>page</h1></body>".write(to: doc, atomically: true, encoding: .utf8)
+        let viewer = PaneView(viewer: ViewerView(location: doc.path))
+        var tree = SplitTree<PaneView>(view: terminal)
+        tree = try tree.inserting(view: viewer, at: terminal, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = false
+        controller.paneSidebarState.isPinned = true
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1400, height: 800))
+        window.makeFirstResponder(try #require(viewer.viewerView))
+        await settle(1.5)
+        let key = Set([terminal.id, viewer.id])
+
+        func event(_ type: NSEvent.EventType, _ p: NSPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(
+                with: type, location: p, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+        }
+        /// A real drag from `from` through each offset in `path`, delivered
+        /// to whatever the window hit-tests there.
+        func drag(from: NSPoint, through path: [CGFloat]) async throws -> NSView? {
+            let hit = window.contentView?.superview?.hitTest(from)
+            var x = from.x
+            for target in path.map({ from.x + $0 }) {
+                let step: CGFloat = target > x ? 10 : -10
+                while abs(target - x) >= 10 {
+                    x += step
+                    NSApp.postEvent(try event(.leftMouseDragged, NSPoint(x: x, y: from.y)), atStart: false)
+                }
+            }
+            NSApp.postEvent(try event(.leftMouseUp, NSPoint(x: x, y: from.y)), atStart: false)
+            hit?.mouseDown(with: try event(.leftMouseDown, from))
+            await settle(1.0)
+            return hit
+        }
+
+        // The divider, dragged to the window's leading edge.
+        let divider = try #require(handles(window).first)
+        let gutter = divider.convert(divider.bounds, to: nil)
+        _ = try await drag(from: NSPoint(x: gutter.midX, y: gutter.midY), through: [-gutter.midX + 5])
+        #expect(controller.paneStackState.pin(for: key) != nil, "collapsed")
+        #expect(strips(window) == [terminal.id], "the terminal is a strip")
+
+        // The gutter between the strip and the viewer: the one grip left.
+        let grips = handles(window)
+        #expect(grips.count == 1, "\(grips.count) grips")
+        let grip = try #require(grips.first).convert(try #require(grips.first).bounds, to: nil)
+        let point = NSPoint(x: grip.midX, y: grip.midY)
+        let hit = try await drag(from: point, through: path)
+        try await capture(window, "strip-gutter-after")
+        #expect(hit is DividerHandle.DividerHandleView, "the gutter at \(point) hit \(String(describing: hit))")
+        if comesOut {
+            #expect(controller.paneStackState.pin(for: key) == nil, "pulled back out")
+            #expect(strips(window).isEmpty)
+            // Its edge where the pointer let go: the divider is there.
+            let edge = try #require(handles(window).first)
+            let at = edge.convert(edge.bounds, to: nil).midX
+            #expect(abs(at - (point.x + path.last!)) <= 12, "the divider at \(at), the pointer at \(point.x + path.last!)")
+        } else {
+            #expect(controller.paneStackState.pin(for: key) != nil, "still collapsed")
+            #expect(strips(window) == [terminal.id])
+        }
+    }
+
+    /// A drag from `start` through `path` (offsets along x), paced like a
+    /// hand's — posted from another thread, a step every 8ms, so frames are
+    /// drawn between — recorded as the window server composites it. Returns
+    /// the frames drawn while the mouse was held, each with the range the
+    /// pointer's offset took in the 150ms before it (a frame trails the
+    /// events it shows, by a varying amount).
+    private func recordedDrag(
+        _ window: NSWindow, from start: NSPoint, through path: [CGFloat]
+    ) async throws -> [(image: CGImage, pointer: ClosedRange<CGFloat>)] {
+        let windowNumber = window.windowNumber
+        func event(_ type: NSEvent.EventType, _ x: CGFloat) -> NSEvent? {
+            NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: x, y: start.y), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)
+        }
+        let recorder = WindowFrameRecorder()
+        try await recorder.start(window, scale: 2)
+        await settle(0.3)
+        let steps = Steps()
+        let posted = DispatchSemaphore(value: 0)
+        let last = path.last ?? 0
+        DispatchQueue.global().async {
+            for dx in path {
+                usleep(8000)
+                steps.append(CACurrentMediaTime(), dx)
+                if let e = event(.leftMouseDragged, start.x + dx) { NSApp.postEvent(e, atStart: false) }
+            }
+            usleep(50000)
+            if let e = event(.leftMouseUp, start.x + last) { NSApp.postEvent(e, atStart: false) }
+            posted.signal()
+        }
+        GutterBar.pointerOverride = CGPoint(x: start.x + last, y: start.y)
+        defer { GutterBar.pointerOverride = nil }
+        let hit = try #require(window.contentView?.superview?.hitTest(start))
+        hit.mouseDown(with: try #require(event(.leftMouseDown, start.x)))
+        let released = CACurrentMediaTime()
+        posted.wait()
+        await settle(0.3)
+        let all = steps.all
+        return await recorder.stop().compactMap { t, image in
+            let recent = all.filter { $0.0 <= t && $0.0 >= t - 0.15 }.map(\.1)
+            guard let first = all.first, t > first.0 + 0.05, t < released - 0.06,
+                  let lo = recent.min(), let hi = recent.max() else { return nil }
+            return (image, lo...hi)
+        }
+    }
+
+    private final class Steps: @unchecked Sendable {
+        private let lock = NSLock()
+        private var steps: [(CFTimeInterval, CGFloat)] = []
+        func append(_ t: CFTimeInterval, _ dx: CGFloat) { lock.lock(); steps.append((t, dx)); lock.unlock() }
+        var all: [(CFTimeInterval, CGFloat)] { lock.lock(); defer { lock.unlock() }; return steps }
+    }
+
+    /// The accent bars across a frame's row at `y` (window points): the x of
+    /// each run of saturated accent.
+    private func bars(_ image: CGImage, _ window: NSWindow, y: CGFloat) -> [CGFloat] {
+        let scale = CGFloat(image.width) / window.frame.width
+        let rep = NSBitmapImageRep(cgImage: image)
+        let row = Int((window.frame.height - y) * scale)
+        var runs: [CGFloat] = []
+        var inRun = false
+        for px in 0..<image.width {
+            guard let c = rep.colorAt(x: px, y: row)?.usingColorSpace(.sRGB) else { continue }
+            let lit = c.blueComponent > 0.75 && c.blueComponent - c.redComponent > 0.4
+            if lit && !inRun { runs.append(CGFloat(px) / scale) }
+            inRun = lit
+        }
+        return runs
+    }
+
+    /// The bar stays in the gutter it is dragging, lit, and is the only bar:
+    /// a strip's grip pulled out past the pane's minimum, then back so the
+    /// pane goes back, recorded frame by frame. Under the minimum it stays
+    /// at the strip's gutter (the pane has not come out, so the gutter has
+    /// not moved); out, it is the divider's, at the pointer. It used to
+    /// vanish as the pane came out and as it went back, and to double up
+    /// with the hover bar of a grip that came back under the pointer.
+    @Test func theBarStaysInTheGutterAsAStripComesOutAndGoesBack() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        let key = Set(panes.map(\.id))
+        drag(try #require(handles(window).first), by: -800)
+        await settle(0.8)
+        #expect(controller.paneStackState.pin(for: key) != nil, "collapsed")
+        let grip = try #require(handles(window).first)
+        let gutter = grip.convert(grip.bounds, to: nil)
+        let start = NSPoint(x: gutter.midX, y: gutter.midY)
+
+        var path = Array(stride(from: CGFloat(10), through: 400, by: 10)) + Array(repeating: 400, count: 15)
+        path += Array(stride(from: CGFloat(390), through: 100, by: -10)) + Array(repeating: 100, count: 30)
+        let frames = try await recordedDrag(window, from: start, through: path)
+        #expect(controller.paneStackState.pin(for: key) != nil, "back under the minimum, it went back")
+        #expect(frames.count > 20, "only \(frames.count) frames while held")
+        try expectOneBar(frames, window, y: start.y) { pointer, bar in
+            // In the gutter: at the strip's until the pane comes out, then
+            // the divider's, gliding with it as the pane comes out and goes
+            // back — never past the strip, nor out ahead of the pointer.
+            bar >= start.x - 8 && bar <= start.x + pointer.upperBound + 8
+        }
+        // Let go away from any gutter: nothing stays lit.
+        await settle(0.3)
+        #expect(handles(window).allSatisfy { !$0.showsBar }, "a bar stayed lit after the drag")
+    }
+
+    /// A divider dragged until its pane tucks away, then on, and back: the
+    /// bar stays in the gutter — at the pane's minimum while it squeezes, at
+    /// the strip's edge once it snaps there — lit, one bar, never at the
+    /// pointer out past where the gutter can go.
+    @Test func theBarStaysInTheGutterAsADividerCollapsesAPaneAndBack() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        let key = Set(panes.map(\.id))
+        let divider = try #require(handles(window).first)
+        let gutter = divider.convert(divider.bounds, to: nil)
+        let start = NSPoint(x: gutter.midX, y: gutter.midY)
+        let paneStart = try #require(cardRects(window).map(\.minX).min())
+        let minimumAt = paneStart + PaneLayout.Metrics.minimumPaneSize.width - start.x
+
+        var path = Array(stride(from: CGFloat(-10), through: -450, by: -10)) + Array(repeating: -450, count: 15)
+        path += Array(stride(from: CGFloat(-440), through: 0, by: 10)) + Array(repeating: 0, count: 15)
+        let frames = try await recordedDrag(window, from: start, through: path)
+        #expect(controller.paneStackState.pin(for: key) == nil, "back where it began, side by side")
+        #expect(frames.count > 20, "only \(frames.count) frames while held")
+        try expectOneBar(frames, window, y: start.y) { pointer, bar in
+            // Out past where the gutter can go, the bar is not at the
+            // pointer: it is at the pane's minimum, or — the pane tucked —
+            // at the strip's edge, where the gutter snapped.
+            pointer.upperBound < minimumAt - 100 ? abs(bar - (start.x + pointer.lowerBound)) > 40 : true
+        }
+    }
+
+    /// A pane collapsed by its divider narrows into its strip as a glass
+    /// card — its content fading out and its title in, step by step with how
+    /// far in it is — and its strip is that card, the desk reading through
+    /// it like any unfocused pane. It used to glide in as a glass card, then
+    /// switch in one frame to a dark, nearly opaque bar.
+    @Test func aPaneCollapsesIntoAGlassStripWithNothingSnapping() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        let key = Set(panes.map(\.id))
+        let divider = try #require(handles(window).first)
+        let gutter = divider.convert(divider.bounds, to: nil)
+
+        var samples: [(collapse: CGFloat, title: CGFloat)] = []
+        var mismatched: [String] = []
+        let timer = Timer(timeInterval: 0.008, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard let card = self.all(PaneCardView.self, in: window.contentView!)
+                    .first(where: { $0.paneID == panes[0].id }) else { return }
+                samples.append((card.collapse, card.titleOpacity))
+                if abs(card.collapse - card.titleOpacity) > 0.01 {
+                    mismatched.append("collapse \(card.collapse) title \(card.titleOpacity)")
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        let path = Array(stride(from: CGFloat(-20), through: -700, by: -20)) + Array(repeating: -700, count: 10)
+        _ = try await recordedDrag(window, from: NSPoint(x: gutter.midX, y: gutter.midY), through: path)
+        await settle(0.6)
+        timer.invalidate()
+
+        #expect(controller.paneStackState.pin(for: key) != nil, "the left pane is a strip")
+        #expect(mismatched.isEmpty, "the title is not the content's complement: \(mismatched.prefix(5))")
+        let collapses = samples.map(\.collapse)
+        #expect(collapses.last == 1, "settled as a strip: \(collapses.suffix(5))")
+        #expect(collapses.contains { $0 > 0.05 && $0 < 0.95 }, "it faded through, never seen part way: \(collapses)")
+        let steps = zip(collapses.dropFirst(), collapses).map { abs($0 - $1) }
+        #expect((steps.max() ?? 0) < 0.5, "it snapped: \(collapses.map { String(format: "%.2f", $0) })")
+
+        // The strip is glass: about as light as the desk beside it.
+        let strip = try #require(cardRect(window, panes[0]))
+        let recorder = WindowFrameRecorder()
+        try await recorder.start(window)
+        await settle(0.2)
+        let image = try #require(await recorder.stop().last?.1)
+        let rep = NSBitmapImageRep(cgImage: image)
+        let scale = CGFloat(image.width) / window.frame.width
+        func luminance(_ rect: CGRect) -> CGFloat {
+            var sum: CGFloat = 0, n: CGFloat = 0
+            for y in stride(from: rect.minY, to: rect.maxY, by: 4) {
+                for x in stride(from: rect.minX, to: rect.maxX, by: 2) {
+                    guard let c = rep.colorAt(x: Int(x * scale), y: Int((window.frame.height - y) * scale)) else { continue }
+                    sum += (c.redComponent + c.greenComponent + c.blueComponent) / 3
+                    n += 1
+                }
+            }
+            return n > 0 ? sum / n : 0
+        }
+        // Away from the title down its middle, and from the rim.
+        let side = CGRect(x: strip.minX + 3, y: strip.minY + 40, width: 6, height: strip.height / 3)
+        let desk = CGRect(x: strip.minX - 7, y: side.minY, width: 4, height: side.height)
+        let (s, d) = (luminance(side), luminance(desk))
+        #expect(s > d * 0.75, "the strip is a dark bar, not glass: \(s) against the desk's \(d)")
+    }
+
+    private func expectOneBar(
+        _ frames: [(image: CGImage, pointer: ClosedRange<CGFloat>)], _ window: NSWindow, y: CGFloat,
+        where placed: (ClosedRange<CGFloat>, CGFloat) -> Bool
+    ) throws {
+        let dir = "/tmp/pane-stack-snapshots/bar-frames"
+        try? FileManager.default.removeItem(atPath: dir)
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        for (n, frame) in frames.enumerated() {
+            let found = bars(frame.image, window, y: y)
+            let ok = found.count == 1 && placed(frame.pointer, found[0])
+            try? NSBitmapImageRep(cgImage: frame.image).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: String(format: "%@/f%03d%@.png", dir, n, ok ? "" : "-bad")))
+            if !ok {
+                Issue.record("frame \(n), pointer \(frame.pointer): bars at \(found.map { Int($0) })")
+            }
+        }
+    }
+
+    /// The user's layout: two terminals stacked on the left; on the right a
+    /// viewer over a row of four terminals, the first two tucked away as
+    /// strips with no room for a third card. Returns the panes: a, b (left),
+    /// v (viewer), c, d, e, f (the row).
+    private func nestedCollapsedRow(width: CGFloat = 1700) async throws -> (TerminalController, NSWindow, [PaneView]) {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        func terminal() -> PaneView { PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        let a = terminal(), b = terminal(), c = terminal(), d = terminal(), e = terminal(), f = terminal()
+        let v = PaneView(viewer: ViewerView(location: "about:blank"))
+        var tree = SplitTree<PaneView>(view: a)
+        tree = try tree.inserting(view: v, at: a, direction: .right)
+        tree = try tree.inserting(view: b, at: a, direction: .down)
+        tree = try tree.inserting(view: c, at: v, direction: .down)
+        tree = try tree.inserting(view: d, at: c, direction: .right)
+        tree = try tree.inserting(view: e, at: d, direction: .right)
+        tree = try tree.inserting(view: f, at: e, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        controller.paneSidebarState.isHidden = true
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: width, height: 900))
+        window.makeFirstResponder(f.surfaceView)
+        await settle(1.2)
+        return (controller, window, [a, b, v, c, d, e, f])
+    }
+
+    /// The bottom row stacked for want of room — two strips to the left, no
+    /// room for a third card, collapsed by nobody: the gutter between the
+    /// strips and the first card on show is a grip all the same, and pulling
+    /// it past a pane's minimum brings the nearer strip out, the card at the
+    /// far end tucking away to make room. It used to be no grip at all — a
+    /// gutter that could not be taken.
+    @Test func aRunEdgeWithNoRoomForOneMoreIsStillAGrip() async throws {
+        let (controller, window, panes) = try await nestedCollapsedRow(width: 1450)
+        defer { controller.close() }
+        let row = panes[3...].map { [$0.id] }
+        try await capture(window, "nested-before")
+        let stack = try #require(controller.paneStackState.stacks.first { $0.items == row }, "the row is stacked")
+        #expect(stack.run.lowerBound > 0 && stack.fits <= stack.run.count,
+                "strips before the run, no room for more: run \(stack.run), fits \(stack.fits)")
+
+        // The gutter between the last strip and the first card on show.
+        let firstOnShow = try #require(cardRect(window, panes[3 + stack.run.lowerBound]))
+        let point = NSPoint(x: firstOnShow.minX - 5, y: firstOnShow.midY)
+        let hit = window.contentView?.superview?.hitTest(point)
+        let grip = try #require(hit as? DividerHandle.DividerHandleView, "the gutter at \(point) hit \(String(describing: hit))")
+        // Far enough for a pane's minimum on this side, not so far that the
+        // other side (710pt: two cards of 300 and their strips) has no room
+        // left for one card and a strip: 259...269 slides by exactly one.
+        grip.onDragBegan?()
+        for step in 1...24 { grip.onDragDelta?(CGFloat(step) * 11, 0.5); await settle(0.01) }
+        grip.onDragEnded?()
+        await settle(0.8)
+        try await capture(window, "nested-slid")
+        let after = try #require(controller.paneStackState.stacks.first { $0.items == row })
+        #expect(after.run == (stack.run.lowerBound - 1)...(stack.run.upperBound - 1),
+                "slid along by one: \(stack.run) -> \(after.run); row \(stack.frame), cards \(panes[3...].map { cardRect(window, $0).map { Int($0.width) } ?? -1 })")
+    }
+
+    /// Five panes, four on show at their minimums and the fifth a strip on
+    /// the right, no room for another: pulling the strip's gutter out slides
+    /// the row along — the leftmost pane tucks away, the strip's pane comes
+    /// out. It used to refuse: bringing the strip out first made "all five on
+    /// show", which is no collapse at all, so there was nothing left to tuck
+    /// and the row stacked back exactly as it was.
+    @Test func pullingTheLastStripOutOfAFullRowTucksTheFarPane() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 5, width: 1340)
+        defer { controller.close() }
+        window.makeFirstResponder(panes[0].surfaceView)
+        await settle(0.6)
+        #expect(strips(window) == [panes[4].id], "four on show, the fifth a strip: \(strips(window))")
+        // Far enough for the fifth's minimum, not so far that the four give
+        // up two: the row slides by one.
+        let grip = try #require(handles(window).last)
+        drag(grip, by: -280)
+        await settle(0.8)
+        #expect(strips(window) == [panes[0].id], "slid along: \(strips(window))")
+    }
+
+    /// The same full row, its last strip pulled out with a hand-paced drag
+    /// and let go: once settled, every card sits where the layout puts it,
+    /// whole — nothing cut, nothing still mid-glide. It used to end with the
+    /// pane that came out cut short on its leading side and a gap before it:
+    /// its cut was taken from where it was first headed, and the glide never
+    /// heard that the drag was over.
+    @Test func pullingTheLastStripOutOfAFullRowSettlesWhole() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 5, width: 1340)
+        defer { controller.close() }
+        window.makeFirstResponder(panes[0].surfaceView)
+        await settle(0.6)
+        #expect(strips(window) == [panes[4].id])
+        let grip = try #require(handles(window).last)
+        let gutter = grip.convert(grip.bounds, to: nil)
+        let path = Array(stride(from: CGFloat(-10), through: -280, by: -10)) + Array(repeating: -280, count: 10)
+        _ = try await recordedDrag(window, from: NSPoint(x: gutter.midX, y: gutter.midY), through: path)
+        await settle(0.6)
+        #expect(strips(window) == [panes[0].id], "slid along")
+        // Every card on show is drawn where the layout puts it, uncut.
+        for card in all(PaneCardView.self, in: window.contentView!) where !card.isContentHidden {
+            let id = try #require(card.paneID)
+            #expect(!card.isGliding, "\(id) still mid-glide")
+            let clip = try #require(card.clipLayer).frame
+            let o = PaneCardView.outset
+            #expect(clip.minX <= o + 0.5 && clip.maxX >= card.bounds.width - o - 0.5,
+                    "\(id) cut: clip \(clip) in a card \(card.bounds.width) wide")
+        }
+        let shown = panes[1...].compactMap { cardRect(window, $0) }.sorted { $0.minX < $1.minX }
+        for (a, b) in zip(shown, shown.dropFirst()) {
+            let gap = PaneElevation.paneGap(for: controller.ghostty.config.macosPaneStyle) ?? PaneLayout.Metrics.flatGap
+            #expect(abs(b.minX - a.maxX - gap) <= 1.5, "a gutter of \(b.minX - a.maxX)")
+        }
+    }
+
+    /// The whole of it, as a person does it: enough panes that some are
+    /// strips on either side; the gutter in the middle of the run dragged all
+    /// the way left (panes on the left tuck away, the ones on the right grow),
+    /// all the way right (the reverse), and back to where it began, let go.
+    /// Every sampled frame: no two cards overlap, every gutter between
+    /// neighbours is the row's gutter, every card on show is inside the row
+    /// and at least a pane's minimum, no strip has come out (a drag only
+    /// collapses, or pulls one strip out by its own gutter), one bar. And let
+    /// go where it began, the row is as it was.
+    @Test func aGutterDraggedAcrossTheWholeRowAndBackIsCoherentThroughout() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 7, width: 1500)
+        defer { controller.close() }
+        window.makeFirstResponder(panes[3].surfaceView)
+        await settle(0.8)
+        // Strips on both sides: the innermost strip on the left clicked, its
+        // pane coming on show and the far one going to a strip on the right.
+        if let innermost = all(PaneStackTabView.self, in: window.contentView!).filter({ $0.isStrip })
+            .max(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) {
+            let point = innermost.convert(NSPoint(x: innermost.bounds.midX, y: innermost.bounds.midY), to: nil)
+            let hit = try #require(window.contentView!.superview!.hitTest(point))
+            hit.mouseDown(with: try #require(NSEvent.mouseEvent(
+                with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)))
+            hit.mouseUp(with: try #require(NSEvent.mouseEvent(
+                with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)))
+            await settle(1.0)
+        }
+        let gap = PaneElevation.paneGap(for: controller.ghostty.config.macosPaneStyle) ?? PaneLayout.Metrics.flatGap
+        let minimum = PaneLayout.Metrics.minimumPaneSize.width
+        func state() -> [String] {
+            panes.map { p in strips(window).contains(p.id) ? "strip" : "\(Int((cardRect(window, p)?.width ?? -1).rounded()))" }
+        }
+        let before = state()
+        let left = strips(window).filter { id in (cardRect(window, panes.first { $0.id == id }!)?.minX ?? 0) < window.frame.width / 2 }
+        #expect(!left.isEmpty && left.count < strips(window).count, "strips on both sides: \(before)")
+
+        let startStrips = Set(strips(window).compactMap { $0 })
+        // The gutter in the middle of the run.
+        let grips = gripsBetweenCards(window)
+        let grip = try #require(grips[grips.count / 2])
+        let gutter = grip.convert(grip.bounds, to: nil)
+        let row = (lo: window.contentView!.bounds.minX, hi: window.contentView!.bounds.maxX)
+
+        var problems: [String] = []
+        var layoutProblems: [String] = []
+        let timer = Timer(timeInterval: 0.008, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                var shown: [(CGRect, UUID)] = []
+                for card in self.all(PaneCardView.self, in: window.contentView!) where !card.isContentHidden {
+                    let r = card.drawnPaneInWindow
+                    guard r.width > 1, let id = card.paneID else { continue }
+                    shown.append((r, id))
+                }
+                shown.sort { $0.0.minX < $1.0.minX }
+                for (a, b) in zip(shown, shown.dropFirst()) {
+                    if a.0.maxX > b.0.minX + 0.5 { problems.append("overlap \(Int(a.0.maxX)) > \(Int(b.0.minX))") }
+                    else if abs(b.0.minX - a.0.maxX - gap) > 1.5 {
+                        let ia = panes.firstIndex { $0.id == a.1 } ?? -1, ib = panes.firstIndex { $0.id == b.1 } ?? -1
+                        let la = controller.paneStackState.layoutGrid?().leaves[a.1], lb = controller.paneStackState.layoutGrid?().leaves[b.1]
+                        let ca = self.all(PaneCardView.self, in: window.contentView!).first { $0.paneID == a.1 }
+                        let cb = self.all(PaneCardView.self, in: window.contentView!).first { $0.paneID == b.1 }
+                        problems.append("placed \(String(describing: ca?.placedFrame)) clip \(String(describing: ca?.clipLayer?.frame)) | placed \(String(describing: cb?.placedFrame)) clip \(String(describing: cb?.clipLayer?.frame))")
+                        problems.append("gutter \(Int(b.0.minX - a.0.maxX)) between \(ia) \(Int(a.0.minX))...\(Int(a.0.maxX)) [to \(Int(la?.frame.minX ?? -1))...\(Int(la?.frame.maxX ?? -1)) t=\(la?.isTucked == true)] and \(ib) \(Int(b.0.minX))...\(Int(b.0.maxX)) [to \(Int(lb?.frame.minX ?? -1))...\(Int(lb?.frame.maxX ?? -1)) t=\(lb?.isTucked == true)]")
+                    }
+                }
+                for (r, _) in shown {
+                    if r.minX < row.lo - 0.5 || r.maxX > row.hi + 0.5 { problems.append("outside \(Int(r.minX))...\(Int(r.maxX))") }
+                }
+                // The layout itself, as the drag has left it: items end to
+                // end, a gutter between each.
+                if let layout = controller.paneStackState.layoutGrid?() {
+                    for id in startStrips where layout.leaves[id]?.isTucked == false {
+                        layoutProblems.append("strip \(panes.firstIndex { $0.id == id } ?? -1) came out")
+                    }
+                    let items = panes.compactMap { p -> CGRect? in
+                        guard let leaf = layout.leaves[p.id] else { return nil }
+                        return leaf.isTucked ? leaf.tab : leaf.frame
+                    }.sorted { $0.minX < $1.minX }
+                    for (a, b) in zip(items, items.dropFirst()) where abs(b.minX - a.maxX - gap) > 1.5 {
+                        layoutProblems.append("layout gutter \(Int(b.minX - a.maxX)) at \(Int(a.maxX))")
+                    }
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        let start = NSPoint(x: gutter.midX, y: gutter.midY)
+        let toLeft = row.lo + 20 - start.x, toRight = row.hi - 20 - start.x
+        var path = Array(stride(from: CGFloat(-10), through: toLeft, by: -10))
+        path += Array(stride(from: toLeft, through: toRight, by: 10))
+        path += Array(stride(from: toRight, through: 0, by: -10)) + Array(repeating: 0, count: 10)
+        let frames = try await recordedDrag(window, from: start, through: path)
+        await settle(0.8)
+        timer.invalidate()
+        try expectOneBar(frames, window, y: start.y) { _, _ in true }
+        #expect(layoutProblems.isEmpty, "\(layoutProblems.count) incoherent layouts: \(Array(Set(layoutProblems)).prefix(8))")
+        #expect(problems.isEmpty, "\(problems.count) incoherent samples: \(Array(Set(problems)).prefix(8))")
+        #expect(state() == before, "let go where it began, as it was: \(before) -> \(state())")
+        for card in all(PaneCardView.self, in: window.contentView!) where !card.isContentHidden {
+            #expect(!card.isGliding)
+            if let r = cardRect(window, panes.first { $0.id == card.paneID }!) {
+                #expect(r.width >= minimum - 1, "a card under the minimum: \(r.width)")
+            }
+        }
+    }
+
+    /// Dragging the divider between the left column and the right one, whose
+    /// row is already collapsed: the right column narrows as its row stacks
+    /// further, as a column whose row can stack does. It used to collapse
+    /// the whole right column at the first pixel, its minimum taken as the
+    /// row's four panes side by side.
+    @Test func aDividerBesideAColumnWithACollapsedRowResizesIt() async throws {
+        let (controller, window, panes) = try await nestedCollapsedRow()
+        defer { controller.close() }
+        // Collapse the bottom row by dragging its first divider far left:
+        // the one at c's trailing edge.
+        let c = try #require(cardRect(window, panes[3]))
+        let first = try #require(handles(window).min {
+            abs($0.convert($0.bounds, to: nil).minX - c.maxX) + abs($0.convert($0.bounds, to: nil).midY - c.midY)
+                < abs($1.convert($1.bounds, to: nil).minX - c.maxX) + abs($1.convert($1.bounds, to: nil).midY - c.midY)
+        })
+        first.onDragBegan?()
+        for step in 1...20 { first.onDragDelta?(CGFloat(step) * -30, first.currentSplit?() ?? 0.5); await settle(0.01) }
+        first.onDragEnded?()
+        await settle(0.8)
+        let row = Set(panes[3...].map(\.id))
+        #expect(controller.paneStackState.pin(for: row) != nil, "the bottom row is collapsed")
+
+        // The main divider: the tall one between the columns.
+        let main = try #require(handles(window).first { $0.convert($0.bounds, to: nil).height > window.frame.height * 0.6 })
+        let viewerBefore = try #require(cardRect(window, panes[2]))
+        let mainBefore = main.convert(main.bounds, to: nil)
+        let split = main.currentSplit?() ?? 0.5
+        main.onDragBegan?()
+        for step in 1...6 { main.onDragDelta?(CGFloat(step) * 10, split); await settle(0.01) }
+        main.onDragEnded?()
+        await settle(0.8)
+        let top = Set([panes[0], panes[1]].map(\.id) + panes[2...].map(\.id))
+        #expect(controller.paneStackState.pins.keys.allSatisfy { !$0.isSuperset(of: top) }, "the columns did not collapse")
+        try await capture(window, "nested-main-dragged")
+        let viewerAfter = try #require(cardRect(window, panes[2]))
+        #expect(abs((viewerBefore.width - viewerAfter.width) - 60) < 4,
+                "the right column narrowed by the drag: \(viewerBefore) -> \(viewerAfter); main \(mainBefore) -> \(main.convert(main.bounds, to: nil)); a \(String(describing: cardRect(window, panes[0])))")
+    }
+
+    /// A strip's pane pulled out by hand: it follows the hand — every card
+    /// where the layout puts it, every step, nothing sliding, fading or held
+    /// at another size on its own clock. It used to run the click's slide
+    /// against the drag: the pane beside it jumped, the one coming out lagged
+    /// with its content held at its old size, its sheet faded in and its
+    /// strip out on their own schedules, all visibly out of step.
+    /// Two strips on the right: the inner one's gutter pulled far to the
+    /// left brings out that pane alone, however far it goes — the strip
+    /// beyond it stays a strip, and the panes on show give way instead.
+    @Test(arguments: [(3, false), (3, true), (4, false), (5, false)])
+    func aStripPulledFarBringsOutItsPaneAlone(count: Int, throughHandle: Bool) async throws {
+        let (controller, window, panes) = try await stackedWindow(count: count, width: 1700)
+        defer { controller.close() }
+        drag(try #require(handles(window).last), by: 900)
+        await settle(0.8)
+        let hs = handles(window)
+        drag(hs[hs.count - 2], by: 900)
+        await settle(0.8)
+        let n = panes.count
+        try #require(strips(window) == [panes[n - 2].id, panes[n - 1].id], "two strips on the right: \(strips(window))")
+        let grip = try #require(handles(window).last)
+        let gutter = grip.convert(grip.bounds, to: nil)
+        var seen: [[UUID?]] = []
+        let timer = Timer(timeInterval: 0.008, repeats: true) { _ in
+            MainActor.assumeIsolated { seen.append(self.strips(window)) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        if throughHandle {
+            drag(grip, by: -1100)
+        } else {
+            let path = Array(stride(from: CGFloat(-20), through: -1100, by: -20)) + Array(repeating: -1100, count: 10)
+            _ = try await recordedDrag(window, from: NSPoint(x: gutter.midX, y: gutter.midY), through: path)
+        }
+        await settle(0.6)
+        timer.invalidate()
+        let bad = seen.filter { $0.contains(panes[n - 1].id) == false }
+        #expect(bad.isEmpty, "the strip beyond came out: \(bad.first.map { $0.map { u in panes.firstIndex { $0.id == u } ?? -1 } } ?? [])")
+        #expect(strips(window).contains(panes[n - 1].id), "settled with the far pane a strip: \(strips(window))")
+    }
+
+    @Test func aStripPulledOutFollowsTheHandWithNothingSliding() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        let key = Set(panes.map(\.id))
+        drag(try #require(handles(window).first), by: 800)
+        await settle(0.8)
+        #expect(controller.paneStackState.pin(for: key) != nil, "the right pane is a strip")
+        let grip = try #require(handles(window).last)
+        let gutter = grip.convert(grip.bounds, to: nil)
+
+        // Sampled while the hand drags, out past the minimum and on: nothing
+        // on a clock of its own, the gutter between the two panes its width
+        // in every sample, and the pane coming out seen on its way in.
+        var offClock: [String] = []
+        var gutters: [CGFloat] = []
+        var widths: [CGFloat] = []
+        var misplaced: [String] = []
+        let timer = Timer(timeInterval: 0.008, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                for card in self.all(PaneCardView.self, in: window.contentView!) {
+                    if card.isAnimating { offClock.append("animating") }
+                    if card.isFrozen, !self.strips(window).contains(card.paneID) { offClock.append("frozen") }
+                }
+                guard self.strips(window).isEmpty,
+                      let a = self.cardRect(window, panes[0]), let b = self.cardRect(window, panes[1]) else { return }
+                gutters.append(b.minX - a.maxX)
+                widths.append(b.width)
+                // The bar over the gutter as it is drawn, not ahead of it.
+                if let bar = grip.barInWindow, bar.midX < a.maxX - 1 || bar.midX > b.minX + 1 {
+                    misplaced.append("bar \(Int(bar.midX)) gutter \(Int(a.maxX))...\(Int(b.minX))")
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        let path = Array(stride(from: CGFloat(-10), through: -560, by: -10)) + Array(repeating: -560, count: 20)
+        let frames = try await recordedDrag(window, from: NSPoint(x: gutter.midX, y: gutter.midY), through: path)
+        timer.invalidate()
+        let dir = "/tmp/pane-stack-snapshots/pull-frames"
+        try? FileManager.default.removeItem(atPath: dir)
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        for (n, f) in frames.enumerated() {
+            try? NSBitmapImageRep(cgImage: f.image).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: String(format: "%@/f%03d-%d.png", dir, n, Int(f.pointer.upperBound))))
+        }
+        #expect(controller.paneStackState.pin(for: key) == nil, "pulled out")
+        #expect(offClock.isEmpty, "\(offClock.count) samples off the hand's clock: \(Set(offClock))")
+        let gap = PaneElevation.paneGap(for: controller.ghostty.config.macosPaneStyle) ?? PaneLayout.Metrics.flatGap
+        #expect(!gutters.isEmpty && gutters.allSatisfy { abs($0 - gap) <= 1.5 },
+                "the gutter held \(gap)pt: \(gutters.map { Int($0) })")
+        // On its way in: drawn narrower than where it landed.
+        await settle(0.3)
+        let landed = try #require(cardRect(window, panes[1])).width
+        let onItsWay = widths.filter { $0 < landed - 20 }.count
+        #expect(onItsWay > 2, "the pane glided in, not appeared (\(onItsWay) samples on its way)")
+        #expect(misplaced.isEmpty, "\(misplaced.count) samples with the bar off the gutter: \(misplaced.prefix(5))")
+    }
+
+    /// A strip's pane pulled out FAST: the glide keeps chasing the hand —
+    /// every frame of it the pane at the size the card is drawn (its content
+    /// held at where the layout now puts it, not where it was when the glide
+    /// began), and its edge never jumping as the glide ends. It used to hold
+    /// the content at the first target, so a fast pull stopped short and
+    /// snapped to the pointer at the end.
+    @Test func aFastPullKeepsTheGlideOnTheHand() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        drag(try #require(handles(window).first), by: -800)
+        await settle(0.8)
+        #expect(strips(window) == [panes[0].id], "the left pane is a strip")
+        let grip = try #require(handles(window).first)
+        let gutter = grip.convert(grip.bounds, to: nil)
+
+        var edges: [(t: CFTimeInterval, x: CGFloat)] = []
+        var stale: [String] = []
+        let timer = Timer(timeInterval: 0.008, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard self.strips(window).isEmpty, let a = self.cardRect(window, panes[0]) else { return }
+                edges.append((CACurrentMediaTime(), a.maxX))
+                // The content fills the card it is drawn in (or more, cut).
+                let content = panes[0].contentView.frame.width
+                if content + 2 < a.width { stale.append("content \(Int(content)) card \(Int(a.width))") }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        // 600pt in about 160ms, then held.
+        let path = Array(stride(from: CGFloat(30), through: 600, by: 30)) + Array(repeating: 600, count: 40)
+        _ = try await recordedDrag(window, from: NSPoint(x: gutter.midX, y: gutter.midY), through: path)
+        timer.invalidate()
+        // A jump measured against the time it took: a starved timer (a busy
+        // machine) samples further apart, and a smooth glide covers more
+        // ground between them. 120pt per 8ms sample at most.
+        let jumps = zip(edges.dropFirst(), edges).map { abs($0.x - $1.x) / Swift.max(1, ($0.t - $1.t) / 0.008) }
+        #expect(stale.isEmpty, "\(stale.count) samples with the content short of its card: \(stale.prefix(4))")
+        #expect((jumps.max() ?? 0) < 120, "the edge jumped \(Int(jumps.max() ?? 0))pt in one sample: \(edges.map { Int($0.x) })")
+    }
+
+    /// The same fast pull, let go of at once: the pane goes on gliding to
+    /// where it was headed and settles there — no jump on release. It used
+    /// to be placed there at once the moment the mouse came up.
+    @Test func aFastPullLetGoOfSettlesWithoutASnap() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        drag(try #require(handles(window).first), by: -800)
+        await settle(0.8)
+        #expect(strips(window) == [panes[0].id], "the left pane is a strip")
+        let grip = try #require(handles(window).first)
+        let gutter = grip.convert(grip.bounds, to: nil)
+
+        var edges: [(x: CGFloat, t: CFTimeInterval)] = []
+        let timer = Timer(timeInterval: 0.008, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard self.strips(window).isEmpty, let a = self.cardRect(window, panes[0]) else { return }
+                edges.append((a.maxX, CACurrentMediaTime()))
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        let path = Array(stride(from: CGFloat(40), through: 600, by: 40))
+        _ = try await recordedDrag(window, from: NSPoint(x: gutter.midX, y: gutter.midY), through: path)
+        await settle(0.5)
+        timer.invalidate()
+        // Per 8ms of the time it took, as in `aFastPullKeepsTheGlideOnTheHand`.
+        let jumps = zip(edges.dropFirst(), edges).map { abs($0.x - $1.x) / Swift.max(1, ($0.t - $1.t) / 0.008) }
+        #expect((jumps.max() ?? 0) < 120, "the edge jumped \(Int(jumps.max() ?? 0))pt in one sample: \(edges.map { Int($0.x) })")
+        let final = try #require(cardRect(window, panes[0])).maxX
+        #expect(abs(final - (gutter.midX + 600)) < 12, "settled at the pointer: \(final) vs \(gutter.midX + 600)")
+        #expect(all(PaneCardView.self, in: window.contentView!).allSatisfy { !$0.isFrozen }, "and nothing held")
+    }
+
+    /// Four panes; the last divider dragged right until the last pane tucks
+    /// away: the bar stays with the gutter that snapped to the edge, not
+    /// the one beside it that the pointer had come closer to.
+    @Test func theBarStaysWithTheGutterThatSnappedToTheEdge() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 4, width: 1300)
+        defer { controller.close() }
+        let key = Set(panes.map(\.id))
+        #expect(controller.paneStackState.pin(for: key) == nil && strips(window).isEmpty, "side by side")
+        let divider = try #require(handles(window).last)
+        let gutter = divider.convert(divider.bounds, to: nil)
+        let start = NSPoint(x: gutter.midX, y: gutter.midY)
+        let path = Array(stride(from: CGFloat(10), through: 200, by: 10)) + Array(repeating: 200, count: 25)
+        let frames = try await recordedDrag(window, from: start, through: path)
+        #expect(strips(window) == [panes[3].id], "the last pane tucked away")
+        let edge = try #require(handles(window).max { $0.convert($0.bounds, to: nil).midX < $1.convert($1.bounds, to: nil).midX })
+        let edgeX = edge.convert(edge.bounds, to: nil).midX
+        try expectOneBar(frames, window, y: start.y) { pointer, bar in
+            pointer.lowerBound >= 200 ? abs(bar - edgeX) < 8 : true
+        }
+    }
+
+    /// Pulling the grip at the run's edge when more than one pane is tucked
+    /// that way: the nearest comes out at the width pulled, the row still
+    /// stacked, the other strip where it was.
+    @Test func aStripPulledOutOfAStackComesOutAtTheWidthPulled() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 3, width: 1300)
+        defer { controller.close() }
+        let key = Set(panes.map(\.id))
+        // Tuck the first two away to the left: the last divider, dragged on
+        // through the row.
+        let divider = try #require(handles(window).last)
+        divider.onDragBegan?()
+        let start = divider.currentSplit?() ?? 0.5
+        for step in 1...40 {
+            divider.onDragDelta?(CGFloat(step) * -30, start)
+            await settle(0.01)
+        }
+        divider.onDragEnded?()
+        await settle(0.8)
+        #expect(controller.paneStackState.pin(for: key) == .init(start: 2, count: 1), "two strips")
+
+        // The grip where the run meets them, pulled 400pt into the run.
+        let grip = try #require(handles(window).first)
+        let pointer = grip.convert(grip.bounds, to: nil).midX + 400
+        drag(grip, by: 400)
+        await settle(0.8)
+        #expect(controller.paneStackState.pin(for: key) == .init(start: 1, count: 2), "one out, one still a strip")
+        // Its edge where the pointer let go: the grip between it and the
+        // card beside it is there.
+        let between = try #require(handles(window).first { $0.convert($0.bounds, to: nil).midX > pointer - 100 })
+        let at = between.convert(between.bounds, to: nil).midX
+        #expect(abs(at - pointer) <= 12, "the grip at \(at), the pointer at \(pointer); cards \(cardRects(window))")
+    }
+
+    /// What can be dragged says so: a bar down the middle of a divider's
+    /// gutter while the pointer is over it, and under the pointer while it
+    /// drags.
+    @Test func aDividerShowsABarOnHoverThatFollowsTheDrag() async throws {
+        let (controller, window, _) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        let handle = try #require(handles(window).first)
+        #expect(!handle.showsBar)
+        handle.mouseEntered(with: try #require(NSEvent.enterExitEvent(
+            with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
+        let hovered = try #require(handle.barInWindow)
+        let gutter = handle.convert(handle.bounds, to: nil)
+        #expect(hovered.width == DividerHandle.DividerHandleView.barThickness)
+        #expect(abs(hovered.midX - gutter.midX) < 0.5, "down the middle")
+
+        let start = handle.convert(NSPoint(x: handle.bounds.midX, y: handle.bounds.midY), to: nil)
+        func event(_ type: NSEvent.EventType, _ x: CGFloat) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: x, y: start.y), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        // Driven step by step: the handle's own event loop would wait on
+        // the window for them.
+        handle.tracksModally = false
+        handle.mouseDown(with: try event(.leftMouseDown, start.x))
+        handle.mouseDragged(with: try event(.leftMouseDragged, start.x + 80))
+        await settle(0.3)
+        handle.mouseDragged(with: try event(.leftMouseDragged, start.x + 80))
+        // In the gutter, which the divider moved with the pointer.
+        let bar = try #require(handle.barInWindow)
+        #expect(abs(bar.midX - (start.x + 80)) < 2, "in the gutter: \(bar.midX) vs \(start.x + 80)")
+        // The pointer has left the gutter; the bar goes with it all the same.
+        handle.mouseExited(with: try #require(NSEvent.enterExitEvent(
+            with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
+        #expect(handle.showsBar, "still dragging")
+        GutterBar.pointerOverride = CGPoint(x: start.x + 300, y: start.y)
+        defer { GutterBar.pointerOverride = nil }
+        handle.mouseUp(with: try event(.leftMouseUp, start.x + 300))
+        #expect(!handle.showsBar, "the pointer is elsewhere once the drag ends")
+
+        // Let go where the gutter WAS, before the layout has moved it: at
+        // that moment the pointer is over it, and then the gutter moves out
+        // from under a pointer that does not — AppKit sends no mouse-exited
+        // for that. It stayed lit, looking mid-drag, until the pointer
+        // crossed it again.
+        await settle(0.4)
+        let here = handle.convert(NSPoint(x: handle.bounds.midX, y: handle.bounds.midY), to: nil)
+        GutterBar.pointerOverride = here
+        handle.mouseEntered(with: try #require(NSEvent.enterExitEvent(
+            with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
+        handle.tracksModally = false
+        handle.mouseDown(with: try event(.leftMouseDown, here.x))
+        handle.mouseDragged(with: try event(.leftMouseDragged, here.x - 120))
+        handle.mouseUp(with: try event(.leftMouseUp, here.x))
+        await settle(0.4)
+        #expect(abs(handle.convert(handle.bounds, to: nil).midX - (here.x - 120)) < 2, "the divider moved")
+        #expect(!handle.showsBar, "the bar stayed lit after the gutter moved out from under the pointer")
+    }
+
     // MARK: - Resizers live in the gutters
 
     /// Where every card shows, in window coordinates: a card on show is its
     /// pane; a strip is its tab.
+    /// Where `pane`'s card is, in window coordinates: its strip when it is
+    /// one.
+    private func cardRect(_ window: NSWindow, _ pane: PaneView) -> CGRect? {
+        guard let card = all(PaneCardView.self, in: window.contentView!).first(where: { $0.paneID == pane.id })
+        else { return nil }
+        if let tab = all(PaneStackTabView.self, in: card).first(where: { $0.isStrip }) {
+            return tab.convert(tab.bounds, to: nil)
+        }
+        let o = PaneCardView.outset
+        return card.convert(card.bounds.insetBy(dx: o, dy: o), to: nil)
+    }
+
     private func cardRects(_ window: NSWindow) -> [CGRect] {
         all(PaneCardView.self, in: window.contentView!).compactMap { card -> CGRect? in
-            if let tab = all(PaneStackTabView.self, in: card).first(where: { !$0.isHidden }) {
+            if let tab = all(PaneStackTabView.self, in: card).first(where: { $0.isStrip }) {
                 return tab.convert(tab.bounds, to: nil)
             }
             guard !card.isContentHidden else { return nil }
@@ -715,6 +1587,62 @@ struct PaneStackWindowTests {
         try expectResizersInGutters(window, "sidebar rail")
     }
 
+    /// The pinned sidebar is resized from the gutter between it and the
+    /// panes — all of that gutter, and not from inside the sidebar, whose
+    /// edge is a click on the list. It used to straddle the edge: half
+    /// inside the sidebar, and only part of the gutter.
+    @Test func thePinnedSidebarResizesFromTheGutterBesideIt() async throws {
+        let (controller, window, _) = try await stackedWindow(count: 2, width: 1300)
+        defer { controller.close() }
+        try #require(controller.ghostty.config.macosPaneStyle == .elevated)
+        controller.paneSidebarState.isHidden = false
+        controller.setPaneSidebarPinned(true)
+        await settle(1.0)
+        let host = try #require(all(PaneSidebarHostView.self, in: window.contentView!).first)
+        let edge = host.convert(host.cardRect, to: nil).maxX
+        let firstCard = try #require(cardRects(window).map(\.minX).min())
+        let handle = try #require(all(SidePanelResizeHandle.self, in: window.contentView!)
+            .first { !$0.isHiddenOrHasHiddenAncestor })
+        let grab = handle.convert(handle.bounds, to: nil)
+        #expect(abs(grab.minX - edge) <= 0.5 && abs(grab.maxX - firstCard) <= 0.5,
+                "the handle \(grab.minX)...\(grab.maxX), the gutter \(edge)...\(firstCard)")
+        let root = try #require(window.contentView?.superview)
+        let y = grab.midY
+        #expect(root.hitTest(CGPoint(x: (edge + firstCard) / 2, y: y)) === handle, "the gutter's middle")
+        #expect(!(root.hitTest(CGPoint(x: edge - 2, y: y)) is SidePanelResizeHandle), "just inside the sidebar")
+        // And it says so, as a divider does: a bar down the gutter's middle.
+        handle.mouseEntered(with: try #require(NSEvent.enterExitEvent(
+            with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
+        let bar = try #require(handle.barInWindow)
+        #expect(abs(bar.midX - (edge + firstCard) / 2) < 0.5 && bar.width == GutterBar.thickness)
+
+        // Dragged far past the panel's widest, the bar stops in the gutter
+        // where the panel stopped, lit — not out at the pointer.
+        func event(_ type: NSEvent.EventType, _ x: CGFloat) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: x, y: y), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        let from = (edge + firstCard) / 2
+        handle.mouseDown(with: try event(.leftMouseDown, from))
+        handle.mouseDragged(with: try event(.leftMouseDragged, from + 900))
+        await settle(0.4)
+        handle.mouseDragged(with: try event(.leftMouseDragged, from + 900))
+        let widest = host.convert(host.cardRect, to: nil).maxX
+        let held = try #require(handle.barInWindow)
+        #expect(controller.paneSidebarState.width < 900, "the panel stopped at its widest")
+        #expect(abs(held.midX - (widest + (firstCard - edge) / 2)) < 2,
+                "the bar at \(held.midX), the panel's edge at \(widest)")
+        GutterBar.pointerOverride = CGPoint(x: from + 900, y: y)
+        defer { GutterBar.pointerOverride = nil }
+        handle.mouseUp(with: try event(.leftMouseUp, from + 900))
+        // Let go out there, away from the gutter: it is not left lit.
+        await settle(0.3)
+        #expect(!handle.showsBar, "the bar stayed lit after the drag")
+    }
+
     @Test func everyResizerOfAStackSitsInAGutter() async throws {
         // A collapsed row: grips between the cards on show and at the run's
         // edges, beside the strips.
@@ -739,7 +1667,7 @@ struct PaneStackWindowTests {
     }
 
     private func tab(_ window: NSWindow, _ pane: PaneView) throws -> PaneStackTabView {
-        try #require(all(PaneStackTabView.self, in: window.contentView!).first { $0.pane === pane && !$0.isHidden })
+        try #require(all(PaneStackTabView.self, in: window.contentView!).first { $0.pane === pane && $0.isStrip })
     }
 
     /// `a b [c d] e f`: b's strip dragged into the gutter between c and d

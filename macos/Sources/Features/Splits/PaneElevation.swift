@@ -306,11 +306,45 @@ struct PaneCard: ViewModifier {
                                   : Color.white.opacity(isFocused ? 0.20 : 0.10),
                                   lineWidth: 0.5)
                     .allowsHitTesting(false))
-            .background {
-                PaneGlass(tint: background, isLight: isLight,
-                          tintStrength: isDimmed ? PaneGlass.unfocusedTint : PaneGlass.tint)
-                    .modifier(FocusFade(opacity: isDimmed ? dimmedOpacity : 1))
+            .backgroundPreferenceValue(PaneBannerCardKey.self) { card in
+                let strength = isDimmed ? PaneGlass.unfocusedTint : PaneGlass.tint
+                GeometryReader { proxy in
+                    PaneGlass(tint: background, isLight: isLight, tintStrength: strength)
+                        // Under the pane banner the sheet is thinner, so the
+                        // card reads as a pane of glass of its own, layered
+                        // on top — but never thinner than an unfocused pane,
+                        // whose sheet terminal text is already read through.
+                        .mask {
+                            ZStack(alignment: .topLeading) {
+                                Rectangle()
+                                if let card {
+                                    let rect = proxy[card.bounds]
+                                    RoundedRectangle(cornerRadius: card.cornerRadius, style: .continuous)
+                                        .frame(width: rect.width, height: rect.height)
+                                        .offset(x: rect.minX, y: rect.minY)
+                                        .opacity(1 - min(1, PaneGlass.bannerTint / strength))
+                                        .blendMode(.destinationOut)
+                                }
+                            }
+                            .compositingGroup()
+                        }
+                }
+                .modifier(FocusFade(opacity: isDimmed ? dimmedOpacity : 1))
             }
+    }
+}
+
+/// The pane banner's card on a glass pane, published up to the pane's
+/// `PaneCard` so its sheet can thin out under the card.
+struct PaneBannerCard: Equatable {
+    let bounds: Anchor<CGRect>
+    let cornerRadius: CGFloat
+}
+
+struct PaneBannerCardKey: PreferenceKey {
+    static let defaultValue: PaneBannerCard? = nil
+    static func reduce(value: inout PaneBannerCard?, nextValue: () -> PaneBannerCard?) {
+        value = value ?? nextValue()
     }
 }
 
@@ -374,6 +408,10 @@ struct PaneGlass: View {
     static let unfocusedTint: Double = 0.15
     /// A glass card floating over glass panes (the unpinned sidebar).
     static let overlayTint: Double = 0.3
+    /// Under the pane banner's card: a bit thinner than the focused pane's
+    /// sheet, so the desk reads through the banner more than through the
+    /// pane, and still thicker than an unfocused pane's.
+    static let bannerTint: Double = 0.25
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

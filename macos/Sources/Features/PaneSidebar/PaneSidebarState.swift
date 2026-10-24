@@ -119,6 +119,24 @@ final class PaneSidebarState: ObservableObject {
                     trailing: GlassCard.outerMargin)
     }
 
+    /// Where the pinned panel's resize grip lies, from the panel's edge.
+    /// Elevated: all of the gutter between the panel and the panes (the
+    /// grid's margin), as every resizer lives in a gutter — it used to
+    /// straddle the edge, half of it a click on the list. Flat: the grid
+    /// starts right at the edge, so just inside it.
+    static func pinnedEdgeGrip(elevated: Bool) -> (offset: CGFloat, width: CGFloat) {
+        elevated
+            ? (0, PaneElevation.margin)
+            : (-SidePanelResizeHandle.grabWidth, SidePanelResizeHandle.grabWidth)
+    }
+
+    /// How far the pinned panel's host reaches past its edge: as far as the
+    /// grip does.
+    static func pinnedEdgeReach(elevated: Bool) -> CGFloat {
+        let grip = pinnedEdgeGrip(elevated: elevated)
+        return Swift.max(0, grip.offset + grip.width)
+    }
+
     /// The rail's column: its insets and the card.
     nonisolated static func railColumnWidth(elevated: Bool) -> CGFloat {
         let insets = railInsets(elevated: elevated)

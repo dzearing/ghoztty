@@ -43,6 +43,31 @@ const DisplayLink = switch (builtin.os.tag) {
 
 const log = std.log.scoped(.generic_renderer);
 
+/// A cell other than blank or a space: a cleared prompt row is spaces.
+fn hasVisibleText(cells: []const terminal.Cell) bool {
+    for (cells) |c| {
+        if (c.hasText() and c.codepoint() != ' ') return true;
+    }
+    return false;
+}
+
+/// Whether the line the cursor is on shows anything: its row, or a row it
+/// soft-wraps from. A wrapped prompt's last row can hold nothing but the
+/// space before the cursor.
+fn cursorLineHasVisibleText(cursor_pin: terminal.Pin) bool {
+    var pin = cursor_pin;
+    while (true) {
+        if (hasVisibleText(pin.cells(.all))) return true;
+        const above = pin.up(1) orelse return false;
+        if (!above.rowAndCell().row.wrap) return false;
+        pin = above;
+    }
+}
+
+/// How long the shell's output must go quiet before a prompt it is
+/// redrawing after a resize is shown (`Terminal.flags.awaiting_prompt_redraw`).
+pub const prompt_redraw_quiet_ns = 15 * std.time.ns_per_ms;
+
 /// Create a renderer type with the provided graphics API wrapper.
 ///
 /// The graphics API wrapper must provide the interface outlined below.
@@ -1185,6 +1210,33 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 if (state.terminal.modes.get(.synchronized_output)) {
                     log.debug("synchronized output started, skipping render", .{});
                     return;
+                }
+
+                // Likewise while a resize waits for the shell to redraw the
+                // prompt it cleared (`Terminal.flags.awaiting_prompt_redraw`),
+                // until its output has been quiet for a moment — the
+                // renderer thread retries (`Thread.prompt_redraw_retry_ms`).
+                if (state.terminal.flags.awaiting_prompt_redraw) hold: {
+                    const out = state.terminal.prompt_redraw_output orelse {
+                        log.debug("awaiting prompt redraw, skipping render", .{});
+                        return;
+                    };
+                    const now = std.time.Instant.now() catch break :hold;
+                    if (now.since(out) < prompt_redraw_quiet_ns) {
+                        log.debug("prompt redraw in progress, skipping render", .{});
+                        return;
+                    }
+                    // The shell's first output need not be the prompt (an
+                    // erase, spaces, a title, shell-integration marks —
+                    // through the agent, a round trip apart): it is in once
+                    // the cursor's line shows something again.
+                    const cursor = &state.terminal.screens.active.cursor;
+                    if (!cursorLineHasVisibleText(cursor.page_pin.*)) {
+                        log.debug("prompt not redrawn yet, skipping render", .{});
+                        return;
+                    }
+                    state.terminal.flags.awaiting_prompt_redraw = false;
+                    state.terminal.prompt_redraw_output = null;
                 }
 
                 // If scroll-to-bottom on output is enabled, check if the final line

@@ -3764,6 +3764,18 @@ pub const CAPI = struct {
         surface.updateSize(w, h);
     }
 
+    /// See `Surface.predictResizeShift`.
+    export fn ghostty_surface_predict_resize_shift(surface: *Surface, h: u32) i32 {
+        return surface.core_surface.predictResizeShift(h);
+    }
+
+    /// Apply the surface's pending resize to the terminal now instead of
+    /// after the resize debounce (`termio.Thread.Coalesce`): for a single,
+    /// deliberate resize the app hides while it lands.
+    export fn ghostty_surface_flush_resize(surface: *Surface) void {
+        surface.core_surface.flushResize();
+    }
+
     /// Return the size information a surface has.
     export fn ghostty_surface_size(surface: *Surface) SurfaceSize {
         const grid_size = surface.core_surface.size.grid();

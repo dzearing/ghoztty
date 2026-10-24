@@ -35,6 +35,7 @@ pub fn init() !IOSurfaceLayer {
 
     layer.setInstanceVariable("display_cb", .{ .value = null });
     layer.setInstanceVariable("display_ctx", .{ .value = null });
+    layer.setInstanceVariable("last_seq", .{ .value = null });
 
     return .{ .layer = layer };
 }
@@ -46,7 +47,16 @@ pub fn release(self: *IOSurfaceLayer) void {
 /// Sets the layer's `contents` to the provided IOSurface.
 ///
 /// Makes sure to do so on the main thread to avoid visual artifacts.
-pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
+///
+/// `seq` is the frame's draw order. A frame older than the one the layer
+/// already shows is dropped: an asynchronously drawn frame is set by a block
+/// queued on the main thread, and a synchronous one (the display callback on
+/// a bounds change) is set at once, so a resize can draw async frame N with
+/// the OLD grid at the NEW size, then sync frame N+1 with the new grid, and
+/// have N land last. Same size, so the size check below passes it, and an
+/// idle pane kept showing the stale grid — wrong rows, the cursor gone —
+/// until something drew again.
+pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface, seq: u64) !void {
     // We retain the surface to make sure it's not GC'd
     // before we can set it as the contents of the layer.
     //
@@ -59,6 +69,7 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
     var block = SetSurfaceBlock.init(.{
         .layer = self.layer.value,
         .surface = surface,
+        .seq = seq,
     }, &setSurfaceCallback);
 
     // We check if we're on the main thread and run the block directly if so.
@@ -80,13 +91,28 @@ pub inline fn setSurface(self: *IOSurfaceLayer, surface: *IOSurface) !void {
 /// Sets the layer's `contents` to the provided IOSurface.
 ///
 /// Does not ensure this happens on the main thread.
-pub inline fn setSurfaceSync(self: *IOSurfaceLayer, surface: *IOSurface) void {
+pub inline fn setSurfaceSync(self: *IOSurfaceLayer, surface: *IOSurface, seq: u64) void {
+    if (!takeSeq(self.layer, seq)) return;
     self.layer.setProperty("contents", surface);
+}
+
+/// Record `seq` as the frame the layer shows, unless a newer one is shown
+/// already (see `setSurface`). The ivar holds the number itself, not an
+/// object, like `display_cb` holds a function pointer — scaled by an `id`'s
+/// alignment, since an `id` holding a bare 1 fails the pointer alignment
+/// check.
+fn takeSeq(layer: objc.Object, seq: u64) bool {
+    const scale = @alignOf(objc.c.objc_object);
+    const last: u64 = @intFromPtr(layer.getInstanceVariable("last_seq").value) / scale;
+    if (seq < last) return false;
+    layer.setInstanceVariable("last_seq", .{ .value = @ptrFromInt(@as(usize, @intCast(seq)) * scale) });
+    return true;
 }
 
 const SetSurfaceBlock = objc.Block(struct {
     layer: objc.c.id,
     surface: *IOSurface,
+    seq: u64,
 }, .{}, void);
 
 fn setSurfaceCallback(
@@ -112,6 +138,11 @@ fn setSurfaceCallback(
             "setSurfaceCallback(): surface is wrong size for layer, discarding. surface = {d}x{d}, layer = {d}x{d}",
             .{ surface.getWidth(), surface.getHeight(), width, height },
         );
+        return;
+    }
+
+    if (!takeSeq(layer, block.seq)) {
+        log.debug("setSurfaceCallback(): a newer frame is already shown, discarding", .{});
         return;
     }
 
@@ -147,6 +178,7 @@ fn getSubclass() error{ObjCFailed}!objc.Class {
 
     if (!subclass.addIvar("display_cb")) return error.ObjCFailed;
     if (!subclass.addIvar("display_ctx")) return error.ObjCFailed;
+    if (!subclass.addIvar("last_seq")) return error.ObjCFailed;
 
     subclass.replaceMethod("display", struct {
         fn display(target: objc.c.id, sel: objc.c.SEL) callconv(.c) void {

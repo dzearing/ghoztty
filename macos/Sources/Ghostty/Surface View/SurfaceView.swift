@@ -56,6 +56,30 @@ extension Ghostty {
         // frames.
         @State private var bannerHeight: CGFloat = 0
 
+        // Collapse/expand without the terminal flashing. A resize is never
+        // shown happening: the terminal is resized ONCE, at the start, while a
+        // frozen copy of its last frame stands in for it, and the live
+        // terminal comes back once it has redrawn at the new size. The copy
+        // moves to where the content will land (`ghostty_surface_predict_
+        // resize_shift`, the grid's own resize rules): text at the top of the
+        // screen rides the card's edge down or up; text laid out to the
+        // bottom (a shell at the bottom of its scrollback, an agent's input
+        // box) holds still while the card covers or uncovers rows above it.
+        // - `bannerReveal` is where the terminal starts to show (the card's
+        //   edge). It animates with the card (same curve): a mask, never a
+        //   layout change.
+        // - `terminalInset` is where the terminal is laid out, i.e. its size.
+        // - `bannerGlide` moves the frozen copy and the live terminal along
+        //   that path (`BannerGlide`), so the swap lands wherever it happens.
+        // A banner change that is not a toggle (new text, first set) moves
+        // the edge and the inset together, instantly.
+        @State private var bannerReveal: CGFloat = 0
+        @State private var terminalInset: CGFloat = 0
+        @State private var bannerCollapsedSeen = false
+        @State private var bannerToggleGeneration = 0
+        @State private var bannerGlide = BannerGlide()
+        @State private var bannerFrozen: FrozenTerminal?
+
         #if canImport(AppKit)
         // Observe SecureInput to detect when its enabled
         @ObservedObject private var secureInput = SecureInput.shared
@@ -104,6 +128,62 @@ extension Ghostty {
             surfaceFocus || lastFocusedSurface?.value === surfaceView
         }
 
+        /// The banner settled on a new height (see `bannerReveal`).
+        private func bannerTargetChanged(_ target: CGFloat) {
+            let collapsed = surfaceView.paneBannerCollapsed
+            let toggled = collapsed != bannerCollapsedSeen && bannerHeight > 0
+            bannerCollapsedSeen = collapsed
+            bannerToggleGeneration += 1
+            let generation = bannerToggleGeneration
+
+            // Never let an ambient animation interpolate the layout inset —
+            // an animated inset drags the terminal through per-frame resizes.
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            guard toggled else {
+                withTransaction(instant) {
+                    bannerHeight = target
+                    bannerReveal = target
+                    terminalInset = target
+                    bannerFrozen = nil
+                }
+                return
+            }
+
+            let oldInset = terminalInset
+            #if canImport(AppKit)
+            let frozen = surfaceView.frozenFrame()
+            let shift: CGFloat = {
+                guard let surface = surfaceView.surface, let frozen else { return 0 }
+                let height = (surfaceView.bounds.height + oldInset - target) * frozen.scale
+                return CGFloat(ghostty_surface_predict_resize_shift(surface, UInt32(max(0, height)))) / frozen.scale
+            }()
+            #else
+            let frozen: (surface: IOSurface, scale: CGFloat)? = nil
+            let shift: CGFloat = 0
+            #endif
+            withTransaction(instant) {
+                bannerHeight = target
+                terminalInset = target
+                bannerFrozen = frozen.map {
+                    FrozenTerminal(surface: $0.surface, scale: $0.scale, top: oldInset,
+                                   size: surfaceView.bounds.size)
+                }
+                bannerGlide.base = bannerGlide.progress
+                bannerGlide.delta = target - oldInset + shift
+            }
+            withAnimation(SurfacePaneBanner.toggleAnimation) {
+                bannerReveal = target
+                bannerGlide.progress = bannerGlide.base + 1
+            }
+            #if canImport(AppKit)
+            surfaceView.resizeOutOfSight {
+                guard generation == bannerToggleGeneration else { return }
+                withTransaction(instant) { bannerFrozen = nil }
+            }
+            #endif
+        }
+
         var body: some View {
             let center = NotificationCenter.default
 
@@ -125,7 +205,7 @@ extension Ghostty {
                         Rectangle()
                             .fill(basePaneBackgroundColor)
                             .opacity(ghostty.config.backgroundOpacity)
-                            .frame(height: bannerHeight)
+                            .frame(height: bannerReveal)
                         Spacer(minLength: 0)
                     }
                     .allowsHitTesting(false)
@@ -175,8 +255,29 @@ extension Ghostty {
                 // Inset the terminal below the sticky banner so the
                 // scrollable content ends under it instead of being
                 // covered by it.
-                .padding(.top, surfaceView.paneBanner != nil ? bannerHeight : 0)
+                .padding(.top, surfaceView.paneBanner != nil ? terminalInset : 0)
+                .modifier(bannerGlide.live)
+                .opacity(bannerFrozen == nil ? 1 : 0)
+                // Rows between the layout inset and the card's animated edge
+                // are under the card: masked, not just covered, since the card
+                // is translucent.
+                .mask(alignment: .top) {
+                    Rectangle().padding(.top, surfaceView.paneBanner != nil ? bannerReveal : 0)
+                }
                 .ghosttySurfaceView(surfaceView)
+
+                // The terminal's last frame, standing in for it while it
+                // resizes (see `bannerFrozen`). Always mounted, so the glide
+                // animates from where it is rather than appearing at its end.
+                if surfaceView.paneBanner != nil {
+                    FrozenTerminalView(frozen: bannerFrozen)
+                        .frame(width: bannerFrozen?.size.width ?? 0, height: bannerFrozen?.size.height ?? 0)
+                        .modifier(bannerGlide.frozen)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(.top, bannerFrozen?.top ?? 0)
+                        .mask(alignment: .top) { Rectangle().padding(.top, bannerReveal) }
+                        .allowsHitTesting(false)
+                }
 
                 // Background tint from IPC --color flag
                 if let tint = surfaceView.backgroundTint {
@@ -204,6 +305,8 @@ extension Ghostty {
                                 paneWidth: geo.size.width,
                                 cornerRadius: ghostty.config.macosPaneStyle == .elevated
                                     ? PaneElevation.nestedCardCornerRadius : GlassCard.cornerRadius,
+                                isGlass: ghostty.config.paneGlass,
+                                collapsed: $surfaceView.paneBannerCollapsed,
                                 linkSurface: surfaceView)
                             #if canImport(AppKit)
                                 // The terminal is inset below the banner, so
@@ -211,7 +314,15 @@ extension Ghostty {
                                 // handle's reveal still has to. Cleared when
                                 // the banner goes away under the pointer.
                                 .onHover { surfaceView.pointerOverBanner = $0 }
-                                .onDisappear { surfaceView.pointerOverBanner = false }
+                                .onDisappear {
+                                    surfaceView.pointerOverBanner = false
+                                    // A banner set again later starts fresh.
+                                    bannerHeight = 0
+                                    bannerReveal = 0
+                                    terminalInset = 0
+                                    bannerCollapsedSeen = false
+                                    bannerFrozen = nil
+                                }
                             #endif
                                 .onPreferenceChange(BannerTargetHeightKey.self) { target in
                                     // The target comes from a hidden
@@ -221,11 +332,7 @@ extension Ghostty {
                                     // ambient animation interpolate this — an
                                     // animated inset drags the terminal surface
                                     // through per-frame resizes.
-                                    var tx = Transaction()
-                                    tx.disablesAnimations = true
-                                    withTransaction(tx) {
-                                        bannerHeight = target
-                                    }
+                                    bannerTargetChanged(target)
                                 }
                             Spacer(minLength: 0)
                         }
@@ -1497,3 +1604,4 @@ extension FocusedValues {
         typealias Value = OSSize
     }
 }
+

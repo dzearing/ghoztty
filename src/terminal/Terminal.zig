@@ -125,9 +125,22 @@ flags: packed struct {
     /// resulting in more throughput for everything.
     search_viewport_dirty: bool = false,
 
+    /// A resize cleared the prompt for the shell to redraw (see
+    /// `Screen.resize`), and the redraw is not in yet. The renderer holds
+    /// the last frame meanwhile: drawn, the cleared prompt flashes blank for
+    /// a round trip (longer through the session agent), and a redraw that
+    /// arrives in pieces (the erase, then the prompt) flashes between them.
+    /// The renderer releases it once output has gone quiet
+    /// (`prompt_redraw_output`), termio's cap if the shell never redraws.
+    awaiting_prompt_redraw: bool = false,
+
     /// Dirty flags for the renderer.
     dirty: Dirty = .{},
 } = .{},
+
+/// When the shell last wrote while `flags.awaiting_prompt_redraw`: null
+/// until its redraw starts.
+prompt_redraw_output: ?std.time.Instant = null,
 
 /// The various color configurations a terminal maintains and that can
 /// be set dynamically via OSC, with defaults usually coming from a
