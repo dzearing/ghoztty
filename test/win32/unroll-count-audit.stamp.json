@@ -1,8 +1,8 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-23T20:56:17-07:00",
-    "commit":  "5a9f311cf",
+    "generated":  "2026-10-23T22:32:46-07:00",
+    "commit":  "99edb09ad",
     "uncommitted":  [
 
                     ],
@@ -15,7 +15,7 @@
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
-                  "scripts/control-char-scan.ps1":  "5d86caddd7c8b44be9b3148dd5994881a8f8fa8eb1a07d2fe5414b0dd6428ba8",
+                  "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
                   "scripts/daily-publish.ps1":  "44bdce30b404b4f8da2bb69527ae66f389d5aaa4b47e0c89f623bfefbbe78a2a",
@@ -37,7 +37,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "df430a711c693aa6df6effdf7ba76a59c6f8269865d3379bb1225051d223e624",
+                  "scripts/guard-due.ps1":  "3039316b17aea01c3350e133851190b779934b5a5010ef02eed28417ed807658",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "cda274a862bd12af712f6f6a2f018142f82cce573faded7954a6e1befb93608b",
@@ -56,6 +56,7 @@
                   "scripts/lib/DataBreak.ps1":  "6175abb366946daab496a8943000e33417c7fff0a27d5e8756b48e938676613e",
                   "scripts/lib/DigestState.ps1":  "997fd841d1a19a0a5cea6b583d475510c9606bcac5b4d885bca4ae6f7f54ae60",
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
+                  "scripts/lib/EscapeDamage.ps1":  "87c096ced08379d50c3dbabbd65bcf6596c2812039dde1e4d00d66943a0baa84",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
                   "scripts/lib/HarnessFloor.ps1":  "01c2f1653690c2ef146b6e32c1941d58132832b01a3d79815f955d682e9c3712",
                   "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",

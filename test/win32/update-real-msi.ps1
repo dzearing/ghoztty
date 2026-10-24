@@ -46,7 +46,12 @@ param(
     [string]$Identity = 'GhozttyT1194Test',
     [string]$OldTag = 'win-v1.35.0',
     [string]$NewTag = 'win-v1.36.0',
-    [switch]$KeepInstall
+    [switch]$KeepInstall,
+    # Negative control for section C (T1269): offer an "MSI" that is not one.
+    # The app's download refuses it, and C must report that as the failure it
+    # is, early, instead of waiting out the whole poll. D and E skip, so a run
+    # under this switch never stamps the guard.
+    [switch]$BreakDownload
 )
 $ErrorActionPreference = 'Stop'
 
@@ -59,6 +64,10 @@ $realLocalAppData = $env:LOCALAPPDATA
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+# Every launch here goes to a background desktop (T1269): the installed
+# terminal, the applier and the terminal the applier relaunches all open
+# windows, and none of them may land on the user's screen.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # The throwaway product identity, its packages and its processes - shared with
 # test\win32\update-graceful.ps1, which drives the same machinery through the
@@ -150,6 +159,7 @@ Assert ((@(Get-ThrowawayUninstallEntries -Identity $Identity)).Count -ge 1) 'B: 
 
 # ============================================ C. the app stages the update
 Write-Host "`n-- C. the app finds $NewTag and stages its package --"
+$td = New-TestDesktop
 
 # The asset URL must sit under /download/<tag>/ - that is how the scanner
 # proves an asset belongs to the release it is offering - so the package is
@@ -157,7 +167,11 @@ Write-Host "`n-- C. the app finds $NewTag and stages its package --"
 $assetDir = Join-Path $work "download\$NewTag"
 New-Item -ItemType Directory -Force $assetDir | Out-Null
 $assetMsi = Join-Path $assetDir "Ghoztty-$newVer-x64.msi"
-Copy-Item $msiNew $assetMsi -Force
+if ($BreakDownload) {
+    [IO.File]::WriteAllText($assetMsi, 'not an msi package (T1269 negative control)')
+} else {
+    Copy-Item $msiNew $assetMsi -Force
+}
 $assetUrl = 'file:///' + ($assetMsi -replace '\\', '/')
 $feedPath = Join-Path $work 'feed.json'
 [IO.File]::WriteAllText($feedPath,
@@ -166,6 +180,54 @@ $feedPath = Join-Path $work 'feed.json'
 $feedUrl = 'file:///' + ($feedPath -replace '\\', '/')
 
 if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue }
+
+# The poll used to be a flat 120s that knew nothing about the app, so a box
+# busy with a floor run read as "the app never staged the package" and the
+# failure could not say why (T1269, red once on 2026-09-01 and 30/30 on the
+# re-run). A released build is GUI-subsystem but still writes its log to the
+# redirected stderr below, and the update path names every step there. So the
+# poll reads the app's own account: a step that means nothing will ever be
+# staged ends it at once, and a log or staging directory that is still moving
+# keeps it waiting past the base deadline, up to a hard cap.
+#
+# Terminal lines: after a failed pre-download every later tick answers
+# "already offered; not re-notifying" (App.zig, T1171), and a feed that offers
+# nothing never will. A failed CHECK is not terminal - the recheck below runs
+# it again.
+function Get-StageLogVerdict([string]$Text) {
+    $terminal = @(
+        'update (pre-)?download failed[^\r\n]*',
+        'update download: [^\r\n]*is not an MSI package[^\r\n]*',
+        'update check[^\r\n]*: no win-v release found[^\r\n]*',
+        'update check[^\r\n]*: up to date[^\r\n]*'
+    )
+    foreach ($re in $terminal) {
+        $m = [regex]::Match($Text, $re)
+        if ($m.Success) { return "failed: $($m.Value)" }
+    }
+    if ($Text -match 'update download: staged ') { return 'staged' }
+    if ($Text -match 'update available') { return 'offered' }
+    return 'checking'
+}
+
+# The reader's control: each verdict it can return, from lines the real app
+# writes (the "(automatic)" form is today's, the bare form is the 1.35.0
+# release this section actually launches).
+Assert ((Get-StageLogVerdict "info(win32): update available: current=1.35.0 latest=win-v1.36.0`r`n") -eq 'offered') 'C: the poll reads an offered update as still in progress (control)'
+Assert ((Get-StageLogVerdict "info(win32_update_install): update download: staged 41451008 bytes at x`r`n") -eq 'staged') 'C: the poll reads a staged package as staged (control)'
+Assert ((Get-StageLogVerdict "warning(win32): update pre-download failed: error.HttpFailed`r`ninfo: next`r`n") -eq 'failed: update pre-download failed: error.HttpFailed') 'C: the poll ends at once on a failed download, naming it (control)'
+Assert ((Get-StageLogVerdict "warning(win32_update_install): update download: 44 bytes from file:///x is not an MSI package`n").StartsWith('failed: ')) 'C: the poll ends at once on a package that is not an MSI (control)'
+Assert ((Get-StageLogVerdict "info(win32): update check (automatic): up to date (current=1.36.0 latest=win-v1.36.0)`n").StartsWith('failed: ')) 'C: the poll ends at once when the app says it is up to date (control)'
+Assert ((Get-StageLogVerdict "warning(win32): update check (automatic) failed: error.Timeout`n") -eq 'checking') 'C: a failed CHECK keeps the poll waiting for the recheck (control)'
+
+# Read what the app has written so far without disturbing its handle.
+function Read-AppLog([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    try {
+        $fs = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        try { return (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    } catch { return '' }
+}
 
 $env:GHOZTTY_UPDATE_URL = $feedUrl
 # The check re-runs on a timer, and this is the knob update-check.ps1 already
@@ -178,26 +240,68 @@ try {
     # T689: the installed build's own stderr. This launch is the one expected
     # to find and stage the update, so when it does not, its log is the only
     # record of how far it got.
-    $app = Start-Process -FilePath $testExe -PassThru `
-        -RedirectStandardError (Join-Path $work 'app-update.err.txt')
-    $null = $app.Handle
+    $appLog = Join-Path $work 'app-update.err.txt'
+    Remove-Item $appLog -Force -ErrorAction SilentlyContinue
+    # -AllowReleaseBuild: the subject is a published build, and the launch gate
+    # checks the -ReleaseSandbox above rather than taking this on trust.
+    $app = Start-OnTestDesktop -Exe $testExe -Arguments @() -StdErr $appLog -AllowReleaseBuild
+    $appProc = $app.Process
     # The check runs in the background at startup and the download follows it;
-    # poll for the staged package rather than guessing a sleep. A released
-    # build is GUI-subsystem, so its log lines are not available to read.
+    # poll for the staged package rather than guessing a sleep, and follow the
+    # app's log while doing it (above). Base deadline 120s; any movement - log
+    # growth, staging bytes - buys another 120s from that moment; 360s is the
+    # cap however busy the box is.
     $staged = $null
-    for ($i = 0; $i -lt 120; $i++) {
+    $verdict = 'checking'
+    $stopReason = ''
+    $started = Get-Date
+    $lastMove = $started
+    $lastSig = ''
+    while ($true) {
         Start-Sleep -Seconds 1
-        if (Test-Path $stagingDir) {
+        $logText = Read-AppLog $appLog
+        $verdict = Get-StageLogVerdict $logText
+        # The download creates the .msi and THEN writes 40 MB into it
+        # (update_install.download), so the file appearing is not the package
+        # being staged; the app's own "staged" line is.
+        if ($verdict -eq 'staged' -and (Test-Path $stagingDir)) {
             $hit = @(Get-ChildItem $stagingDir -Filter '*.msi' -File -ErrorAction SilentlyContinue)
             if ($hit.Count -gt 0) { $staged = $hit[0].FullName; break }
         }
+        if ($verdict.StartsWith('failed: ')) { $stopReason = "the app reported $($verdict.Substring(8))"; break }
+        if ($appProc -and $appProc.HasExited) { $stopReason = 'the app exited before staging anything'; break }
+        $stagingBytes = 0
+        foreach ($f in @(Get-ChildItem $stagingDir -File -ErrorAction SilentlyContinue)) { $stagingBytes += $f.Length }
+        $sig = "$($logText.Length)/$stagingBytes"
+        $now = Get-Date
+        if ($sig -ne $lastSig) { $lastSig = $sig; $lastMove = $now }
+        $elapsed = ($now - $started).TotalSeconds
+        if ($elapsed -ge 360) { $stopReason = 'the 360s cap ran out while the app was still moving'; break }
+        if ($elapsed -ge 120 -and ($now - $lastMove).TotalSeconds -ge 120) {
+            $stopReason = "nothing moved for 120s (last verdict: $verdict)"; break
+        }
     }
+    $waited = [int]((Get-Date) - $started).TotalSeconds
 } finally {
     Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:GHOZTTY_UPDATE_RECHECK_MS -ErrorAction SilentlyContinue
 }
 
-Assert ($null -ne $staged) "C: the app downloaded and staged a package into $stagingDir"
+if ($BreakDownload) {
+    # The negative control: a refused package must END the poll, named, well
+    # before the base deadline - not read as a slow box.
+    Assert ($null -eq $staged) 'C: a package that is not an MSI was not staged (negative control)'
+    Assert ($stopReason -like 'the app reported*') "C: the poll stopped on the app's own failure line ($stopReason)"
+    Assert ($waited -lt 90) "C: and stopped early instead of waiting out the poll (${waited}s)"
+} else {
+    Assert ($null -ne $staged) "C: the app downloaded and staged a package into $stagingDir$(if (-not $staged) { " - $stopReason after ${waited}s" })"
+}
+if (-not $staged) {
+    # Whatever stopped the poll, the app's own account of how far it got is
+    # the evidence a red run needs.
+    Write-Host "  app log tail ($appLog):" -ForegroundColor Yellow
+    foreach ($l in @((Read-AppLog $appLog) -split "`r?`n" | Where-Object { $_ } | Select-Object -Last 12)) { Write-Host "    $l" }
+}
 if ($staged) {
     Assert ((Get-Item $staged).Length -eq (Get-Item $msiNew).Length) 'C: the staged bytes are the package it was offered'
     Assert ($staged -like "*$newVer*") "C: it staged the $newVer package"
@@ -228,8 +332,9 @@ if (-not $staged) {
 
     $env:GHOZTTY_UPDATE_APPLY = "$($dead.Id)|$staged|$testExe"
     try {
-        $ap = Start-Process -FilePath $applier -PassThru
-        $null = $ap.Handle
+        # The applier relaunches the terminal, and that child inherits the
+        # applier's desktop - so this one launch keeps both off the user's.
+        $ap = (Start-OnTestDesktop -Exe $applier -Arguments @()).Process
         $exited = $ap.WaitForExit(300000)
     } finally {
         Remove-Item Env:GHOZTTY_UPDATE_APPLY -ErrorAction SilentlyContinue
@@ -311,7 +416,9 @@ if ($staged) {
 # the process - so a `.old-<stamp>` file here is the expected state, not a
 # leak. What the task asks is that it does not OUTLIVE the holders.
 $sidelined = @(Get-ChildItem $installDir -Filter '*.old-*' -File -Recurse -ErrorAction SilentlyContinue)
-if ($holdersBefore.Count -gt 0) {
+if (-not $staged) {
+    Skip 'E: nothing was installed, so nothing could have been renamed aside'
+} elseif ($holdersBefore.Count -gt 0) {
     Assert ($sidelined.Count -ge 1) 'E: the old agent image was renamed aside rather than the holder killed'
 } else {
     Assert ($sidelined.Count -eq 0) "E: nothing was sidelined when no holder was running ($($sidelined.Count))"
@@ -370,9 +477,19 @@ while ($stillHeld -and (Get-Date) -lt $heldDeadline) {
 }
 if ($stillHeld) { Write-Host "  note: still held 60s after every holder exited: $stillHeld" -ForegroundColor Yellow }
 
-$again = Start-Process -FilePath $testExe -PassThru `
-    -RedirectStandardError (Join-Path $work 'app-sweep.err.txt')   # T689
-$null = $again.Handle
+# This launch is judged on what it SWEEPS, so it must not stage anything new:
+# with no feed set it asks GitHub, finds a newer release and starts a 40 MB
+# download into the very directory being checked for emptiness (seen in
+# T1269's runs). A feed that offers no win-v release answers that question
+# with "nothing to offer".
+$emptyFeed = Join-Path $work 'feed-empty.json'
+[IO.File]::WriteAllText($emptyFeed, '[{"tag_name":"v1.0.0","assets":[]}]')
+$env:GHOZTTY_UPDATE_URL = 'file:///' + ($emptyFeed -replace '\\', '/')
+try {
+    $again = Start-OnTestDesktop -Exe $testExe -Arguments @() -StdErr (Join-Path $work 'app-sweep.err.txt') -AllowReleaseBuild   # T689
+} finally {
+    Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
+}
 $clean = $false
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 1
@@ -402,6 +519,7 @@ Assert ($userExeVersionAfter -eq $userExeVersionBefore) 'E: the user''s ghoztty.
 Complete-TestBody
 
 } finally {
+    Remove-TestDesktop
     if (-not $KeepInstall) {
         Write-Host "`n-- cleanup --"
         Stop-ThrowawayInstances -InstallDir $installDir -RealLocalAppData $realLocalAppData
