@@ -1,22 +1,24 @@
 import Foundation
 
 
-/// What `+split --name=<name>` does when a pane already holds that name.
+/// What `+split --name=<name>` does when the name is already held in the
+/// window the split would land in.
 ///
 /// The name is the idempotency key: re-running the same launch must not
-/// duplicate the pane, so a matching request REUSES it. It used to reuse on the
-/// name alone — silently, from any window, whatever was asked for — so a caller
-/// asking for `--view=b.html` beside itself got exit 0 and nothing, while a
-/// pane of the same name in another window went on showing `a.html`. Now:
+/// duplicate the pane, so a matching request REUSES it. Pane names belong to
+/// their window (`TargetLookup`), so only a pane in the SAME window collides —
+/// a pane of that name in another window is another window's business, and
+/// this split creates this window's own. (Names used to be one namespace
+/// across every window, and the second agent to ask for `draft` got exit 0
+/// and "reused" a pane in the first agent's window.) Window names are still
+/// global, so a window's name is never a pane's.
 ///
 ///   * A request the existing pane already satisfies is reused, and the reply
-///     says so and names the window — which may not be the caller's: pane
-///     names are one namespace across every window (they are `--target`s), so
-///     a second pane cannot take the name without orphaning the first.
+///     says so.
 ///   * A request it does NOT satisfy — another `--view`, or a terminal where a
-///     viewer stands (or the reverse) — fails, naming the pane, its window,
-///     and what it shows. Retargeting the pane instead would hijack whatever
-///     else put it there, often another agent in another window.
+///     viewer stands (or the reverse) — fails, naming the pane and what it
+///     shows. Retargeting the pane instead would hijack whatever else put it
+///     there.
 ///
 /// Pure, so the policy is testable without windows (`SplitNameCollisionTests`).
 enum SplitNameCollision: Equatable {
@@ -25,22 +27,20 @@ enum SplitNameCollision: Equatable {
     /// The request conflicts with the existing pane; the command fails.
     case conflict(error: String)
 
-    /// What currently holds the name, and where.
+    /// What currently holds the name.
     struct Existing: Equatable {
         var kind: Kind
         /// The `windowName` of the window holding it (the window itself, for
         /// `.window`).
         var windowName: String
-        /// Whether that window is the one the split would have anchored in.
-        var inAnchorWindow: Bool
 
         enum Kind: Equatable {
             case terminal
             /// `location` is what it shows now, `homeLocation` what it was
             /// opened with.
             case viewer(location: String, homeLocation: String)
-            /// A WINDOW of that name: `--target`s and pane names are one
-            /// namespace, so a pane cannot take it.
+            /// A WINDOW of that name: window names are global, so a pane
+            /// cannot take one.
             case window
         }
     }
@@ -50,9 +50,7 @@ enum SplitNameCollision: Equatable {
         existing: Existing,
         requestedView: String?
     ) -> SplitNameCollision {
-        let window = existing.inAnchorWindow
-            ? "this window ('\(existing.windowName)')"
-            : "window '\(existing.windowName)', not the window this split was for"
+        let window = "this window ('\(existing.windowName)')"
 
         let closeHint = "Use another --name, or close it first: ghoztty +close --target=\(name)"
 

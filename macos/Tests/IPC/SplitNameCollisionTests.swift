@@ -3,51 +3,35 @@ import Testing
 
 /// `+split --name=<n>` used to succeed silently whenever ANY pane held the
 /// name — in another window, showing another file — so an agent reported a
-/// pane that never opened. These pin the policy: a request the pane already
-/// satisfies is reused and says where, anything else fails and says why.
+/// pane that never opened. Pane names now belong to their window, so only a
+/// pane in the window the split lands in collides (`PaneNameScopeWindowTests`
+/// drives the cross-window case). These pin what such a collision does: a
+/// request the pane already satisfies is reused and says so, anything else
+/// fails and says why.
 struct SplitNameCollisionTests {
     private func viewer(
         _ location: String,
         home: String? = nil,
-        window: String = "window-2",
-        inAnchor: Bool = false
+        window: String = "window-2"
     ) -> SplitNameCollision.Existing {
-        .init(
-            kind: .viewer(location: location, homeLocation: home ?? location),
-            windowName: window,
-            inAnchorWindow: inAnchor)
+        .init(kind: .viewer(location: location, homeLocation: home ?? location), windowName: window)
     }
 
-    /// The reported bug: a different `--view` under a name held in another
-    /// window. It must fail, naming the pane's window and what it shows.
-    @Test func differentViewInAnotherWindowFails() {
+    /// A different view under a name this window already holds fails: the
+    /// pane belongs to whatever opened it, so it is not quietly retargeted.
+    @Test func differentViewFails() {
         let result = SplitNameCollision.decide(
             name: "writeup",
-            existing: viewer("/Users/me/Documents/old.html", window: "window-7"),
+            existing: viewer("/Users/me/Documents/old.html", window: "dev"),
             requestedView: "/Users/me/Documents/new.html")
         guard case .conflict(let error) = result else {
             Issue.record("expected a conflict, got \(result)")
             return
         }
-        #expect(error.contains("window 'window-7'"))
-        #expect(error.contains("not the window this split was for"))
+        #expect(error.contains("this window ('dev')"))
         #expect(error.contains("/Users/me/Documents/old.html"))
         #expect(error.contains("/Users/me/Documents/new.html"))
         #expect(error.contains("+close --target=writeup"))
-    }
-
-    /// A different view in the caller's own window is not quietly retargeted
-    /// either: the pane belongs to whatever opened it.
-    @Test func differentViewInTheAnchorWindowFails() {
-        let result = SplitNameCollision.decide(
-            name: "doc",
-            existing: viewer("/a.md", window: "dev", inAnchor: true),
-            requestedView: "/b.md")
-        guard case .conflict(let error) = result else {
-            Issue.record("expected a conflict, got \(result)")
-            return
-        }
-        #expect(error.contains("this window ('dev')"))
     }
 
     /// Re-running the same launch is the idempotent case: reused, and said.
@@ -57,15 +41,14 @@ struct SplitNameCollisionTests {
             existing: viewer("/a.md", window: "window-3"),
             requestedView: "/a.md")
         #expect(result == .reuse(message:
-            "pane 'doc' already exists in window 'window-3', not the window this split was for, "
-                + "showing /a.md; reused it, no split created"))
+            "pane 'doc' already exists in this window ('window-3'), showing /a.md; reused it, no split created"))
     }
 
     /// A pane the user navigated away from still answers its own launch.
     @Test func homeLocationCountsAsTheSameView() {
         let result = SplitNameCollision.decide(
             name: "site",
-            existing: viewer("https://example.com/other/", home: "https://example.com", inAnchor: true),
+            existing: viewer("https://example.com/other/", home: "https://example.com"),
             requestedView: "https://example.com/")
         guard case .reuse = result else {
             Issue.record("expected reuse, got \(result)")
@@ -76,7 +59,7 @@ struct SplitNameCollisionTests {
     @Test func fileURLAndPathAreTheSameView() {
         let result = SplitNameCollision.decide(
             name: "doc",
-            existing: viewer("file:///tmp/a.md", inAnchor: true),
+            existing: viewer("file:///tmp/a.md"),
             requestedView: "/tmp/a.md")
         guard case .reuse = result else {
             Issue.record("expected reuse, got \(result)")
@@ -87,7 +70,7 @@ struct SplitNameCollisionTests {
     @Test func terminalAgainIsReused() {
         let result = SplitNameCollision.decide(
             name: "logs",
-            existing: .init(kind: .terminal, windowName: "dev", inAnchorWindow: true),
+            existing: .init(kind: .terminal, windowName: "dev"),
             requestedView: nil)
         #expect(result == .reuse(message:
             "pane 'logs' already exists in this window ('dev'); reused it, no split created"))
@@ -96,11 +79,11 @@ struct SplitNameCollisionTests {
     @Test func kindMismatchFails() {
         let viewerAskedOfTerminal = SplitNameCollision.decide(
             name: "logs",
-            existing: .init(kind: .terminal, windowName: "dev", inAnchorWindow: true),
+            existing: .init(kind: .terminal, windowName: "dev"),
             requestedView: "/a.md")
         let terminalAskedOfViewer = SplitNameCollision.decide(
             name: "doc",
-            existing: viewer("/a.md", inAnchor: true),
+            existing: viewer("/a.md"),
             requestedView: nil)
         guard case .conflict = viewerAskedOfTerminal, case .conflict = terminalAskedOfViewer else {
             Issue.record("expected conflicts, got \(viewerAskedOfTerminal) / \(terminalAskedOfViewer)")
@@ -108,11 +91,11 @@ struct SplitNameCollisionTests {
         }
     }
 
-    /// Window names and pane names share one namespace.
+    /// Window names are global: a pane never takes one.
     @Test func aWindowNameIsNeverReusedAsAPane() {
         let result = SplitNameCollision.decide(
             name: "window-2",
-            existing: .init(kind: .window, windowName: "window-2", inAnchorWindow: false),
+            existing: .init(kind: .window, windowName: "window-2"),
             requestedView: nil)
         guard case .conflict(let error) = result else {
             Issue.record("expected a conflict, got \(result)")
@@ -121,10 +104,15 @@ struct SplitNameCollisionTests {
         #expect(error.contains("name of a window"))
     }
 
-    @Test func createdMessageNamesPaneWindowAndView() {
+    @Test func createdMessageNamesPaneWindowViewAndWhetherItIsOnShow() {
+        let id = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
         let parsed = IPCServer.parseArguments(["--name=doc", "--view=/a.md"])
-        #expect(IPCServer.createdMessage(parsed, in: "dev") == "created pane 'doc' in window 'dev', showing /a.md")
+        #expect(IPCServer.createdMessage(parsed, .init(paneID: id, windowName: "dev", onShow: true))
+            == "created pane 'doc' (\(id.uuidString)) in window 'dev', showing /a.md")
         let unnamed = IPCServer.parseArguments(["--direction=down"])
-        #expect(IPCServer.createdMessage(unnamed, in: "dev") == "created a split in window 'dev'")
+        #expect(IPCServer.createdMessage(unnamed, .init(paneID: id, windowName: "dev", onShow: nil))
+            == "created pane \(id.uuidString) in window 'dev'")
+        #expect(IPCServer.createdMessage(unnamed, .init(paneID: id, windowName: "dev", onShow: false))
+            .hasSuffix("; it is minimized to a strip, since its row has no room for it on show"))
     }
 }

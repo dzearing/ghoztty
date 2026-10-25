@@ -31,7 +31,30 @@ final class PaneStackState: ObservableObject {
     /// How many panes are remembered: far more than a window can hold.
     static let capacity = 64
 
+    /// A pane opened BESIDE the one with the caret, without taking it — an
+    /// agent's `+split --view`, a banner link's side pane. It was asked for, so
+    /// it comes on show: it outranks even the focused pane in a row that has
+    /// no room for all of it (`ranks`), other panes minimize to make room, and
+    /// when even that is not enough the focused pane becomes the strip — and
+    /// KEEPS the caret, which stays where it was rather than moving onto a
+    /// strip. It used to be born a strip nobody noticed. Cleared by the next
+    /// change of focus, after which the row is the focus history's again.
+    @Published private(set) var featured: UUID?
+
+    func feature(_ id: UUID) {
+        featured = id
+    }
+
+    /// The layout's ranks (`PaneLayout.compute`): 0 for the focused pane,
+    /// 1 for the one before it, …, and the featured pane ahead of all of them.
+    var ranks: [UUID: Int] {
+        var ranks = Dictionary(uniqueKeysWithValues: recency.enumerated().map { ($1, $0) })
+        if let featured { ranks[featured] = -1 }
+        return ranks
+    }
+
     func noteFocus(_ id: UUID) {
+        if featured != nil, recency.first != id { featured = nil }
         bringOnShow(id, in: Array(pinnedItems.keys))
         guard recency.first != id else { return }
         recency = Self.noting(id, in: recency)
@@ -270,8 +293,11 @@ final class PaneStackState: ObservableObject {
         // again as it lays them out).
         for key in pinnedItems.keys where !keys.contains(key) { pinnedItems[key] = nil }
         // The focus can land before the tree change is seen (a pane focused
-        // as it joins a row): it comes on show as it would have after.
+        // as it joins a row): it comes on show as it would have after. So
+        // does a featured pane joining a collapsed row, after the focus, so it
+        // is the one that wins where both cannot be on show.
         if let focused = recency.first { bringOnShow(focused, in: Array(carried.keys)) }
+        if let featured { bringOnShow(featured, in: Array(carried.keys)) }
     }
 
     /// Where the caret goes when the rows change from `old` to `new` (a

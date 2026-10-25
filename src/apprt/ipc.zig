@@ -119,6 +119,45 @@ pub fn seedCallerPane(
     return seedCallerPaneFrom(alloc, arguments, std.posix.getenv(pane_env));
 }
 
+/// Write `"caller_pane": $GHOZTTY_PANE_ID` into a request object, when set.
+///
+/// Every command sends it so the app can look a NAME up in the caller's own
+/// window first: pane names belong to the window they were created in, and
+/// `+close --target=draft` from one window must not close another window's
+/// `draft`. It is a top-level field, not an argument, so an older app ignores
+/// it (an extra argument would become banner text in its `+set-banner`).
+/// `seedCallerPane` is a different thing: the default ANCHOR of a command
+/// that creates a pane, which explicit flags override.
+pub fn writeCallerPane(jws: *std.json.Stringify) std.Io.Writer.Error!void {
+    return writeCallerPaneFrom(jws, std.posix.getenv(pane_env));
+}
+
+fn writeCallerPaneFrom(jws: *std.json.Stringify, baked: ?[]const u8) std.Io.Writer.Error!void {
+    const pane = baked orelse return;
+    if (pane.len == 0) return;
+    try jws.objectField("caller_pane");
+    try jws.write(pane);
+}
+
+test "callerPane: every request carries the pane it came from as a field" {
+    const testing = std.testing;
+    for ([_]struct { baked: ?[]const u8, want: []const u8 }{
+        .{ .baked = "PANE-1", .want = "{\"action\":\"close\",\"caller_pane\":\"PANE-1\"}" },
+        .{ .baked = null, .want = "{\"action\":\"close\"}" },
+        .{ .baked = "", .want = "{\"action\":\"close\"}" },
+    }) |case| {
+        var out: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer out.deinit();
+        var jws: std.json.Stringify = .{ .writer = &out.writer };
+        try jws.beginObject();
+        try jws.objectField("action");
+        try jws.write("close");
+        try writeCallerPaneFrom(&jws, case.baked);
+        try jws.endObject();
+        try testing.expectEqualStrings(case.want, out.written());
+    }
+}
+
 /// `seedCallerPane` with the baked value injected, so the rule is testable
 /// without mutating the process environment.
 fn seedCallerPaneFrom(

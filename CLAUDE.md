@@ -4,7 +4,7 @@ A fork of [Ghostty](https://github.com/ghostty-org/ghostty) that adds CLI-driven
 
 ## CLI Window Management
 
-IPC commands communicate with a running Ghoztty instance over a Unix domain socket. All commands are idempotent — named targets that already exist are reused instead of recreated (and focused only with `--focus`), as long as they match the request; a `+split --name` that names a different pane fails instead of silently reusing it (see `+split`).
+IPC commands communicate with a running Ghoztty instance over a Unix domain socket. All commands are idempotent — named targets that already exist are reused instead of recreated (and focused only with `--focus`), as long as they match the request; a `+split --name` that names a different pane fails instead of silently reusing it (see `+split`). Pane names belong to the window they were created in, and a name is looked up in the caller's window first (see Naming).
 
 ### Focus: programmatic surfaces stay in the background
 
@@ -82,24 +82,56 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
 - `--target`: Named window to split in. Default: **the pane the command was
   invoked from** (see Caller anchoring), falling back to the most recently
   focused window.
-- `--name`: Register the new pane with a name for later targeting. Pane names
-  are **one namespace across every window** (and shared with window names), so
-  the name may already be held by a pane in another window. Re-running the same
-  split reuses it; anything else fails rather than doing nothing:
+- `--name`: Register the new pane with a name for later targeting. **A pane
+  name belongs to the window the pane is in** (see Naming): only a pane of that
+  name in the window the split lands in, or a window of that name, collides.
+  A pane called `draft` in another window does not — this split creates this
+  window's own. (Names used to be one namespace across every window. Session
+  A's `+split --name=draft --view=…` and session B's same command, in another
+  window, collided: B got exit 0 and "reused" A's pane in A's window, and the
+  agent reported a side pane the user never saw. With a different `--view`, B
+  got exit 1, retried, and the user had to say "open it!".) Re-running the same
+  split reuses the pane; anything else fails rather than doing nothing:
   - **Matches** (a terminal again, or a viewer showing that `--view` or opened
-    with it): no split, exit 0, stdout says `pane '<n>' already exists in
-    <window>; reused it, no split created`.
+    with it): no split, exit 0, stdout says `pane '<n>' already exists in this
+    window ('<w>'); reused it, no split created`.
   - **Doesn't match** (another `--view`, a terminal where a viewer stands or the
-    reverse, or the name is a window's): exit 1, stderr names the pane, its
-    window and what it shows. Nothing is retargeted — the pane belongs to
-    whatever opened it, often another agent. Use another `--name`, or `+close`
-    it first.
-  - **Created**: stdout says `created pane '<n>' in window '<w>'`. A `--target`
-    that names nothing now fails too (it used to exit 0 and do nothing).
+    reverse, or the name is a window's): exit 1, stderr names the pane and what
+    it shows. Nothing is retargeted — the pane belongs to whatever opened it.
+    Use another `--name`, or `+close` it first.
 
-  The line comes from the response's additive `message` field; a CLI older than
-  the app ignores it. Policy: `SplitNameCollision`; tests:
-  `SplitNameCollisionTests`.
+  Policy: `SplitNameCollision`; tests: `SplitNameCollisionTests`,
+  `PaneNameScopeWindowTests`.
+- **The reply is sent after the split, and says what happened.** It used to be
+  sent first (`created …`) with the split run afterwards on the main queue,
+  where a failure (the anchor gone from its tree, the insert refused) only
+  logged at a level that is not persisted — so `+split` could not fail, and an
+  agent reported a pane that never opened. Now `handleSplit` waits, bounded
+  (10s), for the pane to exist and be laid out, and replies with one of:
+  - **Created**: exit 0, stdout `created pane '<n>' (<id>) in window '<w>',
+    showing <view>` — or `created pane <id> in window '<w>'` without `--name`.
+    The pane id is there so a caller can target the pane without naming it.
+  - **Created, minimized**: the same line ending `; it is minimized to a strip,
+    since its row has no room for it on show`. Exit 0; the pane exists. (With
+    the side-pane rule in Stacked panes this is rare.)
+  - **Failed**: exit 1 and the reason on stderr — including a `--target` /
+    `--pane` that names nothing, an ambiguous name, and a split that did not
+    finish within the wait (it may still appear; the message says so).
+
+  An **agent-backed terminal split** (session persistence, a remote machine)
+  asks the agent for the parent's cwd off the main thread and is created a beat
+  later; `newSplit`'s `onFinish` reports that path's success or failure too,
+  so it is waited on like a local one. On show is read from the layout
+  (`PaneStackState.stackMinimizing`) once the pane is laid out; a window that
+  never lays it out (not on screen) gets no on-show claim either way. The line
+  comes from the response's additive `message` field; a CLI older than the app
+  ignores it.
+- **Every `+split` is logged at `.notice`** (persisted): the caller pane, the
+  window it resolved to, the anchor pane, the name and view, the outcome
+  (created / reused / name collision / failed / timed out) and whether the new
+  pane is on show. Ambiguous name lookups are logged the same way. Read them
+  with `/usr/bin/log show --last 1h --predicate 'subsystem BEGINSWITH
+  "com.dzearing.ghoztty" AND category == "IPCServer"'`.
 - `--view`: Open a **viewer** pane (see Viewer Panes below) instead of a terminal — a file (markdown, HTML rendered as a live page, code, or an **image**), a website, or a **git diff** (`git-status:` / `git-diff:<revspec>`, see Git diff panes). Mutually exclusive with `--command`/`-e`. Works with `--pane` targeting, including splitting off an existing viewer pane.
 
 ### `ghoztty +close`
@@ -567,9 +599,41 @@ leaves the machine reachable, and de-enroll kills the live bridge).
 
 ### Naming
 
-- `+new-window --target=<name>` registers a **window**
-- `+split --name=<name>` registers a **pane**
+- `+new-window --target=<name>` registers a **window**. Window names are
+  global: one window holds a name, and a name a pane holds cannot be taken by
+  a window (`+new-window --target=` fails rather than "reusing" a pane).
+- `+split --name=<name>` registers a **pane**, in the window it lands in.
+  **Pane names belong to their window**: two windows can each have a pane
+  called `draft`.
 - `+split --target`, `+close --target`, and `+send-keys --target` reference either kind
+
+**How a name is looked up** (`TargetLookup`, the one policy;
+`IPCServer.lookup` applies it). Every command carries the pane it was run from
+— the CLI writes `$GHOZTTY_PANE_ID` into each request as a top-level
+`caller_pane` field — and the name means, in order:
+
+1. a pane of that name in **the caller's window**;
+2. a window of that name;
+3. a pane of that name in another window, **if exactly one window has one**.
+
+Two or more other windows holding the name is **ambiguous**: the command
+fails (exit 1) naming the windows and pointing at the pane id, rather than
+pick one — picking would act on another agent's pane at random. A caller with
+no pane (a plain shell, a `ghoztty://` link) starts at step 2. A pane id is
+always exact and needs none of this. An explicit `--target=<window>` /
+`--pane=<id>` still reaches across windows.
+
+This applies to `+split --name`/`--pane`/`--target`, `+close`, `+send-keys`,
+`+read`, `+set-banner`, `+set-state`, `+reload`, `+stash`, `+restore`,
+`+rename` and `+rearrange` (whose layout names panes of the window it
+rearranges). `caller_pane` is a field rather than an argument because it must
+be additive both ways: an older app's decoder ignores an unknown field, where
+an extra argument would have become text in its `+set-banner`. The server
+folds it into the arguments as `--caller-pane=` (in front of any `-e`), the
+one spelling every handler reads (`IPCRequest.resolvedArguments`). A name
+follows its pane when the pane moves to another window. Tests:
+`TargetLookupTests`, `PaneNameScopeWindowTests` (two real windows: split,
+close and send-keys from each).
 
 A window opened without an explicit `--target=` (Cmd-N, or a bare
 `+new-window`) still gets an **auto name** — `window-1`, `window-2`, … — which
@@ -628,6 +692,10 @@ viewer side pane, plus a user clicking window B in the meantime, put the pane in
 B. The race does not need a user, either — an agent's command is asynchronous
 with respect to focus.
 
+- **Name lookup is a different use of the same pane** (see Naming): every
+  command sends it as the request's `caller_pane` field, explicit anchors or
+  not, and a name is looked up in that pane's window first. Anchoring is only
+  for commands that need somewhere to put a pane.
 - **Applies to `+split` and `+rearrange`.** Both took the focused-window
   fallback. `+new-window` creates a window and needs no anchor, and
   `--from-focused` (on `+split` and `+new-window`) is the caller asking for the
@@ -689,9 +757,13 @@ ghoztty://focus/<target>
 ```
 
 One verb, one shape. `<target>` is percent-decoded and passed to
-`IPCServer.resolveTarget` — the same resolver `--target` uses, so there is one
+`IPCServer.lookup` — the same resolver `--target` uses, so there is one
 naming system, not two: a registered window name, an auto `window-N`, a
 registered pane name, or a pane id (`$GHOZTTY_PANE_ID`, case-insensitive).
+A link has no caller pane, so a pane name is looked up across every window
+(see Naming): once two windows each hold a pane of that name the link is
+**ambiguous** and reports so (`Failure.ambiguousTarget`, "Can't focus …")
+instead of raising one of them at random. A pane id never is.
 Everything after the verb is ONE target, so a name containing `/` survives
 encoded (`focus/feat%2Flogin`) or not (`focus/feat/login`). The path form is
 canonical over `ghoztty://<target>` (nowhere to put a verb) and over
@@ -1876,8 +1948,26 @@ AND the stashed-pane slots, so a restored pane never reflows.
   `replaceSurfaceTree`), so an undone close brings the row back exactly. (Old
   rows' pins used to be kept for that, and came back stale after later changes
   — minimizing the focused pane.)
-- **The caret never lands on a strip** unless the user asked for that pane:
-  focusing one brings it out. Every handoff picks the pane on show nearest
+- **A side pane opened without focus comes on show.** A pane split off the
+  pane with the caret that does not take it — every agent `+split` (focus is
+  opt-in), a banner link's Cmd-click side pane — was asked for, so it must be
+  seen: it is the **featured** pane (`PaneStackState.featured`), ranked ahead
+  even of the focused pane (`PaneStackState.ranks`, -1) wherever its row has
+  no room for every pane. Other panes in the row minimize to make room; when
+  even that is not enough the CALLER becomes the strip — and **keeps the
+  caret**. It used to be born a strip: in a window with room for two cards
+  but not three (~640–950pt, a half-screen window), the run kept the caller
+  and its last-focused neighbour, and the new pane was a strip nobody saw.
+  The feature ends with the next change of focus, after which the row is the
+  focus history's again. Set by `newViewerSplit`, and by `newTerminalSplit`
+  / `newSplit` when `focus` is false. Tests:
+  `aSidePaneOpenedWithoutFocusComesOnShow`,
+  `aSidePaneInARowWithRoomForOneTakesItAndTheCallerKeepsTheCaret`,
+  `aSidePaneOpenedWhileTheWindowIsCoveredIsThereWhenUncovered` (rules out a
+  covered window as a cause).
+- **Focus never MOVES onto a strip** unless the user asked for that pane:
+  focusing one brings it out. (The one way the caret can sit in a strip is to
+  have stayed there — the caller of a side pane, above.) Every handoff picks the pane on show nearest
   the candidate (`paneOnShow`, `focusTargetAfterRemoving`): a close, Cmd-W in
   a viewer, a stash, the sidebar's trash kill, and the window becoming key
   with nothing focused. And only a pane that **really has the caret** counts
