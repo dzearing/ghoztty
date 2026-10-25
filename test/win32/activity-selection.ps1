@@ -408,8 +408,11 @@ try {
     Send-TestMouse -Window $panel -Target $filterEdit `
         -X ([int](($fr2.Left + $fr2.Right) / 2)) -Y ([int](($fr2.Top + $fr2.Bottom) / 2)) `
         -Button left -Action click | Out-Null
-    Start-Sleep -Milliseconds 400
-    Assert ((Get-TestFocusedWindow -Window $panel) -eq $filterEdit) 'the caret is in the filter field: the table does NOT hold the keyboard'
+    # WAIT for the caret rather than sleeping a flat 400ms (T1372): the row's
+    # unfocused paint below is a function of where the keyboard is, and the
+    # -Sync capture repaints inside the call, so focus is the whole condition.
+    $caretMoved = Wait-TestFocus -Window $panel -Expected ([int64]$filterEdit) -TimeoutMs 3000
+    Assert ($caretMoved -and (Get-TestFocusedWindow -Window $panel) -eq $filterEdit) 'the caret is in the filter field: the table does NOT hold the keyboard'
 
     $unfocused = $null
     $shotB = Get-TestWindowPixels -Window $panel -Sync

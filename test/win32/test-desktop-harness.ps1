@@ -748,7 +748,30 @@ try {
 
     Send-TestText -Window $top -Target $pane -Text 'echo ZZZZZZZZZZZZZZZZ' | Out-Null
     Send-TestKeys -Window $top -Target $pane -Key Enter | Out-Null
-    Start-Sleep -Milliseconds 1200
+    # The claim below is that the fill does NOT move when the terminal renders,
+    # so it is only worth anything once the terminal HAS rendered. Wait for the
+    # echo in the pane's own text rather than sleeping a flat 1200ms and
+    # assuming it (T1372): a capture taken before the output landed would pass
+    # against a pane that never repainted.
+    $rendered = $false
+    $t = ''
+    $renderSw = [System.Diagnostics.Stopwatch]::StartNew()
+    if ($paneName) {
+        while ($renderSw.ElapsedMilliseconds -lt 8000) {
+            $t = (& $exe +read --name=$paneName --lines=20 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
+            # Two occurrences: the typed command line, then the echo's output.
+            # Case-insensitive: the letters are typed as posted keys, and their
+            # case is the latch section's subject, not this one's.
+            if (([regex]::Matches($t, 'z{16}', 'IgnoreCase')).Count -ge 2) { $rendered = $true; break }
+            Start-Sleep -Milliseconds 150
+        }
+    }
+    $renderSw.Stop()
+    if (-not $rendered) {
+        Write-Host "      pane text at the deadline (last 6 lines):"
+        ($t -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 6) | ForEach-Object { Write-Host "        | $_" }
+    }
+    Assert $rendered "positive control: the pane rendered the new output before the capture (after $([int]$renderSw.ElapsedMilliseconds)ms)"
     $shot2 = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform -TornReason $surfaceLimit
     try {
         $surfColors2 = Get-TestDistinctColors -Shot $shot2

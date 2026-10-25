@@ -64,6 +64,7 @@ if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 $env:GHOZTTY_PIPE_SUFFIX = "-t828$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\PaintWait.ps1')
 . (Join-Path $PSScriptRoot 'lib\ColorMath.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
@@ -186,6 +187,16 @@ try {
     $indicatorW = [math]::Max((Px 4 $scale), 1)
     $markBand = $indicatorX + $indicatorW
     $midX = [int]($lr.Width / 2)
+
+    # Is the pill's fill wash(row bg, $wash) in this frame? Measure-Row's first
+    # two readings, as one yes/no a wait loop can poll (T1372).
+    function Test-RowWash($shot, [double]$wash) {
+        $bg = Get-ModalColor $shot ($lr.Left + $fillInsetX + 2) ($lr.Bottom - (Px 60 $scale)) `
+            ($lr.Right - $fillInsetX - 2) ($lr.Bottom - 2) 3
+        $p = Get-TestPixel -Shot $shot -X ($lr.Left + $midX) -Y ($lr.Top + $fillInsetY)
+        if ($null -eq $bg -or $null -eq $p) { return $false }
+        return ((Get-ChannelDistance @([int]$p.R, [int]$p.G, [int]$p.B) (Get-Wash $bg.Rgb $wash)) -le 2)
+    }
 
     # Score one captured frame. `$wash` is the weight the fill is expected to
     # carry, `$accented` whether the mark should be the user's accent.
@@ -324,10 +335,16 @@ try {
     # unemphasized while the script believed it had clicked it.
     Send-TestMouse -Window ([IntPtr]$lr.Hwnd) -X ($lr.Left + $midX) -Y ($lr.Top + (Px 20 $scale)) `
         -Button left -Action click | Out-Null
-    Start-Sleep -Milliseconds 500
+    # WAIT for the emphasized fill rather than sleeping a flat 500ms (T1372),
+    # and score the frame that met it. A wait that runs out still hands
+    # Measure-Row its last frame, so a red run reads the fill it actually saw.
+    $w2 = Wait-TestPaint -Window $chooser -KeepShot -Until {
+        param($s) Test-RowWash $s $SELECTION_WASH_FOCUSED
+    }
+    Write-Host "     the focused fill reached a capture after $($w2.ElapsedMs)ms ($($w2.Polls) poll(s); met=$($w2.Met))"
 
     $fillFocused = $null
-    $shot2 = Get-TestWindowPixels -Window $chooser -Sync
+    $shot2 = $w2.Shot
     try {
         Measure-Row $shot2 'focused' $SELECTION_WASH_FOCUSED $true
         $fp = Get-TestPixel -Shot $shot2 -X ($lr.Left + $midX) -Y ($lr.Top + $fillInsetY)

@@ -923,11 +923,13 @@ try {
             $c = $shot.Bitmap.GetPixel($chL + $inset, $chTop + $inset)
             return [pscustomobject]@{ Edge = [int]$e.R; Corner = [int]$c.R }
         }
-        Send-TestMouse -Window $top -Target $ovHwnd2 -X ($ovC.Left + $margin + 4) -Y ($ovC.Top + $chCy) -Action move | Out-Null
-        Start-Sleep -Milliseconds 250
-        $restShot = Get-TestWindowPixels -Window $ovHwnd2 -Sync
+        # The REST frame is taken the way the hot one is (T1372): the app parks
+        # the pointer on the card's left edge and photographs it on one stack,
+        # where a posted move and a flat 250ms sleep used to bet that the move
+        # had been drained before the capture.
+        $restShot = Get-TestHoverCapture -Hwnd $ovHwnd2 -X ($ovC.Left + $margin + 4) -Y ($ovC.Top + $chCy)
         $chRest = Probe-Chev $restShot
-        Close-TestWindowPixels $restShot
+        Close-TestHoverCapture $restShot
 
         $hotShot  = Get-TestHoverCapture -Hwnd $ovHwnd2 -X ($ovC.Left + $chCx) -Y ($ovC.Top + $chCy)
         $elseShot = Get-TestHoverCapture -Hwnd $ovHwnd2 -X ($ovC.Left + $margin + 4) -Y ($ovC.Top + $chCy)

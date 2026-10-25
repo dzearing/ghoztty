@@ -76,6 +76,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-elevtest$PID"
 $conf = Join-Path $env:TEMP "ghoztty-pane-elevation-$PID.conf"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\PaintWait.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')
 . (Join-Path $PSScriptRoot 'lib\WindowComposite.ps1')
@@ -724,8 +725,24 @@ function Get-MarginPixel([string]$label) {
 Start-Sleep -Milliseconds 600
 $tr = Get-MarginPixel 'translucent'
 Assert (Send-TestKeys -Window $top -Target ([IntPtr]$p.Hwnd) -Modifiers ctrl, alt -Key f8) 'translucent desk: toggle_background_opacity delivered'
-Start-Sleep -Milliseconds 900
-$op = Get-MarginPixel 'toggled opaque'
+# WAIT for the toggle to reach the paint rather than sleeping a flat 900ms
+# (T1372). The condition is only "the margin pixel MOVED off the translucent
+# reading" - Test-DeskPixel passes at half strength too, so it cannot be the
+# condition - and the ratio asserts below still judge where it moved to.
+$op = $null
+if ($null -ne $tr) {
+    $trSum = $tr.R + $tr.G + $tr.B
+    $wOp = Wait-TestPaint -Window $top -KeepShot -Until {
+        param($s)
+        $c = Get-TestPixel -Shot $s -X $mx -Y $my
+        ($null -ne $c) -and ([math]::Abs(($c.R + $c.G + $c.B) - $trSum) -gt 12)
+    }
+    try {
+        $op = Get-TestPixel -Shot $wOp.Shot -X $mx -Y $my
+        if ($null -ne $op) { Write-Host "      toggled opaque right-margin pixel ($mx,$my) = $($op.R),$($op.G),$($op.B)" }
+    } finally { Close-TestWindowPixels $wOp.Shot }
+    Write-Host "      the opaque desk reached a capture after $($wOp.ElapsedMs)ms ($($wOp.Polls) poll(s); met=$($wOp.Met))"
+}
 if ($null -eq $tr -or $null -eq $op) {
     $script:skipped++; Write-Host 'SKIP  translucent desk probe: margin pixel off the capture'
 } else {
