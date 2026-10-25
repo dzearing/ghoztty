@@ -1,10 +1,13 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-25T12:35:46-07:00",
-    "commit":  "c10a76ded",
+    "generated":  "2026-10-25T13:59:05-07:00",
+    "commit":  "c08e902df",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/go-loop-exec.ps1",
+                        "scripts/guard-due.ps1",
+                        "scripts/main-intake.ps1",
+                        "scripts/morning-owner.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -32,12 +35,12 @@
                   "scripts/ghoztty-cleanup.ps1":  "0535db22311b9640e47102124f856a2690dd446d9b87461ba2749f9418d29ffc",
                   "scripts/git-commit-guard.ps1":  "403f237ec4c34e94862e20b23586bfa4d5cb286b0d8179f67e402f361a024374",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "f92bdf7a2875e0c8148e015e308fdfb03d30a2819be966e8b58811c7fec87eef",
+                  "scripts/go-loop-exec.ps1":  "477da022a14cb53e9502ace9dcdfb3006ea550e773dca9f2422c1a3499775416",
                   "scripts/go-loop-health.ps1":  "becaebfb01ef3286d90d76ec88c6e769dd1fd93ea8991b3c3aca4ca19bdcd467",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "729a197c6ed62476604c0a3b7dc288ee2fe393249afb0e3582441b9dce80e9e2",
+                  "scripts/guard-due.ps1":  "7222bec6fdd8ff049a3c76e86e9577d17d0e65b90f6d76a95cceaae29862f6be",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "f055b029eedf4387b748f3e8e0e2b545e90023a017eddf18e5662024a1244ac8",
@@ -73,7 +76,8 @@
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/lib/WebViewLane.ps1":  "14ff86074a34aef73316a5c94032bf32bd42845d7e831170366034700898a579",
                   "scripts/loop-session.ps1":  "39189157a285514dc8e68c86a5f844d688463d1124c90e882623373045895ade",
-                  "scripts/morning-owner.ps1":  "cdac0752bf2ff0f78cd5e94dcc8182129c0f282b7dc07a224e7c7e07362343ff",
+                  "scripts/main-intake.ps1":  "16e52bcca79577cdfaf9eb2ca8485d3969001c6e2225ed33cc9140fe9ef2c00d",
+                  "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
                   "scripts/parity-decisions.ps1":  "2475b9be8aa438a4f5b0cbe1f977253e14a669de074547c869246b83b44d5030",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",

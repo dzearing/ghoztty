@@ -1,21 +1,22 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-10-24T16:14:05-07:00",
-    "commit":  "ab62653f3",
+    "generated":  "2026-10-25T13:56:36-07:00",
+    "commit":  "c08e902df",
     "uncommitted":  [
-                        "scripts/go-loop-exec.ps1"
+                        "scripts/go-loop-exec.ps1",
+                        "scripts/morning-owner.ps1"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "fdd6c6920122fd7b3052cc45b98fb3e9587aa018b42fadce2fdbee92e9d17ccb",
                   "scripts/deliver-windows-build.ps1":  "7246739997be71d01b58307c789f90a4277b6b38dad68c094663fd1b9d1db3c5",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "f92bdf7a2875e0c8148e015e308fdfb03d30a2819be966e8b58811c7fec87eef",
+                  "scripts/go-loop-exec.ps1":  "477da022a14cb53e9502ace9dcdfb3006ea550e773dca9f2422c1a3499775416",
                   "scripts/go-loop-health.ps1":  "becaebfb01ef3286d90d76ec88c6e769dd1fd93ea8991b3c3aca4ca19bdcd467",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
                   "scripts/lib/LoopLane.ps1":  "5a323edad01338d2719fcb162c838a68f80b66a01616d9abf8d44daf9e1b51a8",
-                  "scripts/morning-owner.ps1":  "cdac0752bf2ff0f78cd5e94dcc8182129c0f282b7dc07a224e7c7e07362343ff",
+                  "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",
                   "scripts/publish-windows-tag.ps1":  "8f55c46c6de05261d252468afd35246dfa18b97aea63f079a6f7d235f6b7e055",
                   "scripts/task-dashboard.js":  "5a7b6166a9b96da4ee7a1dd59a1fafcef5bcca3b8c443f2157c10000a516fe40",
                   "scripts/upgrade-ghoztty-windows.ps1":  "75256af8f048f5ea44892ec200b601e7acc1900972a284e2095ae486138a68c5",

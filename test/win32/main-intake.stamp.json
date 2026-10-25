@@ -1,0 +1,14 @@
+{
+    "guard":  "main-intake",
+    "script":  "test/win32/main-intake.ps1",
+    "generated":  "2026-10-25T14:51:32-07:00",
+    "commit":  "c08e902df",
+    "uncommitted":  [
+                        "scripts/main-intake.ps1",
+                        "test/win32/main-intake.ps1"
+                    ],
+    "files":  {
+                  "scripts/main-intake.ps1":  "16e52bcca79577cdfaf9eb2ca8485d3969001c6e2225ed33cc9140fe9ef2c00d",
+                  "test/win32/main-intake.ps1":  "1902f11d0ba7222f21da46d202725c544777bbfa0604c8a17bf4d1c5fb49098b"
+              }
+}

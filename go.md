@@ -281,18 +281,49 @@ Concretely, in order, with no stops in between:
      reached 0 on 2026-09-27, so any non-zero there is a new library that
      landed without a row that runs it.
    - **Main intake** (user, 2026-08-07: "reduce the lag of the windows
-     client to virtually hours rather than days"; daily for now): `git fetch
+     client to virtually hours rather than days"; user, 2026-10-25: "checking
+     main maybe a few times a day for mac updates so that updates stream with
+     a very low latency"). **It is NOT part of the morning block any more**
+     (T2260): it runs whenever it is DUE, from any lane, at any task boundary.
+     Step 0's claim asks `scripts\main-intake.ps1 check` every turn and prints
+     `INTAKE DUE` when origin/main has moved past the watermark AND 4 hours
+     have passed since the last intake (`INTAKE BUSY` when the other lane is
+     running it; `INTAKE NOT DUE` says why not and when it falls due). On
+     `INTAKE DUE`, before step 1:
+
+     ```
+     powershell -NoProfile -File scripts\main-intake.ps1 claim
+     ```
+
+     (a box-wide lease - exactly one lane reads main at a time), then do the
+     intake below, then
+
+     ```
+     powershell -NoProfile -File scripts\main-intake.ps1 record -Tasks T1,T2 -MergeTask T3 -Note "<the intake note>"
+     ```
+
+     which moves the watermark (date AND time, plus a `runs` entry carrying
+     the worst Mac-commit -> filed latency), commit it WITH the filed tasks
+     through the commit guard, and `main-intake.ps1 release`. `record`
+     refuses without the lease, refuses while the branch on origin carries a
+     newer watermark (pull first - the two lanes' watermark commits never
+     conflict), and refuses Mac commits with no open P1 **merge task** (the
+     T2249 shape: file or refresh "merge origin/main" so the code merge
+     follows the same day; `-NoMergeTask -Reason` for release notes only).
+     The morning triage reports yesterday's
+     `main-intake.ps1 day -Date <yesterday>` line (intakes run, worst
+     latency). The intake itself: `git fetch
      origin main`, then evaluate every commit new since the last intake and
      BREAK THE INCOMING CHANGES INTO TASKS for the windows seat — one task
      per coherent change (feature, fix, behavior change), priority by user
      impact, `milestone: "M1"` when it is user-facing parity, dep-linked to
      each other where the upstream commits build on each other. Watermark:
      `docs/design/windows-parity-main-intake.json` holds the last evaluated
-     main sha (`{ "lastEvaluated": "<sha>", "date": "YYYY-MM-DD" }`) —
-     update it in the same commit as the filed tasks, so intake never
-     double-files and never skips. Pure refactors with no windows-visible
+     main sha (`lastEvaluated`, `date`, `at`, `runs`, `note`) — `record`
+     writes it; commit it in the same commit as the filed tasks, so intake
+     never double-files and never skips. Pure refactors with no windows-visible
      behavior can be batched into one task; note what was batched. The goal
-     is that main's changes are IN THE QUEUE within a day of landing, and
+     is that main's changes are IN THE QUEUE within hours of landing, and
      the lag is worked off task by task instead of accumulating into a
      merge cliff.
 
@@ -352,7 +383,9 @@ Concretely, in order, with no stops in between:
      (D80: that is the user's call).
    - **Write `## Task triage`** into today's digest: counts (filed
      yesterday, closed yesterday, net flow, M1 closed/total), **main intake
-     (N commits evaluated, M tasks filed, current lag in commits)**, what
+     (yesterday's `main-intake.ps1 day` line - intakes run, commits
+     evaluated, tasks filed, worst Mac-commit -> filed latency - plus the
+     current lag in commits)**, what
      was promoted into M1 and why, dep repairs made, proposed closes
      awaiting veto, and yesterday's proposals now enacted. **Scannable, never dense**
      (user, 2026-08-06): lead with an H3 stat line (`### M1: X of Y

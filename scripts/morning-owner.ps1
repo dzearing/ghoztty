@@ -12,6 +12,9 @@
 # lane a's loop is NOT running (its lock is free or stale, or it is stopped by
 # request), so a parked lane a never costs the user their morning read.
 #
+# The MAIN INTAKE left this block in T2260: it runs whenever it is due, from
+# any lane, under its own box-wide lease (scripts\main-intake.ps1).
+#
 # This only answers "is it this lane's job?". Whether a digest is owed at all
 # (past 05:00, no file yet) is still `digest=` on go-loop-health.ps1, which
 # stays lane-agnostic: it asks whether the file exists, not who wrote it.
@@ -39,7 +42,7 @@ if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
 
 $lane = Get-LoopLaneId -Repo $Repo
 if (Test-LoopLaneOwnsDelivery $lane) {
-    Write-Host "MORNING OWNER lane $lane - write today's digest, triage, intake and feature ideas (go.md steps 0.5-0.7)"
+    Write-Host "MORNING OWNER lane $lane - write today's digest, triage and feature ideas (go.md steps 0.5-0.7)"
     exit 0
 }
 
@@ -58,10 +61,10 @@ if ($laneA) {
 
 if ($state -eq 'held') {
     Write-Host ("LANE REFUSED lane $lane does not write the morning block - lane a is running the loop and owns " +
-        "today's digest, triage, intake and feature ideas, so two lanes never write the same day twice (T2115). " +
+        "today's digest, triage and feature ideas, so two lanes never write the same day twice (T2115). " +
         "Skip go.md steps 0.5-0.7 and carry on with step 1.")
     exit 3
 }
 
-Write-Host "MORNING OWNER lane $lane - lane a is $state, so this lane writes today's digest, triage, intake and feature ideas (go.md steps 0.5-0.7)"
+Write-Host "MORNING OWNER lane $lane - lane a is $state, so this lane writes today's digest, triage and feature ideas (go.md steps 0.5-0.7)"
 exit 0

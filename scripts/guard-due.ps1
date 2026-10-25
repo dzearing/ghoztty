@@ -3943,6 +3943,18 @@ $GuardTable = @(
             'test\win32\machine-lock.ps1'
         )
     },
+    # When the Mac side's main is read into the Windows queue (T2260). A broken
+    # due-check fails quiet - main moves, nothing says INTAKE DUE, and Mac work
+    # waits a day again - so only this harness's fixture proves it can say due.
+    [pscustomobject]@{
+        Name   = 'main-intake'
+        Script = 'test\win32\main-intake.ps1'
+        Stamp  = 'test\win32\main-intake.stamp.json'
+        Covers = @(
+            'scripts\main-intake.ps1',
+            'test\win32\main-intake.ps1'
+        )
+    },
     # The decisions CLI (T566), for the same reason as the row above: nothing
     # in the zig lanes or the P1-P3 floor executes a line of
     # `scripts\parity-decisions.ps1`, and its failure mode is not a red test

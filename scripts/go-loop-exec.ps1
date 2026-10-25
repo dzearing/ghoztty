@@ -547,6 +547,19 @@ switch ($Action) {
             "  digest $($digest.State) ($($digest.Date))"
         }
 
+        # T2260: is a MAIN INTAKE due? It used to ride the morning block, so a
+        # Mac commit waited up to a day just to be read. Now any lane's claim
+        # asks main-intake.ps1 (main moved past the watermark AND the window
+        # since the last intake has passed; BUSY while another lane holds the
+        # lease). Reported, never refused - the remedy is this turn running
+        # the intake before step 1, and a claim that refused over it would
+        # wedge the loop on a network blip.
+        $intakeScript = Join-Path $PSScriptRoot 'main-intake.ps1'
+        if (Test-Path -LiteralPath $intakeScript) {
+            $intakeOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $intakeScript check -Repo $Repo 2>&1 | Out-String
+            foreach ($line in ($intakeOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
+        }
+
         # T1823: a shell "open with" picker sitting on the user's desktop is a
         # focus pull some earlier turn caused, and nothing else here would ever
         # say so. Reported, never refused - the picker is the user's to dismiss.

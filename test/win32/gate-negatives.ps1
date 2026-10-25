@@ -217,6 +217,13 @@ $Registry = @(
     # Feature ideas). Reported, never refused, same as DIGEST OWED; red in C12,
     # the all-three positive control is C11.
     [pscustomobject]@{ Label = 'DIGEST INCOMPLETE'; Kind = 'gate'; Demo = $Self; Marker = 'DIGEST INCOMPLETE' }
+    # T2260. A main intake is due this turn (main moved past the watermark and
+    # the window since the last intake has passed). Reported, never refused -
+    # the remedy is the turn running the intake - and driven due / not-due /
+    # busy against a fixture repo in test\win32\main-intake.ps1.
+    [pscustomobject]@{ Label = 'INTAKE DUE'; Kind = 'gate'; Demo = 'test\win32\main-intake.ps1'
+        Marker = 'INTAKE DUE'; Via = 'scripts\main-intake.ps1'
+    }
     [pscustomobject]@{ Label = 'CI IN PROGRESS'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI OK'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI UNKNOWN'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
