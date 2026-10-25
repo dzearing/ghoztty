@@ -1,0 +1,20 @@
+{
+  "version": "1.45.0",
+  "sections": [
+    {
+      "title": "Agent integrations",
+      "items": [
+        { "title": "Side panes really open", "text": "When an agent says it opened a side pane, it's in your window. Pane names now belong to their window, so another session's \"draft\" pane is no longer reused somewhere you can't see." },
+        { "title": "+split reports what actually happened", "text": "The command answers after the pane exists: its id and window, whether it opened minimized, or a real error if it didn't open." },
+        { "title": "A side pane always comes on show", "text": "In a half-screen window, a pane an agent opens beside you comes on show instead of being born a strip. Your caret stays put." },
+        { "title": "Lighter ghoztty skill", "text": "The skill loads a short core (side panes, new window, close, banners, send-keys) and reads the rest only when needed. Re-install it from Ghoztty's setup to pick this up." }
+      ]
+    },
+    {
+      "title": "Command line",
+      "items": [
+        { "title": "Names resolve in your own window first", "text": "+close, +send-keys, +read, +set-banner and friends look a name up in the caller's window first. A name held by several other windows is an error that points at the pane id, never a random pick." }
+      ]
+    }
+  ]
+}
