@@ -209,51 +209,24 @@ struct PaneSidebarView: View {
         }
     }
 
-    /// This window: its panes, then — anchored at the bottom of the bar, under
-    /// a divider — the tray of stashed panes. Two lists, and a drag moves a
-    /// pane within either or across: into the tray stashes it, out restores.
+    /// This window: its panes, then — right after the last of them, under a
+    /// divider — the tray of stashed panes, in one scrolling list. Two lists,
+    /// and a drag moves a pane within either or across: into the tray
+    /// stashes it, out restores. (The tray was first anchored at the bottom
+    /// of the bar, which left it far from the panes it is for.)
     @ViewBuilder
     private var thisWindowList: some View {
+        let content = VStack(alignment: .leading, spacing: 0) {
+            paneRows(controller, isThisWindow: true, indent: 0)
+            tray(controller, isThisWindow: true, indent: 0)
+        }
+        .padding(.vertical, SidePanelRow.fillInset)
         if isInteractive {
-            GeometryReader { proxy in
-                VStack(spacing: 0) {
-                    ScrollView(.vertical) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            paneRows(controller, isThisWindow: true, indent: 0)
-                        }
-                        .padding(.vertical, SidePanelRow.fillInset)
-                    }
-                    ScrollView(.vertical) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            tray(controller, isThisWindow: true, indent: 0)
-                        }
-                        .padding(.bottom, SidePanelRow.fillInset)
-                        .background(GeometryReader { tray in
-                            Color.clear.preference(key: PaneSidebarTrayHeight.self, value: tray.size.height)
-                        })
-                    }
-                    // As tall as it is, up to a share of the bar: past that the
-                    // tray scrolls on its own, and the panes keep the rest.
-                    .frame(height: Swift.min(trayHeight, proxy.size.height * Self.trayShare))
-                    .scrollDisabled(trayHeight <= proxy.size.height * Self.trayShare)
-                }
-            }
-            .onPreferenceChange(PaneSidebarTrayHeight.self) { trayHeight = $0 }
+            ScrollView(.vertical) { content }
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                paneRows(controller, isThisWindow: true, indent: 0)
-                Spacer(minLength: 0)
-                tray(controller, isThisWindow: true, indent: 0)
-            }
-            .padding(.vertical, SidePanelRow.fillInset)
-            .frame(maxHeight: .infinity, alignment: .top)
+            content.frame(maxHeight: .infinity, alignment: .top)
         }
     }
-
-    /// The most of the bar the tray takes before it scrolls.
-    static let trayShare: CGFloat = 0.45
-
-    @State private var trayHeight: CGFloat = 0
 
     @ViewBuilder
     private var scrollingWindows: some View {
@@ -434,27 +407,50 @@ struct PaneSidebarView: View {
         // "primary" pane with the others nested under it.
         let focused = isThisWindow ? (owner.publishedFocusedPane ?? visible.first) : nil
         let drag = isThisWindow ? dragLayout : nil
-        let source = drag.flatMap { drag in visible.firstIndex { $0 === drag.pane } }
+        let slide = slideIndices(owner, matches: matches, drag: drag)
 
         ForEach(Array(visible.enumerated()), id: \.element.id) { index, pane in
             row(pane, owner: owner, isStashed: false,
                 isSelected: pane === focused, isThisWindow: isThisWindow, indent: indent)
                 .modifier(PaneSidebarShift(
-                    rows: drag.map { drag in
-                        drag.isOverSidebar
-                            ? PaneSidebarOrder.shift(index: index, source: source, target: drag.paneTarget) : 0
-                    } ?? 0,
+                    rows: slide.map { PaneSidebarOrder.shift(index: index, source: $0.source, target: $0.target) } ?? 0,
                     height: drag?.height ?? 0,
-                    isLifted: rowDrag.pane === pane || (drag?.isOverSidebar == true && index == source),
+                    isLifted: rowDrag.pane === pane || (slide != nil && index == slide?.source),
                     isDragging: drag != nil))
                 .background { rowFrameReader(pane, isStashed: false, isThisWindow: isThisWindow) }
         }
-        // Room for a row coming in from the tray or another window, so the
-        // rows it pushes down have somewhere to go. Held for the whole drag,
-        // so the list never re-lays out under the pointer.
-        if let drag, source == nil {
-            Color.clear.frame(height: drag.height).accessibilityHidden(true)
-        }
+    }
+
+    /// A drag over this window's sidebar as one sequence — the pane list, the
+    /// tray's header (its divider and caption), then the tray — for the
+    /// slide (`PaneSidebarOrder.shift`): where the dragged row is in it, and
+    /// where it would land, of the sequence without it. One sequence, so a
+    /// row crossing from the list into the tray (or back) slides the header
+    /// with the rows between, and the list's last row never runs over the
+    /// divider. Nil when nothing is dragged over this sidebar.
+    private func slideIndices(
+        _ owner: BaseTerminalController,
+        matches: Set<ObjectIdentifier>?,
+        drag: DragLayout?
+    ) -> (source: Int?, target: Int?)? {
+        guard let drag, drag.isOverSidebar else { return nil }
+        let shown = { (pane: PaneView) in matches?.contains(ObjectIdentifier(pane)) ?? true }
+        let visible = owner.paneSidebarPanes.filter(shown)
+        let stashed = owner.surfaceTree.stashedViews.filter(shown)
+        let inList = visible.firstIndex { $0 === drag.pane }
+        let inTray = stashed.firstIndex { $0 === drag.pane }
+        let source = inList ?? inTray.map { visible.count + 1 + $0 }
+        let listCount = visible.count - (inList == nil ? 0 : 1)
+        let target = drag.paneTarget ?? drag.stashTarget.map { listCount + 1 + $0 }
+        return (source, target)
+    }
+
+    /// Where a tray item — `nil` for the header, else a stashed row's index —
+    /// is in `slideIndices`' sequence.
+    private func trayIndex(_ owner: BaseTerminalController, matches: Set<ObjectIdentifier>?, row: Int?) -> Int {
+        let shown = { (pane: PaneView) in matches?.contains(ObjectIdentifier(pane)) ?? true }
+        let listCount = owner.paneSidebarPanes.filter(shown).count
+        return row.map { listCount + 1 + $0 } ?? listCount
     }
 
     /// A window's tray: a divider, then its stashed panes. In this window's
@@ -470,21 +466,15 @@ struct PaneSidebarView: View {
         let shown = { (pane: PaneView) in matches?.contains(ObjectIdentifier(pane)) ?? true }
         let stashed = owner.surfaceTree.stashedViews.filter(shown)
         let drag = isThisWindow ? dragLayout : nil
-        let source = drag.flatMap { drag in stashed.firstIndex { $0 === drag.pane } }
+        let slide = slideIndices(owner, matches: matches, drag: drag)
+        let source = slide?.source.map { $0 - trayIndex(owner, matches: matches, row: 0) }
+        let slides = { (item: Int) in
+            slide.map { PaneSidebarOrder.shift(index: item, source: $0.source, target: $0.target) } ?? 0
+        }
 
         if !stashed.isEmpty || (isThisWindow && (dragSession.isDragging || !state.showsAllWindows)) {
+          VStack(alignment: .leading, spacing: 0) {
             PaneSidebarDivider(isRail: isRail, indent: indent)
-                .background {
-                    // Where the tray begins, for the drop geometry: only
-                    // during a drag, as for the rows.
-                    if drag != nil {
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: PaneSidebarTrayFrame.self,
-                                value: proxy.frame(in: .named(PaneSidebarGeometry.space)))
-                        }
-                    }
-                }
             if !isRail {
                 HStack(alignment: .firstTextBaseline) {
                     SidePanelCaption(text: "Stashed")
@@ -498,30 +488,42 @@ struct PaneSidebarView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 5)
             }
+          }
+          // The header slides with the rows (`slideIndices`); its frame is
+          // read outside the slide, as the rows' are.
+          .modifier(PaneSidebarShift(
+              rows: slides(trayIndex(owner, matches: matches, row: nil)),
+              height: drag?.height ?? 0, isLifted: false, isDragging: drag != nil))
+          .background {
+              // Where the tray begins, for the drop geometry: only during a
+              // drag, as for the rows.
+              if drag != nil {
+                  GeometryReader { proxy in
+                      Color.clear.preference(
+                          key: PaneSidebarTrayFrame.self,
+                          value: proxy.frame(in: .named(PaneSidebarGeometry.space)))
+                  }
+              }
+          }
         }
 
         ForEach(Array(stashed.enumerated()), id: \.element.id) { index, pane in
             row(pane, owner: owner, isStashed: true, isSelected: false,
                 isThisWindow: isThisWindow, indent: indent)
                 .modifier(PaneSidebarShift(
-                    rows: drag.map { drag in
-                        drag.isOverSidebar
-                            ? PaneSidebarOrder.shift(index: index, source: source, target: drag.stashTarget) : 0
-                    } ?? 0,
+                    rows: slides(trayIndex(owner, matches: matches, row: index)),
                     height: drag?.height ?? 0,
-                    isLifted: rowDrag.pane === pane || (drag?.isOverSidebar == true && index == source),
+                    isLifted: rowDrag.pane === pane || (slide != nil && index == source),
                     isDragging: drag != nil))
                 .background { rowFrameReader(pane, isStashed: true, isThisWindow: isThisWindow) }
         }
 
         // An empty tray is still somewhere to drop: a slot that says so,
         // always there in this window's list, lit while a drag would land in
-        // it.
+        // it. It stays put; the rows open the gap above it.
         if stashed.isEmpty && isThisWindow {
             PaneSidebarEmptyStashSlot(isRail: isRail, isHot: drag?.stashTarget != nil,
                                       isDragging: drag != nil)
-        } else if let drag, source == nil {
-            Color.clear.frame(height: drag.height).accessibilityHidden(true)
         }
     }
 
@@ -1117,13 +1119,6 @@ struct PaneSidebarTrayFrame: PreferenceKey {
     static let defaultValue: CGRect? = nil
     static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
         value = value ?? nextValue()
-    }
-}
-
-private struct PaneSidebarTrayHeight: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = Swift.max(value, nextValue())
     }
 }
 

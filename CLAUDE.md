@@ -1630,9 +1630,12 @@ the interactive mock settled).
   specular rim, a shadow scaled to its size), so the color behind shows
   through; the selected tile is accent-tinted glass. All static. **No `?`
   badge on a tile**: a question is an accent rim.
-- Rows: grid panes (focused one selected), then — **anchored at the bottom of
-  the bar** under a divider — the **tray** of stashed panes (up to 45% of the
-  bar, scrolling past that). An empty tray is still a visible target: a faint
+- Rows: grid panes (focused one selected), then — **right after the last of
+  them**, under a divider, in the same scrolling list — the **tray** of
+  stashed panes. (It was first anchored at the bottom of the bar, far from the
+  panes it is for.) A drag slides the list, the tray's header and the tray as
+  one sequence, so a row crossing into the tray moves the divider with it
+  (`PaneSidebarView.slideIndices`). An empty tray is still a visible target: a faint
   dashed well with a tray glyph ("Drag a pane here to stash it" when
   expanded), lit in the accent while a drag would land in it. Click focuses /
   restores to the exact slot it

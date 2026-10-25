@@ -26,8 +26,7 @@ The sidebar lists **every pane in the window**, in two sections:
 │ ▸ zsh — ~/git/ghoztty     │   ← in the grid; the focused pane is selected
 │   claude — pane-sidebar ● │     ● busy
 │   README.md               │
-│                           │
-│ ───────────────────────── │   ← anchored at the bottom of the bar
+│ ───────────────────────── │   ← right after the last pane
 │   STASHED                 │
 │   claude — relay   question│   ← out of the layout, still running
 │   tail -f app.log         │
@@ -392,10 +391,13 @@ two are there once it is expanded.
   - `idle`: nothing.
   - A **bell** on a stashed pane shows a dot until the pane is restored.
 
-The pane list scrolls; under it, **anchored at the bottom of the bar**, are a
-hairline divider and the **tray**: a "STASHED" caption (with a count) and the
-stashed rows. The tray is always there in this window's list, since it is a
-drop target; it takes up to 45% of the bar and scrolls on its own past that.
+Right after the last pane, in the same scrolling list, are a hairline divider
+and the **tray**: a "STASHED" caption (with a count) and the stashed rows. The
+tray is always there in this window's list, since it is a drop target. (It was
+first anchored at the bottom of the bar; that put it far from the panes it is
+for.) A drag slides the list, the tray's header and the tray as ONE sequence
+(`slideIndices`), so a row crossing from the list into the tray moves the
+divider with the rows between, and the list's last row never runs over it.
 During a drag with nothing stashed, an empty "Drop to stash — it keeps
 running" slot appears so the target is visible.
 

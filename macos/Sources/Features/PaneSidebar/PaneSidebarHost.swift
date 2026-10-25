@@ -225,7 +225,8 @@ final class PaneSidebarHostView: NSView {
             rect: card,
             paneRows: geometry.rowFrames.filter { !$0.isStashed }.map { (id: $0.id, rect: toScreen($0.frame)) },
             stashRows: geometry.rowFrames.filter(\.isStashed).map { (id: $0.id, rect: toScreen($0.frame)) },
-            trayTop: geometry.trayFrame.map { toScreen($0).midY },
+            // The tray's header's top: below the divider line is the tray.
+            trayTop: geometry.trayFrame.map { toScreen($0).maxY },
             windowGroups: state.showsAllWindows
                 ? geometry.groupFrames.map { (window: $0.window, rect: toScreen($0.frame)) }
                 : [])
