@@ -352,9 +352,19 @@ pub fn handleInApp(app: *App, owner: ?w32.HWND, scale: f32, url: []const u8) boo
 
     switch (cmd) {
         .focus => |target| {
-            const entry = app.ipcLookup(target) orelse {
-                log.info("url scheme: in-app focus '{s}' not found", .{target});
-                presentInApp(app, owner, scale, .{ .target_not_found = target });
+            // A link has no caller pane, so a name is looked up across every
+            // window, and one panes in several windows hold is reported rather
+            // than resolved at random (T2250).
+            const found = app.ipc_registry.lookup(app.core_app.alloc, app.windows.items, target, null);
+            const entry = found.target() orelse {
+                log.info("url scheme: in-app focus '{s}' {s}", .{
+                    target,
+                    if (found == .ambiguous) "is ambiguous" else "not found",
+                });
+                presentInApp(app, owner, scale, if (found == .ambiguous)
+                    .{ .ambiguous_target = target }
+                else
+                    .{ .target_not_found = target });
                 return false;
             };
             IpcHandlers.focusTarget(entry);

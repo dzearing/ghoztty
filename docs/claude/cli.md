@@ -116,17 +116,16 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
   this, not `--target`, to split a specific pane: `--target=<pane>` silently
   splitting a different pane once built a three-high column that the
   stacked-panes layout then tucked out of sight (T2163).
-- `--name`: Register the new pane with a name for later targeting. **On macOS a
-  pane name belongs to the window the pane is in** (see Naming, main
-  71da9a680): only a pane of that name in the window the split lands in, or a
+- `--name`: Register the new pane with a name for later targeting. **A pane
+  name belongs to the window the pane is in** (see Naming; macOS main
+  71da9a680, Windows T2250): only a pane of that name in the window the split lands in, or a
   window of that name, collides. A pane called `draft` in another window does
   not — this split creates this window's own. (Names used to be one namespace
   across every window. Session A's `+split --name=draft --view=…` and session
   B's same command, in another window, collided: B got exit 0 and "reused" A's
   pane in A's window, and the agent reported a side pane the user never saw.
   With a different `--view`, B got exit 1, retried, and the user had to say
-  "open it!".) **Windows still uses the one namespace across every window**,
-  shared with window names, until T2250 ports the scope. Re-running the same
+  "open it!".) Window names stay global, and a pane never takes one. Re-running the same
   split reuses the pane; anything else fails rather than doing nothing (T2184,
   main c2057a810 — identical on both platforms, wording included):
   - **Matches** (a terminal again, or a viewer showing that `--view` or opened
@@ -138,8 +137,8 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
     window and what it shows. Nothing is retargeted — the pane belongs to
     whatever opened it, often another agent. Use another `--name`, or `+close`
     it first.
-  - **Created**: stdout says `created pane '<n>' in window '<w>'` (plus
-    `, showing <view>` for a viewer). A `--target` that names nothing fails.
+  - **Created**: stdout says which pane and where (below). A `--target` that
+    names nothing fails.
 
   The line travels in the response's additive `message` field, which the CLI
   prints to stdout; a CLI older than the app ignores it. Policy and wording:
@@ -169,7 +168,12 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
   so it is waited on like a local one. On show is read from the layout
   (`PaneStackState.stackMinimizing`) once the pane is laid out; a window that
   never lays it out (not on screen) gets no on-show claim either way.
-- **Every `+split` is logged at `.notice`** (persisted; macOS): the caller
+  On Windows the split itself is synchronous on the GUI thread (an
+  agent-backed pane's reply is still held until its session binds, T1612), and
+  on show is read from the stacked-panes grid as laid out (`is_tucked`;
+  `IpcHandlers.paneOnShow`). Wording: `apprt.ipc.args.splitCreatedMessage`.
+- **Every `+split` is logged at `.notice`** (persisted; macOS) — on Windows as
+  an `IPC +split:` info line in the app log (T2250): the caller
   pane, the window it resolved to, the anchor pane, the name and view, the
   outcome (created / reused / name collision / failed / timed out) and whether
   the new pane is on show. Ambiguous name lookups are logged the same way. Read
@@ -701,8 +705,8 @@ order. Not yet on Windows: the sidebar to SEE the stash in (T1828) - use
   global: one window holds a name, and a name a pane holds cannot be taken by
   a window (`+new-window --target=` fails rather than "reusing" a pane).
 - `+split --name=<name>` registers a **pane**, in the window it lands in.
-  **On macOS pane names belong to their window**: two windows can each have a
-  pane called `draft` (Windows: T2250).
+  **Pane names belong to their window**: two windows can each have a pane
+  called `draft` (macOS 71da9a680; Windows T2250).
 - `+new-window --name=<name>` registers a **pane** too (T968): the window's
   first pane, or with `--split` the inline split pane. It is idempotent, by
   the name alone (on both platforms it has not taken `+split --name`'s
@@ -738,10 +742,16 @@ folds it into the arguments as `--caller-pane=` (in front of any `-e`), the
 one spelling every handler reads (`IPCRequest.resolvedArguments`). A name
 follows its pane when the pane moves to another window. Tests:
 `TargetLookupTests`, `PaneNameScopeWindowTests` (two real windows: split,
-close and send-keys from each). **Windows:** the CLI already sends
-`caller_pane` on every request (`ipc_client.buildRequest`, T2249); the win32
-server does not scope by it yet and still resolves a pane name across every
-window — T2250.
+close and send-keys from each). **Windows (T2250):** the CLI sends
+`caller_pane` on every request (`ipc_client.buildRequest`, T2249), and the
+win32 server scopes by it at dispatch rather than folding it into the
+arguments: `IpcHandlers.dispatch` resolves the caller pane's window into
+`App.ipc_caller_window` for the request's lifetime, and every `ipcLookup`
+starts there (`IpcRegistry.lookup`, policy `apprt.ipc.target_lookup`, the
+Mac's wording). A not-found reply becomes the ambiguity error when that is
+the reason (`missingResponse`), and `+close` of an ambiguous name fails
+instead of "succeeding" idempotently. Acceptance: arms J and L-P of
+`test/win32/split-name-collision.ps1`.
 
 A window opened without an explicit `--target=` (Cmd-N, or a bare
 `+new-window`) still gets an **auto name** — `window-1`, `window-2`, … — which
@@ -983,7 +993,10 @@ id (`$GHOZTTY_PANE_ID`, case-insensitive). On macOS (`IPCServer.lookup`) a
 link has no caller pane, so a pane name is looked up across every window (see
 Naming): once two windows each hold a pane of that name the link is
 **ambiguous** and reports so (`Failure.ambiguousTarget`, "Can't focus …")
-instead of raising one of them at random. A pane id never is (Windows: T2250).
+instead of raising one of them at random. A pane id never is. Windows
+(T2250): the in-app link path reports it the same way
+(`url_scheme.Failure.ambiguous_target`); a cold click from outside goes
+through `+focus`, whose refusal reads as not found.
 Everything after the verb is ONE target, so a name containing `/` survives encoded (`focus/feat%2Flogin`) or not
 (`focus/feat/login`). The path form is canonical over `ghoztty://<target>`
 (nowhere to put a verb) and over `ghoztty://focus?target=…` (a second escaping
@@ -1603,7 +1616,8 @@ AND the stashed-pane slots, so a restored pane never reflows.
   `aSidePaneOpenedWithoutFocusComesOnShow`,
   `aSidePaneInARowWithRoomForOneTakesItAndTheCallerKeepsTheCaret`,
   `aSidePaneOpenedWhileTheWindowIsCoveredIsThereWhenUncovered` (rules out a
-  covered window as a cause). Windows: T2250.
+  covered window as a cause). Windows: T2257 (a side pane into a full row is
+  still born a strip there; since T2250 the `+split` reply says so).
 - **Focus never MOVES onto a strip** unless the user asked for that pane:
   focusing one brings it out. (The one way the caret can sit in a strip is to
   have stayed there — the caller of a side pane, above.) Every handoff picks the pane on show nearest

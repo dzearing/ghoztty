@@ -1,3 +1,8 @@
+# @parallel-unsafe - section A asserts the ONE per-user HKCU ghoztty-debug
+# protocol class points at this worker's exe; a sibling worker's build
+# registers its own exe there (seen 2026-10-25, T2250: red beside others,
+# 42/42 alone).
+#
 # T695 acceptance: the focus-only ghoztty:// URL scheme on Windows.
 #
 # What is asserted:

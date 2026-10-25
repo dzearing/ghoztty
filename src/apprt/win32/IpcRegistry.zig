@@ -1,9 +1,14 @@
 //! Named IPC targets for the win32 apprt: `+new-window --target` registers
 //! windows, `+split --name` registers panes (spec, "Architecture
-//! decisions"). Keys are owned (duped) strings. Entries are removed eagerly
+//! decisions"). Names are owned (duped) strings. Entries are removed eagerly
 //! from Window/Surface destroy paths (`forget`) and pruned against the live
 //! window list on registration, so a recycled allocation can never be
 //! reached through a stale name.
+//!
+//! A window name is global: one window holds it. A pane name belongs to its
+//! window (T2250; the Mac's `TargetLookup`, main 71da9a680), so one name can
+//! list a pane in each of several windows, and `lookup` resolves it from the
+//! caller's window first (`apprt.ipc.target_lookup`).
 const IpcRegistry = @This();
 
 const std = @import("std");
@@ -12,12 +17,20 @@ const Allocator = std.mem.Allocator;
 const PaneView = @import("PaneView.zig");
 const Window = @import("Window.zig");
 const pane_id_mod = @import("pane_id.zig");
+const target_lookup = @import("../ipc/target_lookup.zig");
 
-targets: std.StringHashMapUnmanaged(Target) = .empty,
+/// Every registration. A list rather than a map because a pane name may be
+/// held once per window; it is tiny (named targets), so the scans are free.
+entries: std.ArrayListUnmanaged(Entry) = .empty,
 
 /// Counter for auto-generated window names (`window-1`, ...), mirroring the
 /// Mac's BaseTerminalController.nextWindowId.
 window_counter: u64 = 0,
+
+const Entry = struct {
+    name: []u8,
+    target: Target,
+};
 
 pub const Target = union(enum) {
     window: *Window,
@@ -47,15 +60,19 @@ pub const Target = union(enum) {
 pub const RegisterResult = enum {
     /// `name` now resolves to `target` (it already did, or it does now).
     registered,
-    /// `name` was already held by a DIFFERENT live target; the incumbent
-    /// won and `target` is not reachable under it.
+    /// `name` was already held by a DIFFERENT live target where `target`
+    /// would need it — any window or pane, for a window; a window, or a pane
+    /// in the same window, for a pane. The incumbent won and `target` is not
+    /// reachable under it.
     already_held,
 };
 
-/// Register `target` under `name` (key is duped). If the name is already
-/// registered to a live target, the existing registration wins — consistent
-/// with the CLI's idempotent named-target semantics; callers that need
-/// focus-if-exists behavior look the name up first.
+/// Register `target` under `name` (the name is duped). If the name is already
+/// held where `target` would need it (see `RegisterResult.already_held`), the
+/// existing registration wins — consistent with the CLI's idempotent
+/// named-target semantics; callers that need focus-if-exists behavior look the
+/// name up first. A pane of that name in ANOTHER window is no obstacle to a
+/// pane: pane names belong to their window.
 pub fn register(
     self: *IpcRegistry,
     alloc: Allocator,
@@ -64,21 +81,47 @@ pub fn register(
     target: Target,
 ) Allocator.Error!RegisterResult {
     self.prune(alloc, live_windows);
-    const gop = try self.targets.getOrPut(alloc, name);
-    if (gop.found_existing) {
-        return if (gop.value_ptr.eql(target)) .registered else .already_held;
-    }
-    gop.key_ptr.* = alloc.dupe(u8, name) catch |err| {
-        // The slot holds the BORROWED key until the dupe lands; drop it
-        // rather than leave the map pointing at a caller's buffer.
-        self.targets.removeByPtr(gop.key_ptr);
-        return err;
+    const home: ?*Window = switch (target) {
+        .window => |w| w,
+        .pane => |p| paneWindow(live_windows, p),
     };
-    gop.value_ptr.* = target;
+    for (self.entries.items) |e| {
+        if (!std.mem.eql(u8, e.name, name)) continue;
+        if (e.target.eql(target)) return .registered;
+        switch (target) {
+            .window => return .already_held,
+            .pane => switch (e.target) {
+                .window => return .already_held,
+                .pane => |p| if (paneWindow(live_windows, p) == home) return .already_held,
+            },
+        }
+    }
+    const owned = try alloc.dupe(u8, name);
+    errdefer alloc.free(owned);
+    try self.entries.append(alloc, .{ .name = owned, .target = target });
     return .registered;
 }
 
-/// Look up a live target by name (stale entries are pruned first).
+/// What a name resolved to (`lookup`).
+pub const Lookup = union(enum) {
+    found: Target,
+    not_found,
+    /// Panes in several windows hold the name and none is the caller's;
+    /// `ambiguityError` says which.
+    ambiguous,
+
+    /// The target, or null for nothing or more than one thing.
+    pub fn target(self: Lookup) ?Target {
+        return switch (self) {
+            .found => |t| t,
+            .not_found, .ambiguous => null,
+        };
+    }
+};
+
+/// Look up a live target by name (stale entries are pruned first), for a
+/// command run from a pane in `caller` (null: a caller with no pane, which
+/// searches every window). The order is `target_lookup`'s.
 ///
 /// Explicitly registered names win. On a miss we fall back to the pane's OWN
 /// identity (T113), which docs/claude/cli.md promises is "accepted directly by every
@@ -91,10 +134,107 @@ pub fn lookup(
     alloc: Allocator,
     live_windows: []const *Window,
     name: []const u8,
+    caller: ?*Window,
+) Lookup {
+    self.prune(alloc, live_windows);
+    var fallback = std.heap.stackFallback(2048, alloc);
+    const scratch = fallback.get();
+    var matches: std.ArrayListUnmanaged(Target) = .empty;
+    defer matches.deinit(scratch);
+    var candidates: std.ArrayListUnmanaged(target_lookup.Candidate) = .empty;
+    defer candidates.deinit(scratch);
+    for (self.entries.items) |e| {
+        if (!std.mem.eql(u8, e.name, name)) continue;
+        const candidate: target_lookup.Candidate = switch (e.target) {
+            .window => |w| .{ .kind = .window, .window_name = e.name, .in_caller_window = caller == w },
+            .pane => |p| .{
+                .kind = .pane,
+                // Only the ambiguity message reads it (`ambiguityError`).
+                .window_name = "",
+                .in_caller_window = caller != null and paneWindow(live_windows, p) == caller,
+            },
+        };
+        // Out of memory here is a lookup that fails closed: not found.
+        matches.append(scratch, e.target) catch return .not_found;
+        candidates.append(scratch, candidate) catch return .not_found;
+    }
+    switch (target_lookup.pick(scratch, candidates.items) catch return .not_found) {
+        .found => |i| return .{ .found = matches.items[i] },
+        .ambiguous => |windows| {
+            scratch.free(windows);
+            return .ambiguous;
+        },
+        .not_found => {},
+    }
+    return if (findPaneByIdentity(live_windows, name)) |t| .{ .found = t } else .not_found;
+}
+
+/// The error for a name `lookup` found `.ambiguous`: which windows hold a pane
+/// of that name (the Mac's wording). Allocated from `alloc`.
+pub fn ambiguityError(
+    self: *IpcRegistry,
+    alloc: Allocator,
+    live_windows: []const *Window,
+    name: []const u8,
+) Allocator.Error![]u8 {
+    var windows: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer windows.deinit(alloc);
+    for (self.entries.items) |e| {
+        if (!std.mem.eql(u8, e.name, name)) continue;
+        const p = switch (e.target) {
+            .pane => |p| p,
+            .window => continue,
+        };
+        const w = paneWindow(live_windows, p) orelse continue;
+        try windows.append(alloc, w.ipc_name orelse "");
+    }
+    std.mem.sort([]const u8, windows.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lt);
+    return target_lookup.ambiguityError(alloc, name, windows.items);
+}
+
+/// What holds `name` where a `+split --name=` would land in `window`: a
+/// window of that name anywhere (window names are global), or a pane of that
+/// name in that window. Null when the name is free there — a pane of that
+/// name in ANOTHER window does not count (T2250).
+pub fn holderIn(
+    self: *IpcRegistry,
+    alloc: Allocator,
+    live_windows: []const *Window,
+    name: []const u8,
+    window: *Window,
 ) ?Target {
     self.prune(alloc, live_windows);
-    if (self.targets.get(name)) |t| return t;
-    return findPaneByIdentity(live_windows, name);
+    for (self.entries.items) |e| {
+        if (!std.mem.eql(u8, e.name, name)) continue;
+        if (e.target == .window) return e.target;
+    }
+    for (self.entries.items) |e| {
+        if (!std.mem.eql(u8, e.name, name)) continue;
+        switch (e.target) {
+            .pane => |p| if (paneWindow(live_windows, p) == window) return e.target,
+            .window => {},
+        }
+    }
+    return null;
+}
+
+/// The live window `pane` is in now — found by walking the trees, since a
+/// pane can move to another window after it was named. Null when it is in
+/// none (closed, or its window is parked for undo).
+fn paneWindow(live_windows: []const *Window, pane: *PaneView) ?*Window {
+    for (live_windows) |win| {
+        for (0..win.tab_count) |i| {
+            var panes = win.tab_trees[i].iterator();
+            while (panes.next()) |v| {
+                if (v.view == pane) return win;
+            }
+        }
+    }
+    return null;
 }
 
 /// Resolve a pane by its own identity rather than a registered name. Returns
@@ -128,9 +268,8 @@ fn findPaneByIdentity(live_windows: []const *Window, name: []const u8) ?Target {
 
 /// Reverse lookup: the registered name of a target, if any.
 pub fn nameOf(self: *IpcRegistry, target: Target) ?[]const u8 {
-    var it = self.targets.iterator();
-    while (it.next()) |entry| {
-        if (entry.value_ptr.eql(target)) return entry.key_ptr.*;
+    for (self.entries.items) |e| {
+        if (e.target.eql(target)) return e.name;
     }
     return null;
 }
@@ -141,11 +280,11 @@ pub const Saved = struct {
     target: Target,
 };
 
-/// Copy out every registration whose target `pred` accepts (oldest-key order
-/// is not kept; names are unique). For a target that leaves the live set for
-/// a while and comes back - a window parked for undo (T1874) is pruned like a
-/// dead one meanwhile - so its names can be registered again afterwards.
-/// The caller owns the slice and every name in it (`freeSaved`).
+/// Copy out every registration whose target `pred` accepts. For a target
+/// that leaves the live set for a while and comes back - a window parked for
+/// undo (T1874) is pruned like a dead one meanwhile - so its names can be
+/// registered again afterwards. The caller owns the slice and every name in
+/// it (`freeSaved`).
 pub fn save(
     self: *IpcRegistry,
     alloc: Allocator,
@@ -157,11 +296,10 @@ pub fn save(
         for (out.items) |s| alloc.free(s.name);
         out.deinit(alloc);
     }
-    var it = self.targets.iterator();
-    while (it.next()) |entry| {
-        if (!pred(ctx, entry.value_ptr.*)) continue;
-        const name = try alloc.dupe(u8, entry.key_ptr.*);
-        out.append(alloc, .{ .name = name, .target = entry.value_ptr.* }) catch |err| {
+    for (self.entries.items) |e| {
+        if (!pred(ctx, e.target)) continue;
+        const name = try alloc.dupe(u8, e.name);
+        out.append(alloc, .{ .name = name, .target = e.target }) catch |err| {
             alloc.free(name);
             return err;
         };
@@ -178,46 +316,33 @@ pub fn freeSaved(alloc: Allocator, saved: []Saved) void {
 /// Drop every registration pointing at `target`. Called from Window and
 /// Surface destroy paths so names can never reach a recycled allocation.
 pub fn forget(self: *IpcRegistry, alloc: Allocator, target: Target) void {
-    var it = self.targets.iterator();
-    while (it.next()) |entry| {
-        if (!entry.value_ptr.eql(target)) continue;
-        const key = entry.key_ptr.*;
-        self.targets.removeByPtr(entry.key_ptr);
-        alloc.free(key);
-        // Hash map iterators are invalidated by removal; restart. The map
-        // is tiny (named targets), so the rescan is negligible.
-        it = self.targets.iterator();
+    var i: usize = 0;
+    while (i < self.entries.items.len) {
+        const e = self.entries.items[i];
+        if (!e.target.eql(target)) {
+            i += 1;
+            continue;
+        }
+        alloc.free(e.name);
+        _ = self.entries.orderedRemove(i);
     }
 }
 
 /// Remove registry entries whose target is no longer alive.
 fn prune(self: *IpcRegistry, alloc: Allocator, live_windows: []const *Window) void {
-    var it = self.targets.iterator();
-    while (it.next()) |entry| {
-        const alive = switch (entry.value_ptr.*) {
-            .window => |w| alive: {
-                for (live_windows) |live| {
-                    if (live == w) break :alive true;
-                }
-                break :alive false;
-            },
-            .pane => |p| alive: {
-                for (live_windows) |win| {
-                    for (0..win.tab_count) |i| {
-                        var panes = win.tab_trees[i].iterator();
-                        while (panes.next()) |v| {
-                            if (v.view == p) break :alive true;
-                        }
-                    }
-                }
-                break :alive false;
-            },
+    var i: usize = 0;
+    while (i < self.entries.items.len) {
+        const e = self.entries.items[i];
+        const alive = switch (e.target) {
+            .window => |w| std.mem.indexOfScalar(*Window, live_windows, w) != null,
+            .pane => |p| paneWindow(live_windows, p) != null,
         };
-        if (alive) continue;
-        const key = entry.key_ptr.*;
-        self.targets.removeByPtr(entry.key_ptr);
-        alloc.free(key);
-        it = self.targets.iterator();
+        if (alive) {
+            i += 1;
+            continue;
+        }
+        alloc.free(e.name);
+        _ = self.entries.orderedRemove(i);
     }
 }
 
@@ -261,11 +386,10 @@ pub fn nextWindowName(self: *IpcRegistry, alloc: Allocator) Allocator.Error![]u8
     return std.fmt.allocPrint(alloc, auto_prefix ++ "{d}", .{self.window_counter});
 }
 
-/// Free all owned keys and the map itself.
+/// Free all owned names and the list itself.
 pub fn deinit(self: *IpcRegistry, alloc: Allocator) void {
-    var it = self.targets.keyIterator();
-    while (it.next()) |key| alloc.free(key.*);
-    self.targets.deinit(alloc);
+    for (self.entries.items) |e| alloc.free(e.name);
+    self.entries.deinit(alloc);
 }
 
 const testing = std.testing;
@@ -365,7 +489,7 @@ test "registering a name a different target holds reports already_held" {
         IpcRegistry.RegisterResult.already_held,
         try reg.register(alloc, &live, "window-3", .{ .window = b }),
     );
-    try testing.expect(reg.lookup(alloc, &live, "window-3").?.eql(.{ .window = a }));
+    try testing.expect(reg.lookup(alloc, &live, "window-3", null).target().?.eql(.{ .window = a }));
 }
 
 test "save copies out a target's names so a pruned target can have them back" {
@@ -391,8 +515,8 @@ test "save copies out a target's names so a pruned target can have them back" {
 
     // `a` leaves the live set (parked): its name is pruned like a dead one...
     const only_b = [_]*Window{b};
-    try testing.expectEqual(@as(?Target, null), reg.lookup(alloc, &only_b, "keep"));
+    try testing.expectEqual(@as(?Target, null), reg.lookup(alloc, &only_b, "keep", null).target());
     // ...and comes back with it once re-registered from the copy.
     for (saved) |s| _ = try reg.register(alloc, &both, s.name, s.target);
-    try testing.expect(reg.lookup(alloc, &both, "keep").?.eql(.{ .window = a }));
+    try testing.expect(reg.lookup(alloc, &both, "keep", null).target().?.eql(.{ .window = a }));
 }

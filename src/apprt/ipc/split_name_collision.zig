@@ -1,21 +1,25 @@
-//! What `+split --name=<name>` does when something already holds that name
-//! (T2184; the Mac's `SplitNameCollision.swift`, main c2057a810).
+//! What `+split --name=<name>` does when the name is already held in the
+//! window the split would land in (T2184; the Mac's `SplitNameCollision.swift`,
+//! main c2057a810, scoped to the window by 71da9a680 / T2250).
 //!
 //! The name is the idempotency key: re-running the same launch must not
 //! duplicate the pane, so a matching request REUSES it. It used to reuse on
 //! the name alone - silently, from any window, whatever was asked for - so a
 //! caller asking for `--view=b.html` beside itself got exit 0 and nothing,
 //! while a pane of the same name in another window went on showing `a.html`.
-//! Now:
+//! Pane names belong to their window (`target_lookup`), so only a pane in the
+//! SAME window collides - a pane of that name in another window is another
+//! window's business, and this split creates this window's own. (Names used
+//! to be one namespace across every window, and the second agent to ask for
+//! `draft` got exit 0 and "reused" a pane in the first agent's window.)
+//! Window names are still global, so a window's name is never a pane's. Now:
 //!
 //!   * A request the existing pane already satisfies is reused, and the reply
-//!     says so and names the window - which may not be the caller's: pane
-//!     names are one namespace across every window (they are `--target`s), so
-//!     a second pane cannot take the name without orphaning the first.
+//!     says so.
 //!   * A request it does NOT satisfy - another `--view`, or a terminal where a
 //!     viewer stands (or the reverse), or a WINDOW of that name - fails,
-//!     naming the pane, its window, and what it shows. Retargeting the pane
-//!     instead would hijack whatever else put it there, often another agent.
+//!     naming the pane and what it shows. Retargeting the pane instead would
+//!     hijack whatever else put it there.
 //!
 //! The wording is the Mac's, character for character, so a script reading the
 //! line gets the same answer from either platform. Pure, so both the policy
@@ -23,22 +27,20 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-/// What currently holds the name, and where.
+/// What currently holds the name.
 pub const Existing = struct {
     kind: Kind,
     /// The IPC name of the window holding it (the window itself, for
     /// `.window`).
     window_name: []const u8,
-    /// Whether that window is the one the split would have anchored in.
-    in_anchor_window: bool,
 
     pub const Kind = union(enum) {
         terminal,
         /// `location` is what it shows now, `home_location` what it was
         /// opened with (null when it has none).
         viewer: struct { location: []const u8, home_location: ?[]const u8 = null },
-        /// A WINDOW of that name: `--target`s and pane names are one
-        /// namespace, so a pane cannot take it.
+        /// A WINDOW of that name: window names are global, so a pane cannot
+        /// take one.
         window,
     };
 };
@@ -62,10 +64,7 @@ pub fn decide(
     requested_view: ?[]const u8,
 ) Allocator.Error!Outcome {
     var window_buf: [512]u8 = undefined;
-    const window = (if (existing.in_anchor_window)
-        std.fmt.bufPrint(&window_buf, "this window ('{s}')", .{existing.window_name})
-    else
-        std.fmt.bufPrint(&window_buf, "window '{s}', not the window this split was for", .{existing.window_name})) catch
+    const window = std.fmt.bufPrint(&window_buf, "this window ('{s}')", .{existing.window_name}) catch
         existing.window_name;
 
     const close_hint = "Use another --name, or close it first: ghoztty +close --target=";
@@ -218,18 +217,7 @@ test "a terminal asked for again is reused, naming this window" {
     try expectReuse(try decide(arena.allocator(), "build", .{
         .kind = .terminal,
         .window_name = "window-1",
-        .in_anchor_window = true,
     }, null), "pane 'build' already exists in this window ('window-1'); reused it, no split created");
-}
-
-test "a terminal in another window is reused and says which window" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    try expectReuse(try decide(arena.allocator(), "build", .{
-        .kind = .terminal,
-        .window_name = "window-2",
-        .in_anchor_window = false,
-    }, null), "pane 'build' already exists in window 'window-2', not the window this split was for; reused it, no split created");
 }
 
 test "a viewer showing the requested view is reused" {
@@ -238,7 +226,6 @@ test "a viewer showing the requested view is reused" {
     try expectReuse(try decide(arena.allocator(), "doc", .{
         .kind = .{ .viewer = .{ .location = "D:\\a\\b.md", .home_location = "D:\\a\\b.md" } },
         .window_name = "window-1",
-        .in_anchor_window = true,
     }, "D:\\a\\b.md"), "pane 'doc' already exists in this window ('window-1'), showing D:\\a\\b.md; reused it, no split created");
 }
 
@@ -248,19 +235,18 @@ test "a viewer that navigated away still matches the view it was opened with" {
     const outcome = try decide(arena.allocator(), "site", .{
         .kind = .{ .viewer = .{ .location = "https://x.com/page2", .home_location = "https://x.com" } },
         .window_name = "window-1",
-        .in_anchor_window = true,
     }, "https://x.com/");
     try testing.expect(outcome == .reuse);
 }
 
 test "a viewer showing another view is a conflict naming both" {
+    // The pane belongs to whatever opened it, so it is not quietly retargeted.
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     try expectConflict(try decide(arena.allocator(), "doc", .{
         .kind = .{ .viewer = .{ .location = "D:\\a\\a.html", .home_location = "D:\\a\\a.html" } },
         .window_name = "window-2",
-        .in_anchor_window = false,
-    }, "D:\\a\\b.html"), "pane 'doc' already exists in window 'window-2', not the window this split was for, showing D:\\a\\a.html, not D:\\a\\b.html. Use another --name, or close it first: ghoztty +close --target=doc");
+    }, "D:\\a\\b.html"), "pane 'doc' already exists in this window ('window-2'), showing D:\\a\\a.html, not D:\\a\\b.html. Use another --name, or close it first: ghoztty +close --target=doc");
 }
 
 test "a terminal asked for where a viewer stands is a conflict" {
@@ -269,7 +255,6 @@ test "a terminal asked for where a viewer stands is a conflict" {
     try expectConflict(try decide(arena.allocator(), "doc", .{
         .kind = .{ .viewer = .{ .location = "D:\\a\\a.md" } },
         .window_name = "window-1",
-        .in_anchor_window = true,
     }, null), "pane 'doc' already exists in this window ('window-1') as a viewer pane showing D:\\a\\a.md, not a terminal. Use another --name, or close it first: ghoztty +close --target=doc");
 }
 
@@ -279,7 +264,6 @@ test "a view asked for where a terminal stands is a conflict" {
     try expectConflict(try decide(arena.allocator(), "build", .{
         .kind = .terminal,
         .window_name = "window-1",
-        .in_anchor_window = true,
     }, "D:\\a\\a.md"), "pane 'build' already exists in this window ('window-1') as a terminal pane, so it cannot show D:\\a\\a.md. Use another --name, or close it first: ghoztty +close --target=build");
 }
 
@@ -290,7 +274,6 @@ test "a window's name is never taken by a pane" {
         try expectConflict(try decide(arena.allocator(), "main", .{
             .kind = .window,
             .window_name = "main",
-            .in_anchor_window = true,
         }, view), "'main' is already the name of a window, so no pane can take it. Use another --name.");
     }
 }

@@ -1,5 +1,6 @@
 # T2184 acceptance: `+split --name=<n>` never silently reuses a different pane
-# (the win32 half of main c2057a810).
+# (the win32 half of main c2057a810) - and, since T2250 (main 71da9a680), pane
+# names belong to their window.
 #
 # Before this, a split whose --name was already held by ANY live pane exited 0
 # with no output, so an agent asking for `--view=b.html` beside itself was told
@@ -12,7 +13,12 @@
 #   - It does NOT match (another --view, a kind mismatch, or the name is a
 #     WINDOW's): no split, exit 1, stderr names the pane, its window and what it
 #     shows.
-#   - A created pane says where it went, on stdout.
+#   - A created pane says which pane it is (its id) and where it went, on
+#     stdout - and, when it came in minimized to a strip, says that too.
+#   - Only a pane in the window the split lands in collides: a second window
+#     gets its own pane of that name. A name panes in two windows hold is
+#     looked up in the CALLER's window first; with no caller there it is
+#     ambiguous and the verb fails naming both windows, never picking one.
 #
 #   A  +split --name=t1                         created, names the window
 #   B  the same again                           reused, "this window", no new pane
@@ -23,8 +29,13 @@
 #   G  --name=v1 --view=<b>                     conflict naming both files
 #   H  --name=v1 (a terminal)                   conflict: a viewer stands there
 #   I  --name=<a window's name>                 conflict: a window holds it
-#   J  --target=<other window> --name=t1        reused, names the OTHER window
+#   J  --target=<other window> --name=t1        CREATED there: names are per window
 #   K  --target=<nothing>                       fails (exit 1), no pane
+#   L  +close --target=t1, no caller pane       ambiguous: names both windows, closes nothing
+#   M  +read --name=t1 from win1's t1           resolves the caller's own window's t1
+#   N  +close --target=t1 from win1's t1        closes win1's t1 only; snc-w2's survives
+#   O  +read --name=t1, no caller pane          one t1 left: found, wherever it is
+#   P  +new-window --target=t1                  fails: a pane holds the name
 #
 # Every arm reads exit code, stdout and stderr SEPARATELY (one process each,
 # redirected), and counts the panes `+list --json` reports before and after,
@@ -64,10 +75,17 @@ function Kill-RepoInstances { [void](Stop-RepoGhoztty -Exe $exe -AppOnly -Settle
 # redirected streams rather than `& $exe 2>&1`: under ErrorActionPreference Stop
 # a native stderr line through 2>&1 throws in PS 5.1, and the two streams are
 # the very thing under test.
-function Invoke-Cli([string[]]$CliArgs) {
+#
+# -CallerPane is the `$GHOZTTY_PANE_ID` the CLI runs with: it sends it as the
+# request's `caller_pane`, and a name is looked up in that pane's window first
+# (T2250). Every other run has none - never this script's own pane, which
+# belongs to another app.
+function Invoke-Cli([string[]]$CliArgs, [string]$CallerPane = '') {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exe
     $psi.Arguments = (($CliArgs | ForEach-Object { '"' + $_ + '"' }) -join ' ')
+    $psi.EnvironmentVariables.Remove('GHOZTTY_PANE_ID')
+    if ($CallerPane) { $psi.EnvironmentVariables['GHOZTTY_PANE_ID'] = $CallerPane }
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
@@ -148,11 +166,19 @@ try {
     # ran this script) can never pick the anchor.
     $T1 = "--target=$win1"
 
-    # ---- A: created, and says where ----------------------------------------
+    # A pane id, as `+split` reports it; the strip note is allowed, since
+    # whether the row has room depends on the test desktop's window size.
+    $id = '([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})'
+    $strip = '(; it is minimized to a strip, since its row has no room for it on show)?'
+    $win1Re = [regex]::Escape($win1)
+
+    # ---- A: created, and says which pane and where ---------------------------
     $before = Total-Panes
     $r = Invoke-Cli @('+split', $T1, '--name=t1')
     Assert ($r.Code -eq 0) "A: a new named split exits 0 (exit $($r.Code))"
-    Assert ($r.Out -eq "created pane 't1' in window '$win1'") "A: stdout says where it went ('$($r.Out)')"
+    $m = [regex]::Match($r.Out, "^created pane 't1' \($id\) in window '$win1Re'$strip$")
+    Assert $m.Success "A: stdout names the pane's id and its window ('$($r.Out)')"
+    $t1InWin1 = if ($m.Success) { $m.Groups[1].Value } else { '' }
     Start-Sleep -Milliseconds 800
     Assert ((Total-Panes) -eq $before + 1) "A: one pane was added ($before -> $(Total-Panes))"
 
@@ -179,7 +205,7 @@ try {
     $before = Total-Panes
     $r = Invoke-Cli @('+split', $T1, '--name=v1', "--view=$fileA")
     Assert ($r.Code -eq 0) "D: a named viewer split exits 0 (exit $($r.Code))"
-    Assert ($r.Out -like "created pane 'v1' in window '$win1', showing *a-doc.md") "D: stdout says where it went and what it shows ('$($r.Out)')"
+    Assert ([regex]::IsMatch($r.Out, "^created pane 'v1' \($id\) in window '$win1Re', showing .*a-doc\.md$strip$")) "D: stdout names the pane, where it went and what it shows ('$($r.Out)')"
     Start-Sleep -Seconds 2   # a viewer's WebView2 comes up asynchronously
     Assert ((Total-Panes) -eq $before + 1) "D: one pane was added ($before -> $(Total-Panes))"
 
@@ -222,12 +248,18 @@ try {
     Assert ($r.ErrTail -eq '+split failed.') "I: nothing but the CLI's own failure line follows it ('$($r.ErrTail)')"
     Assert ((Total-Panes) -eq $before) "I: no pane was added ($before -> $(Total-Panes))"
 
-    # ---- J: reused from another window, and the reply says which -------------
+    # ---- J: another window gets its OWN pane of that name --------------------
+    # The bug (main 71da9a680): the second agent's `+split --name=draft` used
+    # to "reuse" the first agent's pane in the first agent's window, exit 0.
     $before = Total-Panes
     $r = Invoke-Cli @('+split', '--target=snc-w2', '--name=t1')
-    Assert ($r.Code -eq 0) "J: re-running from another window exits 0 (exit $($r.Code))"
-    Assert ($r.Out -eq "pane 't1' already exists in window '$win1', not the window this split was for; reused it, no split created") "J: stdout names the OTHER window ('$($r.Out)')"
-    Assert ((Total-Panes) -eq $before) "J: no pane was added ($before -> $(Total-Panes))"
+    Assert ($r.Code -eq 0) "J: the same name in another window exits 0 (exit $($r.Code))"
+    $m = [regex]::Match($r.Out, "^created pane 't1' \($id\) in window 'snc-w2'$strip$")
+    Assert $m.Success "J: stdout says a pane was CREATED in the other window ('$($r.Out)')"
+    $t1InW2 = if ($m.Success) { $m.Groups[1].Value } else { '' }
+    Start-Sleep -Milliseconds 800
+    Assert ((Total-Panes) -eq $before + 1) "J: one pane was added ($before -> $(Total-Panes))"
+    Assert ($t1InWin1 -and $t1InW2 -and $t1InWin1 -ne $t1InW2) "J: the two t1 panes are different panes ($t1InWin1 / $t1InW2)"
 
     # ---- K: a --target that names nothing fails ------------------------------
     $before = Total-Panes
@@ -235,6 +267,46 @@ try {
     Assert ($r.Code -eq 1) "K: a --target naming nothing fails (exit $($r.Code))"
     Assert ($r.Err -like "*snc-nothing-here*not found*") "K: stderr names the missing target ('$($r.Err)')"
     Assert ((Total-Panes) -eq $before) "K: no pane was added ($before -> $(Total-Panes))"
+
+    # ---- L: with no caller pane, a name two windows hold is ambiguous --------
+    $sorted = [string[]]@('snc-w2', $win1)
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    $wantL = "'t1' names a pane in 2 windows ('{0}', '{1}'), so it is ambiguous here. " -f $sorted[0], $sorted[1]
+    $wantL += 'Run the command from a pane in the window you mean, or target the pane by its id (`id` in `ghoztty +list --json`).'
+    $before = Total-Panes
+    $r = Invoke-Cli @('+close', '--target=t1')
+    Assert ($r.Code -eq 1) "L: closing an ambiguous name fails (exit $($r.Code))"
+    Assert ($r.Err -eq $wantL) "L: stderr names both windows and the remedy ('$($r.Err)')"
+    Assert ((Total-Panes) -eq $before) "L: nothing was closed ($before -> $(Total-Panes))"
+
+    # ---- M: from a pane in win1, the name is win1's ---------------------------
+    $r = Invoke-Cli @('+read', '--name=t1', '--lines=5') -CallerPane $t1InWin1
+    Assert ($r.Code -eq 0) "M: +read from win1's own pane resolves win1's t1 (exit $($r.Code), err '$($r.Err)')"
+
+    # ---- N: +close from win1 closes win1's t1, and only that ------------------
+    $layoutBefore = @(Get-Layout)
+    $w1Before = ($layoutBefore | Where-Object { $_.Target -eq $win1 }).Panes
+    $w2Before = ($layoutBefore | Where-Object { $_.Target -eq 'snc-w2' }).Panes
+    $r = Invoke-Cli @('+close', '--target=t1') -CallerPane $t1InWin1
+    Assert ($r.Code -eq 0) "N: +close from win1 exits 0 (exit $($r.Code), err '$($r.Err)')"
+    Start-Sleep -Milliseconds 800
+    $layoutAfter = @(Get-Layout)
+    $w1After = ($layoutAfter | Where-Object { $_.Target -eq $win1 }).Panes
+    $w2After = ($layoutAfter | Where-Object { $_.Target -eq 'snc-w2' }).Panes
+    Assert ($w1After -eq $w1Before - 1) "N: win1 lost its t1 ($w1Before -> $w1After)"
+    Assert ($w2After -eq $w2Before) "N: snc-w2's t1 is untouched ($w2Before -> $w2After)"
+
+    # ---- O: one t1 left, so a caller with no pane finds it -------------------
+    $r = Invoke-Cli @('+read', '--name=t1', '--lines=5')
+    Assert ($r.Code -eq 0) "O: the one remaining t1 is found from anywhere (exit $($r.Code), err '$($r.Err)')"
+
+    # ---- P: a pane's name is never a window's --------------------------------
+    $before = @(Get-Layout).Count
+    $r = Invoke-Cli @('+new-window', '--target=t1')
+    Assert ($r.Code -ne 0) "P: +new-window --target=<a pane's name> fails (exit $($r.Code))"
+    Assert ($r.Err -eq "'t1' is already the name of a pane, so no window can take it. Use another --target.") "P: stderr says a pane holds it ('$($r.Err)')"
+    Start-Sleep -Milliseconds 800
+    Assert (@(Get-Layout).Count -eq $before) "P: no window was opened ($before -> $(@(Get-Layout).Count))"
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
     $launched += $script:GhozttyTestDesktopPids
@@ -262,4 +334,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'split-name-collision' -MinPass 30
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'split-name-collision' -MinPass 42

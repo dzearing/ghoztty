@@ -181,13 +181,16 @@ pub const Failure = union(enum) {
     unsupported_link: []const u8,
     /// A well-formed focus, but nothing open answers to that name.
     target_not_found: []const u8,
+    /// Panes in several windows have that name, and a link has no window of
+    /// its own to prefer (T2250; `target_lookup`).
+    ambiguous_target: []const u8,
 
     /// The dialog caption. Kept free of the curly quotes the Mac wording uses,
     /// because a window title is what a script matches on here.
     pub fn title(self: Failure, buf: []u8) []const u8 {
         return switch (self) {
             .unsupported_link => "Unsupported Ghoztty link",
-            .target_not_found => |t| std.fmt.bufPrint(
+            .target_not_found, .ambiguous_target => |t| std.fmt.bufPrint(
                 buf,
                 "Can't focus \"{s}\"",
                 .{t},
@@ -208,6 +211,8 @@ pub const Failure = union(enum) {
             .target_not_found => "No open Ghoztty window or pane has that name. " ++
                 "It may have been closed, or it may belong to a different " ++
                 "Ghoztty instance.",
+            .ambiguous_target => "More than one Ghoztty window has a pane with that name, so " ++
+                "the link can't tell which one it means. Link to a window name or a pane id instead.",
         };
     }
 };
@@ -317,6 +322,9 @@ test "failure wording names the target and the one supported form" {
     try testing.expectEqualStrings("Can't focus \"dev\"", nf.title(&buf));
     try testing.expect(std.mem.indexOf(u8, nf.body(&body_buf), "closed") != null);
 
+    const am: Failure = .{ .ambiguous_target = "draft" };
+    try testing.expectEqualStrings("Can't focus \"draft\"", am.title(&buf));
+    try testing.expect(std.mem.indexOf(u8, am.body(&buf), "More than one Ghoztty window") != null);
     const un: Failure = .{ .unsupported_link = "ghoztty://open/dev" };
     try testing.expectEqualStrings("Unsupported Ghoztty link", un.title(&buf));
     const text = un.body(&body_buf);

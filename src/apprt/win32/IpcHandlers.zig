@@ -56,6 +56,11 @@ const Request = struct {
     /// launch built before this existed — both of which mean "say nothing",
     /// which is what the app did before.
     handoff: ?ipc_handoff.Identity = null,
+    /// The pane the command was run from (`$GHOZTTY_PANE_ID`), which every CLI
+    /// command sends (T2250; main 71da9a680) so a NAME is looked up in the
+    /// caller's own window first. Absent from an older CLI and from a caller
+    /// with no pane, both of which search every window.
+    caller_pane: ?[]const u8 = null,
 };
 
 /// Dispatch one request on the GUI thread. Returns the response JSON
@@ -74,6 +79,13 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
     const request = parsed.value;
 
     log.info("IPC: received action '{s}'", .{request.action});
+
+    // Pane names belong to their window (T2250): every lookup this request
+    // makes starts in the caller's. Restored rather than cleared, so a request
+    // served inside another's nested wait hands the outer one its scope back.
+    const outer_caller = ctx.app.ipc_caller_window;
+    ctx.app.ipc_caller_window = callerWindow(ctx.app, request.caller_pane);
+    defer ctx.app.ipc_caller_window = outer_caller;
 
     if (std.mem.eql(u8, request.action, "new-window")) {
         return try handleNewWindow(ctx, request);
@@ -137,6 +149,32 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
     }
 
     return try errorResponse(ctx.alloc, "unknown action: {s}", .{request.action});
+}
+
+/// The window of the pane a request came from, by the pane's own id. Null for
+/// no caller pane, or one that is gone.
+fn callerWindow(app: *App, caller_pane: ?[]const u8) ?*Window {
+    const id = nonEmpty(caller_pane orelse return null) orelse return null;
+    return switch (app.ipcLookupFrom(id, null) orelse return null) {
+        .pane => |pane| pane.parentWindow(),
+        .window => null,
+    };
+}
+
+/// The reply for a name `ipcLookup` found nothing for: the ambiguity, when
+/// panes in several windows hold it and none is the caller's (T2250), else the
+/// handler's own not-found text.
+fn missingResponse(
+    ctx: Context,
+    name: []const u8,
+    comptime fmt: []const u8,
+    args: anytype,
+) Allocator.Error![]u8 {
+    if (try ctx.app.ipcAmbiguity(ctx.alloc, name)) |msg| {
+        defer ctx.alloc.free(msg);
+        return try errorResponse(ctx.alloc, "{s}", .{msg});
+    }
+    return try errorResponse(ctx.alloc, fmt, args);
 }
 
 // Pure verb-argument logic (flag parsing, shell wrap table, ConPTY input
@@ -390,8 +428,23 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // caller passed flags that only a create would honor, a `note` names
     // them — the CLI prints it to stderr so the drop is loud. Exit stays 0:
     // idempotency is the contract, silence was the defect.
+    //
+    // Window names are global, and a pane's name is never a window's (T2250,
+    // Mac 71da9a680): a `--target` a pane holds fails, rather than "succeeding"
+    // without opening the window that was asked for.
     if (args.target) |target| {
-        if (app.ipcLookup(target)) |entry| {
+        const held = app.ipc_registry.lookup(app.core_app.alloc, app.windows.items, target, null);
+        if (held == .ambiguous) return try errorResponse(
+            ctx.alloc,
+            "'{s}' is already the name of a pane, so no window can take it. Use another --target.",
+            .{target},
+        );
+        if (held.target()) |entry| {
+            if (entry == .pane) return try errorResponse(
+                ctx.alloc,
+                "'{s}' is already the name of a pane, so no window can take it. Use another --target.",
+                .{target},
+            );
             if (args.focus) focusTarget(entry); // T1797: raised only on request
             if (try verb_args.droppedOnExistingTarget(arena, args)) |dropped| {
                 const note = try std.fmt.allocPrint(
@@ -838,19 +891,27 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // First thing, as on the Mac (IPCServer.swift:572).
     if (try viewArgResponse(ctx, args)) |response| return response;
 
-    // Idempotent: if --name is held and already is what was asked for, it is
-    // the answer - and the reply says so, and where. A request it does not
-    // satisfy fails instead, naming what holds the name (T2184, Mac
-    // c2057a810; policy in `apprt.ipc.split_name_collision`). Focusing a
-    // reused pane is the caller's choice (`--focus`, T1797). `--from-focused`
-    // ignores `--name`, as on the Mac.
+    // Idempotent: if --name is already held in THE WINDOW THIS SPLIT LANDS IN
+    // and already is what was asked for, it is the answer - and the reply says
+    // so. A request it does not satisfy fails instead, naming what holds the
+    // name (T2184, Mac c2057a810; policy in `apprt.ipc.split_name_collision`).
+    // A pane of that name in another window does not count: pane names belong
+    // to their window (T2250, Mac 71da9a680), so this split creates this
+    // window's own. Focusing a reused pane is the caller's choice (`--focus`,
+    // T1797). `--from-focused` ignores `--name`, as on the Mac. An anchor that
+    // names nothing skips the check; the split below fails with the reason.
     if (args.name) |name| check: {
         if (args.from_focused) break :check;
-        if (app.ipcLookup(name)) |entry| {
-            if (describeExisting(entry, splitAnchorWindow(app, args))) |existing| {
+        const anchor = splitAnchorWindow(app, args) orelse break :check;
+        if (app.ipcHolderIn(name, anchor)) |entry| {
+            if (describeExisting(entry)) |existing| {
                 switch (try split_name_collision.decide(arena, name, existing, nonEmpty(args.view))) {
-                    .conflict => |msg| return try errorResponse(ctx.alloc, "{s}", .{msg}),
+                    .conflict => |msg| {
+                        logSplit(request, args, anchor, null, msg, null);
+                        return try errorResponse(ctx.alloc, "{s}", .{msg});
+                    },
                     .reuse => |msg| {
+                        logSplit(request, args, anchor, null, msg, null);
                         if (args.focus) focusTarget(entry); // T1797
                         return try messageResponse(ctx.alloc, msg);
                     },
@@ -892,14 +953,11 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             log.warn("IPC split --from-focused failed err={}", .{err});
             return try errorResponse(ctx.alloc, "failed to create split", .{});
         } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
-        if (inherited.pane_view) |pv| {
-            app.ipc_session_await.add(pv.paneId()); // T1612
-            if (args.focus) focusTarget(.{ .pane = pv });
-        }
-        return try messageResponse(
-            ctx.alloc,
-            try std.fmt.allocPrint(arena, "created a split in window '{s}'", .{window.ipc_name orelse ""}),
-        );
+        const pv = inherited.pane_view orelse
+            return try splitFailed(ctx, request, args, window, "failed to create split");
+        app.ipc_session_await.add(pv.paneId()); // T1612
+        if (args.focus) focusTarget(.{ .pane = pv });
+        return try createdResponse(ctx, arena, request, args, window, pv);
     }
 
     // Resolve where to split: --pane names the exact surface; --target
@@ -910,7 +968,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     var at: *PaneView = undefined;
     if (args.pane) |pane_name| {
         const entry = app.ipcLookup(pane_name) orelse
-            return try errorResponse(ctx.alloc, "pane '{s}' not found", .{pane_name});
+            return try missingResponse(ctx, pane_name, "pane '{s}' not found", .{pane_name});
         switch (entry) {
             .pane => |pane| {
                 at = pane;
@@ -920,7 +978,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         }
     } else if (args.target) |target| {
         const entry = app.ipcLookup(target) orelse
-            return try errorResponse(ctx.alloc, "target '{s}' not found in registry", .{target});
+            return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
         window = switch (entry) {
             .window => |w| w,
             .pane => |pane| pane.parentWindow(),
@@ -964,7 +1022,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
             if (args.name) |name| app.ipcRegister(name, .{ .pane = pane }) catch {};
             if (args.focus) focusTarget(.{ .pane = pane });
-            return try messageResponse(ctx.alloc, try createdMessage(arena, args, window));
+            return try createdResponse(ctx, arena, request, args, window, pane);
         }
     }
 
@@ -1073,20 +1131,21 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // adjusted palette (overwrites newSplitAt's auto-shifted inheritance).
     if (resolveColor(args.color)) |tint| new_surface.applyBackgroundTint(tint, true);
 
-    if (args.name) |name| {
-        if (new_surface.pane_view) |pv| app.ipcRegister(name, .{ .pane = pv }) catch {};
-    }
+    // A surface with no pane is not a pane anybody can see or target: say so
+    // rather than reply "created" (T2250).
+    const pv = new_surface.pane_view orelse
+        return try splitFailed(ctx, request, args, window, "failed to create split");
+
+    if (args.name) |name| app.ipcRegister(name, .{ .pane = pv }) catch {};
 
     // T1612: answer once the new pane's agent session is bound (see
     // `ipc_session_await.zig`), so `+list --json` right after reads it.
-    if (new_surface.pane_view) |pv| {
-        app.ipc_session_await.add(pv.paneId());
-        // `--focus` (T1797): focus the new pane, raise its window, take the
-        // foreground - the one focus implementation a `--target` hit uses.
-        if (args.focus) focusTarget(.{ .pane = pv });
-    }
+    app.ipc_session_await.add(pv.paneId());
+    // `--focus` (T1797): focus the new pane, raise its window, take the
+    // foreground - the one focus implementation a `--target` hit uses.
+    if (args.focus) focusTarget(.{ .pane = pv });
 
-    return try messageResponse(ctx.alloc, try createdMessage(arena, args, window));
+    return try createdResponse(ctx, arena, request, args, window, pv);
 }
 
 /// The window a `+split` lands in: the `--pane` pane's window, else
@@ -1110,10 +1169,11 @@ fn splitAnchorWindow(app: *App, args: VerbArgs) ?*Window {
     return frontWindow(app);
 }
 
-/// What holds a name `+split --name=` asked for, for `split_name_collision`.
-/// Null for a viewer with nothing loaded yet - nothing to compare against, so
-/// the name stays the existing pane's and the split goes ahead, as on the Mac.
-fn describeExisting(entry: App.IpcTarget, anchor: ?*Window) ?split_name_collision.Existing {
+/// What holds a name `+split --name=` asked for in the window it lands in
+/// (`App.ipcHolderIn`), for `split_name_collision`. Null for a viewer with
+/// nothing loaded yet - nothing to compare against, so the name stays the
+/// existing pane's and the split goes ahead, as on the Mac.
+fn describeExisting(entry: App.IpcTarget) ?split_name_collision.Existing {
     const holder: *Window = switch (entry) {
         .window => |w| w,
         .pane => |pane| pane.parentWindow(),
@@ -1129,23 +1189,85 @@ fn describeExisting(entry: App.IpcTarget, anchor: ?*Window) ?split_name_collisio
     return .{
         .kind = kind,
         .window_name = holder.ipc_name orelse "",
-        .in_anchor_window = anchor == holder,
     };
 }
 
-/// The reply to a `+split` that creates a pane (Mac `createdMessage`).
-fn createdMessage(arena: Allocator, args: VerbArgs, window: *Window) Allocator.Error![]const u8 {
-    const what = if (args.name) |n|
-        try std.fmt.allocPrint(arena, "created pane '{s}'", .{n})
-    else
-        "created a split";
-    const view = nonEmpty(args.view);
-    return std.fmt.allocPrint(arena, "{s} in window '{s}'{s}{s}", .{
-        what,
-        window.ipc_name orelse "",
-        if (view != null) ", showing " else "",
-        view orelse "",
+/// The reply to a `+split` that created `pane` in `window`, logged: which
+/// pane, where, and - when it did not come on show - that it is a strip
+/// (T2250; Mac `createdMessage`).
+fn createdResponse(
+    ctx: Context,
+    arena: Allocator,
+    request: Request,
+    args: VerbArgs,
+    window: *Window,
+    pane: *PaneView,
+) Allocator.Error![]u8 {
+    const on_show = paneOnShow(window, pane);
+    const message = try verb_args.splitCreatedMessage(arena, .{
+        .name = args.name,
+        .pane_id = pane.paneId(),
+        .window_name = window.ipc_name orelse "",
+        .view = nonEmpty(args.view),
+        .on_show = on_show,
     });
+    logSplit(request, args, window, pane, "created", on_show);
+    return try messageResponse(ctx.alloc, message);
+}
+
+/// A `+split` that did not produce a pane: logged, and the reason sent back.
+fn splitFailed(
+    ctx: Context,
+    request: Request,
+    args: VerbArgs,
+    window: ?*Window,
+    reason: []const u8,
+) Allocator.Error![]u8 {
+    logSplit(request, args, window, null, reason, null);
+    return try errorResponse(ctx.alloc, "{s}", .{reason});
+}
+
+/// Whether `pane` is on show in `window` as laid out now: false when its row
+/// has no room and it is minimized to a strip, null when the window has no
+/// layout for it (not in any tab, or no client area yet).
+fn paneOnShow(window: *Window, pane: *PaneView) ?bool {
+    for (0..window.tab_count) |i| {
+        var panes = window.tab_trees[i].iterator();
+        while (panes.next()) |v| {
+            if (v.view != pane) continue;
+            var grid = window.stackGridForTab(i) orelse return null;
+            defer grid.deinit();
+            const p = grid.placement(pane_stack_grid.viewId(pane)) orelse return null;
+            return !p.is_tucked;
+        }
+    }
+    return null;
+}
+
+/// Every `+split`, in the log (T2250; the Mac logs it at `.notice`), so the
+/// next unexplained "I opened it in a side pane" can be read back: who asked,
+/// where it went, and what came of it.
+fn logSplit(
+    request: Request,
+    args: VerbArgs,
+    window: ?*Window,
+    pane: ?*PaneView,
+    outcome: []const u8,
+    on_show: ?bool,
+) void {
+    const shown: []const u8 = if (on_show) |s| (if (s) "yes" else "NO (strip)") else "unknown";
+    log.info(
+        "IPC +split: caller={s} window={s} pane={s} name={s} view={s} outcome={s} onShow={s}",
+        .{
+            request.caller_pane orelse args.caller_pane orelse "-",
+            if (window) |w| w.ipc_name orelse "-" else "-",
+            if (pane) |p| p.paneId() else "-",
+            args.name orelse "-",
+            nonEmpty(args.view) orelse "-",
+            outcome,
+            shown,
+        },
+    );
 }
 
 /// `{"success":true,"message":<msg>}`: a success the CLI reports on stdout
@@ -1197,7 +1319,7 @@ fn handleRead(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         50;
 
     const entry = ctx.app.ipcLookup(name) orelse
-        return try errorResponse(ctx.alloc, "pane '{s}' not found in registry", .{name});
+        return try missingResponse(ctx, name, "pane '{s}' not found in registry", .{name});
     const pane = targetPane(entry) orelse
         return try errorResponse(ctx.alloc, "pane '{s}' is no longer alive", .{name});
     const surface = pane.surface() orelse
@@ -1319,7 +1441,7 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // Resolve the window, then every pane against its ACTIVE tab's tree.
     const window: *Window = if (args.target) |target| window: {
         const entry = app.ipcLookup(target) orelse
-            return try errorResponse(ctx.alloc, "target window '{s}' not found", .{target});
+            return try missingResponse(ctx, target, "target window '{s}' not found", .{target});
         break :window switch (entry) {
             .window => |w| w,
             .pane => |pane| pane.parentWindow(),
@@ -1342,7 +1464,7 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     var surfaces: std.StringHashMapUnmanaged(*PaneView) = .empty;
     for (names.items) |name| {
         const entry = app.ipcLookup(name) orelse
-            return try errorResponse(ctx.alloc, "pane '{s}' not found in registry", .{name});
+            return try missingResponse(ctx, name, "pane '{s}' not found in registry", .{name});
         const pane = switch (entry) {
             .pane => |p| p,
             .window => return try errorResponse(ctx.alloc, "pane '{s}' not found in registry", .{name}),
@@ -1489,7 +1611,7 @@ fn handleSetState(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     };
 
     const entry = ctx.app.ipcLookup(target) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' not found in registry", .{target});
+        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
 
     // Pane targets set just that pane; window targets set every pane in
     // the window (Mac handleSetState semantics).
@@ -1528,7 +1650,7 @@ fn handleSetBanner(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         return try errorResponse(ctx.alloc, "--target is required for +set-banner", .{});
 
     const entry = ctx.app.ipcLookup(target) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' not found in registry", .{target});
+        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
 
     const pane = targetPane(entry) orelse
         return try errorResponse(ctx.alloc, "target '{s}' has no focused pane", .{target});
@@ -1578,7 +1700,7 @@ fn handleReload(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         return try errorResponse(ctx.alloc, "--target is required for +reload", .{});
 
     const entry = ctx.app.ipcLookup(target) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' not found in registry", .{target});
+        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
 
     const view = switch (entry) {
         .pane => |pane| pane.viewer() orelse return try errorResponse(
@@ -1622,7 +1744,7 @@ fn handleStash(ctx: Context, request: Request, restore: bool) Allocator.Error!?[
         return try errorResponse(ctx.alloc, "--target is required for {s}", .{verb});
 
     const entry = ctx.app.ipcLookup(target) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' not found in registry", .{target});
+        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
     const pane = switch (entry) {
         .pane => |p| p,
         .window => return try errorResponse(
@@ -1692,7 +1814,7 @@ fn handleFocus(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         return try errorResponse(ctx.alloc, "--target is required for focus", .{});
 
     const entry = ctx.app.ipcLookup(target) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' not found in registry", .{target});
+        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
 
     focusTarget(entry);
     log.info("IPC: focused '{s}'", .{target});
@@ -1711,7 +1833,7 @@ fn handleRename(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         return try errorResponse(ctx.alloc, "--title is required for +rename", .{});
 
     const entry = ctx.app.ipcLookup(target) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' not found in registry", .{target});
+        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
     const window = switch (entry) {
         .window => |w| w,
         .pane => |pane| pane.parentWindow(),
@@ -1806,7 +1928,7 @@ fn handleSendKeys(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         return try errorResponse(ctx.alloc, "text is required for +send-keys", .{});
 
     const entry = ctx.app.ipcLookup(target_name) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' not found", .{target_name});
+        return try missingResponse(ctx, target_name, "target '{s}' not found", .{target_name});
     const pane = targetPane(entry) orelse
         return try errorResponse(ctx.alloc, "target '{s}' is no longer alive", .{target_name});
     const surface = pane.surface() orelse
@@ -1950,9 +2072,16 @@ fn handleClose(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const target = args.target orelse
         return try errorResponse(ctx.alloc, "--target is required for +close", .{});
 
-    // Idempotent: closing a target that's already gone succeeds silently.
-    const entry = app.ipcLookup(target) orelse
+    // Idempotent: closing a target that's already gone succeeds silently. A
+    // name panes in several other windows hold is not "gone": closing one of
+    // them at random would be closing another agent's pane (T2250).
+    const entry = app.ipcLookup(target) orelse {
+        if (try app.ipcAmbiguity(ctx.alloc, target)) |msg| {
+            defer ctx.alloc.free(msg);
+            return try errorResponse(ctx.alloc, "{s}", .{msg});
+        }
         return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    };
 
     switch (entry) {
         // Both paths close without confirmation (the CLI drives teardown;

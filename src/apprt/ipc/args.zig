@@ -1563,3 +1563,57 @@ test "firstDuplicate" {
     try testing.expectEqualStrings("b", firstDuplicate(&.{ "a", "b", "c", "b" }).?);
     try testing.expectEqual(@as(?[]const u8, null), firstDuplicate(&.{}));
 }
+
+/// What `+split` created, for its reply (T2250).
+pub const SplitCreated = struct {
+    /// The `--name` it was given, if any.
+    name: ?[]const u8 = null,
+    pane_id: []const u8,
+    window_name: []const u8,
+    /// The `--view` it shows, if it is a viewer.
+    view: ?[]const u8 = null,
+    /// Whether it is on show as laid out; null when the window had not laid
+    /// it out.
+    on_show: ?bool = null,
+};
+
+/// The reply to a `+split` that creates a pane: which pane, where, and - when
+/// it did not come on show - that it is a strip. The Mac's `createdMessage`
+/// (main 71da9a680), character for character: the reply used to say
+/// "created" without naming the pane, so a caller could not tell a pane that
+/// opened from one that never did.
+pub fn splitCreatedMessage(alloc: Allocator, created: SplitCreated) Allocator.Error![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(alloc);
+    const w = out.writer(alloc);
+    if (created.name) |n|
+        try w.print("created pane '{s}' ({s})", .{ n, created.pane_id })
+    else
+        try w.print("created pane {s}", .{created.pane_id});
+    try w.print(" in window '{s}'", .{created.window_name});
+    if (created.view) |v| try w.print(", showing {s}", .{v});
+    if (created.on_show == false)
+        try w.writeAll("; it is minimized to a strip, since its row has no room for it on show");
+    return out.toOwnedSlice(alloc);
+}
+
+test "splitCreatedMessage names the pane, its window, its view and whether it is on show" {
+    const id = "11111111-2222-3333-4444-555555555555";
+    const named = try splitCreatedMessage(testing.allocator, .{
+        .name = "doc",
+        .pane_id = id,
+        .window_name = "dev",
+        .view = "D:/a.md",
+        .on_show = true,
+    });
+    defer testing.allocator.free(named);
+    try testing.expectEqualStrings("created pane 'doc' (" ++ id ++ ") in window 'dev', showing D:/a.md", named);
+
+    const unnamed = try splitCreatedMessage(testing.allocator, .{ .pane_id = id, .window_name = "dev" });
+    defer testing.allocator.free(unnamed);
+    try testing.expectEqualStrings("created pane " ++ id ++ " in window 'dev'", unnamed);
+
+    const strip = try splitCreatedMessage(testing.allocator, .{ .pane_id = id, .window_name = "dev", .on_show = false });
+    defer testing.allocator.free(strip);
+    try testing.expect(std.mem.endsWith(u8, strip, "; it is minimized to a strip, since its row has no room for it on show"));
+}

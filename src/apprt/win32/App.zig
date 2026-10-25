@@ -648,6 +648,14 @@ ipc_server: ?IpcServer = null,
 /// to the live window list and app allocator.
 ipc_registry: IpcRegistry = .{},
 
+/// The window of the pane the IPC request being dispatched RIGHT NOW came
+/// from (its `caller_pane`), so a name is looked up in the caller's own window
+/// first (T2250). Null for a caller with no pane - a plain shell, a
+/// `ghoztty://` link - and between requests. Set and restored around each
+/// dispatch (a nested one restores the outer value); only ever compared, never
+/// dereferenced. GUI-thread only.
+ipc_caller_window: ?*Window = null,
+
 /// Parked pane/tab closes waiting out `undo-timeout` (T1825). Set in `init`
 /// once the App has its final address; see `CloseUndo.zig`.
 close_undo: CloseUndo = undefined,
@@ -2673,9 +2681,33 @@ pub fn ipcReserveWindowName(self: *App, name: []const u8) void {
     self.ipc_registry.reserveWindowName(name);
 }
 
-/// Look up a live target by name. See IpcRegistry.lookup.
+/// Look up a live target by name, from the window of the request being
+/// dispatched (`ipc_caller_window`). Null for nothing, and for a name panes in
+/// several windows hold (`ipcAmbiguity` says which). See IpcRegistry.lookup.
 pub fn ipcLookup(self: *App, name: []const u8) ?IpcTarget {
-    return self.ipc_registry.lookup(self.core_app.alloc, self.windows.items, name);
+    return self.ipcLookupFrom(name, self.ipc_caller_window);
+}
+
+/// `ipcLookup` from an explicit caller window (null: no caller pane).
+pub fn ipcLookupFrom(self: *App, name: []const u8, caller: ?*Window) ?IpcTarget {
+    const found = self.ipc_registry.lookup(self.core_app.alloc, self.windows.items, name, caller);
+    if (found == .ambiguous) log.info("IPC: '{s}' is ambiguous: panes in several windows", .{name});
+    return found.target();
+}
+
+/// Why `ipcLookup(name)` found nothing, when the reason is that panes in
+/// several windows hold it and none is the caller's: the error to fail with.
+/// Null when the name is simply not there. Allocated from `alloc`.
+pub fn ipcAmbiguity(self: *App, alloc: Allocator, name: []const u8) Allocator.Error!?[]u8 {
+    const found = self.ipc_registry.lookup(self.core_app.alloc, self.windows.items, name, self.ipc_caller_window);
+    if (found != .ambiguous) return null;
+    return try self.ipc_registry.ambiguityError(alloc, self.windows.items, name);
+}
+
+/// What holds `name` where a `+split --name=` would land in `window`. See
+/// IpcRegistry.holderIn.
+pub fn ipcHolderIn(self: *App, name: []const u8, window: *Window) ?IpcTarget {
+    return self.ipc_registry.holderIn(self.core_app.alloc, self.windows.items, name, window);
 }
 
 /// Reverse lookup: the registered name of a target, if any.

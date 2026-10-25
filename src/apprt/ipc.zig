@@ -397,6 +397,11 @@ pub const url_scheme = @import("ipc/url_scheme.zig");
 /// `SplitNameCollision.swift`). One wording for both servers.
 pub const split_name_collision = @import("ipc/split_name_collision.zig");
 
+/// Which window or pane a `--target`/`--name` means: pane names belong to
+/// their window, looked up in the caller's first (T2250; the Mac's
+/// `TargetLookup.swift`).
+pub const target_lookup = @import("ipc/target_lookup.zig");
+
 /// The build identity a launch carries when it hands its window to the
 /// instance already running, and the notice shown when the two builds differ
 /// (T1022 / D79). Lives beside the transport in `os/` — the wire field is the
@@ -410,6 +415,7 @@ test {
     _ = read_tail;
     _ = url_scheme;
     _ = split_name_collision;
+    _ = target_lookup;
     _ = @import("ipc/list.zig");
 }
 
