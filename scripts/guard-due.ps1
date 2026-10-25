@@ -5607,6 +5607,21 @@ $GuardTable = @(
         )
     }
 
+    # T1358 - the swap-then-release sweep. The sweep reads every `.zig` file
+    # in the win32 frontend, because the case the rule exists for is a NEW
+    # site replacing or removing a tab's split tree, and that can land in any
+    # of them (the IPC handlers already carry three).
+    [pscustomobject]@{
+        Name   = 'tree-swap'
+        Script = 'test\win32\tree-swap-audit.ps1'
+        Stamp  = 'test\win32\tree-swap-audit.stamp.json'
+        Covers = @(
+            'test\win32\tree-swap-audit.ps1',
+            'test\win32\lib\TreeSwapAudit.ps1',
+            'src\apprt\win32\*.zig'
+        )
+    }
+
     # T831 - the counted-wait sweep. It covers the two files that rediscovered
     # the wall-clock deadline independently, the shared helper they now share,
     # and the directories whose waits are cross-thread: the case the rule exists

@@ -3701,8 +3701,16 @@ fn closeTabByIndex(self: *Window, idx: usize) void {
             entry.view.setSessionCloseIntent(true);
         }
     }
-    tree.deinit(); // This unrefs all surfaces → Surface.unref frees when ref_count=0
+    // Detach first, then release (T1358; the T1356 rule, which this site
+    // still broke). A viewer pane's `deinit` closes its WebView2 controller,
+    // which PUMPS MESSAGES, and anything dispatched in that pump walks
+    // `tab_trees[0..tab_count]` - so the slot has to be gone before the tree
+    // is freed. Hide the panes first: once the slot is removed, re-seating
+    // the active tab no longer knows these HWNDs exist, and they would sit
+    // over the tab being shown until the release destroys them.
+    self.setTabSurfacesVisible(idx, false);
     self.removeTabSlot(idx);
+    tree.deinit(); // This unrefs all surfaces → Surface.unref frees when ref_count=0
 }
 
 /// Drop tab slot `idx` from the window's parallel arrays and re-seat the
