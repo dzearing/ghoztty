@@ -162,6 +162,23 @@ pub fn visibleLeafCount(tree: anytype) usize {
     return n;
 }
 
+/// The pane that should hold focus after the tree under it was replaced
+/// (T1371): `current` if it is still in `tree` and on screen, otherwise the
+/// first on-screen leaf in SCREEN order — the top-left pane, Mac's
+/// `leftmostLeaf()`. Storage order (`iterator()`) would make the fallback an
+/// artifact of how the nodes were allocated. Null only for a tree with no
+/// pane on screen.
+pub fn keepOrFirstVisible(tree: anytype, current: ?*@TypeOf(tree).View) ?*@TypeOf(tree).View {
+    var first: ?*@TypeOf(tree).View = null;
+    var it = tree.leafIterator();
+    while (it.next()) |entry| {
+        if (isStashed(entry.view)) continue;
+        if (current != null and entry.view == current.?) return entry.view;
+        if (first == null) first = entry.view;
+    }
+    return first;
+}
+
 /// Whether more than one pane is on screen — the stash-aware "is this tab
 /// split", for every question about what the user can SEE (dim overlays,
 /// divider paint, hero mode).
@@ -385,6 +402,41 @@ fn threePane(alloc: std.mem.Allocator, a: *TestView, b: *TestView, c: *TestView)
     var bc = try tb.split(alloc, .root, .down, 0.5, &tc);
     defer bc.deinit();
     return try ta.split(alloc, .root, .right, 0.5, &bc);
+}
+
+test "pane_stash: focus after a tree swap keeps a surviving pane, else the top-left one (T1371)" {
+    const alloc = std.testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var gone: TestView = .{ .label = "gone" };
+    var tree = try threePane(alloc, &a, &b, &c);
+    defer tree.deinit();
+
+    // A `down` split stores the new pane before the one it displaced, so the
+    // storage walk meets C before B even though B is above it. The fallback
+    // must not depend on that.
+    var bt = try Tree.init(alloc, &b);
+    defer bt.deinit();
+    var ct = try Tree.init(alloc, &c);
+    defer ct.deinit();
+    var bc = try bt.split(alloc, .root, .down, 0.5, &ct);
+    defer bc.deinit();
+    var storage = bc.iterator();
+    try std.testing.expectEqual(&c, storage.next().?.view);
+    try std.testing.expectEqual(&b, keepOrFirstVisible(bc, &gone).?);
+    try std.testing.expectEqual(&b, keepOrFirstVisible(bc, null).?);
+
+    // A surviving pane keeps focus wherever it sits.
+    try std.testing.expectEqual(&c, keepOrFirstVisible(tree, &c).?);
+    try std.testing.expectEqual(&a, keepOrFirstVisible(tree, &gone).?);
+
+    // Stashed panes are never picked, even when they were focused or sit
+    // first on screen.
+    mark(&a);
+    try std.testing.expectEqual(&b, keepOrFirstVisible(tree, &a).?);
+    try std.testing.expectEqual(&b, keepOrFirstVisible(tree, &gone).?);
+    unmark(&a);
 }
 
 test "pane_stash: stash and restore change only the mark, never the tree" {

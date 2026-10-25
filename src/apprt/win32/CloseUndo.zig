@@ -47,6 +47,7 @@ const IpcRegistry = @import("IpcRegistry.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const msg_timer = @import("msg_timer.zig");
 const pane_id = @import("pane_id.zig");
+const pane_stash = @import("pane_stash.zig");
 const pane_stack_state = @import("pane_stack_state.zig");
 const tab_color = @import("tab_color.zig");
 const w32 = @import("win32.zig");
@@ -779,9 +780,14 @@ pub fn paneGone(self: *CloseUndo, pane: *PaneView) bool {
                 } else if (t.tree.remove(alloc, handle)) |smaller| {
                     var old = t.tree;
                     t.tree = smaller;
+                    // The top-left pane on screen inherits it, not the
+                    // first in storage order (T1371); a tab left with only
+                    // stashed panes still names one of its own.
                     if (t.active == pane) {
-                        var first = t.tree.iterator();
-                        if (first.next()) |entry| t.active = entry.view;
+                        var leaves = t.tree.leafIterator();
+                        const top_left = leaves.next();
+                        if (pane_stash.keepOrFirstVisible(t.tree, null) orelse
+                            (if (top_left) |e| e.view else null)) |v| t.active = v;
                     }
                     old.deinit();
                 } else |_| {

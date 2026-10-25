@@ -1492,17 +1492,12 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     }
     _ = pane_stash.normalize(&window.tab_trees[tab]);
 
-    // Focus: keep the focused pane if it survived, else the first leaf.
-    const focus: *PaneView = focus: {
-        var it = window.tab_trees[tab].iterator();
-        var first: ?*PaneView = null;
-        while (it.next()) |view_entry| {
-            if (pane_stash.isStashed(view_entry.view)) continue;
-            if (first == null) first = view_entry.view;
-            if (view_entry.view == current_focus) break :focus current_focus;
-        }
-        break :focus first.?; // validated non-empty layout above
-    };
+    // Focus: keep the focused pane if it survived, else the top-left one on
+    // screen (Mac `leftmostLeaf()`, T1371) - never storage order.
+    const focus: *PaneView = pane_stash.keepOrFirstVisible(
+        window.tab_trees[tab],
+        current_focus,
+    ).?; // validated non-empty layout above
     window.tab_active_pane[tab] = focus;
     window.heroOnTreeChanged(tab);
     window.layoutSplits();
