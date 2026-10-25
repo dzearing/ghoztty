@@ -356,7 +356,7 @@ In the mini rail the three stack vertically at the top of the card.
   stripped, when it has one — the banner hooks keep it as a live
   title/goal/status, the most useful single line about an agent pane.
   Otherwise the working directory, `~`-abbreviated, or a viewer's location.
-- **State**, using the human labels, never the machine tokens (`CLAUDE.md` →
+- **State**, using the human labels, never the machine tokens (`docs/reference/cli-commands.md` →
   `+set-state`):
   - `busy`: **the icon shimmers.** The glyph is drawn as a dim base with a
     brighter band sweeping across it (~1.1s sweep, ~0.3s rest). No spinner,
@@ -579,7 +579,7 @@ roughly a column or two per split, which is the trade for the depth.
 
 ## CLI
 
-Extends the contract in `CLAUDE.md` → "Pane identity" and "Naming" without
+Extends the contract in `docs/reference/cli-targeting.md` → "Pane identity" and "Naming" without
 changing any existing field.
 
 - **Everything keeps working on a stashed pane** (`+send-keys`, `+read`,

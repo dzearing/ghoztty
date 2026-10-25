@@ -1,0 +1,112 @@
+# Pane style (`macos-pane-style`) and glass panes
+
+How a window's panes look: elevated cards on a gradient desk, glass panes,
+focus glow and unfocused dimming. Read before touching `PaneElevation` /
+`PaneDesk` / `PaneCard` / `PaneGlass` / `PaneFocusGlow`, window gradients, or
+anything painted behind or over a pane. Settled in the pane-sidebar mock
+(`docs/design/pane-sidebar.md` → Pane style). Stacking geometry is in
+[stacked-panes.md](stacked-panes.md); resize pacing in
+[terminal-resize.md](terminal-resize.md).
+
+## Styles
+
+- **`elevated`** (default): panes are slightly raised rounded cards (11pt
+  radius, a soft two-layer shadow, a hairline rim) on a soft blue-to-teal
+  **ocean** gradient. ONE spacing, 10pt, is every gutter: pane to pane (the
+  gaps are still the dividers), pane to window edge, and around the mini rail
+  (which takes no trailing margin of its own — the grid's is that gap).
+- **`flat`**: the classic edge-to-edge look with a 1px `split-divider-color`
+  line drawn down the middle of a 6pt gutter (`PaneLayout.Metrics.flatGap`) —
+  a real gutter, because gutters are where the resize grips live. Its panes
+  stack like any other.
+- Geometry and palette live once in `PaneElevation`/`PaneDesk`/`PaneCard`
+  (`Features/Splits/PaneElevation.swift`), used by the grid AND the hidden
+  stashed-pane slots — the slots must lay out exactly like the grid or a
+  restored pane would reflow.
+- The pinned pane sidebar goes translucent so the gradient runs under it.
+- A translucent terminal (`background-opacity` < 1) gets an equally
+  translucent gradient.
+
+## Window gradients and `--color`
+
+**A window opened by hand (Cmd-N, the New Window menu item / palette command)
+gets a random gradient by default**, exactly as **`+new-window --color=random`**
+does. In the elevated style that gives the window its OWN gradient
+(`PaneDeskVariant`: a persisted seed; ONE random hue from the whole wheel, with
+a soft spotlight from the top center, getting darker toward the
+bottom-trailing corner on a dark theme and lighter on a light one, where a dim
+pool of the **complementary** hue subtly lights that corner) and leaves the
+terminals their theme color. An explicit `--color=#hex`, `random` on a split,
+and `random` in the `flat` style still tint the terminal background.
+(See also `docs/design/window-color.md`.)
+
+## Glass panes (`macos-pane-glass`, default `true`, elevated only)
+
+Each pane is a translucent sheet tinted with the terminal's own background
+(Liquid Glass on macOS 26, a plain tint before — `PaneGlass`), so the
+gradient's light and shade read through every pane.
+
+**Tint levels**: focused pane `PaneGlass.tint` 40%; unfocused pane
+`PaneGlass.unfocusedTint` 15%; under a banner card `PaneGlass.bannerTint` 25%
+(never below an unfocused pane's 15%).
+
+- The renderer stops drawing the terminal's background (`generic.zig`
+  `pane_glass`, the same switch the `macos-glass-*` blur styles use).
+- **Banner card**: the banner strip skips its base fill, and the card is a
+  pane of glass of its own layered on top — the pane's sheet thins to
+  `bannerTint` under it (the card publishes its frame up to `PaneCard` as
+  `PaneBannerCardKey`), and the card itself is rim and drop shadow only, no
+  white wash and no sheen (`SurfacePaneBanner.isGlass`). A white lift, or a
+  second Liquid Glass sheet, greyed the gradient into a flat slab
+  (`bannerOnGlassLetsTheGradientThrough`). `flat` and elevated-without-glass
+  keep the wash.
+- **Viewers**: template pages (markdown/code/diff/image) go see-through
+  (`ViewerView.isOnGlass`, a `pane-glass` class in `viewer.css`); websites and
+  HTML files keep their own background.
+- **Titlebar**: the gradient runs up under it — the transparent-titlebar window
+  turns on `.fullSizeContentView` and `titlebarAppearsTransparent` (macOS 26
+  otherwise backs it with a material), and the desk sits behind the whole
+  content stack. Any `.background(Color)` in that stack must pass
+  `ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the
+  titlebar.
+- **Sidebar on glass**: the unpinned sidebar's card is the same tinted glass
+  (`SidePanelCard(isGlass:)`); the header is no band of its own (the list
+  starts below it); the pinned panel's edge is a pane-rim hairline; glyphs are
+  the mock's icon set drawn natively (`PaneSidebarSymbol`), not SF Symbols.
+  Folding a window or project group animates.
+- **Hero mode** shows its pane as the same glass card — the hero container
+  paints no fill of its own on glass (`HeroPaneContainer.isGlass`).
+- **A stacked row has no solid cards**: a tucked card is a card of the
+  strip's size, so nothing lies under a card on show and every card and strip
+  is glass (see [stacked-panes.md](stacked-panes.md)).
+
+## Focus: backlit focused pane, see-through unfocused panes
+
+- In the elevated style the **focused pane** (of several) is **backlit**: a
+  soft white light behind the card spills past its edges onto the desk, masked
+  to outside the card so it never lightens the pane's own glass
+  (`PaneFocusGlow`, driven by `PaneView.isFocusedPane`; `PaneFocusGlowTests`).
+- **On glass, an unfocused pane is the MORE see-through one.** Its tint drops
+  to `unfocusedTint`, and an unfocused **terminal** also fades as a whole — its
+  content (text included) and its sheet, each at `unfocused-split-opacity`
+  (default 0.7) — animated with the focus change. A **viewer** gets the thinner
+  sheet only; its page is never faded.
+- Upstream's unfocused dimming (a wash of `unfocused-split-fill` at
+  `1 - unfocused-split-opacity` drawn OVER the pane) is not drawn on glass —
+  over a translucent sheet it made unfocused panes the more opaque ones.
+  `flat`, and `elevated` without glass, keep the wash and honor both keys.
+- Switches: `PaneCard.isDimmed` (one of several panes, not the focused one)
+  and `PaneCard.dimmedOpacity`. The fades animate opacity ONLY (`FocusFade`) —
+  a strip click changes focus and a card's size in one update, and an
+  `.animation(_:value:)` over the card would animate the frame too, resizing
+  the terminal on every frame.
+
+## Tests
+
+Measured on the composited window (how much of the desk in the gutter beside a
+pane its glass hides): `glassPanesLetTheGradientThrough` (also writes a
+ScreenCaptureKit capture of its own window),
+`unfocusedGlassPanesAreMoreTransparent`, `stackedRowCardsOnShowStayGlass`,
+`heroModeIsGlassLikeAFocusedPane` (`PaneSidebarWindowTests`),
+`bannerOnGlassLetsTheGradientThrough`; layout rule `noCardIsDrawnOverAnother`
+(`PaneLayoutTests`).
