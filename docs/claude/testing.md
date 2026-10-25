@@ -1821,3 +1821,17 @@ What to do about it:
   blank is normally an error; that switch accepts it, and a probe carrying it
   is a probe with nothing left to notice a capture that drew less than it
   should have.
+
+**When you correct a claim about the code, register it so it cannot come back**
+(T1342). A sentence that turned false gets copied: T1158 fixed a line saying
+the agent pipe had no env override in one file, and the same claim stood in four more for
+twelve days, until a turn happened to grep for it (T490). Fixing the copy you
+found is half the job. The other half is a row in
+`test\win32\lib\RetiredClaims.ps1`: the claim as a pattern, the change that
+made it false, the commit that corrected it, where the truth lives, and a
+`Proofs` pair (a commit and a path where the claim was present). Then
+`test\win32\doc-claims.ps1` fails the tree if the claim shows up again in any
+live doc, script, harness header or open task. It also fails if the pattern
+stops matching the sentence it retired. The session log, digests, decisions,
+closed tasks and progress logs are history and are not scanned. A quoted
+mention is allowed.

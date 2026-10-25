@@ -4759,6 +4759,27 @@ $GuardTable = @(
             'test\win32\merge-terminology.ps1'
         )
     },
+    # The retired-claims lint (T1342): a sentence the code made false must not
+    # come back. T1158 corrected "the agent pipe has no env override" in one
+    # file and the same claim stood in four more for twelve days (T490). The
+    # registry is the library; the scan is the whole tracked tree, so the row
+    # covers the registry, the harness, and the docs and harness headers where
+    # the seed claim lived - an edit to any of them re-proves the tree. Static
+    # scan, a few seconds.
+    [pscustomobject]@{
+        Name   = 'doc-claims'
+        Script = 'test\win32\doc-claims.ps1'
+        Stamp  = 'test\win32\doc-claims.stamp.json'
+        Covers = @(
+            'CLAUDE.md',
+            'go.md',
+            'docs\claude\*.md',
+            'test\win32\lib\BuildMode.ps1',
+            'test\win32\lib\Isolation.ps1',
+            'test\win32\lib\RetiredClaims.ps1',
+            'test\win32\doc-claims.ps1'
+        )
+    },
     # The feedback user-report rule (T1321): a report drained from the viewer
     # feedback queue is a USER report, so the pass that fixes one records a
     # release request and files what it defers with `-UserReport` - otherwise
