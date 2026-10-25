@@ -51,16 +51,50 @@
 .PARAMETER NoResolve
     Skip the PnP device walk (fast, and the only mode that works off a fixture
     naming devices this box does not have).
+
+.PARAMETER Claim
+    T1335 - the mode `go-loop-exec.ps1 claim` runs every turn. Same reading of
+    the log, opposite presentation, because the two classes deserve opposite
+    treatment at the top of a turn:
+
+      * CORRECTED errors print NOTHING, however many there are. ~267 a day is
+        noise to a turn, and a block that appears every turn trains the reader
+        to skip it - which is exactly what must not happen to the next class.
+      * UNCORRECTED errors print ONE block, once: the event, the source and the
+        device resolved as the full report resolves it. The newest reported
+        event's time goes into -WatermarkPath, so the next turn stays silent
+        until there is a NEW one. It reads as news, never as a standing state.
+
+    Only the uncorrected IDs are queried from the live log, so the corrected
+    flood is never formatted, and the PnP walk runs only when there is
+    something to name. Always exits 0: a claim that could fail over the state
+    of the hardware log would wedge the loop, which is the disease, not the
+    cure. -Days is the look-back on a first run (no watermark yet; default 7).
+
+.PARAMETER WatermarkPath
+    Claim mode: where the last reported event's time is kept. Default
+    temp\go-loop.whea.json; claim passes the path beside its lock.
 #>
 [CmdletBinding()]
 param(
     [int]$Days = 30,
     [switch]$Json,
     [string]$InputPath,
-    [switch]$NoResolve
+    [switch]$NoResolve,
+    [switch]$Claim,
+    [string]$WatermarkPath
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Test seam (T1335): the claim harness cannot plant an event in the real
+# System log, so it names a fixture here, the same way GHOZTTY_CI_RUNS_JSON
+# stands in for `gh` under ci-status.ps1.
+if (-not $InputPath -and $env:GHOZTTY_WHEA_FIXTURE) { $InputPath = $env:GHOZTTY_WHEA_FIXTURE }
+if ($Claim -and -not $PSBoundParameters.ContainsKey('Days')) { $Days = 7 }
+if ($Claim -and -not $WatermarkPath) {
+    $WatermarkPath = Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'temp') 'go-loop.whea.json'
+}
 
 # What each WHEA-Logger event ID means. Deliberately explicit: an ID that is
 # not in here is reported as UNCLASSIFIED rather than assumed harmless, because
@@ -170,6 +204,15 @@ function Resolve-WheaDevice([string]$hardwareId) {
 # --- gather ---------------------------------------------------------------
 
 $since = (Get-Date).AddDays(-[math]::Abs($Days))
+$watermark = $null
+if ($Claim -and (Test-Path -LiteralPath $WatermarkPath)) {
+    try {
+        $wm = Get-Content -LiteralPath $WatermarkPath -Raw | ConvertFrom-Json
+        if ($wm.lastReported) { $watermark = [datetime]::Parse([string]$wm.lastReported, $null, 'RoundtripKind') }
+    } catch { $watermark = $null }   # an unreadable watermark re-reports once; never throws
+}
+if ($watermark -and $watermark -gt $since) { $since = $watermark }
+$uncorrectedIds = @($script:WheaIds.Keys | Where-Object { $script:WheaIds[$_].Class -eq 'UNCORRECTED' } | Sort-Object)
 $events = @()
 $source = 'System event log'
 
@@ -190,11 +233,16 @@ if ($InputPath) {
     try {
         # NO Level filter, ever. That filter is the defect this script was
         # written to make impossible to reintroduce.
-        $raw = @(Get-WinEvent -FilterHashtable @{
+        $filter = @{
             LogName      = 'System'
             ProviderName = 'Microsoft-Windows-WHEA-Logger'
             StartTime    = $since
-        } -ErrorAction Stop)
+        }
+        # Claim mode asks only for the uncorrected IDs - selected by what the
+        # ID MEANS, which is not a level filter - so the corrected flood is
+        # never fetched or formatted on a path that runs every turn.
+        if ($Claim) { $filter.Id = $uncorrectedIds }
+        $raw = @(Get-WinEvent -FilterHashtable $filter -ErrorAction Stop)
     } catch {
         # Get-WinEvent throws rather than returning empty when a filter matches
         # nothing, which is genuinely the clean case.
@@ -224,6 +272,51 @@ $rows = foreach ($e in $events) {
     }
 }
 $rows = @($rows)
+
+# --- claim: news, once ----------------------------------------------------
+
+if ($Claim) {
+    # The fixture path holds every class and the live path may too, so the
+    # class and the watermark are both re-applied here rather than trusted.
+    $new = @($rows | Where-Object {
+            $_.Class -eq 'UNCORRECTED' -and $_.TimeCreated -ge (Get-Date).AddDays(-[math]::Abs($Days)) -and
+            (-not $watermark -or $_.TimeCreated -gt $watermark)
+        } | Sort-Object TimeCreated)
+    if ($new.Count -eq 0) { exit 0 }     # silence IS the corrected-only answer
+
+    $sinceText = if ($watermark) { "since $($watermark.ToString('yyyy-MM-dd HH:mm'))" } else { "in $Days days" }
+    "  WHEA UNCORRECTED: $($new.Count) new hardware error(s) $sinceText - the fault reached the machine (T1335; reported once)"
+    foreach ($g in ($new | Group-Object Hardware, Bdf)) {
+        $first = $g.Group[0]
+        $where = if ($first.Bdf) { " at $($first.Bdf)" } else { '' }
+        $whats = (@($g.Group | ForEach-Object { "id $($_.Id) $($_.What)" } | Sort-Object -Unique) -join '; ')
+        "    $($g.Count) x $($first.Hardware)$where - $whats"
+        "      last: $($g.Group[-1].TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'))"
+        if (-not $NoResolve) {
+            $res = $null
+            try { $res = Resolve-WheaDevice $first.Hardware } catch { $res = $null }
+            if ($res -and $res.Name)   { "      device:    $($res.Name)" }
+            if ($res -and $res.Behind) { "      behind it: $($res.Behind)" }
+            foreach ($d in @(if ($res) { $res.Disks })) {
+                $l = if ($d.Letters.Count) { ($d.Letters -join ' ') } else { '(no drive letter)' }
+                "      disk $($d.Number): $($d.Model) -> $l"
+            }
+        }
+    }
+    "    full report: powershell -NoProfile -File scripts\whea-report.ps1 -Days $Days"
+    try {
+        $dir = Split-Path -Parent $WatermarkPath
+        if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+        ([ordered]@{
+            lastReported = $new[-1].TimeCreated.ToString('o')
+            count        = $new.Count
+            reportedAt   = (Get-Date).ToString('o')
+        } | ConvertTo-Json) | Out-File -FilePath $WatermarkPath -Encoding utf8
+    } catch {
+        "    (watermark not written: $($_.Exception.Message) - the next turn will repeat this block)"
+    }
+    exit 0
+}
 
 $counts = @{ CORRECTED = 0; UNCORRECTED = 0; INFORMATIONAL = 0; UNCLASSIFIED = 0 }
 foreach ($r in $rows) { $counts[$r.Class] = $counts[$r.Class] + 1 }

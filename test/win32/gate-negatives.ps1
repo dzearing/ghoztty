@@ -49,7 +49,8 @@
          the positive control on a clean, pushed, wired repo. Nothing on the
          live box is touched: the claim runs with `-Repo` pointed at the
          fixture, so its lock, its snapshot and its boot record all land in the
-         fixture's own `temp\`.
+         fixture's own `temp\`. C13-C17 plant hardware-error fixtures (T1335):
+         an uncorrected event is named once, corrected-only is silent.
       D. The rule is WRITTEN DOWN: `go.md` states it and names this harness, so
          the next person adding a gate is told rather than expected to know.
 
@@ -228,6 +229,12 @@ $Registry = @(
     # so an unsent continuation would read as empty. Reported, never refused -
     # the remedy is teaching the probe the new chrome - and driven red against a
     # drifted chrome in BB38-BB41 of the loop guard.
+    # T1335. An uncorrected hardware error since the last report. Reported
+    # once and never refused - the hardware log is not a state a turn can clear
+    # - and driven red (C14/C17), silent (C13) and watermarked (C16) in section C.
+    [pscustomobject]@{ Label = 'WHEA UNCORRECTED'; Kind = 'gate'; Demo = $Self
+        Marker = 'WHEA UNCORRECTED'; Via = 'scripts\whea-report.ps1'
+    }
     [pscustomobject]@{ Label = 'COMPOSER UNRECOGNISED'; Kind = 'gate'; Demo = $Loop
         Marker = 'COMPOSER UNRECOGNISED'; Via = 'scripts\go-loop-pane-probe.ps1'
     }
@@ -687,6 +694,58 @@ try {
         ($r.Text -match 'DIGEST INCOMPLETE: .*## Task triage, ## Feature ideas' -and
             $r.Text -notmatch "digest present") $r.Text
     [void](Invoke-GitIn $green @('checkout', '-q', '--', '.'))
+
+    # T1335: an UNCORRECTED hardware error reaches the next turn once, and a
+    # corrected-only window - hundreds a day on this box - says nothing at all.
+    # The real System log cannot be planted, so the fixture stands in for it
+    # through the same -InputPath seam test\win32\whea-report.ps1 scores with.
+    $wheaDir = Join-Path $Sandbox 'whea'
+    New-Item -ItemType Directory -Force -Path $wheaDir | Out-Null
+    # One fixed instant, so the same minute offset is the same EVENT in every fixture.
+    $wheaBase = Get-Date
+    function New-WheaFixture {
+        param([string]$Name, [object[]]$Events)
+        $path = Join-Path $wheaDir "$Name.json"
+        $rows = foreach ($e in $Events) {
+            [pscustomobject]@{
+                TimeCreated = $wheaBase.AddMinutes(-[int]$e[0]).ToString('o'); Id = [int]$e[1]
+                LevelDisplayName = [string]$e[2]
+                Message = "Component: PCI Express Root Port`nPrimary Device Name: $($e[3])`nPrimary Bus:Device:Function: 0x0:0x1C:0x0"
+            }
+        }
+        Write-Ascii $path @((ConvertTo-Json -InputObject @($rows) -Depth 3))
+        return $path
+    }
+    function Invoke-WheaClaim {
+        param([string]$Fixture)
+        $env:GHOZTTY_WHEA_FIXTURE = $Fixture
+        try { return Invoke-Claim $green 'GATE-NEG-GREEN-0001' }
+        finally { Remove-Item Env:GHOZTTY_WHEA_FIXTURE -ErrorAction SilentlyContinue }
+    }
+    $corrOnly = New-WheaFixture 'corrected' @(
+        @(90, 17, 'Warning', 'PCI\VEN_8086&DEV_7A30&REV_11'), @(80, 17, 'Warning', 'PCI\VEN_8086&DEV_7A30&REV_11'),
+        @(70, 19, 'Warning', 'PCI\VEN_8086&DEV_7A30&REV_11'), @(60, 47, 'Warning', 'PCI\VEN_8086&DEV_7A30&REV_11'))
+    $r = Invoke-WheaClaim $corrOnly
+    Check 'C13 a corrected-only hardware log produces NO WHEA line at all, and claim exits 0' `
+        ($r.Code -eq 0 -and $r.Text -notmatch 'WHEA UNCORRECTED') "exit=$($r.Code): $($r.Text)"
+
+    $uncorr = New-WheaFixture 'uncorrected' @(
+        @(90, 17, 'Warning', 'PCI\VEN_8086&DEV_7A30&REV_11'),
+        @(30, 18, 'Error', 'PCI\VEN_GATE&DEV_0E61&REV_01'))
+    $r = Invoke-WheaClaim $uncorr
+    Check 'C14 an uncorrected hardware error is reported as WHEA UNCORRECTED, naming its source' `
+        ($r.Text -match 'WHEA UNCORRECTED: 1 new' -and $r.Text -match 'PCI\\VEN_GATE&DEV_0E61' -and
+            $r.Text -match 'id 18 fatal hardware error') $r.Text
+    Check 'C15 ...the corrected event beside it is not counted, and claim still exits 0' `
+        ($r.Code -eq 0 -and $r.Text -notmatch 'VEN_8086') "exit=$($r.Code): $($r.Text)"
+    $r = Invoke-WheaClaim $uncorr
+    Check 'C16 the same event does not reappear on the following turn (watermarked)' `
+        ($r.Code -eq 0 -and $r.Text -notmatch 'WHEA UNCORRECTED') "exit=$($r.Code): $($r.Text)"
+    $again = New-WheaFixture 'uncorrected-later' @(
+        @(30, 18, 'Error', 'PCI\VEN_GATE&DEV_0E61&REV_01'), @(1, 46, 'Error', 'PCI\VEN_GATE&DEV_0E62&REV_01'))
+    $r = Invoke-WheaClaim $again
+    Check 'C17 ...but a NEW uncorrected event after the watermark is reported, and only it' `
+        ($r.Text -match 'WHEA UNCORRECTED: 1 new' -and $r.Text -match 'DEV_0E62' -and $r.Text -notmatch 'DEV_0E61') $r.Text
 
     # =======================================================================
     Say ''

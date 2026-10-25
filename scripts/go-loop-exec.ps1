@@ -572,6 +572,21 @@ switch ($Action) {
             foreach ($line in ($bootOut -split "`r?`n")) { if ($line.Trim()) { $line } }
         }
 
+        # T1335: an UNCORRECTED hardware error since the last report. The crash
+        # hunt's most decisive possible evidence used to wait in the event log
+        # for somebody to think of asking (T449 asked once, wrongly). Corrected
+        # errors - hundreds a day here - print nothing at all; an uncorrected
+        # one prints once, device named, and its time is watermarked beside the
+        # lock so the next turn is silent until there is a new one. Reported,
+        # never refused: the hardware log is not a state a turn can clear.
+        $wheaScript = Join-Path $PSScriptRoot 'whea-report.ps1'
+        if (Test-Path -LiteralPath $wheaScript) {
+            $wheaMark = $LockPath -replace '\.lock\.json$', '.whea.json'
+            if ($wheaMark -eq $LockPath) { $wheaMark = "$LockPath.whea.json" }
+            $wheaOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $wheaScript -Claim -WatermarkPath $wheaMark 2>&1 | Out-String
+            foreach ($line in ($wheaOut -split "`r?`n")) { if ($line.Trim()) { $line } }
+        }
+
         # T847: anything dirty in the tree RIGHT NOW is a dead turn's work -
         # this turn has not touched a file yet. The CLAUDE.md split sat
         # uncommitted for two days while task commits landed around it, because
