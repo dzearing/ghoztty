@@ -1262,6 +1262,14 @@ pub extern "gdi32" fn DeleteObject(
     ho: *anyopaque,
 ) callconv(.winapi) i32;
 
+/// The COLORREF at (x, y) in `hdc`, or `CLR_INVALID` outside its clip region.
+pub extern "gdi32" fn GetPixel(
+    hdc: HDC,
+    x: i32,
+    y: i32,
+) callconv(.winapi) u32;
+pub const CLR_INVALID: u32 = 0xFFFFFFFF;
+
 pub extern "user32" fn FillRect(
     hDC: HDC,
     lprc: *const RECT,

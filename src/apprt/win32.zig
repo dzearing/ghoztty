@@ -159,4 +159,9 @@ test {
     // and what a session event means for it.
     _ = @import("win32/occlusion.zig");
     _ = @import("win32/remote_session.zig");
+    // The floating chrome's one reposition path (T1392) and the pixel proof of
+    // what its SWP_NOCOPYBITS does (T1348). Five overlays import it, and its
+    // tests still ran nowhere until this line: a `-Dtest-filter=chrome_reposition`
+    // run matched nothing.
+    _ = @import("win32/chrome_reposition.zig");
 }
