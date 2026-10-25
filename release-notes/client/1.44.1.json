@@ -1,0 +1,11 @@
+{
+  "version": "1.44.1",
+  "sections": [
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Gutter highlight goes away after a drag", "text": "Letting go of a resize drag with the pointer still on the gutter, then moving away, no longer leaves the gutter's highlight bar lit. Before, it stayed on until you hovered the gutter and left again. This applies to split gutters and the viewer side panel's resize edge." }
+      ]
+    }
+  ]
+}

@@ -508,6 +508,34 @@ pub fn buildRequestWithHandoff(
     arguments: ?[]const [:0]const u8,
     handoff_id: ?handoff.Identity,
 ) Allocator.Error![]u8 {
+    // A missing or unreadable variable is simply "no caller pane".
+    const caller_pane: ?[]u8 = std.process.getEnvVarOwned(alloc, caller_pane_env) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => null,
+    };
+    defer if (caller_pane) |p| alloc.free(p);
+    return buildRequestFrom(alloc, action, arguments, handoff_id, caller_pane);
+}
+
+/// The variable a pane's shell carries its own pane id in. Spelled here
+/// rather than imported (`os/` does not reach into `remote/`);
+/// `apprt/ipc.zig` asserts it equals the agent protocol's `pane_id_env`.
+pub const caller_pane_env = "GHOZTTY_PANE_ID";
+
+/// `buildRequestWithHandoff` with the caller pane injected, so the wire shape
+/// is testable without the process environment (tests run inside a pane).
+///
+/// `caller_pane` (main 71da9a680, T2249) is the pane the command came FROM:
+/// the app looks a NAME up in the caller's own window first, since pane names
+/// belong to the window they were created in. It is a top-level field, not an
+/// argument, so an older app ignores it. Empty means none.
+fn buildRequestFrom(
+    alloc: Allocator,
+    action: []const u8,
+    arguments: ?[]const [:0]const u8,
+    handoff_id: ?handoff.Identity,
+    caller_pane: ?[]const u8,
+) Allocator.Error![]u8 {
     var json_buf: std.Io.Writer.Allocating = .init(alloc);
     errdefer json_buf.deinit();
     var jws: std.json.Stringify = .{ .writer = &json_buf.writer };
@@ -523,6 +551,10 @@ pub fn buildRequestWithHandoff(
             for (args) |arg| jws.write(arg) catch break :write;
             jws.endArray() catch break :write;
         }
+        if (caller_pane) |pane| if (pane.len > 0) {
+            jws.objectField("caller_pane") catch break :write;
+            jws.write(pane) catch break :write;
+        };
         if (handoff_id) |id| {
             jws.objectField("handoff") catch break :write;
             jws.beginObject() catch break :write;
@@ -915,7 +947,7 @@ test "parseRunningInstance: an older build's reply offers no switch (T1070)" {
 
 test "buildRequest: no handoff object unless a launch supplies one (T1022)" {
     const testing = std.testing;
-    const json = try buildRequest(testing.allocator, "new-window", null);
+    const json = try buildRequestFrom(testing.allocator, "new-window", null, null, null);
     defer testing.allocator.free(json);
     try testing.expectEqualStrings("{\"action\":\"new-window\"}", json);
     try testing.expect(std.mem.indexOf(u8, json, "handoff") == null);
@@ -924,11 +956,12 @@ test "buildRequest: no handoff object unless a launch supplies one (T1022)" {
 test "buildRequestWithHandoff: the launch's build rides beside the arguments (T1022)" {
     const testing = std.testing;
     const args = [_][:0]const u8{"--working-directory=D:\\proj"};
-    const json = try buildRequestWithHandoff(
+    const json = try buildRequestFrom(
         testing.allocator,
         "new-window",
         &args,
         .{ .version = "1.4.0", .commit = "abc1234", .exe = "D:\\a\\ghoztty.exe" },
+        null,
     );
     defer testing.allocator.free(json);
 
@@ -1005,7 +1038,7 @@ test "clientEndpointPath: an explicit suffix outranks the baked endpoint" {
 
 test "buildRequest: action only omits arguments" {
     const testing = std.testing;
-    const json = try buildRequest(testing.allocator, "list", null);
+    const json = try buildRequestFrom(testing.allocator, "list", null, null, null);
     defer testing.allocator.free(json);
     try testing.expectEqualStrings("{\"action\":\"list\"}", json);
 }
@@ -1013,7 +1046,7 @@ test "buildRequest: action only omits arguments" {
 test "buildRequest: arguments array" {
     const testing = std.testing;
     var args_buf = [_][:0]const u8{ "--name=logs", "--lines=5" };
-    const json = try buildRequest(testing.allocator, "read", &args_buf);
+    const json = try buildRequestFrom(testing.allocator, "read", &args_buf, null, null);
     defer testing.allocator.free(json);
     try testing.expectEqualStrings(
         "{\"action\":\"read\",\"arguments\":[\"--name=logs\",\"--lines=5\"]}",
@@ -1021,9 +1054,23 @@ test "buildRequest: arguments array" {
     );
 }
 
+test "buildRequest: every request carries the pane it came from (main 71da9a680)" {
+    const testing = std.testing;
+    const args = [_][:0]const u8{"--target=draft"};
+    for ([_]struct { pane: ?[]const u8, want: []const u8 }{
+        .{ .pane = "PANE-1", .want = "{\"action\":\"close\",\"arguments\":[\"--target=draft\"],\"caller_pane\":\"PANE-1\"}" },
+        .{ .pane = null, .want = "{\"action\":\"close\",\"arguments\":[\"--target=draft\"]}" },
+        .{ .pane = "", .want = "{\"action\":\"close\",\"arguments\":[\"--target=draft\"]}" },
+    }) |case| {
+        const json = try buildRequestFrom(testing.allocator, "close", &args, null, case.pane);
+        defer testing.allocator.free(json);
+        try testing.expectEqualStrings(case.want, json);
+    }
+}
+
 test "buildRequest: empty arguments still writes the field" {
     const testing = std.testing;
-    const json = try buildRequest(testing.allocator, "new-remote-window", &.{});
+    const json = try buildRequestFrom(testing.allocator, "new-remote-window", &.{}, null, null);
     defer testing.allocator.free(json);
     try testing.expectEqualStrings(
         "{\"action\":\"new-remote-window\",\"arguments\":[]}",

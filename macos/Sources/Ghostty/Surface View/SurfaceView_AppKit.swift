@@ -581,6 +581,70 @@ extension Ghostty {
             }
         }
 
+        /// A copy of the frame on screen, for showing in the terminal's place
+        /// while it resizes out of sight (the pane banner's collapse/expand).
+        /// A copy, not the renderer's own IOSurface: that one is in its swap
+        /// chain and gets drawn into again. Same pixels, pixel format and
+        /// color space, so the swap back to the live terminal is invisible.
+        func frozenFrame() -> (surface: IOSurface, scale: CGFloat)? {
+            guard let layer, let contents = layer.contents else { return nil }
+            guard CFGetTypeID(contents as CFTypeRef) == IOSurfaceGetTypeID() else { return nil }
+            let src = contents as! IOSurface
+            guard let dst = IOSurface(properties: [
+                .width: src.width,
+                .height: src.height,
+                .pixelFormat: src.pixelFormat,
+                .bytesPerElement: src.bytesPerElement,
+                .bytesPerRow: src.bytesPerRow,
+            ]) else { return nil }
+            src.lock(options: .readOnly, seed: nil)
+            dst.lock(options: [], seed: nil)
+            memcpy(dst.baseAddress, src.baseAddress, min(src.allocationSize, dst.allocationSize))
+            dst.unlock(options: [], seed: nil)
+            src.unlock(options: .readOnly, seed: nil)
+            if let space = IOSurfaceCopyValue(src, kIOSurfaceColorSpace) {
+                IOSurfaceSetValue(dst, kIOSurfaceColorSpace, space)
+            }
+            return (dst, layer.contentsScale)
+        }
+
+        /// The next resize is applied to the terminal at once (not after the
+        /// resize debounce), and `done` runs once it has landed: the renderer
+        /// presents frames at the new size and they have stopped changing —
+        /// the shell redrew its prompt, a full-screen program repainted.
+        /// Capped, for a program that never stops drawing.
+        func resizeOutOfSight(then done: @escaping () -> Void) {
+            settle?.timer.invalidate()
+            flushNextResize = true
+            let start = CACurrentMediaTime()
+            var last: ObjectIdentifier?
+            var lastChange = start
+            let timer = Timer(timeInterval: 1.0 / 240, repeats: true) { [weak self] timer in
+                guard let self else { timer.invalidate(); return }
+                let now = CACurrentMediaTime()
+                let contents = self.layer?.contents.map { ObjectIdentifier($0 as AnyObject) }
+                if contents != last { last = contents; lastChange = now }
+                let landed = self.settle?.height.map { height in
+                    (self.layer?.contents).map { CFGetTypeID($0 as CFTypeRef) == IOSurfaceGetTypeID()
+                        && ($0 as! IOSurface).height == height } ?? false
+                } ?? false
+                guard (landed && now - lastChange >= Self.settleQuiet) || now - start >= Self.settleCap else { return }
+                timer.invalidate()
+                self.settle = nil
+                done()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            settle = (timer, nil)
+        }
+
+        /// How long frames must stop changing for a resize to have landed,
+        /// and the longest `resizeOutOfSight` waits regardless.
+        static let settleQuiet: CFTimeInterval = 0.04
+        static let settleCap: CFTimeInterval = 0.5
+
+        private var flushNextResize = false
+        private var settle: (timer: Timer, height: Int?)?
+
         override func sizeDidChange(_ size: CGSize) {
             // Ghostty wants to know the actual framebuffer size... It is very important
             // here that we use "size" and NOT the view frame. If we're in the middle of
@@ -597,6 +661,11 @@ extension Ghostty {
 
             // Update our core surface
             ghostty_surface_set_size(surface, width, height)
+            if flushNextResize {
+                flushNextResize = false
+                ghostty_surface_flush_resize(surface)
+                settle?.height = Int(height)
+            }
 
             // Update our cached size metrics
             let size = ghostty_surface_size(surface)

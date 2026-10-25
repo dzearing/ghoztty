@@ -1,31 +1,23 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// The live grid's panes, each in an AppKit card (`PaneCardView`) placed
 /// where `PaneLayout` puts it.
 ///
-/// AppKit rather than SwiftUI frames, for the slide. SwiftUI animates a pane by
-/// moving its AppKit views from the main thread a frame at a time, so a busy
-/// main thread stutters the slide, and the clip that cuts a card at its
-/// stack's end is applied on a different schedule from the views it clips —
-/// text showed past the stack's edge mid-slide. Here a slide is a Core
-/// Animation animation of each card's layer, run by the render server the way
-/// a browser runs a CSS transition: every part of a card (the terminal, its
-/// chrome, its clip) moves together, on time.
+/// AppKit rather than SwiftUI frames, for the glide: every part of a card
+/// (the pane, its chrome, its clip, its title) is placed in the same step,
+/// so it moves as one.
 ///
-/// A slide moves a card's frame and animates its layer additively from where
-/// it was, so the terminal inside never changes size (nothing is told to
-/// reflow), and a click mid-slide starts the next slide from where the cards
-/// are on screen.
-///
-/// A slide that also changes a card's SIZE (a row gaining or losing a card on
-/// show) gives the card its new shape at once, but holds what is inside it at
-/// the size it had (`paneContentFreeze`) — clipped by the card, or with sheet
-/// to spare — until the slide ends. Then every card on the stage takes its
-/// new size in the same transaction: one resize per pane, after the motion,
-/// never a reflow (and a program's repaint) mid-slide. A tucked card shows
-/// only its strip, and its pane is held at its last size on show until it is
-/// back: a program nobody can see is never resized.
+/// A change in which cards are on show — a strip's pane coming out, a pane
+/// tucking away, whether a drag or a click made it — glides
+/// (`PaneStageView.glide`): every card and strip eases from where it is
+/// drawn toward where the layout puts it, a frame at a time. A card's
+/// content is held at one size while it glides (`paneContentFreeze`) —
+/// clipped by the card, or with sheet to spare — so a terminal is resized
+/// at most once, never per frame. A tucked card is its strip, its pane held
+/// at its last size on show until it is back: a program nobody can see is
+/// never resized.
 struct PaneStage: NSViewRepresentable {
     struct Card {
         let pane: PaneView
@@ -37,6 +29,9 @@ struct PaneStage: NSViewRepresentable {
     }
 
     struct Style {
+        /// Panes are cards (the elevated style), so a strip is one too; in
+        /// the flat style a strip is a filled bar.
+        let isCard: Bool
         let cornerRadius: CGFloat
         let background: Color
         let isLight: Bool
@@ -49,6 +44,9 @@ struct PaneStage: NSViewRepresentable {
     let runs: [ClosedRange<Int>]
     /// A divider or grip drag is under way (`PaneStackState.isGesturing`).
     let isGesturing: Bool
+    /// Told when a drag ends, so a glide settles though nothing redraws the
+    /// grid then.
+    let stackState: PaneStackState
     let style: Style
 
     func makeNSView(context: Context) -> PaneStageView {
@@ -56,6 +54,7 @@ struct PaneStage: NSViewRepresentable {
     }
 
     func updateNSView(_ view: PaneStageView, context: Context) {
+        view.observe(stackState)
         // Each card hosts its own SwiftUI tree, which inherits nothing from
         // this one unless it is handed over.
         view.apply(
@@ -63,7 +62,7 @@ struct PaneStage: NSViewRepresentable {
             environment: context.environment,
             size: size,
             runs: runs,
-            duration: isGesturing ? PaneStageView.gestureSlideDuration : PaneStageView.slideDuration,
+            isGesturing: isGesturing,
             style: style)
     }
 }
@@ -72,14 +71,10 @@ final class PaneStageView: NSView {
     private var cards: [UUID: PaneCardView] = [:]
     private var lastRuns: [ClosedRange<Int>]?
     private var lastSize: CGSize?
-    /// When the slide under way ends, and the frozen cards take their sizes.
-    private var thawAt: CFTimeInterval = 0
 
-    /// How a card slides: the HTML mock's curve and duration — or, while a
-    /// drag is reshaping the row, quicker, so the layout keeps up with the hand.
-    static let slideDuration: CFTimeInterval = 0.38
-    static let gestureSlideDuration: CFTimeInterval = 0.2
-    static let slideTiming = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+    /// A strip let go of mid-drag gliding back to its place (`settle`).
+    static let settleDuration: CFTimeInterval = 0.2
+    static let settleTiming = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
 
     init() {
         super.init(frame: .zero)
@@ -92,13 +87,18 @@ final class PaneStageView: NSView {
 
     func apply(
         cards: [PaneStage.Card], environment: EnvironmentValues, size: CGSize, runs: [ClosedRange<Int>],
-        duration: CFTimeInterval, style: PaneStage.Style
+        isGesturing: Bool, style: PaneStage.Style
     ) {
-        // Only a change in which cards are on show slides anything: a window
-        // resize lays out immediately, as it always has.
-        let slides = lastRuns != nil && runs != lastRuns && size == lastSize
+        // A change in which cards are on show glides (`glide`), and so does
+        // every layout after it until the glide is over: each eases toward
+        // its latest. A window resize lays out immediately, as it always has.
+        let changed = lastRuns != nil && runs != lastRuns && size == lastSize
         lastRuns = runs
         lastSize = size
+        if changed || glide != nil {
+            startGlide(cards, environment: environment, style: style, isGesturing: isGesturing)
+            return
+        }
 
         var order: [NSView] = []
         var live = Set<UUID>()
@@ -110,7 +110,7 @@ final class PaneStageView: NSView {
                 self.cards[id] = view
                 return view
             }()
-            view.apply(card, environment: environment, style: style, slides: slides ? duration : nil)
+            view.apply(card, environment: environment, style: style)
             order.append(view)
         }
         for (id, view) in self.cards where !live.contains(id) {
@@ -118,25 +118,297 @@ final class PaneStageView: NSView {
             self.cards[id] = nil
         }
         if subviews != order { subviews = order }
-
-        // Frozen cards all take their sizes together, once the slide is over
-        // (a slide that starts before then carries them on to its own end).
-        if slides, self.cards.values.contains(where: \.isFrozen) {
-            thawAt = CACurrentMediaTime() + duration
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-                guard let self, CACurrentMediaTime() >= self.thawAt - 0.001 else { return }
-                self.thaw()
-            }
-        } else if !slides, CACurrentMediaTime() >= thawAt {
-            thaw()
-        }
     }
 
-    private func thaw() {
+    // MARK: Glide
+
+    /// Which cards are on show changed: each card eases from where it is on
+    /// screen toward where the layout now puts it, every card re-placed
+    /// together on every frame — one unit, the card, its sheet and its
+    /// content placed in the same step, the gutters between them holding
+    /// their width (the edges move by the same easing). The layout keeps
+    /// changing under a drag; each frame eases toward its latest. A card's
+    /// content is held at its final size (or the larger of the two, for a
+    /// card on show at both ends) meanwhile, clipped by the card, so nothing
+    /// reflows mid-glide. A card going into its strip narrows into it, its
+    /// content fading out and its title in (`PaneCardView.collapse`); one
+    /// coming out widens, the other way round.
+    private struct Glide {
+        /// Each item as it is drawn: a card's pane, or a strip — what glides.
+        var drawn: [UUID: CGRect] = [:]
+        /// The item is drawn as a card (its pane shows), not a strip. A card
+        /// going into its strip stays a card until it is there.
+        var asCard: [UUID: Bool] = [:]
+        /// A card that was on show when its glide began: its size then. Its
+        /// content is held at the larger of that and its target (cut by the
+        /// card), so nothing reflows on the glide's own clock.
+        var startSize: [UUID: CGSize] = [:]
+        /// A card going into or coming out of its strip: the strip lies on
+        /// its leading side. Its content slides behind the strip's edge, its
+        /// far edge leading.
+        var stripLeads: [UUID: Bool] = [:]
+        /// The size a card going into its strip is held at.
+        var goingInSize: [UUID: CGSize] = [:]
+        /// The size a card coming out of its strip was held at there.
+        var comingOutSize: [UUID: CGSize] = [:]
+        var targets: [UUID: PaneStage.Card] = [:]
+        var environment: EnvironmentValues
+        var style: PaneStage.Style
+        var last: CFTimeInterval
+        /// The drag is still under way: a glide that catches up rests until
+        /// the next step. Once it is over, catching up ends the glide.
+        var isGesturing = true
+        /// No drag began it (a strip clicked, a pane split or closed): every
+        /// card's content is held at the size it had until the glide is
+        /// over, and then they all take their sizes together — one resize
+        /// per terminal, after the motion. A drag's follows the hand.
+        var holdsSizes = false
+    }
+
+    private var glide: Glide?
+    private var glideTimer: Timer?
+
+    /// How quickly a glide closes on its target: about 90% in 0.1s.
+    static let glideTime: CFTimeInterval = 0.045
+
+    /// Where the layout puts an item: its strip, or its card.
+    private static func target(_ leaf: PaneLayout.Leaf) -> CGRect {
+        leaf.isTucked ? (leaf.tab ?? leaf.frame) : leaf.frame
+    }
+
+    private func startGlide(
+        _ cards: [PaneStage.Card], environment: EnvironmentValues, style: PaneStage.Style, isGesturing: Bool
+    ) {
+        var glide = self.glide ?? Glide(
+            environment: environment, style: style, last: CACurrentMediaTime(), holdsSizes: !isGesturing)
+        glide.environment = environment
+        glide.style = style
+        glide.isGesturing = isGesturing
+        var order: [NSView] = []
+        var live = Set<UUID>()
+        for card in cards {
+            let id = card.pane.id
+            live.insert(id)
+            let view = self.cards[id] ?? {
+                let view = PaneCardView()
+                self.cards[id] = view
+                return view
+            }()
+            order.append(view)
+            glide.targets[id] = card
+            let to = Self.target(card.leaf)
+            if glide.drawn[id] == nil {
+                // As it is drawn now: its strip, or its card.
+                let wasCard = view.placedFrame != nil && !view.isContentHidden
+                glide.drawn[id] = view.placedTab?.rect ?? view.placedFrame ?? to
+                glide.asCard[id] = view.placedFrame == nil ? !card.leaf.isTucked : wasCard
+                if wasCard, let size = view.laidOutSize ?? view.placedFrame?.size { glide.startSize[id] = size }
+            }
+            let drawn = glide.drawn[id] ?? to
+            let asCard = glide.asCard[id] ?? false
+            if card.leaf.isTucked {
+                if asCard {
+                    // Going into its strip: held at the size it is drawn at,
+                    // sliding behind the strip's edge.
+                    if glide.goingInSize[id] == nil {
+                        glide.goingInSize[id] = view.laidOutSize ?? drawn.size
+                        glide.stripLeads[id] = Self.leads(to, of: drawn, card.leaf.tabAxis)
+                    }
+                    view.glideFreeze = glide.goingInSize[id]
+                } else {
+                    view.glideFreeze = nil
+                    view.glideAnchor = nil
+                }
+            } else {
+                glide.goingInSize[id] = nil
+                if !asCard {
+                    // Coming out of its strip.
+                    glide.asCard[id] = true
+                    glide.stripLeads[id] = Self.leads(drawn, of: to, card.leaf.tabAxis ?? view.placedTab?.axis)
+                    glide.comingOutSize[id] = view.heldSize
+                }
+                if glide.holdsSizes, let held = glide.comingOutSize[id] ?? glide.startSize[id] {
+                    view.glideFreeze = held
+                    continue
+                }
+                // Held at where the layout puts it NOW: the target moves with
+                // the hand, and the content with it. Held at the first target,
+                // a fast pull left the content short of its growing card.
+                let size = card.leaf.frame.size
+                view.glideFreeze = glide.startSize[id].map {
+                    CGSize(width: max($0.width, size.width), height: max($0.height, size.height))
+                } ?? size
+            }
+        }
+        for (id, view) in self.cards where !live.contains(id) {
+            view.removeFromSuperview()
+            self.cards[id] = nil
+            for key in [id] {
+                glide.drawn[key] = nil; glide.asCard[key] = nil; glide.startSize[key] = nil
+                glide.stripLeads[key] = nil; glide.goingInSize[key] = nil; glide.targets[key] = nil
+                glide.comingOutSize[key] = nil
+            }
+        }
+        if subviews != order { subviews = order }
+        if glideTimer == nil { glide.last = CACurrentMediaTime() }
+        self.glide = glide
+        if glideTimer == nil {
+            let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.stepGlide() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            glideTimer = timer
+        }
+        stepGlide()
+    }
+
+    /// Whether `strip` lies on the leading side of `card`, along the stack.
+    private static func leads(_ strip: CGRect, of card: CGRect, _ axis: PaneLayout.Direction?) -> Bool {
+        axis == .vertical ? strip.midY < card.midY : strip.midX < card.midX
+    }
+
+    private func stepGlide() {
+        guard var glide else { return }
+        let now = CACurrentMediaTime()
+        let k = 1 - exp(-(now - glide.last) / Self.glideTime)
+        glide.last = now
+        var settled = true
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for card in cards.values { card.thaw() }
+        for (id, card) in glide.targets {
+            guard let view = cards[id], let from = glide.drawn[id] else { continue }
+            let to = Self.target(card.leaf)
+            func ease(_ a: CGFloat, _ b: CGFloat) -> CGFloat { abs(b - a) < 0.5 ? b : a + (b - a) * k }
+            let next = CGRect(
+                x: ease(from.minX, to.minX), y: ease(from.minY, to.minY),
+                width: ease(from.width, to.width), height: ease(from.height, to.height))
+            glide.drawn[id] = next
+            if next != to { settled = false }
+            // A card that reached its strip is the strip.
+            if card.leaf.isTucked, next == to {
+                glide.asCard[id] = false
+                glide.startSize[id] = nil
+                glide.goingInSize[id] = nil
+                glide.comingOutSize[id] = nil
+            }
+            var leaf = card.leaf
+            if glide.asCard[id] == true {
+                let horizontal = (card.leaf.tabAxis ?? .horizontal) == .horizontal
+                if card.leaf.isTucked || glide.startSize[id] == nil {
+                    // In or out of its strip: the card where it is drawn,
+                    // its rim and sheet all round it, its content at its
+                    // held size pinned to the far edge — sliding behind the
+                    // strip's edge — and cut by the card.
+                    let leadsStrip = glide.stripLeads[id] ?? true
+                    view.glideAnchor = horizontal
+                        ? (leadsStrip ? .topTrailing : .topLeading)
+                        : (leadsStrip ? .bottomLeading : .topLeading)
+                } else {
+                    view.glideAnchor = nil
+                }
+                leaf.frame = next
+                leaf.clip = nil
+                leaf.isTucked = false
+                leaf.tab = nil
+                leaf.isSliver = false
+            } else {
+                // A strip, moved along with the row.
+                let dx = next.minX - to.minX, dy = next.minY - to.minY
+                leaf.frame = leaf.frame.offsetBy(dx: dx, dy: dy)
+                leaf.tab = leaf.tab?.offsetBy(dx: dx, dy: dy)
+            }
+            if glide.asCard[id] != true { view.glideAnchor = nil }
+            view.apply(
+                PaneStage.Card(pane: card.pane, leaf: leaf, isStacked: card.isStacked, content: card.content),
+                environment: glide.environment, style: glide.style)
+        }
         CATransaction.commit()
+        self.glide = glide
+        // Caught up: rest until the layout moves again (the next step
+        // restarts the clock) — or, the drag over, end.
+        if settled {
+            glideTimer?.invalidate()
+            glideTimer = nil
+            if !glide.isGesturing { finishGlide() }
+        }
+        // The bar of the drag stays over the gutter as it is drawn.
+        GutterBar.refreshActive()
+    }
+
+    /// Every card where the layout puts it, its content at its size.
+    private func finishGlide() {
+        guard let glide else { return }
+        glideTimer?.invalidate()
+        glideTimer = nil
+        self.glide = nil
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (id, card) in glide.targets {
+            guard let view = cards[id] else { continue }
+            view.glideAnchor = nil
+            // Placed first, so a card that went into its strip keeps its
+            // content at the size it was held at.
+            view.apply(card, environment: glide.environment, style: glide.style)
+            view.glideFreeze = nil
+        }
+        CATransaction.commit()
+    }
+
+    /// Where a gutter laid out at `rect` (window coordinates) is drawn while
+    /// the cards glide: beside the card whose edge it is, as far along as
+    /// that card has got. Nil when no glide is under way, or it is no
+    /// card's gutter.
+    func shownGutter(_ rect: CGRect, horizontal: Bool) -> CGRect? {
+        guard let glide else { return nil }
+        let r = convert(rect, from: nil)
+        for (id, shown) in glide.drawn {
+            guard let leaf = glide.targets[id]?.leaf else { continue }
+            let target = Self.target(leaf)
+            let offset: CGFloat?
+            if horizontal {
+                guard target.maxY > r.minY, target.minY < r.maxY else { continue }
+                offset = abs(target.maxX - r.minX) <= 1.5 ? shown.maxX - target.maxX
+                    : abs(target.minX - r.maxX) <= 1.5 ? shown.minX - target.minX : nil
+            } else {
+                guard target.maxX > r.minX, target.minX < r.maxX else { continue }
+                offset = abs(target.maxY - r.minY) <= 1.5 ? shown.maxY - target.maxY
+                    : abs(target.minY - r.maxY) <= 1.5 ? shown.minY - target.minY : nil
+            }
+            guard let offset else { continue }
+            let moved = horizontal ? r.offsetBy(dx: offset, dy: 0) : r.offsetBy(dx: 0, dy: offset)
+            return convert(moved, to: nil)
+        }
+        return nil
+    }
+
+    private var gestureEnds: AnyCancellable?
+    private weak var observed: PaneStackState?
+
+    /// The drag is over: a glide resting where it caught up ends now; one
+    /// still on its way settles first. (Left to the next redraw of the grid,
+    /// which the end of a drag does not always bring, a glide could rest
+    /// forever, the cards mid-way and cut.)
+    func observe(_ state: PaneStackState) {
+        guard observed !== state else { return }
+        observed = state
+        gestureEnds = state.$isGesturing
+            .removeDuplicates()
+            .filter { !$0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, var glide = self.glide else { return }
+                glide.isGesturing = false
+                self.glide = glide
+                if self.glideTimer == nil {
+                    self.glide?.last = CACurrentMediaTime()
+                    let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+                        MainActor.assumeIsolated { self?.stepGlide() }
+                    }
+                    RunLoop.main.add(timer, forMode: .common)
+                    self.glideTimer = timer
+                }
+                self.stepGlide()
+            }
     }
 
     // Points over no card fall through to whatever is behind the stage.
@@ -147,8 +419,15 @@ final class PaneStageView: NSView {
 }
 
 /// One pane on the stage: its SwiftUI content (the pane and its card chrome)
-/// in a hosting view, and — when it is tucked into a stack — the scrim that
-/// dims it and the tab that brings it forward.
+/// in a hosting view, and — when it is tucked into a stack — the title that
+/// names it and brings it forward.
+///
+/// A tucked pane is its strip: the pane's own card at the strip's size — the
+/// same glass, rim and unfocused tint as any card — with its content faded
+/// out and its title in. Neither is switched: both follow how far into its
+/// strip the card is drawn (`collapse`), so a card gliding into its strip
+/// fades its content out and its title in as it narrows, and the reverse
+/// coming out, with nothing left to change when it gets there.
 ///
 /// The view is larger than the pane by `outset` all round, room for the
 /// card's shadow and focus glow. Inside it, a clip view cuts the card off at
@@ -159,14 +438,15 @@ final class PaneCardView: NSView {
     /// Room around the pane for what its card draws outside itself.
     static let outset: CGFloat = 32
 
+    /// How much wider than its strip a card is when its content has faded
+    /// all the way in (and its title out).
+    static let fadeSpan: CGFloat = 120
+
     private let clipView = FlippedLayerView()
     private let contentView = FlippedLayerView()
     private let shadowView = FlippedLayerView()
-    /// The card itself: the pane, its scrim and its tab. Cut to the tab for a
-    /// card drawn as its sliver alone (`PaneLayout.Leaf.isSliver`).
+    /// The card itself: the pane and its title.
     private let bodyView = FlippedLayerView()
-    private let bodyMask = CAShapeLayer()
-    private let scrimView = FlippedLayerView()
     private let host = NSHostingView(rootView: AnyView(EmptyView()))
     private let tab = PaneStackTabView()
 
@@ -177,30 +457,76 @@ final class PaneCardView: NSView {
     /// last handed over.
     private var content: AnyView?
     private var environment: EnvironmentValues?
-    /// The size the pane's content is held at while its card changes size
-    /// in a slide (`PaneStage`). Nil: it fills the card.
+    /// The size a tucked card's content is held at: the size it last had on
+    /// show. Nil: it fills the card.
     private var frozenSize: CGSize?
+    /// The size the content was last laid out at.
+    private var contentSize: CGSize?
+    /// The axis of the stack the card was last a strip of.
+    private var axis: PaneLayout.Direction?
+
+    /// The size the content is held at while the stage glides the card
+    /// (`PaneStageView.glide`), so nothing reflows mid-glide.
+    var glideFreeze: CGSize? {
+        didSet { if glideFreeze != oldValue { render() } }
+    }
+
+    /// Where held content is pinned in a card gliding into or out of its
+    /// strip: its far edge, so the pane slides behind the strip's edge. Nil:
+    /// its top leading corner, and the card is not on its way to or from a
+    /// strip.
+    var glideAnchor: Alignment?
+
+    /// The size a strip's content is held at: what it had last on show.
+    var heldSize: CGSize? { frozenSize }
+    /// The size its content is laid out at now.
+    var laidOutSize: CGSize? { contentSize }
+    /// Its content is held at a size of its own, not the card's.
     var isFrozen: Bool { frozenSize != nil }
-    /// The pane is hidden, leaving only the strip: a tucked card.
-    var isContentHidden: Bool { host.alphaValue == 0 }
+
+    /// How far into its strip the card is drawn: 0 on show (its content
+    /// shows), 1 a strip (its title does).
+    private(set) var collapse: CGFloat = 0
+
+    /// The part of the pane that is drawn, in window coordinates: the pane
+    /// as cut by its clip. For tests.
+    var drawnPaneInWindow: CGRect {
+        let o = Self.outset
+        let pane = bounds.insetBy(dx: o, dy: o)
+        let clip = clipView.frame
+        return convert(pane.intersection(clip), to: nil)
+    }
+
+    /// The stage is gliding this card (for tests: none should be, once a
+    /// drag has settled).
+    var isGliding: Bool { glideFreeze != nil }
+
+    /// Where the card was last placed, in the stage's coordinates.
+    var placedFrame: CGRect? { leaf?.frame }
+
+    /// The strip it was last placed as, and the axis its stack runs along.
+    var placedTab: (rect: CGRect, axis: PaneLayout.Direction)? {
+        guard let leaf, leaf.isTucked, let tab = leaf.tab, let axis = leaf.tabAxis else { return nil }
+        return (tab, axis)
+    }
+
+    /// Something of the card is animating on its own clock, for tests: none
+    /// of it should while a drag moves the layout.
+    var isAnimating: Bool {
+        func busy(_ layer: CALayer?) -> Bool {
+            guard let layer else { return false }
+            return !(layer.animationKeys() ?? []).isEmpty || (layer.sublayers ?? []).contains(where: busy)
+        }
+        return busy(layer)
+    }
+    /// The pane's content has faded out all the way, leaving its strip.
+    var isContentHidden: Bool { collapse >= 1 }
+    /// How opaque the title is (it shows as the content fades), for tests.
+    var titleOpacity: CGFloat { tab.isHidden ? 0 : tab.alphaValue }
     /// The pane this card shows.
     private(set) var paneID: UUID?
-    /// The cut that keeps a hanging card inside its stack, as a layer whose
-    /// presentation can be read mid-slide.
+    /// The cut that keeps a hanging card inside its stack.
     var clipLayer: CALayer? { clipView.layer }
-    private var isTabHovered = false
-    /// The tab, in this view's coordinates, of a card drawn as its sliver
-    /// alone: the only part of it that shows or takes a click.
-    private var sliver: CGRect?
-    /// Bumped by every layout.
-    private var generation = 0
-    /// When the slide under way ends, and the cut the card should have then.
-    private var slideEnds: CFTimeInterval = 0
-    private var settledClip: CGRect?
-    /// Whether the card shows its tab, and a count of the times that changed,
-    /// so the hide at the end of a fade-out knows if it is stale.
-    private var isTabShown = false
-    private var tabGeneration = 0
 
     init() {
         super.init(frame: .zero)
@@ -220,18 +546,10 @@ final class PaneCardView: NSView {
         if #available(macOS 13.3, *) { host.safeAreaRegions = [] }
         host.sizingOptions = []
         contentView.addSubview(bodyView)
-        bodyView.layer?.mask = bodyMask
         bodyView.addSubview(host)
-
-        scrimView.alphaValue = 0
-        bodyView.addSubview(scrimView)
 
         tab.alphaValue = 0
         tab.isHidden = true
-        tab.onHover = { [weak self] hovered in
-            self?.isTabHovered = hovered
-            self?.updateScrim(animated: true)
-        }
         bodyView.addSubview(tab)
     }
 
@@ -239,114 +557,53 @@ final class PaneCardView: NSView {
 
     override var isFlipped: Bool { true }
 
-    /// - Parameter slides: how long a card that moved takes to slide there;
-    ///   nil, it is placed there at once.
-    func apply(_ card: PaneStage.Card, environment: EnvironmentValues, style: PaneStage.Style, slides: CFTimeInterval?) {
+    func apply(_ card: PaneStage.Card, environment: EnvironmentValues, style: PaneStage.Style) {
         let o = Self.outset
-        let old = leaf
-        leaf = card.leaf
+        // A tucked card is its strip: the pane's own card, the strip's size.
+        var shown = card.leaf
+        if shown.isTucked, let tab = shown.tab {
+            shown.frame = tab
+            shown.isSliver = false
+        }
+        leaf = shown
         paneID = card.pane.id
         self.style = style
-        generation += 1
+        if let axis = shown.tabAxis { self.axis = axis }
 
-        let frame = card.leaf.frame.insetBy(dx: -o, dy: -o)
+        // A tucked card's pane keeps the size it last had on show — a row
+        // reflowing around it never resizes a program nobody can see — and
+        // takes its slot's size once it is back on show.
+        frozenSize = shown.isTucked ? frozenSize ?? glideFreeze ?? contentSize ?? card.leaf.frame.size : nil
+
+        let frame = shown.frame.insetBy(dx: -o, dy: -o)
         let size = frame.size
-        let paneRect = CGRect(x: o, y: o, width: card.leaf.frame.width, height: card.leaf.frame.height)
+        let paneRect = CGRect(x: o, y: o, width: shown.frame.width, height: shown.frame.height)
+        let clip = Self.visible(shown, clip: shown.clip).offsetBy(dx: -frame.minX, dy: -frame.minY)
+        Self.place(self, frame)
+        Self.place(clipView, clip)
+        Self.place(contentView, CGRect(origin: CGPoint(x: -clip.minX, y: -clip.minY), size: size))
+        clipView.layer?.cornerRadius = style.cornerRadius
+        clipView.layer?.cornerCurve = .continuous
+        Self.place(bodyView, CGRect(origin: .zero, size: size))
+        Self.place(host, CGRect(origin: .zero, size: size))
+        Self.place(shadowView, CGRect(origin: .zero, size: size))
 
-        // A tucked card is its strip and nothing else: its pane is hidden, and
-        // keeps the size it last had on show — a row reflowing around it never
-        // resizes a program nobody can see. It takes its slot's size once it
-        // is back on show (when the slide bringing it forward ends).
-        // A slide that resizes a card on show holds its content the same way,
-        // through every slide until they end, not the last one's start.
-        if card.leaf.isTucked {
-            frozenSize = frozenSize ?? old?.frame.size ?? card.leaf.frame.size
-        } else if slides != nil, let old, old.frame.size != card.leaf.frame.size {
-            frozenSize = frozenSize ?? old.frame.size
+        // How far into its strip: by how much wider than a strip the card is
+        // drawn. Only a strip, or a card on its way to or from one, fades.
+        let pane = paneRect.intersection(clip)
+        if shown.isTucked || glideAnchor != nil, !pane.isNull {
+            let extent = Swift.min(pane.width, pane.height)
+            collapse = Swift.min(1, Swift.max(0, 1 - (extent - PaneLayout.Metrics.peek) / Self.fadeSpan))
+        } else {
+            collapse = 0
         }
-        if card.leaf.isTucked != (old?.isTucked ?? false) || old == nil {
-            // Out as it tucks away under its neighbours; in as it comes forward.
-            Self.fade(host, to: card.leaf.isTucked ? 0 : 1, duration: old == nil ? 0 : (slides ?? 0.15))
-        }
+
         content = card.content
         self.environment = environment
         render()
 
-        let moved = slides != nil && old != nil && old!.frame.origin != card.leaf.frame.origin
-        let slide = moved && old!.frame.size == card.leaf.frame.size
-        let duration = slides ?? 0
-        let now = CACurrentMediaTime()
-
-        // The cut, in this view's coordinates. Mid-slide a card cut in either
-        // layout is cut in both: the cut is fixed to the stack, so it only
-        // has to hold still while the card moves under it.
-        let finalClip = Self.visible(card.leaf, clip: card.leaf.clip).offsetBy(dx: -frame.minX, dy: -frame.minY)
-        if slide, let old {
-            let oldFrame = old.frame.insetBy(dx: -o, dy: -o)
-            let startClip = Self.visible(old, clip: old.clip ?? card.leaf.clip)
-                .offsetBy(dx: -oldFrame.minX, dy: -oldFrame.minY)
-            let endClip = Self.visible(card.leaf, clip: card.leaf.clip ?? old.clip)
-                .offsetBy(dx: -frame.minX, dy: -frame.minY)
-            // Start from the old geometry with no animation, then slide.
-            Self.place(clipView, startClip)
-            Self.place(contentView, CGRect(origin: CGPoint(x: -startClip.minX, y: -startClip.minY), size: oldFrame.size))
-            Self.slide(self, to: frame, duration: duration)
-            Self.slide(clipView, to: endClip, duration: duration)
-            Self.slide(contentView, to: CGRect(origin: CGPoint(x: -endClip.minX, y: -endClip.minY), size: size),
-                       duration: duration)
-            // The cut settles where it belongs once the card is there.
-            slideEnds = now + duration
-            settledClip = finalClip
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-                guard let self, CACurrentMediaTime() >= self.slideEnds - 0.001 else { return }
-                self.settleClip()
-            }
-        } else if moved, let old {
-            // A card that changes size as it moves (a row collapsing or
-            // widening): it takes its new size at once and slides from where
-            // its leading edge was.
-            Self.place(clipView, finalClip)
-            Self.place(contentView, CGRect(origin: CGPoint(x: -finalClip.minX, y: -finalClip.minY), size: size))
-            Self.slide(self, to: frame, from: old.frame.insetBy(dx: -o, dy: -o), duration: duration)
-            slideEnds = now + duration
-            settledClip = finalClip
-        } else {
-            Self.place(self, frame)
-            settledClip = finalClip
-            // Mid-slide the cut is held still; it settles when the slide ends.
-            if now >= slideEnds { settleClip() }
-        }
-        clipView.layer?.cornerRadius = style.cornerRadius
-        clipView.layer?.cornerCurve = .continuous
-
-        Self.place(bodyView, CGRect(origin: .zero, size: size))
-        Self.place(host, CGRect(origin: .zero, size: size))
-        Self.place(shadowView, CGRect(origin: .zero, size: size))
-        Self.place(scrimView, paneRect)
-
-        // What of the card is drawn: all of it, or its sliver alone. The cut
-        // moves with the card, and narrows or widens over a slide.
-        let toCard = CGAffineTransform(translationX: o - card.leaf.frame.minX, y: o - card.leaf.frame.minY)
-        sliver = card.leaf.isSliver ? card.leaf.tab?.applying(toCard) : nil
-        let drawn = Self.rounded(sliver ?? CGRect(origin: .zero, size: size), style.cornerRadius)
-        if bodyMask.path != drawn {
-            let from = bodyMask.presentation()?.path ?? bodyMask.path
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            bodyMask.path = drawn
-            CATransaction.commit()
-            if let from, slides != nil, old != nil {
-                let animation = CABasicAnimation(keyPath: "path")
-                animation.fromValue = from
-                animation.toValue = drawn
-                animation.duration = duration
-                animation.timingFunction = PaneStageView.slideTiming
-                bodyMask.add(animation, forKey: "path")
-            }
-        }
-
-        // Shadow: only where cards overlap, cast by what of the card is drawn.
-        let shape = Self.rounded(sliver ?? paneRect, style.cornerRadius)
+        // Shadow: only where cards overlap.
+        let shape = Self.rounded(paneRect, style.cornerRadius)
         shadowView.layer?.shadowPath = shape
         shadowView.layer?.shadowOpacity = card.isStacked ? (style.isLight ? 0.16 : 0.4) : 0
         let outside = CAShapeLayer()
@@ -357,44 +614,36 @@ final class PaneCardView: NSView {
         outside.fillRule = .evenOdd
         shadowView.layer?.mask = outside
 
-        scrimView.layer?.cornerRadius = style.cornerRadius
-        scrimView.layer?.cornerCurve = .continuous
-        scrimView.layer?.backgroundColor = NSColor.black.cgColor
-        updateScrim(animated: old != nil)
-
-        // The tab: the tucked card's visible sliver.
-        if let tabRect = card.leaf.tab, let axis = card.leaf.tabAxis {
+        // The title, over what of the card is drawn, as the content fades.
+        if collapse > 0, !pane.isNull {
             tab.pane = card.pane
             tab.update(face: PaneStackTabFace(
                 pane: card.pane,
-                axis: axis,
+                axis: shown.tabAxis ?? axis ?? (pane.width < pane.height ? .horizontal : .vertical),
                 cornerRadius: style.cornerRadius,
                 background: style.background,
-                isLight: style.isLight))
-            Self.place(tab, tabRect.offsetBy(dx: o - card.leaf.frame.minX, dy: o - card.leaf.frame.minY))
+                isLight: style.isLight,
+                isFilled: !style.isCard))
+            Self.place(tab, pane)
             tab.isHidden = false
-            if !isTabShown {
-                tabGeneration += 1
-                Self.fade(tab, to: 1, duration: old == nil ? 0 : 0.2)
-            }
-        } else if isTabShown {
-            isTabHovered = false
-            Self.fade(tab, to: 0, duration: 0.15)
-            tabGeneration += 1
-            let shown = tabGeneration
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                guard let self, self.tabGeneration == shown else { return }
-                self.tab.isHidden = true
-            }
+            tab.alphaValue = collapse
+            tab.isStrip = shown.isTucked
+        } else {
+            tab.isHidden = true
+            tab.alphaValue = 0
+            tab.isStrip = false
         }
-        isTabShown = card.leaf.tab != nil
         setAccessibilityElement(false)
     }
 
     /// The SwiftUI content, laid out exactly where the grid puts the pane.
     private func render() {
         guard let leaf, let content, var environment else { return }
-        environment.paneContentFreeze = frozenSize
+        let held = glideFreeze ?? frozenSize
+        environment.paneContentFreeze = held
+        environment.paneContentAnchor = glideAnchor ?? .topLeading
+        environment.paneCollapse = collapse
+        contentSize = held ?? leaf.frame.size
         host.rootView = AnyView(
             content
                 .environment(\.self, environment)
@@ -403,24 +652,14 @@ final class PaneCardView: NSView {
                 .ignoresSafeArea())
     }
 
-    /// Let the content fill the card again, after a resizing slide. A tucked
-    /// card stays as it is until it is back on show.
-    func thaw() {
-        guard frozenSize != nil, leaf?.isTucked != true else { return }
-        frozenSize = nil
-        render()
-    }
-
     /// Draw the card `offset` from its place, above every other card: it is
-    /// being dragged by its tab.
+    /// being dragged by its strip.
     func lift(by offset: CGSize) {
         guard let layer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer.zPosition = 1000
         layer.transform = CATransform3DMakeTranslation(offset.width, offset.height, 0)
-        // Out of the stack, the whole card shows, not just its sliver.
-        bodyView.layer?.mask = nil
         CATransaction.commit()
     }
 
@@ -435,33 +674,13 @@ final class PaneCardView: NSView {
         let animation = CABasicAnimation(keyPath: "transform")
         animation.fromValue = NSValue(caTransform3D: from)
         animation.toValue = NSValue(caTransform3D: CATransform3DIdentity)
-        animation.duration = PaneStageView.gestureSlideDuration
-        animation.timingFunction = PaneStageView.slideTiming
+        animation.duration = PaneStageView.settleDuration
+        animation.timingFunction = PaneStageView.settleTiming
         layer.add(animation, forKey: "settle")
         DispatchQueue.main.asyncAfter(deadline: .now() + animation.duration) { [weak self] in
             guard let self, let layer = self.layer, CATransform3DIsIdentity(layer.transform) else { return }
             layer.zPosition = 0
-            self.bodyView.layer?.mask = self.bodyMask
         }
-    }
-
-    private func settleClip() {
-        guard let settledClip else { return }
-        Self.place(clipView, settledClip)
-        Self.place(contentView, CGRect(
-            origin: CGPoint(x: -settledClip.minX, y: -settledClip.minY), size: bounds.size))
-    }
-
-    private func updateScrim(animated: Bool) {
-        guard let leaf, let style else { return }
-        let alpha: CGFloat = if !leaf.isTucked {
-            0
-        } else if style.isLight {
-            isTabHovered ? 0.06 : 0.16
-        } else {
-            isTabHovered ? 0.2 : 0.45
-        }
-        Self.fade(scrimView, to: alpha, duration: animated ? 0.2 : 0)
     }
 
     // Only the pane itself, and only the part of it not cut off, takes clicks:
@@ -471,7 +690,6 @@ final class PaneCardView: NSView {
         let local = convert(point, from: superview)
         let pane = bounds.insetBy(dx: Self.outset, dy: Self.outset)
         guard pane.contains(local), clipView.frame.contains(local) else { return nil }
-        if let sliver, !sliver.contains(local) { return nil }
         return super.hitTest(point)
     }
 
@@ -501,8 +719,6 @@ final class PaneCardView: NSView {
         return CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil)
     }
 
-    // MARK: Core Animation
-
     /// Set a frame with no animation.
     private static func place(_ view: NSView, _ frame: CGRect) {
         guard view.frame != frame else { return }
@@ -510,76 +726,6 @@ final class PaneCardView: NSView {
         CATransaction.setDisableActions(true)
         view.frame = frame
         CATransaction.commit()
-    }
-
-    /// Set a frame, and animate the layer there from where it was.
-    ///
-    /// Additive: the animation is the offset from the new place back to the
-    /// old, decaying to nothing. A second slide before the first finishes adds
-    /// its own offset on top, so the card carries on from where it is on
-    /// screen rather than jumping.
-    private static func slide(_ view: NSView, to frame: CGRect, from: CGRect? = nil, duration: CFTimeInterval) {
-        guard let layer = view.layer else { return place(view, frame) }
-        var fromPosition = layer.position
-        let fromSize = layer.bounds.size
-        place(view, frame)
-        let toPosition = layer.position
-        let toSize = layer.bounds.size
-        if let from {
-            // Only the leading edge slides; the size is already the new one.
-            // (The stage is flipped, and so is its layer geometry.)
-            fromPosition = CGPoint(x: toPosition.x + from.minX - frame.minX,
-                                   y: toPosition.y + from.minY - frame.minY)
-            return animate(layer, position: fromPosition, to: toPosition, size: toSize, to: toSize, duration: duration)
-        }
-        animate(layer, position: fromPosition, to: toPosition, size: fromSize, to: toSize, duration: duration)
-    }
-
-    private static func animate(
-        _ layer: CALayer,
-        position fromPosition: CGPoint, to toPosition: CGPoint,
-        size fromSize: CGSize, to toSize: CGSize,
-        duration: CFTimeInterval
-    ) {
-        func add(_ keyPath: String, _ from: Any, _ to: Any) {
-            let animation = CABasicAnimation(keyPath: keyPath)
-            animation.fromValue = from
-            animation.toValue = to
-            animation.isAdditive = true
-            animation.duration = duration
-            animation.timingFunction = PaneStageView.slideTiming
-            animation.fillMode = .backwards
-            layer.add(animation, forKey: "slide.\(keyPath).\(UUID().uuidString)")
-        }
-        if fromPosition != toPosition {
-            add("position",
-                NSValue(point: CGPoint(x: fromPosition.x - toPosition.x, y: fromPosition.y - toPosition.y)),
-                NSValue(point: .zero))
-        }
-        if fromSize != toSize {
-            add("bounds.size",
-                NSValue(size: CGSize(width: fromSize.width - toSize.width, height: fromSize.height - toSize.height)),
-                NSValue(size: .zero))
-        }
-    }
-
-    private static func fade(_ view: NSView, to alpha: CGFloat, duration: CFTimeInterval) {
-        guard let layer = view.layer else {
-            view.alphaValue = alpha
-            return
-        }
-        let from = layer.presentation()?.opacity ?? layer.opacity
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        view.alphaValue = alpha
-        CATransaction.commit()
-        guard duration > 0, from != Float(alpha) else { return }
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = from
-        animation.toValue = Float(alpha)
-        animation.duration = duration
-        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer.add(animation, forKey: "fade")
     }
 }
 
@@ -605,11 +751,33 @@ private struct PaneContentFreezeKey: EnvironmentKey {
     static let defaultValue: CGSize? = nil
 }
 
+private struct PaneContentAnchorKey: EnvironmentKey {
+    static let defaultValue: Alignment = .topLeading
+}
+
+private struct PaneCollapseKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
 extension EnvironmentValues {
-    /// The size a pane's content is held at while its card changes size in a
-    /// slide (`PaneStage`); nil, it fills the card.
+    /// The size a pane's content is held at while its card glides or is a
+    /// strip (`PaneStage`); nil, it fills the card.
     var paneContentFreeze: CGSize? {
         get { self[PaneContentFreezeKey.self] }
         set { self[PaneContentFreezeKey.self] = newValue }
     }
+
+    /// Where held content is pinned in its card (`PaneCardView.glideAnchor`).
+    var paneContentAnchor: Alignment {
+        get { self[PaneContentAnchorKey.self] }
+        set { self[PaneContentAnchorKey.self] = newValue }
+    }
+
+    /// How far into its strip a pane's card is (`PaneCardView.collapse`): its
+    /// content fades out as it goes in.
+    var paneCollapse: CGFloat {
+        get { self[PaneCollapseKey.self] }
+        set { self[PaneCollapseKey.self] = newValue }
+    }
 }
+

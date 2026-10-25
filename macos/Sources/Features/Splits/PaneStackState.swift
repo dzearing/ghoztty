@@ -31,7 +31,30 @@ final class PaneStackState: ObservableObject {
     /// How many panes are remembered: far more than a window can hold.
     static let capacity = 64
 
+    /// A pane opened BESIDE the one with the caret, without taking it — an
+    /// agent's `+split --view`, a banner link's side pane. It was asked for, so
+    /// it comes on show: it outranks even the focused pane in a row that has
+    /// no room for all of it (`ranks`), other panes minimize to make room, and
+    /// when even that is not enough the focused pane becomes the strip — and
+    /// KEEPS the caret, which stays where it was rather than moving onto a
+    /// strip. It used to be born a strip nobody noticed. Cleared by the next
+    /// change of focus, after which the row is the focus history's again.
+    @Published private(set) var featured: UUID?
+
+    func feature(_ id: UUID) {
+        featured = id
+    }
+
+    /// The layout's ranks (`PaneLayout.compute`): 0 for the focused pane,
+    /// 1 for the one before it, …, and the featured pane ahead of all of them.
+    var ranks: [UUID: Int] {
+        var ranks = Dictionary(uniqueKeysWithValues: recency.enumerated().map { ($1, $0) })
+        if let featured { ranks[featured] = -1 }
+        return ranks
+    }
+
     func noteFocus(_ id: UUID) {
+        if featured != nil, recency.first != id { featured = nil }
         bringOnShow(id, in: Array(pinnedItems.keys))
         guard recency.first != id else { return }
         recency = Self.noting(id, in: recency)
@@ -91,6 +114,30 @@ final class PaneStackState: ObservableObject {
         shares[key] = pin == nil ? nil : sizes
     }
 
+    /// The row as a gutter drag leaves it (`PaneLayout.dragged`): `run` on
+    /// show at `sizes`, the rest strips. All of it on show is no collapse at
+    /// all (the tree's ratios size it).
+    func show(_ row: PaneLayout.Row<UUID>, run: ClosedRange<Int>, sizes: [CGFloat]) {
+        let key = row.key
+        for other in pins.keys where !other.isDisjoint(with: key)
+            && !other.isSubset(of: key) && !other.isSuperset(of: key) {
+            pins[other] = nil
+            pinnedItems[other] = nil
+        }
+        guard run.count < row.items.count else {
+            if pins[key] != nil { pins[key] = nil }
+            if shares[key] != nil { shares[key] = nil }
+            pinnedItems[key] = nil
+            return
+        }
+        let pin = PaneLayout.Pin(start: run.lowerBound, count: run.count)
+        let total = sizes.reduce(0, +)
+        let new = total > 0 ? sizes.map { $0 / total } : nil
+        if pins[key] != pin { pins[key] = pin }
+        if shares[key] != new { shares[key] = new }
+        pinnedItems[key] = row.items
+    }
+
     /// One row's collapse and slot sizes, as a drag found them: every step
     /// of the drag is replayed from this, so dragging back undoes what
     /// dragging forward did.
@@ -128,9 +175,11 @@ final class PaneStackState: ObservableObject {
         capacity = saved.capacity
     }
 
-    /// A drag on a divider or stack grip is under way. Cards move faster while
-    /// one is: the hand is already moving, and the layout should keep up.
-    var isGesturing = false
+    /// A drag on a divider or stack grip is under way. Nothing slides or fades
+    /// while one is (`PaneStageView.apply`): the hand is moving the layout,
+    /// and every card follows it, step by step.
+    /// Published: the grid settles a drag's glide when it ends.
+    @Published var isGesturing = false
 
     /// Set how a stacked row's run is divided (a grip between cards dragged).
     func resize(_ row: PaneLayout.Row<UUID>, shares new: [CGFloat]) {
@@ -157,6 +206,26 @@ final class PaneStackState: ObservableObject {
     /// The stacked rows as last laid out on screen: where a strip being
     /// dragged lives (`PaneDragSession`).
     private(set) var stacks: [PaneLayout.Stack<UUID>] = []
+
+    /// Lays the on-screen grid out again, with the pins and shares as they
+    /// are when it is called: how a drag that changes a row finds the divider
+    /// or slots that change makes, in the same event.
+    private(set) var layoutGrid: (() -> PaneLayout.Result<PaneView>)?
+
+    func noteGrid(_ layout: @escaping () -> PaneLayout.Result<PaneView>) {
+        layoutGrid = layout
+    }
+
+    /// Each row's collapse as it is laid out: the user's pin, else the run of
+    /// a row that stacked for want of room. What a divider drag measures a
+    /// side's minimum with — a nested row is as wide as its run and strips.
+    var laidOutPin: (Set<UUID>) -> PaneLayout.Pin? {
+        let pins = pins, stacks = stacks
+        return { key in
+            pins[key] ?? stacks.first { Set($0.items.joined()) == key }
+                .map { PaneLayout.Pin(start: $0.run.lowerBound, count: $0.run.count) }
+        }
+    }
 
     /// The grid's stacked rows, as it lays them out.
     func noteStacks(_ stacks: [PaneLayout.Stack<UUID>]) {
@@ -224,8 +293,11 @@ final class PaneStackState: ObservableObject {
         // again as it lays them out).
         for key in pinnedItems.keys where !keys.contains(key) { pinnedItems[key] = nil }
         // The focus can land before the tree change is seen (a pane focused
-        // as it joins a row): it comes on show as it would have after.
+        // as it joins a row): it comes on show as it would have after. So
+        // does a featured pane joining a collapsed row, after the focus, so it
+        // is the one that wins where both cannot be on show.
         if let focused = recency.first { bringOnShow(focused, in: Array(carried.keys)) }
+        if let featured { bringOnShow(featured, in: Array(carried.keys)) }
     }
 
     /// Where the caret goes when the rows change from `old` to `new` (a

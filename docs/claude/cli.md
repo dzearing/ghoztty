@@ -12,7 +12,10 @@
 IPC commands communicate with a running Ghoztty instance over a local IPC
 endpoint (a Unix domain socket on macOS, a named pipe on Windows — see
 Architecture in `/CLAUDE.md`). All commands are idempotent — named targets that already exist
-are focused instead of recreated. Since T135, that focus is no longer silent
+are focused instead of recreated, as long as they match the request; a `+split
+--name` that names a different pane fails instead of silently reusing it (see
+`+split`). On macOS pane names belong to the window they were created in, and a
+name is looked up in the caller's window first (see Naming; Windows: T2250). Since T135, that focus is no longer silent
 about what it dropped: `+new-window` against an existing target replies
 `outcome: "focused"` (vs `"created"`) and, when create-only flags
 (`--command`, an explicit `--working-directory`, `--view`, …) were passed, a
@@ -113,11 +116,19 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
   this, not `--target`, to split a specific pane: `--target=<pane>` silently
   splitting a different pane once built a three-high column that the
   stacked-panes layout then tucked out of sight (T2163).
-- `--name`: Register the new pane with a name for later targeting. Pane names
-  are **one namespace across every window** (and shared with window names), so
-  the name may already be held by a pane in another window. Re-running the same
-  split reuses it; anything else fails rather than doing nothing (T2184, main
-  c2057a810 — identical on both platforms, wording included):
+- `--name`: Register the new pane with a name for later targeting. **On macOS a
+  pane name belongs to the window the pane is in** (see Naming, main
+  71da9a680): only a pane of that name in the window the split lands in, or a
+  window of that name, collides. A pane called `draft` in another window does
+  not — this split creates this window's own. (Names used to be one namespace
+  across every window. Session A's `+split --name=draft --view=…` and session
+  B's same command, in another window, collided: B got exit 0 and "reused" A's
+  pane in A's window, and the agent reported a side pane the user never saw.
+  With a different `--view`, B got exit 1, retried, and the user had to say
+  "open it!".) **Windows still uses the one namespace across every window**,
+  shared with window names, until T2250 ports the scope. Re-running the same
+  split reuses the pane; anything else fails rather than doing nothing (T2184,
+  main c2057a810 — identical on both platforms, wording included):
   - **Matches** (a terminal again, or a viewer showing that `--view` or opened
     with it): no split, exit 0, stdout says `pane '<n>' already exists in
     <window>; reused it, no split created`. On Windows a local path matches
@@ -133,7 +144,37 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
   The line travels in the response's additive `message` field, which the CLI
   prints to stdout; a CLI older than the app ignores it. Policy and wording:
   `src/apprt/ipc/split_name_collision.zig` (Mac: `SplitNameCollision.swift`);
-  acceptance: `test/win32/split-name-collision.ps1`.
+  acceptance: `test/win32/split-name-collision.ps1`. Mac tests:
+  `SplitNameCollisionTests`, `PaneNameScopeWindowTests`.
+- **The reply is sent after the split, and says what happened** (macOS, main
+  71da9a680; Windows: T2250). It used to be sent first (`created …`) with the
+  split run afterwards on the main queue, where a failure (the anchor gone from
+  its tree, the insert refused) only logged at a level that is not persisted —
+  so `+split` could not fail, and an agent reported a pane that never opened.
+  Now `handleSplit` waits, bounded (10s), for the pane to exist and be laid
+  out, and replies with one of:
+  - **Created**: exit 0, stdout `created pane '<n>' (<id>) in window '<w>',
+    showing <view>` — or `created pane <id> in window '<w>'` without `--name`.
+    The pane id is there so a caller can target the pane without naming it.
+  - **Created, minimized**: the same line ending `; it is minimized to a strip,
+    since its row has no room for it on show`. Exit 0; the pane exists. (With
+    the side-pane rule in Stacked panes this is rare.)
+  - **Failed**: exit 1 and the reason on stderr — including a `--target` /
+    `--pane` that names nothing, an ambiguous name, and a split that did not
+    finish within the wait (it may still appear; the message says so).
+
+  An **agent-backed terminal split** (session persistence, a remote machine)
+  asks the agent for the parent's cwd off the main thread and is created a beat
+  later; `newSplit`'s `onFinish` reports that path's success or failure too,
+  so it is waited on like a local one. On show is read from the layout
+  (`PaneStackState.stackMinimizing`) once the pane is laid out; a window that
+  never lays it out (not on screen) gets no on-show claim either way.
+- **Every `+split` is logged at `.notice`** (persisted; macOS): the caller
+  pane, the window it resolved to, the anchor pane, the name and view, the
+  outcome (created / reused / name collision / failed / timed out) and whether
+  the new pane is on show. Ambiguous name lookups are logged the same way. Read
+  them with `/usr/bin/log show --last 1h --predicate 'subsystem BEGINSWITH
+  "com.dzearing.ghoztty" AND category == "IPCServer"'`.
 - `--focus`: Move keyboard focus to the new pane, raise its window, and activate Ghoztty. Without it the pane that had focus keeps it.
 - `--view`: Open a **viewer** pane (see `docs/claude/viewers.md`) instead of a terminal — a file, a local **HTML page**, a website, or a **git diff** (`git-status:` / `git-diff:<revspec>`, see Git diff panes in that doc). Mutually exclusive with `--command`/`-e`. Works with `--pane` targeting, including splitting off an existing viewer pane.
 
@@ -523,6 +564,40 @@ ghoztty +set-banner --target=dev --clear
 
 Processes can also set the banner from inside the pane via OSC escape sequence: `\033]7778;<text>\007` (empty text clears). The interactive equivalent is Cmd+R ("Set Pane Banner…", also in the command palette), which opens a multi-line editor for the focused pane's banner (Return inserts a newline, Cmd+Return saves, Escape cancels). Cmd+R only reaches this while a **terminal** pane is focused — a focused viewer pane takes Cmd+R for reload (see `docs/claude/viewers.md`). On Windows the editor chord is Ctrl+Shift+B and Ctrl+Enter saves (plain Ctrl+R belongs to the shell).
 
+**Collapse/expand never shows the terminal resizing** (macOS, main a81db68f9;
+Windows: T2252). Clicking the card (or its chevron) collapses it to its title
+row. The terminal is resized ONCE, at the click, while a frozen copy of its
+last frame stands in for it (`SurfaceView.frozenFrame`: a copy of the
+renderer's IOSurface — same pixels, format and color space — not the surface
+itself, which the renderer draws into again); the live terminal comes back once
+it has redrawn at the new size and its frames have stopped changing
+(`resizeOutOfSight`, capped at 0.5s). That resize skips the 100ms debounce
+(`ghostty_surface_flush_resize`), so a shell's prompt redraw lands in a frame
+or two. The copy is shown by a view that sets its layer's contents in
+`updateLayer` (`FrozenLayerView`): contents set on a layer-backed view from
+outside are wiped by its next display, which blanked the copy for a few frames
+now and then. The copy and the live terminal move to where the content will
+land, along one path with the card's curve (`BannerGlide`): the core predicts
+it with the grid's own resize rules before resizing
+(`ghostty_surface_predict_resize_shift`). So a prompt at the **top** of the
+screen rides the card's edge down or up, and content laid out to the
+**bottom** (a shell at the end of its scrollback; a full-screen program on the
+alternate screen, taken to lay out to the bottom like an agent's input box)
+holds still while the card covers or uncovers rows above it (the terminal is
+masked at the card's animated edge, `bannerReveal`). It used to resize while
+the card animated: the prompt jumped a row, vanished for a frame (it is
+cleared on resize for the shell to redraw) and came back, and jumped again
+when the card finished. Separately, the renderer's layer refuses a frame drawn
+earlier than the one it shows (`IOSurfaceLayer` frame sequence): on any resize
+an async frame of the OLD grid at the NEW size could land after the
+synchronous redraw, and an idle pane then kept the wrong rows, cursor gone,
+until something printed. The collapsed state lives on the surface
+(`paneBannerCollapsed`, ephemeral; a cleared banner comes back expanded).
+Tests: `BannerCollapseWindowTests` (recorded at the display's frame rate;
+frames in `/tmp/banner-collapse` and `/tmp/banner-collapse-prompt[-agent]`;
+the prompt cases run in a plain local pane and in an agent-backed one, whose
+shell redraws a round trip later).
+
 Banners are persisted per pane in the session-layout manifest (keyed to the stable pane id), so a session-persistence restore brings them back with their text intact — across app quit/relaunch/upgrade re-attach and across an agent-restart relaunch alike. **The banner slot belongs to the pane** (T422): the session-interrupted notice an agent-restart prints is always folded into the pane's scrollback, but only claims the banner slot when the pane has no banner of its own — a restored banner is never overwritten by it. `+list --json` reports each terminal pane's current banner in a `banner` field (absent when no banner is set), which is also the CLI way to read a banner back.
 
 A banner with a **title** — an `## ` heading on its first line, or a one-line banner opening with a standalone `**bold**` run — also **names its pane** in the pane sidebar and on a stacked pane's strip, in place of the pane title (see Stacked panes). **Windows:** the sidebar half landed in T2085; strips arrive with stacked panes (T2081).
@@ -613,8 +688,12 @@ order. Not yet on Windows: the sidebar to SEE the stash in (T1828) - use
 
 ### Naming
 
-- `+new-window --target=<name>` registers a **window**
-- `+split --name=<name>` registers a **pane**
+- `+new-window --target=<name>` registers a **window**. Window names are
+  global: one window holds a name, and a name a pane holds cannot be taken by
+  a window (`+new-window --target=` fails rather than "reusing" a pane).
+- `+split --name=<name>` registers a **pane**, in the window it lands in.
+  **On macOS pane names belong to their window**: two windows can each have a
+  pane called `draft` (Windows: T2250).
 - `+new-window --name=<name>` registers a **pane** too (T968): the window's
   first pane, or with `--split` the inline split pane. It is idempotent, by
   the name alone (on both platforms it has not taken `+split --name`'s
@@ -623,6 +702,37 @@ order. Not yet on Windows: the sidebar to SEE the stash in (T1828) - use
   first). It used to be accepted and silently dropped for a window without
   `--split`, so the next `--target=<name>` answered `not found`.
 - `+split --target`, `+close --target`, and `+send-keys --target` reference either kind
+
+**How a name is looked up** (`TargetLookup`, the one policy;
+`IPCServer.lookup` applies it). Every command carries the pane it was run from
+— the CLI writes `$GHOZTTY_PANE_ID` into each request as a top-level
+`caller_pane` field — and the name means, in order:
+
+1. a pane of that name in **the caller's window**;
+2. a window of that name;
+3. a pane of that name in another window, **if exactly one window has one**.
+
+Two or more other windows holding the name is **ambiguous**: the command
+fails (exit 1) naming the windows and pointing at the pane id, rather than
+pick one — picking would act on another agent's pane at random. A caller with
+no pane (a plain shell, a `ghoztty://` link) starts at step 2. A pane id is
+always exact and needs none of this. An explicit `--target=<window>` /
+`--pane=<id>` still reaches across windows.
+
+This applies to `+split --name`/`--pane`/`--target`, `+close`, `+send-keys`,
+`+read`, `+set-banner`, `+set-state`, `+reload`, `+stash`, `+restore`,
+`+rename` and `+rearrange` (whose layout names panes of the window it
+rearranges). `caller_pane` is a field rather than an argument because it must
+be additive both ways: an older app's decoder ignores an unknown field, where
+an extra argument would have become text in its `+set-banner`. The server
+folds it into the arguments as `--caller-pane=` (in front of any `-e`), the
+one spelling every handler reads (`IPCRequest.resolvedArguments`). A name
+follows its pane when the pane moves to another window. Tests:
+`TargetLookupTests`, `PaneNameScopeWindowTests` (two real windows: split,
+close and send-keys from each). **Windows:** the CLI already sends
+`caller_pane` on every request (`ipc_client.buildRequest`, T2249); the win32
+server does not scope by it yet and still resolves a pane name across every
+window — T2250.
 
 A window opened without an explicit `--target=` (Cmd-N, or a bare
 `+new-window`) still gets an **auto name** — `window-1`, `window-2`, … — which
@@ -683,6 +793,10 @@ pane, plus a user clicking window B in the meantime, put the pane in B. The race
 does not need a user, either — an agent's command is asynchronous with respect
 to focus.
 
+- **Name lookup is a different use of the same pane** (see Naming): every
+  command sends it as the request's `caller_pane` field, explicit anchors or
+  not, and a name is looked up in that pane's window first. Anchoring is only
+  for commands that need somewhere to put a pane.
 - **Applies to `+split` and `+rearrange`.** Both took the focused-window
   fallback. `+new-window` creates a window and needs no anchor, and
   `--from-focused` (on `+split` and `+new-window`) is the caller asking for the
@@ -856,8 +970,12 @@ ghoztty://focus/<target>
 One verb, one shape. `<target>` is percent-decoded and passed to the same
 target resolver `--target` uses, so there is one naming system, not two: a
 registered window name, an auto `window-N`, a registered pane name, or a pane
-id (`$GHOZTTY_PANE_ID`, case-insensitive). Everything after the verb is ONE
-target, so a name containing `/` survives encoded (`focus/feat%2Flogin`) or not
+id (`$GHOZTTY_PANE_ID`, case-insensitive). On macOS (`IPCServer.lookup`) a
+link has no caller pane, so a pane name is looked up across every window (see
+Naming): once two windows each hold a pane of that name the link is
+**ambiguous** and reports so (`Failure.ambiguousTarget`, "Can't focus …")
+instead of raising one of them at random. A pane id never is (Windows: T2250).
+Everything after the verb is ONE target, so a name containing `/` survives encoded (`focus/feat%2Flogin`) or not
 (`focus/feat/login`). The path form is canonical over `ghoztty://<target>`
 (nowhere to put a verb) and over `ghoztty://focus?target=…` (a second escaping
 context for no gain). Parsing is strict: unknown verb, empty target, and bare
@@ -1169,7 +1287,15 @@ is a translucent sheet tinted 40% with the terminal's own background (Liquid
 Glass on macOS 26, a plain tint before — `PaneGlass`), so the gradient's light
 and shade read through every pane. The renderer stops drawing the terminal's
 background (`generic.zig` `pane_glass`, the same switch the `macos-glass-*`
-blur styles use), the banner strip skips its base fill, viewer template pages
+blur styles use), the banner strip skips its base fill and the **banner card is
+a pane of glass of its own, layered on top** — the pane's sheet thins out
+under the card (`PaneGlass.bannerTint`, 25% against the focused pane's 40%, never
+below an unfocused pane's 15%; the card publishes its frame up to `PaneCard` as
+`PaneBannerCardKey`), and the card itself is rim and drop shadow only, no white
+wash and no sheen (`SurfacePaneBanner.isGlass`): a white lift over glass greyed
+the gradient into a flat slab ~17 levels lighter than the pane, and a second
+Liquid Glass sheet over the pane's greys it further
+(`bannerOnGlassLetsTheGradientThrough`; `flat` and elevated-without-glass keep the wash), viewer template pages
 (markdown/code/diff/image) go see-through (`ViewerView.isOnGlass`, a
 `pane-glass` class in `viewer.css`) while websites and HTML files keep their
 own background, and the gradient runs up under the titlebar: the transparent
@@ -1204,8 +1330,8 @@ size in one update, and an `.animation(_:value:)` over the card animated the
 frame too, resizing the terminal on every frame of the fade. `flat`, and
 `elevated` without glass, keep the wash and honor both config keys as before.
 **A stacked row has no solid cards.** A tucked card, on either side of the
-run, is drawn as its sliver alone, so nothing lies under a card on show and
-every card is glass. (Cards used to be drawn whole with most of them under
+run, is a card of the strip's size (see Stacked panes), so nothing lies under
+a card on show and every card — every strip too — is glass. (Cards used to be drawn whole with most of them under
 their neighbours, so every stacked card was filled 92% opaque — a row that did
 not fit lost its glass altogether.) **Hero mode** shows its pane as that
 same glass card — the hero container paints no fill of its own on glass
@@ -1221,7 +1347,28 @@ much of the desk in the gutter beside a pane its glass hides — by
 than 350ms. Each one is a SIGWINCH on which a full-screen TUI (Claude Code)
 clears and repaints; at the old fixed 25ms coalesce a 600ms divider drag was 35
 repaints — the resize flicker — and is now ~4
-(`aDragDoesNotStormTheProgramWithResizes`). `resize-overlay` defaults to
+(`aDragDoesNotStormTheProgramWithResizes`). **A shell at its prompt is not
+debounced** (`Termio.resizePace`): the grid reflows at once, and the next
+resize waits only for the shell's redraw of the last, so a drag reflows the
+prompt as it goes. It used to wait out the 100ms, and a drag reflowed only
+every 350ms (`aResizeReflowsThePromptAsItHappens`, local and agent panes). A
+program running (the cursor's content is output, or the alternate screen) is
+debounced as above. **A resize never shows the
+prompt blank.** With the cursor at a prompt, a resize clears the prompt for
+the shell to redraw (`Screen.resize`, shell integration), and every frame
+drawn before the redraw arrived showed it gone — for a round trip, longer
+through the session agent, where the redraw can also arrive in pieces. The
+renderer now holds the last frame (`Terminal.flags.awaiting_prompt_redraw`)
+until the cursor's line (its row, or a row it soft-wraps from: a wrapped
+prompt's last row can hold just the space before the cursor) shows text
+again and the output has been quiet 15ms,
+capped at 250ms (`termio.Thread.prompt_redraw_ms`) for a shell that never
+redraws. That cap is armed after `loop.update_now()`: the IO loop's cached
+clock is seconds stale after an idle stretch, and a timer measured from it
+fires at once. Tests: `aResizeNeverBlanksThePrompt` (window resizes, local
+and agent panes; frames in `/tmp/banner-collapse-resize[-agent]`). The pacing
+and the frame hold are shared core, so Windows has them since T2249; proving
+them through ConPTY and the session agent is T2251. `resize-overlay` defaults to
 `never` in this fork (the dimensions popup on every divider drag). Verified by `glassPanesLetTheGradientThrough`,
 which also writes a ScreenCaptureKit capture of its own window. A translucent terminal
 (`background-opacity` < 1) gets an equally translucent gradient. Settled in the
@@ -1238,7 +1385,9 @@ proves the win32 resize paths and the overlay default against it.
 **A pane is never narrower (or shorter) than 300pt.** A row of panes that
 cannot fit side by side at that minimum becomes a **stack**: as many panes as
 fit stay on show (the **run**), and the rest are **minimized** into strips at
-the edge they live on — a dark bar with the pane's name down it. Nothing is
+the edge they live on — the pane's own card at the strip's size (the same
+glass, rim and unfocused tint as any card on show), its content faded out and
+its name down it. Nothing is
 ever squeezed below the minimum to make room. Layout is one pure function,
 `PaneLayout.compute` (`Features/Splits/PaneLayout.swift`), used by the live grid
 AND the stashed-pane slots, so a restored pane never reflows.
@@ -1279,32 +1428,108 @@ AND the stashed-pane slots, so a restored pane never reflows.
 - **Elevation**: the run is highest, and strips sit lower the farther they are
   from it, on both sides — the run casts its shadow on the strip beside it, and
   each strip on the next one out. On either side of the run a tucked card is
-  drawn as its strip alone (`Leaf.isSliver`), so slides never move a card
+  drawn at its strip's size (`Leaf.isSliver`), so glides never move a card
   through another and no card on show ever has one under its glass.
   Paint order is `Leaf.elevation`, not tree order.
-- **Collapsing by hand**: dragging a divider (or a grip between cards on
-  show) ~48pt past the minimum of the pane it squeezes minimizes the outermost
-  pane on that side, **while the mouse is still down** — and the drag **goes
-  on**: the grip then follows the pointer through the run, and each next pane
-  on that side tucks away in its turn once the pointer is 48pt past its
-  minimum, until nothing on that side is on show (three across, the left
-  divider dragged right: c, then b, then a alone). Dragging back returns them
-  in reverse — each once there is room for it again at its minimum, the first
-  by the divider's own threshold — all in the same drag
-  (`PaneLayout.chain` / `squeezedShares`, pure; `BaseTerminalController
-  .squeezeRow` replays each step from a snapshot taken at mouse-down). It
-  measures in row coordinates, so `(a | b) | c` and `a | (b | c)` behave the
-  same. A collapsed row stays collapsed with room to spare (a `Pin`). Grips
-  between cards on show resize them; a grip at the run's edge widens it again
-  when one more card fits. Rows nest (`a | (b / c)` is a row whose second item
-  is a column), and each keeps its own collapse.
+- **Every gutter of a row is one thing, and the row is a function of where
+  it is.** A divider, a grip between cards on show, and a grip where the run
+  meets its strips (on any stacked row with strips on that side, collapsed by
+  the user or for want of room) are all gutters of their row, and dragging one
+  makes the row what `PaneLayout.dragged` says the gutter's position makes of
+  it — computed afresh every step from the row as the drag found it, never
+  from the step before: the items before the gutter get the space from the
+  row's start to it, the items after it the rest; each side shows as many of
+  its items as fit at their minimums, nearest the gutter first, the others
+  strips at the row's edge on that side (a side with no room for even one is
+  all strips, the gutter at their edge, the other side taking the rest); the
+  item beside the gutter takes up the slack, and the others keep their sizes
+  from when the drag began until the space runs out, then give way nearest
+  first. **A drag only collapses panes, and brings out at most one**: a side
+  never shows more than it had on show when the drag began — or, all strips
+  then, the one pane beside the gutter, pulled out. So a gutter dragged one
+  way tucks the panes on that side away one after another while the panes on
+  the other side grow and its strips stay strips; a strip pulled out by its
+  gutter comes out alone, growing as far as the hand takes it, the strips
+  behind it staying strips and the panes on the other side tucking away to
+  make room (`aStripPulledOutBringsOutItsPaneAlone`,
+  `aGutterDraggedNeverBringsStripsOutOnItsOtherSide`,
+  `aStripPulledFarBringsOutItsPaneAlone`). It used to bring strips out on
+  the side gaining room, so collapsing one pane pulled the far ones out, and
+  a strip pulled far brought the next one out after it. Dragged back, a
+  gutter undoes exactly that: let go where it began, the row is as it was.
+  A pane tucks away the moment it would go under its minimum; there
+  is no resistance band past it, which would make the row depend on how the
+  gutter got where it is. The row's state goes to `PaneStackState.show` (a
+  `Pin` and slot shares), or, all of it on show, to the tree's ratios
+  (`SplitTree.settingRow`). It measures in row coordinates, so `(a | b) | c`
+  and `a | (b | c)` behave the same. It replaced a squeeze chain for dividers,
+  a one-strip-at-a-time pull for edge grips and a two-slot resize for grips
+  between cards, which disagreed with each other and depended on the path:
+  an edge grip brought out one strip and nothing more until the mouse was
+  let go, and dragging a gutter across a row and back ended in undefined
+  states. Tests: `aGutterDraggedAcrossTheWholeRowAndBackIsCoherentThroughout`
+  (the whole of it, hand-paced: a middle gutter dragged to the left edge, the
+  right edge, and back, every sampled frame checked — no overlap, every
+  gutter the row's, every card inside the row, one bar — and the row as it
+  was at the end), `pullingTheLastStripOutOfAFullRowTucksTheFarPane`,
+  `aRunEdgeWithNoRoomForOneMoreIsStillAGrip`,
+  `aStripIsPulledBackOutByItsGutterLikeADivider`; the rule's own cases in
+  `PaneLayoutTests` (`aGutterDragged…`). **A row nested across the divider
+  counts as it is laid out**: a column holding a collapsed row (or one
+  stacked for want of room) is only as wide as that row's run and strips
+  (`PaneStackState.laidOutPin`, through `SplitTree.movingDivider(laidOut:)`);
+  counted with all its panes side by side, the column was past its minimum at
+  the first pixel and the whole column tucked away
+  (`aDividerBesideAColumnWithACollapsedRowResizesIt`). A collapsed row stays
+  collapsed with room to spare (a `Pin`). Rows nest (`a | (b / c)` is a row
+  whose second item is a column), and each keeps its own collapse.
+- **What can be dragged says so**: every divider and grip (`DividerHandle`)
+  and the edge of a side panel (the pane sidebar's, a viewer's contents —
+  `SidePanelResizeHandle`) shows a 4pt accent bar with a soft glow down the
+  middle of its gutter (`GutterBar`): at half strength while the pointer is
+  over it, full while it is dragged. **The bar stays in the gutter**, never
+  out at the pointer: it is drawn at the gutter being dragged as the layout
+  leaves it, so it stops where the edge stops — at a pane's minimum, a
+  panel's widest or narrowest, a strip whose pane has not come out yet — and
+  when the gutter snaps (a pane tucks away, a strip comes out or goes back)
+  it moves to the gutter that took its place, lit until the mouse comes up.
+  Rules that came from bugs:
+  - While a drag is under way the bar is drawn on the window, not on the
+    handle, and above everything on it (`zPosition`): a grip whose strip
+    comes out is replaced mid-drag, and the bar went with it; then the
+    panes' layers were drawn over it as a card slid.
+  - One bar at a time: no gutter shows its hover bar while any drag is under
+    way (a grip that came back under the pointer doubled the bar up).
+  - When the dragged gutter is replaced, the bar goes to the gutter that
+    moved the way the drag is going, nearest to where the bar was — a gutter
+    snapped to the edge as its pane tucked away. Nearest the pointer, it
+    took the gutter beside it (`theBarStaysWithTheGutterThatSnappedToTheEdge`).
+  - A gutter asks again whether the pointer is over it whenever it moves in
+    its window (`updateTrackingAreas`, which AppKit calls then, even when it
+    is an ancestor that moved), and every gutter in the window asks when a
+    drag ends: a gutter that moved out from under a still pointer gets no
+    mouse-exited, and stayed lit as if the drag were still going on. The
+    tracking areas also run during drags (`.enabledDuringMouseDrag`). Tests
+    say where their synthetic pointer is (`GutterBar.pointerOverride`).
+
+  Tests: `aDividerShowsABarOnHoverThatFollowsTheDrag`,
+  `theBarStaysInTheGutterAsAStripComesOutAndGoesBack` and
+  `theBarStaysInTheGutterAsADividerCollapsesAPaneAndBack` (paced drags
+  recorded as the window server composites them: one bar in every frame
+  while held, in the gutter), `thePinnedSidebarResizesFromTheGutterBesideIt`
+  (stops at the panel's widest).
+
+  **Windows:** the one gutter rule, the accent bar and the glide are T2253.
 - **Resizers live in the gutters**: every card on show and every strip is
   separated from the next by the same gutter (`Metrics.gap`: 10pt elevated,
   6pt flat), whatever the run's position — so moving the run never resizes a
   card. Every resizer takes the mouse in its gutter and nowhere else
   (`Divider.gutter`, `StackHandle.gutter`): split dividers, grips between
   cards, the grip where the run meets its strips, and the pane sidebar's edge
-  (inside its card where the grid or a pane lies right past it). A click just
+  — pinned, ALL of the gutter between the panel and the panes, and none of
+  the panel (`PaneSidebarState.pinnedEdgeGrip`; it used to straddle the
+  edge, half of it a click on the list; `thePinnedSidebarResizesFromTheGutterBesideIt`);
+  flat, or on the card floating over the grid, just inside its edge. A click just
   inside a card's edge is the card's — its grab handle sits at its top edge,
   and a strip is its own drag source. Pinned by
   `everyResizerSitsInAGutter` / `everyResizerOfAStackSitsInAGutter` (real
@@ -1345,8 +1570,26 @@ AND the stashed-pane slots, so a restored pane never reflows.
   `replaceSurfaceTree`), so an undone close brings the row back exactly. (Old
   rows' pins used to be kept for that, and came back stale after later changes
   — minimizing the focused pane.)
-- **The caret never lands on a strip** unless the user asked for that pane:
-  focusing one brings it out. Every handoff picks the pane on show nearest
+- **A side pane opened without focus comes on show.** A pane split off the
+  pane with the caret that does not take it — every agent `+split` (focus is
+  opt-in), a banner link's Cmd-click side pane — was asked for, so it must be
+  seen: it is the **featured** pane (`PaneStackState.featured`), ranked ahead
+  even of the focused pane (`PaneStackState.ranks`, -1) wherever its row has
+  no room for every pane. Other panes in the row minimize to make room; when
+  even that is not enough the CALLER becomes the strip — and **keeps the
+  caret**. It used to be born a strip: in a window with room for two cards
+  but not three (~640–950pt, a half-screen window), the run kept the caller
+  and its last-focused neighbour, and the new pane was a strip nobody saw.
+  The feature ends with the next change of focus, after which the row is the
+  focus history's again. Set by `newViewerSplit`, and by `newTerminalSplit`
+  / `newSplit` when `focus` is false. Tests:
+  `aSidePaneOpenedWithoutFocusComesOnShow`,
+  `aSidePaneInARowWithRoomForOneTakesItAndTheCallerKeepsTheCaret`,
+  `aSidePaneOpenedWhileTheWindowIsCoveredIsThereWhenUncovered` (rules out a
+  covered window as a cause). Windows: T2250.
+- **Focus never MOVES onto a strip** unless the user asked for that pane:
+  focusing one brings it out. (The one way the caret can sit in a strip is to
+  have stayed there — the caller of a side pane, above.) Every handoff picks the pane on show nearest
   the candidate (`paneOnShow`, `focusTargetAfterRemoving`): a close, Cmd-W in
   a viewer, a stash, the sidebar's trash kill, and the window becoming key
   with nothing focused. And only a pane that **really has the caret** counts
@@ -1355,24 +1598,60 @@ AND the stashed-pane slots, so a restored pane never reflows.
   gave it up, the window itself after a re-parent), and that terminal may
   have been minimized since — reading it as focused again brought it back
   out.
-- **No resize per animation frame**: a slide is a Core Animation animation of
-  each card's layer (`PaneStage`), never a frame change, so a terminal is told
-  its size once, and its PTY never SIGWINCHes during a slide. **A minimized
-  pane is its strip and nothing else**: its content is hidden (it used to show
-  through the strip), and it keeps the size it last had on show — a row
-  reflowing around it never resizes a program nobody can see. It takes its
-  slot's size once, when the slide bringing it forward ends. A slide that ALSO
-  changes card sizes (a row gaining or losing a card on show) gives each card
-  its new shape at once but holds its content at the old size — anchored top
-  left, cut by the card or with sheet to spare (`paneContentFreeze`) — until
-  the slide ends; then every card takes its size in one transaction: **one
-  resize per terminal, after the motion**. It used to be resized on every frame
-  of the 0.25s focus fade (a strip click focuses AND reshapes in one update),
-  seven times in 250ms, each a reflow the shell repainted mid-slide. Tested by
-  `aResizingSlideResizesEachTerminalOnceAfterIt`, which also records the slide
-  at the display's frame rate (`WindowFrameRecorder`, frames in
-  `/tmp/pane-stack-snapshots/frames`) and fails on a frame where the still card
-  flashes.
+- **A change in what is on show glides; nothing slides on its own clock.**
+  A strip's pane coming out or going back, a pane tucking away — by a
+  divider or grip drag, a strip click, a split or a close — is a **glide**
+  (`PaneStageView.glide`): every card and strip eases from where it is drawn
+  toward where the layout puts it (about 90% in 0.15s), all re-placed
+  together every frame, so a card, its sheet and its content move as one
+  and the gutters between cards hold their width. Under a drag the layout
+  keeps changing and each frame eases toward its latest — no tween with an
+  end to reach and correct from: the target is retargeted mid-motion as the
+  hand moves.
+  - **A pane going into its strip narrows into it** as a card, rim and glass
+    all round it, its content pinned to its far edge (sliding behind the
+    strip's edge) and cut by the card; **its content fades out and its title
+    fades in** as it narrows (`PaneCardView.collapse`: by how much wider than
+    a strip it is drawn, over its last 120pt). Coming out is the same the
+    other way round. At the strip there is nothing left to change: it used to
+    glide in as a glass card and then switch, in one frame, to a dark bar
+    over a black scrim (`aPaneCollapsesIntoAGlassStripWithNothingSnapping`,
+    which also checks the strip reads as glass against the desk beside it).
+    The flat style, whose panes are no cards, fills its strips.
+  - **What a card's content is held at.** Under a drag, at where the layout
+    puts it now (the larger of that and its size when the glide began, for a
+    card on show at both ends) — held at the first target instead, a fast
+    pull left the content short of its growing card
+    (`aFastPullKeepsTheGlideOnTheHand`). In a glide no drag began, at the
+    size it had (a strip's pane at its last size on show) until the glide is
+    over, when every card takes its size in one transaction: **one resize per
+    terminal, after the motion** (`aResizingSlideResizesEachTerminalOnceAfterIt`,
+    which records the glide at the display's frame rate, frames in
+    `/tmp/pane-stack-snapshots/frames`, and fails on a frame where the still
+    card flashes). It used to be resized on every frame of a 0.25s focus fade.
+  - **A glide lasts the drag and settles after it**: a card that has caught
+    up rests until the next step, and when the hand lets go the cards glide
+    on to where they were headed. "The drag is over"
+    (`PaneStackState.isGesturing`) lands 50ms after the mouse comes up: a
+    fast hand outruns the grid (`aFastPullLetGoOfSettlesWithoutASnap`). The
+    stage hears the drag end itself (it observes `isGesturing`): left to the
+    next redraw of the grid, which the end of a drag does not always bring, a
+    resting glide never finished.
+  - **Every item glides**, a strip as much as a card, by the rect it is
+    drawn in — with only cards gliding, a pane that tucked away left a hole
+    its neighbours glided into (`pullingTheLastStripOutOfAFullRowSettlesWhole`).
+    The drag's bar is drawn over the gutter as the cards draw it
+    (`PaneStageView.shownGutter`).
+  - Clicks used to run a Core Animation slide, and a drag ran it against the
+    hand: the card beside jumped, the one coming out lagged with its content
+    held at its old size, its sheet faded in and its strip out on their own
+    clocks, and a release mid-slide could leave them there. Tests:
+    `aStripPulledOutFollowsTheHandWithNothingSliding` (every card sampled
+    through a hand-paced drag: nothing on its own clock, the gutter its
+    width, the pane seen on its way in, the bar over the drawn gutter).
+- **A minimized pane is never resized**: it keeps the size it last had on
+  show — a row reflowing around it never resizes a program nobody can see —
+  and takes its slot's size once, when the glide bringing it forward ends.
 - **Drag a strip** to pick its pane up: the card itself follows the pointer (no
   drag image, past a 5pt threshold, so a click with a wobble is a click). A
   strip has **targets of its own** (`PaneDropResolver.resolveBlade`; see Pane

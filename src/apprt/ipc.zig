@@ -125,6 +125,11 @@ test "socketPath: falls back to this build's own socket when unset or empty" {
 /// drift apart.
 pub const pane_env = @import("../remote/protocol.zig").Open.pane_id_env;
 
+// `ipc_client` writes `caller_pane` from its own spelling of the variable.
+comptime {
+    std.debug.assert(std.mem.eql(u8, pane_env, internal_os.ipc_client.caller_pane_env));
+}
+
 /// The flag `seedCallerPane` adds to carry `$GHOZTTY_PANE_ID` to the app.
 ///
 /// Aliased from `ipc/args.zig`, where the win32 server's parser and its
@@ -170,6 +175,54 @@ pub fn seedCallerPane(
     }
 
     return seedCallerPaneFrom(alloc, arguments, std.posix.getenv(pane_env));
+}
+
+/// Write `"caller_pane": $GHOZTTY_PANE_ID` into a request object, when set.
+///
+/// Every command sends it so the app can look a NAME up in the caller's own
+/// window first: pane names belong to the window they were created in, and
+/// `+close --target=draft` from one window must not close another window's
+/// `draft`. It is a top-level field, not an argument, so an older app ignores
+/// it (an extra argument would become banner text in its `+set-banner`).
+/// `seedCallerPane` is a different thing: the default ANCHOR of a command
+/// that creates a pane, which explicit flags override.
+pub fn writeCallerPane(jws: *std.json.Stringify) std.Io.Writer.Error!void {
+    // Windows: `std.posix.getenv` is a compile error there (see
+    // `seedCallerPane`). A pane id is a UUID, so a stack buffer holds it; a
+    // value that does not fit, or no value, is "no caller pane".
+    if (comptime builtin.os.tag == .windows) {
+        var buf: [256]u8 = undefined;
+        var fba: std.heap.FixedBufferAllocator = .init(&buf);
+        const baked = std.process.getEnvVarOwned(fba.allocator(), pane_env) catch null;
+        return writeCallerPaneFrom(jws, baked);
+    }
+    return writeCallerPaneFrom(jws, std.posix.getenv(pane_env));
+}
+
+fn writeCallerPaneFrom(jws: *std.json.Stringify, baked: ?[]const u8) std.Io.Writer.Error!void {
+    const pane = baked orelse return;
+    if (pane.len == 0) return;
+    try jws.objectField("caller_pane");
+    try jws.write(pane);
+}
+
+test "callerPane: every request carries the pane it came from as a field" {
+    const testing = std.testing;
+    for ([_]struct { baked: ?[]const u8, want: []const u8 }{
+        .{ .baked = "PANE-1", .want = "{\"action\":\"close\",\"caller_pane\":\"PANE-1\"}" },
+        .{ .baked = null, .want = "{\"action\":\"close\"}" },
+        .{ .baked = "", .want = "{\"action\":\"close\"}" },
+    }) |case| {
+        var out: std.Io.Writer.Allocating = .init(testing.allocator);
+        defer out.deinit();
+        var jws: std.json.Stringify = .{ .writer = &out.writer };
+        try jws.beginObject();
+        try jws.objectField("action");
+        try jws.write("close");
+        try writeCallerPaneFrom(&jws, case.baked);
+        try jws.endObject();
+        try testing.expectEqualStrings(case.want, out.written());
+    }
 }
 
 /// `seedCallerPane` with the baked value injected, so the rule is testable

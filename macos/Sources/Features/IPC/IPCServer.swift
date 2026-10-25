@@ -17,7 +17,10 @@ class IPCServer {
     private var sentinelSource: DispatchSourceFileSystemObject?
     private var sentinelDirFd: Int32 = -1
     private let queue = DispatchQueue(label: "com.dzearing.ghoztty.ipc", qos: .utility)
-    private var targetRegistry: [String: TargetEntry] = [:]
+    /// Names → what they name. A window name is global (one window holds
+    /// it); a pane name belongs to its window, so one name can list a pane in
+    /// each of several windows (`TargetLookup`). Main thread only.
+    private var targetRegistry: [String: [TargetEntry]] = [:]
 
     private enum TargetEntry {
         case window(WeakRef<TerminalController>)
@@ -53,6 +56,30 @@ class IPCServer {
             case .window(let ref): return ref.value != nil
             case .pane(_, let ref): return ref.value != nil
             case .viewerPane(_, let ref): return ref.value != nil
+            }
+        }
+
+        /// The window, surface, or viewer pane this entry names.
+        var object: AnyObject? {
+            switch self {
+            case .window(let ref): return ref.value
+            case .pane(_, let ref): return ref.value
+            case .viewerPane(_, let ref): return ref.value
+            }
+        }
+
+        var isWindow: Bool {
+            if case .window = self { return true }
+            return false
+        }
+
+        /// The same pane, in `controller` — where it lives NOW, which a pane
+        /// moved between windows has changed since it was registered.
+        func moved(to controller: TerminalController) -> TargetEntry {
+            switch self {
+            case .window: return self
+            case .pane(_, let surface): return .pane(controller: WeakRef(controller), surface: surface)
+            case .viewerPane(_, let pane): return .viewerPane(controller: WeakRef(controller), pane: pane)
             }
         }
 
@@ -281,7 +308,7 @@ class IPCServer {
         }
 
         Self.logger.info("IPC: received action '\(request.action)'")
-        let response = dispatchAction(request)
+        let response = dispatch(request)
         sendResponse(fd: fd, response: response)
     }
 
@@ -318,10 +345,14 @@ class IPCServer {
         }
 
         Self.logger.info("IPC: processing pending action '\(request.action)'")
-        _ = dispatchAction(request)
+        // On the IPC queue, like a socket request: handlers wait on work they
+        // hand to the main thread (`+split` waits for its pane), so running
+        // one ON main would wait on itself.
+        queue.async { [weak self] in _ = self?.dispatch(request) }
     }
 
-    private func dispatchAction(_ request: IPCRequest) -> IPCResponse {
+    func dispatch(_ request: IPCRequest) -> IPCResponse {
+        let request = IPCRequest(action: request.action, arguments: request.resolvedArguments)
         switch request.action {
         case "new-window":
             return handleNewWindow(request)
@@ -412,29 +443,37 @@ class IPCServer {
         // Idempotent: if target exists and window is alive, it is the
         // answer. Raising it is the caller's choice (`--focus`); by default
         // finding it is a no-op, like every other programmatic path.
+        //
+        // Window names are global, and a pane's name is never a window's
+        // (see `SplitNameCollision`): a `--target` a pane holds fails, rather
+        // than "succeeding" without opening the window that was asked for.
         if let target = parsed.target {
             pruneStaleTargets()
-            if let entry = resolveTarget(target), entry.controller != nil {
+            switch lookup(target, from: nil) {
+            case .found(let entry) where entry.isWindow && entry.controller != nil:
                 if parsed.focus.raisesWindow {
                     DispatchQueue.main.async { _ = Self.bringForward(entry) }
                 }
                 return .ok
+            case .found, .ambiguous:
+                return IPCResponse(
+                    success: false,
+                    error: "'\(target)' is already the name of a pane, so no window can take it. Use another --target.")
+            case .notFound:
+                break
             }
         }
 
         // T968: `--name` names a PANE (the first one, or the inline split's)
         // and is idempotent the way `+split --name` is: a live pane already
-        // under that name is focused rather than a second window opened.
+        // under that name is the answer rather than a second window opened.
         // `--target` decided first above, so this only answers when the
         // caller named no window.
         if parsed.target == nil, let name = parsed.name {
             pruneStaleTargets()
-            if let entry = resolveTarget(name), let controller = entry.controller {
-                if !parsed.noActivate {
-                    DispatchQueue.main.async {
-                        controller.window?.makeKeyAndOrderFront(nil)
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
+            if let entry = resolveTarget(name), entry.controller != nil {
+                if parsed.focus.raisesWindow {
+                    DispatchQueue.main.async { _ = Self.bringForward(entry) }
                 }
                 return .ok
             }
@@ -525,13 +564,13 @@ class IPCServer {
                     // +list doesn't mint a second "window-N" alias (terminal
                     // windows get this via the GHOZTTY_WINDOW_NAME env var).
                     controller.windowName = target
-                    self?.targetRegistry[target] = .window(WeakRef(controller))
+                    self?.register(target, .window(WeakRef(controller)))
                     Self.logger.info("IPC: registered window target '\(target)'")
                 }
                 if let name = parsed.name {
-                    self?.targetRegistry[name] = .viewerPane(
+                    self?.register(name, .viewerPane(
                         controller: WeakRef(controller),
-                        pane: WeakRef(pane))
+                        pane: WeakRef(pane)))
                 }
             }
             return .ok
@@ -557,7 +596,7 @@ class IPCServer {
             }
 
             if let target = parsed.target {
-                self?.targetRegistry[target] = .window(WeakRef(controller))
+                self?.register(target, .window(WeakRef(controller)))
                 Self.logger.info("IPC: registered window target '\(target)'")
             }
 
@@ -569,10 +608,10 @@ class IPCServer {
                         Self.logger.warning("IPC: no surface view to name '\(firstPaneName)'")
                         return
                     }
-                    self?.targetRegistry[firstPaneName] = .pane(
+                    self?.register(firstPaneName, .pane(
                         controller: WeakRef(controller),
                         surface: WeakRef(surfaceView)
-                    )
+                    ))
                     Self.logger.info("IPC: registered pane target '\(firstPaneName)'")
                 }
             }
@@ -626,10 +665,9 @@ class IPCServer {
                     }
 
                     if let name = parsed.name, let newView {
-                        self?.targetRegistry[name] = .pane(
+                        self?.register(name, .pane(
                             controller: WeakRef(controller),
-                            surface: WeakRef(newView)
-                        )
+                            surface: WeakRef(newView)))
                         Self.logger.info("IPC: registered pane target '\(name)'")
                     }
                 }
@@ -660,31 +698,12 @@ class IPCServer {
             parsed.splitCommand = wrapCommandInShell(splitCommand, shell: parsed.shell)
         }
 
-        // Convert color string to Color
-        let tintNSColor: NSColor? = parsed.color.flatMap {
-            $0 == "random" ? Self.randomDarkColor() : NSColor(hex: $0)
-        }
-        let tintColor: Color? = tintNSColor.map { Color($0) }
+        // `--from-focused` is the inheriting split (see `splitAnchor`); it
+        // takes no name.
+        if parsed.fromFocused { parsed.name = nil }
 
-        // Idempotent: if --name exists and already is what was asked for, it
-        // is the answer — and the reply says so, and where. A request it does
-        // not satisfy fails instead (see `SplitNameCollision`). Focusing a
-        // reused pane is the caller's choice (`--focus`), as for `+new-window
-        // --target=`. `--from-focused` ignores `--name`.
-        if let name = parsed.name, !parsed.fromFocused {
-            pruneStaleTargets()
-            if let entry = resolveTarget(name), entry.isAlive,
-               let existing = describeExisting(entry, anchor: splitAnchorController(parsed)) {
-                switch SplitNameCollision.decide(name: name, existing: existing, requestedView: parsed.view) {
-                case .conflict(let error):
-                    return IPCResponse(success: false, error: error)
-                case .reuse(let message):
-                    if parsed.focus.movesKeyboardFocus {
-                        DispatchQueue.main.async { _ = Self.bringForward(entry) }
-                    }
-                    return IPCResponse(success: true, message: message)
-                }
-            }
+        let tint: NSColor? = parsed.color.flatMap {
+            $0 == "random" ? Self.randomDarkColor() : NSColor(hex: $0)
         }
 
         // Validate percent if provided
@@ -698,326 +717,329 @@ class IPCServer {
             ratio = 0.5
         }
 
-        // `--from-focused`: mirror the keyboard/menu split exactly. Resolve the
-        // app's focused window + its focused surface and call the REAL
-        // `newSplit(at: focusedSurface, ...)` — the same path a Cmd-D split takes.
-        // This is the faithful REMOTE-inheriting split: `newSplit` injects the
-        // window's shared remote connection + parent command/cwd (BaseTerminal
-        // Controller §WP4). Unlike `--target`/`--pane` we pass NO command/cwd of
-        // our own, so inheritance is never suppressed. Used to drive rapid remote
-        // splits (each opens a fresh session on the same machine/connection).
-        if parsed.fromFocused {
-            let directionStr = parsed.splitDirection ?? "right"
-            guard let direction = Self.parseSplitDirection(directionStr) else {
-                return IPCResponse(success: false, error: "invalid direction: \(directionStr)")
-            }
-            DispatchQueue.main.async {
-                guard let controller = TerminalController.preferredParent else {
-                    Self.logger.warning("IPC: +split --from-focused: no focused window")
-                    return
-                }
-                guard let surfaceView = controller.focusedSurface else {
-                    Self.logger.warning("IPC: +split --from-focused: no focused surface")
-                    return
-                }
-                // Empty config so `newSplit` performs full remote inheritance
-                // (connection + parent command + cwd). The tint/name plumbing is
-                // intentionally omitted here — this trigger is the inheriting case.
-                let splitConfig = Ghostty.SurfaceConfiguration()
-                _ = controller.newSplit(
-                    at: surfaceView,
-                    direction: direction,
-                    baseConfig: splitConfig,
-                    ratio: ratio,
-                    focus: parsed.focus.movesKeyboardFocus
-                ) { newView in
-                    Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
-                }
-            }
-            let windowName = Self.onMain { TerminalController.preferredParent?.windowName }
-            return IPCResponse(
-                success: true,
-                message: windowName.map { "created a split in window '\($0)'" } ?? "created a split in the focused window")
-        }
-
-        // No explicit anchor: split off the pane this command was invoked FROM
-        // rather than whatever window is focused by the time we get here.
-        // Assigning `parsed.pane` routes it down the ordinary `--pane` path, so
-        // a caller-anchored split is the same split an explicit one would be.
-        if let callerPane = callerAnchorPane(parsed) {
-            parsed.pane = callerPane
-        }
-
-        // Resolve --pane targeting: find the named pane (terminal surface or
-        // viewer) and its controller.
-        if let paneName = parsed.pane {
-            pruneStaleTargets()
-            guard let entry = resolveTarget(paneName), entry.isAlive,
-                  let controller = entry.controller else {
-                return IPCResponse(success: false, error: "pane '\(paneName)' not found")
-            }
-
-            let directionStr = parsed.splitDirection ?? "right"
-            guard let direction = Self.parseSplitDirection(directionStr) else {
-                return IPCResponse(success: false, error: "invalid direction: \(directionStr)")
-            }
-
-            DispatchQueue.main.async { [weak self] in
-                // Resolve the anchor pane (works for terminal AND viewer targets).
-                let anchorPane: PaneView?
-                if let surface = entry.surfaceView {
-                    anchorPane = controller.surfaceTree.pane(for: surface)
-                } else {
-                    anchorPane = entry.viewerPaneView
-                }
-                guard let anchorPane else {
-                    Self.logger.warning("IPC: pane '\(paneName)' is no longer in a tree")
-                    return
-                }
-
-                if let viewLocation = parsed.view {
-                    self?.createViewerSplit(
-                        controller: controller,
-                        atPane: anchorPane,
-                        direction: direction,
-                        ratio: ratio,
-                        location: viewLocation,
-                        originDirectory: parsed.config.workingDirectory,
-                        name: parsed.name,
-                        focus: parsed.focus)
-                    return
-                }
-
-                // Terminal split anchored at a viewer pane: no surface to
-                // inherit from — build a plain local surface.
-                if entry.surfaceView == nil {
-                    var splitConfig = Ghostty.SurfaceConfiguration()
-                    if let command = parsed.config.command { splitConfig.command = command }
-                    if let workingDirectory = parsed.config.workingDirectory {
-                        splitConfig.workingDirectory = workingDirectory
-                    }
-                    splitConfig.backgroundTint = tintColor
-                    splitConfig.backgroundTintNSColor = tintNSColor
-                    for (key, val) in parsed.config.environmentVariables {
-                        splitConfig.environmentVariables[key] = val
-                    }
-                    if let name = parsed.name {
-                        splitConfig.environmentVariables["GHOZTTY_PANE_NAME"] = name
-                    }
-                    if let newView = controller.newTerminalSplit(
-                        atPane: anchorPane,
-                        direction: direction,
-                        baseConfig: splitConfig,
-                        ratio: ratio,
-                        focus: parsed.focus.movesKeyboardFocus
-                    ) {
-                        Self.applyColorScheme(for: tintColor, to: newView)
-                        if let name = parsed.name {
-                            self?.targetRegistry[name] = .pane(
-                                controller: WeakRef(controller),
-                                surface: WeakRef(newView))
-                        }
-                        Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
-                    }
-                    return
-                }
-
-                guard let surface = entry.surfaceView else { return }
-
-                var splitConfig = Ghostty.SurfaceConfiguration()
-                if let splitCommand = parsed.splitCommand {
-                    splitConfig.command = splitCommand
-                }
-                if let command = parsed.config.command {
-                    splitConfig.command = command
-                }
-                if let workingDirectory = parsed.config.workingDirectory {
-                    splitConfig.workingDirectory = workingDirectory
-                }
-                splitConfig.backgroundTint = tintColor
-                splitConfig.backgroundTintNSColor = tintNSColor
-
-                for (key, val) in parsed.config.environmentVariables {
-                    splitConfig.environmentVariables[key] = val
-                }
-                if let windowName = self?.windowName(for: controller) {
-                    splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
-                }
-                if let name = parsed.name {
-                    splitConfig.environmentVariables["GHOZTTY_PANE_NAME"] = name
-                }
-
-                // Registration happens in `onCreate` (not on the return value)
-                // because a remote/agent-backed split is created ASYNCHRONOUSLY
-                // (off-main cwd inheritance) and returns nil here.
-                _ = controller.newSplit(
-                    at: surface,
-                    direction: direction,
-                    baseConfig: splitConfig,
-                    ratio: ratio,
-                    focus: parsed.focus.movesKeyboardFocus
-                ) { newView in
-                    Self.applyColorScheme(for: tintColor, to: newView)
-                    if let name = parsed.name {
-                        self?.targetRegistry[name] = .pane(
-                            controller: WeakRef(controller),
-                            surface: WeakRef(newView)
-                        )
-                        Self.logger.info("IPC: registered pane target '\(name)'")
-                    }
-                    Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
-                }
-            }
-
-            return IPCResponse(success: true, message: Self.createdMessage(parsed, in: Self.onMain { controller.windowName }))
-        }
-
         let directionStr = parsed.splitDirection ?? "right"
         guard let direction = Self.parseSplitDirection(directionStr) else {
             return IPCResponse(success: false, error: "invalid direction: \(directionStr)")
         }
 
-        // Resolve the window NOW rather than on the main queue later, so a
-        // missing one fails the command instead of logging into the void, and
-        // the reply can name the window the split went into.
-        if parsed.target != nil { pruneStaleTargets() }
-        guard let controller = splitAnchorController(parsed) else {
-            if let target = parsed.target {
-                return IPCResponse(success: false, error: "target '\(target)' not found")
-            }
-            return IPCResponse(success: false, error: "no Ghoztty window to split")
+        // Where the pane goes, resolved now, so a missing one fails the
+        // command and the reply can name the window.
+        pruneStaleTargets()
+        let anchor: SplitAnchor
+        switch splitAnchor(parsed) {
+        case .success(let found): anchor = found
+        case .failure(let failure):
+            Self.logSplit(parsed, anchor: nil, outcome: "failed: \(failure.message)")
+            return IPCResponse(success: false, error: failure.message)
         }
-        let createdMessage = Self.createdMessage(parsed, in: Self.onMain { controller.windowName })
 
+        // Idempotent: if --name is already held in THIS window and is what
+        // was asked for, it is the answer — and the reply says so. A request
+        // it does not satisfy fails instead (see `SplitNameCollision`). A
+        // pane of that name in another window does not count: pane names
+        // belong to their window. Focusing a reused pane is the caller's
+        // choice (`--focus`), as for `+new-window --target=`.
+        if let name = parsed.name, let (entry, existing) = existingHolder(of: name, in: anchor.controller) {
+            switch SplitNameCollision.decide(name: name, existing: existing, requestedView: parsed.view) {
+            case .conflict(let error):
+                Self.logSplit(parsed, anchor: anchor, outcome: "name collision: \(error)")
+                return IPCResponse(success: false, error: error)
+            case .reuse(let message):
+                Self.logSplit(parsed, anchor: anchor, outcome: "reused: \(message)")
+                if parsed.focus.movesKeyboardFocus {
+                    DispatchQueue.main.async { _ = Self.bringForward(entry) }
+                }
+                return IPCResponse(success: true, message: message)
+            }
+        }
+
+        // Split, and reply with what actually happened. The reply used to be
+        // sent first ("created …") and the split run afterwards, where a
+        // failure only logged — so an agent reported a side pane that never
+        // opened. Now the reply waits (bounded) for the pane to exist and be
+        // laid out, and says whether it is on show.
+        let reply = SplitReply()
         DispatchQueue.main.async { [weak self] in
-
-            // The window's focused pane may be a VIEWER, which has no
-            // SurfaceView at all. Anchor on the PANE so `--target=<window>`
-            // splits whatever kind of pane happens to be focused — requiring
-            // a focused *surface* here made the whole command a silent no-op
-            // for a window whose viewer pane had focus.
-            //
-            // The last fallback matters for the common agent pattern of
-            // splitting into a NAMED BACKGROUND window: `focusedSurface` is a
-            // stored property that survives losing key, but focusedViewerPane
-            // is resolved from the live first responder and goes nil the
-            // moment another window takes over. Anchoring at the tree's first
-            // pane keeps `--target` deterministic instead of dependent on
-            // which window the user happens to be looking at.
-            let focusedSurfaceView = controller.focusedSurface
-            let anchorPane = focusedSurfaceView.flatMap { controller.surfaceTree.pane(for: $0) }
-                ?? controller.focusedViewerPane
-                ?? controller.surfaceTree.visibleLeaves.first
-            guard let anchorPane else {
-                Self.logger.warning("IPC: no pane to anchor split in target window")
-                return
-            }
-
-            if let viewLocation = parsed.view {
-                self?.createViewerSplit(
-                    controller: controller,
-                    atPane: anchorPane,
-                    direction: direction,
-                    ratio: ratio,
-                    location: viewLocation,
-                    originDirectory: parsed.config.workingDirectory,
-                    name: parsed.name,
-                    focus: parsed.focus)
-                return
-            }
-
-            var splitConfig = Ghostty.SurfaceConfiguration()
-            if let splitCommand = parsed.splitCommand {
-                splitConfig.command = splitCommand
-            }
-            if let command = parsed.config.command {
-                splitConfig.command = command
-            }
-            if let workingDirectory = parsed.config.workingDirectory {
-                splitConfig.workingDirectory = workingDirectory
-            }
-            splitConfig.backgroundTint = tintColor
-
-            for (key, val) in parsed.config.environmentVariables {
-                splitConfig.environmentVariables[key] = val
-            }
-            if let target = parsed.target {
-                splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = target
-            } else if let windowName = self?.windowName(for: controller) {
-                splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
-            }
-            if let name = parsed.name {
-                splitConfig.environmentVariables["GHOZTTY_PANE_NAME"] = name
-            }
-
-            // Terminal split anchored at a viewer pane: there is no surface
-            // to inherit cwd/command from, so build a plain local one.
-            guard let surfaceView = focusedSurfaceView else {
-                if let newView = controller.newTerminalSplit(
-                    atPane: anchorPane,
-                    direction: direction,
-                    baseConfig: splitConfig,
-                    ratio: ratio,
-                    focus: parsed.focus.movesKeyboardFocus
-                ) {
-                    Self.applyColorScheme(for: tintColor, to: newView)
-                    if let name = parsed.name {
-                        self?.targetRegistry[name] = .pane(
-                            controller: WeakRef(controller),
-                            surface: WeakRef(newView))
-                        Self.logger.info("IPC: registered pane target '\(name)'")
+            MainActor.assumeIsolated {
+                guard let self else {
+                    reply.finish(.failure(SplitFailure("the IPC server is no longer available")))
+                    return
+                }
+                self.performSplit(parsed, at: anchor, direction: direction, ratio: ratio, tint: tint) { result in
+                    switch result {
+                    case .failure(let failure):
+                        reply.finish(.failure(failure))
+                    case .success(let pane):
+                        if let name = parsed.name {
+                            if let surface = pane.surfaceView {
+                                self.register(name, .pane(controller: WeakRef(anchor.controller), surface: WeakRef(surface)))
+                            } else {
+                                self.register(name, .viewerPane(controller: WeakRef(anchor.controller), pane: WeakRef(pane)))
+                            }
+                        }
+                        Self.presentIfAsked(pane, in: anchor.controller, parsed.focus)
+                        Self.whenLaidOut(pane, in: anchor.controller, deadline: .now() + 1) { onShow in
+                            reply.finish(.success(SplitCreated(
+                                paneID: pane.id, windowName: anchor.controller.windowName, onShow: onShow)))
+                        }
                     }
-                    Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
                 }
-                return
-            }
-
-            // Registration happens in `onCreate` (not on the return value)
-            // because a remote/agent-backed split is created ASYNCHRONOUSLY
-            // (off-main cwd inheritance) and returns nil here.
-            _ = controller.newSplit(
-                at: surfaceView,
-                direction: direction,
-                baseConfig: splitConfig,
-                ratio: ratio,
-                focus: parsed.focus.movesKeyboardFocus
-            ) { newView in
-                Self.applyColorScheme(for: tintColor, to: newView)
-                if let name = parsed.name {
-                    self?.targetRegistry[name] = .pane(
-                        controller: WeakRef(controller),
-                        surface: WeakRef(newView)
-                    )
-                    Self.logger.info("IPC: registered pane target '\(name)'")
-                }
-                Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
             }
         }
 
-        return IPCResponse(success: true, message: createdMessage)
+        switch reply.wait(timeout: Self.splitTimeout) {
+        case nil:
+            let error = "the split in window '\(anchor.windowName)' did not finish within "
+                + "\(Int(Self.splitTimeout))s; it may still appear (check `ghoztty +list`)"
+            Self.logSplit(parsed, anchor: anchor, outcome: "timed out")
+            return IPCResponse(success: false, error: error)
+        case .failure(let failure)?:
+            Self.logSplit(parsed, anchor: anchor, outcome: "failed: \(failure.message)")
+            return IPCResponse(success: false, error: failure.message)
+        case .success(let created)?:
+            let message = Self.createdMessage(parsed, created)
+            Self.logSplit(
+                parsed, anchor: anchor,
+                outcome: "created \(created.paneID.uuidString)",
+                onShow: created.onShow)
+            return IPCResponse(success: true, message: message)
+        }
     }
 
-    /// The window a `+split` lands in, resolved when the command is handled:
-    /// the `--pane` (or calling) pane's window, else `--target`, else the
-    /// focused window — the same precedence `handleSplit` splits by. Nil
-    /// when that names nothing. Callable from the IPC queue or main.
-    private func splitAnchorController(_ parsed: ParsedArguments) -> TerminalController? {
-        if let pane = parsed.pane ?? callerAnchorPane(parsed) {
-            return resolveTarget(pane)?.controller
+    /// How long `+split` waits for its pane. A local split is synchronous; an
+    /// agent-backed one (session persistence, a remote machine) first asks
+    /// the agent for the parent's cwd, normally a few milliseconds.
+    private static let splitTimeout: TimeInterval = 10
+
+    /// Where a `+split` lands: the window, the pane it splits beside, and the
+    /// window's name for messages.
+    private struct SplitAnchor {
+        let controller: TerminalController
+        let pane: PaneView
+        let windowName: String
+    }
+
+    struct SplitFailure: Error {
+        let message: String
+        init(_ message: String) { self.message = message }
+    }
+
+    /// A pane a `+split` created.
+    struct SplitCreated {
+        let paneID: UUID
+        let windowName: String
+        /// Whether it is on show, as laid out; nil when the window had not
+        /// laid it out within the wait (a window that is not on screen).
+        let onShow: Bool?
+    }
+
+    /// The result of a split, handed from the main thread to the IPC thread
+    /// waiting on it.
+    private final class SplitReply {
+        private let lock = NSLock()
+        private let done = DispatchSemaphore(value: 0)
+        private var result: Result<SplitCreated, SplitFailure>?
+
+        func finish(_ result: Result<SplitCreated, SplitFailure>) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard self.result == nil else { return }
+            self.result = result
+            done.signal()
         }
+
+        func wait(timeout: TimeInterval) -> Result<SplitCreated, SplitFailure>? {
+            _ = done.wait(timeout: .now() + timeout)
+            lock.lock()
+            defer { lock.unlock() }
+            return result
+        }
+    }
+
+    /// The window and pane a `+split` splits, resolved when the command is
+    /// handled:
+    ///
+    ///   * `--from-focused`: the focused window's focused pane — the split a
+    ///     Cmd-D would make.
+    ///   * `--pane`, or the calling pane (`callerAnchorPane`): that pane.
+    ///   * `--target`: that window's focused pane. The window's focused pane
+    ///     may be a VIEWER, which has no SurfaceView, so this anchors on the
+    ///     PANE; and a window that is not key has no live first responder, so
+    ///     it falls back to the tree's first pane rather than to whichever
+    ///     window the user happens to be looking at.
+    ///   * nothing: the focused window, the same way.
+    private func splitAnchor(_ parsed: ParsedArguments) -> Result<SplitAnchor, SplitFailure> {
+        if parsed.fromFocused {
+            return Self.onMain {
+                guard let controller = TerminalController.preferredParent else {
+                    return .failure(SplitFailure("no focused window to split"))
+                }
+                guard let pane = controller.focusedSurface.flatMap({ controller.surfaceTree.pane(for: $0) }) else {
+                    return .failure(SplitFailure("the focused window has no focused terminal to split"))
+                }
+                return .success(SplitAnchor(controller: controller, pane: pane, windowName: controller.windowName))
+            }
+        }
+
+        // No explicit anchor: split off the pane this command was invoked FROM
+        // rather than whatever window is focused by the time we get here.
+        if let paneName = parsed.pane ?? callerAnchorPane(parsed) {
+            let entry: TargetEntry
+            switch lookup(paneName, from: parsed.callerPane) {
+            case .found(let found): entry = found
+            case .notFound: return .failure(SplitFailure("pane '\(paneName)' not found"))
+            case .ambiguous(let error): return .failure(SplitFailure(error))
+            }
+            return Self.onMain {
+                guard let (owner, pane) = Self.paneAndController(for: entry),
+                      let controller = owner as? TerminalController else {
+                    if entry.isWindow, let controller = entry.controller {
+                        return Self.windowAnchor(controller)
+                    }
+                    return .failure(SplitFailure("pane '\(paneName)' is no longer in a window"))
+                }
+                return .success(SplitAnchor(controller: controller, pane: pane, windowName: controller.windowName))
+            }
+        }
+
         if let target = parsed.target {
-            return resolveTarget(target)?.controller
+            switch lookup(target, from: parsed.callerPane) {
+            case .found(let entry):
+                guard let controller = entry.controller else {
+                    return .failure(SplitFailure("target '\(target)' not found"))
+                }
+                return Self.onMain { Self.windowAnchor(controller) }
+            case .notFound: return .failure(SplitFailure("target '\(target)' not found"))
+            case .ambiguous(let error): return .failure(SplitFailure(error))
+            }
         }
-        return Self.onMain { TerminalController.preferredParent }
+
+        return Self.onMain {
+            guard let controller = TerminalController.preferredParent else {
+                return .failure(SplitFailure("no Ghoztty window to split"))
+            }
+            return Self.windowAnchor(controller)
+        }
     }
 
-    /// What holds a name `+split --name=` asked for, for `SplitNameCollision`.
-    private func describeExisting(
-        _ entry: TargetEntry,
-        anchor: TerminalController?
-    ) -> SplitNameCollision.Existing? {
+    @MainActor
+    private static func windowAnchor(_ controller: TerminalController) -> Result<SplitAnchor, SplitFailure> {
+        let pane = controller.focusedSurface.flatMap { controller.surfaceTree.pane(for: $0) }
+            ?? controller.focusedViewerPane
+            ?? controller.surfaceTree.visibleLeaves.first
+        guard let pane else {
+            return .failure(SplitFailure("window '\(controller.windowName)' has no pane to split"))
+        }
+        return .success(SplitAnchor(controller: controller, pane: pane, windowName: controller.windowName))
+    }
+
+    /// Create the split `parsed` asks for beside `anchor`, and call `finish`
+    /// exactly once with the new pane or why there is none — after the
+    /// agent's answer, for an agent-backed terminal split.
+    @MainActor
+    private func performSplit(
+        _ parsed: ParsedArguments,
+        at anchor: SplitAnchor,
+        direction: SplitTree<PaneView>.NewDirection,
+        ratio: Double,
+        tint: NSColor?,
+        finish: @escaping (Result<PaneView, SplitFailure>) -> Void
+    ) {
+        let controller = anchor.controller
+        guard controller.surfaceTree.root?.node(view: anchor.pane) != nil else {
+            finish(.failure(SplitFailure("the pane to split beside left window '\(anchor.windowName)' before the split")))
+            return
+        }
+        let insertFailed = SplitFailure("could not insert the new pane into window '\(anchor.windowName)'")
+
+        if let location = parsed.view {
+            let viewer = ViewerView(location: location, originDirectory: parsed.config.workingDirectory)
+            guard let pane = controller.newViewerSplit(
+                atPane: anchor.pane, direction: direction, viewer: viewer, ratio: ratio)
+            else { return finish(.failure(insertFailed)) }
+            return finish(.success(pane))
+        }
+
+        // `--from-focused` passes NO config of its own, so `newSplit` performs
+        // the full remote inheritance (connection + parent command + cwd).
+        var config = Ghostty.SurfaceConfiguration()
+        if !parsed.fromFocused {
+            if let splitCommand = parsed.splitCommand { config.command = splitCommand }
+            if let command = parsed.config.command { config.command = command }
+            if let workingDirectory = parsed.config.workingDirectory { config.workingDirectory = workingDirectory }
+            config.backgroundTint = tint.map { Color($0) }
+            config.backgroundTintNSColor = tint
+            for (key, val) in parsed.config.environmentVariables {
+                config.environmentVariables[key] = val
+            }
+            if let name = parsed.name { config.environmentVariables["GHOZTTY_PANE_NAME"] = name }
+        }
+        let tintColor = config.backgroundTint
+
+        // Terminal split anchored at a viewer pane: there is no surface to
+        // inherit cwd/command from, so build a plain local one.
+        guard let surface = anchor.pane.surfaceView else {
+            guard let newView = controller.newTerminalSplit(
+                atPane: anchor.pane, direction: direction, baseConfig: config, ratio: ratio,
+                focus: parsed.focus.movesKeyboardFocus),
+                  let pane = controller.surfaceTree.pane(for: newView)
+            else { return finish(.failure(insertFailed)) }
+            Self.applyColorScheme(for: tintColor, to: newView)
+            return finish(.success(pane))
+        }
+
+        // An agent-backed split is created ASYNCHRONOUSLY (off-main cwd
+        // inheritance) and returns nil here; `onFinish` reports either way.
+        controller.newSplit(
+            at: surface, direction: direction, baseConfig: config, ratio: ratio,
+            focus: parsed.focus.movesKeyboardFocus,
+            onFinish: { newView in
+                guard let newView, let pane = controller.surfaceTree.pane(for: newView) else {
+                    return finish(.failure(insertFailed))
+                }
+                if !parsed.fromFocused { Self.applyColorScheme(for: tintColor, to: newView) }
+                finish(.success(pane))
+            })
+    }
+
+    /// Call `body` once `pane` has been laid out in its window, with whether
+    /// it is on show (false: a strip in a row with no room for it), or nil if
+    /// that had not happened by `deadline` (a window that is not on screen).
+    @MainActor
+    private static func whenLaidOut(
+        _ pane: PaneView,
+        in controller: TerminalController,
+        deadline: DispatchTime,
+        _ body: @escaping (Bool?) -> Void
+    ) {
+        let stacks = controller.paneStackState.stacks
+        let inAStack = stacks.contains { $0.items.joined().contains(pane.id) }
+        if inAStack || pane.contentView.window != nil {
+            return body(controller.paneStackState.stackMinimizing(pane.id) == nil)
+        }
+        guard DispatchTime.now() < deadline else { return body(nil) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            whenLaidOut(pane, in: controller, deadline: deadline, body)
+        }
+    }
+
+    /// What holds `name` where a `+split --name=` would land in `controller`,
+    /// for `SplitNameCollision`: a pane of that name in that window, or a
+    /// window of that name anywhere. Nil when the name is free there.
+    private func existingHolder(
+        of name: String,
+        in controller: TerminalController
+    ) -> (TargetEntry, SplitNameCollision.Existing)? {
         Self.onMain {
-            guard let controller = entry.controller else { return nil }
+            let entries = (targetRegistry[name] ?? []).filter(\.isAlive)
+            if let window = entries.first(where: \.isWindow), let holder = window.controller {
+                return (window, .init(kind: .window, windowName: holder.windowName))
+            }
+            if !entries.contains(where: \.isWindow),
+               let holder = TerminalController.all.first(where: { $0.windowName == name }) {
+                return (.window(WeakRef(holder)), .init(kind: .window, windowName: holder.windowName))
+            }
+            guard let entry = entries.first(where: { liveController(of: $0) === controller }) else { return nil }
             let kind: SplitNameCollision.Existing.Kind
             switch entry {
             case .window:
@@ -1028,19 +1050,43 @@ class IPCServer {
                 guard let viewer = ref.value?.viewerView else { return nil }
                 kind = .viewer(location: viewer.location, homeLocation: viewer.homeLocation)
             }
-            return SplitNameCollision.Existing(
-                kind: kind,
-                windowName: controller.windowName,
-                inAnchorWindow: controller === anchor)
+            return (entry.moved(to: controller), .init(kind: kind, windowName: controller.windowName))
         }
     }
 
-    /// The reply to a `+split` that creates a pane.
-    static func createdMessage(_ parsed: ParsedArguments, in windowName: String) -> String {
-        var message = parsed.name.map { "created pane '\($0)'" } ?? "created a split"
-        message += " in window '\(windowName)'"
+    /// The reply to a `+split` that creates a pane: which pane, where, and —
+    /// when it did not come on show — that it is a strip.
+    static func createdMessage(_ parsed: ParsedArguments, _ created: SplitCreated) -> String {
+        var message = parsed.name.map { "created pane '\($0)' (\(created.paneID.uuidString))" }
+            ?? "created pane \(created.paneID.uuidString)"
+        message += " in window '\(created.windowName)'"
         if let view = parsed.view { message += ", showing \(view)" }
+        if created.onShow == false {
+            message += "; it is minimized to a strip, since its row has no room for it on show"
+        }
         return message
+    }
+
+    /// Every `+split`, persisted (`.notice`) so the next unexplained "I opened
+    /// it in a side pane" can be read back with `/usr/bin/log show
+    /// --predicate 'category == "IPCServer"'`.
+    private static func logSplit(
+        _ parsed: ParsedArguments,
+        anchor: SplitAnchor?,
+        outcome: String,
+        onShow: Bool? = nil
+    ) {
+        let caller = parsed.callerPane ?? "-"
+        let window = anchor?.windowName ?? "-"
+        let pane = anchor?.pane.id.uuidString ?? "-"
+        let name = parsed.name ?? "-"
+        let view = parsed.view ?? "-"
+        let shown = onShow.map { $0 ? "yes" : "NO (strip)" } ?? "unknown"
+        logger.notice("""
+            IPC +split: caller=\(caller, privacy: .public) window=\(window, privacy: .public) \
+            anchor=\(pane, privacy: .public) name=\(name, privacy: .public) view=\(view, privacy: .public) \
+            outcome=\(outcome, privacy: .public) onShow=\(shown, privacy: .public)
+            """)
     }
 
     /// Run `body` on the main thread and return its result, from the IPC
@@ -1048,39 +1094,6 @@ class IPCServer {
     private static func onMain<T>(_ body: @MainActor () -> T) -> T {
         if Thread.isMainThread { return MainActor.assumeIsolated(body) }
         return DispatchQueue.main.sync { MainActor.assumeIsolated(body) }
-    }
-
-    /// Create a viewer split pane and register its name. Main thread only.
-    @MainActor
-    private func createViewerSplit(
-        controller: TerminalController,
-        atPane anchorPane: PaneView,
-        direction: SplitTree<PaneView>.NewDirection,
-        ratio: Double,
-        location: String,
-        originDirectory: String?,
-        name: String?,
-        focus: IPCFocusPolicy
-    ) {
-        let viewer = ViewerView(location: location, originDirectory: originDirectory)
-        guard let pane = controller.newViewerSplit(
-            atPane: anchorPane,
-            direction: direction,
-            viewer: viewer,
-            ratio: ratio
-        ) else {
-            Self.logger.warning("IPC: failed to create viewer split")
-            return
-        }
-        if let name {
-            targetRegistry[name] = .viewerPane(
-                controller: WeakRef(controller),
-                pane: WeakRef(pane))
-            Self.logger.info("IPC: registered viewer pane target '\(name)'")
-        }
-        // `newViewerSplit` never moves focus (a GUI side pane opened from a
-        // link leaves the caret where it was), so `--focus` does it here.
-        Self.presentIfAsked(pane, in: controller, focus)
     }
 
     private func handleClose(_ request: IPCRequest) -> IPCResponse {
@@ -1097,9 +1110,13 @@ class IPCServer {
 
         pruneStaleTargets()
 
-        guard let entry = resolveTarget(target) else {
-            // Idempotent: already gone
-            return .ok
+        // The caller's own pane of that name first: `+close --target=draft`
+        // from one window used to close another window's `draft`.
+        let entry: TargetEntry
+        switch lookup(target, from: parsed.callerPane) {
+        case .found(let found): entry = found
+        case .notFound: return .ok // Idempotent: already gone
+        case .ambiguous(let error): return IPCResponse(success: false, error: error)
         }
 
         DispatchQueue.main.async { [weak self] in
@@ -1117,7 +1134,7 @@ class IPCServer {
             case .window(let controllerRef):
                 controllerRef.value?.closeWindowImmediately()
             }
-            self?.targetRegistry.removeValue(forKey: target)
+            self?.unregister(target, entry)
         }
 
         return .ok
@@ -1141,8 +1158,10 @@ class IPCServer {
 
         pruneStaleTargets()
 
-        guard let entry = resolveTarget(target) else {
-            return IPCResponse(success: false, error: "target '\(target)' not found in registry")
+        let entry: TargetEntry
+        switch resolve(target, from: parsed.callerPane, missing: "target '\(target)' not found in registry") {
+        case .entry(let found): entry = found
+        case .failure(let response): return response
         }
 
         guard let controller = entry.controller else {
@@ -1191,8 +1210,10 @@ class IPCServer {
 
         pruneStaleTargets()
 
-        guard let entry = resolveTarget(target) else {
-            return IPCResponse(success: false, error: "target '\(target)' not found in registry")
+        let entry: TargetEntry
+        switch resolve(target, from: parsed.callerPane, missing: "target '\(target)' not found in registry") {
+        case .entry(let found): entry = found
+        case .failure(let response): return response
         }
 
         guard let controller = entry.controller else {
@@ -1230,12 +1251,15 @@ class IPCServer {
     /// applies to its focused pane (banners are per-pane).
     private func handleSetBanner(_ request: IPCRequest) -> IPCResponse {
         var target: String?
+        var callerPane: String?
         var clear = false
         var textParts: [String] = []
 
         for arg in request.arguments ?? [] {
             if let value = arg.dropPrefix("--target=") {
                 target = String(value)
+            } else if let value = arg.dropPrefix("--caller-pane=") {
+                callerPane = String(value)
             } else if arg == "--clear" {
                 clear = true
             } else {
@@ -1257,8 +1281,10 @@ class IPCServer {
 
         pruneStaleTargets()
 
-        guard let entry = resolveTarget(target) else {
-            return IPCResponse(success: false, error: "target '\(target)' not found in registry")
+        let entry: TargetEntry
+        switch resolve(target, from: callerPane, missing: "target '\(target)' not found in registry") {
+        case .entry(let found): entry = found
+        case .failure(let response): return response
         }
 
         if case .viewerPane = entry {
@@ -1298,10 +1324,13 @@ class IPCServer {
     private func handleStash(_ request: IPCRequest, restore: Bool) -> IPCResponse {
         let verb = restore ? "+restore" : "+stash"
         var target: String?
+        var callerPane: String?
         var focus = false
         for arg in request.arguments ?? [] {
             if let value = arg.dropPrefix("--target=") {
                 target = String(value)
+            } else if let value = arg.dropPrefix("--caller-pane=") {
+                callerPane = String(value)
             } else if arg == "--focus" || arg == "--focus=true" {
                 focus = true
             } else if arg == "--focus=false" {
@@ -1313,8 +1342,10 @@ class IPCServer {
         }
 
         pruneStaleTargets()
-        guard let entry = resolveTarget(target), entry.isAlive else {
-            return IPCResponse(success: false, error: "target '\(target)' not found in registry")
+        let entry: TargetEntry
+        switch resolve(target, from: callerPane, missing: "target '\(target)' not found in registry") {
+        case .entry(let found): entry = found
+        case .failure(let response): return response
         }
         if case .window = entry {
             return IPCResponse(
@@ -1381,10 +1412,13 @@ class IPCServer {
 
     private func handleReload(_ request: IPCRequest) -> IPCResponse {
         var target: String?
+        var callerPane: String?
         var reloadConfig = false
         for arg in request.arguments ?? [] {
             if let value = arg.dropPrefix("--target=") {
                 target = String(value)
+            } else if let value = arg.dropPrefix("--caller-pane=") {
+                callerPane = String(value)
             } else if arg == "--config" {
                 reloadConfig = true
             }
@@ -1414,8 +1448,10 @@ class IPCServer {
 
         pruneStaleTargets()
 
-        guard let entry = resolveTarget(target) else {
-            return IPCResponse(success: false, error: "target '\(target)' not found in registry")
+        let entry: TargetEntry
+        switch resolve(target, from: callerPane, missing: "target '\(target)' not found in registry") {
+        case .entry(let found): entry = found
+        case .failure(let response): return response
         }
 
         var reloadError: String?
@@ -1584,7 +1620,7 @@ class IPCServer {
                         // here, falling back to the agent-reported hostname);
                         // the registry key stays the --name for scriptability.
                         if let target = name {
-                            self?.targetRegistry[target] = .window(WeakRef(controller))
+                            self?.register(target, .window(WeakRef(controller)))
                             Self.logger.info("IPC: registered remote window target '\(target)'")
                         }
                     })
@@ -1602,7 +1638,7 @@ class IPCServer {
                         // the window under its friendly name so +send-keys /
                         // +read / +close can target TCP remote windows too.
                         if let target = name {
-                            self?.targetRegistry[target] = .window(WeakRef(controller))
+                            self?.register(target, .window(WeakRef(controller)))
                             Self.logger.info("IPC: registered remote window target '\(target)'")
                         }
                     })
@@ -1632,8 +1668,10 @@ class IPCServer {
 
         pruneStaleTargets()
 
-        guard let entry = resolveTarget(name) else {
-            return IPCResponse(success: false, error: "pane '\(name)' not found in registry")
+        let entry: TargetEntry
+        switch resolve(name, from: parsed.callerPane, missing: "pane '\(name)' not found in registry") {
+        case .entry(let found): entry = found
+        case .failure(let response): return response
         }
 
         if case .viewerPane = entry {
@@ -1742,12 +1780,15 @@ class IPCServer {
         }
 
         var target: String?
+        var callerPane: String?
         var text: String?
         var encodedSegments: String?
 
         for arg in arguments {
             if let value = arg.dropPrefix("--target=") {
                 target = String(value)
+            } else if let value = arg.dropPrefix("--caller-pane=") {
+                callerPane = String(value)
             } else if let value = arg.dropPrefix("--keys=") {
                 text = String(value)
             } else if let value = arg.dropPrefix("--segments=") {
@@ -1772,8 +1813,10 @@ class IPCServer {
 
         pruneStaleTargets()
 
-        guard let entry = resolveTarget(target) else {
-            return IPCResponse(success: false, error: "target '\(target)' not found")
+        let entry: TargetEntry
+        switch resolve(target, from: callerPane, missing: "target '\(target)' not found") {
+        case .entry(let found): entry = found
+        case .failure(let response): return response
         }
 
         if case .viewerPane = entry {
@@ -1843,7 +1886,7 @@ class IPCServer {
                 // Resolve target controller
                 let controller: TerminalController?
                 if let target = parsed.target {
-                    controller = self.resolveTarget(target)?.controller
+                    controller = self.resolveTarget(target, from: parsed.callerPane)?.controller
                     if controller == nil {
                         result = IPCResponse(success: false, error: "target window '\(target)' not found")
                         return
@@ -1874,7 +1917,9 @@ class IPCServer {
                     layoutJSON: layoutJSON,
                     in: controller.surfaceTree,
                     resolve: { name in
-                        guard let entry = self.resolveTarget(name) else { return nil }
+                        // The layout names panes of THIS window: its own
+                        // pane of each name is the one meant.
+                        guard case .found(let entry) = self.lookupOnMain(name, scope: controller) else { return nil }
                         return .init(
                             surface: entry.surfaceView,
                             viewerPane: entry.viewerPaneView,
@@ -1935,8 +1980,8 @@ class IPCServer {
 
                 // Remove registry entries for panes no longer in the tree
                 for pane in removedPanes {
-                    for (name, entry) in self.targetRegistry where entry.names(pane) {
-                        self.targetRegistry.removeValue(forKey: name)
+                    for (name, entries) in self.targetRegistry {
+                        for entry in entries where entry.names(pane) { self.unregister(name, entry) }
                     }
                 }
 
@@ -2021,7 +2066,7 @@ class IPCServer {
         let heldByLiveWindow = TerminalController.all.contains {
             $0 !== controller && $0.windowName == name
         }
-        return targetRegistry[name] != nil || heldByLiveWindow
+        return targetRegistry[name]?.isEmpty == false || heldByLiveWindow
     }
 
     /// Re-register a RESTORED remote window under the IPC target name
@@ -2037,7 +2082,7 @@ class IPCServer {
             Self.logger.info("IPC: restored remote window not re-registered — target '\(name)' already in use")
             return
         }
-        targetRegistry[name] = .window(WeakRef(controller))
+        register(name, .window(WeakRef(controller)))
         // Adopt the name as the controller's display name too so +list shows
         // the persisted target instead of a fresh "window-N" alias.
         controller.windowName = name
@@ -2047,58 +2092,43 @@ class IPCServer {
     /// Re-register a RESTORED pane under the IPC target name persisted in
     /// its `SessionLayoutManifest` leaf (T06), so `+read` / `+send-keys` /
     /// `+close --target=<name>` keep working across a quit/relaunch. Same
-    /// idempotent semantics as `registerRestoredRemoteWindow`: a live target
-    /// already holding the name wins and the restored pane is skipped.
+    /// idempotent semantics as `registerRestoredRemoteWindow`, in the pane's
+    /// own window (pane names belong to it): a live pane of that name already
+    /// there wins, as does a window holding it, and the restored pane is
+    /// skipped.
     @MainActor
     func registerRestoredPane(name: String, controller: TerminalController, surface: Ghostty.SurfaceView) {
-        pruneStaleTargets()
-        guard targetRegistry[name] == nil else {
+        guard isPaneNameFree(name, in: controller) else {
             Self.logger.info("IPC: restored pane not re-registered — target '\(name)' already in use")
             return
         }
-        targetRegistry[name] = .pane(controller: WeakRef(controller), surface: WeakRef(surface))
+        register(name, .pane(controller: WeakRef(controller), surface: WeakRef(surface)))
         Self.logger.info("IPC: re-registered restored pane target '\(name)'")
+    }
+
+    /// Whether a pane in `controller` may take `name`: no window holds it,
+    /// and no other live pane in that window does.
+    @MainActor
+    private func isPaneNameFree(_ name: String, in controller: TerminalController) -> Bool {
+        pruneStaleTargets()
+        return !(targetRegistry[name] ?? []).contains { $0.isWindow || liveController(of: $0) === controller }
     }
 
     @MainActor
     private func ensureWindowRegistered(name: String, controller: BaseTerminalController) {
-        if targetRegistry[name] == nil, let tc = controller as? TerminalController {
-            targetRegistry[name] = .window(WeakRef(tc))
+        if targetRegistry[name]?.contains(where: \.isWindow) != true, let tc = controller as? TerminalController {
+            register(name, .window(WeakRef(tc)))
         }
     }
 
+    /// The name `+list` shows for a pane: its registered name, else its id —
+    /// which needs no registering, since a pane id resolves on its own.
     @MainActor
-    private func ensurePaneRegistered(name: String, controller: BaseTerminalController, surface: Ghostty.SurfaceView) {
-        if targetRegistry[name] == nil, let tc = controller as? TerminalController {
-            targetRegistry[name] = .pane(controller: WeakRef(tc), surface: WeakRef(surface))
+    private func paneName(of object: AnyObject, id: UUID) -> String {
+        for (name, entries) in targetRegistry where entries.contains(where: { $0.object === object }) {
+            return name
         }
-    }
-
-    @MainActor
-    private func ensureViewerPaneRegistered(name: String, controller: BaseTerminalController, pane: PaneView) {
-        if targetRegistry[name] == nil, let tc = controller as? TerminalController {
-            targetRegistry[name] = .viewerPane(controller: WeakRef(tc), pane: WeakRef(pane))
-        }
-    }
-
-    @MainActor
-    private func paneNameForViewerPane(_ pane: PaneView) -> String {
-        for (name, entry) in targetRegistry {
-            if case .viewerPane(_, let paneRef) = entry, paneRef.value === pane {
-                return name
-            }
-        }
-        return pane.id.uuidString
-    }
-
-    @MainActor
-    private func paneNameForSurface(_ view: Ghostty.SurfaceView) -> String {
-        for (name, entry) in targetRegistry {
-            if case .pane(_, let surfaceRef) = entry, surfaceRef.value === view {
-                return name
-            }
-        }
-        return view.id.uuidString
+        return id.uuidString
     }
 
     @MainActor
@@ -2123,8 +2153,7 @@ class IPCServer {
         switch node {
         case .leaf(let pane):
             if let viewer = pane.viewerView {
-                let paneName = paneNameForViewerPane(pane)
-                ensureViewerPaneRegistered(name: paneName, controller: controller, pane: pane)
+                let paneName = paneName(of: pane, id: pane.id)
                 return .leaf(IPCData.TerminalData(
                     id: pane.id.uuidString,
                     title: pane.title,
@@ -2151,8 +2180,7 @@ class IPCServer {
                     exit_code: nil
                 ))
             }
-            let paneName = paneNameForSurface(view)
-            ensurePaneRegistered(name: paneName, controller: controller, surface: view)
+            let paneName = paneName(of: view, id: view.id)
 
             return .leaf(IPCData.TerminalData(
                 id: view.id.uuidString,
@@ -2193,77 +2221,160 @@ class IPCServer {
         }
     }
 
+    /// Drop names whose window or pane is gone. Callable from the IPC queue
+    /// or main; the registry itself is only touched on main.
     private func pruneStaleTargets() {
-        targetRegistry = targetRegistry.filter { $0.value.isAlive }
-    }
-
-    /// Resolve a `--target`/`--name` argument: the name registry first, then a
-    /// scan of live windows — by STABLE pane uuid when the string parses as one
-    /// (wp3 pane identity: the `+list` leaf `id` and the pane's own
-    /// `$GHOZTTY_PANE_ID`), and otherwise by the window's own `windowName`.
-    /// UUID parsing normalizes case, so the env value matches regardless of
-    /// casing; window names match exactly, like the registry itself. A hit is
-    /// registered on the way out so later lookups are O(1).
-    ///
-    /// The `windowName` scan is what makes an AUTO-NAMED window ("window-7",
-    /// minted for every Cmd-N window and exported as `$GHOZTTY_WINDOW_NAME`)
-    /// targetable. Registration otherwise only happens at `+new-window
-    /// --target=` time or when `+list` walks the tree, so until something ran
-    /// `+list` every `+set-state`/`+send-keys`/`+close --target=window-7`
-    /// failed with "not found in registry" — and the registry is per-process,
-    /// so it emptied again on every app relaunch. Callers that swallow stderr
-    /// (the activity-state hooks in `~/.claude/settings.json` do: `2>/dev/null
-    /// || true`) saw the window simply never update, with no error anywhere.
-    ///
-    /// Callable from the IPC queue OR the main thread (handlers are split
-    /// across both): the window scan touches AppKit state, so it hops to main
-    /// synchronously when needed — the same bounded main-thread round-trip
-    /// `handleList` already performs per request.
-    private func resolveTarget(_ target: String) -> TargetEntry? {
-        if let entry = targetRegistry[target], entry.isAlive { return entry }
-        let uuid = UUID(uuidString: target)
-        let scan = { () -> TargetEntry? in
-            MainActor.assumeIsolated {
-                if let uuid {
-                    for scriptWindow in NSApp.scriptWindows {
-                        for tab in scriptWindow.tabs {
-                            guard let controller = tab.parentController as? TerminalController else { continue }
-                            for pane in controller.surfaceTree.root?.leaves() ?? [] where pane.id == uuid {
-                                let entry: TargetEntry
-                                if let surface = pane.surfaceView {
-                                    entry = .pane(
-                                        controller: WeakRef(controller),
-                                        surface: WeakRef(surface))
-                                } else {
-                                    entry = .viewerPane(
-                                        controller: WeakRef(controller),
-                                        pane: WeakRef(pane))
-                                }
-                                self.targetRegistry[pane.id.uuidString] = entry
-                                return entry
-                            }
-                        }
-                    }
-                    // A well-formed uuid is a pane id or nothing; no window
-                    // carries one as its name.
-                    return nil
-                }
-
-                for controller in TerminalController.all where controller.windowName == target {
-                    let entry = TargetEntry.window(WeakRef(controller))
-                    self.targetRegistry[target] = entry
-                    return entry
-                }
-                return nil
+        Self.onMain {
+            for (name, entries) in targetRegistry {
+                let live = entries.filter(\.isAlive)
+                if live.count != entries.count { targetRegistry[name] = live.isEmpty ? nil : live }
             }
         }
-        if Thread.isMainThread { return scan() }
-        return DispatchQueue.main.sync(execute: scan)
+    }
+
+    /// Record `name` for `entry`. A window name replaces the window that held
+    /// it; a pane name replaces only the pane of that name in the SAME window
+    /// (`TargetLookup`), and moves with the pane if it was registered under
+    /// another name's entry before. Main thread only.
+    private func register(_ name: String, _ entry: TargetEntry) {
+        MainActor.assumeIsolated {
+            var entries = (targetRegistry[name] ?? []).filter(\.isAlive)
+            if entry.isWindow {
+                entries.removeAll(where: \.isWindow)
+            } else {
+                let window = liveController(of: entry)
+                entries.removeAll { other in
+                    !other.isWindow && (other.object === entry.object || liveController(of: other) === window)
+                }
+            }
+            entries.append(entry)
+            targetRegistry[name] = entries
+        }
+    }
+
+    /// Forget that `name` names `entry`'s window or pane (it is being closed).
+    private func unregister(_ name: String, _ entry: TargetEntry) {
+        guard var entries = targetRegistry[name] else { return }
+        entries.removeAll { $0.object === entry.object || !$0.isAlive }
+        targetRegistry[name] = entries.isEmpty ? nil : entries
+    }
+
+    /// The window `entry` is in now: a pane's by walking the live windows,
+    /// since a pane can be moved to another one after it was named.
+    @MainActor
+    private func liveController(of entry: TargetEntry) -> TerminalController? {
+        if case .window = entry { return entry.controller }
+        return (Self.paneAndController(for: entry)?.0 as? TerminalController) ?? entry.controller
+    }
+
+    /// What a `--target`/`--name` resolved to.
+    private enum Lookup {
+        case found(TargetEntry)
+        case notFound
+        /// Panes in several windows hold the name; the error says which.
+        case ambiguous(String)
+    }
+
+    /// Resolve a `--target`/`--name` the way `TargetLookup` says, for a
+    /// command run from `callerPane` (`--caller-pane=`; nil for a caller with
+    /// no pane, which searches every window).
+    ///
+    /// A string that parses as a uuid is a PANE ID (the `+list` leaf `id`,
+    /// the pane's own `$GHOZTTY_PANE_ID`), found by walking the live windows;
+    /// UUID parsing normalizes case. Anything else is a name: the registry's
+    /// panes and windows, plus a scan of live windows by their own
+    /// `windowName` — which is what makes an AUTO-NAMED window (`window-7`,
+    /// minted for every Cmd-N window and exported as `$GHOZTTY_WINDOW_NAME`)
+    /// targetable without a `+list` first. (Registration otherwise only
+    /// happened at `+new-window --target=` time or when `+list` walked the
+    /// tree, and callers that swallow stderr — the activity-state hooks do —
+    /// saw the window simply never update.)
+    ///
+    /// Callable from the IPC queue or main: it runs on main, where the
+    /// windows and the registry live.
+    private func lookup(_ target: String, from callerPane: String?) -> Lookup {
+        Self.onMain {
+            let caller = callerPane.flatMap { pane -> TerminalController? in
+                guard !pane.isEmpty, case .found(let entry) = lookupOnMain(pane, scope: nil) else { return nil }
+                return entry.controller
+            }
+            return lookupOnMain(target, scope: caller)
+        }
+    }
+
+    @MainActor
+    private func lookupOnMain(_ target: String, scope: TerminalController?) -> Lookup {
+        if let uuid = UUID(uuidString: target) {
+            for controller in TerminalController.all {
+                for pane in controller.surfaceTree where pane.id == uuid {
+                    if let surface = pane.surfaceView {
+                        return .found(.pane(controller: WeakRef(controller), surface: WeakRef(surface)))
+                    }
+                    return .found(.viewerPane(controller: WeakRef(controller), pane: WeakRef(pane)))
+                }
+            }
+            // A well-formed uuid is a pane id or nothing; no window carries
+            // one as its name.
+            return .notFound
+        }
+
+        var entries: [TargetEntry] = (targetRegistry[target] ?? []).compactMap { entry in
+            guard entry.isAlive, let controller = liveController(of: entry) else { return nil }
+            return entry.moved(to: controller)
+        }
+        if !entries.contains(where: \.isWindow),
+           let controller = TerminalController.all.first(where: { $0.windowName == target }) {
+            let window = TargetEntry.window(WeakRef(controller))
+            register(target, window)
+            entries.append(window)
+        }
+
+        let candidates = entries.map { entry in
+            TargetLookup.Candidate(
+                kind: entry.isWindow ? .window : .pane,
+                windowName: entry.controller?.windowName ?? "",
+                inCallerWindow: scope != nil && entry.controller === scope)
+        }
+        switch TargetLookup.pick(candidates) {
+        case .found(let index):
+            return .found(entries[index])
+        case .notFound:
+            return .notFound
+        case .ambiguous(let windows):
+            Self.logger.notice("IPC: '\(target, privacy: .public)' is ambiguous: panes in \(windows, privacy: .public)")
+            return .ambiguous(TargetLookup.ambiguityError(target, windows: windows))
+        }
+    }
+
+    /// `lookup` for a caller that only needs the entry: nil when nothing (or
+    /// more than one thing) answers to the name.
+    private func resolveTarget(_ target: String, from callerPane: String? = nil) -> TargetEntry? {
+        if case .found(let entry) = lookup(target, from: callerPane) { return entry }
+        return nil
+    }
+
+    /// `lookup` as a handler wants it: the entry, or the reply to fail with —
+    /// `missing` when nothing answers to the name, the ambiguity when panes in
+    /// several windows do.
+    private func resolve(_ target: String, from callerPane: String?, missing: String) -> Resolved {
+        switch lookup(target, from: callerPane) {
+        case .found(let entry): return .entry(entry)
+        case .notFound: return .failure(IPCResponse(success: false, error: missing))
+        case .ambiguous(let error): return .failure(IPCResponse(success: false, error: error))
+        }
+    }
+
+    private enum Resolved {
+        case entry(TargetEntry)
+        case failure(IPCResponse)
     }
 
     /// Raise the window owning `target` and focus the pane within it, or do
-    /// nothing at all if the target names nothing that is currently open.
-    /// Returns whether a target was found.
+    /// nothing at all if the target names nothing that is currently open —
+    /// or names panes in several windows: a link has no caller pane, so the
+    /// name is looked up across every window (`TargetLookup`), and an
+    /// ambiguous one is reported rather than resolved at random. Returns why
+    /// nothing was focused, or nil when it was.
     ///
     /// This is the whole of what the `ghoztty://` URL scheme can do (see
     /// `GhozttyURLScheme`), factored out so the untrusted caller shares the
@@ -2276,10 +2387,16 @@ class IPCServer {
     /// verb. It does not consult `IPCFocusPolicy`.
     @MainActor
     @discardableResult
-    func focusTarget(_ target: String) -> Bool {
+    func focusTarget(_ target: String) -> GhozttyURLScheme.Failure? {
         pruneStaleTargets()
-        guard let entry = resolveTarget(target), entry.isAlive else { return false }
-        return Self.bringForward(entry)
+        switch lookup(target, from: nil) {
+        case .found(let entry) where entry.isAlive:
+            return Self.bringForward(entry) ? nil : .targetNotFound(target)
+        case .found, .notFound:
+            return .targetNotFound(target)
+        case .ambiguous(let error):
+            return .ambiguousTarget(target, detail: error)
+        }
     }
 
     /// Activate the app, raise the window owning `entry`, and focus the pane
@@ -2364,10 +2481,8 @@ class IPCServer {
     }
 
     private func windowName(for controller: TerminalController) -> String? {
-        for (name, entry) in targetRegistry {
-            if case .window(let ref) = entry, ref.value === controller {
-                return name
-            }
+        for (name, entries) in targetRegistry where entries.contains(where: { $0.isWindow && $0.object === controller }) {
+            return name
         }
         return nil
     }
@@ -2386,20 +2501,16 @@ class IPCServer {
     /// to the surface UUID for `+list` display).
     @MainActor
     func registeredPaneName(forSurface view: Ghostty.SurfaceView) -> String? {
-        for (name, entry) in targetRegistry {
-            if case .pane(_, let surfaceRef) = entry, surfaceRef.value === view {
-                return name
-            }
+        for (name, entries) in targetRegistry where entries.contains(where: { $0.object === view }) {
+            return name
         }
         return nil
     }
 
     @MainActor
     func registeredPaneName(forViewerPane pane: PaneView) -> String? {
-        for (name, entry) in targetRegistry {
-            if case .viewerPane(_, let paneRef) = entry, paneRef.value === pane {
-                return name
-            }
+        for (name, entries) in targetRegistry where entries.contains(where: { $0.object === pane }) {
+            return name
         }
         return nil
     }
@@ -2408,12 +2519,11 @@ class IPCServer {
     /// Same idempotent semantics as `registerRestoredPane`.
     @MainActor
     func registerRestoredViewerPane(name: String, controller: TerminalController, pane: PaneView) {
-        pruneStaleTargets()
-        guard targetRegistry[name] == nil else {
+        guard isPaneNameFree(name, in: controller) else {
             Self.logger.info("IPC: restored viewer pane not re-registered — target '\(name)' already in use")
             return
         }
-        targetRegistry[name] = .viewerPane(controller: WeakRef(controller), pane: WeakRef(pane))
+        register(name, .viewerPane(controller: WeakRef(controller), pane: WeakRef(pane)))
         Self.logger.info("IPC: re-registered restored viewer pane target '\(name)'")
     }
 

@@ -434,6 +434,8 @@ pub const App = struct {
             jws.endArray() catch return error.IPCFailed;
         }
 
+        apprt.ipc.writeCallerPane(&jws) catch return error.IPCFailed;
+
         jws.endObject() catch return error.IPCFailed;
 
         const json_bytes = json_buf.written();
@@ -3781,6 +3783,18 @@ pub const CAPI = struct {
     /// to the pty and the renderer.
     export fn ghostty_surface_set_size(surface: *Surface, w: u32, h: u32) void {
         surface.updateSize(w, h);
+    }
+
+    /// See `Surface.predictResizeShift`.
+    export fn ghostty_surface_predict_resize_shift(surface: *Surface, h: u32) i32 {
+        return surface.core_surface.predictResizeShift(h);
+    }
+
+    /// Apply the surface's pending resize to the terminal now instead of
+    /// after the resize debounce (`termio.Thread.Coalesce`): for a single,
+    /// deliberate resize the app hides while it lands.
+    export fn ghostty_surface_flush_resize(surface: *Surface) void {
+        surface.core_surface.flushResize();
     }
 
     /// Return the size information a surface has.

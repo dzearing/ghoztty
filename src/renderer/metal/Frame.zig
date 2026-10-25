@@ -19,6 +19,9 @@ const log = std.log.scoped(.metal);
 pub const Options = struct {
     /// MTLCommandQueue
     queue: objc.Object,
+
+    /// The frame's draw order, handed to `present`.
+    seq: u64,
 };
 
 /// MTLCommandBuffer
@@ -48,6 +51,7 @@ pub fn begin(
             .renderer = renderer,
             .target = target,
             .sync = false,
+            .seq = opts.seq,
         },
         &bufferCompleted,
     );
@@ -60,6 +64,7 @@ const CompletionBlock = objc.Block(struct {
     renderer: *Renderer,
     target: *Target,
     sync: bool,
+    seq: u64,
 }, .{
     objc.c.id, // MTLCommandBuffer
 }, void);
@@ -82,6 +87,7 @@ fn bufferCompleted(
         block.renderer.api.present(
             block.target.*,
             block.sync,
+            block.seq,
         ) catch |err| {
             log.err("Failed to present render target: err={}", .{err});
         };

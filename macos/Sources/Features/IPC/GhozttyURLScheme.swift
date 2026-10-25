@@ -130,11 +130,14 @@ extension GhozttyURLScheme {
         case unsupportedLink(String)
         /// A well-formed focus, but nothing open answers to that name.
         case targetNotFound(String)
+        /// Panes in several windows have that name, and a link has no
+        /// window of its own to prefer (`TargetLookup`). `detail` names them.
+        case ambiguousTarget(String, detail: String)
 
         var messageText: String {
             switch self {
             case .unsupportedLink: return "Unsupported Ghoztty link"
-            case .targetNotFound(let target): return "Can’t focus “\(target)”"
+            case .targetNotFound(let target), .ambiguousTarget(let target, _): return "Can’t focus “\(target)”"
             }
         }
 
@@ -146,6 +149,9 @@ extension GhozttyURLScheme {
             case .targetNotFound:
                 return "No open Ghoztty window or pane has that name. It may have been "
                     + "closed, or it may belong to a different Ghoztty instance."
+            case .ambiguousTarget(let target, _):
+                return "More than one Ghoztty window has a pane named “\(target)”, so the link "
+                    + "can’t tell which one it means. Link to a window name or a pane id instead."
             }
         }
     }
@@ -208,14 +214,14 @@ extension GhozttyURLScheme {
         switch command {
         case .focus(let target):
             guard let server = (NSApp.delegate as? AppDelegate)?.ipcServer else { return false }
-            guard server.focusTarget(target) else {
+            if let failure = server.focusTarget(target) {
                 // Also the cold-launch case: the link LAUNCHED the app, so
                 // nothing is registered yet. A focus link must not create a
                 // window as a side effect — that would smuggle window creation
                 // back into the scheme's surface — so the honest answer is to
-                // say the target isn't open.
-                logger.info("URL scheme: focus target '\(target, privacy: .public)' not found")
-                present(.targetNotFound(target))
+                // say the target isn't open (or isn't one target).
+                logger.info("URL scheme: focus target '\(target, privacy: .public)' failed: \(String(describing: failure), privacy: .public)")
+                present(failure)
                 return false
             }
             return true

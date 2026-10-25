@@ -127,6 +127,9 @@ enum GlassCard {
 struct GlassCardBackground: ViewModifier {
     let fill: AnyShapeStyle
     var cornerRadius: CGFloat = GlassCard.cornerRadius
+    /// Whether to draw the specular sheen. Off for a card on glass panes
+    /// (the pane banner): its white lift greys the gradient coming through.
+    var sheen: Bool = true
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -138,7 +141,7 @@ struct GlassCardBackground: ViewModifier {
     /// along the bottom edge to ground the card. Attached as a background of
     /// the content so it renders above the material but below the text (an
     /// overlay would wash the glyphs too).
-    private var sheen: some View {
+    private var sheenLayer: some View {
         ZStack {
             shape.fill(
                 EllipticalGradient(
@@ -209,7 +212,7 @@ struct GlassCardBackground: ViewModifier {
         // Backgrounds stack front-to-back: sheen over the wash fill over the
         // drop shadow.
         content
-            .background(sheen)
+            .background(sheenLayer.opacity(sheen ? 1 : 0))
             .background(shape.fill(fill))
             .background(dropShadow)
             .overlay(rim)

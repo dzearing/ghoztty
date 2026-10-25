@@ -53,12 +53,6 @@ enum PaneLayout {
         /// strip and a few columns of what is in it.
         static let peek: CGFloat = 36
 
-        /// How far past a pane's minimum a divider must be dragged before the
-        /// pane tucks behind its neighbours instead (and how far a stack grip
-        /// must be dragged to do the same, or to bring one back): far enough
-        /// that resizing up against the minimum never does it by accident.
-        static let restackDistance: CGFloat = 48
-
         /// Below this a tucked card can no longer be hit; past it a window too
         /// small for even one pane plus slivers lets the front panes shrink.
         static let minimumPeek: CGFloat = 8
@@ -231,109 +225,84 @@ enum PaneLayout {
         }
     }
 
-    /// What a drag on a divider or a grip between cards has squeezed out of
-    /// its row: `count` items on show on `side` of it, outermost first.
-    struct Squeeze: Equatable {
-        var side: Side
-        var count: Int
-
-        /// The pin this makes of `row` (as the drag found it).
-        func pin<ID>(of row: Row<ID>) -> Pin? {
-            var run = row.run
-            var pin: Pin?
-            for _ in 0..<count {
-                pin = Pin.restacking(run, of: row.items.count, .collapse(side))
-                guard let pin else { break }
-                run = pin.start...(pin.start + pin.count - 1)
-            }
-            return pin
-        }
-
-        /// The run of `row` with this squeezed out of it.
-        func run<ID>(of row: Row<ID>) -> ClosedRange<Int> {
-            side == .trailing
-                ? row.run.lowerBound...(row.run.upperBound - count)
-                : (row.run.lowerBound + count)...row.run.upperBound
-        }
-    }
-
-    /// How a drag already squeezing `row` carries on, with its pointer at `x`
-    /// (from the row's start; the centre of the gutter the grip is in) and
-    /// `boundary` the row index of the first item after the grip: the chain.
-    /// Once the first item has tucked away (`current`), the grip follows the
-    /// pointer through the run (`squeezedShares`), and the next item on show
-    /// on the squeezed side tucks away in its turn once the pointer is
-    /// `past` beyond its minimum — until nothing on that side is left on
-    /// show. Coming back, each one returns once there is room for it again
-    /// at its minimum, last tucked first. Never below one: the first item's
-    /// return is the caller's (the drag's own threshold, which knows how its
-    /// split squeezes).
-    static func chain<ID>(_ row: Row<ID>, boundary: Int, at x: CGFloat, current: Squeeze, past: CGFloat) -> Squeeze {
-        let n = row.items.count, step = row.peek + row.gap
-        let maxCount = current.side == .trailing
-            ? row.run.upperBound - boundary + 1
-            : boundary - row.run.lowerBound
-        /// Room on the squeezed side with `k` squeezed out, and what the
-        /// items still on show there need.
-        func fit(_ k: Int) -> (room: CGFloat, need: CGFloat, shown: Int) {
-            let squeezed = Squeeze(side: current.side, count: k)
-            let run = squeezed.run(of: row)
-            let shown = run.filter { current.side == .trailing ? $0 >= boundary : $0 < boundary }
-            let need = shown.reduce(0) { $0 + (row.minimums.indices.contains($1) ? row.minimums[$1] : 0) }
-                + CGFloat(Swift.max(0, shown.count - 1)) * row.gap
-            let room: CGFloat = current.side == .trailing
-                ? row.extent - CGFloat(n - 1 - run.upperBound) * step - x - row.gap / 2
-                : x - row.gap / 2 - CGFloat(run.lowerBound) * step
-            return (room, need, shown.count)
-        }
-        var k = Swift.max(1, Swift.min(current.count, maxCount))
-        while k < maxCount {
-            let f = fit(k)
-            guard f.shown > 0, f.room < f.need - past else { break }
-            k += 1
-        }
-        while k > 1 {
-            let back = fit(k - 1)
-            guard back.room >= back.need else { break }
-            k -= 1
-        }
-        return Squeeze(side: current.side, count: k)
-    }
-
-    /// The run's slot sizes, as shares, that put the grip under the pointer
-    /// at `x` while `squeeze` is squeezed out of `row`: each side of it keeps
-    /// the proportions the drag found it with, and no item goes under its
-    /// minimum.
-    static func squeezedShares<ID>(_ row: Row<ID>, boundary: Int, squeeze: Squeeze, at x: CGFloat) -> [CGFloat] {
-        let n = row.items.count, step = row.peek + row.gap
-        let run = squeeze.run(of: row)
-        let runStart = CGFloat(run.lowerBound) * step
-        let runEnd = row.extent - CGFloat(n - 1 - run.upperBound) * step
-        let before = run.filter { $0 < boundary }, after = run.filter { $0 >= boundary }
-        func size(_ i: Int) -> CGFloat {
-            let k = i - row.run.lowerBound
-            return row.sizes.indices.contains(k) ? row.sizes[k] : 1
-        }
+    /// What a gutter of `row` dragged to `position` (the gutter's centre, in
+    /// points from the row's start) makes of the row — any gutter: a divider,
+    /// a grip between cards on show, a grip where the run meets its strips.
+    ///
+    /// The items before the gutter get the space from the row's start to it,
+    /// the items after it the rest. Each side shows as many of its items as
+    /// fit at their minimums — nearest the gutter first, and never more than
+    /// it had on show when the drag began (`sizes`: each item's size then,
+    /// nil for a strip), or one if it had none — and the others are strips
+    /// at the row's edge on that side; a side with no room for even one is
+    /// all strips, the gutter at their edge, the other side taking the rest.
+    /// The item beside the gutter takes up the slack; the others keep their
+    /// sizes until the space runs out, and then give way nearest first.
+    ///
+    /// So a drag only collapses panes and brings out at most one: dragging a
+    /// gutter one way tucks the panes on that side away one after another
+    /// while the panes on the other side grow — its strips stay strips — and
+    /// a strip pulled out by its gutter comes out alone, the other side
+    /// giving way. Dragging back undoes exactly that: the row is a function
+    /// of where the gutter is, never of how it got there.
+    static func dragged<ID>(
+        _ row: Row<ID>, boundary: Int, at position: CGFloat, sizes: [CGFloat?]
+    ) -> (run: ClosedRange<Int>, sizes: [CGFloat]) {
+        let n = row.items.count
+        let step = row.peek + row.gap
         func minimum(_ i: Int) -> CGFloat { row.minimums.indices.contains(i) ? row.minimums[i] : 0 }
-        func fill(_ items: [Int], _ space: CGFloat) -> [CGFloat] {
-            guard !items.isEmpty else { return [] }
-            let available = space - CGFloat(items.count - 1) * row.gap
-            let floor = items.reduce(0) { $0 + minimum($1) }
-            return PaneLayout.waterFill(items.map(size), minimums: items.map(minimum),
-                                        available: Swift.max(available, floor))
+        func start(_ i: Int) -> CGFloat? { sizes.indices.contains(i) ? sizes[i] : nil }
+        /// The extent the first `k` of `side` (nearest first) need on show,
+        /// the rest of it as strips.
+        func need(_ side: [Int], _ k: Int) -> CGFloat {
+            guard k > 0 else { return step * CGFloat(side.count) - row.gap }
+            return side.prefix(k).reduce(0) { $0 + minimum($1) } + row.gap * CGFloat(k - 1)
+                + step * CGFloat(side.count - k)
         }
-        let total = runEnd - runStart
-        var sizes: [CGFloat]
-        if before.isEmpty || after.isEmpty {
-            sizes = fill(before + after, total)
-        } else {
-            let afterFloor = after.reduce(0) { $0 + minimum($1) } + CGFloat(after.count - 1) * row.gap
-            let beforeFloor = before.reduce(0) { $0 + minimum($1) } + CGFloat(before.count - 1) * row.gap
-            let split = Swift.min(Swift.max(x - row.gap / 2 - runStart, beforeFloor), total - row.gap - afterFloor)
-            sizes = fill(before, split) + fill(after, total - split - row.gap)
+        let before = Array((0..<boundary).reversed()), after = Array(boundary..<n)
+        /// A drag only collapses panes, and brings out at most one: a side
+        /// shows no more than it had on show when the drag began — or, all
+        /// strips then, the one pane beside the gutter, pulled out.
+        func most(_ side: [Int]) -> Int { Swift.max(1, side.filter { start($0) != nil }.count) }
+        /// How many of `side` fit on show in `space`.
+        func fits(_ side: [Int], _ space: CGFloat) -> Int {
+            var count = 0
+            while count < most(side), need(side, count + 1) <= space { count += 1 }
+            return count
         }
-        let sum = sizes.reduce(0, +)
-        return sum > 0 ? sizes.map { $0 / sum } : sizes
+        guard !before.isEmpty, !after.isEmpty else { return (row.run, row.sizes) }
+
+        // Each side's extent: up to the gutter — or, a side that is all
+        // strips, just its strips, the other side taking the rest.
+        var left = position - row.gap / 2, right = row.extent - position - row.gap / 2
+        if fits(before, left) == 0 {
+            left = need(before, 0)
+            right = row.extent - left - row.gap
+        } else if fits(after, right) == 0 {
+            right = need(after, 0)
+            left = row.extent - right - row.gap
+        }
+
+        /// One side, in `space`: what is on show, at what size.
+        func fill(_ side: [Int], _ space: CGFloat) -> [Int: CGFloat] {
+            let count = fits(side, space)
+            guard count > 0 else { return [:] }
+            let shown = Array(side.prefix(count))
+            let cards = space - step * CGFloat(side.count - count) - row.gap * CGFloat(count - 1)
+            var result: [Int: CGFloat] = [:]
+            for i in shown.dropFirst() { result[i] = Swift.max(start(i) ?? minimum(i), minimum(i)) }
+            var deficit = minimum(shown[0]) - (cards - result.values.reduce(0, +))
+            for i in shown.dropFirst() where deficit > 0 {
+                let give = Swift.min(deficit, result[i]! - minimum(i))
+                result[i]! -= give
+                deficit -= give
+            }
+            result[shown[0]] = cards - result.values.reduce(0, +)
+            return result
+        }
+        let sized = fill(before, left).merging(fill(after, right)) { a, _ in a }
+        guard let lo = sized.keys.min(), let hi = sized.keys.max() else { return (row.run, row.sizes) }
+        return (lo...hi, (lo...hi).map { sized[$0] ?? minimum($0) })
     }
 
     /// A divider between two side-by-side panes (or groups of panes).
@@ -464,12 +433,13 @@ extension PaneLayout {
     /// No gaps: this is what a divider move clamps against, and the gaps are
     /// the layout's to make room for.
     static func minimumExtent<V>(
-        _ node: SplitTree<V>.Node, along d: Direction, minimum: CGSize, stacking: Bool
+        _ node: SplitTree<V>.Node, along d: Direction, minimum: CGSize, stacking: Bool,
+        pin: @escaping (Set<V.ID>) -> Pin? = { _ in nil }
     ) -> CGFloat {
         let engine = Engine<V>(
             metrics: Metrics(gap: 0, peek: Metrics.peek, minimumPaneSize: minimum),
             rank: { _ in nil },
-            pin: { _ in nil },
+            pin: pin,
             shares: { _ in nil },
             shown: { _ in nil })
         return stacking ? engine.compact(node, along: d) : engine.comfortable(node, along: d)
@@ -869,8 +839,12 @@ private extension PaneLayout {
             result.stacks.append(.init(frame: rect, direction: d, items: items, run: run, fits: fits))
 
             // Grips, on a stack that shows: in the gutters between the cards
-            // on show, and in the gutter where a run the user narrowed meets
-            // its strips, when there is room to widen it.
+            // on show, and in the gutter where the run meets its strips —
+            // whether the user collapsed the row or it stacked for want of
+            // room, and with room to widen it or not: without, pulling it
+            // slides the run along (`BaseTerminalController.splitDidDragStack`).
+            // It used to be no grip at all there, a gutter that could not be
+            // taken.
             guard !tucked else { return laidOut }
             let shown = Row(
                 items: items, run: run, sizes: slots,
@@ -887,8 +861,7 @@ private extension PaneLayout {
                     position: slotStart(k + 1) - gap / 2, kind: .between(slot: k),
                     gutter: gutter(at: slotStart(k + 1) - gap)))
             }
-            let roomForOneMore = needed(count + 1) <= extent
-            if pin != nil, roomForOneMore {
+            do {
                 if run.lowerBound > 0 {
                     result.stackHandles.append(.init(
                         row: shown, direction: d, frame: rect, position: runStart - gap / 2,

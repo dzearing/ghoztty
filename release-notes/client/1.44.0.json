@@ -1,0 +1,31 @@
+{
+  "version": "1.44.0",
+  "sections": [
+    {
+      "title": "Pane banners",
+      "items": [
+        { "title": "Glass banners", "text": "With glass panes on, a pane's banner is now a glass card too, so the window's color shows through it instead of an opaque slab." },
+        { "title": "Smooth collapse and expand", "text": "Collapsing or expanding a banner glides with the card. The terminal underneath no longer jumps or resizes on screen while it moves." }
+      ]
+    },
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Strips glide", "text": "Panes on show and minimized strips ease into place for both drags and clicks. A strip is the pane's own glass card at strip size: its content fades out and its title fades in as it narrows, with no snap to a dark bar." },
+        { "title": "One rule for every gutter", "text": "Dragging any gutter collapses panes as you go and brings out at most one. Drag back and the row returns to how it was. Draggable gutters show an accent bar on hover and while dragging, and the pinned pane sidebar resizes from the gutter beside it." }
+      ]
+    },
+    {
+      "title": "Terminal",
+      "items": [
+        { "title": "Prompts reflow live while resizing", "text": "Resizing a pane reflows the shell prompt as you drag, and the prompt never goes blank mid-resize." }
+      ]
+    },
+    {
+      "title": "Command line",
+      "items": [
+        { "title": "+split --name tells you what happened", "text": "Re-running the same split still reuses its pane, and now says so. If the name belongs to a different pane, the command fails and names that pane instead of silently doing nothing. A new pane reports where it opened, and a --target that names nothing is an error." }
+      ]
+    }
+  ]
+}

@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// The visible sliver of a pane tucked into a stack (see `PaneLayout`): a
-/// dark strip down the card's leading edge with the pane's name running
-/// along it, over the scrim that dims the card (`PaneCardView`). Clicking it
-/// focuses the pane, which is what brings it forward — the stack's run
-/// follows focus (`PaneStackState`).
+/// The title of a pane tucked into a stack (see `PaneLayout`): the pane's
+/// name running along its strip, which is the pane's own card at the strip's
+/// size (`PaneCardView`). It fades in as the card goes into its strip.
+/// Clicking it focuses the pane, which is what brings it forward — the
+/// stack's run follows focus (`PaneStackState`).
 ///
 /// The tab is an AppKit view hosting its SwiftUI face: the pane under it is an
 /// AppKit view (a Metal terminal, a web view), and SwiftUI content drawn as a
@@ -14,8 +14,9 @@ final class PaneStackTabView: NSView {
     weak var pane: PaneView? {
         didSet { dragSource.pane = pane }
     }
-    /// Hover lightens the card's scrim as well as the tab.
-    var onHover: ((Bool) -> Void)?
+    /// The card is a strip, not a card on its way into or out of one: only
+    /// a strip takes clicks and is a drop target.
+    var isStrip = false
     private var host: NSHostingView<PaneStackTabFace>?
     private let hover = PaneStackTabFace.Hover()
 
@@ -75,7 +76,7 @@ final class PaneStackTabView: NSView {
 
     // The whole tab is one target; the face inside it is only drawing.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        !isHidden && frame.contains(point) ? dragSource : nil
+        isStrip && !isHidden && frame.contains(point) ? dragSource : nil
     }
 
     override func layout() {
@@ -94,7 +95,6 @@ final class PaneStackTabView: NSView {
     private func setHovered(_ hovered: Bool) {
         guard hover.isHovered != hovered else { return }
         hover.isHovered = hovered
-        onHover?(hovered)
     }
 
     override func accessibilityPerformPress() -> Bool {
@@ -144,7 +144,7 @@ final class PaneStackTabView: NSView {
     /// hidden tab — wherever it was last — is not where its pane is.
     static func all(in window: NSWindow) -> [UUID: PaneStackTabView] {
         var found: [UUID: PaneStackTabView] = [:]
-        for tab in mounted.allObjects where tab.window === window && !tab.isHidden && tab.alphaValue > 0 {
+        for tab in mounted.allObjects where tab.window === window && tab.isStrip && !tab.isHidden {
             guard let pane = tab.pane else { continue }
             found[pane.id] = tab
         }
@@ -163,16 +163,16 @@ struct PaneStackTabFace: View {
     let cornerRadius: CGFloat
     let background: Color
     let isLight: Bool
+    /// Filled: a bar of its own (the flat style, whose panes are no cards).
+    /// Otherwise the card under it is the strip.
+    var isFilled = false
     var hover = Hover()
 
     var body: some View {
         HoverReader(hover: hover) { isHovered in
             GeometryReader { geo in
                 ZStack(alignment: .topLeading) {
-                    // A dark strip of the pane's own color: the card's scrim
-                    // dims the pane, and the strip all but hides the few
-                    // columns under the title so they don't compete with it.
-                    shape.fill(strip)
+                    if isFilled { shape.fill(strip) }
                     label(in: geo.size, isHovered: isHovered)
                 }
             }

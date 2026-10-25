@@ -35,9 +35,9 @@ enum TerminalSplitOperation {
         /// the drag starts from what the user sees.
         var displayed: SplitTree<PaneView>.Node? = nil
 
-        /// On `.began`: the row the divider is in. Dragged well past a pane's
-        /// minimum, the row collapses instead (`PaneLayout.Restack`), one
-        /// pane after another as the drag goes on (`PaneLayout.chain`).
+        /// On `.began`: the row the divider is in. The divider is a gutter
+        /// of it: the drag makes the row what its position makes of it
+        /// (`PaneLayout.dragged`), panes tucking away and strips coming out.
         var row: PaneLayout.Row<UUID>? = nil
 
         /// On `.began`: how many of the row's items lie before the divider.
@@ -77,7 +77,7 @@ struct TerminalSplitTreeView: View {
         // as the panes behind a zoom are not. Divider gestures report nodes of
         // this tree; the controller lifts their ratios back onto the full one.
         let visible = tree.visibleTree
-        let ranks = Dictionary(uniqueKeysWithValues: stackState.recency.enumerated().map { ($1, $0) })
+        let ranks = stackState.ranks
         Group {
             if heroModeState.isActive {
                 HeroModeView(tree: visible, state: heroModeState)
@@ -146,7 +146,7 @@ private struct PaneGrid: View {
     let node: SplitTree<PaneView>.Node
     let isRoot: Bool
     let rearranging: Bool
-    /// `PaneStackState.recency` as ranks: 0 is the focused pane.
+    /// `PaneStackState.ranks`: 0 is the focused pane, a featured one -1.
     let ranks: [UUID: Int]
     /// Which rows the user collapsed — passed by value, so a change to them
     /// redraws the grid.
@@ -196,6 +196,16 @@ private struct PaneGrid: View {
             let _ = slots == nil
                 ? stackState.noteStacks(layout.stacks)
                 : layout.stacks.forEach { stackState.noteItems($0.items, fits: $0.fits) }
+            let _ = slots == nil ? stackState.noteGrid { [node, size = geo.size, paneGap, ranks, stackState] in
+                PaneLayout.compute(
+                    node,
+                    in: CGRect(origin: .zero, size: size),
+                    metrics: .forStyle(paneGap: paneGap),
+                    rank: { ranks[$0.id] },
+                    pin: { stackState.pins[$0] },
+                    shares: { stackState.shares[$0] },
+                    shown: { stackState.shownRun($0) })
+            } : ()
             ZStack(alignment: .topLeading) {
                 if let slots {
                     ForEach(panes, id: \.id) { pane in
@@ -221,7 +231,9 @@ private struct PaneGrid: View {
                         size: geo.size,
                         runs: layout.stacks.map(\.run),
                         isGesturing: stackState.isGesturing,
+                        stackState: stackState,
                         style: .init(
+                            isCard: isElevated,
                             cornerRadius: isElevated ? PaneElevation.cornerRadius : 0,
                             background: ghostty.config.backgroundColor,
                             isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
@@ -377,9 +389,10 @@ private struct GridDivider: View {
 /// A grip on a stacked row (`PaneLayout.StackHandle`). Between two cards on
 /// show it resizes them, and a drag well past a card's minimum tucks the
 /// outermost card on that side behind instead, as a divider does; at the edge
-/// of a run the user narrowed, a drag out over the tucked cards brings the
-/// nearest one back. Either way, dragging back undoes it while the mouse is
-/// still down (see `BaseTerminalController.splitDidDragStack`).
+/// of a run the user narrowed it is the divider of the nearest strip, which
+/// comes out once it has been pulled to a pane's minimum and then follows
+/// the pointer. Either way, dragging back undoes it while the mouse is still
+/// down (see `BaseTerminalController.splitDidDragStack`).
 private struct StackGrip: View {
     let handle: PaneLayout.StackHandle<UUID>
     let paneGap: CGFloat?
@@ -439,16 +452,20 @@ private struct PaneLeafView: View {
 
     @ObservedObject private var dragSession = PaneDragSession.shared
     @Environment(\.paneContentFreeze) private var freeze
+    @Environment(\.paneContentAnchor) private var anchor
+    @Environment(\.paneCollapse) private var collapse
 
     private var isBeingDragged: Bool { dragSession.isDragging(pane) }
 
     var body: some View {
-        // Mid-slide the pane keeps the size it had (`PaneStage`), from the
-        // card's top-left corner — cut by the card, or with sheet to spare —
-        // and is resized once the slide is over. An overlay, so a frozen pane
-        // larger than its card never reports that size up (a frame would, and
-        // be centered); the same structure frozen or not, so nothing remounts.
-        Color.clear.overlay(alignment: .topLeading) {
+        // Mid-glide, and as a strip, the pane keeps one size (`PaneStage`),
+        // from the card's top-left corner — or its far edge, gliding into or
+        // out of its strip — cut by the card, or with sheet to spare. An
+        // overlay, so a frozen pane larger than its card never reports that
+        // size up (a frame would, and be centered); the same structure frozen
+        // or not, so nothing remounts. It fades out as its card goes into its
+        // strip, leaving the card's glass and the strip's title.
+        Color.clear.overlay(alignment: anchor) {
             VStack(spacing: 0) {
                 if rearranging {
                     PaneHeaderView(pane: pane)
@@ -456,7 +473,9 @@ private struct PaneLeafView: View {
                 content
             }
             .frame(width: freeze?.width, height: freeze?.height)
+            .opacity(1 - collapse)
         }
+        .clipped()
         // The source pane fades for the duration of the drag, so the layout
         // it is leaving reads as provisional.
         .opacity(isBeingDragged ? 0.4 : 1.0)

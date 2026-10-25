@@ -40,15 +40,13 @@ struct PaneSidebarContainer<Content: View>: View {
         })
         .overlay(alignment: .topLeading) {
             if mode != .hidden {
-                // In the pinned case the frame reaches half a grab width past
-                // the panel: the resize handle straddles the panel's edge, and
-                // AppKit never hit-tests the part of a view outside its
-                // parent's bounds — the outer half of the handle was dead, so
-                // the sizer sat LEFT of the line. `hitTest` limits the extra
-                // strip to the handle.
+                // In the pinned case the frame reaches past the panel over the
+                // gutter its resize grip lies in (`pinnedEdgeGrip`): AppKit
+                // never hit-tests the part of a view outside its parent's
+                // bounds. `hitTest` limits the extra strip to the grip.
                 PaneSidebarHostRepresentable(controller: controller, state: state, mode: mode)
                     .frame(width: mode == .expanded
-                           ? column + SidePanelResizeHandle.grabWidth / 2
+                           ? column + PaneSidebarState.pinnedEdgeReach(elevated: elevated)
                            : insets.leading + state.width + insets.trailing)
                     .frame(maxHeight: .infinity)
                     // Up beside the tab bar, which then starts at the
@@ -201,9 +199,9 @@ final class PaneSidebarHostView: NSView {
             return .zero
         case .expanded:
             // The panel, without the strip the frame reserves past its edge
-            // for the resize handle's outer half.
+            // for the resize grip.
             return NSRect(x: 0, y: 0,
-                          width: Swift.max(0, bounds.width - SidePanelResizeHandle.grabWidth / 2),
+                          width: Swift.max(0, bounds.width - PaneSidebarState.pinnedEdgeReach(elevated: elevated)),
                           height: bounds.height)
         case .mini:
             let insets = PaneSidebarState.railInsets(
@@ -218,12 +216,16 @@ final class PaneSidebarHostView: NSView {
     /// outside its trailing edge); everything else falls through to the grid.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
-        let slop = SidePanelResizeHandle.grabWidth
         let card = cardRect
-        let edge = NSRect(x: card.maxX - slop / 2, y: card.minY, width: slop, height: card.height)
+        let grip = mode == .expanded
+            ? PaneSidebarState.pinnedEdgeGrip(elevated: elevated)
+            : (offset: -SidePanelResizeHandle.grabWidth / 2, width: SidePanelResizeHandle.grabWidth)
+        let edge = NSRect(x: card.maxX + grip.offset, y: card.minY, width: grip.width, height: card.height)
         guard card.union(edge).contains(local) else { return nil }
         return super.hitTest(point)
     }
+
+    private var elevated: Bool { controller?.ghostty.config.macosPaneStyle == .elevated }
 
     // MARK: Hover-open (unpinned)
 
@@ -416,23 +418,22 @@ private struct PaneSidebarChrome: View {
                     state.width = PaneSidebarState.clampWidth(proposed)
                 }
             })
-            .frame(width: SidePanelResizeHandle.grabWidth)
-            .offset(x: resizeHandleOffset)
+            .frame(width: resizeHandleGrip.width)
+            .offset(x: resizeHandleGrip.offset + resizeHandleGrip.width)
     }
 
-    /// Where the edge grip sits against the card's trailing edge. Like every
-    /// resizer, never over a pane: it straddles the edge only when what lies
-    /// past it is a gutter (the elevated grid's margin beside the pinned
-    /// panel); beside the flat grid, which starts right at the panel, and on
-    /// the card floating over the grid (the rail, open or not), it lies just
-    /// inside the edge.
-    private var resizeHandleOffset: CGFloat {
-        let half = SidePanelResizeHandle.grabWidth / 2
+    /// Where the edge grip lies, from the trailing edge of what it overlays.
+    /// Like every resizer, never over a pane: pinned, it is the gutter beside
+    /// the panel (`PaneSidebarState.pinnedEdgeGrip`); on the card floating
+    /// over the grid (the rail, open or not), just inside the card's edge —
+    /// what it overlays includes the card's trailing margin.
+    private var resizeHandleGrip: (offset: CGFloat, width: CGFloat) {
         let elevated = controller.ghostty.config.macosPaneStyle == .elevated
+        let grab = SidePanelResizeHandle.grabWidth
         switch mode {
-        case .expanded: return elevated ? half : -half
-        case .mini: return -half - railInsets.trailing
-        case .hidden: return 0
+        case .expanded: return PaneSidebarState.pinnedEdgeGrip(elevated: elevated)
+        case .mini: return (-grab * 1.5 - railInsets.trailing, grab)
+        case .hidden: return (0, grab)
         }
     }
 
