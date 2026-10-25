@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-24T19:40:30-07:00",
-    "commit":  "82bfee6f9",
+    "generated":  "2026-10-24T19:45:01-07:00",
+    "commit":  "5c78d628b",
     "uncommitted":  [
 
                     ],
@@ -1082,6 +1082,7 @@
                   "test/win32/desk-variant.ps1":  "da9faf809bdd7995944d552b6406ee3736229a7821f246530dbdd42a61d7a17d",
                   "test/win32/dip-rounding-audit.ps1":  "8a3979da25d92635db2d67c480af57699a7a61c55331b19d8e56a3fab18d5f5b",
                   "test/win32/divergence-inventory.ps1":  "204e43a76176ef9d5536b00eff27c9af89be83bf0ea4032a9c2eb11a59eecc3b",
+                  "test/win32/doc-claims.ps1":  "89225631de66b3d1dc4c196c2dbea93fd7c416774c464c32fdc3e6f3198d3ece",
                   "test/win32/docs-routing.ps1":  "98d25cb8eaba89f37cb2fe892dc86cee04a2cec771acc0c588e39d69446ccf11",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
                   "test/win32/drag-perf.ps1":  "a38388c599a62ca131caee78821d1fc41261531856665b8cdf753f1a149be0ec",
