@@ -144,6 +144,12 @@ fn onUnhandled(info: ?*w32.EXCEPTION_POINTERS) callconv(.winapi) i32 {
         }) catch "code=unknown";
     };
     append(.crash, detail);
+
+    // The filter this one replaced is the crash-report writer
+    // (`crash/windows.zig`, installed by `crash.init` before the app exists).
+    // Only the newest unhandled-exception filter is called, so without this
+    // hand-off the ledger line would be the only record a crash left (T1355).
+    if (prev_filter) |f| return f(info);
     return w32.EXCEPTION_CONTINUE_SEARCH;
 }
 

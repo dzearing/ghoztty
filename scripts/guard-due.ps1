@@ -2201,6 +2201,21 @@ $GuardTable = @(
             'test\win32\exit-reason.ps1'
         )
     },
+    # A crash leaves a report a user can send (T1355): the filter, the report
+    # text it writes, the dispatch that installs it on Windows, and the exit
+    # ledger's filter, which sits on top of it and must hand the crash on.
+    [pscustomobject]@{
+        Name   = 'crash-report'
+        Script = 'test\win32\crash-report.ps1'
+        Stamp  = 'test\win32\crash-report.stamp.json'
+        Covers = @(
+            'src\crash\windows.zig',
+            'src\crash\windows_report.zig',
+            'src\crash\main.zig',
+            'src\apprt\win32\exit_reason.zig',
+            'test\win32\crash-report.ps1'
+        )
+    },
     # A startup failure is VISIBLE (T1177). The whole point of this code is a
     # dialog that appears when nothing else can, so an edit to any link in that
     # chain - the reporter, the dialog it builds on, the message text, or the
