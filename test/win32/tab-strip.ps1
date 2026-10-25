@@ -1008,13 +1008,14 @@ try {
             $c = $shot.Bitmap.GetPixel($offX + $sqL + $ibInset, $stripTop + $y0 + $ibInset)
             return [pscustomobject]@{ Edge = [int]$e.R; Corner = [int]$c.R }
         }
-        # Rest readings first, with the pointer parked off both buttons.
-        [void](Send-TestMouse -Window $top -Target $top -X ($clientX + $t3.Left + 6) -Y ($clientY + $m.StripTopClient + $cCy) -Action move)
-        Start-Sleep -Milliseconds 250
-        $restShot  = Get-TestWindowPixels -Window $top -Sync
+        # Rest readings first, with the pointer parked off both buttons - parked
+        # and photographed by the app on one stack, like the hovered captures
+        # below (T1372), where a posted move and a flat 250ms sleep used to bet
+        # that the move had been drained before the capture.
+        $restShot  = Get-TestHoverCapture -Hwnd $top -X ($clientX + $t3.Left + 6) -Y ($clientY + $m.StripTopClient + $cCy)
         $restClose = Probe-Fill $restShot $cSqL $cCx $cSqT
         $restPlus  = Probe-Fill $restShot $pSqL $pCx $cSqT
-        Close-TestWindowPixels $restShot
+        Close-TestHoverCapture $restShot
 
         # One capture per hovered button. Each is probed at BOTH squares: the
         # hovered one must light and the other must not, which is what says the

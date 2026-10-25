@@ -3459,7 +3459,9 @@ $GuardTable = @(
             'src\apprt\win32\desk_palette.zig',
             'src\apprt\win32\PaneDesk.zig',
             'src\apprt\win32\split_geometry.zig',
-            'test\win32\pane-elevation.ps1'
+            'test\win32\pane-elevation.ps1',
+            # T1372: its toggle wait polls through this
+            'test\win32\lib\PaintWait.ps1'
         )
     },
     # T1951 (rescope, GitHub #13): on a software renderer the panes' presents
@@ -4910,7 +4912,9 @@ $GuardTable = @(
             'src\apprt\win32\chooser_sessions.zig',
             'src\apprt\win32\MachineChooser.zig',
             'src\apprt\win32\SessionRoster.zig',
-            'test\win32\chooser-selection.ps1'
+            'test\win32\chooser-selection.ps1',
+            # T1372: its focused-fill wait polls through this
+            'test\win32\lib\PaintWait.ps1'
         )
     },
     # The PROCESS TABLE's selection treatment (T1008): the second list on this
