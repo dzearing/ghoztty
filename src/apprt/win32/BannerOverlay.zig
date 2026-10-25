@@ -309,6 +309,14 @@ pub const BannerOverlay = struct {
     card_bits: ?[*]u32 = null,
     card_w: i32 = 0,
     card_h: i32 = 0,
+    /// Rows the DIB section behind `card_dc` holds (T1349), at least
+    /// `card_h`. A collapse or expand renders the card at a new height on
+    /// every frame; the section is sized to the window's client up front, so
+    /// those frames re-render into it instead of creating a fresh one each.
+    card_cap_h: i32 = 0,
+    /// How many times the section has been (re)created — what the unit lane
+    /// reads to prove an animation reuses it.
+    card_allocs: u32 = 0,
     card_bg: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
     card_scale: f32 = 0,
     /// `nested` the cached backdrop was rendered for (T1900).
@@ -1951,29 +1959,18 @@ pub const BannerOverlay = struct {
     }
 
     fn buildCardSurface(self: *BannerOverlay, hdc: w32.HDC, w: i32, h: i32, glass_at: ?[2]i32) void {
-        self.releaseCardSurface();
-
-        var bmi = std.mem.zeroes(w32.BITMAPINFO);
-        bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth = w;
-        bmi.bmiHeader.biHeight = -h; // top-down
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-
-        const mem_dc = w32.CreateCompatibleDC(hdc) orelse return;
-        var bits: ?*anyopaque = null;
-        const bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
-            _ = w32.DeleteDC(mem_dc);
-            return;
-        };
-        const raw = bits orelse {
-            _ = w32.DeleteObject(bmp);
-            _ = w32.DeleteDC(mem_dc);
-            return;
-        };
-        _ = w32.SelectObject(mem_dc, bmp);
-
-        const pixels = @as([*]u32, @ptrCast(@alignCast(raw)));
+        // A top-down section `w` wide holds a `w` x `h` image in its first
+        // `w * h` pixels, so one at least `h` rows tall is reused as is
+        // (T1349): a toggle's ~11 frames each re-render, none re-allocate.
+        const reuse = self.card_dc != null and self.card_bits != null and
+            self.card_w == w and self.card_cap_h >= h;
+        if (reuse) {
+            // The section has been read by GDI since it was last written
+            // (every blit of it); its memory is only ours again once that
+            // batch is flushed.
+            _ = w32.GdiFlush();
+        } else if (!self.allocCardSurface(hdc, w, h)) return;
+        const pixels = self.card_bits.?;
         const count: usize = @intCast(w * h);
         var metrics = card.Metrics.init(w, h, self.scale);
         metrics.radius = self.cardRadius() * self.scale;
@@ -1998,13 +1995,49 @@ pub const BannerOverlay = struct {
             card.render(pixels[0..count], metrics, self.pane_bg_rgb);
         }
 
-        self.card_dc = mem_dc;
-        self.card_bmp = bmp;
-        self.card_bits = pixels;
-        self.card_w = w;
         self.card_h = h;
         self.card_bg = self.pane_bg_rgb;
         self.card_scale = self.scale;
+    }
+
+    /// A fresh top-down DIB section `w` wide for the card, tall enough for
+    /// `h` and for the whole client — the tallest band an animation can ask
+    /// for — so the frames that follow reuse it (T1349). False when GDI
+    /// would not make one; the caller then paints the flat fallback.
+    fn allocCardSurface(self: *BannerOverlay, hdc: w32.HDC, w: i32, h: i32) bool {
+        self.releaseCardSurface();
+
+        var client: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+        _ = w32.GetClientRect(self.hwnd, &client);
+        const cap_h = @max(h, client.bottom - client.top);
+
+        var bmi = std.mem.zeroes(w32.BITMAPINFO);
+        bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = w;
+        bmi.bmiHeader.biHeight = -cap_h; // top-down
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+
+        const mem_dc = w32.CreateCompatibleDC(hdc) orelse return false;
+        var bits: ?*anyopaque = null;
+        const bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
+            _ = w32.DeleteDC(mem_dc);
+            return false;
+        };
+        const raw = bits orelse {
+            _ = w32.DeleteObject(bmp);
+            _ = w32.DeleteDC(mem_dc);
+            return false;
+        };
+        _ = w32.SelectObject(mem_dc, bmp);
+
+        self.card_dc = mem_dc;
+        self.card_bmp = bmp;
+        self.card_bits = @as([*]u32, @ptrCast(@alignCast(raw)));
+        self.card_w = w;
+        self.card_cap_h = cap_h;
+        self.card_allocs +%= 1;
+        return true;
     }
 
     fn releaseCardSurface(self: *BannerOverlay) void {
@@ -2015,6 +2048,7 @@ pub const BannerOverlay = struct {
         self.card_bits = null;
         self.card_w = 0;
         self.card_h = 0;
+        self.card_cap_h = 0;
         self.card_scale = 0;
     }
 
@@ -2887,6 +2921,10 @@ test "banner overlay: an expanding card repaints while the window keeps its size
 
     var before: w32.RECT = undefined;
     try std.testing.expect(w32.GetWindowRect(overlay.hwnd, &before) != 0);
+    // T1349: the backdrop section exists, sized to the whole client.
+    const allocs_before = overlay.card_allocs;
+    try std.testing.expect(allocs_before > 0);
+    try std.testing.expectEqual(before.bottom - before.top, overlay.card_cap_h);
 
     // Drive the animation by hand rather than through `startCollapseAnim`: no
     // timer to pump, and no dependency on the system's client-area animation
@@ -2921,6 +2959,10 @@ test "banner overlay: an expanding card repaints while the window keeps its size
     try std.testing.expect(saw_intermediate);
     // And it ends up showing the card it settled at, not a frame short of it.
     try std.testing.expectEqual(target, overlay.painted_h);
+    // T1349: every one of those frames re-rendered the card at its own
+    // height into the SAME section — none of them made a new one.
+    try std.testing.expectEqual(allocs_before, overlay.card_allocs);
+    try std.testing.expectEqual(banner_layout.bandHeight(target, overlay.px(MARGIN)), overlay.card_h);
 }
 
 // T677: the body's opacity really MOVES during a toggle, and the links do not.

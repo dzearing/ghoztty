@@ -439,19 +439,97 @@ pub fn glassFillColor(under: Rgb, bg: Rgb) Rgb {
 
 const Mode = enum { flat, solid_on, glass_on };
 
+/// What the band is at one pixel: how much of the card, its rim and its
+/// shadow cover it, and the two specular alphas there. Everything
+/// `Paint.composite` needs that does not depend on the pixel underneath.
+const Cover = struct {
+    card: f32,
+    rim: f32 = 0.0,
+    shadow: f32 = 0.0,
+    sheen: f32 = 0.0,
+    rim_a: f32 = 0.0,
+};
+
+/// The pixel-independent constants of one `renderImpl` call.
+const Paint = struct {
+    mode: Mode,
+    bg_f: Frgb,
+    bg_packed: u32,
+    fill_f: Frgb,
+    wash_to: Frgb,
+    wash_a: f32,
+
+    /// The card over `p` given its cover: the same sequence of composites
+    /// the per-pixel walk has always done, so a mirrored or row-constant
+    /// pixel (see `renderImpl`) is the same bits as one computed in place.
+    inline fn composite(self: Paint, p: *u32, cv: Cover, dark: f32) void {
+        const on_existing = self.mode != .flat;
+        if (on_existing and cv.card == 0.0 and cv.shadow == 0.0) return;
+        var c = if (on_existing) Frgb.unpack(p.*) else self.bg_f;
+        // Shadow, with the card's own interior masked out of it (Mac
+        // masks the shape out of its blurred copy so the translucent
+        // wash is not darkened from behind).
+        if (cv.shadow > 0.0) {
+            c = c.over(BLACK, SHADOW_ALPHA * cv.shadow * (1.0 - cv.card));
+        }
+        if (cv.card > 0.0) {
+            c = if (self.mode == .glass_on) c.over(self.wash_to, self.wash_a * cv.card) else c.over(self.fill_f, cv.card);
+            if (cv.sheen > 0.0) c = c.over(WHITE, cv.sheen * cv.card);
+            if (dark > 0.0) c = c.over(BLACK, dark * cv.card);
+            if (cv.rim > 0.0) c = c.over(WHITE, cv.rim_a * cv.rim);
+        }
+        p.* = if (cv.card == 0.0 and cv.shadow == 0.0) self.bg_packed else c.pack();
+    }
+};
+
+/// Is the band's paint symmetric about `w / 2` to the bit (T1349)? True when
+/// the card's centre and both specular centres land exactly on it in floats,
+/// which every whole-number margin does; a fractional one can round a hair
+/// off it, and then `renderImpl` computes both halves.
+fn mirrorable(m: Metrics) bool {
+    const card = m.card();
+    const wf: f32 = @floatFromInt(m.w);
+    return card.left + card.right == wf and
+        Ellipse.init(card, SHEEN_RADIUS).cx == wf * 0.5 and
+        Ellipse.init(card, RIM_RADIUS).cx == wf * 0.5;
+}
+
+/// The band, a pixel at a time — but not every pixel is computed (T1349). A
+/// banner re-renders this on every frame of a collapse or expand (~11 in
+/// 180 ms, each at a new height), and on a wide hi-DPI pane the plain walk
+/// cost 3-6.5 ms a frame in ReleaseFast and 17-39 ms in Debug: most of a
+/// frame's budget, spent in the middle of an animation. Two things are
+/// skipped, and both are bit-exact rather than approximate — the old walk is
+/// `renderReference` in the tests, and every mode is compared against it:
+///
+/// - **The right half is the left half, mirrored.** The card, its shadow and
+///   both specular ellipses are centred on the band, so a pixel and its
+///   mirror have the same cover; only the composite (which reads the pixel
+///   underneath, in the `_on` modes) runs for both. Taken only when the
+///   centre is EXACTLY `w / 2` in floats — that is what makes `x - cx` and
+///   its mirror equal and opposite to the bit. Otherwise every pixel is
+///   computed, as before.
+/// - **A row the sheen cannot reach has one interior colour.** Away from the
+///   card's edges the only per-pixel term is the sheen; on a row outside its
+///   ellipse (with a margin, so no pixel can land on the boundary stop) the
+///   interior is one colour in the two opaque modes, composited once per
+///   row. Glass reads the sheet underneath, so it does not get this one.
 fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
     if (m.w <= 0 or m.h <= 0) return;
     const w: usize = @intCast(m.w);
     const h: usize = @intCast(m.h);
     if (pixels.len < w * h) return;
 
-    const on_existing = mode != .flat;
-    const bg_f = Frgb.from(bg);
-    const bg_packed = bg_f.pack();
-    const fill_f = Frgb.from(fillColor(bg));
     const light = color_math.isLight(bg);
-    const wash_to = if (light) BLACK else WHITE;
-    const wash_a: f32 = if (light) FILL_DARKEN else FILL_LIGHTEN;
+    const bg_f = Frgb.from(bg);
+    const paint = Paint{
+        .mode = mode,
+        .bg_f = bg_f,
+        .bg_packed = bg_f.pack(),
+        .fill_f = Frgb.from(fillColor(bg)),
+        .wash_to = if (light) BLACK else WHITE,
+        .wash_a = if (light) FILL_DARKEN else FILL_LIGHTEN,
+    };
     const card = m.card();
 
     // Shadow shape: the card, pushed down. Blurred by a smoothstep of its
@@ -473,6 +551,9 @@ fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
     const sheen_e = Ellipse.init(card, SHEEN_RADIUS);
     const rim_e = Ellipse.init(card, RIM_RADIUS);
 
+    const mirror = mirrorable(m);
+    const half = if (mirror) (w + 1) / 2 else w;
+
     for (0..h) |row| {
         const y = @as(f32, @floatFromInt(row)) + 0.5;
         const y_inside = y >= card.top + inner and y <= card.bottom - inner;
@@ -481,47 +562,204 @@ fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
         const sheen_dark = bottomShadeAlpha(y, card);
         const line = pixels[row * w ..][0..w];
 
-        for (line, 0..) |*p, col| {
-            const x = @as(f32, @floatFromInt(col)) + 0.5;
+        // Every `t` on this row is at least sqrt(sheen_row), and past the
+        // last stop (1.0) the sheen is exactly zero. The margin keeps out a
+        // `t` that rounds onto the stop itself, which still lights a hair.
+        const row_const: ?u32 = if (y_inside and mode != .glass_on and sheen_row > 1.001) blk: {
+            var px: u32 = 0;
+            paint.composite(&px, .{ .card = 1.0 }, sheen_dark);
+            break :blk px;
+        } else null;
 
-            var cov_card: f32 = undefined;
-            var cov_rim: f32 = 0.0;
-            var cov_shadow: f32 = 0.0;
+        // The interior of a sheen-lit row in the opaque modes, eight pixels
+        // at a time: [span_lo, span_hi) is where `interiorRun` takes over.
+        var span_lo: usize = half;
+        var span_hi: usize = half;
+        if (y_inside and mode != .glass_on and row_const == null) {
+            span_lo = 0;
+            while (span_lo < half and !(colX(span_lo) >= card.left + inner)) span_lo += 1;
+            span_hi = span_lo;
+            while (span_hi < half and colX(span_hi) <= card.right - inner) span_hi += 1;
+        }
+
+        const flat_run = FlatRun.init(y, card, shadow, m.radius);
+        var run_cover: ?Cover = null;
+
+        var col: usize = 0;
+        while (col < half) : (col += 1) {
+            if (col == span_lo) {
+                const done = interiorRun(line, span_lo, span_hi, mirror, paint, sheen_e, sheen_row, sheen_dark);
+                if (done > col) {
+                    col = done - 1;
+                    continue;
+                }
+            }
+            const x = colX(col);
+            const twin = w - 1 - col;
+            const pair = mirror and twin != col;
+
+            var cv: Cover = undefined;
             if (y_inside and x >= card.left + inner and x <= card.right - inner) {
-                cov_card = 1.0;
-            } else {
-                const sd = sdRoundRect(x, y, card, m.radius);
-                cov_card = coverage(sd);
-                // Hairline rim: the outer edge minus the same shape inset
-                // by one px, so it hugs the antialiased boundary.
-                cov_rim = @max(cov_card - coverage(sd + 1.0), 0.0);
-                if (cov_card < 1.0) {
-                    const sds = sdRoundRect(x, y, shadow, m.radius);
-                    cov_shadow = 1.0 - smoothstep(-m.shadow_blur, m.shadow_blur, sds);
+                if (row_const) |px| {
+                    line[col] = px;
+                    if (pair) line[twin] = px;
+                    continue;
                 }
+                cv = .{ .card = 1.0 };
+            } else if (flat_run.covers(x)) {
+                // The straight run of an edge row: one cover for all of it.
+                if (run_cover == null) run_cover = edgeCover(x, y, card, shadow, m);
+                cv = run_cover.?;
+            } else {
+                cv = edgeCover(x, y, card, shadow, m);
+            }
+            if (cv.card > 0.0) {
+                cv.sheen = gradient(&SHEEN_STOPS, sheen_e.atRow(x, sheen_row));
+                if (cv.rim > 0.0) cv.rim_a = gradient(&RIM_STOPS, rim_e.atRow(x, rim_row));
             }
 
-            if (on_existing and cov_card == 0.0 and cov_shadow == 0.0) continue;
-            var c = if (on_existing) Frgb.unpack(p.*) else bg_f;
-            // Shadow, with the card's own interior masked out of it (Mac
-            // masks the shape out of its blurred copy so the translucent
-            // wash is not darkened from behind).
-            if (cov_shadow > 0.0) {
-                c = c.over(BLACK, SHADOW_ALPHA * cov_shadow * (1.0 - cov_card));
-            }
-            if (cov_card > 0.0) {
-                c = if (mode == .glass_on) c.over(wash_to, wash_a * cov_card) else c.over(fill_f, cov_card);
-                const sheen_a = gradient(&SHEEN_STOPS, sheen_e.atRow(x, sheen_row));
-                if (sheen_a > 0.0) c = c.over(WHITE, sheen_a * cov_card);
-                if (sheen_dark > 0.0) c = c.over(BLACK, sheen_dark * cov_card);
-                if (cov_rim > 0.0) {
-                    const rim_a = gradient(&RIM_STOPS, rim_e.atRow(x, rim_row));
-                    c = c.over(WHITE, rim_a * cov_rim);
-                }
-            }
-            p.* = if (cov_card == 0.0 and cov_shadow == 0.0) bg_packed else c.pack();
+            paint.composite(&line[col], cv, sheen_dark);
+            if (!pair) continue;
+            // Where the result cannot depend on the pixel underneath — the
+            // flat mode everywhere, and an opaque fill the card covers
+            // completely — the twin IS this pixel. Only an edge composited
+            // onto a backdrop, or glass, has to be done again.
+            if (mode == .flat or (mode == .solid_on and cv.card == 1.0)) {
+                line[twin] = line[col];
+            } else paint.composite(&line[twin], cv, sheen_dark);
         }
     }
+}
+
+/// The card, rim and shadow cover at a pixel the interior shortcut does not
+/// reach: the antialiased edge, its hairline rim, and the shadow under it.
+inline fn edgeCover(x: f32, y: f32, card: Rect, shadow: Rect, m: Metrics) Cover {
+    const sd = sdRoundRect(x, y, card, m.radius);
+    var cv = Cover{ .card = coverage(sd) };
+    // Hairline rim: the outer edge minus the same shape inset by one px, so
+    // it hugs the antialiased boundary.
+    cv.rim = @max(cv.card - coverage(sd + 1.0), 0.0);
+    if (cv.card < 1.0) {
+        const sds = sdRoundRect(x, y, shadow, m.radius);
+        cv.shadow = 1.0 - smoothstep(-m.shadow_blur, m.shadow_blur, sds);
+    }
+    return cv;
+}
+
+/// Where on one row `edgeCover` does not depend on x (T1349): the straight
+/// run of a top or bottom edge, between the corners. In `sdRoundRect` terms
+/// that is `qx <= min(0, qy)` for the card AND the shadow — `ax` is then
+/// exactly 0 and the `max` picks `qy` — so every such column computes the
+/// same bits and one evaluation serves the run. `qx` is formed here exactly
+/// as `sdRoundRect` forms it, per shape, since the shadow's `hh` is its own
+/// float difference and need not equal the card's.
+const FlatRun = struct {
+    card: Shape,
+    shadow: Shape,
+
+    const Shape = struct {
+        cx: f32,
+        reach: f32,
+        limit: f32,
+
+        fn init(y: f32, r: Rect, radius: f32) Shape {
+            const cy = (r.top + r.bottom) * 0.5;
+            const hw = r.width() * 0.5;
+            const hh = r.height() * 0.5;
+            const rad = @min(radius, @min(hw, hh));
+            const qy = @abs(y - cy) - (hh - rad);
+            return .{ .cx = (r.left + r.right) * 0.5, .reach = hw - rad, .limit = @min(qy, 0.0) };
+        }
+
+        inline fn covers(self: Shape, x: f32) bool {
+            return @abs(x - self.cx) - self.reach <= self.limit;
+        }
+    };
+
+    fn init(y: f32, card: Rect, shadow: Rect, radius: f32) FlatRun {
+        return .{ .card = Shape.init(y, card, radius), .shadow = Shape.init(y, shadow, radius) };
+    }
+
+    inline fn covers(self: FlatRun, x: f32) bool {
+        return self.card.covers(x) and self.shadow.covers(x);
+    }
+};
+
+/// The x of column `col`'s pixel centre.
+inline fn colX(col: usize) f32 {
+    return @as(f32, @floatFromInt(col)) + 0.5;
+}
+
+const LANES = 8;
+const Vf = @Vector(LANES, f32);
+
+fn splat(v: f32) Vf {
+    return @splat(v);
+}
+
+/// `gradient(&SHEEN_STOPS, t)` for eight `t` at once, with the same
+/// arithmetic per lane: the spans and deltas are the f32 differences the
+/// scalar loop computes from the same stops.
+fn sheenGradient8(t: Vf) Vf {
+    const s0 = SHEEN_STOPS[0];
+    const s1 = SHEEN_STOPS[1];
+    const s2 = SHEEN_STOPS[2];
+    const seg1 = splat(s0.a) + splat(s1.a - s0.a) * ((t - splat(s0.t)) / splat(s1.t - s0.t));
+    const seg2 = splat(s1.a) + splat(s2.a - s1.a) * ((t - splat(s1.t)) / splat(s2.t - s1.t));
+    return @select(f32, t <= splat(s0.t), splat(s0.a), @select(f32, t <= splat(s1.t), seg1, @select(f32, t <= splat(s2.t), seg2, splat(s2.a))));
+}
+
+/// `Frgb.pack` for one channel of eight pixels.
+fn channel8(v: Vf) @Vector(LANES, u32) {
+    return @intFromFloat(@min(@max(@round(v), splat(0.0)), splat(255.0)));
+}
+
+/// Fill the card interior of one row, columns [lo, hi), eight at a time
+/// (T1349), and their mirrors when `mirror`. Only for the opaque modes,
+/// where an interior pixel is `fill` + sheen + bottom shade whatever was
+/// under it. Returns the first column it did not paint — the remainder
+/// short of a full eight is the scalar loop's.
+///
+/// Bit-exact with `Paint.composite` on a `Cover{ .card = 1 }`: the fill
+/// composite at full cover lands exactly on `fill` (whole numbers in f32),
+/// and a zero sheen or shade is an exact no-op of the same `over`, so the
+/// branches the scalar path takes are folded away without changing a bit.
+fn interiorRun(
+    line: []u32,
+    lo: usize,
+    hi: usize,
+    mirror: bool,
+    paint: Paint,
+    sheen_e: Ellipse,
+    sheen_row: f32,
+    dark: f32,
+) usize {
+    const w = line.len;
+    var col = lo;
+    while (col + LANES <= hi) : (col += LANES) {
+        var xs: Vf = undefined;
+        inline for (0..LANES) |i| xs[i] = colX(col + i);
+        const dx = (xs - splat(sheen_e.cx)) * splat(sheen_e.inv_rx);
+        const s = sheenGradient8(@sqrt(dx * dx + splat(sheen_row)));
+
+        var r = splat(paint.fill_f.r);
+        var g = splat(paint.fill_f.g);
+        var b = splat(paint.fill_f.b);
+        r = r + (splat(WHITE.r) - r) * s;
+        g = g + (splat(WHITE.g) - g) * s;
+        b = b + (splat(WHITE.b) - b) * s;
+        const d = splat(dark);
+        r = r + (splat(BLACK.r) - r) * d;
+        g = g + (splat(BLACK.g) - g) * d;
+        b = b + (splat(BLACK.b) - b) * d;
+
+        const px = (channel8(r) << @splat(16)) | (channel8(g) << @splat(8)) | channel8(b);
+        inline for (0..LANES) |i| {
+            line[col + i] = px[i];
+            if (mirror) line[w - 1 - (col + i)] = px[i];
+        }
+    }
+    return col;
 }
 
 // ---------------------------------------------------------------------------
@@ -886,4 +1124,164 @@ test "nestedRadius: concentric with the pane's corner, floored at 4" {
     // A pane corner wide enough to clear the margin is truly concentric.
     try testing.expectEqual(@as(f32, 8), nestedRadius(20));
     try testing.expect(nestedRadius(11) < RADIUS);
+}
+
+/// The per-pixel walk `renderImpl` replaced (T1349), kept verbatim as the
+/// oracle the fast one is compared against bit for bit.
+fn renderReference(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
+    if (m.w <= 0 or m.h <= 0) return;
+    const w: usize = @intCast(m.w);
+    const h: usize = @intCast(m.h);
+    if (pixels.len < w * h) return;
+
+    const on_existing = mode != .flat;
+    const bg_f = Frgb.from(bg);
+    const bg_packed = bg_f.pack();
+    const fill_f = Frgb.from(fillColor(bg));
+    const light = color_math.isLight(bg);
+    const wash_to = if (light) BLACK else WHITE;
+    const wash_a: f32 = if (light) FILL_DARKEN else FILL_LIGHTEN;
+    const card = m.card();
+
+    // Shadow shape: the card, pushed down. Blurred by a smoothstep of its
+    // own SDF, which is what a gaussian of a large rounded shape looks like
+    // everywhere except very tight corners.
+    const shadow = Rect{
+        .left = card.left,
+        .top = card.top + m.shadow_dy,
+        .right = card.right,
+        .bottom = card.bottom + m.shadow_dy,
+    };
+
+    // Rows/columns this far inside the card need no SDF at all: full card
+    // coverage, no rim, no shadow. That is the bulk of a wide banner.
+    const inner = m.radius + 1.0;
+
+    // The two overhead specular gradients. Built once — only their row and
+    // column terms vary per pixel.
+    const sheen_e = Ellipse.init(card, SHEEN_RADIUS);
+    const rim_e = Ellipse.init(card, RIM_RADIUS);
+
+    for (0..h) |row| {
+        const y = @as(f32, @floatFromInt(row)) + 0.5;
+        const y_inside = y >= card.top + inner and y <= card.bottom - inner;
+        const sheen_row = sheen_e.rowTerm(y);
+        const rim_row = rim_e.rowTerm(y);
+        const sheen_dark = bottomShadeAlpha(y, card);
+        const line = pixels[row * w ..][0..w];
+
+        for (line, 0..) |*p, col| {
+            const x = @as(f32, @floatFromInt(col)) + 0.5;
+
+            var cov_card: f32 = undefined;
+            var cov_rim: f32 = 0.0;
+            var cov_shadow: f32 = 0.0;
+            if (y_inside and x >= card.left + inner and x <= card.right - inner) {
+                cov_card = 1.0;
+            } else {
+                const sd = sdRoundRect(x, y, card, m.radius);
+                cov_card = coverage(sd);
+                // Hairline rim: the outer edge minus the same shape inset
+                // by one px, so it hugs the antialiased boundary.
+                cov_rim = @max(cov_card - coverage(sd + 1.0), 0.0);
+                if (cov_card < 1.0) {
+                    const sds = sdRoundRect(x, y, shadow, m.radius);
+                    cov_shadow = 1.0 - smoothstep(-m.shadow_blur, m.shadow_blur, sds);
+                }
+            }
+
+            if (on_existing and cov_card == 0.0 and cov_shadow == 0.0) continue;
+            var c = if (on_existing) Frgb.unpack(p.*) else bg_f;
+            // Shadow, with the card's own interior masked out of it (Mac
+            // masks the shape out of its blurred copy so the translucent
+            // wash is not darkened from behind).
+            if (cov_shadow > 0.0) {
+                c = c.over(BLACK, SHADOW_ALPHA * cov_shadow * (1.0 - cov_card));
+            }
+            if (cov_card > 0.0) {
+                c = if (mode == .glass_on) c.over(wash_to, wash_a * cov_card) else c.over(fill_f, cov_card);
+                const sheen_a = gradient(&SHEEN_STOPS, sheen_e.atRow(x, sheen_row));
+                if (sheen_a > 0.0) c = c.over(WHITE, sheen_a * cov_card);
+                if (sheen_dark > 0.0) c = c.over(BLACK, sheen_dark * cov_card);
+                if (cov_rim > 0.0) {
+                    const rim_a = gradient(&RIM_STOPS, rim_e.atRow(x, rim_row));
+                    c = c.over(WHITE, rim_a * cov_rim);
+                }
+            }
+            p.* = if (cov_card == 0.0 and cov_shadow == 0.0) bg_packed else c.pack();
+        }
+    }
+}
+
+/// A deterministic, deliberately asymmetric backdrop for the `_on` modes, so
+/// a mirror that copied a composite instead of a cover would show.
+fn fillBackdrop(pixels: []u32, seed: u32) void {
+    var s: u32 = seed | 1;
+    for (pixels) |*p| {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        p.* = s & 0x00FF_FFFF;
+    }
+}
+
+test "T1349: renderImpl is renderReference to the bit, every mode, size and scale" {
+    const alloc = testing.allocator;
+    const widths = [_]i32{ 1, 2, 3, 7, 24, 25, 26, 31, 64, 201, 640 };
+    const heights = [_]i32{ 1, 2, 10, 25, 26, 49, 90, 137 };
+    const scales = [_]f32{ 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.25 };
+    const bgs = [_]Rgb{ DARK, .{ .r = 250, .g = 250, .b = 248 }, .{ .r = 40, .g = 90, .b = 160 } };
+    const modes = [_]Mode{ .flat, .solid_on, .glass_on };
+
+    const got = try alloc.alloc(u32, 640 * 137);
+    defer alloc.free(got);
+    const want = try alloc.alloc(u32, 640 * 137);
+    defer alloc.free(want);
+
+    var compared: usize = 0;
+    var mirrored: usize = 0;
+    for (scales) |scale| for (widths) |w| for (heights) |h| for (bgs, 0..) |bg, bi| for (modes) |mode| {
+        // The banner's own radius, the nested floor, and asymmetric insets
+        // (the elevated rail) — the last one is never mirrorable.
+        for (0..3) |variant| {
+            var m = Metrics.init(w, h, scale);
+            switch (variant) {
+                0 => {},
+                1 => m.radius = NESTED_RADIUS_FLOOR * scale,
+                else => m.insets = .{ .left = 12 * scale, .top = 12 * scale, .right = 0, .bottom = 12 * scale },
+            }
+            const n: usize = @intCast(w * h);
+            fillBackdrop(got[0..n], @as(u32, @intCast(w * 31 + h * 7)) + @as(u32, @intCast(bi)));
+            @memcpy(want[0..n], got[0..n]);
+            renderImpl(got[0..n], m, bg, mode);
+            renderReference(want[0..n], m, bg, mode);
+            if (!std.mem.eql(u32, got[0..n], want[0..n])) {
+                for (got[0..n], want[0..n], 0..) |g, wv, i| if (g != wv) {
+                    std.debug.print("mismatch w={} h={} scale={d} mode={s} variant={} at ({},{}): got {x} want {x}\n", .{ w, h, scale, @tagName(mode), variant, i % @as(usize, @intCast(w)), i / @as(usize, @intCast(w)), g, wv });
+                    break;
+                };
+                return error.TestExpectedEqual;
+            }
+            compared += 1;
+            if (mirrorable(m)) mirrored += 1;
+        }
+    };
+    // The comparison has to have exercised the mirror, or it proves nothing
+    // about it — and the fallback, or it proves nothing about that.
+    try testing.expect(mirrored > compared / 8);
+    try testing.expect(mirrored < compared);
+}
+
+test "T1349: the banner's own geometry takes the mirror at every common scale" {
+    for ([_]f32{ 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 }) |scale| {
+        for ([_]i32{ 400, 901, 1800, 3000 }) |w| {
+            var m = Metrics.init(w, 200, scale);
+            m.radius = RADIUS * scale;
+            try testing.expect(mirrorable(m));
+        }
+    }
+    // Asymmetric insets are not symmetric, and are never mirrored.
+    var rail = Metrics.init(400, 200, 1.0);
+    rail.insets = .{ .left = 12, .top = 12, .right = 0, .bottom = 12 };
+    try testing.expect(!mirrorable(rail));
 }
