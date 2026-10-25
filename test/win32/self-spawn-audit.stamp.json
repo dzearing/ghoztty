@@ -1,16 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-24T22:53:40-07:00",
-    "commit":  "85d3ec901",
+    "generated":  "2026-10-24T23:23:20-07:00",
+    "commit":  "7aec7806a",
     "uncommitted":  [
-                        "src/apprt/win32/chrome_fanout.zig",
-                        "src/apprt/win32/DimOverlay.zig",
-                        "src/apprt/win32/drag_perf.zig",
-                        "src/apprt/win32/KeyStateIndicator.zig",
-                        "src/apprt/win32/ReadonlyBadge.zig",
-                        "src/apprt/win32/Scrollbar.zig",
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -113,12 +107,12 @@
                   "src/apprt/win32/App.zig":  "89c6393b3eefe9daf65b4d997f23ef9a6a4ffab07aecdea634edf1cd87b211cd",
                   "src/apprt/win32/app_restart.zig":  "e6de2b1d367b2e5832906b032b50b8f1fd3ff7f9cd59602b2e626b7f4a9ea73f",
                   "src/apprt/win32/background_zorder.zig":  "f365d4f6606a4f32c237ae49721ba46b6a7239e253fb205598df7a668e75d823",
-                  "src/apprt/win32/banner_card.zig":  "0c5f77663c5464b0ff89692bb1de820cd982a27dc4caef5ce230bfde879d0700",
+                  "src/apprt/win32/banner_card.zig":  "cd02a8786a17d91a60bfb1af01df87beb970e64db9262424a23a75950400c12d",
                   "src/apprt/win32/banner_layout.zig":  "9a4fef1af1553e28f590f3bd5efab4791d03bddea0122b0b53b2cf92cd80f195",
                   "src/apprt/win32/banner_link.zig":  "0ca33afdba886a50a930f6cdb93f79e2a066ad776ea1a68b1215239d4bf020a7",
                   "src/apprt/win32/banner_markdown.zig":  "cc606914608fa4bca12b7c2efbc493c60bd37805d3cc3593d4b548139e28015d",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
-                  "src/apprt/win32/BannerOverlay.zig":  "f7a1d75c1d6d6e49b607d0a1c624d55fb76a30a55a3de76bcf7328d02b3b7dbe",
+                  "src/apprt/win32/BannerOverlay.zig":  "c1477f57561079badbf99971bf062d54d14957b8744aef95edc2a165e9c01244",
                   "src/apprt/win32/BannerScriptInstaller.zig":  "e349d9a86275fb68b44211120d5859a92e14dc2ce797f9060a8b5cd701cb923d",
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
                   "src/apprt/win32/bell_math.zig":  "5df36ed1e5391ddcb531e6defbca5307066e028546336ae371fe619ecdffce6d",
