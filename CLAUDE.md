@@ -1609,7 +1609,10 @@ the interactive mock settled).
   title (`<project>: <worktree>`), which a pane banner has no say in.
   **A rail tile is ONE letter** of that same name (`PaneSidebarText.monogram`:
   the first letter or digit, upper-cased — a leading `✳ `/`~/` is skipped, or
-  every Claude pane would get the same tile), for every kind of pane.
+  every Claude pane would get the same tile), for every kind of pane. Every
+  tile is the same raised **button with a sheen** (`PaneSidebarTileButton`:
+  gradient, top-half sheen, bevelled rim, drop shadow; accent when selected,
+  all static). **No `?` badge on a tile**: a question is an accent rim.
 - Rows: grid panes (focused one selected), then — **anchored at the bottom of
   the bar** under a divider — the **tray** of stashed panes (up to 45% of the
   bar, scrolling past that). Click focuses / restores to the exact slot it

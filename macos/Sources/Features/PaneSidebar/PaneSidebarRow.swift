@@ -160,30 +160,25 @@ struct PaneSidebarRow: View {
     private var tile: some View {
         ZStack(alignment: .topTrailing) {
             ZStack {
-                SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized)
+                PaneSidebarTileButton(
+                    isSelected: isSelected, isEmphasized: isEmphasized, isHovered: isHovered,
+                    hasQuestion: pane.activityState == .needsInput)
                 // One letter of the pane's name — the same name its row and
                 // its stacked strip show — for every kind of pane.
                 let monogram = PaneSidebarText.monogram(for: displayTitle)
                 PaneSidebarGlyph(isBusy: isBusy, color: onAccent ? .white : Color(nsColor: .labelColor),
                                  maskKey: monogram) {
                     Text(monogram)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .lineLimit(1)
                 }
+                .shadow(color: .black.opacity(onAccent ? 0.25 : 0), radius: 0.5, y: 0.5)
                 interaction
             }
-            .frame(width: 32, height: 32)
+            .frame(width: 30, height: 30)
             .background(rowHover)
 
-            if pane.activityState == .needsInput {
-                Text("?")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 13, height: 13)
-                    .background(Circle().fill(Color(nsColor: .controlAccentColor)))
-                    .offset(x: 3, y: -3)
-                    .allowsHitTesting(false)
-            } else if pane.bell && isStashed {
+            if pane.bell && isStashed {
                 Circle()
                     .fill(Color(nsColor: .controlAccentColor))
                     .frame(width: 7, height: 7)
@@ -197,7 +192,7 @@ struct PaneSidebarRow: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 1)
+        .padding(.vertical, 2)
         .help(rowHelp)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
@@ -301,6 +296,60 @@ struct PaneSidebarRow: View {
         case .idle: break
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// A rail tile drawn as a small raised button, the same for every pane: a
+/// soft vertical gradient, a sheen across its top half, a hairline rim and a
+/// short drop shadow. The selected pane's is the accent, lit the same way;
+/// hover lifts it a little. A pane with a question gets an accent rim — no
+/// badge on the tile. All static: nothing here animates.
+struct PaneSidebarTileButton: View {
+    let isSelected: Bool
+    /// The window is key: only then is a selection the accent (as AppKit
+    /// draws a sidebar's); otherwise it is the neutral button, lifted.
+    var isEmphasized: Bool = true
+    let isHovered: Bool
+    let hasQuestion: Bool
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    static let cornerRadius: CGFloat = 8
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+        let dark = colorScheme == .dark
+        let isSelected = self.isSelected && isEmphasized
+        let isHovered = self.isHovered || (self.isSelected && !isEmphasized)
+        let accent = Color(nsColor: .controlAccentColor)
+        let base: [Color] = isSelected
+            ? [accent.opacity(0.92), accent]
+            : dark
+                ? [Color.white.opacity(isHovered ? 0.20 : 0.15), Color.white.opacity(isHovered ? 0.10 : 0.06)]
+                : [Color.white.opacity(isHovered ? 1 : 0.95), Color.black.opacity(isHovered ? 0.05 : 0.07)]
+        shape
+            .fill(LinearGradient(colors: base, startPoint: .top, endPoint: .bottom))
+            // The sheen: light falling on the top half, gone by the middle.
+            .overlay(
+                shape.fill(LinearGradient(
+                    stops: [
+                        .init(color: .white.opacity(isSelected ? 0.32 : dark ? 0.16 : 0.55), location: 0),
+                        .init(color: .white.opacity(0), location: 0.55),
+                    ],
+                    startPoint: .top, endPoint: .bottom)))
+            // A rim: bright along the top edge, darker below — a bevel.
+            .overlay(
+                shape.strokeBorder(
+                    hasQuestion
+                        ? AnyShapeStyle(accent.opacity(isSelected ? 0 : 0.9))
+                        : AnyShapeStyle(LinearGradient(
+                            colors: [
+                                .white.opacity(isSelected ? 0.45 : dark ? 0.22 : 0.9),
+                                .black.opacity(isSelected ? 0.25 : dark ? 0.35 : 0.14),
+                            ],
+                            startPoint: .top, endPoint: .bottom)),
+                    lineWidth: hasQuestion && !isSelected ? 1.5 : 0.75))
+            .shadow(color: .black.opacity(dark ? 0.35 : 0.14), radius: 1.5, y: 1)
     }
 }
 

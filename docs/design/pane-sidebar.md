@@ -438,8 +438,14 @@ selection pill, and the tray under a hairline at the bottom.
   character. (It replaced a heuristic of up to three characters taken from
   after an em dash or from the command name, which named panes differently
   from their rows.) A tile carries a tooltip with its full name.
-- **Activity rides as a corner badge**: a blue `?` (question) top-right, a dot
-  (bell); busy is the same shimmer, on the letter.
+- **Every tile is the same small raised button** (`PaneSidebarTileButton`):
+  a soft vertical gradient, a sheen over its top half, a bevelled hairline
+  rim, a short drop shadow; the selected pane's in the accent, lit the same
+  way (neutral and lifted while the window is not key). All static — nothing
+  on a tile animates but the busy shimmer.
+- **Activity without badges on the letter**: a question is an accent rim
+  round the tile — no `?` badge (it covered the letter and read as clutter);
+  a bell is a dot; busy is the same shimmer, on the letter.
 - **The rail never opens on hover.** It used to open to full width over the
   grid after a short intent delay; but the rail is where its tiles are
   dragged, and a card springing open under a drag is in the way of exactly
