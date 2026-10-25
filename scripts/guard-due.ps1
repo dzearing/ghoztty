@@ -2839,6 +2839,8 @@ $GuardTable = @(
             'src\apprt\win32\ActivityMonitor.zig',
             'src\apprt\win32\activity_input.zig',
             'src\apprt\win32\activity_procs.zig',
+            # T1373: sections B2 and J score every tint through it.
+            'test\win32\lib\PixelScan.ps1',
             'test\win32\activity-monitor.ps1'
         )
     },
@@ -4024,6 +4026,20 @@ $GuardTable = @(
         Covers = @(
             'test\win32\lib\CountOrZero.ps1',
             'test\win32\count-or-zero.ps1'
+        )
+    },
+    # The compiled exact-colour scan (T1373). Its callers poll on the NEGATIVE
+    # answer, so the two ways it can rot are both quiet: a scan that drifts from
+    # the GetPixel walk it replaced turns a pixel oracle green against nothing,
+    # and one that gets slow again turns every wait it backs into a measurement
+    # of itself. App-free, a few seconds.
+    [pscustomobject]@{
+        Name   = 'pixel-scan'
+        Script = 'test\win32\pixel-scan.ps1'
+        Stamp  = 'test\win32\pixel-scan.stamp.json'
+        Covers = @(
+            'test\win32\lib\PixelScan.ps1',
+            'test\win32\pixel-scan.ps1'
         )
     },
     # The drawn-port helpers and the sweep that keeps them (T694). A script that

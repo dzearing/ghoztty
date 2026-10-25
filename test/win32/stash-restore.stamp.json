@@ -1,13 +1,13 @@
 {
     "guard":  "stash-restore",
     "script":  "test/win32/stash-restore.ps1",
-    "generated":  "2026-10-25T04:05:27-07:00",
-    "commit":  "4ee63ed89",
+    "generated":  "2026-10-25T04:39:21-07:00",
+    "commit":  "ed61be794",
     "uncommitted":  [
-                        "src/apprt/win32/pane_stash.zig"
+
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "89c6393b3eefe9daf65b4d997f23ef9a6a4ffab07aecdea634edf1cd87b211cd",
+                  "src/apprt/win32/App.zig":  "4a9094ff8fd5b9070bf415917f454686eb3a7cba1f60b82d54dbb7e9e97bba89",
                   "src/apprt/win32/pane_stash.zig":  "9630f313b9811db3497998a01772b4dce32497326ba99fdef7a2c883f48530cb",
                   "src/apprt/win32/session_layout.zig":  "5553b74f94f5c8f49f5600e654574f5a0e408f92096dea61c699128bbb0d4f9b",
                   "src/apprt/win32/Window.zig":  "6ae847d2ae16e34a20ea6e73a4c84038e8e0c220644e353097aba6a0a5a60e29",

@@ -1,10 +1,12 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-25T03:54:36-07:00",
-    "commit":  "4ee63ed89",
+    "generated":  "2026-10-25T06:36:50-07:00",
+    "commit":  "ed61be794",
     "uncommitted":  [
-
+                        "test/win32/activity-monitor.ps1",
+                        "test/win32/lib/PixelScan.ps1",
+                        "test/win32/pixel-scan.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -12,7 +14,7 @@
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/acceptance-parallel.ps1":  "112add92412ef2d5e520a37bb79e1d88d7df0b1dbd876596fc80479275d55107",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
-                  "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
+                  "test/win32/activity-monitor.ps1":  "af20f4d3bfb61cc694ff06a6c7f7a60849d64f898640892731d8f4bfe8bedf7c",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
                   "test/win32/activity-monitor-probe-fail.ps1":  "bab527a3bfb7ceb8428cf31a3c382b7e2ab6ea001228140e9234c350142dbd15",
                   "test/win32/activity-monitor-remote.ps1":  "011a75488fceba22d318ca3a97b2bf727439d22da6b1d8000b52fee091216c30",
@@ -207,7 +209,7 @@
                   "test/win32/ipc-target-exists-note.ps1":  "5d92714c75607c77a5882b5935bde14dbe26dbba54226b3a003648a3e9318dfc",
                   "test/win32/ipc-timeout.ps1":  "1cc28e2c148b1e65b8e4ec719f0cd1e22b936506a49c75581590da11692d5d30",
                   "test/win32/ipc-under-load.ps1":  "0a636d56ea711bf3eeffdd2c414f5aea7603a129a10a497ffa55ac69e9c477c0",
-                  "test/win32/ipc-version.ps1":  "a2af14e7a2a1e52da099d88a3116dd2c6e8661fe2d4b228590197fcb96cc260c",
+                  "test/win32/ipc-version.ps1":  "43c484eb50fbbac6ed4e52203d750e0bb8544abdf7de2a949b224e43fdb23ec5",
                   "test/win32/ipc-when-idle.ps1":  "9f4f4e064df51079fdd4dd86dfb8afad9b4f639e43f91f7bd557f75dc5fb50d6",
                   "test/win32/isolation-meta.ps1":  "cb7688ef19b8663b15f80479ff8f220b0ddc09f83670420f6817cc3d85d38ef5",
                   "test/win32/job-escape-startup.ps1":  "5d14fe7f499bbbe6d87ed6d375d4d43abc8e22e2eed9e2e6a6c32c3de6dfc573",
@@ -267,6 +269,7 @@
                   "test/win32/lib/PersistentState.ps1":  "f5256d10c2866031a73ccc1fc247f9f670836e2dfdab53ad2432dbd0189019e9",
                   "test/win32/lib/PipeBridge.ps1":  "448d2d97a731911d9a9dea55e529a64a546e425cbf38df6ba3bb083d7794000d",
                   "test/win32/lib/PixelOracleAudit.ps1":  "7b18849da492030e15f819601e3fbde28f4042cd6e9c3ab6b11063b22071937b",
+                  "test/win32/lib/PixelScan.ps1":  "41c312f9a9db8bd3b6402118af61aa445e6f25f2dfa15f2bd45d1fe5731bb73d",
                   "test/win32/lib/RebootShape.ps1":  "6f38d632f286dc5514f3e7973f82bcb7481953e17a20aa8215f631b8521a5c45",
                   "test/win32/lib/RetiredClaims.ps1":  "3fbaacd49f9341d0c4cf7c4a03ed0487a1d371cf6b395e9984cf2ea12f5876bb",
                   "test/win32/lib/RingSnapshot.ps1":  "fd4d7b91f60409df62a3a90461e03783dbf2b655aea98487152368ea4386912e",
@@ -349,6 +352,7 @@
                   "test/win32/persistence-flag.ps1":  "c8d93f1a71d3d4f19304d948c1e00bedfd6a1cd6abda7382c62c81504b224920",
                   "test/win32/persistent-state.ps1":  "e8e10a48df6586dde45f0fef13d3343059bd89eb7c277f6f55805416ff5ec7ce",
                   "test/win32/pixel-oracle-audit.ps1":  "1af4585a75c0eba82c2b7dcb88ab4a8c4f1cd1e75db5624afd0bbb2bb51ab163",
+                  "test/win32/pixel-scan.ps1":  "ed2e640f16766b9a4cd8048505c14c050e5d9bbb8e0bb8b908e53783ab411846",
                   "test/win32/pr-health.ps1":  "90d12cddbdc5252db6def47f05eb54527c74c9da86af4528a6f687af5db1997f",
                   "test/win32/printclient-audit.ps1":  "4a24bbd0e3ee2f47aed2c53e5996cb792e92b94082be61dcd4b0799338f84418",
                   "test/win32/probe-topmost-restore.ps1":  "b2e3afe3d1e5db7cd3555160771e966e8e7c7d5260e1ca4f9fe2c304fd53540a",
@@ -431,7 +435,7 @@
                   "test/win32/stack-collapse-carry.ps1":  "707673385d69adc61c66363757209f3e5d75a057ca79622fe7ebdb0f29eab289",
                   "test/win32/stack-collapse-drag.ps1":  "284281482e8fea9be88c5539433ba6de45b3f253dcc20922dd55fc2a188afeff",
                   "test/win32/stack-fold-slide.ps1":  "5afac98db200193cd082d3c90c06cf6fda6bcac8ecec6016a6a6af7b1df13ed6",
-                  "test/win32/stale-build-notify.ps1":  "a02d798714cf724e1a6c513094480b64e18f796e07405b319d020ca254fbfc5d",
+                  "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79",
                   "test/win32/stash-restore.ps1":  "872e2e0c8b6b8ce06145cc783a37ddffc32b24e7e2bfb5cb9a624f037a2f6809",

@@ -133,6 +133,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-activitytest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\ColorMath.ps1')
+. (Join-Path $PSScriptRoot 'lib\PixelScan.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # The panel's colors are DERIVED from the surface `window-theme` puts the app
@@ -256,15 +257,12 @@ function Invoke-Palette([IntPtr]$top, [IntPtr]$pane, [string]$filter, [string]$l
 # quieter.
 #
 # The constants are ActivityMonitor.zig's COLOR_CPU / COLOR_MEM.
+#
+# T1373: every probe below scans through lib\PixelScan.ps1, which reads every
+# pixel in compiled code. The PowerShell walks they replace were cheap to say
+# "yes" and ~2.5s to say "no", which made the negative answer useless as a poll.
 function Test-ExactPixel($Shot, [int]$X0, [int]$Y0, [int]$X1, [int]$Y1, [int[]]$Rgb) {
-    for ($y = $Y0; $y -lt $Y1; $y += 1) {
-        for ($x = $X0; $x -lt $X1; $x += 1) {
-            $c = Get-TestPixel -Shot $Shot -X $x -Y $y
-            if ($null -eq $c) { continue }
-            if ($c.R -eq $Rgb[0] -and $c.G -eq $Rgb[1] -and $c.B -eq $Rgb[2]) { return $true }
-        }
-    }
-    return $false
+    return (Test-TestExactPixel -Shot $Shot -X0 $X0 -Y0 $Y0 -X1 $X1 -Y1 $Y1 -Rgb $Rgb)
 }
 
 function Get-Panels {
@@ -274,31 +272,15 @@ function Get-Panels {
 # How many pixels in the box are NOT $Rgb. "The rim is bare background" and
 # "the rim got painted" are the same measurement, read in two directions.
 function Count-NonMatching($Shot, [int]$X0, [int]$Y0, [int]$X1, [int]$Y1, [int[]]$Rgb) {
-    $n = 0
-    for ($y = $Y0; $y -lt $Y1; $y += 1) {
-        for ($x = $X0; $x -lt $X1; $x += 1) {
-            $c = Get-TestPixel -Shot $Shot -X $x -Y $y
-            if ($null -eq $c) { continue }
-            if ($c.R -ne $Rgb[0] -or $c.G -ne $Rgb[1] -or $c.B -ne $Rgb[2]) { $n++ }
-        }
-    }
-    return $n
+    $m = Measure-TestExactPixels -Shot $Shot -X0 $X0 -Y0 $Y0 -X1 $X1 -Y1 $Y1 -Rgb $Rgb
+    return [int]($m.Examined - $m.Count)
 }
 
 # The FIRST screen coordinate in the box whose pixel is exactly $Rgb, or $null.
 # Test-ExactPixel answers "is it there"; this answers "where", which is what a
 # click on a PAINTED control (the banner's dismiss glyph) needs.
 function Find-ExactPixel($Shot, [int]$X0, [int]$Y0, [int]$X1, [int]$Y1, [int[]]$Rgb) {
-    for ($y = $Y0; $y -lt $Y1; $y += 1) {
-        for ($x = $X0; $x -lt $X1; $x += 1) {
-            $c = Get-TestPixel -Shot $Shot -X $x -Y $y
-            if ($null -eq $c) { continue }
-            if ($c.R -eq $Rgb[0] -and $c.G -eq $Rgb[1] -and $c.B -eq $Rgb[2]) {
-                return [pscustomobject]@{ X = $x; Y = $y }
-            }
-        }
-    }
-    return $null
+    return (Find-TestExactPixel -Shot $Shot -X0 $X0 -Y0 $Y0 -X1 $X1 -Y1 $Y1 -Rgb $Rgb)
 }
 
 # The topmost screen row, scanning UP from $YBottom, that still carries a pixel
@@ -321,12 +303,7 @@ function Find-ExactPixel($Shot, [int]$X0, [int]$Y0, [int]$X1, [int]$Y1, [int[]]$
 function Find-BandTop($Shot, [int]$X0, [int]$X1, [int]$YFloor, [int]$YBottom, [int[]]$Rgb) {
     $top = $null
     for ($y = $YBottom - 1; $y -ge $YFloor; $y -= 1) {
-        $hit = $false
-        for ($x = $X0; $x -lt $X1; $x += 1) {
-            $c = Get-TestPixel -Shot $Shot -X $x -Y $y
-            if ($null -eq $c) { continue }
-            if ($c.R -eq $Rgb[0] -and $c.G -eq $Rgb[1] -and $c.B -eq $Rgb[2]) { $hit = $true; break }
-        }
+        $hit = Test-TestExactPixel -Shot $Shot -X0 $X0 -Y0 $y -X1 $X1 -Y1 ($y + 1) -Rgb $Rgb
         if ($hit) { $top = $y } elseif ($null -ne $top) { break }
     }
     return $top
@@ -337,40 +314,23 @@ function Find-BandTop($Shot, [int]$X0, [int]$X1, [int]$YFloor, [int]$YBottom, [i
 # of the stroke (and, with the font path, an antialiased one), while its centroid
 # is the middle of the mark and therefore the middle of the click target.
 function Get-ExactPixelCentroid($Shot, [int]$X0, [int]$Y0, [int]$X1, [int]$Y1, [int[]]$Rgb) {
-    $n = 0; $sx = 0; $sy = 0
-    for ($y = $Y0; $y -lt $Y1; $y += 1) {
-        for ($x = $X0; $x -lt $X1; $x += 1) {
-            $c = Get-TestPixel -Shot $Shot -X $x -Y $y
-            if ($null -eq $c) { continue }
-            if ($c.R -eq $Rgb[0] -and $c.G -eq $Rgb[1] -and $c.B -eq $Rgb[2]) {
-                $n++; $sx += $x; $sy += $y
-            }
-        }
-    }
-    if ($n -eq 0) { return $null }
-    return [pscustomobject]@{ X = [int]($sx / $n); Y = [int]($sy / $n); Count = $n }
+    $m = Measure-TestExactPixels -Shot $Shot -X0 $X0 -Y0 $Y0 -X1 $X1 -Y1 $Y1 -Rgb $Rgb
+    if ($m.Count -eq 0) { return $null }
+    return [pscustomobject]@{ X = $m.X; Y = $m.Y; Count = $m.Count }
 }
 
 # Is the error banner still painted at the panel's bottom? One capture, one
 # question - which is what a wait-for-condition loop needs (T561).
 #
-# Sampled on a coarse grid rather than pixel by pixel. The band is a SOLID fill
-# hundreds of pixels wide, so no grid this dense can miss it, and the cost is
-# what makes the answer usable as a clock: Test-ExactPixel exits early when the
-# band IS there but walks all ~60k pixels of the box when it is NOT, so a
-# full-fidelity poll spends ~2.5s to say "gone" and every latency it reports is
-# its own.
+# Every pixel of the bottom band, not a grid (T1373). T561 sampled a coarse grid
+# here because the PowerShell walk spent ~2.5s to say "gone" and every latency
+# the poll reported was its own; the compiled scan says it in about a
+# millisecond, so the poll no longer has to trade fidelity for being a clock.
 function Test-BannerUp([IntPtr]$Panel, $Rect, [int[]]$Rgb) {
     $s = Get-TestWindowPixels -Window $Panel -Sync
     try {
-        for ($y = $Rect.Bottom - 1; $y -gt $Rect.Bottom - 60; $y -= 3) {
-            for ($x = $Rect.Left + 4; $x -lt $Rect.Right; $x += 7) {
-                $c = Get-TestPixel -Shot $s -X $x -Y $y
-                if ($null -eq $c) { continue }
-                if ($c.R -eq $Rgb[0] -and $c.G -eq $Rgb[1] -and $c.B -eq $Rgb[2]) { return $true }
-            }
-        }
-        return $false
+        return (Test-TestExactPixel -Shot $s -X0 ($Rect.Left + 4) -Y0 ($Rect.Bottom - 59) `
+            -X1 $Rect.Right -Y1 $Rect.Bottom -Rgb $Rgb)
     } finally { Close-TestWindowPixels -Shot $s }
 }
 

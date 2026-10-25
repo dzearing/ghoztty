@@ -1,0 +1,14 @@
+{
+    "guard":  "pixel-scan",
+    "script":  "test/win32/pixel-scan.ps1",
+    "generated":  "2026-10-25T05:32:35-07:00",
+    "commit":  "ed61be794",
+    "uncommitted":  [
+                        "test/win32/lib/PixelScan.ps1",
+                        "test/win32/pixel-scan.ps1"
+                    ],
+    "files":  {
+                  "test/win32/lib/PixelScan.ps1":  "41c312f9a9db8bd3b6402118af61aa445e6f25f2dfa15f2bd45d1fe5731bb73d",
+                  "test/win32/pixel-scan.ps1":  "ed2e640f16766b9a4cd8048505c14c050e5d9bbb8e0bb8b908e53783ab411846"
+              }
+}
