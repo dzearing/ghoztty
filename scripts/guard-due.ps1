@@ -3404,6 +3404,10 @@ $GuardTable = @(
             'src\apprt\win32\banner_markdown.zig',
             'src\apprt\win32\banner_link.zig',
             'src\apprt\win32\BannerDialog.zig',
+            # T2252: the frozen-frame glide behind a toggle; only the 6f2
+            # T2252 assertions drive it.
+            'src\apprt\win32\BannerFreeze.zig',
+            'src\apprt\win32\banner_glide.zig',
             # T1895: the T165 Ctrl+click section is the only harness that
             # catches a closed viewer's late page focus re-taking the window.
             'src\apprt\win32\ViewerPane.zig',

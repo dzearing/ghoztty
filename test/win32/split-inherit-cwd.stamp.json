@@ -1,8 +1,8 @@
 {
     "guard":  "split-inherit-cwd",
     "script":  "test/win32/split-inherit-cwd.ps1",
-    "generated":  "2026-10-25T11:00:23-07:00",
-    "commit":  "40f38f2a4",
+    "generated":  "2026-10-25T12:05:45-07:00",
+    "commit":  "622505659",
     "uncommitted":  [
 
                     ],

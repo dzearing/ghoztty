@@ -732,6 +732,46 @@ try {
             Assert ($a.Frames[-1] -eq $a.To) `
                 "T149 ($dir): the last frame lands EXACTLY on the settled height ($($a.Frames[-1]) = $($a.To))"
 
+            # T2252 (Mac a81db68f9): the resize is never SEEN. A frozen copy of
+            # the terminal's last frame goes up before the layout pass, the
+            # grid is resized once (flushed, not debounced) behind it, the
+            # copy glides with the card by the inset change plus the grid's
+            # own row shift, and it comes down only after the card has stopped
+            # and the terminal has redrawn at its new size. The copy's pixels
+            # cannot be captured on the background desktop any more than the
+            # card's frames can, so the sequence is read from the oracle.
+            $g = $null; $gEnd = $null; $gBeginAt = -1; $resizeAt = @()
+            $lines = @(Get-Content $errlog -ErrorAction SilentlyContinue)
+            $glideBegins = 0
+            for ($k = 0; $k -lt $lines.Count; $k++) {
+                if ($lines[$k] -match 'banner glide begin delta=(-?\d+) shift=(-?\d+) inset=(-?\d+)->(-?\d+)') {
+                    $glideBegins++; $gBeginAt = $k
+                    $g = [pscustomobject]@{ Delta = [int]$Matches[1]; Shift = [int]$Matches[2]; Old = [int]$Matches[3]; New = [int]$Matches[4] }
+                } elseif ($lines[$k] -match 'banner glide end reason=(\w+(?:-\w+)?) ms=(\d+) frames=(\d+)') {
+                    $gEnd = [pscustomobject]@{ Reason = $Matches[1]; Ms = [int]$Matches[2]; Frames = [int]$Matches[3] }
+                } elseif ($lines[$k] -match 'resize applied cols=') {
+                    $resizeAt += $k
+                }
+            }
+            Write-Host "INFO  T2252 $dir : begins=$glideBegins glide=$(if ($g) { "$($g.Delta) (inset $($g.Old)->$($g.New) shift $($g.Shift))" }) end=$(if ($gEnd) { "$($gEnd.Reason) $($gEnd.Ms)ms frames=$($gEnd.Frames)" }) resizes=$($resizeAt.Count)"
+            Assert ($glideBegins -eq 1) "T2252 ($dir): ONE frozen copy goes up per click (begins=$glideBegins)"
+            if ($g) {
+                Assert ($g.Delta -eq ($g.New - $g.Old + $g.Shift)) `
+                    "T2252 ($dir): the copy travels the inset change plus the grid's row shift ($($g.Delta) = $($g.New) - $($g.Old) + $($g.Shift))"
+                if ($dir -eq 'collapse') { Assert ($g.New -lt $g.Old) "T2252 (collapse): the band it glides over is shrinking ($($g.Old) -> $($g.New))" }
+                else { Assert ($g.New -gt $g.Old) "T2252 (expand): the band it glides over is growing ($($g.Old) -> $($g.New))" }
+            }
+            Assert ($resizeAt.Count -eq 1) "T2252 ($dir): the grid is resized exactly ONCE for the toggle (resizes=$($resizeAt.Count))"
+            Assert ($gBeginAt -ge 0 -and $resizeAt.Count -ge 1 -and $resizeAt[0] -gt $gBeginAt) `
+                "T2252 ($dir): the copy is up BEFORE the grid resizes, so the reflow happens out of sight"
+            Assert ($null -ne $gEnd -and $gEnd.Reason -eq 'landed') `
+                "T2252 ($dir): the copy comes down because the terminal redrew at its new size, not on the cap (reason=$(if ($gEnd) { $gEnd.Reason }))"
+            if ($gEnd) {
+                Assert ($gEnd.Ms -ge 180 -and $gEnd.Ms -lt 500) `
+                    "T2252 ($dir): the copy rides the whole card animation and no longer than the cap ($($gEnd.Ms)ms)"
+                Assert ($gEnd.Frames -ge 1) "T2252 ($dir): the live terminal presented a frame behind the copy ($($gEnd.Frames))"
+            }
+
             # T833: and every one of those frames REACHED THE SCREEN. The
             # frames above are what the heartbeat wanted; `banner paint h=` is
             # what a WM_PAINT actually drew. They agreed in the collapse

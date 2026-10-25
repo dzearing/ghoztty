@@ -204,6 +204,18 @@ has_presented_frame: std.atomic.Value(bool) = .init(false),
 /// the swap, read on the UI thread.
 presented_size: std.atomic.Value(u64) = .init(0),
 
+/// Bumped on every frame the renderer presents into this window (T2252). A
+/// banner toggle's frozen copy stays up until this has stopped moving at the
+/// new size, which is how "the terminal has redrawn" is told from "the
+/// terminal has drawn once" (Mac `resizeOutOfSight`).
+present_seq: std.atomic.Value(u32) = .init(0),
+
+/// Apply the NEXT resize to the grid at once instead of after the coalescing
+/// window (T2252, Mac `flushNextResize`): a banner toggle resizes once, behind
+/// a frozen copy, and waiting out the debounce only keeps the copy up longer.
+/// GUI thread only; consumed by `handleResize`.
+flush_next_resize: bool = false,
+
 /// The size this surface is waiting to see presented — set by `handleResize`
 /// before it blocks, read by the layout pass when the wait comes back. Only
 /// meaningful on the UI thread, which is the only thread that touches it.
@@ -4093,6 +4105,10 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
         log.err("sizeCallback error: {}", .{err});
         return;
     };
+    if (self.flush_next_resize) {
+        self.flush_next_resize = false;
+        self.core_surface.flushResize();
+    }
     if (size_timer) |*t| self.parent_window.addResizeUs(t.read() / std.time.ns_per_us);
 
     // During a resize the user is watching, block until the renderer has
@@ -5646,6 +5662,7 @@ pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
     // a thread the event wakes must never read a size older than the frame it
     // was woken for (T1476).
     self.presented_size.store(resize_paint.packSize(width, height), .release);
+    _ = self.present_seq.fetchAdd(1, .release);
     // Ordered before the event: a thread woken by the event must never see
     // "no frame yet" for a frame that has already been presented (T1031).
     // Load-then-store so the steady state is a relaxed read rather than a

@@ -33,6 +33,9 @@ const App = @import("App.zig");
 const markdown = @import("banner_markdown.zig");
 const card = @import("banner_card.zig");
 const banner_layout = @import("banner_layout.zig");
+const banner_glide = @import("banner_glide.zig");
+const BannerFreeze = @import("BannerFreeze.zig");
+const resize_paint = @import("resize_paint.zig");
 const banner_link = @import("banner_link.zig");
 const type_ramp = @import("type_ramp.zig");
 const Surface = @import("Surface.zig");
@@ -122,9 +125,11 @@ fn wrapWidth(content_w: i32) i32 {
 /// Collapsed content height: first line fully visible plus a sliver that
 /// fades out (Mac: 24 at 12pt → one and a half of our line boxes).
 const COLLAPSED_H: f32 = LINE_H * 1.5;
-/// Timer id for the collapse/expand animation heartbeat (T149). The only
-/// timer this window class owns.
+/// Timer id for the collapse/expand animation heartbeat (T149).
 const COLLAPSE_TIMER_ID: usize = 1;
+/// Timer id for the frozen-frame glide (T2252): runs alongside the collapse
+/// heartbeat and on past it, until the terminal under the copy has settled.
+const GLIDE_TIMER_ID: usize = 2;
 
 /// Negative control for `pane-banner.ps1`'s T149 section, the same seam
 /// `T377_NEUTERED` gives the wrap work above. Flipping it restores the
@@ -144,6 +149,14 @@ const T149_NEUTERED = false;
 /// exactly the 6f2 "reaches the screen" assertions in the expand direction and
 /// nothing else.
 const T833_NEUTERED = false;
+
+/// Negative control for `pane-banner.ps1`'s T2252 section. Flipping it
+/// restores the pre-T2252 toggle: no frozen copy, no flushed resize, so the
+/// terminal reflows in view under the moving card. Re-running the script must
+/// fail exactly the glide assertions and nothing else. (Measured 2026-10-25:
+/// the six T2252 assertions go red - one copy per click, the copy up before
+/// the resize, released on landing, each direction - and all 154 others pass.)
+const T2252_NEUTERED = false;
 
 /// Negative control for `pane-banner.ps1`'s T1344 assertions. Flipping it
 /// restores the pre-T1344 direct paint: every stage of a frame — the band
@@ -237,6 +250,20 @@ pub const BannerOverlay = struct {
         from_h: i32,
         start: std.time.Instant,
     } = null,
+    /// The frozen copy of the terminal standing in for it while a toggle's
+    /// one resize lands (T2252), and the window that shows it.
+    freeze: BannerFreeze,
+    glide: ?struct {
+        start: std.time.Instant,
+        /// Total travel of the copy, px down (`banner_glide.travel`).
+        delta: i32,
+        /// The last `present_seq` seen, and when it last moved.
+        seq: u32,
+        seq_at: std.time.Instant,
+        /// Frames the terminal presented while the copy was up.
+        frames: u32 = 0,
+    } = null,
+    hinstance: w32.HINSTANCE,
     /// Expanded content height in px (excludes padding), lazily computed;
     /// -1 means stale (recompute on next use).
     content_h: i32 = -1,
@@ -399,6 +426,8 @@ pub const BannerOverlay = struct {
             .owner = owner,
             .hwnd = undefined,
             .arena = std.heap.ArenaAllocator.init(alloc),
+            .freeze = BannerFreeze.init(alloc),
+            .hinstance = hinstance,
         };
 
         // WS_EX_LAYERED — DWM-composited above OpenGL content.
@@ -431,6 +460,7 @@ pub const BannerOverlay = struct {
     pub fn destroy(self: *BannerOverlay) void {
         _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
         _ = w32.DestroyWindow(self.hwnd);
+        self.freeze.deinit();
         self.clearFonts();
         self.releaseCardSurface();
         if (self.bg_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
@@ -624,6 +654,7 @@ pub const BannerOverlay = struct {
     }
 
     pub fn hide(self: *BannerOverlay) void {
+        self.endGlide("hidden");
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
     }
 
@@ -2194,6 +2225,7 @@ pub const BannerOverlay = struct {
         // reverse out of the current frame, or the card jumps before it
         // moves.
         const from = self.paintedCardHeight();
+        const old_inset = self.inset;
         self.collapsed = !self.collapsed;
         // Debug-build oracle for pane-banner.ps1's T149 section, logged HERE
         // rather than inside `startCollapseAnim`: the toggle happens whether
@@ -2204,6 +2236,11 @@ pub const BannerOverlay = struct {
         // survive to a screen capture on the background test desktop.
         log.debug("banner collapse from={} to={}", .{ from, self.cardHeight() });
         self.startCollapseAnim(from);
+        // Before the layout resizes anything: put a copy of the terminal's
+        // last frame up over it, and have the one resize flushed rather than
+        // debounced (T2252). The copy glides with the card to where the
+        // content will land, so the reflow below is never seen happening.
+        self.beginGlide(from, old_inset);
         // The strip height changed: re-run the owning window's layout so
         // the terminal band under the strip grows/shrinks to match (T101).
         // The layout pass repositions this popup via updatePaneBanners.
@@ -2214,7 +2251,111 @@ pub const BannerOverlay = struct {
         // the whole grid through eleven resizes per click — the flicker
         // Mac's hidden measurement copy exists to avoid.
         App.relayoutOwnerWindow(self.owner);
+        // A toggle that resized nothing must not flush some later resize.
+        if (self.surface) |s| s.flush_next_resize = false;
         _ = w32.InvalidateRect(self.hwnd, null, 1);
+    }
+
+    /// Freeze the terminal for a toggle whose card just started moving from
+    /// `from_h` (T2252, Mac `bannerTargetChanged`). Called after `collapsed`
+    /// flipped and before the layout pass, while the terminal is still at its
+    /// old size: the frame is captured, the grid's own row shift for the new
+    /// size is predicted, and the copy goes up over the pane. Leaves the
+    /// pre-T2252 toggle (the terminal reflowing in view) when there is no
+    /// animation to ride or no frame to show.
+    fn beginGlide(self: *BannerOverlay, from_h: i32, old_inset: i32) void {
+        self.endGlide("retoggled");
+        if (T2252_NEUTERED) return;
+        const s = self.surface orelse return;
+        if (!s.core_surface_ready) return;
+        s.flush_next_resize = true;
+        if (self.collapse_anim == null) return;
+
+        var client: w32.RECT = undefined;
+        var screen: w32.RECT = undefined;
+        if (w32.GetClientRect(self.owner, &client) == 0) return;
+        if (w32.GetWindowRect(self.owner, &screen) == 0) return;
+        const w = client.right - client.left;
+        const h = client.bottom - client.top;
+        if (w <= 0 or h <= 0) return;
+
+        // The inset the layout pass is about to reserve, by the same rule it
+        // uses (`Surface.bannerLayoutInset`), so the predicted height is the
+        // height the grid actually gets.
+        const slot_h = @max(old_inset, 0) + h;
+        const new_inset = banner_layout.clampInset(self.insetHeight(self.scale, screen.right - screen.left), slot_h);
+        const new_h = banner_glide.resizedHeight(h, @max(old_inset, 0), new_inset);
+        const shift = s.core_surface.predictResizeShift(new_h);
+        const delta = banner_glide.travel(@max(old_inset, 0), new_inset, shift);
+
+        const buf = self.freeze.buffer(@intCast(w), @intCast(h)) orelse return;
+        s.captureContent(@intCast(w), @intCast(h), buf, 50) catch |err| {
+            log.debug("banner glide skip reason={}", .{err});
+            return;
+        };
+        // On the card's clock, not the capture's: the copy and the card are
+        // one motion, and the cap counts from the click.
+        const now = self.collapse_anim.?.start;
+        const bg =@as(u32, self.pane_bg_rgb.r) | (@as(u32, self.pane_bg_rgb.g) << 8) | (@as(u32, self.pane_bg_rgb.b) << 16);
+        if (!self.freeze.show(self.hinstance, self.owner, self.hwnd, @intCast(w), @intCast(h), .{
+            .left = screen.left,
+            .top = screen.top - @max(old_inset, 0),
+            .width = w,
+            .height = slot_h,
+            .img_top = @max(old_inset, 0),
+            .edge = banner_layout.bandHeight(from_h, self.px(MARGIN)),
+        }, bg)) return;
+        self.glide = .{ .start = now, .delta = delta, .seq = s.present_seq.load(.acquire), .seq_at = now };
+        // Debug-build oracle for pane-banner.ps1's T2252 section: where the
+        // copy is going and why (the inset change plus the grid's shift).
+        log.debug("banner glide begin delta={} shift={} inset={}->{} w={} h={}->{}", .{ delta, shift, old_inset, new_inset, w, h, new_h });
+        _ = w32.SetTimer(self.hwnd, GLIDE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS, null);
+    }
+
+    /// Take the copy down and hand the pane back to the live terminal.
+    fn endGlide(self: *BannerOverlay, reason: []const u8) void {
+        const g = self.glide orelse return;
+        self.glide = null;
+        _ = w32.KillTimer(self.hwnd, GLIDE_TIMER_ID);
+        self.freeze.hide();
+        const ms = if (std.time.Instant.now()) |now| now.since(g.start) / std.time.ns_per_ms else |_| 0;
+        log.debug("banner glide end reason={s} ms={} frames={}", .{ reason, ms, g.frames });
+    }
+
+    /// One step of the glide (T2252): move the copy with the card, and once
+    /// the card has stopped and the terminal has redrawn at its new size and
+    /// gone quiet (or the cap has passed), take the copy down.
+    fn onGlideTick(self: *BannerOverlay) void {
+        if (self.glide == null) {
+            _ = w32.KillTimer(self.hwnd, GLIDE_TIMER_ID);
+            return;
+        }
+        const g = &self.glide.?;
+        const s = self.surface orelse return self.endGlide("no-surface");
+        const now = std.time.Instant.now() catch return self.endGlide("no-clock");
+        const p = self.collapseProgress();
+        const off = banner_glide.offset(g.delta, p orelse 1.0);
+        self.freeze.update(self.hwnd, off, banner_layout.bandHeight(self.paintedCardHeight(), self.px(MARGIN)));
+
+        const seq = s.present_seq.load(.acquire);
+        if (seq != g.seq) {
+            g.frames +%= seq -% g.seq;
+            g.seq = seq;
+            g.seq_at = now;
+        }
+        var client: w32.RECT = undefined;
+        const landed = w32.GetClientRect(self.owner, &client) != 0 and
+            s.presented_size.load(.acquire) == resize_paint.packSize(
+                @intCast(@max(client.right - client.left, 0)),
+                @intCast(@max(client.bottom - client.top, 0)),
+            );
+        const elapsed = now.since(g.start) / std.time.ns_per_ms;
+        if (banner_glide.shouldRelease(.{
+            .anim_done = p == null,
+            .elapsed_ms = elapsed,
+            .landed = landed,
+            .quiet_ms = now.since(g.seq_at) / std.time.ns_per_ms,
+        })) self.endGlide(if (elapsed >= banner_glide.SETTLE_CAP_MS) "cap" else "landed");
     }
 
     /// Begin a card resize from `from_h` to the settled `cardHeight()`.
@@ -2570,6 +2711,7 @@ fn bannerWndProc(
 
         w32.WM_TIMER => {
             if (wparam == COLLAPSE_TIMER_ID) self.onCollapseTick();
+            if (wparam == GLIDE_TIMER_ID) self.onGlideTick();
             return 0;
         },
 
@@ -2727,6 +2869,7 @@ test "T283: the banner's negative controls are clear and non-empty" {
     // remembers to redo.
     try std.testing.expect(!T833_NEUTERED);
     try std.testing.expect(!T1344_NEUTERED);
+    try std.testing.expect(!T2252_NEUTERED);
 
     const CellWrap = BannerOverlay.CellWrap;
     try std.testing.expectEqual(CellWrap.shipped, CellWrap.forCell());
