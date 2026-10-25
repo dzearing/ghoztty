@@ -875,8 +875,8 @@ struct MachineChooserView: View {
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
-                if let argv = session.argv, !argv.isEmpty {
-                    Text(argv)
+                if let command = session.command {
+                    Text(command)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)

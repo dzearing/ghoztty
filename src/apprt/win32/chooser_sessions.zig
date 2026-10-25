@@ -50,7 +50,19 @@ pub const Session = struct {
     title: ?[]const u8 = null,
     cwd: ?[]const u8 = null,
     argv: ?[]const u8 = null,
+    /// What the session's shell is running RIGHT NOW, sampled by the agent and
+    /// null at an idle prompt (T429/T545). `argv` is only what the session was
+    /// OPENED with, so a plain shell pane — the common case — has none.
+    fg_cmd: ?[]const u8 = null,
 };
+
+/// The command line a card's command subline shows (T1359): what is running
+/// now, else what the session was opened with — the same `fg_cmd orelse argv`
+/// precedence the relaunch notice uses (`Remote.zig`). Null when neither is
+/// known, which is a plain shell sitting at its prompt.
+pub fn command(s: Session) ?[]const u8 {
+    return nonEmpty(s.fg_cmd) orelse nonEmpty(s.argv);
+}
 
 /// A session worth showing: one whose program is STILL RUNNING. The user's
 /// answer to D91 (2026-09-05) is the whole rule — *"the list represents the
@@ -675,11 +687,13 @@ pub fn metrics(scale: f32) Metrics {
 }
 
 /// How many sublines a session's card carries: cwd and/or command, each shown
-/// only when the agent reported it.
+/// only when the agent reported it. The command is `command`'s answer, so a
+/// plain shell gains its line while something is running and gives it back at
+/// the prompt.
 pub fn sublineCount(s: Session) i32 {
     var n: i32 = 0;
     if (nonEmpty(s.cwd) != null) n += 1;
-    if (nonEmpty(s.argv) != null) n += 1;
+    if (command(s) != null) n += 1;
     return n;
 }
 
@@ -1162,6 +1176,28 @@ test "sublineCount counts only the lines the agent reported" {
     try testing.expectEqual(@as(i32, 2), sublineCount(.{ .cwd = "D:\\git", .argv = "pwsh" }));
     // Empty strings are not lines.
     try testing.expectEqual(@as(i32, 0), sublineCount(.{ .cwd = "", .argv = "" }));
+}
+
+test "a plain shell's card names what it is running, and only while it runs (T1359)" {
+    // A plain shell pane: no argv, so before T1359 the card had no command line.
+    const busy: Session = .{ .cwd = "D:\\git", .fg_cmd = "zig build test" };
+    try testing.expectEqualStrings("zig build test", command(busy).?);
+    try testing.expectEqual(@as(i32, 2), sublineCount(busy));
+
+    // Back at the prompt the agent clears fg_cmd and the line goes away.
+    const idle: Session = .{ .cwd = "D:\\git" };
+    try testing.expect(command(idle) == null);
+    try testing.expectEqual(@as(i32, 1), sublineCount(idle));
+
+    // What is running now beats what the session was opened with.
+    const both: Session = .{ .argv = "pwsh", .fg_cmd = "claude --continue" };
+    try testing.expectEqualStrings("claude --continue", command(both).?);
+    try testing.expectEqual(@as(i32, 1), sublineCount(both));
+
+    // An idle --command pane still shows its argv, as it always did; an empty
+    // fg_cmd is not a command.
+    try testing.expectEqualStrings("pwsh", command(.{ .argv = "pwsh", .fg_cmd = "" }).?);
+    try testing.expect(command(.{ .argv = "", .fg_cmd = "" }) == null);
 }
 
 test "row geometry nests inside the card at every scale" {

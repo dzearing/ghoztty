@@ -871,6 +871,7 @@ pub fn visible(self: *const SessionRoster, app: *App, out: []VisibleRow) []const
             .title = s.title,
             .cwd = s.cwd,
             .argv = s.argv,
+            .fg_cmd = s.fg_cmd,
         };
         if (!chooser_sessions.isConnectable(row)) continue;
         if (self.isKilled(s.id)) continue;
@@ -1490,7 +1491,8 @@ fn paintRow(
     }
 
     // Sublines: cwd first (head-truncated, like Mac — the tail of a path is
-    // what identifies it), then the command.
+    // what identifies it), then the command — what is running now, else what
+    // the session was opened with (T1359).
     const old_sub = if (ctx.caption_font) |f| w32.SelectObject(hdc, f) else null;
     _ = w32.SetTextColor(hdc, rgb(chrome_theme.textSecondaryOn(card_bg)));
     var line = l.cwd;
@@ -1501,11 +1503,9 @@ fn paintRow(
             line = l.argv;
         }
     }
-    if (row.session.argv) |argv| {
-        if (argv.len > 0) {
-            var r = rect(line);
-            drawText(hdc, argv, &r);
-        }
+    if (chooser_sessions.command(row.session)) |cmd| {
+        var r = rect(line);
+        drawText(hdc, cmd, &r);
     }
     if (old_sub) |o| _ = w32.SelectObject(hdc, o);
 

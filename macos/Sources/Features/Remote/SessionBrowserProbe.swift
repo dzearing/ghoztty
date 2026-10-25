@@ -24,9 +24,23 @@ struct BrowsedSession: Identifiable, Hashable, Decodable {
     /// a dead-end. Optional/defaulted so an older agent that omits the field
     /// decodes as `false` (forward-compatible, cf. the agent-contract rule).
     let relaunchable: Bool
+    /// What the session's shell is running right now, sampled by the agent and
+    /// nil at an idle prompt (T429). `argv` is only what the session was OPENED
+    /// with, so a plain shell — the common case — has none (T1359). Optional so
+    /// an older agent or C API that omits the key decodes as nil.
+    let fgCmd: String?
+
+    /// The command line the card shows: what is running now, else what the
+    /// session was opened with — the relaunch notice's `fg_cmd orelse argv`.
+    var command: String? {
+        if let fgCmd, !fgCmd.isEmpty { return fgCmd }
+        if let argv, !argv.isEmpty { return argv }
+        return nil
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, alive, attached, activity, pid, cwd, argv, title, pinned, relaunchable
+        case fgCmd = "fg_cmd"
         case exitCode = "exit_code"
         case createdAt = "created_at"
         case lastActivity = "last_activity"
@@ -47,6 +61,7 @@ struct BrowsedSession: Identifiable, Hashable, Decodable {
         lastActivity = try c.decodeIfPresent(Int64.self, forKey: .lastActivity) ?? 0
         pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         relaunchable = try c.decodeIfPresent(Bool.self, forKey: .relaunchable) ?? false
+        fgCmd = try c.decodeIfPresent(String.self, forKey: .fgCmd)
     }
 
     /// A session worth showing in the chooser: still alive (resumable/showable) or

@@ -3004,7 +3004,7 @@ pub const CAPI = struct {
     /// machine — because the transport is resolved through `handle.conn()`.
     /// Returns a JSON array string (each element:
     /// `{id, alive, exit_code, attached, activity, pid, cwd, argv, title,
-    /// created_at, last_activity, pinned, relaunchable}`), freed with
+    /// created_at, last_activity, pinned, relaunchable, fg_cmd}`), freed with
     /// `ghostty_string_free`.
     /// Returns `.empty` on any failure (no connection, timeout, malformed
     /// reply). `timeout_ms == 0` ⇒ the 5s default. BLOCKING; call off the main
@@ -3047,6 +3047,10 @@ pub const CAPI = struct {
             /// very rows it was written to keep (T322). Additive — an older
             /// decoder ignores the key.
             relaunchable: bool,
+            /// What the session's shell is running right now, null at the
+            /// prompt (T429). The chooser's card shows it, since `argv` is
+            /// null for a plain shell pane (T1359). Additive, like the above.
+            fg_cmd: ?[]const u8,
         };
 
         const rows = handle.alloc.alloc(SessionJsonRow, roster.sessions.len) catch return .empty;
@@ -3066,6 +3070,7 @@ pub const CAPI = struct {
                 .last_activity = s.last_activity,
                 .pinned = s.pinned,
                 .relaunchable = s.relaunchable,
+                .fg_cmd = s.fg_cmd,
             };
         }
 
