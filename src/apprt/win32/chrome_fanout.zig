@@ -64,6 +64,12 @@ pub const Counts = struct {
     /// stray-topmost check still ran on every one of these (T1413) - what was
     /// skipped is the walk, not the heal.
     heals_skipped: u32 = 0,
+    /// Wall clock spent INSIDE those moves (T1350): the `SetWindowPos` calls
+    /// themselves, plus the `EndDeferWindowPos` that lands the batched washes.
+    /// The counts above say how many windows a tick moved; this says what
+    /// moving them cost, which is the most that putting the chrome into fewer
+    /// windows could ever give back.
+    move_ns: u64 = 0,
 
     pub fn reset(self: *Counts) void {
         self.* = .{};
@@ -220,6 +226,24 @@ pub fn noteBlit() void {
     state.counts.blits +|= 1;
 }
 
+/// Start timing a chrome window move (T1350). Only inside a live layout pass,
+/// in either fan-out shape, since that is the only place the number is read;
+/// outside one this is a branch and nothing else.
+pub fn startMoveClock() ?std.time.Timer {
+    if (state.suppress_depth == 0) return null;
+    return std.time.Timer.start() catch null;
+}
+
+/// Fold a move's clock into the tick's `move_ns`.
+pub fn stopMoveClock(clock: ?std.time.Timer) void {
+    var c = clock orelse return;
+    addMoveNs(c.read());
+}
+
+pub fn addMoveNs(ns: u64) void {
+    state.counts.move_ns +|= ns;
+}
+
 pub fn noteBlitSkipped() void {
     state.counts.blits_skipped +|= 1;
 }
@@ -356,6 +380,26 @@ test "counts accumulate and reset, and total is what reached the window manager"
     try testing.expectEqual(@as(u32, 0), c.total());
     try testing.expectEqual(@as(u32, 0), c.blits_skipped);
     try testing.expectEqual(@as(u32, 0), c.heals_skipped);
+}
+
+test "move time accumulates per tick and only a live pass starts the clock (T1350)" {
+    const saved = state;
+    defer state = saved;
+    state = .{};
+    // Outside a live pass there is nothing reading the number, so no clock.
+    try testing.expect(startMoveClock() == null);
+    stopMoveClock(null);
+    try testing.expectEqual(@as(u64, 0), state.counts.move_ns);
+    // Inside one - in the legacy shape too, which is the comparison's control.
+    state.legacy = true;
+    state.beginSuppress();
+    defer state.endSuppress();
+    try testing.expect(startMoveClock() != null);
+    addMoveNs(1500);
+    addMoveNs(500);
+    try testing.expectEqual(@as(u64, 2000), state.counts.move_ns);
+    state.counts.reset();
+    try testing.expectEqual(@as(u64, 0), state.counts.move_ns);
 }
 
 test "suppression nests, and a nested pass ending does not lift it" {

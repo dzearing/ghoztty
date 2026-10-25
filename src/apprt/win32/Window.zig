@@ -6796,7 +6796,7 @@ fn reportDragCost(self: *Window) void {
         "mean_layout_us={d} mean_place_us={d} mean_paint_us={d} " ++
         "mean_overlay_us={d} mean_resize_us={d} mean_cards_us={d} " ++
         "chrome_moves={d} chrome_sb={d} chrome_dim={d} " ++
-        "chrome_blits={d} chrome_heals={d} chrome_skipped={d} " ++
+        "chrome_blits={d} chrome_heals={d} chrome_skipped={d} mean_chrome_move_us={d} " ++
         "over_budget={d} wait={s} chrome={s} verdict={s}";
     const args = .{
         st.ticks,
@@ -6823,6 +6823,7 @@ fn reportDragCost(self: *Window) void {
         st.chrome_blits_max,
         st.chrome_heals_max,
         st.chrome_skipped_max,
+        st.meanChromeMoveUs(),
         st.over_budget,
         if (self.frame_wait_serial) "serial" else "batched",
         if (chrome_fanout.state.legacy) "legacy" else "batched",
@@ -7218,7 +7219,11 @@ pub fn updateDimOverlays(self: *Window) void {
     // passes below place their popups directly, and leaving the batch open
     // across them would land the washes after chrome computed from the same
     // layout. There is no early return between the open and this line.
+    // Clocked as chrome moves (T1350): this call is where the batched washes
+    // actually move.
+    const batch_clock = if (hdwp != null) chrome_fanout.startMoveClock() else null;
     endPaneBatch(hdwp);
+    chrome_fanout.stopMoveClock(batch_clock);
 
     // Pane banners glue to the same layout/visibility/config events (T35).
     self.updatePaneBanners();
@@ -9467,6 +9472,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
             .chrome_heals = chrome_fanout.state.counts.heals,
             .chrome_skipped = chrome_fanout.state.counts.blits_skipped +|
                 chrome_fanout.state.counts.heals_skipped,
+            .chrome_move_us = chrome_fanout.state.counts.move_ns / std.time.ns_per_us,
         });
     };
     const rect = self.drag_start_rect;

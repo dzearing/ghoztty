@@ -377,6 +377,7 @@ pub const Scrollbar = struct {
         } else if (chrome_fanout.moveNeeded(self.shown, Placement.eql(self.placed, placement))) {
             const was_shown = self.shown;
             chrome_fanout.noteMove(.scrollbar);
+            const clock = chrome_fanout.startMoveClock();
             _ = w32.SetWindowPos(
                 self.hwnd,
                 null,
@@ -386,6 +387,7 @@ pub const Scrollbar = struct {
                 placement.h,
                 w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_SHOWWINDOW,
             );
+            chrome_fanout.stopMoveClock(clock);
             self.shown = true;
             self.placed = placement;
             // Every reposition re-checks the z-order instead of leaving it to

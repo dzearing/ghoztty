@@ -137,7 +137,7 @@ function Get-DragSamples([string]$log) {
                 'mean_overlay_us=(\d+) mean_resize_us=(\d+) (?:mean_cards_us=\d+ )?' +
                 'chrome_moves=(\d+) chrome_sb=(\d+) chrome_dim=(\d+) ' +
                 'chrome_blits=(\d+) chrome_heals=(\d+) ' +
-                'chrome_skipped=(\d+) over_budget=(\d+) ' +
+                'chrome_skipped=(\d+) (?:mean_chrome_move_us=\d+ )?over_budget=(\d+) ' +
                 'wait=(\w+) chrome=(\w+) verdict=(\w+)')) {
             $o = [pscustomobject]@{
                 Ticks       = [int]$Matches[1]
@@ -167,10 +167,14 @@ function Get-DragSamples([string]$log) {
                 Chrome      = $Matches[25]
                 Verdict     = $Matches[26]
                 CardsUs     = 0
+                ChromeMoveUs = 0
             }
             # The card-region cut (T1906) - optional so an older build's
             # line still parses.
             if ($l -match 'mean_cards_us=(\d+)') { $o.CardsUs = [int]$Matches[1] }
+            # The clock on the chrome moves themselves (T1350), optional for
+            # the same reason.
+            if ($l -match 'mean_chrome_move_us=(\d+)') { $o.ChromeMoveUs = [int]$Matches[1] }
             $out += $o
         }
     }
@@ -285,12 +289,12 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
                 $line = '  {0,-8} panes={1,-2} ticks={2,-3} mean={3,6}us max={4,6}us ' +
                 'layout={13,6}us place={14,6}us paint={15,6}us cards={22,6}us wait={5,6}us overlay={7,6}us ~{8,4} fps ' +
                 'resizes/move={9,-2} waits/move={10,-2} timeouts={11,-3} ' +
-                'chrome move={16,-3}(sb {17,-2}/dim {18,-2}) blit={19,-2} heal={20,-3} skip={21,-3} {12}'
+                'chrome move={16,-3}(sb {17,-2}/dim {18,-2}) {23,5}us blit={19,-2} heal={20,-3} skip={21,-3} {12}'
                 Rep ($line -f $mode, $s.Panes, $s.Ticks, $s.MeanUs, $s.MaxUs,
                     $s.MeanWaitUs, $s.ResizeUs, $s.OverlayUs, $s.Fps, $s.ResizesMax,
                     $s.WaitsMax, $s.Timeouts, $s.Verdict, $s.LayoutUs, $s.PlaceUs, $s.PaintUs,
                     $s.ChromeMoves, $s.ChromeSb, $s.ChromeDim, $s.ChromeBlits,
-                    $s.ChromeHeals, $s.ChromeSkip, $s.CardsUs)
+                    $s.ChromeHeals, $s.ChromeSkip, $s.CardsUs, $s.ChromeMoveUs)
                 $results[$want] = $s
             }
         }
@@ -419,6 +423,29 @@ try {
         "overlay term $($bHi.OverlayUs)us, mean $($bHi.MeanUs)us")
     Rep ("                    at $lo panes: legacy $($fLo.ChromeMoves) moves -> " +
         "now $($bLo.ChromeMoves)")
+
+    # ---- E. what the remaining chrome moves cost (T1350) -----------------
+    # T1350 asked whether putting each pane's chrome into ONE popup is worth
+    # it. The most that could ever give back is the time spent inside the
+    # moves that are left, so the app clocks them, and this states the ceiling:
+    # one popup per resized pane instead of one per piece. Asserted only that
+    # the clock is live - a ceiling read off a dead clock would close the
+    # question on a zero nobody measured.
+    $clockLive = ($bHi.ChromeMoves -eq 0 -or $bHi.ChromeMoveUs -gt 0)
+    if ($NegativeControl) { $clockLive = -not $clockLive }
+    Assert $clockLive ("the chrome moves are clocked, not only counted: at $hi panes " +
+        "$($bHi.ChromeMoves) moves cost $($bHi.ChromeMoveUs)us per mouse move")
+    if ($bHi.ChromeMoves -gt 0 -and $bHi.MeanUs -gt 0) {
+        # A pane owns at most one popup of each kind, so the fewest windows a
+        # one-popup-per-pane design could still move is the largest per-kind
+        # count - which makes the saving below an upper bound, not a guess.
+        $other = $bHi.ChromeMoves - $bHi.ChromeSb - $bHi.ChromeDim
+        $kept = [math]::Max([math]::Max($bHi.ChromeSb, $bHi.ChromeDim), [math]::Max($other, 1))
+        $ceiling = [int]($bHi.ChromeMoveUs * ($bHi.ChromeMoves - $kept) / $bHi.ChromeMoves)
+        $pct = [math]::Round(100.0 * $ceiling / $bHi.MeanUs, 2)
+        Rep ("  one popup per pane (T1350) at $hi panes: $($bHi.ChromeMoves) chrome moves " +
+            "-> at most $kept, saving at most ${ceiling}us of a $($bHi.MeanUs)us move ($pct%)")
+    }
 
     Rep ''
     Rep "report: $report"

@@ -133,6 +133,9 @@ pub const Sample = struct {
     /// Blits and heals the skip policies declined. Counted so a change that
     /// quietly stops skipping shows up as a number rather than as a feeling.
     chrome_skipped: u32 = 0,
+    /// Wall clock spent inside those moves (T1350) - the ceiling on what
+    /// putting the chrome into fewer windows could save this tick.
+    chrome_move_us: u64 = 0,
 
     /// Work the UI thread actually did, as opposed to waited for.
     pub fn workUs(self: Sample) u64 {
@@ -177,6 +180,7 @@ pub const Stats = struct {
     chrome_blits_max: u32 = 0,
     chrome_heals_max: u32 = 0,
     chrome_skipped_max: u32 = 0,
+    chrome_move_us: u64 = 0,
 
     pub fn reset(self: *Stats) void {
         self.* = .{};
@@ -206,6 +210,7 @@ pub const Stats = struct {
         if (s.chrome_blits > self.chrome_blits_max) self.chrome_blits_max = s.chrome_blits;
         if (s.chrome_heals > self.chrome_heals_max) self.chrome_heals_max = s.chrome_heals;
         if (s.chrome_skipped > self.chrome_skipped_max) self.chrome_skipped_max = s.chrome_skipped;
+        self.chrome_move_us += s.chrome_move_us;
         if (s.overBudget()) self.over_budget += 1;
     }
 
@@ -237,6 +242,11 @@ pub const Stats = struct {
     pub fn meanCardsUs(self: Stats) u64 {
         if (self.ticks == 0) return 0;
         return self.cards_us / self.ticks;
+    }
+
+    pub fn meanChromeMoveUs(self: Stats) u64 {
+        if (self.ticks == 0) return 0;
+        return self.chrome_move_us / self.ticks;
     }
 
     pub fn meanOverlayUs(self: Stats) u64 {
@@ -372,6 +382,20 @@ test "stats accumulate mean, max, fps and the over-budget count" {
     fast.reset();
     try testing.expectEqual(@as(u64, 0), fast.ticks);
     try testing.expectEqual(Verdict.no_data, fast.verdict());
+}
+
+test "chrome move time is a per-tick mean, unlike the counts (T1350)" {
+    // The counts are a per-tick maximum because they are a property of the
+    // code; the clock is a cost, and a cost is reported as a mean the same way
+    // every other `_us` term on the drag line is.
+    var st: Stats = .{};
+    try testing.expectEqual(@as(u64, 0), st.meanChromeMoveUs());
+    st.record(.{ .tick_us = 1000, .chrome_moves = 4, .chrome_move_us = 300 });
+    st.record(.{ .tick_us = 1000, .chrome_moves = 2, .chrome_move_us = 100 });
+    try testing.expectEqual(@as(u64, 200), st.meanChromeMoveUs());
+    try testing.expectEqual(@as(u32, 4), st.chrome_moves_max);
+    st.reset();
+    try testing.expectEqual(@as(u64, 0), st.chrome_move_us);
 }
 
 test "the chrome fan-out is carried as a per-tick maximum, not an average" {

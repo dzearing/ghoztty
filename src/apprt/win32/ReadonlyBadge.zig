@@ -188,6 +188,7 @@ pub const ReadonlyBadge = struct {
 
         const was_shown = self.visible;
         chrome_fanout.noteMove(.badge);
+        const clock = chrome_fanout.startMoveClock();
         _ = w32.SetWindowPos(
             self.hwnd,
             null,
@@ -197,6 +198,7 @@ pub const ReadonlyBadge = struct {
             @max(rect.bottom - rect.top, 1),
             w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_SHOWWINDOW,
         );
+        chrome_fanout.stopMoveClock(clock);
         self.visible = true;
 
         if (moved or bg_changed) self.repaint(m, l, pane_bg, rect);

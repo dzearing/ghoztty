@@ -298,6 +298,7 @@ pub const KeyStateIndicator = struct {
 
         const was_shown = self.visible;
         chrome_fanout.noteMove(.key_state);
+        const clock = chrome_fanout.startMoveClock();
         _ = w32.SetWindowPos(
             self.hwnd,
             null,
@@ -307,6 +308,7 @@ pub const KeyStateIndicator = struct {
             @max(rect.bottom - rect.top, 1),
             w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_SHOWWINDOW,
         );
+        chrome_fanout.stopMoveClock(clock);
         self.visible = true;
 
         if (moved or bg_changed or relaid) self.repaint();

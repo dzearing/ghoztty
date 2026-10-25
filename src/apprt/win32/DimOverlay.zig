@@ -303,6 +303,9 @@ pub const DimOverlay = struct {
                 }
                 b.* = null;
             };
+            // A batched wash's cost lands in the batch's `EndDeferWindowPos`,
+            // which `Window.updateDimOverlays` clocks; this is the direct one.
+            const clock = chrome_fanout.startMoveClock();
             _ = w32.SetWindowPos(
                 self.hwnd,
                 null,
@@ -312,6 +315,7 @@ pub const DimOverlay = struct {
                 placement.height,
                 flags,
             );
+            chrome_fanout.stopMoveClock(clock);
         }
         // Every reposition re-checks the z-order instead of leaving it to
         // whatever last touched it (T142) — except inside a live layout pass,
