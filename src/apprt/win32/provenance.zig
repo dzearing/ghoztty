@@ -57,6 +57,11 @@ pub const Provenance = struct {
     /// started: a newer build is installed and this window is still running
     /// the old one. Restarting is what picks it up.
     newer_build_installed: bool = false,
+    /// The on-disk exe's link stamp (T1365), read only when its mtime says it
+    /// might be a newer build; null when it was not read or has none. This is
+    /// what tells one installed build from another, so a re-stamped copy of a
+    /// build already announced is not announced again.
+    on_disk_link_stamp: ?u32 = null,
     pid: u32,
 };
 
@@ -74,6 +79,12 @@ pub fn collect(alloc: Allocator) Allocator.Error!Provenance {
         break :on_disk st.mtime;
     };
     const started_ns = processStartNs();
+    // The mtime is only the trigger (T1365): when it says the file is newer,
+    // confirm against the link stamps before calling it a newer build.
+    const disk_stamp: ?u32 = if (image_freshness.isStale(on_disk_ns, started_ns))
+        fileLinkStamp(exe)
+    else
+        null;
     return .{
         .exe = exe,
         .update_check = install_location.autoUpdateCheckEnabled(alloc),
@@ -85,7 +96,13 @@ pub fn collect(alloc: Allocator) Allocator.Error!Provenance {
             try formatUtc(alloc, started_ns)
         else
             try alloc.dupe(u8, "unknown"),
-        .newer_build_installed = image_freshness.isStale(on_disk_ns, started_ns),
+        .newer_build_installed = image_freshness.isNewerBuild(
+            on_disk_ns,
+            started_ns,
+            disk_stamp,
+            runningLinkStamp(),
+        ),
+        .on_disk_link_stamp = disk_stamp,
         .pid = windows.GetCurrentProcessId(),
     };
 }
@@ -105,6 +122,27 @@ pub fn processStartNs() i128 {
     if (ticks == 0) return 0;
     return image_freshness.filetimeToUnixNs(ticks);
 }
+
+/// The link stamp of the exe file at `path` (T1365), or null when it cannot
+/// be read or carries none.
+pub fn fileLinkStamp(path: []const u8) ?u32 {
+    const f = std.fs.openFileAbsolute(path, .{}) catch return null;
+    defer f.close();
+    var buf: [image_freshness.header_probe_len]u8 = undefined;
+    const n = f.readAll(&buf) catch return null;
+    return image_freshness.linkStamp(buf[0..n]);
+}
+
+/// The link stamp of the image THIS process is running, read from its own
+/// mapped headers: the loader maps the first page verbatim and never rewrites
+/// `TimeDateStamp`, so this is the build we are, whatever the file now holds.
+pub fn runningLinkStamp() ?u32 {
+    const base = GetModuleHandleW(null) orelse return null;
+    const bytes: [*]const u8 = @ptrCast(base);
+    return image_freshness.linkStamp(bytes[0..image_freshness.header_probe_len]);
+}
+
+extern "kernel32" fn GetModuleHandleW(lpModuleName: ?[*:0]const u16) callconv(.winapi) ?windows.HMODULE;
 
 extern "kernel32" fn GetProcessTimes(
     hProcess: windows.HANDLE,

@@ -1,16 +1,18 @@
 {
     "guard":  "stale-build-notify",
     "script":  "test/win32/stale-build-notify.ps1",
-    "generated":  "2026-10-22T16:34:29-07:00",
-    "commit":  "e2c8d3d48",
+    "generated":  "2026-10-25T03:01:42-07:00",
+    "commit":  "5600868e7",
     "uncommitted":  [
+                        "src/apprt/win32/image_freshness.zig",
+                        "src/apprt/win32/provenance.zig",
                         "test/win32/stale-build-notify.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/image_freshness.zig":  "8edb6d86781716200a50df3157f8a1a396da5f2f265db20f470aa72f0f177f1c",
-                  "src/apprt/win32/provenance.zig":  "3d097ede4b454d4813d00a9ec1935d6ed11718627a2b017435edac7167d1b50a",
+                  "src/apprt/win32/image_freshness.zig":  "4e9a9d53f0b5502093ccd2bc7bdaa90e6f8aca6be34aa6b187aa683e67a45998",
+                  "src/apprt/win32/provenance.zig":  "5d687d8a5a2a81c81f3f21b96852d057e2aa680859479c8dbeda89ea89aeeb33",
                   "src/apprt/win32/relaunch_guard.zig":  "3cc0c7d3961eb984559da32e7e6ab36db57795d1e0165bc5fe9fe71104c2b847",
                   "src/apprt/win32/tray_notify.zig":  "74c7ddecf7646b2b866af6e5effc88d95652f858439f50958367b29fee887cbf",
-                  "test/win32/stale-build-notify.ps1":  "a02d798714cf724e1a6c513094480b64e18f796e07405b319d020ca254fbfc5d"
+                  "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1"
               }
 }

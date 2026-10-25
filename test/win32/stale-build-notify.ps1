@@ -10,11 +10,15 @@
 #
 #   S1. NEGATIVE CONTROL: a window running the file it launched from ticks the
 #       check several times and never decides to notify.
-#   S2. A newer build lands on disk (the running image is renamed aside and a
-#       fresh file put at its path - the move msiexec makes): the app decides to
+#   S1b. A REPAIR (T1365): the running image renamed aside and the SAME bytes
+#       put at its path with a fresh mtime. Not a newer build, so no notice.
+#   S2. A newer build lands on disk (that file's PE link stamp bumped, so it is
+#       a different build and not only a newer mtime): the app decides to
 #       notify, and asks the shell for the balloon.
 #   S3. DEDUPE: more ticks over the same file do NOT notify again.
-#   S4. A second, newer file (another upgrade while the window is still open)
+#   S3b. A Repair of the build already announced (fresh mtime, same stamp)
+#       does NOT notify again either (T1365).
+#   S4. A second, newer build (another upgrade while the window is still open)
 #       DOES notify again.
 #   S5. The About box, with a newer build on disk, is the offer: its buttons are
 #       "Restart Now" and "Later", and "Later" changes nothing.
@@ -118,6 +122,25 @@ function Open-AboutBox([IntPtr]$Top, [int]$AppPid) {
     }
     return [IntPtr]::Zero
 }
+# Make the file at $Path a different BUILD, not merely a newer mtime (T1365):
+# bump its PE link stamp (IMAGE_FILE_HEADER.TimeDateStamp, at e_lfanew + 8),
+# which is what the app compares against its own mapped image. Only ever used
+# on a file that is not mapped for execution. Returns the new stamp.
+function Step-ExeLinkStamp([string]$Path) {
+    $fs = [IO.File]::Open($Path, 'Open', 'ReadWrite', 'None')
+    try {
+        $b = New-Object byte[] 4
+        $fs.Position = 0x3c; [void]$fs.Read($b, 0, 4)
+        $at = [BitConverter]::ToInt32($b, 0) + 8
+        $fs.Position = $at; [void]$fs.Read($b, 0, 4)
+        $stamp = [BitConverter]::ToUInt32($b, 0)
+        $next = [uint32](($stamp + 1) % 4294967296)
+        if ($next -eq 0) { $next = 1 }
+        $fs.Position = $at
+        $fs.Write([BitConverter]::GetBytes($next), 0, 4)
+        return $next
+    } finally { $fs.Dispose() }
+}
 function Get-DialogButtons([IntPtr]$Dlg) {
     return @(Get-TestChildWindows -Window $Dlg -Class 'Button' | ForEach-Object {
         [pscustomobject]@{ Ctl = $_; Text = (Get-TestControlText -Control ([IntPtr]$_.Hwnd)) }
@@ -156,14 +179,27 @@ try {
     Assert ((Get-LogCount 'newer build installed on disk') -eq 0) 'S1: no notification was decided'
 
     $decide = 'newer build installed on disk \(running build started'
+    Write-Host '== S1b: a Repair rewrites the SAME build with a fresh mtime, and stays quiet (T1365)'
+    # The move msiexec makes - the running image renamed aside, a file put at
+    # its path - but with the very bytes the window is running, stamped now,
+    # the way a Repair or a same-version reinstall leaves it.
+    Rename-Item -Path $runExe -NewName (Split-Path -Leaf $oldExe) -ErrorAction Stop
+    Copy-Item -Path $oldExe -Destination $runExe -ErrorAction Stop
+    (Get-Item $runExe).LastWriteTimeUtc = (Get-Date).ToUniversalTime()
+    $ticksBefore = Get-LogCount ([regex]::Escape($tick))
+    Assert (Wait-LogCount ([regex]::Escape($tick)) ($ticksBefore + 3) 10000) 'S1b: the check ticked at least 3 times over the repaired file'
+    Assert ((Get-LogCount ([regex]::Escape($tick + 'true'))) -eq 0) 'S1b: no tick called the repaired file a newer build'
+    Assert ((Get-LogCount 'newer build installed on disk') -eq 0) 'S1b: no notification was decided'
+
     Write-Host '== S2: a newer build lands under the running window'
     if ($NegativeControl) {
-        Write-Host 'NEGATIVE CONTROL: no newer file is put on disk - S2-S6 MUST fail'
+        Write-Host 'NEGATIVE CONTROL: no newer build is put on disk - S2-S6 MUST fail'
     } else {
-        Rename-Item -Path $runExe -NewName (Split-Path -Leaf $oldExe) -ErrorAction Stop
-        Copy-Item -Path $oldExe -Destination $runExe -ErrorAction Stop
-        # Copy-Item keeps the source's mtime; stamp it now, the way an
-        # installer's freshly extracted file is.
+        # A different build at the same path: the file S1b put there is not
+        # mapped, so its link stamp can be rewritten - the one byte-level
+        # difference the app reads to tell builds apart.
+        $s2Stamp = Step-ExeLinkStamp $runExe
+        "  on-disk link stamp now 0x{0:x8}" -f $s2Stamp
         (Get-Item $runExe).LastWriteTimeUtc = (Get-Date).ToUniversalTime()
     }
     Assert (Wait-LogCount $decide 1 8000) 'S2: the app decided to notify about the newer build'
@@ -176,9 +212,19 @@ try {
     Assert ((Get-LogCount ([regex]::Escape($tick + 'true'))) -ge ($ticksBefore + 3)) 'S3: the check kept ticking over the newer file'
     Assert ((Get-LogCount $decide) -eq 1) "S3: still exactly one notification (got $(Get-LogCount $decide))"
 
+    Write-Host '== S3b: a Repair of the build already announced is not announced again (T1365)'
+    if (-not $NegativeControl) {
+        (Get-Item $runExe).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddSeconds(3)
+    }
+    $ticksBefore = Get-LogCount ([regex]::Escape($tick + 'true'))
+    Wait-LogCount ([regex]::Escape($tick + 'true')) ($ticksBefore + 3) 8000 | Out-Null
+    Assert ((Get-LogCount ([regex]::Escape($tick + 'true'))) -ge ($ticksBefore + 3)) 'S3b: the check kept ticking over the re-stamped file'
+    Assert ((Get-LogCount $decide) -eq 1) "S3b: still exactly one notification (got $(Get-LogCount $decide))"
+
     Write-Host '== S4: a second upgrade while the window is open is announced again'
     if (-not $NegativeControl) {
-        (Get-Item $runExe).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddSeconds(5)
+        Step-ExeLinkStamp $runExe | Out-Null
+        (Get-Item $runExe).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddSeconds(6)
     }
     Assert (Wait-LogCount $decide 2 8000) "S4: a newer file notified again (got $(Get-LogCount $decide))"
     Start-Sleep -Seconds 3

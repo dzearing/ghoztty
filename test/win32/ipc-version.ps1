@@ -183,8 +183,10 @@ Assert "no stale-build note for a window running the file it launched from" ($vt
 # `update_install.sidelineName` make, so this is the real state rather than a
 # simulation of it: same path, newer file, process still on the old bytes.
 #
-# The bytes are identical, so nothing about the app changes - only the answer
-# to "was this file written after I started?". The finally puts the original
+# Since T1365 the bytes cannot be identical: identical bytes are a Repair, and
+# the first assertion below proves that stays quiet. The copy's PE link stamp
+# is then bumped - four bytes of header, so nothing the CLI runs changes - which
+# is what makes it a different build to the app. The finally puts the original
 # file back at its original path, mtime included, so zig's build cache is not
 # disturbed.
 $staleOld = "$Exe.t1205-old"
@@ -197,6 +199,26 @@ try {
     # Copy-Item preserves the source's LastWriteTime, which is the whole point
     # of the test being defeated - stamp it to now, the way a real installer's
     # freshly-extracted file is stamped.
+    (Get-Item $Exe).LastWriteTimeUtc = (Get-Date).ToUniversalTime()
+
+    # T1365: identical bytes with a fresh mtime are a REPAIR, not an upgrade -
+    # the window is still running exactly the build on disk, so nothing is said.
+    cmd /c "`"$Exe`" +version > `"$tmp\version-repair.txt`" 2>&1"
+    Assert "a repair (same build, fresh mtime) is not called a newer build" `
+        ((Get-Content "$tmp\version-repair.txt" -Raw) -notmatch 'newer build is installed')
+
+    # Now make it a different BUILD: bump the PE link stamp (TimeDateStamp at
+    # e_lfanew + 8) of the copy, which is not mapped, then re-stamp the mtime.
+    $fs = [IO.File]::Open($Exe, 'Open', 'ReadWrite', 'None')
+    try {
+        $b = New-Object byte[] 4
+        $fs.Position = 0x3c; [void]$fs.Read($b, 0, 4)
+        $at = [BitConverter]::ToInt32($b, 0) + 8
+        $fs.Position = $at; [void]$fs.Read($b, 0, 4)
+        $next = [uint32](([BitConverter]::ToUInt32($b, 0) + 1) % 4294967296)
+        if ($next -eq 0) { $next = 1 }
+        $fs.Position = $at; $fs.Write([BitConverter]::GetBytes($next), 0, 4)
+    } finally { $fs.Dispose() }
     (Get-Item $Exe).LastWriteTimeUtc = (Get-Date).ToUniversalTime()
 
     cmd /c "`"$Exe`" +version > `"$tmp\version-stale.txt`" 2>&1"

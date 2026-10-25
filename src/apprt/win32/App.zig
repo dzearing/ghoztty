@@ -631,6 +631,10 @@ update_auto_apply_last: ?update_auto_apply.Reason = null,
 /// is opened, and a NEWER build landing on disk re-arms this (the file's
 /// mtime is what is remembered, not merely "we told them once").
 stale_build_notified_ns: i128 = 0,
+/// The link stamp of the build that balloon announced (T1365), when the file
+/// had one. Remembered beside the mtime so a Repair that re-stamps the
+/// already-announced newer build is not announced a second time.
+stale_build_notified_stamp: ?u32 = null,
 
 /// Whether CoInitializeEx has been called on the main thread.
 com_initialized: bool = false,
@@ -11026,9 +11030,16 @@ fn checkStaleBuild(self: *App) void {
     // Remember the FILE's timestamp, not a bool: a second upgrade landing
     // while the window is still open is a new fact and deserves to be said
     // again, while the same file must never be announced twice.
+    // When the file carries a link stamp, that is the build's identity and
+    // the thing deduped on (T1365): a Repair re-stamps the mtime of a build
+    // already announced without making it a new one.
     const on_disk_ns = staleBuildOnDiskNs(prov.exe);
     if (on_disk_ns == 0 or on_disk_ns == self.stale_build_notified_ns) return;
+    if (prov.on_disk_link_stamp) |stamp| {
+        if (self.stale_build_notified_stamp == stamp) return;
+    }
     self.stale_build_notified_ns = on_disk_ns;
+    self.stale_build_notified_stamp = prov.on_disk_link_stamp;
 
     log.info(
         "newer build installed on disk (running build started {s}, exe written {s})",
