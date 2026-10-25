@@ -889,17 +889,20 @@ struct PaneSidebarCount: View {
     }
 }
 
+/// A hairline between sections — above all, the tray's: the line a pane is
+/// dragged below to stash it, so it must read on glass (at 9% it all but
+/// vanished there).
 struct PaneSidebarDivider: View {
     let isRail: Bool
     var indent: CGFloat = 0
 
     var body: some View {
         Rectangle()
-            .fill(Color.primary.opacity(0.09))
+            .fill(Color.primary.opacity(0.22))
             .frame(height: 1)
-            .padding(.leading, isRail ? 10 : SidePanelRow.labelInset + indent)
-            .padding(.trailing, isRail ? 10 : SidePanelRow.labelInset)
-            .padding(.vertical, isRail ? 5 : 0)
+            .padding(.leading, isRail ? 8 : SidePanelRow.labelInset + indent)
+            .padding(.trailing, isRail ? 8 : SidePanelRow.labelInset)
+            .padding(.vertical, isRail ? 7 : 0)
             .padding(.top, isRail ? 0 : 8)
     }
 }

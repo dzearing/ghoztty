@@ -318,14 +318,13 @@ deliberately split between two containers for its two states:
   while the window is key, the unemphasized fill otherwise, hover as a separate
   wash), `SidePanelCaption` for "PANES" / "STASHED", and
   `SidePanelResizeHandle` for drag-to-resize with a shared width preference.
-- **Expanded is a FLAT panel**, not a card: edge to edge down the window's left
-  side, square, no shadow or rim, separated from the grid by a 1px rule in the
-  split-divider color, on the terminal background lifted by the same wash the
-  card uses. Expanded, the sidebar is part of the window, so it should read as
-  one more column of it, not as something floating on it. (The first draft
-  made it the glass card; the mock showed that a floating card in a column the
-  grid is laid out beside reads as an overlay that isn't one.)
-- **Collapsed is the raised glass card** — `SidePanelCard`'s shape, glass,
+- **Expanded is the same raised glass card, wider.** It was a flat panel
+  edge to edge down the window's side (the mock had argued a floating card in
+  a column reads as an overlay), but against the rail that put the list at a
+  different top and height, with different row metrics, so every icon jumped
+  when the sidebar was toggled; the user asked for one card in the window's
+  gutters, like the panes.
+- **Both are the raised glass card** — `SidePanelCard`'s shape, glass,
   opaque base, and `GlassCard.outerMargin` (12pt on every side) — as the
   rail. The card's opaque base becomes a parameter (it is hard-wired
   to the viewer document's colors today); the sidebar passes the terminal
@@ -469,9 +468,22 @@ selection pill, and the tray under a hairline at the bottom.
 
 ### Collapsed and expanded
 
+**One card.** Expanded is the rail's raised glass card at the panel's width —
+the same margins (the grid's gutters), top and height — and every row is one
+height, so a pane's icon sits at the same height in both modes. (Expanded was
+first a flat edge-to-edge panel, which put it at a different height with
+different row metrics: the icons jumped on every toggle.)
+
+**A row dragged in the list only rearranges.** Its drag is a list drag
+(`PaneDragSession.isListDrag`): the pointer is held to the bar before the
+drop is resolved, so letting go beside it — over the grid, past the window —
+lands the row at the place level with the pointer. It used to resolve like a
+pane's grab handle, which made a release past the window a `.newWindow` and
+took the pane away.
+
 | | Expanded | Collapsed |
 |---|---|---|
-| Look | Flat panel, full width | Raised glass card: the rail |
+| Look | The raised glass card, at the panel's width | The same card: the rail |
 | Column | `--sidebar-w` (default 240, drag the edge) | 68pt |
 | Switched by | The button at the top of the bar | The same |
 | Persisted | Yes, per window, in the session manifest | (the same flag) |

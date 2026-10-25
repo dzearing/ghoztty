@@ -44,6 +44,10 @@ final class PaneDragSession: ObservableObject {
     /// The drag is a strip's: it has the targets of a pane put away in its
     /// row (`PaneDropResolver.resolveBlade`), not a pane's.
     private(set) var isBlade = false
+    /// The drag is a pane-sidebar row's, moved up and down its list: it only
+    /// ever means a place in that list or its tray (`listPoint`), wherever it
+    /// is let go — never the grid, another window, or a new one.
+    private(set) var isListDrag = false
     private var dwellTimer: Timer?
     private var dwellKey: String?
 
@@ -61,10 +65,12 @@ final class PaneDragSession: ObservableObject {
 
     // MARK: Lifecycle
 
-    func begin(pane: PaneView, from controller: BaseTerminalController, isBlade: Bool = false) {
+    func begin(pane: PaneView, from controller: BaseTerminalController, isBlade: Bool = false,
+               isListDrag: Bool = false) {
         self.pane = pane
         self.source = controller
         self.isBlade = isBlade
+        self.isListDrag = isListDrag
         self.target = nil
         self.hoveredTab = nil
         refreshCandidates()
@@ -76,6 +82,11 @@ final class PaneDragSession: ObservableObject {
         // Windows move, resize, and get created mid-drag (a dwell switches
         // tabs), so the geometry is re-read rather than snapshotted at begin.
         refreshCandidates()
+
+        if isListDrag {
+            target = listTarget(screenPoint: screenPoint, dragged: pane.id)
+            return
+        }
 
         target = PaneDropResolver.resolve(
             screenPoint: screenPoint,
@@ -100,6 +111,30 @@ final class PaneDragSession: ObservableObject {
         PaneMoveCoordinator.apply(target, pane: pane, from: source)
     }
 
+    /// A list drag's target: the pointer held to its own window's sidebar —
+    /// at the bar's middle, and inside its top and bottom — and resolved
+    /// against that sidebar alone. So letting go beside the bar, over the
+    /// grid or past the window, is the place in the list (or tray) level
+    /// with the pointer, as the row the pointer is dragging shows it.
+    private func listTarget(screenPoint: CGPoint, dragged: UUID) -> PaneDropTarget? {
+        guard let source,
+              let own = candidates.first(where: { $0.window == PaneDropWindowRef(source) }),
+              let sidebar = own.sidebar
+        else { return nil }
+        let rect = sidebar.rect
+        let point = CGPoint(
+            x: rect.midX,
+            y: Swift.min(Swift.max(screenPoint.y, rect.minY + 1), rect.maxY - 1))
+        return PaneDropResolver.sidebarHit(
+            screenPoint: point,
+            candidates: [PaneDropCandidate(
+                window: own.window, zOrder: 0, contentRect: own.contentRect,
+                paneRects: own.paneRects,
+                sidebar: .init(rect: rect, paneRows: sidebar.paneRows, stashRows: sidebar.stashRows,
+                               trayTop: sidebar.trayTop))],
+            dragged: dragged)
+    }
+
     private func reset() {
         cancelDwell()
         removeTabCaret()
@@ -107,6 +142,7 @@ final class PaneDragSession: ObservableObject {
         pane = nil
         source = nil
         isBlade = false
+        isListDrag = false
         target = nil
         hoveredTab = nil
         candidates = []

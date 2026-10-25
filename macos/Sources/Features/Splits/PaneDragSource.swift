@@ -82,6 +82,10 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     /// (`PaneDropResolver.resolveBlade`).
     var isBlade: Bool = false
 
+    /// A pane-sidebar row moved up and down its list: its targets are only
+    /// places in that list (`PaneDragSession.isListDrag`).
+    var isListDrag: Bool = false
+
     /// The pointer moved, in screen points, during a drag; and the drag ended.
     var onDragMoved: ((NSPoint) -> Void)?
     var onDragFinished: (() -> Void)?
@@ -197,7 +201,7 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
         }
 
         MainActor.assumeIsolated {
-            PaneDragSession.shared.begin(pane: pane, from: controller, isBlade: isBlade)
+            PaneDragSession.shared.begin(pane: pane, from: controller, isBlade: isBlade, isListDrag: isListDrag)
         }
         onDragStateChanged?(true)
 

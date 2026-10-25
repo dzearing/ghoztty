@@ -1590,9 +1590,13 @@ A per-window list of **every pane in the window**, into which a pane can be
 the interactive mock settled).
 
 - Two modes, **collapsed ⇄ expanded**, switched by ONE button at the top of
-  the bar (`setPaneSidebarExpanded`). **Expanded** = a flat edge-to-edge panel
-  the grid sits beside. **Collapsed** = the raised glass card as a 68pt
-  **rail** of one-letter tiles. **No pin, no hover-open**: hovering the rail
+  the bar (`setPaneSidebarExpanded`). Both are ONE raised glass card, in the
+  same margins (the grid's gutters), with the same top and height —
+  **collapsed** at the 44pt rail's width (one-letter tiles), **expanded** at
+  the panel's width (full rows) — and every row is one height
+  (`PaneSidebarRow.height`), so a pane's icon sits at the same height in both
+  (`iconsStayAtTheSameHeightExpandedOrCollapsed`). (Expanded used to be a flat
+  edge-to-edge panel, its rows a different height.) **No pin, no hover-open**: hovering the rail
   opens nothing, because the rail is where its tiles are dragged.
   **Collapse/expand glides**: the grid's cards glide over to their new places
   (`PaneStackState.noteColumnShift` → `PaneStageView.apply` seeds the glide
@@ -1641,7 +1645,13 @@ the interactive mock settled).
   window's pane joins this window there; below it `.stash`. Any pane — a row,
   a tile, a grid pane's grab handle — goes into the tray to stash and out to
   restore; a row into the grid places it as before. ONE resolver, ONE drag
-  (`PaneDragSession`), no parallel drop path. **The row itself follows the
+  (`PaneDragSession`), no parallel drop path. **A row dragged in the list
+  only ever rearranges** (`PaneDragSession.isListDrag`): the pointer is held
+  to its own sidebar before resolving, so letting go beside the bar, over the
+  grid or past the window, is the place in the list (or tray) level with the
+  pointer — it used to resolve as a grid move, or `.newWindow`, which took
+  the pane out of the window. A pane's grab handle still drops anywhere.
+  **The row itself follows the
   pointer — up and down only, never sideways, kept inside the bar** — not a
   drag image (`PaneSidebarRowDrag`: the row's drag source draws no preview and
   feeds the pointer's travel; `PaneSidebarView.ghost` draws the row there,

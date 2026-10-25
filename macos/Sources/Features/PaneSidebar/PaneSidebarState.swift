@@ -123,44 +123,28 @@ final class PaneSidebarState: ObservableObject {
                     trailing: GlassCard.outerMargin)
     }
 
-    /// Where the expanded panel's resize grip lies, from the panel's edge.
-    /// Elevated: all of the gutter between the panel and the panes (the
-    /// grid's margin), as every resizer lives in a gutter — it used to
-    /// straddle the edge, half of it a click on the list. Flat: the grid
-    /// starts right at the edge, so just inside it.
-    static func pinnedEdgeGrip(elevated: Bool) -> (offset: CGFloat, width: CGFloat) {
-        elevated
-            ? (0, PaneElevation.margin)
-            : (-SidePanelResizeHandle.grabWidth, SidePanelResizeHandle.grabWidth)
+    /// The sidebar's card — the rail's, and the expanded list's, which is
+    /// the same raised glass card at the panel's width: same margins, same
+    /// top, same height, so a pane's icon sits at the same height in both.
+    /// Its width.
+    nonisolated static func cardWidth(for mode: Mode, panelWidth: CGFloat) -> CGFloat {
+        mode == .expanded ? panelWidth : railCardWidth
     }
 
-    /// How far the expanded panel's host reaches past its edge: as far as the
-    /// grip does.
-    static func pinnedEdgeReach(elevated: Bool) -> CGFloat {
-        let grip = pinnedEdgeGrip(elevated: elevated)
-        return Swift.max(0, grip.offset + grip.width)
-    }
-
-    /// Where the sidebar's edge grip lies in `mode`, from the drawn card's
-    /// trailing edge — always in the gutter between it and the panes, never
-    /// over the sidebar: expanded, `pinnedEdgeGrip`; collapsed, the gutter
-    /// right of the rail card (the grid's margin in the elevated style, the
-    /// card's own trailing margin in the flat one). It used to sit just
-    /// inside the rail card, over its tiles.
+    /// Where the sidebar's edge grip lies, from the card's trailing edge:
+    /// the gutter between the card and the panes, never over the card — the
+    /// grid's margin in the elevated style, the card's own trailing margin in
+    /// the flat one. The same in both modes, since the card is. (It used to
+    /// sit just inside the rail card, its bar over the tiles.)
     static func edgeGrip(for mode: Mode, elevated: Bool) -> (offset: CGFloat, width: CGFloat) {
-        switch mode {
-        case .expanded, .hidden: pinnedEdgeGrip(elevated: elevated)
-        case .collapsed: (0, elevated ? PaneElevation.margin : railInsets(elevated: false).trailing)
-        }
+        (0, elevated ? PaneElevation.margin : railInsets(elevated: false).trailing)
     }
 
     /// How far the sidebar's host reaches past its column for the grip: only
-    /// as far as the grip lies outside the column.
+    /// as far as the grip lies outside the column — the grid's margin,
+    /// elevated; none, flat, where the gutter is the card's own margin.
     static func edgeReach(for mode: Mode, elevated: Bool) -> CGFloat {
-        switch mode {
-        case .expanded, .hidden: pinnedEdgeReach(elevated: elevated)
-        case .collapsed: elevated ? PaneElevation.margin : 0
-        }
+        elevated ? PaneElevation.margin : 0
     }
 
     /// Collapsing or expanding: the sidebar's width (and the crossfade of
@@ -226,11 +210,9 @@ final class PaneSidebarState: ObservableObject {
     /// Only collapse/expand and hide/show change it, so a terminal is resized
     /// only by something somebody chose.
     nonisolated static func columnWidth(for mode: Mode, panelWidth: CGFloat, elevated: Bool) -> CGFloat {
-        switch mode {
-        case .hidden: 0
-        case .expanded: panelWidth
-        case .collapsed: railColumnWidth(elevated: elevated)
-        }
+        guard mode != .hidden else { return 0 }
+        let insets = railInsets(elevated: elevated)
+        return insets.leading + cardWidth(for: mode, panelWidth: panelWidth) + insets.trailing
     }
 
     nonisolated static func clampWidth(_ width: CGFloat) -> CGFloat {

@@ -36,6 +36,10 @@ struct PaneSidebarRow: View {
 
     private var onAccent: Bool { isSelected && isEmphasized }
 
+    /// Every row's height, full or rail: one number, so a pane's icon sits at
+    /// the same height whether the sidebar is expanded or collapsed.
+    static let height: CGFloat = 38
+
     var body: some View {
         Group {
             if isRail { tile } else { fullRow }
@@ -48,7 +52,7 @@ struct PaneSidebarRow: View {
     private var fullRow: some View {
         let fill = rowFill
         return ZStack(alignment: .trailing) {
-            HStack(alignment: .top, spacing: 7) {
+            HStack(alignment: .center, spacing: 7) {
                 PaneSidebarIcon(pane: pane, isBusy: isBusy, color: iconColor)
                     .frame(width: 16, height: 15)
                 VStack(alignment: .leading, spacing: 1) {
@@ -66,7 +70,7 @@ struct PaneSidebarRow: View {
                 // Room for the trailing button, so text never runs under it.
                 Color.clear.frame(width: trailingButtonWidth, height: 1)
             }
-            .padding(.vertical, SidePanelRow.verticalPadding)
+            .frame(height: Self.height - 1)
             .padding(.leading, SidePanelRow.textInset + indent)
             .padding(.trailing, SidePanelRow.textInset)
             .background(fill)
@@ -192,7 +196,7 @@ struct PaneSidebarRow: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 2)
+        .frame(height: Self.height)
         .help(rowHelp)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
@@ -493,6 +497,7 @@ struct PaneSidebarRowInteraction: NSViewRepresentable {
         view.menuProvider = menu
         view.showsGrabCursor = false
         view.showsPreview = !followsPointer
+        view.isListDrag = followsPointer
         guard followsPointer else {
             view.onDragStateChanged = { _ in }
             view.onDragMoved = nil

@@ -57,7 +57,9 @@ struct PaneSidebarStateTests {
     }
 
     @Test func theColumnIsThePanelWhenExpanded() {
-        #expect(State.columnWidth(for: .expanded, panelWidth: 260, elevated: true) == 260)
+        // The rail's card at the panel's width, in the rail's margins.
+        #expect(State.columnWidth(for: .expanded, panelWidth: 260, elevated: true) == PaneElevation.margin + 260)
+        #expect(State.columnWidth(for: .expanded, panelWidth: 260, elevated: false) == 260 + 2 * GlassCard.outerMargin)
     }
 
     @Test func hiddenTakesNoColumn() {

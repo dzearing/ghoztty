@@ -189,23 +189,13 @@ final class PaneSidebarHostView: NSView {
     // MARK: Footprint
 
     /// Where the sidebar is actually drawn, in this view's coordinates: the
-    /// flat panel fills the frame; the raised rail card sits inside its
-    /// margin.
+    /// raised card inside its margin — the rail's width, or the panel's.
     var cardRect: NSRect {
-        switch mode {
-        case .hidden:
-            return .zero
-        case .expanded:
-            // The panel, without the strip the frame reserves past its edge
-            // for the resize grip.
-            return NSRect(x: 0, y: 0,
-                          width: Swift.max(0, bounds.width - PaneSidebarState.edgeReach(for: mode, elevated: elevated)),
-                          height: bounds.height)
-        case .collapsed:
-            let insets = PaneSidebarState.railInsets(elevated: elevated)
-            return NSRect(x: insets.leading, y: insets.vertical, width: PaneSidebarState.railCardWidth,
-                          height: Swift.max(0, bounds.height - 2 * insets.vertical))
-        }
+        guard mode != .hidden else { return .zero }
+        let insets = PaneSidebarState.railInsets(elevated: elevated)
+        return NSRect(x: insets.leading, y: insets.vertical,
+                      width: PaneSidebarState.cardWidth(for: mode, panelWidth: state.width),
+                      height: Swift.max(0, bounds.height - 2 * insets.vertical))
     }
 
     /// Clicks land only on the drawn card (plus the resize handle's slop just
@@ -252,21 +242,44 @@ private struct PaneSidebarChrome: View {
     let mode: PaneSidebarState.Mode
     let canExpand: Bool
 
+    /// One raised glass card in both modes — the rail's width collapsed, the
+    /// panel's expanded — with the same margins, top and height, so a pane's
+    /// icon is at the same height either way. Its width animates as it
+    /// collapses or expands while the rail's tiles and the full rows
+    /// crossfade inside it, each laid out at its own width (and cut by the
+    /// card) so neither reflows on the way.
     var body: some View {
+        let background = controller.ghostty.config.backgroundColor
+        let insets = railInsets
         ZStack(alignment: .topLeading) {
-            switch mode {
-            case .hidden:
-                EmptyView()
-            case .expanded:
-                panel.transition(.opacity)
-            case .collapsed:
-                rail.transition(.opacity)
+            if mode == .expanded {
+                PaneSidebarView(
+                    controller: controller, state: state, geometry: geometry,
+                    isRail: false, isFlat: false)
+                    .frame(width: state.width)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .transition(.opacity)
+            } else if mode == .collapsed {
+                PaneSidebarView(
+                    controller: controller, state: state, geometry: geometry,
+                    isRail: true, isFlat: false, canExpand: canExpand)
+                    .frame(width: PaneSidebarState.railCardWidth)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .transition(.opacity)
             }
         }
+        .padding(.top, state.tabRowHeight)
+        .modifier(SidePanelCard(
+            width: PaneSidebarState.cardWidth(for: mode, panelWidth: state.width),
+            maxHeight: .infinity,
+            accessibilityLabel: "Panes",
+            base: background,
+            isLightBase: OSColor(background).isLightColor,
+            margins: EdgeInsets(
+                top: insets.vertical, leading: insets.leading,
+                bottom: insets.vertical, trailing: insets.trailing),
+            isGlass: controller.ghostty.config.paneGlass))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // The panel is wider than the host while it grows or shrinks: cut it
-        // there rather than drawing over the grid.
-        .clipped()
         .overlay(alignment: .topLeading) {
             if mode != .hidden { resizeHandle }
         }
@@ -276,60 +289,6 @@ private struct PaneSidebarChrome: View {
 
     private var elevated: Bool { controller.ghostty.config.macosPaneStyle == .elevated }
 
-    /// EXPANDED: a flat panel — part of the window, not floating on it. The
-    /// terminal background lifted by the same wash the glass card uses, and
-    /// a 1px rule in the split-divider color.
-    private var panel: some View {
-        let background = controller.ghostty.config.backgroundColor
-        let isLight = OSColor(background).isLightColor
-        return PaneSidebarView(
-            controller: controller, state: state, geometry: geometry,
-            isRail: false, isFlat: true)
-            .padding(.top, state.tabRowHeight)
-            .frame(width: state.width)
-            .frame(maxHeight: .infinity, alignment: .topLeading)
-            // Elevated: translucent, so the window's gradient runs under the
-            // sidebar and the panel reads as part of the same surface the
-            // panes are raised from. Flat: the terminal background, lifted,
-            // and a 1px rule. Glass panes: no lifting wash either — it greys
-            // the gradient out — just the panes' own neutral tint.
-            .background(controller.ghostty.config.paneGlass
-                ? AnyShapeStyle(Color.clear) : GlassCard.fill(isLightBackground: isLight))
-            .background(background.opacity(elevated ? 0.38 : 1))
-            // Its edge: in the elevated style, the same hairline a pane's rim
-            // is drawn in, so the panel has an edge against the desk; flat,
-            // the split-divider rule.
-            .overlay(alignment: .trailing) {
-                Rectangle()
-                    .fill(elevated
-                        ? (isLight ? Color.black.opacity(0.10) : Color.white.opacity(0.12))
-                        : controller.ghostty.config.splitDividerColor)
-                    .frame(width: 1)
-            }
-    }
-
-    /// COLLAPSED: the raised glass card, icons only. It never opens on hover
-    /// — the rail is where its icons are dragged.
-    private var rail: some View {
-        let background = controller.ghostty.config.backgroundColor
-        let insets = railInsets
-        return PaneSidebarView(
-            controller: controller, state: state, geometry: geometry,
-            isRail: true, isFlat: false, canExpand: canExpand)
-            .padding(.top, state.tabRowHeight)
-            .modifier(SidePanelCard(
-                width: PaneSidebarState.railCardWidth,
-                maxHeight: .infinity,
-                accessibilityLabel: "Panes",
-                base: background,
-                isLightBase: OSColor(background).isLightColor,
-                margins: EdgeInsets(
-                    top: insets.vertical, leading: insets.leading,
-                    bottom: insets.vertical, trailing: insets.trailing),
-                isGlass: controller.ghostty.config.paneGlass))
-            .frame(maxHeight: .infinity, alignment: .topLeading)
-    }
-
     /// The edge grip, in the gutter beside the drawn card (`edgeGrip`) —
     /// never over the sidebar. Dragged, it resizes the panel; past its
     /// minimum it pulls the rail out, and well under it tucks the panel back
@@ -337,9 +296,7 @@ private struct PaneSidebarChrome: View {
     /// ways.
     private var resizeHandle: some View {
         let grip = PaneSidebarState.edgeGrip(for: mode, elevated: elevated)
-        let cardMaxX = mode == .collapsed
-            ? railInsets.leading + PaneSidebarState.railCardWidth
-            : state.width
+        let cardMaxX = railInsets.leading + PaneSidebarState.cardWidth(for: mode, panelWidth: state.width)
         return PaneSidebarResizeHandle(
             currentWidth: {
                 mode == .collapsed ? PaneSidebarState.railCardWidth : state.width
@@ -354,7 +311,7 @@ private struct PaneSidebarChrome: View {
             })
             .frame(width: grip.width)
             .frame(maxHeight: .infinity)
-            .padding(.vertical, mode == .collapsed ? railInsets.vertical : 0)
+            .padding(.vertical, railInsets.vertical)
             .offset(x: cardMaxX + grip.offset)
     }
 

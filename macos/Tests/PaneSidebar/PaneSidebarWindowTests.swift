@@ -669,33 +669,53 @@ struct PaneSidebarWindowTests {
 
     // MARK: Layout
 
-    @Test func expandedIsAFlatColumnTheGridSitsBeside() async throws {
+    /// Expanded is the rail's card, wider: the same margins, top and
+    /// height, the grid beside its column, the grip in the gutter.
+    @Test func expandedIsTheRailsCardWider() async throws {
         let h = try await open(expanded: true)
         defer { Task { await close(h) } }
 
         let host = try #require(h.controller.paneSidebarHost)
         let hostFrame = host.convert(host.bounds, to: nil)
         let elevated = h.controller.ghostty.config.macosPaneStyle == .elevated
-        let grip = PaneSidebarState.pinnedEdgeGrip(elevated: elevated)
-        #expect(abs(hostFrame.width - (240 + PaneSidebarState.pinnedEdgeReach(elevated: elevated))) < 1,
+        let insets = PaneSidebarState.railInsets(elevated: elevated)
+        let column = PaneSidebarState.columnWidth(for: .expanded, panelWidth: 240, elevated: elevated)
+        let grip = PaneSidebarState.edgeGrip(for: .expanded, elevated: elevated)
+        #expect(abs(hostFrame.width - (column + PaneSidebarState.edgeReach(for: .expanded, elevated: elevated))) < 1,
                 "the column, plus the gutter its resize grip lies in")
         #expect(abs(hostFrame.minX) < 1, "flush with the window's left edge")
-        #expect(abs(host.cardRect.width - 240) < 1, "the panel fills its column, no card margin")
-        // The resize grip takes the mouse over all of its span (past the
-        // panel too, which is outside the panel's own bounds), and the host
-        // nothing past it.
+        #expect(host.cardRect == NSRect(x: insets.leading, y: insets.vertical, width: 240,
+                                        height: host.bounds.height - 2 * insets.vertical),
+                "the rail's card at the panel's width: its margins, its top, its height")
         let edgeX = host.frame.minX + host.cardRect.maxX
         let y = host.frame.midY
         #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + 1, y: y)) is SidePanelResizeHandle, "its start")
         #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + grip.width - 1, y: y)) is SidePanelResizeHandle,
                 "its end")
+        #expect(!(host.hitTest(NSPoint(x: edgeX - 3, y: y)) is SidePanelResizeHandle), "not over the card")
         #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + grip.width + 1, y: y)) == nil,
                 "nothing past the grip")
 
         // The grid starts where the column ends (plus the elevated margin).
         let leftPane = frameInWindow(h.panes[0])
-        #expect(abs(leftPane.minX - (240 + gridMargin(h))) < 1)
+        #expect(abs(leftPane.minX - (column + gridMargin(h))) < 1)
         snapshot(h, "expanded")
+        await close(h)
+    }
+
+    /// A pane's icon is at the same height expanded and collapsed: one card,
+    /// one row height.
+    @Test func iconsStayAtTheSameHeightExpandedOrCollapsed() async throws {
+        let h = try await open(expanded: true)
+        let host = try #require(h.controller.paneSidebarHost)
+        let expanded = h.panes.compactMap { rowFrame($0, in: host)?.midY }
+        h.controller.setPaneSidebarExpanded(false)
+        await settle(0.8)
+        let collapsed = h.panes.compactMap { rowFrame($0, in: host)?.midY }
+        #expect(expanded.count == 3 && collapsed.count == 3)
+        for (e, c) in zip(expanded, collapsed) {
+            #expect(abs(e - c) < 1, "a row at \(e) expanded is at \(c) collapsed")
+        }
         await close(h)
     }
 
@@ -727,7 +747,8 @@ struct PaneSidebarWindowTests {
         // and the grid glides over rather than snapping: part way there a
         // moment in, its terminal still at its old size until the motion is
         // over, then resized once.
-        let expandedLeft = 240 + gridMargin(h)
+        let expandedLeft = PaneSidebarState.columnWidth(for: .expanded, panelWidth: 240, elevated: elevated)
+            + gridMargin(h)
         let sizeBefore = try #require(gridSize(h.panes[0]))
         h.controller.setPaneSidebarExpanded(true)
         await settle(0.04)
@@ -780,7 +801,7 @@ struct PaneSidebarWindowTests {
         let session = PaneDragSession.shared
         let rowDrag = PaneSidebarRowDrag.shared
         let start = try screenPoint(on: a, h)
-        session.begin(pane: a, from: h.controller)
+        session.begin(pane: a, from: h.controller, isListDrag: true)
         rowDrag.begin(a, screenY: start.y)
         session.update(screenPoint: start)
         await settle(0.3)
@@ -792,6 +813,15 @@ struct PaneSidebarWindowTests {
         session.update(screenPoint: moved)
         rowDrag.move(screenY: moved.y)
         await settle(0.4)
+        // Off the bar, over the grid: still a place in the list — a row
+        // dragged in the list only rearranges, wherever it is let go.
+        #expect(session.target == .sidebarOrder(window: PaneDropWindowRef(h.controller), index: 2),
+                "released off the bar: \(String(describing: session.target))")
+        // ...and past the window, too.
+        session.update(screenPoint: CGPoint(x: moved.x + 3000, y: moved.y))
+        #expect(session.target == .sidebarOrder(window: PaneDropWindowRef(h.controller), index: 2),
+                "released past the window: \(String(describing: session.target))")
+        session.update(screenPoint: moved)
         #expect(rowDrag.frame != nil, "the dragged row's place is known")
         #expect(rowDrag.dy > 0, "it follows the pointer down")
         try await captureComposited(h.window, expanded ? "drag-ghost-expanded" : "drag-ghost-rail")
