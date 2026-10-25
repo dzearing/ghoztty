@@ -1,10 +1,13 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-25T13:29:05-07:00",
-    "commit":  "419554746",
+    "generated":  "2026-10-25T15:30:40-07:00",
+    "commit":  "c10a76ded",
     "uncommitted":  [
-                        "test/win32/pane-banner.ps1"
+                        "test/win32/pane-stack-grid.ps1",
+                        "test/win32/pane-stack-slide.ps1",
+                        "test/win32/side-pane-featured.ps1",
+                        "test/win32/stack-collapse-carry.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -319,7 +322,7 @@
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
                   "test/win32/palette-order.ps1":  "1aa851b76eaafbb3d721aece4d5f934a9a142e0d9d23ac8b1645d38b86727580",
-                  "test/win32/pane-banner.ps1":  "f6714584eddae2b45003fbb5df28a0aad06b4cbc29c479e96fecf99292c3bf2f",
+                  "test/win32/pane-banner.ps1":  "2757a7bc4a03c68c45fc93f1093a6a5747e255f11a8da9a955ed4545a95966b3",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
                   "test/win32/pane-elevation.ps1":  "0ec2001d57d1cc6739d10a45b0bb68e74653ea1d3b4fb57d08c9d23712ec6b9f",
@@ -338,8 +341,8 @@
                   "test/win32/pane-sidebar-resize.ps1":  "55787f9e4ec5f13d78d25831c0e2bb4ee4cc98408135a94681e2365e05325720",
                   "test/win32/pane-sidebar-scroll.ps1":  "5aa2f6aa4e7f30afde28ff9a030d6938b9ab8218497fa37eba0f1c2d47369956",
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
-                  "test/win32/pane-stack-grid.ps1":  "ba993d5e638c8dc7505d0d07fffb8780e80d2056e13f18e36a8df9568aad40e0",
-                  "test/win32/pane-stack-slide.ps1":  "e7a0e07f70f4f696318ea015b78948755fe69691ca615d631a0dd4dd0f4b931a",
+                  "test/win32/pane-stack-grid.ps1":  "5dd7a5124079e987275382bb720333041d7bbe0ee759b1879f38be67553c2b76",
+                  "test/win32/pane-stack-slide.ps1":  "3e6d5ed838cf6e03f9d52bae180a3a78ba0d7f40688dc1c45964df6313cb698c",
                   "test/win32/pane-stack-strip.ps1":  "aa1393ef9fccee12deae56d6434928cdec110bbe12d67afe3c1a35d25979fb0f",
                   "test/win32/pane-stack-unfold.ps1":  "cde0c940cadbed2917dd542d5c947af721e17528e5e33723b0eff11463d4bbff",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
@@ -421,6 +424,7 @@
                   "test/win32/session-vanished.ps1":  "e0019c099845add5401f0faf816a19db34eb148ba1dc8a4b7d8b390ad86ab0a5",
                   "test/win32/share-machine.ps1":  "eba316515b7f90d758ce528b6832cdb1573b2ccc86f456a4b1ffce5655f0091d",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
+                  "test/win32/side-pane-featured.ps1":  "9c5ba23581dc36c34fcef162b15e0c109a2dc5bd71e409a111425af6cb3fdae7",
                   "test/win32/single-instance-join.ps1":  "5b182fa1d110e5a2eb1cba34f90e80e4ff8dd811838b6d5c4c69de85c2f648f0",
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
                   "test/win32/soak.ps1":  "70115de02426d4dc47fe1b0c021ed89c7a8bf4a58487ded16f353f878a7c9787",
@@ -433,7 +437,7 @@
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",
-                  "test/win32/stack-collapse-carry.ps1":  "707673385d69adc61c66363757209f3e5d75a057ca79622fe7ebdb0f29eab289",
+                  "test/win32/stack-collapse-carry.ps1":  "2fb0e9c3403e77a583f2eee95338ea9b0cbd9005eff39ca7dd278e5e202b713c",
                   "test/win32/stack-collapse-drag.ps1":  "284281482e8fea9be88c5539433ba6de45b3f253dcc20922dd55fc2a188afeff",
                   "test/win32/stack-fold-slide.ps1":  "5afac98db200193cd082d3c90c06cf6fda6bcac8ecec6016a6a6af7b1df13ed6",
                   "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",

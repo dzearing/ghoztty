@@ -7844,11 +7844,18 @@ pub fn caretPaneOnShow(self: *Window, tab: usize) *PaneView {
 /// to the tab's focused pane instead. Every deliberate focus (a strip click,
 /// goto_split, a sidebar row, IPC) sets the tab's focused pane first.
 pub fn adoptsFocus(self: *Window, tab: usize, pane: *PaneView) bool {
-    if (tab >= self.tab_count or self.tab_active_pane[tab] == pane) return true;
-    if (!self.isStackMinimized(tab, pane)) return true;
-    log.info("stale focus on a folded strip: caret goes back to the pane on show", .{});
-    if (tab == self.active_tab) if (self.tab_active_pane[tab].hwnd()) |h| App.deferSetFocus(h); // T48
-    return false;
+    if (tab >= self.tab_count) return true;
+    if (self.tab_active_pane[tab] != pane and self.isStackMinimized(tab, pane)) {
+        log.info("stale focus on a folded strip: caret goes back to the pane on show", .{});
+        if (tab == self.active_tab) if (self.tab_active_pane[tab].hwnd()) |h| App.deferSetFocus(h); // T48
+        return false;
+    }
+    // A change of focus ends a side pane's featuring (T2257) when it happens,
+    // not at the next layout. Also for a pane the tab already made its focused
+    // one: every deliberate focus path sets that before the window's focus
+    // lands here.
+    if (tab == self.active_tab) self.stackState().noteFocusMoved(pane_stack_grid.viewId(pane));
+    return true;
 }
 
 /// The pane of tab `tab` the caret goes to instead of `candidate` now that
@@ -9832,6 +9839,20 @@ fn insertPaneAsSplit(
     // tab's active pane, so the user's typing keeps landing where it was.
     const background = self.split_background;
     if (!background) self.tab_active_pane[tab] = new_pane;
+    // A split that leaves the caret where it was has to come on show without
+    // it (T2257, Mac `PaneStackState.featured`): in a row with no room it is
+    // the caller that becomes the strip, caret and all.
+    // The history is brought up to the caret first: it is noted at layout, so
+    // it can lag a focus move, and the caller's own focus coming back must not
+    // read as a change that ends the featuring (`noteFocusMoved`).
+    if (background) {
+        const state = self.stackState();
+        if (tab == self.active_tab) {
+            const focus = pane_stack_grid.viewId(self.tab_active_pane[tab]);
+            if (state.recency.first() != focus) state.noteFocus(focus);
+        }
+        state.feature(pane_stack_grid.viewId(new_pane));
+    }
     // ...and relabel the tab after it, for the reason `insertPaneAsTab` does:
     // the focused pane drives the tab title (T92), and a viewer was named
     // before this tree existed so its own `setTitle` had nobody to tell (T383).

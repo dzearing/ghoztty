@@ -624,6 +624,20 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # A side pane opened without focus into a full row comes on show and the
+    # caller keeps the caret (T2257): `PaneStackState.featured`, set by
+    # `Window.insertPaneAsSplit` for a background split.
+    [pscustomobject]@{
+        Name   = 'side-pane-featured'
+        Script = 'test\win32\side-pane-featured.ps1'
+        Stamp  = 'test\win32\side-pane-featured.stamp.json'
+        Covers = @(
+            'test\win32\side-pane-featured.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\pane_stack_layout.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The carousel slide (T2102): a run change glides the cards on show to
     # their slots and resizes no terminal mid-slide. `pane_stack_grid.zig` is
     # named because the slide's from/to rects are its placements.

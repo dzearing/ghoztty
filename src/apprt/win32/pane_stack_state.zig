@@ -150,6 +150,16 @@ pub const PaneStackState = struct {
     /// The rows `noteRows` saw last, and the arena they live in.
     seen: ?std.heap.ArenaAllocator = null,
     seen_rows: Rows = &.{},
+    /// A pane opened BESIDE the one with the caret, without taking it (T2257,
+    /// Mac 71da9a680) - an agent's `+split --view`, a banner link's side pane.
+    /// It was asked for, so it comes on show: it outranks even the focused
+    /// pane in a row with no room for all of it (`layoutRank`), other panes
+    /// minimize to make room, and when even that is not enough the focused
+    /// pane becomes the strip and KEEPS the caret. It used to be born a strip
+    /// nobody noticed. Cleared by the next change of focus, after which the
+    /// row is the focus history's again, and when the pane leaves every row
+    /// (ids are addresses, so a later pane could reuse it).
+    featured: ?Id = null,
 
     pub fn init(gpa: Allocator) PaneStackState {
         return .{ .gpa = gpa };
@@ -165,8 +175,24 @@ pub const PaneStackState = struct {
     // -- focus ------------------------------------------------------------
 
     pub fn noteFocus(self: *PaneStackState, id: Id) void {
+        self.noteFocusMoved(id);
         self.bringOnShow(id, null);
         if (self.recency.first() != id) self.recency.note(id);
+    }
+
+    /// `id` took the keyboard, as it happens (`Window.adoptsFocus`): a change
+    /// of focus ends the featuring. Only that - the history itself is noted
+    /// when the window next lays out (`noteFocus`), which on win32 can be
+    /// several focus moves later; a move away and back between two layouts
+    /// would otherwise look like no change at all and leave the side pane
+    /// outranking a focus the user has since moved.
+    pub fn noteFocusMoved(self: *PaneStackState, id: Id) void {
+        if (self.featured != null and self.recency.first() != id) self.featured = null;
+    }
+
+    /// `id` comes on show without the caret (`featured`).
+    pub fn feature(self: *PaneStackState, id: Id) void {
+        self.featured = id;
     }
 
     /// 0 for the focused pane, 1 for the one before it, …; null if never
@@ -174,6 +200,15 @@ pub const PaneStackState = struct {
     pub fn rank(self: *const PaneStackState, id: Id) ?u32 {
         const i = std.mem.indexOfScalar(Id, self.recency.items(), id) orelse return null;
         return @intCast(i);
+    }
+
+    /// The rank the layout reads (Mac's `ranks`): `rank`, with the featured
+    /// pane ahead of all of them. Mac gives it -1; ranks here are unsigned and
+    /// only compared, so it takes 0 and the history moves back one.
+    pub fn layoutRank(self: *const PaneStackState, id: Id) ?u32 {
+        const f = self.featured orelse return self.rank(id);
+        if (id == f) return 0;
+        return (self.rank(id) orelse return null) + 1;
     }
 
     /// A pane minimized in a collapsed row comes back: the run grows to take
@@ -564,8 +599,14 @@ pub const PaneStackState = struct {
         }
 
         // The focus can land before the tree change is seen (a pane focused
-        // as it joins a row): it comes on show as it would have after.
+        // as it joins a row): it comes on show as it would have after. So
+        // does a featured pane joining a collapsed row, after the focus, so it
+        // is the one that wins where both cannot be on show. A featured pane
+        // that left every row is not featured any more.
         if (self.recency.first()) |focused| self.bringOnShow(focused, carried);
+        if (self.featured) |f| {
+            if (rowsContain(new, f)) self.bringOnShow(f, carried) else self.featured = null;
+        }
         self.prune();
     }
 
@@ -712,7 +753,7 @@ pub const PaneStackState = struct {
 
     fn providerRank(ctx: ?*const anyopaque, id: Id) ?u32 {
         const self: *const PaneStackState = @ptrCast(@alignCast(ctx.?));
-        return self.rank(id);
+        return self.layoutRank(id);
     }
     fn providerPin(ctx: ?*const anyopaque, key: []const Id) ?Pin {
         const self: *const PaneStackState = @ptrCast(@alignCast(ctx.?));
@@ -864,6 +905,11 @@ fn traded(id: Id, a: Id, b: Id) Id {
 fn itemIndex(items: []const []const Id, id: Id) ?usize {
     for (items, 0..) |item, i| if (std.mem.indexOfScalar(Id, item, id) != null) return i;
     return null;
+}
+
+fn rowsContain(rows_in: Rows, id: Id) bool {
+    for (rows_in) |row| if (itemIndex(row, id) != null) return true;
+    return false;
 }
 
 fn paneCount(items: []const []const Id) usize {
@@ -1551,6 +1597,147 @@ test "pane_stack_state: a focus landing before or after the split gives the same
     }
     try testing.expect(Pin.eql(pins[0], pins[1]));
     try testing.expect(Pin.eql(pins[0], .{ .start = 2, .count = 2 }));
+}
+
+// -- tests: a side pane opened without the caret (T2257): Mac's
+// PaneStackWindowTests cases from 71da9a680, against the layout.
+
+fn rowOf(comptime n: usize) [2 * n - 1]layout.Node {
+    // 1 | 2 | … | n, evenly, as a right-leaning chain of horizontal splits.
+    var nodes: [2 * n - 1]layout.Node = undefined;
+    for (0..n) |i| nodes[i] = .{ .leaf = i + 1 };
+    if (n == 1) return nodes;
+    // Node n + k splits leaf k from the rest (node n + k + 1, or the last leaf).
+    var k: usize = n - 1;
+    while (k > 0) {
+        k -= 1;
+        const right: u32 = if (k == n - 2) @intCast(n - 1) else @intCast(n + k + 1);
+        const remaining: f64 = @floatFromInt(n - k);
+        nodes[n + k] = .{ .split = .{ .direction = .horizontal, .ratio = 1.0 / remaining, .left = @intCast(k), .right = right } };
+    }
+    return nodes;
+}
+
+const side_metrics: layout.Metrics = .{ .gap = 10, .peek = 36, .minimum_width = 300, .minimum_height = 200 };
+
+fn tuckedCount(r: anytype, n: usize) usize {
+    var count: usize = 0;
+    for (1..n + 1) |id| if (r.leaf(id).?.is_tucked) {
+        count += 1;
+    };
+    return count;
+}
+
+test "pane_stack_state: a side pane opened without focus comes on show" {
+    // 1 | 2 | 3 fit side by side; 3 has the caret and opens 4 beside itself
+    // without taking it. Ranked by recency alone 4 - never focused - is the
+    // first strip; featured, it is on show, and 3 keeps the caret.
+    const rect: layout.Rect = .{ .w = 3 * 300 + 4 * 10 + 40, .h = 600 };
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    state.noteFocus(1);
+    state.noteFocus(2);
+    state.noteFocus(3);
+    const three = rowOf(3);
+    var r0 = try layout.compute(testing.allocator, &three, 3, rect, side_metrics, state.provider());
+    defer r0.deinit();
+    try testing.expectEqual(@as(usize, 0), tuckedCount(r0, 3));
+
+    const four = rowOf(4);
+    var plain = try layout.compute(testing.allocator, &four, 4, rect, side_metrics, state.provider());
+    defer plain.deinit();
+    try testing.expect(plain.leaf(4).?.is_tucked); // the defect: born a strip
+
+    state.feature(4);
+    var r1 = try layout.compute(testing.allocator, &four, 4, rect, side_metrics, state.provider());
+    defer r1.deinit();
+    try testing.expect(!r1.leaf(4).?.is_tucked);
+    try testing.expect(tuckedCount(r1, 4) > 0);
+    try testing.expectEqual(@as(?Id, 3), state.recency.first()); // the caret stays
+
+    // The caller noting its own focus again changes nothing.
+    state.noteFocus(3);
+    try testing.expectEqual(@as(?Id, 4), state.featured);
+}
+
+test "pane_stack_state: a side pane in a row with room for one takes it and the caller keeps the caret" {
+    const rect: layout.Rect = .{ .w = 300 + 2 * 10 + 40, .h = 600 };
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    state.noteFocus(1);
+    state.feature(2);
+    const two = rowOf(2);
+    var r = try layout.compute(testing.allocator, &two, 2, rect, side_metrics, state.provider());
+    defer r.deinit();
+    try testing.expect(!r.leaf(2).?.is_tucked);
+    try testing.expect(r.leaf(1).?.is_tucked); // the caller made room
+    try testing.expectEqual(@as(?Id, 1), state.recency.first()); // and kept the caret
+}
+
+test "pane_stack_state: the next change of focus ends the featuring" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    state.noteFocus(1);
+    state.noteFocus(2);
+    state.feature(9);
+    try testing.expectEqual(@as(?u32, 0), state.layoutRank(9));
+    try testing.expectEqual(@as(?u32, 1), state.layoutRank(2));
+    try testing.expectEqual(@as(?u32, 2), state.layoutRank(1));
+    try testing.expectEqual(@as(?u32, 0), state.rank(2)); // the history is untouched
+    state.noteFocus(1);
+    try testing.expectEqual(@as(?Id, null), state.featured);
+    try testing.expectEqual(@as(?u32, null), state.layoutRank(9));
+    try testing.expectEqual(@as(?u32, 0), state.layoutRank(1));
+}
+
+test "pane_stack_state: a focus moved away and back before any layout still ends the featuring" {
+    // win32 notes the history at layout; the window's focus events say each
+    // move as it happens. Away to 1 and back to 2 between two layouts.
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    state.noteFocus(1);
+    state.noteFocus(2);
+    state.feature(9);
+    state.noteFocusMoved(2); // the caller's own focus coming back: no change
+    try testing.expectEqual(@as(?Id, 9), state.featured);
+    state.noteFocusMoved(1);
+    state.noteFocusMoved(2);
+    try testing.expectEqual(@as(?Id, null), state.featured);
+    try testing.expectEqual(@as(?Id, 2), state.recency.first()); // untouched until layout
+}
+
+test "pane_stack_state: a side pane joining a collapsed row comes on show over the caret" {
+    // a b [c] d e, collapsed to one with room for one: c has the caret and a
+    // side pane x lands at the far end. Unfeatured it would be a strip; it is
+    // the one on show, and c is the strip.
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    const ids = [_]Id{ 1, 2, 3, 4, 5 };
+    const before = singles(5, &ids);
+    try collapsedToOne(&state, &before);
+    try state.noteItems(&before, 1);
+    state.noteFocus(3);
+    const after = [_][]const Id{ &.{1}, &.{2}, &.{3}, &.{4}, &.{5}, &.{9} };
+    state.feature(9);
+    try state.rowsDidChange(&.{&before}, &.{&after});
+    const p = state.pin(&.{ 1, 2, 3, 4, 5, 9 }).?;
+    try testing.expect(p.start <= 5 and 5 < p.start + p.count);
+    try testing.expectEqual(@as(?Id, 3), state.recency.first());
+}
+
+test "pane_stack_state: a featured pane that leaves every row is not featured" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    state.noteFocus(1);
+    const with = [_][]const Id{ &.{1}, &.{9} };
+    try state.noteRows(&.{&with});
+    state.feature(9);
+    const kept = [_][]const Id{ &.{1}, &.{9}, &.{2} };
+    try state.noteRows(&.{&kept});
+    try testing.expectEqual(@as(?Id, 9), state.featured);
+    const without = [_][]const Id{ &.{1}, &.{2} };
+    try state.noteRows(&.{&without});
+    try testing.expectEqual(@as(?Id, null), state.featured);
 }
 
 test "pane_stack_state: undoing a close brings back the row as it was" {

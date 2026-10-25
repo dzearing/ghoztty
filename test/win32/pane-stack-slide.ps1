@@ -185,6 +185,19 @@ try {
     & $exe +split --pane=s2 --direction=right --name=s3 | Out-Null
     $c4 = @(Wait-Shown $top 4)
     if ($c4.Count -ne 4) { Write-TestAssertedNothing -Reason "four panes never came up on show (got $($c4.Count))" }
+    # A scripted split keeps the caret where it was and is FEATURED until the
+    # next change of focus (T2257, Mac 71da9a680): it comes on show ahead of
+    # the focused pane where the row has no room. This layout is about the
+    # focus history, so the focus moves away and back, as a click would.
+    $listed = ((& $exe +list --json 2>$null) -join "`n") | ConvertFrom-Json
+    $node = @($listed.data.windows[0].tabs | Where-Object { $_.selected })[0].splits
+    while ($null -ne $node -and $node.type -ne 'leaf') { $node = $node.left }
+    $firstPane = if ($null -ne $node) { [string]$node.terminal.id } else { '' }
+    if (-not $firstPane) { Write-TestAssertedNothing -Reason '+list named no first pane to give the focus back to' }
+    $link = 'ghoztty-debug://focus/s1'; & $exe $link 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 500
+    $link = "ghoztty-debug://focus/$firstPane"; & $exe $link 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 800
     $names = @($null, 's1', 's2', 's3')
     Start-Sleep -Milliseconds 600
     $fourUp = @{}

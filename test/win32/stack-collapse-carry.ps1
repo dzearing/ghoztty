@@ -223,6 +223,19 @@ try {
     & $exe +split --pane=s3 --direction=right --name=s4 | Out-Null
     $ok = Wait-Until { @(Get-Leaves).Count -eq 5 } 15
     if (-not $ok) { Write-TestAssertedNothing -Reason "+list never named five panes ($(@(Get-Leaves).Count))" }
+    # A scripted split keeps the caret where it was and is FEATURED until the
+    # next change of focus (T2257, Mac 71da9a680): it comes on show ahead of
+    # the focused pane where the row has no room. This layout is about the
+    # focus history, so the focus moves away and back, as a click would.
+    $listed = ((& $exe +list --json 2>$null) -join "`n") | ConvertFrom-Json
+    $node = @($listed.data.windows[0].tabs | Where-Object { $_.selected })[0].splits
+    while ($null -ne $node -and $node.type -ne 'leaf') { $node = $node.left }
+    $firstPane = if ($null -ne $node) { [string]$node.terminal.id } else { '' }
+    if (-not $firstPane) { Write-TestAssertedNothing -Reason '+list named no first pane to give the focus back to' }
+    $link = 'ghoztty-debug://focus/s1'; & $exe $link 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 500
+    $link = "ghoztty-debug://focus/$firstPane"; & $exe $link 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 800
     Start-Sleep -Milliseconds 1000
     $all = @(Get-Panes $top)
     Say ("      dpi {0}; tree order: {1}; panes: {2}" -f $dpi, ((Get-Leaves | ForEach-Object Name) -join ', '), (Format-Cols $all))

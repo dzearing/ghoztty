@@ -1616,8 +1616,13 @@ AND the stashed-pane slots, so a restored pane never reflows.
   `aSidePaneOpenedWithoutFocusComesOnShow`,
   `aSidePaneInARowWithRoomForOneTakesItAndTheCallerKeepsTheCaret`,
   `aSidePaneOpenedWhileTheWindowIsCoveredIsThereWhenUncovered` (rules out a
-  covered window as a cause). Windows: T2257 (a side pane into a full row is
-  still born a strip there; since T2250 the `+split` reply says so).
+  covered window as a cause). Windows (T2257): the same rule —
+  `PaneStackState.featured`, set by `Window.insertPaneAsSplit` for a
+  background split; the layout reads it through `layoutRank` (ranks there are
+  unsigned, so the featured pane takes 0 and the history moves back one), and
+  it is also dropped once its pane leaves every row, since win32 pane ids are
+  addresses. Tests: the `side pane` cases in `pane_stack_state.zig` and
+  `test\win32\side-pane-featured.ps1`.
 - **Focus never MOVES onto a strip** unless the user asked for that pane:
   focusing one brings it out. (The one way the caret can sit in a strip is to
   have stayed there — the caller of a side pane, above.) Every handoff picks the pane on show nearest
