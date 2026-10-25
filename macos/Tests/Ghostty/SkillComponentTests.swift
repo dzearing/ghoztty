@@ -47,4 +47,45 @@ struct SkillComponentTests {
         try c.uninstall()
         #expect(c.state() == .notInstalled)
     }
+
+    /// A skill is its directory: the reference files `SKILL.md` points the
+    /// agent at are installed beside it, each with the marker, and go with it.
+    @Test func installsEveryFileOfASkill() throws {
+        let home = try tempHome()
+        let c = SkillComponent(agent: .claude, homeDirectoryURL: home, fileManager: .default)
+        try c.install()
+        let dir = home.appendingPathComponent(".claude/skills/ghoztty")
+        let bundled = try GhosttyAssets.skillFiles("ghoztty").map(\.path)
+        #expect(bundled.count > 1, "the ghoztty skill ships reference files beside SKILL.md")
+        for path in bundled {
+            let text = try String(contentsOf: dir.appendingPathComponent(path), encoding: .utf8)
+            #expect(text.contains(SkillComponent.marker), "\(path) carries the managed marker")
+        }
+        try c.uninstall()
+        #expect(!FileManager.default.fileExists(atPath: dir.path), "an emptied skill directory goes too")
+    }
+
+    /// A reference file an earlier version shipped and this one does not is
+    /// stale: it reads as outdated and an update removes it. A file of the
+    /// user's in the same directory is never touched.
+    @Test func anUpdateRemovesManagedFilesTheBundleNoLongerShips() throws {
+        let home = try tempHome()
+        let c = SkillComponent(agent: .claude, homeDirectoryURL: home, fileManager: .default)
+        try c.install()
+        let dir = home.appendingPathComponent(".claude/skills/ghoztty")
+        let stale = dir.appendingPathComponent("old-reference.md")
+        let mine = dir.appendingPathComponent("my-notes.md")
+        try "old\n\(SkillComponent.marker)\n".write(to: stale, atomically: true, encoding: .utf8)
+        try "my own notes".write(to: mine, atomically: true, encoding: .utf8)
+        #expect(c.state() == .outdated)
+
+        try c.install()
+        #expect(!FileManager.default.fileExists(atPath: stale.path))
+        #expect(FileManager.default.fileExists(atPath: mine.path))
+        #expect(c.state() == .installed)
+
+        try c.uninstall()
+        #expect(FileManager.default.fileExists(atPath: mine.path), "the user's file survives uninstall")
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("SKILL.md").path))
+    }
 }

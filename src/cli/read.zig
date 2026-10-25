@@ -209,6 +209,8 @@ fn sendReadQuery(
         jws.endArray() catch return error.IPCFailed;
     }
 
+    ipc.writeCallerPane(&jws) catch return error.IPCFailed;
+
     jws.endObject() catch return error.IPCFailed;
 
     const json_bytes = json_buf.written();

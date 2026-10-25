@@ -23,11 +23,12 @@ struct GhosttyAssetsTests {
     /// that the copy was rewritten rather than pasted.
     @Test func bundledSkillsNameTheAppsBannerPathNotThePlugins() throws {
         for name in SkillComponent.skillNames {
-            let text = try GhosttyAssets.skillMarkdown(name)
-            #expect(!text.contains(".claude/scripts/ghoztty-banner.sh"),
-                    "\(name) still points at the plugin-owned banner path")
-            #expect(!text.contains("CLAUDE_PLUGIN_ROOT"),
-                    "\(name) still references the plugin root")
+            for file in try GhosttyAssets.skillFiles(name) {
+                #expect(!file.contents.contains(".claude/scripts/ghoztty-banner.sh"),
+                        "\(name)/\(file.path) still points at the plugin-owned banner path")
+                #expect(!file.contents.contains("CLAUDE_PLUGIN_ROOT"),
+                        "\(name)/\(file.path) still references the plugin root")
+            }
         }
     }
 
@@ -37,9 +38,24 @@ struct GhosttyAssetsTests {
     /// bundled default's.
     @Test func bundledSkillsCarryNoAIAttribution() throws {
         for name in SkillComponent.skillNames {
-            let text = try GhosttyAssets.skillMarkdown(name).lowercased()
-            #expect(!text.contains("co-authored-by: claude"), "\(name) carries a Co-Authored-By trailer")
-            #expect(!text.contains("generated with [claude"), "\(name) carries a generated-with footer")
+            for file in try GhosttyAssets.skillFiles(name) {
+                let text = file.contents.lowercased()
+                #expect(!text.contains("co-authored-by: claude"), "\(name)/\(file.path) carries a Co-Authored-By trailer")
+                #expect(!text.contains("generated with [claude"), "\(name)/\(file.path) carries a generated-with footer")
+            }
+        }
+    }
+
+    /// The `ghoztty` skill is loaded into every session that lists it, so its
+    /// core stays short and every file it points at exists.
+    @Test func theGhozttySkillIsAShortCoreThatIndexesItsReferenceFiles() throws {
+        let files = try GhosttyAssets.skillFiles("ghoztty")
+        let core = try #require(files.first { $0.path == "SKILL.md" }?.contents)
+        #expect(core.utf8.count < 6_000, "SKILL.md is \(core.utf8.count) bytes")
+        let description = core.split(separator: "\n").first { $0.hasPrefix("description:") } ?? ""
+        #expect(description.utf8.count < 400, "the description is paid in every session's skill list")
+        for file in files where file.path != "SKILL.md" {
+            #expect(core.contains("`\(file.path)`"), "SKILL.md's index names \(file.path)")
         }
     }
 }

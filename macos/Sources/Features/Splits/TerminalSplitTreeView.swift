@@ -77,7 +77,7 @@ struct TerminalSplitTreeView: View {
         // as the panes behind a zoom are not. Divider gestures report nodes of
         // this tree; the controller lifts their ratios back onto the full one.
         let visible = tree.visibleTree
-        let ranks = Dictionary(uniqueKeysWithValues: stackState.recency.enumerated().map { ($1, $0) })
+        let ranks = stackState.ranks
         Group {
             if heroModeState.isActive {
                 HeroModeView(tree: visible, state: heroModeState)
@@ -146,7 +146,7 @@ private struct PaneGrid: View {
     let node: SplitTree<PaneView>.Node
     let isRoot: Bool
     let rearranging: Bool
-    /// `PaneStackState.recency` as ranks: 0 is the focused pane.
+    /// `PaneStackState.ranks`: 0 is the focused pane, a featured one -1.
     let ranks: [UUID: Int]
     /// Which rows the user collapsed — passed by value, so a change to them
     /// redraws the grid.

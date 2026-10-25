@@ -563,6 +563,84 @@ struct PaneStackWindowTests {
         #expect(added.isFocusedPane)
     }
 
+    /// An agent's side pane: `+split --view` from the pane with the caret,
+    /// which keeps the caret. In a row with no room for one more, the new
+    /// pane must still come on show — it is what was asked for — rather than
+    /// be born a strip nobody notices.
+    @Test(arguments: [2, 3])
+    func aSidePaneOpenedWithoutFocusComesOnShow(count: Int) async throws {
+        let width = CGFloat(count) * 300 + CGFloat(count + 1) * PaneElevation.gap + 40
+        let (controller, window, panes) = try await stackedWindow(count: count, width: width)
+        defer { controller.close() }
+        #expect(strips(window).isEmpty, "\(count) fit side by side")
+
+        let caller = panes[count - 1]
+        let viewer = ViewerView(location: "about:blank")
+        let added = try #require(controller.newViewerSplit(atPane: caller, direction: .right, viewer: viewer))
+        // The row stacks once it is laid out; under load that takes a while.
+        for _ in 0..<50 where strips(window).count < 2 { await settle(0.1) }
+        await settle(0.5)
+        try await capture(window, "side-pane-\(count)")
+
+        #expect(!strips(window).contains(added.id), "the side pane is on show, not a strip")
+        #expect(caller.isFocusedPane, "the caller keeps the caret")
+        #expect(caller.surfaceView.map { window.firstResponder === $0 } == true, "the caret really is there")
+        // Two cards and a strip fit in the wider window: the caller stays on
+        // show beside its side pane and the other panes make room. The
+        // narrower one has room for one card once a strip is needed, and the
+        // side pane is that card — the caller makes room, caret and all.
+        #expect(strips(window).contains(caller.id) == (count == 2), "\(strips(window))")
+        #expect(strips(window).count == 2, "3 panes with 1 on show, or 4 with 2")
+    }
+
+    /// Room for one pane only: the side pane is still the one on show, and
+    /// the caller — now the strip — keeps the caret. Focus never MOVES onto a
+    /// strip; here it stays where it was.
+    @Test func aSidePaneInARowWithRoomForOneTakesItAndTheCallerKeepsTheCaret() async throws {
+        let width = 300 + 2 * PaneElevation.gap + 40
+        let (controller, window, panes) = try await stackedWindow(count: 1, width: width)
+        defer { controller.close() }
+
+        let caller = panes[0]
+        let viewer = ViewerView(location: "about:blank")
+        let added = try #require(controller.newViewerSplit(atPane: caller, direction: .right, viewer: viewer))
+        for _ in 0..<50 where strips(window).isEmpty { await settle(0.1) }
+        await settle(0.5)
+        try await capture(window, "side-pane-room-for-one")
+
+        #expect(!strips(window).contains(added.id), "the side pane is on show")
+        #expect(strips(window).contains(caller.id), "the caller made room")
+        #expect(caller.isFocusedPane, "the caller keeps the caret")
+        #expect(caller.surfaceView.map { window.firstResponder === $0 } == true, "the caret really is there")
+    }
+
+    /// The user's flow: ask for a side pane, switch to another app, come
+    /// back. The split lands while the window is covered (occluded), and must
+    /// be on screen when the window is uncovered.
+    @Test func aSidePaneOpenedWhileTheWindowIsCoveredIsThereWhenUncovered() async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 1, width: 1200)
+        defer { controller.close() }
+        let cover = NSWindow(contentRect: window.frame.insetBy(dx: -40, dy: -40), styleMask: [.borderless], backing: .buffered, defer: false)
+        cover.backgroundColor = .black
+        cover.level = .floating
+        cover.orderFrontRegardless()
+        for _ in 0..<30 where window.occlusionState.contains(.visible) { await settle(0.1) }
+        let occluded = !window.occlusionState.contains(.visible)
+
+        let viewer = ViewerView(location: "about:blank")
+        let added = try #require(controller.newViewerSplit(atPane: panes[0], direction: .right, viewer: viewer))
+        await settle(3)
+        cover.orderOut(nil)
+        await settle(1.2)
+        try await capture(window, "side-pane-covered")
+
+        #expect(occluded, "the window was covered")
+        let card = try #require(cardRect(window, added), "the side pane has a card")
+        #expect(card.width > 300, "the side pane is on show: \(card)")
+        #expect(added.contentView.window === window)
+        #expect(added.contentView.frame.width > 300, "its content is laid out: \(added.contentView.frame)")
+    }
+
     // MARK: - A drag that goes on squeezing
 
     /// The user's repro: three panes side by side, the LEFT divider dragged

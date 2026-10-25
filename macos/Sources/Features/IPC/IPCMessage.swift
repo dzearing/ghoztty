@@ -3,6 +3,39 @@ import Foundation
 struct IPCRequest: Decodable {
     let action: String
     let arguments: [String]?
+    /// The pane the command was run from (`$GHOZTTY_PANE_ID`), which every
+    /// CLI command sends so a name is looked up in the caller's own window
+    /// first (`TargetLookup`). A top-level field rather than an argument
+    /// because it is additive both ways: an older app's decoder ignores it,
+    /// where an extra argument would have become banner text in its
+    /// `+set-banner`. Absent from an older CLI.
+    let callerPane: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case action, arguments
+        case callerPane = "caller_pane"
+    }
+
+    init(action: String, arguments: [String]?, callerPane: String? = nil) {
+        self.action = action
+        self.arguments = arguments
+        self.callerPane = callerPane
+    }
+
+    /// `arguments` with `callerPane` folded in as `--caller-pane=`, the one
+    /// spelling every handler reads — unless an argument already says it.
+    /// It goes in front of `-e`: everything from there on is the user's
+    /// command, verbatim.
+    var resolvedArguments: [String]? {
+        guard let callerPane, !callerPane.isEmpty else { return arguments }
+        var arguments = self.arguments ?? []
+        let commandStart = arguments.firstIndex(of: "-e") ?? arguments.endIndex
+        guard !arguments[..<commandStart].contains(where: { $0.hasPrefix("--caller-pane=") }) else {
+            return arguments
+        }
+        arguments.insert("--caller-pane=\(callerPane)", at: commandStart)
+        return arguments
+    }
 }
 
 struct IPCResponse: Encodable {

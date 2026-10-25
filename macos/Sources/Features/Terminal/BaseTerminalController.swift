@@ -658,6 +658,11 @@ class BaseTerminalController: NSWindowController,
     /// `focus` moves keyboard focus to the new pane, as every split the user
     /// asks for does. A script's split passes false (`IPCFocusPolicy`) so the
     /// pane that had the caret keeps it.
+    ///
+    /// `onCreate` is called with the new view once it exists; `onFinish` is
+    /// called exactly once either way, with the view or nil when there is
+    /// none — the only way to learn that an agent-backed split, which returns
+    /// nil here and finishes later, failed.
     @discardableResult
     func newSplit(
         at oldView: Ghostty.SurfaceView,
@@ -665,10 +670,14 @@ class BaseTerminalController: NSWindowController,
         baseConfig config: Ghostty.SurfaceConfiguration? = nil,
         ratio: Double = 0.5,
         focus: Bool = true,
-        onCreate: ((Ghostty.SurfaceView) -> Void)? = nil
+        onCreate: ((Ghostty.SurfaceView) -> Void)? = nil,
+        onFinish: ((Ghostty.SurfaceView?) -> Void)? = nil
     ) -> Ghostty.SurfaceView? {
         // We can only create new splits for surfaces in our tree.
-        guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
+        guard surfaceTree.root?.node(view: oldView) != nil else {
+            onFinish?(nil)
+            return nil
+        }
         if let anchor = surfaceTree.pane(for: oldView) { restoreSplitAnchor(anchor) }
 
         // Inherit and shift the parent's background color for visual depth.
@@ -748,18 +757,21 @@ class BaseTerminalController: NSWindowController,
                 from: oldView,
                 on: remoteConnection.handle
             ) { [weak self] _, cwd in
-                guard let self else { return }
+                guard let self else {
+                    onFinish?(nil)
+                    return
+                }
                 var cfg = effectiveConfig
                 if !alreadyHasCwd, let cwd { cfg.remoteWorkingDirectory = cwd }
-                if let newView = self.finishSplit(
+                let newView = self.finishSplit(
                     config: cfg,
                     at: oldView,
                     direction: direction,
                     ratio: ratio,
                     hasExplicitTint: hasExplicitTint,
-                    focus: focus) {
-                    onCreate?(newView)
-                }
+                    focus: focus)
+                if let newView { onCreate?(newView) }
+                onFinish?(newView)
             }
             return nil
         }
@@ -772,6 +784,7 @@ class BaseTerminalController: NSWindowController,
             hasExplicitTint: hasExplicitTint,
             focus: focus)
         if let newView { onCreate?(newView) }
+        onFinish?(newView)
         return newView
     }
 
@@ -813,6 +826,9 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
+        // A side pane never takes the caret, so it is what has to come on
+        // show (`PaneStackState.featured`).
+        paneStackState.feature(pane.id)
         keepingFirstResponder {
             replaceSurfaceTree(
                 newTree,
@@ -858,6 +874,9 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
+        // A split that leaves the caret where it was has to come on show
+        // without it (`PaneStackState.featured`).
+        if !focus { paneStackState.feature(newView.id) }
         keepingFirstResponder(unless: focus) {
             replaceSurfaceTree(
                 newTree,
@@ -905,6 +924,7 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
+        if !focus { paneStackState.feature(newView.id) }
         keepingFirstResponder(unless: focus) {
             replaceSurfaceTree(
                 newTree,
