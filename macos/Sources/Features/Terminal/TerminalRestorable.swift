@@ -85,6 +85,9 @@ final class TerminalRestorableState: TerminalRestorable {
     var paneSidebarHidden: Bool? {
         internalState.paneSidebarHidden
     }
+    var paneSidebarOrder: [UUID]? {
+        internalState.paneSidebarOrder
+    }
     var deskVariant: PaneDeskVariant? {
         internalState.deskVariant
     }
@@ -172,8 +175,9 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
             withSurfaceTree: state.surfaceTree)
 
         // The pane sidebar's layout before the window lays out its terminals.
-        if let pinned = state.paneSidebarPinned { c.paneSidebarState.isPinned = pinned }
+        if let expanded = state.paneSidebarPinned { c.paneSidebarState.isExpanded = expanded }
         if let hidden = state.paneSidebarHidden { c.paneSidebarState.isHidden = hidden }
+        if let order = state.paneSidebarOrder { c.paneSidebarState.order = order }
         c.deskVariant = state.deskVariant
 
         guard let window = c.window else {

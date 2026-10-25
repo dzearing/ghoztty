@@ -133,33 +133,62 @@ extension BaseTerminalController {
 
     // MARK: Sidebar visibility
 
-    /// The pin: flat panel ⇄ raised mini rail. Unpinning leaves the card open
-    /// under the pointer (it was just clicked) until the pointer leaves.
-    func togglePaneSidebarPin() {
-        setPaneSidebarPinned(!paneSidebarState.isPinned)
+    /// The button at the top of the bar: the full list ⇄ the icon rail.
+    func togglePaneSidebarExpanded() {
+        setPaneSidebarExpanded(!paneSidebarState.isExpanded)
     }
 
-    func setPaneSidebarPinned(_ pinned: Bool) {
+    func setPaneSidebarExpanded(_ expanded: Bool) {
         let state = paneSidebarState
-        guard state.isPinned != pinned else { return }
-        state.isPinned = pinned
-        state.isHoverOpen = !pinned
+        guard state.isExpanded != expanded else { return }
+        state.isExpanded = expanded
         syncPaneSidebarLayout()
     }
 
     /// Ctrl+Cmd+S: hide or show the sidebar entirely.
     func togglePaneSidebar() {
         paneSidebarState.isHidden.toggle()
-        paneSidebarState.isHoverOpen = false
         syncPaneSidebarLayout()
     }
 
-    /// The pin and hidden flags are layout: persist them with the window.
+    /// The expanded and hidden flags and the sidebar's order are layout:
+    /// persist them with the window.
     func syncPaneSidebarLayout() {
         window?.invalidateRestorableState()
         if sessionLayoutEntryID != nil {
             SessionLayoutManifest.shared.scheduleSync(self)
         }
+    }
+
+    // MARK: Sidebar order
+
+    /// This window's grid panes in the sidebar's order (`PaneSidebarOrder`).
+    var paneSidebarPanes: [PaneView] {
+        let visible = surfaceTree.visibleLeaves
+        let byID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        return PaneSidebarOrder.arranged(visible.map(\.id), by: paneSidebarState.order)
+            .compactMap { byID[$0] }
+    }
+
+    /// The order as persisted: only panes still in the window, and nothing
+    /// at all until the list has been reordered.
+    var paneSidebarPersistedOrder: [UUID] {
+        let existing = Set(surfaceTree.map(\.id))
+        return paneSidebarState.order.filter(existing.contains)
+    }
+
+    /// Put `pane`, which must be on the grid, at `index` of the sidebar's
+    /// list. The list only: the grid does not change.
+    func placeInPaneSidebar(_ pane: PaneView, at index: Int) {
+        let visible = surfaceTree.visibleLeaves.map(\.id)
+        guard visible.contains(pane.id) else { return }
+        let state = paneSidebarState
+        let order = PaneSidebarOrder.moving(
+            pane.id, to: index, visible: visible, order: state.order,
+            existing: Set(surfaceTree.map(\.id)))
+        guard order != state.order else { return }
+        state.order = order
+        syncPaneSidebarLayout()
     }
 
     // MARK: Close / kill

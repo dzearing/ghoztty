@@ -2,9 +2,9 @@
 
 A per-window, vertical list of every pane in the window. A pane can be
 **stashed** into it, which takes it out of the split grid without ending it,
-and restored from it by click or drag. Pinned, the list is a flat panel down
-the window's side; unpinned, it collapses to a raised rail of icons that opens
-while the pointer is over it.
+and restored from it by click or drag. Expanded, the list is a flat panel down
+the window's side; collapsed, it is a raised rail of one-letter icons. One
+button at the top of the bar switches between the two; nothing opens on hover.
 
 The problem, in the user's words: *"Right now I have a really difficult time
 managing panes that I just want to minimize in the window."* Today a pane can
@@ -22,11 +22,12 @@ mock converged on, including the choices that were tried and dropped.
 The sidebar lists **every pane in the window**, in two sections:
 
 ```
-┌─ PANES ─────────────── 📌 ┐
+┌─ PANES ─────────────── ◧ ┐
 │ ▸ zsh — ~/git/ghoztty     │   ← in the grid; the focused pane is selected
 │   claude — pane-sidebar ● │     ● busy
 │   README.md               │
-│ ───────────────────────── │
+│                           │
+│ ───────────────────────── │   ← anchored at the bottom of the bar
 │   STASHED                 │
 │   claude — relay   question│   ← out of the layout, still running
 │   tail -f app.log         │
@@ -37,7 +38,8 @@ The sidebar lists **every pane in the window**, in two sections:
 |---|---|---|
 | Click | Focus that pane | **Restore** it to where it was in the grid, and focus it |
 | Drag into the grid | Move it (the same drop as the hover grab handle) | **Restore** it at the drop target |
-| Drag into the stashed section | **Stash** it, at that position in the list | Reorder the stash |
+| Drag up or down the pane list | **Reorder the list** — the rows slide to make room; the grid does not change | **Restore** it, at that place in the list |
+| Drag into the tray (below the divider) | **Stash** it, at that position in the tray | Reorder the tray |
 | Drag to empty space or another window | Pop out / move, as today | Same, and it is no longer stashed |
 | Hover button | `−` stash | `↩` restore |
 | Right-click | Stash · Move to New Window · Close Pane | Restore · Swap with Focused Pane · Move to New Window · Close Pane |
@@ -45,8 +47,9 @@ The sidebar lists **every pane in the window**, in two sections:
 
 There is **no close button outside trash mode** (see Closing panes).
 
-Dragging any pane, from its grab handle or its rearrange-mode header, onto the
-sidebar stashes it. When a pane leaves the grid the remaining panes reflow to
+Dragging any pane, from its grab handle or its rearrange-mode header, into the
+**tray** stashes it; onto the pane list above the tray, it takes that place in
+the list. When a pane leaves the grid the remaining panes reflow to
 fill its space, exactly as they do when a pane is closed.
 
 **Vertical tabs are the extreme case, not a mode.** Stash everything except
@@ -58,7 +61,7 @@ one-pane-at-a-time switching for anyone who works that way.)
 ### Why this model won
 
 - **No mode to enter.** The sidebar is always valid. You stash a pane the same
-  way whether the sidebar is pinned, hidden, or in rearrange mode. The
+  way whether the sidebar is expanded, collapsed, hidden, or in rearrange mode. The
   complaint is about everyday pane management, and a feature you must switch
   into first would solve a different problem.
 - **It reads as one macOS sidebar.** Finder, Mail, and Xcode's navigator are
@@ -226,11 +229,10 @@ actions from it still find their controller.
   restore. Their frames are not animated, because an animated split resize is
   a run of `SIGWINCH`s that makes a TUI repaint its conversation once per
   frame. The *sidebar row* animates; the grid snaps.
-- **Pinning and unpinning** change the column's width, which resizes the
+- **Collapsing and expanding** change the column's width, which resizes the
   grid's panes once each way — the same trade rearrange mode's header makes:
-  the sidebar takes real space so that it never covers content. **Hovering
-  the mini rail resizes nothing**: the card opens over the grid while the
-  column stays mini (see Pinned and unpinned).
+  the sidebar takes real space so that it never covers content. Nothing else
+  changes the column (see Collapsed and expanded).
 
 Verified by measurement, not assumed: `PaneSidebarWindowTests` reads
 `ghostty_surface_size` before a stash, while stashed, and after restore (same
@@ -248,24 +250,31 @@ enum PaneDropTarget {
     …
     /// Stash the dragged pane into this window's sidebar at `index`.
     case stash(window: PaneDropWindowRef, index: Int)
+    /// Put it at `index` of the sidebar's pane list — the list, not the grid.
+    case sidebarOrder(window: PaneDropWindowRef, index: Int)
 }
 
-struct PaneDropCandidate {
-    …
-    let sidebarRect: CGRect?           // nil while the sidebar is hidden
-    let stashRowRects: [CGRect]        // stashed rows, top to bottom
+struct PaneDropCandidate.Sidebar {
+    let rect: CGRect                   // the drawn card or panel
+    let paneRows: [(id, rect)]         // the pane list, top to bottom, as laid out
+    let stashRows: [(id, rect)]        // the tray, top to bottom
+    let trayTop: CGFloat?              // the tray's divider
+    let windowGroups: [(window, rect)] // all-windows scope: other windows
 }
 ```
 
 **Precedence:** tab bar, then **sidebar**, then window edge band, then pane
 zones, then a new window. The sidebar comes before the edge band because it is
 chrome on top of the content, as the tab bar is. A point on it never also
-means a pane. Anywhere on the sidebar means stash, and the index is the gap
-between stashed rows nearest the pointer. Dropping onto the grid section also
-stashes, at the top of the stash, so a drop on the sidebar never does
-nothing.
+means a pane. The sidebar is **two lists split at the tray's divider**: above
+it a drop is `sidebarOrder` (a grid pane moves in the list, a stashed one is
+restored into it, another window's joins this window there); below it, `stash`.
+In both the index is the number of that list's rows, the dragged one aside,
+whose middle is above the pointer. The rows are measured **as laid out**, not
+as the drag slides them, so the index never moves under the pointer while the
+rows animate.
 
-**The mini rail is always a target.** Unpinned, the sidebar is still a column
+**The rail is always a target.** Collapsed, the sidebar is still a column
 of its own, so there is always something to drop on; no reveal gesture is
 needed. (An earlier draft had a hidden overlay that a 500ms dwell at the left
 edge slid in. The always-present rail made it unnecessary, and it was
@@ -309,16 +318,16 @@ deliberately split between two containers for its two states:
   while the window is key, the unemphasized fill otherwise, hover as a separate
   wash), `SidePanelCaption` for "PANES" / "STASHED", and
   `SidePanelResizeHandle` for drag-to-resize with a shared width preference.
-- **Pinned is a FLAT panel**, not a card: edge to edge down the window's left
+- **Expanded is a FLAT panel**, not a card: edge to edge down the window's left
   side, square, no shadow or rim, separated from the grid by a 1px rule in the
   split-divider color, on the terminal background lifted by the same wash the
-  card uses. Pinned, the sidebar is part of the window, so it should read as
+  card uses. Expanded, the sidebar is part of the window, so it should read as
   one more column of it, not as something floating on it. (The first draft
   made it the glass card; the mock showed that a floating card in a column the
   grid is laid out beside reads as an overlay that isn't one.)
-- **Unpinned is the raised glass card** — `SidePanelCard`'s shape, glass,
-  opaque base, and `GlassCard.outerMargin` (12pt on every side) — collapsed to
-  the mini rail. The card's opaque base becomes a parameter (it is hard-wired
+- **Collapsed is the raised glass card** — `SidePanelCard`'s shape, glass,
+  opaque base, and `GlassCard.outerMargin` (12pt on every side) — as the
+  rail. The card's opaque base becomes a parameter (it is hard-wired
   to the viewer document's colors today); the sidebar passes the terminal
   background, which is what it sits on.
 
@@ -336,9 +345,11 @@ dims it). On/off is read from the glyph itself, never from a blue tint:
 |---|---|---|
 | All windows | `macwindow.on.rectangle` | filled; caption reads **ALL WINDOWS** |
 | Trash | `trash` | `trash.fill` in system red; caption reads **CLICK × TO KILL** in red |
-| Pin | `pin`, tilted 45° | `pin.fill`, upright (the tilt animates) |
+| Collapse | — | a window with its sidebar panel filled: collapses to the rail |
 
-In the mini rail the three stack vertically at the top of the card.
+The rail has one button at its top — the same glyph, panel outlined —
+which expands it (disabled in a window too narrow for the panel). The other
+two are there once it is expanded.
 
 ### Rows
 
@@ -382,69 +393,94 @@ In the mini rail the three stack vertically at the top of the card.
   - `idle`: nothing.
   - A **bell** on a stashed pane shows a dot until the pane is restored.
 
-The two sections share one list with a hairline divider and a "STASHED"
-caption (with a count) that appears only when the stash is non-empty. During a
-drag with nothing stashed, an empty "Drop to stash — it keeps running" slot
-appears so the target is visible.
+The pane list scrolls; under it, **anchored at the bottom of the bar**, are a
+hairline divider and the **tray**: a "STASHED" caption (with a count) and the
+stashed rows. The tray is always there in this window's list, since it is a
+drop target; it takes up to 45% of the bar and scrolls on its own past that.
+During a drag with nothing stashed, an empty "Drop to stash — it keeps
+running" slot appears so the target is visible.
+
+**Reordering.** The list has its own order (`PaneSidebarState.order`,
+`PaneSidebarOrder`): dragging a row up or down changes the list and never the
+grid. While a drag is over the sidebar the dragged row is lifted out, leaving
+its gap, and the rows it passes slide by its height to open a gap where it
+would land (`PaneSidebarOrder.shift`, a 0.2s bounded animation; none once the
+drag ends, since the drop re-lays the list out where the rows were already
+drawn). A row crossing between the list and the tray closes its gap in one and
+opens one in the other; each list holds a row's worth of room at its end for
+the whole drag, so nothing re-lays out under the pointer.
+- A pane the order has never seen — a new split, a pane from another window —
+  goes after its nearest tree neighbour the order knows (so a split appears
+  beside the pane it came from), else before the next, else at the end.
+- A stashed pane keeps its place in the order, so restoring it brings it back
+  to the same spot. Closed panes are pruned on the next move and never
+  persisted.
+- Until the first reorder the order is empty, which means the tree's order.
+- It persists with the other sidebar layout (session manifest
+  `paneSidebarOrder`, window restoration), by stable pane id.
 
 **While the sidebar is hidden,** a stashed pane asking a question still shows,
 because the window title's activity suffix is aggregated across every leaf in
 the tree and stashed panes are still in it.
 
-### The mini rail
+### The rail
 
-Unpinned, the card collapses to a 44pt rail (a 68pt column with its margins).
-Every pane is a 28pt tile in the same order, the focused one in the selection
-pill, and a hairline between the grid and stashed sections.
+Collapsed, the card is a 44pt rail (a 68pt column with its margins). Every
+pane is a 28pt tile in the same order as the list, the focused one in the
+selection pill, and the tray under a hairline at the bottom.
 
-- **Tiles need labels.** Every terminal has the same icon, so a terminal tile
-  shows a short **monogram** taken from the part of its title that tells panes
-  apart: the text after an em dash if there is one (`claude — relay` → `RE`,
-  `claude — pane-sidebar` → `PS`), else the command name (`zsh`, `npm`), up to
-  three characters. Viewer tiles keep their kind glyph.
+- **A tile is one letter**: the first letter or digit of what the pane is
+  called (`PaneView.displayLabel` — its banner title, else its title, exactly
+  as a stacked pane's strip is named), upper-cased, for every kind of pane
+  (`PaneSidebarText.monogram`). A leading glyph is skipped — Claude Code
+  titles its pane `✳ <task>`, a shell `~/…` — or every such pane would get
+  the same tile; a name with no letters at all shows its first visible
+  character. (It replaced a heuristic of up to three characters taken from
+  after an em dash or from the command name, which named panes differently
+  from their rows.) A tile carries a tooltip with its full name.
 - **Activity rides as a corner badge**: a blue `?` (question) top-right, a dot
-  (bell); busy is the same shimmer, on the monogram.
-- **Hovering the rail opens the card** (after the 140ms intent delay), so the
-  full rows are the label; a tile also carries a tooltip with its title. (The
-  mock's separate hover label was dropped — the card opening makes it
-  redundant.)
+  (bell); busy is the same shimmer, on the letter.
+- **The rail never opens on hover.** It used to open to full width over the
+  grid after a short intent delay; but the rail is where its tiles are
+  dragged, and a card springing open under a drag is in the way of exactly
+  that. The button at its top expands it.
 
-### Pinned and unpinned
+### Collapsed and expanded
 
-| | Pinned | Unpinned |
+| | Expanded | Collapsed |
 |---|---|---|
-| Look | Flat panel, full width | Raised glass card, collapsed to the mini rail |
+| Look | Flat panel, full width | Raised glass card: the rail |
 | Column | `--sidebar-w` (default 240, drag the edge) | 68pt |
-| Pointer over it | — | Opens to full width **over** the grid after a 140ms intent delay; contracts ~0.3s after the pointer leaves |
+| Switched by | The button at the top of the bar | The same |
 | Persisted | Yes, per window, in the session manifest | (the same flag) |
-| Narrow window (< 720pt) | Shows the mini rail — the full panel would crowd the grid, the rail doesn't | Mini rail |
+| Narrow window (< 720pt) | Shows the rail — the full panel would crowd the grid, the rail doesn't; the expand button is off | Rail |
 
-- **Pin is the expand/collapse control.** There is no separate collapse
-  button. Pulling the rail's edge past 120pt pins it open; a pinned panel's
-  edge only resizes it, stopping at the minimum and maximum widths — it never
-  unpins under a drag (that read as the panel jumping away mid-resize).
-- **Unpinning never snaps shut under the pointer.** The pointer is on the pin
-  when you click it, so the card stays open until the pointer leaves.
-- **The hover-open card floats; the column does not widen.** Widening the
-  column on hover would resize every terminal in the window — a `SIGWINCH` and
-  a TUI redraw — each time the pointer passed by. Only pin/unpin, which are
-  deliberate, change the column.
-- The card never contracts out from under an open menu, a confirmation, or a
-  drag.
+- **One button, at the top of the bar.** Pulling the rail's edge past 120pt
+  also expands it; an expanded panel's edge only resizes it, stopping at the
+  minimum and maximum widths — it never collapses under a drag (that read as
+  the panel jumping away mid-resize).
+- **Only collapse/expand and hide/show change the column**, and so resize the
+  window's terminals: each is something somebody chose.
 - **Ctrl+Cmd+S hides or shows the sidebar entirely.** Hidden is persisted
-  with the pin.
-- An earlier draft had an *overlay* mode (unpinned = hidden; the shortcut
-  slid a floating card in). The mini rail replaced it: it keeps every pane's
-  state visible for 68pt and is always a drop target.
+  with the expanded flag.
+- **It replaced a pin.** Pinned was the flat panel; unpinned was the rail,
+  which opened over the grid while the pointer was over it. The pin and the
+  hover-open card are gone. The persisted flag keeps its old name
+  (`paneSidebarPinned`, and `PaneSidebarPinned` in UserDefaults as a fallback
+  for the new `PaneSidebarExpanded`): pinned meant the full panel, which is
+  what expanded is, so old state reads as-is.
+- An earlier draft had an *overlay* mode (the shortcut slid a floating card
+  in). The rail replaced it: it keeps every pane's state visible for 68pt and
+  is always a drop target.
 
 **Why the stash persists.** The viewer side panel's open/closed state is
 deliberately ephemeral because restoring an overlay would hide the content it
 covers. A **stash** is different: it is the window's layout, like a split
 ratio or a zoom, and losing it on relaunch would hand back every pane you put
-away. The **pin** and **hidden** flags are layout too (they size the column),
-so they persist. The hover-open state, the trash mode, and the all-windows
-scope are not persisted — the first two are transient by nature, and a window
-should never come back in kill mode.
+away. The **expanded** and **hidden** flags are layout too (they size the
+column), and so is the list's **order**; all three persist. The trash mode and
+the all-windows scope are not persisted — a window should never come back in
+kill mode.
 
 ### All windows
 
@@ -485,8 +521,7 @@ to every Ghoztty window, so window management can happen from one list.
 - Drag a row into this grid to bring the pane here; drag one of this window's
   rows onto another window's group to send it there. Both are the existing
   cross-window move.
-- In the mini rail, windows are separated by a hairline; the hover label
-  names the window.
+- In the rail, windows are separated by a hairline.
 
 ### Closing panes
 
@@ -548,7 +583,7 @@ to opt out. Each pane is a slightly raised rounded card on a soft gradient —
 blue pooling at the top-leading corner, teal at the bottom-trailing, over deep
 slate (pale counterparts on a light terminal theme) — "the simplicity of the
 ocean option". One 10pt spacing is every gutter — pane to pane (still the divider),
-pane to window edge, and around the mini rail, which takes no trailing margin
+pane to window edge, and around the rail, which takes no trailing margin
 of its own because the grid's margin is that gap. (The first build used an 8pt
 gap beside a 10pt margin, and the rail's own 12pt card margin on top of the
 grid's: three numbers that read as uneven. Now one constant,
@@ -573,7 +608,7 @@ two-pool shape with a neighboring second hue, which lit the bottom-trailing
 corner instead of darkening it and read as duo-toned. Ocean, the default,
 keeps its two pools. It persists as a seed (`PaneDeskVariant`), and the palette is derived from
 the seed for the CURRENT theme, so a window keeps its character across a
-light/dark switch and a session restore. The pinned sidebar panel goes
+light/dark switch and a session restore. The expanded sidebar panel goes
 translucent over the same gradient instead of carrying its own 1px rule. Cost:
 roughly a column or two per split, which is the trade for the depth.
 
@@ -610,7 +645,9 @@ changing any existing field.
 - `stashedPaneIDs: [String]?`: the ordered stash, keyed by the stable pane id
   (the leaf's `surfaceID`, which is `$GHOZTTY_PANE_ID`), the same keying
   per-pane banners use.
-- `paneSidebarPinned: Bool?`
+- `paneSidebarPinned: Bool?` (true = expanded; the name predates collapse/expand)
+- `paneSidebarHidden: Bool?`
+- `paneSidebarOrder: [UUID]?`: the list's own order, by stable pane id
 
 On restore, the tree is rebuilt with the full topology, so stashed leaves come
 back in their slots, and then `stashed` is applied. An older app reading a
@@ -637,12 +674,19 @@ inspection and by the user's feel test, not by synthetic events (synthetic
 - **`PaneDropResolverTests`**: the `.stash` target, its precedence over the
   edge band, its index math, a hidden sidebar resolving as before, and the
   left-edge dwell.
-- **`PaneSidebarStateTests`**: pin/overlay state, the narrow-window fallback,
-  and which state persists.
+- **`PaneSidebarStateTests`**: collapsed/expanded mode, the narrow-window
+  fallback, the pin → expanded migration, and which state persists.
+- **`PaneSidebarOrderTests`**: the list's order against the tree (new,
+  stashed and closed panes) and the slide of each row during a drag.
+- **`PaneSidebarTextTests`**: names, subtitles, and the one-letter monogram.
+- **`PaneSidebarWindowTests.dragReordersTheListAndTheTrayStashesAndRestores`**:
+  in both modes, a real window driven through `PaneDragSession` — a reorder
+  (the rows slide while it is held; the grid unchanged), into the tray, and
+  back out to the top of the list.
 - **IPC**: `+list` JSON shape, plus `+stash`/`+restore` idempotency and the
   last-visible-pane error.
 - **Layout**: the offscreen `NSHostingView` harness for the sidebar's geometry
-  (card margins against a TOC card, row metrics, pinned gutter width).
+  (card margins against a TOC card, row metrics, expanded gutter width).
   Geometry from that harness is reliable; glass and color are not, and those
   are checked by eye in the debug app.
 - **Geometry property**: the measured grid size of a stashed terminal is

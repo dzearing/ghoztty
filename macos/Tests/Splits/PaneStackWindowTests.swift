@@ -719,7 +719,7 @@ struct PaneStackWindowTests {
         #expect(!controller.paneStackState.isGesturing)
     }
 
-    /// A terminal beside a viewer, the sidebar pinned, the divider dragged to
+    /// A terminal beside a viewer, the sidebar expanded, the divider dragged to
     /// the window's edge so the terminal is a strip; then the grip between
     /// the strip and the viewer pulled away from the strip, with real mouse
     /// events, like the divider it stands in for. The terminal comes out
@@ -746,7 +746,7 @@ struct PaneStackWindowTests {
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         defer { controller.close() }
         controller.paneSidebarState.isHidden = false
-        controller.paneSidebarState.isPinned = true
+        controller.paneSidebarState.isExpanded = true
         for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 1400, height: 800))
@@ -1704,12 +1704,12 @@ struct PaneStackWindowTests {
         await settle(1.0)
         try expectResizersInGutters(window, "side by side")
 
-        // The sidebar pinned beside them.
+        // The sidebar expanded beside them.
         controller.paneSidebarState.isHidden = false
-        controller.setPaneSidebarPinned(true)
+        controller.setPaneSidebarExpanded(true)
         await settle(1.0)
-        try expectResizersInGutters(window, "pinned sidebar")
-        controller.setPaneSidebarPinned(false)
+        try expectResizersInGutters(window, "expanded sidebar")
+        controller.setPaneSidebarExpanded(false)
         await settle(1.0)
         try expectResizersInGutters(window, "sidebar rail")
     }
@@ -1718,12 +1718,12 @@ struct PaneStackWindowTests {
     /// panes — all of that gutter, and not from inside the sidebar, whose
     /// edge is a click on the list. It used to straddle the edge: half
     /// inside the sidebar, and only part of the gutter.
-    @Test func thePinnedSidebarResizesFromTheGutterBesideIt() async throws {
+    @Test func theExpandedSidebarResizesFromTheGutterBesideIt() async throws {
         let (controller, window, _) = try await stackedWindow(count: 2, width: 1300)
         defer { controller.close() }
         try #require(controller.ghostty.config.macosPaneStyle == .elevated)
         controller.paneSidebarState.isHidden = false
-        controller.setPaneSidebarPinned(true)
+        controller.setPaneSidebarExpanded(true)
         await settle(1.0)
         let host = try #require(all(PaneSidebarHostView.self, in: window.contentView!).first)
         let edge = host.convert(host.cardRect, to: nil).maxX

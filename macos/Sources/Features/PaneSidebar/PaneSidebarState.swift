@@ -5,29 +5,28 @@ import SwiftUI
 ///
 /// Two kinds of state live here, and the difference matters:
 ///
-/// - **Layout** — `isPinned` and `isHidden`. They size the sidebar's column,
-///   which is part of the window's layout, so they persist (per window, in the
-///   session-layout manifest) and are what new windows start from.
-/// - **Transient** — `isHoverOpen`, `isQuickKill`, `showsAllWindows`, and the
-///   all-windows folds. Never persisted: a hover is over when the pointer
-///   leaves, and a window must never come back in kill mode.
+/// - **Layout** — `isExpanded` and `isHidden`. They size the sidebar's
+///   column, which is part of the window's layout, so they persist (per
+///   window, in the session-layout manifest) and are what new windows start
+///   from. So does `order`, the sidebar's own order of the panes.
+/// - **Transient** — `isQuickKill`, `showsAllWindows`, and the all-windows
+///   folds. Never persisted: a window must never come back in kill mode.
 ///
 /// The stash itself is NOT here — it is part of the tree (`SplitTree.stashed`),
 /// which is what keeps a stashed pane in the window for everything else.
 @MainActor
 final class PaneSidebarState: ObservableObject {
-    /// Flat, full-width panel (true) or the raised mini rail (false).
-    @Published var isPinned: Bool {
-        didSet { if isPinned != oldValue { Self.rememberForNewWindows(self) } }
+    /// The full list (true) or the icon-only rail (false). One button at the
+    /// top of the bar switches it; nothing else does — there is no hover-open,
+    /// since the rail is where its icons are dragged.
+    @Published var isExpanded: Bool {
+        didSet { if isExpanded != oldValue { Self.rememberForNewWindows(self) } }
     }
 
     /// Hidden outright (Ctrl+Cmd+S). Not a drop target while hidden.
     @Published var isHidden: Bool {
         didSet { if isHidden != oldValue { Self.rememberForNewWindows(self) } }
     }
-
-    /// The mini rail is open to full width under the pointer.
-    @Published var isHoverOpen: Bool = false
 
     /// Trash mode: every row grows a red × that kills with no confirmation.
     @Published var isQuickKill: Bool = false
@@ -46,9 +45,14 @@ final class PaneSidebarState: ObservableObject {
 
     /// The all-windows search (`PaneSidebarFilter`). Empty = no filter.
     @Published var filter: String = ""
-    /// The search field has the caret: an open hover card stays open while
-    /// someone is typing in it, wherever the pointer wanders.
-    @Published var isFilterFocused: Bool = false
+
+    /// The sidebar's own order of this window's panes, by pane id — what a
+    /// drag within the list changes. It orders the LIST only: the grid is
+    /// never touched. Empty until the first reorder, which means "the tree's
+    /// order". Read through `PaneSidebarOrder.arranged`, which also places
+    /// panes it has never seen; a stashed pane keeps its place in it, so it
+    /// comes back to the same spot.
+    @Published var order: [UUID] = []
 
     /// Window groups whose fold the user flipped away from its default in the
     /// all-windows list (`isWindowFolded`). Holding the flips rather than the
@@ -71,9 +75,9 @@ final class PaneSidebarState: ObservableObject {
         didSet { UserDefaults.standard.set(Double(width), forKey: Self.widthKey) }
     }
 
-    init(isPinned: Bool? = nil, isHidden: Bool? = nil) {
+    init(isExpanded: Bool? = nil, isHidden: Bool? = nil) {
         let defaults = UserDefaults.standard
-        self.isPinned = isPinned ?? (defaults.object(forKey: Self.pinnedKey) as? Bool ?? false)
+        self.isExpanded = isExpanded ?? Self.storedExpanded(defaults)
         self.isHidden = isHidden ?? (defaults.object(forKey: Self.hiddenKey) as? Bool ?? false)
         let stored = defaults.double(forKey: Self.widthKey)
         self.width = stored > 0 ? Self.clampWidth(CGFloat(stored)) : Self.defaultWidth
@@ -83,13 +87,13 @@ final class PaneSidebarState: ObservableObject {
 
     enum Mode: Equatable {
         case hidden
-        /// Pinned: the flat panel.
+        /// The flat panel: every pane as a full row.
         case expanded
-        /// Unpinned (or a narrow window): the raised mini rail.
-        case mini
+        /// Collapsed (or a narrow window): the raised icon-only rail.
+        case collapsed
     }
 
-    /// Below this window width the full panel would crowd the grid; the mini
+    /// Below this window width the full panel would crowd the grid; the
     /// rail doesn't. The same breakpoint the viewer side panel uses.
     nonisolated static let narrowWindowWidth: CGFloat = 720
 
@@ -97,7 +101,7 @@ final class PaneSidebarState: ObservableObject {
     nonisolated static let minimumWidth: CGFloat = 180
     nonisolated static let maximumWidth: CGFloat = 380
 
-    /// The mini rail's card.
+    /// The rail's card.
     nonisolated static let railCardWidth: CGFloat = 44
 
     /// The space around the raised rail card.
@@ -119,7 +123,7 @@ final class PaneSidebarState: ObservableObject {
                     trailing: GlassCard.outerMargin)
     }
 
-    /// Where the pinned panel's resize grip lies, from the panel's edge.
+    /// Where the expanded panel's resize grip lies, from the panel's edge.
     /// Elevated: all of the gutter between the panel and the panes (the
     /// grid's margin), as every resizer lives in a gutter — it used to
     /// straddle the edge, half of it a click on the list. Flat: the grid
@@ -130,7 +134,7 @@ final class PaneSidebarState: ObservableObject {
             : (-SidePanelResizeHandle.grabWidth, SidePanelResizeHandle.grabWidth)
     }
 
-    /// How far the pinned panel's host reaches past its edge: as far as the
+    /// How far the expanded panel's host reaches past its edge: as far as the
     /// grip does.
     static func pinnedEdgeReach(elevated: Bool) -> CGFloat {
         let grip = pinnedEdgeGrip(elevated: elevated)
@@ -143,20 +147,21 @@ final class PaneSidebarState: ObservableObject {
         return insets.leading + railCardWidth + insets.trailing
     }
 
-    /// A rail pulled out past this pins. (A pinned panel dragged narrow just
-    /// stops at `minimumWidth` — it never unpins itself.)
+    /// A rail's edge pulled out past this expands it. (An expanded panel
+    /// dragged narrow just stops at `minimumWidth` — it never collapses
+    /// itself.)
     nonisolated static let expandThreshold: CGFloat = 120
 
-    /// Hover-open timing: a short intent delay on the way in (so passing over
-    /// the rail on the way somewhere else doesn't pop it open) and a grace
-    /// period on the way out.
-    nonisolated static let hoverOpenDelay: TimeInterval = 0.1
-    nonisolated static let hoverCloseDelay: TimeInterval = 0.28
-
-    nonisolated static func mode(isPinned: Bool, isHidden: Bool, windowWidth: CGFloat) -> Mode {
+    nonisolated static func mode(isExpanded: Bool, isHidden: Bool, windowWidth: CGFloat) -> Mode {
         if isHidden { return .hidden }
-        if isPinned && windowWidth >= narrowWindowWidth { return .expanded }
-        return .mini
+        if isExpanded && windowWidth >= narrowWindowWidth { return .expanded }
+        return .collapsed
+    }
+
+    /// Whether the collapse/expand button can expand: not in a window too
+    /// narrow for the panel, where the rail is forced.
+    nonisolated static func canExpand(windowWidth: CGFloat) -> Bool {
+        windowWidth >= narrowWindowWidth
     }
 
     /// Whether a window's panes are folded away in the all-windows list.
@@ -174,20 +179,17 @@ final class PaneSidebarState: ObservableObject {
     }
 
     func mode(windowWidth: CGFloat) -> Mode {
-        Self.mode(isPinned: isPinned, isHidden: isHidden, windowWidth: windowWidth)
+        Self.mode(isExpanded: isExpanded, isHidden: isHidden, windowWidth: windowWidth)
     }
 
     /// The width of the sidebar's COLUMN — what the grid is laid out beside.
-    ///
-    /// Deliberately independent of `isHoverOpen`: the hover-open card floats
-    /// over the grid. Widening the column on hover would resize every terminal
-    /// in the window (a SIGWINCH and a TUI redraw) each time the pointer
-    /// passed by; only pin/unpin, which are deliberate, change it.
+    /// Only collapse/expand and hide/show change it, so a terminal is resized
+    /// only by something somebody chose.
     nonisolated static func columnWidth(for mode: Mode, panelWidth: CGFloat, elevated: Bool) -> CGFloat {
         switch mode {
         case .hidden: 0
         case .expanded: panelWidth
-        case .mini: railColumnWidth(elevated: elevated)
+        case .collapsed: railColumnWidth(elevated: elevated)
         }
     }
 
@@ -197,14 +199,23 @@ final class PaneSidebarState: ObservableObject {
 
     // MARK: Defaults for new windows
 
-    private static let pinnedKey = "PaneSidebarPinned"
+    private static let expandedKey = "PaneSidebarExpanded"
+    /// Before collapse/expand there was a pin: pinned was the flat full panel,
+    /// which is what expanded is, so a stored pin is read as that.
+    private static let legacyPinnedKey = "PaneSidebarPinned"
     private static let hiddenKey = "PaneSidebarHidden"
     private static let widthKey = "PaneSidebarWidth"
+
+    nonisolated static func storedExpanded(_ defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: expandedKey) as? Bool
+            ?? defaults.object(forKey: legacyPinnedKey) as? Bool
+            ?? false
+    }
 
     /// New windows start from the most recently chosen layout, the way a
     /// Finder window's sidebar does.
     private static func rememberForNewWindows(_ state: PaneSidebarState) {
-        UserDefaults.standard.set(state.isPinned, forKey: pinnedKey)
+        UserDefaults.standard.set(state.isExpanded, forKey: expandedKey)
         UserDefaults.standard.set(state.isHidden, forKey: hiddenKey)
     }
 }
@@ -214,40 +225,18 @@ final class PaneSidebarState: ObservableObject {
 /// The text a sidebar row or rail tile shows for a pane. Pure, so the rules
 /// are unit-tested (`PaneSidebarTextTests`).
 enum PaneSidebarText {
-    /// A rail tile's label. Every terminal shares one icon, so a tile needs
-    /// text that tells panes apart: the part of the title after an em dash
-    /// (`claude — relay` → `RE`), else the command's first word (`zsh`,
-    /// `npm`), up to three characters.
-    static func monogram(for title: String) -> String {
-        let trimmed = title.trimmingCharacters(in: .whitespaces)
-        if let dash = trimmed.range(of: " — ") ?? trimmed.range(of: " - ") {
-            let tail = trimmed[dash.upperBound...].trimmingCharacters(in: .whitespaces)
-            let words = tail
-                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-                .filter { !$0.isEmpty }
-            if words.count >= 2 {
-                return String(words.prefix(2).compactMap(\.first)).uppercased()
-            }
-            if let word = words.first {
-                return String(word.prefix(2)).uppercased()
-            }
+    /// A rail tile's label: ONE character of what the pane is called
+    /// (`label` — its banner title, else its title, exactly as a stacked
+    /// pane's strip is named), so a tile and the row it collapsed from name
+    /// the pane the same way. The first letter or digit, upper-cased: a title
+    /// that opens with a glyph — Claude Code's `✳ ` / spinner prefix, a path's
+    /// `~/` — would otherwise give every such pane the same tile. A label with
+    /// no letters at all shows its first visible character.
+    static func monogram(for label: String) -> String {
+        if let letter = label.first(where: { $0.isLetter || $0.isNumber }) {
+            return String(letter).uppercased()
         }
-        // A path — what a shell titles itself by default: its last component,
-        // and home is "~" itself (a mark, not a bullet).
-        if trimmed == "~" || trimmed.hasPrefix("~/") || trimmed.hasPrefix("/") {
-            let last = (trimmed as NSString).lastPathComponent
-            if last == "~" || last == "/" || last.isEmpty { return trimmed == "/" ? "/" : "~" }
-            let letters = last.filter { $0.isLetter || $0.isNumber }
-            if !letters.isEmpty { return String(letters.prefix(3)).lowercased() }
-        }
-        // A command: its first word, minus any path ("/bin/zsh" → "zsh").
-        let first = trimmed.split(separator: " ").first.map(String.init) ?? trimmed
-        let command = (first as NSString).lastPathComponent
-        let letters = command.filter { $0.isLetter || $0.isNumber }
-        if !letters.isEmpty { return String(letters.prefix(3)).lowercased() }
-        // No letters at all: show what there is rather than a bullet.
-        let visible = trimmed.filter { !$0.isWhitespace }
-        return visible.isEmpty ? "•" : String(visible.prefix(2))
+        return label.first(where: { !$0.isWhitespace }).map(String.init) ?? "•"
     }
 
     /// The name a row shows. A terminal that never set a title carries
@@ -473,5 +462,91 @@ enum PaneSidebarFilter {
         return terms.allSatisfy {
             haystack.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
+    }
+}
+
+// MARK: - Sidebar order (pure)
+
+/// The sidebar's own order of a window's panes. A drag in the list reorders
+/// the LIST — the grid stays as it is — so the list keeps an order of its
+/// own, reconciled against the tree on every read. Tested in
+/// `PaneSidebarOrderTests`.
+///
+/// - Panes the order has never seen (a new split, a pane moved in from
+///   another window) go beside their tree neighbour: after the nearest pane
+///   before them in the tree that the order knows, else before the nearest
+///   after them, else at the end. A split appears next to the pane it came
+///   from.
+/// - A pane that leaves the grid (stashed) keeps its place in the order, so
+///   it comes back to the same spot. A closed pane is pruned on the next
+///   move.
+enum PaneSidebarOrder {
+    /// `visible` — the grid's panes, in tree order — in the sidebar's order.
+    static func arranged(_ visible: [UUID], by order: [UUID]) -> [UUID] {
+        guard !order.isEmpty else { return visible }
+        let shown = Set(visible)
+        var result = order.filter { shown.contains($0) }
+        var known = Set(result)
+        for (index, id) in visible.enumerated() where !known.contains(id) {
+            if let before = visible[..<index].last(where: known.contains),
+               let at = result.firstIndex(of: before) {
+                result.insert(id, at: at + 1)
+            } else if let after = visible[(index + 1)...].first(where: known.contains),
+                      let at = result.firstIndex(of: after) {
+                result.insert(id, at: at)
+            } else {
+                result.append(id)
+            }
+            known.insert(id)
+        }
+        return result
+    }
+
+    /// The order after moving `id` to `index` of the arranged list, which
+    /// `id` must be in (`visible`). Ids the order knows that are not on show
+    /// (stashed panes) keep their place after whatever preceded them; ids in
+    /// neither `visible` nor `existing` are dropped.
+    static func moving(
+        _ id: UUID,
+        to index: Int,
+        visible: [UUID],
+        order: [UUID],
+        existing: Set<UUID>
+    ) -> [UUID] {
+        var list = arranged(visible, by: order).filter { $0 != id }
+        list.insert(id, at: Swift.min(Swift.max(index, 0), list.count))
+        // Put back the panes not on show, each after the id it followed.
+        let onShow = Set(list)
+        var previous: UUID?
+        var followers: [UUID?: [UUID]] = [:]
+        for entry in order {
+            // Not after the moved pane: the others stay where they were.
+            if onShow.contains(entry) {
+                if entry != id { previous = entry }
+            } else if existing.contains(entry) {
+                followers[previous, default: []].append(entry)
+            }
+        }
+        var result = followers[nil] ?? []
+        for entry in list {
+            result.append(entry)
+            result.append(contentsOf: followers[entry] ?? [])
+        }
+        return result
+    }
+
+    /// Where each of a section's rows is drawn while a drag is over the
+    /// sidebar: the dragged row's gap closes where it left and opens where it
+    /// would land, every other row sliding by the dragged row's height.
+    /// `source` is the dragged row's index in this section (nil when it comes
+    /// from elsewhere); `target` the index it would land at, of the section
+    /// without it (nil when it would land elsewhere). The offset of row
+    /// `index`, in rows (multiply by the row height).
+    static func shift(index: Int, source: Int?, target: Int?) -> Int {
+        if index == source { return 0 }
+        let after = source.map { index > $0 } ?? false
+        let without = after ? index - 1 : index
+        let opens = target.map { without >= $0 } ?? false
+        return (opens ? 1 : 0) - (after ? 1 : 0)
     }
 }

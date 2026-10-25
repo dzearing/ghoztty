@@ -9,7 +9,9 @@ import SwiftUI
 enum PaneSidebarSymbol: Equatable {
     case windows(filled: Bool)
     case trash(filled: Bool)
-    case pin(filled: Bool)
+    /// The collapse/expand button: a window with its sidebar, filled while
+    /// the sidebar is expanded.
+    case sidebar(expanded: Bool)
     case terminal
     case document
     case globe
@@ -20,7 +22,7 @@ enum PaneSidebarSymbol: Equatable {
         switch self {
         case .terminal, .document, .globe: 1.3
         case .diff: 1.4
-        case .windows, .trash, .pin: 1.25
+        case .windows, .trash, .sidebar: 1.25
         }
     }
 
@@ -48,10 +50,10 @@ enum PaneSidebarSymbol: Equatable {
             if self != .trash(filled: true) {
                 p.addPath(Self.trashRibs)
             }
-        case .pin:
-            p.addPath(Self.pinHead)
-            p.addPath(Self.pinBody)
-            p.move(to: CGPoint(x: 8, y: 9.8)); p.addLine(to: CGPoint(x: 8, y: 14.7))
+        case .sidebar:
+            p.addRoundedRect(in: CGRect(x: 1.8, y: 2.6, width: 12.4, height: 10.8),
+                             cornerSize: CGSize(width: 2, height: 2))
+            p.move(to: CGPoint(x: 6.2, y: 2.6)); p.addLine(to: CGPoint(x: 6.2, y: 13.4))
         case .terminal:
             p.addRoundedRect(in: CGRect(x: 1.5, y: 2.5, width: 13, height: 11),
                              cornerSize: CGSize(width: 2.2, height: 2.2))
@@ -89,12 +91,9 @@ enum PaneSidebarSymbol: Equatable {
                  cornerSize: CGSize(width: 1.8, height: 1.8))
         case .trash(filled: true):
             Self.trashCan
-        case .pin(filled: true):
-            {
-                var p = Self.pinHead
-                p.addPath(Self.pinBody)
-                return p
-            }()
+        case .sidebar(expanded: true):
+            Path(roundedRect: CGRect(x: 1.8, y: 2.6, width: 4.4, height: 10.8),
+                 cornerSize: CGSize(width: 2, height: 2))
         default:
             nil
         }
@@ -117,25 +116,6 @@ enum PaneSidebarSymbol: Equatable {
         var p = Path()
         p.move(to: CGPoint(x: 6.8, y: 6.5)); p.addLine(to: CGPoint(x: 6.8, y: 11.1))
         p.move(to: CGPoint(x: 9.2, y: 6.5)); p.addLine(to: CGPoint(x: 9.2, y: 11.1))
-        return p
-    }
-
-    private static var pinHead: Path {
-        Path(roundedRect: CGRect(x: 5.1, y: 1.4, width: 5.8, height: 2),
-             cornerSize: CGSize(width: 1, height: 1))
-    }
-
-    private static var pinBody: Path {
-        var p = Path()
-        p.move(to: CGPoint(x: 6.3, y: 3.4))
-        p.addLine(to: CGPoint(x: 9.7, y: 3.4))
-        p.addLine(to: CGPoint(x: 10.3, y: 7.5))
-        p.addCurve(to: CGPoint(x: 12.4, y: 9.8),
-                   control1: CGPoint(x: 11.5, y: 8), control2: CGPoint(x: 12.3, y: 8.8))
-        p.addLine(to: CGPoint(x: 3.6, y: 9.8))
-        p.addCurve(to: CGPoint(x: 5.7, y: 7.5),
-                   control1: CGPoint(x: 3.7, y: 8.8), control2: CGPoint(x: 4.5, y: 8))
-        p.closeSubpath()
         return p
     }
 }

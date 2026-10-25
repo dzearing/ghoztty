@@ -48,6 +48,12 @@ enum PaneDropTarget: Equatable {
     /// Stash the pane in `window`'s pane sidebar, at `index` in its stash.
     case stash(window: PaneDropWindowRef, index: Int)
 
+    /// Put the pane at `index` of `window`'s pane sidebar list — the list
+    /// only, never the grid. A pane already on that grid just moves in the
+    /// list; a stashed one comes out of the tray first; another window's
+    /// joins this one.
+    case sidebarOrder(window: PaneDropWindowRef, index: Int)
+
     /// Send the pane into `window`'s grid. What a drop on another window's
     /// group in the all-windows sidebar means: a cross-window move without
     /// dragging across the screen.
@@ -66,7 +72,7 @@ enum PaneDropTarget: Equatable {
     var window: PaneDropWindowRef? {
         switch self {
         case .split(let w, _, _), .swap(let w, _), .topLevel(let w, _), .newTab(let w, _),
-             .stash(let w, _), .joinWindow(let w), .reorder(let w, _, _, _): w
+             .stash(let w, _), .sidebarOrder(let w, _), .joinWindow(let w), .reorder(let w, _, _, _): w
         case .newWindow, .tile: nil
         }
     }
@@ -191,13 +197,21 @@ struct PaneDropCandidate {
 
     /// The pane sidebar's droppable geometry, in screen coordinates.
     struct Sidebar {
-        /// The whole sidebar card or panel as drawn — including a mini rail
-        /// opened over the grid, which is exactly where the pointer is.
+        /// The whole sidebar card or panel as drawn.
         let rect: CGRect
+
+        /// This window's grid panes' rows, top to bottom in the sidebar's
+        /// order, keyed by pane id — as laid out, not as a drag slides them.
+        let paneRows: [(id: UUID, rect: CGRect)]
 
         /// This window's STASHED rows, top to bottom, keyed by pane id. The
         /// stash index of a drop is the gap between these nearest the pointer.
         let stashRows: [(id: UUID, rect: CGRect)]
+
+        /// Where the tray begins (its divider, screen y): below it a drop
+        /// stashes, above it a drop places the pane in the list. Nil: the
+        /// whole sidebar stashes.
+        let trayTop: CGFloat?
 
         /// With the all-windows scope on: each OTHER window's group, so a
         /// drop there sends the pane to that window.
@@ -205,11 +219,15 @@ struct PaneDropCandidate {
 
         init(
             rect: CGRect,
+            paneRows: [(id: UUID, rect: CGRect)] = [],
             stashRows: [(id: UUID, rect: CGRect)] = [],
+            trayTop: CGFloat? = nil,
             windowGroups: [(window: PaneDropWindowRef, rect: CGRect)] = []
         ) {
             self.rect = rect
+            self.paneRows = paneRows
             self.stashRows = stashRows
+            self.trayTop = trayTop
             self.windowGroups = windowGroups
         }
     }
@@ -470,10 +488,13 @@ enum PaneDropResolver {
     /// The drop a point on a window's pane sidebar means, or nil when the
     /// point is on no sidebar.
     ///
-    /// Anywhere on the sidebar means "stash": over another window's group (in
-    /// the all-windows scope) it means "send it to that window"; otherwise the
-    /// index is the number of this window's stashed rows above the point —
-    /// so the grid section, which sits above the stash, means the top.
+    /// Over another window's group (in the all-windows scope) it means "send
+    /// it to that window". Otherwise the sidebar is two lists, split at the
+    /// tray's divider (`trayTop`): above it, the window's panes — a drop
+    /// places the pane in the list (`sidebarOrder`); below it, the tray — a
+    /// drop stashes. Either index is the number of that list's rows, the
+    /// dragged one aside, whose middle is above the point. With no tray
+    /// geometry the whole sidebar is the tray.
     static func sidebarHit(
         screenPoint: CGPoint,
         candidates: [PaneDropCandidate],
@@ -490,11 +511,13 @@ enum PaneDropResolver {
 
             // Screen coordinates grow UPWARD: a row is above the point when
             // its middle is higher.
-            let index = sidebar.stashRows
-                .filter { $0.id != dragged }
-                .filter { $0.rect.midY > screenPoint.y }
-                .count
-            return .stash(window: candidate.window, index: index)
+            func index(in rows: [(id: UUID, rect: CGRect)]) -> Int {
+                rows.filter { $0.id != dragged && $0.rect.midY > screenPoint.y }.count
+            }
+            if let trayTop = sidebar.trayTop, screenPoint.y > trayTop {
+                return .sidebarOrder(window: candidate.window, index: index(in: sidebar.paneRows))
+            }
+            return .stash(window: candidate.window, index: index(in: sidebar.stashRows))
         }
         return nil
     }

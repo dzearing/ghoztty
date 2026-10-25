@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// One pane in the sidebar: a full row in the flat panel or hover-open card,
-/// a tile in the mini rail.
+/// One pane in the sidebar: a full row in the expanded panel, a tile in the
+/// collapsed rail.
 ///
 /// The whole row is a drag source AND a button. Both are owned by an AppKit
 /// view (`PaneSidebarRowInteraction`) rather than SwiftUI gestures: the drag
@@ -161,17 +161,14 @@ struct PaneSidebarRow: View {
         ZStack(alignment: .topTrailing) {
             ZStack {
                 SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized)
-                if pane.surfaceView != nil {
-                    let monogram = PaneSidebarText.monogram(for: displayTitle)
-                    PaneSidebarGlyph(isBusy: isBusy, color: onAccent ? .white : Color(nsColor: .labelColor),
-                                     maskKey: monogram) {
-                        Text(monogram)
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                } else {
-                    PaneSidebarIcon(pane: pane, isBusy: isBusy, color: iconColor, size: 15)
+                // One letter of the pane's name — the same name its row and
+                // its stacked strip show — for every kind of pane.
+                let monogram = PaneSidebarText.monogram(for: displayTitle)
+                PaneSidebarGlyph(isBusy: isBusy, color: onAccent ? .white : Color(nsColor: .labelColor),
+                                 maskKey: monogram) {
+                    Text(monogram)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
                 }
                 interaction
             }
