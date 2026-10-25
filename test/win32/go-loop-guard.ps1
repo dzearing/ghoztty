@@ -1826,6 +1826,59 @@ $lRemote = (& git -C $pBare rev-parse "refs/heads/$lTrunkBranch" 2>$null | Selec
 $lLocal = (& git -C $lRepo rev-parse HEAD 2>$null | Select-Object -First 1)
 Assert 'W28f a rejected lane b push is rebased onto the trunk and pushed there' `
     ($lCode -eq 0 -and $r -match 'push rejected' -and $r -match 'PUSHED' -and $lRemote -eq $lLocal)
+Assert 'W28f2 control: a linear rejected push still takes the rebase path' `
+    ($r -match 'pulling with rebase' -and $r -notmatch 'MERGE')
+
+# T2256: a main merge raced by the other lane. A plain `pull --rebase` drops the
+# merge and replays what it brought in, so the merge-base never moves. The guard
+# must answer a range holding a merge with a merge pull, keeping the merge commit.
+$mSide = 'side-main'
+git -C $pOther pull -q --rebase 2>$null
+git -C $pOther checkout -q -b $mSide 2>$null
+Set-Content -Path (Join-Path $pOther 'main-a.txt') -Value 'main a'
+git -C $pOther add main-a.txt 2>$null
+git -C $pOther -c core.hooksPath= commit -q -m 'main commit a' 2>$null
+Set-Content -Path (Join-Path $pOther 'main-b.txt') -Value 'main b'
+git -C $pOther add main-b.txt 2>$null
+git -C $pOther -c core.hooksPath= commit -q -m 'main commit b' 2>$null
+git -C $pOther push -q origin $mSide 2>$null
+git -C $pOther checkout -q $lTrunkBranch 2>$null
+git -C $pRepo pull -q --rebase 2>$null
+git -C $pRepo fetch -q origin 2>$null
+git -C $pRepo -c core.hooksPath= merge -q --no-ff --no-edit "origin/$mSide" 2>$null
+$mMerge = (& git -C $pRepo rev-parse HEAD 2>$null | Select-Object -First 1)
+$mParents = @((& git -C $pRepo rev-list --parents -n 1 $mMerge 2>$null | Select-Object -First 1) -split ' ' | Where-Object { $_ })
+# The other lane moves the trunk meanwhile.
+Set-Content -Path (Join-Path $pOther 'race.txt') -Value 'raced'
+git -C $pOther add race.txt 2>$null
+git -C $pOther -c core.hooksPath= commit -q -m 'the other lane raced the merge' 2>$null
+git -C $pOther push -q origin HEAD 2>$null
+# Negative control: the plain rebase really does flatten this shape.
+$eapM = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+& git -C $pRepo -c rebase.autoStash=false pull -q --rebase 2>&1 | Out-Null
+$ErrorActionPreference = $eapM
+$mFlat = (& git -C $pRepo rev-list --merges --count "origin/$lTrunkBranch..HEAD" 2>$null | Select-Object -First 1)
+$mFlatHasMerge = $false
+& git -C $pRepo merge-base --is-ancestor $mMerge HEAD 2>$null; if ($LASTEXITCODE -eq 0) { $mFlatHasMerge = $true }
+Assert 'W28f3 control: a plain pull --rebase flattens the merge (no merge commit survives)' `
+    ($mParents.Count -eq 3 -and "$mFlat" -eq '0' -and -not $mFlatHasMerge)
+& git -C $pRepo rebase --abort 2>$null | Out-Null
+& git -C $pRepo reset -q --hard $mMerge 2>$null | Out-Null
+$r = & powershell -NoProfile -ExecutionPolicy Bypass -File $cgScript push -Repo $pRepo 2>&1 |
+    ForEach-Object { $_.ToString() } | Out-String
+$mCode = $LASTEXITCODE
+$mRemote = (& git -C $pBare rev-parse "refs/heads/$lTrunkBranch" 2>$null | Select-Object -First 1)
+$mLocal = (& git -C $pRepo rev-parse HEAD 2>$null | Select-Object -First 1)
+Assert 'W28f4 a rejected push of a merge commit is merge-pulled, says so, and pushes' `
+    ($mCode -eq 0 -and $r -match 'push rejected' -and $r -match 'MERGE' -and $r -match 'kept the merge commit' -and $mRemote -eq $mLocal)
+$mKept = $false
+& git -C $pBare merge-base --is-ancestor $mMerge $mRemote 2>$null; if ($LASTEXITCODE -eq 0) { $mKept = $true }
+$mSideOk = $false
+& git -C $pBare merge-base --is-ancestor "refs/heads/$mSide" $mRemote 2>$null; if ($LASTEXITCODE -eq 0) { $mSideOk = $true }
+$mLog = @(& git -C $pBare log --format=%s $mRemote 2>$null)
+Assert 'W28f5 the pushed head carries the ORIGINAL merge commit (both parents), the merged side and the raced commit' `
+    ($mKept -and $mSideOk -and @($mLog | Where-Object { $_ -eq 'the other lane raced the merge' }).Count -eq 1 -and
+     @($mLog | Where-Object { $_ -eq 'main commit a' }).Count -eq 1)
 
 # T2027: both lanes re-stamp the same harness. Two commits that each rewrite one
 # stamp.json conflicted on the rebase above, and a stamp left dirty by a green

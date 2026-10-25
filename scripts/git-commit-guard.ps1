@@ -449,15 +449,38 @@ function Restore-StampPark($park) {
     return $lines
 }
 
+# How many merge commits the unpushed range holds (T2256). A plain
+# `pull --rebase` drops a merge and replays every commit it brought in, so a
+# main merge raced by the other lane came back as main's commits re-applied one
+# by one (it stopped on a conflict at c2057a810 during T2249; had it applied
+# cleanly the merge-base with main would never have moved, and the next intake
+# would re-merge the same commits). `--rebase=merges` is no answer either: it
+# re-runs the merge and throws its conflict resolutions away. So a range with a
+# merge in it is answered by a MERGE pull, which keeps the merge commit - and
+# every resolution in it - byte for byte. No upstream reads as 0: the plain
+# rebase path stands, with its own error.
+function Get-UnpushedMergeCount {
+    $r = Git-Run @('rev-list', '--merges', '--count', '@{u}..HEAD')
+    if ($r.Code -ne 0 -or -not $r.Out) { return 0 }
+    $n = 0
+    if ([int]::TryParse((($r.Out -split "`r?`n")[0].Trim()), [ref]$n)) { return $n }
+    return 0
+}
+
 function Invoke-PushWithRebase {
     $lines = @()
     $pushArgs = Get-PushArgs
     $res = Git-Run $pushArgs
-    if ($res.Code -eq 0) { return @{ Ok = $true; Out = $res.Out; Rebased = $false; Lines = $lines } }
+    if ($res.Code -eq 0) { return @{ Ok = $true; Out = $res.Out; Rebased = $false; Merged = $false; Lines = $lines } }
     if ($res.Out -notmatch 'non-fast-forward|fetch first|Updates were rejected|behind its remote') {
-        return @{ Ok = $false; Out = $res.Out; Rebased = $false; Lines = $lines }
+        return @{ Ok = $false; Out = $res.Out; Rebased = $false; Merged = $false; Lines = $lines }
     }
-    $lines += 'push rejected (the branch moved under us) - pulling with rebase, per go.md step 4'
+    $merges = Get-UnpushedMergeCount
+    if ($merges -gt 0) {
+        $lines += "push rejected (the branch moved under us) - pulling with a MERGE, because the unpushed range holds $merges merge commit(s) a rebase would flatten (T2256)"
+    } else {
+        $lines += 'push rejected (the branch moved under us) - pulling with rebase, per go.md step 4'
+    }
     $park = @(Get-StampPark)
     if ($park.Count -gt 0) {
         $lines += "parking $($park.Count) dirty guard stamp(s) across the rebase (T2027)"
@@ -466,10 +489,15 @@ function Invoke-PushWithRebase {
             else { Git-Run @('checkout', 'HEAD', '--', $p.Path) | Out-Null }
         }
     }
-    $pull = Git-Run @('-c', 'rebase.autoStash=false', 'pull', '--rebase')
+    if ($merges -gt 0) {
+        $pull = Git-Run @('-c', 'merge.autoStash=false', 'pull', '--no-rebase', '--no-ff', '--no-edit')
+    } else {
+        $pull = Git-Run @('-c', 'rebase.autoStash=false', 'pull', '--rebase')
+    }
     if ($park.Count -gt 0) {
         $gd = Get-GitDir
-        $midRebase = $gd -and ((Test-Path (Join-Path $gd 'rebase-merge')) -or (Test-Path (Join-Path $gd 'rebase-apply')))
+        $midRebase = $gd -and ((Test-Path (Join-Path $gd 'rebase-merge')) -or (Test-Path (Join-Path $gd 'rebase-apply')) -or
+            (Test-Path (Join-Path $gd 'MERGE_HEAD')))
         if ($midRebase) {
             # Writing into a stopped rebase would mix our stamps into its
             # conflict. Keep them beside it instead, and say where.
@@ -484,11 +512,15 @@ function Invoke-PushWithRebase {
         }
     }
     if ($pull.Code -ne 0) {
-        return @{ Ok = $false; Rebased = $true; Lines = $lines
+        if ($merges -gt 0) {
+            return @{ Ok = $false; Rebased = $false; Merged = $true; Lines = $lines
+                Out = ("push was rejected and the merge pull did not complete (git merge --abort undoes it):`n" + $pull.Out) }
+        }
+        return @{ Ok = $false; Rebased = $true; Merged = $false; Lines = $lines
             Out = ("push was rejected and the rebase did not run:`n" + $pull.Out) }
     }
     $res2 = Git-Run $pushArgs
-    return @{ Ok = ($res2.Code -eq 0); Out = $res2.Out; Rebased = $true; Lines = $lines }
+    return @{ Ok = ($res2.Code -eq 0); Out = $res2.Out; Rebased = ($merges -eq 0); Merged = ($merges -gt 0); Lines = $lines }
 }
 
 function Test-PathCovered([string]$file, [string[]]$requested) {
@@ -803,6 +835,10 @@ switch ($Action) {
             # would pin the task to a commit that no longer exists.
             $short = (& git -C $Repo rev-parse --short HEAD 2>$null | Select-Object -First 1)
             "PUSHED $short (rebased onto the moved branch; the sha above is the pre-rebase one)"
+        } elseif ($pushRes.Merged) {
+            # The commit keeps its sha; HEAD is now the merge that carries it.
+            $head = (& git -C $Repo rev-parse --short HEAD 2>$null | Select-Object -First 1)
+            "PUSHED $short (merged with the moved branch as $head, so the merge commit it carries kept its parents)"
         } else {
             "PUSHED $short"
         }
@@ -821,7 +857,8 @@ switch ($Action) {
         $res = Invoke-PushWithRebase
         $res.Lines
         if (-not $res.Ok) { "ERROR push failed:"; $res.Out; exit 6 }
-        "PUSHED $($st.Count) commit(s) to $($st.Upstream)$(if ($res.Rebased) { ' (after a rebase onto the moved branch)' })"
+        $how = if ($res.Merged) { ' (after a merge pull, which kept the merge commit intact)' } elseif ($res.Rebased) { ' (after a rebase onto the moved branch)' } else { '' }
+        "PUSHED $($st.Count) commit(s) to $($st.Upstream)$how"
         exit 0
     }
 
