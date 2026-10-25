@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-25T00:45:24-07:00",
-    "commit":  "037aa8dce",
+    "generated":  "2026-10-25T01:30:34-07:00",
+    "commit":  "d3d1318ce",
     "uncommitted":  [
-                        "test/win32/crash-report.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -108,7 +108,7 @@
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",
                   "test/win32/conpty-sync-hold.ps1":  "80d46330e8239ff9760c3366670af73622e2d1a0737592062164e7dba28acdda",
-                  "test/win32/context-menu.ps1":  "f2a4b2dc20b370fced913397300f3a900d8af66c1bd58d2e9de35eec2ebf132b",
+                  "test/win32/context-menu.ps1":  "d4a1392f81b85508f9c2c66fd8eee2c4fa56e9c6bb0b28c9d5d9e295a82a9636",
                   "test/win32/context-menu-real-input.ps1":  "90d2537c4df6cc16f4426b415f1befa1edd75761862fb708d40ea9cefaf9d163",
                   "test/win32/control-char-scan.ps1":  "70a206b8794ccbf250ac349adbb5a2303e850c9370117b31afbad1541c9692a9",
                   "test/win32/count-or-zero.ps1":  "569947be0dd433056f05a38d16eae3c81cf3a5a02e0710669458650ea6e5e0ad",
@@ -298,7 +298,7 @@
                   "test/win32/low-power-render.ps1":  "8c54e7930c1fcaa3549b75281ed4958802af8bf60446ab3426eeab9afbfc137e",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e",
                   "test/win32/machine-lock.ps1":  "95c57d9daef68bfb8403be792a5e21c87bfad2ee1f5dd0507feb2c51aaca32d5",
-                  "test/win32/menu-bar.ps1":  "0696e938e4dd833766a674573e3cd0ae82475c3e6e4ada0e8cfdc212ea882aaf",
+                  "test/win32/menu-bar.ps1":  "186390615527c8100b5e1e1672bb40dbde91ae15627c54d7a7c12ddfcf3d5654",
                   "test/win32/menu-f10-binding.ps1":  "2a0f0edd446c99a0ed1ffb5d1b0ce8e3e1a8ae8df140fd70fa5f6b5df37b8e22",
                   "test/win32/merge-terminology.ps1":  "7d155ca2da0de4866e7afab82df19ab046be33aa3c34655481192c1e158b5d25",
                   "test/win32/mouse-nc-routing.ps1":  "4f982fe22519310d39a3d910edbd2596e9929fdfc3db7462799a1f625cb677cc",
