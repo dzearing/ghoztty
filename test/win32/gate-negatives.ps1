@@ -250,6 +250,8 @@ $Registry = @(
     [pscustomobject]@{ Label = 'NO STATUS'; Kind = 'gate'; Demo = $Self; Marker = 'NO STATUS' }
     [pscustomobject]@{ Label = 'ODD STATUS'; Kind = 'gate'; Demo = $Self; Marker = 'ODD STATUS' }
     [pscustomobject]@{ Label = 'DANGLING DEP'; Kind = 'gate'; Demo = $Self; Marker = 'DANGLING DEP' }
+    # T1353. A redirect skip whose target has no file releases its dependents.
+    [pscustomobject]@{ Label = 'DANGLING REDIRECT'; Kind = 'gate'; Demo = $Self; Marker = 'DANGLING REDIRECT' }
     [pscustomobject]@{ Label = 'DEP CYCLE'; Kind = 'gate'; Demo = $Self; Marker = 'DEP CYCLE' }
     [pscustomobject]@{ Label = 'ODD SEAT'; Kind = 'gate'; Demo = $Seat; Marker = 'ODD SEAT' }
     # T2175. A typo'd `lane:` hides the task from every lane's `next`.
@@ -549,6 +551,21 @@ try {
     $r = Invoke-Validate $d
     Check 'B6 a dep naming a task that does not exist fails' `
         ($r.Code -ne 0 -and $r.Text -match 'DANGLING DEP: T26 -> T404') "exit=$($r.Code): $($r.Text)"
+
+    # T1353. The redirect TARGET is the first id in the status; a typo there
+    # used to resolve to nothing and release every dependent. The prose after
+    # it names other ids freely, so the control below must stay green.
+    $d = New-CaseDir 'danglingredirect'
+    New-TaskFile -Dir $d -Id 'T33' -Status 'skipped(duplicate of T4040; see T10)'
+    $r = Invoke-Validate $d
+    Check 'B6b a redirect skip naming a task that does not exist fails' `
+        ($r.Code -ne 0 -and $r.Text -match 'DANGLING REDIRECT: T33 is skipped as a redirect to T4040') "exit=$($r.Code): $($r.Text)"
+
+    $d = New-CaseDir 'redirectprose'
+    New-TaskFile -Dir $d -Id 'T34' -Status 'skipped(superseded by T10; T4040 was a typo of it)'
+    $r = Invoke-Validate $d
+    Check 'B6c ...but a missing id in the prose AFTER a real target does not' `
+        ($r.Code -eq 0 -and $r.Text -notmatch 'DANGLING REDIRECT') "exit=$($r.Code): $($r.Text)"
 
     # T1133's own addition to validate. A ring is the one tracker defect where
     # every file reads correctly on its own, so it is checked over the graph.

@@ -2034,6 +2034,17 @@ switch ($Command) {
                     }
                 }
             }
+            # T1353: a redirect target with no task file. Get-OpenDeps ignores
+            # an unknown id, so `skipped(duplicate of T9999)` - a typo, a
+            # dropped digit - resolves to nothing and releases every dependent:
+            # the misroute T518 closed, re-opened by a slip of the keyboard.
+            # Only the target (the first id) is in scope; the prose after it
+            # names other tasks freely and is nobody's business here.
+            foreach ($rt in @(Get-RedirectTarget $t.Status)) {
+                if (-not $byId.ContainsKey($rt)) {
+                    Write-Host ("DANGLING REDIRECT: {0} is skipped as a redirect to {1}, which has no task file (its dependents would be released on a typo)" -f $t.Id, $rt); $problems++
+                }
+            }
             if ($t.Status -notmatch '^(todo|in-progress|done|blocked|skipped)') {
                 Write-Host ("ODD STATUS: {0} = '{1}'" -f $t.Id, $t.Status); $problems++
             }

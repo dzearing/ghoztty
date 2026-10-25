@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-24T23:13:56-07:00",
-    "commit":  "85d3ec901",
+    "generated":  "2026-10-24T23:34:45-07:00",
+    "commit":  "b5cf7dabc",
     "uncommitted":  [
-                        "test/win32/drag-perf.ps1"
+                        "test/win32/gate-negatives.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -130,7 +130,7 @@
                   "test/win32/doc-claims.ps1":  "89225631de66b3d1dc4c196c2dbea93fd7c416774c464c32fdc3e6f3198d3ece",
                   "test/win32/docs-routing.ps1":  "98d25cb8eaba89f37cb2fe892dc86cee04a2cec771acc0c588e39d69446ccf11",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
-                  "test/win32/drag-perf.ps1":  "b067f23ab5c86e878d16744287156776b82503cf0944f5e1faed207aca5d0c97",
+                  "test/win32/drag-perf.ps1":  "a38388c599a62ca131caee78821d1fc41261531856665b8cdf753f1a149be0ec",
                   "test/win32/echo-marker-audit.ps1":  "d896ea0055d1564eeba5ce6fc2bceda25aa0d32d3ccacd848d85c75d130d98f1",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
@@ -157,7 +157,7 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
-                  "test/win32/gate-negatives.ps1":  "6435bf8e11e48fb744dc3c2c128b8d597743b99049762218fb75548839c8df0c",
+                  "test/win32/gate-negatives.ps1":  "02d60558d98716c9cea7e0563420ba3cb3232a51c20ad2ede99952438308e864",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
                   "test/win32/go-loop-guard.ps1":  "0a4f5c0cff7650be0af50b6801df9c8019e36732d63bb1191403b5d9bc14cffc",
