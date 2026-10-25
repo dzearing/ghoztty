@@ -20,6 +20,10 @@ enum TerminalSplitOperation {
     /// collapses the row; at the run's edge it widens it.
     case stackDrag(StackDrag)
 
+    /// A divider double-clicked: even out the panes across dividers that run
+    /// its way, and only those (`SplitTree.equalized(only:)`).
+    case equalize(SplitTree<PaneView>.Direction)
+
     struct Resize {
         /// The split node whose divider the gesture is on.
         let node: SplitTree<PaneView>.Node
@@ -378,11 +382,11 @@ private struct GridDivider: View {
         send(.moved(position: clamped, dimension: extent))
     }
 
+    /// Double-click: even out the panes across this divider — the splits
+    /// laid out its way — and leave the other direction alone. (It used to
+    /// run `equalize_splits`, which reset every ratio both ways.)
     private func equalize() {
-        // Any terminal surface in the subtree can host the equalize action
-        // (the leftmost leaf may be a viewer pane).
-        guard let surface = divider.node.leaves().compactMap(\.surface).first else { return }
-        ghostty.splitEqualize(surface: surface)
+        action(.equalize(divider.direction == .horizontal ? .horizontal : .vertical))
     }
 }
 

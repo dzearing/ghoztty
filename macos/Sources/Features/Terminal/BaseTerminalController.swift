@@ -2176,6 +2176,10 @@ class BaseTerminalController: NSWindowController,
             splitDidRestack(row, change)
         case .stackDrag(let drag):
             splitDidDragStack(drag)
+        case .equalize(let direction):
+            // On screen only, as `equalize_splits`; stashed panes' slots
+            // keep their ratios.
+            surfaceTree = surfaceTree.applyingToVisible { $0.equalized(only: direction) }
         }
     }
 

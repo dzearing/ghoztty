@@ -1924,6 +1924,13 @@ AND the stashed-pane slots, so a restored pane never reflows.
   (`aDividerBesideAColumnWithACollapsedRowResizesIt`). A collapsed row stays
   collapsed with room to spare (a `Pin`). Rows nest (`a | (b / c)` is a row
   whose second item is a column), and each keeps its own collapse.
+- **Double-clicking a divider evens out the panes across it — in its
+  direction only** (`TerminalSplitOperation.equalize`,
+  `SplitTree.equalized(only:)`): a horizontal divider evens the heights and
+  leaves every width as set, and the other way round. It used to run
+  `equalize_splits`, which reset every ratio both ways (a pane made narrow
+  came back wide). `equalize_splits` itself still evens out both. Test:
+  `equalizedInOneDirectionKeepsTheOther`.
 - **What can be dragged says so**: every divider and grip (`DividerHandle`)
   and the edge of a side panel (the pane sidebar's, a viewer's contents —
   `SidePanelResizeHandle`) shows a 4pt accent bar with a soft glow down the
