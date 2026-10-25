@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-25T01:57:16-07:00",
-    "commit":  "4416f4c64",
+    "generated":  "2026-10-25T02:52:41-07:00",
+    "commit":  "ea0309277",
     "uncommitted":  [
 
                     ],
@@ -1123,7 +1123,7 @@
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "21b7ecbf38d6d7990c6a00a5d3437e81bd53486ded60b0d1ddb55412e8e776ae",
                   "test/win32/gui-launch-command.ps1":  "8e90681b56d560d7779cccbeb8ba4c3c652d48b42fbc2546a0e35ac4662c69aa",
-                  "test/win32/gui-postmortem.ps1":  "b0595f3b54b8326445756b773988528e7702572014b7e730c06e29cdd68eb30c",
+                  "test/win32/gui-postmortem.ps1":  "4f9ba3bb7629a71ca32e0c793212c56dfabeb1ed8c96dc41eacddf0d0598da98",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "78b92e36c1ce07a9da43b380a464389a724a5e61132b37a723ed0c0603cf7562",
                   "test/win32/harness-process-leak.ps1":  "05e37207bcb0ccea6c80bb1e48e79737a5afd59a172deeb624d7942975c39d25",

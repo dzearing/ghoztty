@@ -338,6 +338,29 @@ try {
     Remove-Item -Recurse -Force $jDir -ErrorAction SilentlyContinue
 }
 
+# ------------- K. 0xFFFFFFFF with no harness kill is still a crash (T1363)
+
+# WHY. Sections F and J silence the teardown's own kills, which exit with
+# TerminateProcess's 0xFFFFFFFF. That code is indistinguishable by value from
+# an exception code, so the silence must come from the kill mark and never from
+# the value: a child that exits -1 ON ITS OWN has to keep the CRASHED verdict.
+# Without this section, widening ConvertTo-GuiExitVerdict's "not a crash" range
+# would pass every other check here.
+Write-Host 'K an unkilled 0xFFFFFFFF exit is still reported as CRASHED'
+$td5 = New-TestDesktop
+$kDie = Start-OnTestDesktop -Exe $env:ComSpec -Arguments @('/c', 'ping -n 2 127.0.0.1 >nul & exit -1')
+$kGone = Wait-Gone -ProcessId $kDie.Pid -TimeoutSec 60
+Assert 'K1 the -1 child exited on its own' $kGone
+Clear-LastGuiPostmortem
+$kCount = Write-TestDesktopPostmortems -WaitSeconds 1
+$kBlock = (@(Get-LastGuiPostmortem) -join "`n")
+Assert "K2 the unkilled -1 exit is reported (blocks: $kCount, want 1)" `
+    ($kCount -eq 1 -and $kBlock -like "*pid $($kDie.Pid)*")
+Assert 'K3 its verdict is CRASHED - 0xFFFFFFFF' ($kBlock -like '*verdict : CRASHED - 0xFFFFFFFF*')
+$kRec = @(Get-TestLaunchRecords | Where-Object { $_.Pid -eq $kDie.Pid })
+Assert 'K4 the launch is not on the record as killed' ($kRec.Count -eq 1 -and -not $kRec[0].Killed)
+Remove-TestDesktop
+
 Complete-TestBody
 
 } finally {
