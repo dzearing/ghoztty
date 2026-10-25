@@ -1387,6 +1387,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     }
                     state.terminal.flags.awaiting_prompt_redraw = false;
                     state.terminal.prompt_redraw_output = null;
+                    log.debug("prompt redraw released by=redraw", .{});
                 }
 
                 // If scroll-to-bottom on output is enabled, check if the final line

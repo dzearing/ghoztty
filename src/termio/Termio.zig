@@ -783,6 +783,82 @@ fn atPromptLocked(self: *Termio) bool {
         self.terminal.screens.active.cursor.semantic_content != .output;
 }
 
+/// Whether the cursor sits on a shell's prompt row in a pane whose child
+/// repaints its whole viewport after a resize (a ConPTY child, local or
+/// through the agent), though `atPromptLocked` reads it as output. The caller
+/// holds the renderer state mutex.
+fn conptyPromptRowLocked(self: *Termio) bool {
+    return conptyPromptRow(&self.terminal, history_guard.enabledFor(self.backend.childPtyFlavor()));
+}
+
+/// conhost's post-resize paint walks the viewport from the top, row break by
+/// row break, and the first break ends an input region that runs to the end
+/// of its line - which is how cmd's prompt marks its input (`133;I`, T1757,
+/// since cmd has no hook for `133;C`). So in a cmd pane every resize after the
+/// first finds the cursor in "output" with cmd idle at its prompt, and would
+/// fall back to the debounce. The row keeps its prompt mark through the paint,
+/// and a running command's cursor is on rows of its output, so on a pane whose
+/// child `repaints_viewport` the row decides - the row the prompt STARTED on
+/// (`133;A`), never a continuation: the same paint, over a prompt that keeps
+/// its input open (PowerShell's `133;B`), marks every row it breaks as a
+/// prompt continuation, and a command that later prints onto those rows would
+/// read as a prompt and lose its debounce. It decides only the pacing:
+/// nothing was cleared for the shell to redraw (`Screen.resize` keys that on
+/// the cursor), so there is no frame to hold (T2251).
+pub fn conptyPromptRow(t: *const terminalpkg.Terminal, repaints_viewport: bool) bool {
+    if (!repaints_viewport) return false;
+    return t.screens.active_key == .primary and
+        t.flags.shell_redraws_prompt != .false and
+        t.screens.active.cursor.page_row.semantic_prompt == .prompt;
+}
+
+test "T2251 a cmd prompt keeps live resize pacing through conhost's repaint" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var t = try terminalpkg.Terminal.init(alloc, .{ .cols = 80, .rows = 24 });
+    defer t.deinit(alloc);
+    var s = t.vtStream();
+    defer s.deinit();
+
+    // cmd's rendered prompt (shell_integration.setupCmd): input to the end of
+    // the line, since cmd cannot say when a command starts.
+    const prompt = "\x1b]133;A\x1b\\C:\\Users\\David>\x1b]133;I\x1b\\";
+    s.nextSlice("Microsoft Windows [Version 10.0.26200]\r\n\r\n" ++ prompt);
+    try testing.expect(t.screens.active.cursor.semantic_content == .input);
+
+    // conhost's paint after a resize: home, then the viewport row by row.
+    s.nextSlice("\x1b[?25l\x1b[HMicrosoft Windows [Version 10.0.26200]\x1b[K\r\n\x1b[K\r\n" ++
+        "C:\\Users\\David>\x1b[K\x1b[?25h");
+    // The first row break ended the input region: the cursor reads as output,
+    // which alone would put this idle prompt on the debounce...
+    try testing.expect(t.screens.active.cursor.semantic_content == .output);
+    // ...but its row is still the prompt's, so a ConPTY pane paces it live.
+    try testing.expect(conptyPromptRow(&t, true));
+    // A child that redraws its own prompt is left exactly as it was.
+    try testing.expect(!conptyPromptRow(&t, false));
+
+    // A command entered and running, printing: its rows are not the prompt's.
+    s.nextSlice("build.bat\r\n");
+    for (0..5) |n| {
+        var buf: [32]u8 = undefined;
+        s.nextSlice(try std.fmt.bufPrint(&buf, "out-{d} compiling\r\n", .{n}));
+    }
+    try testing.expect(!conptyPromptRow(&t, true));
+
+    // A command printing onto rows an open-input prompt's paint marked as
+    // continuations (PowerShell's `133;B` prompt, then conhost's paint, then a
+    // command's output) is not at a prompt either.
+    s.nextSlice("\x1b]133;A\x1b\\PS C:\\>\x1b]133;B\x1b\\");
+    s.nextSlice("\x1b[HMicrosoft Windows\r\n\r\nPS C:\\>\r\n\r\n");
+    try testing.expect(t.screens.active.cursor.page_row.semantic_prompt == .prompt_continuation);
+    s.nextSlice("\x1b]133;C\x1b\\");
+    try testing.expect(!conptyPromptRow(&t, true));
+
+    // A full-screen program on the alternate screen is never a prompt.
+    s.nextSlice("\x1b[?1049h");
+    try testing.expect(!conptyPromptRow(&t, true));
+}
+
 /// How the IO thread paces a resize (`termio.Thread.handleResize`).
 pub const ResizePace = enum {
     /// Debounced: a program is running, and may repaint on every SIGWINCH.
@@ -800,8 +876,29 @@ pub const ResizePace = enum {
 pub fn resizePace(self: *Termio) ResizePace {
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
+    return self.resizePaceLocked();
+}
+
+fn resizePaceLocked(self: *Termio) ResizePace {
     if (self.terminal.flags.awaiting_prompt_redraw) return .after_redraw;
-    return if (self.atPromptLocked()) .now else .debounce;
+    return if (self.atPromptLocked() or self.conptyPromptRowLocked()) .now else .debounce;
+}
+
+/// `resizePace`, stated on the debug log with the inputs that decided it, so
+/// a pane that keeps the debounce at a prompt says why (the Windows
+/// acceptance reads it: test/win32/prompt-reflow.ps1, T2251).
+pub fn resizePaceReported(self: *Termio) ResizePace {
+    self.renderer_state.mutex.lock();
+    defer self.renderer_state.mutex.unlock();
+    const pace = self.resizePaceLocked();
+    log.debug("resize pace={s} screen={s} content={s} row={s} redraw={s}", .{
+        @tagName(pace),
+        @tagName(self.terminal.screens.active_key),
+        @tagName(self.terminal.screens.active.cursor.semantic_content),
+        @tagName(self.terminal.screens.active.cursor.page_row.semantic_prompt),
+        @tagName(self.terminal.flags.shell_redraws_prompt),
+    });
+    return pace;
 }
 
 /// Stop holding the last frame for a prompt redraw that never came.
@@ -813,6 +910,9 @@ pub fn releasePromptRedraw(self: *Termio) void {
         self.terminal.flags.awaiting_prompt_redraw = false;
         self.terminal.prompt_redraw_output = null;
     }
+    // The renderer draws whatever is there now, a still-blank prompt
+    // included (test/win32/prompt-reflow.ps1 counts these, T2251).
+    log.debug("prompt redraw released by=cap", .{});
     self.renderer_wakeup.notify() catch {};
 }
 

@@ -470,7 +470,7 @@ fn syncHoldCallback(
 fn handleResize(self: *Thread, cb: *CallbackData, resize: renderer.Size) void {
     self.coalesce_data.resize = resize;
 
-    switch (cb.io.resizePace()) {
+    switch (cb.io.resizePaceReported()) {
         .debounce => {},
         .now => {
             self.applyResize(cb);
@@ -516,6 +516,8 @@ fn applyResize(self: *Thread, cb: *CallbackData) void {
     const v = self.coalesce_data.resize orelse return;
     self.coalesce_data.resize = null;
     self.coalesce_data.pending_since = null;
+    const grid = v.grid();
+    log.debug("resize applied cols={d} rows={d}", .{ grid.columns, grid.rows });
     cb.io.resize(&cb.data, v) catch |err| {
         log.warn("error during resize err={}", .{err});
     };

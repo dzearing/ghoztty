@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-25T09:28:14-07:00",
-    "commit":  "70fae5a63",
+    "generated":  "2026-10-25T10:47:13-07:00",
+    "commit":  "3d4ce19aa",
     "uncommitted":  [
-                        "test/win32/rearrange-undo.ps1"
+                        "test/win32/conpty-sync-hold.ps1",
+                        "test/win32/prompt-reflow.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -107,7 +108,7 @@
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",
-                  "test/win32/conpty-sync-hold.ps1":  "80d46330e8239ff9760c3366670af73622e2d1a0737592062164e7dba28acdda",
+                  "test/win32/conpty-sync-hold.ps1":  "c35c5319c5f9a7dfcbad49e519d19f9af4a0c0a68dcf303aae1717a6d47eb18c",
                   "test/win32/context-menu.ps1":  "d4a1392f81b85508f9c2c66fd8eee2c4fa56e9c6bb0b28c9d5d9e295a82a9636",
                   "test/win32/context-menu-real-input.ps1":  "90d2537c4df6cc16f4426b415f1befa1edd75761862fb708d40ea9cefaf9d163",
                   "test/win32/control-char-scan.ps1":  "70a206b8794ccbf250ac349adbb5a2303e850c9370117b31afbad1541c9692a9",
@@ -357,6 +358,7 @@
                   "test/win32/probe-topmost-restore.ps1":  "b2e3afe3d1e5db7cd3555160771e966e8e7c7d5260e1ca4f9fe2c304fd53540a",
                   "test/win32/process-family.ps1":  "d66e2ac7f288c8ace90f538a8fe7796160d8e605850814041893d7918055e0c2",
                   "test/win32/profile-latency.ps1":  "ef85fd712546fc90183fbf176b36ab613d0f96c437e8439f6270744f00edbec6",
+                  "test/win32/prompt-reflow.ps1":  "4655bc63db182d6fb6e35ce465aa188f5a5672490c3effdc39f7ca7ba402dd40",
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
                   "test/win32/pty-host.ps1":  "466be0c285d0654ebf15bb7e7e545b38b5e1b9e12d3328ed49f9b009b469b2d5",
                   "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183",

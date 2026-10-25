@@ -5531,6 +5531,27 @@ $GuardTable = @(
             'test\win32\resize-debounce.ps1'
         )
     },
+    # Live prompt reflow (T2251, Mac a81db68f9): at a shell prompt a resize is
+    # applied at once and the last frame is held until the prompt is redrawn;
+    # a running program keeps the debounce. The pacing is decided in Termio
+    # (with the ConPTY prompt-row rule for cmd), run by the termio thread and
+    # released by the renderer, and the prompt marks come from the injected
+    # cmd/PowerShell integrations - an edit to any of them is an edit to what
+    # the harness proves. About three minutes, off the input desktop.
+    [pscustomobject]@{
+        Name   = 'prompt-reflow'
+        Script = 'test\win32\prompt-reflow.ps1'
+        Stamp  = 'test\win32\prompt-reflow.stamp.json'
+        Covers = @(
+            'src\termio\Termio.zig',
+            'src\termio\Thread.zig',
+            'src\termio\shell_integration.zig',
+            'src\renderer\generic.zig',
+            'src\renderer\Thread.zig',
+            'src\shell-integration\powershell\ghostty.ps1',
+            'test\win32\prompt-reflow.ps1'
+        )
+    },
     # The ConPTY sync hold (T1763): a ConPTY child's clear-and-redraw arrives
     # as an erase in a bracket that closes at once and then conhost's paint, so
     # the hold is what keeps a resized Claude Code pane from flashing blank.

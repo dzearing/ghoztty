@@ -1,3 +1,4 @@
+# @timing-sensitive - it bounds how long a held frame waits (held_ms <= 200), and box load from scripts beside it stretched one past that (T2251's due run), so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T1763 acceptance: a ConPTY child's clear-and-redraw never shows a blank frame.
 #
 #   powershell -NoProfile -File test\win32\conpty-sync-hold.ps1

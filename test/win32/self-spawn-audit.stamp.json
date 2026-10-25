@@ -1,15 +1,12 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-25T09:08:28-07:00",
-    "commit":  "70fae5a63",
+    "generated":  "2026-10-25T10:30:18-07:00",
+    "commit":  "3d4ce19aa",
     "uncommitted":  [
-                        "src/apprt/unit_tests.zig",
-                        "src/apprt/win32/CloseUndo.zig",
-                        "src/apprt/win32/IpcHandlers.zig",
-                        "src/apprt/win32/layout_undo.zig",
-                        "src/apprt/win32/LayoutUndo.zig",
-                        "src/apprt/win32/skill_rewrite.zig"
+                        "src/renderer/generic.zig",
+                        "src/termio/Termio.zig",
+                        "src/termio/Thread.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -777,7 +774,7 @@
                   "src/renderer/backend.zig":  "6c17bdd1d4eeb9eda89fc7259147fd4e28b207a684dece941104c6e1e6cf5b79",
                   "src/renderer/cell.zig":  "e7b1395f5740944729142bdb88371003d61839c05f0baef19ccd64a6642663f5",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
-                  "src/renderer/generic.zig":  "c4ee061746be5c9be3f6925fff33d6f03a90a23899bf34171a07456a331d8932",
+                  "src/renderer/generic.zig":  "2bc08d38f72869fb268aa9caeb30c58a66ded011f8ce714379ed8bf11d2b59a2",
                   "src/renderer/gl_loader.zig":  "f79e254d9bd6132bec1db99dad0fed3c9860b175ddebae5fd3707101a5563c93",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
                   "src/renderer/gl_robust.zig":  "70d950fc2a359d24df6783cfbe2ffc3812daf307834f0afa65e61ae8e9c38614",
@@ -962,8 +959,8 @@
                   "src/termio/session_snapshot.zig":  "72d2abd34fd2df726b6ae44aa88ed1b22c84cdb1b17253f9136597e278052ada",
                   "src/termio/shell_integration.zig":  "9516f3dc973e902e406f09418bce7454e2f09400de0f70462fdf0fd5c9492c58",
                   "src/termio/stream_handler.zig":  "f4426909f86c1b03e535d7217515150cf6ad84f41473fa6af63309f7e7235fc9",
-                  "src/termio/Termio.zig":  "eacd8a4b3089fb72e660e09980e68cb944f35118fecd175d66d4f34fbd22c78e",
-                  "src/termio/Thread.zig":  "904b6f314151b398e50b0430516a3edc1ce1d25ad145c378bb8fb45975b6ed96",
+                  "src/termio/Termio.zig":  "2473e3eeeac52f188e311f56356ea236347e3a7bedd5a1631603c23b53263b9c",
+                  "src/termio/Thread.zig":  "e48462c2305b1c96d91cb673dde1647ac299c09b28d708cbcab202fc1d74dbc7",
                   "src/tripwire.zig":  "d6e1a2fdd04b3c0f4d82671cb5b81bcac3a92aca9253e96025d32728e403079e",
                   "src/unicode/grapheme.zig":  "68be73160b503faf60099159836896b9d1093d088cc4cd712d3bcd9d28e38990",
                   "src/unicode/lut.zig":  "170f7acae4205ec2eb3b63071e61adf56687922cb3100e36a6eb9cf0ecf30b70",

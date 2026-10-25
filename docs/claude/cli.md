@@ -1376,8 +1376,16 @@ redraws. That cap is armed after `loop.update_now()`: the IO loop's cached
 clock is seconds stale after an idle stretch, and a timer measured from it
 fires at once. Tests: `aResizeNeverBlanksThePrompt` (window resizes, local
 and agent panes; frames in `/tmp/banner-collapse-resize[-agent]`). The pacing
-and the frame hold are shared core, so Windows has them since T2249; proving
-them through ConPTY and the session agent is T2251. `resize-overlay` defaults to
+and the frame hold are shared core, so Windows has them since T2249, proven
+through ConPTY and the session agent by `test/win32/prompt-reflow.ps1` (T2251:
+cmd and Windows PowerShell, local and agent panes, plus a running program
+that must keep the debounce). One Windows-only rule: conhost's post-resize
+paint ends cmd's input region (`133;I`) at its first row break, so on a ConPTY
+child the pace also takes the cursor sitting on the prompt's own row
+(`Termio.conptyPromptRow`) - pacing only, since nothing is cleared there.
+The debug build states each decision on stderr (`resize pace=.. content=..
+row=..`, `resize applied`, `prompt redraw released by=redraw|cap`).
+`resize-overlay` defaults to
 `never` in this fork (the dimensions popup on every divider drag). Verified by `glassPanesLetTheGradientThrough`,
 which also writes a ScreenCaptureKit capture of its own window. A translucent terminal
 (`background-opacity` < 1) gets an equally translucent gradient. Settled in the
