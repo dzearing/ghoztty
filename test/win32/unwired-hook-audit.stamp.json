@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-24T16:46:14-07:00",
-    "commit":  "ca804122b",
+    "generated":  "2026-10-24T17:18:58-07:00",
+    "commit":  "a3dcef60a",
     "uncommitted":  [
 
                     ],
@@ -1111,7 +1111,7 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
-                  "test/win32/gate-negatives.ps1":  "925c265fb910963fbc8ba677311909b35cfcb1ec9022721a2ace206e4346d426",
+                  "test/win32/gate-negatives.ps1":  "6435bf8e11e48fb744dc3c2c128b8d597743b99049762218fb75548839c8df0c",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
                   "test/win32/go-loop-guard.ps1":  "0a4f5c0cff7650be0af50b6801df9c8019e36732d63bb1191403b5d9bc14cffc",
