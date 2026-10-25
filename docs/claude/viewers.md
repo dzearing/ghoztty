@@ -480,7 +480,10 @@ answers "what changed in abc123". Use `a..b` when you mean a comparison.
   Escape clears it — plus folder/file hierarchy with git's own status letter
   (A/M/D/R…) and each file's `+N −M`. Chains of single-child directories
   collapse into one row (`macos/Sources/Features/Viewer`), and clicking a
-  folder folds it.
+  folder folds it. Windows carries the same filter since T1336 (a real `EDIT`
+  in the card's header; a pre-rename path matches too, a hit shows its folder
+  on a second line, the header reads "3 of 120 files", and a filter down to
+  one hit or none never retracts the card).
 - **Working-tree sections**: staged, unstaged, and untracked are three lists,
   in that order, because which changes are staged is the thing `git status`
   exists to tell you. A file modified both staged and unstaged appears in both

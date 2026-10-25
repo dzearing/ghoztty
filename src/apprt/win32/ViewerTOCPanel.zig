@@ -48,12 +48,24 @@ const toc = @import("viewer_toc_layout.zig");
 const list_selection = @import("list_selection.zig");
 const file_tree = @import("viewer_file_tree.zig");
 const diff = @import("viewer_diff.zig");
+const icon_button = @import("icon_button.zig");
+const icon_paint = @import("icon_button_paint.zig");
+const viewer_find = @import("viewer_find.zig");
+const viewer_accel = @import("viewer_accel.zig");
+const input = @import("../../input.zig");
+const utf16_text = @import("utf16_text.zig");
 const ViewerPane = @import("ViewerPane.zig");
 
 const log = std.log.scoped(.viewer_toc);
 const paint_probe = @import("paint_probe.zig");
 
 pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyViewerTOC");
+const class_name_utf8 = "GhozttyViewerTOC";
+
+/// The diff card's filter field (T1336): its control id, and how much it may
+/// hold. A path query longer than this is not a query anybody types.
+const filter_edit_id: usize = 1;
+const filter_cap_utf16: usize = 256;
 
 /// The compact overlay's slide timer (T543) and its frame interval. 15ms is a
 /// hair under a 60Hz frame, so a frame is never skipped waiting for the next
@@ -102,6 +114,9 @@ const Row = struct {
     binary: bool = false,
     /// `.folder` rows: whether the reader has clicked it shut.
     collapsed: bool = false,
+    /// `.file` rows of a FILTERED tree: the file's directory, owned, drawn as
+    /// a second line under the name (T1336). Empty otherwise.
+    detail16: []u16 = &.{},
     y: i32 = 0,
     h: i32 = 0,
     /// Measured widths of the two side labels, filled by `measureRows`.
@@ -117,6 +132,19 @@ const Row = struct {
 hwnd: w32.HWND,
 pane: *ViewerPane,
 alloc: Allocator,
+
+/// The filter field (T1336): a real `EDIT`, shown only while the card lists a
+/// diff's files. Null when it could not be created, which leaves a card that
+/// lists and cannot filter rather than no card.
+filter_edit: ?w32.HWND = null,
+/// The EDIT's single-line height in its font, measured with the rows.
+filter_edit_h: i32 = 14,
+/// Set while this side writes the field's text itself, so the EN_CHANGE that
+/// write raises is not mistaken for the reader typing.
+filter_syncing: bool = false,
+/// The clear button's pointer state.
+clear_hover: bool = false,
+clear_pressed: bool = false,
 
 rows: std.ArrayList(Row) = .empty,
 /// Total measured list height (rows + inter-row spacing), px.
@@ -184,6 +212,10 @@ doc_bg: color_math.Rgb = .{ .r = 13, .g = 17, .b = 23 },
 card_fill: color_math.Rgb = .{ .r = 28, .g = 31, .b = 37 },
 text_ref: u32 = 0x00FFFFFF,
 secondary_ref: u32 = 0x00AAAAAA,
+/// The filter's recessed well, and the brush its EDIT paints its background
+/// with so the control and the well are one surface.
+field_rgb: color_math.Rgb = .{ .r = 20, .g = 23, .b = 29 },
+edit_brush: ?w32.HBRUSH = null,
 
 // Cached card backdrop DIB (the BannerOverlay pattern): regenerated when the
 // band size, the theme, or the scale moves.
@@ -246,7 +278,10 @@ pub fn create(
         0,
         CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_CHILD, // shown by place() when a layout calls for it
+        // Shown by place() when a layout calls for it. WS_CLIPCHILDREN so the
+        // card's own paint never draws over the filter field (T1336), which
+        // would flash the well's fill across the text on every repaint.
+        w32.WS_CHILD | w32.WS_CLIPCHILDREN,
         0,
         0,
         0,
@@ -265,8 +300,57 @@ pub fn create(
         .pane = pane,
         .alloc = alloc,
     };
+    self.filter_edit = createFilterEdit(hwnd, hinstance);
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
     self.applyTheme();
+    return self;
+}
+
+/// The filter field: a borderless single-line EDIT, hidden until the card
+/// lists files. No WS_BORDER for the find card's reason — it sits in a well
+/// painted on a card that already has an edge, and a second rectangle inside
+/// it reads as a dialog. The cue banner is Mac's placeholder, and the
+/// Windows-native way to label a search box without a caption.
+fn createFilterEdit(parent: w32.HWND, hinstance: ?w32.HINSTANCE) ?w32.HWND {
+    const edit = w32.CreateWindowExW(
+        0,
+        std.unicode.utf8ToUtf16LeStringLiteral("EDIT"),
+        std.unicode.utf8ToUtf16LeStringLiteral(""),
+        w32.WS_CHILD | w32.ES_AUTOHSCROLL,
+        0,
+        0,
+        0,
+        0,
+        parent,
+        @ptrFromInt(filter_edit_id),
+        hinstance,
+        null,
+    ) orelse {
+        log.warn("viewer TOC filter field could not be created; the file list cannot be filtered", .{});
+        return null;
+    };
+    _ = w32.SendMessageW(edit, w32.EM_LIMITTEXT, filter_cap_utf16 - 1, 0);
+    _ = w32.SendMessageW(
+        edit,
+        w32.EM_SETCUEBANNER,
+        1,
+        @bitCast(@intFromPtr(std.unicode.utf8ToUtf16LeStringLiteral("Filter files"))),
+    );
+    return edit;
+}
+
+/// The card whose FILTER FIELD is `hwnd`, if any — the main message loop's
+/// routing hook, identified by the parent's class exactly like
+/// `ViewerNavBar.owningEdit`.
+pub fn owningEdit(hwnd: w32.HWND) ?*ViewerTOCPanel {
+    const parent = w32.GetParent(hwnd) orelse return null;
+    var name: [24:0]u16 = undefined;
+    const n = w32.GetClassNameW(parent, &name, name.len);
+    if (n <= 0) return null;
+    const expect = std.unicode.utf8ToUtf16LeStringLiteral(class_name_utf8);
+    if (!std.mem.eql(u16, name[0..@intCast(n)], expect)) return null;
+    const self = fromHwnd(parent) orelse return null;
+    if (self.filter_edit != hwnd) return null;
     return self;
 }
 
@@ -281,6 +365,7 @@ pub fn destroy(self: *ViewerTOCPanel) void {
     self.releaseCardSurface();
     if (self.row_font) |f| _ = w32.DeleteObject(@ptrCast(f));
     if (self.header_font) |f| _ = w32.DeleteObject(@ptrCast(f));
+    if (self.edit_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
     self.alloc.destroy(self);
 }
 
@@ -300,9 +385,120 @@ fn clearRows(self: *ViewerTOCPanel) void {
         if (r.badge16.len > 0) self.alloc.free(r.badge16);
         if (r.adds16.len > 0) self.alloc.free(r.adds16);
         if (r.dels16.len > 0) self.alloc.free(r.dels16);
+        if (r.detail16.len > 0) self.alloc.free(r.detail16);
     }
     self.rows.clearRetainingCapacity();
     self.list_h = 0;
+}
+
+/// How many items the card is OF, for the gutter/overlay/hidden decision: the
+/// diff's whole file list, not the rows a filter happens to be showing. A
+/// filter narrowed to one hit — or to none — must not retract the card, and
+/// the field the reader is typing into with it (the same rule
+/// `ViewerPane.updateTOC` applies to shut folders).
+fn itemCount(self: *const ViewerTOCPanel) usize {
+    if (self.pane.diffTree()) |tree| return tree.total_files;
+    return self.rows.items.len;
+}
+
+/// The pinned header's height: the caption band, plus the filter while the
+/// card lists files.
+fn headerH(self: *const ViewerTOCPanel) i32 {
+    return toc.headerHeightWith(
+        self.caption_line_h,
+        self.scale,
+        self.showsFiles() and self.filter_edit != null,
+    );
+}
+
+/// True while the filter field holds keyboard focus — what the pane asks to
+/// answer `viewer_find.Focus.diff_filter`.
+pub fn filterFocused(self: *const ViewerTOCPanel) bool {
+    const edit = self.filter_edit orelse return false;
+    return w32.GetFocus() == @as(?w32.HWND, edit);
+}
+
+/// Empty the field without that reading as the reader typing. The pane owns
+/// the filter itself; this only keeps the control in step with it.
+pub fn clearFilterField(self: *ViewerTOCPanel) void {
+    const edit = self.filter_edit orelse return;
+    if (w32.GetWindowTextLengthW(edit) == 0) return;
+    self.filter_syncing = true;
+    defer self.filter_syncing = false;
+    _ = w32.SetWindowTextW(edit, std.unicode.utf8ToUtf16LeStringLiteral(""));
+    self.clear_hover = false;
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+}
+
+/// The field's text moved: hand it to the pane as UTF-8.
+fn filterChanged(self: *ViewerTOCPanel) void {
+    if (self.filter_syncing) return;
+    const edit = self.filter_edit orelse return;
+    var wide: [filter_cap_utf16]u16 = undefined;
+    const n = w32.GetWindowTextW(edit, &wide, wide.len);
+    var buf: [filter_cap_utf16 * 3]u8 = undefined;
+    const len = if (n > 0) utf16_text.toUtf8Truncating(&buf, wide[0..@intCast(n)]) else 0;
+    // Repaint first: the clear button appears with the first letter and goes
+    // with the last, whatever the tree does with the text.
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.pane.setDiffFilter(buf[0..len]);
+}
+
+fn filterHasText(self: *const ViewerTOCPanel) bool {
+    const edit = self.filter_edit orelse return false;
+    return w32.GetWindowTextLengthW(edit) > 0;
+}
+
+// -------------------------------------------------------------------------
+// Main-loop hooks (the filter EDIT's keys)
+// -------------------------------------------------------------------------
+
+/// Escape and Return while the filter field holds focus, routed here by the
+/// main message loop (an EDIT never delivers these itself). Returns true when
+/// consumed.
+///
+/// Escape goes through `viewer_find.fieldKeyAction`, the one precedence table
+/// for the pane's fields, so it cannot drift from the address bar's and the
+/// find card's rules. Return is the field's own: it opens the top hit.
+pub fn handleEditKey(self: *ViewerTOCPanel, vk: u16) bool {
+    const mods: viewer_find.Mods = .{
+        .ctrl = w32.GetKeyState(@as(i32, w32.VK_CONTROL)) < 0,
+        .shift = w32.GetKeyState(@as(i32, w32.VK_SHIFT)) < 0,
+        .alt = w32.GetKeyState(@as(i32, w32.VK_MENU)) < 0,
+        .super = w32.GetKeyState(@as(i32, w32.VK_LWIN)) < 0 or
+            w32.GetKeyState(@as(i32, w32.VK_RWIN)) < 0,
+    };
+    if (vk == w32.VK_RETURN) {
+        if (mods.ctrl or mods.alt or mods.super or mods.shift) return false;
+        self.pane.diffFilterSubmitted();
+        return true;
+    }
+    const action = viewer_find.fieldKeyAction(vk, mods, .{
+        .diff_filter = true,
+        .find_open = self.pane.find_open,
+    }) orelse return false;
+    switch (action) {
+        .clear_diff_filter => self.pane.diffFilterEscaped(),
+        // Not reachable with the filter focused, and answering them here
+        // would be acting on another field's behalf.
+        .revert_address, .close_find, .find_next, .find_previous => return false,
+    }
+    return true;
+}
+
+/// The pane-scoped chords while the filter holds focus: the chords belong to
+/// the PANE, and this card is inside the pane (the find card's rule).
+pub fn handleEditChord(self: *ViewerTOCPanel, vk: u16) bool {
+    const mods: input.Mods = .{
+        .ctrl = w32.GetKeyState(@as(i32, w32.VK_CONTROL)) < 0,
+        .shift = w32.GetKeyState(@as(i32, w32.VK_SHIFT)) < 0,
+        .alt = w32.GetKeyState(@as(i32, w32.VK_MENU)) < 0,
+        .super = w32.GetKeyState(@as(i32, w32.VK_LWIN)) < 0 or
+            w32.GetKeyState(@as(i32, w32.VK_RWIN)) < 0,
+    };
+    const chord = viewer_accel.paneChord(vk, mods) orelse return false;
+    self.pane.handlePaneChord(chord);
+    return true;
 }
 
 /// True when this card is listing a diff's changed files rather than a
@@ -344,6 +540,10 @@ pub fn setItems(self: *ViewerTOCPanel, keep_scroll: bool) void {
     } else {
         self.buildHeadingRows();
     }
+    // The pane dropped its filter (it left the diff): the field follows, so a
+    // diff opened later in this pane does not show a stale query over an
+    // unfiltered list.
+    if (self.pane.diffFilter().len == 0) self.clearFilterField();
 
     if (keep_scroll) {
         self.scroll = scroll_before;
@@ -407,6 +607,9 @@ fn buildFileRows(self: *ViewerTOCPanel, tree: *const file_tree.Tree) void {
                     r.status.letter(),
                 ) catch &.{};
                 self.fillCounts(&row, r);
+                if (r.detail.len > 0) {
+                    row.detail16 = std.unicode.utf8ToUtf16LeAlloc(self.alloc, r.detail) catch &.{};
+                }
             },
         }
         self.rows.append(self.alloc, row) catch {
@@ -414,6 +617,7 @@ fn buildFileRows(self: *ViewerTOCPanel, tree: *const file_tree.Tree) void {
             if (row.badge16.len > 0) self.alloc.free(row.badge16);
             if (row.adds16.len > 0) self.alloc.free(row.adds16);
             if (row.dels16.len > 0) self.alloc.free(row.dels16);
+            if (row.detail16.len > 0) self.alloc.free(row.detail16);
             return;
         };
     }
@@ -481,6 +685,28 @@ pub fn applyTheme(self: *ViewerTOCPanel) void {
     const secondary = chrome_theme.textSecondaryOn(self.card_fill);
     self.text_ref = w32.RGB(text.r, text.g, text.b);
     self.secondary_ref = w32.RGB(secondary.r, secondary.g, secondary.b);
+    // The filter's well is a step off the card — darker in dark mode, lighter
+    // in light — so it reads as a recess rather than as paint missing from the
+    // card. The find card's well, by the same rule and the same step.
+    const d: i32 = if (self.dark) -14 else 14;
+    self.field_rgb = .{
+        .r = icon_button.shadeChannel(self.card_fill.r, d),
+        .g = icon_button.shadeChannel(self.card_fill.g, d),
+        .b = icon_button.shadeChannel(self.card_fill.b, d),
+    };
+    if (self.edit_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
+    self.edit_brush = w32.CreateSolidBrush(w32.RGB(self.field_rgb.r, self.field_rgb.g, self.field_rgb.b));
+    if (self.filter_edit) |edit| {
+        _ = w32.SetWindowTheme(
+            edit,
+            if (self.dark)
+                std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer")
+            else
+                std.unicode.utf8ToUtf16LeStringLiteral("Explorer"),
+            null,
+        );
+        _ = w32.InvalidateRect(edit, null, 1);
+    }
     self.releaseCardSurface();
     _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
@@ -495,8 +721,17 @@ fn px(self: *const ViewerTOCPanel, dip: f32) i32 {
 
 fn ensureFonts(self: *ViewerTOCPanel) void {
     if (self.row_font != null and self.measured_scale == self.scale) return;
-    if (self.row_font) |f| _ = w32.DeleteObject(@ptrCast(f));
-    if (self.header_font) |f| _ = w32.DeleteObject(@ptrCast(f));
+    // The filter field holds the row font, so the old one is released only
+    // AFTER the field has been handed its replacement.
+    const old_row = self.row_font;
+    const old_header = self.header_font;
+    defer {
+        if (old_row) |f| _ = w32.DeleteObject(@ptrCast(f));
+        if (old_header) |f| _ = w32.DeleteObject(@ptrCast(f));
+    }
+    defer if (self.filter_edit) |edit| {
+        if (self.row_font) |f| _ = w32.SendMessageW(edit, w32.WM_SETFONT, @intFromPtr(f), 1);
+    };
     const row_ramp = type_ramp.caption(self.scale);
     self.row_font = w32.CreateFontW(
         -row_ramp.height,
@@ -551,6 +786,9 @@ fn measureRows(self: *ViewerTOCPanel, card_w: i32) void {
     _ = w32.DrawTextW(hdc, &probe, 2, &pr, w32.DT_CALCRECT | w32.DT_SINGLELINE | w32.DT_NOPREFIX);
     self.line_h = @max(pr.bottom - pr.top, 1);
     self.caption_line_h = self.line_h;
+    // The filter EDIT draws in this same font, so one line of it is exactly
+    // this tall.
+    self.filter_edit_h = self.line_h;
 
     const gap = self.px(1); // Mac: VStack spacing 1 between rows
     var y: i32 = 0;
@@ -571,7 +809,9 @@ fn measureRows(self: *ViewerTOCPanel, card_w: i32) void {
             const both = if (adds_w > 0 and dels_w > 0) self.px(toc.row_gap_dip) else 0;
             row.counts_w = adds_w + both + dels_w;
             row.y = y;
-            row.h = toc.rowHeight(1, self.line_h, self.scale);
+            // A filter hit carries its folder on a second line (T1336).
+            const lines: i32 = if (row.detail16.len > 0) 2 else 1;
+            row.h = toc.rowHeight(lines, self.line_h, self.scale);
             y += row.h;
             continue;
         }
@@ -613,7 +853,7 @@ fn measureText(hdc: w32.HDC, text: []const u16) i32 {
 
 /// The card content's needed height: header + list inset above and below.
 fn neededHeight(self: *const ViewerTOCPanel) i32 {
-    return toc.headerHeight(self.caption_line_h, self.scale) +
+    return self.headerH() +
         2 * self.px(toc.fill_inset_dip) + self.list_h;
 }
 
@@ -642,7 +882,7 @@ pub fn place(
     self.setScale(scale);
 
     const pane_w_dip = @as(f32, @floatFromInt(content_w)) / scale;
-    const which = toc.mode(pane_w_dip, self.rows.items.len);
+    const which = toc.mode(pane_w_dip, self.itemCount());
     if (which == .hidden) {
         self.hide();
         return .{ .which = .hidden, .card_w_dip = 0 };
@@ -666,7 +906,7 @@ pub fn place(
         content_h,
         pref_dip,
         self.neededHeight(),
-        self.rows.items.len,
+        self.itemCount(),
     );
     const l = self.layout;
 
@@ -720,11 +960,39 @@ pub fn place(
     // moved, not when the pane crossed the threshold between the two.
     const animate = which == .compact and self.last_mode == .compact;
     self.last_mode = which;
+    self.placeFilterEdit();
     self.setVisible(visible, animate);
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.logCardMetrics();
 
     return .{ .which = which, .card_w_dip = l.card_w_dip };
+}
+
+/// The filter's boxes in THIS window's client coordinates: the layout's card
+/// origin plus `toc.filterBox`'s card-relative geometry.
+fn filterBoxes(self: *const ViewerTOCPanel) toc.FilterBox {
+    const l = self.layout;
+    var b = toc.filterBox(l.card.width(), self.caption_line_h, self.filter_edit_h, self.scale);
+    inline for (.{ &b.well, &b.glyph, &b.edit, &b.clear }) |r| {
+        r.left += l.card.left;
+        r.right += l.card.left;
+        r.top += l.card.top;
+        r.bottom += l.card.top;
+    }
+    return b;
+}
+
+/// Put the filter field in its well, or hide it when the card is listing a
+/// document's headings.
+fn placeFilterEdit(self: *ViewerTOCPanel) void {
+    const edit = self.filter_edit orelse return;
+    if (!self.showsFiles() or self.layout.which == .hidden) {
+        _ = w32.ShowWindow(edit, w32.SW_HIDE);
+        return;
+    }
+    const b = self.filterBoxes();
+    _ = chrome_reposition.place(edit, b.edit.left, b.edit.top, b.edit.width(), b.edit.height(), 0);
+    _ = w32.ShowWindow(edit, w32.SW_SHOWNA);
 }
 
 /// Report the card's measured box, once per CHANGE of it.
@@ -736,7 +1004,7 @@ pub fn place(
 /// would be noise; a line per change is the same rule `logPanelLayout` follows
 /// one level up.
 fn logCardMetrics(self: *ViewerTOCPanel) void {
-    const header_h = toc.headerHeight(self.caption_line_h, self.scale);
+    const header_h = self.headerH();
     const w = self.layout.card.width();
     const h = self.layout.card.height();
     if (header_h == self.logged_header and w == self.logged_card_w and
@@ -861,6 +1129,7 @@ pub fn sliding(self: *const ViewerTOCPanel) bool {
 }
 
 pub fn hide(self: *ViewerTOCPanel) void {
+    if (self.filter_edit) |edit| _ = w32.ShowWindow(edit, w32.SW_HIDE);
     self.layout = .{ .which = .hidden };
     self.last_mode = .hidden;
     self.stopSlide();
@@ -878,7 +1147,7 @@ pub fn hide(self: *ViewerTOCPanel) void {
 fn viewportHeight(self: *const ViewerTOCPanel) i32 {
     return @max(
         self.layout.card.height() -
-            toc.headerHeight(self.caption_line_h, self.scale) -
+            self.headerH() -
             2 * self.px(toc.fill_inset_dip),
         1,
     );
@@ -915,7 +1184,7 @@ fn revealRow(self: *ViewerTOCPanel, index: usize) void {
 fn hitRow(self: *const ViewerTOCPanel, x: i32, y: i32) i32 {
     const l = self.layout;
     if (l.which == .hidden) return -1;
-    const header_h = toc.headerHeight(self.caption_line_h, self.scale);
+    const header_h = self.headerH();
     const list_top = l.card.top + header_h + self.px(toc.fill_inset_dip);
     if (x < l.card.left or x >= l.card.right) return -1;
     if (y < list_top or y >= l.card.bottom - self.px(toc.fill_inset_dip)) return -1;
@@ -1081,7 +1350,7 @@ fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
         _ = w32.SelectClipRgn(hdc, rgn);
     }
 
-    const header_h = toc.headerHeight(self.caption_line_h, self.scale);
+    const header_h = self.headerH();
     _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
 
     // Rows, clipped to the list viewport so they scroll UNDER the header.
@@ -1256,11 +1525,13 @@ fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
         var contents = std.unicode.utf8ToUtf16LeStringLiteral("CONTENTS").*;
         var files = std.unicode.utf8ToUtf16LeStringLiteral("FILES").*;
         const caption: []u16 = if (self.showsFiles()) &files else &contents;
+        // The CAPTION band only: with the filter pinned under it, centring on
+        // the whole header would drop the caption into the field.
         var cr = w32.RECT{
             .left = l.card.left + self.px(toc.label_inset_dip),
             .top = l.card.top,
             .right = l.card.right - self.px(toc.label_inset_dip),
-            .bottom = l.card.top + header_h,
+            .bottom = l.card.top + toc.headerHeight(self.caption_line_h, self.scale),
         };
         _ = w32.DrawTextW(
             hdc,
@@ -1273,15 +1544,26 @@ fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
         // band. The page's own summary line carries the +/- totals, so the
         // header does not repeat them.
         if (self.showsFiles()) {
-            var buf: [32]u8 = undefined;
+            var buf: [48]u8 = undefined;
             const n = self.fileRowCount();
-            const text = std.fmt.bufPrint(
-                &buf,
-                "{d} {s}",
-                .{ n, if (n == 1) "file" else "files" },
-            ) catch "";
+            const tree = self.pane.diffTree();
+            // A filtered card says how much of the diff it is showing: "3 of
+            // 120 files" keeps the size of the change in view while the list
+            // is narrowed (Mac's `diffSummaryText`, "3/120").
+            const text = if (tree != null and tree.?.filtered)
+                std.fmt.bufPrint(&buf, "{d} of {d} {s}", .{
+                    n,
+                    tree.?.total_files,
+                    if (tree.?.total_files == 1) "file" else "files",
+                }) catch ""
+            else
+                std.fmt.bufPrint(
+                    &buf,
+                    "{d} {s}",
+                    .{ n, if (n == 1) "file" else "files" },
+                ) catch "";
             if (text.len > 0) {
-                var text16: [32]u16 = undefined;
+                var text16: [48]u16 = undefined;
                 const len = std.unicode.utf8ToUtf16Le(&text16, text) catch 0;
                 if (len > 0) {
                     _ = w32.DrawTextW(
@@ -1293,8 +1575,67 @@ fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
                     );
                 }
             }
+            if (self.filter_edit != null) self.paintFilter(hdc);
         }
     }
+}
+
+/// The filter's well, its magnifier, and — while there is text to clear — the
+/// clear button (T1336). The EDIT paints its own text over the well; with
+/// WS_CLIPCHILDREN on the card this never draws across it.
+fn paintFilter(self: *ViewerTOCPanel, hdc: w32.HDC) void {
+    const b = self.filterBoxes();
+    fillRoundRect(
+        hdc,
+        .{ .left = b.well.left, .top = b.well.top, .right = b.well.right, .bottom = b.well.bottom },
+        self.px(toc.row_corner_dip),
+        w32.RGB(self.field_rgb.r, self.field_rgb.g, self.field_rgb.b),
+    );
+
+    const m = icon_button.Metrics.init(self.scale);
+    // A label for the field, not a button: no fill, no hover.
+    icon_paint.glyph(hdc, m, iconRect(b.glyph), .search, self.secondary_ref);
+
+    if (!self.filterHasText()) return;
+    const clear = iconRect(b.clear);
+    if (self.clear_hover or self.clear_pressed) {
+        const state: icon_button.State = if (self.clear_pressed) .pressed else .hover;
+        const d = icon_button.fillDelta(state, self.dark);
+        fillRoundRect(
+            hdc,
+            .{ .left = b.clear.left, .top = b.clear.top, .right = b.clear.right, .bottom = b.clear.bottom },
+            self.px(4),
+            w32.RGB(
+                icon_button.shadeChannel(self.field_rgb.r, d),
+                icon_button.shadeChannel(self.field_rgb.g, d),
+                icon_button.shadeChannel(self.field_rgb.b, d),
+            ),
+        );
+    }
+    icon_paint.glyph(
+        hdc,
+        m,
+        icon_button.glyphTarget(m, clear, .close),
+        .close,
+        if (self.clear_hover) self.text_ref else self.secondary_ref,
+    );
+}
+
+fn iconRect(r: toc.Rect) icon_button.Rect {
+    return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+}
+
+/// Whether a client point is on the clear button — only while it is showing.
+fn onClear(self: *const ViewerTOCPanel, x: i32, y: i32) bool {
+    if (!self.showsFiles() or self.layout.which == .hidden) return false;
+    if (!self.filterHasText()) return false;
+    return self.filterBoxes().clear.containsPoint(x, y);
+}
+
+/// Whether a client point is in the filter's well (the field and its glyph).
+fn onFilter(self: *const ViewerTOCPanel, x: i32, y: i32) bool {
+    if (self.filter_edit == null or !self.showsFiles() or self.layout.which == .hidden) return false;
+    return self.filterBoxes().well.containsPoint(x, y);
 }
 
 /// One diff-tree row: `[status] name -- +12 -3` for a file, `[chevron] path`
@@ -1384,11 +1725,14 @@ fn paintTreeRow(
     // `Viewer...Leaf.zig` keeps both the distinguishing tail and the
     // extension. A folder row's title is a joined path, which is exactly what
     // the flag is for.
+    // A filter hit's folder rides on a second line (T1336), so the name takes
+    // the first line instead of the row's middle.
+    const two_line = row.detail16.len > 0;
     var nr = w32.RECT{
         .left = l.card.left + boxes.name_left,
         .top = text_top,
         .right = l.card.left + boxes.name_right,
-        .bottom = text_bottom,
+        .bottom = if (two_line) text_top + self.line_h else text_bottom,
     };
     const name_ink = if (row.kind == .folder) self.secondary_ref else ink;
     _ = w32.SetTextColor(hdc, name_ink);
@@ -1399,6 +1743,24 @@ fn paintTreeRow(
         &nr,
         w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_PATH_ELLIPSIS | w32.DT_NOPREFIX,
     );
+    if (two_line) {
+        // Secondary ink, path-ellipsized: the folder that tells two
+        // same-named hits apart is usually its TAIL.
+        var dr = w32.RECT{
+            .left = nr.left,
+            .top = nr.bottom,
+            .right = nr.right,
+            .bottom = text_bottom,
+        };
+        _ = w32.SetTextColor(hdc, self.secondary_ref);
+        _ = w32.DrawTextW(
+            hdc,
+            row.detail16.ptr,
+            @intCast(row.detail16.len),
+            &dr,
+            w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_PATH_ELLIPSIS | w32.DT_NOPREFIX,
+        );
+    }
 
     if (row.counts_w == 0) return;
 
@@ -1511,7 +1873,32 @@ fn wndProc(
 
         // The card is chrome: interacting with it must not steal keyboard
         // focus from the document (or the address bar).
-        w32.WM_MOUSEACTIVATE => return w32.MA_NOACTIVATE,
+        // The filter field is the exception (T1336): a click in its well is a
+        // request for the caret, which an un-activated window cannot give.
+        w32.WM_MOUSEACTIVATE => {
+            var pt: w32.POINT = undefined;
+            if (w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0) {
+                if (self.onFilter(pt.x, pt.y) and !self.onClear(pt.x, pt.y)) return w32.MA_ACTIVATE;
+            }
+            return w32.MA_NOACTIVATE;
+        },
+
+        w32.WM_CTLCOLOREDIT => {
+            const hdc: w32.HDC = @ptrFromInt(wparam);
+            _ = w32.SetTextColor(hdc, self.text_ref);
+            _ = w32.SetBkColor(hdc, w32.RGB(self.field_rgb.r, self.field_rgb.g, self.field_rgb.b));
+            if (self.edit_brush) |b| {
+                return @bitCast(@intFromPtr(@as(*const anyopaque, @ptrCast(b))));
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
+        w32.WM_COMMAND => {
+            const code: u16 = @intCast((wparam >> 16) & 0xFFFF);
+            const id: u16 = @intCast(wparam & 0xFFFF);
+            if (id == filter_edit_id and code == w32.EN_CHANGE) self.filterChanged();
+            return 0;
+        },
 
         w32.WM_SETCURSOR => {
             var pt: w32.POINT = undefined;
@@ -1533,8 +1920,10 @@ fn wndProc(
                 return 0;
             }
             const hot = self.hitRow(x, y);
-            if (hot != self.hover) {
+            const clear_hot = self.onClear(x, y);
+            if (hot != self.hover or clear_hot != self.clear_hover) {
                 self.hover = hot;
+                self.clear_hover = clear_hot;
                 _ = w32.InvalidateRect(hwnd, null, 0);
             }
             if (!self.tracking) {
@@ -1551,8 +1940,9 @@ fn wndProc(
 
         w32.WM_MOUSELEAVE => {
             self.tracking = false;
-            if (self.hover != -1) {
+            if (self.hover != -1 or self.clear_hover) {
                 self.hover = -1;
+                self.clear_hover = false;
                 _ = w32.InvalidateRect(hwnd, null, 0);
             }
             return 0;
@@ -1577,6 +1967,18 @@ fn wndProc(
                 _ = w32.SetCapture(hwnd);
                 return 0;
             }
+            if (self.onClear(x, y)) {
+                self.clear_pressed = true;
+                _ = w32.SetCapture(hwnd);
+                _ = w32.InvalidateRect(hwnd, null, 0);
+                return 0;
+            }
+            // The rest of the well (the magnifier, the padding) is the field's
+            // too: a click anywhere in it puts the caret in the field.
+            if (self.onFilter(x, y)) {
+                if (self.filter_edit) |edit| _ = w32.SetFocus(edit);
+                return 0;
+            }
             // Row activation happens on the up over the same row (standard
             // button affordance); remember the press via hover.
             return 0;
@@ -1589,6 +1991,22 @@ fn wndProc(
                 self.drag = null;
                 _ = w32.ReleaseCapture();
                 self.pane.commitTOCWidth();
+                return 0;
+            }
+            if (self.clear_pressed) {
+                self.clear_pressed = false;
+                _ = w32.ReleaseCapture();
+                _ = w32.InvalidateRect(hwnd, null, 0);
+                // Mouse-up over the same button it went down on: the whole
+                // list comes back, and the caret goes to the field so the
+                // next query can be typed straight away (a search box's
+                // clear button, Mac's and Windows' alike).
+                if (self.onClear(x, y)) {
+                    log.info("viewer tree pane={s} filter-clear", .{self.pane.paneId()});
+                    self.clearFilterField();
+                    self.pane.setDiffFilter("");
+                    if (self.filter_edit) |edit| _ = w32.SetFocus(edit);
+                }
                 return 0;
             }
             const hit = self.hitRow(x, y);

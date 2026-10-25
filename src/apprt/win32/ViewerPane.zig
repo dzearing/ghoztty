@@ -636,6 +636,12 @@ diff_tree: ?file_tree.Tree = null,
 /// folder that re-opened itself twice a minute would be unusable.
 diff_collapsed: std.ArrayList([]u8) = .empty,
 
+/// What the reader has typed into the card's filter field (T1336), UTF-8,
+/// owned. On the PANE for the reason `diff_collapsed` is: a working-tree poll
+/// rebuilds the tree every two seconds, and a filter that forgot itself on
+/// every rebuild would be no filter at all.
+diff_filter: std.ArrayList(u8) = .empty,
+
 /// Whether the page has been given a listing since it last loaded. A poll only
 /// redraws when the file list MOVED, so without this a freshly-loaded page
 /// whose diff has not changed would be handed nothing and stay blank — Mac's
@@ -1014,6 +1020,7 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
     self.diff_file = null;
     self.clearDiffTree(alloc);
     self.diff_collapsed.deinit(alloc);
+    self.diff_filter.deinit(alloc);
     // Destroy the dim overlay before the host window (its owner) is gone —
     // the same ordering Surface.deinit keeps for its own (T380).
     if (self.dim_overlay) |d| {
@@ -3480,6 +3487,10 @@ fn clearDiffTree(self: *ViewerPane, alloc: Allocator) void {
     self.diff_tree = null;
     for (self.diff_collapsed.items) |k| alloc.free(k);
     self.diff_collapsed.clearRetainingCapacity();
+    // Leaving the diff takes the filter with it (Mac's `clearDiffState`): the
+    // next diff this pane shows must not open pre-narrowed by a query typed
+    // against a different one.
+    self.diff_filter.clearRetainingCapacity();
 }
 
 /// Rebuild the file tree from the probe's current listing and hand it to the
@@ -3503,7 +3514,7 @@ fn rebuildDiffTree(self: *ViewerPane, alloc: Allocator, keep_scroll: bool) void 
     defer alloc.free(keys);
     for (self.diff_collapsed.items, 0..) |k, i| keys[i] = k;
 
-    self.diff_tree = file_tree.build(alloc, views, keys) catch null;
+    self.diff_tree = file_tree.buildFiltered(alloc, views, keys, self.diff_filter.items) catch null;
     if (self.toc) |panel| panel.setItems(keep_scroll);
     self.updateTOC(alloc);
 
@@ -3516,7 +3527,9 @@ fn rebuildDiffTree(self: *ViewerPane, alloc: Allocator, keep_scroll: bool) void 
     var folders: usize = 0;
     var sections: usize = 0;
     var files_shown: usize = 0;
+    var filtered = false;
     if (self.diff_tree) |*t| {
+        filtered = t.filtered;
         rows = t.rows.len;
         for (t.rows) |r| switch (r.kind) {
             .folder => folders += 1,
@@ -3525,7 +3538,7 @@ fn rebuildDiffTree(self: *ViewerPane, alloc: Allocator, keep_scroll: bool) void 
         };
     }
     log.info(
-        "viewer tree pane={s} rows={d} files={d} folders={d} sections={d} shut={d} layout={s} selected={s}",
+        "viewer tree pane={s} rows={d} files={d} folders={d} sections={d} shut={d} layout={s} selected={s} filtered={d} total={d}",
         .{
             self.paneId(),
             rows,
@@ -3535,8 +3548,72 @@ fn rebuildDiffTree(self: *ViewerPane, alloc: Allocator, keep_scroll: bool) void 
             self.diff_collapsed.items.len,
             @tagName(self.toc_mode),
             self.diff_file orelse "-",
+            @intFromBool(filtered),
+            probe.files.items.len,
         },
     );
+}
+
+/// The card's filter text, borrowed. Empty when nothing is typed.
+pub fn diffFilter(self: *const ViewerPane) []const u8 {
+    return self.diff_filter.items;
+}
+
+/// The filter field's text moved (T1336): narrow the tree. Every keystroke is
+/// applied straight away — the tree is rebuilt from a listing already in
+/// memory, so a keystroke costs a pass over the paths and nothing else (Mac's
+/// `setDiffFilter` makes the same call).
+///
+/// The list starts again from the top: the rows under the pointer have all
+/// changed, so holding the old scroll offset would hold nothing in particular.
+pub fn setDiffFilter(self: *ViewerPane, text: []const u8) void {
+    const p = self.pending orelse return;
+    if (std.mem.eql(u8, self.diff_filter.items, text)) return;
+    self.diff_filter.clearRetainingCapacity();
+    self.diff_filter.appendSlice(p.alloc, text) catch {
+        self.diff_filter.clearRetainingCapacity();
+    };
+    // Its own line, ahead of the tree line it causes, because the text can
+    // hold spaces and the tree line's fields are space-separated. The filter
+    // is LAST so a reader can take the rest of the line as the query.
+    log.info("viewer tree pane={s} filter={s}", .{ self.paneId(), self.diff_filter.items });
+    if (self.diff_tree == null) return;
+    self.rebuildDiffTree(p.alloc, false);
+}
+
+/// Return in the filter field: open the hit at the top of the list — the
+/// "type a few letters and go" path that makes this a jump-to-file field
+/// rather than only a way to shorten the list (Mac's `openFirstFilteredFile`).
+/// Nothing matching is nothing to open.
+pub fn diffFilterSubmitted(self: *ViewerPane) void {
+    const tree = if (self.diff_tree) |*t| t else return;
+    const index = file_tree.firstFile(tree.rows) orelse {
+        log.info("viewer tree pane={s} submit=-", .{self.paneId()});
+        return;
+    };
+    const probe = if (self.diff_probe) |*probe| probe else return;
+    if (index >= probe.files.items.len) return;
+    // The PROBE's copy of the path, not the tree row's: opening a file can
+    // rebuild the card, and the row would go with it mid-call.
+    const path = probe.files.items[index].path;
+    log.info("viewer tree pane={s} submit={s}", .{ self.paneId(), path });
+    self.diffFileClicked(path);
+}
+
+/// Escape in the filter field: put the whole list back and hand the caret to
+/// the diff — the same "throw the edit away" contract the address field has
+/// (Mac's `.clearDiffFilter`).
+pub fn diffFilterEscaped(self: *ViewerPane) void {
+    if (self.toc) |panel| panel.clearFilterField();
+    self.setDiffFilter("");
+    if (self.controller) |c| _ = c.moveFocus(.programmatic);
+}
+
+/// Whether the card's filter field holds the caret — the input to
+/// `viewer_find.Focus.diff_filter`.
+fn diffFilterFocused(self: *const ViewerPane) bool {
+    const panel = self.toc orelse return false;
+    return panel.filterFocused();
 }
 
 /// Leaving diff mode: the card goes back to listing headings.
@@ -6083,6 +6160,7 @@ fn findEscapeAction(
         .super = mods.super,
     }, .{
         .address = if (self.nav) |nav| w32.GetFocus() == @as(?w32.HWND, nav.edit) else false,
+        .diff_filter = self.diffFilterFocused(),
         .find = self.findFieldFocused(),
         .find_open = self.find_open,
     }) orelse return null;

@@ -47,6 +47,7 @@ const Surface = @import("Surface.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const ViewerNavBar = @import("ViewerNavBar.zig");
 const ViewerFindBar = @import("ViewerFindBar.zig");
+const ViewerTOCPanel = @import("ViewerTOCPanel.zig");
 const webview2 = @import("webview2.zig");
 const Window = @import("Window.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
@@ -2248,6 +2249,15 @@ pub fn run(self: *App) !void {
                     if (bar.handleEditChord(vk)) continue :loop;
                     if (bar.pane.claimFieldChord(vk, msg.lParam)) continue :loop;
                 }
+                // A diff pane's file filter (T1336): Return opens the top hit
+                // and Escape puts the whole list back, neither of which an
+                // EDIT delivers itself; the pane-scoped chords are live in it
+                // for the reason they are in the find field.
+                if (ViewerTOCPanel.owningEdit(msg.hwnd.?)) |panel| {
+                    if (panel.handleEditKey(vk)) continue :loop;
+                    if (panel.handleEditChord(vk)) continue :loop;
+                    if (panel.pane.claimFieldChord(vk, msg.lParam)) continue :loop;
+                }
                 // Check if this edit is a tab rename edit
                 if (vk == w32.VK_RETURN or vk == w32.VK_ESCAPE) {
                     for (self.windows.items) |win| {
@@ -2326,6 +2336,10 @@ pub fn run(self: *App) !void {
             if (ViewerFindBar.owningEdit(msg.hwnd.?)) |bar| {
                 if (bar.handleEditChord(sys_vk)) continue :loop;
                 if (bar.pane.claimFieldChord(sys_vk, msg.lParam)) continue :loop;
+            }
+            if (ViewerTOCPanel.owningEdit(msg.hwnd.?)) |panel| {
+                if (panel.handleEditChord(sys_vk)) continue :loop;
+                if (panel.pane.claimFieldChord(sys_vk, msg.lParam)) continue :loop;
             }
         }
 

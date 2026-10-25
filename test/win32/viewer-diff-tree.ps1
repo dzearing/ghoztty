@@ -15,6 +15,10 @@
 #     a time, so selecting and opening are one act).
 #   - clicking a FOLDER row shuts it, and its files leave the list; clicking it
 #     again brings them back.
+#   - the FILTER field pinned in the card's header (T1336): typing flattens the
+#     tree to the files matching every term, Return opens the top hit, Escape
+#     and the clear button put the whole list back, and a query with one hit or
+#     none never retracts the card it is typed into.
 #
 # THE ORACLE, and why it is the app's own stderr: the panel is a child window
 # whose contents `+list --json` cannot see, and this suite runs on a background
@@ -71,6 +75,10 @@ function Assert([bool]$cond, [string]$label) {
 Add-Type -Namespace VDT -Name U -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
 [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, string l);
+[DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; }
 '@
 
@@ -117,7 +125,7 @@ function Get-Log {
     return ((Get-Content $script:errlog -Raw -ErrorAction SilentlyContinue) -replace '\s+', ' ')
 }
 
-$treeRe = 'viewer tree pane=(\S+) rows=(\d+) files=(\d+) folders=(\d+) sections=(\d+) shut=(\d+) layout=(\S+) selected=(\S+)'
+$treeRe = 'viewer tree pane=(\S+) rows=(\d+) files=(\d+) folders=(\d+) sections=(\d+) shut=(\d+) layout=(\S+) selected=(\S+)(?: filtered=(\d+) total=(\d+))?'
 
 # The LAST tree line for a pane, as a record. `-After` skips the lines already
 # seen, which is what makes a rebuild distinguishable from the state that was
@@ -137,6 +145,8 @@ function Wait-Tree([string]$PaneId, [int]$After = 0, [int]$TimeoutMs = 15000) {
                 Shut     = [int]$m.Groups[6].Value
                 Layout   = $m.Groups[7].Value
                 Selected = $m.Groups[8].Value
+                Filtered = $(if ($m.Groups[9].Success) { [int]$m.Groups[9].Value } else { -1 })
+                Total    = $(if ($m.Groups[10].Success) { [int]$m.Groups[10].Value } else { -1 })
                 Count    = $hits.Count
             }
         }
@@ -437,6 +447,113 @@ try {
             }
         }
         Assert $fileHit 'C: clicking a file row opens that file'
+    }
+
+    # -----------------------------------------------------------------------
+    # F. The filter field (T1336).
+    #
+    # Mac pins a search field under the card's header: typing flattens the tree
+    # to a hit list, Return opens the top hit, Escape puts the list back. The
+    # field is a real EDIT child of the card, so it is found and driven through
+    # the window tree: WM_SETTEXT is what the control itself receives when text
+    # arrives (and raises the same EN_CHANGE a keystroke does), and a POSTED
+    # WM_KEYDOWN goes through the app's message loop exactly as a real key
+    # does, which is where Return and Escape are routed.
+    #
+    # The scratch repository makes every count exact: "win32" matches alpha
+    # and beta only, "win32 beta" only beta, and "readme" only docs/readme.md.
+    # -----------------------------------------------------------------------
+    $WM_SETTEXT = 0x000C
+    $WM_GETTEXTLENGTH = 0x000E
+    $WM_KEYDOWN = 0x0100
+    $toc = Get-TocHwnd
+    $edit = [IntPtr]::Zero
+    if ($toc -ne [IntPtr]::Zero) {
+        $edits = @(Get-TestChildWindows -Window $toc -Class 'Edit')
+        if ($edits.Count -ge 1) { $edit = [IntPtr]$edits[0].Hwnd }
+    }
+    Assert ($edit -ne [IntPtr]::Zero) 'F: the files card carries a filter field'
+    if ($edit -ne [IntPtr]::Zero) {
+        Assert ([VDT.U]::IsWindowVisible($edit)) 'F: and it is showing'
+        $er = Get-Rect $edit
+        Assert ((Rect-Width $er) -gt 0 -and (Inside $er (Get-Rect $toc))) 'F: inside the card'
+
+        function Set-Filter([string]$text) {
+            $seen = Count-Tree $paneId
+            [void][VDT.U]::SendMessage($edit, $WM_SETTEXT, [IntPtr]::Zero, $text)
+            return (Wait-Tree $paneId $seen 5000)
+        }
+        function Send-FieldKey([int]$vk) {
+            [void][VDT.U]::PostMessage($edit, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]1)
+        }
+
+        # Positive control: before anything is typed the tree is the tree.
+        $f0 = Wait-Tree $paneId 0
+        Assert ($null -ne $f0 -and $f0.Filtered -eq 0 -and $f0.Files -eq 4) `
+            "F: unfiltered, all four files are listed (filtered=$($f0.Filtered) files=$($f0.Files))"
+
+        $f1 = Set-Filter 'win32'
+        Assert ($null -ne $f1 -and $f1.Filtered -eq 1) 'F: typing narrows the card to a filtered list'
+        if ($f1) {
+            Assert ($f1.Files -eq 2 -and $f1.Folders -eq 0) `
+                "F: 'win32' leaves exactly alpha and beta, flat, with no folder rows (files=$($f1.Files) folders=$($f1.Folders))"
+            Assert ($f1.Total -eq 4) "F: the card still knows the diff has four files (total=$($f1.Total))"
+        }
+        Assert ((Get-Log) -match ('viewer tree pane=' + $paneId + ' filter=win32')) 'F: the pane recorded the query'
+
+        $f2 = Set-Filter 'win32 beta'
+        Assert ($null -ne $f2 -and $f2.Files -eq 1) `
+            "F: every term has to match: 'win32 beta' leaves one file (got $($f2.Files))"
+        Assert ((Get-TocHwnd) -ne [IntPtr]::Zero) 'F: one hit does not retract the card'
+
+        # Return opens the hit at the top of the list.
+        Send-FieldKey 0x0D
+        $opened = $null
+        for ($i = 0; $i -lt 20 -and -not $opened; $i++) {
+            Start-Sleep -Milliseconds 250
+            if ((Get-Log) -match ('viewer tree pane=' + $paneId + ' submit=(\S+)')) { $opened = $Matches[1] }
+        }
+        Assert ($opened -eq 'src/apprt/win32/beta.txt') "F: Return opens the top hit (submit=$opened)"
+        Start-Sleep -Milliseconds 600
+        Assert ((Get-OpenFile $paneId) -eq 'src/apprt/win32/beta.txt') `
+            "F: and the page shows that file's patch (open=$(Get-OpenFile $paneId))"
+
+        $f3 = Set-Filter 'nothing-matches-this'
+        Assert ($null -ne $f3 -and $f3.Files -eq 0 -and $f3.Rows -eq 0) `
+            "F: a query with no hits empties the list (rows=$($f3.Rows))"
+        Assert ((Get-TocHwnd) -ne [IntPtr]::Zero) 'F: and the card (with the field in it) stays up'
+
+        # Escape puts the whole list back and empties the field.
+        $seen = Count-Tree $paneId
+        Send-FieldKey 0x1B
+        $f4 = Wait-Tree $paneId $seen 5000
+        Assert ($null -ne $f4 -and $f4.Filtered -eq 0 -and $f4.Files -eq 4) `
+            "F: Escape restores the whole tree (filtered=$($f4.Filtered) files=$($f4.Files))"
+        $len = [int][VDT.U]::SendMessage($edit, $WM_GETTEXTLENGTH, [IntPtr]::Zero, [IntPtr]::Zero)
+        Assert ($len -eq 0) "F: and empties the field (length=$len)"
+
+        # The clear button sits just past the field's trailing edge, centred on
+        # it vertically. Found from the EDIT's own rect rather than a restated
+        # layout constant: whatever the field's width, the button is the next
+        # thing to its right.
+        $f5 = Set-Filter 'readme'
+        Assert ($null -ne $f5 -and $f5.Files -eq 1) "F: 'readme' finds docs/readme.md (got $($f5.Files))"
+        $er = Get-Rect $edit
+        $clearHit = $false
+        for ($dx = 6; $dx -le 26 -and -not $clearHit; $dx += 4) {
+            $seen = Count-Tree $paneId
+            $x = $er.right + [int][Math]::Round($dx * $scale, [MidpointRounding]::AwayFromZero)
+            $y = [int](($er.top + $er.bottom) / 2)
+            [void](Send-TestMouse -Window $top -Target $toc -X $x -Y $y -Action 'click' -Client)
+            Start-Sleep -Milliseconds 300
+            if ((Get-Log) -match ('viewer tree pane=' + $paneId + ' filter-clear')) {
+                $f6 = Wait-Tree $paneId $seen 4000
+                $clearHit = ($null -ne $f6 -and $f6.Filtered -eq 0 -and $f6.Files -eq 4)
+            }
+        }
+        Assert $clearHit 'F: the clear button puts the whole list back'
+        $len = [int][VDT.U]::SendMessage($edit, $WM_GETTEXTLENGTH, [IntPtr]::Zero, [IntPtr]::Zero)
+        Assert ($len -eq 0) "F: and empties the field (length=$len)"
     }
 
     # -----------------------------------------------------------------------

@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-24T17:59:44-07:00",
-    "commit":  "a3dcef60a",
+    "generated":  "2026-10-24T18:12:10-07:00",
+    "commit":  "83b46fe60",
     "uncommitted":  [
-
+                        "test/win32/viewer-diff-tree.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -156,7 +156,7 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
-                  "test/win32/gate-negatives.ps1":  "6435bf8e11e48fb744dc3c2c128b8d597743b99049762218fb75548839c8df0c",
+                  "test/win32/gate-negatives.ps1":  "925c265fb910963fbc8ba677311909b35cfcb1ec9022721a2ace206e4346d426",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
                   "test/win32/go-loop-guard.ps1":  "0a4f5c0cff7650be0af50b6801df9c8019e36732d63bb1191403b5d9bc14cffc",
@@ -477,7 +477,7 @@
                   "test/win32/viewer-close.ps1":  "db3dc1453f6d49be9669b5cd739d9a765b2c53c21826ec41352b70cbe25d8e3b",
                   "test/win32/viewer-composer.ps1":  "884e11cadc3a85a60b400e48522b2c7c5e7ddad28d3f8e039338c62197eded23",
                   "test/win32/viewer-diff.ps1":  "432e3279ef54e088498f7e1fe0c9922e941f188ab83b6a8a3fd0d9f2c9172730",
-                  "test/win32/viewer-diff-tree.ps1":  "5877f359c51ec7de7fdd91e626c11f008e99dac36fcece9733eafad7302a2661",
+                  "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82",
                   "test/win32/viewer-error-card.ps1":  "f8015c9f4ae53bf6ed0daa8f079cc1c8618b8841ca7da22dc40832e65f01a3c9",
                   "test/win32/viewer-feedback.ps1":  "fa5765780089947c0a242fbcabc094ab72c7393fbe21370eaab86b2aa9bc5ec2",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",

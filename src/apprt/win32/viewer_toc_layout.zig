@@ -301,6 +301,95 @@ pub fn headerHeight(caption_line_h: i32, scale: f32) i32 {
     return caption_line_h + 2 * px(header_pad_v_dip, scale);
 }
 
+/// The diff card's filter field (T1336), pinned in the header UNDER the
+/// "FILES" caption so it never scrolls away from the list it filters — Mac's
+/// `ViewerDiffPanel.header`, where title and field share one pinned band.
+///
+/// All on the 4 DIP scale: a 24 DIP well (the Windows 11 compact text box),
+/// an `md` gap below it before the rows begin, the well spanning the same
+/// fill insets a row's selection does so the field and the rows line up as
+/// one column, a 16 DIP magnifier `sm` in from the well's leading edge, and a
+/// 20 DIP clear target `xs` in from its trailing edge.
+pub const filter_h_dip: f32 = 24;
+pub const filter_pad_bottom_dip: f32 = 8;
+pub const filter_glyph_dip: f32 = 16;
+pub const filter_clear_dip: f32 = 20;
+pub const filter_pad_dip: f32 = 4;
+pub const filter_clear_inset_dip: f32 = 2;
+
+/// What the filter adds to the header's height.
+pub fn filterBandHeight(scale: f32) i32 {
+    return px(filter_h_dip, scale) + px(filter_pad_bottom_dip, scale);
+}
+
+/// The pinned header's height for a card that may carry the filter.
+pub fn headerHeightWith(caption_line_h: i32, scale: f32, has_filter: bool) i32 {
+    const base = headerHeight(caption_line_h, scale);
+    return if (has_filter) base + filterBandHeight(scale) else base;
+}
+
+pub const FilterBox = struct {
+    /// The recessed well the field sits in.
+    well: Rect,
+    /// The leading magnifier — a label for the field, never a button.
+    glyph: Rect,
+    /// Where the EDIT control goes: `edit_h` tall, centred in the well.
+    edit: Rect,
+    /// The clear button's target. Reserved whether or not it is showing, so
+    /// the text never shifts sideways under the caret when the first letter
+    /// makes the button appear.
+    clear: Rect,
+};
+
+/// The filter's boxes in CARD coordinates, for a card `card_w` wide whose
+/// caption band is `caption_line_h` + padding. `edit_h` is the EDIT's own
+/// line height — measured from its font by the caller — so the control is
+/// exactly as tall as the text it draws and is centred rather than top-aligned
+/// in a taller well.
+pub fn filterBox(card_w: i32, caption_line_h: i32, edit_h: i32, scale: f32) FilterBox {
+    const top = headerHeight(caption_line_h, scale);
+    const inset = px(fill_inset_dip, scale);
+    const well_h = px(filter_h_dip, scale);
+    const well = Rect{
+        .left = inset,
+        .top = top,
+        .right = @max(card_w - inset, inset + 1),
+        .bottom = top + well_h,
+    };
+    const pad = px(filter_pad_dip, scale);
+    const glyph_side = px(filter_glyph_dip, scale);
+    const glyph_top = top + @divTrunc(well_h - glyph_side, 2);
+    const glyph = Rect{
+        .left = well.left + pad,
+        .top = glyph_top,
+        .right = well.left + pad + glyph_side,
+        .bottom = glyph_top + glyph_side,
+    };
+    const clear_side = px(filter_clear_dip, scale);
+    const clear_right = well.right - px(filter_clear_inset_dip, scale);
+    const clear_top = top + @divTrunc(well_h - clear_side, 2);
+    const clear = Rect{
+        .left = clear_right - clear_side,
+        .top = clear_top,
+        .right = clear_right,
+        .bottom = clear_top + clear_side,
+    };
+    const h = std.math.clamp(edit_h, 1, well_h);
+    const edit_top = top + @divTrunc(well_h - h, 2);
+    const edit_left = glyph.right + pad;
+    return .{
+        .well = well,
+        .glyph = glyph,
+        .edit = .{
+            .left = edit_left,
+            .top = edit_top,
+            .right = @max(clear.left - pad, edit_left + 1),
+            .bottom = edit_top + h,
+        },
+        .clear = clear,
+    };
+}
+
 /// The compact overlay's slide (T543), and the pinned header's translucency.
 ///
 /// Mac parks the compact card off the leading edge and animates a Core
@@ -824,4 +913,51 @@ test "badgeWidth: never narrower than tall, so a letter chip is a circle" {
         const wide = badgeWidth(px(40, scale), line_h, scale);
         try testing.expectEqual(px(40, scale) + 2 * px(row_gap_dip, scale), wide);
     }
+}
+
+test "T1336 filter: the well sits under the caption, inside the row column, at every scale" {
+    for (scales) |s| {
+        const caption: i32 = px(14, s);
+        const card_w = px(card_default_dip, s);
+        const b = filterBox(card_w, caption, px(14, s), s);
+        // Directly under the caption band, and the header grows by exactly the
+        // well plus its gap.
+        try testing.expectEqual(headerHeight(caption, s), b.well.top);
+        try testing.expectEqual(px(filter_h_dip, s), b.well.height());
+        try testing.expectEqual(
+            headerHeight(caption, s) + b.well.height() + px(filter_pad_bottom_dip, s),
+            headerHeightWith(caption, s, true),
+        );
+        try testing.expectEqual(headerHeight(caption, s), headerHeightWith(caption, s, false));
+        // Same left and right edges as a row's selection fill.
+        try testing.expectEqual(px(fill_inset_dip, s), b.well.left);
+        try testing.expectEqual(card_w - px(fill_inset_dip, s), b.well.right);
+    }
+}
+
+test "T1336 filter: glyph, edit and clear are ordered, inside the well, and centred" {
+    for (scales) |s| {
+        const card_w = px(card_min_dip, s);
+        const edit_h = px(15, s);
+        const b = filterBox(card_w, px(14, s), edit_h, s);
+        try testing.expect(b.well.left < b.glyph.left);
+        try testing.expect(b.glyph.right < b.edit.left);
+        try testing.expect(b.edit.right < b.clear.left);
+        try testing.expect(b.clear.right <= b.well.right);
+        try testing.expectEqual(edit_h, b.edit.height());
+        for ([_]Rect{ b.glyph, b.edit, b.clear }) |r| {
+            try testing.expect(r.top >= b.well.top and r.bottom <= b.well.bottom);
+            // Centred: the slack above and below differ by at most a pixel.
+            const above = r.top - b.well.top;
+            const below = b.well.bottom - r.bottom;
+            try testing.expect(@abs(above - below) <= 1);
+        }
+    }
+}
+
+test "T1336 filter: a starved card and an oversized font still yield sane boxes" {
+    const b = filterBox(10, 14, 400, 1.0);
+    try testing.expect(b.edit.width() >= 1);
+    try testing.expect(b.edit.height() <= b.well.height());
+    try testing.expect(b.well.width() >= 1);
 }

@@ -67,16 +67,29 @@ pub const Row = struct {
     binary: bool = false,
     /// For a `.folder` row: whether the user has clicked it shut.
     collapsed: bool = false,
+    /// For a `.file` row in a FILTERED tree: the directory the file lives in,
+    /// owned, empty at the repository root (T1336). Filtering flattens the
+    /// tree, so the folder has to come back on the row itself — otherwise two
+    /// same-named files in different folders are indistinguishable hits (Mac's
+    /// `ViewerDiffPanel.fileRow` draws it as a second line for that reason).
+    detail: []const u8 = "",
 };
 
 pub const Tree = struct {
     rows: []Row = &.{},
     alloc: Allocator,
+    /// Whether a non-empty filter produced these rows: a flat hit list rather
+    /// than the folder hierarchy.
+    filtered: bool = false,
+    /// How many files the listing had BEFORE the filter, so the card's header
+    /// can say "3 of 120 files" rather than lose the size of the diff.
+    total_files: usize = 0,
 
     pub fn deinit(self: *Tree) void {
         for (self.rows) |r| {
             self.alloc.free(r.id);
             self.alloc.free(r.title);
+            if (r.detail.len > 0) self.alloc.free(r.detail);
         }
         if (self.rows.len > 0) self.alloc.free(self.rows);
         self.rows = &.{};
@@ -104,11 +117,33 @@ pub fn build(
     files: []const diff.File,
     collapsed: []const []const u8,
 ) Allocator.Error!Tree {
+    return buildFiltered(alloc, files, collapsed, "");
+}
+
+/// `build`, narrowed by the card's filter field (T1336; Mac's
+/// `ViewerDiffTree.rows(for:filter:collapsed:)`).
+///
+/// `filter` is whitespace-separated terms, ALL of which must appear in a
+/// file's path (or its pre-rename path), case-insensitively. A filter with any
+/// term switches the tree to a FLAT list of the matching files, sorted by
+/// path: when you are hunting for one file in a thousand, the folder structure
+/// between you and it is in the way. The working-tree sections survive, with
+/// counts of what matched, because "is it staged?" is still the question a
+/// `git-status:` pane is asked. `collapsed` is not consulted while filtering —
+/// a hit hidden inside a folder the reader shut an hour ago would be a hit the
+/// filter found and then refused to show.
+pub fn buildFiltered(
+    alloc: Allocator,
+    files: []const diff.File,
+    collapsed: []const []const u8,
+    filter: []const u8,
+) Allocator.Error!Tree {
     var rows: std.ArrayList(Row) = .empty;
     errdefer {
         for (rows.items) |r| {
             alloc.free(r.id);
             alloc.free(r.title);
+            if (r.detail.len > 0) alloc.free(r.detail);
         }
         rows.deinit(alloc);
     }
@@ -117,11 +152,15 @@ pub fn build(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    const filtered = isFiltering(filter);
+
     for (section_order) |origin| {
         // The indices of this section's files, in the order git listed them.
         var section: std.ArrayList(usize) = .empty;
         for (files, 0..) |f, i| {
-            if (f.origin == origin) try section.append(arena, i);
+            if (f.origin != origin) continue;
+            if (filtered and !matches(f, filter)) continue;
+            try section.append(arena, i);
         }
         if (section.items.len == 0) continue;
 
@@ -144,12 +183,102 @@ pub fn build(
             depth = 1;
         }
 
+        if (filtered) {
+            try appendHits(alloc, arena, &rows, files, section.items, depth);
+            continue;
+        }
+
         const root = try Node.create(arena);
         for (section.items) |i| try root.insert(arena, files[i].path, i);
         try flatten(alloc, arena, &rows, files, root, "", origin, depth, collapsed);
     }
 
-    return .{ .rows = try rows.toOwnedSlice(alloc), .alloc = alloc };
+    return .{
+        .rows = try rows.toOwnedSlice(alloc),
+        .alloc = alloc,
+        .filtered = filtered,
+        .total_files = files.len,
+    };
+}
+
+// -------------------------------------------------------------------------
+// Filtering (T1336)
+// -------------------------------------------------------------------------
+
+/// Whether `filter` holds any term at all. Whitespace alone is not a filter:
+/// a stray space must not flatten the reader's tree.
+pub fn isFiltering(filter: []const u8) bool {
+    var it = std.mem.tokenizeAny(u8, filter, &std.ascii.whitespace);
+    return it.next() != null;
+}
+
+/// Does `f` match EVERY term of `filter`? Multiple terms all having to match
+/// is what makes `viewer zig` a useful query rather than a literal one. The
+/// pre-rename path counts too, so a renamed file is findable by either name.
+///
+/// Case is folded in ASCII only. Mac lowercases through Foundation, which
+/// also folds accented letters; a path is overwhelmingly ASCII, and folding
+/// UTF-8 byte-wise here would be wrong rather than merely incomplete.
+pub fn matches(f: diff.File, filter: []const u8) bool {
+    var it = std.mem.tokenizeAny(u8, filter, &std.ascii.whitespace);
+    while (it.next()) |term| {
+        const in_path = std.ascii.indexOfIgnoreCase(f.path, term) != null;
+        const in_old = if (f.old_path) |old|
+            std.ascii.indexOfIgnoreCase(old, term) != null
+        else
+            false;
+        if (!in_path and !in_old) return false;
+    }
+    return true;
+}
+
+/// One section's hits as flat file rows, ordered by their whole PATH (not
+/// their basename — the folder is part of what the reader typed against).
+fn appendHits(
+    alloc: Allocator,
+    arena: Allocator,
+    rows: *std.ArrayList(Row),
+    files: []const diff.File,
+    indices: []const usize,
+    depth: u8,
+) Allocator.Error!void {
+    const order = try arena.dupe(usize, indices);
+    std.mem.sort(usize, order, files, struct {
+        fn less(fs: []const diff.File, a: usize, b: usize) bool {
+            return naturalLess(fs[a].path, fs[b].path);
+        }
+    }.less);
+    for (order) |index| {
+        const f = files[index];
+        const id = try alloc.dupe(u8, f.path);
+        errdefer alloc.free(id);
+        const label = try alloc.dupe(u8, baseName(f.path));
+        errdefer alloc.free(label);
+        const detail: []const u8 = if (parentPath(f.path)) |p| try alloc.dupe(u8, p) else "";
+        errdefer if (detail.len > 0) alloc.free(detail);
+        try rows.append(alloc, .{
+            .kind = .file,
+            .id = id,
+            .title = label,
+            .depth = depth,
+            .file = index,
+            .status = f.status,
+            .additions = f.additions,
+            .deletions = f.deletions,
+            .binary = f.binary,
+            .detail = detail,
+        });
+    }
+}
+
+/// The first file row's `file` index — what Return in the filter opens (Mac's
+/// `openFirstFilteredFile`), so "type a few letters and go" lands on the hit
+/// at the top of the list the reader is looking at.
+pub fn firstFile(rows: []const Row) ?usize {
+    for (rows) |row| {
+        if (row.kind == .file) return row.file;
+    }
+    return null;
 }
 
 // -------------------------------------------------------------------------
@@ -695,4 +824,119 @@ test "T817: a shut folder's files are not somewhere next-change lands" {
     try testing.expectEqual(@as(usize, 1), visible);
     try testing.expectEqual(@as(?usize, null), adjacentFile(tree.rows, "README.md", false));
     try testing.expectEqual(@as(?usize, null), adjacentFile(tree.rows, "README.md", true));
+}
+
+test "T1336: a filter flattens the tree into a path-ordered hit list" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{
+        file("src/apprt/win32/ViewerPane.zig", .committed),
+        file("src/apprt/win32/viewer_file_tree.zig", .committed),
+        file("docs/viewer.md", .committed),
+        file("build.zig", .committed),
+    };
+    var tree = try buildFiltered(alloc, &files, &.{}, "viewer");
+    defer tree.deinit();
+
+    try testing.expect(tree.filtered);
+    try testing.expectEqual(@as(usize, 4), tree.total_files);
+    // No folder rows at all: every row is a hit, at the top level, ordered by
+    // its whole path rather than its name.
+    try testing.expectEqual(@as(usize, 3), tree.rows.len);
+    try expectRow(tree.rows[0], .file, "viewer.md", 0);
+    try expectRow(tree.rows[1], .file, "viewer_file_tree.zig", 0);
+    try expectRow(tree.rows[2], .file, "ViewerPane.zig", 0);
+    // The directory comes back on the row, since the tree that carried it is
+    // gone.
+    try testing.expectEqualStrings("docs", tree.rows[0].detail);
+    try testing.expectEqualStrings("src/apprt/win32", tree.rows[1].detail);
+}
+
+test "T1336: every term must match, in any order, ignoring case" {
+    const f = diff.File{ .path = "src/apprt/win32/ViewerPane.zig", .status = .modified, .origin = .committed };
+    try testing.expect(matches(f, "pane"));
+    try testing.expect(matches(f, "ZIG win32"));
+    try testing.expect(matches(f, "  viewer   apprt "));
+    try testing.expect(!matches(f, "viewer markdown"));
+    // A term spanning a separator is still one substring of the path.
+    try testing.expect(matches(f, "win32/viewer"));
+}
+
+test "T1336: a renamed file is found by its old name too" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{
+        .{ .path = "docs/new-name.md", .old_path = "docs/old-name.md", .status = .renamed, .origin = .committed },
+        file("README.md", .committed),
+    };
+    var tree = try buildFiltered(alloc, &files, &.{}, "old-name");
+    defer tree.deinit();
+    try testing.expectEqual(@as(usize, 1), tree.rows.len);
+    try expectRow(tree.rows[0], .file, "new-name.md", 0);
+}
+
+test "T1336: whitespace alone is not a filter" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{
+        file("src/a.zig", .committed),
+        file("src/b.zig", .committed),
+    };
+    var tree = try buildFiltered(alloc, &files, &.{}, "  \t ");
+    defer tree.deinit();
+    try testing.expect(!tree.filtered);
+    // The ordinary tree: a folder row, then its two files.
+    try testing.expectEqual(@as(usize, 3), tree.rows.len);
+    try expectRow(tree.rows[0], .folder, "src", 0);
+    try testing.expectEqualStrings("", tree.rows[1].detail);
+}
+
+test "T1336: a filter finds files inside folders the reader shut" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{
+        file("README.md", .committed),
+        file("src/main.zig", .committed),
+    };
+    var tree = try buildFiltered(alloc, &files, &.{"committed:src"}, "main");
+    defer tree.deinit();
+    try testing.expectEqual(@as(usize, 1), tree.rows.len);
+    try expectRow(tree.rows[0], .file, "main.zig", 0);
+}
+
+test "T1336: sections survive a filter, counting only their hits, and empty ones go" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{
+        file("src/one.zig", .staged),
+        file("src/two.zig", .unstaged),
+        file("src/three.md", .unstaged),
+        file("notes.txt", .untracked),
+    };
+    var tree = try buildFiltered(alloc, &files, &.{}, ".zig");
+    defer tree.deinit();
+    try testing.expectEqual(@as(usize, 4), tree.rows.len);
+    try testing.expectEqual(Kind.section, tree.rows[0].kind);
+    try expectRow(tree.rows[1], .file, "one.zig", 1);
+    try testing.expectEqual(Kind.section, tree.rows[2].kind);
+    // "Changes · 1", not "· 2": the count is of what the reader can see.
+    try testing.expect(std.mem.endsWith(u8, tree.rows[2].title, "\u{00b7} 1"));
+    try expectRow(tree.rows[3], .file, "two.zig", 1);
+}
+
+test "T1336: no hits is an empty tree, and Return has nothing to open" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{file("README.md", .committed)};
+    var tree = try buildFiltered(alloc, &files, &.{}, "nothing-matches-this");
+    defer tree.deinit();
+    try testing.expectEqual(@as(usize, 0), tree.rows.len);
+    try testing.expectEqual(@as(usize, 1), tree.total_files);
+    try testing.expectEqual(@as(?usize, null), firstFile(tree.rows));
+}
+
+test "T1336: Return opens the hit at the TOP of the list, not git's first file" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{
+        file("zeta/viewer.zig", .committed),
+        file("alpha/viewer.zig", .committed),
+    };
+    var tree = try buildFiltered(alloc, &files, &.{}, "viewer");
+    defer tree.deinit();
+    // alpha sorts first, and it is index 1 in the caller's list.
+    try testing.expectEqual(@as(?usize, 1), firstFile(tree.rows));
 }

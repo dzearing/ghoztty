@@ -83,11 +83,9 @@ pub const FieldKeyAction = enum {
 /// bools so a caller cannot silently swap two of them.
 pub const Focus = struct {
     address: bool = false,
-    /// A diff pane's file filter. Win32 has no such field YET — the side panel
-    /// is list-only here — so this is always false today. It is a parameter
-    /// rather than an omission because the PRECEDENCE is what this function
-    /// exists to pin down, and a filter added later must slot into the order
-    /// Mac already established rather than be re-argued then.
+    /// A diff pane's file filter, the field pinned in the changed-files card's
+    /// header (T1336). It slots into the order Mac established: below an
+    /// abandoned address edit, above closing find.
     diff_filter: bool = false,
     find: bool = false,
     /// The card is mounted (whether or not its field has the caret).

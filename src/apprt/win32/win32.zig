@@ -3052,6 +3052,8 @@ pub extern "gdi32" fn StretchDIBits(
 // -----------------------------------------------------------------------
 
 pub const WM_MOUSEACTIVATE: u32 = 0x0021;
+/// WM_MOUSEACTIVATE: activate the window and pass the click on (T1336).
+pub const MA_ACTIVATE: isize = 1;
 pub const MA_NOACTIVATE: isize = 3;
 
 // -----------------------------------------------------------------------
