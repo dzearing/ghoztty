@@ -487,6 +487,12 @@ private struct PaneLeafView: View {
             PaneDropFeedbackView(paneID: pane.id, isDraggedPane: isBeingDragged)
                 .allowsHitTesting(false)
         }
+        // Its sidebar tile or row is under the pointer: the pane takes its hue.
+        .overlay {
+            PaneSidebarHoverTint(paneID: pane.id,
+                                 cornerRadius: ghostty.config.macosPaneStyle == .elevated ? PaneElevation.cornerRadius : 0)
+                .allowsHitTesting(false)
+        }
         // The elevated style: a raised rounded card on the window's gradient.
         .modifier(PaneCard(
             isElevated: ghostty.config.macosPaneStyle == .elevated,

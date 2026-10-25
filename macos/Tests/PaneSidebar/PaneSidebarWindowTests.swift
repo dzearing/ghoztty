@@ -787,6 +787,27 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 
+    /// Each tile is its pane's own shade, and a hovered tile tints its pane
+    /// in that hue (sidebar-hue-*.png, by eye) — and the tint goes when the
+    /// pointer leaves.
+    @Test func aHoveredTileTintsItsPaneInItsHue() async throws {
+        let h = try await open(expanded: false)
+        let hover = PaneSidebarHover.shared
+        let b = h.panes[1]
+        hover.hover(b.id, color: PaneSidebarHue.color(for: b, in: h.controller))
+        await settle(0.4)
+        try await captureComposited(h.window, "sidebar-hue-hover")
+        #expect(hover.pane == b.id)
+        hover.leave(b.id)
+        await settle(0.4)
+        #expect(hover.pane == nil)
+        try await captureComposited(h.window, "sidebar-hue-rest")
+        // Neighbours never share a shade.
+        let hues = (0..<6).map(PaneSidebarHue.hue(index:))
+        for (x, y) in zip(hues, hues.dropFirst()) { #expect(abs(x - y) > 0.15) }
+        await close(h)
+    }
+
     // MARK: Drag to reorder, into and out of the tray
 
     /// The dragged row is the row itself, following the pointer up and down

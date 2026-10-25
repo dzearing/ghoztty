@@ -147,6 +147,18 @@ final class PaneSidebarState: ObservableObject {
         elevated ? PaneElevation.margin : 0
     }
 
+    /// How far past the strips a gutter drag pushes before the expanded
+    /// sidebar tucks into its rail (`BaseTerminalController.sidebarAwareRow`):
+    /// what it would give before reaching its minimum, as a pane gives down
+    /// to its own — kept between a nudge and a deliberate push.
+    nonisolated static func dividerTuckGive(panelWidth: CGFloat) -> CGFloat {
+        Swift.min(Swift.max(panelWidth - minimumWidth, 24), 80)
+    }
+
+    /// Dragged back, the sidebar comes back out this far past where it
+    /// tucked, so the edge never flickers at one point.
+    nonisolated static let dividerTuckHysteresis: CGFloat = 24
+
     /// Collapsing or expanding: the sidebar's width (and the crossfade of
     /// rail and panel) on the curve the grid's cards glide on — most of the
     /// travel up front, then a soft settle.
@@ -570,5 +582,56 @@ enum PaneSidebarOrder {
         let without = after ? index - 1 : index
         let opens = target.map { without >= $0 } ?? false
         return (opens ? 1 : 0) - (after ? 1 : 0)
+    }
+}
+
+// MARK: - Pane hues
+
+/// Each pane's own hue in the sidebar: its tile is tinted with it, and
+/// hovering its tile or row tints the pane itself (`PaneSidebarHover`), so the
+/// sidebar says which pane an icon is. Spaced by the golden ratio along the
+/// pane's place in its window's tree, so neighbours never come out alike —
+/// and the list's own order (a drag) changes no pane's color.
+enum PaneSidebarHue {
+    /// The hue, 0..<1, of the pane at `index` of its window's tree.
+    nonisolated static func hue(index: Int) -> Double {
+        let h = (0.58 + Double(index) * 0.618_033_988_75).truncatingRemainder(dividingBy: 1)
+        return h < 0 ? h + 1 : h
+    }
+
+    nonisolated static func color(index: Int) -> Color {
+        Color(hue: hue(index: index), saturation: 0.62, brightness: 0.95)
+    }
+
+    /// `pane`'s color in `owner`'s tree (stashed panes included).
+    @MainActor
+    static func color(for pane: PaneView, in owner: BaseTerminalController) -> Color {
+        color(index: owner.surfaceTree.enumerated().first { $0.element === pane }?.offset ?? 0)
+    }
+}
+
+/// The pane whose sidebar tile or row is under the pointer, and its hue:
+/// that pane is tinted with it (`PaneSidebarHoverTint`) — quickly in, and
+/// back out when the pointer leaves.
+@MainActor
+final class PaneSidebarHover: ObservableObject {
+    static let shared = PaneSidebarHover()
+
+    @Published private(set) var pane: UUID?
+    private(set) var color: Color = .clear
+
+    /// The tint fades in this fast and back out a touch slower: quick, never
+    /// a flicker as the pointer runs down the list.
+    static let fadeIn: Animation = .easeOut(duration: 0.12)
+    static let fadeOut: Animation = .easeOut(duration: 0.2)
+
+    func hover(_ pane: UUID, color: Color) {
+        self.color = color
+        self.pane = pane
+    }
+
+    /// The pointer left `pane`'s tile or row (another may already have it).
+    func leave(_ pane: UUID) {
+        if self.pane == pane { self.pane = nil }
     }
 }

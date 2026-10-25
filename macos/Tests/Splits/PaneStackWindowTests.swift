@@ -152,6 +152,39 @@ struct PaneStackWindowTests {
         handle.onDragEnded?()
     }
 
+    /// The pane sidebar is the row's first item too: a divider pushed left
+    /// past every pane it has tucked away tucks the expanded sidebar into
+    /// its rail, as a pane tucks at its minimum — and dragged back, in the
+    /// same drag, brings it out again.
+    @Test func aDividerPushedPastTheTuckedPanesTucksTheSidebarToo() async throws {
+        let (controller, window, _) = try await stackedWindow(count: 3, width: 1400)
+        defer { controller.close() }
+        controller.paneSidebarState.width = 240
+        controller.paneSidebarState.isHidden = false
+        controller.setPaneSidebarExpanded(true)
+        await settle(1.0)
+        let divider = try #require(handles(window).last)
+        let start = divider.currentSplit?() ?? 0.5
+        divider.onDragBegan?()
+        // Left, step by step, until the panes before it are strips and past.
+        var tuckedAt: CGFloat?
+        for step in 1...40 {
+            divider.onDragDelta?(-CGFloat(step) * 40, start)
+            await settle(0.02)
+            if tuckedAt == nil, !controller.paneSidebarState.isExpanded { tuckedAt = CGFloat(step) * 40 }
+        }
+        #expect(tuckedAt != nil, "the sidebar tucked into its rail")
+        await settle(0.4)
+        // Back where it began, still held: out again.
+        for step in (0...39).reversed() {
+            divider.onDragDelta?(-CGFloat(step) * 40, start)
+            await settle(0.02)
+        }
+        divider.onDragEnded?()
+        await settle(0.6)
+        #expect(controller.paneSidebarState.isExpanded, "dragged back, the sidebar came back out")
+    }
+
     @Test func squeezingAPanePastItsMinimumTucksItAsideAndAGripBringsItBack() async throws {
         // Three panes side by side with room to spare.
         let (controller, window, panes) = try await stackedWindow(count: 3, width: 1300)

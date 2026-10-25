@@ -1,4 +1,10 @@
 import AppKit
+import OSLog
+
+/// Every collapse/expand, with its cause, at `.notice` (persisted): the
+/// sidebar must never change mode on its own, and when someone sees it do so
+/// this is how the cause is found.
+private let paneSidebarLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.dzearing.ghoztty", category: "PaneSidebar")
 
 /// The pane sidebar's operations on a window: stash, restore, exchange,
 /// close, kill. See `docs/design/pane-sidebar.md`.
@@ -135,12 +141,15 @@ extension BaseTerminalController {
 
     /// The button at the top of the bar: the full list ⇄ the icon rail.
     func togglePaneSidebarExpanded() {
-        setPaneSidebarExpanded(!paneSidebarState.isExpanded)
+        setPaneSidebarExpanded(!paneSidebarState.isExpanded, cause: "toggle")
     }
 
-    func setPaneSidebarExpanded(_ expanded: Bool) {
+    /// `cause` names who asked, for the log: "button", "edge drag",
+    /// "divider drag", ….
+    func setPaneSidebarExpanded(_ expanded: Bool, cause: String = "unspecified") {
         let state = paneSidebarState
         guard state.isExpanded != expanded else { return }
+        paneSidebarLog.notice("sidebar \(expanded ? "expanded" : "collapsed", privacy: .public) by \(cause, privacy: .public) in window \(self.window?.title ?? "?", privacy: .public)")
         changingPaneSidebarColumn { state.isExpanded = expanded }
         syncPaneSidebarLayout()
     }
@@ -152,7 +161,7 @@ extension BaseTerminalController {
     }
 
     /// The sidebar's column width now, as its container lays it out.
-    private var paneSidebarColumn: CGFloat {
+    var paneSidebarColumn: CGFloat {
         let windowWidth = window?.contentView?.bounds.width ?? .greatestFiniteMagnitude
         let state = paneSidebarState
         return PaneSidebarState.columnWidth(

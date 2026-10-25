@@ -55,7 +55,7 @@ struct PaneSidebarView: View {
                 PaneSidebarHeaderButton(
                     symbol: .sidebar(expanded: false),
                     help: canExpand ? "Expand the sidebar" : "Too narrow to expand — widen the window"
-                ) { controller.setPaneSidebarExpanded(true) }
+                ) { controller.setPaneSidebarExpanded(true, cause: "rail button") }
                     .disabled(!canExpand)
                     .frame(height: 34)
                 list
@@ -176,7 +176,7 @@ struct PaneSidebarView: View {
         PaneSidebarHeaderButton(
             symbol: .sidebar(expanded: true),
             help: "Collapse the sidebar to icons"
-        ) { controller.setPaneSidebarExpanded(false) }
+        ) { controller.setPaneSidebarExpanded(false, cause: "header button") }
     }
 
     // MARK: List

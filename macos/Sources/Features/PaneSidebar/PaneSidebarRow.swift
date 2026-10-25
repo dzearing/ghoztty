@@ -45,7 +45,20 @@ struct PaneSidebarRow: View {
             if isRail { tile } else { fullRow }
         }
         .opacity(isBeingDragged ? 0.4 : 1)
+        // Hovered, the pane itself takes this row's hue (`PaneSidebarHover`).
+        .onChange(of: isHovered) { hovered in
+            if hovered && isInteractive {
+                PaneSidebarHover.shared.hover(pane.id, color: hue)
+            } else {
+                PaneSidebarHover.shared.leave(pane.id)
+            }
+        }
+        .onDisappear { PaneSidebarHover.shared.leave(pane.id) }
     }
+
+    /// This pane's own color (`PaneSidebarHue`): its tile's tint, its row's
+    /// icon, and the tint the pane takes while either is hovered.
+    private var hue: Color { PaneSidebarHue.color(for: pane, in: owner) }
 
     // MARK: Full row
 
@@ -165,6 +178,7 @@ struct PaneSidebarRow: View {
         ZStack(alignment: .topTrailing) {
             ZStack {
                 PaneSidebarTileButton(
+                    hue: hue,
                     isSelected: isSelected, isEmphasized: isEmphasized, isHovered: isHovered,
                     hasQuestion: pane.activityState == .needsInput)
                 // One letter of the pane's name — the same name its row and
@@ -279,9 +293,11 @@ struct PaneSidebarRow: View {
 
     private var displayTitle: String { pane.displayLabel }
 
+    /// The row's icon in the pane's hue, so a row and its pane's tile — and
+    /// the tint hovering it gives the pane — are one color.
     private var iconColor: Color {
         if onAccent { return .white }
-        return isBusy ? Color(nsColor: .labelColor) : Color(nsColor: .secondaryLabelColor)
+        return hue
     }
 
     private var rowHelp: String {
@@ -307,11 +323,13 @@ struct PaneSidebarRow: View {
 /// A rail tile: a small pane of glass, the pane banner's own
 /// (`GlassCardBackground` — a see-through wash, the elliptical sheen, the
 /// specular rim, a masked drop shadow scaled to its size), so the color
-/// behind shows through it as it does through a banner. The selected pane's
-/// is tinted with the accent, still see-through; hover thickens the wash a
-/// little. A pane with a question gets an accent rim — no badge on the tile.
-/// All static: nothing here animates.
+/// behind shows through it as it does through a banner — tinted with the
+/// pane's own hue (`PaneSidebarHue`), so each tile is its own shade. Hover
+/// deepens the tint; the selected pane's is deeper still, with a white rim.
+/// A pane with a question gets an accent rim — no badge on the tile. All
+/// static: nothing here animates.
 struct PaneSidebarTileButton: View {
+    var hue: Color? = nil
     let isSelected: Bool
     /// The window is key: only then is a selection the accent (as AppKit
     /// draws a sidebar's); otherwise it is the plain glass, thickened.
@@ -328,16 +346,21 @@ struct PaneSidebarTileButton: View {
         let accent = Color(nsColor: .controlAccentColor)
         let light = colorScheme == .light
         let wash = light ? Color.black : Color.white
-        let fill: Color = isSelected && isEmphasized
+        let selected = isSelected && isEmphasized
+        let fill: Color = hue.map { hue in
+            hue.opacity(selected ? 0.6 : isSelected ? 0.48 : isHovered ? 0.44 : 0.26)
+        } ?? (selected
             ? accent.opacity(0.55)
-            : wash.opacity(isSelected ? 0.16 : isHovered ? 0.12 : 0.07)
+            : wash.opacity(isSelected ? 0.16 : isHovered ? 0.12 : 0.07))
         Color.clear
             .modifier(GlassCardBackground(
                 fill: AnyShapeStyle(fill), cornerRadius: Self.cornerRadius,
                 shadowRadius: 2.5, shadowOffset: 1.5))
             .overlay {
                 if hasQuestion {
-                    shape.strokeBorder(accent.opacity(isSelected && isEmphasized ? 0.95 : 0.85), lineWidth: 1.5)
+                    shape.strokeBorder(accent.opacity(selected ? 0.95 : 0.85), lineWidth: 1.5)
+                } else if isSelected && hue != nil {
+                    shape.strokeBorder(Color.white.opacity(selected ? 0.75 : 0.45), lineWidth: 1.5)
                 }
             }
     }
@@ -564,5 +587,26 @@ final class PaneSidebarRowDrag: ObservableObject {
             self.dy = 0
             self.frame = nil
         }
+    }
+}
+
+/// A pane tinted with its sidebar hue while its tile or row is hovered: a
+/// wash and a rim in that color, faded in quickly and back out — bounded
+/// animations, nothing running at rest.
+struct PaneSidebarHoverTint: View {
+    let paneID: UUID
+    let cornerRadius: CGFloat
+
+    @ObservedObject private var hover = PaneSidebarHover.shared
+
+    var body: some View {
+        let on = hover.pane == paneID
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            shape.fill(hover.color.opacity(0.2))
+            shape.strokeBorder(hover.color.opacity(0.9), lineWidth: 2)
+        }
+        .opacity(on ? 1 : 0)
+        .animation(on ? PaneSidebarHover.fadeIn : PaneSidebarHover.fadeOut, value: on)
     }
 }

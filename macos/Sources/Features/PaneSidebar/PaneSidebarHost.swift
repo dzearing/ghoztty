@@ -308,7 +308,7 @@ private struct PaneSidebarChrome: View {
                 guard !drag.expanded || canExpand else { return }
                 // The width first, so expanding glides the grid to it.
                 if let width = drag.width, state.width != width { state.width = width }
-                controller.setPaneSidebarExpanded(drag.expanded)
+                controller.setPaneSidebarExpanded(drag.expanded, cause: "edge drag")
             })
             .frame(width: grip.width)
             .frame(maxHeight: .infinity)

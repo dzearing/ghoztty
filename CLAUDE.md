@@ -1610,6 +1610,13 @@ the interactive mock settled).
   panel's minimum (180) brings the panel out at that width, and pushing the
   panel well under it (< 120) tucks it back into the rail, both ways within one
   drag (`PaneSidebarState.edgeDrag`; between the two it stops at its minimum).
+  **The sidebar is a row's first item in a divider drag**: in a row spanning
+  the grid, a gutter pushed left past every pane it has tucked away tucks the
+  expanded sidebar into its rail as a pane tucks at its minimum
+  (`BaseTerminalController.sidebarAwareRow`, after `dividerTuckGive` —
+  24–80pt), and dragged back in the same drag brings it out; tucked, the row
+  measures the room it gained. Every mode change is logged at `.notice` with
+  its cause (category `PaneSidebar`) — it must never change on its own.
   Only collapse/expand and hide/show change the column, so nothing else
   resizes a terminal. A window narrower than 720pt shows the rail even when
   expanded (its expand button is off). **Ctrl+Cmd+S** hides/shows the sidebar
@@ -1628,8 +1635,14 @@ the interactive mock settled).
   tile is a small **pane of glass, the banner's own** (`PaneSidebarTileButton`
   on `GlassCardBackground`: a see-through wash, the elliptical sheen, the
   specular rim, a shadow scaled to its size), so the color behind shows
-  through; the selected tile is accent-tinted glass. All static. **No `?`
-  badge on a tile**: a question is an accent rim.
+  through — **tinted with the pane's own hue** (`PaneSidebarHue`: golden-ratio
+  steps along the pane's place in its window's tree, so neighbours never
+  match and a list reorder changes no color). The selected tile's tint is
+  deeper, with a white rim. A row's icon takes the same hue. **Hovering a
+  tile or row tints its pane in that hue** — a wash and a rim on the pane's
+  card (`PaneSidebarHover`, `PaneSidebarHoverTint`), in over 0.12s, out over
+  0.2s — so the sidebar says which pane an icon is. All static at rest. **No
+  `?` badge on a tile**: a question is an accent rim.
 - Rows: grid panes (focused one selected), then — **right after the last of
   them**, under a divider, in the same scrolling list — the **tray** of
   stashed panes. (It was first anchored at the bottom of the bar, far from the
