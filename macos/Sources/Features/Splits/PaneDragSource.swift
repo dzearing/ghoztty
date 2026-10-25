@@ -94,7 +94,7 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     private var isTracking: Bool = false
 
     /// Where the button went down, in window coordinates.
-    private var downLocation: NSPoint?
+    private(set) var downLocation: NSPoint?
 
     private var escapeMonitor: Any?
     private var dragCancelledByEscape: Bool = false

@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 
 /// What decides which panes of a stacked row are on show (`PaneLayout`):
 /// the window's pane focus history, and the rows the user collapsed.
@@ -180,6 +181,27 @@ final class PaneStackState: ObservableObject {
     /// and every card follows it, step by step.
     /// Published: the grid settles a drag's glide when it ends.
     @Published var isGesturing = false
+
+    /// The pane sidebar's column is about to change by `dx` (collapse/expand,
+    /// hide/show) — the grid moves by that much. The stage glides its cards
+    /// from where they are on screen to where the new size puts them, as it
+    /// does when a strip comes out, rather than snapping
+    /// (`PaneStageView.apply`). Taken by the first size change; ignored if no
+    /// size change follows within `columnShiftLifetime`.
+    func noteColumnShift(_ dx: CGFloat) {
+        guard dx != 0 else { return }
+        columnShift = (dx, CACurrentMediaTime())
+    }
+
+    /// The pending column shift, taken.
+    func takeColumnShift() -> CGFloat? {
+        guard let shift = columnShift else { return nil }
+        columnShift = nil
+        return CACurrentMediaTime() - shift.at < Self.columnShiftLifetime ? shift.dx : nil
+    }
+
+    static let columnShiftLifetime: CFTimeInterval = 0.5
+    private var columnShift: (dx: CGFloat, at: CFTimeInterval)?
 
     /// Set how a stacked row's run is divided (a grip between cards dragged).
     func resize(_ row: PaneLayout.Row<UUID>, shares new: [CGFloat]) {

@@ -400,6 +400,19 @@ drop target; it takes up to 45% of the bar and scrolls on its own past that.
 During a drag with nothing stashed, an empty "Drop to stash — it keeps
 running" slot appears so the target is visible.
 
+**The row follows the pointer.** A row (or tile) being dragged is the row
+itself, moved up or down with the pointer — never sideways, and kept inside
+the bar — over a solid backing so it reads as on top; no drag image. It is
+still `PaneDragSession`'s drag (the row's source draws no preview and feeds
+the pointer's travel to `PaneSidebarRowDrag`); let go, it glides to where it
+landed. The drop geometry is the rows **as laid out**: a row's frame is read
+by a background outside its slide offset, since a reader inside an `.offset`
+moves with it — which made the drop index chase the sliding rows.
+
+**An empty tray is a visible target**: a faint dashed well with a tray glyph
+(and "Drag a pane here to stash it" when expanded), always there in this
+window's list, lit in the accent while a drag would land in it.
+
 **Reordering.** The list has its own order (`PaneSidebarState.order`,
 `PaneSidebarOrder`): dragging a row up or down changes the list and never the
 grid. While a drag is over the sidebar the dragged row is lifted out, leaving
@@ -438,11 +451,14 @@ selection pill, and the tray under a hairline at the bottom.
   character. (It replaced a heuristic of up to three characters taken from
   after an em dash or from the command name, which named panes differently
   from their rows.) A tile carries a tooltip with its full name.
-- **Every tile is the same small raised button** (`PaneSidebarTileButton`):
-  a soft vertical gradient, a sheen over its top half, a bevelled hairline
-  rim, a short drop shadow; the selected pane's in the accent, lit the same
-  way (neutral and lifted while the window is not key). All static — nothing
-  on a tile animates but the busy shimmer.
+- **Every tile is a small pane of glass — the pane banner's own**
+  (`PaneSidebarTileButton` on `GlassCardBackground`): a see-through wash, the
+  elliptical sheen, the specular rim, a drop shadow scaled down to its size.
+  The color behind shows through it as it does through a banner. The selected
+  pane's is accent-tinted glass (plain glass, thickened, while the window is
+  not key). All static — nothing on a tile animates but the busy shimmer. (A
+  first take was an opaque bevelled button with a gradient; it read as a
+  control from another app, not as Ghoztty's glass.)
 - **Activity without badges on the letter**: a question is an accent rim
   round the tile — no `?` badge (it covered the letter and read as clutter);
   a bell is a dot; busy is the same shimmer, on the letter.
@@ -461,10 +477,19 @@ selection pill, and the tray under a hairline at the bottom.
 | Persisted | Yes, per window, in the session manifest | (the same flag) |
 | Narrow window (< 720pt) | Shows the rail — the full panel would crowd the grid, the rail doesn't; the expand button is off | Rail |
 
-- **One button, at the top of the bar.** Pulling the rail's edge past 120pt
-  also expands it; an expanded panel's edge only resizes it, stopping at the
-  minimum and maximum widths — it never collapses under a drag (that read as
-  the panel jumping away mid-resize).
+- **One button, at the top of the bar** — or the gutter. The edge grip lies
+  in the gutter beside the sidebar in both modes, never over it
+  (`PaneSidebarState.edgeGrip`); its bar used to sit on the rail's tiles.
+  Pulled past the panel's minimum the rail comes out at that width; pushed
+  well under it (< 120pt) the panel tucks back into the rail; between the two
+  it stops at its minimum (`edgeDrag`) — so the edge never flickers at one
+  width, and one drag goes both ways.
+- **It glides.** Collapse and expand move the grid's cards the way a strip
+  coming out does: `PaneStackState.noteColumnShift` tells the stage the column
+  is moving, the stage seeds its glide from where the cards are on screen and
+  eases them to their new places, each terminal held at its size and resized
+  once, after the motion. The sidebar's width animates on the same curve
+  while rail and panel crossfade. It used to snap.
 - **Only collapse/expand and hide/show change the column**, and so resize the
   window's terminals: each is something somebody chose.
 - **Ctrl+Cmd+S hides or shows the sidebar entirely.** Hidden is persisted

@@ -710,7 +710,8 @@ struct PaneSidebarWindowTests {
         #expect(abs(gridLeft - (column + gridMargin(h))) < 1, "the grid sits beside the rail column")
         #expect(host.cardRect.width == PaneSidebarState.railCardWidth)
         #expect(host.cardRect.minX == insets.leading, "the raised card keeps its margin")
-        #expect(abs(host.frame.width - column) < 1, "no room is held for a card opening over the grid")
+        #expect(abs(host.frame.width - (column + PaneSidebarState.edgeReach(for: .collapsed, elevated: elevated))) < 1,
+                "the column, plus the gutter its grip lies in — no room for a card opening over the grid")
         // Equal gutters: window edge → rail, and rail → panes.
         let railFrame = host.convert(host.cardRect, to: nil)
         #expect(abs(railFrame.minX - (gridLeft - railFrame.maxX)) < 1,
@@ -722,10 +723,21 @@ struct PaneSidebarWindowTests {
         }
         snapshot(h, "rail")
 
-        // The button at the top of the bar is the way out (and in again).
+        // The button at the top of the bar is the way out (and in again) —
+        // and the grid glides over rather than snapping: part way there a
+        // moment in, its terminal still at its old size until the motion is
+        // over, then resized once.
+        let expandedLeft = 240 + gridMargin(h)
+        let sizeBefore = try #require(gridSize(h.panes[0]))
         h.controller.setPaneSidebarExpanded(true)
+        await settle(0.04)
+        let midway = frameInWindow(h.panes[0]).minX
+        #expect(midway > gridLeft + 1 && midway < expandedLeft - 1,
+                "the grid glides: \(gridLeft) → \(midway) → \(expandedLeft)")
+        #expect(gridSize(h.panes[0])?.cols == sizeBefore.cols, "no resize mid-glide")
         await settle(0.6)
-        #expect(abs(frameInWindow(h.panes[0]).minX - (240 + gridMargin(h))) < 1, "expanded: the panel's column")
+        #expect(abs(frameInWindow(h.panes[0]).minX - expandedLeft) < 1, "expanded: the panel's column")
+        #expect(gridSize(h.panes[0])?.cols != sizeBefore.cols, "resized once the glide is over")
         h.controller.setPaneSidebarExpanded(false)
         await settle(0.6)
         #expect(abs(frameInWindow(h.panes[0]).minX - gridLeft) < 1, "collapsed again")
@@ -733,19 +745,72 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 
-    @Test func clicksOutsideTheRailFallThroughToTheGrid() async throws {
+    /// The rail's grip is the gutter between it and the panes — all of it,
+    /// and none of the rail (it used to sit inside the card, its bar over the
+    /// tiles). Past it, clicks fall through to the grid.
+    @Test func theRailsGripIsTheGutterBesideIt() async throws {
         let h = try await open(expanded: false)
         let host = try #require(h.controller.paneSidebarHost)
-        // Past the rail's card, in its trailing gutter or beyond, nothing is
-        // the sidebar's.
-        let pastCard = NSPoint(x: host.frame.minX + host.cardRect.maxX + 4, y: host.frame.midY)
-        #expect(host.hitTest(pastCard) == nil)
-        let onRail = NSPoint(x: host.frame.minX + host.cardRect.minX + 10, y: host.frame.midY)
-        #expect(host.hitTest(onRail) != nil)
+        let elevated = gridMargin(h) > 0
+        let grip = PaneSidebarState.edgeGrip(for: .collapsed, elevated: elevated)
+        let edge = host.frame.minX + host.cardRect.maxX
+        let y = host.frame.midY
+        #expect(host.hitTest(NSPoint(x: edge + grip.offset + 1, y: y)) is SidePanelResizeHandle, "its start")
+        #expect(host.hitTest(NSPoint(x: edge + grip.offset + grip.width - 1, y: y)) is SidePanelResizeHandle, "its end")
+        #expect(!(host.hitTest(NSPoint(x: edge - 3, y: y)) is SidePanelResizeHandle), "not over the rail")
+        #expect(host.hitTest(NSPoint(x: edge + grip.offset + grip.width + 2, y: y)) == nil, "the grid's past it")
+        if elevated {
+            #expect(abs(edge + grip.offset + grip.width - frameInWindow(h.panes[0]).minX) < 1,
+                    "the grip ends where the panes begin")
+        }
         await close(h)
     }
 
     // MARK: Drag to reorder, into and out of the tray
+
+    /// The dragged row is the row itself, following the pointer up and down
+    /// only (`PaneSidebarRowDrag`), the list leaving its gap; let go, it
+    /// settles where it landed. Captured composited, in both modes
+    /// (drag-ghost-*.png): a check by eye, since no synthetic event drives a
+    /// real drag.
+    @Test(arguments: [true, false])
+    func theDraggedRowFollowsThePointerVertically(expanded: Bool) async throws {
+        let h = try await open(expanded: expanded)
+        let (a, c) = (h.panes[0], h.panes[2])
+        let session = PaneDragSession.shared
+        let rowDrag = PaneSidebarRowDrag.shared
+        let start = try screenPoint(on: a, h)
+        session.begin(pane: a, from: h.controller)
+        rowDrag.begin(a, screenY: start.y)
+        session.update(screenPoint: start)
+        await settle(0.3)
+        // c's lower part, as laid out (the rows' own views slide).
+        let cRow = try #require(h.controller.paneSidebarHost?.dropGeometry()?.paneRows.first { $0.id == c.id }?.rect)
+        let end = CGPoint(x: cRow.midX, y: cRow.minY + cRow.height * 0.2)
+        // Sideways too: the row must not follow that.
+        let moved = CGPoint(x: end.x + 300, y: end.y)
+        session.update(screenPoint: moved)
+        rowDrag.move(screenY: moved.y)
+        await settle(0.4)
+        #expect(rowDrag.frame != nil, "the dragged row's place is known")
+        #expect(rowDrag.dy > 0, "it follows the pointer down")
+        try await captureComposited(h.window, expanded ? "drag-ghost-expanded" : "drag-ghost-rail")
+        session.update(screenPoint: end)
+        await settle(0.4)
+        // b and c slide up into a's gap — and the geometry the drop is read
+        // from still has them where they are laid out, so the index does not
+        // chase them.
+        #expect(session.target == .sidebarOrder(window: PaneDropWindowRef(h.controller), index: 2))
+        let rows = try #require(h.controller.paneSidebarHost?.dropGeometry()?.paneRows)
+        #expect(rows.first { $0.id == c.id }?.rect == cRow, "c's laid-out row did not move with its slide")
+        #expect(Set(rows.map(\.rect.minY)).count == 3, "no two rows report the same place")
+        session.end(commit: true)
+        rowDrag.finish(a)
+        await settle(0.5)
+        #expect(rowDrag.pane == nil, "settled")
+        #expect(h.controller.paneSidebarPanes.last === a)
+        await close(h)
+    }
 
     /// The drag source views of a pane's sidebar row, in window coordinates.
     private func rowFrame(_ pane: PaneView, in host: NSView) -> NSRect? {
@@ -756,9 +821,14 @@ struct PaneSidebarWindowTests {
     }
 
     /// A point on `pane`'s row, in screen coordinates; `fraction` of the way
-    /// down it.
+    /// down it. Where the row is LAID OUT — the drop geometry, once a drag
+    /// has the rows reporting it — not where its view has slid to.
     private func screenPoint(on pane: PaneView, _ h: Harness, fraction: CGFloat = 0.5) throws -> CGPoint {
         let host = try #require(h.controller.paneSidebarHost)
+        if let geo = host.dropGeometry(),
+           let rect = (geo.paneRows + geo.stashRows).first(where: { $0.id == pane.id })?.rect {
+            return CGPoint(x: rect.midX, y: rect.maxY - rect.height * fraction)
+        }
         let row = try #require(rowFrame(pane, in: host), "no row for the pane")
         let inWindow = NSPoint(x: row.midX, y: row.maxY - row.height * fraction)
         return h.window.convertPoint(toScreen: inWindow)

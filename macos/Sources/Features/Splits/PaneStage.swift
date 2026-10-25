@@ -91,12 +91,19 @@ final class PaneStageView: NSView {
     ) {
         // A change in which cards are on show glides (`glide`), and so does
         // every layout after it until the glide is over: each eases toward
-        // its latest. A window resize lays out immediately, as it always has.
+        // its latest. So does the grid moving over for the pane sidebar
+        // collapsing or expanding (`PaneStackState.noteColumnShift`): the
+        // cards start where they are on screen — the stage itself moved by
+        // the shift — and glide to their new places. A window resize lays
+        // out immediately, as it always has.
+        let resized = lastSize != nil && size != lastSize
+        let shift = resized ? observed?.takeColumnShift() : nil
         let changed = lastRuns != nil && runs != lastRuns && size == lastSize
         lastRuns = runs
         lastSize = size
-        if changed || glide != nil {
-            startGlide(cards, environment: environment, style: style, isGesturing: isGesturing)
+        if changed || shift != nil || glide != nil {
+            startGlide(cards, environment: environment, style: style, isGesturing: isGesturing,
+                       seedOffset: shift.map { -$0 } ?? 0)
             return
         }
 
@@ -177,10 +184,16 @@ final class PaneStageView: NSView {
     }
 
     private func startGlide(
-        _ cards: [PaneStage.Card], environment: EnvironmentValues, style: PaneStage.Style, isGesturing: Bool
+        _ cards: [PaneStage.Card], environment: EnvironmentValues, style: PaneStage.Style, isGesturing: Bool,
+        seedOffset: CGFloat = 0
     ) {
         var glide = self.glide ?? Glide(
             environment: environment, style: style, last: CACurrentMediaTime(), holdsSizes: !isGesturing)
+        if seedOffset != 0 {
+            // The stage moved under its cards: where they are drawn, in its
+            // new coordinates, is that far back.
+            for (id, rect) in glide.drawn { glide.drawn[id] = rect.offsetBy(dx: seedOffset, dy: 0) }
+        }
         glide.environment = environment
         glide.style = style
         glide.isGesturing = isGesturing
@@ -200,7 +213,7 @@ final class PaneStageView: NSView {
             if glide.drawn[id] == nil {
                 // As it is drawn now: its strip, or its card.
                 let wasCard = view.placedFrame != nil && !view.isContentHidden
-                glide.drawn[id] = view.placedTab?.rect ?? view.placedFrame ?? to
+                glide.drawn[id] = (view.placedTab?.rect ?? view.placedFrame)?.offsetBy(dx: seedOffset, dy: 0) ?? to
                 glide.asCard[id] = view.placedFrame == nil ? !card.leaf.isTucked : wasCard
                 if wasCard, let size = view.laidOutSize ?? view.placedFrame?.size { glide.startSize[id] = size }
             }

@@ -214,6 +214,7 @@ struct PaneSidebarRow: View {
         PaneSidebarRowInteraction(
             pane: pane,
             owner: owner,
+            followsPointer: !isForeign,
             onClick: click,
             menu: contextMenu)
     }
@@ -299,15 +300,17 @@ struct PaneSidebarRow: View {
     }
 }
 
-/// A rail tile drawn as a small raised button, the same for every pane: a
-/// soft vertical gradient, a sheen across its top half, a hairline rim and a
-/// short drop shadow. The selected pane's is the accent, lit the same way;
-/// hover lifts it a little. A pane with a question gets an accent rim — no
-/// badge on the tile. All static: nothing here animates.
+/// A rail tile: a small pane of glass, the pane banner's own
+/// (`GlassCardBackground` — a see-through wash, the elliptical sheen, the
+/// specular rim, a masked drop shadow scaled to its size), so the color
+/// behind shows through it as it does through a banner. The selected pane's
+/// is tinted with the accent, still see-through; hover thickens the wash a
+/// little. A pane with a question gets an accent rim — no badge on the tile.
+/// All static: nothing here animates.
 struct PaneSidebarTileButton: View {
     let isSelected: Bool
     /// The window is key: only then is a selection the accent (as AppKit
-    /// draws a sidebar's); otherwise it is the neutral button, lifted.
+    /// draws a sidebar's); otherwise it is the plain glass, thickened.
     var isEmphasized: Bool = true
     let isHovered: Bool
     let hasQuestion: Bool
@@ -318,38 +321,21 @@ struct PaneSidebarTileButton: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-        let dark = colorScheme == .dark
-        let isSelected = self.isSelected && isEmphasized
-        let isHovered = self.isHovered || (self.isSelected && !isEmphasized)
         let accent = Color(nsColor: .controlAccentColor)
-        let base: [Color] = isSelected
-            ? [accent.opacity(0.92), accent]
-            : dark
-                ? [Color.white.opacity(isHovered ? 0.20 : 0.15), Color.white.opacity(isHovered ? 0.10 : 0.06)]
-                : [Color.white.opacity(isHovered ? 1 : 0.95), Color.black.opacity(isHovered ? 0.05 : 0.07)]
-        shape
-            .fill(LinearGradient(colors: base, startPoint: .top, endPoint: .bottom))
-            // The sheen: light falling on the top half, gone by the middle.
-            .overlay(
-                shape.fill(LinearGradient(
-                    stops: [
-                        .init(color: .white.opacity(isSelected ? 0.32 : dark ? 0.16 : 0.55), location: 0),
-                        .init(color: .white.opacity(0), location: 0.55),
-                    ],
-                    startPoint: .top, endPoint: .bottom)))
-            // A rim: bright along the top edge, darker below — a bevel.
-            .overlay(
-                shape.strokeBorder(
-                    hasQuestion
-                        ? AnyShapeStyle(accent.opacity(isSelected ? 0 : 0.9))
-                        : AnyShapeStyle(LinearGradient(
-                            colors: [
-                                .white.opacity(isSelected ? 0.45 : dark ? 0.22 : 0.9),
-                                .black.opacity(isSelected ? 0.25 : dark ? 0.35 : 0.14),
-                            ],
-                            startPoint: .top, endPoint: .bottom)),
-                    lineWidth: hasQuestion && !isSelected ? 1.5 : 0.75))
-            .shadow(color: .black.opacity(dark ? 0.35 : 0.14), radius: 1.5, y: 1)
+        let light = colorScheme == .light
+        let wash = light ? Color.black : Color.white
+        let fill: Color = isSelected && isEmphasized
+            ? accent.opacity(0.55)
+            : wash.opacity(isSelected ? 0.16 : isHovered ? 0.12 : 0.07)
+        Color.clear
+            .modifier(GlassCardBackground(
+                fill: AnyShapeStyle(fill), cornerRadius: Self.cornerRadius,
+                shadowRadius: 2.5, shadowOffset: 1.5))
+            .overlay {
+                if hasQuestion {
+                    shape.strokeBorder(accent.opacity(isSelected && isEmphasized ? 0.95 : 0.85), lineWidth: 1.5)
+                }
+            }
     }
 }
 
@@ -483,6 +469,10 @@ private final class PaneSidebarMenuActions: NSObject {
 struct PaneSidebarRowInteraction: NSViewRepresentable {
     let pane: PaneView
     let owner: BaseTerminalController
+    /// The row itself follows the pointer up and down its list while it is
+    /// dragged (`PaneSidebarRowDrag`), instead of a drag image. Off for
+    /// another window's row in the all-windows list.
+    var followsPointer: Bool = true
     let onClick: (NSEvent) -> Void
     let menu: () -> NSMenu
 
@@ -502,6 +492,72 @@ struct PaneSidebarRowInteraction: NSViewRepresentable {
         view.onClick = onClick
         view.menuProvider = menu
         view.showsGrabCursor = false
-        view.onDragStateChanged = { _ in }
+        view.showsPreview = !followsPointer
+        guard followsPointer else {
+            view.onDragStateChanged = { _ in }
+            view.onDragMoved = nil
+            view.onDragFinished = nil
+            return
+        }
+        let pane = pane
+        view.onDragStateChanged = { [weak view] dragging in
+            guard dragging, let view, let window = view.window, let down = view.downLocation else { return }
+            PaneSidebarRowDrag.shared.begin(pane, screenY: window.convertPoint(toScreen: down).y)
+        }
+        view.onDragMoved = { point in PaneSidebarRowDrag.shared.move(screenY: point.y) }
+        view.onDragFinished = { PaneSidebarRowDrag.shared.finish(pane) }
+    }
+}
+
+/// A sidebar row being dragged: the row itself follows the pointer up and
+/// down its list — never sideways — drawn over the list by
+/// `PaneSidebarDragGhost` while the row in the list leaves its gap. The drag
+/// is still `PaneDragSession`'s (resolver, targets, drop); this is only
+/// where the row is drawn. Let go, the row glides from the pointer to where
+/// it landed (`isSettling`), then the list draws it again.
+@MainActor
+final class PaneSidebarRowDrag: ObservableObject {
+    static let shared = PaneSidebarRowDrag()
+
+    @Published private(set) var pane: PaneView?
+    /// How far the pointer has moved down since the drag began.
+    @Published private(set) var dy: CGFloat = 0
+    /// Let go: gliding to its place in the list.
+    @Published private(set) var isSettling = false
+    /// The dragged row as laid out (before any slide), in the sidebar's
+    /// coordinate space — where it was, and after the drop where it landed.
+    @Published var frame: CGRect?
+
+    private var startY: CGFloat = 0
+    private var generation = 0
+
+    static let settleDuration: TimeInterval = 0.22
+    static let settleAnimation: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: settleDuration)
+
+    func begin(_ pane: PaneView, screenY: CGFloat) {
+        generation += 1
+        self.pane = pane
+        startY = screenY
+        dy = 0
+        isSettling = false
+    }
+
+    func move(screenY: CGFloat) {
+        guard pane != nil, !isSettling else { return }
+        // Screen coordinates grow up; the list's grow down.
+        dy = startY - screenY
+    }
+
+    func finish(_ pane: PaneView) {
+        guard self.pane === pane else { return }
+        isSettling = true
+        let generation = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleDuration) { [weak self] in
+            guard let self, self.generation == generation else { return }
+            self.pane = nil
+            self.isSettling = false
+            self.dy = 0
+            self.frame = nil
+        }
     }
 }

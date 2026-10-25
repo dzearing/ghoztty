@@ -77,6 +77,27 @@ struct PaneSidebarStateTests {
 
     // MARK: Edge drag thresholds agree with the rail and panel sizes
 
+    /// The edge grip pulls the rail out once the panel would fit, and tucks
+    /// the panel back in well under its minimum — with a band between where
+    /// each stays what it is, so the edge does not flicker at one width.
+    @Test func anEdgeDragPullsTheRailOutAndTucksThePanelIn() {
+        #expect(State.edgeDrag(proposed: 100, isExpanded: false) == (false, nil), "short of the panel: still the rail")
+        #expect(State.edgeDrag(proposed: 150, isExpanded: false) == (false, nil))
+        #expect(State.edgeDrag(proposed: 200, isExpanded: false) == (true, 200), "past its minimum: out")
+        #expect(State.edgeDrag(proposed: 9_000, isExpanded: true) == (true, State.maximumWidth))
+        #expect(State.edgeDrag(proposed: 150, isExpanded: true) == (true, State.minimumWidth), "stops at its minimum")
+        #expect(State.edgeDrag(proposed: 100, isExpanded: true) == (false, nil), "well under: tucked in")
+    }
+
+    @MainActor
+    @Test func theRailsGripIsItsGutter() {
+        #expect(State.edgeGrip(for: .collapsed, elevated: true) == (0, PaneElevation.margin))
+        #expect(State.edgeReach(for: .collapsed, elevated: true) == PaneElevation.margin)
+        #expect(State.edgeGrip(for: .collapsed, elevated: false) == (0, GlassCard.outerMargin),
+                "flat: the card's own trailing margin")
+        #expect(State.edgeReach(for: .collapsed, elevated: false) == 0)
+    }
+
     @Test func thresholdsSitBetweenTheRailAndTheNarrowestPanel() {
         #expect(State.railCardWidth < State.expandThreshold)
         #expect(State.expandThreshold < State.minimumWidth)

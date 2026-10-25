@@ -141,14 +141,32 @@ extension BaseTerminalController {
     func setPaneSidebarExpanded(_ expanded: Bool) {
         let state = paneSidebarState
         guard state.isExpanded != expanded else { return }
-        state.isExpanded = expanded
+        changingPaneSidebarColumn { state.isExpanded = expanded }
         syncPaneSidebarLayout()
     }
 
     /// Ctrl+Cmd+S: hide or show the sidebar entirely.
     func togglePaneSidebar() {
-        paneSidebarState.isHidden.toggle()
+        changingPaneSidebarColumn { paneSidebarState.isHidden.toggle() }
         syncPaneSidebarLayout()
+    }
+
+    /// The sidebar's column width now, as its container lays it out.
+    private var paneSidebarColumn: CGFloat {
+        let windowWidth = window?.contentView?.bounds.width ?? .greatestFiniteMagnitude
+        let state = paneSidebarState
+        return PaneSidebarState.columnWidth(
+            for: state.mode(windowWidth: windowWidth), panelWidth: state.width,
+            elevated: ghostty.config.macosPaneStyle == .elevated)
+    }
+
+    /// Make a change that moves the sidebar's column, telling the grid first
+    /// so it glides over rather than snapping (`PaneStackState.noteColumnShift`).
+    /// The sidebar animates its own width to match (`PaneSidebarContainer`).
+    private func changingPaneSidebarColumn(_ change: () -> Void) {
+        let before = paneSidebarColumn
+        change()
+        paneStackState.noteColumnShift(paneSidebarColumn - before)
     }
 
     /// The expanded and hidden flags and the sidebar's order are layout:

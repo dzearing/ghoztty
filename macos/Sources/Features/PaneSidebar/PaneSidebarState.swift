@@ -141,15 +141,55 @@ final class PaneSidebarState: ObservableObject {
         return Swift.max(0, grip.offset + grip.width)
     }
 
+    /// Where the sidebar's edge grip lies in `mode`, from the drawn card's
+    /// trailing edge — always in the gutter between it and the panes, never
+    /// over the sidebar: expanded, `pinnedEdgeGrip`; collapsed, the gutter
+    /// right of the rail card (the grid's margin in the elevated style, the
+    /// card's own trailing margin in the flat one). It used to sit just
+    /// inside the rail card, over its tiles.
+    static func edgeGrip(for mode: Mode, elevated: Bool) -> (offset: CGFloat, width: CGFloat) {
+        switch mode {
+        case .expanded, .hidden: pinnedEdgeGrip(elevated: elevated)
+        case .collapsed: (0, elevated ? PaneElevation.margin : railInsets(elevated: false).trailing)
+        }
+    }
+
+    /// How far the sidebar's host reaches past its column for the grip: only
+    /// as far as the grip lies outside the column.
+    static func edgeReach(for mode: Mode, elevated: Bool) -> CGFloat {
+        switch mode {
+        case .expanded, .hidden: pinnedEdgeReach(elevated: elevated)
+        case .collapsed: elevated ? PaneElevation.margin : 0
+        }
+    }
+
+    /// Collapsing or expanding: the sidebar's width (and the crossfade of
+    /// rail and panel) on the curve the grid's cards glide on — most of the
+    /// travel up front, then a soft settle.
+    nonisolated static let columnAnimation: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.24)
+
+    /// The width an edge drag makes of the sidebar, from the width it would
+    /// have at `proposed`: past the panel's minimum, expanded at that width
+    /// (clamped); short of `expandThreshold`, collapsed; between the two, what
+    /// it already is — expanded at its minimum, or still the rail. So the
+    /// rail is pulled out by its gutter once the panel would fit, and the
+    /// panel tucks back into the rail when pushed well under its minimum,
+    /// both within one drag and both ways.
+    nonisolated static func edgeDrag(proposed: CGFloat, isExpanded: Bool) -> (expanded: Bool, width: CGFloat?) {
+        if proposed >= minimumWidth { return (true, clampWidth(proposed)) }
+        if proposed < expandThreshold { return (false, nil) }
+        return isExpanded ? (true, minimumWidth) : (false, nil)
+    }
+
     /// The rail's column: its insets and the card.
     nonisolated static func railColumnWidth(elevated: Bool) -> CGFloat {
         let insets = railInsets(elevated: elevated)
         return insets.leading + railCardWidth + insets.trailing
     }
 
-    /// A rail's edge pulled out past this expands it. (An expanded panel
-    /// dragged narrow just stops at `minimumWidth` — it never collapses
-    /// itself.)
+    /// An expanded panel's edge pushed in short of this collapses it to the
+    /// rail (`edgeDrag`); between this and `minimumWidth` it stops at its
+    /// minimum.
     nonisolated static let expandThreshold: CGFloat = 120
 
     nonisolated static func mode(isExpanded: Bool, isHidden: Bool, windowWidth: CGFloat) -> Mode {

@@ -1591,10 +1591,21 @@ the interactive mock settled).
 
 - Two modes, **collapsed ⇄ expanded**, switched by ONE button at the top of
   the bar (`setPaneSidebarExpanded`). **Expanded** = a flat edge-to-edge panel
-  the grid sits beside (drag its edge to resize; min/max, never collapses).
-  **Collapsed** = the raised glass card as a 68pt **rail** of one-letter tiles.
-  **No pin, no hover-open**: hovering the rail opens nothing, because the rail
-  is where its tiles are dragged (pulling its edge past 120pt still expands).
+  the grid sits beside. **Collapsed** = the raised glass card as a 68pt
+  **rail** of one-letter tiles. **No pin, no hover-open**: hovering the rail
+  opens nothing, because the rail is where its tiles are dragged.
+  **Collapse/expand glides**: the grid's cards glide over to their new places
+  (`PaneStackState.noteColumnShift` → `PaneStageView.apply` seeds the glide
+  from where they were on screen), each terminal held at its size and resized
+  once after the motion, while the sidebar's width animates on the same curve
+  and rail and panel crossfade (`PaneSidebarState.columnAnimation`). It used to
+  snap. **The edge grip is the gutter beside the sidebar in both modes**
+  (`PaneSidebarState.edgeGrip`: the grid's margin, elevated; the rail card's
+  own margin, flat) — never over the rail, where its bar used to sit on the
+  tiles. Dragging it resizes the panel; pulling the rail's gutter past the
+  panel's minimum (180) brings the panel out at that width, and pushing the
+  panel well under it (< 120) tucks it back into the rail, both ways within one
+  drag (`PaneSidebarState.edgeDrag`; between the two it stops at its minimum).
   Only collapse/expand and hide/show change the column, so nothing else
   resizes a terminal. A window narrower than 720pt shows the rail even when
   expanded (its expand button is off). **Ctrl+Cmd+S** hides/shows the sidebar
@@ -1610,12 +1621,17 @@ the interactive mock settled).
   **A rail tile is ONE letter** of that same name (`PaneSidebarText.monogram`:
   the first letter or digit, upper-cased — a leading `✳ `/`~/` is skipped, or
   every Claude pane would get the same tile), for every kind of pane. Every
-  tile is the same raised **button with a sheen** (`PaneSidebarTileButton`:
-  gradient, top-half sheen, bevelled rim, drop shadow; accent when selected,
-  all static). **No `?` badge on a tile**: a question is an accent rim.
+  tile is a small **pane of glass, the banner's own** (`PaneSidebarTileButton`
+  on `GlassCardBackground`: a see-through wash, the elliptical sheen, the
+  specular rim, a shadow scaled to its size), so the color behind shows
+  through; the selected tile is accent-tinted glass. All static. **No `?`
+  badge on a tile**: a question is an accent rim.
 - Rows: grid panes (focused one selected), then — **anchored at the bottom of
   the bar** under a divider — the **tray** of stashed panes (up to 45% of the
-  bar, scrolling past that). Click focuses / restores to the exact slot it
+  bar, scrolling past that). An empty tray is still a visible target: a faint
+  dashed well with a tray glyph ("Drag a pane here to stash it" when
+  expanded), lit in the accent while a drag would land in it. Click focuses /
+  restores to the exact slot it
   left; **Option-click** swaps a stashed pane with the focused one. Hover
   offers only stash (−) / restore (↩).
 - **Drag to reorder, in both modes.** A drag over the sidebar resolves to one
@@ -1625,11 +1641,17 @@ the interactive mock settled).
   window's pane joins this window there; below it `.stash`. Any pane — a row,
   a tile, a grid pane's grab handle — goes into the tray to stash and out to
   restore; a row into the grid places it as before. ONE resolver, ONE drag
-  (`PaneDragSession`), no parallel drop path. While held, the dragged row is
-  lifted out and the others **slide by its height** to make room
-  (`PaneSidebarOrder.shift`, a bounded 0.2s animation, none at the drop); the
-  index is read off the rows as laid out, before the slide, so it never moves
-  under the pointer. The order is per window (`PaneSidebarState.order`,
+  (`PaneDragSession`), no parallel drop path. **The row itself follows the
+  pointer — up and down only, never sideways, kept inside the bar** — not a
+  drag image (`PaneSidebarRowDrag`: the row's drag source draws no preview and
+  feeds the pointer's travel; `PaneSidebarView.ghost` draws the row there,
+  lifted, over a solid backing). Let go, it glides to where it landed. The
+  others **slide by its height** to make room (`PaneSidebarOrder.shift`, a
+  bounded 0.2s animation, none at the drop). The index is read off the rows
+  as LAID OUT: each row's frame is measured by a background attached OUTSIDE
+  its slide offset (`rowFrameReader`) — a reader inside an `.offset` moves
+  with it, and the index then chased the sliding rows (a row slid into the
+  gap reported the gap's place). The order is per window (`PaneSidebarState.order`,
   reconciled by `PaneSidebarOrder.arranged`): a new pane goes after its tree
   neighbour (a split lands beside its parent), a stashed pane keeps its place
   for when it comes back, closed panes are pruned, and empty means tree

@@ -130,6 +130,11 @@ struct GlassCardBackground: ViewModifier {
     /// Whether to draw the specular sheen. Off for a card on glass panes
     /// (the pane banner): its white lift greys the gradient coming through.
     var sheen: Bool = true
+    /// The elevation shadow's blur and drop. A card the size of a banner
+    /// takes the defaults; something button-sized (a sidebar rail tile) a
+    /// fraction of them, or the shadow outgrows it.
+    var shadowRadius: CGFloat = 8
+    var shadowOffset: CGFloat = 4
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -196,11 +201,11 @@ struct GlassCardBackground: ViewModifier {
     private var dropShadow: some View {
         shape
             .fill(Color.black.opacity(0.3))
-            .blur(radius: 8)
-            .offset(y: 4)
+            .blur(radius: shadowRadius)
+            .offset(y: shadowOffset)
             .mask {
                 ZStack {
-                    Rectangle().fill(.white).padding(-24)
+                    Rectangle().fill(.white).padding(-3 * shadowRadius)
                     shape.fill(.black).blendMode(.destinationOut)
                 }
                 .compositingGroup()

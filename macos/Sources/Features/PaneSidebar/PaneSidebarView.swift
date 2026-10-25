@@ -13,6 +13,7 @@ struct PaneSidebarView: View {
     @ObservedObject var geometry: PaneSidebarGeometry
     @ObservedObject private var roster = PaneRoster.shared
     @ObservedObject private var dragSession = PaneDragSession.shared
+    @ObservedObject private var rowDrag = PaneSidebarRowDrag.shared
 
     /// Laid out as the rail (tiles) rather than full rows.
     let isRail: Bool
@@ -27,7 +28,15 @@ struct PaneSidebarView: View {
 
     var body: some View {
         content
-            .onPreferenceChange(PaneSidebarRowFrames.self) { geometry.rowFrames = $0 }
+            .overlay(alignment: .topLeading) { ghost }
+            .onPreferenceChange(PaneSidebarRowFrames.self) { frames in
+                geometry.rowFrames = frames
+                if let pane = rowDrag.pane,
+                   let frame = frames.first(where: { $0.id == pane.id })?.frame,
+                   frame != rowDrag.frame {
+                    rowDrag.frame = frame
+                }
+            }
             .onPreferenceChange(PaneSidebarGroupFrames.self) { geometry.groupFrames = $0 }
             .onPreferenceChange(PaneSidebarTrayFrame.self) { geometry.trayFrame = $0 }
             .font(.system(size: 12))
@@ -60,6 +69,52 @@ struct PaneSidebarView: View {
             list.safeAreaInset(edge: .top, spacing: 0) {
                 SidePanelHeader(base: controller.ghostty.config.backgroundColor) { headerContent }
             }
+        }
+    }
+
+    // MARK: Dragged row
+
+    /// The row being dragged, drawn over the list where the pointer has it:
+    /// at its own place, moved only up or down, never sideways, and kept
+    /// inside the bar. Let go, it glides to where it landed. The row in the
+    /// list leaves its gap meanwhile (`PaneSidebarShift.isLifted`).
+    @ViewBuilder
+    private var ghost: some View {
+        if let pane = rowDrag.pane, let frame = rowDrag.frame,
+           controller.surfaceTree.contains(where: { $0 === pane }) {
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .named(PaneSidebarGeometry.space)).origin
+                let top = rowDrag.isSettling ? frame.minY : frame.minY + rowDrag.dy
+                let y = Swift.min(Swift.max(top - origin.y, 0), Swift.max(0, proxy.size.height - frame.height))
+                PaneSidebarRow(
+                    pane: pane, owner: controller,
+                    isStashed: controller.surfaceTree.isStashed(pane),
+                    isSelected: pane === controller.publishedFocusedPane,
+                    isForeign: false, isRail: isRail, isQuickKill: false, isBeingDragged: false)
+                    .environment(\.paneSidebarInteractive, false)
+                    .frame(width: frame.width, height: frame.height)
+                    // Solid under the glass while it is held, so it reads as
+                    // on top of the rows it passes rather than mixed with them.
+                    .background {
+                        RoundedRectangle(
+                            cornerRadius: isRail ? PaneSidebarTileButton.cornerRadius : SidePanelRow.cornerRadius,
+                            style: .continuous)
+                            .fill(Color(nsColor: .windowBackgroundColor).opacity(rowDrag.isSettling ? 0 : 0.92))
+                            .overlay(
+                                RoundedRectangle(
+                                    cornerRadius: isRail ? PaneSidebarTileButton.cornerRadius : SidePanelRow.cornerRadius,
+                                    style: .continuous)
+                                    .fill(Color.primary.opacity(rowDrag.isSettling ? 0 : 0.06)))
+                            .padding(.horizontal, isRail ? (frame.width - 30) / 2 : SidePanelRow.fillInset)
+                            .padding(.vertical, isRail ? (frame.height - 30) / 2 : 0.5)
+                    }
+                    .scaleEffect(rowDrag.isSettling ? 1 : 1.04)
+                    .shadow(color: .black.opacity(rowDrag.isSettling ? 0 : 0.3), radius: 6, y: 3)
+                    .offset(x: frame.minX - origin.x, y: y)
+                    .animation(rowDrag.isSettling ? PaneSidebarRowDrag.settleAnimation : nil, value: y)
+                    .animation(PaneSidebarRowDrag.settleAnimation, value: rowDrag.isSettling)
+            }
+            .allowsHitTesting(false)
         }
     }
 
@@ -390,8 +445,9 @@ struct PaneSidebarView: View {
                             ? PaneSidebarOrder.shift(index: index, source: source, target: drag.paneTarget) : 0
                     } ?? 0,
                     height: drag?.height ?? 0,
-                    isLifted: drag?.isOverSidebar == true && index == source,
+                    isLifted: rowDrag.pane === pane || (drag?.isOverSidebar == true && index == source),
                     isDragging: drag != nil))
+                .background { rowFrameReader(pane, isStashed: false, isThisWindow: isThisWindow) }
         }
         // Room for a row coming in from the tray or another window, so the
         // rows it pushes down have somewhere to go. Held for the whole drag,
@@ -453,16 +509,19 @@ struct PaneSidebarView: View {
                             ? PaneSidebarOrder.shift(index: index, source: source, target: drag.stashTarget) : 0
                     } ?? 0,
                     height: drag?.height ?? 0,
-                    isLifted: drag?.isOverSidebar == true && index == source,
+                    isLifted: rowDrag.pane === pane || (drag?.isOverSidebar == true && index == source),
                     isDragging: drag != nil))
+                .background { rowFrameReader(pane, isStashed: true, isThisWindow: isThisWindow) }
         }
 
-        if let drag, source == nil {
-            if stashed.isEmpty {
-                PaneSidebarEmptyStashSlot(isRail: isRail, isHot: drag.stashTarget != nil)
-            } else {
-                Color.clear.frame(height: drag.height).accessibilityHidden(true)
-            }
+        // An empty tray is still somewhere to drop: a slot that says so,
+        // always there in this window's list, lit while a drag would land in
+        // it.
+        if stashed.isEmpty && isThisWindow {
+            PaneSidebarEmptyStashSlot(isRail: isRail, isHot: drag?.stashTarget != nil,
+                                      isDragging: drag != nil)
+        } else if let drag, source == nil {
+            Color.clear.frame(height: drag.height).accessibilityHidden(true)
         }
     }
 
@@ -484,18 +543,24 @@ struct PaneSidebarView: View {
             isQuickKill: state.isQuickKill,
             isBeingDragged: dragSession.isDragging(pane),
             indent: indent)
-        .background {
-            // Only during a drag, for the same reason as a group's frame.
-            // Measured BEFORE the row is shifted (`PaneSidebarShift` comes
-            // after): the drop index is read off the rows as laid out, so it
-            // never moves under the pointer as they slide.
-            if dragSession.isDragging && isThisWindow {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: PaneSidebarRowFrames.self,
-                        value: [.init(id: pane.id, frame: proxy.frame(in: .named(PaneSidebarGeometry.space)),
-                                      isStashed: isStashed)])
-                }
+
+    }
+
+    /// Reports a row's frame for the drop geometry — only during a drag, for
+    /// the same reason as a group's frame. Attached OUTSIDE the row's slide
+    /// (`PaneSidebarShift`): a background takes its content's layout frame,
+    /// which an offset does not move, where a reader inside the offset moves
+    /// with it. The drop index is read off the rows as laid out, so it never
+    /// moves under the pointer as they slide (read inside, a row sliding into
+    /// the gap reported the gap's place, and the index chased it).
+    @ViewBuilder
+    private func rowFrameReader(_ pane: PaneView, isStashed: Bool, isThisWindow: Bool) -> some View {
+        if (dragSession.isDragging || rowDrag.pane != nil) && isThisWindow {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: PaneSidebarRowFrames.self,
+                    value: [.init(id: pane.id, frame: proxy.frame(in: .named(PaneSidebarGeometry.space)),
+                                  isStashed: isStashed)])
             }
         }
     }
@@ -861,28 +926,42 @@ private struct PaneSidebarShift: ViewModifier {
     }
 }
 
-/// While a drag is in flight and nothing is stashed: the target, made visible.
+/// An empty tray: the place to drop a pane to stash it, made visible. Faint
+/// at rest — a dashed well with a tray glyph (and, expanded, what it is for)
+/// — brighter while a pane is dragged, and lit in the accent when the drag
+/// would land in it.
 private struct PaneSidebarEmptyStashSlot: View {
     let isRail: Bool
     let isHot: Bool
+    var isDragging: Bool = false
 
     var body: some View {
         let accent = Color(nsColor: .controlAccentColor)
-        Text(isRail ? "" : "Drop to stash — it keeps running")
-            .font(.system(size: 11))
-            .foregroundStyle(isHot ? AnyShapeStyle(accent) : AnyShapeStyle(.secondary))
-            .frame(maxWidth: .infinity)
-            .frame(height: isRail ? 28 : 40)
-            .background(
-                RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                    .fill(isHot ? accent.opacity(0.08) : .clear))
-            .overlay(
-                RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                    .strokeBorder(isHot ? accent : Color.primary.opacity(0.3),
-                                  style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
-            .padding(.horizontal, isRail ? 6 : SidePanelRow.fillInset)
-            .padding(.vertical, 4)
-            .allowsHitTesting(false)
+        let ink: AnyShapeStyle = isHot ? AnyShapeStyle(accent)
+            : isDragging ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
+        HStack(spacing: 6) {
+            Image(systemName: "tray.and.arrow.down")
+                .font(.system(size: isRail ? 12 : 11, weight: .medium))
+            if !isRail {
+                Text(isDragging ? "Drop to stash — it keeps running" : "Drag a pane here to stash it")
+                    .font(.system(size: 11))
+            }
+        }
+        .foregroundStyle(ink)
+        .frame(maxWidth: .infinity)
+        .frame(height: isRail ? 30 : 36)
+        .background(
+            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+                .fill(isHot ? accent.opacity(0.10) : .clear))
+        .overlay(
+            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+                .strokeBorder(isHot ? accent : Color.primary.opacity(isDragging ? 0.3 : 0.14),
+                              style: StrokeStyle(lineWidth: isHot ? 1.5 : 1, dash: [4, 3])))
+        .padding(.horizontal, isRail ? 7 : SidePanelRow.fillInset)
+        .padding(.vertical, 4)
+        .animation(.easeOut(duration: 0.15), value: isHot)
+        .help("Drag a pane here to stash it — out of the grid, still running")
+        .allowsHitTesting(false)
     }
 }
 
