@@ -1984,13 +1984,15 @@ struct PaneStackWindowTests {
         #expect(panes[3].isFocusedPane)
     }
 
-    /// The same, for the sidebar's trash mode (`killPane`).
-    @Test func killingTheFocusedPaneNeverFocusesAStrip() async throws {
+    /// The same, for a close from the sidebar (its row's ×), past any
+    /// confirmation (`closeSurface` is what the × reaches).
+    @Test func closingTheFocusedPaneNeverFocusesAStrip() async throws {
         let (controller, window, panes) = try await collapsedRow(.right)
         defer { controller.close() }
         window.makeFirstResponder(panes[2].surfaceView)
         await settle(0.4)
-        controller.killPane(panes[2])
+        let node = try #require(controller.surfaceTree.root?.node(view: panes[2]))
+        controller.closeSurface(node, withConfirmation: false)
         await settle(1.0)
         #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id), "a strip came out")
         #expect(panes[3].isFocusedPane)

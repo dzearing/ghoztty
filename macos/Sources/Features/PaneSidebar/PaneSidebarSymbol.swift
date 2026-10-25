@@ -8,7 +8,6 @@ import SwiftUI
 /// line width included.
 enum PaneSidebarSymbol: Equatable {
     case windows(filled: Bool)
-    case trash(filled: Bool)
     /// The collapse/expand button: a window with its sidebar, filled while
     /// the sidebar is expanded.
     case sidebar(expanded: Bool)
@@ -22,7 +21,7 @@ enum PaneSidebarSymbol: Equatable {
         switch self {
         case .terminal, .document, .globe: 1.3
         case .diff: 1.4
-        case .windows, .trash, .sidebar: 1.25
+        case .windows, .sidebar: 1.25
         }
     }
 
@@ -42,14 +41,6 @@ enum PaneSidebarSymbol: Equatable {
             p.addLine(to: CGPoint(x: 1.8, y: 6.4))
             p.addArc(tangent1End: CGPoint(x: 1.8, y: 4.6), tangent2End: CGPoint(x: 3.6, y: 4.6), radius: 1.8)
             p.addLine(to: CGPoint(x: 4.4, y: 4.6))
-        case .trash:
-            p.move(to: CGPoint(x: 2.8, y: 4.2)); p.addLine(to: CGPoint(x: 13.2, y: 4.2))
-            p.move(to: CGPoint(x: 6.2, y: 4.2)); p.addLine(to: CGPoint(x: 6.2, y: 2.8))
-            p.addLine(to: CGPoint(x: 9.8, y: 2.8)); p.addLine(to: CGPoint(x: 9.8, y: 4.2))
-            p.addPath(Self.trashCan)
-            if self != .trash(filled: true) {
-                p.addPath(Self.trashRibs)
-            }
         case .sidebar:
             p.addRoundedRect(in: CGRect(x: 1.8, y: 2.6, width: 12.4, height: 10.8),
                              cornerSize: CGSize(width: 2, height: 2))
@@ -89,8 +80,6 @@ enum PaneSidebarSymbol: Equatable {
         case .windows(filled: true):
             Path(roundedRect: CGRect(x: 4.4, y: 1.8, width: 9.8, height: 8),
                  cornerSize: CGSize(width: 1.8, height: 1.8))
-        case .trash(filled: true):
-            Self.trashCan
         case .sidebar(expanded: true):
             Path(roundedRect: CGRect(x: 1.8, y: 2.6, width: 4.4, height: 10.8),
                  cornerSize: CGSize(width: 2, height: 2))
@@ -99,25 +88,8 @@ enum PaneSidebarSymbol: Equatable {
         }
     }
 
-    /// Drawn knocked out of the fill (the filled trash can's ribs).
-    var knockout: Path? {
-        self == .trash(filled: true) ? Self.trashRibs : nil
-    }
-
-    private static var trashCan: Path {
-        var p = Path()
-        p.move(to: CGPoint(x: 4.2, y: 4.2)); p.addLine(to: CGPoint(x: 4.9, y: 13.2))
-        p.addLine(to: CGPoint(x: 11.1, y: 13.2)); p.addLine(to: CGPoint(x: 11.8, y: 4.2))
-        p.closeSubpath()
-        return p
-    }
-
-    private static var trashRibs: Path {
-        var p = Path()
-        p.move(to: CGPoint(x: 6.8, y: 6.5)); p.addLine(to: CGPoint(x: 6.8, y: 11.1))
-        p.move(to: CGPoint(x: 9.2, y: 6.5)); p.addLine(to: CGPoint(x: 9.2, y: 11.1))
-        return p
-    }
+    /// Drawn knocked out of the fill. None of the glyphs has one today.
+    var knockout: Path? { nil }
 }
 
 /// A `PaneSidebarSymbol`, `size` points square, in the current foreground style.

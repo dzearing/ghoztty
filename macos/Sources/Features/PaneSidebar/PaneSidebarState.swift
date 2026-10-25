@@ -9,8 +9,8 @@ import SwiftUI
 ///   column, which is part of the window's layout, so they persist (per
 ///   window, in the session-layout manifest) and are what new windows start
 ///   from. So does `order`, the sidebar's own order of the panes.
-/// - **Transient** — `isQuickKill`, `showsAllWindows`, and the all-windows
-///   folds. Never persisted: a window must never come back in kill mode.
+/// - **Transient** — `showsAllWindows` and the all-windows folds. Never
+///   persisted.
 ///
 /// The stash itself is NOT here — it is part of the tree (`SplitTree.stashed`),
 /// which is what keeps a stashed pane in the window for everything else.
@@ -27,9 +27,6 @@ final class PaneSidebarState: ObservableObject {
     @Published var isHidden: Bool {
         didSet { if isHidden != oldValue { Self.rememberForNewWindows(self) } }
     }
-
-    /// Trash mode: every row grows a red × that kills with no confirmation.
-    @Published var isQuickKill: Bool = false
 
     /// List panes from every window, grouped by window. Off by default.
     @Published var showsAllWindows: Bool = false {

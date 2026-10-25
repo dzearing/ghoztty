@@ -20,7 +20,6 @@ struct PaneSidebarRow: View {
     /// focus, drawn unemphasized, and clicking raises that window.
     let isForeign: Bool
     let isRail: Bool
-    let isQuickKill: Bool
     let isBeingDragged: Bool
     /// Leading indent of the row's content (not its fill): a window's panes
     /// sit under its header in the all-windows outline.
@@ -29,6 +28,7 @@ struct PaneSidebarRow: View {
     @State private var isHovered = false
     @Environment(\.paneSidebarEmphasized) private var windowIsKey
     @Environment(\.paneSidebarInteractive) private var isInteractive
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The accent pill only while this window is key, and never for another
     /// window's focus — that one isn't focused HERE.
@@ -114,14 +114,8 @@ struct PaneSidebarRow: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    @ViewBuilder
     private var rowFill: some View {
-        if isQuickKill && isHovered && !onAccent {
-            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                .fill(Color(nsColor: .systemRed).opacity(0.12))
-        } else {
-            SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized)
-        }
+        SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized)
     }
 
     @ViewBuilder
@@ -140,36 +134,44 @@ struct PaneSidebarRow: View {
         .frame(height: 15)
     }
 
-    /// Where a row's trailing button sits inside its fill. Shared with the
-    /// all-windows header, whose × must line up with its panes' ×s.
+    /// Where a row's trailing buttons sit inside its fill.
     static let trailingButtonInset: CGFloat = SidePanelRow.textInset - 4
 
-    /// −/↩ on hover (this window only); trash mode's red × always. There is
-    /// NO close button outside trash mode — a stray click on the list must
-    /// never end a session.
+    /// On hover (this window's rows): −/↩, then ×.
     private var trailingButtonWidth: CGFloat {
-        if isQuickKill { return 18 }
-        if isForeign { return 0 }
-        return isHovered ? 18 : 0
+        isForeign || !isHovered ? 0 : 18 * 2 + Self.trailingButtonSpacing
     }
 
+    static let trailingButtonSpacing: CGFloat = 4
+
+    /// −/↩ (stash/restore), then × — the ordinary close, as right-click →
+    /// Close Pane: it asks first when something is running or the pane is
+    /// on another machine, and is undoable. (It replaced the sidebar's trash
+    /// mode, whose red × killed with no confirmation and no undo.)
     @ViewBuilder
     private var trailingButton: some View {
-        if isQuickKill {
-            PaneSidebarKillButton(help: "Kill now — no confirmation") { kill() }
-        } else if !isForeign && isHovered {
-            Button(action: isStashed ? restore : stash) {
-                Image(systemName: isStashed ? "arrow.uturn.backward" : "minus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(onAccent ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
-                    .frame(width: 18, height: 18)
-                    .background(Circle().fill(onAccent ? Color.white.opacity(0.2) : Color.primary.opacity(0.08)))
-                    .contentShape(Circle())
+        if !isForeign && isHovered {
+            HStack(spacing: Self.trailingButtonSpacing) {
+                rowButton(isStashed ? "arrow.uturn.backward" : "minus",
+                          help: isStashed ? "Restore" : "Stash",
+                          action: isStashed ? restore : stash)
+                rowButton("xmark", help: "Close pane", action: close)
             }
-            .buttonStyle(.plain)
-            .help(isStashed ? "Restore" : "Stash")
-            .accessibilityLabel(isStashed ? "Restore" : "Stash")
         }
+    }
+
+    private func rowButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(onAccent ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(onAccent ? Color.white.opacity(0.2) : Color.primary.opacity(0.08)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     // MARK: Rail tile
@@ -183,13 +185,17 @@ struct PaneSidebarRow: View {
                     hasQuestion: pane.activityState == .needsInput)
                 // One letter of the pane's name — the same name its row and
                 // its stacked strip show — for every kind of pane.
-                let monogram = PaneSidebarText.monogram(for: displayTitle)
-                PaneSidebarGlyph(isBusy: isBusy, color: onAccent ? .white : Color(nsColor: .labelColor),
-                                 maskKey: monogram) {
-                    Text(monogram)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
+                // Busy: a sheen sweeps diagonally across the tile — its own
+                // glass sheen, moving — rather than through the letter.
+                if isBusy && !reduceMotion {
+                    PaneSidebarTileSheenLayer(cornerRadius: PaneSidebarTileButton.cornerRadius)
+                        .accessibilityLabel("Busy")
                 }
+                let monogram = PaneSidebarText.monogram(for: displayTitle)
+                Text(monogram)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .foregroundStyle(onAccent ? Color.white : Color(nsColor: .labelColor))
                 .shadow(color: .black.opacity(onAccent ? 0.25 : 0), radius: 0.5, y: 0.5)
                 interaction
             }
@@ -202,11 +208,6 @@ struct PaneSidebarRow: View {
                     .frame(width: 7, height: 7)
                     .offset(x: 1, y: -1)
                     .allowsHitTesting(false)
-            }
-
-            if isQuickKill {
-                PaneSidebarKillButton(size: 13, help: "Kill now — no confirmation") { kill() }
-                    .offset(x: -23, y: -4)
             }
         }
         .frame(maxWidth: .infinity)
@@ -256,7 +257,7 @@ struct PaneSidebarRow: View {
 
     private func stash() { owner.stashPane(pane) }
     private func restore() { owner.restorePane(pane) }
-    private func kill() { owner.killPane(pane) }
+    private func close() { owner.closePaneFromSidebar(pane) }
 
     private func contextMenu() -> NSMenu {
         let menu = NSMenu()
@@ -603,8 +604,10 @@ struct PaneSidebarHoverTint: View {
         let on = hover.pane == paneID
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         ZStack {
-            shape.fill(hover.color.opacity(0.2))
-            shape.strokeBorder(hover.color.opacity(0.9), lineWidth: 2)
+            // Half of what it first was: a hint of the pane's hue, not a
+            // paint job.
+            shape.fill(hover.color.opacity(0.1))
+            shape.strokeBorder(hover.color.opacity(0.45), lineWidth: 2)
         }
         .opacity(on ? 1 : 0)
         .animation(on ? PaneSidebarHover.fadeIn : PaneSidebarHover.fadeOut, value: on)

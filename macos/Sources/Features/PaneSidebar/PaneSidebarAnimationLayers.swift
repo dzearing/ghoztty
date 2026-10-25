@@ -210,3 +210,91 @@ struct PaneSidebarPulseRing: NSViewRepresentable {
         }
     }
 }
+
+/// A busy rail tile's sheen: a band of light sweeping diagonally across the
+/// whole glass tile — the tile's own sheen, set moving — on
+/// `PaneSidebarShimmer`'s timing and in phase with every other busy glyph.
+/// Core Animation, as the shimmer is (see the top of this file): played by
+/// the render server, it costs the main thread nothing per frame.
+struct PaneSidebarTileSheenLayer: NSViewRepresentable {
+    let cornerRadius: CGFloat
+
+    func makeNSView(context: Context) -> View { View() }
+
+    func updateNSView(_ view: View, context: Context) {
+        view.cornerRadius = cornerRadius
+    }
+
+    final class View: NSView {
+        var cornerRadius: CGFloat = 8 { didSet { if cornerRadius != oldValue { needsLayout = true } } }
+
+        private let band = CAGradientLayer()
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            layerContentsRedrawPolicy = .never
+            layer?.masksToBounds = true
+            layer?.addSublayer(band)
+            let light = NSColor.white.cgColor
+            band.colors = [light.copy(alpha: 0)!, light.copy(alpha: 0.42)!, light.copy(alpha: 0)!]
+            band.locations = [0.38, 0.5, 0.62]
+            // Top-left to bottom-right, in CA's y-up unit space: a band
+            // running from the lower left up to the upper right.
+            band.startPoint = CGPoint(x: 0, y: 1)
+            band.endPoint = CGPoint(x: 1, y: 0)
+            band.anchorPoint = .zero
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // CA drops a layer's animations when it leaves the window.
+            if window != nil { needsLayout = true; animateBand() }
+        }
+
+        override func layout() {
+            super.layout()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer?.cornerRadius = cornerRadius
+            layer?.cornerCurve = .continuous
+            // Square, so the 45° band crosses the tile corner to corner.
+            let side = Swift.max(bounds.width, bounds.height)
+            band.bounds = CGRect(x: 0, y: 0, width: side * PaneSidebarShimmer.bandWidthFactor,
+                                 height: side * PaneSidebarShimmer.bandWidthFactor)
+            band.position = CGPoint(x: 0, y: -(band.bounds.height - bounds.height) / 2)
+            CATransaction.commit()
+            animateBand()
+        }
+
+        private func animateBand() {
+            let width = Swift.max(bounds.width, bounds.height)
+            guard width > 0, window != nil else { return }
+            let from = PaneSidebarShimmer.offset(position: 1, width: width)
+            let to = PaneSidebarShimmer.offset(position: 0, width: width)
+            if let existing = band.animation(forKey: "sweep") as? CAKeyframeAnimation,
+               existing.values?.first as? CGFloat == from {
+                return
+            }
+            let period = PaneSidebarShimmer.period
+            let sweep = CAKeyframeAnimation(keyPath: "position.x")
+            sweep.values = [from, to, to]
+            sweep.keyTimes = [0, NSNumber(value: PaneSidebarShimmer.sweepFraction), 1]
+            sweep.timingFunctions = [
+                CAMediaTimingFunction(controlPoints: 0.455, 0.03, 0.515, 0.955),
+                CAMediaTimingFunction(name: .linear),
+            ]
+            sweep.duration = period
+            sweep.repeatCount = .infinity
+            let phase = Date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period)
+            sweep.beginTime = band.convertTime(CACurrentMediaTime(), from: nil) - phase
+            sweep.fillMode = .backwards
+            sweep.isRemovedOnCompletion = false
+            band.add(sweep, forKey: "sweep")
+        }
+    }
+}

@@ -40,11 +40,10 @@ The sidebar lists **every pane in the window**, in two sections:
 | Drag up or down the pane list | **Reorder the list** — the rows slide to make room; the grid does not change | **Restore** it, at that place in the list |
 | Drag into the tray (below the divider) | **Stash** it, at that position in the tray | Reorder the tray |
 | Drag to empty space or another window | Pop out / move, as today | Same, and it is no longer stashed |
-| Hover button | `−` stash | `↩` restore |
+| Hover buttons | `−` stash, `×` close | `↩` restore, `×` close |
 | Right-click | Stash · Move to New Window · Close Pane | Restore · Swap with Focused Pane · Move to New Window · Close Pane |
-| Trash mode on | red `×`: kill now, no confirmation | red `×`: kill now, no confirmation |
 
-There is **no close button outside trash mode** (see Closing panes).
+`×` is the ordinary close (see Closing panes).
 
 Dragging any pane, from its grab handle or its rearrange-mode header, into the
 **tray** stashes it; onto the pane list above the tray, it takes that place in
@@ -342,12 +341,14 @@ dims it). On/off is read from the glyph itself, never from a blue tint:
 | Button | Off | On |
 |---|---|---|
 | All windows | `macwindow.on.rectangle` | filled; caption reads **ALL WINDOWS** |
-| Trash | `trash` | `trash.fill` in system red; caption reads **CLICK × TO KILL** in red |
 | Collapse | — | a window with its sidebar panel filled: collapses to the rail |
 
-The rail has one button at its top — the same glyph, panel outlined —
-which expands it (disabled in a window too narrow for the panel). The other
-two are there once it is expanded.
+The collapse button comes FIRST, at the header's leading edge, centered on
+the rail's width; the rail's one button — the same glyph, panel outlined,
+which expands it (disabled in a window too narrow for the panel) — sits in
+exactly that spot, so the button never moves when toggled. All windows is
+there once it is expanded. (A trash button, which turned on an unconfirmed
+kill mode, was removed in favour of a row's ordinary `×`.)
 
 ### Rows
 
@@ -523,9 +524,8 @@ deliberately ephemeral because restoring an overlay would hide the content it
 covers. A **stash** is different: it is the window's layout, like a split
 ratio or a zoom, and losing it on relaunch would hand back every pane you put
 away. The **expanded** and **hidden** flags are layout too (they size the
-column), and so is the list's **order**; all three persist. The trash mode and
-the all-windows scope are not persisted — a window should never come back in
-kill mode.
+column), and so is the list's **order**; all three persist. The all-windows
+scope is not persisted.
 
 ### All windows
 
@@ -570,20 +570,17 @@ to every Ghoztty window, so window management can happen from one list.
 
 ### Closing panes
 
-**No close buttons, unless the trash is on.** Hovering a row offers only `−`
-(stash) or `↩` (restore). A stray click on the list can never end a session.
-(Middle-click-to-close, the browser convention, was tried and removed for the
-same reason.) Right-click → Close Pane remains, and goes through the normal
-close path — confirmation when something is running, Disconnect for remote
-panes, undo.
+**A row's `×` is the ordinary close.** Hovering an expanded row offers `−`
+(stash) or `↩` (restore), and `×`. The `×` goes through the normal close path
+— the same as right-click → Close Pane: confirmation when something is
+running, Disconnect for remote panes, and undo — so a stray click costs at
+most a dialog or an Undo. (Middle-click-to-close, the browser convention, was
+tried and removed: there is no undo for a click you did not mean.)
 
-**Trash mode** (the trash button): every row, rail tile, and — with the
-all-windows scope — window header gets a solid red `×`, and hovering a row
-tints it red. One click **kills**: no confirmation, and **no undo window** —
-the agent session is ended immediately rather than at undo-expiry, because
-"just kill the terminal" is the point. The row fades out and a "Killed …"
-notice appears. The mode stays on so several panes can be cleared in a row;
-the trash button again or Escape leaves it. Never persisted.
+**There is no trash mode any more.** It was a header button that gave every
+row a red `×` which killed with no confirmation and no undo window. The
+user asked for a close button on the rows instead; with one there, the
+unconfirmed kill had no reason to exist.
 
 ### The grab handle
 

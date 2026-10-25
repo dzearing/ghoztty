@@ -57,6 +57,8 @@ struct PaneSidebarView: View {
                     help: canExpand ? "Expand the sidebar" : "Too narrow to expand — widen the window"
                 ) { controller.setPaneSidebarExpanded(true, cause: "rail button") }
                     .disabled(!canExpand)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, Self.toggleLeading)
                     .frame(height: 34)
                 list
             }
@@ -90,7 +92,7 @@ struct PaneSidebarView: View {
                     pane: pane, owner: controller,
                     isStashed: controller.surfaceTree.isStashed(pane),
                     isSelected: pane === controller.publishedFocusedPane,
-                    isForeign: false, isRail: isRail, isQuickKill: false, isBeingDragged: false)
+                    isForeign: false, isRail: isRail, isBeingDragged: false)
                     .environment(\.paneSidebarInteractive, false)
                     .frame(width: frame.width, height: frame.height)
                     // Solid under the glass while it is held, so it reads as
@@ -123,11 +125,18 @@ struct PaneSidebarView: View {
     private var headerContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 2) {
-                caption
+                // The collapse button first, where the rail's expand button
+                // is: centered on the rail's width, so toggling never moves
+                // it (`toggleLeading`).
+                PaneSidebarHeaderButton(
+                    symbol: .sidebar(expanded: true),
+                    help: "Collapse the sidebar to icons"
+                ) { controller.setPaneSidebarExpanded(false, cause: "header button") }
+                caption.padding(.leading, 4)
                 Spacer(minLength: 4)
                 headerButtons
             }
-            .padding(.leading, SidePanelRow.labelInset)
+            .padding(.leading, Self.toggleLeading)
             .padding(.trailing, 6)
             .frame(height: 34)
             // All windows is the "find that pane" view, so it brings a
@@ -140,18 +149,12 @@ struct PaneSidebarView: View {
     }
 
     private var caption: some View {
-        Group {
-            if state.isQuickKill {
-                SidePanelCaption(text: "Click × to kill", color: Color(nsColor: .systemRed))
-            } else {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    SidePanelCaption(text: state.showsAllWindows ? "All windows" : "Panes")
-                    if state.showsAllWindows {
-                        // How many WINDOWS, styled as a project header's count.
-                        PaneSidebarCount(value: allControllers.count)
-                            .accessibilityLabel("\(allControllers.count) windows")
-                    }
-                }
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            SidePanelCaption(text: state.showsAllWindows ? "All windows" : "Panes")
+            if state.showsAllWindows {
+                // How many WINDOWS, styled as a project header's count.
+                PaneSidebarCount(value: allControllers.count)
+                    .accessibilityLabel("\(allControllers.count) windows")
             }
         }
     }
@@ -164,20 +167,11 @@ struct PaneSidebarView: View {
         ) {
             withAnimation(PaneSidebarOutline.scopeAnimation) { state.showsAllWindows.toggle() }
         }
-
-        PaneSidebarHeaderButton(
-            symbol: .trash(filled: state.isQuickKill),
-            tint: state.isQuickKill ? Color(nsColor: .systemRed) : nil,
-            help: state.isQuickKill
-                ? "Done killing panes (Esc)"
-                : "Quick close — kill panes with one click, no confirmation"
-        ) { state.isQuickKill.toggle() }
-
-        PaneSidebarHeaderButton(
-            symbol: .sidebar(expanded: true),
-            help: "Collapse the sidebar to icons"
-        ) { controller.setPaneSidebarExpanded(false, cause: "header button") }
     }
+
+    /// The collapse/expand button's leading inset: centered on the rail card,
+    /// in both modes, so it stays put when toggled.
+    static let toggleLeading: CGFloat = (PaneSidebarState.railCardWidth - 24) / 2
 
     // MARK: List
 
@@ -341,7 +335,6 @@ struct PaneSidebarView: View {
                     isThisWindow: isThisWindow,
                     indent: indent,
                     isFolded: folded,
-                    isQuickKill: state.isQuickKill,
                     isDropTarget: isJoinTarget(owner),
                     onFold: {
                         withAnimation(PaneSidebarOutline.foldAnimation) {
@@ -542,7 +535,6 @@ struct PaneSidebarView: View {
             isSelected: isSelected,
             isForeign: !isThisWindow,
             isRail: isRail,
-            isQuickKill: state.isQuickKill,
             isBeingDragged: dragSession.isDragging(pane),
             indent: indent)
 
@@ -695,8 +687,7 @@ struct PaneSidebarView: View {
 
 /// A 24pt borderless glyph button, styled exactly like the viewer nav bar's
 /// chevrons: the `.primary` glyph, no fill; pressing dims it. On/off is read
-/// from the glyph (outline ⇄ filled), never from a tint —
-/// the one exception being trash's red, which says "this kills".
+/// from the glyph (outline ⇄ filled), never from a tint.
 struct PaneSidebarHeaderButton: View {
     let symbol: PaneSidebarSymbol
     var tint: Color? = nil
@@ -726,7 +717,6 @@ private struct PaneSidebarWindowHeader: View {
     /// Inside a project group: one outline level in.
     var indent: CGFloat = 0
     let isFolded: Bool
-    let isQuickKill: Bool
     let isDropTarget: Bool
     let onFold: () -> Void
 
@@ -768,18 +758,10 @@ private struct PaneSidebarWindowHeader: View {
             } else {
                 PaneSidebarCount(value: owner.surfaceTree.count)
             }
-
-            if showsKill {
-                PaneSidebarKillButton(help: "Kill this window now") {
-                    owner.window?.close()
-                }
-            }
         }
         .padding(.vertical, 6)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
-        // With a trailing button, the SAME inset a row's button has, so the
-        // header's × and its panes' ×s line up in one column.
-        .padding(.trailing, showsKill ? PaneSidebarRow.trailingButtonInset : SidePanelRow.textInset)
+        .padding(.trailing, SidePanelRow.textInset)
         .background(
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                 .fill(isHovered && !isThisWindow ? Color.primary.opacity(0.06) : .clear))
@@ -802,8 +784,6 @@ private struct PaneSidebarWindowHeader: View {
     private var hasQuestion: Bool {
         owner.surfaceTree.contains { $0.activityState == .needsInput }
     }
-
-    private var showsKill: Bool { isQuickKill && !isThisWindow }
 }
 
 // MARK: - Project header (all-windows scope)
@@ -994,27 +974,6 @@ struct PaneSidebarQuestionBadge: View {
                 }
             }
             .accessibilityLabel("Has a question")
-    }
-}
-
-/// Trash mode's red ×.
-struct PaneSidebarKillButton: View {
-    var size: CGFloat = 18
-    let help: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "xmark")
-                .font(.system(size: size * 0.5, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .background(Circle().fill(Color(nsColor: .systemRed)))
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
     }
 }
 

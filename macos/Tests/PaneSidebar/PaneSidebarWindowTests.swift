@@ -604,10 +604,8 @@ struct PaneSidebarWindowTests {
         }
         // SwiftUI's own renderer: draws the view tree itself (AppKit
         // representables — the rows' click/drag views — are invisible anyway).
-        for (name, rail, quick, all) in [("render-expanded", false, false, false), ("render-rail", true, false, false),
-                                          ("render-trash", false, true, false), ("render-all", false, false, true),
-                                          ("render-all-trash", false, true, true)] {
-            h.controller.paneSidebarState.isQuickKill = quick
+        for (name, rail, all) in [("render-expanded", false, false), ("render-rail", true, false),
+                                  ("render-all", false, true)] {
             h.controller.paneSidebarState.showsAllWindows = all
             await settle(0.1)
             let bg = h.controller.ghostty.config.backgroundColor
@@ -632,20 +630,20 @@ struct PaneSidebarWindowTests {
         h.panes[2].surfaceView?.activityState = .needsInput
         h.panes[1].surfaceView?.paneBanner = "**Pane sidebar** — building the _rows_"
         await settle(0.2)
-        for (name, rail, quick) in [("rows", false, false), ("rows-trash", false, true), ("tiles", true, false)] {
+        for (name, rail) in [("rows", false), ("tiles", true)] {
             let tree = h.controller.surfaceTree
             let bg = h.controller.ghostty.config.backgroundColor
             let rows = VStack(alignment: .leading, spacing: 0) {
                 ForEach(tree.visibleLeaves) { pane in
                     PaneSidebarRow(pane: pane, owner: h.controller, isStashed: false,
                                    isSelected: pane === tree.visibleLeaves.first, isForeign: false,
-                                   isRail: rail, isQuickKill: quick, isBeingDragged: false)
+                                   isRail: rail, isBeingDragged: false)
                 }
                 PaneSidebarDivider(isRail: rail)
                 ForEach(tree.stashedViews) { pane in
                     PaneSidebarRow(pane: pane, owner: h.controller, isStashed: true,
                                    isSelected: false, isForeign: false,
-                                   isRail: rail, isQuickKill: quick, isBeingDragged: false)
+                                   isRail: rail, isBeingDragged: false)
                 }
             }
             .padding(.vertical, 8)
@@ -662,7 +660,6 @@ struct PaneSidebarWindowTests {
                     to: URL(fileURLWithPath: "/tmp/pane-sidebar-snapshots/\(name).png"))
             }
         }
-        h.controller.paneSidebarState.isQuickKill = false
         h.controller.paneSidebarState.showsAllWindows = false
         await close(h)
     }
@@ -805,6 +802,23 @@ struct PaneSidebarWindowTests {
         // Neighbours never share a shade.
         let hues = (0..<6).map(PaneSidebarHue.hue(index:))
         for (x, y) in zip(hues, hues.dropFirst()) { #expect(abs(x - y) > 0.15) }
+        await close(h)
+    }
+
+    /// A busy pane's tile carries a diagonal sheen, and the collapse/expand
+    /// button sits at the same place in both modes (sidebar-busy-*.png, by
+    /// eye: the sheen is Core Animation, the button SwiftUI).
+    @Test func aBusyTileShinesAndTheToggleStaysPut() async throws {
+        let h = try await open(expanded: false)
+        h.panes[1].surfaceView?.activityState = .busy
+        await settle(0.5)
+        try await captureComposited(h.window, "sidebar-busy-rail")
+        await settle(0.35)
+        try await captureComposited(h.window, "sidebar-busy-rail-later")
+        h.controller.setPaneSidebarExpanded(true)
+        await settle(0.8)
+        try await captureComposited(h.window, "sidebar-busy-expanded")
+        h.panes[1].surfaceView?.activityState = .idle
         await close(h)
     }
 
@@ -1236,13 +1250,9 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 
-    @Test func trashModeAndAllWindowsRender() async throws {
+    @Test func allWindowsRenders() async throws {
         let h = try await open(expanded: true)
         h.controller.stashPane(h.panes[2])
-        h.controller.paneSidebarState.isQuickKill = true
-        await settle(0.4)
-        snapshot(h, "trash")
-        h.controller.paneSidebarState.isQuickKill = false
         h.controller.paneSidebarState.showsAllWindows = true
         await settle(0.4)
         snapshot(h, "all-windows")

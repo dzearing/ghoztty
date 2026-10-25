@@ -110,7 +110,6 @@ struct PaneSidebarStateTests {
     @MainActor
     @Test func transientStateStartsOff() {
         let state = PaneSidebarState(isExpanded: true, isHidden: false)
-        #expect(!state.isQuickKill, "a window must never come back in kill mode")
         #expect(!state.showsAllWindows, "the all-windows scope is off by default")
     }
 

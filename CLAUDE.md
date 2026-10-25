@@ -1640,8 +1640,8 @@ the interactive mock settled).
   match and a list reorder changes no color). The selected tile's tint is
   deeper, with a white rim. A row's icon takes the same hue. **Hovering a
   tile or row tints its pane in that hue** — a wash and a rim on the pane's
-  card (`PaneSidebarHover`, `PaneSidebarHoverTint`), in over 0.12s, out over
-  0.2s — so the sidebar says which pane an icon is. All static at rest. **No
+  card (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim — a
+  hint, halved from the first take), in over 0.12s, out over 0.2s — so the sidebar says which pane an icon is. All static at rest. **No
   `?` badge on a tile**: a question is an accent rim.
 - Rows: grid panes (focused one selected), then — **right after the last of
   them**, under a divider, in the same scrolling list — the **tray** of
@@ -1682,11 +1682,17 @@ the interactive mock settled).
   neighbour (a split lands beside its parent), a stashed pane keeps its place
   for when it comes back, closed panes are pruned, and empty means tree
   order. Tests: `PaneSidebarOrderTests`, `PaneDropResolverSidebarTests`,
-  `dragReordersTheListAndTheTrayStashesAndRestores` (both modes). **There are no
-  close buttons** except in **trash mode** (header trash button): a red × on
-  every row that kills with no confirmation and no undo window; Escape leaves
-  it. Right-click → Close Pane is the ordinary confirmed close.
-- Activity: a **busy** pane's icon shimmers (no spinner, no glow); `needs_input`
+  `dragReordersTheListAndTheTrayStashesAndRestores` (both modes). Hovering an
+  expanded row offers −/↩ (stash/restore) and **×**, the ordinary close
+  (`closePaneFromSidebar`, as right-click → Close Pane: confirmation when
+  something runs or the pane is remote, and undo). **There is no trash mode**
+  any more (its unconfirmed, unundoable kill went with its header button).
+  The **collapse/expand button is the header's first item**, centered on the
+  rail's width (`PaneSidebarView.toggleLeading`), so it does not move when
+  toggled.
+- Activity: a **busy** pane's icon shimmers (no spinner, no glow) — on a rail
+  tile, a band of light sweeps diagonally across the whole glass tile
+  (`PaneSidebarTileSheenLayer`, Core Animation, in phase with the shimmer); `needs_input`
   shows a **question** badge — the human label, never the machine token. Both
   animate on **Core Animation**, never an endless SwiftUI animation, which
   re-renders the whole sidebar every frame (measured: ~90% of the main thread
@@ -1717,8 +1723,8 @@ the interactive mock settled).
   (`paneSidebarOrder`, by pane id). The expanded flag is stored under its
   pre-rename name `paneSidebarPinned` (UserDefaults: `PaneSidebarExpanded`,
   falling back to `PaneSidebarPinned`) — pinned WAS the full panel, so old
-  state decodes as expanded/collapsed unchanged. Trash mode and the
-  all-windows scope are never persisted.
+  state decodes as expanded/collapsed unchanged. The all-windows scope is
+  never persisted.
 - Keybinds (macOS defaults): `toggle_pane_sidebar` Ctrl+Cmd+S, `stash_pane`
   Shift+Cmd+M, `restore_stashed_pane` (unbound); Window menu items for all three.
 
@@ -2053,7 +2059,7 @@ AND the stashed-pane slots, so a restored pane never reflows.
   focusing one brings it out. (The one way the caret can sit in a strip is to
   have stayed there — the caller of a side pane, above.) Every handoff picks the pane on show nearest
   the candidate (`paneOnShow`, `focusTargetAfterRemoving`): a close, Cmd-W in
-  a viewer, a stash, the sidebar's trash kill, and the window becoming key
+  a viewer, a stash, a close from the sidebar, and the window becoming key
   with nothing focused. And only a pane that **really has the caret** counts
   as focused to a stack (`PaneView.holdsKeyboardFocus`): `focusedPane` falls
   back to the last focused terminal while the caret is elsewhere (a viewer

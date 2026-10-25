@@ -110,9 +110,6 @@ final class PaneSidebarHostView: NSView {
     private var hosting: NSHostingView<AnyView>?
     private var cancellables: Set<AnyCancellable> = []
 
-    /// Live only while trash mode is on: Escape leaves it.
-    private var escapeMonitor: Any?
-
     init(controller: BaseTerminalController, state: PaneSidebarState, mode: PaneSidebarState.Mode,
          canExpand: Bool = true) {
         self.controller = controller
@@ -127,29 +124,8 @@ final class PaneSidebarHostView: NSView {
             .sink { [weak self] _ in self?.needsLayout = true }
             .store(in: &cancellables)
 
-        state.$isQuickKill
-            .removeDuplicates()
-            .sink { [weak self] on in self?.setEscapeMonitor(on) }
-            .store(in: &cancellables)
-
         render()
         controller.paneSidebarHost = self
-    }
-
-    /// Escape leaves trash mode — innermost first: a drag in flight owns
-    /// Escape (it cancels the drag), and only this window's sidebar answers.
-    private func setEscapeMonitor(_ on: Bool) {
-        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
-        escapeMonitor = nil
-        guard on else { return }
-        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.keyCode == 53,
-                  self.window?.isKeyWindow == true,
-                  !PaneDragSession.shared.isDragging,
-                  self.state.isQuickKill else { return event }
-            self.state.isQuickKill = false
-            return nil
-        }
     }
 
     required init?(coder: NSCoder) {
@@ -158,7 +134,6 @@ final class PaneSidebarHostView: NSView {
 
     /// The representable is going away (the sidebar was hidden).
     func detach() {
-        setEscapeMonitor(false)
         if controller?.paneSidebarHost === self { controller?.paneSidebarHost = nil }
     }
 

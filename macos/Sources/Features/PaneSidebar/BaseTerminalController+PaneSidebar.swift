@@ -230,33 +230,4 @@ extension BaseTerminalController {
         let confirm = pane.needsConfirmQuit || !disconnectableViews(in: [pane]).isEmpty
         closeSurface(node, withConfirmation: confirm)
     }
-
-    /// Trash mode: kill `pane` now. No confirmation, and no undo window —
-    /// the tree is replaced WITHOUT registering an undo, so nothing retains
-    /// the pane and its surface (and the process or agent session behind it)
-    /// is freed as soon as the layout lets go of it, rather than when an undo
-    /// window expires. That is what "just kill the terminal" means.
-    func killPane(_ pane: PaneView) {
-        guard let node = surfaceTree.root?.node(view: pane) else { return }
-
-        // A window's last pane: killing it is closing the window, which has
-        // its own path (and its own confirmation bypass is the point here).
-        guard surfaceTree.count > 1 else {
-            window?.close()
-            return
-        }
-
-        let nextFocus: PaneView? = focusedPane === pane
-            ? focusTargetAfterRemoving(node, leaving: surfaceTree.removing(node))
-            : nil
-
-        // Assigning directly is what skips the undo registration. The
-        // `surfaceTreeDidChange` bookkeeping still runs: the pane is marked
-        // CLOSE-on-free, so its agent session ends rather than detaching.
-        surfaceTree = surfaceTree.removing(node)
-
-        if let nextFocus {
-            DispatchQueue.main.async { Ghostty.moveFocus(to: nextFocus) }
-        }
-    }
 }
