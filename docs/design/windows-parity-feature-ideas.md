@@ -539,3 +539,12 @@ as the digest that showed them.
 - A cancelled update picks up where it stopped (resumable update download after Cancel or a dropped connection)
 - Turn a portable copy into a real install (portable menu offers Install Ghoztty, carrying settings and saved sessions)
 - Slides keep up on a big screen (fold/unfold paints at the monitor refresh rate with several 4K panes)
+
+## 2026-10-25
+
+- Tick off files as you review a diff (mark a diff file reviewed, it folds away, the list counts what is left, the mark holds until the file changes)
+- Session cards show what was last on screen (the chooser's saved-session cards show their last two lines of output)
+- Go back to the release before (About offers a one-click reinstall of the previous version, sessions intact)
+- A pane says who opened it (a script- or agent-opened pane names its opener in the banner for a few seconds; click jumps back)
+- Typing through an animation is never lost (keys typed during a fold, slide or resize arrive in order in the caret's pane)
+- Idle windows cost nothing (a window with no output and no pointer stops repainting until something changes)
