@@ -217,6 +217,15 @@ tree still references is never ended (main's `e65cfa4d5` invariant, which is
 what keeps recovery-style tree swaps safe). Acceptance:
 `test/win32/rearrange-session-drop.ps1`.
 
+**A rearrange can be undone** (T2234, Mac "Rearrange Layout"): Ctrl+Shift+Z
+puts the previous layout back and Ctrl+Shift+Y redoes it, on the same
+per-window undo stack as a closed pane. So "omits is CLOSED" happens when
+`undo-timeout` (default 5s) expires, not at the call: until then an omitted
+pane is hidden and out of `+list`, with its shell and session untouched, and
+the undo brings it back with its name. `undo-timeout = 0` restores the
+immediate close. Glue in `src/apprt/win32/LayoutUndo.zig`, the pure layout
+logic in `layout_undo.zig`; acceptance `test/win32/rearrange-undo.ps1`.
+
 ### `ghoztty +read`
 
 Read the last N lines of terminal output from a named pane and print to stdout.

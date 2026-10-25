@@ -1,0 +1,18 @@
+{
+    "guard":  "rearrange-undo",
+    "script":  "test/win32/rearrange-undo.ps1",
+    "generated":  "2026-10-25T09:05:20-07:00",
+    "commit":  "70fae5a63",
+    "uncommitted":  [
+                        "src/apprt/win32/CloseUndo.zig",
+                        "src/apprt/win32/layout_undo.zig",
+                        "src/apprt/win32/LayoutUndo.zig",
+                        "test/win32/rearrange-undo.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/CloseUndo.zig":  "af006bcddd5d1418d294a4007d4db738761afb9b6c4af0a065532bd798696cad",
+                  "src/apprt/win32/layout_undo.zig":  "30e9ad79b3fb62e23fffb9b6f005fe8518ffb676db361c785d4adf0bd7e6e252",
+                  "src/apprt/win32/LayoutUndo.zig":  "50ee3672cbd88e6cafd37f7ce4efa4de258e126e7011536dda8f329bb163542c",
+                  "test/win32/rearrange-undo.ps1":  "359bdc46a1a8c8c4f103b2052df020d8ba4edac5f5ca5db1ace0878ff4be341b"
+              }
+}

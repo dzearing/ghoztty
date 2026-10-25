@@ -5153,6 +5153,22 @@ $GuardTable = @(
             'test\win32\close-undo.ps1'
         )
     },
+    # `+rearrange` can be undone (T2234, Mac "Rearrange Layout"): the previous
+    # layout is parked on the close-undo stack, panes it left out alive and
+    # hidden until the undo expires. Covers the pure shape/reconcile module,
+    # the window glue, the stack it rides on, the verb that registers it, and
+    # the harness.
+    [pscustomobject]@{
+        Name   = 'rearrange-undo'
+        Script = 'test\win32\rearrange-undo.ps1'
+        Stamp  = 'test\win32\rearrange-undo.stamp.json'
+        Covers = @(
+            'src\apprt\win32\layout_undo.zig',
+            'src\apprt\win32\LayoutUndo.zig',
+            'src\apprt\win32\CloseUndo.zig',
+            'test\win32\rearrange-undo.ps1'
+        )
+    },
     # A pane's overlay popups leave the screen with the pane (T2012): a close
     # parked for undo hid the pane's window and left its banner, dim wash and
     # scrollbar standing over the neighbour for the whole undo window. Covers

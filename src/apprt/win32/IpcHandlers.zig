@@ -9,7 +9,7 @@ const windows = std.os.windows;
 
 const App = @import("App.zig");
 const IpcSessionAwait = @import("ipc_session_await.zig");
-const agent_recovery = @import("agent_recovery.zig");
+const LayoutUndo = @import("LayoutUndo.zig");
 const ProcessTree = @import("ProcessTree.zig");
 const provenance = @import("provenance.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
@@ -1359,41 +1359,31 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         try surfaces.put(arena, name, pane);
     }
 
-    // T128: the session ids the NEW layout still references. Collected here,
-    // where allocating is still free to fail, and consumed below in the
-    // infallible stretch around the swap. Read-only — nothing is marked yet.
-    var surviving_ids: std.ArrayList([]const u8) = .empty;
-    {
-        var kept = surfaces.valueIterator();
-        while (kept.next()) |pane_ptr| {
-            const s = pane_ptr.*.surface() orelse continue;
-            if (!s.core_surface_ready) continue;
-            if (s.core_surface.remoteSessionId()) |sid| try surviving_ids.append(arena, sid);
-        }
-    }
+    // The layout as it stands, for the undo (T2234): captured before any
+    // stash mark below changes, so an undo stashes again what was stashed.
+    var before = try LayoutUndo.capture(ctx.alloc, tree);
+    var before_owned = true;
+    defer if (before_owned) before.deinit(ctx.alloc);
 
-    // Build the replacement tree in its own arena (SplitTree owns it).
+    // Build the replacement tree in its own arena (SplitTree owns it). The
+    // nodes borrow the kept panes; `clone` takes the new tree's references.
     const gpa = ctx.alloc;
     var tree_arena = std.heap.ArenaAllocator.init(gpa);
-    errdefer tree_arena.deinit();
+    defer tree_arena.deinit();
     var nodes: std.ArrayList(SplitTree.Node) = .empty;
     _ = try buildLayoutNode(tree_arena.allocator(), &nodes, layout, &surfaces);
-    const final_nodes = try tree_arena.allocator().dupe(SplitTree.Node, nodes.items);
-
-    // Allocate the success response up front: past this point the swap
-    // must not hit a fallible path while errdefer would free the arena the
-    // new tree now owns.
-    const response = try ctx.alloc.dupe(u8, "{\"success\":true}");
+    const borrowed: SplitTree = .{ .arena = tree_arena, .nodes = nodes.items, .zoomed = null };
+    var new_tree = try borrowed.clone(gpa);
+    var new_tree_owned = true;
+    defer if (new_tree_owned) new_tree.deinit();
 
     // T1827 (Mac `handleRearrange`): a STASHED pane the layout leaves out
     // stays stashed - the layout describes the grid, and a stash is not part
-    // of it. Without this it would be destroyed below like any omitted pane:
-    // a close the user never asked for, of a pane they could not even see.
-    // It is carried into the new tree at the top level, where it is hidden
-    // anyway; one the layout DOES place comes back on screen. Each carried
-    // pane holds a temporary reference across the swap, released once the
-    // new tree holds its own.
-    var carried: std.ArrayList(*PaneView) = .empty;
+    // of it. Without this it would be left out like any omitted pane: a close
+    // the user never asked for, of a pane they could not even see. It is
+    // carried into the new tree at the top level, right of the layout so the
+    // layout's own first leaf stays first for the focus pick, where it is
+    // hidden anyway; one the layout DOES place comes back on screen.
     {
         var it = tree.iterator();
         while (it.next()) |view_entry| {
@@ -1406,106 +1396,32 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                 }
                 break :placed false;
             };
-            if (placed) {
-                pane_stash.unmark(view);
-                continue;
-            }
-            carried.append(arena, view) catch continue;
-            _ = view.ref(gpa) catch {};
+            if (placed) continue;
+            var leaf = try SplitTree.init(gpa, view);
+            defer leaf.deinit();
+            const next = try new_tree.insertAtTopLevel(gpa, .right, 0.5, &leaf);
+            new_tree.deinit();
+            new_tree = next;
         }
     }
 
-    // Take ownership references on the kept panes BEFORE dropping the
-    // old tree, so they can't hit refcount 0 during the swap.
-    var kept_it = surfaces.valueIterator();
-    while (kept_it.next()) |pane_ptr| {
-        _ = pane_ptr.*.ref(gpa) catch {};
-    }
+    // Allocate the success response up front: `apply` takes the trees over.
+    const response = try ctx.alloc.dupe(u8, "{\"success\":true}");
+    errdefer ctx.alloc.free(response);
 
-    // T128: a pane the new layout OMITS is destroyed by the swap below — a
-    // close written as a layout — so its agent session must END rather than
-    // detach, exactly as `+close` on that pane would. Without this the child
-    // kept running under the agent forever, pinned and unreachable, with no
-    // pane anywhere that could reach it.
-    //
-    // Marked per leaf through `agent_recovery.closesDepartingLeaf`, so the
-    // `e65cfa4d5` invariant holds: a session the new tree still references is
-    // never ended. Nothing here can fail, and it runs after the response has
-    // been allocated, so no error path can leave a still-in-tree pane wearing a
-    // close intent it never earned.
+    // Bring the placed stashed panes back on screen. Only now, with nothing
+    // left to fail before the swap but `apply`'s own allocations.
     {
-        var it = tree.iterator();
-        while (it.next()) |view_entry| {
-            const view = view_entry.view;
-            const in_new_tree = in_new_tree: {
-                var kept = surfaces.valueIterator();
-                while (kept.next()) |pane_ptr| {
-                    if (pane_ptr.* == view) break :in_new_tree true;
-                }
-                // A carried stashed pane survives too (T1827): never mark it
-                // close-on-free (Mac PaneStashSessionSafetyTests).
-                for (carried.items) |c| if (c == view) break :in_new_tree true;
-                break :in_new_tree false;
-            };
-            const sid: ?[]const u8 = if (view.surface()) |s|
-                (if (s.core_surface_ready) s.core_surface.remoteSessionId() else null)
-            else
-                null;
-            if (agent_recovery.closesDepartingLeaf(in_new_tree, sid, surviving_ids.items)) {
-                view.setSessionCloseIntent(true);
-            } else if (in_new_tree) {
-                // Re-adoption releases a Disconnect pin (T1390): this pane is
-                // live in the new layout, so a LATER close is a close like any
-                // other. The pin only ever has to outlive the ONE close the
-                // user answered, and a pane that survived that close is no
-                // longer in it.
-                view.clearDetachPin();
-            }
-            // A pane leaving the layout takes its popups with it NOW (T2012):
-            // no sweep walks it once the tree is swapped.
-            if (!in_new_tree) view.hideOverlays();
-        }
+        var kept = surfaces.valueIterator();
+        while (kept.next()) |pane_ptr| pane_stash.unmark(pane_ptr.*);
     }
 
-    // Swap trees. Old-tree deinit unrefs every old view: panes not in the
-    // new layout reach refcount 0 and are destroyed (their registry names
-    // drop via ipcForget in Surface.deinit).
-    const current_focus = window.tab_active_pane[tab];
-    var old_tree = window.tab_trees[tab];
-    window.tab_trees[tab] = .{
-        .arena = tree_arena,
-        .nodes = final_nodes,
-        .zoomed = null,
-    };
-    old_tree.deinit();
-
-    // Carry the omitted stashed panes in (see above), right of the layout so
-    // the layout's own first leaf stays first for the focus pick below.
-    for (carried.items) |view| {
-        defer view.unref(gpa);
-        var leaf = SplitTree.init(gpa, view) catch continue;
-        defer leaf.deinit();
-        const next = window.tab_trees[tab].insertAtTopLevel(gpa, .right, 0.5, &leaf) catch continue;
-        var prev = window.tab_trees[tab];
-        window.tab_trees[tab] = next;
-        prev.deinit();
-    }
-    _ = pane_stash.normalize(&window.tab_trees[tab]);
-
-    // Focus: keep the focused pane if it survived, else the top-left one on
-    // screen (Mac `leftmostLeaf()`, T1371) - never storage order.
-    const focus: *PaneView = pane_stash.keepOrFirstVisible(
-        window.tab_trees[tab],
-        current_focus,
-    ).?; // validated non-empty layout above
-    window.tab_active_pane[tab] = focus;
-    window.heroOnTreeChanged(tab);
-    window.layoutSplits();
-    if (focus.hwnd()) |h| App.deferSetFocus(h); // T48
-    window.updateWindowTitle();
-    // T110: the whole tree (topology AND every split ratio) just changed —
-    // re-persist, else a restore rebuilds the PRE-rearrange shape.
-    app.markLayoutDirty();
+    // Swap, ending or parking (T2234) the panes the layout left out, and
+    // re-persist (T110). T128's session rules live there too, shared with a
+    // redo of this rearrange.
+    new_tree_owned = false;
+    before_owned = false;
+    try LayoutUndo.apply(app, window, tab, new_tree, before);
 
     return response;
 }

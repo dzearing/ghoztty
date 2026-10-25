@@ -62,6 +62,10 @@ test {
     // tree. Every lane.
     _ = @import("win32/close_undo.zig");
 
+    // Pure win32 `+rearrange` undo (T2234): which tree an undo puts back, and
+    // the by-identity layout a redo rebuilds. Every lane.
+    _ = @import("win32/layout_undo.zig");
+
     // Pure win32 pane sidebar rules (T1828): modes, column widths, the rail
     // monogram, row text, roster order and the panel/rail geometry. Imports
     // only the TOC layout and the shared split tree. Every lane.

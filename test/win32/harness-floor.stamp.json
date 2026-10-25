@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-25T08:14:19-07:00",
-    "commit":  "385035248",
+    "generated":  "2026-10-25T09:28:14-07:00",
+    "commit":  "70fae5a63",
     "uncommitted":  [
-
+                        "test/win32/rearrange-undo.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -369,6 +369,7 @@
                   "test/win32/rearrange-restore.ps1":  "d80fc3586f2df6c6ea37ac98639080da169a29042b5498af703ebe12259da87b",
                   "test/win32/rearrange-session-drop.ps1":  "6287ccbfc0e01e0ad14b65b7f2520b63739b1262e41ea3caef11a6b800297c7d",
                   "test/win32/rearrange-tab-drop.ps1":  "80e105f9602c48519bc13fc86cbeef5db1ce492d81e9c200ba06ae3bd018f9fd",
+                  "test/win32/rearrange-undo.ps1":  "359bdc46a1a8c8c4f103b2052df020d8ba4edac5f5ca5db1ace0878ff4be341b",
                   "test/win32/rearrange-viewer.ps1":  "ee522f1930125af3207f34809aaf274f7d85e981e312a7cf575e1580d4c6a9ff",
                   "test/win32/rearrange-window-drop.ps1":  "233039d655e86f5b3db3e415a22b07989fcccb9461014124fe32c1e320665baa",
                   "test/win32/registration-sites.ps1":  "3ca28bc31d56cf01408b6f0afe10f66a47e239ed08bb78e924b0e203c5c463ee",

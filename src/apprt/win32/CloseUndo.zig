@@ -44,6 +44,7 @@ const PaneView = @import("PaneView.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const close_undo = @import("close_undo.zig");
 const IpcRegistry = @import("IpcRegistry.zig");
+const LayoutUndo = @import("LayoutUndo.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const msg_timer = @import("msg_timer.zig");
 const pane_id = @import("pane_id.zig");
@@ -59,11 +60,13 @@ pub const TIMER_ID: usize = msg_timer.close_undo;
 const Tree = SplitTree(PaneView);
 const Anchor = close_undo.Anchor(PaneView);
 
-/// A closed pane, tab or window, held for its undo.
+/// A closed pane, tab or window - or a rearranged tab's previous layout
+/// (T2234) - held for its undo.
 pub const Parked = union(enum) {
     pane: ParkedPane,
     tab: ParkedTab,
     window: ParkedWindow,
+    layout: LayoutUndo.Parked,
 };
 
 const ParkedWindow = struct {
@@ -118,6 +121,9 @@ pub const Reclose = union(enum) {
     /// The window by pointer AND its first tab's identity: the pointer alone
     /// could name a later window allocated at the same address.
     window: struct { ptr: usize, tab0: pane_id.Buf },
+    /// The rearranged layout, by identity (T2234). Owns its shape: dropped
+    /// through `dropRedo`, never just forgotten.
+    layout: LayoutUndo.Redo,
 };
 
 app: *App,
@@ -149,6 +155,7 @@ pub fn deinit(self: *CloseUndo) void {
     while (self.undo_stack.takeAny()) |item| self.finalize(item.payload);
     const alloc = self.app.core_app.alloc;
     self.undo_stack.deinit(alloc);
+    for (self.redo_stack.items.items) |item| self.dropRedo(item.payload);
     self.redo_stack.deinit(alloc);
     self.* = undefined;
 }
@@ -179,7 +186,7 @@ pub fn endGroup(self: *CloseUndo) void {
 /// Whether a close of `pane` should be parked at all. A pane whose shell has
 /// already exited has nothing to bring back, and a window that is itself
 /// going away cannot hold anything.
-fn parkable(self: *const CloseUndo, window: *const Window) bool {
+pub fn parkable(self: *const CloseUndo, window: *const Window) bool {
     if (self.timeoutMs() == null) return false;
     if (self.bypass) return false;
     if (window.closing) return false;
@@ -353,6 +360,12 @@ fn removeFromApp(self: *CloseUndo, window: *Window) void {
     app.markLayoutDirty();
 }
 
+/// Hold a rearranged tab's previous layout for its undo (`LayoutUndo.apply`,
+/// which checked `parkable`). On failure nothing was taken over.
+pub fn parkLayout(self: *CloseUndo, window: *Window, parked: LayoutUndo.Parked) Allocator.Error!void {
+    return self.push(window, .{ .layout = parked });
+}
+
 fn push(self: *CloseUndo, window: *Window, payload: Parked) Allocator.Error!void {
     return self.pushOwned(owner(window), payload);
 }
@@ -367,7 +380,10 @@ fn pushOwned(self: *CloseUndo, key: usize, payload: Parked) Allocator.Error!void
     });
     // A fresh close is a new branch of history: what was undone before it can
     // no longer be redone (every undo manager, Mac's included).
-    if (!self.replaying) self.redo_stack.items.clearRetainingCapacity();
+    if (!self.replaying) {
+        for (self.redo_stack.items.items) |item| self.dropRedo(item.payload);
+        self.redo_stack.items.clearRetainingCapacity();
+    }
     self.arm();
 }
 
@@ -469,7 +485,10 @@ fn closeAgain(self: *CloseUndo, key: usize, what: Reclose) void {
         w.close();
         return;
     }
-    const window = self.findWindow(key) orelse return;
+    const window = self.findWindow(key) orelse {
+        self.dropRedo(what);
+        return;
+    };
     switch (what) {
         .pane => |id| {
             for (0..window.tab_count) |t| {
@@ -490,7 +509,19 @@ fn closeAgain(self: *CloseUndo, key: usize, what: Reclose) void {
                 }
             }
         },
+        .layout => |r| LayoutUndo.reapply(self.app, window, r),
         .window => unreachable, // handled above
+    }
+}
+
+/// Let go of a redo nobody will run: what it owns is freed.
+fn dropRedo(self: *CloseUndo, what: Reclose) void {
+    switch (what) {
+        .layout => |r| {
+            var shape = r.after;
+            shape.deinit(self.app.core_app.alloc);
+        },
+        .pane, .tab, .window => {},
     }
 }
 
@@ -502,6 +533,7 @@ fn restore(self: *CloseUndo, parked: Parked) ?Reclose {
         .pane => |p| return self.restorePane(p),
         .tab => |t| return self.restoreTab(t),
         .window => |w| return self.restoreWindow(w),
+        .layout => |l| return if (LayoutUndo.restore(self.app, l)) |r| .{ .layout = r } else null,
     }
 }
 
@@ -667,6 +699,7 @@ fn finalize(self: *CloseUndo, parked: Parked) void {
             w.window.parked_for_undo = false;
             w.window.closeNow();
         },
+        .layout => |l| LayoutUndo.finalize(self.app, l),
     }
 }
 
@@ -709,7 +742,7 @@ pub fn onTimer(self: *CloseUndo) void {
         self.finalize(item.payload);
         ended += 1;
     }
-    while (self.redo_stack.takeExpired(t)) |_| {}
+    while (self.redo_stack.takeExpired(t)) |item| self.dropRedo(item.payload);
     if (ended > 0) log.info("undo expired: {} close(s) finalized", .{ended});
     self.arm();
 }
@@ -720,7 +753,7 @@ pub fn onTimer(self: *CloseUndo) void {
 pub fn finalizeWindow(self: *CloseUndo, window: *Window) void {
     const key = owner(window);
     while (self.undo_stack.takeOwnedBy(key)) |item| self.finalize(item.payload);
-    while (self.redo_stack.takeOwnedBy(key)) |_| {}
+    while (self.redo_stack.takeOwnedBy(key)) |item| self.dropRedo(item.payload);
     self.arm();
 }
 
@@ -731,7 +764,7 @@ pub fn cancelPark(self: *CloseUndo, pane: *PaneView) void {
         fn f(target: *PaneView, p: *const Parked) bool {
             return switch (p.*) {
                 .pane => |pp| pp.pane == target,
-                .tab, .window => false,
+                .tab, .window, .layout => false,
             };
         }
     }.f;
@@ -753,7 +786,7 @@ pub fn paneGone(self: *CloseUndo, pane: *PaneView) bool {
         fn f(target: *PaneView, p: *const Parked) bool {
             return switch (p.*) {
                 .pane => |pp| pp.pane == target,
-                .tab, .window => false,
+                .tab, .window, .layout => false,
             };
         }
     }.f;
@@ -764,10 +797,12 @@ pub fn paneGone(self: *CloseUndo, pane: *PaneView) bool {
     }
 
     // In a parked tab: take it out of that tab's tree; an emptied tab goes.
+    // Left out by a rearrange (T2234): its layout entry lets it go.
     const alloc = self.app.core_app.alloc;
     for (self.undo_stack.items.items, 0..) |*item, i| {
         switch (item.payload) {
             .pane, .window => {},
+            .layout => |*l| if (LayoutUndo.paneGone(self.app, l, pane)) return true,
             .tab => |*t| {
                 var it = t.tree.iterator();
                 const handle = while (it.next()) |entry| {

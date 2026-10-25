@@ -25,7 +25,8 @@
 //!   - ctrl+shift+n New Remote Window: `window_chord.zig`
 //!   - banner link Ctrl / Ctrl+Shift: `banner_link.clickAction`
 //!   - per-flavor `--shell` invocation, `cmd.exe` fallback: `docs/claude/cli.md`
-//!   - `+rearrange` has no undo on Windows yet (T2234 tracks it)
+//!   - `+rearrange` undo on ctrl+shift+z: `LayoutUndo.zig` (T2234), chord in
+//!     the `Config.zig` win32 block
 //!
 //! No OS imports, so the tests run in every app-runtime lane.
 const std = @import("std");
@@ -62,7 +63,7 @@ pub const windows_rewrites = [_]Rewrite{
     // `+rearrange`.
     .{
         .mac = "- Supports undo (Cmd+Z restores the previous layout).",
-        .win = "- Not undoable on Windows yet: to go back, `+rearrange` to the previous layout.",
+        .win = "- Supports undo (Ctrl+Shift+Z restores the previous layout).",
     },
     // Banner editor.
     .{

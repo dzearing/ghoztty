@@ -1,14 +1,14 @@
 {
     "guard":  "close-undo",
     "script":  "test/win32/close-undo.ps1",
-    "generated":  "2026-10-25T04:05:08-07:00",
-    "commit":  "4ee63ed89",
+    "generated":  "2026-10-25T08:57:09-07:00",
+    "commit":  "70fae5a63",
     "uncommitted":  [
                         "src/apprt/win32/CloseUndo.zig"
                     ],
     "files":  {
                   "src/apprt/win32/close_undo.zig":  "8316a81b0aeb43382d0f196c37933a101b1503bbe022c9a25b3e62937e221910",
-                  "src/apprt/win32/CloseUndo.zig":  "0734dc85549fb5a803f9051c101e8ad58ffbda4a61842806cf0199bd3b7a4570",
+                  "src/apprt/win32/CloseUndo.zig":  "af006bcddd5d1418d294a4007d4db738761afb9b6c4af0a065532bd798696cad",
                   "test/win32/close-undo.ps1":  "fed06626d7e7ddb4c092063d142e7f87a7468cde565a355445e6bec932ed6938"
               }
 }
