@@ -151,6 +151,63 @@ pub fn keyName(k: input.Key) []const u8 {
     };
 }
 
+/// Chords to advertise for an action ahead of the binding set's reverse map,
+/// best first (T1354).
+///
+/// The reverse map deliberately skips performable bindings, and every copy
+/// and paste chord a Windows user actually presses is performable (ctrl+c
+/// copies only with a selection, ctrl+v pastes only with text on the
+/// clipboard). What the map is left holding is the generic non-darwin
+/// ctrl+insert for copy, and nothing at all for paste — shift+insert's later
+/// rebind to paste_from_selection evicted it. So the Edit menu taught
+/// Ctrl+Insert and gave Paste no hint, where the Mac menu shows Cmd+C/Cmd+V.
+///
+/// A candidate is advertised only while the live set still binds it to the
+/// same action, so a user who rebinds ctrl+c falls through to the next one
+/// and finally to the reverse map. Kept here rather than in `Binding.Set` so
+/// GTK and the C API resolve exactly what they did before.
+const preferred = [_]struct {
+    action: input.Binding.Action,
+    triggers: []const input.Binding.Trigger,
+}{
+    .{
+        .action = .{ .copy_to_clipboard = .mixed },
+        .triggers = &.{
+            .{ .mods = .{ .ctrl = true }, .key = .{ .unicode = 'c' } },
+            .{ .mods = .{ .ctrl = true, .shift = true }, .key = .{ .unicode = 'c' } },
+            .{ .mods = .{ .ctrl = true }, .key = .{ .physical = .insert } },
+        },
+    },
+    .{
+        .action = .paste_from_clipboard,
+        .triggers = &.{
+            .{ .mods = .{ .ctrl = true }, .key = .{ .unicode = 'v' } },
+            .{ .mods = .{ .ctrl = true, .shift = true }, .key = .{ .unicode = 'v' } },
+            .{ .mods = .{ .shift = true }, .key = .{ .physical = .insert } },
+        },
+    },
+};
+
+/// The chord a menu row should advertise for `action`: the first preferred
+/// candidate the live set still binds to it, else the reverse map's trigger.
+/// Every win32 surface that labels a command reads it through here, so the
+/// menu bar, the context menu and the palette cannot disagree.
+pub fn accelTrigger(set: *const input.Binding.Set, action: input.Binding.Action) ?input.Binding.Trigger {
+    const h = action.hash();
+    for (preferred) |p| {
+        if (p.action.hash() != h) continue;
+        for (p.triggers) |t| {
+            const entry = set.get(t) orelse continue;
+            switch (entry.value_ptr.*) {
+                .leaf => |leaf| if (leaf.action.hash() == h) return t,
+                .leader, .leaf_chained => {},
+            }
+        }
+        break;
+    }
+    return set.getTrigger(action);
+}
+
 /// `title`, or `title\t<accel>` written into `buf` when `trigger` is
 /// non-null and formats to something. Returns a pointer suitable for
 /// `AppendMenuW` — either into `buf` or `title` itself, so the caller must
@@ -242,6 +299,75 @@ test "an unbound command keeps its bare title" {
         .mods = .{},
         .key = .{ .physical = .numpad_0 },
     }, &buf));
+}
+
+/// Triggers have no `eql`; their hash is what the binding set keys on.
+fn same(a: ?input.Binding.Trigger, b: input.Binding.Trigger) bool {
+    return if (a) |t| t.hash() == b.hash() else false;
+}
+
+const ctrl_c: input.Binding.Trigger = .{ .mods = .{ .ctrl = true }, .key = .{ .unicode = 'c' } };
+const ctrl_v: input.Binding.Trigger = .{ .mods = .{ .ctrl = true }, .key = .{ .unicode = 'v' } };
+const ctrl_ins: input.Binding.Trigger = .{ .mods = .{ .ctrl = true }, .key = .{ .physical = .insert } };
+const shift_ins: input.Binding.Trigger = .{ .mods = .{ .shift = true }, .key = .{ .physical = .insert } };
+
+test "copy and paste advertise ctrl+c and ctrl+v over the reverse map" {
+    const alloc = testing.allocator;
+    var set: input.Binding.Set = .{};
+    defer set.deinit(alloc);
+
+    // The default config's shape: plain put()s for the insert chords, then
+    // the performable ctrl chords the reverse map never records.
+    try set.put(alloc, ctrl_ins, .{ .copy_to_clipboard = .mixed });
+    try set.put(alloc, shift_ins, .paste_from_clipboard);
+    try set.putFlags(alloc, ctrl_c, .{ .copy_to_clipboard = .mixed }, .{ .performable = true });
+    try set.putFlags(alloc, ctrl_v, .paste_from_clipboard, .{ .performable = true });
+
+    try testing.expect(same(set.getTrigger(.{ .copy_to_clipboard = .mixed }), ctrl_ins));
+    try testing.expect(same(accelTrigger(&set, .{ .copy_to_clipboard = .mixed }), ctrl_c));
+    try testing.expect(same(accelTrigger(&set, .paste_from_clipboard), ctrl_v));
+}
+
+test "a rebound preferred chord falls through to the reverse map" {
+    const alloc = testing.allocator;
+    var set: input.Binding.Set = .{};
+    defer set.deinit(alloc);
+
+    try set.put(alloc, ctrl_ins, .{ .copy_to_clipboard = .mixed });
+    // ctrl+c now does something else, so the menu must not promise it copies.
+    try set.put(alloc, ctrl_c, .{ .text = "x" });
+
+    try testing.expect(same(accelTrigger(&set, .{ .copy_to_clipboard = .mixed }), ctrl_ins));
+    // A different copy format is a different action and is not overridden.
+    try testing.expectEqual(@as(?input.Binding.Trigger, null), accelTrigger(&set, .{ .copy_to_clipboard = .plain }));
+}
+
+test "actions with no preference read the reverse map unchanged" {
+    const alloc = testing.allocator;
+    var set: input.Binding.Set = .{};
+    defer set.deinit(alloc);
+
+    const t: input.Binding.Trigger = .{ .mods = .{ .ctrl = true, .shift = true }, .key = .{ .unicode = 'b' } };
+    try set.put(alloc, t, .{ .new_tab = {} });
+    try testing.expect(same(accelTrigger(&set, .{ .new_tab = {} }), t));
+    try testing.expectEqual(@as(?input.Binding.Trigger, null), accelTrigger(&set, .{ .close_tab = .this }));
+}
+
+test "the default Windows config labels Copy Ctrl+C and Paste Ctrl+V" {
+    const builtin = @import("builtin");
+    if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
+    const Config = @import("../../config.zig").Config;
+    var cfg = try Config.default(testing.allocator);
+    defer cfg.deinit();
+    const set = &cfg.keybind.set;
+
+    // The defect as shipped: the reverse map advertises the OS/2-era chord
+    // for Copy, and has lost Paste to the selection-clipboard rebind.
+    try testing.expect(same(set.getTrigger(.{ .copy_to_clipboard = .mixed }), ctrl_ins));
+    try testing.expect(!same(set.getTrigger(.paste_from_clipboard), ctrl_v));
+
+    try testing.expect(same(accelTrigger(set, .{ .copy_to_clipboard = .mixed }), ctrl_c));
+    try testing.expect(same(accelTrigger(set, .paste_from_clipboard), ctrl_v));
 }
 
 test "an over-long title falls back to itself rather than truncating" {

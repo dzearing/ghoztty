@@ -817,6 +817,13 @@ if ($null -ne $tree) {
     Assert ($null -ne $remote -and $remote.Accel -eq '') "B: New Remote Window (no binding) shows no chord (got '$($remote.Accel)')"
     $undo = Row $tree "&Edit/Und&o Close"
     Assert ($null -ne $undo -and $undo.Accel -eq 'Ctrl+Shift+Z') "B: Edit>Undo Close is labeled Ctrl+Shift+Z (got '$($undo.Accel)')"
+    # T1354: Copy and Paste advertise the chords people press. The reverse map
+    # skips performable bindings, so it used to offer Ctrl+Insert for Copy and
+    # nothing at all for Paste.
+    $copyRow = Row $tree "&Edit/&Copy"
+    Assert ($null -ne $copyRow -and $copyRow.Accel -eq 'Ctrl+C') "B(T1354): Edit>Copy is labeled Ctrl+C (got '$($copyRow.Accel)')"
+    $pasteRow = Row $tree "&Edit/&Paste"
+    Assert ($null -ne $pasteRow -and $pasteRow.Accel -eq 'Ctrl+V') "B(T1354): Edit>Paste is labeled Ctrl+V (got '$($pasteRow.Accel)')"
     $about = Row $tree "&Help/&About Ghoztty"
     Assert ($null -ne $about -and $about.Accel -eq '') "B: About (no binding) shows no chord (got '$($about.Accel)')"
     # T1848: the pane sidebar rows carry their Windows chords, and the

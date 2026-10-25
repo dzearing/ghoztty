@@ -3962,7 +3962,7 @@ pub fn paintPaletteInto(self: *Surface, hdc: w32.HDC, hwnd: w32.HWND) void {
         }
 
         // Draw keybinding hint on the right
-        const trigger = if (entry_action) |a| self.app.config.keybind.set.getTrigger(a) else null;
+        const trigger = if (entry_action) |a| menu_label.accelTrigger(&self.app.config.keybind.set, a) else null;
         if (trigger) |t| {
             _ = w32.SetTextColor(hdc, system_colors.cr(row_dim));
             var kb_buf: [64]u8 = undefined;
@@ -4943,7 +4943,7 @@ fn menuLabel(
     const act = context_menu.action(id) orelse return title.ptr;
     return menu_label.withAccel(
         title,
-        self.app.config.keybind.set.getTrigger(act),
+        menu_label.accelTrigger(&self.app.config.keybind.set, act),
         buf,
     );
 }

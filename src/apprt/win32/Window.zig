@@ -13248,7 +13248,7 @@ fn menuItemLabel(
     if (cmd.kind != .binding) return title.ptr;
     return menu_label.withAccel(
         title,
-        self.app.config.keybind.set.getTrigger(cmd.action),
+        menu_label.accelTrigger(&self.app.config.keybind.set, cmd.action),
         buf,
     );
 }

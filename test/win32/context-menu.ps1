@@ -300,6 +300,12 @@ if ($menuWnd -ne [IntPtr]::Zero) {
     Assert ($bannerAccel -eq 'Ctrl+Shift+B') "G: banner row is labeled Ctrl+Shift+B (got '$bannerAccel')"
     # The whole point of the row: the Windows chord is NOT the Mac one.
     Assert ($bannerAccel -notmatch 'Win\+R|Ctrl\+R$') 'G: banner accelerator is not the Mac cmd+r chord'
+    # T1354: Copy and Paste agree with the menu bar - the chords people press,
+    # not the Ctrl+Insert / no-hint pair the reverse map alone produced.
+    $copyAccel = Accel-For $parsed 'Copy'
+    Assert ($copyAccel -eq 'Ctrl+C') "G(T1354): Copy row is labeled Ctrl+C (got '$copyAccel')"
+    $pasteAccel = Accel-For $parsed 'Paste'
+    Assert ($pasteAccel -eq 'Ctrl+V') "G(T1354): Paste row is labeled Ctrl+V (got '$pasteAccel')"
     # Accelerators are a menu-wide affordance, not a one-off for the banner.
     $withAccel = @($parsed | Where-Object { $_.Accel -ne '' })
     Assert ($withAccel.Count -ge 3) "G: bound items show their chords (got $($withAccel.Count) labeled rows)"
