@@ -32,6 +32,13 @@
 //! catches up under a drag rests until the hand moves again, and ends only
 //! once the drag is over.
 //!
+//! A card going behind the run glides into its STRIP (T2287; Mac a81db68f9's
+//! `PaneStageView.target`): its card narrows from where it was on show to the
+//! strip's rect, and its pane - held at the size it had on show, so nothing
+//! is resized - rides the card's far edge, cut to the card, so its content
+//! slides behind the strip's edge rather than vanishing at full size. Coming
+//! out is the same in reverse: the card widens out of the strip.
+//!
 //! Pure, so the tests need no window: the follower, which cards slide, and where
 //! each one is at a given moment.
 
@@ -40,6 +47,7 @@ const testing = std.testing;
 const grid = @import("pane_stack_grid.zig");
 const PxRect = grid.PxRect;
 const Id = grid.Id;
+const Direction = @import("pane_stack_layout.zig").Direction;
 
 /// How quickly a glide closes on its target (T2268; Mac `PaneStageView.glideTime`,
 /// a81db68f9): every frame each edge goes `1 - exp(-dt / glide_ms)` of the way
@@ -76,13 +84,60 @@ pub fn follow(a: f64, b: f64, k: f64) f64 {
     return a + (b - a) * k;
 }
 
-/// A card as the layout placed it: its full card rect, and whether it is
-/// tucked behind its stack's run (only its strip on show).
+/// A card as the layout placed it: its full card rect (a tucked card's held
+/// rect), and whether it is tucked behind its stack's run (only its strip on
+/// show).
 pub const Placed = struct {
     id: Id,
     rect: PxRect,
     tucked: bool,
+    /// A tucked card's strip (T2287): where its card is drawn once it has
+    /// gone in, and where it comes out from.
+    strip: ?PxRect = null,
+    /// The axis its stack runs along: a horizontal stack's strips are bands
+    /// down the cards' leading edges.
+    axis: Direction = .horizontal,
+
+    /// Where the glide takes this card (Mac `PaneStageView.target`): its
+    /// strip when it is tucked, else its card.
+    pub fn target(p: Placed) PxRect {
+        if (p.tucked) if (p.strip) |s| return s;
+        return p.rect;
+    }
 };
+
+/// Which corner a strip card's held pane is pinned to (T2287; Mac
+/// `PaneCardView.glideAnchor`): its far edge from the strip, so the pane
+/// slides behind the strip's edge as the card narrows.
+pub const Anchor = enum {
+    top_left,
+    top_right,
+    bottom_left,
+
+    /// For a stack along `axis` whose strip lies on the leading side of the
+    /// card (`leads`): pinned trailing (or to the bottom); else leading.
+    pub fn of(axis: Direction, strip_leads: bool) Anchor {
+        if (!strip_leads) return .top_left;
+        return if (axis == .horizontal) .top_right else .bottom_left;
+    }
+};
+
+/// Whether `strip` lies on the leading side of `card` along `axis` (Mac
+/// `PaneStageView.leads`).
+pub fn leads(strip: PxRect, card: PxRect, axis: Direction) bool {
+    return if (axis == .vertical)
+        strip.top + strip.bottom < card.top + card.bottom
+    else
+        strip.left + strip.right < card.left + card.right;
+}
+
+/// How far into its strip a card drawn at `extent` (its smaller side) is
+/// (T2287, for T2288's fade; Mac `PaneCardView.collapse`): 0 for a card at
+/// least `span` wider than a strip, 1 for one no wider than `strip`.
+pub fn collapse(extent: f64, strip: f64, span: f64) f64 {
+    if (span <= 0) return if (extent <= strip) 1 else 0;
+    return std.math.clamp(1 - (extent - strip) / span, 0, 1);
+}
 
 /// A card's width and height, in pixels.
 pub const Size = struct {
@@ -117,6 +172,18 @@ pub const Card = struct {
     from: PxRect,
     to: PxRect,
     drawn: Edges,
+    /// Set for a card going into or coming out of its strip (T2287): the
+    /// card is drawn at `drawn` (every edge moving, so it narrows or widens)
+    /// and its pane is held, pinned to `anchor`. See `StripCard`.
+    strip: ?StripCard = null,
+};
+
+/// How a card on its way into or out of its strip holds its pane (T2287).
+pub const StripCard = struct {
+    /// The size the pane is held at; null follows the target's size (a
+    /// drag's glide out of a strip, whose target moves with the hand).
+    held: ?Size,
+    anchor: Anchor,
 };
 
 /// A rect's four edges as the glide carries them, in fractional pixels.
@@ -230,8 +297,9 @@ pub const Slide = struct {
         var moved = false;
         for (self.cards[0..self.len]) |*c| {
             for (now) |p| if (p.id == c.id) {
-                if (!std.meta.eql(c.to, p.rect)) moved = true;
-                c.to = p.rect;
+                const to = p.target();
+                if (!std.meta.eql(c.to, to)) moved = true;
+                c.to = to;
                 break;
             };
         }
@@ -272,9 +340,20 @@ pub const Slide = struct {
 /// size it slid FROM until the glide is over, so a card that changes size
 /// resizes once, at the end. With `resize` (a drag's glide, T2186) every edge
 /// moves, so the size passes through each width on the way.
+///
+/// A strip card's pane (T2287) is held at its size and pinned to the drawn
+/// card's far edge, whatever the glide: the card narrows or widens around it.
 pub fn rectOf(c: Card, resize: bool) PxRect {
     if (c.drawn.eql(c.to)) return c.to;
     const d = c.drawn.round();
+    if (c.strip) |s| {
+        const size = s.held orelse Size{ .w = c.to.width(), .h = c.to.height() };
+        return switch (s.anchor) {
+            .top_left => .{ .left = d.left, .top = d.top, .right = d.left + size.w, .bottom = d.top + size.h },
+            .top_right => .{ .left = d.right - size.w, .top = d.top, .right = d.right, .bottom = d.top + size.h },
+            .bottom_left => .{ .left = d.left, .top = d.bottom - size.h, .right = d.left + size.w, .bottom = d.bottom },
+        };
+    }
     if (resize) return d;
     return .{
         .left = d.left,
@@ -292,17 +371,32 @@ pub fn rectOf(c: Card, resize: bool) PxRect {
 /// beside it until the very end, so the unfold looked instant - and one that
 /// grows shows its card's backdrop beyond it. A `resize` glide (a drag's,
 /// T2186) resizes the pane on the way, so card and pane agree.
+///
+/// A strip card (T2287) is drawn where the glide has it, every edge moving:
+/// it narrows into its strip, or widens out of it.
 pub fn cardOf(c: Card, resize: bool) PxRect {
+    if (c.strip != null) return if (c.drawn.eql(c.to)) c.to else c.drawn.round();
     const p = rectOf(c, resize);
     if (resize) return p;
     return .{ .left = p.left, .top = p.top, .right = p.left + c.to.width(), .bottom = p.top + c.to.height() };
 }
 
-/// What of a held pane window shows inside its card: `window` cut to `card`,
-/// or null when the window already fits (nothing to cut).
-pub fn clip(window: Size, card: Size) ?Size {
-    if (window.w <= card.w and window.h <= card.h) return null;
-    return .{ .w = @max(@min(window.w, card.w), 1), .h = @max(@min(window.h, card.h), 1) };
+/// What of a held pane window shows inside its card: the part of `window`
+/// inside `card`, in the window's own coordinates (a window region), or null
+/// when the window already lies inside it (nothing to cut). A strip card's
+/// pane (T2287) is pinned to the card's far edge, so its cut can start past
+/// the window's own origin.
+pub fn clip(window: PxRect, card: PxRect) ?PxRect {
+    if (window.left >= card.left and window.top >= card.top and
+        window.right <= card.right and window.bottom <= card.bottom) return null;
+    const left = @max(window.left, card.left) - window.left;
+    const top = @max(window.top, card.top) - window.top;
+    return .{
+        .left = left,
+        .top = top,
+        .right = @max(@min(window.right, card.right) - window.left, left + 1),
+        .bottom = @max(@min(window.bottom, card.bottom) - window.top, top + 1),
+    };
 }
 
 /// Whether going from `before` to `after` changed which cards are on show -
@@ -342,16 +436,56 @@ pub fn plan(
         // Tucked now: it slides only if it was on show (it is going away).
         if (a.tucked) if (last) |b| if (b.tucked) continue;
         const from = blk: {
-            if (current) |cur| if (cur.placed(a.id)) |rect| break :blk rect;
-            if (last) |b| break :blk b.rect;
+            if (current) |cur| if (cur.find(a.id)) |c| break :blk shownAt(c, cur.resize);
+            if (last) |b| break :blk b.target();
             break :blk null;
         } orelse continue;
-        if (std.meta.eql(from, a.rect)) continue;
+        const to = a.target();
+        if (std.meta.eql(from, to)) continue;
         if (out.len == max_cards) break;
-        out.cards[out.len] = .{ .id = a.id, .from = from, .to = a.rect, .drawn = Edges.of(from) };
+        out.cards[out.len] = .{
+            .id = a.id,
+            .from = from,
+            .to = to,
+            .drawn = Edges.of(from),
+            .strip = if (last) |b| stripCard(b, a, from, resize) else null,
+        };
         out.len += 1;
     }
     return out;
+}
+
+/// Where card `c` of a glide under way is on screen, for the next glide to
+/// start from: a strip card's card (its pane is pinned inside it), any other
+/// card's pane.
+fn shownAt(c: Card, resize: bool) PxRect {
+    return if (c.strip != null) cardOf(c, resize) else rectOf(c, resize);
+}
+
+/// How card `a` holds its pane on its way into or out of its strip (T2287),
+/// given its last placement `b` and where it starts `from`; null for a card
+/// that does neither, or whose stack draws no strip for it.
+fn stripCard(b: Placed, a: Placed, from: PxRect, resize: bool) ?StripCard {
+    if (a.tucked and !b.tucked) {
+        // Going in: held at the size it is tucked at - the size it had on
+        // show - pinned to its far edge from the strip.
+        const strip = a.strip orelse return null;
+        return .{
+            .held = .{ .w = a.rect.width(), .h = a.rect.height() },
+            .anchor = Anchor.of(a.axis, leads(strip, from, a.axis)),
+        };
+    }
+    if (!a.tucked and b.tucked) {
+        // Coming out: a click's glide holds the size it was tucked at, and
+        // the pane takes its slot's size once, at the end; a drag's follows
+        // the slot as the hand moves it.
+        const strip = b.strip orelse return null;
+        return .{
+            .held = if (resize) null else .{ .w = b.rect.width(), .h = b.rect.height() },
+            .anchor = Anchor.of(b.axis, leads(strip, a.rect, b.axis)),
+        };
+    }
+    return null;
 }
 
 // -- tests -------------------------------------------------------------------
@@ -485,8 +619,8 @@ test "cardOf: an unfold cuts the widening neighbour to its new card at once (T21
     try testing.expectEqual(@as(i32, 450), card_b.width());
     // The cut: A's 900-wide window shows 450 of itself; B's 375-wide window
     // fits its 450 card and is not cut.
-    try testing.expectEqual(Size{ .w = 450, .h = 600 }, clip(.{ .w = 900, .h = 600 }, .{ .w = card_a.width(), .h = 600 }).?);
-    try testing.expectEqual(@as(?Size, null), clip(.{ .w = 375, .h = 600 }, .{ .w = card_b.width(), .h = 600 }));
+    try testing.expectEqual(r(0, 0, 450, 600), clip(s.rect(1).?, card_a).?);
+    try testing.expectEqual(@as(?PxRect, null), clip(s.rect(2).?, card_b));
     // At the end card and pane agree, and neither is sliding any more.
     _ = runOut(&s);
     try testing.expectEqual(r(0, 0, 450, 600), s.placed(1).?);
@@ -737,4 +871,126 @@ test "shownGutter: a gutter no gliding card borders is not moved" {
     // Not at the card's edge, and beside it but in another row.
     try testing.expectEqual(@as(?PxRect, null), s.shownGutter(r(900, 0, 6, 600), true, 2));
     try testing.expectEqual(@as(?PxRect, null), s.shownGutter(r(600, 700, 6, 300), true, 2));
+}
+
+test "plan: a card going behind the run narrows into its strip, its pane pinned to the far edge (T2287)" {
+    // A | C with C folding into a strip at the row's right edge: the strip
+    // trails C's card, so the pane is pinned to its leading edge and slides
+    // right, behind the strip.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
+        .{ .id = 3, .rect = r(400, 0, 400, 600), .tucked = false },
+    };
+    const strip = r(764, 0, 36, 600);
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 760, 600), .tucked = false },
+        .{ .id = 3, .rect = heldRect(r(764, 0, 400, 600), .{ .w = 400, .h = 600 }), .tucked = true, .strip = strip },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    try testing.expectEqual(@as(usize, 2), s.len);
+    const c = s.cards[1];
+    try testing.expectEqual(@as(Id, 3), c.id);
+    // Its glide ends at the strip, not at the full-size card behind it.
+    try testing.expectEqual(strip, c.to);
+    try testing.expectEqual(Anchor.top_left, c.strip.?.anchor);
+    _ = s.step(30);
+    const card = s.cardRect(3).?;
+    const pane = s.rect(3).?;
+    // The card narrows: narrower than it was, wider than the strip.
+    try testing.expect(card.width() < 400 and card.width() > 36);
+    try testing.expect(card.left > 400 and card.left < 764);
+    // The pane keeps its size (no resize) at the card's leading edge, and is
+    // cut to the card.
+    try testing.expectEqual(@as(i32, 400), pane.width());
+    try testing.expectEqual(card.left, pane.left);
+    try testing.expectEqual(PxRect{ .left = 0, .top = 0, .right = card.width(), .bottom = 600 }, clip(pane, card).?);
+    // Caught up, it is its strip: not sliding, so the window hides the pane
+    // and paints the strip.
+    _ = runOut(&s);
+    try testing.expectEqual(@as(?PxRect, null), s.rect(3));
+    try testing.expectEqual(@as(?PxRect, null), s.cardRect(3));
+}
+
+test "plan: a strip on the card's leading side pins the pane to the trailing edge (T2287)" {
+    // A card folding into a strip at the row's LEFT edge: the content slides
+    // left, behind the strip's edge, so it is pinned to the card's right.
+    const before = [_]Placed{.{ .id = 1, .rect = r(100, 0, 400, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = true, .strip = r(0, 0, 36, 600) }};
+    var s = plan(&before, &after, null, glide_ms, false);
+    try testing.expectEqual(Anchor.top_right, s.cards[0].strip.?.anchor);
+    _ = s.step(20);
+    const card = s.cardRect(1).?;
+    const pane = s.rect(1).?;
+    try testing.expectEqual(card.right, pane.right);
+    try testing.expectEqual(@as(i32, 400), pane.width());
+    // The cut starts inside the window: its leading part is past the card.
+    const cut = clip(pane, card).?;
+    try testing.expectEqual(card.left - pane.left, cut.left);
+    try testing.expectEqual(@as(i32, 400), cut.right);
+    // A vertical stack's leading strip lies above: pinned to the bottom.
+    try testing.expectEqual(Anchor.bottom_left, Anchor.of(.vertical, true));
+    try testing.expect(leads(r(0, 0, 400, 30), r(0, 40, 400, 300), .vertical));
+}
+
+test "plan: a card coming out of its strip widens from it, its pane held and pinned (T2287)" {
+    const strip = r(764, 0, 36, 600);
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 760, 600), .tucked = false },
+        .{ .id = 3, .rect = r(764, 0, 375, 600), .tucked = true, .strip = strip },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
+        .{ .id = 3, .rect = r(400, 0, 400, 600), .tucked = false },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    const c = s.find(3).?;
+    // It starts at its strip, not at the full card hidden behind the run.
+    try testing.expectEqual(strip, c.from);
+    try testing.expectEqual(Anchor.top_left, c.strip.?.anchor);
+    _ = s.step(20);
+    const card = s.cardRect(3).?;
+    try testing.expect(card.width() > 36 and card.width() < 400);
+    // Held at the size it was tucked at until the glide ends.
+    try testing.expectEqual(@as(i32, 375), s.rect(3).?.width());
+    _ = runOut(&s);
+    try testing.expectEqual(r(400, 0, 400, 600), s.placed(3).?);
+    // A drag's glide out follows the slot's size instead.
+    var g = plan(&before, &after, null, glide_ms, true);
+    _ = g.step(20);
+    try testing.expectEqual(@as(i32, 400), g.rect(3).?.width());
+}
+
+test "plan: a card turned back mid-glide carries on from where its card is drawn (T2287)" {
+    const strip = r(764, 0, 36, 600);
+    const shown = [_]Placed{.{ .id = 3, .rect = r(400, 0, 400, 600), .tucked = false }};
+    const tucked = [_]Placed{.{ .id = 3, .rect = r(764, 0, 400, 600), .tucked = true, .strip = strip }};
+    var going = plan(&shown, &tucked, null, glide_ms, false);
+    _ = going.step(20);
+    const drawn = going.cardRect(3).?;
+    const back = plan(&tucked, &shown, &going, glide_ms, false);
+    try testing.expectEqual(drawn, back.cards[0].from);
+    try testing.expect(back.cards[0].strip != null);
+}
+
+test "retarget: a card going into its strip follows the strip, not its held card (T2287)" {
+    const before = [_]Placed{.{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    var s = plan(&before, &after, null, glide_ms, true);
+    const moved = [_]Placed{.{ .id = 1, .rect = r(770, 0, 400, 600), .tucked = true, .strip = r(770, 0, 36, 600) }};
+    try testing.expect(s.retarget(&moved));
+    try testing.expectEqual(r(770, 0, 36, 600), s.cards[0].to);
+}
+
+test "collapse: Mac's fade - none until a strip plus the span, all of it at strip width" {
+    try testing.expectEqual(@as(f64, 0), collapse(400, 36, 120));
+    try testing.expectEqual(@as(f64, 0), collapse(156, 36, 120));
+    try testing.expectApproxEqAbs(@as(f64, 0.5), collapse(96, 36, 120), 1e-9);
+    try testing.expectEqual(@as(f64, 1), collapse(36, 36, 120));
+    try testing.expectEqual(@as(f64, 1), collapse(10, 36, 120));
+}
+
+test "clip: a window inside its card is not cut" {
+    try testing.expectEqual(@as(?PxRect, null), clip(r(10, 10, 100, 100), r(0, 0, 200, 200)));
+    // Bigger than its card: cut to it, from the window's own origin.
+    try testing.expectEqual(PxRect{ .left = 0, .top = 0, .right = 450, .bottom = 600 }, clip(r(0, 0, 900, 600), r(0, 0, 450, 600)).?);
 }

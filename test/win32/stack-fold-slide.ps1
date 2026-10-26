@@ -13,7 +13,8 @@
 #   - the pane windows are stacked in the layout's paint order, so the
 #     folding pane slides UNDER the run, never across it
 #
-# Layout: P | s1 | s2 across a 1500 DIP window, the stack-collapse-drag.ps1
+# Layout: P | s1 | s2 across a 1125 DIP window (T2295: five pane minimums of
+# 225 DIP, the shape the old 1500 had at 300), the stack-collapse-drag.ps1
 # shape. The root divider is dragged right past the fold point and HELD, with
 # the slide stretched to 2 s (`GHOZTTY_STACK_SLIDE_MS`) so the sampler sees it
 # in motion.
@@ -41,9 +42,15 @@
 #       laid-out gutter while P grows into the fold, past it while P shrinks
 #       back on the unfold. Read from the debug build's `gutter bar gliding`
 #       oracle line.
+#   F8) the folding card NARROWS into its strip (T2287; Mac a81db68f9): mid-
+#       glide s2's window is cut to its card (its window region), and that
+#       card is seen at 2+ widths well short of s2's full width - not a
+#       full-size card that slides off and vanishes at the end
+#   F9) unfolding, s2's card widens out of its strip the same way: seen cut
+#       to 2+ partial widths on its way back
 #
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
-# before any slide) and keeps F1/F2/F7 as written: they MUST fail.
+# before any slide) and keeps F1/F2/F7/F8 as written: they MUST fail.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -141,15 +148,38 @@ function Get-StrayPopups([int]$procId, [IntPtr]$top) {
         } | ForEach-Object { "$($_.Class) $($_.Left)-$($_.Right)" })
 }
 
-# Sample every pane window (and any stray popup) for $ms milliseconds.
+# How much of a pane window shows across its middle (T2287): its window
+# region, probed every 4 px; the whole width when it has no region.
+function Get-ShownWidth($pane) {
+    $pts = New-Object System.Collections.Generic.List[int]
+    $y = [int]($pane.Height / 2)
+    for ($x = 2; $x -lt $pane.Width; $x += 4) { $pts.Add($x); $pts.Add($y) }
+    if ($pts.Count -eq 0) { return 0 }
+    $hits = Get-TestWindowRegionHits -Window ([IntPtr]$pane.Hwnd) -Points $pts.ToArray()
+    if ($null -eq $hits) { return $pane.Width }
+    return 4 * @($hits | Where-Object { $_ }).Count
+}
+
+# Sample every pane window (and any stray popup) for $ms milliseconds, with
+# how much of $script:watchPane shows when it is on show.
 function Get-Samples([IntPtr]$top, [int]$ms) {
     $out = New-Object System.Collections.Generic.List[object]
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while ($sw.ElapsedMilliseconds -lt $ms) {
-        $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = @(Get-Panes $top); Stray = @(Get-StrayPopups $script:appPid $top) })
+        $panes = @(Get-Panes $top)
+        $w = $null
+        $q = Find-Pane $panes $script:watchPane
+        if ($null -ne $q -and $q.Visible) { $w = [pscustomobject]@{ Width = $q.Width; Shown = (Get-ShownWidth $q) } }
+        $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $panes; Stray = @(Get-StrayPopups $script:appPid $top); Watch = $w })
         Start-Sleep -Milliseconds 15
     }
     return $out
+}
+# The distinct partial widths $samples saw the watched pane cut to: shown,
+# and narrower than 80% of its window.
+function Get-PartialWidths($samples) {
+    return @($samples | Where-Object { $null -ne $_.Watch -and $_.Watch.Shown -gt 0 -and $_.Watch.Shown -lt 0.8 * $_.Watch.Width } |
+            ForEach-Object { $_.Watch.Shown } | Sort-Object -Unique)
 }
 # The `gutter bar gliding at X,Y laid out at X,Y` oracle lines (T2270) from
 # line $from of the app's stderr on: each as drawn x and laid-out x.
@@ -211,7 +241,11 @@ try {
     }
 
     # ---- setup: P | s1 | s2 ----------------------------------------------------
-    Say "== setup: P | s1 | s2, 1500 DIP wide, slide $slideMs ms"
+    # T2295: the row is sized from the pane minimum (225 DIP since T2284), so
+    # P | s1 | s2 fits and the drag below folds s2 where it says it does.
+    $minDip = 225
+    $winDip = 5 * $minDip
+    Say "== setup: P | s1 | s2, $winDip DIP wide, slide $slideMs ms"
     $app = Start-App
     $script:appPid = [int]$app.Pid
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -219,7 +253,7 @@ try {
     $dpi = [int](Get-TestWindowDpi -Window $top)
     if ($dpi -le 0) { $dpi = 96 }
     $scale = $dpi / 96.0
-    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 1500 -Scale $scale) -Height (Get-TestChromeDip -Dip 700 -Scale $scale))
+    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip $winDip -Scale $scale) -Height (Get-TestChromeDip -Dip 700 -Scale $scale))
     Start-Sleep -Seconds 2
     & $exe +split --direction=right --name=s1 | Out-Null
     Start-Sleep -Milliseconds 800
@@ -231,6 +265,7 @@ try {
     $hP = $c3[0].Hwnd
     $hS1 = $c3[1].Hwnd
     $hS2 = $c3[2].Hwnd
+    $script:watchPane = [int64]$hS2
     $pW0 = $c3[0].Width
     $s2Left0 = $c3[2].Left
     Say ("      dpi {0}; columns: {1}" -f $dpi, (Format-Cols $c3))
@@ -241,11 +276,16 @@ try {
     $y = [int](($c3[0].Top + $c3[0].Bottom) / 2)
     # 1000/1500 is past the fold point; 850/1500 is short of it, where the
     # drag has only resized. Since T2263 (Mac a81db68f9) the fold point is where
-    # s1 and s2 stop fitting at their minimums, about 1500 - 600 - a gutter =
-    # ~891/1500 in the flat style - no 48 DIP past it any more, so the old
-    # 900/1500 approach had already started the fold.
-    $xFold = [int]($gridLeft + $gridW * 1000 / 1500)
-    $xNear = [int]($gridLeft + $gridW * 850 / 1500)
+    # s1 and s2 stop fitting at their minimums: the row less two minimums and
+    # a gutter, ~891/1500 of it in the flat style - no 48 DIP past it any
+    # more, so the old 900/1500 approach had already started the fold.
+    # Derived from the minimum rather than as fractions of the row (T2295):
+    # the row starts after the sidebar, a fixed width the fractions ignore.
+    $gutter = $c3[1].Left - $c3[0].Right
+    $foldAt = $c3[2].Right - 2 * (Get-TestChromeDip -Dip $minDip -Scale $scale) - $gutter
+    $xFold = [int]($foldAt + (Get-TestChromeDip -Dip 100 -Scale $scale))
+    $xNear = [int]($foldAt - (Get-TestChromeDip -Dip 40 -Scale $scale))
+    Say ("      fold point ~{0} px; approach to {1}, fold at {2}" -f $foldAt, $xNear, $xFold)
 
     # Focus P, so s2 - the pane that folds - is an unfocused pane and carries
     # the dim wash whose bleed T2227 is about.
@@ -253,7 +293,13 @@ try {
     Start-Sleep -Milliseconds 600
     $washes = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyDimOverlay' | Where-Object Visible)
     Say ("      P focused; {0} dim wash(es) on show" -f $washes.Count)
-    Assert ($washes.Count -ge 2) "F6 precondition: with P focused, s1 and s2 carry the dim wash ($($washes.Count) on show)"
+    # Glass panes never dim (T2281, Mac 9da9618f8): there F6 still checks
+    # every popup, but has no wash to check.
+    if ($PaneStyle -eq 'flat') {
+        Assert ($washes.Count -ge 2) "F6 precondition: with P focused, s1 and s2 carry the dim wash ($($washes.Count) on show)"
+    } else {
+        Assert ($washes.Count -eq 0) "F6 precondition: glass panes carry no dim wash (T2281) ($($washes.Count) on show)"
+    }
 
     # ---- the fold, held, sampled ---------------------------------------------
     Say '== drag the root divider up to the fold point, then over it in one move, and hold'
@@ -334,6 +380,11 @@ try {
     Say ("      bar drawn short of its gutter at: {0}" -f ($barFoldAt -join ', '))
     Assert ($barFoldAt.Count -ge 2) "F7: folding, the dragged bar is drawn at $($barFoldAt.Count) places short of its laid-out gutter (need 2+): it stays with the gliding card"
 
+    # F8: the folding card narrows into its strip (T2287).
+    $narrow = @(Get-PartialWidths $fold)
+    Say ("      s2 cut to its narrowing card at: {0} px" -f ($narrow -join ', '))
+    Assert ($narrow.Count -ge 2) "F8: folding, s2 is seen cut to $($narrow.Count) partial widths (need 2+): its card narrows into the strip, it does not slide off full size"
+
     # F4: the T2124 layout at rest.
     $shown = @($rest | Where-Object Visible)
     Assert ($shown.Count -eq 2) "F4: at rest two panes are on show (got $($shown.Count))"
@@ -341,15 +392,20 @@ try {
 
     # ---- the unfold, still held, sampled ---------------------------------------
     Say '== drag back to the start, still held'
-    Move-To $top $xFold $x0 $y
+    # One move, as the fold: stepped, the unfold began mid-steps and most of
+    # its widening was over before the sampler started (T2287's F9).
+    [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action move -HoldMs 0)
     $back = @(Get-Samples $top ($slideMs + 1000))
     $again = @(Get-Panes $top)
     $s2Back = Find-Pane $again $hS2
     $s2Home = if ($s2Back) { $s2Back.Left } else { $s2Tuck }
     $s2Coming = @(Get-Between $back $hS2 $s2Tuck $s2Home)
     Say ("      s2 {0} -> {1}; on show between: {2}; at rest: {3}" -f $s2Tuck, $s2Home, ($s2Coming -join ', '), (Format-Cols $again))
+    $widen = @(Get-PartialWidths $back)
+    Say ("      s2 cut to its widening card at: {0} px" -f ($widen -join ', '))
     if (-not $NegativeControl) {
         Assert ($s2Coming.Count -ge 2) "F5: unfolding, s2 is seen at $($s2Coming.Count) positions on its way back (need 2+)"
+        Assert ($widen.Count -ge 2) "F9: unfolding, s2 is seen cut to $($widen.Count) partial widths (need 2+): its card widens out of the strip"
     }
     $barBack = @(Get-GlidingBar $logBack | Where-Object { $_.Shown -gt $_.Laid })
     $barBackAt = @($barBack | ForEach-Object Shown | Sort-Object -Unique)
