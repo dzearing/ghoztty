@@ -55,6 +55,7 @@ const App = @import("App.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
 const toc = @import("viewer_toc_layout.zig");
 const color_math = @import("color_math.zig");
+const pane_hue = @import("pane_hue.zig");
 const chrome_theme = @import("chrome_theme.zig");
 const system_colors = @import("system_colors.zig");
 const banner_card = @import("banner_card.zig");
@@ -189,6 +190,10 @@ const Entry = struct {
     subtitle: []u16,
     mono: []u16,
     icon: u16,
+    /// Its place in its tab's tree, stashed panes included: what its hue is
+    /// spaced by (T2278, `pane_hue`), so a reorder of the list recolors
+    /// nothing.
+    hue: u16 = 0,
     state: ActivityState,
     /// The bell rang and the pane has not been looked at since.
     bell: bool,
@@ -238,6 +243,9 @@ scroll: [2]i32 = .{ 0, 0 },
 wheel: [2]scroll_mod.Wheel = .{ .{}, .{} },
 thumb_drag: ?struct { which: Surface, grab: i32 } = null,
 revealed: ?*PaneView = null,
+/// The pane this sidebar last handed the hover tint to (T2278), so a hover
+/// change clears only its own (`syncHoverTint`).
+tint_pane: ?*const PaneView = null,
 
 mode: pane_sidebar.Mode = .hidden,
 /// `Window.paneSidebarReachPx()` at the last `place` (T1900).
@@ -451,6 +459,9 @@ pub fn create(alloc: Allocator, window: *Window, parent: w32.HWND) ?*PaneSidebar
 }
 
 pub fn destroy(self: *PaneSidebar) void {
+    // Let go of the tint this sidebar handed out (T2278).
+    self.hover = .none;
+    self.syncHoverTint();
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
     // synchronously and they must not find a half-dead object.
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
@@ -621,6 +632,9 @@ fn hashView(h: *std.hash.Wyhash, v: *PaneView, selected: bool) void {
 /// The roster changed: repaint, re-glue the open card, re-sync the tips.
 fn rosterChanged(self: *PaneSidebar) void {
     self.revealSelected();
+    // The rows moved under the pointer: the hovered index may name another
+    // pane now.
+    self.syncHoverTint();
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.logOutline();
     self.logMarks();
@@ -1061,6 +1075,7 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
             .subtitle = subtitle,
             .mono = mono,
             .icon = iconFor(v),
+            .hue = @intCast(@min(pane_hue.treeIndex(window.tab_trees[tab], v), std.math.maxInt(u16))),
             .state = if (v.surface()) |s| s.activity_state else .idle,
             .bell = if (v.surface()) |s| s.bell else false,
             // Only THIS window has a selection (Mac 55352e377): another
@@ -1815,6 +1830,40 @@ fn paintBellDot(self: *PaneSidebar, hdc: w32.HDC, cx: i32, cy: i32, t: Theme) vo
     fillRound(hdc, dot, @divTrunc(d, 2), rgb(t.accent));
 }
 
+/// A pane's mark ink (T2278, Mac `iconColor`): its hue, at full strength on
+/// the focused row of a focused window and on a hovered one, quieter
+/// elsewhere, over `under`.
+fn hueInk(self: *const PaneSidebar, e: Entry, under: color_math.Rgb, hovered: bool, emphasized: bool, t: Theme) u32 {
+    _ = self;
+    const strong = (e.selected and emphasized) or hovered;
+    return rgb(pane_hue.iconInk(pane_hue.color(e.hue, t.dark), under, strong));
+}
+
+/// The pane under the pointer in this sidebar, if any, takes its hue as a
+/// tint (T2278, Mac `PaneSidebarHover`); the one that had it lets go. Called
+/// after every hover change. Only this sidebar's own last target is cleared,
+/// so another window's sidebar that just took the hover keeps it.
+fn syncHoverTint(self: *PaneSidebar) void {
+    const app = self.window.app;
+    const want: ?Entry = switch (self.hover) {
+        .item, .item_button => |i| if (i < self.entries.items.len) self.entries.items[i] else null,
+        else => null,
+    };
+    const pane: ?*const PaneView = if (want) |e| e.pane else null;
+    if (pane == self.tint_pane) return;
+    if (pane) |p| {
+        const e = want.?;
+        app.sidebar_hover_pane = p;
+        app.sidebar_hover_color = pane_hue.color(e.hue, self.theme().dark);
+        const c = app.sidebar_hover_color;
+        log.info("pane sidebar hover tint index={d} rgb={d},{d},{d}", .{ e.hue, c.r, c.g, c.b });
+    } else if (app.sidebar_hover_pane == self.tint_pane) {
+        app.sidebar_hover_pane = null;
+    }
+    self.tint_pane = pane;
+    for (app.windows.items) |w| w.updateHoverTints();
+}
+
 fn isEmphasized(self: *const PaneSidebar) bool {
     return w32.windowIsActive(w32.GetAncestor(self.hwnd, w32.GA_ROOT));
 }
@@ -1985,9 +2034,11 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             .right = content + icon_box,
             .bottom = r.top + pad_v + self.metrics.title_h,
         };
-        // A busy pane's icon is in full ink, shimmering (Mac iconColor).
+        // The icon is drawn in the pane's own hue (T2278, Mac iconColor):
+        // full on the focused row and a hovered one, a touch quieter
+        // elsewhere. A busy pane's shimmers.
         const busy = e.state == .busy;
-        self.paintMarkFor(hdc, icon_r, .{ .glyph = e.icon }, if (busy) t.text else ink, under, busy);
+        self.paintMarkFor(hdc, icon_r, .{ .glyph = e.icon }, self.hueInk(e, under, hovered, emphasized, t), under, busy);
 
         // The trailing edge: the hover button replaces the state accessories
         // while the pointer is on the row, so the two never crowd each other.
@@ -2400,9 +2451,10 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         });
         if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
         const busy = e.state == .busy;
-        const ink = if (e.selected or busy) t.text else t.secondary;
+        const under = sel.fill orelse t.surface;
+        const hovered = self.hoverIs(.{ .item = i }) or self.hoverIs(.{ .item_button = i });
         const mark: Mark = if (e.icon == glyph_terminal) .{ .text = e.mono } else .{ .glyph = e.icon };
-        self.paintMarkFor(hdc, r, mark, ink, sel.fill orelse t.surface, busy);
+        self.paintMarkFor(hdc, r, mark, self.hueInk(e, under, hovered, emphasized, t), under, busy);
         // The corner (Mac): the question disc top-right - still, unlike a
         // row's - or else a stashed pane's bell dot.
         const two = pane_sidebar.px(2, self.scale);
@@ -2543,6 +2595,7 @@ fn hitAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) pane_sidebar.Hit {
 fn setHover(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit) void {
     if (std.meta.eql(self.hover, hit)) return;
     self.hover = hit;
+    self.syncHoverTint();
     if (self.surfaceHwnd(which)) |h| self.invalidate(h);
 }
 
@@ -2728,6 +2781,8 @@ pub fn openCard(self: *PaneSidebar, reason: CardReason) void {
     const was_open = self.card_open;
     self.card_open = true;
     if (!was_open) self.layer_logged = false;
+    // The tint is left where it is: the pointer is on the same pane's row in
+    // the card a moment later, and clearing it here would blink the pane.
     self.hover = .none;
     self.pressed = .none;
     // A query the rail ignored filters again on the card (T1877).
@@ -2760,6 +2815,7 @@ pub fn closeCard(self: *PaneSidebar, reason: CardReason) void {
     self.card_open = false;
     self.card_tracking = false;
     self.hover = .none;
+    self.syncHoverTint();
     self.pressed = .none;
     if (self.card_hwnd) |c| {
         _ = w32.KillTimer(c, TIMER_CLOSE);
@@ -3323,6 +3379,7 @@ fn toggleScope(self: *PaneSidebar, which: Surface) void {
     self.startTransition(which, self.snapshot(which, .{ .scope = !self.all_windows }));
     self.all_windows = !self.all_windows;
     self.hover = .none;
+    self.syncHoverTint();
     self.signature = 0;
     if (self.all_windows) {
         self.open_key = tabKey(self.window, self.window.active_tab);
@@ -3345,6 +3402,7 @@ pub fn setQuickKill(self: *PaneSidebar, on: bool) void {
     if (self.quick_kill == on) return;
     self.quick_kill = on;
     self.hover = .none;
+    self.syncHoverTint();
     log.info("pane sidebar trash mode on={}", .{on});
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     if (self.card_hwnd) |c| self.invalidate(c);

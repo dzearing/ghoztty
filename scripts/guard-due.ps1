@@ -5308,6 +5308,23 @@ $GuardTable = @(
             'test\win32\pane-sidebar-activity.ps1'
         )
     },
+    # Each pane's own hue in the sidebar (T2278): the icons are drawn in it,
+    # and hovering a row tints that pane - a popup glued to the pane, cut to
+    # its card, faded back out on leave. The colours, pixels and curves are
+    # unit-tested in pane_hue.zig; this proves the hover reaches the right
+    # pane in the right colour.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-hue'
+        Script = 'test\win32\pane-sidebar-hue.ps1'
+        Stamp  = 'test\win32\pane-sidebar-hue.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_hue.zig',
+            'src\apprt\win32\HoverTint.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'src\apprt\win32\PaneView.zig',
+            'test\win32\pane-sidebar-hue.ps1'
+        )
+    },
     # A bell's `title` and `audio` features (T1890): the glyph in front of the
     # caption while the rung pane is unlooked-at, and the sound file played at
     # its volume. The strings and the volume mapping are unit-tested in

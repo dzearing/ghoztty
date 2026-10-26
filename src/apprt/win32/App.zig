@@ -486,6 +486,13 @@ layout_round_incomplete: bool = false,
 layout_capture_deadline_ms: i64 = std.math.maxInt(i64),
 layout_capture_deferred: usize = 0,
 
+/// The pane whose sidebar row or tile is under the pointer, in any window's
+/// sidebar, and its hue (T2278; Mac `PaneSidebarHover.shared`): that pane
+/// takes the tint (`Window.updateHoverTints`). Compared by identity only,
+/// never dereferenced, so a pane that closes under the pointer is harmless.
+sidebar_hover_pane: ?*const PaneView = null,
+sidebar_hover_color: @import("color_math.zig").Rgb = .{ .r = 0, .g = 0, .b = 0 },
+
 /// The HINSTANCE for this module.
 hinstance: w32.HINSTANCE,
 

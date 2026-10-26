@@ -7240,6 +7240,8 @@ pub fn updateDimOverlays(self: *Window) void {
     self.updateReadonlyBadges();
     // ...and the bell frame (T1919).
     self.updateBellBorders();
+    // ...and the sidebar-hover tint (T2278).
+    self.updateHoverTints();
     // ...and the key-state pill (T446).
     self.updateKeyStateIndicators();
     // ...and the pane sidebar's selection and roster (T1828).
@@ -7430,6 +7432,19 @@ pub fn updateBellBorders(self: *Window) void {
             const surface = entry.view.surface() orelse continue;
             surface.updateBellBorder();
         }
+    }
+}
+
+/// Glue, fade or hide every pane's sidebar-hover tint (T2278): the one pane
+/// named by `App.sidebar_hover_pane` takes it, every other fades out. Rides
+/// the layout pass, and every sidebar hover change in any window.
+pub fn updateHoverTints(self: *Window) void {
+    if (self.closing) return;
+    const target = self.app.sidebar_hover_pane;
+    const c = self.app.sidebar_hover_color;
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| entry.view.updateHoverTint(entry.view == target, c, self.scale);
     }
 }
 

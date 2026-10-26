@@ -35,6 +35,10 @@ const w32 = @import("win32.zig");
 const RefCount = @import("pane_refcount.zig").RefCount;
 const Surface = @import("Surface.zig");
 const ViewerPane = @import("ViewerPane.zig");
+const HoverTint = @import("HoverTint.zig").HoverTint;
+const pane_hue = @import("pane_hue.zig");
+const pane_elevation = @import("pane_elevation.zig");
+const color_math = @import("color_math.zig");
 const Window = @import("Window.zig");
 const session_disconnect = @import("session_disconnect.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
@@ -78,6 +82,11 @@ glass_backdrop_key: u64 = 0,
 /// `Window.planStackSlide` owns it; `pane_stack_slide.hold` is the rule.
 stack_held: ?pane_stack_slide.Size = null,
 
+/// The tint this pane takes while its sidebar row or tile is hovered (T2278),
+/// created on the first hover. Kind-generic - Mac tints viewers too - so it
+/// lives here rather than on the leaf, and goes with the PaneView.
+hover_tint: ?*HoverTint = null,
+
 /// Wrap an existing Surface as a terminal pane. Takes one reference on the
 /// surface, which is released when this PaneView is freed. The surface's
 /// back-pointer is set here so `Surface` destroy paths can find the leaf.
@@ -114,6 +123,11 @@ pub fn ref(self: *PaneView, alloc: Allocator) Allocator.Error!*PaneView {
 /// the leaf it owns) at zero.
 pub fn unref(self: *PaneView, alloc: Allocator) void {
     if (!self.ref_count.release()) return;
+    // Before the leaf: its child HWND owns the tint's popup.
+    if (self.hover_tint) |t| {
+        t.destroy();
+        self.hover_tint = null;
+    }
     switch (self.kind) {
         // Surface.unref runs its own hide/deinit/destroy at zero. The
         // back-pointer stays valid across it ON PURPOSE: Surface teardown
@@ -246,6 +260,7 @@ pub fn hideDimOverlay(self: *PaneView) void {
 /// pane that leaves the layout while staying alive. A viewer's only popup is
 /// its dim wash.
 pub fn hideOverlays(self: *PaneView) void {
+    if (self.hover_tint) |t| t.hide();
     switch (self.kind) {
         .terminal => |s| s.hideOverlays(),
         .viewer => |v| v.hideDimOverlay(),
@@ -254,10 +269,36 @@ pub fn hideOverlays(self: *PaneView) void {
 
 /// Re-check the z-order of this pane's layered popups (T142).
 pub fn healOverlayZOrders(self: *PaneView) void {
+    if (self.hover_tint) |t| if (self.hwnd()) |owner| w32.healOverlayZOrder(t.hwnd, owner);
     switch (self.kind) {
         .terminal => |s| s.healOverlayZOrders(),
         .viewer => |v| v.healOverlayZOrders(),
     }
+}
+
+/// Show, glue, fade or hide this pane's sidebar-hover tint (T2278): on while
+/// `want` (its sidebar row or tile is under the pointer), in `c`. Follows the
+/// pane's card: rounded in the elevated style (`card_region_key` bit 0), with
+/// square top corners under a header or banner (bit 1). A pane that was never
+/// hovered pays one null test.
+pub fn updateHoverTint(self: *PaneView, want: bool, c: color_math.Rgb, scale: f32) void {
+    if (!want and self.hover_tint == null) return;
+    const owner = self.hwnd() orelse return;
+    if (self.hover_tint == null) {
+        const app = self.parentWindow().app;
+        self.hover_tint = HoverTint.create(app.core_app.alloc, owner, app.hinstance) catch |err| {
+            std.log.scoped(.win32_hover_tint).warn("hover tint create failed err={}", .{err});
+            return;
+        };
+    }
+    const t = self.hover_tint.?;
+    t.matchOwnerRegion(self.card_region_key);
+    const key = self.card_region_key;
+    const shape: pane_hue.Shape = if (key & 1 != 0)
+        .{ .radius = pane_elevation.childRadiusPx(scale), .square_top = key & 2 != 0 }
+    else
+        .{};
+    t.update(want, c, shape, scale);
 }
 
 /// A pane's most recent hero-mode thumbnail: a 32-bit DIB plus the pixel size

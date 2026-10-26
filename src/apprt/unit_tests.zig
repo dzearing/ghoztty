@@ -33,6 +33,7 @@ test {
 
     // Pure win32 bell title glyph and sound commands (T1890), same deal.
     _ = @import("win32/bell_math.zig");
+    _ = @import("win32/pane_hue.zig");
 
     // Pure win32 alpha-correct chrome rule for per-pixel-alpha windows
     // (T1787), same no-OS-imports deal.
