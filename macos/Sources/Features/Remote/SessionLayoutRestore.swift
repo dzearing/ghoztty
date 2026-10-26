@@ -336,8 +336,9 @@ extension AppDelegate {
         // The pane sidebar's layout flags BEFORE the window first lays out, so
         // the restored terminals are sized for the column they will actually
         // have — one size, not a placeholder and then a corrective resize.
-        if let pinned = entry.paneSidebarPinned { controller.paneSidebarState.isPinned = pinned }
+        if let expanded = entry.paneSidebarPinned { controller.paneSidebarState.isExpanded = expanded }
         if let hidden = entry.paneSidebarHidden { controller.paneSidebarState.isHidden = hidden }
+        if let order = entry.paneSidebarOrder { controller.paneSidebarState.order = order }
         controller.deskVariant = entry.deskVariant
 
         // For a LOCAL resume/restore, adopt the manifest entry so the window is

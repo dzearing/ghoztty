@@ -73,6 +73,19 @@ enum PaneMoveCoordinator {
                                    in: destination, at: index)
             }
 
+        case .sidebarOrder(let window, let index):
+            guard let destination = controller(for: window) else { return }
+            if destination === source {
+                // Out of the tray: back to the slot it left, then its place in
+                // the list. Already on the grid: the list only.
+                if source.surfaceTree.isStashed(pane) { source.restorePane(pane) }
+                source.placeInPaneSidebar(pane, at: index)
+            } else {
+                insertAtTopLevel(pane: pane, node: sourceNode, from: source,
+                                 in: destination, side: .right)
+                destination.placeInPaneSidebar(pane, at: index)
+            }
+
         case .joinWindow(let window):
             guard let destination = controller(for: window), destination !== source else { return }
             insertAtTopLevel(pane: pane, node: sourceNode, from: source,
@@ -126,7 +139,7 @@ enum PaneMoveCoordinator {
             // A new tab beside SOME OTHER window is a real relocation; a new
             // tab beside your own lone-pane window is the churn case.
             return sourcePaneCount > 1 || !targetIsSourceWindow
-        case .split, .swap, .topLevel, .stash:
+        case .split, .swap, .topLevel, .stash, .sidebarOrder:
             return true
         case .joinWindow:
             // Joining your own window is not a move.

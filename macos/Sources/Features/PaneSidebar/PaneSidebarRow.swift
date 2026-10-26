@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// One pane in the sidebar: a full row in the flat panel or hover-open card,
-/// a tile in the mini rail.
+/// One pane in the sidebar: a full row in the expanded panel, a tile in the
+/// collapsed rail.
 ///
 /// The whole row is a drag source AND a button. Both are owned by an AppKit
 /// view (`PaneSidebarRowInteraction`) rather than SwiftUI gestures: the drag
@@ -20,7 +20,6 @@ struct PaneSidebarRow: View {
     /// focus, drawn unemphasized, and clicking raises that window.
     let isForeign: Bool
     let isRail: Bool
-    let isQuickKill: Bool
     let isBeingDragged: Bool
     /// Leading indent of the row's content (not its fill): a window's panes
     /// sit under its header in the all-windows outline.
@@ -29,6 +28,7 @@ struct PaneSidebarRow: View {
     @State private var isHovered = false
     @Environment(\.paneSidebarEmphasized) private var windowIsKey
     @Environment(\.paneSidebarInteractive) private var isInteractive
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The accent pill only while this window is key, and never for another
     /// window's focus — that one isn't focused HERE.
@@ -36,21 +36,38 @@ struct PaneSidebarRow: View {
 
     private var onAccent: Bool { isSelected && isEmphasized }
 
+    /// Every row's height, full or rail: one number, so a pane's icon sits at
+    /// the same height whether the sidebar is expanded or collapsed.
+    static let height: CGFloat = 38
+
     var body: some View {
         Group {
             if isRail { tile } else { fullRow }
         }
         .opacity(isBeingDragged ? 0.4 : 1)
+        // Hovered, the pane itself takes this row's hue (`PaneSidebarHover`).
+        .onChange(of: isHovered) { hovered in
+            if hovered && isInteractive {
+                PaneSidebarHover.shared.hover(pane.id, color: hue)
+            } else {
+                PaneSidebarHover.shared.leave(pane.id)
+            }
+        }
+        .onDisappear { PaneSidebarHover.shared.leave(pane.id) }
     }
+
+    /// This pane's own color (`PaneSidebarHue`): its icon's, and the tint the
+    /// pane takes while its row is hovered.
+    private var hue: Color { PaneSidebarHue.color(for: pane, in: owner) }
 
     // MARK: Full row
 
     private var fullRow: some View {
         let fill = rowFill
         return ZStack(alignment: .trailing) {
-            HStack(alignment: .top, spacing: 7) {
-                PaneSidebarIcon(pane: pane, isBusy: isBusy, color: iconColor)
-                    .frame(width: 16, height: 15)
+            HStack(alignment: .center, spacing: 7) {
+                PaneSidebarIcon(pane: pane, color: iconColor)
+                    .frame(width: Self.iconWidth, height: 15)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(displayTitle)
                         .font(.system(size: 12))
@@ -66,9 +83,10 @@ struct PaneSidebarRow: View {
                 // Room for the trailing button, so text never runs under it.
                 Color.clear.frame(width: trailingButtonWidth, height: 1)
             }
-            .padding(.vertical, SidePanelRow.verticalPadding)
+            .frame(height: Self.height - 1)
             .padding(.leading, SidePanelRow.textInset + indent)
             .padding(.trailing, SidePanelRow.textInset)
+            .background(busySheen)
             .background(fill)
             // Hover is the WHOLE row, button included. The drag source below
             // stops short of the button, so hover measured there ended the
@@ -97,22 +115,13 @@ struct PaneSidebarRow: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    @ViewBuilder
     private var rowFill: some View {
-        if isQuickKill && isHovered && !onAccent {
-            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                .fill(Color(nsColor: .systemRed).opacity(0.12))
-        } else {
-            SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized)
-        }
+        SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized)
     }
 
     @ViewBuilder
     private var stateAccessories: some View {
         HStack(spacing: 5) {
-            if pane.activityState == .needsInput {
-                PaneSidebarQuestionBadge(isOnAccent: onAccent)
-            }
             if pane.bell && isStashed {
                 Circle()
                     .fill(onAccent ? Color.white : Color(nsColor: .controlAccentColor))
@@ -123,87 +132,94 @@ struct PaneSidebarRow: View {
         .frame(height: 15)
     }
 
-    /// Where a row's trailing button sits inside its fill. Shared with the
-    /// all-windows header, whose × must line up with its panes' ×s.
+    /// Where a row's trailing buttons sit inside its fill.
     static let trailingButtonInset: CGFloat = SidePanelRow.textInset - 4
 
-    /// −/↩ on hover (this window only); trash mode's red × always. There is
-    /// NO close button outside trash mode — a stray click on the list must
-    /// never end a session.
+    /// On hover (this window's rows): −/↩, then ×.
     private var trailingButtonWidth: CGFloat {
-        if isQuickKill { return 18 }
-        if isForeign { return 0 }
-        return isHovered ? 18 : 0
+        isForeign || !isHovered ? 0 : 18 * 2 + Self.trailingButtonSpacing
     }
 
+    static let trailingButtonSpacing: CGFloat = 4
+
+    /// −/↩ (stash/restore), then × — the ordinary close, as right-click →
+    /// Close Pane: it asks first when something is running or the pane is
+    /// on another machine, and is undoable. (It replaced the sidebar's trash
+    /// mode, whose red × killed with no confirmation and no undo.)
     @ViewBuilder
     private var trailingButton: some View {
-        if isQuickKill {
-            PaneSidebarKillButton(help: "Kill now — no confirmation") { kill() }
-        } else if !isForeign && isHovered {
-            Button(action: isStashed ? restore : stash) {
-                Image(systemName: isStashed ? "arrow.uturn.backward" : "minus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(onAccent ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
-                    .frame(width: 18, height: 18)
-                    .background(Circle().fill(onAccent ? Color.white.opacity(0.2) : Color.primary.opacity(0.08)))
-                    .contentShape(Circle())
+        if !isForeign && isHovered {
+            HStack(spacing: Self.trailingButtonSpacing) {
+                rowButton(isStashed ? "arrow.uturn.backward" : "minus",
+                          help: isStashed ? "Restore" : "Stash",
+                          action: isStashed ? restore : stash)
+                rowButton("xmark", help: "Close pane", action: close)
             }
-            .buttonStyle(.plain)
-            .help(isStashed ? "Restore" : "Stash")
-            .accessibilityLabel(isStashed ? "Restore" : "Stash")
         }
+    }
+
+    private func rowButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(onAccent ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(onAccent ? Color.white.opacity(0.2) : Color.primary.opacity(0.08)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     // MARK: Rail tile
 
+    /// The icon's width, and the rail's: a tile is a full row with its text
+    /// taken away — the same pill (`fillInset` from the card), the same icon
+    /// at the same place (`textInset` into the pill) — so collapsing or
+    /// expanding the sidebar moves no icon (`PaneSidebarState.railCardWidth`
+    /// is exactly the pill around it).
+    static let iconWidth: CGFloat = 16
+
     private var tile: some View {
         ZStack(alignment: .topTrailing) {
             ZStack {
-                SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized)
-                if pane.surfaceView != nil {
-                    let monogram = PaneSidebarText.monogram(for: displayTitle)
-                    PaneSidebarGlyph(isBusy: isBusy, color: onAccent ? .white : Color(nsColor: .labelColor),
-                                     maskKey: monogram) {
-                        Text(monogram)
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                } else {
-                    PaneSidebarIcon(pane: pane, isBusy: isBusy, color: iconColor, size: 15)
-                }
+                PaneSidebarIcon(pane: pane, color: iconColor)
+                    .frame(width: Self.iconWidth, height: 15)
                 interaction
             }
-            .frame(width: 32, height: 32)
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.height - 1)
+            .background(busySheen)
+            .background(rowFill)
             .background(rowHover)
 
-            if pane.activityState == .needsInput {
-                Text("?")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 13, height: 13)
-                    .background(Circle().fill(Color(nsColor: .controlAccentColor)))
-                    .offset(x: 3, y: -3)
-                    .allowsHitTesting(false)
-            } else if pane.bell && isStashed {
+            if pane.bell && isStashed {
                 Circle()
                     .fill(Color(nsColor: .controlAccentColor))
                     .frame(width: 7, height: 7)
-                    .offset(x: 1, y: -1)
+                    .offset(x: 1, y: 3)
                     .allowsHitTesting(false)
             }
-
-            if isQuickKill {
-                PaneSidebarKillButton(size: 13, help: "Kill now — no confirmation") { kill() }
-                    .offset(x: -23, y: -4)
-            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 1)
+        .padding(.horizontal, SidePanelRow.fillInset)
+        .padding(.vertical, 0.5)
         .help(rowHelp)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// Busy: a faint band of light sweeps across the row's pill from right to
+    /// left — the same in both modes, so a tile is its row without the text.
+    @ViewBuilder
+    private var busySheen: some View {
+        if isBusy && !reduceMotion {
+            // Faded in, so it never pops on when work starts.
+            PaneSidebarTileSheenLayer(cornerRadius: SidePanelRow.cornerRadius)
+                .accessibilityLabel("Busy")
+                .transition(.opacity.animation(.easeOut(duration: 0.25)))
+        }
     }
 
     // MARK: Interaction
@@ -222,6 +238,7 @@ struct PaneSidebarRow: View {
         PaneSidebarRowInteraction(
             pane: pane,
             owner: owner,
+            followsPointer: !isForeign,
             onClick: click,
             menu: contextMenu)
     }
@@ -245,7 +262,7 @@ struct PaneSidebarRow: View {
 
     private func stash() { owner.stashPane(pane) }
     private func restore() { owner.restorePane(pane) }
-    private func kill() { owner.killPane(pane) }
+    private func close() { owner.closePaneFromSidebar(pane) }
 
     private func contextMenu() -> NSMenu {
         let menu = NSMenu()
@@ -278,13 +295,16 @@ struct PaneSidebarRow: View {
 
     // MARK: Text
 
-    private var isBusy: Bool { pane.activityState == .busy }
+    private var isBusy: Bool { pane.isWorking }
 
     private var displayTitle: String { pane.displayLabel }
 
+    /// The icon in the pane's hue — the same in a row and a tile, and the
+    /// tint hovering it gives the pane. A touch quieter unless its pane is
+    /// the focused one (or hovered), never so far as to lose the contrast.
     private var iconColor: Color {
         if onAccent { return .white }
-        return isBusy ? Color(nsColor: .labelColor) : Color(nsColor: .secondaryLabelColor)
+        return (isSelected && isEmphasized) || isHovered ? hue : hue.opacity(0.8)
     }
 
     private var rowHelp: String {
@@ -300,25 +320,22 @@ struct PaneSidebarRow: View {
         if isStashed { parts.append("stashed") }
         switch pane.activityState {
         case .busy: parts.append("busy")
-        case .needsInput: parts.append("has a question")
-        case .idle: break
+        case .needsInput, .idle: break
         }
         return parts.joined(separator: ", ")
     }
 }
 
 /// A row's icon: the pane kind's glyph (the mock's icon set — see
-/// `PaneSidebarSymbol`), shimmering while busy.
+/// `PaneSidebarSymbol`). Busy is the row's sheen, not the glyph's.
 struct PaneSidebarIcon: View {
     @ObservedObject var pane: PaneView
-    let isBusy: Bool
     let color: Color
     var size: CGFloat = 14
 
     var body: some View {
-        let symbol = Self.symbol(for: pane)
-        PaneSidebarGlyph(isBusy: isBusy, color: color, maskKey: "\(String(describing: symbol))@\(size)") {
-            if let symbol {
+        Group {
+            if let symbol = Self.symbol(for: pane) {
                 PaneSidebarSymbolView(symbol: symbol, size: size)
             } else {
                 // An image pane: the mock has no glyph for one.
@@ -327,6 +344,7 @@ struct PaneSidebarIcon: View {
                     .frame(width: size, height: size)
             }
         }
+        .foregroundStyle(color)
     }
 
     static func symbol(for pane: PaneView) -> PaneSidebarSymbol? {
@@ -437,6 +455,10 @@ private final class PaneSidebarMenuActions: NSObject {
 struct PaneSidebarRowInteraction: NSViewRepresentable {
     let pane: PaneView
     let owner: BaseTerminalController
+    /// The row itself follows the pointer up and down its list while it is
+    /// dragged (`PaneSidebarRowDrag`), instead of a drag image. Off for
+    /// another window's row in the all-windows list.
+    var followsPointer: Bool = true
     let onClick: (NSEvent) -> Void
     let menu: () -> NSMenu
 
@@ -456,6 +478,96 @@ struct PaneSidebarRowInteraction: NSViewRepresentable {
         view.onClick = onClick
         view.menuProvider = menu
         view.showsGrabCursor = false
-        view.onDragStateChanged = { _ in }
+        view.showsPreview = !followsPointer
+        view.isListDrag = followsPointer
+        guard followsPointer else {
+            view.onDragStateChanged = { _ in }
+            view.onDragMoved = nil
+            view.onDragFinished = nil
+            return
+        }
+        let pane = pane
+        view.onDragStateChanged = { [weak view] dragging in
+            guard dragging, let view, let window = view.window, let down = view.downLocation else { return }
+            PaneSidebarRowDrag.shared.begin(pane, screenY: window.convertPoint(toScreen: down).y)
+        }
+        view.onDragMoved = { point in PaneSidebarRowDrag.shared.move(screenY: point.y) }
+        view.onDragFinished = { PaneSidebarRowDrag.shared.finish(pane) }
+    }
+}
+
+/// A sidebar row being dragged: the row itself follows the pointer up and
+/// down its list — never sideways — drawn over the list by
+/// `PaneSidebarDragGhost` while the row in the list leaves its gap. The drag
+/// is still `PaneDragSession`'s (resolver, targets, drop); this is only
+/// where the row is drawn. Let go, the row glides from the pointer to where
+/// it landed (`isSettling`), then the list draws it again.
+@MainActor
+final class PaneSidebarRowDrag: ObservableObject {
+    static let shared = PaneSidebarRowDrag()
+
+    @Published private(set) var pane: PaneView?
+    /// How far the pointer has moved down since the drag began.
+    @Published private(set) var dy: CGFloat = 0
+    /// Let go: gliding to its place in the list.
+    @Published private(set) var isSettling = false
+    /// The dragged row as laid out (before any slide), in the sidebar's
+    /// coordinate space — where it was, and after the drop where it landed.
+    @Published var frame: CGRect?
+
+    private var startY: CGFloat = 0
+    private var generation = 0
+
+    static let settleDuration: TimeInterval = 0.22
+    static let settleAnimation: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: settleDuration)
+
+    func begin(_ pane: PaneView, screenY: CGFloat) {
+        generation += 1
+        self.pane = pane
+        startY = screenY
+        dy = 0
+        isSettling = false
+    }
+
+    func move(screenY: CGFloat) {
+        guard pane != nil, !isSettling else { return }
+        // Screen coordinates grow up; the list's grow down.
+        dy = startY - screenY
+    }
+
+    func finish(_ pane: PaneView) {
+        guard self.pane === pane else { return }
+        isSettling = true
+        let generation = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleDuration) { [weak self] in
+            guard let self, self.generation == generation else { return }
+            self.pane = nil
+            self.isSettling = false
+            self.dy = 0
+            self.frame = nil
+        }
+    }
+}
+
+/// A pane tinted with its sidebar hue while its tile or row is hovered: a
+/// wash and a rim in that color, faded in quickly and back out — bounded
+/// animations, nothing running at rest.
+struct PaneSidebarHoverTint: View {
+    let paneID: UUID
+    let cornerRadius: CGFloat
+
+    @ObservedObject private var hover = PaneSidebarHover.shared
+
+    var body: some View {
+        let on = hover.pane == paneID
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            // Half of what it first was: a hint of the pane's hue, not a
+            // paint job.
+            shape.fill(hover.color.opacity(0.1))
+            shape.strokeBorder(hover.color.opacity(0.45), lineWidth: 2)
+        }
+        .opacity(on ? 1 : 0)
+        .animation(on ? PaneSidebarHover.fadeIn : PaneSidebarHover.fadeOut, value: on)
     }
 }

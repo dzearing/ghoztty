@@ -173,13 +173,17 @@ final class SessionLayoutManifest {
         var tabIndex: Int = 0
         /// The split topology. Nil until the first tree sync.
         var tree: Node?
-        /// The pane sidebar's layout flags (pinned flat panel vs mini rail;
+        /// The pane sidebar's layout flags (expanded panel vs collapsed rail;
         /// hidden). Layout, so persisted; the sidebar's transient states
-        /// (hover-open, trash mode, all-windows scope) never are.
-        /// Optional/additive: older manifests decode with nil and the window
-        /// takes the defaults new windows get.
+        /// (trash mode, all-windows scope) never are. Optional/additive:
+        /// older manifests decode with nil and the window takes the defaults
+        /// new windows get. `paneSidebarPinned` keeps its pre-rename name —
+        /// pinned was the expanded panel, so true still means expanded.
         var paneSidebarPinned: Bool? = nil
         var paneSidebarHidden: Bool? = nil
+        /// The sidebar's own order of the window's panes, by stable pane id
+        /// (`PaneSidebarState.order`). Optional/additive.
+        var paneSidebarOrder: [UUID]? = nil
         /// The window's own gradient (`--color=random` in the elevated pane
         /// style), as its seed. Optional/additive: nil is the default desk.
         var deskVariant: PaneDeskVariant? = nil
@@ -287,6 +291,7 @@ final class SessionLayoutManifest {
         tree: Node?,
         paneSidebarPinned: Bool? = nil,
         paneSidebarHidden: Bool? = nil,
+        paneSidebarOrder: [UUID]? = nil,
         deskVariant: PaneDeskVariant?? = nil
     ) {
         lock.lock()
@@ -295,6 +300,7 @@ final class SessionLayoutManifest {
         var entry = entries[idx]
         if let paneSidebarPinned { entry.paneSidebarPinned = paneSidebarPinned }
         if let paneSidebarHidden { entry.paneSidebarHidden = paneSidebarHidden }
+        if let paneSidebarOrder { entry.paneSidebarOrder = paneSidebarOrder }
         if let deskVariant { entry.deskVariant = deskVariant }
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
@@ -663,8 +669,9 @@ final class SessionLayoutManifest {
             tabGroupID: tabGroupID,
             tabIndex: tabIndex,
             tree: tree,
-            paneSidebarPinned: controller.paneSidebarState.isPinned,
+            paneSidebarPinned: controller.paneSidebarState.isExpanded,
             paneSidebarHidden: controller.paneSidebarState.isHidden,
+            paneSidebarOrder: controller.paneSidebarPersistedOrder,
             deskVariant: .some(controller.deskVariant))
     }
 

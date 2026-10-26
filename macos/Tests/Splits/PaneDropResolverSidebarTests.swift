@@ -85,9 +85,9 @@ struct PaneDropResolverSidebarTests {
         #expect(target == .newWindow(at: CGPoint(x: 100, y: 100)))
     }
 
-    @Test func aSidebarOpenOverTheGridBeatsThePaneUnderIt() {
-        // The hover-open card floats over the grid's left edge — and over the
-        // window-edge band — so the sidebar must win there.
+    @Test func aSidebarOverTheGridBeatsThePaneUnderIt() {
+        // A sidebar drawn over the grid's left edge — and over the
+        // window-edge band — must win there.
         let floating = PaneDropCandidate.Sidebar(rect: CGRect(x: 240, y: 0, width: 240, height: 600))
         let target = PaneDropResolver.resolve(
             screenPoint: CGPoint(x: 250, y: 300),
@@ -151,7 +151,67 @@ struct PaneDropResolverSidebarTests {
         _ = backToken
     }
 
+    // MARK: Two lists: the panes, and the tray under its divider
+
+    private let paneB = UUID()
+    private let paneC = UUID()
+
+    /// The panes a, b, c top-down above the tray's divider at y=320, the
+    /// stashed B and A below it.
+    private var twoLists: PaneDropCandidate.Sidebar {
+        .init(
+            rect: CGRect(x: 0, y: 0, width: 240, height: 600),
+            paneRows: [
+                (id: paneA, rect: CGRect(x: 0, y: 540, width: 240, height: 40)),
+                (id: paneB, rect: CGRect(x: 0, y: 500, width: 240, height: 40)),
+                (id: paneC, rect: CGRect(x: 0, y: 460, width: 240, height: 40)),
+            ],
+            stashRows: [
+                (id: stashedB, rect: CGRect(x: 0, y: 270, width: 240, height: 40)),
+                (id: stashedA, rect: CGRect(x: 0, y: 230, width: 240, height: 40)),
+            ],
+            trayTop: 320)
+    }
+
+    private func resolve(_ y: CGFloat, dragging: UUID) -> PaneDropTarget? {
+        PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 100, y: y),
+            candidates: [candidate(sidebar: twoLists)],
+            dragged: dragging)
+    }
+
+    @Test func aboveTheTrayADropPlacesThePaneInTheList() {
+        // a dragged below c's middle: the end of the list without it.
+        #expect(resolve(470, dragging: paneA) == .sidebarOrder(window: window, index: 2))
+        // ...and above b's middle, where it was.
+        #expect(resolve(525, dragging: paneA) == .sidebarOrder(window: window, index: 0))
+        // c dragged to the top.
+        #expect(resolve(590, dragging: paneC) == .sidebarOrder(window: window, index: 0))
+        // The empty list below the rows, still above the tray: the end.
+        #expect(resolve(400, dragging: paneB) == .sidebarOrder(window: window, index: 2))
+    }
+
+    @Test func belowTheTraysDividerADropStashes() {
+        #expect(resolve(300, dragging: paneA) == .stash(window: window, index: 0))
+        #expect(resolve(250, dragging: paneA) == .stash(window: window, index: 1))
+        #expect(resolve(10, dragging: paneA) == .stash(window: window, index: 2))
+    }
+
+    @Test func aStashedPaneDraggedAboveTheTrayComesBackIntoTheList() {
+        #expect(resolve(510, dragging: stashedA) == .sidebarOrder(window: window, index: 2),
+                "below b's middle: between b and c")
+        #expect(resolve(300, dragging: stashedA) == .stash(window: window, index: 0), "within the tray: a move")
+    }
+
     // MARK: Coordinator policy
+
+    @MainActor
+    @Test func placingInTheListIsAlwaysAllowed() {
+        #expect(PaneMoveCoordinator.allows(.sidebarOrder(window: window, index: 0),
+                                           sourcePaneCount: 1, targetIsSourceWindow: true))
+        #expect(PaneMoveCoordinator.allows(.sidebarOrder(window: other, index: 0),
+                                           sourcePaneCount: 1, targetIsSourceWindow: false))
+    }
 
     @MainActor
     @Test func stashingIsAlwaysAllowedAndJoiningYourOwnWindowIsNot() {

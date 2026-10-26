@@ -220,6 +220,33 @@ struct SplitTreeTests {
         }
     }
 
+    /// A divider's double-click evens out only the splits running its way:
+    /// a | (b / c) with a made narrow, and b's row made short — evening the
+    /// heights keeps a narrow.
+    @Test func equalizedInOneDirectionKeepsTheOther() throws {
+        typealias Node = SplitTree<MockView>.Node
+        let a = MockView(), b = MockView(), c = MockView()
+        let column = Node.split(.init(direction: .vertical, ratio: 0.8, left: .leaf(view: b), right: .leaf(view: c)))
+        let root = Node.split(.init(direction: .horizontal, ratio: 0.2, left: .leaf(view: a), right: column))
+        let tree = SplitTree<MockView>(root: root, zoomed: nil, stashed: [])
+
+        let heights = tree.equalized(only: .vertical)
+        guard case .split(let outer) = heights.root, case .split(let inner) = outer.right else {
+            Issue.record("unexpected node type")
+            return
+        }
+        #expect(abs(outer.ratio - 0.2) < 0.001, "the widths are left as they were")
+        #expect(abs(inner.ratio - 0.5) < 0.001, "the heights are evened out")
+
+        let widths = tree.equalized(only: .horizontal)
+        guard case .split(let outerW) = widths.root, case .split(let innerW) = outerW.right else {
+            Issue.record("unexpected node type")
+            return
+        }
+        #expect(abs(outerW.ratio - 0.5) < 0.001, "the widths are evened out")
+        #expect(abs(innerW.ratio - 0.8) < 0.001, "the heights are left as they were")
+    }
+
     // MARK: - Resizing
 
     @Test(arguments: [

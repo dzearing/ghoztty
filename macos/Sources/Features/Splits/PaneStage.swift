@@ -91,12 +91,19 @@ final class PaneStageView: NSView {
     ) {
         // A change in which cards are on show glides (`glide`), and so does
         // every layout after it until the glide is over: each eases toward
-        // its latest. A window resize lays out immediately, as it always has.
+        // its latest. So does the grid moving over for the pane sidebar
+        // collapsing or expanding (`PaneStackState.noteColumnShift`): the
+        // cards start where they are on screen — the stage itself moved by
+        // the shift — and glide to their new places. A window resize lays
+        // out immediately, as it always has.
+        let resized = lastSize != nil && size != lastSize
+        let shift = resized ? observed?.takeColumnShift() : nil
         let changed = lastRuns != nil && runs != lastRuns && size == lastSize
         lastRuns = runs
         lastSize = size
-        if changed || glide != nil {
-            startGlide(cards, environment: environment, style: style, isGesturing: isGesturing)
+        if changed || shift != nil || glide != nil {
+            startGlide(cards, environment: environment, style: style, isGesturing: isGesturing,
+                       seedOffset: shift.map { -$0 } ?? 0)
             return
         }
 
@@ -177,10 +184,16 @@ final class PaneStageView: NSView {
     }
 
     private func startGlide(
-        _ cards: [PaneStage.Card], environment: EnvironmentValues, style: PaneStage.Style, isGesturing: Bool
+        _ cards: [PaneStage.Card], environment: EnvironmentValues, style: PaneStage.Style, isGesturing: Bool,
+        seedOffset: CGFloat = 0
     ) {
         var glide = self.glide ?? Glide(
             environment: environment, style: style, last: CACurrentMediaTime(), holdsSizes: !isGesturing)
+        if seedOffset != 0 {
+            // The stage moved under its cards: where they are drawn, in its
+            // new coordinates, is that far back.
+            for (id, rect) in glide.drawn { glide.drawn[id] = rect.offsetBy(dx: seedOffset, dy: 0) }
+        }
         glide.environment = environment
         glide.style = style
         glide.isGesturing = isGesturing
@@ -200,7 +213,7 @@ final class PaneStageView: NSView {
             if glide.drawn[id] == nil {
                 // As it is drawn now: its strip, or its card.
                 let wasCard = view.placedFrame != nil && !view.isContentHidden
-                glide.drawn[id] = view.placedTab?.rect ?? view.placedFrame ?? to
+                glide.drawn[id] = (view.placedTab?.rect ?? view.placedFrame)?.offsetBy(dx: seedOffset, dy: 0) ?? to
                 glide.asCard[id] = view.placedFrame == nil ? !card.leaf.isTucked : wasCard
                 if wasCard, let size = view.laidOutSize ?? view.placedFrame?.size { glide.startSize[id] = size }
             }
@@ -557,6 +570,24 @@ final class PaneCardView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// Where a strip's title goes: the part of it that shows. A strip that
+    /// reaches under the strip in front of it (`bladeTuck`, toward the run)
+    /// has that much of itself hidden, so its title is centered on the rest.
+    private static func titleRect(_ pane: CGRect, _ leaf: PaneLayout.Leaf) -> CGRect {
+        guard let leads = leaf.stripLeads, let axis = leaf.tabAxis else { return pane }
+        let tuck = PaneLayout.Metrics.bladeTuck
+        let along = axis == .horizontal ? pane.width : pane.height
+        guard along > PaneLayout.Metrics.peek + tuck / 2 else { return pane }
+        // Leading strips reach toward the run past their trailing edge;
+        // trailing ones past their leading edge.
+        switch (axis, leads) {
+        case (.horizontal, true): return CGRect(x: pane.minX, y: pane.minY, width: pane.width - tuck, height: pane.height)
+        case (.horizontal, false): return CGRect(x: pane.minX + tuck, y: pane.minY, width: pane.width - tuck, height: pane.height)
+        case (.vertical, true): return CGRect(x: pane.minX, y: pane.minY, width: pane.width, height: pane.height - tuck)
+        case (.vertical, false): return CGRect(x: pane.minX, y: pane.minY + tuck, width: pane.width, height: pane.height - tuck)
+        }
+    }
+
     func apply(_ card: PaneStage.Card, environment: EnvironmentValues, style: PaneStage.Style) {
         let o = Self.outset
         // A tucked card is its strip: the pane's own card, the strip's size.
@@ -593,7 +624,10 @@ final class PaneCardView: NSView {
         let pane = paneRect.intersection(clip)
         if shown.isTucked || glideAnchor != nil, !pane.isNull {
             let extent = Swift.min(pane.width, pane.height)
-            collapse = Swift.min(1, Swift.max(0, 1 - (extent - PaneLayout.Metrics.peek) / Self.fadeSpan))
+            // A strip reaching under the one in front (`bladeTuck`) is still
+            // just a strip: fully collapsed up to its peek and its tuck.
+            let strip = PaneLayout.Metrics.peek + PaneLayout.Metrics.bladeTuck
+            collapse = Swift.min(1, Swift.max(0, 1 - (extent - strip) / Self.fadeSpan))
         } else {
             collapse = 0
         }
@@ -602,13 +636,34 @@ final class PaneCardView: NSView {
         self.environment = environment
         render()
 
-        // Shadow: only where cards overlap.
+        // Shadow: only where cards overlap. A strip is a blade tucked behind
+        // the panes on show, lying against the next blade out: its shadow is
+        // tighter and stronger than a card's, leans AWAY from the run (onto
+        // the blade behind it), and stops at the strip's own sides rather
+        // than haloing past them. All of it follows `collapse` — how far the
+        // card is into its strip — so it comes on as the card narrows into
+        // the strip, not in one step when the glide lands.
         let shape = Self.rounded(paneRect, style.cornerRadius)
+        let blade = card.isStacked ? collapse : 0
+        func mix(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * blade }
+        let axis = shown.tabAxis ?? self.axis
+        let outward: CGFloat = (shown.stripLeads ?? card.leaf.stripLeads).map { $0 ? -1 : 1 } ?? 0
+        let lean = mix(0, 3) * outward
         shadowView.layer?.shadowPath = shape
-        shadowView.layer?.shadowOpacity = card.isStacked ? (style.isLight ? 0.16 : 0.4) : 0
+        shadowView.layer?.shadowRadius = mix(10, 5)
+        shadowView.layer?.shadowOffset = axis == .vertical
+            ? CGSize(width: 0, height: lean)
+            : CGSize(width: lean, height: 0)
+        shadowView.layer?.shadowOpacity = card.isStacked
+            ? Float(mix(style.isLight ? 0.16 : 0.4, style.isLight ? 0.26 : 0.6)) : 0
         let outside = CAShapeLayer()
         let mask = CGMutablePath()
-        mask.addRect(CGRect(origin: .zero, size: size))
+        // Across the stack, the shadow narrows to the strip's own extent as
+        // it becomes one.
+        let across = mix(0, o)
+        mask.addRect(axis == .vertical
+            ? CGRect(x: across, y: 0, width: size.width - 2 * across, height: size.height)
+            : CGRect(x: 0, y: across, width: size.width, height: size.height - 2 * across))
         mask.addPath(shape)
         outside.path = mask
         outside.fillRule = .evenOdd
@@ -624,7 +679,7 @@ final class PaneCardView: NSView {
                 background: style.background,
                 isLight: style.isLight,
                 isFilled: !style.isCard))
-            Self.place(tab, pane)
+            Self.place(tab, Self.titleRect(pane, shown))
             tab.isHidden = false
             tab.alphaValue = collapse
             tab.isStrip = shown.isTucked
