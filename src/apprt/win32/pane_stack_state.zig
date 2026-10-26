@@ -298,6 +298,53 @@ pub const PaneStackState = struct {
         self.prune();
     }
 
+    /// The row as a gutter drag leaves it (`layout.dragged`): `run` on show
+    /// at `sizes`, the rest strips. All of it on show is no collapse at all
+    /// (the tree's ratios size it). Mac `PaneStackState.show` (a81db68f9).
+    pub fn show(self: *PaneStackState, row: Row, run: Range, sizes: []const f64) Allocator.Error!void {
+        const gpa = self.gpa;
+        const key = try row.key(gpa);
+        defer gpa.free(key);
+
+        // A row that only partly overlaps this one is one its panes have
+        // left: that pin is stale (as `restack`).
+        var it = self.rows.iterator();
+        while (it.next()) |kv| {
+            const other = kv.key_ptr.*;
+            if (kv.value_ptr.pin == null) continue;
+            if (!intersects(other, key) or isSubset(other, key) or isSubset(key, other)) continue;
+            kv.value_ptr.pin = null;
+            self.clearItems(kv.value_ptr);
+        }
+
+        if (run.count() >= row.items.len) {
+            if (self.rows.getPtr(key)) |e| {
+                e.pin = null;
+                self.clearShares(e);
+                self.clearItems(e);
+            }
+            self.prune();
+            return;
+        }
+        var total: f64 = 0;
+        for (sizes) |s| total += s;
+        const shares: ?[]f64 = if (total > 0) blk: {
+            const v = try gpa.alloc(f64, sizes.len);
+            for (v, sizes) |*d, s| d.* = s / total;
+            break :blk v;
+        } else null;
+        errdefer if (shares) |v| gpa.free(v);
+        const items = try dupeItems(gpa, row.items);
+        errdefer freeItems(gpa, items);
+        const e = try self.entry(key);
+        e.pin = .{ .start = run.lo, .count = run.count() };
+        self.clearShares(e);
+        self.clearItems(e);
+        e.shares = shares;
+        e.items = items;
+        self.prune();
+    }
+
     /// What `change` makes of a run's slot sizes: the panes still on show
     /// keep theirs, a pane coming back gets an average slot, all normalised
     /// to shares. Null for no sizes. Caller frees.

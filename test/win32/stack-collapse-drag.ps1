@@ -1,23 +1,26 @@
-# T2124 acceptance: dragging a divider well past a pane's minimum folds the
-# next pane into a strip, going on folds the one after it, and dragging back
-# unfolds them in reverse; a stack's edge grip pulled outward brings a strip
-# back.
+# T2124/T2263 acceptance: dragging a divider far enough that the panes past
+# it no longer fit at their minimums folds the outermost into a strip, going
+# on folds the one after it, and dragging back unfolds them in reverse; a
+# stack's edge grip is a gutter like any other.
 #
 # THE CLAIM. Before T2124 the win32 divider drag only ever moved ratios: a
-# pane pushed into its 300 DIP minimum stopped there and nothing folded.
-# Mac (2811a3043) folds the outermost pane on the squeezed side once the
-# pointer is `restack_distance` (48 DIP) past the minimum, chains into the next
-# pane as the drag goes on, and restores them last-folded-first coming back.
+# pane pushed into its 300 DIP minimum stopped there and nothing folded. Mac
+# a81db68f9 (T2263) makes every gutter of a row one rule: the row is a
+# function of where the gutter is (`pane_stack_layout.dragged`). Its side
+# folds its outermost pane as soon as it cannot hold them all at their
+# minimums - no 48 DIP threshold any more - and a strip comes out only when
+# its own gutter is dragged INTO the run, the other side giving way.
 #
 # Layout: P | s1 | s2 across a 1500 DIP window (each ~490 DIP). The root
 # divider (P's right edge) is dragged right:
-#   A) to ~1000 DIP - past (1500 - 600) + 48 - s2 folds: two panes on show,
+#   A) to ~1000 DIP - past 1500 - 600, s2 folds: two panes on show,
 #      and the caret, which was in s2, moves to s1 (the pane still on show)
 #   B) on to ~1420 DIP - s1 folds too: one pane on show
 #   C) back to ~1000 DIP - s1 unfolds: two on show again
 #   D) back to the start - s2 unfolds: three on show, P's edge where it began
 #   E) dragged to ~1000 DIP and RELEASED: the fold sticks after the drag ends
-#   F) the stack's trailing edge grip pulled outward past 48 DIP brings s2
+#   F) the stack's trailing edge grip pushed OUTWARD leaves s2 a strip (the
+#      old rule brought it back), and pulled 400 DIP INTO the run brings s2
 #      back: three on show again
 #
 # -NegativeControl inverts claim A to "three panes stay on show" - the
@@ -184,7 +187,7 @@ try {
     $x0 = [int](($c3[0].Right + $c3[1].Left) / 2)
     $y = [int](($c3[0].Top + $c3[0].Bottom) / 2)
     # Positions as fractions of the grid, so DPI and chrome do not matter:
-    # 1000/1500 is well past the fold point (948/1500); 1420/1500 folds s1 too.
+    # 1000/1500 is past the fold point (~900/1500); 1420/1500 folds s1 too.
     $xFold1 = [int]($gridLeft + $gridW * 1000 / 1500)
     $xFold2 = [int]($gridLeft + $gridW * 1420 / 1500)
 
@@ -244,20 +247,37 @@ try {
     $strayE = @(Get-StrayPopups $app.Pid $top)
     Assert ($strayE.Count -eq 0) ("E: no pane popup reaches outside the window after the release (T2185; got {0}: {1})" -f $strayE.Count, (($strayE | ForEach-Object { "$($_.Class) $($_.Left)-$($_.Right)" }) -join ' | '))
 
-    # ---- F: the edge grip brings the strip back --------------------------------
+    # ---- F: the edge grip is a gutter like any other (T2263) -------------------
     if ($e.Count -eq 2) {
-        Say '== pull the run''s trailing edge grip outward'
         # The grip sits in the gutter just past the last card on show.
         $gx = $e[1].Right + [math]::Max(1, (Get-TestChromeDip -Dip 1 -Scale $scale))
-        $pull = Get-TestChromeDip -Dip 100 -Scale $scale
+        Say '== push the run''s trailing edge grip outward'
+        # Outward only squeezes s2's side further: it stays a strip. Under the
+        # old rule (Mac 2811a3043) this pull past 48 DIP brought s2 back.
+        $push = Get-TestChromeDip -Dip 100 -Scale $scale
         [void](Send-TestMouse -Window $top -Target $top -X $gx -Y $y -Action down -HoldMs 0)
         Start-Sleep -Milliseconds 150
-        Move-To $top $gx ($gx + $pull) $y
-        [void](Send-TestMouse -Window $top -Target $top -X ($gx + $pull) -Y $y -Action up -HoldMs 0)
+        Move-To $top $gx ($gx + $push) $y
+        [void](Send-TestMouse -Window $top -Target $top -X ($gx + $push) -Y $y -Action up -HoldMs 0)
+        Start-Sleep -Milliseconds 800
+        $f0 = @(Get-VisiblePanes $top)
+        Say "      after the outward push: $($f0.Count) on show"
+        Assert ($f0.Count -eq 2) "F: the edge grip pushed outward leaves s2 a strip - two on show (got $($f0.Count))"
+
+        Say '== pull the run''s trailing edge grip into the run'
+        # Into the run, past where s2 fits at its minimum (about 1200/1500):
+        # the strip comes out, the panes before it giving way.
+        $now = @(Get-VisiblePanes $top)
+        if ($now.Count -eq 2) { $gx = $now[1].Right + [math]::Max(1, (Get-TestChromeDip -Dip 1 -Scale $scale)) }
+        $pull = Get-TestChromeDip -Dip 400 -Scale $scale
+        [void](Send-TestMouse -Window $top -Target $top -X $gx -Y $y -Action down -HoldMs 0)
+        Start-Sleep -Milliseconds 150
+        Move-To $top $gx ($gx - $pull) $y
+        [void](Send-TestMouse -Window $top -Target $top -X ($gx - $pull) -Y $y -Action up -HoldMs 0)
         Start-Sleep -Milliseconds 800
         $f = @(Get-VisiblePanes $top)
-        Say "      after the grip pull: $($f.Count) on show"
-        Assert ($f.Count -eq 3) "F: the edge grip pulled outward brings s2 back - three on show (got $($f.Count))"
+        Say ("      after the grip pull: {0} on show ({1})" -f $f.Count, (($f | ForEach-Object { "$($_.Left)-$($_.Right)" }) -join ' | '))
+        Assert ($f.Count -eq 3) "F: the edge grip pulled into the run brings s2 back - three on show (got $($f.Count))"
     } else {
         Assert $false 'F: not reached (E left the wrong number of panes)'
     }

@@ -219,10 +219,13 @@ try {
     $gridW = $c3[2].Right - $c3[0].Left
     $x0 = [int](($c3[0].Right + $c3[1].Left) / 2)
     $y = [int](($c3[0].Top + $c3[0].Bottom) / 2)
-    # 1000/1500 is well past the fold point (948/1500), as in stack-collapse-drag;
-    # 900/1500 is short of it, where the drag has only resized.
+    # 1000/1500 is past the fold point; 850/1500 is short of it, where the
+    # drag has only resized. Since T2263 (Mac a81db68f9) the fold point is where
+    # s1 and s2 stop fitting at their minimums, about 1500 - 600 - a gutter =
+    # ~891/1500 in the flat style - no 48 DIP past it any more, so the old
+    # 900/1500 approach had already started the fold.
     $xFold = [int]($gridLeft + $gridW * 1000 / 1500)
-    $xNear = [int]($gridLeft + $gridW * 900 / 1500)
+    $xNear = [int]($gridLeft + $gridW * 850 / 1500)
 
     # Focus P, so s2 - the pane that folds - is an unfocused pane and carries
     # the dim wash whose bleed T2227 is about.
@@ -241,7 +244,10 @@ try {
     # The baseline is the layout the hand made before the fold: what moves
     # after this is the fold's doing.
     $near = @(Get-VisiblePanes $top)
-    if ($near.Count -ne 3) { Write-TestAssertedNothing -Reason "the approach already folded ($($near.Count) on show at 900/1500)" }
+    if ($near.Count -ne 3) { Write-TestAssertedNothing -Reason "the approach already folded ($($near.Count) on show at 850/1500)" }
+    # Three on show is not enough: a fold already under way still shows s2
+    # mid-slide, on its way past the grid's right edge.
+    if ($near[2].Right -gt $c3[2].Right + 2) { Write-TestAssertedNothing -Reason "the approach already started the fold (s2 at $($near[2].Left)-$($near[2].Right), grid ends at $($c3[2].Right))" }
     $pW0 = (Find-Pane $near $hP).Width
     $s2Left0 = (Find-Pane $near $hS2).Left
     Say ("      short of the fold: {0}" -f (Format-Cols $near))

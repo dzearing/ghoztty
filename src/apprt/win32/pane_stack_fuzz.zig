@@ -393,21 +393,10 @@ const Fuzz = struct {
     /// moving off a pane that folds away (`rowDragStepped`) and the window
     /// laid out after each step.
     fn drag(self: *Fuzz, target: DragTarget, deltas: []const f64) Allocator.Error!void {
-        const past = layout.Metrics.restack_distance * self.scale;
-        var rd: stack_drag.RowDrag = switch (target) {
-            .divider => |d| blk: {
-                var rd = try stack_drag.RowDrag.begin(self.gpa, &self.state, d.row, d.index, d.offset, past);
-                rd.press = d.position;
-                break :blk rd;
-            },
-            .grip => |g| try stack_drag.RowDrag.begin(self.gpa, &self.state, g.row, g.boundary, g.offset, past),
-        };
+        var rd = try stack_drag.RowDrag.begin(self.gpa, &self.state, target.row, target.boundary, target.offset);
         defer rd.deinit(&self.state);
         for (deltas) |delta| {
-            const step = switch (target) {
-                .divider => |d| try rd.dividerMoved(&self.state, d.position + delta, d.dimension, d.leading_min, d.trailing_min),
-                .grip => |g| try rd.gripMoved(&self.state, g.kind, delta, g.minimum),
-            };
+            const step = try rd.moved(&self.state, target.press + delta);
             if (step.restacked) if (rd.focusAfterRestack(&self.state, self.focused.id)) |id| {
                 if (self.viewById(id)) |v| self.focused = v;
             };
@@ -416,24 +405,16 @@ const Fuzz = struct {
     }
 };
 
-/// What a drag was pressed on, copied out of the layout it came from.
-const DragTarget = union(enum) {
-    divider: struct {
-        row: layout.Row,
-        index: usize,
-        offset: f64,
-        position: f64,
-        dimension: f64,
-        leading_min: f64,
-        trailing_min: f64,
-    },
-    grip: struct {
-        row: layout.Row,
-        kind: layout.StackHandle.Kind,
-        boundary: usize,
-        offset: f64,
-        minimum: f64,
-    },
+/// What a drag was pressed on, copied out of the layout it came from: the
+/// gutter before item `boundary` of `row`, `offset` measuring the gesture's
+/// positions from the row's start and `press` the gesture's position at the
+/// press (a divider's centre in its split; a grip's moves run from 0).
+const DragTarget = struct {
+    kind: enum { divider, grip },
+    row: layout.Row,
+    boundary: usize,
+    offset: f64,
+    press: f64,
 };
 
 fn tuckedOf(a: Allocator, result: *const layout.Result) Allocator.Error![]Id {
@@ -573,36 +554,25 @@ fn runSeed(gpa: Allocator, seed: u64, verbose: bool) Fail!void {
                 const n = r.dividers.items.len + r.stack_handles.items.len;
                 if (n == 0) continue;
                 const i = pick(&rng, n);
-                const mw = layout.Metrics.default_minimum_width * f.scale;
-                const mh = layout.Metrics.default_minimum_height * f.scale;
-                var target: DragTarget = undefined;
-                if (i < r.dividers.items.len) {
+                const target: DragTarget = if (i < r.dividers.items.len) blk: {
                     const d = r.dividers.items[i];
-                    var built = try grid_mod.buildWith(gpa, f.tree, viewId, .visible);
-                    defer built.deinit(gpa);
-                    const s = built.nodes[d.node].split;
-                    target = .{ .divider = .{
+                    break :blk .{
+                        .kind = .divider,
                         .row = d.row,
-                        .index = d.index,
+                        .boundary = d.index,
                         .offset = d.node_frame.start(d.direction) - d.row.start,
-                        .position = d.position,
-                        .dimension = d.node_frame.extentAlong(d.direction),
-                        .leading_min = try layout.minimumExtent(gpa, built.nodes, s.left, d.direction, mw, mh, false),
-                        .trailing_min = try layout.minimumExtent(gpa, built.nodes, s.right, d.direction, mw, mh, false),
-                    } };
-                } else {
+                        .press = d.position,
+                    };
+                } else blk: {
                     const h = r.stack_handles.items[i - r.dividers.items.len];
-                    target = .{ .grip = .{
+                    break :blk .{
+                        .kind = .grip,
                         .row = h.row,
-                        .kind = h.kind,
-                        .boundary = switch (h.kind) {
-                            .between => |slot| h.row.run.lo + slot + 1,
-                            .expand => 0,
-                        },
+                        .boundary = stack_drag.gripBoundary(h),
                         .offset = h.frame.start(h.direction) + h.position - h.row.start,
-                        .minimum = if (h.direction == .horizontal) mw else mh,
-                    } };
-                }
+                        .press = 0,
+                    };
+                };
                 const reaches = [_]f64{ 60, 200, 400, 700, 1000, 1400 };
                 var deltas: [4]f64 = undefined;
                 const moves = 1 + pick(&rng, 3);
@@ -619,7 +589,7 @@ fn runSeed(gpa: Allocator, seed: u64, verbose: bool) Fail!void {
                 // The drag's row, copied: the layout it came from is freed
                 // before the drag ends, as in the window.
                 try f.drag(target, all);
-                try f.note("drag {s} {d} by {any}", .{ @tagName(target), i, all });
+                try f.note("drag {s} {d} by {any}", .{ @tagName(target.kind), i, all });
                 if (back) {
                     const pins_after = try f.pins(a);
                     if (!std.mem.eql(u8, pins_before, pins_after))

@@ -687,14 +687,11 @@ drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 drag_nodes: [MAX_DRAG_NODES]split_resize.Node = undefined,
 drag_node_len: usize = 0,
 
-/// The row a divider or stack-grip drag is in, as the drag found it, and what
-/// the drag has folded away so far (T2124, Mac `RowDrag`). Null when the drag
-/// is not in a row the layout reported, which leaves it an ordinary resize.
+/// The row a divider or stack-grip drag is in, as the drag found it (T2124,
+/// T2263, Mac `RowDrag`): every step makes the row what the gutter's position
+/// makes of it. Null when the drag is not in a row the layout reported, which
+/// leaves it an ordinary resize.
 row_drag: ?stack_drag.RowDrag = null,
-/// The least the dragged split's left and right sides can be along the drag,
-/// in pixels: past either by `restack_distance`, the row folds instead.
-drag_lead_min: f64 = 0,
-drag_trail_min: f64 = 0,
 
 /// A grip on a stacked row being dragged (T2124): between two cards on show,
 /// or at the edge of a narrowed run. Null when none is.
@@ -9157,37 +9154,55 @@ pub fn hitTestStackGrip(self: *Window, x: i32, y: i32) ?GripHit {
     return .{ .index = i, .direction = grid.result.stack_handles.items[i].direction };
 }
 
-/// `restack_distance` in the grid's units (pixels).
-fn restackPast(self: *const Window) f64 {
-    const s: f64 = if (self.scale > 0) self.scale else 1;
-    return pane_stack_layout.Metrics.restack_distance * s;
-}
-
-/// The least a pane may be along `d`, in the grid's units (pixels).
-fn paneMinimum(self: *const Window, d: pane_stack_layout.Direction) f64 {
-    const s: f64 = if (self.scale > 0) self.scale else 1;
-    return s * switch (d) {
-        .horizontal => pane_stack_layout.Metrics.default_minimum_width,
-        .vertical => pane_stack_layout.Metrics.default_minimum_height,
-    };
-}
-
-/// Begin a drag that may fold panes of `row` into strips (T2124), on the grip
+/// Begin a gutter drag in `row` along `d` (T2124, T2263), on the gutter
 /// before item `boundary`; `offset` measures the drag's positions from the
-/// row's start.
-fn beginRowDrag(self: *Window, row: pane_stack_layout.Row, boundary: usize, offset: f64) void {
+/// row's start. Notes the ratios the row's splits have now, which is where
+/// they stay while part of the row is folded away.
+fn beginRowDrag(self: *Window, row: pane_stack_layout.Row, d: pane_stack_layout.Direction, boundary: usize, offset: f64) void {
     self.endRowDrag();
-    self.row_drag = stack_drag.RowDrag.begin(
-        self.app.core_app.alloc,
-        self.stackState(),
-        row,
-        boundary,
-        offset,
-        self.restackPast(),
-    ) catch |err| blk: {
+    const gpa = self.app.core_app.alloc;
+    var rd = stack_drag.RowDrag.begin(gpa, self.stackState(), row, boundary, offset) catch |err| {
         log.warn("row drag not started: {}", .{err});
-        break :blk null;
+        return;
     };
+    rd.direction = d;
+    if (self.rowRatios(d, row.items, null)) |ratios| {
+        defer gpa.free(ratios);
+        rd.noteRatios(ratios) catch {};
+    }
+    self.row_drag = rd;
+}
+
+/// The splits of the active tab's row of `items` along `d`, with the ratios
+/// that give each item its share of `shares` (null: the ratios they have).
+/// Null when the tree holds no such row. Caller frees.
+fn rowRatios(self: *Window, d: pane_stack_layout.Direction, items: []const []const pane_stack_layout.Id, shares: ?[]const f64) ?[]pane_stack_layout.RowRatio {
+    if (self.tab_count == 0) return null;
+    const gpa = self.app.core_app.alloc;
+    var built = pane_stack_grid.buildWith(gpa, self.tab_trees[self.active_tab], pane_stack_grid.viewId, .visible) catch return null;
+    defer built.deinit(gpa);
+    const root = built.root orelse return null;
+    return pane_stack_layout.settingRow(gpa, built.nodes, root, d, items, shares) catch null;
+}
+
+/// After a step of a row drag, the tree's side of it (Mac `dragRow`): all of
+/// the row on show, its splits sized by the step's shares; part of it folded
+/// away, its splits as the drag found them (the collapse sizes the run).
+fn applyRowDrag(self: *Window, step: stack_drag.Step) void {
+    if (self.tab_count == 0) return;
+    const rd = &(self.row_drag orelse return);
+    const tree = &self.tab_trees[self.active_tab];
+    const gpa = self.app.core_app.alloc;
+    const fresh = if (step.all_shown) self.rowRatios(rd.direction, rd.row.items, rd.shares) else null;
+    defer if (fresh) |f| gpa.free(f);
+    for (fresh orelse rd.ratios) |r| {
+        // A pane closed under the drag: the noted splits may be gone.
+        if (r.node >= tree.nodes.len) continue;
+        switch (tree.nodes[r.node]) {
+            .split => tree.resizeInPlace(@enumFromInt(r.node), @floatCast(r.ratio)),
+            else => {},
+        }
+    }
 }
 
 fn endRowDrag(self: *Window) void {
@@ -9217,27 +9232,12 @@ fn rowDragStepped(self: *Window, step: stack_drag.Step) void {
     }
 }
 
-/// Put every split ratio of the active tab back to the drag's snapshot: a
-/// squeezed row leaves the ratios as the drag found them (Mac restores
-/// `dividerDragOrigin.tree`).
-fn restoreDragRatios(self: *Window) void {
-    if (!self.dragSnapshotMatches()) return;
-    for (self.drag_nodes[0..self.drag_node_len], 0..) |n, i| switch (n) {
-        .split => |s| self.tab_trees[self.active_tab].resizeInPlace(@enumFromInt(i), @floatCast(s.ratio)),
-        else => {},
-    };
-}
-
 fn startGripDrag(self: *Window, hit: GripHit, x: i32, y: i32) void {
     var grid = self.stackGrid() orelse return;
     defer grid.deinit();
     if (hit.index >= grid.result.stack_handles.items.len) return;
     const h = grid.result.stack_handles.items[hit.index];
-    const boundary: usize = switch (h.kind) {
-        .between => |slot| h.row.run.lo + slot + 1,
-        .expand => 0,
-    };
-    self.beginRowDrag(h.row, boundary, h.frame.start(h.direction) + h.position - h.row.start);
+    self.beginRowDrag(h.row, h.direction, stack_drag.gripBoundary(h), h.frame.start(h.direction) + h.position - h.row.start);
     self.grip_drag = .{
         .kind = h.kind,
         .direction = h.direction,
@@ -9254,10 +9254,11 @@ fn updateGripDrag(self: *Window, x: i32, y: i32) void {
     const pos = if (g.direction == .horizontal) x else y;
     self.grip_drag.?.at = pos;
     const delta: f64 = @floatFromInt(pos - g.start);
-    const step = rd.gripMoved(self.stackState(), g.kind, delta, self.paneMinimum(g.direction)) catch |err| {
+    const step = rd.moved(self.stackState(), delta) catch |err| {
         log.warn("stack grip drag step failed: {}", .{err});
         return;
     };
+    self.applyRowDrag(step);
     self.rowDragStepped(step);
     self.layoutSplitsLive();
 }
@@ -9595,30 +9596,18 @@ fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layo
     if (self.hwnd) |hwnd| _ = w32.SetCapture(hwnd);
 }
 
-/// The row the grabbed divider is in, for a drag that may fold its panes into
-/// strips (T2124): where the split starts in its row, how many of the row's
-/// items lie before it, and the least either side of it can be. No row drag
-/// when the divider is not one the layout reported.
+/// The row the grabbed divider is in (T2124, T2263): a divider is a gutter of
+/// its row like any grip, so the drag makes the row what the gutter's
+/// position makes of it. Where the split starts in its row, and how many of
+/// the row's items lie before it. No row drag when the divider is not one the
+/// layout reported.
 fn beginDividerRowDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle) void {
     self.endRowDrag();
     var grid = self.stackGrid() orelse return;
     defer grid.deinit();
     const i = gridDivider(&grid, handle) orelse return;
     const d = grid.result.dividers.items[i];
-    const gpa = self.app.core_app.alloc;
-    var built = pane_stack_grid.buildWith(gpa, self.tab_trees[self.active_tab], pane_stack_grid.viewId, .visible) catch return;
-    defer built.deinit(gpa);
-    if (d.node >= built.nodes.len) return;
-    const s = switch (built.nodes[d.node]) {
-        .split => |sp| sp,
-        .leaf => return,
-    };
-    const mw = self.paneMinimum(.horizontal);
-    const mh = self.paneMinimum(.vertical);
-    self.drag_lead_min = pane_stack_layout.minimumExtent(gpa, built.nodes, s.left, d.direction, mw, mh, false) catch return;
-    self.drag_trail_min = pane_stack_layout.minimumExtent(gpa, built.nodes, s.right, d.direction, mw, mh, false) catch return;
-    self.beginRowDrag(d.row, d.index, d.node_frame.start(d.direction) - d.row.start);
-    if (self.row_drag) |*rd| rd.press = d.position;
+    self.beginRowDrag(d.row, d.direction, d.index, d.node_frame.start(d.direction) - d.row.start);
 }
 
 /// Flatten the active tab's tree into `drag_nodes` for `split_resize.plan`.
@@ -9730,30 +9719,23 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
         .horizontal => .{ rect.left, rect.right, x },
         .vertical => .{ rect.top, rect.bottom, y },
     };
-    // T2124: well past a pane's minimum the row folds that pane into a strip
-    // instead (and the next, as the drag goes on); the ratios then stay as the
-    // drag found them. Back where it fits, the row is as it was and this is an
-    // ordinary resize again.
-    if (self.row_drag) |*rd| {
-        const step = rd.dividerMoved(
-            self.stackState(),
-            @floatFromInt(pos - start),
-            @floatFromInt(end - start),
-            self.drag_lead_min,
-            self.drag_trail_min,
-        ) catch |err| blk: {
+    // A divider is a gutter of its row (T2263, Mac `dragRow`): the row is
+    // what the gutter's position makes of it - the two panes beside it
+    // resizing, then the next giving way, then the outermost folding into a
+    // strip once there is no room for them all at their minimums - and back
+    // where the drag began it is exactly as it was.
+    if (self.row_drag) |*rd| moved: {
+        const step = rd.moved(self.stackState(), @floatFromInt(pos - start)) catch |err| {
             log.warn("divider row drag step failed: {}", .{err});
-            break :blk stack_drag.Step{};
+            break :moved;
         };
+        self.applyRowDrag(step);
         self.rowDragStepped(step);
-        if (step.restacked or step.restored) log.info("divider drag folded={?d}", .{if (rd.squeeze) |s| s.count else null});
-        if (step.squeezed) {
-            self.restoreDragRatios();
-            var lt = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
-            self.layoutSplitsLive();
-            if (lt) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
-            return;
-        }
+        if (step.restacked) log.info("divider drag run={d}..{d} of {d}", .{ rd.run.lo, rd.run.hi, rd.row.items.len });
+        var lt = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+        self.layoutSplitsLive();
+        if (lt) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
+        return;
     }
 
     // On the engine's geometry (T2125): a ratio is the left side's share of

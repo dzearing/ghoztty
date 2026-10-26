@@ -1,19 +1,19 @@
-//! A drag on a divider or a stack grip that can collapse its row (T2124): a
-//! port of Mac's `BaseTerminalController.RowDrag` and the drag arms around it
-//! (`splitDidResize`, `splitDidDragStack`, `squeezeRow`, 2811a3043).
+//! A drag on any gutter of a row - a divider, a grip between two cards on
+//! show, a grip where the run meets its strips (T2124, T2263): a port of
+//! Mac's `BaseTerminalController.RowDrag` and `dragRow` (a81db68f9).
 //!
-//! The gesture, as the user feels it: drag a divider (or the grip between two
-//! cards of a stack) well past a pane's minimum and the outermost pane on that
-//! side folds into a strip instead of being crushed. Keep going and the next
-//! one folds too (`pane_stack_layout.chain`), and the next. Drag back and they
-//! come out again, last folded first, until the row is exactly as the drag
-//! found it. A grip at the edge of a narrowed run drags the other way: pulled
-//! outward it brings the nearest strip back on show.
+//! The gesture, as the user feels it: the row is a function of where its
+//! gutter is (`pane_stack_layout.dragged`). Drag a gutter one way and the two
+//! panes beside it resize; past the near pane's minimum the next one gives
+//! way, and once there is no room for them all at their minimums the
+//! outermost pane on that side folds into a strip, then the next. The panes
+//! on the other side grow and their strips stay strips. A strip pulled out by
+//! its gutter comes out alone, the other side tucking away to make room. Drag
+//! back and the row is exactly as the drag found it.
 //!
 //! Every step is measured against the row AS THE DRAG FOUND IT, never against
-//! the previous step's result: the state is put back to the snapshot taken at
-//! the press (`origin`) and the change re-applied whole. That is what makes a
-//! drag reversible however far it went.
+//! the previous step's result, which is what makes a drag reversible however
+//! far it went.
 //!
 //! Pure and free of OS imports, so its tests run in every app-runtime lane.
 //! The window turns pointer pixels into the positions below; every length here
@@ -27,43 +27,44 @@ const stack_state = @import("pane_stack_state.zig");
 
 const Id = layout.Id;
 const Row = layout.Row;
-const Side = layout.Side;
-const Restack = layout.Restack;
-const Squeeze = layout.Squeeze;
+const Range = layout.Range;
+const RowRatio = layout.RowRatio;
 const PaneStackState = stack_state.PaneStackState;
 
 pub const RowDrag = struct {
     gpa: Allocator,
-    /// Owns `row` and `key`.
+    /// Owns `row`, `key`, `sizes`, `shares` and `ratios`.
     arena: std.heap.ArenaAllocator,
     /// The row as the drag found it.
     row: Row,
     key: []const Id,
-    /// The row's collapse and slot sizes at the press: every step starts here.
-    origin: stack_state.Snapshot,
-    /// The row index of the first item after the grip.
+    /// The row index of the first item after the gutter.
     boundary: usize,
     /// Added to a position the gesture reports to measure it from the row's
     /// start.
     offset: f64,
-    /// How far past a minimum the pointer must go before a pane folds away
-    /// (`Metrics.restack_distance`, in the row's units).
-    past: f64,
-    /// A widening drag's change, from a grip at the run's edge.
-    change: ?Restack = null,
-    /// What a squeezing drag has tucked away so far.
-    squeeze: ?Squeeze = null,
-    /// Where a divider drag grabbed the divider, from the start of its split.
-    /// A side ALREADY under its minimum there (a window too narrow for it, so
-    /// it is laid out stacked) folds only once the drag pushes `past` beyond
-    /// the press, and is back where it was at the press: measured from the
-    /// minimum alone, as Mac does, the first pixel of movement folded that
-    /// whole side, and it could not come back during the drag.
-    press: ?f64 = null,
+    /// Each item's size when the drag began; null for a strip.
+    sizes: []const ?f64,
+    /// The run the last step left on show.
+    run: Range,
+    /// The row's shares, one per item, when the last step left all of it on
+    /// show: what the window sizes the tree's splits of the row by.
+    shares: []f64,
+    /// The row's splits with the ratios the drag found them at
+    /// (`noteRatios`): what the tree goes back to while part of the row is
+    /// folded away. Empty until the window notes them.
+    ratios: []const RowRatio = &.{},
+    /// The axis the row runs along: what the window finds its splits by.
+    direction: layout.Direction = .horizontal,
+    /// Every row's collapse and slot shares at the press: what a gutter back
+    /// where the drag found it puts back, exactly - a row stacked for want
+    /// of room, say, stays unpinned rather than pinned at the run it had, and
+    /// a stale pin a step cleared (`PaneStackState.show`) comes back too.
+    origin: stack_state.Saved,
 
-    /// Begin a drag on the grip before item `boundary` of `row` (copied: the
+    /// Begin a drag on the gutter before item `boundary` of `row` (copied: the
     /// layout result it came from is freed long before the drag ends).
-    pub fn begin(gpa: Allocator, state: *PaneStackState, row: Row, boundary: usize, offset: f64, past: f64) Allocator.Error!RowDrag {
+    pub fn begin(gpa: Allocator, state: *PaneStackState, row: Row, boundary: usize, offset: f64) Allocator.Error!RowDrag {
         var arena = std.heap.ArenaAllocator.init(gpa);
         errdefer arena.deinit();
         const a = arena.allocator();
@@ -73,18 +74,28 @@ pub const RowDrag = struct {
         copy.items = items;
         copy.sizes = try a.dupe(f64, row.sizes);
         copy.minimums = try a.dupe(f64, row.minimums);
+        const sizes = try a.alloc(?f64, row.items.len);
+        @memset(sizes, null);
+        for (0..row.run.count()) |k| {
+            const i = row.run.lo + k;
+            if (i < sizes.len and k < row.sizes.len) sizes[i] = row.sizes[k];
+        }
         const key = try copy.key(a);
-        const origin = try state.snapshot(key);
+        const shares = try a.alloc(f64, row.items.len);
+        var origin = try state.saved();
+        errdefer origin.deinit(gpa);
         state.is_gesturing = true;
         return .{
             .gpa = gpa,
             .arena = arena,
             .row = copy,
             .key = key,
-            .origin = origin,
             .boundary = boundary,
             .offset = offset,
-            .past = past,
+            .sizes = sizes,
+            .run = row.run,
+            .shares = shares,
+            .origin = origin,
         };
     }
 
@@ -95,123 +106,43 @@ pub const RowDrag = struct {
         self.* = undefined;
     }
 
-    /// A divider drag moved: `position` is the divider's centre from the start
-    /// of the split it belongs to, `dimension` that split's extent, and the
-    /// two minimums the least each side of it can be. Well past a side's
-    /// minimum the row collapses instead of the divider moving; back where
-    /// that side fits, it comes back. Returns whether the row is squeezed: the
-    /// window then leaves the split ratios as the drag found them.
-    pub fn dividerMoved(self: *RowDrag, state: *PaneStackState, position: f64, dimension: f64, leading_min: f64, trailing_min: f64) Allocator.Error!Step {
-        var leading = leading_min;
-        var trailing = dimension - trailing_min;
-        if (self.press) |p| {
-            leading = @min(leading, p);
-            trailing = @max(trailing, p);
-        }
-        const collapsing: ?Side = if (position < leading - self.past)
-            .leading
-        else if (position > trailing + self.past)
-            .trailing
-        else
-            null;
-        return self.squeezeAt(state, position, collapsing, position >= leading and position <= trailing);
+    /// Keep the row's splits at the ratios the drag found them
+    /// (`layout.settingRow` with no shares).
+    pub fn noteRatios(self: *RowDrag, ratios: []const RowRatio) Allocator.Error!void {
+        self.ratios = try self.arena.allocator().dupe(RowRatio, ratios);
     }
 
-    /// A grip on a stack moved `delta` from where the press was, `minimum`
-    /// being the least a pane may be along the row.
-    pub fn gripMoved(self: *RowDrag, state: *PaneStackState, kind: layout.StackHandle.Kind, delta: f64, minimum: f64) Allocator.Error!Step {
-        switch (kind) {
-            .expand => |side| {
-                const outward = if (side == .trailing) delta else -delta;
-                return self.setChange(state, if (outward > self.past) .{ .expand = side } else null);
-            },
-            .between => |slot| {
-                // `delta` runs from where the drag began, so it applies to the
-                // sizes the row had then: added to each step's result it would
-                // compound and the edge would run ahead of the hand.
-                const sizes = self.row.sizes;
-                if (slot + 1 >= sizes.len) return .{};
-                // Resizing two slots never changes their sum.
-                const pair = sizes[slot] + sizes[slot + 1];
-                const leading = sizes[slot] + delta;
-                // Squeezing a card next to the grip well past its minimum
-                // tucks the outermost card on that side away, then the next,
-                // and the next, as the pointer goes on.
-                const collapsing: ?Side = if (pair - leading < minimum - self.past)
-                    .trailing
-                else if (leading < minimum - self.past)
-                    .leading
-                else
-                    null;
-                const step = try self.squeezeAt(state, delta, collapsing, leading >= minimum and pair - leading >= minimum);
-                if (step.squeezed) return step;
-                if (pair < 2 * minimum) return step;
-                const resized = try self.gpa.dupe(f64, sizes);
-                defer self.gpa.free(resized);
-                resized[slot] = @min(@max(leading, minimum), pair - minimum);
-                resized[slot + 1] = pair - resized[slot];
-                var total: f64 = 0;
-                for (resized) |s| total += s;
-                if (total > 0) for (resized) |*s| {
-                    s.* /= total;
-                };
-                try state.resize(self.row, resized);
-                return step;
-            },
+    /// One step: the gutter at `position` (the gesture's own measure). The
+    /// row as the gutter's position makes it.
+    pub fn moved(self: *RowDrag, state: *PaneStackState, position: f64) Allocator.Error!Step {
+        const d = try layout.dragged(self.gpa, self.row, self.boundary, self.offset + position, self.sizes);
+        defer self.gpa.free(d.sizes);
+        if (self.isOrigin(d)) {
+            try state.restore(&self.origin);
+        } else try state.show(self.row, d.run, d.sizes);
+        const restacked = d.run.lo != self.run.lo or d.run.hi != self.run.hi;
+        self.run = d.run;
+        const all = d.run.count() == self.row.items.len and d.sizes.len == self.shares.len;
+        if (all) {
+            var total: f64 = 0;
+            for (d.sizes) |s| total += s;
+            for (self.shares, d.sizes) |*sh, s| sh.* = s / @max(total, 1);
         }
+        return .{ .all_shown = all, .restacked = restacked };
     }
 
-    /// One step of a drag that can squeeze its row, with the pointer at
-    /// `position` (the gesture's own measure). `collapsing`: the side whose
-    /// first item the drag has just squeezed well past its minimum, null if
-    /// not; `back`: the drag is back where that item fits again.
-    fn squeezeAt(self: *RowDrag, state: *PaneStackState, position: f64, collapsing: ?Side, back: bool) Allocator.Error!Step {
-        const x = self.offset + position;
-        const next: ?Squeeze = if (self.squeeze) |current| blk: {
-            // The first item comes back by the drag's own measure; the ones
-            // after it by the chain's - in the same step (T2129): a pointer
-            // that jumps straight back from two folds deep comes back to
-            // where it was pressed in ONE move when the mouse is fast, and
-            // the row must not keep a fold that the next move, at the same
-            // spot, would undo.
-            const chained = layout.chain(self.row, self.boundary, x, current, self.past);
-            break :blk if (chained.count == 1 and back) null else chained;
-        } else if (collapsing) |side|
-            layout.chain(self.row, self.boundary, x, .{ .side = side, .count = 1 }, self.past)
-        else
-            null;
-        var step: Step = .{};
-        if (!squeezeEql(next, self.squeeze)) {
-            try state.restoreSnapshot(self.key, self.origin);
-            self.squeeze = next;
-            if (next) |s| {
-                try state.restack(self.row, .{ .collapse = s.side }, s.count);
-                step.restacked = true;
-            } else step.restored = true;
-        }
-        const s = next orelse return step;
-        const shares = try layout.squeezedShares(self.gpa, self.row, self.boundary, s, x);
-        defer self.gpa.free(shares);
-        try state.resize(self.row, shares);
-        step.squeezed = true;
-        return step;
-    }
-
-    /// Put the row in the state `change` makes of it as the drag found it
-    /// (null: as the drag found it): a grip at the run's edge.
-    fn setChange(self: *RowDrag, state: *PaneStackState, change: ?Restack) Allocator.Error!Step {
-        if (restackEql(self.change, change)) return .{};
-        try state.restoreSnapshot(self.key, self.origin);
-        self.change = change;
-        const c = change orelse return .{ .restored = true };
-        try state.restack(self.row, c, 1);
-        return .{ .restacked = true };
+    /// Whether `d` is the row as the drag found it.
+    fn isOrigin(self: *const RowDrag, d: layout.Dragged) bool {
+        if (d.run.lo != self.row.run.lo or d.run.hi != self.row.run.hi) return false;
+        if (d.sizes.len != self.row.sizes.len) return false;
+        for (d.sizes, self.row.sizes) |x, y| if (@abs(x - y) > 1e-6) return false;
+        return true;
     }
 
     /// The pane the caret should move to after a restack, when the focused
     /// pane `focused` has just folded away: the nearest item still on show,
     /// and within it (a nested column, say) the pane last focused there. Null
-    /// when the focus can stay where it is. Mac `splitDidRestack`.
+    /// when the focus can stay where it is. Mac `keepFocusOnShow`.
     pub fn focusAfterRestack(self: *const RowDrag, state: *const PaneStackState, focused: Id) ?Id {
         const p = state.pin(self.key) orelse return null;
         const index = for (self.row.items, 0..) |item, i| {
@@ -233,244 +164,208 @@ pub const RowDrag = struct {
     }
 };
 
+/// The row index of the first item after a grip's gutter: between two cards,
+/// the second; at the run's edge, the first item past it on that side. Mac
+/// `splitDidDragStack`.
+pub fn gripBoundary(h: layout.StackHandle) usize {
+    return switch (h.kind) {
+        .between => |slot| h.row.run.lo + slot + 1,
+        .expand => |side| switch (side) {
+            .leading => h.row.run.lo,
+            .trailing => h.row.run.hi + 1,
+        },
+    };
+}
+
 /// What one step of a drag did.
 pub const Step = struct {
-    /// The row is squeezed: the grip follows the pointer through the run, and
-    /// a divider drag must leave the split ratios as it found them.
-    squeezed: bool = false,
-    /// A pane folded away or came back this step: the caret may need to move
+    /// All of the row is on show: the tree's ratios size it, by
+    /// `RowDrag.shares`. Otherwise the tree stays as the drag found it
+    /// (`RowDrag.ratios`) and the collapse's shares size the run.
+    all_shown: bool = false,
+    /// What is on show changed this step: the caret may need to move
     /// (`RowDrag.focusAfterRestack`).
     restacked: bool = false,
-    /// The row went back to how the drag found it this step.
-    restored: bool = false,
 };
 
-fn squeezeEql(a: ?Squeeze, b: ?Squeeze) bool {
-    if (a == null or b == null) return a == null and b == null;
-    return a.?.side == b.?.side and a.?.count == b.?.count;
-}
-
-fn restackEql(a: ?Restack, b: ?Restack) bool {
-    if (a == null or b == null) return a == null and b == null;
-    return std.meta.eql(a.?, b.?);
-}
-
 // ---------------------------------------------------------------------------
-// Tests. A row of three panes across 1000 units: 10 gaps, 36 peeks, 300
-// minimums - the elevated style's numbers at 100%.
-
-const past_default: f64 = layout.Metrics.restack_distance;
+// Tests. A row of three panes across 1220 units: 10 gaps, 36 peeks, 300
+// minimums, three 400 panes - Mac's PaneLayoutTests numbers.
 
 const items_3 = [_][]const Id{ &.{1}, &.{2}, &.{3} };
 const key_3 = [_]Id{ 1, 2, 3 };
 
 fn rowOf3() Row {
-    const third = (1000.0 - 20.0) / 3.0;
     return .{
         .items = &items_3,
         .run = .{ .lo = 0, .hi = 2 },
-        .sizes = &.{ third, third, third },
+        .sizes = &.{ 400, 400, 400 },
         .start = 0,
-        .extent = 1000,
+        .extent = 1220,
         .minimums = &.{ 300, 300, 300 },
         .gap = 10,
         .peek = 36,
     };
 }
 
-test "divider: dragged well past the trailing panes' minimum folds the last one, and back restores it" {
+test "divider: a nudge resizes the two panes beside it, through the tree" {
     var state = PaneStackState.init(testing.allocator);
     defer state.deinit();
-    // The divider after the first pane, in a split spanning the whole row.
-    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0, past_default);
+    // The divider after the first pane, at 405, in a split spanning the row.
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0);
     defer drag.deinit(&state);
     try testing.expect(state.is_gesturing);
 
-    // Inside the trailing side's room (1000 - 600 = 400): an ordinary resize.
-    var step = try drag.dividerMoved(&state, 420, 1000, 300, 600);
-    try testing.expect(!step.squeezed);
+    const step = try drag.moved(&state, 455);
+    try testing.expect(step.all_shown and !step.restacked);
     try testing.expect(state.pin(&key_3) == null);
-
-    // Past it by more than the restack distance: the third pane folds.
-    step = try drag.dividerMoved(&state, 460, 1000, 300, 600);
-    try testing.expect(step.squeezed and step.restacked);
-    try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 2 }, state.pin(&key_3)));
-
-    // Back where the trailing side fits: the row is as the drag found it.
-    step = try drag.dividerMoved(&state, 380, 1000, 300, 600);
-    try testing.expect(!step.squeezed and step.restored);
-    try testing.expect(state.pin(&key_3) == null);
+    try testing.expectApproxEqAbs(@as(f64, 450.0 / 1200.0), drag.shares[0], 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 350.0 / 1200.0), drag.shares[1], 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 400.0 / 1200.0), drag.shares[2], 1e-9);
 }
 
-test "divider: a drag that goes on chains into the next pane, and coming back unfolds them last first" {
+test "divider: dragged on, the far pane folds as soon as the side cannot hold both, then the next" {
     var state = PaneStackState.init(testing.allocator);
     defer state.deinit();
-    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0, past_default);
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0);
     defer drag.deinit(&state);
 
-    _ = try drag.dividerMoved(&state, 460, 1000, 300, 600);
+    // b at its minimum, c giving way: still all on show.
+    var step = try drag.moved(&state, 600);
+    try testing.expect(step.all_shown);
+    // No room for b and c at their minimums: c folds.
+    step = try drag.moved(&state, 700);
+    try testing.expect(!step.all_shown and step.restacked);
     try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 2 }, state.pin(&key_3)));
-
-    // Far enough that the second pane cannot keep its minimum either.
-    const step = try drag.dividerMoved(&state, 900, 1000, 300, 600);
-    try testing.expect(step.squeezed and step.restacked);
+    // At the edge, b too.
+    step = try drag.moved(&state, 1210);
+    try testing.expect(step.restacked);
     try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 1 }, state.pin(&key_3)));
-
-    // Back to where the second pane fits again: only the third stays folded.
-    _ = try drag.dividerMoved(&state, 600, 1000, 300, 600);
-    try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 2 }, state.pin(&key_3)));
-
-    // And all the way back: nothing folded.
-    _ = try drag.dividerMoved(&state, 350, 1000, 300, 600);
-    try testing.expect(state.pin(&key_3) == null);
 }
 
-test "divider: a pointer that jumps straight back from two folds deep unfolds both in one move (T2129)" {
+test "divider: back where the drag began, the row is exactly as it was, in one move" {
     var state = PaneStackState.init(testing.allocator);
     defer state.deinit();
-    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0, past_default);
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0);
     defer drag.deinit(&state);
+    _ = try drag.moved(&state, 1210);
+    try testing.expect(state.pin(&key_3) != null);
 
-    _ = try drag.dividerMoved(&state, 460, 1000, 300, 600);
-    _ = try drag.dividerMoved(&state, 900, 1000, 300, 600);
-    try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 1 }, state.pin(&key_3)));
-
-    // One move back to where the drag began, as a fast mouse delivers it:
-    // nothing stays folded, and a further move at the same spot changes
-    // nothing.
-    var step = try drag.dividerMoved(&state, 350, 1000, 300, 600);
-    try testing.expect(step.restored and !step.squeezed);
+    // One move back, as a fast mouse delivers it (T2129).
+    var step = try drag.moved(&state, 405);
+    try testing.expect(step.all_shown and step.restacked);
     try testing.expect(state.pin(&key_3) == null);
-    step = try drag.dividerMoved(&state, 350, 1000, 300, 600);
-    try testing.expect(!step.restored and !step.restacked);
-}
-
-test "divider: a side already under its minimum at the press folds only once pushed past the press" {
-    var state = PaneStackState.init(testing.allocator);
-    defer state.deinit();
-    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0, past_default);
-    defer drag.deinit(&state);
-    // The trailing side needs 600 of a 1000 split but was grabbed at 500:
-    // already 100 under its minimum.
-    drag.press = 500;
-
-    // A nudge further in: no fold (measured from the minimum alone, 520 is
-    // 120 past it and would fold).
-    var step = try drag.dividerMoved(&state, 520, 1000, 300, 600);
-    try testing.expect(!step.squeezed);
-    try testing.expect(state.pin(&key_3) == null);
-
-    // Pushed past the press by more than the distance: it folds.
-    step = try drag.dividerMoved(&state, 560, 1000, 300, 600);
-    try testing.expect(step.squeezed);
-    try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 2 }, state.pin(&key_3)));
-
-    // Back at the press: unfolded, as the drag found it.
-    step = try drag.dividerMoved(&state, 500, 1000, 300, 600);
-    try testing.expect(step.restored);
-    try testing.expect(state.pin(&key_3) == null);
+    try testing.expect(state.sharesFor(&key_3) == null);
+    for (drag.shares) |s| try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), s, 1e-9);
+    // And a further move at the same spot changes nothing.
+    step = try drag.moved(&state, 405);
+    try testing.expect(!step.restacked);
 }
 
 test "divider: past the leading minimum folds the first pane" {
     var state = PaneStackState.init(testing.allocator);
     defer state.deinit();
-    // The divider after the second pane, in a split spanning the whole row.
-    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 2, 0, past_default);
+    // The divider after the second pane, dragged toward the start.
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 2, 0);
     defer drag.deinit(&state);
-    const step = try drag.dividerMoved(&state, 540, 1000, 600, 300);
-    try testing.expect(step.squeezed);
+    const step = try drag.moved(&state, 500);
+    try testing.expect(!step.all_shown);
     try testing.expect(layout.Pin.eql(.{ .start = 1, .count = 2 }, state.pin(&key_3)));
 }
 
-test "divider: a squeezed row keeps the sizes that put the grip under the pointer" {
+test "divider: a folded row's shares put the gutter under the pointer" {
     var state = PaneStackState.init(testing.allocator);
     defer state.deinit();
-    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0, past_default);
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0);
     defer drag.deinit(&state);
-    _ = try drag.dividerMoved(&state, 460, 1000, 300, 600);
+    _ = try drag.moved(&state, 700);
     const shares = state.sharesFor(&key_3) orelse return error.TestExpectedShares;
     try testing.expectEqual(@as(usize, 2), shares.len);
-    var sum: f64 = 0;
-    for (shares) |s| sum += s;
-    try testing.expectApproxEqAbs(@as(f64, 1), sum, 1e-9);
+    // a gets 695 of the 695 + 469 the run holds.
+    try testing.expectApproxEqAbs(@as(f64, 695.0 / (695.0 + 469.0)), shares[0], 1e-9);
 }
 
-test "divider: the drag starts from the collapse the row already had, and returns to it" {
+test "grip between cards: resizes the pair, folds on its far side, and never brings strips out" {
     var state = PaneStackState.init(testing.allocator);
     defer state.deinit();
-    try state.restack(rowOf3(), .{ .collapse = .leading }, 1);
-    const before = state.pin(&key_3);
-    try testing.expect(before != null);
-    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0, past_default);
-    defer drag.deinit(&state);
-    _ = try drag.dividerMoved(&state, 460, 1000, 300, 600);
-    _ = try drag.dividerMoved(&state, 380, 1000, 300, 600);
-    try testing.expect(layout.Pin.eql(before, state.pin(&key_3)));
-}
-
-test "grip between cards: resizes the pair, then folds past a minimum and back" {
-    var state = PaneStackState.init(testing.allocator);
-    defer state.deinit();
-    // A stack showing two of three cards, the grip between them.
-    const row: Row = .{
-        .items = &items_3,
-        .run = .{ .lo = 1, .hi = 2 },
-        .sizes = &.{ 400, 400 },
-        .start = 0,
-        .extent = 856,
-        .minimums = &.{ 300, 300, 300 },
-        .gap = 10,
-        .peek = 36,
-    };
-    var drag = try RowDrag.begin(testing.allocator, &state, row, 2, 46 + 405, past_default);
+    // a | b on show, c a strip, across 1164 (a and b 554 each).
+    var row = rowOf3();
+    row.run = .{ .lo = 0, .hi = 1 };
+    row.sizes = &.{ 554, 554 };
+    row.extent = 1164;
+    try state.show(row, row.run, row.sizes);
+    // The grip between a and b sits at 559.
+    var drag = try RowDrag.begin(testing.allocator, &state, row, 1, 559);
     defer drag.deinit(&state);
 
-    var step = try drag.gripMoved(&state, .{ .between = 0 }, 50, 300);
-    try testing.expect(!step.squeezed);
-    const shares = state.sharesFor(&key_3) orelse return error.TestExpectedShares;
-    try testing.expectApproxEqAbs(@as(f64, 450.0 / 800.0), shares[0], 1e-9);
+    var step = try drag.moved(&state, -100);
+    try testing.expect(!step.all_shown and !step.restacked);
+    var shares = state.sharesFor(&key_3) orelse return error.TestExpectedShares;
+    try testing.expectApproxEqAbs(@as(f64, 454.0 / 1108.0), shares[0], 1e-9);
 
-    // The trailing card well under its minimum: it folds.
-    step = try drag.gripMoved(&state, .{ .between = 0 }, 160, 300);
-    try testing.expect(step.squeezed and step.restacked);
+    // Dragged toward the start, a folds; c stays a strip however far.
+    step = try drag.moved(&state, -559);
+    try testing.expect(step.restacked);
     try testing.expect(layout.Pin.eql(.{ .start = 1, .count = 1 }, state.pin(&key_3)));
 
-    // Back where both fit: the row as the drag found it.
-    step = try drag.gripMoved(&state, .{ .between = 0 }, 0, 300);
-    try testing.expect(!step.squeezed and step.restored);
-    try testing.expect(state.pin(&key_3) == null);
+    // Back: as the drag found it.
+    step = try drag.moved(&state, 0);
+    try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 2 }, state.pin(&key_3)));
+    shares = state.sharesFor(&key_3) orelse return error.TestExpectedShares;
+    try testing.expectApproxEqAbs(@as(f64, 0.5), shares[0], 1e-9);
 }
 
-test "grip at the run's edge: pulled outward past the distance brings a strip back, and in again puts it away" {
+test "grip at the run's edge: pulled out brings the strip out alone, the other side giving way" {
     var state = PaneStackState.init(testing.allocator);
     defer state.deinit();
+    // a | b on show, c a strip at the end: the grip at the run's trailing
+    // edge (boundary 2, at 1164 - 46 + 5).
     var row = rowOf3();
-    try state.restack(row, .{ .collapse = .trailing }, 1);
     row.run = .{ .lo = 0, .hi = 1 };
-    row.sizes = &.{ 450, 450 };
-    var drag = try RowDrag.begin(testing.allocator, &state, row, 0, 0, past_default);
+    row.sizes = &.{ 554, 554 };
+    row.extent = 1164;
+    try state.show(row, row.run, row.sizes);
+    const at = 1164.0 - 46.0 + 5.0;
+    var drag = try RowDrag.begin(testing.allocator, &state, row, 2, at);
     defer drag.deinit(&state);
 
-    var step = try drag.gripMoved(&state, .{ .expand = .trailing }, 20, 300);
-    try testing.expect(!step.restacked);
-    try testing.expect(state.pin(&key_3) != null);
-
-    step = try drag.gripMoved(&state, .{ .expand = .trailing }, 60, 300);
-    try testing.expect(step.restacked);
+    // Pulled in to where c fits at its minimum (859): c comes out, a and b
+    // give way.
+    var step = try drag.moved(&state, 859 - at);
+    try testing.expect(step.all_shown and step.restacked);
     try testing.expect(state.pin(&key_3) == null);
 
-    step = try drag.gripMoved(&state, .{ .expand = .trailing }, 10, 300);
-    try testing.expect(step.restored);
+    // Back to the edge: c a strip again, the row as it was.
+    step = try drag.moved(&state, 0);
+    try testing.expect(step.restacked);
     try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 2 }, state.pin(&key_3)));
+}
+
+test "a row stacked for want of room, let go where it was pressed, stays unpinned" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    // a | b on show and c a strip because the window is narrow, collapsed by
+    // nobody: no pin.
+    var row = rowOf3();
+    row.run = .{ .lo = 0, .hi = 1 };
+    row.sizes = &.{ 554, 554 };
+    row.extent = 1164;
+    var drag = try RowDrag.begin(testing.allocator, &state, row, 1, 559);
+    defer drag.deinit(&state);
+    _ = try drag.moved(&state, -400);
+    try testing.expect(state.pin(&key_3) != null);
+    _ = try drag.moved(&state, 0);
+    try testing.expect(state.pin(&key_3) == null);
+    try testing.expect(state.sharesFor(&key_3) == null);
 }
 
 test "focus: the caret leaves a pane that folded, for the nearest one on show" {
     var state = PaneStackState.init(testing.allocator);
     defer state.deinit();
     state.noteFocus(3);
-    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0, past_default);
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0);
     defer drag.deinit(&state);
-    _ = try drag.dividerMoved(&state, 460, 1000, 300, 600);
+    _ = try drag.moved(&state, 700);
     try testing.expectEqual(@as(?Id, 2), drag.focusAfterRestack(&state, 3));
     // A pane still on show keeps it.
     try testing.expectEqual(@as(?Id, null), drag.focusAfterRestack(&state, 1));

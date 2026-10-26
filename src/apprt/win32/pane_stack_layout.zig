@@ -141,11 +141,6 @@ pub const Metrics = struct {
     /// strip and a few columns of what is in it.
     pub const default_peek: f64 = 36;
 
-    /// How far past a pane's minimum a divider must be dragged before the pane
-    /// tucks behind its neighbours instead (and how far a stack grip must be
-    /// dragged to do the same, or to bring one back).
-    pub const restack_distance: f64 = 48;
-
     /// Below this a tucked card can no longer be hit; past it a window too
     /// small for even one pane plus strips lets the front panes shrink.
     pub const minimum_peek: f64 = 8;
@@ -376,149 +371,237 @@ pub const Pin = struct {
     }
 };
 
-/// What a drag on a divider or a grip between cards has squeezed out of its
-/// row: `count` items on show on `side` of it, outermost first.
-pub const Squeeze = struct {
-    side: Side,
-    count: usize,
+/// What a gutter of `row` dragged to `position` (the gutter's centre, from
+/// the row's start) makes of the row: any gutter - a divider, a grip between
+/// cards on show, a grip where the run meets its strips. Mac
+/// `PaneLayout.dragged` (a81db68f9).
+///
+/// The items before the gutter get the space from the row's start to it, the
+/// items after it the rest. Each side shows as many of its items as fit at
+/// their minimums - nearest the gutter first, and never more than it had on
+/// show when the drag began (`start_sizes`: each item's size then, null for a
+/// strip), or one if it had none - and the others are strips at the row's
+/// edge on that side; a side with no room for even one is all strips, the
+/// gutter at their edge, the other side taking the rest. The item beside the
+/// gutter takes up the slack; the others keep their sizes until the space
+/// runs out, and then give way nearest first.
+///
+/// So a drag only collapses panes and brings out at most one: dragging a
+/// gutter one way tucks the panes on that side away one after another while
+/// the panes on the other side grow - its strips stay strips - and a strip
+/// pulled out by its gutter comes out alone, the other side giving way.
+/// Dragging back undoes exactly that: the row is a function of where the
+/// gutter is, never of how it got there. Caller frees the sizes.
+pub fn dragged(gpa: Allocator, row: Row, boundary: usize, position: f64, start_sizes: []const ?f64) Allocator.Error!Dragged {
+    const n = row.items.len;
+    if (boundary == 0 or boundary >= n) return .{ .run = row.run, .sizes = try gpa.dupe(f64, row.sizes) };
+    const G = struct {
+        row: Row,
+        start_sizes: []const ?f64,
+        boundary: usize,
 
-    /// The pin this makes of `row` (as the drag found it).
-    pub fn pin(s: Squeeze, row: Row) ?Pin {
-        var run = row.run;
-        var p: ?Pin = null;
-        for (0..s.count) |_| {
-            p = Pin.restacking(run, row.items.len, .{ .collapse = s.side });
-            const got = p orelse break;
-            run = .{ .lo = got.start, .hi = got.start + got.count - 1 };
+        fn step(g: @This()) f64 {
+            return g.row.peek + g.row.gap;
         }
-        return p;
-    }
-
-    /// The run of `row` with this squeezed out of it.
-    pub fn runOf(s: Squeeze, row: Row) Range {
-        return if (s.side == .trailing)
-            .{ .lo = row.run.lo, .hi = row.run.hi - s.count }
-        else
-            .{ .lo = row.run.lo + s.count, .hi = row.run.hi };
-    }
-};
-
-/// How a drag already squeezing `row` carries on, with its pointer at `x`
-/// (from the row's start; the centre of the gutter the grip is in) and
-/// `boundary` the row index of the first item after the grip: the chain. Once
-/// the first item has tucked away (`current`), the next item on show on the
-/// squeezed side tucks away in its turn once the pointer is `past` beyond its
-/// minimum — until nothing on that side is left on show. Coming back, each one
-/// returns once there is room for it again at its minimum, last tucked first.
-/// Never below one: the first item's return is the drag's own.
-pub fn chain(row: Row, boundary: usize, x: f64, current: Squeeze, past: f64) Squeeze {
-    const step = row.peek + row.gap;
-    const max_count: usize = if (current.side == .trailing)
-        row.run.hi + 1 - boundary
-    else
-        boundary - row.run.lo;
-    const Fit = struct { room: f64, need: f64, shown: usize };
-    const fit = struct {
-        fn f(r: Row, b: usize, side: Side, k: usize, px: f64, st: f64) Fit {
-            const run = (Squeeze{ .side = side, .count = k }).runOf(r);
-            var need: f64 = 0;
+        fn minimum(g: @This(), i: usize) f64 {
+            return if (i < g.row.minimums.len) g.row.minimums[i] else 0;
+        }
+        fn start(g: @This(), i: usize) ?f64 {
+            return if (i < g.start_sizes.len) g.start_sizes[i] else null;
+        }
+        /// How many items lie on `side` of the gutter.
+        fn len(g: @This(), side: Side) usize {
+            return if (side == .leading) g.boundary else g.row.items.len - g.boundary;
+        }
+        /// The row index of the `j`th item on `side`, nearest the gutter first.
+        fn at(g: @This(), side: Side, j: usize) usize {
+            return if (side == .leading) g.boundary - 1 - j else g.boundary + j;
+        }
+        /// The extent the first `k` of `side` need on show, the rest of it as
+        /// strips.
+        fn need(g: @This(), side: Side, k: usize) f64 {
+            const count: f64 = @floatFromInt(g.len(side));
+            if (k == 0) return g.step() * count - g.row.gap;
+            var total: f64 = 0;
+            for (0..k) |j| total += g.minimum(g.at(side, j));
+            const kf: f64 = @floatFromInt(k);
+            return total + g.row.gap * (kf - 1) + g.step() * (count - kf);
+        }
+        /// A drag only collapses panes, and brings out at most one: a side
+        /// shows no more than it had on show when the drag began - or, all
+        /// strips then, the one pane beside the gutter, pulled out.
+        fn most(g: @This(), side: Side) usize {
             var shown: usize = 0;
-            var i = run.lo;
-            while (i <= run.hi) : (i += 1) {
-                const on_side = if (side == .trailing) i >= b else i < b;
-                if (!on_side) continue;
-                shown += 1;
-                if (i < r.minimums.len) need += r.minimums[i];
+            for (0..g.len(side)) |j| {
+                if (g.start(g.at(side, j)) != null) shown += 1;
             }
-            if (shown > 1) need += @as(f64, @floatFromInt(shown - 1)) * r.gap;
-            const nn = r.items.len;
-            const room = if (side == .trailing)
-                r.extent - @as(f64, @floatFromInt(nn - 1 - run.hi)) * st - px - r.gap / 2
-            else
-                px - r.gap / 2 - @as(f64, @floatFromInt(run.lo)) * st;
-            return .{ .room = room, .need = need, .shown = shown };
+            return @max(1, shown);
         }
-    }.f;
-    var k: usize = @max(1, @min(current.count, max_count));
-    while (k < max_count) {
-        const f = fit(row, boundary, current.side, k, x, step);
-        if (!(f.shown > 0 and f.room < f.need - past)) break;
-        k += 1;
+        /// How many of `side` fit on show in `space`.
+        fn fits(g: @This(), side: Side, space: f64) usize {
+            var count: usize = 0;
+            while (count < g.most(side) and g.need(side, count + 1) <= space) count += 1;
+            return count;
+        }
+        /// One side, in `space`: what is on show, at what size, into `out`.
+        fn fill(g: @This(), side: Side, space: f64, out: []?f64) void {
+            const count = g.fits(side, space);
+            if (count == 0) return;
+            const strips: f64 = @floatFromInt(g.len(side) - count);
+            const gaps: f64 = @floatFromInt(count - 1);
+            const cards = space - g.step() * strips - g.row.gap * gaps;
+            var rest: f64 = 0;
+            for (1..count) |j| {
+                const i = g.at(side, j);
+                const size = @max(g.start(i) orelse g.minimum(i), g.minimum(i));
+                out[i] = size;
+                rest += size;
+            }
+            const first = g.at(side, 0);
+            var deficit = g.minimum(first) - (cards - rest);
+            for (1..count) |j| {
+                if (!(deficit > 0)) break;
+                const i = g.at(side, j);
+                const give = @min(deficit, out[i].? - g.minimum(i));
+                out[i].? -= give;
+                rest -= give;
+                deficit -= give;
+            }
+            out[first] = cards - rest;
+        }
+    };
+    const g: G = .{ .row = row, .start_sizes = start_sizes, .boundary = boundary };
+
+    // Each side's extent: up to the gutter - or, a side that is all strips,
+    // just its strips, the other side taking the rest.
+    var left = position - row.gap / 2;
+    var right = row.extent - position - row.gap / 2;
+    if (g.fits(.leading, left) == 0) {
+        left = g.need(.leading, 0);
+        right = row.extent - left - row.gap;
+    } else if (g.fits(.trailing, right) == 0) {
+        right = g.need(.trailing, 0);
+        left = row.extent - right - row.gap;
     }
-    while (k > 1) {
-        const back = fit(row, boundary, current.side, k - 1, x, step);
-        if (!(back.room >= back.need)) break;
-        k -= 1;
-    }
-    return .{ .side = current.side, .count = k };
+
+    const sized = try gpa.alloc(?f64, n);
+    defer gpa.free(sized);
+    @memset(sized, null);
+    g.fill(.leading, left, sized);
+    g.fill(.trailing, right, sized);
+    var lo: ?usize = null;
+    var hi: usize = 0;
+    for (sized, 0..) |s, i| if (s != null) {
+        if (lo == null) lo = i;
+        hi = i;
+    };
+    const first = lo orelse return .{ .run = row.run, .sizes = try gpa.dupe(f64, row.sizes) };
+    const sizes = try gpa.alloc(f64, hi + 1 - first);
+    for (sizes, first..) |*s, i| s.* = sized[i] orelse g.minimum(i);
+    return .{ .run = .{ .lo = first, .hi = hi }, .sizes = sizes };
 }
 
-/// The run's slot sizes, as shares, that put the grip under the pointer at
-/// `x` while `squeeze` is squeezed out of `row`: each side of it keeps the
-/// proportions the drag found it with, and no item goes under its minimum.
-/// Caller frees.
-pub fn squeezedShares(gpa: Allocator, row: Row, boundary: usize, squeeze: Squeeze, x: f64) Allocator.Error![]f64 {
-    const n = row.items.len;
-    const step = row.peek + row.gap;
-    const run = squeeze.runOf(row);
-    const run_start = @as(f64, @floatFromInt(run.lo)) * step;
-    const run_end = row.extent - @as(f64, @floatFromInt(n - 1 - run.hi)) * step;
-    const H = struct {
-        fn size(r: Row, i: usize) f64 {
-            if (i < r.run.lo) return 1;
-            const k = i - r.run.lo;
-            return if (k < r.sizes.len) r.sizes[k] else 1;
+/// What `dragged` makes of a row.
+pub const Dragged = struct {
+    /// The items on show; the rest are strips.
+    run: Range,
+    /// The extent of each item of `run`, in order. The caller's to free.
+    sizes: []f64,
+};
+
+/// One split of a row, with the ratio that sizes it (`settingRow`).
+pub const RowRatio = struct {
+    /// An index into the input nodes.
+    node: u32,
+    ratio: f64,
+};
+
+/// The splits of the row of `items` (each item's leaf ids, in order) along
+/// `d` within the tree at `root`, each with the ratio that gives every item
+/// its share of `shares` (one per item) - or, `shares` null, the ratio it has
+/// now. Null when the tree holds no such row. Caller frees. Mac
+/// `SplitTree.settingRow` (a81db68f9): how a gutter drag that leaves the whole
+/// row on show sizes it, through the tree's ratios rather than a collapse.
+pub fn settingRow(gpa: Allocator, nodes: []const Node, root: u32, d: Direction, items: []const []const Id, shares: ?[]const f64) Allocator.Error!?[]RowRatio {
+    if (shares) |s| if (s.len != items.len) return null;
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const T = struct {
+        nodes: []const Node,
+        d: Direction,
+
+        fn along(t: @This(), node: u32) ?Node.Split {
+            if (node >= t.nodes.len) return null;
+            return switch (t.nodes[node]) {
+                .split => |s| if (s.direction == t.d) s else null,
+                .leaf => null,
+            };
         }
-        fn minimum(r: Row, i: usize) f64 {
-            return if (i < r.minimums.len) r.minimums[i] else 0;
-        }
-        fn fill(a: Allocator, r: Row, lo: usize, hi_excl: usize, space: f64, out: []f64) Allocator.Error!void {
-            const cnt = hi_excl - lo;
-            if (cnt == 0) return;
-            const wanted = try a.alloc(f64, cnt);
-            defer a.free(wanted);
-            const mins = try a.alloc(f64, cnt);
-            defer a.free(mins);
-            var floor_total: f64 = 0;
-            for (0..cnt) |j| {
-                wanted[j] = size(r, lo + j);
-                mins[j] = minimum(r, lo + j);
-                floor_total += mins[j];
+        fn leaves(t: @This(), al: Allocator, node: u32, out: *std.ArrayListUnmanaged(Id)) Allocator.Error!void {
+            if (node >= t.nodes.len) return;
+            switch (t.nodes[node]) {
+                .leaf => |id| try out.append(al, id),
+                .split => |s| {
+                    try t.leaves(al, s.left, out);
+                    try t.leaves(al, s.right, out);
+                },
             }
-            const available = space - @as(f64, @floatFromInt(cnt - 1)) * r.gap;
-            waterFillInto(wanted, mins, @max(available, floor_total), out);
         }
-        fn floorOf(r: Row, lo: usize, hi_excl: usize) f64 {
-            var t: f64 = 0;
-            for (lo..hi_excl) |i| t += minimum(r, i);
-            const cnt = hi_excl - lo;
-            if (cnt > 0) t += @as(f64, @floatFromInt(cnt - 1)) * r.gap;
-            return t;
+        fn rowItems(t: @This(), al: Allocator, node: u32, out: *std.ArrayListUnmanaged([]const Id)) Allocator.Error!void {
+            if (t.along(node)) |s| {
+                try t.rowItems(al, s.left, out);
+                try t.rowItems(al, s.right, out);
+                return;
+            }
+            var ids: std.ArrayListUnmanaged(Id) = .empty;
+            try t.leaves(al, node, &ids);
+            try out.append(al, ids.items);
+        }
+        fn itemCount(t: @This(), node: u32) usize {
+            const s = t.along(node) orelse return 1;
+            return t.itemCount(s.left) + t.itemCount(s.right);
+        }
+        fn heads(t: @This(), al: Allocator, node: u32, want: []const []const Id) Allocator.Error!bool {
+            if (t.along(node) == null) return false;
+            var got: std.ArrayListUnmanaged([]const Id) = .empty;
+            try t.rowItems(al, node, &got);
+            if (got.items.len != want.len) return false;
+            for (got.items, want) |x, y| if (!std.mem.eql(Id, x, y)) return false;
+            return true;
+        }
+        fn find(t: @This(), al: Allocator, node: u32, want: []const []const Id) Allocator.Error!?u32 {
+            if (node >= t.nodes.len) return null;
+            if (try t.heads(al, node, want)) return node;
+            const s = switch (t.nodes[node]) {
+                .split => |s| s,
+                .leaf => return null,
+            };
+            return (try t.find(al, s.left, want)) orelse try t.find(al, s.right, want);
+        }
+        fn sized(t: @This(), al: Allocator, node: u32, part: ?[]const f64, out: *std.ArrayListUnmanaged(RowRatio)) Allocator.Error!void {
+            const s = t.along(node) orelse return;
+            const count = t.itemCount(s.left);
+            var ratio = s.ratio;
+            var split: usize = 0;
+            if (part) |p| {
+                split = @min(count, p.len);
+                var total: f64 = 0;
+                for (p) |v| total += v;
+                var lead: f64 = 0;
+                for (p[0..split]) |v| lead += v;
+                if (total > 0) ratio = lead / total;
+            }
+            try out.append(al, .{ .node = node, .ratio = ratio });
+            try t.sized(al, s.left, if (part) |p| p[0..split] else null, out);
+            try t.sized(al, s.right, if (part) |p| p[split..] else null, out);
         }
     };
-    const total_count = run.count();
-    const sizes = try gpa.alloc(f64, total_count);
-    errdefer gpa.free(sizes);
-    // Items of the run before and after the boundary.
-    const split_at = std.math.clamp(boundary, run.lo, run.hi + 1);
-    const before_n = split_at - run.lo;
-    const after_n = run.hi + 1 - split_at;
-    const total = run_end - run_start;
-    if (before_n == 0 or after_n == 0) {
-        try H.fill(gpa, row, run.lo, run.hi + 1, total, sizes);
-    } else {
-        const after_floor = H.floorOf(row, split_at, run.hi + 1);
-        const before_floor = H.floorOf(row, run.lo, split_at);
-        const split = @min(@max(x - row.gap / 2 - run_start, before_floor), total - row.gap - after_floor);
-        try H.fill(gpa, row, run.lo, split_at, split, sizes[0..before_n]);
-        try H.fill(gpa, row, split_at, run.hi + 1, total - split - row.gap, sizes[before_n..]);
-    }
-    var sum: f64 = 0;
-    for (sizes) |s| sum += s;
-    if (sum > 0) for (sizes) |*s| {
-        s.* /= sum;
-    };
-    return sizes;
+    const t: T = .{ .nodes = nodes, .d = d };
+    const head = (try t.find(a, root, items)) orelse return null;
+    var out: std.ArrayListUnmanaged(RowRatio) = .empty;
+    try t.sized(a, head, shares, &out);
+    return try gpa.dupe(RowRatio, out.items);
 }
 
 /// Distribute `available` in proportion to `wanted`, giving no item less than
@@ -1188,8 +1271,11 @@ const Engine = struct {
         try e.result.stacks.append(e.a, .{ .frame = rect, .direction = d, .items = item_ids, .run = run, .fits = fits });
 
         // Grips, on a stack that shows: in the gutters between the cards on
-        // show, and in the gutter where a run the user narrowed meets its
-        // strips, when there is room to widen it.
+        // show, and in the gutter where the run meets its strips - whether
+        // the user collapsed the row or it stacked for want of room, and with
+        // room to widen it or not: without, pulling it brings the strip out
+        // and the other side gives way (`dragged`). It used to be no grip at
+        // all there, a gutter that could not be taken (Mac a81db68f9).
         if (tucked) return;
         const card_mins = try e.a.alloc(f64, n);
         @memset(card_mins, card);
@@ -1223,8 +1309,7 @@ const Engine = struct {
                 .gutter = gutter.at(slot.start(k + 1) - gap),
             });
         }
-        const room_for_one_more = needed.at(count + 1) <= extent;
-        if (pin != null and room_for_one_more) {
+        {
             if (run.lo > 0) try e.result.stack_handles.append(e.a, .{
                 .row = shown,
                 .direction = d,
@@ -1830,7 +1915,7 @@ fn hasKind(r: *const Result, kind: StackHandle.Kind) bool {
     return false;
 }
 
-test "pane_stack_layout: grips sit between cards and at a widenable edge" {
+test "pane_stack_layout: grips sit between cards and at every edge of the run" {
     var t: TestTree = .{};
     defer t.deinit();
     const root = try t.row(3, .horizontal);
@@ -1843,11 +1928,17 @@ test "pane_stack_layout: grips sit between cards and at a widenable edge" {
         try testing.expect(!hasKind(&r, .{ .expand = .leading }));
     }
     {
-        // Too narrow for a third card: nothing to widen into.
+        // Too narrow for a third card: the edge is a grip all the same
+        // (pulling it brings the strip out, the other side giving way), and
+        // so it is on a row that stacked for want of room, collapsed by
+        // nobody (Mac a81db68f9).
         var r = try testLayout(&t, root, 700, 600, &p);
         defer r.deinit();
-        try testing.expect(!hasKind(&r, .{ .expand = .trailing }));
-        try testing.expect(!hasKind(&r, .{ .expand = .leading }));
+        try testing.expect(hasKind(&r, .{ .expand = .trailing }));
+        const unpinned: TestProvider = .{};
+        var u = try testLayout(&t, root, 700, 600, &unpinned);
+        defer u.deinit();
+        try testing.expect(hasKind(&u, .{ .expand = .trailing }) or hasKind(&u, .{ .expand = .leading }));
     }
 }
 
@@ -1888,44 +1979,128 @@ const three_across: Row = .{
     .gap = 10,
     .peek = 36,
 };
+const all_400 = [_]?f64{ 400, 400, 400 };
 
-test "pane_stack_layout: a drag goes on squeezing one pane after another" {
-    const row = three_across;
-    const first: Squeeze = .{ .side = .trailing, .count = 1 };
-    // c tucked: the run is a b and the strip. b needs 300 between the pointer
-    // and the run's end (1174).
-    try testing.expectEqual(first, chain(row, 1, 700, first, 48));
-    // 48 past b's minimum, b tucks too: a is all that is on show.
-    try testing.expectEqual(@as(usize, 2), chain(row, 1, 1174 - 5 - 300 + 49, first, 48).count);
-    // And no further: the run never empties.
-    try testing.expectEqual(@as(usize, 2), chain(row, 1, 1210, first, 48).count);
-    // Back: b returns once it fits again at its minimum.
-    const both: Squeeze = .{ .side = .trailing, .count = 2 };
-    try testing.expectEqual(both, chain(row, 1, 1174 - 5 - 300 + 10, both, 48));
-    try testing.expectEqual(first, chain(row, 1, 1174 - 5 - 300, both, 48));
-    // The first one's return is the drag's own (never below one here).
-    try testing.expectEqual(first, chain(row, 1, 100, first, 48));
+fn expectDragged(want_lo: usize, want_hi: usize, want: []const f64, got: Dragged) !void {
+    defer testing.allocator.free(got.sizes);
+    try testing.expectEqual(want_lo, got.run.lo);
+    try testing.expectEqual(want_hi, got.run.hi);
+    try testing.expectEqual(want.len, got.sizes.len);
+    for (want, got.sizes) |w, g| try testing.expectApproxEqAbs(w, g, 1e-9);
 }
 
-test "pane_stack_layout: a drag goes on squeezing toward the leading side too" {
-    const row = three_across;
-    const first: Squeeze = .{ .side = .leading, .count = 1 };
-    try testing.expectEqual(first, chain(row, 2, 600, first, 48));
-    try testing.expectEqual(@as(usize, 2), chain(row, 2, 46 + 5 + 300 - 49, first, 48).count);
-    try testing.expect(Pin.eql(.{ .start = 2, .count = 1 }, (Squeeze{ .side = .leading, .count = 2 }).pin(row)));
+test "pane_stack_layout: a gutter dragged resizes the two beside it first" {
+    // The gutter between a and b (at 405) to 455: a grows by 50, b gives it
+    // up, c keeps its size.
+    try expectDragged(0, 2, &.{ 450, 350, 400 }, try dragged(testing.allocator, three_across, 1, 455, &all_400));
 }
 
-test "pane_stack_layout: a squeezed row's grip follows the pointer" {
-    const row = three_across;
-    const squeeze: Squeeze = .{ .side = .trailing, .count = 1 };
-    const shares = try squeezedShares(testing.allocator, row, 1, squeeze, 700);
-    defer testing.allocator.free(shares);
-    try testing.expectEqual(@as(usize, 2), shares.len);
-    try testing.expectApproxEqAbs(@as(f64, 700 - 5), shares[0] * (1174 - 10), 0.5);
-    // Never under a minimum: past b's, b stays at it.
-    const pinned = try squeezedShares(testing.allocator, row, 1, squeeze, 1100);
-    defer testing.allocator.free(pinned);
-    try testing.expectApproxEqAbs(@as(f64, 300), pinned[1] * 1164, 0.5);
+test "pane_stack_layout: a gutter dragged on tucks panes away one after another" {
+    const gpa = testing.allocator;
+    // b gives way first; past its minimum c gives way to its own, then -
+    // there being no room for both at their minimums - c tucks away (a strip
+    // of 36 and its gutter at the end), then b.
+    try expectDragged(0, 2, &.{ 495, 305, 400 }, try dragged(gpa, three_across, 1, 500, &all_400));
+    try expectDragged(0, 1, &.{ 695, 1220 - 700 - 5 - 46 }, try dragged(gpa, three_across, 1, 700, &all_400));
+    // b still fits, at 415 with c's strip.
+    const two = try dragged(gpa, three_across, 1, 800, &all_400);
+    defer gpa.free(two.sizes);
+    try testing.expectEqual(@as(usize, 1), two.run.hi);
+    // At the edge b too: its side is all strips, a has the rest.
+    try expectDragged(0, 0, &.{1220 - 82 - 10}, try dragged(gpa, three_across, 1, 1210, &all_400));
+    // The row never empties: a cannot tuck from this gutter too.
+    const zero = try dragged(gpa, three_across, 1, 0, &all_400);
+    defer gpa.free(zero.sizes);
+    try testing.expect(zero.run.count() >= 1);
+}
+
+const four_items = [_][]const Id{ &.{1}, &.{2}, &.{3}, &.{4} };
+
+test "pane_stack_layout: a gutter dragged never brings strips out on its other side" {
+    const gpa = testing.allocator;
+    // a b on show, c d strips: the gutter between a and b dragged left tucks
+    // a away and grows b; c and d stay strips however far it goes.
+    const row: Row = .{
+        .items = &four_items,
+        .run = .{ .lo = 0, .hi = 1 },
+        .sizes = &.{ 554, 554 },
+        .extent = 1210,
+        .minimums = &.{ 300, 300, 300, 300 },
+        .gap = 10,
+        .peek = 36,
+    };
+    const sizes = [_]?f64{ 554, 554, null, null };
+    const same = try dragged(gpa, row, 1, 559, &sizes);
+    defer gpa.free(same.sizes);
+    try testing.expectEqual(Range{ .lo = 0, .hi = 1 }, same.run);
+    const left = try dragged(gpa, row, 1, 305, &sizes);
+    defer gpa.free(left.sizes);
+    try testing.expectEqual(Range{ .lo = 0, .hi = 1 }, left.run);
+    try testing.expect(left.sizes[1] > 554);
+    const edge = try dragged(gpa, row, 1, 0, &sizes);
+    defer gpa.free(edge.sizes);
+    try testing.expectEqual(Range{ .lo = 1, .hi = 1 }, edge.run);
+}
+
+test "pane_stack_layout: a strip pulled out brings out its pane alone" {
+    const gpa = testing.allocator;
+    // s0 s1 strips, a b on show: the grip between s1 and a pulled far right
+    // brings out s1 alone - s0 behind it stays a strip - and the panes on the
+    // other side tuck away to make room.
+    const row: Row = .{
+        .items = &four_items,
+        .run = .{ .lo = 2, .hi = 3 },
+        .sizes = &.{ 554, 554 },
+        .extent = 1210,
+        .minimums = &.{ 300, 300, 300, 300 },
+        .gap = 10,
+        .peek = 36,
+    };
+    const sizes = [_]?f64{ null, null, 554, 554 };
+    const pulled = try dragged(gpa, row, 2, 700, &sizes);
+    defer gpa.free(pulled.sizes);
+    try testing.expectEqual(Range{ .lo = 1, .hi = 2 }, pulled.run);
+    try testing.expectApproxEqAbs(@as(f64, 700 - 5 - 46), pulled.sizes[0], 0.001);
+    const far = try dragged(gpa, row, 2, 1200, &sizes);
+    defer gpa.free(far.sizes);
+    try testing.expectEqual(Range{ .lo = 1, .hi = 1 }, far.run);
+}
+
+test "pane_stack_layout: a gutter dragged back puts the row back exactly" {
+    const gpa = testing.allocator;
+    const there = try dragged(gpa, three_across, 1, 1000, &all_400);
+    defer gpa.free(there.sizes);
+    try testing.expect(there.run.count() != 3);
+    try expectDragged(0, 2, &.{ 400, 400, 400 }, try dragged(gpa, three_across, 1, 405, &all_400));
+}
+
+test "pane_stack_layout: settingRow sizes every split of the row, and finds it nested" {
+    const gpa = testing.allocator;
+    // A column over a row a | (b | c): the row's two splits are 2 and 4.
+    const nodes = [_]Node{
+        .{ .split = .{ .direction = .vertical, .ratio = 0.5, .left = 1, .right = 2 } },
+        .{ .leaf = 9 },
+        .{ .split = .{ .direction = .horizontal, .ratio = 0.5, .left = 3, .right = 4 } },
+        .{ .leaf = 1 },
+        .{ .split = .{ .direction = .horizontal, .ratio = 0.5, .left = 5, .right = 6 } },
+        .{ .leaf = 2 },
+        .{ .leaf = 3 },
+    };
+    const set = (try settingRow(gpa, &nodes, 0, .horizontal, &three_items, &.{ 450, 350, 400 })) orelse
+        return error.TestExpectedRow;
+    defer gpa.free(set);
+    try testing.expectEqual(@as(usize, 2), set.len);
+    try testing.expectEqual(@as(u32, 2), set[0].node);
+    try testing.expectApproxEqAbs(@as(f64, 450.0 / 1200.0), set[0].ratio, 1e-9);
+    try testing.expectEqual(@as(u32, 4), set[1].node);
+    try testing.expectApproxEqAbs(@as(f64, 350.0 / 750.0), set[1].ratio, 1e-9);
+    // Null shares: the ratios as they are.
+    const now = (try settingRow(gpa, &nodes, 0, .horizontal, &three_items, null)) orelse
+        return error.TestExpectedRow;
+    defer gpa.free(now);
+    try testing.expectApproxEqAbs(@as(f64, 0.5), now[0].ratio, 1e-9);
+    // No such row: null.
+    try testing.expect((try settingRow(gpa, &nodes, 0, .vertical, &three_items, null)) == null);
 }
 
 test "pane_stack_layout: a window too small for the collapsed run shows its focused part" {

@@ -511,7 +511,8 @@ fn expectNoResizerIn(g: *const Grid, r: PxRect, step: i32) !void {
 
 test "pane_stack_grid: T2125 every resizer answers in its gutter and nowhere else" {
     // a | b | c | d in the flat style at 2x, narrow enough to stack: two
-    // cards on show with a grip between them, two strips. Then roomy, with
+    // cards on show with a grip between them and one at the run's edge, two
+    // strips. Then roomy, with
     // three dividers.
     var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 }, .{ .id = 4 } };
     const n = rowOfFour(&v);
@@ -542,9 +543,11 @@ test "pane_stack_grid: T2125 every resizer answers in its gutter and nowhere els
             resizers += 1;
         }
         if (g.result.stacks.items.len == 1) {
-            // One grip, between the two cards on show.
-            try testing.expectEqual(@as(usize, 1), resizers);
-            try testing.expectEqual(@as(usize, 1), g.result.stack_handles.items.len);
+            // Two grips: between the two cards on show, and where the run
+            // meets its strips (every edge of the run is one since T2263,
+            // Mac a81db68f9).
+            try testing.expectEqual(@as(usize, 2), resizers);
+            try testing.expectEqual(@as(usize, 2), g.result.stack_handles.items.len);
             // Strips get gutters too: the same 6 DIP between the two strips.
             const t3 = g.placement(3).?.tab.?;
             const t4 = g.placement(4).?.tab.?;
