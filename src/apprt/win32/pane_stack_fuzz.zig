@@ -744,7 +744,7 @@ fn checkWindow(f: *Fuzz) Fail!void {
         for (r.stack_handles.items) |h| try checkGutter(f, h.gutter, shown, kv.key_ptr.*);
         // Nothing on show is under its minimum width (there is always room
         // for at least one card: 700 DIP).
-        if (!l.is_tucked and l.frame.w < 299 * f.scale)
+        if (!l.is_tucked and l.frame.w < (layout.Metrics.default_minimum_width - 1) * f.scale)
             return f.fail("{d} is {d} wide", .{ kv.key_ptr.*, l.frame.w });
     }
 }

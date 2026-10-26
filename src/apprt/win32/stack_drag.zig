@@ -151,16 +151,31 @@ pub const RowDrag = struct {
         if (p.count == 0) return null;
         const target = std.math.clamp(index, p.start, p.start + p.count - 1);
         if (target == index) return null;
+        // A pane folded into a strip of a stack nested in the item (a column
+        // whose own row is collapsed) is no place for the caret, however
+        // recently it had it: prefer one on show there (T2284).
         var best: ?Id = null;
         var best_rank: u32 = std.math.maxInt(u32);
+        var best_shown = false;
         for (self.row.items[target]) |id| {
             const r = state.rank(id) orelse std.math.maxInt(u32);
-            if (best == null or r < best_rank) {
+            const shown = self.shownInItem(state, id);
+            if (best == null or (shown and !best_shown) or (shown == best_shown and r < best_rank)) {
                 best = id;
                 best_rank = r;
+                best_shown = shown;
             }
         }
         return best;
+    }
+
+    /// Whether `id` was on show at the last layout, or folded only in this
+    /// drag's own row (whose item it is in is coming on show).
+    fn shownInItem(self: *const RowDrag, state: *const PaneStackState, id: Id) bool {
+        const st = state.stackMinimizing(id) orelse return true;
+        if (st.items.len != self.row.items.len) return false;
+        for (st.items, self.row.items) |x, y| if (!std.mem.eql(Id, x, y)) return false;
+        return true;
     }
 };
 
@@ -369,4 +384,24 @@ test "focus: the caret leaves a pane that folded, for the nearest one on show" {
     try testing.expectEqual(@as(?Id, 2), drag.focusAfterRestack(&state, 3));
     // A pane still on show keeps it.
     try testing.expectEqual(@as(?Id, null), drag.focusAfterRestack(&state, 1));
+}
+
+test "focus: T2284 the caret goes to the pane on show in a column, not one folded in its own stack" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    // a | (b over d, d folded into a strip of that column's own stack) | c:
+    // d had the caret more recently than b, then c had it.
+    const items = [_][]const Id{ &.{1}, &.{ 2, 4 }, &.{3} };
+    const nested = [_][]const Id{ &.{2}, &.{4} };
+    try state.noteStacks(&.{.{ .frame = .{ .x = 0, .y = 0, .w = 400, .h = 600 }, .direction = .vertical, .items = &nested, .run = .{ .lo = 0, .hi = 0 } }});
+    state.noteFocus(2);
+    state.noteFocus(4);
+    state.noteFocus(3);
+    var row = rowOf3();
+    row.items = &items;
+    var drag = try RowDrag.begin(testing.allocator, &state, row, 1, 0);
+    defer drag.deinit(&state);
+    _ = try drag.moved(&state, 700);
+    // c folded; the column is nearest, and b is what shows of it.
+    try testing.expectEqual(@as(?Id, 2), drag.focusAfterRestack(&state, 3));
 }
