@@ -1589,15 +1589,39 @@ A per-window list of **every pane in the window**, into which a pane can be
 `docs/design/pane-sidebar.md` (it records the alternatives and the choices
 the interactive mock settled).
 
-- **Pinned** (pin button, or drag the edge out) = a flat edge-to-edge panel the
-  grid sits beside. **Unpinned** = the raised glass card collapsed to a 68pt
-  **mini rail** of tiles that opens to full width while the pointer is over it.
-  Dragging a pinned panel's edge only resizes it (min/max, never unpins).
-  The hover-open card FLOATS over the grid — the column never widens on hover,
-  so no terminal resizes; only pin/unpin change the column. A window narrower
-  than 720pt shows the rail even when pinned. **Ctrl+Cmd+S** hides/shows the
-  sidebar entirely.
-- A row (and a rail tile's monogram) names its pane the way a stacked strip
+- Two modes, **collapsed ⇄ expanded**, switched by ONE button at the top of
+  the bar (`setPaneSidebarExpanded`). Both are ONE raised glass card, in the
+  same margins (the grid's gutters), with the same top and height —
+  **collapsed** at the 44pt rail's width (one-letter tiles), **expanded** at
+  the panel's width (full rows) — and every row is one height
+  (`PaneSidebarRow.height`), so a pane's icon sits at the same height in both
+  (`iconsStayAtTheSameHeightExpandedOrCollapsed`). (Expanded used to be a flat
+  edge-to-edge panel, its rows a different height.) **No pin, no hover-open**: hovering the rail
+  opens nothing, because the rail is where its tiles are dragged.
+  **Collapse/expand glides**: the grid's cards glide over to their new places
+  (`PaneStackState.noteColumnShift` → `PaneStageView.apply` seeds the glide
+  from where they were on screen), each terminal held at its size and resized
+  once after the motion, while the sidebar's width animates on the same curve
+  and rail and panel crossfade (`PaneSidebarState.columnAnimation`). It used to
+  snap. **The edge grip is the gutter beside the sidebar in both modes**
+  (`PaneSidebarState.edgeGrip`: the grid's margin, elevated; the rail card's
+  own margin, flat) — never over the rail, where its bar used to sit on the
+  tiles. Dragging it resizes the panel; pulling the rail's gutter past the
+  panel's minimum (180) brings the panel out at that width, and pushing the
+  panel well under it (< 120) tucks it back into the rail, both ways within one
+  drag (`PaneSidebarState.edgeDrag`; between the two it stops at its minimum).
+  **The sidebar is a row's first item in a divider drag**: in a row spanning
+  the grid, a gutter pushed left past every pane it has tucked away tucks the
+  expanded sidebar into its rail as a pane tucks at its minimum
+  (`BaseTerminalController.sidebarAwareRow`, after `dividerTuckGive` —
+  24–80pt), and dragged back in the same drag brings it out; tucked, the row
+  measures the room it gained. Every mode change is logged at `.notice` with
+  its cause (category `PaneSidebar`) — it must never change on its own.
+  Only collapse/expand and hide/show change the column, so nothing else
+  resizes a terminal. A window narrower than 720pt shows the rail even when
+  expanded (its expand button is off). **Ctrl+Cmd+S** hides/shows the sidebar
+  entirely.
+- A row (and a rail tile) names its pane the way a stacked strip
   does: the **banner's title** when it has one, else the pane's title
   (`PaneView.displayLabel`; see Stacked panes). The subtitle is then the
   working directory — a titled banner's first line IS the title, so showing
@@ -1605,17 +1629,75 @@ the interactive mock settled).
   has no title. The all-windows search still matches the pane's own title.
   The all-windows **window** names are not affected: they group by window
   title (`<project>: <worktree>`), which a pane banner has no say in.
-- Rows: grid panes (focused one selected), then **STASHED**. Click focuses /
-  restores to the exact slot it left; **Option-click** swaps a stashed pane with
-  the focused one; drag a pane's grab handle onto the list to stash it, a row
-  into the grid to place it (ONE resolver: `PaneDropTarget.stash` /
-  `.joinWindow`). Hover offers only stash (−) / restore (↩). **There are no
-  close buttons** except in **trash mode** (header trash button): a red × on
-  every row that kills with no confirmation and no undo window; Escape leaves
-  it. Right-click → Close Pane is the ordinary confirmed close.
-- Activity: a **busy** pane's icon shimmers (no spinner, no glow); `needs_input`
-  shows a **question** badge — the human label, never the machine token. Both
-  animate on **Core Animation**, never an endless SwiftUI animation, which
+  **A rail tile is its row with the text taken away**: the same pill (hover
+  wash, the accent selection), the same kind glyph at the same place — the
+  rail card is exactly that pill (`railCardWidth` = 52) — so collapsing or
+  expanding moves no icon, either way. The glyph is in the pane's own hue
+  (`PaneSidebarHue`: golden-ratio steps along its tree position; light and
+  soft on a dark theme, deeper on a light one, for contrast), a touch quieter
+  unless its pane is focused or hovered. **Hovering a row or tile tints its
+  pane in that hue** — a wash and a rim on the pane's card
+  (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim), in over
+  0.12s, out over 0.2s — so the sidebar says which pane an icon is. (Earlier
+  takes — one letter per tile, then glass tiles tinted whole — made the two
+  modes look like two different things.)
+- Rows: grid panes (focused one selected), then — **right after the last of
+  them**, under a divider, in the same scrolling list — the **tray** of
+  stashed panes. (It was first anchored at the bottom of the bar, far from the
+  panes it is for.) A drag slides the list, the tray's header and the tray as
+  one sequence, so a row crossing into the tray moves the divider with it
+  (`PaneSidebarView.slideIndices`). An empty tray is still a visible target: a faint
+  dashed well with a tray glyph ("Drag a pane here to stash it" when
+  expanded), lit in the accent while a drag would land in it. Click focuses /
+  restores to the exact slot it
+  left; **Option-click** swaps a stashed pane with the focused one. Hover
+  offers only stash (−) / restore (↩).
+- **Drag to reorder, in both modes.** A drag over the sidebar resolves to one
+  of two lists, split at the tray's divider (`PaneDropCandidate.Sidebar.trayTop`):
+  above it `PaneDropTarget.sidebarOrder` — a grid pane moves in the LIST ONLY
+  (the grid never changes), a stashed pane is restored into it, another
+  window's pane joins this window there; below it `.stash`. Any pane — a row,
+  a tile, a grid pane's grab handle — goes into the tray to stash and out to
+  restore; a row into the grid places it as before. ONE resolver, ONE drag
+  (`PaneDragSession`), no parallel drop path. **A row dragged in the list
+  only ever rearranges** (`PaneDragSession.isListDrag`): the pointer is held
+  to its own sidebar before resolving, so letting go beside the bar, over the
+  grid or past the window, is the place in the list (or tray) level with the
+  pointer — it used to resolve as a grid move, or `.newWindow`, which took
+  the pane out of the window. A pane's grab handle still drops anywhere.
+  **The row itself follows the
+  pointer — up and down only, never sideways, kept inside the bar** — not a
+  drag image (`PaneSidebarRowDrag`: the row's drag source draws no preview and
+  feeds the pointer's travel; `PaneSidebarView.ghost` draws the row there,
+  lifted, over a solid backing). Let go, it glides to where it landed. The
+  others **slide by its height** to make room (`PaneSidebarOrder.shift`, a
+  bounded 0.2s animation, none at the drop). The index is read off the rows
+  as LAID OUT: each row's frame is measured by a background attached OUTSIDE
+  its slide offset (`rowFrameReader`) — a reader inside an `.offset` moves
+  with it, and the index then chased the sliding rows (a row slid into the
+  gap reported the gap's place). The order is per window (`PaneSidebarState.order`,
+  reconciled by `PaneSidebarOrder.arranged`): a new pane goes after its tree
+  neighbour (a split lands beside its parent), a stashed pane keeps its place
+  for when it comes back, closed panes are pruned, and empty means tree
+  order. Tests: `PaneSidebarOrderTests`, `PaneDropResolverSidebarTests`,
+  `dragReordersTheListAndTheTrayStashesAndRestores` (both modes). Hovering an
+  expanded row offers −/↩ (stash/restore) and **×**, the ordinary close
+  (`closePaneFromSidebar`, as right-click → Close Pane: confirmation when
+  something runs or the pane is remote, and undo). **There is no trash mode**
+  any more (its unconfirmed, unundoable kill went with its header button).
+  The **collapse/expand button is the header's first item**, centered on the
+  rail's width (`PaneSidebarView.toggleLeading`), so it does not move when
+  toggled.
+- Activity: a **busy** pane's row — or tile — sheens: a faint upright band
+  of light (25%) sweeps across its pill from right to left every 2s
+  (`PaneSidebarTileSheenLayer`, Core Animation; travel in `PaneSidebarSheen`),
+  starting and ending fully off it. No spinner, no glow, no glyph shimmer. **Busy is `PaneView.isWorking`**: the hook-set activity
+  state OR a progress report on screen (OSC 9;4 — what animates the pane's
+  border, `SurfaceBusyBorder`), so an icon animates whenever its pane's border
+  does (it read only the activity state, and the two disagreed). **The sidebar
+  shows no question state** — no badge on a row, a tile or a window header:
+  it did not work reliably, and was removed. Both animations run on **Core
+  Animation**, never an endless SwiftUI animation, which
   re-renders the whole sidebar every frame (measured: ~90% of the main thread
   at rest with 40 windows; `PaneSidebarAnimationLayers.swift`).
 - **All-windows** header toggle (off by default) groups every window's panes.
@@ -1640,8 +1722,12 @@ the interactive mock settled).
   to the 800×600 placeholder (49×17) — even when stashed at launch — and
   restoring it is not a reflow. Tested in `PaneSidebarWindowTests`.
 - Persisted: the stash (manifest per-leaf `stashIndex`; `SplitTree` coding for
-  AppKit restoration) and the pinned/hidden flags. Hover-open, trash mode and
-  the all-windows scope are never persisted.
+  AppKit restoration), the expanded/hidden flags and the list's order
+  (`paneSidebarOrder`, by pane id). The expanded flag is stored under its
+  pre-rename name `paneSidebarPinned` (UserDefaults: `PaneSidebarExpanded`,
+  falling back to `PaneSidebarPinned`) — pinned WAS the full panel, so old
+  state decodes as expanded/collapsed unchanged. The all-windows scope is
+  never persisted.
 - Keybinds (macOS defaults): `toggle_pane_sidebar` Ctrl+Cmd+S, `stash_pane`
   Shift+Cmd+M, `restore_stashed_pane` (unbound); Window menu items for all three.
 
@@ -1651,7 +1737,7 @@ the interactive mock settled).
 rounded cards (11pt radius, a soft two-layer shadow, a hairline rim) on a soft
 blue-to-teal **ocean** gradient. ONE spacing, 10pt, is every gutter: pane to
 pane (the gaps are still the dividers), pane to window edge, and around the
-mini rail (which takes no trailing margin of its own — the grid's is that gap).
+rail (which takes no trailing margin of its own — the grid's is that gap).
 **A window opened by hand (Cmd-N, the New Window menu item / palette
 command) gets a random gradient by default**, exactly as
 **`+new-window --color=random`** does — in this style that gives the window its OWN
@@ -1668,7 +1754,7 @@ gutters are where the resize grips live (see Stacked panes → Resizers live in
 the gutters) — and its panes stack like any other. Geometry and palette live once in
 `PaneElevation`/`PaneDesk`/`PaneCard` (`Features/Splits/PaneElevation.swift`),
 which the grid AND the hidden stashed-pane slots both use — the slots must lay
-out exactly like the grid or a restored pane would reflow. The pinned pane
+out exactly like the grid or a restored pane would reflow. The expanded pane
 sidebar goes translucent so the gradient runs under it.
 **Glass panes** (`macos-pane-glass`, default `true`, elevated only): each pane
 is a translucent sheet tinted 40% with the terminal's own background (Liquid
@@ -1677,8 +1763,7 @@ and shade read through every pane. The renderer stops drawing the terminal's
 background (`generic.zig` `pane_glass`, the same switch the `macos-glass-*`
 blur styles use), the banner strip skips its base fill and the **banner card is
 a pane of glass of its own, layered on top** — the pane's sheet thins out
-under the card (`PaneGlass.bannerTint`, 25% against the focused pane's 40%, never
-below an unfocused pane's 15%; the card publishes its frame up to `PaneCard` as
+under the card (`PaneGlass.bannerTint`, 25% against the pane's 40%; the card publishes its frame up to `PaneCard` as
 `PaneBannerCardKey`), and the card itself is rim and drop shadow only, no white
 wash and no sheen (`SurfacePaneBanner.isGlass`): a white lift over glass greyed
 the gradient into a flat slab ~17 levels lighter than the pane, and a second
@@ -1691,9 +1776,11 @@ titlebar window turns on `.fullSizeContentView` and `titlebarAppearsTransparent`
 (macOS 26 otherwise backs it with a material), and the desk sits behind the
 whole content stack. Any `.background(Color)` in that stack must pass
 `ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the titlebar
-(the debug-build warning did). The unpinned sidebar's card is the same tinted glass
-(`SidePanelCard(isGlass:)`) instead of an opaque slab. On glass the sidebar header is no band of its
-own (the list starts below it), the pinned panel's edge is a pane-rim hairline,
+(the debug-build warning did). The sidebar's card, in both modes, is an
+**unfocused pane's card** (`PaneSidebarCard` → `PaneCard`): the same corner radius, hairline
+rim, glass sheet and shadow as the panes beside it (it was the viewer side panel's glass card —
+rounder, a specular rim, a thinner sheet — and did not match). On glass the sidebar header is no band of its
+own (the list starts below it),
 and the sidebar's glyphs are the mock's icon set drawn natively
 (`PaneSidebarSymbol`), not SF Symbols. Folding a window or project group animates. In the elevated style the
 **focused pane** (of several) reads as **backlit**: a soft white light behind the
@@ -1701,22 +1788,15 @@ card spills past its edges onto the desk (masked to outside the card, so it neve
 lightens the pane's own glass) — a subtle outer glow only, nothing inside the
 pane (`PaneFocusGlow`, driven by
 `PaneView.isFocusedPane`; `PaneFocusGlowTests`).
-**On glass, an unfocused pane is the MORE see-through one.** Its sheet's tint
-drops from `PaneGlass.tint` (40%) to `PaneGlass.unfocusedTint` (15%), and an
-unfocused **terminal** also fades as a whole — its content (text included) and
-its sheet, each at `unfocused-split-opacity` (default 0.7) — animated with the
-focus change, so the desk reads through every pane but the focused one, which
-stays solid and backlit. A **viewer** gets the thinner sheet only: its page is
-never faded (an HTML pane's especially). Upstream's unfocused dimming — a wash
-of `unfocused-split-fill` (default: the terminal background) at
-`1 - unfocused-split-opacity` drawn OVER the pane — is not drawn on glass: over
-a translucent sheet it made the unfocused panes the more opaque ones.
-`PaneCard.isDimmed` (one of several panes, not the focused one) and
-`PaneCard.dimmedOpacity` (content and sheet fade) are the switches; the fades
-animate opacity ONLY (`FocusFade`) — a strip click changes focus and a card's
-size in one update, and an `.animation(_:value:)` over the card animated the
-frame too, resizing the terminal on every frame of the fade. `flat`, and
-`elevated` without glass, keep the wash and honor both config keys as before.
+**On glass, focus changes only the rim and the glow.** The focused pane's
+hairline rim is lighter (34% white, against 10%) and it is backlit
+(`PaneFocusGlow`); its sheet and its content are exactly those of every other
+pane (`PaneGlass.tint`, 40%), nothing faded. An unfocused pane used to get a
+thinner sheet (15%) and fade its terminal by `unfocused-split-opacity`, so
+focusing a pane read as the pane itself lighting up; that is gone. Upstream's
+unfocused dimming — a wash of `unfocused-split-fill` drawn OVER the pane — is
+still not drawn on glass; `flat`, and `elevated` without glass, keep the wash
+and honor both config keys as before.
 **A stacked row has no solid cards.** A tucked card, on either side of the
 run, is a card of the strip's size (see Stacked panes), so nothing lies under
 a card on show and every card — every strip too — is glass. (Cards used to be drawn whole with most of them under
@@ -1726,7 +1806,7 @@ same glass card — the hero container paints no fill of its own on glass
 (`HeroPaneContainer.isGlass`); it used to fill with the terminal background,
 an opaque slab where every other pane is glass. Measured on the composited window — how
 much of the desk in the gutter beside a pane its glass hides — by
-`unfocusedGlassPanesAreMoreTransparent`, `stackedRowCardsOnShowStayGlass` and
+`glassPanesLookTheSameFocusedOrNot`, `stackedRowCardsOnShowStayGlass` and
 `heroModeIsGlassLikeAFocusedPane` (`PaneSidebarWindowTests`); the layout rule by `noCardIsDrawnOverAnother`
 (`PaneLayoutTests`).
 
@@ -1762,7 +1842,7 @@ pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).
 
 ## Stacked panes
 
-**A pane is never narrower (or shorter) than 300pt.** A row of panes that
+**A pane is never narrower than 225pt, or shorter than 125pt.** A row of panes that
 cannot fit side by side at that minimum becomes a **stack**: as many panes as
 fit stay on show (the **run**), and the rest are **minimized** into strips at
 the edge they live on — the pane's own card at the strip's size (the same
@@ -1863,6 +1943,13 @@ AND the stashed-pane slots, so a restored pane never reflows.
   (`aDividerBesideAColumnWithACollapsedRowResizesIt`). A collapsed row stays
   collapsed with room to spare (a `Pin`). Rows nest (`a | (b / c)` is a row
   whose second item is a column), and each keeps its own collapse.
+- **Double-clicking a divider evens out the panes across it — in its
+  direction only** (`TerminalSplitOperation.equalize`,
+  `SplitTree.equalized(only:)`): a horizontal divider evens the heights and
+  leaves every width as set, and the other way round. It used to run
+  `equalize_splits`, which reset every ratio both ways (a pane made narrow
+  came back wide). `equalize_splits` itself still evens out both. Test:
+  `equalizedInOneDirectionKeepsTheOther`.
 - **What can be dragged says so**: every divider and grip (`DividerHandle`)
   and the edge of a side panel (the pane sidebar's, a viewer's contents —
   `SidePanelResizeHandle`) shows a 4pt accent bar with a soft glow down the
@@ -1896,18 +1983,29 @@ AND the stashed-pane slots, so a restored pane never reflows.
   `theBarStaysInTheGutterAsAStripComesOutAndGoesBack` and
   `theBarStaysInTheGutterAsADividerCollapsesAPaneAndBack` (paced drags
   recorded as the window server composites them: one bar in every frame
-  while held, in the gutter), `thePinnedSidebarResizesFromTheGutterBesideIt`
+  while held, in the gutter), `theExpandedSidebarResizesFromTheGutterBesideIt`
   (stops at the panel's widest).
-- **Resizers live in the gutters**: every card on show and every strip is
-  separated from the next by the same gutter (`Metrics.gap`: 10pt elevated,
-  6pt flat), whatever the run's position — so moving the run never resizes a
-  card. Every resizer takes the mouse in its gutter and nowhere else
+- **Strips are blades**: no gap between two strips (`Metrics.bladeGap` = 0),
+  and a strip that has another between it and the run reaches 12pt under that
+  one (`Metrics.bladeTuck`), its rounded edge out of sight — overlaid bars, not
+  pills touching at their corners; each still shows 36pt, its title centered on
+  what shows (`PaneCardView.titleRect`). Each casts a tight shadow that leans
+  AWAY from the run onto the blade behind it and stops at its own sides, and
+  the shadow follows `collapse`, so it comes on as a card narrows into its
+  strip rather than snapping in when the glide lands. They used to be spaced
+  by a full gutter each.
+- **Resizers live in the gutters**: every card on show is separated from the
+  next by the same gutter (`Metrics.gap`: 10pt elevated, 6pt flat), and so is
+  the run from each group of strips beside it — the grip that pulls a strip
+  back out lives there. A run with strips on both sides has one more such
+  gutter than a run at an end, so its cards are that much narrower there (they
+  take it after the glide, one resize each). Every resizer takes the mouse in its gutter and nowhere else
   (`Divider.gutter`, `StackHandle.gutter`): split dividers, grips between
   cards, the grip where the run meets its strips, and the pane sidebar's edge
-  — pinned, ALL of the gutter between the panel and the panes, and none of
+  — expanded, ALL of the gutter between the panel and the panes, and none of
   the panel (`PaneSidebarState.pinnedEdgeGrip`; it used to straddle the
-  edge, half of it a click on the list; `thePinnedSidebarResizesFromTheGutterBesideIt`);
-  flat, or on the card floating over the grid, just inside its edge. A click just
+  edge, half of it a click on the list; `theExpandedSidebarResizesFromTheGutterBesideIt`);
+  flat, or on the rail card, just inside its edge. A click just
   inside a card's edge is the card's — its grab handle sits at its top edge,
   and a strip is its own drag source. Pinned by
   `everyResizerSitsInAGutter` / `everyResizerOfAStackSitsInAGutter` (real
@@ -1969,7 +2067,7 @@ AND the stashed-pane slots, so a restored pane never reflows.
   focusing one brings it out. (The one way the caret can sit in a strip is to
   have stayed there — the caller of a side pane, above.) Every handoff picks the pane on show nearest
   the candidate (`paneOnShow`, `focusTargetAfterRemoving`): a close, Cmd-W in
-  a viewer, a stash, the sidebar's trash kill, and the window becoming key
+  a viewer, a stash, a close from the sidebar, and the window becoming key
   with nothing focused. And only a pane that **really has the caret** counts
   as focused to a stack (`PaneView.holdsKeyboardFocus`): `focusedPane` falls
   back to the last focused terminal while the caret is elsewhere (a viewer

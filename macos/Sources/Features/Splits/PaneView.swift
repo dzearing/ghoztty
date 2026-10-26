@@ -32,9 +32,20 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
     @Published var isFocusedPane: Bool = false
     @Published private(set) var bell: Bool = false
     @Published private(set) var activityState: Ghostty.ActivityState = .idle
+    /// The terminal is showing a progress report (OSC 9;4) — what draws the
+    /// light circling its border (`SurfaceBusyBorder`) or its progress bar.
+    @Published private(set) var isShowingProgress: Bool = false
     @Published private(set) var paneBanner: String?
     /// The terminal's working directory (nil for a viewer).
     @Published private(set) var pwd: String?
+
+    /// Working, as far as anything that shows it is concerned: its activity
+    /// state says busy (the agent hooks), or it is showing a progress report
+    /// (the program itself — Claude Code reports progress while it works,
+    /// and that is what animates the pane's border). The sidebar's busy
+    /// shimmer and sheen follow this, so an icon animates whenever its pane's
+    /// border does.
+    var isWorking: Bool { activityState == .busy || isShowingProgress }
 
     var surfaceView: Ghostty.SurfaceView? {
         if case .terminal(let view) = content { return view }
@@ -107,6 +118,10 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             view.$title.assign(to: &$title)
             view.$bell.assign(to: &$bell)
             view.$activityState.assign(to: &$activityState)
+            view.$progressReport
+                .map { $0.map { $0.state != .remove } ?? false }
+                .removeDuplicates()
+                .assign(to: &$isShowingProgress)
             view.$paneBanner.assign(to: &$paneBanner)
             view.$pwd.assign(to: &$pwd)
         case .viewer(let view):

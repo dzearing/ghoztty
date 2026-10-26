@@ -13,19 +13,32 @@ struct PaneSidebarView: View {
     @ObservedObject var geometry: PaneSidebarGeometry
     @ObservedObject private var roster = PaneRoster.shared
     @ObservedObject private var dragSession = PaneDragSession.shared
+    @ObservedObject private var rowDrag = PaneSidebarRowDrag.shared
 
-    /// Laid out as the mini rail (tiles) rather than full rows.
+    /// Laid out as the rail (tiles) rather than full rows.
     let isRail: Bool
-    /// The flat pinned panel (vs the raised card).
+    /// The flat expanded panel (vs the raised rail card).
     let isFlat: Bool
+    /// The window is wide enough for the expanded panel (the rail's expand
+    /// button is off otherwise).
+    var canExpand: Bool = true
 
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.paneSidebarInteractive) private var isInteractive
 
     var body: some View {
         content
-            .onPreferenceChange(PaneSidebarRowFrames.self) { geometry.rowFrames = $0 }
+            .overlay(alignment: .topLeading) { ghost }
+            .onPreferenceChange(PaneSidebarRowFrames.self) { frames in
+                geometry.rowFrames = frames
+                if let pane = rowDrag.pane,
+                   let frame = frames.first(where: { $0.id == pane.id })?.frame,
+                   frame != rowDrag.frame {
+                    rowDrag.frame = frame
+                }
+            }
             .onPreferenceChange(PaneSidebarGroupFrames.self) { geometry.groupFrames = $0 }
+            .onPreferenceChange(PaneSidebarTrayFrame.self) { geometry.trayFrame = $0 }
             .font(.system(size: 12))
             .environment(\.paneSidebarEmphasized, controlActiveState == .key)
     }
@@ -36,9 +49,19 @@ struct PaneSidebarView: View {
     @ViewBuilder
     private var content: some View {
         if isRail {
-            // The minimized rail is just its tiles: the header's buttons are
-            // there once it opens (hover) or is pinned.
-            list
+            // The rail is its tiles under one button: expand. The header's
+            // other buttons are there once it is expanded.
+            VStack(spacing: 0) {
+                PaneSidebarHeaderButton(
+                    symbol: .sidebar(expanded: false),
+                    help: canExpand ? "Expand the sidebar" : "Too narrow to expand — widen the window"
+                ) { controller.setPaneSidebarExpanded(true, cause: "rail button") }
+                    .disabled(!canExpand)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, Self.toggleLeading)
+                    .frame(height: 34)
+                list
+            }
         } else if controller.ghostty.config.paneGlass {
             VStack(spacing: 0) {
                 headerContent
@@ -51,16 +74,65 @@ struct PaneSidebarView: View {
         }
     }
 
+    // MARK: Dragged row
+
+    /// The row being dragged, drawn over the list where the pointer has it:
+    /// at its own place, moved only up or down, never sideways, and kept
+    /// inside the bar. Let go, it glides to where it landed. The row in the
+    /// list leaves its gap meanwhile (`PaneSidebarShift.isLifted`).
+    @ViewBuilder
+    private var ghost: some View {
+        if let pane = rowDrag.pane, let frame = rowDrag.frame,
+           controller.surfaceTree.contains(where: { $0 === pane }) {
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .named(PaneSidebarGeometry.space)).origin
+                let top = rowDrag.isSettling ? frame.minY : frame.minY + rowDrag.dy
+                let y = Swift.min(Swift.max(top - origin.y, 0), Swift.max(0, proxy.size.height - frame.height))
+                PaneSidebarRow(
+                    pane: pane, owner: controller,
+                    isStashed: controller.surfaceTree.isStashed(pane),
+                    isSelected: pane === controller.publishedFocusedPane,
+                    isForeign: false, isRail: isRail, isBeingDragged: false)
+                    .environment(\.paneSidebarInteractive, false)
+                    .frame(width: frame.width, height: frame.height)
+                    // Solid under the glass while it is held, so it reads as
+                    // on top of the rows it passes rather than mixed with them.
+                    .background {
+                        RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+                            .fill(Color(nsColor: .windowBackgroundColor).opacity(rowDrag.isSettling ? 0 : 0.92))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+                                    .fill(Color.primary.opacity(rowDrag.isSettling ? 0 : 0.06)))
+                            .padding(.horizontal, SidePanelRow.fillInset)
+                            .padding(.vertical, 0.5)
+                    }
+                    .scaleEffect(rowDrag.isSettling ? 1 : 1.04)
+                    .shadow(color: .black.opacity(rowDrag.isSettling ? 0 : 0.3), radius: 6, y: 3)
+                    .offset(x: frame.minX - origin.x, y: y)
+                    .animation(rowDrag.isSettling ? PaneSidebarRowDrag.settleAnimation : nil, value: y)
+                    .animation(PaneSidebarRowDrag.settleAnimation, value: rowDrag.isSettling)
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
     // MARK: Header
 
     private var headerContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 2) {
-                caption
+                // The collapse button first, where the rail's expand button
+                // is: centered on the rail's width, so toggling never moves
+                // it (`toggleLeading`).
+                PaneSidebarHeaderButton(
+                    symbol: .sidebar(expanded: true),
+                    help: "Collapse the sidebar to icons"
+                ) { controller.setPaneSidebarExpanded(false, cause: "header button") }
+                caption.padding(.leading, 4)
                 Spacer(minLength: 4)
                 headerButtons
             }
-            .padding(.leading, SidePanelRow.labelInset)
+            .padding(.leading, Self.toggleLeading)
             .padding(.trailing, 6)
             .frame(height: 34)
             // All windows is the "find that pane" view, so it brings a
@@ -73,18 +145,12 @@ struct PaneSidebarView: View {
     }
 
     private var caption: some View {
-        Group {
-            if state.isQuickKill {
-                SidePanelCaption(text: "Click × to kill", color: Color(nsColor: .systemRed))
-            } else {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    SidePanelCaption(text: state.showsAllWindows ? "All windows" : "Panes")
-                    if state.showsAllWindows {
-                        // How many WINDOWS, styled as a project header's count.
-                        PaneSidebarCount(value: allControllers.count)
-                            .accessibilityLabel("\(allControllers.count) windows")
-                    }
-                }
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            SidePanelCaption(text: state.showsAllWindows ? "All windows" : "Panes")
+            if state.showsAllWindows {
+                // How many WINDOWS, styled as a project header's count.
+                PaneSidebarCount(value: allControllers.count)
+                    .accessibilityLabel("\(allControllers.count) windows")
             }
         }
     }
@@ -97,22 +163,11 @@ struct PaneSidebarView: View {
         ) {
             withAnimation(PaneSidebarOutline.scopeAnimation) { state.showsAllWindows.toggle() }
         }
-
-        PaneSidebarHeaderButton(
-            symbol: .trash(filled: state.isQuickKill),
-            tint: state.isQuickKill ? Color(nsColor: .systemRed) : nil,
-            help: state.isQuickKill
-                ? "Done killing panes (Esc)"
-                : "Quick close — kill panes with one click, no confirmation"
-        ) { state.isQuickKill.toggle() }
-
-        PaneSidebarHeaderButton(
-            symbol: .pin(filled: state.isPinned),
-            // Unpinned the pin lies tilted; pinned it stands upright.
-            rotation: state.isPinned ? 0 : 45,
-            help: state.isPinned ? "Unpin — collapse to icons" : "Pin — keep the sidebar open"
-        ) { controller.togglePaneSidebarPin() }
     }
+
+    /// The collapse/expand button's leading inset: centered on the rail card,
+    /// in both modes, so it stays put when toggled.
+    static let toggleLeading: CGFloat = (PaneSidebarState.railCardWidth - 24) / 2
 
     // MARK: List
 
@@ -137,6 +192,34 @@ struct PaneSidebarView: View {
 
     @ViewBuilder
     private var scrollingList: some View {
+        if state.showsAllWindows {
+            scrollingWindows
+        } else {
+            thisWindowList
+        }
+    }
+
+    /// This window: its panes, then — right after the last of them, under a
+    /// divider — the tray of stashed panes, in one scrolling list. Two lists,
+    /// and a drag moves a pane within either or across: into the tray
+    /// stashes it, out restores. (The tray was first anchored at the bottom
+    /// of the bar, which left it far from the panes it is for.)
+    @ViewBuilder
+    private var thisWindowList: some View {
+        let content = VStack(alignment: .leading, spacing: 0) {
+            paneRows(controller, isThisWindow: true, indent: 0)
+            tray(controller, isThisWindow: true, indent: 0)
+        }
+        .padding(.vertical, SidePanelRow.fillInset)
+        if isInteractive {
+            ScrollView(.vertical) { content }
+        } else {
+            content.frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    @ViewBuilder
+    private var scrollingWindows: some View {
         if isInteractive {
             ScrollView(.vertical) {
                 // Lazy only for the pinned (sticky) project headers.
@@ -153,14 +236,7 @@ struct PaneSidebarView: View {
         }
     }
 
-    @ViewBuilder
-    private var listContent: some View {
-        if state.showsAllWindows {
-            allWindows
-        } else {
-            windowSection(controller, isThisWindow: true, indent: 0)
-        }
-    }
+    private var listContent: some View { allWindows }
 
     /// Every terminal window with a sidebar, this one included even before
     /// it is visible.
@@ -255,7 +331,6 @@ struct PaneSidebarView: View {
                     isThisWindow: isThisWindow,
                     indent: indent,
                     isFolded: folded,
-                    isQuickKill: state.isQuickKill,
                     isDropTarget: isJoinTarget(owner),
                     onFold: {
                         withAnimation(PaneSidebarOutline.foldAnimation) {
@@ -293,6 +368,8 @@ struct PaneSidebarView: View {
         }
     }
 
+    /// A window's panes and tray, one after the other: a group of the
+    /// all-windows list.
     @ViewBuilder
     private func windowSection(
         _ owner: BaseTerminalController,
@@ -300,21 +377,92 @@ struct PaneSidebarView: View {
         indent: CGFloat,
         matches: Set<ObjectIdentifier>? = nil
     ) -> some View {
-        let tree = owner.surfaceTree
+        paneRows(owner, isThisWindow: isThisWindow, indent: indent, matches: matches)
+        tray(owner, isThisWindow: isThisWindow, indent: indent, matches: matches)
+    }
+
+    /// A window's grid panes, in the sidebar's order (`PaneSidebarOrder`).
+    @ViewBuilder
+    private func paneRows(
+        _ owner: BaseTerminalController,
+        isThisWindow: Bool,
+        indent: CGFloat,
+        matches: Set<ObjectIdentifier>? = nil
+    ) -> some View {
         let shown = { (pane: PaneView) in matches?.contains(ObjectIdentifier(pane)) ?? true }
-        let visible = tree.visibleLeaves.filter(shown)
-        let stashed = tree.stashedViews.filter(shown)
+        let visible = owner.paneSidebarPanes.filter(shown)
         // Only THIS window has a selection: another window's focus is not
         // focus here, and a highlighted row among its siblings read as a
         // "primary" pane with the others nested under it.
         let focused = isThisWindow ? (owner.publishedFocusedPane ?? visible.first) : nil
+        let drag = isThisWindow ? dragLayout : nil
+        let slide = slideIndices(owner, matches: matches, drag: drag)
 
-        ForEach(visible) { pane in
+        ForEach(Array(visible.enumerated()), id: \.element.id) { index, pane in
             row(pane, owner: owner, isStashed: false,
                 isSelected: pane === focused, isThisWindow: isThisWindow, indent: indent)
+                .modifier(PaneSidebarShift(
+                    rows: slide.map { PaneSidebarOrder.shift(index: index, source: $0.source, target: $0.target) } ?? 0,
+                    height: drag?.height ?? 0,
+                    isLifted: rowDrag.pane === pane || (slide != nil && index == slide?.source),
+                    isDragging: drag != nil))
+                .background { rowFrameReader(pane, isStashed: false, isThisWindow: isThisWindow) }
+        }
+    }
+
+    /// A drag over this window's sidebar as one sequence — the pane list, the
+    /// tray's header (its divider and caption), then the tray — for the
+    /// slide (`PaneSidebarOrder.shift`): where the dragged row is in it, and
+    /// where it would land, of the sequence without it. One sequence, so a
+    /// row crossing from the list into the tray (or back) slides the header
+    /// with the rows between, and the list's last row never runs over the
+    /// divider. Nil when nothing is dragged over this sidebar.
+    private func slideIndices(
+        _ owner: BaseTerminalController,
+        matches: Set<ObjectIdentifier>?,
+        drag: DragLayout?
+    ) -> (source: Int?, target: Int?)? {
+        guard let drag, drag.isOverSidebar else { return nil }
+        let shown = { (pane: PaneView) in matches?.contains(ObjectIdentifier(pane)) ?? true }
+        let visible = owner.paneSidebarPanes.filter(shown)
+        let stashed = owner.surfaceTree.stashedViews.filter(shown)
+        let inList = visible.firstIndex { $0 === drag.pane }
+        let inTray = stashed.firstIndex { $0 === drag.pane }
+        let source = inList ?? inTray.map { visible.count + 1 + $0 }
+        let listCount = visible.count - (inList == nil ? 0 : 1)
+        let target = drag.paneTarget ?? drag.stashTarget.map { listCount + 1 + $0 }
+        return (source, target)
+    }
+
+    /// Where a tray item — `nil` for the header, else a stashed row's index —
+    /// is in `slideIndices`' sequence.
+    private func trayIndex(_ owner: BaseTerminalController, matches: Set<ObjectIdentifier>?, row: Int?) -> Int {
+        let shown = { (pane: PaneView) in matches?.contains(ObjectIdentifier(pane)) ?? true }
+        let listCount = owner.paneSidebarPanes.filter(shown).count
+        return row.map { listCount + 1 + $0 } ?? listCount
+    }
+
+    /// A window's tray: a divider, then its stashed panes. In this window's
+    /// list it is always there (it is a drop target); in another's, only
+    /// when it holds something.
+    @ViewBuilder
+    private func tray(
+        _ owner: BaseTerminalController,
+        isThisWindow: Bool,
+        indent: CGFloat,
+        matches: Set<ObjectIdentifier>? = nil
+    ) -> some View {
+        let shown = { (pane: PaneView) in matches?.contains(ObjectIdentifier(pane)) ?? true }
+        let stashed = owner.surfaceTree.stashedViews.filter(shown)
+        let drag = isThisWindow ? dragLayout : nil
+        let slide = slideIndices(owner, matches: matches, drag: drag)
+        let source = slide?.source.map { $0 - trayIndex(owner, matches: matches, row: 0) }
+        let slides = { (item: Int) in
+            slide.map { PaneSidebarOrder.shift(index: item, source: $0.source, target: $0.target) } ?? 0
         }
 
-        if !stashed.isEmpty || (isThisWindow && dragSession.isDragging && stashed.isEmpty) {
+        if !stashed.isEmpty || (isThisWindow && (dragSession.isDragging || !state.showsAllWindows)) {
+          VStack(alignment: .leading, spacing: 0) {
             PaneSidebarDivider(isRail: isRail, indent: indent)
             if !isRail {
                 HStack(alignment: .firstTextBaseline) {
@@ -329,18 +477,42 @@ struct PaneSidebarView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 5)
             }
+          }
+          // The header slides with the rows (`slideIndices`); its frame is
+          // read outside the slide, as the rows' are.
+          .modifier(PaneSidebarShift(
+              rows: slides(trayIndex(owner, matches: matches, row: nil)),
+              height: drag?.height ?? 0, isLifted: false, isDragging: drag != nil))
+          .background {
+              // Where the tray begins, for the drop geometry: only during a
+              // drag, as for the rows.
+              if drag != nil {
+                  GeometryReader { proxy in
+                      Color.clear.preference(
+                          key: PaneSidebarTrayFrame.self,
+                          value: proxy.frame(in: .named(PaneSidebarGeometry.space)))
+                  }
+              }
+          }
         }
 
-        let caret = isThisWindow ? stashCaretIndex : nil
         ForEach(Array(stashed.enumerated()), id: \.element.id) { index, pane in
-            if caret == index { PaneSidebarCaret(isRail: isRail) }
             row(pane, owner: owner, isStashed: true, isSelected: false,
                 isThisWindow: isThisWindow, indent: indent)
+                .modifier(PaneSidebarShift(
+                    rows: slides(trayIndex(owner, matches: matches, row: index)),
+                    height: drag?.height ?? 0,
+                    isLifted: rowDrag.pane === pane || (slide != nil && index == source),
+                    isDragging: drag != nil))
+                .background { rowFrameReader(pane, isStashed: true, isThisWindow: isThisWindow) }
         }
-        if let caret, caret >= stashed.count, !stashed.isEmpty { PaneSidebarCaret(isRail: isRail) }
 
-        if isThisWindow && stashed.isEmpty && dragSession.isDragging {
-            PaneSidebarEmptyStashSlot(isRail: isRail, isHot: caret != nil)
+        // An empty tray is still somewhere to drop: a slot that says so,
+        // always there in this window's list, lit while a drag would land in
+        // it. It stays put; the rows open the gap above it.
+        if stashed.isEmpty && isThisWindow {
+            PaneSidebarEmptyStashSlot(isRail: isRail, isHot: drag?.stashTarget != nil,
+                                      isDragging: drag != nil)
         }
     }
 
@@ -359,17 +531,26 @@ struct PaneSidebarView: View {
             isSelected: isSelected,
             isForeign: !isThisWindow,
             isRail: isRail,
-            isQuickKill: state.isQuickKill,
             isBeingDragged: dragSession.isDragging(pane),
             indent: indent)
-        .background {
-            // Only during a drag, for the same reason as a group's frame.
-            if dragSession.isDragging && isThisWindow && isStashed {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: PaneSidebarRowFrames.self,
-                        value: [.init(id: pane.id, frame: proxy.frame(in: .named(PaneSidebarGeometry.space)))])
-                }
+
+    }
+
+    /// Reports a row's frame for the drop geometry — only during a drag, for
+    /// the same reason as a group's frame. Attached OUTSIDE the row's slide
+    /// (`PaneSidebarShift`): a background takes its content's layout frame,
+    /// which an offset does not move, where a reader inside the offset moves
+    /// with it. The drop index is read off the rows as laid out, so it never
+    /// moves under the pointer as they slide (read inside, a row sliding into
+    /// the gap reported the gap's place, and the index chased it).
+    @ViewBuilder
+    private func rowFrameReader(_ pane: PaneView, isStashed: Bool, isThisWindow: Bool) -> some View {
+        if (dragSession.isDragging || rowDrag.pane != nil) && isThisWindow {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: PaneSidebarRowFrames.self,
+                    value: [.init(id: pane.id, frame: proxy.frame(in: .named(PaneSidebarGeometry.space)),
+                                  isStashed: isStashed)])
             }
         }
     }
@@ -432,7 +613,6 @@ struct PaneSidebarView: View {
                 text: $state.filter,
                 onSubmit: revealFirstMatch,
                 onFocusChange: { focused in
-                    state.isFilterFocused = focused
                     // The diff filter's yield: a terminal in this window keeps
                     // its `focused` flag while the field has the caret, and its
                     // key handling would eat Cmd-C/V before the field editor
@@ -459,11 +639,38 @@ struct PaneSidebarView: View {
 
     // MARK: Drop feedback
 
-    /// Where the in-flight drag would land in this window's stash, if here.
-    private var stashCaretIndex: Int? {
-        guard case .stash(let window, let index) = dragSession.target,
-              window == PaneDropWindowRef(controller) else { return nil }
-        return index
+    /// The in-flight drag as this window's list draws it: which pane, where
+    /// it would land in either list, and how far the rows slide for it.
+    private struct DragLayout {
+        let pane: PaneView
+        /// Its index in the pane list, if it would land there.
+        let paneTarget: Int?
+        /// Its index in the tray, if it would land there.
+        let stashTarget: Int?
+        /// The dragged row's height: how far every row it passes slides.
+        let height: CGFloat
+
+        /// Released now, it would land in this sidebar: the rows make room.
+        /// Anywhere else they stay put, the dragged row dimmed in place.
+        var isOverSidebar: Bool { paneTarget != nil || stashTarget != nil }
+    }
+
+    private var dragLayout: DragLayout? {
+        guard let pane = dragSession.pane else { return nil }
+        let here = PaneDropWindowRef(controller)
+        var paneTarget: Int?, stashTarget: Int?
+        switch dragSession.target {
+        case .sidebarOrder(let window, let index) where window == here: paneTarget = index
+        case .stash(let window, let index) where window == here: stashTarget = index
+        default: break
+        }
+        // The dragged row's own height, else a row of this list's (a pane
+        // from another window), else a row's usual height.
+        let frames = geometry.rowFrames
+        let height = frames.first { $0.id == pane.id }?.frame.height
+            ?? frames.first?.frame.height
+            ?? (isRail ? 34 : 38)
+        return .init(pane: pane, paneTarget: paneTarget, stashTarget: stashTarget, height: height)
     }
 
     private func isJoinTarget(_ owner: BaseTerminalController) -> Bool {
@@ -476,20 +683,16 @@ struct PaneSidebarView: View {
 
 /// A 24pt borderless glyph button, styled exactly like the viewer nav bar's
 /// chevrons: the `.primary` glyph, no fill; pressing dims it. On/off is read
-/// from the glyph (outline ⇄ filled, tilted ⇄ upright), never from a tint —
-/// the one exception being trash's red, which says "this kills".
+/// from the glyph (outline ⇄ filled), never from a tint.
 struct PaneSidebarHeaderButton: View {
     let symbol: PaneSidebarSymbol
     var tint: Color? = nil
-    var rotation: Double = 0
     let help: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             PaneSidebarSymbolView(symbol: symbol, size: 15)
-                .rotationEffect(.degrees(rotation))
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: rotation)
                 .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
                 .frame(width: 24, height: 24)
                 .contentShape(Rectangle())
@@ -510,7 +713,6 @@ private struct PaneSidebarWindowHeader: View {
     /// Inside a project group: one outline level in.
     var indent: CGFloat = 0
     let isFolded: Bool
-    let isQuickKill: Bool
     let isDropTarget: Bool
     let onFold: () -> Void
 
@@ -547,23 +749,11 @@ private struct PaneSidebarWindowHeader: View {
             }
             Spacer(minLength: 4)
 
-            if hasQuestion {
-                PaneSidebarQuestionBadge(isOnAccent: false)
-            } else {
-                PaneSidebarCount(value: owner.surfaceTree.count)
-            }
-
-            if showsKill {
-                PaneSidebarKillButton(help: "Kill this window now") {
-                    owner.window?.close()
-                }
-            }
+            PaneSidebarCount(value: owner.surfaceTree.count)
         }
         .padding(.vertical, 6)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
-        // With a trailing button, the SAME inset a row's button has, so the
-        // header's × and its panes' ×s line up in one column.
-        .padding(.trailing, showsKill ? PaneSidebarRow.trailingButtonInset : SidePanelRow.textInset)
+        .padding(.trailing, SidePanelRow.textInset)
         .background(
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                 .fill(isHovered && !isThisWindow ? Color.primary.opacity(0.06) : .clear))
@@ -582,12 +772,6 @@ private struct PaneSidebarWindowHeader: View {
         }
         .help(isThisWindow ? "This window" : "Raise this window")
     }
-
-    private var hasQuestion: Bool {
-        owner.surfaceTree.contains { $0.activityState == .needsInput }
-    }
-
-    private var showsKill: Bool { isQuickKill && !isThisWindow }
 }
 
 // MARK: - Project header (all-windows scope)
@@ -675,180 +859,82 @@ struct PaneSidebarCount: View {
     }
 }
 
+/// A hairline between sections — above all, the tray's: the line a pane is
+/// dragged below to stash it, so it must read on glass (at 9% it all but
+/// vanished there).
 struct PaneSidebarDivider: View {
     let isRail: Bool
     var indent: CGFloat = 0
 
     var body: some View {
         Rectangle()
-            .fill(Color.primary.opacity(0.09))
+            .fill(Color.primary.opacity(0.22))
             .frame(height: 1)
-            .padding(.leading, isRail ? 10 : SidePanelRow.labelInset + indent)
-            .padding(.trailing, isRail ? 10 : SidePanelRow.labelInset)
-            .padding(.vertical, isRail ? 5 : 0)
+            .padding(.leading, isRail ? 8 : SidePanelRow.labelInset + indent)
+            .padding(.trailing, isRail ? 8 : SidePanelRow.labelInset)
+            .padding(.vertical, isRail ? 7 : 0)
             .padding(.top, isRail ? 0 : 8)
     }
 }
 
-/// The insertion line where a drop would land in the stash.
-private struct PaneSidebarCaret: View {
-    let isRail: Bool
+/// A row of the sidebar while a pane is dragged over it: slid `rows` rows
+/// of `height` to make room (`PaneSidebarOrder.shift`), or — the dragged row
+/// itself, over the sidebar — lifted out, leaving its gap. The slide is a
+/// short bounded animation, and none at all once the drag ends: the drop
+/// re-lays the list out where the rows were already drawn, so nothing moves.
+private struct PaneSidebarShift: ViewModifier {
+    let rows: Int
+    let height: CGFloat
+    let isLifted: Bool
+    let isDragging: Bool
 
-    var body: some View {
-        HStack(spacing: 0) {
-            Circle()
-                .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2)
-                .frame(width: 8, height: 8)
-            Rectangle()
-                .fill(Color(nsColor: .controlAccentColor))
-                .frame(height: 2)
-        }
-        .frame(height: 8)
-        .padding(.horizontal, isRail ? 6 : SidePanelRow.fillInset + 2)
-        .padding(.vertical, -3)
-        .allowsHitTesting(false)
+    static let animation: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.2)
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isLifted ? 0 : 1)
+            .offset(y: CGFloat(rows) * height)
+            .animation(isDragging ? Self.animation : nil, value: rows)
+            .animation(isDragging ? Self.animation : nil, value: isLifted)
     }
 }
 
-/// While a drag is in flight and nothing is stashed: the target, made visible.
+/// An empty tray: the place to drop a pane to stash it, made visible. Faint
+/// at rest — a dashed well with a tray glyph (and, expanded, what it is for)
+/// — brighter while a pane is dragged, and lit in the accent when the drag
+/// would land in it.
 private struct PaneSidebarEmptyStashSlot: View {
     let isRail: Bool
     let isHot: Bool
+    var isDragging: Bool = false
 
     var body: some View {
         let accent = Color(nsColor: .controlAccentColor)
-        Text(isRail ? "" : "Drop to stash — it keeps running")
-            .font(.system(size: 11))
-            .foregroundStyle(isHot ? AnyShapeStyle(accent) : AnyShapeStyle(.secondary))
-            .frame(maxWidth: .infinity)
-            .frame(height: isRail ? 28 : 40)
-            .background(
-                RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                    .fill(isHot ? accent.opacity(0.08) : .clear))
-            .overlay(
-                RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                    .strokeBorder(isHot ? accent : Color.primary.opacity(0.3),
-                                  style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
-            .padding(.horizontal, isRail ? 6 : SidePanelRow.fillInset)
-            .padding(.vertical, 4)
-            .allowsHitTesting(false)
-    }
-}
-
-/// The `needs_input` badge — the human label, never the machine token.
-struct PaneSidebarQuestionBadge: View {
-    /// On the accent selection pill the badge inverts, or it would vanish.
-    let isOnAccent: Bool
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let accent = Color(nsColor: .controlAccentColor)
-        Text("question")
-            .font(.system(size: 9.5, weight: .semibold))
-            .padding(.horizontal, 6)
-            .frame(height: 15)
-            .foregroundStyle(isOnAccent ? accent : .white)
-            .background(Capsule().fill(isOnAccent ? Color.white : accent))
-            .background {
-                // A soft ring that breathes, so a question in an otherwise
-                // quiet list is the thing that draws the eye. On Core
-                // Animation — see `PaneSidebarShimmerLayer` for why.
-                if !reduceMotion && !isOnAccent {
-                    PaneSidebarPulseRing(color: accent).padding(-1.5)
-                }
+        let ink: AnyShapeStyle = isHot ? AnyShapeStyle(accent)
+            : isDragging ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary)
+        HStack(spacing: 6) {
+            Image(systemName: "tray.and.arrow.down")
+                .font(.system(size: isRail ? 12 : 11, weight: .medium))
+            if !isRail {
+                Text(isDragging ? "Drop to stash — it keeps running" : "Drag a pane here to stash it")
+                    .font(.system(size: 11))
             }
-            .accessibilityLabel("Has a question")
-    }
-}
-
-/// Trash mode's red ×.
-struct PaneSidebarKillButton: View {
-    var size: CGFloat = 18
-    let help: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "xmark")
-                .font(.system(size: size * 0.5, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .background(Circle().fill(Color(nsColor: .systemRed)))
-                .contentShape(Circle())
         }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
-    }
-}
-
-// MARK: - Shimmer
-
-/// A busy pane's icon: the glyph drawn dim, with a brighter band sweeping
-/// across it. The whole busy signal — no spinner, no glow (both were tried
-/// in the design mock and dropped). See `PaneSidebarShimmer` for the timing.
-///
-/// The sweep is a Core Animation layer under a mask of the glyph, drawn once
-/// (`PaneSidebarShimmerLayer` says why it is not SwiftUI). `maskKey` names
-/// the glyph, so the mask is redrawn only when the glyph changes.
-struct PaneSidebarGlyph<Content: View>: View {
-    let isBusy: Bool
-    let color: Color
-    let maskKey: AnyHashable
-    @ViewBuilder let content: Content
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        if isBusy && !reduceMotion {
-            // The glyph only sizes the slot; the layer draws it.
-            content
-                .hidden()
-                .overlay {
-                    PaneSidebarShimmerLayer(color: color, maskKey: maskKey) { size, scale in
-                        let renderer = ImageRenderer(content: content
-                            .foregroundStyle(Color.black)
-                            .frame(width: size.width, height: size.height))
-                        renderer.scale = scale
-                        return renderer.cgImage
-                    }
-                }
-                .accessibilityLabel("Busy")
-        } else {
-            content.foregroundStyle(color)
-        }
-    }
-}
-
-/// The shimmer's timing and geometry, pure so it is testable.
-enum PaneSidebarShimmer {
-    /// One cycle: a sweep, then a short rest before the next.
-    static let period: TimeInterval = 1.4
-    /// The part of the period the band spends moving.
-    static let sweepFraction: Double = 0.8
-    /// The band layer is this many times the glyph's width, so that at either
-    /// end of its travel the bright band is fully off the glyph.
-    static let bandWidthFactor: CGFloat = 3
-    /// The glyph's base under the band. Low enough that the band reads at a
-    /// glance on a 14pt glyph: at 0.62 it swept from 62% to 100% and, at
-    /// that size, looked like no busy indication at all.
-    static let baseOpacity: Double = 0.3
-
-    /// 1 = band parked off the LEADING edge, 0 = off the TRAILING edge; the
-    /// sweep runs 1 → 0 (left to right), eased, then rests at 0.
-    static func bandPosition(at time: TimeInterval) -> Double {
-        let phase = time.truncatingRemainder(dividingBy: period) / period
-        let t = Swift.min(1, phase / sweepFraction)
-        let eased = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2
-        return 1 - eased
-    }
-
-    /// The band layer's x offset for a position, for a glyph `width` wide.
-    /// At 1 the band's bright middle sits half a glyph off the leading edge;
-    /// at 0, half a glyph off the trailing edge.
-    static func offset(position: Double, width: CGFloat) -> CGFloat {
-        -(bandWidthFactor - 1) * width * CGFloat(position)
+        .foregroundStyle(ink)
+        .frame(maxWidth: .infinity)
+        .frame(height: isRail ? 30 : 36)
+        .background(
+            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+                .fill(isHot ? accent.opacity(0.10) : .clear))
+        .overlay(
+            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+                .strokeBorder(isHot ? accent : Color.primary.opacity(isDragging ? 0.3 : 0.14),
+                              style: StrokeStyle(lineWidth: isHot ? 1.5 : 1, dash: [4, 3])))
+        .padding(.horizontal, SidePanelRow.fillInset)
+        .padding(.vertical, 4)
+        .animation(.easeOut(duration: 0.15), value: isHot)
+        .help("Drag a pane here to stash it — out of the grid, still running")
+        .allowsHitTesting(false)
     }
 }
 
@@ -862,17 +948,28 @@ final class PaneSidebarGeometry: ObservableObject {
 
     var rowFrames: [PaneSidebarRowFrames.Entry] = []
     var groupFrames: [PaneSidebarGroupFrames.Entry] = []
+    /// This window's tray divider, during a drag.
+    var trayFrame: CGRect?
 }
 
 struct PaneSidebarRowFrames: PreferenceKey {
     struct Entry: Equatable {
         let id: UUID
         let frame: CGRect
+        /// A tray row (vs a row of the pane list).
+        let isStashed: Bool
     }
 
     static let defaultValue: [Entry] = []
     static func reduce(value: inout [Entry], nextValue: () -> [Entry]) {
         value.append(contentsOf: nextValue())
+    }
+}
+
+struct PaneSidebarTrayFrame: PreferenceKey {
+    static let defaultValue: CGRect? = nil
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = value ?? nextValue()
     }
 }
 

@@ -20,6 +20,10 @@ enum TerminalSplitOperation {
     /// collapses the row; at the run's edge it widens it.
     case stackDrag(StackDrag)
 
+    /// A divider double-clicked: even out the panes across dividers that run
+    /// its way, and only those (`SplitTree.equalized(only:)`).
+    case equalize(SplitTree<PaneView>.Direction)
+
     struct Resize {
         /// The split node whose divider the gesture is on.
         let node: SplitTree<PaneView>.Node
@@ -378,11 +382,11 @@ private struct GridDivider: View {
         send(.moved(position: clamped, dimension: extent))
     }
 
+    /// Double-click: even out the panes across this divider — the splits
+    /// laid out its way — and leave the other direction alone. (It used to
+    /// run `equalize_splits`, which reset every ratio both ways.)
     private func equalize() {
-        // Any terminal surface in the subtree can host the equalize action
-        // (the leftmost leaf may be a viewer pane).
-        guard let surface = divider.node.leaves().compactMap(\.surface).first else { return }
-        ghostty.splitEqualize(surface: surface)
+        action(.equalize(divider.direction == .horizontal ? .horizontal : .vertical))
     }
 }
 
@@ -474,6 +478,13 @@ private struct PaneLeafView: View {
             }
             .frame(width: freeze?.width, height: freeze?.height)
             .opacity(1 - collapse)
+            // The banner's glass (the sheet's thinner patch under its card)
+            // fades with it, and is gone on a strip.
+            .transformPreference(PaneBannerCardKey.self) { card in
+                card = card.map {
+                    PaneBannerCard(bounds: $0.bounds, cornerRadius: $0.cornerRadius, shown: $0.shown * (1 - collapse))
+                }
+            }
         }
         .clipped()
         // The source pane fades for the duration of the drag, so the layout
@@ -483,16 +494,18 @@ private struct PaneLeafView: View {
             PaneDropFeedbackView(paneID: pane.id, isDraggedPane: isBeingDragged)
                 .allowsHitTesting(false)
         }
+        // Its sidebar tile or row is under the pointer: the pane takes its hue.
+        .overlay {
+            PaneSidebarHoverTint(paneID: pane.id,
+                                 cornerRadius: ghostty.config.macosPaneStyle == .elevated ? PaneElevation.cornerRadius : 0)
+                .allowsHitTesting(false)
+        }
         // The elevated style: a raised rounded card on the window's gradient.
         .modifier(PaneCard(
             isElevated: ghostty.config.macosPaneStyle == .elevated,
             isGlass: ghostty.config.paneGlass,
             // Only among siblings: a lone pane has nothing to stand out from.
             isFocused: isSplit && pane.isFocusedPane,
-            isDimmed: isSplit && !pane.isFocusedPane,
-            // A terminal fades as a whole, text included, by the user's
-            // `unfocused-split-opacity`; a viewer's page is left as it is.
-            dimmedOpacity: pane.surfaceView != nil ? 1 - ghostty.config.unfocusedSplitOpacity : 1,
             background: ghostty.config.backgroundColor,
             isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
     }

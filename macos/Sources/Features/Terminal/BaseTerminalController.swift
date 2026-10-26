@@ -127,6 +127,9 @@ class BaseTerminalController: NSWindowController,
         let sizes: [CGFloat?]
         /// The tree as the drag found it (its ratios as laid out on screen).
         let tree: SplitTree<PaneView>
+        /// This drag tucked the pane sidebar into its rail, which widened the
+        /// row by this much (`dragRow`).
+        var tuckedSidebar: CGFloat? = nil
     }
 
     let heroModeState = HeroModeState()
@@ -2176,6 +2179,10 @@ class BaseTerminalController: NSWindowController,
             splitDidRestack(row, change)
         case .stackDrag(let drag):
             splitDidDragStack(drag)
+        case .equalize(let direction):
+            // On screen only, as `equalize_splits`; stashed panes' slots
+            // keep their ratios.
+            surfaceTree = surfaceTree.applyingToVisible { $0.equalized(only: direction) }
         }
     }
 
@@ -2245,8 +2252,12 @@ class BaseTerminalController: NSWindowController,
             rowDrag = nil
             return
         }
+        // The pane sidebar is the row's first item too, when the row spans
+        // the grid: pushed past the panes it has tucked away, it tucks into
+        // its rail as a pane would, and the row has its room.
+        let (row, at) = sidebarAwareRow(drag, at: drag.offset + position)
         let (run, sizes) = PaneLayout.dragged(
-            drag.row, boundary: drag.boundary, at: drag.offset + position, sizes: drag.sizes)
+            row, boundary: drag.boundary, at: at, sizes: drag.sizes)
         paneStackState.show(drag.row, run: run, sizes: sizes)
         if run.count == drag.row.items.count {
             // All on show: the tree's ratios size the row.
@@ -2258,6 +2269,39 @@ class BaseTerminalController: NSWindowController,
             surfaceTree = drag.tree
         }
         keepFocusOnShow(drag.row)
+    }
+
+    /// The sidebar in a gutter drag of a row spanning the grid, left to
+    /// right: once every pane left of the gutter is a strip, pushing past
+    /// them by the sidebar's give (`PaneSidebarState.dividerTuckGive`)
+    /// tucks the expanded sidebar into its rail, and dragging back out past
+    /// that point brings it back — within the drag, both ways, as a pane
+    /// tucks at its minimum. Tucked, the row really is that much wider, so the
+    /// drag measures against it. `position` is in the row as the drag found
+    /// it. Returns the row and position to lay out with.
+    private func sidebarAwareRow(
+        _ drag: RowDrag, at position: CGFloat
+    ) -> (PaneLayout.Row<UUID>, CGFloat) {
+        let spansGrid = drag.direction == .horizontal
+            && Set(drag.row.items.joined()) == Set(surfaceTree.visibleLeaves.map(\.id))
+        if spansGrid, !paneSidebarState.isHidden {
+            let strips = PaneLayout.Metrics.blades(drag.boundary, peek: drag.row.peek)
+            let tuckAt = strips - PaneSidebarState.dividerTuckGive(panelWidth: paneSidebarState.width)
+            let windowWidth = window?.contentView?.bounds.width ?? 0
+            if drag.tuckedSidebar == nil, position < tuckAt,
+               paneSidebarState.mode(windowWidth: windowWidth) == .expanded {
+                let before = paneSidebarColumn
+                setPaneSidebarExpanded(false, cause: "divider drag")
+                rowDrag?.tuckedSidebar = before - paneSidebarColumn
+            } else if drag.tuckedSidebar != nil, position > tuckAt + PaneSidebarState.dividerTuckHysteresis {
+                setPaneSidebarExpanded(true, cause: "divider drag back")
+                rowDrag?.tuckedSidebar = nil
+            }
+        }
+        guard let widened = rowDrag?.tuckedSidebar else { return (drag.row, position) }
+        var row = drag.row
+        row.extent += widened
+        return (row, position + widened)
     }
 
     private func endRowDrag() {

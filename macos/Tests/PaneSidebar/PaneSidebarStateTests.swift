@@ -8,28 +8,41 @@ struct PaneSidebarStateTests {
 
     // MARK: Mode
 
-    @Test func pinnedInAWideWindowIsTheFlatPanel() {
-        #expect(State.mode(isPinned: true, isHidden: false, windowWidth: 1200) == .expanded)
+    @Test func expandedInAWideWindowIsTheFlatPanel() {
+        #expect(State.mode(isExpanded: true, isHidden: false, windowWidth: 1200) == .expanded)
     }
 
-    @Test func unpinnedIsTheMiniRail() {
-        #expect(State.mode(isPinned: false, isHidden: false, windowWidth: 1200) == .mini)
+    @Test func collapsedIsTheRail() {
+        #expect(State.mode(isExpanded: false, isHidden: false, windowWidth: 1200) == .collapsed)
     }
 
-    @Test func aNarrowWindowShowsTheRailEvenWhenPinned() {
-        #expect(State.mode(isPinned: true, isHidden: false, windowWidth: 700) == .mini)
-        #expect(State.mode(isPinned: true, isHidden: false, windowWidth: State.narrowWindowWidth) == .expanded)
+    @Test func aNarrowWindowShowsTheRailEvenWhenExpanded() {
+        #expect(State.mode(isExpanded: true, isHidden: false, windowWidth: 700) == .collapsed)
+        #expect(State.mode(isExpanded: true, isHidden: false, windowWidth: State.narrowWindowWidth) == .expanded)
+        #expect(!State.canExpand(windowWidth: 700), "the rail's expand button is off there")
+        #expect(State.canExpand(windowWidth: State.narrowWindowWidth))
     }
 
     @Test func hiddenWinsOverEverything() {
-        #expect(State.mode(isPinned: true, isHidden: true, windowWidth: 1200) == .hidden)
-        #expect(State.mode(isPinned: false, isHidden: true, windowWidth: 400) == .hidden)
+        #expect(State.mode(isExpanded: true, isHidden: true, windowWidth: 1200) == .hidden)
+        #expect(State.mode(isExpanded: false, isHidden: true, windowWidth: 400) == .hidden)
+    }
+
+    /// The pin became collapse/expand: a stored pin (pinned = the flat full
+    /// panel) reads as expanded, and the new key wins once there is one.
+    @Test func aStoredPinReadsAsExpanded() throws {
+        let defaults = try #require(UserDefaults(suiteName: "PaneSidebarStateTests-\(UUID().uuidString)"))
+        #expect(!State.storedExpanded(defaults), "collapsed by default")
+        defaults.set(true, forKey: "PaneSidebarPinned")
+        #expect(State.storedExpanded(defaults))
+        defaults.set(false, forKey: "PaneSidebarExpanded")
+        #expect(!State.storedExpanded(defaults))
     }
 
     // MARK: Column
 
     @Test func theColumnIsTheRailPlusItsMargins() {
-        #expect(State.columnWidth(for: .mini, panelWidth: 240, elevated: false) == 44 + 2 * GlassCard.outerMargin)
+        #expect(State.columnWidth(for: .collapsed, panelWidth: 240, elevated: false) == State.railCardWidth + 2 * GlassCard.outerMargin)
     }
 
     @Test func elevatedRailSharesItsGapWithTheGrid() {
@@ -40,22 +53,22 @@ struct PaneSidebarStateTests {
         #expect(insets.vertical == PaneElevation.margin, "the rail's ends line up with the panes'")
         #expect(insets.trailing == 0)
         #expect(insets.leading == insets.trailing + PaneElevation.margin, "equal gutters either side")
-        #expect(State.columnWidth(for: .mini, panelWidth: 240, elevated: true) == PaneElevation.margin + 44)
+        #expect(State.columnWidth(for: .collapsed, panelWidth: 240, elevated: true) == PaneElevation.margin + State.railCardWidth)
     }
 
-    @Test func theColumnIsThePanelWhenPinned() {
-        #expect(State.columnWidth(for: .expanded, panelWidth: 260, elevated: true) == 260)
+    @Test func theColumnIsThePanelWhenExpanded() {
+        // The rail's card at the panel's width, in the rail's margins.
+        #expect(State.columnWidth(for: .expanded, panelWidth: 260, elevated: true) == PaneElevation.margin + 260)
+        #expect(State.columnWidth(for: .expanded, panelWidth: 260, elevated: false) == 260 + 2 * GlassCard.outerMargin)
     }
 
     @Test func hiddenTakesNoColumn() {
         #expect(State.columnWidth(for: .hidden, panelWidth: 260, elevated: false) == 0)
     }
 
-    @Test func theColumnDoesNotDependOnHoverOpen() {
-        // The hover-open card floats; there is no input for it to widen the
-        // column with. Stated so a future signature change has to face it.
-        let mini = State.columnWidth(for: .mini, panelWidth: 300, elevated: false)
-        #expect(mini == State.railColumnWidth(elevated: false))
+    @Test func theRailsColumnDoesNotDependOnThePanelWidth() {
+        let rail = State.columnWidth(for: .collapsed, panelWidth: 300, elevated: false)
+        #expect(rail == State.railColumnWidth(elevated: false))
     }
 
     @Test func widthIsClamped() {
@@ -66,6 +79,27 @@ struct PaneSidebarStateTests {
 
     // MARK: Edge drag thresholds agree with the rail and panel sizes
 
+    /// The edge grip pulls the rail out once the panel would fit, and tucks
+    /// the panel back in well under its minimum — with a band between where
+    /// each stays what it is, so the edge does not flicker at one width.
+    @Test func anEdgeDragPullsTheRailOutAndTucksThePanelIn() {
+        #expect(State.edgeDrag(proposed: 100, isExpanded: false) == (false, nil), "short of the panel: still the rail")
+        #expect(State.edgeDrag(proposed: 150, isExpanded: false) == (false, nil))
+        #expect(State.edgeDrag(proposed: 200, isExpanded: false) == (true, 200), "past its minimum: out")
+        #expect(State.edgeDrag(proposed: 9_000, isExpanded: true) == (true, State.maximumWidth))
+        #expect(State.edgeDrag(proposed: 150, isExpanded: true) == (true, State.minimumWidth), "stops at its minimum")
+        #expect(State.edgeDrag(proposed: 100, isExpanded: true) == (false, nil), "well under: tucked in")
+    }
+
+    @MainActor
+    @Test func theRailsGripIsItsGutter() {
+        #expect(State.edgeGrip(for: .collapsed, elevated: true) == (0, PaneElevation.margin))
+        #expect(State.edgeReach(for: .collapsed, elevated: true) == PaneElevation.margin)
+        #expect(State.edgeGrip(for: .collapsed, elevated: false) == (0, GlassCard.outerMargin),
+                "flat: the card's own trailing margin")
+        #expect(State.edgeReach(for: .collapsed, elevated: false) == 0)
+    }
+
     @Test func thresholdsSitBetweenTheRailAndTheNarrowestPanel() {
         #expect(State.railCardWidth < State.expandThreshold)
         #expect(State.expandThreshold < State.minimumWidth)
@@ -75,9 +109,7 @@ struct PaneSidebarStateTests {
 
     @MainActor
     @Test func transientStateStartsOff() {
-        let state = PaneSidebarState(isPinned: true, isHidden: false)
-        #expect(!state.isQuickKill, "a window must never come back in kill mode")
-        #expect(!state.isHoverOpen)
+        let state = PaneSidebarState(isExpanded: true, isHidden: false)
         #expect(!state.showsAllWindows, "the all-windows scope is off by default")
     }
 
@@ -103,7 +135,7 @@ struct PaneSidebarStateTests {
 
     @MainActor
     @Test func leavingAllWindowsForgetsTheFolds() {
-        let state = PaneSidebarState(isPinned: true, isHidden: false)
+        let state = PaneSidebarState(isExpanded: true, isHidden: false)
         state.showsAllWindows = true
         state.toggledWindows = [ObjectIdentifier(state)]
         state.showsAllWindows = false
@@ -113,30 +145,6 @@ struct PaneSidebarStateTests {
 
 struct PaneSidebarTextTests {
     typealias Text = PaneSidebarText
-
-    // MARK: Monograms
-
-    @Test func theTextAfterAnEmDashNamesThePane() {
-        #expect(Text.monogram(for: "claude — relay") == "RE")
-        #expect(Text.monogram(for: "claude — pane-sidebar") == "PS")
-        #expect(Text.monogram(for: "claude — windows-amd64") == "WA")
-    }
-
-    @Test func aPlainCommandUsesItsName() {
-        #expect(Text.monogram(for: "zsh") == "zsh")
-        #expect(Text.monogram(for: "npm run dev") == "npm")
-        #expect(Text.monogram(for: "/bin/bash") == "bas")
-    }
-
-    @Test func anEmptyTitleStillGetsAMark() {
-        #expect(Text.monogram(for: "") == "•")
-    }
-
-    @Test func aPathTitleUsesItsLastComponent() {
-        #expect(Text.monogram(for: "~") == "~", "a shell sitting at home")
-        #expect(Text.monogram(for: "~/git/ghoztty") == "gho")
-        #expect(Text.monogram(for: "/tmp") == "tmp")
-    }
 
     // MARK: Title
 
@@ -273,33 +281,22 @@ struct PaneSidebarTextTests {
     }
 }
 
-struct PaneSidebarShimmerTests {
-    typealias Shimmer = PaneSidebarShimmer
+struct PaneSidebarSheenTests {
+    typealias Sheen = PaneSidebarSheen
 
-    @Test func theBandStartsOffTheLeadingEdgeAndEndsOffTheTrailingOne() {
-        #expect(Shimmer.bandPosition(at: 0) == 1)
-        let endOfSweep = Shimmer.period * Shimmer.sweepFraction
-        #expect(abs(Shimmer.bandPosition(at: endOfSweep)) < 0.0001)
+    /// The band's light, in the row's coordinates, with the band layer's
+    /// left edge at `x`.
+    private func light(at x: CGFloat, width: CGFloat) -> ClosedRange<CGFloat> {
+        let w = Sheen.bandWidthFactor * width
+        return (x + Sheen.light.lowerBound * w)...(x + Sheen.light.upperBound * w)
     }
 
-    @Test func itRestsAfterTheSweep() {
-        let rest = Shimmer.period * (Shimmer.sweepFraction + 0.1)
-        #expect(Shimmer.bandPosition(at: rest) == 0)
-    }
-
-    @Test func itRepeatsEveryPeriod() {
-        #expect(abs(Shimmer.bandPosition(at: 0.3) - Shimmer.bandPosition(at: 0.3 + Shimmer.period)) < 0.0001)
-    }
-
-    @Test func atEitherEndTheBrightBandIsOffTheGlyph() {
-        let width: CGFloat = 14
-        let bandCenter = { (position: Double) -> CGFloat in
-            Shimmer.offset(position: position, width: width) + width * Shimmer.bandWidthFactor / 2
-        }
-        // The band's bright middle sits half a glyph outside the glyph at
-        // both ends, so the sweep enters and leaves rather than popping.
-        #expect(bandCenter(1) <= -width / 2 + 0.0001)
-        #expect(bandCenter(0) >= width + width / 2 - 0.0001)
+    @Test(arguments: [36.0, 240.0, 380.0])
+    func aSweepStartsOffTheRowAndLeavesItEntirely(width: CGFloat) {
+        let (from, to) = Sheen.travel(width: width)
+        #expect(light(at: from, width: width).lowerBound > width, "starts past the right edge")
+        #expect(light(at: to, width: width).upperBound < 0, "ends past the left edge")
+        #expect(from > to, "right to left")
     }
 }
 
@@ -403,5 +400,70 @@ struct PaneSidebarFilterTests {
     @Test func anEmptyQueryMatchesEverything() {
         #expect(hit("   ", ["anything"]))
         #expect(PaneSidebarFilter.terms("  a  b ") == ["a", "b"])
+    }
+}
+
+/// The sidebar's own order of a window's panes (`PaneSidebarOrder`).
+struct PaneSidebarOrderTests {
+    typealias Order = PaneSidebarOrder
+    let a = UUID(), b = UUID(), c = UUID(), d = UUID(), e = UUID()
+
+    @Test func noOrderIsTheTreesOrder() {
+        #expect(Order.arranged([a, b, c], by: []) == [a, b, c])
+    }
+
+    @Test func theOrderWins() {
+        #expect(Order.arranged([a, b, c], by: [c, a, b]) == [c, a, b])
+    }
+
+    @Test func aNewPaneGoesAfterItsTreeNeighbour() {
+        // d was split off b (tree a, b, d, c); the list had c first.
+        #expect(Order.arranged([a, b, d, c], by: [c, a, b]) == [c, a, b, d])
+        // Two new panes in a row stay together, in tree order.
+        #expect(Order.arranged([a, d, e, b], by: [b, a]) == [b, a, d, e])
+    }
+
+    @Test func aNewPaneFirstInTheTreeGoesBeforeItsNeighbour() {
+        #expect(Order.arranged([d, a, b], by: [b, a]) == [b, d, a])
+    }
+
+    @Test func panesNotOnShowAreLeftOut() {
+        #expect(Order.arranged([a, c], by: [c, b, a]) == [c, a])
+    }
+
+    @Test func movingPutsThePaneAtTheIndex() {
+        let all: Set = [a, b, c]
+        #expect(Order.moving(a, to: 2, visible: [a, b, c], order: [], existing: all) == [b, c, a])
+        #expect(Order.moving(c, to: 0, visible: [a, b, c], order: [], existing: all) == [c, a, b])
+        #expect(Order.moving(b, to: 99, visible: [a, b, c], order: [], existing: all) == [a, c, b], "clamped")
+    }
+
+    /// A stashed pane keeps its place, so restoring it brings it back there.
+    @Test func aStashedPaneKeepsItsPlaceThroughAMove() {
+        // b is stashed; the list shows a, c, d.
+        let moved = Order.moving(d, to: 0, visible: [a, c, d], order: [a, b, c, d], existing: [a, b, c, d])
+        #expect(moved == [d, a, b, c])
+        #expect(Order.arranged([a, b, c, d], by: moved) == [d, a, b, c], "b comes back after a")
+    }
+
+    @Test func aClosedPaneIsPrunedOnTheNextMove() {
+        let moved = Order.moving(c, to: 0, visible: [a, c], order: [a, b, c], existing: [a, c])
+        #expect(moved == [c, a])
+    }
+
+    // MARK: Shift
+
+    @Test func rowsSlideToMakeRoom() {
+        // Row 0 dragged down to land at 2: rows 1 and 2 slide up, row 3 stays.
+        #expect((0...3).map { Order.shift(index: $0, source: 0, target: 2) } == [0, -1, -1, 0])
+        // Row 3 dragged up to land at 1: rows 1 and 2 slide down.
+        #expect((0...3).map { Order.shift(index: $0, source: 3, target: 1) } == [0, 1, 1, 0])
+        // Dropped where it was: nothing moves.
+        #expect((0...3).map { Order.shift(index: $0, source: 2, target: 2) } == [0, 0, 0, 0])
+    }
+
+    @Test func aRowComingInOpensAGapAndOneLeavingClosesIt() {
+        #expect((0...2).map { Order.shift(index: $0, source: nil, target: 1) } == [0, 1, 1])
+        #expect((0...2).map { Order.shift(index: $0, source: 0, target: nil) } == [0, -1, -1])
     }
 }
