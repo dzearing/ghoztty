@@ -676,6 +676,9 @@ in_live_layout: bool = false,
 drag_split_handle: SplitTree(PaneView).Node.Handle = .root,
 drag_split_layout: SplitTree(PaneView).Split.Layout = .horizontal,
 drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+/// Where a divider drag's pointer is along the drag, in client pixels: which
+/// grip its accent bar sits on once a fold has replaced the divider (T2270).
+drag_split_at: i32 = 0,
 
 /// The active tab's tree as it was when the divider was GRABBED, flattened for
 /// `split_resize.plan` (T533). Every motion tick re-solves the compensation
@@ -805,6 +808,8 @@ hover_sidebar_edge: bool = false,
 /// The gutter bar the last paint showed, so the debug oracle logs a change
 /// rather than every frame of a drag (T2253).
 gutter_bar_logged: ?gutter_bar.Lit = null,
+/// Where `logGutterBarAt` last saw a dragged bar drawn off its gutter (T2270).
+gutter_bar_at_logged: ?w32.RECT = null,
 
 /// Which panes of a stacked row are on show (T2108): the window's pane focus
 /// history and the rows the user collapsed, read by `stackGrid` as the
@@ -9514,20 +9519,7 @@ fn litGutterBar(self: *Window, grid_opt: ?*const pane_stack_grid.Grid) ?GutterPa
         .{ .divider = @intCast(self.drag_split_handle.idx()) }
     else if (self.grip_drag) |g| blk: {
         const grid = grid_opt orelse break :blk null;
-        var best: ?usize = null;
-        var best_d: i32 = std.math.maxInt(i32);
-        for (grid.result.stack_handles.items, 0..) |sh, i| {
-            if (sh.direction != g.direction) continue;
-            if (std.meta.activeTag(sh.kind) != std.meta.activeTag(g.kind)) continue;
-            const r = grid.stackHandleGutter(i);
-            const mid = if (g.direction == .horizontal) @divFloor(r.left + r.right, 2) else @divFloor(r.top + r.bottom, 2);
-            const d: i32 = @intCast(@abs(mid - g.at));
-            if (d < best_d) {
-                best_d = d;
-                best = i;
-            }
-        }
-        break :blk if (best) |b| .{ .grip = b } else null;
+        break :blk if (nearestGrip(grid, g.direction, std.meta.activeTag(g.kind), g.at)) |b| .{ .grip = b } else null;
     } else if (self.sidebarEdgeDragging()) .sidebar_edge else null;
     const l = gutter_bar.lit(hovered, dragged) orelse {
         self.logGutterBar(null, .{ .r = 0, .g = 0, .b = 0 });
@@ -9539,7 +9531,18 @@ fn litGutterBar(self: *Window, grid_opt: ?*const pane_stack_grid.Grid) ?GutterPa
             for (grid.result.dividers.items, 0..) |d, i| {
                 if (d.node == node) break :blk .{ .gutter = winRect(grid.dividerGutter(i)), .dir = d.direction };
             }
-            return null;
+            // A divider drag that folded its row into one stack (T2263) is
+            // dragging the grip that took the divider's place: the bar stays
+            // on it, the nearest the hand along the drag (T2270; Mac
+            // `GutterBar.replacement`). Before this the bar went out for the
+            // whole fold.
+            if (!self.dragging_split or self.row_drag == null) return null;
+            const dir: pane_stack_layout.Direction = switch (self.drag_split_layout) {
+                .horizontal => .horizontal,
+                .vertical => .vertical,
+            };
+            const i = nearestGrip(grid, dir, null, self.drag_split_at) orelse return null;
+            break :blk .{ .gutter = winRect(grid.stackHandleGutter(i)), .dir = dir };
         },
         .grip => |i| blk: {
             const grid = grid_opt orelse return null;
@@ -9548,11 +9551,28 @@ fn litGutterBar(self: *Window, grid_opt: ?*const pane_stack_grid.Grid) ?GutterPa
         },
         .sidebar_edge => .{ .gutter = self.sidebarEdgeGutter() orelse return null, .dir = .horizontal },
     };
+    // The drag's bar stays over the gutter as it is drawn (T2270; Mac
+    // `GutterBar.place` + `PaneStageView.shownGutter`): mid-glide the cards
+    // beside it are still on their way to where the layout puts them, and
+    // every glide frame lays out again, which repaints the bar here.
+    const shown: w32.RECT = blk: {
+        if (l.strength != .drag) break :blk found.gutter;
+        const s = if (self.stack_slide) |*sl| sl else break :blk found.gutter;
+        const g = found.gutter;
+        const tol: i32 = @intFromFloat(@round(1.5 * self.scale));
+        const at = s.shownGutter(
+            .{ .left = g.left, .top = g.top, .right = g.right, .bottom = g.bottom },
+            found.dir == .horizontal,
+            @max(tol, 1),
+        ) orelse break :blk g;
+        break :blk winRect(at);
+    };
+    self.logGutterBarAt(found.gutter, shown);
     const core = gutter_bar.barIn(.{
-        .left = found.gutter.left,
-        .top = found.gutter.top,
-        .right = found.gutter.right,
-        .bottom = found.gutter.bottom,
+        .left = shown.left,
+        .top = shown.top,
+        .right = shown.right,
+        .bottom = shown.bottom,
     }, switch (found.dir) {
         .horizontal => .across_x,
         .vertical => .across_y,
@@ -9583,6 +9603,45 @@ fn logGutterBar(self: *Window, l: ?gutter_bar.Lit, color: color_math.Rgb) void {
     if (l) |v| {
         log.debug("gutter bar {s} {s} rgb={d},{d},{d}", .{ @tagName(v.gutter), @tagName(v.strength), color.r, color.g, color.b });
     } else log.debug("gutter bar none", .{});
+}
+
+/// The stack grip running `direction` whose gutter's middle is nearest `at`
+/// along the row, of kind `kind` when one is named (T2253, T2270; Mac
+/// `GutterBar.replacement`): where a drag's bar sits once the layout has
+/// replaced the gutter the drag began on.
+fn nearestGrip(
+    grid: *const pane_stack_grid.Grid,
+    direction: pane_stack_layout.Direction,
+    kind: ?std.meta.Tag(pane_stack_layout.StackHandle.Kind),
+    at: i32,
+) ?usize {
+    var best: ?usize = null;
+    var best_d: i32 = std.math.maxInt(i32);
+    for (grid.result.stack_handles.items, 0..) |sh, i| {
+        if (sh.direction != direction) continue;
+        if (kind) |k| if (std.meta.activeTag(sh.kind) != k) continue;
+        const r = grid.stackHandleGutter(i);
+        const mid = if (direction == .horizontal) @divFloor(r.left + r.right, 2) else @divFloor(r.top + r.bottom, 2);
+        const d: i32 = @intCast(@abs(mid - at));
+        if (d < best_d) {
+            best_d = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/// Debug-build oracle for `stack-fold-slide.ps1` (T2270): a dragged gutter's
+/// bar drawn away from its laid-out gutter because the cards beside it are
+/// still gliding, logged when that place changes.
+fn logGutterBarAt(self: *Window, laid: w32.RECT, shown: w32.RECT) void {
+    if (std.meta.eql(laid, shown)) {
+        self.gutter_bar_at_logged = null;
+        return;
+    }
+    if (self.gutter_bar_at_logged) |old| if (std.meta.eql(old, shown)) return;
+    self.gutter_bar_at_logged = shown;
+    log.debug("gutter bar gliding at {d},{d} laid out at {d},{d}", .{ shown.left, shown.top, laid.left, laid.top });
 }
 
 /// Repaint EVERY divider band of the active tab through the paint cycle
@@ -9819,6 +9878,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
         .horizontal => .{ rect.left, rect.right, x },
         .vertical => .{ rect.top, rect.bottom, y },
     };
+    self.drag_split_at = pos;
     // A divider is a gutter of its row (T2263, Mac `dragRow`): the row is
     // what the gutter's position makes of it - the two panes beside it
     // resizing, then the next giving way, then the outermost folding into a

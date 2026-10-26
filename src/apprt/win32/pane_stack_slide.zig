@@ -237,6 +237,35 @@ pub const Slide = struct {
         }
         return moved;
     }
+
+    /// Where a gutter laid out at `gutter` is drawn while the cards glide
+    /// (T2270; Mac `PaneStageView.shownGutter`, a81db68f9): moved along with
+    /// the card whose edge it is, as far as that card has got. `across_x`: the
+    /// cards sit side by side and the gutter runs down between them. An edge
+    /// within `tol_px` of the gutter's side is that card's (Mac's 1.5 pt).
+    /// Null when no card in this glide has that gutter for an edge.
+    pub fn shownGutter(self: *const Slide, gutter: PxRect, across_x: bool, tol_px: i32) ?PxRect {
+        for (self.items()) |c| {
+            const target = c.to;
+            const shown = cardOf(c, self.resize);
+            const offset: i32 = if (across_x) blk: {
+                if (target.bottom <= gutter.top or target.top >= gutter.bottom) continue;
+                if (@abs(target.right - gutter.left) <= tol_px) break :blk shown.right - target.right;
+                if (@abs(target.left - gutter.right) <= tol_px) break :blk shown.left - target.left;
+                continue;
+            } else blk: {
+                if (target.right <= gutter.left or target.left >= gutter.right) continue;
+                if (@abs(target.bottom - gutter.top) <= tol_px) break :blk shown.bottom - target.bottom;
+                if (@abs(target.top - gutter.bottom) <= tol_px) break :blk shown.top - target.top;
+                continue;
+            };
+            return if (across_x)
+                .{ .left = gutter.left + offset, .top = gutter.top, .right = gutter.right + offset, .bottom = gutter.bottom }
+            else
+                .{ .left = gutter.left, .top = gutter.top + offset, .right = gutter.right, .bottom = gutter.bottom + offset };
+        }
+        return null;
+    }
 };
 
 /// Where `c`'s pane is drawn. A click's glide moves its origin and holds the
@@ -649,4 +678,63 @@ test "a zero time constant is no glide: the first frame lands" {
     var s = plan(&before, &after, null, 0, false);
     try testing.expect(s.step(16));
     try testing.expectEqual(r(0, 0, 400, 600), s.placed(1).?);
+}
+
+test "shownGutter: mid-glide the gutter is drawn beside the card whose edge it is" {
+    // Card 1 widens from 400 to 600 under a drag; its right edge is the
+    // gutter at 600..606, and card 2 starts beyond it.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(406, 0, 400, 600), .tucked = false },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 600, 600), .tucked = false },
+        .{ .id = 2, .rect = r(606, 0, 200, 600), .tucked = false },
+    };
+    var s = plan(&before, &after, null, glide_ms, true);
+    _ = s.step(16);
+    const gutter = r(600, 0, 6, 600);
+    const at = s.shownGutter(gutter, true, 2).?;
+    const edge = s.placed(1).?.right;
+    try testing.expect(edge > 400 and edge < 600);
+    // Moved by exactly as far as the card still has to go, only along x.
+    try testing.expectEqual(edge, at.left);
+    try testing.expectEqual(@as(i32, 6), at.right - at.left);
+    try testing.expectEqual(gutter.top, at.top);
+    try testing.expectEqual(gutter.bottom, at.bottom);
+    // Caught up: the gutter is where the layout puts it.
+    while (!s.step(16)) {}
+    try testing.expectEqual(gutter, s.shownGutter(gutter, true, 2).?);
+}
+
+test "shownGutter: a card on the far side of the gutter carries it by its leading edge" {
+    const before = [_]Placed{.{ .id = 2, .rect = r(406, 0, 400, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 2, .rect = r(206, 0, 600, 600), .tucked = false }};
+    var s = plan(&before, &after, null, glide_ms, true);
+    _ = s.step(16);
+    const at = s.shownGutter(r(200, 0, 6, 600), true, 2).?;
+    try testing.expectEqual(s.placed(2).?.left, at.right);
+}
+
+test "shownGutter: rows stacked top to bottom move a gutter that runs across" {
+    const before = [_]Placed{.{ .id = 1, .rect = r(0, 0, 800, 300), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(0, 0, 800, 500), .tucked = false }};
+    var s = plan(&before, &after, null, glide_ms, true);
+    _ = s.step(16);
+    const gutter = r(0, 500, 800, 6);
+    const at = s.shownGutter(gutter, false, 2).?;
+    try testing.expectEqual(s.placed(1).?.bottom, at.top);
+    try testing.expectEqual(gutter.left, at.left);
+    // The across-x reading of the same gutter finds no card edge.
+    try testing.expectEqual(@as(?PxRect, null), s.shownGutter(gutter, true, 2));
+}
+
+test "shownGutter: a gutter no gliding card borders is not moved" {
+    const before = [_]Placed{.{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(0, 0, 600, 600), .tucked = false }};
+    var s = plan(&before, &after, null, glide_ms, true);
+    _ = s.step(16);
+    // Not at the card's edge, and beside it but in another row.
+    try testing.expectEqual(@as(?PxRect, null), s.shownGutter(r(900, 0, 6, 600), true, 2));
+    try testing.expectEqual(@as(?PxRect, null), s.shownGutter(r(600, 700, 6, 300), true, 2));
 }

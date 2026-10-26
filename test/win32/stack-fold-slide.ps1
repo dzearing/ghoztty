@@ -35,9 +35,15 @@
 #       by the window, but its popups (the unfocused dim wash, painted in the
 #       background colour) are not, and the user saw that wash bleed out over
 #       the desktop mid-slide. P is focused first so s2 carries the wash.
+#   F7) the dragged divider's accent bar stays over the gutter as it is
+#       DRAWN (T2270; Mac `PaneStageView.shownGutter`): mid-glide it is seen
+#       off its laid-out gutter at 2+ places, trailing the hand - short of the
+#       laid-out gutter while P grows into the fold, past it while P shrinks
+#       back on the unfold. Read from the debug build's `gutter bar gliding`
+#       oracle line.
 #
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
-# before any slide) and keeps F1/F2 as written: they MUST fail.
+# before any slide) and keeps F1/F2/F7 as written: they MUST fail.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -63,6 +69,7 @@ if ($AgentExe) { $agent = $AgentExe }
 $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-stack-fold-slide-$PID"
+$script:errlog = Join-Path $root 'app-stderr.log'
 $slideMs = if ($NegativeControl) { 0 } else { 2000 }
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
@@ -81,7 +88,7 @@ function Stop-RepoInstances { [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700) }
 $appArgs = @('--config-default-files=false', '--session-persistence=false', "--macos-pane-style=$PaneStyle")
 
 function Start-App {
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs
+    $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs -StdErr $script:errlog
     if ((Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Write-TestAssertedNothing -Reason 'the app never opened a GhozttyWindow'
     }
@@ -144,6 +151,19 @@ function Get-Samples([IntPtr]$top, [int]$ms) {
     }
     return $out
 }
+# The `gutter bar gliding at X,Y laid out at X,Y` oracle lines (T2270) from
+# line $from of the app's stderr on: each as drawn x and laid-out x.
+function Get-GlidingBar([int]$from) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match 'gutter bar gliding at (-?\d+),(-?\d+) laid out at (-?\d+),(-?\d+)') {
+            $out += [pscustomobject]@{ Shown = [int]$Matches[1]; Laid = [int]$Matches[3] }
+        }
+    }
+    return $out
+}
+function Get-LogLength { return @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue).Count }
 function Find-Pane($panes, [int64]$hwnd) {
     $m = @($panes | Where-Object { $_.Hwnd -eq $hwnd })
     if ($m.Count -eq 1) { return $m[0] }
@@ -251,8 +271,10 @@ try {
     $pW0 = (Find-Pane $near $hP).Width
     $s2Left0 = (Find-Pane $near $hS2).Left
     Say ("      short of the fold: {0}" -f (Format-Cols $near))
+    $logFold = Get-LogLength
     [void](Send-TestMouse -Window $top -Target $top -X $xFold -Y $y -Action move -HoldMs 0)
     $fold = @(Get-Samples $top ($slideMs + 1000))
+    $logBack = Get-LogLength
     $rest = @(Get-Panes $top)
     $pEnd = Find-Pane $rest $hP
     $s2End = Find-Pane $rest $hS2
@@ -306,6 +328,12 @@ try {
     $firstFold = if ($strayFold.Count -gt 0) { "at $($strayFold[0].Ms) ms: $($strayFold[0].Stray -join ' | ')" } else { '' }
     Assert ($strayFold.Count -eq 0) "F6: no popup reaches outside the window during the fold ($($strayFold.Count) of $($fold.Count) samples) $firstFold"
 
+    # F7: the bar follows P's edge as it is drawn, short of the hand.
+    $barFold = @(Get-GlidingBar $logFold | Where-Object { $_.Shown -lt $_.Laid })
+    $barFoldAt = @($barFold | ForEach-Object Shown | Sort-Object -Unique)
+    Say ("      bar drawn short of its gutter at: {0}" -f ($barFoldAt -join ', '))
+    Assert ($barFoldAt.Count -ge 2) "F7: folding, the dragged bar is drawn at $($barFoldAt.Count) places short of its laid-out gutter (need 2+): it stays with the gliding card"
+
     # F4: the T2124 layout at rest.
     $shown = @($rest | Where-Object Visible)
     Assert ($shown.Count -eq 2) "F4: at rest two panes are on show (got $($shown.Count))"
@@ -322,6 +350,12 @@ try {
     Say ("      s2 {0} -> {1}; on show between: {2}; at rest: {3}" -f $s2Tuck, $s2Home, ($s2Coming -join ', '), (Format-Cols $again))
     if (-not $NegativeControl) {
         Assert ($s2Coming.Count -ge 2) "F5: unfolding, s2 is seen at $($s2Coming.Count) positions on its way back (need 2+)"
+    }
+    $barBack = @(Get-GlidingBar $logBack | Where-Object { $_.Shown -gt $_.Laid })
+    $barBackAt = @($barBack | ForEach-Object Shown | Sort-Object -Unique)
+    Say ("      bar drawn past its gutter at: {0}" -f ($barBackAt -join ', '))
+    if (-not $NegativeControl) {
+        Assert ($barBackAt.Count -ge 2) "F7: unfolding, the dragged bar is drawn at $($barBackAt.Count) places past its laid-out gutter (need 2+)"
     }
     $strayBack = @($back | Where-Object { $_.Stray.Count -gt 0 })
     $firstBack = if ($strayBack.Count -gt 0) { "at $($strayBack[0].Ms) ms: $($strayBack[0].Stray -join ' | ')" } else { '' }
