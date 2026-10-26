@@ -548,3 +548,12 @@ as the digest that showed them.
 - A pane says who opened it (a script- or agent-opened pane names its opener in the banner for a few seconds; click jumps back)
 - Typing through an animation is never lost (keys typed during a fold, slide or resize arrive in order in the caret's pane)
 - Idle windows cost nothing (a window with no output and no pointer stops repainting until something changes)
+
+## 2026-10-26
+
+- Choose a pane's colour yourself (right-click a sidebar icon to pick its hue; the colour stays with the pane across restarts)
+- Updates wait for your work to finish (an accepted update holds until busy panes go idle and names the pane it is waiting for)
+- A folded strip says what it is running (a pane folded into its strip shows the running command and a busy shine)
+- Send a pane to another window from the sidebar (new angle on moving panes between windows: drag an all-windows row onto another window's heading)
+- Glides keep their pace while output pours (fold and slide stay smooth beside a pane printing a fast build log)
+- A drag can never strand a pane (an interrupted drag - lock, Alt+Tab, pointer lost - glides the pane back to where it started)
