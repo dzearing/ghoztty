@@ -8228,12 +8228,14 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
     // The pane sidebar collapsing or expanding moved the grid (T2291; Mac
     // `PaneStageView.apply`'s column shift): every card glides over from where
     // it is on screen, as for a run change - a move at the size it had, its
-    // terminal resized once when it lands. Any other resize lays out at once.
+    // terminal resized once when it lands; under a divider drag that tucked
+    // the sidebar (T2277) the cards resize on the way, as the drag does. Any
+    // other resize lays out at once.
     const shifted = same_tab and !same_view and self.takeColumnShift();
     if (shifted) {
         const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
         const next = if (App.clientAreaAnimationsEnabled())
-            pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), false)
+            pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing())
         else
             pane_stack_slide.Slide{};
         if (next.len > 0) {
