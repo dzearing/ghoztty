@@ -1,7 +1,7 @@
 {
     "guard":  "pane-sidebar-hue",
     "script":  "test/win32/pane-sidebar-hue.ps1",
-    "generated":  "2026-10-26T09:54:30-07:00",
+    "generated":  "2026-10-26T10:18:07-07:00",
     "commit":  "05a828249",
     "uncommitted":  [
 

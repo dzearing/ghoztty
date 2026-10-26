@@ -251,11 +251,20 @@ try {
     $o3 = Read-Geometry (Wait-Log 'pane sidebar rows mode=expanded' $mark 3000)
     $row = if ($o3) { RowById $o3 $last.Id } else { $null }
     Assert "back at the end, the restored row is out of view" ($null -ne $row -and -not (InView $o3 $row))
+    # Focus it by its NAME (s<k>). A pane's id is not a name to `+split
+    # --name=`: since T2250, as on the Mac, that spelling creates a fresh pane
+    # called the id - which the sidebar dutifully reveals, while the restored
+    # row stays out of view (T2267).
+    $name = $null
+    foreach ($l in (Get-Leaves)) { if ($l.id -eq $last.Id) { $name = $l.name; break } }
     $mark = Get-LogCount
-    Assert "focus moved to $($last.Id) ($(Get-CliErr))" ((Invoke-Cli "+split --name=$($last.Id) --focus") -eq 0)
-    Assert "the sidebar revealed it (log)" ($null -ne (Wait-Log 'pane sidebar reveal surface=rail' $mark 3000))
+    Assert "focus moved to $name ($(Get-CliErr))" ($name -and (Invoke-Cli "+split --name=$name --focus") -eq 0)
+    $reveal = Wait-Log 'pane sidebar reveal surface=rail' $mark 3000
+    Assert "the sidebar revealed it (log)" ($null -ne $reveal)
     $o4 = Read-Geometry (Wait-Log 'pane sidebar rows mode=expanded' $mark 3000)
     $row = if ($o4) { RowById $o4 $last.Id } else { $null }
+    if ($o4) { "  $reveal; row y=$(if ($row) { $row.Y } else { 'missing' }) scroll=$($o4.Scroll)/$($o4.Max) view=$($o4.Top),$($o4.Bottom)" }
+    Assert "the focus reused the pane rather than adding one ($(if ($o4) { $o4.Items.Count }) rows)" ($null -ne $o4 -and $o4.Items.Count -eq $o3.Items.Count)
     Assert "the focused row is in view ($(if ($o4) { "scroll $($o4.Scroll)" }))" ($null -ne $row -and (InView $o4 $row))
 
     "== 5: the overlay thumb drags"

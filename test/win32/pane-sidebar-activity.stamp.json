@@ -1,7 +1,7 @@
 {
     "guard":  "pane-sidebar-activity",
     "script":  "test/win32/pane-sidebar-activity.ps1",
-    "generated":  "2026-10-26T09:53:36-07:00",
+    "generated":  "2026-10-26T10:17:17-07:00",
     "commit":  "05a828249",
     "uncommitted":  [
 

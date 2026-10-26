@@ -1,7 +1,7 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-26T09:56:00-07:00",
+    "generated":  "2026-10-26T10:19:36-07:00",
     "commit":  "05a828249",
     "uncommitted":  [
 
@@ -1234,7 +1234,7 @@
                   "test/win32/pane-sidebar-hue.ps1":  "53ac7b6b088f9c35d9992ff807d33c685b525a940c8cd34b4e2560eb422d8c19",
                   "test/win32/pane-sidebar-persist.ps1":  "180d6cb19a9d1314c760426c1ccb4dae59c76bb89bf328b51de9245cd67938ca",
                   "test/win32/pane-sidebar-resize.ps1":  "5b8e2ab28811631608c3727e8f89e234b801cf17b16481d6bfe57accbc0a2df2",
-                  "test/win32/pane-sidebar-scroll.ps1":  "bf45c5684804f97dd16f8a1745f9f999df89357ef1e447178a3b96a012c8cfe5",
+                  "test/win32/pane-sidebar-scroll.ps1":  "de29f0c67a12bbae87452bf6c826cf6381a56052299753cac94d6e52231ed6c9",
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",
                   "test/win32/pane-stack-slide.ps1":  "251ff8a8ee694adac8fc0e4e0cdf10abc966b66bd37d2b535f1c661a227205c8",
