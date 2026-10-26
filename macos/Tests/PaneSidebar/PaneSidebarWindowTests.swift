@@ -1110,9 +1110,9 @@ struct PaneSidebarWindowTests {
         await settle(0.3)
     }
 
-    /// A busy pane's sidebar icon shimmers: two captures a moment apart
-    /// differ around the icon (and only while busy). Writes busy-a/b.png.
-    @Test func aBusyPaneShimmersInTheSidebar() async throws {
+    /// A busy pane's sidebar row sheens: captures a moment apart differ
+    /// around it (and only while busy). Writes busy-a/b.png.
+    @Test func aBusyPaneShinesInTheSidebar() async throws {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         let app = try #require(ghostty.app)
         let a = terminalPane(app), b = terminalPane(app)
@@ -1128,11 +1128,11 @@ struct PaneSidebarWindowTests {
         b.surfaceView?.activityState = .busy
         await settle(0.3)
         #expect(b.activityState == .busy)
-        // Frames across one whole shimmer period: two captures alone can both
-        // land while the band is parked off the glyph.
+        // Frames across a whole sheen period (2s): two captures alone can
+        // both land while the band is parked off the row.
         let first = try await captureImage(window)
         var frames: [CGImage] = []
-        for _ in 0..<6 {
+        for _ in 0..<10 {
             await settle(0.23)
             frames.append(try await captureImage(window))
         }

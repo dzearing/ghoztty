@@ -56,8 +56,8 @@ struct PaneSidebarRow: View {
         .onDisappear { PaneSidebarHover.shared.leave(pane.id) }
     }
 
-    /// This pane's own color (`PaneSidebarHue`): its tile's tint, its row's
-    /// icon, and the tint the pane takes while either is hovered.
+    /// This pane's own color (`PaneSidebarHue`): its icon's, and the tint the
+    /// pane takes while its row is hovered.
     private var hue: Color { PaneSidebarHue.color(for: pane, in: owner) }
 
     // MARK: Full row
@@ -66,8 +66,8 @@ struct PaneSidebarRow: View {
         let fill = rowFill
         return ZStack(alignment: .trailing) {
             HStack(alignment: .center, spacing: 7) {
-                PaneSidebarIcon(pane: pane, isBusy: isBusy, color: iconColor)
-                    .frame(width: 16, height: 15)
+                PaneSidebarIcon(pane: pane, color: iconColor)
+                    .frame(width: Self.iconWidth, height: 15)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(displayTitle)
                         .font(.system(size: 12))
@@ -86,6 +86,7 @@ struct PaneSidebarRow: View {
             .frame(height: Self.height - 1)
             .padding(.leading, SidePanelRow.textInset + indent)
             .padding(.trailing, SidePanelRow.textInset)
+            .background(busySheen)
             .background(fill)
             // Hover is the WHOLE row, button included. The drag source below
             // stops short of the button, so hover measured there ended the
@@ -173,49 +174,52 @@ struct PaneSidebarRow: View {
 
     // MARK: Rail tile
 
+    /// The icon's width, and the rail's: a tile is a full row with its text
+    /// taken away — the same pill (`fillInset` from the card), the same icon
+    /// at the same place (`textInset` into the pill) — so collapsing or
+    /// expanding the sidebar moves no icon (`PaneSidebarState.railCardWidth`
+    /// is exactly the pill around it).
+    static let iconWidth: CGFloat = 16
+
     private var tile: some View {
         ZStack(alignment: .topTrailing) {
             ZStack {
-                PaneSidebarTileButton(
-                    hue: hue,
-                    isSelected: isSelected, isEmphasized: isEmphasized, isHovered: isHovered)
-                // One letter of the pane's name — the same name its row and
-                // its stacked strip show — for every kind of pane.
-                // Busy: a sheen sweeps diagonally across the tile — its own
-                // glass sheen, moving — rather than through the letter.
-                if isBusy && !reduceMotion {
-                    // Faded in, so it never pops on when work starts.
-                    PaneSidebarTileSheenLayer(cornerRadius: PaneSidebarTileButton.cornerRadius)
-                        .accessibilityLabel("Busy")
-                        .transition(.opacity.animation(.easeOut(duration: 0.25)))
-                }
-                // The pane kind's glyph, as its row shows it — the tile's hue
-                // tells panes apart — muted unless it is the focused pane's.
-                // Busy is the tile's sheen, so the glyph itself stays still.
-                PaneSidebarIcon(
-                    pane: pane, isBusy: false,
-                    color: onAccent ? Color.white
-                        : Color(nsColor: (isSelected && isEmphasized) || isHovered ? .labelColor : .secondaryLabelColor),
-                    size: 15)
-                .shadow(color: .black.opacity(onAccent ? 0.25 : 0), radius: 0.5, y: 0.5)
+                PaneSidebarIcon(pane: pane, color: iconColor)
+                    .frame(width: Self.iconWidth, height: 15)
                 interaction
             }
-            .frame(width: 30, height: 30)
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.height - 1)
+            .background(busySheen)
+            .background(rowFill)
             .background(rowHover)
 
             if pane.bell && isStashed {
                 Circle()
                     .fill(Color(nsColor: .controlAccentColor))
                     .frame(width: 7, height: 7)
-                    .offset(x: 1, y: -1)
+                    .offset(x: 1, y: 3)
                     .allowsHitTesting(false)
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: Self.height)
+        .padding(.horizontal, SidePanelRow.fillInset)
+        .padding(.vertical, 0.5)
         .help(rowHelp)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// Busy: a faint band of light sweeps across the row's pill from right to
+    /// left — the same in both modes, so a tile is its row without the text.
+    @ViewBuilder
+    private var busySheen: some View {
+        if isBusy && !reduceMotion {
+            // Faded in, so it never pops on when work starts.
+            PaneSidebarTileSheenLayer(cornerRadius: SidePanelRow.cornerRadius)
+                .accessibilityLabel("Busy")
+                .transition(.opacity.animation(.easeOut(duration: 0.25)))
+        }
     }
 
     // MARK: Interaction
@@ -295,12 +299,12 @@ struct PaneSidebarRow: View {
 
     private var displayTitle: String { pane.displayLabel }
 
-    /// The row's icon in the pane's hue, so a row and its pane's tile — and
-    /// the tint hovering it gives the pane — are one color; muted unless its
-    /// pane is the focused one (or hovered), as the tiles are.
+    /// The icon in the pane's hue — the same in a row and a tile, and the
+    /// tint hovering it gives the pane. A touch quieter unless its pane is
+    /// the focused one (or hovered), never so far as to lose the contrast.
     private var iconColor: Color {
         if onAccent { return .white }
-        return (isSelected && isEmphasized) || isHovered ? hue : hue.opacity(0.55)
+        return (isSelected && isEmphasized) || isHovered ? hue : hue.opacity(0.8)
     }
 
     private var rowHelp: String {
@@ -322,69 +326,16 @@ struct PaneSidebarRow: View {
     }
 }
 
-/// A rail tile: a small pane of glass, the pane banner's own
-/// (`GlassCardBackground` — a see-through wash, the elliptical sheen, the
-/// specular rim, a masked drop shadow scaled to its size), so the color
-/// behind shows through it as it does through a banner — tinted with the
-/// pane's own hue (`PaneSidebarHue`), so each tile is its own shade. Hover
-/// deepens the tint; the selected pane's is deeper still, ringed in white.
-/// No activity badge on the tile: busy is its sheen. All static: nothing here
-/// animates.
-struct PaneSidebarTileButton: View {
-    var hue: Color? = nil
-    let isSelected: Bool
-    /// The window is key: only then is a selection the accent (as AppKit
-    /// draws a sidebar's); otherwise it is the plain glass, thickened.
-    var isEmphasized: Bool = true
-    let isHovered: Bool
-
-    @Environment(\.colorScheme) private var colorScheme
-
-    static let cornerRadius: CGFloat = 8
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-        let accent = Color(nsColor: .controlAccentColor)
-        let light = colorScheme == .light
-        let wash = light ? Color.black : Color.white
-        let selected = isSelected && isEmphasized
-        // The focused pane's tile carries its hue; every other tile is a
-        // muted shade of its own, lifted while hovered — as is the focused
-        // one while the window is not key.
-        let fill: Color = hue.map { hue in
-            hue.opacity(selected ? 0.6 : isHovered ? 0.34 : isSelected ? 0.28 : 0.13)
-        } ?? (selected
-            ? accent.opacity(0.55)
-            : wash.opacity(isSelected ? 0.16 : isHovered ? 0.12 : 0.07))
-        Color.clear
-            .modifier(GlassCardBackground(
-                fill: AnyShapeStyle(fill), cornerRadius: Self.cornerRadius,
-                shadowRadius: 2.5, shadowOffset: 1.5))
-            // The selection is a ring OUTSIDE the tile, a point clear of it,
-            // so the tile's own glass edge stays whole.
-            .overlay {
-                if isSelected && hue != nil {
-                    let gap: CGFloat = 1, line: CGFloat = 1.5
-                    RoundedRectangle(cornerRadius: Self.cornerRadius + gap + line, style: .continuous)
-                        .strokeBorder(Color.white.opacity(selected ? 0.75 : 0.4), lineWidth: line)
-                        .padding(-(gap + line))
-                }
-            }
-    }
-}
-
 /// A row's icon: the pane kind's glyph (the mock's icon set — see
-/// `PaneSidebarSymbol`), shimmering while busy.
+/// `PaneSidebarSymbol`). Busy is the row's sheen, not the glyph's.
 struct PaneSidebarIcon: View {
     @ObservedObject var pane: PaneView
-    let isBusy: Bool
     let color: Color
     var size: CGFloat = 14
 
     var body: some View {
-        let symbol = Self.symbol(for: pane)
-        PaneSidebarGlyph(isBusy: isBusy, color: color, maskKey: "\(String(describing: symbol))@\(size)") {
-            if let symbol {
+        Group {
+            if let symbol = Self.symbol(for: pane) {
                 PaneSidebarSymbolView(symbol: symbol, size: size)
             } else {
                 // An image pane: the mock has no glyph for one.
@@ -393,6 +344,7 @@ struct PaneSidebarIcon: View {
                     .frame(width: size, height: size)
             }
         }
+        .foregroundStyle(color)
     }
 
     static func symbol(for pane: PaneView) -> PaneSidebarSymbol? {

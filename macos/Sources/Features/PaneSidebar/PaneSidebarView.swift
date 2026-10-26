@@ -98,17 +98,13 @@ struct PaneSidebarView: View {
                     // Solid under the glass while it is held, so it reads as
                     // on top of the rows it passes rather than mixed with them.
                     .background {
-                        RoundedRectangle(
-                            cornerRadius: isRail ? PaneSidebarTileButton.cornerRadius : SidePanelRow.cornerRadius,
-                            style: .continuous)
+                        RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                             .fill(Color(nsColor: .windowBackgroundColor).opacity(rowDrag.isSettling ? 0 : 0.92))
                             .overlay(
-                                RoundedRectangle(
-                                    cornerRadius: isRail ? PaneSidebarTileButton.cornerRadius : SidePanelRow.cornerRadius,
-                                    style: .continuous)
+                                RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                                     .fill(Color.primary.opacity(rowDrag.isSettling ? 0 : 0.06)))
-                            .padding(.horizontal, isRail ? (frame.width - 30) / 2 : SidePanelRow.fillInset)
-                            .padding(.vertical, isRail ? (frame.height - 30) / 2 : 0.5)
+                            .padding(.horizontal, SidePanelRow.fillInset)
+                            .padding(.vertical, 0.5)
                     }
                     .scaleEffect(rowDrag.isSettling ? 1 : 1.04)
                     .shadow(color: .black.opacity(rowDrag.isSettling ? 0 : 0.3), radius: 6, y: 3)
@@ -934,80 +930,11 @@ private struct PaneSidebarEmptyStashSlot: View {
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                 .strokeBorder(isHot ? accent : Color.primary.opacity(isDragging ? 0.3 : 0.14),
                               style: StrokeStyle(lineWidth: isHot ? 1.5 : 1, dash: [4, 3])))
-        .padding(.horizontal, isRail ? 7 : SidePanelRow.fillInset)
+        .padding(.horizontal, SidePanelRow.fillInset)
         .padding(.vertical, 4)
         .animation(.easeOut(duration: 0.15), value: isHot)
         .help("Drag a pane here to stash it — out of the grid, still running")
         .allowsHitTesting(false)
-    }
-}
-
-// MARK: - Shimmer
-
-/// A busy pane's icon: the glyph drawn dim, with a brighter band sweeping
-/// across it. The whole busy signal — no spinner, no glow (both were tried
-/// in the design mock and dropped). See `PaneSidebarShimmer` for the timing.
-///
-/// The sweep is a Core Animation layer under a mask of the glyph, drawn once
-/// (`PaneSidebarShimmerLayer` says why it is not SwiftUI). `maskKey` names
-/// the glyph, so the mask is redrawn only when the glyph changes.
-struct PaneSidebarGlyph<Content: View>: View {
-    let isBusy: Bool
-    let color: Color
-    let maskKey: AnyHashable
-    @ViewBuilder let content: Content
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        if isBusy && !reduceMotion {
-            // The glyph only sizes the slot; the layer draws it.
-            content
-                .hidden()
-                .overlay {
-                    PaneSidebarShimmerLayer(color: color, maskKey: maskKey) { size, scale in
-                        let renderer = ImageRenderer(content: content
-                            .foregroundStyle(Color.black)
-                            .frame(width: size.width, height: size.height))
-                        renderer.scale = scale
-                        return renderer.cgImage
-                    }
-                }
-                .accessibilityLabel("Busy")
-        } else {
-            content.foregroundStyle(color)
-        }
-    }
-}
-
-/// The shimmer's timing and geometry, pure so it is testable.
-enum PaneSidebarShimmer {
-    /// One cycle: a sweep, then a short rest before the next.
-    static let period: TimeInterval = 1.4
-    /// The part of the period the band spends moving.
-    static let sweepFraction: Double = 0.8
-    /// The band layer is this many times the glyph's width, so that at either
-    /// end of its travel the bright band is fully off the glyph.
-    static let bandWidthFactor: CGFloat = 3
-    /// The glyph's base under the band. Low enough that the band reads at a
-    /// glance on a 14pt glyph: at 0.62 it swept from 62% to 100% and, at
-    /// that size, looked like no busy indication at all.
-    static let baseOpacity: Double = 0.3
-
-    /// 1 = band parked off the LEADING edge, 0 = off the TRAILING edge; the
-    /// sweep runs 1 → 0 (left to right), eased, then rests at 0.
-    static func bandPosition(at time: TimeInterval) -> Double {
-        let phase = time.truncatingRemainder(dividingBy: period) / period
-        let t = Swift.min(1, phase / sweepFraction)
-        let eased = t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2
-        return 1 - eased
-    }
-
-    /// The band layer's x offset for a position, for a glyph `width` wide.
-    /// At 1 the band's bright middle sits half a glyph off the leading edge;
-    /// at 0, half a glyph off the trailing edge.
-    static func offset(position: Double, width: CGFloat) -> CGFloat {
-        -(bandWidthFactor - 1) * width * CGFloat(position)
     }
 }
 

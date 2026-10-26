@@ -98,8 +98,10 @@ final class PaneSidebarState: ObservableObject {
     nonisolated static let minimumWidth: CGFloat = 180
     nonisolated static let maximumWidth: CGFloat = 380
 
-    /// The rail's card.
-    nonisolated static let railCardWidth: CGFloat = 44
+    /// The rail's card: exactly a row's pill around its icon — the pill
+    /// `fillInset` in from each side, the icon `textInset` into the pill —
+    /// so a tile's icon is where its row's is (`PaneSidebarRow.iconWidth`).
+    nonisolated static let railCardWidth: CGFloat = 2 * (8 + 10) + 16
 
     /// The space around the raised rail card.
     struct RailInsets: Equatable {
@@ -582,8 +584,16 @@ enum PaneSidebarHue {
         return h < 0 ? h + 1 : h
     }
 
+    /// Light and soft enough to read on a dark sidebar as an icon on its own
+    /// — at full saturation the deep hues (violet, blue) sank into it — and
+    /// deeper on a light one, where a pastel would vanish.
     nonisolated static func color(index: Int) -> Color {
-        Color(hue: hue(index: index), saturation: 0.62, brightness: 0.95)
+        let h = hue(index: index)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(hue: h, saturation: 0.42, brightness: 1, alpha: 1)
+                : NSColor(hue: h, saturation: 0.7, brightness: 0.62, alpha: 1)
+        })
     }
 
     /// `pane`'s color in `owner`'s tree (stashed panes included).

@@ -42,7 +42,7 @@ struct PaneSidebarStateTests {
     // MARK: Column
 
     @Test func theColumnIsTheRailPlusItsMargins() {
-        #expect(State.columnWidth(for: .collapsed, panelWidth: 240, elevated: false) == 44 + 2 * GlassCard.outerMargin)
+        #expect(State.columnWidth(for: .collapsed, panelWidth: 240, elevated: false) == State.railCardWidth + 2 * GlassCard.outerMargin)
     }
 
     @Test func elevatedRailSharesItsGapWithTheGrid() {
@@ -53,7 +53,7 @@ struct PaneSidebarStateTests {
         #expect(insets.vertical == PaneElevation.margin, "the rail's ends line up with the panes'")
         #expect(insets.trailing == 0)
         #expect(insets.leading == insets.trailing + PaneElevation.margin, "equal gutters either side")
-        #expect(State.columnWidth(for: .collapsed, panelWidth: 240, elevated: true) == PaneElevation.margin + 44)
+        #expect(State.columnWidth(for: .collapsed, panelWidth: 240, elevated: true) == PaneElevation.margin + State.railCardWidth)
     }
 
     @Test func theColumnIsThePanelWhenExpanded() {
@@ -281,33 +281,22 @@ struct PaneSidebarTextTests {
     }
 }
 
-struct PaneSidebarShimmerTests {
-    typealias Shimmer = PaneSidebarShimmer
+struct PaneSidebarSheenTests {
+    typealias Sheen = PaneSidebarSheen
 
-    @Test func theBandStartsOffTheLeadingEdgeAndEndsOffTheTrailingOne() {
-        #expect(Shimmer.bandPosition(at: 0) == 1)
-        let endOfSweep = Shimmer.period * Shimmer.sweepFraction
-        #expect(abs(Shimmer.bandPosition(at: endOfSweep)) < 0.0001)
+    /// The band's light, in the row's coordinates, with the band layer's
+    /// left edge at `x`.
+    private func light(at x: CGFloat, width: CGFloat) -> ClosedRange<CGFloat> {
+        let w = Sheen.bandWidthFactor * width
+        return (x + Sheen.light.lowerBound * w)...(x + Sheen.light.upperBound * w)
     }
 
-    @Test func itRestsAfterTheSweep() {
-        let rest = Shimmer.period * (Shimmer.sweepFraction + 0.1)
-        #expect(Shimmer.bandPosition(at: rest) == 0)
-    }
-
-    @Test func itRepeatsEveryPeriod() {
-        #expect(abs(Shimmer.bandPosition(at: 0.3) - Shimmer.bandPosition(at: 0.3 + Shimmer.period)) < 0.0001)
-    }
-
-    @Test func atEitherEndTheBrightBandIsOffTheGlyph() {
-        let width: CGFloat = 14
-        let bandCenter = { (position: Double) -> CGFloat in
-            Shimmer.offset(position: position, width: width) + width * Shimmer.bandWidthFactor / 2
-        }
-        // The band's bright middle sits half a glyph outside the glyph at
-        // both ends, so the sweep enters and leaves rather than popping.
-        #expect(bandCenter(1) <= -width / 2 + 0.0001)
-        #expect(bandCenter(0) >= width + width / 2 - 0.0001)
+    @Test(arguments: [36.0, 240.0, 380.0])
+    func aSweepStartsOffTheRowAndLeavesItEntirely(width: CGFloat) {
+        let (from, to) = Sheen.travel(width: width)
+        #expect(light(at: from, width: width).lowerBound > width, "starts past the right edge")
+        #expect(light(at: to, width: width).upperBound < 0, "ends past the left edge")
+        #expect(from > to, "right to left")
     }
 }
 

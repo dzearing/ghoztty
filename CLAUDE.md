@@ -1629,20 +1629,18 @@ the interactive mock settled).
   has no title. The all-windows search still matches the pane's own title.
   The all-windows **window** names are not affected: they group by window
   title (`<project>: <worktree>`), which a pane banner has no say in.
-  **A rail tile shows its pane's kind glyph** (terminal, document, globe,
-  diff, image — `PaneSidebarIcon`, as its row shows), its hue telling panes
-  apart (a one-letter monogram of the name was tried first and dropped). Every
-  tile is a small **pane of glass, the banner's own** (`PaneSidebarTileButton`
-  on `GlassCardBackground`: a see-through wash, the elliptical sheen, the
-  specular rim, a shadow scaled to its size), so the color behind shows
-  through — **tinted with the pane's own hue** (`PaneSidebarHue`: golden-ratio
-  steps along the pane's place in its window's tree, so neighbours never
-  match and a list reorder changes no color). The selected tile's tint is
-  deeper, ringed in white OUTSIDE the tile with a 1pt gap; every other tile,
-  and its glyph, is muted (13% tint, secondary glyph) until hovered. A row's icon takes the same hue. **Hovering a
-  tile or row tints its pane in that hue** — a wash and a rim on the pane's
-  card (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim — a
-  hint, halved from the first take), in over 0.12s, out over 0.2s — so the sidebar says which pane an icon is. All static at rest.
+  **A rail tile is its row with the text taken away**: the same pill (hover
+  wash, the accent selection), the same kind glyph at the same place — the
+  rail card is exactly that pill (`railCardWidth` = 52) — so collapsing or
+  expanding moves no icon, either way. The glyph is in the pane's own hue
+  (`PaneSidebarHue`: golden-ratio steps along its tree position; light and
+  soft on a dark theme, deeper on a light one, for contrast), a touch quieter
+  unless its pane is focused or hovered. **Hovering a row or tile tints its
+  pane in that hue** — a wash and a rim on the pane's card
+  (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim), in over
+  0.12s, out over 0.2s — so the sidebar says which pane an icon is. (Earlier
+  takes — one letter per tile, then glass tiles tinted whole — made the two
+  modes look like two different things.)
 - Rows: grid panes (focused one selected), then — **right after the last of
   them**, under a divider, in the same scrolling list — the **tray** of
   stashed panes. (It was first anchored at the bottom of the bar, far from the
@@ -1690,10 +1688,10 @@ the interactive mock settled).
   The **collapse/expand button is the header's first item**, centered on the
   rail's width (`PaneSidebarView.toggleLeading`), so it does not move when
   toggled.
-- Activity: a **busy** pane's icon shimmers (no spinner, no glow) — on a rail
-  tile, a faint upright band of light (25%) sweeps across the whole glass
-  tile from its right edge to its left every 2s (`PaneSidebarTileSheenLayer`, Core Animation), starting and
-  ending fully off it. **Busy is `PaneView.isWorking`**: the hook-set activity
+- Activity: a **busy** pane's row — or tile — sheens: a faint upright band
+  of light (25%) sweeps across its pill from right to left every 2s
+  (`PaneSidebarTileSheenLayer`, Core Animation; travel in `PaneSidebarSheen`),
+  starting and ending fully off it. No spinner, no glow, no glyph shimmer. **Busy is `PaneView.isWorking`**: the hook-set activity
   state OR a progress report on screen (OSC 9;4 — what animates the pane's
   border, `SurfaceBusyBorder`), so an icon animates whenever its pane's border
   does (it read only the activity state, and the two disagreed). **The sidebar
