@@ -188,14 +188,19 @@ struct PaneSidebarRow: View {
                 // Busy: a sheen sweeps diagonally across the tile — its own
                 // glass sheen, moving — rather than through the letter.
                 if isBusy && !reduceMotion {
+                    // Faded in, so it never pops on when work starts.
                     PaneSidebarTileSheenLayer(cornerRadius: PaneSidebarTileButton.cornerRadius)
                         .accessibilityLabel("Busy")
+                        .transition(.opacity.animation(.easeOut(duration: 0.25)))
                 }
-                let monogram = PaneSidebarText.monogram(for: displayTitle)
-                Text(monogram)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                    .foregroundStyle(onAccent ? Color.white : Color(nsColor: .labelColor))
+                // The pane kind's glyph, as its row shows it — the tile's hue
+                // tells panes apart — muted unless it is the focused pane's.
+                // Busy is the tile's sheen, so the glyph itself stays still.
+                PaneSidebarIcon(
+                    pane: pane, isBusy: false,
+                    color: onAccent ? Color.white
+                        : Color(nsColor: (isSelected && isEmphasized) || isHovered ? .labelColor : .secondaryLabelColor),
+                    size: 15)
                 .shadow(color: .black.opacity(onAccent ? 0.25 : 0), radius: 0.5, y: 0.5)
                 interaction
             }
@@ -290,15 +295,16 @@ struct PaneSidebarRow: View {
 
     // MARK: Text
 
-    private var isBusy: Bool { pane.activityState == .busy }
+    private var isBusy: Bool { pane.isWorking }
 
     private var displayTitle: String { pane.displayLabel }
 
     /// The row's icon in the pane's hue, so a row and its pane's tile — and
-    /// the tint hovering it gives the pane — are one color.
+    /// the tint hovering it gives the pane — are one color; muted unless its
+    /// pane is the focused one (or hovered), as the tiles are.
     private var iconColor: Color {
         if onAccent { return .white }
-        return hue
+        return (isSelected && isEmphasized) || isHovered ? hue : hue.opacity(0.55)
     }
 
     private var rowHelp: String {
@@ -348,8 +354,11 @@ struct PaneSidebarTileButton: View {
         let light = colorScheme == .light
         let wash = light ? Color.black : Color.white
         let selected = isSelected && isEmphasized
+        // The focused pane's tile carries its hue; every other tile is a
+        // muted shade of its own, lifted while hovered — as is the focused
+        // one while the window is not key.
         let fill: Color = hue.map { hue in
-            hue.opacity(selected ? 0.6 : isSelected ? 0.48 : isHovered ? 0.44 : 0.26)
+            hue.opacity(selected ? 0.6 : isHovered ? 0.34 : isSelected ? 0.28 : 0.13)
         } ?? (selected
             ? accent.opacity(0.55)
             : wash.opacity(isSelected ? 0.16 : isHovered ? 0.12 : 0.07))
@@ -360,8 +369,16 @@ struct PaneSidebarTileButton: View {
             .overlay {
                 if hasQuestion {
                     shape.strokeBorder(accent.opacity(selected ? 0.95 : 0.85), lineWidth: 1.5)
-                } else if isSelected && hue != nil {
-                    shape.strokeBorder(Color.white.opacity(selected ? 0.75 : 0.45), lineWidth: 1.5)
+                }
+            }
+            // The selection is a ring OUTSIDE the tile, a point clear of it,
+            // so the tile's own glass edge stays whole.
+            .overlay {
+                if isSelected && hue != nil {
+                    let gap: CGFloat = 1, line: CGFloat = 1.5
+                    RoundedRectangle(cornerRadius: Self.cornerRadius + gap + line, style: .continuous)
+                        .strokeBorder(Color.white.opacity(selected ? 0.75 : 0.4), lineWidth: line)
+                        .padding(-(gap + line))
                 }
             }
     }

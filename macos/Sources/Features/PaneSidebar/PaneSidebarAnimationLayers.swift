@@ -212,8 +212,8 @@ struct PaneSidebarPulseRing: NSViewRepresentable {
 }
 
 /// A busy rail tile's sheen: a band of light sweeping diagonally across the
-/// whole glass tile — the tile's own sheen, set moving — on
-/// `PaneSidebarShimmer`'s timing and in phase with every other busy glyph.
+/// whole glass tile — the tile's own sheen, set moving — now and then
+/// (`period`), faint (`peak`), and in phase with every other busy tile.
 /// Core Animation, as the shimmer is (see the top of this file): played by
 /// the render server, it costs the main thread nothing per frame.
 struct PaneSidebarTileSheenLayer: NSViewRepresentable {
@@ -230,6 +230,12 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
 
         private let band = CAGradientLayer()
 
+        /// A sweep every `period`, taking `sweep` of it: an occasional glint,
+        /// not a strobe (the shimmer's 1.4s was too busy on a whole tile).
+        static let period: CFTimeInterval = 2.0
+        static let sweep: CFTimeInterval = 0.8
+        static let peak: CGFloat = 0.25
+
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
@@ -237,8 +243,9 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
             layer?.masksToBounds = true
             layer?.addSublayer(band)
             let light = NSColor.white.cgColor
-            band.colors = [light.copy(alpha: 0)!, light.copy(alpha: 0.42)!, light.copy(alpha: 0)!]
-            band.locations = [0.38, 0.5, 0.62]
+            // Faint: a glint that says "working", not a flash.
+            band.colors = [light.copy(alpha: 0)!, light.copy(alpha: View.peak)!, light.copy(alpha: 0)!]
+            band.locations = [0.33, 0.5, 0.67]
             // Top-left to bottom-right, in CA's y-up unit space: a band
             // running from the lower left up to the upper right.
             band.startPoint = CGPoint(x: 0, y: 1)
@@ -271,19 +278,27 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
             animateBand()
         }
 
+        /// The band's travel runs past the shimmer's at each end: the
+        /// diagonal band is wide enough that at the shimmer's ends it still
+        /// lay over a corner of the tile — each sweep jumped in there and
+        /// stopped short of leaving. Parked further out, it starts off the
+        /// tile, sweeps through, and leaves it entirely.
         private func animateBand() {
             let width = Swift.max(bounds.width, bounds.height)
             guard width > 0, window != nil else { return }
-            let from = PaneSidebarShimmer.offset(position: 1, width: width)
-            let to = PaneSidebarShimmer.offset(position: 0, width: width)
+            // The bright band (40% of the gradient's diagonal) clears a
+            // square tile at -3w before and +w after; a fifth of a tile more
+            // either way, for its soft edges.
+            let from = PaneSidebarShimmer.offset(position: 1, width: width) - width * 1.2
+            let to = PaneSidebarShimmer.offset(position: 0, width: width) + width * 1.2
             if let existing = band.animation(forKey: "sweep") as? CAKeyframeAnimation,
                existing.values?.first as? CGFloat == from {
                 return
             }
-            let period = PaneSidebarShimmer.period
+            let period = View.period
             let sweep = CAKeyframeAnimation(keyPath: "position.x")
             sweep.values = [from, to, to]
-            sweep.keyTimes = [0, NSNumber(value: PaneSidebarShimmer.sweepFraction), 1]
+            sweep.keyTimes = [0, NSNumber(value: View.sweep / View.period), 1]
             sweep.timingFunctions = [
                 CAMediaTimingFunction(controlPoints: 0.455, 0.03, 0.515, 0.955),
                 CAMediaTimingFunction(name: .linear),

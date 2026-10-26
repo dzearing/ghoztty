@@ -256,20 +256,6 @@ final class PaneSidebarState: ObservableObject {
 /// The text a sidebar row or rail tile shows for a pane. Pure, so the rules
 /// are unit-tested (`PaneSidebarTextTests`).
 enum PaneSidebarText {
-    /// A rail tile's label: ONE character of what the pane is called
-    /// (`label` — its banner title, else its title, exactly as a stacked
-    /// pane's strip is named), so a tile and the row it collapsed from name
-    /// the pane the same way. The first letter or digit, upper-cased: a title
-    /// that opens with a glyph — Claude Code's `✳ ` / spinner prefix, a path's
-    /// `~/` — would otherwise give every such pane the same tile. A label with
-    /// no letters at all shows its first visible character.
-    static func monogram(for label: String) -> String {
-        if let letter = label.first(where: { $0.isLetter || $0.isNumber }) {
-            return String(letter).uppercased()
-        }
-        return label.first(where: { !$0.isWhitespace }).map(String.init) ?? "•"
-    }
-
     /// The name a row shows. A terminal that never set a title carries
     /// Ghostty's placeholder (the ghost), which names nothing and gives a rail
     /// tile no letters to work with — so it falls back to the working

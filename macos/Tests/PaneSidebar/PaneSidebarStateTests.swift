@@ -146,39 +146,6 @@ struct PaneSidebarStateTests {
 struct PaneSidebarTextTests {
     typealias Text = PaneSidebarText
 
-    // MARK: Monograms
-
-    @Test func aMonogramIsOneLetterOfTheName() {
-        #expect(Text.monogram(for: "relay") == "R")
-        #expect(Text.monogram(for: "claude — relay") == "C")
-        #expect(Text.monogram(for: "zsh") == "Z")
-        #expect(Text.monogram(for: "npm run dev") == "N")
-        #expect(Text.monogram(for: "2026 notes") == "2")
-    }
-
-    @Test func aLeadingGlyphIsSkipped() {
-        // Claude Code titles its pane "✳ <task>"; a path opens with "~/".
-        #expect(Text.monogram(for: "✳ Fix strip labels") == "F")
-        #expect(Text.monogram(for: "⠂ Building") == "B")
-        #expect(Text.monogram(for: "~/git/ghoztty") == "G")
-        #expect(Text.monogram(for: "/tmp") == "T")
-    }
-
-    @Test func aNameWithNoLettersShowsWhatItHas() {
-        #expect(Text.monogram(for: "~") == "~", "a shell sitting at home")
-        #expect(Text.monogram(for: "  ") == "•")
-        #expect(Text.monogram(for: "") == "•")
-    }
-
-    /// The tile is lettered from what the row and the stacked strip call the
-    /// pane: its banner title when it has one.
-    @Test func theMonogramFollowsTheBannerTitle() {
-        let label = Text.label(title: "✳ claude", pwd: "/x", kind: "Terminal", banner: "## Sidebar reorder")
-        #expect(Text.monogram(for: label) == "S")
-        let untitled = Text.label(title: "zsh", pwd: "/x", kind: "Terminal", banner: "**Goal:** ship")
-        #expect(Text.monogram(for: untitled) == "Z")
-    }
-
     // MARK: Title
 
     @Test func aRealTitleIsKept() {

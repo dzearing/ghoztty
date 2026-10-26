@@ -444,15 +444,10 @@ Collapsed, the card is a 44pt rail (a 68pt column with its margins). Every
 pane is a 28pt tile in the same order as the list, the focused one in the
 selection pill, and the tray under a hairline at the bottom.
 
-- **A tile is one letter**: the first letter or digit of what the pane is
-  called (`PaneView.displayLabel` — its banner title, else its title, exactly
-  as a stacked pane's strip is named), upper-cased, for every kind of pane
-  (`PaneSidebarText.monogram`). A leading glyph is skipped — Claude Code
-  titles its pane `✳ <task>`, a shell `~/…` — or every such pane would get
-  the same tile; a name with no letters at all shows its first visible
-  character. (It replaced a heuristic of up to three characters taken from
-  after an em dash or from the command name, which named panes differently
-  from their rows.) A tile carries a tooltip with its full name.
+- **A tile shows its pane's kind glyph** (terminal, document, globe, diff,
+  image), the one its row shows; its hue (`PaneSidebarHue`) is what tells
+  panes apart. (It was first one letter of the pane's name — the user
+  preferred the glyphs.)
 - **Every tile is a small pane of glass — the pane banner's own**
   (`PaneSidebarTileButton` on `GlassCardBackground`): a see-through wash, the
   elliptical sheen, the specular rim, a drop shadow scaled down to its size.
@@ -461,9 +456,13 @@ selection pill, and the tray under a hairline at the bottom.
   not key). All static — nothing on a tile animates but the busy shimmer. (A
   first take was an opaque bevelled button with a gradient; it read as a
   control from another app, not as Ghoztty's glass.)
-- **Activity without badges on the letter**: a question is an accent rim
-  round the tile — no `?` badge (it covered the letter and read as clutter);
-  a bell is a dot; busy is the same shimmer, on the letter.
+- **Activity without badges**: a question is an accent rim round the tile —
+  no `?` badge (it read as clutter); a bell is a dot; busy is a faint band of
+  light sweeping diagonally across the tile every 2s, entering and leaving
+  fully off it. Busy means `PaneView.isWorking` — the activity state OR a
+  progress report on screen, which is what animates the pane's own border.
+- **The selected tile** is its hue, deeper, ringed in white outside the tile
+  with a 1pt gap; the others are muted until hovered.
 - **The rail never opens on hover.** It used to open to full width over the
   grid after a short intent delay; but the rail is where its tiles are
   dragged, and a card springing open under a drag is in the way of exactly

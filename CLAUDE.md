@@ -1629,16 +1629,17 @@ the interactive mock settled).
   has no title. The all-windows search still matches the pane's own title.
   The all-windows **window** names are not affected: they group by window
   title (`<project>: <worktree>`), which a pane banner has no say in.
-  **A rail tile is ONE letter** of that same name (`PaneSidebarText.monogram`:
-  the first letter or digit, upper-cased — a leading `✳ `/`~/` is skipped, or
-  every Claude pane would get the same tile), for every kind of pane. Every
+  **A rail tile shows its pane's kind glyph** (terminal, document, globe,
+  diff, image — `PaneSidebarIcon`, as its row shows), its hue telling panes
+  apart (a one-letter monogram of the name was tried first and dropped). Every
   tile is a small **pane of glass, the banner's own** (`PaneSidebarTileButton`
   on `GlassCardBackground`: a see-through wash, the elliptical sheen, the
   specular rim, a shadow scaled to its size), so the color behind shows
   through — **tinted with the pane's own hue** (`PaneSidebarHue`: golden-ratio
   steps along the pane's place in its window's tree, so neighbours never
   match and a list reorder changes no color). The selected tile's tint is
-  deeper, with a white rim. A row's icon takes the same hue. **Hovering a
+  deeper, ringed in white OUTSIDE the tile with a 1pt gap; every other tile,
+  and its glyph, is muted (13% tint, secondary glyph) until hovered. A row's icon takes the same hue. **Hovering a
   tile or row tints its pane in that hue** — a wash and a rim on the pane's
   card (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim — a
   hint, halved from the first take), in over 0.12s, out over 0.2s — so the sidebar says which pane an icon is. All static at rest. **No
@@ -1691,8 +1692,12 @@ the interactive mock settled).
   rail's width (`PaneSidebarView.toggleLeading`), so it does not move when
   toggled.
 - Activity: a **busy** pane's icon shimmers (no spinner, no glow) — on a rail
-  tile, a band of light sweeps diagonally across the whole glass tile
-  (`PaneSidebarTileSheenLayer`, Core Animation, in phase with the shimmer); `needs_input`
+  tile, a faint band of light (25%) sweeps diagonally across the whole glass
+  tile every 2s (`PaneSidebarTileSheenLayer`, Core Animation), starting and
+  ending fully off it. **Busy is `PaneView.isWorking`**: the hook-set activity
+  state OR a progress report on screen (OSC 9;4 — what animates the pane's
+  border, `SurfaceBusyBorder`), so an icon animates whenever its pane's border
+  does (it read only the activity state, and the two disagreed); `needs_input`
   shows a **question** badge — the human label, never the machine token. Both
   animate on **Core Animation**, never an endless SwiftUI animation, which
   re-renders the whole sidebar every frame (measured: ~90% of the main thread
