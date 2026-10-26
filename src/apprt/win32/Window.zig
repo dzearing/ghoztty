@@ -2916,37 +2916,33 @@ pub fn paneSidebarExchange(self: *Window, pane: *PaneView) void {
     self.syncPaneSidebar();
 }
 
-/// The sidebar menu's Close Pane (T1845, Mac `closePaneFromSidebar`): the
-/// ordinary interactive close. A terminal goes through its own close binding,
-/// so a running process is confirmed and a remote pane offers Disconnect
-/// exactly as Ctrl+Shift+W does; a viewer owns no process and just closes.
-/// May free `pane` before returning.
-pub fn paneSidebarClose(self: *Window, pane: *PaneView) void {
-    if (self.findTabIndex(pane) == null) return;
-    if (pane.surface()) |s| {
-        if (s.core_surface_ready) {
-            log.info("pane sidebar close pane (interactive)", .{});
-            _ = s.core_surface.performBindingAction(.close_surface) catch |err| {
-                log.err("pane sidebar close failed err={}", .{err});
-            };
-            return;
-        }
-    }
-    log.info("pane sidebar close pane (no process)", .{});
-    self.closeSplitPane(pane);
-}
-
-/// A row's hover x (T2280, Mac dc2bbab6b / 345be6b02 `closePaneFromSidebar`):
-/// close `pane` with no confirmation - nothing running is asked about, a
-/// remote pane is not offered Disconnect - and without moving focus to this
-/// window. It is undoable like any close: the pane is parked, and its session
-/// ends (CLOSE, never detach) when the undo expires. A window's last pane
-/// takes its window with it, parked the same way. May free `pane` before
+/// Every close of a pane from the sidebar (T2280, T2298; Mac 345be6b02
+/// `closePaneFromSidebar`) - a row's x, in this window or another, and the
+/// row menu's Close Pane: close `pane` with no confirmation - nothing running
+/// is asked about, a remote pane is not offered Disconnect - and without
+/// taking focus. Another window is never raised (a deferred focus forwards
+/// only inside the foreground window, `App.performDeferredFocus`), and the
+/// pane that has the caret keeps it unless it is the one closing. It is
+/// undoable like any close: the pane is parked, and its session ends (CLOSE,
+/// never detach) when the undo expires. A window's last pane takes its window
+/// with it, unconfirmed and parked the same way. May free `pane` before
 /// returning. It replaced trash mode's kill, which skipped the undo too.
 pub fn paneSidebarCloseNow(self: *Window, pane: *PaneView) void {
     if (self.findTabIndex(pane) == null) return;
-    log.info("pane sidebar close pane (x)", .{});
-    self.closeSplitPane(pane);
+    log.info("pane sidebar close pane (x) own_window={}", .{w32.windowIsActive(self.hwnd)});
+    self.closeSplitPaneOpts(pane, .{ .keep_focus = true });
+}
+
+/// A window or project header's x (T2298, Mac `closeWindowFromSidebar`):
+/// close the tab `uuid` names - this whole window when it is the last -
+/// with no confirmation and no focus taken. Its sessions end (CLOSE), parked
+/// for undo first. The tab is found by identity: tabs reorder and close.
+pub fn paneSidebarCloseTab(self: *Window, uuid: pane_id.Buf) void {
+    const idx = for (0..self.tab_count) |t| {
+        if (std.mem.eql(u8, &self.tab_uuid[t], &uuid)) break t;
+    } else return;
+    log.info("pane sidebar close tab={d} tabs={d}", .{ idx, self.tab_count });
+    self.closeTabByIndex(idx);
 }
 
 /// The sidebar menu's Move to New Window (T1845): the header pop-out's verb
@@ -3904,6 +3900,17 @@ pub fn closeTabMode(self: *Window, mode: apprt.action.CloseTabMode, pane: *PaneV
 /// Close a single surface within a split tree. If it's the last surface
 /// in the tab, close the entire tab instead.
 pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
+    self.closeSplitPaneOpts(pane, .{});
+}
+
+pub const CloseSplitOpts = struct {
+    /// The sidebar's close (T2298): closing a pane that is not the tab's
+    /// focused one leaves the focus where it is, rather than handing it to
+    /// the closed pane's neighbour.
+    keep_focus: bool = false,
+};
+
+fn closeSplitPaneOpts(self: *Window, pane: *PaneView, opts: CloseSplitOpts) void {
     const alloc = self.app.core_app.alloc;
     const tab = self.findTabIndex(pane) orelse {
         // A pane parked for undo (T1825) is in no tree: this is its shell
@@ -3930,7 +3937,10 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     // (T1827): focus handed to a stashed pane is focus in a hidden window.
     // Closing a STASHED pane moves nothing - the focused pane is still there.
     const closing_stashed = pane_stash.isStashed(pane);
-    var next_pane: ?*PaneView = if (closing_stashed) self.tab_active_pane[tab] else blk: {
+    // A pane that is not the focused one closing (T2298, the sidebar's x):
+    // the focus stays put, like a stashed pane's close.
+    const keeps_focus = closing_stashed or (opts.keep_focus and self.tab_active_pane[tab] != pane);
+    var next_pane: ?*PaneView = if (keeps_focus) self.tab_active_pane[tab] else blk: {
         const n = self.gotoVisible(tab, pane, .next) orelse self.gotoVisible(tab, pane, .previous);
         break :blk if (n == pane) null else n;
     };
@@ -3987,7 +3997,7 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     // Never into a pane minimized in a collapsed row (T2083, Mac 3090ac2aa):
     // focusing it would bring it back out. The pane on show nearest it,
     // focused last, takes the caret instead.
-    if (!closing_stashed) if (next_pane) |candidate| if (rows_before) |before| {
+    if (!keeps_focus) if (next_pane) |candidate| if (rows_before) |before| {
         next_pane = self.paneOnShowAfter(tab, candidate, before, rows_arena.allocator()) orelse candidate;
     };
 
@@ -3998,7 +4008,7 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
         self.layoutSplits();
         self.app.markLayoutDirty(); // T89f: split closed → re-persist the layout
         // A stashed pane closing leaves keyboard focus where it was.
-        if (!closing_stashed) if (ns.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
+        if (!keeps_focus) if (ns.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
     } else {
         log.debug("closeSplitPane: no next pane, closing tab", .{});
         self.closeTabByIndex(tab);

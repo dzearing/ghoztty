@@ -17,8 +17,9 @@
 #      stashed, still four on screen.
 #   4. The menu's Restore brings the swapped-out pane back.
 #   5. The menu's Move to New Window takes s4 into a second window.
-#   6. The menu's Close Pane closes s3 through the ordinary (interactive)
-#      close - an idle shell, so no confirmation - and +list loses it.
+#   6. The menu's Close Pane closes s3 the way the hover x does (T2298, Mac
+#      345be6b02: every close from the sidebar asks nothing) - s3 is made
+#      busy first, so a confirmation would have come up - and +list loses it.
 #   7. The hover x (T2280): s2 is made busy with a long-running command;
 #      hovering its row and clicking the x at the row's trailing edge closes
 #      it - no confirmation dialog, even with something running - and the
@@ -330,13 +331,17 @@ try {
     Assert "a second window opened" (Wait-Until { (@(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow')).Count -eq 2 })
     Assert "this window has four panes left" (Wait-Until { (@(Get-Panes $top)).Count -eq 4 })
 
-    "== 6: Close Pane closes s3 the ordinary way"
+    "== 6: Close Pane closes a busy s3 with no confirmation (T2298)"
+    [void](Invoke-Cli "+send-keys --target=s3 `"ping -n 120 127.0.0.1`" Enter")
+    Start-Sleep -Milliseconds 1200
     $mark = Get-LogCount
     $rows = Wait-Rows { param($r) $r.Items.Count -eq 4 }
     $items = @(Open-RowMenu $top $sb (Row $rows $ids['s3']))
     if ($items.Count -gt 0) { Select-MenuItem $top 3 }   # Stash, Move, Close
-    Assert "it went through the interactive close (log)" ($null -ne (Wait-Log 'pane sidebar close pane \(interactive\)' $mark))
+    Assert "it went through the sidebar's close (log)" ($null -ne (Wait-Log 'pane sidebar close pane \(x\)' $mark))
     Assert "s3 is gone from +list" (Wait-Until { $null -eq (Get-Leaf $ids['s3']) })
+    Start-Sleep -Milliseconds 500
+    Assert "no confirmation dialog came up" ((Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyConfirmDialog') -eq [IntPtr]::Zero)
 
     "== 7: the hover x closes a busy pane with no confirmation, undoably"
     $rows = Wait-Rows { param($r) $r.Items.Count -eq 3 }

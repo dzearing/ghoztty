@@ -5439,6 +5439,23 @@ $GuardTable = @(
             'test\win32\pane-sidebar-all-windows.ps1'
         )
     },
+    # Closing from the sidebar (T2298): another window's row x, a window's
+    # and a project's header x, and a window's own header x - none asks,
+    # none raises a window, each ends what it closes. The geometry and the
+    # rules are unit-tested in every lane; that the closes land in the right
+    # windows, on the next loop turn, unconfirmed and parked for undo, with
+    # activation left where it was, is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-close'
+        Script = 'test\win32\pane-sidebar-close.ps1'
+        Stamp  = 'test\win32\pane-sidebar-close.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\pane_sidebar_menu.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-close.ps1'
+        )
+    },
     # The sidebar scrolls (T1878): the wheel, the overlay thumb, revealing
     # the focused row, the sticky project header, and clicks and tips that
     # follow the offset. The pure half is unit-tested in every lane; that a

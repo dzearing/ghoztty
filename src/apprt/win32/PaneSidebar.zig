@@ -99,6 +99,10 @@ const tool_search_clear: usize = tool_scope + 2;
 fn toolClose(i: usize) usize {
     return tool_search_clear + 1 + i;
 }
+/// A header's hover x (T2298), after the rows'.
+fn toolHeadClose(k: usize) usize {
+    return toolClose(pane_sidebar.max_items) + k;
+}
 
 /// What new windows start from: the most recently chosen expanded and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`),
@@ -275,6 +279,9 @@ tip: ?w32.HWND = null,
 tip_text: [pane_sidebar.max_items][tips.tip_cap]u16 = undefined,
 tip_items: usize = 0,
 tip_heads: usize = 0,
+/// Each header x's tip, kept alive for the tooltip (a project's names its
+/// window count).
+head_tip_text: [pane_sidebar.max_heads][40:0]u16 = undefined,
 tip_log: [256]u8 = undefined,
 tip_log_len: usize = 0,
 
@@ -634,6 +641,12 @@ fn logOutline(self: *PaneSidebar) void {
     w.writeAll(" chev=") catch {};
     for (l.heads[0..l.head_count]) |hd| {
         w.print("{d},{d};", .{ hd.chevron.centerX(), hd.chevron.centerY() }) catch break;
+    }
+    // Each head's hover x (T2298), in heads order.
+    w.writeAll(" hx=") catch {};
+    for (0..l.head_count) |k| {
+        const x = l.headClose(k, self.scale);
+        w.print("{d},{d};", .{ x.centerX(), x.centerY() }) catch break;
     }
     log.debug("pane sidebar outline {s}", .{fbs.getWritten()});
 }
@@ -2015,17 +2028,23 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         self.paintMarkFor(hdc, icon_r, .{ .glyph = e.icon }, self.hueInk(e, under, hovered, emphasized, t), under, busy);
 
         // The trailing edge: the hover buttons (T2280, Mac dc2bbab6b -
-        // stash/restore on this window's rows, then the x) replace the bell
+        // stash/restore on this window's rows, then the x on every row,
+        // T2298) replace the bell
         // dot while the pointer is on the row, so the two never crowd each
         // other. A question has no accessory any more (Mac 2924ea5cc).
         const text_left = icon_r.right + pane_sidebar.px(8, self.scale);
         var text_right = r.right - text_inset;
         const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
-        if (hovered and row_menu.rowOffersButtons(e.own)) {
-            const button = l.rowButton(i, self.scale);
-            text_right = button.left - sm;
-            self.paintRowButton(hdc, .{ .item_button = i }, button, if (e.section == .stashed) glyph_restore else glyph_stash, t);
-            self.paintRowButton(hdc, .{ .item_close = i }, l.rowClose(i, self.scale), glyph_close, t);
+        if (hovered) {
+            // Another window's row offers the x alone (T2298).
+            const x = l.rowClose(i, self.scale);
+            text_right = x.left - sm;
+            if (row_menu.rowOffersStash(e.own)) {
+                const button = l.rowButton(i, self.scale);
+                text_right = button.left - sm;
+                self.paintRowButton(hdc, .{ .item_button = i }, button, if (e.section == .stashed) glyph_restore else glyph_stash, under, t);
+            }
+            self.paintRowButton(hdc, .{ .item_close = i }, x, glyph_close, under, t);
         } else if (e.bell and e.section == .stashed) {
             // Mac's accessory: a stashed pane's bell dot.
             const d = @max(pane_sidebar.px(7, self.scale), 3);
@@ -2223,7 +2242,7 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
 fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, g: Group, t: Theme) void {
     const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
-    const hovered = self.hoverIs(.{ .head = k }) or self.hoverIs(.{ .head_fold = k });
+    const hovered = self.hoverIs(.{ .head = k }) or self.hoverIs(.{ .head_fold = k }) or self.hoverIs(.{ .head_close = k });
     const project = hd.kind == .project;
     var under = t.surface;
     if (hovered and (project or !g.own)) {
@@ -2236,7 +2255,10 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     const folded = if (project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
 
-    // The trailing count first, so the name knows its room.
+    // The trailing count first, so the name knows its room. Hovered, the x
+    // takes the count's place (T2298, Mac 345be6b02); the name stops short
+    // of the x either way, so nothing shifts when it appears.
+    const x = pane_sidebar.headCloseRect(hd, self.scale);
     var right = hd.rect.right - text_inset;
     const text_r: pane_sidebar.Rect = .{ .left = hd.label_x, .top = hd.chevron.top - pane_sidebar.px(6, self.scale), .right = right, .bottom = hd.chevron.bottom + pane_sidebar.px(6, self.scale) };
     {
@@ -2246,8 +2268,10 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
         const cn = std.unicode.utf8ToUtf16Le(&cw, count8) catch 0;
         if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
         const w = textWidth(hdc, cw[0..cn]);
-        drawText(hdc, cw[0..cn], .{ .left = right - w, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_RIGHT);
-        right -= w + sm;
+        if (hovered) {
+            self.paintRowButton(hdc, .{ .head_close = k }, x, glyph_close, under, t);
+        } else drawText(hdc, cw[0..cn], .{ .left = right - w, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_RIGHT);
+        right = @min(right - w, x.left) - sm;
     }
 
     if (project) {
@@ -2337,14 +2361,26 @@ fn strokeDashed(hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, scale: f32, col
 /// One of a hovered row's compact buttons (stash / restore, or the x, T2280):
 /// the glyph, on the icon-button hover fill while the pointer is on it. The x
 /// is an ordinary button, not trash mode's red disc - it closes undoably.
-fn paintRowButton(self: *PaneSidebar, hdc: w32.HDC, hit: pane_sidebar.Hit, b: pane_sidebar.Rect, g: u16, t: Theme) void {
-    if (self.hoverIs(hit)) {
-        const pressed = std.meta.eql(self.pressed, hit);
-        const state: icon_button.State = if (pressed) .pressed else .hover;
-        fillRound(hdc, b, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark) * 2)));
-    }
-    glyph(hdc, self.scale, b, g, 10, t.text);
+/// Every item button - a row's stash/restore and x, a header's x - in one
+/// style (T2298, Mac 345be6b02 `PaneSidebarItemButton`): a circle of the
+/// ink washed over what it sits on, deeper under the pointer (8% -> 18%),
+/// and a glyph that brightens from secondary to primary, so it reads as
+/// clickable before it is hovered. Mac's on-accent variant has no Windows
+/// counterpart: the selected row here is a neutral fill, never an accent
+/// pill (T828).
+fn paintRowButton(self: *PaneSidebar, hdc: w32.HDC, hit: pane_sidebar.Hit, b: pane_sidebar.Rect, g: u16, under: color_math.Rgb, t: Theme) void {
+    const hot = self.hoverIs(hit);
+    const pressed = hot and std.meta.eql(self.pressed, hit);
+    const wash: f64 = if (pressed) item_button_wash_pressed else if (hot) item_button_wash_hover else item_button_wash_rest;
+    fillRound(hdc, b, @divTrunc(b.width(), 2), rgb(color_math.mix(under, t.ink, wash)));
+    glyph(hdc, self.scale, b, g, 10, if (hot) t.text else t.secondary);
 }
+
+/// The item button's wash (Mac `PaneSidebarItemButton.wash`), and a deeper
+/// one while it is held.
+const item_button_wash_rest: f64 = 0.08;
+const item_button_wash_hover: f64 = 0.18;
+const item_button_wash_pressed: f64 = 0.26;
 
 /// The pointer is on row `i` or one of its buttons.
 fn rowHovered(self: *const PaneSidebar, i: usize) bool {
@@ -2702,6 +2738,17 @@ const tip_search_clear = W("Clear search");
 const tip_close = W(row_menu.close_tip);
 const tip_restore_row = W(tips.stashed_row_tip);
 
+/// A header x's tip (Mac's `.help`): "Close window", or a project's "Close
+/// its N windows".
+fn headCloseTip(self: *PaneSidebar, k: usize, hd: pane_sidebar.Head) [*:0]const u16 {
+    const buf = &self.head_tip_text[k];
+    var nb: [40]u8 = undefined;
+    const text8 = if (hd.kind == .window) row_menu.close_window_tip else row_menu.projectCloseTip(if (hd.index < self.groups.items.len) self.groups.items[hd.index].project_size else 0, &nb);
+    const n = std.unicode.utf8ToUtf16Le(buf[0 .. buf.len - 1], text8) catch 0;
+    buf[n] = 0;
+    return buf[0..n :0];
+}
+
 /// The toggle's tip: what a click does, or why it does nothing.
 fn toggleTipText(self: *const PaneSidebar) [*:0]const u16 {
     if (self.mode == .expanded) return tip_collapse;
@@ -2726,7 +2773,10 @@ fn syncTips(self: *PaneSidebar) void {
         delTool(tip, hwnd, toolClose(i));
     };
     const nh = if (live) l.head_count else 0;
-    if (self.tip_heads > nh) for (nh..self.tip_heads) |k| delTool(tip, hwnd, toolHead(k));
+    if (self.tip_heads > nh) for (nh..self.tip_heads) |k| {
+        delTool(tip, hwnd, toolHead(k));
+        delTool(tip, hwnd, toolHeadClose(k));
+    };
     self.tip_heads = nh;
     // The search field (T1877, Mac's `.toolTip` and "Clear search"):
     // the field's tip stops short of the clear button, so the two
@@ -2759,6 +2809,10 @@ fn syncTips(self: *PaneSidebar) void {
             // Only the part of a head in view tips (T1878).
             const v = scroll_mod.visible(&l, hd.rect);
             if (v.height() > 0) addTool(tip, hwnd, toolHead(k), v, text) else delTool(tip, hwnd, toolHead(k));
+            const x = if (rows) scroll_mod.visible(&l, l.headClose(k, self.scale)) else pane_sidebar.Rect{};
+            if (x.height() > 0) {
+                addTool(tip, hwnd, toolHeadClose(k), x, self.headCloseTip(k, hd));
+            } else delTool(tip, hwnd, toolHeadClose(k));
         }
         for (self.entries.items[0..n], 0..) |e, i| {
             if (!l.shown(i) or scroll_mod.visible(&l, l.items[i]).height() <= 0) {
@@ -2868,17 +2922,20 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
         .item_button => |i| {
             if (i >= self.entries.items.len) return;
             const e = self.entries.items[i];
-            // Only this window's rows have one (`rowOffersButtons`).
-            if (row_menu.rowOffersButtons(e.own)) self.window.paneSidebarToggleStash(e.pane);
+            // Only this window's rows have one (`rowOffersStash`).
+            if (row_menu.rowOffersStash(e.own)) self.window.paneSidebarToggleStash(e.pane);
         },
-        // The x (T2280): close the pane. That can close this very window
-        // (its last pane), so nothing here is touched after.
+        // The x (T2280, T2298): close the pane, in this window or another,
+        // asking nothing and taking no focus. That can close this very
+        // window (its last pane), so nothing here is touched after.
         .item_close => |i| {
             if (i >= self.entries.items.len) return;
             const e = self.entries.items[i];
-            if (row_menu.rowOffersButtons(e.own)) return self.window.paneSidebarCloseNow(e.pane);
+            const w = self.rowWindow(e) orelse return;
+            return w.paneSidebarCloseNow(e.pane);
         },
         .head, .head_fold => |k| self.activateHead(k, std.meta.activeTag(hit) == .head_fold),
+        .head_close => |k| self.closeHead(k),
     }
 }
 
@@ -3076,8 +3133,9 @@ fn openRowMenu(self: *PaneSidebar, hwnd: w32.HWND, i: usize, x: i32, y: i32) voi
         .stash => w.paneSidebarToggleStash(e.pane),
         .show => self.focusForeign(e),
         .pop_out => w.paneSidebarPopOut(e.pane),
-        // May free the pane, and close its window: nothing after.
-        .close => w.paneSidebarClose(e.pane),
+        // The x's close (T2298): no confirmation, no focus taken. May free
+        // the pane, and close its window: nothing after.
+        .close => w.paneSidebarCloseNow(e.pane),
     }
 }
 
@@ -3099,6 +3157,34 @@ fn activateHead(self: *PaneSidebar, k: usize, fold: bool) void {
     if (hd.kind == .project) return self.toggleFold(&self.folded_projects, g.project_key);
     if (fold or g.own) return self.toggleFold(&self.toggled, g.key);
     self.raiseGroup(g);
+}
+
+/// A header's x (T2298, Mac 345be6b02): a window's closes that window - the
+/// tab, when its window has others - and a project's every window it shows
+/// (while searching, only the matching ones it counts). Nothing is asked and
+/// no window is raised; the sessions end, undoable as one close.
+///
+/// The targets are captured before anything closes: each close rebuilds this
+/// roster, and one of them may be this sidebar's own window. The closes
+/// themselves run on the next loop turn (`App.closeTabsQuietly`), so a window
+/// can close itself from its own sidebar.
+fn closeHead(self: *PaneSidebar, k: usize) void {
+    const l = self.currentLayout();
+    if (k >= l.head_count) return;
+    const hd = l.heads[k];
+    if (hd.index >= self.groups.items.len) return;
+    const head = self.groups.items[hd.index];
+    var targets: [pane_sidebar.max_heads]App.QuietClose = undefined;
+    var n: usize = 0;
+    for (self.groups.items) |g| {
+        const mine = if (hd.kind == .project) g.project_key == head.project_key else g.key == head.key;
+        if (!mine or n == targets.len) continue;
+        if (g.tab >= g.window.tab_count) continue;
+        targets[n] = .{ .window = g.window, .tab = g.window.tab_uuid[g.tab] };
+        n += 1;
+    }
+    log.info("pane sidebar close {s} windows={d}", .{ @tagName(hd.kind), n });
+    self.window.app.closeTabsQuietly(targets[0..n]);
 }
 
 /// Flip `key` in `set` - a project's fold, or a window's flip away from its

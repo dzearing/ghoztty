@@ -786,8 +786,9 @@ pub const Layout = struct {
     stash_end: usize = 0,
     /// Each item's content indent (outline level), in pixels.
     indent: [max_items]i32 = [_]i32{0} ** max_items,
-    /// Each item is THIS window's (`Item.own`): only those rows offer hover
-    /// buttons (T2280, `pane_sidebar_menu.rowOffersButtons`).
+    /// Each item is THIS window's (`Item.own`): only those rows offer the
+    /// hover stash button; every row has its x (T2298,
+    /// `pane_sidebar_menu.rowOffersStash`).
     own: [max_items]bool = [_]bool{true} ** max_items,
     heads: [max_heads]Head = undefined,
     head_count: usize = 0,
@@ -843,20 +844,33 @@ pub const Layout = struct {
     }
 
     /// An expanded row's hover x (T2280, Mac dc2bbab6b): the compact square
-    /// at the row's trailing edge, `sm` inside its fill. Empty for another
-    /// window's row, which offers no buttons.
+    /// at the row's trailing edge, `sm` inside its fill. Every row has one,
+    /// another window's too (T2298, Mac 345be6b02).
     pub fn rowClose(self: *const Layout, i: usize, scale: f32) Rect {
-        if (!self.own[i]) return .{};
         const r = self.items[i];
         const b = px(row_button_dip, scale);
-        const inset = px(sm_dip, scale);
         const top = r.top + @divTrunc(r.height() - b, 2);
-        return .{ .left = r.right - inset - b, .top = top, .right = r.right - inset, .bottom = top + b };
+        return trailingSquare(r, top, scale);
+    }
+
+    /// An outline header's hover x (T2298, Mac 345be6b02 / 7e4646bb5): where
+    /// the count is, in the same column as the rows' x, level with the
+    /// chevron. A window's closes that window; a project's every window in it.
+    pub fn headClose(self: *const Layout, k: usize, scale: f32) Rect {
+        if (k >= self.head_count) return .{};
+        return headCloseRect(self.heads[k], scale);
+    }
+
+    /// The row-button square at `fill`'s trailing edge, `sm` inside it.
+    fn trailingSquare(fill: Rect, top: i32, scale: f32) Rect {
+        const b = px(row_button_dip, scale);
+        const inset = px(sm_dip, scale);
+        return .{ .left = fill.right - inset - b, .top = top, .right = fill.right - inset, .bottom = top + b };
     }
 
     /// An expanded row's hover stash / restore button: the same square,
     /// `row_button_gap_dip` before the x (Mac's minus/restore, then the x).
-    /// Empty wherever the x is.
+    /// This window's rows only: another window's offers the x alone.
     pub fn rowButton(self: *const Layout, i: usize, scale: f32) Rect {
         if (!self.own[i]) return .{};
         const x = self.rowClose(i, scale);
@@ -864,6 +878,12 @@ pub const Layout = struct {
         return .{ .left = x.left - shift, .top = x.top, .right = x.right - shift, .bottom = x.bottom };
     }
 };
+
+/// Header `hd`'s hover x (`Layout.headClose`).
+pub fn headCloseRect(hd: Head, scale: f32) Rect {
+    const b = px(row_button_dip, scale);
+    return Layout.trailingSquare(hd.rect, hd.chevron.top + @divTrunc(hd.chevron.height() - b, 2), scale);
+}
 
 /// The expanded row's height: Mac's `SidePanelRow` padding around one or two
 /// lines (title, then the subtitle in the caption size).
@@ -1199,6 +1219,8 @@ pub const Hit = union(enum) {
     head: usize,
     /// An outline header's chevron column: fold, never raise.
     head_fold: usize,
+    /// An outline header's hover x (T2298).
+    head_close: usize,
 };
 
 pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
@@ -1217,6 +1239,7 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     for (l.heads[0..l.head_count], 0..) |hd, k| {
         const hit_r = rowHitRect(l, hd.rect);
         if (!hit_r.contains(x, y)) continue;
+        if (rows and l.headClose(k, scale).contains(x, y)) return .{ .head_close = k };
         return if (x < hd.label_x) .{ .head_fold = k } else .{ .head = k };
     }
     for (0..l.count) |i| {
@@ -1285,6 +1308,9 @@ fn onButton(l: *const Layout, x: i32, y: i32, scale: f32) bool {
     if (l.toggle.contains(x, y) or l.scope.contains(x, y)) return true;
     for (0..l.count) |i| {
         if (l.shown(i) and (l.rowClose(i, scale).contains(x, y) or l.rowButton(i, scale).contains(x, y))) return true;
+    }
+    for (0..l.head_count) |k| {
+        if (l.headClose(k, scale).contains(x, y)) return true;
     }
     return false;
 }
@@ -1960,7 +1986,8 @@ test "pane_sidebar: hit testing the outline finds heads, chevrons, rows and the 
     const h0 = l.heads[0];
     try testing.expectEqual(Hit{ .head_fold = 0 }, hitTest(&l, h0.chevron.centerX(), h0.rect.centerY(), s));
     try testing.expectEqual(Hit{ .head = 0 }, hitTest(&l, h0.label_x + 10, h0.rect.centerY(), s));
-    try testing.expectEqual(Hit{ .head = 1 }, hitTest(&l, 200, l.heads[1].rect.centerY(), s));
+    // Clear of the x (T2298), which sits where the count was.
+    try testing.expectEqual(Hit{ .head = 1 }, hitTest(&l, l.heads[1].label_x + 10, l.heads[1].rect.centerY(), s));
     try testing.expectEqual(Hit{ .item = 3 }, hitTest(&l, 60, l.items[3].centerY(), s));
     try testing.expectEqual(@as(Hit, .scope), hitTest(&l, l.scope.centerX(), l.scope.centerY(), s));
     try testing.expectEqual(@as(Hit, .toggle), hitTest(&l, l.toggle.centerX(), l.toggle.centerY(), s));
@@ -2056,18 +2083,21 @@ test "pane_sidebar: the header reads toggle, then all-windows at the trailing ed
     }
 }
 
-test "T2280: another window's row offers no buttons (T2298 adds its x); a tile has none at all" {
+test "T2298: another window's row offers the x alone, in this window's column (Mac 345be6b02); a tile has none at all" {
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .group = 1, .own = false } };
     for (scales) |s| {
         const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
         const l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
         try testing.expectEqual(@as(i32, 0), l.rowButton(1, s).width());
-        try testing.expectEqual(@as(i32, 0), l.rowClose(1, s).width());
-        // Where this window's row has its buttons, another's is all row.
+        const x1 = l.rowClose(1, s);
+        try testing.expectEqual(px(row_button_dip, s), x1.width());
+        try testing.expectEqual(Hit{ .item_close = 1 }, hitTest(&l, x1.centerX(), x1.centerY(), s));
+        // The x lines up with this window's; where its stash button is,
+        // another window's row is all row.
         const own_x = l.rowClose(0, s);
         const own_b = l.rowButton(0, s);
+        try testing.expectEqual(own_x.left, x1.left);
         const y1 = l.items[1].centerY();
-        try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, own_x.centerX(), y1, s));
         try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, own_b.centerX(), y1, s));
 
         // The rail: every point of a tile is the tile (no corner x).
@@ -2198,5 +2228,37 @@ test "T1900: beside the tab strip the column reaches up, its content where it wa
         try testing.expectEqual(c.header.top + reach, d.header.top);
         try testing.expectEqual(c.items[0].top + reach, d.items[0].top);
         try testing.expectEqual(b.toggle, d.toggle);
+    }
+}
+
+test "T2298: a window's and a project's header x sit in the rows' x column, level with the chevron, and are their own hit (Mac 7e4646bb5)" {
+    // A project holding both windows, so a project head is laid out too.
+    const lines = [_]Line{
+        .{ .kind = .project, .index = 0 },
+        .{ .kind = .window, .index = 0, .depth = 1 },
+        .{ .kind = .pane, .index = 0, .depth = 2 },
+        .{ .kind = .pane, .index = 1, .depth = 2 },
+        .{ .kind = .window, .index = 1, .depth = 1 },
+        .{ .kind = .pane, .index = 3, .depth = 2 },
+    };
+    for (scales) |s| {
+        const f = outlineFixture(s);
+        const l = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &lines, f.tm, s);
+        try testing.expectEqual(@as(usize, 3), l.head_count);
+        try testing.expectEqual(HeadKind.project, l.heads[0].kind);
+        const row_x = l.rowClose(0, s);
+        for (0..l.head_count) |k| {
+            const hx = l.headClose(k, s);
+            const hd = l.heads[k];
+            try testing.expectEqual(px(row_button_dip, s), hx.width());
+            try testing.expectEqual(row_x.left, hx.left);
+            try testing.expect(@abs(hx.centerY() - hd.chevron.centerY()) <= 1);
+            try testing.expectEqual(Hit{ .head_close = k }, hitTest(&l, hx.centerX(), hx.centerY(), s));
+            // Beside it the header is still the header.
+            try testing.expectEqual(Hit{ .head = k }, hitTest(&l, hx.left - 2, hx.centerY(), s));
+            // A press on it is the button's, never an edge drag.
+            try testing.expect(onButton(&l, hx.centerX(), hx.centerY(), s));
+        }
+        try testing.expectEqual(Rect{}, l.headClose(l.head_count, s));
     }
 }

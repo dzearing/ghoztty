@@ -1302,16 +1302,22 @@ the interactive mock settled).
   for when it comes back, closed panes are pruned, and empty means tree
   order. Tests: `PaneSidebarOrderTests`, `PaneDropResolverSidebarTests`,
   `dragReordersTheListAndTheTrayStashesAndRestores` (both modes). Hovering an
-  expanded row offers −/↩ (stash/restore) and **×**, the ordinary close
-  (`closePaneFromSidebar`, as right-click → Close Pane: confirmation when
-  something runs or the pane is remote, and undo). **There is no trash mode**
-  any more (its unconfirmed, unundoable kill went with its header button).
+  expanded row offers −/↩ (stash/restore) and **×** (another window's row:
+  × only), and a hovered window or project header puts × where its count was,
+  in the same column. **Every close from the sidebar asks nothing, takes no
+  focus and ends what it closes** (Mac 345be6b02, `closePaneFromSidebar`,
+  `closeWindowsFromSidebar`; right-click → Close Pane too): no running-process
+  confirmation, no remote Disconnect offer, no window raised, sessions
+  CLOSE-on-free - undoable for the usual undo window. **There is no trash
+  mode** any more.
   The **collapse/expand button is the header's first item**, centered on the
   rail's width (`PaneSidebarView.toggleLeading`), so it does not move when
-  toggled. **Windows:** T2275 (order), T2276 (tray), T2280 (landed: this
-  window's rows offer stash/restore and ×, which closes with no confirmation
-  and is undoable - `Window.paneSidebarCloseNow`; trash mode is gone). Another
-  window's row offers no buttons yet: its × is T2298, with the no-focus close.
+  toggled. **Windows:** T2275 (order), T2276 (tray), T2280 + T2298 (landed:
+  every row's × and the right-click Close Pane are `Window.paneSidebarCloseNow`
+  - unconfirmed, undoable, never raising another window, and a pane that is not
+  the focused one closes without moving the caret; a header's × is
+  `App.closeTabsQuietly`, run on the next loop turn as one undo group, so a
+  window closes itself from its own sidebar. `test\win32\pane-sidebar-close.ps1`).
 - Activity: a **busy** pane's row — or tile — sheens: a faint upright band
   of light (25%) sweeps across its pill from right to left every 2s
   (`PaneSidebarTileSheenLayer`, Core Animation; travel in `PaneSidebarSheen`),

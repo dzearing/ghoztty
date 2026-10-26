@@ -185,6 +185,12 @@ const WM_APP_REAP_SURFACE: u32 = w32.WM_APP + 26;
 /// AgentIntegration / AgentIntegrationsDialog. +34 is ShareMachineRow's.)
 const WM_APP_ORPHAN_ROSTER: u32 = w32.WM_APP + 33;
 
+/// Posted to `msg_hwnd` by `closeTabsQuietly` (T2298): close the window tabs
+/// a sidebar header's x named, from the top of the loop rather than inside
+/// the click - so a window can close itself from its own sidebar, as Mac's
+/// next-runloop-turn close does. (+34..+41 are taken, see above and Window.)
+const WM_APP_QUIET_CLOSE: u32 = w32.WM_APP + 42;
+
 /// Ceiling on agent restarts spent chasing the bundled build in one app run
 /// (T147). Two: one for the ordinary "the binary was swapped under us" case,
 /// one spare for a restart that raced something, and no third because a third
@@ -492,6 +498,11 @@ layout_capture_deferred: usize = 0,
 /// never dereferenced, so a pane that closes under the pointer is harmless.
 sidebar_hover_pane: ?*const PaneView = null,
 sidebar_hover_color: @import("color_math.zig").Rgb = .{ .r = 0, .g = 0, .b = 0 },
+
+/// The window tabs a sidebar header's x is closing (T2298), waiting for
+/// `WM_APP_QUIET_CLOSE`. Windows are compared against `windows` before use.
+quiet_closes: [@import("pane_sidebar.zig").max_heads]QuietClose = undefined,
+quiet_close_count: usize = 0,
 
 /// The HINSTANCE for this module.
 hinstance: w32.HINSTANCE,
@@ -1229,6 +1240,43 @@ pub fn performDeferredFocus(hwnd: w32.HWND) void {
 /// With no `msg_hwnd` there is nowhere to defer TO — that is only true after
 /// `terminate` has torn the app down, at which point every window is going
 /// away anyway, so the handle is simply left to Win32.
+/// One window tab a sidebar header's x closes (T2298): the window, and the
+/// tab by its identity.
+pub const QuietClose = struct {
+    window: *Window,
+    tab: @import("pane_id.zig").Buf,
+};
+
+/// Close `targets` on the next loop turn (T2298, Mac
+/// `closeWindowsFromSidebar`): no confirmation, no window raised, every
+/// session in them ended - undoable as one close. A request while one is
+/// pending joins it.
+pub fn closeTabsQuietly(self: *App, targets: []const QuietClose) void {
+    const room = self.quiet_closes.len - self.quiet_close_count;
+    const n = @min(targets.len, room);
+    @memcpy(self.quiet_closes[self.quiet_close_count..][0..n], targets[0..n]);
+    const was_empty = self.quiet_close_count == 0;
+    self.quiet_close_count += n;
+    if (!was_empty or n == 0) return;
+    const msg = self.msg_hwnd orelse return self.performQuietCloses();
+    _ = w32.PostMessageW(msg, WM_APP_QUIET_CLOSE, 0, 0);
+}
+
+fn performQuietCloses(self: *App) void {
+    const n = self.quiet_close_count;
+    var batch: [@import("pane_sidebar.zig").max_heads]QuietClose = undefined;
+    @memcpy(batch[0..n], self.quiet_closes[0..n]);
+    self.quiet_close_count = 0;
+    log.info("sidebar quiet close tabs={d}", .{n});
+    self.close_undo.beginGroup();
+    defer self.close_undo.endGroup();
+    for (batch[0..n]) |c| {
+        // Asked again: each close may have closed the window already.
+        if (!self.hasWindow(c.window) or c.window.closing) continue;
+        c.window.paneSidebarCloseTab(c.tab);
+    }
+}
+
 pub fn reapSurfaceHwnd(self: *App, hwnd: w32.HWND) void {
     const msg = self.msg_hwnd orelse return;
     _ = w32.PostMessageW(msg, WM_APP_REAP_SURFACE, @intFromPtr(hwnd), 0);
@@ -12825,6 +12873,11 @@ fn msgWndProc(
 
     if (msg == w32.WM_TIMER and wparam == VISIBILITY_TIMER_ID) {
         app.pollVisibility();
+        return 0;
+    }
+
+    if (msg == WM_APP_QUIET_CLOSE) {
+        app.performQuietCloses();
         return 0;
     }
 

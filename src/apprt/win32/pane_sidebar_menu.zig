@@ -10,13 +10,16 @@
 //! - **Right-click.** A grid row: Stash Pane / Move to New Window / Close
 //!   Pane. A stashed row: Restore / Swap with Focused Pane / Move to New
 //!   Window / Close Pane. Another window's grid row offers Show Pane in place
-//!   of Stash, and its stashed row no Swap. Close Pane is the ordinary close -
-//!   confirmation and a remote pane's Disconnect included.
-//! - **Hover x** (T2280, Mac dc2bbab6b / 345be6b02). A hovered row offers
-//!   stash/restore (this window's rows only), then an x that closes the pane
-//!   with no confirmation and without taking focus. It is undoable; the
-//!   session ends when the undo expires. It replaced trash mode, whose red x
-//!   killed with no undo at all.
+//!   of Stash, and its stashed row no Swap. Close Pane is the hover x's close
+//!   (T2298, Mac 345be6b02), not the confirmed one.
+//! - **Hover x** (T2280, T2298; Mac dc2bbab6b / 345be6b02). A hovered row
+//!   offers stash/restore (this window's rows only), then an x - every row,
+//!   another window's too. A hovered window or project header puts an x where
+//!   its count was. Every close from the sidebar asks nothing (no running
+//!   process, no remote Disconnect), takes no focus (never raises another
+//!   window), and ends the sessions it closes rather than detaching them. It
+//!   is undoable; the sessions end when the undo expires. It replaced trash
+//!   mode, whose red x killed with no undo at all.
 //!
 //! No OS imports, so this unit-tests in every app-runtime lane; the window
 //! half is `PaneSidebar.zig`.
@@ -122,12 +125,21 @@ pub fn build(f: Facts, out: *[max_items]Item) []const Item {
 /// The hover x's tooltip (Mac's `.help`).
 pub const close_tip = "Close pane";
 
-/// Whether a hovered row offers its buttons - stash/restore, then the x
-/// (Mac dc2bbab6b `trailingButton`): this window's rows do. Another window's
-/// row offers none yet; its x arrives with the no-focus close T2298 ports
-/// (Mac 345be6b02), since closing there must not hand that window focus.
-pub fn rowOffersButtons(own: bool) bool {
+/// A window header's x tooltip (Mac `PaneSidebarWindowHeader`).
+pub const close_window_tip = "Close window";
+
+/// Whether a hovered row offers stash/restore before its x (Mac 345be6b02
+/// `trailingButton`): this window's rows do; another window's row offers the
+/// x alone.
+pub fn rowOffersStash(own: bool) bool {
     return own;
+}
+
+/// A project header's x tooltip (Mac `PaneSidebarProjectHeader`): "Close its
+/// window", or "Close its N windows".
+pub fn projectCloseTip(windows: usize, buf: []u8) []const u8 {
+    if (windows == 1) return "Close its window";
+    return std.fmt.bufPrint(buf, "Close its {d} windows", .{windows}) catch "Close its windows";
 }
 
 // ---------------------------------------------------------------------------
@@ -200,8 +212,12 @@ test "pane_sidebar_menu: every id is non-zero, so a dismissed menu is never a co
     inline for (std.meta.fields(Id)) |f| try testing.expect(f.value != 0);
 }
 
-test "T2280: this window's row offers stash and close, another window's row nothing yet" {
-    try testing.expect(rowOffersButtons(true));
-    try testing.expect(!rowOffersButtons(false));
+test "T2298: this window's row offers stash before its x, another window's the x alone; header tips say what closes" {
+    try testing.expect(rowOffersStash(true));
+    try testing.expect(!rowOffersStash(false));
     try testing.expectEqualStrings("Close pane", close_tip);
+    try testing.expectEqualStrings("Close window", close_window_tip);
+    var buf: [48]u8 = undefined;
+    try testing.expectEqualStrings("Close its window", projectCloseTip(1, &buf));
+    try testing.expectEqualStrings("Close its 3 windows", projectCloseTip(3, &buf));
 }
