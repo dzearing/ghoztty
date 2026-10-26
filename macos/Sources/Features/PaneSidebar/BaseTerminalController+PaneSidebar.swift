@@ -218,16 +218,59 @@ extension BaseTerminalController {
         syncPaneSidebarLayout()
     }
 
-    // MARK: Close / kill
+    // MARK: Close
 
-    /// The sidebar's right-click → Close Pane: the ordinary interactive
-    /// close, confirmation and remote Disconnect included.
+    /// The sidebar's × (and right-click → Close Pane) on a pane of THIS
+    /// window or another: close it outright — no confirmation, no remote
+    /// Disconnect offer, and no focus taken. Its processes end and its agent
+    /// session is marked CLOSE-on-free like any close, so the session really
+    /// ends (`SessionCloseIntentPolicy`). Undoable, as any close.
+    ///
+    /// A window's last pane closes the window (`closeWindowFromSidebar`):
+    /// `TerminalController.closeSurface` would route the root to
+    /// `closeTab`/`closeWindow`, which confirm.
     func closePaneFromSidebar(_ pane: PaneView) {
         guard let node = surfaceTree.root?.node(view: pane) else { return }
-        // The same widening `ghosttyDidCloseSurface` applies at the
-        // interactive caller: confirm a running process, and confirm any
-        // remote pane even when idle.
-        let confirm = pane.needsConfirmQuit || !disconnectableViews(in: [pane]).isEmpty
-        closeSurface(node, withConfirmation: confirm)
+        switch PaneSidebarClosePolicy.paneClose(leafCount: surfaceTree.root?.leaves().count ?? 0) {
+        case .removePane: closeSurface(node, withConfirmation: false)
+        case .closeWindow: closeWindowFromSidebar()
+        }
+    }
+
+    /// An all-windows window row's ×: close this window (this tab, in a tab
+    /// group) without asking and without raising it — not through
+    /// `performClose`/`windowShouldClose`, which confirm. `windowWillClose`
+    /// marks every pane's session CLOSE-on-free, so they end rather than
+    /// detach. The close runs on the next turn, so a window can close itself
+    /// from its own sidebar without tearing down the button mid-action.
+    func closeWindowFromSidebar() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            if let terminal = self as? TerminalController {
+                terminal.closeTabImmediately()
+            } else {
+                self.window?.close()
+            }
+        }
+    }
+
+    /// A project group header's ×: every window in it, as `closeWindowFromSidebar`.
+    static func closeWindowsFromSidebar(_ controllers: [BaseTerminalController]) {
+        for controller in controllers { controller.closeWindowFromSidebar() }
+    }
+}
+
+/// How the sidebar closes things: every close from it — a pane's, a window's,
+/// a project group's — is unconfirmed and takes no focus.
+enum PaneSidebarClosePolicy {
+    enum PaneClose: Equatable {
+        /// Take the pane out of its window's tree.
+        case removePane
+        /// It is the window's only pane (stashed ones count): close the window.
+        case closeWindow
+    }
+
+    static func paneClose(leafCount: Int) -> PaneClose {
+        leafCount > 1 ? .removePane : .closeWindow
     }
 }

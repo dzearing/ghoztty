@@ -290,6 +290,10 @@ struct PaneSidebarView: View {
                         windowCount: section.windows.count,
                         isFolded: folded,
                         isFirst: index == 0,
+                        onClose: {
+                            BaseTerminalController.closeWindowsFromSidebar(
+                                section.windows.compactMap { byID[$0.id] })
+                        },
                         onFold: {
                             withAnimation(PaneSidebarOutline.foldAnimation) {
                                 if folded { state.foldedProjects.remove(project) }
@@ -717,6 +721,7 @@ private struct PaneSidebarWindowHeader: View {
     let onFold: () -> Void
 
     @State private var isHovered = false
+    @Environment(\.paneSidebarInteractive) private var isInteractive
 
     var body: some View {
         HStack(spacing: PaneSidebarOutline.chevronSpacing) {
@@ -749,7 +754,19 @@ private struct PaneSidebarWindowHeader: View {
             }
             Spacer(minLength: 4)
 
-            PaneSidebarCount(value: owner.surfaceTree.count)
+            // Hovered, the count gives way to × in its place (so nothing
+            // shifts): close the window, no questions, no focus taken.
+            ZStack(alignment: .trailing) {
+                PaneSidebarCount(value: owner.surfaceTree.count)
+                    .opacity(isHovered && isInteractive ? 0 : 1)
+                if isHovered && isInteractive {
+                    PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
+                        owner.closeWindowFromSidebar()
+                    }
+                    .offset(x: PaneSidebarItemButton.headerOffset)
+                }
+            }
+            .frame(height: 14)
         }
         .padding(.vertical, 6)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
@@ -784,38 +801,60 @@ private struct PaneSidebarProjectHeader: View {
     let windowCount: Int
     let isFolded: Bool
     let isFirst: Bool
+    /// Close every window in the group: no questions, no focus taken.
+    let onClose: () -> Void
     let onFold: () -> Void
 
+    @State private var isHovered = false
+    @Environment(\.paneSidebarInteractive) private var isInteractive
+
     var body: some View {
-        Button(action: onFold) {
-            HStack(spacing: PaneSidebarOutline.chevronSpacing) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .rotationEffect(.degrees(isFolded ? -90 : 0))
-                    .foregroundStyle(.secondary)
-                    .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
-                Text(project.uppercased())
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 4)
-                PaneSidebarCount(value: windowCount)
+        HStack(spacing: 0) {
+            Button(action: onFold) {
+                HStack(spacing: PaneSidebarOutline.chevronSpacing) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(.degrees(isFolded ? -90 : 0))
+                        .foregroundStyle(.secondary)
+                        .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
+                    Text(project.uppercased())
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.leading, PaneSidebarOutline.headerLeading)
-            .padding(.trailing, SidePanelRow.textInset)
-            .padding(.horizontal, SidePanelRow.fillInset)
-            .padding(.top, isFirst ? 4 : 10)
-            .padding(.bottom, 5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help(isFolded ? "Show \(project)’s windows" : "Hide \(project)’s windows")
+            .accessibilityLabel("\(project), \(windowCount) windows")
+            .accessibilityAddTraits(.isHeader)
+
+            // As a window row: hovered, the count gives way to ×.
+            ZStack(alignment: .trailing) {
+                PaneSidebarCount(value: windowCount)
+                    .opacity(isHovered && isInteractive ? 0 : 1)
+                if isHovered && isInteractive {
+                    PaneSidebarItemButton(
+                        symbol: "xmark",
+                        help: windowCount == 1 ? "Close its window" : "Close its \(windowCount) windows",
+                        action: onClose)
+                    .offset(x: PaneSidebarItemButton.headerOffset)
+                }
+            }
+            .frame(height: 14)
         }
-        .buttonStyle(.plain)
+        .padding(.leading, PaneSidebarOutline.headerLeading)
+        .padding(.trailing, SidePanelRow.textInset)
+        .padding(.horizontal, SidePanelRow.fillInset)
+        .padding(.top, isFirst ? 4 : 10)
+        .padding(.bottom, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HoverTrackingArea(isHovered: $isHovered))
         .glassBackdrop()
-        .help(isFolded ? "Show \(project)’s windows" : "Hide \(project)’s windows")
-        .accessibilityLabel("\(project), \(windowCount) windows")
-        .accessibilityAddTraits(.isHeader)
     }
 }
 
