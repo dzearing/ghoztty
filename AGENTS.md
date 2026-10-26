@@ -30,3 +30,5 @@ A file for [guiding coding agents](https://agents.md/).
 - Shared Zig core: `src/`
 - macOS app: `macos/`
 - GTK (Linux and FreeBSD) app: `src/apprt/gtk`
+
+Ghoztty (this fork): fork-specific rules and the topic index are in `CLAUDE.md`.
