@@ -3,29 +3,26 @@
 //! grid, listing every pane of the active tab — the panes in the grid with the
 //! focused one selected, then the stashed ones (T1827).
 //!
-//! Pinned, it is a flat panel down the window's side: one more column of the
-//! window, on the terminal background lifted by the card wash, separated from
-//! the grid by a divider-colored rule. Unpinned, it is the raised card the
-//! banner and the viewer side panel use, collapsed to the mini rail — one
-//! 28 DIP tile per pane, each labeled with a monogram. Hidden
+//! Expanded, it is a flat panel down the window's side: one more column of
+//! the window, on the terminal background lifted by the card wash, separated
+//! from the grid by a divider-colored rule. Collapsed, it is the raised card
+//! the banner and the viewer side panel use, as the mini rail — one 28 DIP
+//! tile per pane, each labeled with a monogram. Hidden
 //! (`toggle_pane_sidebar`), it takes no space.
 //!
 //! Clicking a row focuses that pane, or restores it when it is stashed. A
-//! row's hover button stashes a grid pane or restores a stashed one. The pin
-//! flips panel and rail. Everything about modes, widths, text and geometry is
-//! `pane_sidebar.zig`, which is unit-tested without a window; this file only
-//! paints what that decides and routes the clicks back to `Window`.
+//! row's hover button stashes a grid pane or restores a stashed one. One
+//! toggle switches collapsed and expanded (T2289, Mac e77422577/dc2bbab6b):
+//! the header's first item, on the same pixels in both modes, and off - with
+//! a tooltip that says why - in a window too narrow for the panel. There is
+//! no pin and no hover-open: the rail never grows under the pointer.
+//! Everything about modes, widths, text and geometry is `pane_sidebar.zig`,
+//! which is unit-tested without a window; this file only paints what that
+//! decides and routes the clicks back to `Window`.
 //!
-//! Unpinned, the rail opens on hover (T1842; Mac `PaneSidebarHostView`): with
-//! the pointer on the rail's card for Mac's 100 ms intent delay, the card
-//! grows to the panel's full width OVER the grid - in a second window, a
-//! popup owned by the top-level, so the column (and every terminal beside it)
-//! never resizes, and the card covers the panes' own popups (a dim overlay, a
-//! banner strip) instead of being painted over by them. Leaving starts Mac's
-//! 280 ms grace, after which it contracts unless the pointer came back or a
-//! press on it is still held. Every tile, row, row button and the pin carries
-//! a tooltip (Mac `.help`); a tile's names its pane, since the rail shows only
-//! a monogram. The timing and wording rules are `pane_sidebar_hover.zig`.
+//! Every tile, row, row button and the toggle carries a tooltip (Mac
+//! `.help`); a tile's names its pane, since the rail shows only a monogram.
+//! The wording is `pane_sidebar_tips.zig`.
 //!
 //! The roster is rebuilt only when what it shows changed — `refresh` hashes
 //! the panes, their titles, banners, states and the selection first — because
@@ -41,7 +38,7 @@ const w32 = @import("win32.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
 const outline = @import("pane_sidebar_outline.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
-const hov = @import("pane_sidebar_hover.zig");
+const tips = @import("pane_sidebar_tips.zig");
 const sidebar_prefs = @import("pane_sidebar_prefs.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
 const search_field = @import("pane_sidebar_search.zig");
@@ -52,7 +49,6 @@ const xf = @import("pane_sidebar_xfade.zig");
 const Dib32 = @import("dib32.zig");
 const layer = @import("pane_sidebar_layer.zig");
 const App = @import("App.zig");
-const overlay_zorder = @import("overlay_zorder.zig");
 const toc = @import("viewer_toc_layout.zig");
 const color_math = @import("color_math.zig");
 const pane_hue = @import("pane_hue.zig");
@@ -76,28 +72,15 @@ const ActivityState = @import("../../terminal/main.zig").osc.Command.ActivitySta
 const log = std.log.scoped(.pane_sidebar);
 
 pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPaneSidebar");
-/// The hover-open card's popup (T1842).
-pub const CARD_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPaneSidebarCard");
 
-/// Timer ids, each on its own window: the intent delay on the rail, the
-/// grace period on the card.
-const TIMER_OPEN: usize = 1;
-const TIMER_CLOSE: usize = 2;
-/// The motion clock (T1843), on whichever window shows something moving.
+/// Timer ids. (1 and 2 were the hover-open card's, retired with it in T2289.)
+/// The motion clock (T1843), while something on the column moves.
 const TIMER_ANIM: usize = 3;
-/// A list transition's frame clock (T1880), on the surface it runs on.
+/// A list transition's frame clock (T1880).
 const TIMER_XFADE: usize = 4;
 
-/// Which of the sidebar's two windows a message or a paint is for.
-const Surface = enum { rail, card };
-
-/// Why the card opened or closed - logged, so the acceptance script can tell
-/// the paths apart on a desktop where nothing can photograph a popup's life.
-const CardReason = enum { hover, unpin, pin, left, mode, hidden };
-
-/// Tooltip tool ids, per window: the pin, then one per item, then one per
-/// row button.
-const tool_pin: usize = 0;
+/// Tooltip tool ids: the toggle, then one per item, then one per row button.
+const tool_toggle: usize = 0;
 fn toolItem(i: usize) usize {
     return 1 + i;
 }
@@ -112,7 +95,7 @@ const tool_trash: usize = tool_scope + 1;
 const tool_search: usize = tool_trash + 1;
 const tool_search_clear: usize = tool_trash + 2;
 
-/// What new windows start from: the most recently chosen pin and hidden
+/// What new windows start from: the most recently chosen expanded and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`),
 /// and the panel width - one preference shared by every window (Mac
 /// `PaneSidebarWidth`, T1846). Loaded from `pane_sidebar_prefs` before the
@@ -163,8 +146,11 @@ const glyph_document: u16 = 0xE8A5; // Document
 const glyph_globe: u16 = 0xE774; // Globe
 const glyph_photo: u16 = 0xE91B; // Photo
 const glyph_code: u16 = 0xE943; // Code
-const glyph_pin: u16 = 0xE718; // Pin (unpinned: offer to pin)
-const glyph_pinned: u16 = 0xE840; // Pinned
+// The collapse/expand toggle (Mac's `.sidebar` symbol, a window with its
+// sidebar): the open pane offered by the rail, the close pane by the panel -
+// the Fluent pair Windows' own navigation panes use.
+const glyph_open_pane: u16 = 0xE8A0; // OpenPane: "expand the sidebar"
+const glyph_close_pane: u16 = 0xE89F; // ClosePane: "collapse it to icons"
 const glyph_stash: u16 = 0xE921; // ChromeMinimize: "put this away"
 const glyph_restore: u16 = 0xE7A7; // Undo: "bring it back"
 const glyph_windows: u16 = 0xE7C4; // TaskView: "every window"
@@ -234,14 +220,13 @@ window_count: usize = 0,
 search: search_field.Field = .{},
 search_focus: bool = false,
 
-// Scrolling (T1878, `pane_sidebar_scroll`): each surface's wanted offset -
-// the column (rail or pinned panel) and the open card - clamped by every
-// layout, the wheel's carried remainder, a thumb drag in progress, and the
-// pane whose row was last brought into view (a NEW selection reveals; the
+// Scrolling (T1878, `pane_sidebar_scroll`): the wanted offset, clamped by
+// every layout, the wheel's carried remainder, a thumb drag in progress, and
+// the pane whose row was last brought into view (a NEW selection reveals; the
 // same one never fights the user's own scrolling).
-scroll: [2]i32 = .{ 0, 0 },
-wheel: [2]scroll_mod.Wheel = .{ .{}, .{} },
-thumb_drag: ?struct { which: Surface, grab: i32 } = null,
+scroll: i32 = 0,
+wheel: scroll_mod.Wheel = .{},
+thumb_drag: ?struct { grab: i32 } = null,
 revealed: ?*PaneView = null,
 /// The pane this sidebar last handed the hover tint to (T2278), so a hover
 /// change clears only its own (`syncHoverTint`).
@@ -250,6 +235,9 @@ tint_pane: ?*const PaneView = null,
 mode: pane_sidebar.Mode = .hidden,
 /// `Window.paneSidebarReachPx()` at the last `place` (T1900).
 reach: i32 = 0,
+/// `Window.paneSidebarCanExpand()` at the last `place` (T2289): false in a
+/// window too narrow for the panel, where the rail's toggle is off.
+can_expand: bool = true,
 scale: f32 = 1.0,
 hover: pane_sidebar.Hit = .none,
 pressed: pane_sidebar.Hit = .none,
@@ -264,54 +252,29 @@ press_alt: bool = false,
 /// An edge drag in progress (T1846): the width it measures from
 /// (`pane_sidebar.edgeStartDip`) and the screen x it went down at. Screen,
 /// not client, so the measure survives the rail turning into the panel
-/// under the pointer. `which` is the surface it went down on; `gutter` says
-/// it went down in the window's gutter beside the pinned panel (the elevated
-/// style's grip, T2265), whose bar the window paints. Null otherwise.
-edge: ?struct { start_dip: f32, start_x: i32, which: Surface = .rail, gutter: bool = false } = null,
-/// The surface whose edge band the pointer is over (T2265): its accent bar
-/// shows at half strength.
-edge_hover: ?Surface = null,
+/// under the pointer. `gutter` says it went down in the window's gutter
+/// beside the expanded panel (the elevated style's grip, T2265), whose bar
+/// the window paints. Null otherwise.
+edge: ?struct { start_dip: f32, start_x: i32, gutter: bool = false } = null,
+/// The pointer is over the edge band (T2265): its accent bar shows at half
+/// strength.
+edge_hover: bool = false,
 /// The edge bar last painted, for the debug-log oracle.
 edge_bar_logged: ?gutter_bar.Strength = null,
 /// A pane drag is live somewhere (T1844): the empty "Drop to stash" slot
-/// shows while nothing is stashed, and the open card does not contract.
+/// shows while nothing is stashed.
 drag_active: bool = false,
 
 /// Trash mode (T1845, Mac `isQuickKill`): every row and tile grows a red x
 /// that kills its pane with no confirmation. Transient - never persisted,
 /// and per window, as Mac's state object is.
 quick_kill: bool = false,
-/// A row's right-click menu is up: the open card holds open under it (Mac
-/// never contracts under a menu the sidebar put up).
-menu_open: bool = false,
-
-// The hover-open card (T1842).
-card_hwnd: ?w32.HWND = null,
-card_open: bool = false,
-card_tracking: bool = false,
-/// The open card's per-pixel alpha (T1865), built for `layer_key` and
-/// reused by every repaint until the card's shape changes.
-layer_cells: []layer.Cell = &.{},
-layer_key: ?LayerKey = null,
-/// The first present after an open logs what it sent (`layer.stats`).
-layer_logged: bool = false,
-/// The open card's glass layer (T1887), premultiplied, built for
-/// `glass_key` - the sheet, its shadows and the desk under the column - and
-/// the content is laid on it at every present.
-layer_glass: []u32 = &.{},
-glass_key: ?GlassKey = null,
-/// While the open card is painted for its glass compose, the colour its
-/// material is replaced with: black, then white (`layer.composeOver`).
-card_key: ?u32 = null,
-open_armed: bool = false,
-
-// Tooltips: one control, tools on both windows. A tile's text names its pane,
-// so it lives here (a tool keeps a pointer to its text); every other tip is a
-// constant.
+// Tooltips: one control. A tile's text names its pane, so it lives here (a
+// tool keeps a pointer to its text); every other tip is a constant.
 tip: ?w32.HWND = null,
-tip_text: [pane_sidebar.max_items][hov.tip_cap]u16 = undefined,
-tip_items: [2]usize = .{ 0, 0 },
-tip_heads: [2]usize = .{ 0, 0 },
+tip_text: [pane_sidebar.max_items][tips.tip_cap]u16 = undefined,
+tip_items: usize = 0,
+tip_heads: usize = 0,
 tip_log: [256]u8 = undefined,
 tip_log_len: usize = 0,
 
@@ -328,17 +291,17 @@ font_scale: f32 = 0,
 metrics: pane_sidebar.TextMetrics = .{ .title_h = 19, .caption_h = 16 },
 
 // Motion (T1843). Each paint counts the marks it drew into `paint_marks`
-// against one clock reading, and leaves the tally in `marks` for its surface:
-// the motion timer runs while the last paint of that surface drew something
-// that moves, and stops itself on the first tick after it did not.
+// against one clock reading, and leaves the tally in `marks`: the motion
+// timer runs while the last paint drew something that moves, and stops
+// itself on the first tick after it did not.
 paint_marks: motion.Marks = .{},
 paint_ms: u64 = 0,
 paint_motion: bool = true,
-marks: [2]motion.Marks = .{ .{}, .{} },
-anim_armed: [2]bool = .{ false, false },
-/// The list transition running on each surface (T1880): the scope slide or a
+marks: motion.Marks = .{},
+anim_armed: bool = false,
+/// The list transition running on the panel (T1880): the scope slide or a
 /// fold, composed from a picture of the frame before it (`xf`).
-xfade: [2]?xf.Xfade = .{ null, null },
+xfade: ?xf.Xfade = null,
 /// Paint the material alone - no header, no rows: the backdrop a transition
 /// lays the moving lists over.
 paint_bare: bool = false,
@@ -348,11 +311,9 @@ logged_marks: [3]usize = .{ 0, 0, 0 },
 /// The hash of the last row text logged (`logText`), for the same reason.
 logged_text: u64 = 0,
 
-// The card material behind the rail and behind the open card, each cached
-// like the TOC card's (two caches, or the two sizes would thrash one).
+// The card material behind the rail, cached like the TOC card's.
 rail_card: CardCache = .{},
-open_card: CardCache = .{},
-/// The pinned panel's glass over the desk, in the elevated style (T1850).
+/// The expanded panel's glass over the desk, in the elevated style (T1850).
 glass_panel: CardCache = .{},
 /// The desk generation the window last told this sidebar about.
 last_desk_gen: u32 = 0,
@@ -377,27 +338,7 @@ const CardCache = struct {
     }
 };
 
-/// What the open card's alpha mask was built from: a change to any of it is a
-/// new shape.
-const LayerKey = struct {
-    w: i32,
-    h: i32,
-    column_w: i32,
-    card: banner_card.Rect,
-    radius: f32,
-};
-
-/// What the open card's glass layer was built from (T1887): its shape, the
-/// tint and the desk under the column.
-const GlassKey = struct {
-    layer: LayerKey,
-    tint: color_math.Rgb,
-    scale: f32,
-    desk_gen: u32,
-};
-
 var class_registered: bool = false;
-var card_class_registered: bool = false;
 
 fn registerOne(hinstance: ?w32.HINSTANCE, name: [*:0]const u16) bool {
     const wc = w32.WNDCLASSEXW{
@@ -425,7 +366,6 @@ fn registerOne(hinstance: ?w32.HINSTANCE, name: [*:0]const u16) bool {
 
 fn registerClass(hinstance: ?w32.HINSTANCE) void {
     if (!class_registered) class_registered = registerOne(hinstance, CLASS_NAME);
-    if (!card_class_registered) card_class_registered = registerOne(hinstance, CARD_CLASS_NAME);
 }
 
 /// Create the sidebar as a hidden child of `parent`. Null when the window
@@ -465,10 +405,6 @@ pub fn destroy(self: *PaneSidebar) void {
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
     // synchronously and they must not find a half-dead object.
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
-    if (self.card_hwnd) |c| {
-        _ = w32.SetWindowLongPtrW(c, w32.GWLP_USERDATA, 0);
-        _ = w32.DestroyWindow(c);
-    }
     if (self.tip) |t| _ = w32.DestroyWindow(t);
     _ = w32.DestroyWindow(self.hwnd);
     self.clearEntries();
@@ -478,14 +414,9 @@ pub fn destroy(self: *PaneSidebar) void {
     self.lines.deinit(self.alloc);
     self.toggled.deinit(self.alloc);
     self.folded_projects.deinit(self.alloc);
-    for (&self.xfade) |*x| {
-        if (x.*) |*v| v.deinit();
-        x.* = null;
-    }
+    if (self.xfade) |*v| v.deinit();
+    self.xfade = null;
     self.rail_card.release();
-    self.open_card.release();
-    if (self.layer_cells.len > 0) self.alloc.free(self.layer_cells);
-    if (self.layer_glass.len > 0) self.alloc.free(self.layer_glass);
     self.glass_panel.release();
     self.releaseFonts();
     self.alloc.destroy(self);
@@ -507,11 +438,6 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
     const changed = mode != self.mode or scale != self.scale;
     self.mode = mode;
     self.scale = scale;
-    // Only the rail opens (Mac: leaving `.mini` clears `isHoverOpen`).
-    if (mode != .mini) {
-        self.disarm();
-        self.closeCard(if (mode == .hidden) .hidden else .mode);
-    }
     // T1877: a field that is no longer on screen gives the caret back, and a
     // query filters the panel but never the rail - a mode change re-asks.
     if (self.search_focus and !self.searchShown()) self.releaseSearchFocus();
@@ -541,30 +467,29 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
             w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW,
         );
     }
-    // A new shape (the rail pinned into the panel, or back) shows the
+    // A new shape (the rail expanded into the panel, or back) shows the
     // selected row in it (T1878).
-    if (changed) if (self.selectedIndex()) |i| self.revealItem(.rail, i);
+    if (changed) if (self.selectedIndex()) |i| self.revealItem(i);
     // Reaching up beside the tab strip, or no longer (T1900), moves every
     // row by the strip's height inside a column that may not have resized.
     const reach = self.window.paneSidebarReachPx();
     const reached = reach != self.reach;
     self.reach = reach;
     if (changed or reached) _ = w32.InvalidateRect(self.hwnd, null, 0);
-    if (moved or changed) self.syncTips();
-    if (changed) self.logOutline();
-    // A relayout under the open card (a split, a stash from its own row
-    // button) moves the column it grows from: keep it glued there.
-    if (self.card_open) self.positionCard();
+    // A width change can cross the narrow-window line, which turns the
+    // rail's toggle on or off (T2289): repaint it and re-set its tip.
+    const can = self.window.paneSidebarCanExpand();
+    const can_changed = can != self.can_expand;
+    self.can_expand = can;
+    if (can_changed and !changed and !reached) _ = w32.InvalidateRect(self.hwnd, null, 0);
+    if (moved or changed or can_changed) self.syncTips();
+    if (changed or can_changed) self.logOutline();
 }
 
-/// Re-read the roster: this window's active tab, or - in the all-windows
-/// scope - every tab of every window. Cheap when nothing it shows has
-/// changed; repaints only when something did.
-/// Repaint the column and the open card: what they paint over changed (the
-/// window's desk, T1850) though nothing on the list did.
+/// Repaint the column: what it paints over changed (the window's desk,
+/// T1850) though nothing on the list did.
 pub fn repaint(self: *PaneSidebar) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
-    if (self.card_hwnd) |c| self.invalidate(c);
 }
 
 /// The window just painted desk generation `gen`. A new one (a resize - the
@@ -577,6 +502,9 @@ pub fn deskPainted(self: *PaneSidebar, gen: u32) void {
     self.repaint();
 }
 
+/// Re-read the roster: this window's active tab, or - in the all-windows
+/// scope - every tab of every window. Cheap when nothing it shows has
+/// changed; repaints only when something did.
 pub fn refresh(self: *PaneSidebar) void {
     if (self.all_windows) return self.refreshAll();
     const win = self.window;
@@ -629,7 +557,7 @@ fn hashView(h: *std.hash.Wyhash, v: *PaneView, selected: bool) void {
     h.update("\x01");
 }
 
-/// The roster changed: repaint, re-glue the open card, re-sync the tips.
+/// The roster changed: repaint and re-sync the tips.
 fn rosterChanged(self: *PaneSidebar) void {
     self.revealSelected();
     // The rows moved under the pointer: the hovered index may name another
@@ -639,12 +567,6 @@ fn rosterChanged(self: *PaneSidebar) void {
     self.logOutline();
     self.logMarks();
     self.logText();
-    if (self.card_open) {
-        // More or fewer rows: the card is as tall as before, but its region
-        // and rows are re-derived with it.
-        self.positionCard();
-        if (self.card_hwnd) |c| self.invalidate(c);
-    }
     self.syncTips();
 }
 
@@ -657,7 +579,9 @@ fn rosterChanged(self: *PaneSidebar) void {
 /// The single-window roster logs the same shape as `pane sidebar rows ...`
 /// (T1845), with each item's pane id after a `#`, so the row-actions script
 /// can right-click and Alt-click the row of the pane it means. The trash
-/// toggle's center rides at the end.
+/// toggle's center rides at the end. Both lines name the collapse/expand
+/// toggle's center and whether it can expand (T2289), so a script clicks it
+/// rather than re-deriving where it sits.
 fn logOutline(self: *PaneSidebar) void {
     if (self.mode == .hidden) return;
     if (!self.all_windows) return self.logRows();
@@ -678,6 +602,7 @@ fn logOutline(self: *PaneSidebar) void {
     }
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
     w.print(" rules={d} scope={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY() }) catch {};
+    self.logToggle(w, &l);
     // The search field (T1877): where to click it, and whether the "No
     // matching panes" note is up.
     if (l.search.width() > 0) {
@@ -691,6 +616,13 @@ fn logOutline(self: *PaneSidebar) void {
         w.print("{d},{d};", .{ hd.chevron.centerX(), hd.chevron.centerY() }) catch break;
     }
     log.debug("pane sidebar outline {s}", .{fbs.getWritten()});
+}
+
+/// The collapse/expand toggle on a geometry line (T2289): its center, and
+/// whether a click there can expand (`can=0` is the narrow window's dimmed
+/// rail button).
+fn logToggle(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layout) void {
+    w.print(" toggle={d},{d} can={d}", .{ l.toggle.centerX(), l.toggle.centerY(), @intFromBool(self.can_expand) }) catch {};
 }
 
 /// The scroll state (T1878) at the end of a geometry line: the offset of
@@ -714,6 +646,7 @@ fn logRows(self: *PaneSidebar) void {
     }
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
     w.print(" rules={d} scope={d},{d} trash={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY(), l.trash.centerX(), l.trash.centerY() }) catch {};
+    self.logToggle(w, &l);
     logScroll(w, &l);
     log.debug("pane sidebar rows {s}", .{fbs.getWritten()});
 }
@@ -910,7 +843,7 @@ fn countTerms(q: []const u8) usize {
 
 /// Whether the search filters the roster now (`pane_sidebar_search.filters`).
 fn filterActive(self: *const PaneSidebar) bool {
-    return search_field.filters(!self.search.isEmpty(), self.all_windows, self.mode == .expanded, self.card_open);
+    return search_field.filters(!self.search.isEmpty(), self.all_windows, self.mode == .expanded);
 }
 
 /// Whether `query` matches pane `v` of the window called `window_name`: every
@@ -1114,36 +1047,23 @@ fn iconFor(v: *const PaneView) u16 {
 // Layout
 // -------------------------------------------------------------------------
 
+/// The layout as it is on screen: laid out, then scrolled to the offset
+/// (T1878) - which is clamped here, so a list that shrank never leaves the
+/// offset pointing past its end. Everything that paints, hits, drops or tips
+/// goes through this one funnel, so they cannot disagree about where a
+/// scrolled row is.
 fn currentLayout(self: *PaneSidebar) pane_sidebar.Layout {
-    return self.layoutFor(.rail);
-}
-
-fn surfaceHwnd(self: *const PaneSidebar, which: Surface) ?w32.HWND {
-    return switch (which) {
-        .rail => self.hwnd,
-        .card => self.card_hwnd,
-    };
-}
-
-/// `which`'s layout as it is on screen: laid out, then scrolled to that
-/// surface's offset (T1878) - which is clamped here, so a list that shrank
-/// never leaves the offset pointing past its end. Everything that paints,
-/// hits, drops or tips goes through this one funnel, so they cannot
-/// disagree about where a scrolled row is.
-fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
-    var l = self.rawLayoutFor(which);
-    const k = @intFromEnum(which);
-    scroll_mod.apply(&l, self.scroll[k], self.scale);
-    self.scroll[k] = l.scroll;
+    var l = self.rawLayout();
+    scroll_mod.apply(&l, self.scroll, self.scale);
+    self.scroll = l.scroll;
     return l;
 }
 
-/// `which`'s layout before the scroll pass: every row where it would sit in
-/// a column as tall as its content.
-fn rawLayoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
-    const hwnd = self.surfaceHwnd(which) orelse return .{};
+/// The layout before the scroll pass: every row where it would sit in a
+/// column as tall as its content.
+fn rawLayout(self: *PaneSidebar) pane_sidebar.Layout {
     var r: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &r) == 0) return .{};
+    if (w32.GetClientRect(self.hwnd, &r) == 0) return .{};
     var items: [pane_sidebar.max_items]pane_sidebar.Item = undefined;
     const n = @min(self.entries.items.len, items.len);
     for (self.entries.items[0..n], 0..) |e, i| {
@@ -1152,10 +1072,7 @@ fn rawLayoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
     self.ensureFonts();
     const lines: ?[]const pane_sidebar.Line = if (self.all_windows) self.lines.items else null;
     const insets = self.window.paneSidebarInsets();
-    var l = switch (which) {
-        .rail => pane_sidebar.layoutIn(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, insets),
-        .card => pane_sidebar.layoutOpenIn(r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, pane_sidebar.openInsets(insets)),
-    };
+    var l = pane_sidebar.layoutIn(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, insets);
     if (self.drag_active) pane_sidebar.addDropSlot(&l, self.metrics, self.scale);
     l.quick_kill = self.quick_kill;
     l.search_text = !self.search.isEmpty();
@@ -1183,39 +1100,37 @@ fn revealSelected(self: *PaneSidebar) void {
     const pane = self.entries.items[i].pane;
     if (self.revealed == pane) return;
     self.revealed = pane;
-    self.revealItem(.rail, i);
-    if (self.card_open) self.revealItem(.card, i);
+    self.revealItem(i);
 }
 
-/// Scroll `which` the least that shows item `i` (a no-op when it shows).
-fn revealItem(self: *PaneSidebar, which: Surface, i: usize) void {
-    const raw = self.rawLayoutFor(which);
+/// Scroll the least that shows item `i` (a no-op when it shows). The log
+/// keeps its `surface=rail` field: the hover-open card was the other
+/// surface until T2289, and the scripts read the line as it was.
+fn revealItem(self: *PaneSidebar, i: usize) void {
+    const raw = self.rawLayout();
     if (i >= raw.count or !raw.shown(i)) return;
-    const k = @intFromEnum(which);
-    const before = self.scroll[k];
-    self.scroll[k] = scroll_mod.revealOffset(&raw, raw.items[i], before, self.scale);
-    if (self.scroll[k] != before) log.info("pane sidebar reveal surface={s} item={d} scroll={d}", .{ @tagName(which), i, self.scroll[k] });
+    const before = self.scroll;
+    self.scroll = scroll_mod.revealOffset(&raw, raw.items[i], before, self.scale);
+    if (self.scroll != before) log.info("pane sidebar reveal surface=rail item={d} scroll={d}", .{ i, self.scroll });
 }
 
-/// Scroll `which` to `want` (clamped), and follow everything that hangs off
-/// a row's position: the paint, the tips, the hover under a pointer that
-/// did not move, and the geometry line the acceptance script reads.
-fn scrollTo(self: *PaneSidebar, which: Surface, want: i32) void {
-    const k = @intFromEnum(which);
-    const before = self.scroll[k];
-    self.scroll[k] = want;
-    const l = self.layoutFor(which);
+/// Scroll to `want` (clamped), and follow everything that hangs off a row's
+/// position: the paint, the tips, the hover under a pointer that did not
+/// move, and the geometry line the acceptance script reads.
+fn scrollTo(self: *PaneSidebar, want: i32) void {
+    const before = self.scroll;
+    self.scroll = want;
+    const l = self.currentLayout();
     if (l.scroll == before) return;
-    const hwnd = self.surfaceHwnd(which) orelse return;
-    self.invalidate(hwnd);
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.syncTips();
-    log.info("pane sidebar scroll surface={s} offset={d}/{d}", .{ @tagName(which), l.scroll, l.max_scroll });
-    if (which == .rail) self.logOutline();
+    log.info("pane sidebar scroll surface=rail offset={d}/{d}", .{ l.scroll, l.max_scroll });
+    self.logOutline();
     var pt: w32.POINT = undefined;
-    if (self.thumb_drag == null and w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0) {
+    if (self.thumb_drag == null and w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(self.hwnd, &pt) != 0) {
         var cr: w32.RECT = undefined;
-        if (w32.GetClientRect(hwnd, &cr) != 0 and pt.x >= 0 and pt.y >= 0 and pt.x < cr.right and pt.y < cr.bottom) {
-            self.setHover(which, self.hitAt(which, pt.x, pt.y));
+        if (w32.GetClientRect(self.hwnd, &cr) != 0 and pt.x >= 0 and pt.y >= 0 and pt.x < cr.right and pt.y < cr.bottom) {
+            self.setHover(self.hitAt(pt.x, pt.y));
         }
     }
 }
@@ -1223,15 +1138,14 @@ fn scrollTo(self: *PaneSidebar, which: Surface, want: i32) void {
 const SPI_GETWHEELSCROLLLINES: u32 = 0x0068;
 const WHEEL_PAGESCROLL: u32 = 0xFFFF_FFFF;
 
-/// A wheel notch over `which`: the system's lines per notch, a line being a
-/// one-line row (a tile and its gap on the rail); "one screen" scrolls by
-/// the viewport.
-fn onWheel(self: *PaneSidebar, which: Surface, delta: i32) void {
-    const l = self.layoutFor(which);
+/// A wheel notch: the system's lines per notch, a line being a one-line row
+/// (a tile and its gap on the rail); "one screen" scrolls by the viewport.
+fn onWheel(self: *PaneSidebar, delta: i32) void {
+    const l = self.currentLayout();
     if (l.max_scroll <= 0) return;
     var lines: u32 = 3;
     _ = w32.SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, @ptrCast(&lines), 0);
-    const rows = l.mode == .expanded or l.open;
+    const rows = l.mode == .expanded;
     var line_h = if (rows)
         pane_sidebar.rowHeight(false, self.metrics, self.scale)
     else
@@ -1240,15 +1154,14 @@ fn onWheel(self: *PaneSidebar, which: Surface, delta: i32) void {
         lines = 1;
         line_h = l.viewport.height();
     }
-    const k = @intFromEnum(which);
-    self.scrollTo(which, self.scroll[k] + self.wheel[k].step(delta, lines, line_h));
+    self.scrollTo(self.scroll + self.wheel.step(delta, lines, line_h));
 }
 
 /// Where in the thumb a press at (`x`, `y`) took it, or null off it. The
 /// target is wider than the thin thumb - out to the viewport's edge - and
 /// wins over the resize band on its own height only.
-fn thumbAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) ?i32 {
-    const l = self.layoutFor(which);
+fn thumbAt(self: *PaneSidebar, x: i32, y: i32) ?i32 {
+    const l = self.currentLayout();
     const t = scroll_mod.thumb(&l, self.scale) orelse return null;
     const slop = pane_sidebar.px(4, self.scale);
     if (x < t.left - slop or x >= l.viewport.right or y < t.top or y >= t.bottom) return null;
@@ -1261,7 +1174,7 @@ fn thumbAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) ?i32 {
 
 /// The sidebar as a pane-drop target, in screen coordinates.
 pub const DropGeometry = struct {
-    /// Anywhere on it means stash: the column, widened to the open card.
+    /// Anywhere on it means stash: the column.
     sidebar: pane_drop.Rect,
     /// The stashed rows (rail tiles), top to bottom.
     rows: []const pane_drop.Rect,
@@ -1277,15 +1190,10 @@ pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect) ?DropGeometr
     if (w32.IsWindowVisible(self.hwnd) == 0) return null;
     var col: w32.RECT = undefined;
     if (w32.GetWindowRect(self.hwnd, &col) == 0) return null;
-    const which: Surface = if (self.card_open and self.card_hwnd != null) .card else .rail;
-    const hwnd = self.surfaceHwnd(which) orelse return null;
     var origin = w32.POINT{ .x = 0, .y = 0 };
-    _ = w32.ClientToScreen(hwnd, &origin);
-    const l = self.layoutFor(which);
-    var area: pane_drop.Rect = .{ .left = col.left, .top = col.top, .right = col.right, .bottom = col.bottom };
-    // The open card hangs over the grid; all of it is the sidebar. Its
-    // trailing margin is not (the region leaves it to the grid).
-    if (which == .card) area.right = @max(area.right, origin.x + l.card.right);
+    _ = w32.ClientToScreen(self.hwnd, &origin);
+    const l = self.currentLayout();
+    const area: pane_drop.Rect = .{ .left = col.left, .top = col.top, .right = col.right, .bottom = col.bottom };
     var n: usize = 0;
     var i = l.first_stashed;
     const end = if (l.outline) l.stash_end else l.count;
@@ -1319,16 +1227,11 @@ pub fn setDragActive(self: *PaneSidebar, on: bool) void {
     self.drag_active = on;
     // The empty "Drop to stash" slot sits under the last row: a long list
     // scrolls it into view, so the target is there to aim at (T1878).
-    if (on) inline for (.{ Surface.rail, Surface.card }) |which| {
-        if (self.surfaceHwnd(which) != null) {
-            const raw = self.rawLayoutFor(which);
-            if (raw.drop_slot) |sl| self.scroll[@intFromEnum(which)] = scroll_mod.revealOffset(&raw, sl, self.scroll[@intFromEnum(which)], self.scale);
-        }
-    };
+    if (on) {
+        const raw = self.rawLayout();
+        if (raw.drop_slot) |sl| self.scroll = scroll_mod.revealOffset(&raw, sl, self.scroll, self.scale);
+    }
     _ = w32.InvalidateRect(self.hwnd, null, 0);
-    if (self.card_hwnd) |c| self.invalidate(c);
-    // The grace period the drag deferred starts once it is let go.
-    if (!on and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
 }
 
 /// A press on a row that has travelled far enough is a DRAG of that pane:
@@ -1348,7 +1251,7 @@ fn maybeStartRowDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     if (!self.entries.items[i].own) return false;
     const pane = self.entries.items[i].pane;
     self.pressed = .none;
-    self.invalidate(hwnd);
+    _ = w32.InvalidateRect(hwnd, null, 0);
     var press = w32.POINT{ .x = self.press_x, .y = self.press_y };
     _ = w32.ClientToScreen(hwnd, &press);
     var cur = w32.POINT{ .x = x, .y = y };
@@ -1492,23 +1395,21 @@ fn glyph(hdc: w32.HDC, scale: f32, r: pane_sidebar.Rect, cp: u16, dip: f32, colo
     );
 }
 
-fn paint(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
-    defer self.paintEdgeBar(hdc, which, width, height);
-    if (!self.paint_bare and self.xfade[@intFromEnum(which)] != null) {
-        if (self.paintTransition(hdc, which, width, height)) return;
+fn paint(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
+    defer self.paintEdgeBar(hdc, width, height);
+    if (!self.paint_bare and self.xfade != null) {
+        if (self.paintTransition(hdc, width, height)) return;
     }
-    self.paintFrame(hdc, which, width, height);
+    self.paintFrame(hdc, width, height);
 }
 
 /// The edge's accent bar (T2265; Mac `SidePanelResizeHandle.gutterBar`): down
 /// the middle of the band that drags it, half strength while hovered, full
-/// while dragged, never after. The rail's window only: the open card is a
-/// layered window whose premultiplied pixels this does not compose (T2272).
-fn paintEdgeBar(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
-    if (which != .rail) return;
-    const dragged = if (self.edge) |d| d.which == which and !d.gutter else false;
-    const strength = gutter_bar.single(self.edge_hover == which, dragged);
-    const band = if (strength != null) pane_sidebar.edgeBand(&self.layoutFor(which), self.scale, self.elevated()) else null;
+/// while dragged, never after.
+fn paintEdgeBar(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
+    const dragged = if (self.edge) |d| !d.gutter else false;
+    const strength = gutter_bar.single(self.edge_hover, dragged);
+    const band = if (strength != null) pane_sidebar.edgeBand(&self.currentLayout(), self.scale, self.elevated()) else null;
     const shown: ?gutter_bar.Strength = if (band != null) strength else null;
     if (!std.meta.eql(shown, self.edge_bar_logged)) {
         self.edge_bar_logged = shown;
@@ -1524,158 +1425,138 @@ fn elevated(self: *const PaneSidebar) bool {
     return self.window.paneStyle() == .elevated;
 }
 
-/// Set (or clear) the surface whose edge the pointer is over, repainting it
-/// on a change.
-fn setEdgeHover(self: *PaneSidebar, which: Surface, on: bool) void {
-    const now: ?Surface = if (on) which else if (self.edge_hover == which) null else self.edge_hover;
-    if (now == self.edge_hover) return;
-    self.edge_hover = now;
+/// Set (or clear) whether the pointer is over the edge, repainting on a
+/// change.
+fn setEdgeHover(self: *PaneSidebar, on: bool) void {
+    if (on == self.edge_hover) return;
+    self.edge_hover = on;
     // Debug-build oracle (the `divider hover=` idiom): a posted move's hover
     // is gone within a frame on a background desktop, often before a paint.
-    log.debug("pane sidebar edge hover={s}", .{if (now) |s| @tagName(s) else "none"});
-    if (self.surfaceHwnd(which)) |h| self.invalidate(h);
+    // `rail` is the surface's name from when the hover-open card was the
+    // other one (T2289); the scripts read the line as it was.
+    log.debug("pane sidebar edge hover={s}", .{if (on) "rail" else "none"});
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
 
-fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
+fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     const t = self.theme();
-    const l = self.layoutFor(which);
+    const l = self.currentLayout();
     _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
     self.paint_marks = .{};
     self.paint_ms = w32.GetTickCount64();
     self.paint_motion = App.clientAreaAnimationsEnabled();
-    if (l.open) {
-        self.paintOpen(hdc, &l, t);
-    } else switch (l.mode) {
+    switch (l.mode) {
         .hidden => fillRect(hdc, .{ .right = width, .bottom = height }, rgb(t.bg)),
         .expanded => self.paintExpanded(hdc, &l, t),
         .mini => self.paintMini(hdc, &l, t),
     }
-    self.marks[@intFromEnum(which)] = self.paint_marks;
-    if (self.paint_marks.moving(self.paint_motion)) self.armMotion(which);
+    self.marks = self.paint_marks;
+    if (self.paint_marks.moving(self.paint_motion)) self.armMotion();
 }
 
 // -------------------------------------------------------------------------
 // Motion (T1843)
 // -------------------------------------------------------------------------
 
-/// Start the motion clock on `which`, if it is not already running.
-fn armMotion(self: *PaneSidebar, which: Surface) void {
-    const k = @intFromEnum(which);
-    if (self.anim_armed[k]) return;
-    const hwnd = self.surfaceHwnd(which) orelse return;
-    if (w32.SetTimer(hwnd, TIMER_ANIM, motion.frame_ms, null) == 0) return;
-    self.anim_armed[k] = true;
-    const m = self.marks[k];
-    log.info("pane sidebar motion on surface={s} busy={d} pulse={d}", .{ @tagName(which), m.busy, m.pulsing });
+/// Start the motion clock, if it is not already running. The logs keep
+/// their `surface=rail` field from when the hover-open card had a clock of
+/// its own (T2289); the scripts read the lines as they were.
+fn armMotion(self: *PaneSidebar) void {
+    if (self.anim_armed) return;
+    if (w32.SetTimer(self.hwnd, TIMER_ANIM, motion.frame_ms, null) == 0) return;
+    self.anim_armed = true;
+    const m = self.marks;
+    log.info("pane sidebar motion on surface=rail busy={d} pulse={d}", .{ m.busy, m.pulsing });
 }
 
 /// A motion frame: repaint while the last paint drew something that moves
 /// and the window can be seen; otherwise stop. A paint that draws something
 /// moving again re-arms it, so the clock never runs for a still column.
-fn onMotionTick(self: *PaneSidebar, which: Surface) void {
-    const k = @intFromEnum(which);
-    const hwnd = self.surfaceHwnd(which) orelse return;
+fn onMotionTick(self: *PaneSidebar) void {
+    const hwnd = self.hwnd;
     const root = w32.GetAncestor(hwnd, w32.GA_ROOT);
     const seen = w32.IsWindowVisible(hwnd) != 0 and !(root != null and w32.IsIconic(root.?) != 0);
-    if (seen and self.marks[k].moving(App.clientAreaAnimationsEnabled())) {
-        self.invalidate(hwnd);
+    if (seen and self.marks.moving(App.clientAreaAnimationsEnabled())) {
+        _ = w32.InvalidateRect(hwnd, null, 0);
         return;
     }
     _ = w32.KillTimer(hwnd, TIMER_ANIM);
-    self.anim_armed[k] = false;
-    log.info("pane sidebar motion off surface={s}", .{@tagName(which)});
+    self.anim_armed = false;
+    log.info("pane sidebar motion off surface=rail", .{});
 }
 
 // -------------------------------------------------------------------------
 // List transitions (T1880)
 // -------------------------------------------------------------------------
 
-/// `which`'s size as its paints see it: the column's client area, the
-/// layered card's window (`presentCard`).
-fn surfaceSize(self: *PaneSidebar, which: Surface) ?[2]i32 {
-    const hwnd = self.surfaceHwnd(which) orelse return null;
+/// The column's size as its paints see it.
+fn surfaceSize(self: *PaneSidebar) ?[2]i32 {
     var r: w32.RECT = undefined;
-    const ok = if (which == .card) w32.GetWindowRect(hwnd, &r) else w32.GetClientRect(hwnd, &r);
-    if (ok == 0 or r.right <= r.left or r.bottom <= r.top) return null;
+    if (w32.GetClientRect(self.hwnd, &r) == 0 or r.right <= r.left or r.bottom <= r.top) return null;
     return .{ r.right - r.left, r.bottom - r.top };
 }
 
-/// Picture `which` as it is now, before a change to its list - or null when
-/// the change should simply land: animations are off (Mac's Reduce Motion),
-/// the surface is not on screen, or it shows no list (the rail's tiles).
-/// The picture is the frame as presented, so a switch made mid-transition
-/// leaves from where the eye is.
-fn snapshot(self: *PaneSidebar, which: Surface, kind: xf.Kind) ?xf.Xfade {
+/// Picture the panel as it is now, before a change to its list - or null
+/// when the change should simply land: animations are off (Mac's Reduce
+/// Motion), the column is not on screen, or it shows no list (the rail's
+/// tiles). The picture is the frame as presented, so a switch made
+/// mid-transition leaves from where the eye is.
+fn snapshot(self: *PaneSidebar, kind: xf.Kind) ?xf.Xfade {
     if (!App.clientAreaAnimationsEnabled()) return null;
-    const hwnd = self.surfaceHwnd(which) orelse return null;
-    if (w32.IsWindowVisible(hwnd) == 0) return null;
-    const l = self.layoutFor(which);
-    if (!l.open and l.mode != .expanded) return null;
-    const size = self.surfaceSize(which) orelse return null;
+    if (w32.IsWindowVisible(self.hwnd) == 0) return null;
+    const l = self.currentLayout();
+    if (l.mode != .expanded) return null;
+    const size = self.surfaceSize() orelse return null;
     const screen = w32.GetDC(null) orelse return null;
     defer _ = w32.ReleaseDC(null, screen);
-    var x: xf.Xfade = .{ .kind = kind, .w = size[0], .h = size[1] };
-    const saved = self.card_key;
-    defer self.card_key = saved;
-    const n: usize = if (which == .card) xf.keys.len else 1;
-    for (0..n) |v| {
-        const d = Dib32.create(screen, size[0], size[1]) orelse {
-            x.deinit();
-            return null;
-        };
-        x.old[v] = d;
-        self.card_key = xf.keys[v];
-        self.paint(d.dc, which, size[0], size[1]);
-    }
+    const d = Dib32.create(screen, size[0], size[1]) orelse return null;
+    self.paint(d.dc, size[0], size[1]);
     _ = w32.GdiFlush();
-    return x;
+    return .{ .kind = kind, .w = size[0], .h = size[1], .old = d };
 }
 
-/// Run `snap` on `which`, replacing any transition already running there.
-fn startTransition(self: *PaneSidebar, which: Surface, snap: ?xf.Xfade) void {
+/// Run `snap`, replacing any transition already running. The logs keep
+/// their `surface=rail` field (see `armMotion`).
+fn startTransition(self: *PaneSidebar, snap: ?xf.Xfade) void {
     var x = snap orelse return;
-    self.dropTransition(which);
-    const hwnd = self.surfaceHwnd(which) orelse return x.deinit();
-    if (w32.SetTimer(hwnd, TIMER_XFADE, transition.frame_ms, null) == 0) return x.deinit();
+    self.dropTransition();
+    if (w32.SetTimer(self.hwnd, TIMER_XFADE, transition.frame_ms, null) == 0) return x.deinit();
     x.start_ms = w32.GetTickCount64();
-    self.xfade[@intFromEnum(which)] = x;
-    log.info("pane sidebar transition {s} surface={s} ms={d}", .{ @tagName(x.kind), @tagName(which), x.duration() });
+    self.xfade = x;
+    log.info("pane sidebar transition {s} surface=rail ms={d}", .{ @tagName(x.kind), x.duration() });
 }
 
-/// Stop `which`'s transition, if one runs, without a repaint.
-fn dropTransition(self: *PaneSidebar, which: Surface) void {
-    const k = @intFromEnum(which);
-    if (self.xfade[k]) |*x| x.deinit();
-    self.xfade[k] = null;
-    if (self.surfaceHwnd(which)) |hwnd| _ = w32.KillTimer(hwnd, TIMER_XFADE);
+/// Stop the transition, if one runs, without a repaint.
+fn dropTransition(self: *PaneSidebar) void {
+    if (self.xfade) |*x| x.deinit();
+    self.xfade = null;
+    _ = w32.KillTimer(self.hwnd, TIMER_XFADE);
 }
 
-fn onTransitionTick(self: *PaneSidebar, which: Surface) void {
-    const hwnd = self.surfaceHwnd(which) orelse return;
-    const x = self.xfade[@intFromEnum(which)] orelse {
-        _ = w32.KillTimer(hwnd, TIMER_XFADE);
+fn onTransitionTick(self: *PaneSidebar) void {
+    const x = self.xfade orelse {
+        _ = w32.KillTimer(self.hwnd, TIMER_XFADE);
         return;
     };
     if (w32.GetTickCount64() -| x.start_ms >= x.duration()) {
-        self.dropTransition(which);
-        log.info("pane sidebar transition done surface={s}", .{@tagName(which)});
+        self.dropTransition();
+        log.info("pane sidebar transition done surface=rail", .{});
     }
-    self.invalidate(hwnd);
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
 
-/// One frame of `which`'s transition into `hdc`: the frame after the change
+/// One frame of the transition into `hdc`: the frame after the change
 /// painted live, the material alone, and the picture from before, composed
 /// by `transition`. False when there is nothing to compose - the transition
 /// has run out or the surface changed size under it - and the plain frame is
 /// painted instead. A fold whose head moved (the list re-scrolled under it)
 /// is dropped the same way: the fold just lands.
-fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, which: Surface, w: i32, h: i32) bool {
-    const k = @intFromEnum(which);
-    const x = &(self.xfade[k].?);
-    const old = x.old[xf.variantOf(self.card_key)] orelse return false;
+fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
+    const x = &(self.xfade.?);
+    const old = x.old orelse return false;
     const elapsed = w32.GetTickCount64() -| x.start_ms;
     if (x.w != w or x.h != h or elapsed >= x.duration()) {
-        self.dropTransition(which);
+        self.dropTransition();
         return false;
     }
     const p = transition.progress(elapsed, x.duration());
@@ -1688,11 +1569,11 @@ fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, which: Surface, w: i32, h: 
     // The material first, so the motion tally the live frame leaves is the
     // one that stands.
     self.paint_bare = true;
-    self.paintFrame(bg.dc, which, w, h);
+    self.paintFrame(bg.dc, w, h);
     self.paint_bare = false;
-    self.paintFrame(new.dc, which, w, h);
+    self.paintFrame(new.dc, w, h);
     _ = w32.GdiFlush();
-    const l = self.layoutFor(which);
+    const l = self.currentLayout();
     const vp = l.viewport;
     const bottom = if (vp.height() > 0) vp.bottom else l.height;
     switch (x.kind) {
@@ -1706,7 +1587,7 @@ fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, which: Surface, w: i32, h: 
             const nb = scroll_mod.contentBottom(&l, vp.top);
             if (f.head >= l.head_count or l.heads[f.head].rect.bottom != f.y0 or l.scroll != f.scroll or nb == f.bottom) {
                 log.info("pane sidebar transition fold lands: the list moved under it", .{});
-                self.dropTransition(which);
+                self.dropTransition();
                 return false;
             }
             const opening = nb > f.bottom;
@@ -1872,17 +1753,32 @@ fn hoverIs(self: *const PaneSidebar, hit: pane_sidebar.Hit) bool {
     return std.meta.eql(self.hover, hit);
 }
 
-fn paintPin(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
-    const state: icon_button.State = if (self.hoverIs(.pin))
-        (if (std.meta.eql(self.pressed, pane_sidebar.Hit.pin)) .pressed else .hover)
-    else
-        .normal;
+/// The design system's disabled glyph (§2.2): the foreground 40% of the way
+/// toward the background, with no fill in any state.
+const disabled_toward_bg: f64 = 0.4;
+
+/// Whether a click on the toggle would do anything: the panel's always
+/// collapses; the rail's expands only where the panel fits (Mac
+/// `.disabled(!canExpand)`).
+fn toggleEnabled(self: *const PaneSidebar) bool {
+    return self.mode == .expanded or self.can_expand;
+}
+
+/// The collapse/expand toggle (T2289): the open-pane glyph on the rail, the
+/// close-pane glyph on the panel - the glyph says which way it goes, as
+/// Mac's outline/filled `.sidebar` does - on the same pixels in both.
+fn paintToggle(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    const enabled = self.toggleEnabled();
+    const state: icon_button.State = if (!enabled or !self.hoverIs(.toggle))
+        .normal
+    else if (std.meta.eql(self.pressed, pane_sidebar.Hit.toggle)) .pressed else .hover;
     if (icon_button.paintsFill(state)) {
         const inset = pane_sidebar.px(2, self.scale); // design system: fill inset xs
-        const f: pane_sidebar.Rect = .{ .left = l.pin.left + inset, .top = l.pin.top + inset, .right = l.pin.right - inset, .bottom = l.pin.bottom - inset };
+        const f: pane_sidebar.Rect = .{ .left = l.toggle.left + inset, .top = l.toggle.top + inset, .right = l.toggle.right - inset, .bottom = l.toggle.bottom - inset };
         fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark))));
     }
-    glyph(hdc, self.scale, l.pin, if (self.window.pane_sidebar_pinned) glyph_pinned else glyph_pin, 12, t.text);
+    const ink = if (enabled) t.text else rgb(color_math.mix(t.surface, unrgb(t.text), 1.0 - disabled_toward_bg));
+    glyph(hdc, self.scale, l.toggle, if (self.mode == .expanded) glyph_close_pane else glyph_open_pane, 12, ink);
 }
 
 fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
@@ -1906,36 +1802,12 @@ fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout
     self.paintRows(hdc, l, t);
 }
 
-/// The unpinned card opened over the grid (T1842): the column as the rail
-/// leaves it - terminal background - and on it the raised card at the
-/// panel's width, holding the panel's header and rows. Painted opaque;
-/// `presentCard` then keeps everything right of the column to the card and
-/// its shadow (T1865), so the grid shows through the trailing margin.
-fn paintOpen(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
-    // Glass (T1887): the material is the layer `presentCard` composes, so
-    // the rows go down over a plain key colour it can take back out.
-    if (self.card_key) |key| {
-        fillRect(hdc, .{ .right = l.width, .bottom = l.height }, key);
-        return self.paintRows(hdc, l, t);
-    }
-    // Elevated (T1850): the column under the card is the desk, as the rail's.
-    const desk = self.window.deskBackdrop();
-    ensureMaterial(&self.open_card, hdc, l.width, l.height, t.bg, self.scale, .card, desk, if (desk != null) pane_sidebar.openInsets(self.window.paneSidebarInsets()) else null);
-    if (self.open_card.dc) |mem| {
-        _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
-    } else {
-        fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.bg));
-        fillRound(hdc, l.card, pane_sidebar.px(8, self.scale), rgb(t.surface));
-    }
-    self.paintRows(hdc, l, t);
-}
-
-/// The header (caption + pin), the section rule and caption, and the rows -
-/// shared by the pinned panel and the open card, whose layouts place them.
+/// The header (toggle + caption + buttons), the section rule and caption,
+/// and the rows of the expanded panel.
 fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     if (self.paint_bare) return;
-    // Header: "PANES" (or "ALL WINDOWS") on the label inset, the
-    // all-windows toggle and the pin at the trailing edge.
+    // Header: the toggle first, "PANES" (or "ALL WINDOWS") after it, the
+    // all-windows and trash buttons at the trailing edge.
     if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
     // Trash mode says what a click now does, in the destructive red (Mac's
     // "Click × to kill" caption).
@@ -1965,7 +1837,7 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             drawText(hdc, cw[0..cn], .{ .left = left, .top = l.header.top, .right = caption_right, .bottom = l.header.bottom }, t.secondary, w32.DT_VCENTER);
         }
     }
-    self.paintPin(hdc, l, t);
+    self.paintToggle(hdc, l, t);
     self.paintScope(hdc, l, t);
     self.paintTrash(hdc, l, t);
     self.paintSearch(hdc, l, t);
@@ -2084,7 +1956,7 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     self.paintThumb(hdc, l, t);
 }
 
-/// The pinned project header (T1878, Mac's sticky section header): painted
+/// The stuck project header (T1878, Mac's sticky section header): painted
 /// last, on the panel's own material across the viewport's width, so the
 /// rows passing beneath it never show through its text.
 fn paintSticky(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
@@ -2092,12 +1964,10 @@ fn paintSticky(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, 
     const hd = l.heads[k];
     if (hd.index >= self.groups.items.len) return;
     const band: pane_sidebar.Rect = .{ .left = l.viewport.left, .top = hd.rect.top, .right = l.viewport.right, .bottom = hd.rect.bottom };
-    // The material under it: the open card's, the elevated panel's glass,
-    // or the flat panel's solid surface.
-    const mem: ?w32.HDC = if (l.open) self.open_card.dc else if (self.window.deskBackdrop() != null) self.glass_panel.dc else null;
-    if (l.open and self.card_key != null) {
-        fillRect(hdc, band, self.card_key.?);
-    } else if (mem) |m| {
+    // The material under it: the elevated panel's glass, or the flat
+    // panel's solid surface.
+    const mem: ?w32.HDC = if (self.window.deskBackdrop() != null) self.glass_panel.dc else null;
+    if (mem) |m| {
         _ = w32.BitBlt(hdc, band.left, band.top, band.width(), band.height(), m, band.left, band.top, w32.SRCCOPY);
     } else fillRect(hdc, band, rgb(t.surface));
     self.paintHead(hdc, hd, k, self.groups.items[hd.index], t);
@@ -2187,11 +2057,11 @@ fn paintSearch(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, 
     }
 }
 
-/// The caret index a click at `x` (in `which`'s client coordinates) lands on:
-/// the boundary nearest the point, measured the way `paintSearch` lays the
-/// text out.
-fn searchCaretAt(self: *PaneSidebar, which: Surface, x: i32) usize {
-    const l = self.layoutFor(which);
+/// The caret index a click at `x` (in the column's client coordinates) lands
+/// on: the boundary nearest the point, measured the way `paintSearch` lays
+/// the text out.
+fn searchCaretAt(self: *PaneSidebar, x: i32) usize {
+    const l = self.currentLayout();
     const tb = self.searchTextBox(&l);
     const dc = w32.CreateCompatibleDC(null) orelse return self.search.len;
     defer _ = w32.DeleteDC(dc);
@@ -2372,8 +2242,7 @@ fn paintDropSlot(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout
     const r = l.drop_slot orelse return;
     const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
     fillRound(hdc, r, radius, rgb(shade(t.surface, if (t.dark) 10 else -10)));
-    const rows = l.mode == .expanded or l.open;
-    if (!rows) {
+    if (l.mode != .expanded) {
         glyph(hdc, self.scale, r, glyph_stash, 12, t.secondary);
         return;
     }
@@ -2430,8 +2299,8 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         fillRound(hdc, l.card, pane_sidebar.px(8, self.scale), rgb(t.surface));
     }
 
-    self.paintPin(hdc, l, t);
-    // The tiles scroll under the pin (T1878), clipped to the card's inset.
+    self.paintToggle(hdc, l, t);
+    // The tiles scroll under the toggle (T1878), clipped to the card's inset.
     const saved = w32.SaveDC(hdc);
     defer _ = w32.RestoreDC(hdc, saved);
     const vp = l.viewport;
@@ -2472,9 +2341,9 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     self.paintThumb(hdc, l, t);
 }
 
-/// What a cache holds: the raised card (the rail's, or the open one's), the
-/// pinned panel's glass (elevated only), or the rail as Mac's lighter glass
-/// card over the desk (glass panes, T1887).
+/// What a cache holds: the rail's raised card, the expanded panel's glass
+/// (elevated only), or the rail as Mac's lighter glass card over the desk
+/// (glass panes, T1887).
 const Material = enum { card, glass, overlay_glass };
 
 /// Build `cache` when anything it was built from changed. With a `desk`
@@ -2542,17 +2411,16 @@ fn ensureMaterial(
         }
     } else {
         // The banner card's margin IS the rail margin (12 DIP), so the card
-        // the material draws lands exactly on `layout().card` - the rail's,
-        // and the open card's (`layoutOpen` uses the same margin).
+        // the material draws lands exactly on `layout().card`.
         banner_card.render(pixels, banner_card.Metrics.init(w, h, scale), bg);
     }
 
     cache.* = .{ .dc = mem_dc, .bmp = bmp, .w = w, .h = h, .bg = bg, .scale = scale, .desk_gen = gen, .insets = ins, .material = material };
 }
 
-/// The desk's first `w` x `h` pixels into `out` - the sidebar's column, and
-/// the open card that grows from it, start at the desk's left edge. Past the
-/// desk (a size change mid-flight) is the terminal background.
+/// The desk's first `w` x `h` pixels into `out` - the sidebar's column starts
+/// at the desk's left edge. Past the desk (a size change mid-flight) is the
+/// terminal background.
 fn copyDesk(out: []u32, w: i32, h: i32, d: PaneDesk.Backdrop, bg: color_math.Rgb) void {
     const fill: u32 = (@as(u32, bg.r) << 16) | (@as(u32, bg.g) << 8) | bg.b;
     const uw: usize = @intCast(w);
@@ -2571,15 +2439,15 @@ fn copyDesk(out: []u32, w: i32, h: i32, d: PaneDesk.Backdrop, bg: color_math.Rgb
 
 /// Double-buffered: the whole column is drawn into a memory DC and blitted
 /// once, so a refresh never shows a half-painted list.
-fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
+fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     if (width <= 0 or height <= 0) return;
-    const mem = w32.CreateCompatibleDC(hdc) orelse return self.paint(hdc, which, width, height);
+    const mem = w32.CreateCompatibleDC(hdc) orelse return self.paint(hdc, width, height);
     defer _ = w32.DeleteDC(mem);
-    const bmp = w32.CreateCompatibleBitmap(hdc, width, height) orelse return self.paint(hdc, which, width, height);
+    const bmp = w32.CreateCompatibleBitmap(hdc, width, height) orelse return self.paint(hdc, width, height);
     defer _ = w32.DeleteObject(bmp);
     const old = w32.SelectObject(mem, bmp);
     defer _ = w32.SelectObject(mem, old);
-    self.paint(mem, which, width, height);
+    self.paint(mem, width, height);
     _ = w32.BitBlt(hdc, 0, 0, width, height, mem, 0, 0, w32.SRCCOPY);
 }
 
@@ -2587,24 +2455,24 @@ fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, h
 // Input
 // -------------------------------------------------------------------------
 
-fn hitAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) pane_sidebar.Hit {
-    const l = self.layoutFor(which);
+fn hitAt(self: *PaneSidebar, x: i32, y: i32) pane_sidebar.Hit {
+    const l = self.currentLayout();
     return pane_sidebar.hitTest(&l, x, y, self.scale);
 }
 
-fn setHover(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit) void {
+fn setHover(self: *PaneSidebar, hit: pane_sidebar.Hit) void {
     if (std.meta.eql(self.hover, hit)) return;
     self.hover = hit;
     self.syncHoverTint();
-    if (self.surfaceHwnd(which)) |h| self.invalidate(h);
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
 
 // -------------------------------------------------------------------------
 // Edge drag (T1846; Mac `PaneSidebarChrome.resizeHandle`)
 // -------------------------------------------------------------------------
 
-fn onEdgeAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) bool {
-    const l = self.layoutFor(which);
+fn onEdgeAt(self: *PaneSidebar, x: i32, y: i32) bool {
+    const l = self.currentLayout();
     return pane_sidebar.onEdgeIn(&l, x, y, self.scale, self.elevated());
 }
 
@@ -2618,28 +2486,27 @@ fn setSizeCursor() void {
     _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_SIZEWE));
 }
 
-fn edgeBegin(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, x: i32, y: i32) void {
-    self.disarm();
+/// The log keeps its `surface=rail` field (see `armMotion`).
+fn edgeBegin(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) void {
     self.pressed = .none;
-    const start = pane_sidebar.edgeStartDip(self.mode, which == .card, self.window.pane_sidebar_width_dip);
-    self.edge = .{ .start_dip = start, .start_x = screenX(hwnd, x, y), .which = which };
+    const start = pane_sidebar.edgeStartDip(self.mode, self.window.pane_sidebar_width_dip);
+    self.edge = .{ .start_dip = start, .start_x = screenX(hwnd, x, y) };
     _ = w32.SetCapture(hwnd);
-    if (self.surfaceHwnd(which)) |h| self.invalidate(h);
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
     setSizeCursor();
-    log.info("pane sidebar edge drag start surface={s} mode={s} from={d:.0}", .{ @tagName(which), @tagName(self.mode), start });
+    log.info("pane sidebar edge drag start surface=rail mode={s} from={d:.0}", .{ @tagName(self.mode), start });
 }
 
-fn edgeMove(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, x: i32, y: i32) void {
+fn edgeMove(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) void {
     const d = self.edge orelse return;
     setSizeCursor();
     const dx = @as(f32, @floatFromInt(screenX(hwnd, x, y) - d.start_x)) / self.scale;
-    // The mode as it is NOW: a rail pinned earlier in this drag is the
+    // The mode as it is NOW: a rail expanded earlier in this drag is the
     // panel from here on, and its edge follows the pointer.
-    const open = which == .card and self.card_open;
-    switch (pane_sidebar.edgeDrag(self.mode, open, d.start_dip, dx) orelse return) {
-        .pin => if (!self.window.pane_sidebar_pinned) {
-            log.info("pane sidebar edge drag pinned dx={d:.0}", .{dx});
-            self.window.togglePaneSidebarPin();
+    switch (pane_sidebar.edgeDrag(self.mode, d.start_dip, dx) orelse return) {
+        .expand => if (!self.window.pane_sidebar_expanded) {
+            log.info("pane sidebar edge drag expanded dx={d:.0}", .{dx});
+            self.window.setPaneSidebarExpanded(true, "edge drag");
         },
         .width => |w| if (w != self.window.pane_sidebar_width_dip) self.window.setPaneSidebarWidth(w),
     }
@@ -2651,34 +2518,41 @@ fn edgeEnd(self: *PaneSidebar) void {
     self.edge = null;
     // The bar goes out with the drag, and the edge the pointer let go over
     // is asked again from where it is (T2265; Mac 5e4f30144).
-    if (!d.gutter) self.recheckEdgeHover(d.which);
+    if (!d.gutter) self.recheckEdgeHover();
     // The drag moved `remembered.width_dip` live; the file is written once,
     // when it settles (T1847).
     saveRemembered(self.window.app.core_app.alloc);
-    log.info("pane sidebar edge drag end pinned={} width={d:.0}", .{ self.window.pane_sidebar_pinned, self.window.pane_sidebar_width_dip });
+    log.info("pane sidebar edge drag end expanded={} width={d:.0}", .{ self.window.pane_sidebar_expanded, self.window.pane_sidebar_width_dip });
 }
 
-/// Ask again whether the pointer is on `which`'s edge, from where it is. No
+/// Ask again whether the pointer is on the edge, from where it is. No
 /// readable cursor (a background desktop) reads as "off it".
-fn recheckEdgeHover(self: *PaneSidebar, which: Surface) void {
-    const hwnd = self.surfaceHwnd(which) orelse return;
+fn recheckEdgeHover(self: *PaneSidebar) void {
     var pt: w32.POINT = undefined;
-    const on = self.pointerOn(which, null) and w32.GetCursorPos_(&pt) != 0 and
-        w32.ScreenToClient(hwnd, &pt) != 0 and self.onEdgeAt(which, pt.x, pt.y);
-    self.setEdgeHover(which, on);
-    if (self.surfaceHwnd(which)) |h| self.invalidate(h);
+    const on = self.pointerOn() and w32.GetCursorPos_(&pt) != 0 and
+        w32.ScreenToClient(self.hwnd, &pt) != 0 and self.onEdgeAt(pt.x, pt.y);
+    self.setEdgeHover(on);
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
 
-/// An edge drag begun in the WINDOW's gutter beside the pinned panel (T2265:
-/// the elevated style's grip, Mac `pinnedEdgeGrip`). `hwnd` is the window's,
-/// which takes the capture; the drag is the panel's own from there on.
+/// Whether the real pointer is on the column (window regions honored).
+fn pointerOn(self: *PaneSidebar) bool {
+    var pt: w32.POINT = undefined;
+    if (w32.GetCursorPos_(&pt) == 0) return false;
+    return w32.WindowFromPoint(pt) == self.hwnd;
+}
+
+/// An edge drag begun in the WINDOW's gutter beside the expanded panel
+/// (T2265: the elevated style's grip, Mac `pinnedEdgeGrip`). `hwnd` is the
+/// window's, which takes the capture; the drag is the panel's own from there
+/// on.
 pub fn gutterDragBegin(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) void {
-    self.edgeBegin(.rail, hwnd, x, y);
+    self.edgeBegin(hwnd, x, y);
     if (self.edge) |*d| d.gutter = true;
 }
 
 pub fn gutterDragMove(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) void {
-    self.edgeMove(.rail, hwnd, x, y);
+    self.edgeMove(hwnd, x, y);
 }
 
 pub fn gutterDragEnd(self: *PaneSidebar) void {
@@ -2687,420 +2561,6 @@ pub fn gutterDragEnd(self: *PaneSidebar) void {
 
 pub fn gutterDragging(self: *const PaneSidebar) bool {
     return if (self.edge) |d| d.gutter else false;
-}
-
-/// The shared panel width moved (another window's edge, or this one's open
-/// card): regrow the open card from it. The pinned panel is relaid out by
-/// the window, which owns its column.
-pub fn widthChanged(self: *PaneSidebar) void {
-    if (self.card_open) self.positionCard();
-}
-
-// -------------------------------------------------------------------------
-// Hover-open (T1842)
-// -------------------------------------------------------------------------
-
-/// Whether the real pointer is on `which` (window regions honored, so the
-/// open card's trailing margin is not "on" it) and, when given, inside
-/// `rect` of that window's client area. Asked at timer time, the way Mac
-/// asks `mouseLocationOutsideOfEventStream`, because a leave message alone
-/// cannot say whether the pointer has come back.
-fn pointerOn(self: *PaneSidebar, which: Surface, rect: ?pane_sidebar.Rect) bool {
-    const hwnd = self.surfaceHwnd(which) orelse return false;
-    var pt: w32.POINT = undefined;
-    if (w32.GetCursorPos_(&pt) == 0) return false;
-    if (w32.WindowFromPoint(pt) != hwnd) return false;
-    const r = rect orelse return true;
-    _ = w32.ScreenToClient(hwnd, &pt);
-    return r.contains(pt.x, pt.y);
-}
-
-/// Arm (or keep armed) the intent timer for a pointer at (`x`, `y`) on the
-/// rail, or disarm it when the point is off the rail's card.
-fn railPointer(self: *PaneSidebar, x: i32, y: i32) void {
-    const l = self.currentLayout();
-    if (!hov.opensOnTimer(self.mode, self.card_open, l.card.contains(x, y))) {
-        self.disarm();
-        return;
-    }
-    if (self.open_armed) return;
-    if (w32.SetTimer(self.hwnd, TIMER_OPEN, hov.open_delay_ms, null) == 0) return;
-    self.open_armed = true;
-    log.info("pane sidebar hover-open armed delay={d}ms", .{hov.open_delay_ms});
-}
-
-fn disarm(self: *PaneSidebar) void {
-    if (!self.open_armed) return;
-    _ = w32.KillTimer(self.hwnd, TIMER_OPEN);
-    self.open_armed = false;
-}
-
-fn onOpenTimer(self: *PaneSidebar) void {
-    self.disarm();
-    const l = self.currentLayout();
-    if (!hov.opensOnTimer(self.mode, self.card_open, self.pointerOn(.rail, l.card))) return;
-    self.openCard(.hover);
-}
-
-fn ensureCardWindow(self: *PaneSidebar) ?w32.HWND {
-    if (self.card_hwnd) |h| return h;
-    if (!card_class_registered) return null;
-    const root = w32.GetAncestor(self.hwnd, w32.GA_ROOT) orelse return null;
-    // A passive popup OWNED by the top-level: it never takes activation (a
-    // click on a row must not pull the window's focus around), it hides and
-    // minimizes with its owner, and as an owned window it sits above the
-    // panes' own popups once seated (`seatCard`). Layered (T1865): its
-    // pixels go up through `presentCard` with per-pixel alpha, so the card's
-    // corners are antialiased and its shadow falls on the grid. Deliberately
-    // not WS_EX_TRANSPARENT - clicks are decided per point in WM_NCHITTEST.
-    const h = w32.CreateWindowExW(
-        w32.WS_EX_LAYERED | w32.WS_EX_NOACTIVATE | w32.WS_EX_TOOLWINDOW,
-        CARD_CLASS_NAME,
-        std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_POPUP,
-        0,
-        0,
-        0,
-        0,
-        root,
-        null,
-        w32.GetModuleHandleW(null),
-        null,
-    ) orelse return null;
-    _ = w32.SetWindowLongPtrW(h, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
-    self.card_hwnd = h;
-    return h;
-}
-
-/// Open the card over the grid. The column - and so the grid - is untouched.
-pub fn openCard(self: *PaneSidebar, reason: CardReason) void {
-    if (self.mode != .mini) return;
-    if (w32.IsWindowVisible(self.hwnd) == 0) return;
-    if (self.ensureCardWindow() == null) return;
-    self.disarm();
-    const was_open = self.card_open;
-    self.card_open = true;
-    if (!was_open) self.layer_logged = false;
-    // The tint is left where it is: the pointer is on the same pane's row in
-    // the card a moment later, and clearing it here would blink the pane.
-    self.hover = .none;
-    self.pressed = .none;
-    // A query the rail ignored filters again on the card (T1877).
-    if (!was_open and !self.search.isEmpty()) self.refresh();
-    self.positionCard();
-    // The card opens on the selected row (T1878), as the rail it grew from
-    // shows it.
-    if (!was_open) if (self.selectedIndex()) |i| self.revealItem(.card, i);
-    if (self.card_hwnd) |c| {
-        // A leave is owed whether or not a move ever arrives: tracking
-        // starts now, so a pointer that is not on the card (an unpin from
-        // the keyboard, a pin clicked and left in one motion) still gets its
-        // grace period rather than a card that never closes.
-        var tme = w32.TRACKMOUSEEVENT{
-            .cbSize = @sizeOf(w32.TRACKMOUSEEVENT),
-            .dwFlags = w32.TME_LEAVE,
-            .hwndTrack = c,
-            .dwHoverTime = 0,
-        };
-        self.card_tracking = w32.TrackMouseEvent(&tme) != 0;
-        _ = w32.SetTimer(c, TIMER_CLOSE, hov.close_delay_ms, null);
-    }
-    _ = w32.InvalidateRect(self.hwnd, null, 0);
-    self.syncTips();
-    if (!was_open) self.logCard("open", reason);
-}
-
-pub fn closeCard(self: *PaneSidebar, reason: CardReason) void {
-    if (!self.card_open) return;
-    self.card_open = false;
-    self.card_tracking = false;
-    self.hover = .none;
-    self.syncHoverTint();
-    self.pressed = .none;
-    if (self.card_hwnd) |c| {
-        _ = w32.KillTimer(c, TIMER_CLOSE);
-        if (w32.GetCapture() == c) _ = w32.ReleaseCapture();
-        _ = w32.ShowWindow(c, w32.SW_HIDE);
-    }
-    // The field went with the card unless the panel shows it now (T1877):
-    // the caret goes back, and the rail lists every pane again.
-    if (self.search_focus and self.mode != .expanded) self.releaseSearchFocus();
-    if (!self.search.isEmpty()) self.refresh();
-    _ = w32.InvalidateRect(self.hwnd, null, 0);
-    self.logCard("close", reason);
-}
-
-fn logCard(self: *PaneSidebar, what: []const u8, reason: CardReason) void {
-    var col: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
-    _ = w32.GetWindowRect(self.hwnd, &col);
-    var card: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
-    if (self.card_hwnd) |c| _ = w32.GetWindowRect(c, &card);
-    // Where the card's search field is (T1877), in its client coordinates: a
-    // script clicks it before the card's grace period runs out.
-    var sf: pane_sidebar.Rect = .{};
-    // And the first head's chevron, so it can fold a group in the card too
-    // (T1880's fold transition on the layered card).
-    var chev: pane_sidebar.Rect = .{};
-    if (self.card_open) {
-        const l = self.layoutFor(.card);
-        sf = l.search;
-        if (l.head_count > 0) chev = l.heads[0].chevron;
-    }
-    log.info("pane sidebar card {s} reason={s} column={d},{d},{d},{d} card={d},{d},{d},{d} search={d},{d},{d},{d} chev0={d},{d}", .{
-        what,             @tagName(reason),
-        col.left,         col.top,
-        col.right,        col.bottom,
-        card.left,        card.top,
-        card.right,       card.bottom,
-        sf.left,          sf.top,
-        sf.right,         sf.bottom,
-        chev.centerX(),   chev.centerY(),
-    });
-}
-
-/// Glue the card to the column it grows from: same top-left and height, the
-/// panel's width plus the rail's margins (and room for its shadow), seated
-/// above the window's other popups, then drawn. What shows of that window is
-/// the column, the card and its shadow - the layer's alpha (T1865), where a
-/// window region used to clip it to a hard edge.
-fn positionCard(self: *PaneSidebar) void {
-    const c = self.card_hwnd orelse return;
-    var col: w32.RECT = undefined;
-    if (w32.GetWindowRect(self.hwnd, &col) == 0) return;
-    const insets = pane_sidebar.openInsets(self.window.paneSidebarInsets());
-    const w = pane_sidebar.openWidthPxIn(self.window.pane_sidebar_width_dip, self.scale, insets);
-    const h = col.bottom - col.top;
-    if (h <= 0) return;
-
-    self.seatCard(c);
-    _ = w32.SetWindowPos(
-        c,
-        self.seatAfterHwnd(c),
-        col.left,
-        col.top,
-        w,
-        h,
-        w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW,
-    );
-    self.presentCard();
-}
-
-/// The banner-card metrics the open card's material is rendered with in a
-/// `w` x `h` window - the flat style's uniform margin, or the elevated
-/// style's insets - so the layer's alpha edge lands on the painted edge.
-fn openCardMetrics(self: *PaneSidebar, w: i32, h: i32) banner_card.Metrics {
-    var m = banner_card.Metrics.init(w, h, self.scale);
-    if (self.window.deskBackdrop() != null) {
-        const in = pane_sidebar.openInsets(self.window.paneSidebarInsets());
-        const v: f32 = @floatFromInt(in.verticalPx(self.scale));
-        m.insets = .{
-            .left = @floatFromInt(in.leadingPx(self.scale)),
-            .top = v,
-            .right = @floatFromInt(in.trailingPx(self.scale)),
-            .bottom = v,
-        };
-    }
-    return m;
-}
-
-/// Build the open card's alpha mask for a `w` x `h` window, or keep the one
-/// already built for the same shape. False when there is none to use.
-fn ensureLayer(self: *PaneSidebar, w: i32, h: i32) bool {
-    var col: w32.RECT = undefined;
-    if (w32.GetWindowRect(self.hwnd, &col) == 0) return false;
-    const g = layer.Geometry.init(col.right - col.left, self.openCardMetrics(w, h));
-    const key = LayerKey{ .w = w, .h = h, .column_w = g.column_w, .card = g.card, .radius = g.radius };
-    if (self.layer_key) |k| {
-        if (std.meta.eql(k, key)) return true;
-    }
-    const n: usize = @intCast(w * h);
-    if (self.layer_cells.len != n) {
-        if (self.layer_cells.len > 0) self.alloc.free(self.layer_cells);
-        self.layer_cells = &.{};
-        self.layer_key = null;
-        self.layer_cells = self.alloc.alloc(layer.Cell, n) catch return false;
-    }
-    layer.buildMask(self.layer_cells, w, h, g);
-    self.layer_key = key;
-    return true;
-}
-
-/// Build the open card's glass layer (T1887) for the shape `ensureLayer`
-/// just settled, or keep the one built for the same inputs. False when the
-/// card is not glass - glass panes off, or no desk to lay the column on -
-/// and the opaque card is presented as before.
-fn ensureGlass(self: *PaneSidebar, w: i32, h: i32) bool {
-    if (!self.window.paneGlass()) return false;
-    const desk = self.window.deskBackdrop() orelse return false;
-    const shape = self.layer_key orelse return false;
-    const tint = self.theme().bg;
-    const key = GlassKey{ .layer = shape, .tint = tint, .scale = self.scale, .desk_gen = desk.gen };
-    if (self.glass_key) |k| {
-        if (std.meta.eql(k, key) and self.layer_glass.len == @as(usize, @intCast(w * h))) return true;
-    }
-    const n: usize = @intCast(w * h);
-    if (self.layer_glass.len != n) {
-        if (self.layer_glass.len > 0) self.alloc.free(self.layer_glass);
-        self.layer_glass = &.{};
-        self.glass_key = null;
-        self.layer_glass = self.alloc.alloc(u32, n) catch return false;
-    }
-    // The column strip lies on the desk, as the rail's does; past it, the
-    // sheet lies on the panes as a blur would leave them - the desk under
-    // their glass tint, colour without the text (T1939). A sheet over the
-    // live panes let their text and banners read straight through it.
-    const under = self.alloc.alloc(u32, n) catch return false;
-    defer self.alloc.free(under);
-    copyDesk(under, w, h, desk, tint);
-    layer.frostPanes(under, w, h, shape.column_w, tint);
-    const g = layer.Geometry.init(shape.column_w, self.openCardMetrics(w, h));
-    layer.buildGlass(self.layer_glass, w, h, g, .{ .tint = tint, .scale = self.scale }, shape.column_w, under);
-    self.glass_key = key;
-    return true;
-}
-
-/// Draw the open card and hand its pixels to the window manager with their
-/// alpha (`UpdateLayeredWindow`). This is the card's paint: a layered window
-/// that is fed this way gets no WM_PAINT worth drawing in, so every repaint
-/// of the card comes through here (`invalidate`).
-fn presentCard(self: *PaneSidebar) void {
-    const c = self.card_hwnd orelse return;
-    if (!self.card_open) return;
-    var wr: w32.RECT = undefined;
-    if (w32.GetWindowRect(c, &wr) == 0) return;
-    const w = wr.right - wr.left;
-    const h = wr.bottom - wr.top;
-    if (w <= 0 or h <= 0) return;
-    if (!self.ensureLayer(w, h)) return;
-
-    const screen_dc = w32.GetDC(null) orelse return;
-    defer _ = w32.ReleaseDC(null, screen_dc);
-    const mem_dc = w32.CreateCompatibleDC(screen_dc) orelse return;
-    defer _ = w32.DeleteDC(mem_dc);
-    var bmi = std.mem.zeroes(w32.BITMAPINFO);
-    bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h; // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    var bits: ?*anyopaque = null;
-    const bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return;
-    defer _ = w32.DeleteObject(bmp);
-    const raw = bits orelse return;
-    const old = w32.SelectObject(mem_dc, bmp);
-    defer _ = w32.SelectObject(mem_dc, old);
-
-    const pixels = @as([*]u32, @ptrCast(@alignCast(raw)))[0..@intCast(w * h)];
-    const glass = self.ensureGlass(w, h);
-    if (glass) {
-        // Glass (T1887): the rows painted over black and over white give
-        // each pixel its own coverage; laid on the glass layer, which is
-        // opaque inside the card (T1939) and lets only its shadow through.
-        const white_px = self.alloc.alloc(u32, pixels.len) catch return;
-        defer self.alloc.free(white_px);
-        self.card_key = 0x00FF_FFFF;
-        self.paint(mem_dc, .card, w, h);
-        _ = w32.GdiFlush();
-        @memcpy(white_px, pixels);
-        self.card_key = 0;
-        self.paint(mem_dc, .card, w, h);
-        self.card_key = null;
-        _ = w32.GdiFlush();
-        layer.composeOver(pixels, white_px, self.layer_glass);
-    } else {
-        self.paint(mem_dc, .card, w, h);
-        _ = w32.GdiFlush();
-        layer.apply(pixels, self.layer_cells);
-    }
-    if (!self.layer_logged) {
-        self.layer_logged = true;
-        const s = layer.stats(pixels);
-        log.info("pane sidebar card layer {d}x{d} solid={d} partial={d} distinct={d}", .{ w, h, s.solid, s.partial, s.distinct });
-        // What the panes see through: the card's alpha low in its middle,
-        // clear of the rows (the stretch of an open card that holds none).
-        if (self.layer_key) |k| {
-            const cr = k.card;
-            const sx: i32 = std.math.clamp(@as(i32, @intFromFloat((cr.left + cr.right) / 2)), 0, w - 1);
-            const sy: i32 = std.math.clamp(@as(i32, @intFromFloat(cr.bottom - 24 * self.scale)), 0, h - 1);
-            const a = pixels[@intCast(sy * w + sx)] >> 24;
-            log.info("pane sidebar card glass={} interior_alpha={d} at={d},{d}", .{ glass, a, sx, sy });
-        }
-    }
-
-    const dst_pt = w32.POINT{ .x = wr.left, .y = wr.top };
-    const dst_size = w32.SIZE{ .cx = w, .cy = h };
-    const src_pt = w32.POINT{ .x = 0, .y = 0 };
-    const blend = w32.BLENDFUNCTION{ .SourceConstantAlpha = 255 };
-    _ = w32.UpdateLayeredWindow(c, screen_dc, &dst_pt, &dst_size, mem_dc, &src_pt, 0, &blend, w32.ULW_ALPHA);
-}
-
-/// Repaint one of the sidebar's surfaces: the column by invalidating it, the
-/// open card by presenting it again (it is layered, T1865).
-fn invalidate(self: *PaneSidebar, hwnd: w32.HWND) void {
-    if (self.card_hwnd != null and self.card_hwnd.? == hwnd) {
-        self.presentCard();
-    } else {
-        _ = w32.InvalidateRect(hwnd, null, 0);
-    }
-}
-
-/// Clear a stray topmost bit before seating (`overlay_zorder.isStray`): the
-/// card is never topmost unless its window is.
-fn seatCard(self: *PaneSidebar, c: w32.HWND) void {
-    const root = w32.GetAncestor(self.hwnd, w32.GA_ROOT) orelse return;
-    if (overlay_zorder.isStray(w32.GetWindowLongW(c, w32.GWL_EXSTYLE), w32.GetWindowLongW(root, w32.GWL_EXSTYLE))) {
-        _ = w32.SetWindowPos(c, w32.HWND_NOTOPMOST, 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE);
-    }
-}
-
-/// Where in the z-order the card goes: directly below the first visible
-/// window above the root that is not one of the root's own popups
-/// (`hov.seatAfter`), or the top of the band.
-fn seatAfterHwnd(self: *PaneSidebar, c: w32.HWND) ?w32.HWND {
-    const root = w32.GetAncestor(self.hwnd, w32.GA_ROOT) orelse return null;
-    return seatAfterFor(root, c);
-}
-
-/// The same seat for any popup `c` owned by `root` that has to sit above its
-/// sibling popups: the pane grab handle (T1830) is drawn over a pane's banner.
-pub fn seatAfterFor(root: w32.HWND, c: w32.HWND) ?w32.HWND {
-    var steps: [64]hov.ZStep = undefined;
-    var hwnds: [64]w32.HWND = undefined;
-    var n: usize = 0;
-    var cur = w32.GetWindow(root, w32.GW_HWNDPREV);
-    while (cur) |h| : (cur = w32.GetWindow(h, w32.GW_HWNDPREV)) {
-        if (n == steps.len) break;
-        steps[n] = .{
-            .is_self = h == c,
-            .is_sibling = w32.GetWindow(h, w32.GW_OWNER) == root,
-            .is_visible = w32.IsWindowVisible(h) != 0,
-        };
-        hwnds[n] = h;
-        n += 1;
-    }
-    const i = hov.seatAfter(steps[0..n]) orelse return null; // HWND_TOP
-    return hwnds[i];
-}
-
-fn scheduleClose(self: *PaneSidebar) void {
-    const c = self.card_hwnd orelse return;
-    _ = w32.SetTimer(c, TIMER_CLOSE, hov.close_delay_ms, null);
-}
-
-fn onCloseTimer(self: *PaneSidebar) void {
-    const c = self.card_hwnd orelse return;
-    _ = w32.KillTimer(c, TIMER_CLOSE);
-    if (!self.card_open) return;
-    // A press held on the card (a click in progress; later a drag, T1844, or
-    // a menu, T1845) keeps it open until it is let go.
-    // So does the caret in its search field (Mac: the card stays open while
-    // the field is focused) - typing must not lose the field under it.
-    const held = w32.GetCapture() == c or self.drag_active or self.menu_open or self.search_focus;
-    switch (hov.closeVerdict(self.pointerOn(.card, null), held)) {
-        .stay => {},
-        .retry => self.scheduleClose(),
-        .close => self.closeCard(.left),
-    }
 }
 
 // -------------------------------------------------------------------------
@@ -3172,12 +2632,13 @@ fn delTool(tip: w32.HWND, hwnd: w32.HWND, id: usize) void {
 }
 
 const W = std.unicode.utf8ToUtf16LeStringLiteral;
-const tip_pin = W(hov.pinTip(false));
-const tip_unpin = W(hov.pinTip(true));
-const tip_focus = W(hov.rowHint(.grid));
-const tip_restore = W(hov.rowHint(.stashed));
-const tip_stash_btn = W(hov.buttonTip(.grid));
-const tip_restore_btn = W(hov.buttonTip(.stashed));
+const tip_collapse = W(tips.toggleTip(true, true));
+const tip_expand = W(tips.toggleTip(false, true));
+const tip_too_narrow = W(tips.toggleTip(false, false));
+const tip_focus = W(tips.rowHint(.grid));
+const tip_restore = W(tips.rowHint(.stashed));
+const tip_stash_btn = W(tips.buttonTip(.grid));
+const tip_restore_btn = W(tips.buttonTip(.stashed));
 // Mac's `.help` strings for the all-windows scope (T1829).
 const tip_scope_on = W("Show panes from all windows");
 const tip_scope_off = W("Show only this window\u{2019}s panes");
@@ -3190,125 +2651,126 @@ const tip_search_clear = W("Clear search");
 const tip_trash_on = W(row_menu.trashTip(true));
 const tip_trash_off = W(row_menu.trashTip(false));
 const tip_kill = W(row_menu.kill_tip);
-const tip_restore_row = W(hov.stashed_row_tip);
+const tip_restore_row = W(tips.stashed_row_tip);
 
-/// Bring both windows' tools in line with their layouts. Idempotent; cheap
-/// enough for every place/refresh (a handful of tool messages).
+/// The toggle's tip: what a click does, or why it does nothing.
+fn toggleTipText(self: *const PaneSidebar) [*:0]const u16 {
+    if (self.mode == .expanded) return tip_collapse;
+    return if (self.can_expand) tip_expand else tip_too_narrow;
+}
+
+/// Bring the tools in line with the layout. Idempotent; cheap enough for
+/// every place/refresh (a handful of tool messages).
 fn syncTips(self: *PaneSidebar) void {
     const tip = self.tipEnsure() orelse return;
-    var line: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&line);
-    const lw = fbs.writer();
+    const hwnd = self.hwnd;
     // How many rows and tiles got a tip because they are in view (T1878):
-    // a scrolled-away row has none. Logged ahead of the per-surface counts.
-    var in_view: [2]usize = .{ 0, 0 };
-    inline for (.{ Surface.rail, Surface.card }) |which| {
-        const slot = @intFromEnum(which);
-        if (self.surfaceHwnd(which)) |hwnd| {
-            const live = switch (which) {
-                .rail => self.mode != .hidden,
-                .card => self.card_open,
-            };
-            const l = self.layoutFor(which);
-            const n = if (live) @min(l.count, self.entries.items.len) else 0;
-            // Drop the tools of rows and heads that are gone.
-            if (self.tip_items[slot] > n) for (n..self.tip_items[slot]) |i| {
+    // a scrolled-away row has none. Logged ahead of the counts.
+    var in_view: usize = 0;
+    const live = self.mode != .hidden;
+    const l = self.currentLayout();
+    const n = if (live) @min(l.count, self.entries.items.len) else 0;
+    // Drop the tools of rows and heads that are gone.
+    if (self.tip_items > n) for (n..self.tip_items) |i| {
+        delTool(tip, hwnd, toolItem(i));
+        delTool(tip, hwnd, toolButton(i));
+    };
+    const nh = if (live) l.head_count else 0;
+    if (self.tip_heads > nh) for (nh..self.tip_heads) |k| delTool(tip, hwnd, toolHead(k));
+    self.tip_heads = nh;
+    // The search field (T1877, Mac's `.toolTip` and "Clear search"):
+    // the field's tip stops short of the clear button, so the two
+    // never claim the same point.
+    if (live and l.search.width() > 0) {
+        var field = l.search;
+        if (l.search_text) {
+            field.right = l.search_clear.left;
+            addTool(tip, hwnd, tool_search_clear, l.search_clear, tip_search_clear);
+        } else delTool(tip, hwnd, tool_search_clear);
+        addTool(tip, hwnd, tool_search, field, tip_search);
+    } else {
+        delTool(tip, hwnd, tool_search);
+        delTool(tip, hwnd, tool_search_clear);
+    }
+    if (!live) {
+        delTool(tip, hwnd, tool_toggle);
+        delTool(tip, hwnd, tool_scope);
+        delTool(tip, hwnd, tool_trash);
+    } else {
+        addTool(tip, hwnd, tool_toggle, l.toggle, self.toggleTipText());
+        const rows = l.mode == .expanded;
+        if (rows) {
+            addTool(tip, hwnd, tool_scope, l.scope, if (self.all_windows) tip_scope_off else tip_scope_on);
+            addTool(tip, hwnd, tool_trash, l.trash, if (self.quick_kill) tip_trash_on else tip_trash_off);
+        } else {
+            delTool(tip, hwnd, tool_scope);
+            delTool(tip, hwnd, tool_trash);
+        }
+        for (l.heads[0..nh], 0..) |hd, k| {
+            const own = hd.index < self.groups.items.len and self.groups.items[hd.index].own;
+            const text = if (hd.kind == .project) tip_head_project else if (own) tip_head_this else tip_head_other;
+            // Only the part of a head in view tips (T1878).
+            const v = scroll_mod.visible(&l, hd.rect);
+            if (v.height() > 0) addTool(tip, hwnd, toolHead(k), v, text) else delTool(tip, hwnd, toolHead(k));
+        }
+        for (self.entries.items[0..n], 0..) |e, i| {
+            if (!l.shown(i) or scroll_mod.visible(&l, l.items[i]).height() <= 0) {
+                // Folded away, or scrolled out of view (T1878): no
+                // row on screen, so no tip.
                 delTool(tip, hwnd, toolItem(i));
                 delTool(tip, hwnd, toolButton(i));
-            };
-            const nh = if (live) l.head_count else 0;
-            if (self.tip_heads[slot] > nh) for (nh..self.tip_heads[slot]) |k| delTool(tip, hwnd, toolHead(k));
-            self.tip_heads[slot] = nh;
-            // The search field (T1877, Mac's `.toolTip` and "Clear search"):
-            // the field's tip stops short of the clear button, so the two
-            // never claim the same point.
-            if (live and l.search.width() > 0) {
-                var field = l.search;
-                if (l.search_text) {
-                    field.right = l.search_clear.left;
-                    addTool(tip, hwnd, tool_search_clear, l.search_clear, tip_search_clear);
-                } else delTool(tip, hwnd, tool_search_clear);
-                addTool(tip, hwnd, tool_search, field, tip_search);
-            } else {
-                delTool(tip, hwnd, tool_search);
-                delTool(tip, hwnd, tool_search_clear);
+                continue;
             }
-            if (!live) {
-                delTool(tip, hwnd, tool_pin);
-                delTool(tip, hwnd, tool_scope);
-                delTool(tip, hwnd, tool_trash);
+            if (rows) {
+                // Only this window's stashed rows can swap (T1845).
+                const row_tip = if (e.section != .stashed) tip_focus else if (e.own) tip_restore_row else tip_restore;
+                addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), row_tip);
+                in_view += 1;
+                const btn_tip = if (self.quick_kill) tip_kill else if (e.section == .stashed) tip_restore_btn else tip_stash_btn;
+                const b = scroll_mod.visible(&l, l.rowButton(i, self.scale));
+                if (b.height() > 0) addTool(tip, hwnd, toolButton(i), b, btn_tip) else delTool(tip, hwnd, toolButton(i));
             } else {
-                addTool(tip, hwnd, tool_pin, l.pin, if (self.window.pane_sidebar_pinned) tip_unpin else tip_pin);
-                const rows = l.mode == .expanded or l.open;
-                if (rows) {
-                    addTool(tip, hwnd, tool_scope, l.scope, if (self.all_windows) tip_scope_off else tip_scope_on);
-                    addTool(tip, hwnd, tool_trash, l.trash, if (self.quick_kill) tip_trash_on else tip_trash_off);
-                } else {
-                    delTool(tip, hwnd, tool_scope);
-                    delTool(tip, hwnd, tool_trash);
-                }
-                for (l.heads[0..nh], 0..) |hd, k| {
-                    const own = hd.index < self.groups.items.len and self.groups.items[hd.index].own;
-                    const text = if (hd.kind == .project) tip_head_project else if (own) tip_head_this else tip_head_other;
-                    // Only the part of a head in view tips (T1878).
-                    const v = scroll_mod.visible(&l, hd.rect);
-                    if (v.height() > 0) addTool(tip, hwnd, toolHead(k), v, text) else delTool(tip, hwnd, toolHead(k));
-                }
-                for (self.entries.items[0..n], 0..) |e, i| {
-                    if (!l.shown(i) or scroll_mod.visible(&l, l.items[i]).height() <= 0) {
-                        // Folded away, or scrolled out of view (T1878): no
-                        // row on screen, so no tip.
-                        delTool(tip, hwnd, toolItem(i));
-                        delTool(tip, hwnd, toolButton(i));
-                        continue;
-                    }
-                    if (rows) {
-                        // Only this window's stashed rows can swap (T1845).
-                        const row_tip = if (e.section != .stashed) tip_focus else if (e.own) tip_restore_row else tip_restore;
-                        addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), row_tip);
-                        in_view[slot] += 1;
-                        const btn_tip = if (self.quick_kill) tip_kill else if (e.section == .stashed) tip_restore_btn else tip_stash_btn;
-                        const b = scroll_mod.visible(&l, l.rowButton(i, self.scale));
-                        if (b.height() > 0) addTool(tip, hwnd, toolButton(i), b, btn_tip) else delTool(tip, hwnd, toolButton(i));
-                    } else {
-                        // Another window's tile names its window too (Mac: "in
-                        // the mini rail ... the hover label names the window").
-                        var named: [hov.tip_cap]u16 = undefined;
-                        const title = self.tileTitle(e, &named);
-                        const len = hov.tileTip(&self.tip_text[i], title, e.section);
-                        addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), self.tip_text[i][0..len :0]);
-                        in_view[slot] += 1;
-                        if (self.quick_kill) {
-                            addTool(tip, hwnd, toolButton(i), l.tileKill(i, self.scale), tip_kill);
-                        } else delTool(tip, hwnd, toolButton(i));
-                    }
-                }
+                // Another window's tile names its window too (Mac: "in
+                // the mini rail ... the hover label names the window").
+                var named: [tips.tip_cap]u16 = undefined;
+                const title = self.tileTitle(e, &named);
+                const len = tips.tileTip(&self.tip_text[i], title, e.section);
+                addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), self.tip_text[i][0..len :0]);
+                in_view += 1;
+                if (self.quick_kill) {
+                    addTool(tip, hwnd, toolButton(i), l.tileKill(i, self.scale), tip_kill);
+                } else delTool(tip, hwnd, toolButton(i));
             }
-            self.tip_items[slot] = n;
-            lw.print(" {s}={d}", .{ @tagName(which), if (live) n + 1 else 0 }) catch {};
         }
     }
+    self.tip_items = n;
+    // The line keeps its two-surface shape (`view=<rail>,<card>`,
+    // `rail=<n>`): the hover-open card was the second surface until
+    // T2289, and the scripts read the line as it was. The toggle's
+    // tip text rides at the end, so a script can tell a disabled
+    // rail button from an enabled one.
     var full: [300]u8 = undefined;
-    const counts = std.fmt.bufPrint(&full, " view={d},{d}{s}", .{ in_view[0], in_view[1], line[0..fbs.pos] }) catch line[0..fbs.pos];
+    const toggle8 = if (self.mode == .expanded) tips.toggleTip(true, true) else tips.toggleTip(false, self.can_expand);
+    const counts = std.fmt.bufPrint(&full, " view={d},0 rail={d} toggle=\"{s}\"", .{ in_view, if (live) n + 1 else 0, toggle8 }) catch "";
     self.logTips(counts);
 }
 
 /// The tooltip set, once per CHANGE, for the acceptance script: tools are
 /// windows of comctl32's that a background desktop can never show, so what is
-/// scored is that every tile, row and pin got one.
+/// scored is that every tile, row and the toggle got one.
 fn logTips(self: *PaneSidebar, counts: []const u8) void {
     // The first tile's text, so the script can check it names the pane. Part
     // of what is compared: the same counts in another mode is another set.
-    var first: [hov.tip_cap * 3]u8 = undefined;
+    var first: [tips.tip_cap * 3]u8 = undefined;
     var first_len: usize = 0;
-    if (self.mode == .mini and self.tip_items[0] > 0) {
+    if (self.mode == .mini and self.tip_items > 0) {
         const t = std.mem.sliceTo(&self.tip_text[0], 0);
         first_len = std.unicode.utf16LeToUtf8(&first, t) catch 0;
         for (first[0..first_len]) |*ch| if (ch.* == 0x0A) {
             ch.* = '|';
         };
     }
-    var buf: [hov.tip_cap * 3 + 256]u8 = undefined;
+    var buf: [tips.tip_cap * 3 + 256]u8 = undefined;
     const line = std.fmt.bufPrint(&buf, "{s} mode={s} tile0={s}", .{ counts, @tagName(self.mode), first[0..first_len] }) catch counts;
     const key = line[0..@min(line.len, self.tip_log.len)];
     if (key.len == self.tip_log_len and std.mem.eql(u8, self.tip_log[0..self.tip_log_len], key)) return;
@@ -3319,7 +2781,7 @@ fn logTips(self: *PaneSidebar, counts: []const u8) void {
 
 /// A rail tile's tip title: the pane's, and for another window's pane also
 /// " \u{2014} <window>".
-fn tileTitle(self: *const PaneSidebar, e: Entry, buf: *[hov.tip_cap]u16) []const u16 {
+fn tileTitle(self: *const PaneSidebar, e: Entry, buf: *[tips.tip_cap]u16) []const u16 {
     if (e.own or e.group >= self.groups.items.len) return e.title;
     const label = self.groups.items[e.group].label;
     const sep = std.unicode.utf8ToUtf16LeStringLiteral(" \u{2014} ");
@@ -3333,11 +2795,13 @@ fn tileTitle(self: *const PaneSidebar, e: Entry, buf: *[hov.tip_cap]u16) []const
 }
 
 /// `alt`: Alt was down on the click (Mac's Option-click swap, T1845).
-fn activate(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit, alt: bool) void {
+fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
     switch (hit) {
         .none => {},
-        .pin => self.window.togglePaneSidebarPin(),
-        .scope => self.toggleScope(which),
+        // A disabled rail toggle (a window too narrow for the panel) takes
+        // the click and does nothing, as Mac's `.disabled` button does.
+        .toggle => if (self.toggleEnabled()) self.window.setPaneSidebarExpanded(self.mode != .expanded, if (self.mode == .expanded) "header button" else "rail button"),
+        .scope => self.toggleScope(),
         .trash => self.setQuickKill(!self.quick_kill),
         .search => self.focusSearch(),
         .search_clear => {
@@ -3366,17 +2830,17 @@ fn activate(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit, alt: bool
             if (!self.window.app.hasWindow(e.window)) return;
             e.window.paneSidebarToggleStash(e.pane);
         },
-        .head, .head_fold => |k| self.activateHead(which, k, std.meta.activeTag(hit) == .head_fold),
+        .head, .head_fold => |k| self.activateHead(k, std.meta.activeTag(hit) == .head_fold),
     }
 }
 
 /// The all-windows switch (T1829). Nothing is persisted. Each look starts
 /// from the default folds (T1924): this window open, every other folded.
 /// Project folds survive a round trip, as Mac's do.
-fn toggleScope(self: *PaneSidebar, which: Surface) void {
+fn toggleScope(self: *PaneSidebar) void {
     // Started before the switch, so the paint the refresh below brings is
     // already the transition's first frame rather than the new list.
-    self.startTransition(which, self.snapshot(which, .{ .scope = !self.all_windows }));
+    self.startTransition(self.snapshot(.{ .scope = !self.all_windows }));
     self.all_windows = !self.all_windows;
     self.hover = .none;
     self.syncHoverTint();
@@ -3395,9 +2859,9 @@ fn toggleScope(self: *PaneSidebar, which: Surface) void {
     self.refresh();
 }
 
-/// Trash mode on or off (T1845): the header button, or Escape. Repaints both
-/// surfaces - the rail's tiles carry the x too - and re-sets the tips, whose
-/// row buttons now mean "kill".
+/// Trash mode on or off (T1845): the header button, or Escape. Repaints -
+/// the rail's tiles carry the x too - and re-sets the tips, whose row
+/// buttons now mean "kill".
 pub fn setQuickKill(self: *PaneSidebar, on: bool) void {
     if (self.quick_kill == on) return;
     self.quick_kill = on;
@@ -3405,7 +2869,6 @@ pub fn setQuickKill(self: *PaneSidebar, on: bool) void {
     self.syncHoverTint();
     log.info("pane sidebar trash mode on={}", .{on});
     _ = w32.InvalidateRect(self.hwnd, null, 0);
-    if (self.card_hwnd) |c| self.invalidate(c);
     self.syncTips();
 }
 
@@ -3413,17 +2876,17 @@ pub fn setQuickKill(self: *PaneSidebar, on: bool) void {
 // The all-windows search field (T1877)
 // -------------------------------------------------------------------------
 
-/// The field is on screen: the all-windows scope, in the panel or the open
-/// card (the rail has no room for it).
+/// The field is on screen: the all-windows scope, in the panel (the rail has
+/// no room for it).
 fn searchShown(self: *const PaneSidebar) bool {
-    return self.all_windows and (self.mode == .expanded or self.card_open);
+    return self.all_windows and self.mode == .expanded;
 }
 
 /// A click in the field: the column takes the keyboard. Through the loop's
 /// deferred focus (T48) like every other focus move - never a synchronous
-/// SetFocus from inside a click. The open card never activates its window,
-/// so a click on it while another app is in front brings this one forward
-/// first, or the keys would go to that app.
+/// SetFocus from inside a click. A click that did not activate the window
+/// (another app in front) brings it forward first, or the keys would go to
+/// that app.
 fn focusSearch(self: *PaneSidebar) void {
     if (!self.searchShown()) return;
     if (w32.GetAncestor(self.hwnd, w32.GA_ROOT)) |root| {
@@ -3458,7 +2921,7 @@ fn searchEdited(self: *PaneSidebar, text_changed: bool) void {
 fn submitSearch(self: *PaneSidebar) void {
     if (!self.filterActive() or self.entries.items.len == 0) return;
     log.info("pane sidebar search reveal first hit own={}", .{self.entries.items[0].own});
-    self.activate(.rail, .{ .item = 0 }, false);
+    self.activate(.{ .item = 0 }, false);
 }
 
 /// A key while the column holds the keyboard. True when the field used it.
@@ -3537,7 +3000,7 @@ fn killEntry(own_window: *Window, e: Entry) void {
 /// .contextMenu`). The menu's modal loop pumps messages, so the roster can be
 /// rebuilt while it is up: the pane and its window are captured first and
 /// asked about again before the chosen command runs.
-fn openRowMenu(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, i: usize, x: i32, y: i32) void {
+fn openRowMenu(self: *PaneSidebar, hwnd: w32.HWND, i: usize, x: i32, y: i32) void {
     if (i >= self.entries.items.len) return;
     const e = self.entries.items[i];
     const w = self.rowWindow(e) orelse return;
@@ -3566,7 +3029,6 @@ fn openRowMenu(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, i: usize, x: 
     var pt = w32.POINT{ .x = x, .y = y };
     _ = w32.ClientToScreen(hwnd, &pt);
     log.info("pane sidebar row menu open section={s} own={}", .{ @tagName(e.section), e.own });
-    self.menu_open = true;
     const cmd = w32.TrackPopupMenuEx(
         popup,
         w32.TPM_LEFTALIGN | w32.TPM_TOPALIGN | w32.TPM_RETURNCMD | w32.TPM_RIGHTBUTTON,
@@ -3575,9 +3037,6 @@ fn openRowMenu(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, i: usize, x: 
         hwnd,
         null,
     );
-    self.menu_open = false;
-    // Off the card while the menu held it: the grace period starts now.
-    if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
 
     const id = std.meta.intToEnum(row_menu.Id, @as(usize, @intCast(cmd))) catch return; // 0 = dismissed
     // Still open, and the pane still in it?
@@ -3597,13 +3056,13 @@ fn openRowMenu(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, i: usize, x: 
 /// A header click: a project header folds its windows; a window header's
 /// chevron - or THIS window's header anywhere - folds its panes; another
 /// window's header raises that window (Mac `PaneSidebarWindowHeader`).
-fn activateHead(self: *PaneSidebar, which: Surface, k: usize, fold: bool) void {
-    const l = self.layoutFor(which);
+fn activateHead(self: *PaneSidebar, k: usize, fold: bool) void {
+    const l = self.currentLayout();
     if (k >= l.head_count) return;
     const hd = l.heads[k];
     if (hd.index >= self.groups.items.len) return;
     const g = self.groups.items[hd.index];
-    if (hd.kind == .project or fold or g.own) self.startTransition(which, self.snapshot(which, .{ .fold = .{
+    if (hd.kind == .project or fold or g.own) self.startTransition(self.snapshot(.{ .fold = .{
         .head = k,
         .y0 = hd.rect.bottom,
         .bottom = scroll_mod.contentBottom(&l, l.viewport.top),
@@ -3662,18 +3121,12 @@ fn yOf(lparam: isize) i32 {
 
 fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.winapi) isize {
     const self = fromHwnd(hwnd) orelse return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
-    const which: Surface = if (self.card_hwnd != null and self.card_hwnd.? == hwnd) .card else .rail;
     switch (msg) {
         w32.WM_ERASEBKGND => return 1,
-        // The open card never takes activation: a click on a row acts, and the
-        // window's focus moves only as that action moves it.
-        w32.WM_MOUSEACTIVATE => return if (which == .card) w32.MA_NOACTIVATE else w32.DefWindowProcW(hwnd, msg, wparam, lparam),
         w32.WM_TIMER => {
             switch (wparam) {
-                TIMER_OPEN => if (which == .rail) self.onOpenTimer(),
-                TIMER_CLOSE => if (which == .card) self.onCloseTimer(),
-                TIMER_ANIM => self.onMotionTick(which),
-                TIMER_XFADE => self.onTransitionTick(which),
+                TIMER_ANIM => self.onMotionTick(),
+                TIMER_XFADE => self.onTransitionTick(),
                 else => {},
             }
             return 0;
@@ -3682,16 +3135,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             var ps: w32.PAINTSTRUCT = undefined;
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;
             defer _ = w32.EndPaint(hwnd, &ps);
-            // The card is layered: it draws in `presentCard`, and a paint
-            // here would only be thrown away.
-            if (which == .card) return 0;
             var r: w32.RECT = undefined;
-            if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, which, r.right - r.left, r.bottom - r.top);
+            if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top);
             return 0;
         },
-        // The open card takes clicks on its column and its own shape only
-        // (T1865): its shadow and the trailing margin are visible but belong
-        // to the pane underneath, which the window region used to say.
         w32.WM_NCHITTEST => {
             var pt = w32.POINT{ .x = xOf(lparam), .y = yOf(lparam) };
             _ = w32.ScreenToClient(hwnd, &pt);
@@ -3699,13 +3146,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             // is the caption's, so a drag there moves the window and a
             // double-click maximizes it, as on the rest of the band.
             if (pt.y < self.window.paneSidebarReachPx()) return w32.HTTRANSPARENT;
-            if (which != .card) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
-            var wr: w32.RECT = undefined;
-            if (w32.GetClientRect(hwnd, &wr) == 0) return w32.HTTRANSPARENT;
-            var col: w32.RECT = undefined;
-            if (w32.GetWindowRect(self.hwnd, &col) == 0) return w32.HTTRANSPARENT;
-            const g = layer.Geometry.init(col.right - col.left, self.openCardMetrics(wr.right, wr.bottom));
-            return if (layer.hits(g, pt.x, pt.y)) w32.HTCLIENT else w32.HTTRANSPARENT;
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         // The same column into a caller's DC, so a pixel probe can photograph
         // it synchronously (the TOC card's T835 reason).
@@ -3713,7 +3154,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             if (wparam == 0) return 0;
             var r: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &r) == 0) return 0;
-            self.paint(@ptrFromInt(wparam), which, r.right - r.left, r.bottom - r.top);
+            self.paint(@ptrFromInt(wparam), r.right - r.left, r.bottom - r.top);
             return 0;
         },
         // The edge's sizer (T1846): over the band, and for the whole drag.
@@ -3725,16 +3166,16 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             var pt: w32.POINT = undefined;
             if (w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0) {
                 // The thumb is a thumb, not the sizer under it (T1878).
-                if (self.thumb_drag != null or self.thumbAt(which, pt.x, pt.y) != null) {
+                if (self.thumb_drag != null or self.thumbAt(pt.x, pt.y) != null) {
                     _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_ARROW));
                     return 1;
                 }
-                if (self.onEdgeAt(which, pt.x, pt.y)) {
+                if (self.onEdgeAt(pt.x, pt.y)) {
                     setSizeCursor();
                     return 1;
                 }
                 // The search field's text takes the text cursor (T1877).
-                if (self.hitAt(which, pt.x, pt.y) == .search) {
+                if (self.hitAt(pt.x, pt.y) == .search) {
                     _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_IBEAM));
                     return 1;
                 }
@@ -3745,7 +3186,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             self.edgeEnd();
             if (self.thumb_drag != null) {
                 self.thumb_drag = null;
-                self.invalidate(hwnd);
+                _ = w32.InvalidateRect(hwnd, null, 0);
             }
             return 0;
         },
@@ -3753,65 +3194,42 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         // consumed, so it never falls through to the parent window's grid.
         w32.WM_MOUSEWHEEL => {
             const delta: i16 = @bitCast(@as(u16, @truncate(wparam >> 16)));
-            self.onWheel(which, delta);
+            self.onWheel(delta);
             return 0;
         },
         w32.WM_MOUSEMOVE => {
             const x = xOf(lparam);
             const y = yOf(lparam);
             if (self.thumb_drag) |d| {
-                if (d.which == which) {
-                    const l = self.layoutFor(which);
-                    self.scrollTo(which, scroll_mod.dragOffset(&l, y, d.grab, self.scale));
-                }
+                const l = self.currentLayout();
+                self.scrollTo(scroll_mod.dragOffset(&l, y, d.grab, self.scale));
                 return 0;
             }
             if (self.edge != null) {
-                self.edgeMove(which, hwnd, x, y);
+                self.edgeMove(hwnd, x, y);
                 return 0;
             }
             if (self.maybeStartRowDrag(hwnd, x, y)) return 0;
-            // On the edge the pointer means the sizer, not the row under it,
-            // and not the rail's hover-open either.
-            const on_edge = self.onEdgeAt(which, x, y);
-            self.setHover(which, if (on_edge) .none else self.hitAt(which, x, y));
-            self.setEdgeHover(which, on_edge);
-            const tracked = switch (which) {
-                .rail => &self.tracking,
-                .card => &self.card_tracking,
-            };
-            if (!tracked.*) {
+            // On the edge the pointer means the sizer, not the row under it.
+            const on_edge = self.onEdgeAt(x, y);
+            self.setHover(if (on_edge) .none else self.hitAt(x, y));
+            self.setEdgeHover(on_edge);
+            if (!self.tracking) {
                 var tme = w32.TRACKMOUSEEVENT{
                     .cbSize = @sizeOf(w32.TRACKMOUSEEVENT),
                     .dwFlags = w32.TME_LEAVE,
                     .hwndTrack = hwnd,
                     .dwHoverTime = 0,
                 };
-                if (w32.TrackMouseEvent(&tme) != 0) tracked.* = true;
-            }
-            switch (which) {
-                .rail => if (on_edge) self.disarm() else self.railPointer(x, y),
-                // Back on the card: the grace period is off.
-                .card => if (self.card_hwnd) |c| {
-                    _ = w32.KillTimer(c, TIMER_CLOSE);
-                },
+                if (w32.TrackMouseEvent(&tme) != 0) self.tracking = true;
             }
             return 0;
         },
         w32.WM_MOUSELEAVE => {
-            switch (which) {
-                .rail => {
-                    self.tracking = false;
-                    self.disarm();
-                },
-                .card => {
-                    self.card_tracking = false;
-                    if (self.card_open) self.scheduleClose();
-                },
-            }
+            self.tracking = false;
             if (w32.GetCapture() != hwnd) self.pressed = .none;
-            self.setHover(which, .none);
-            self.setEdgeHover(which, false);
+            self.setHover(.none);
+            self.setEdgeHover(false);
             return 0;
         },
         w32.WM_LBUTTONDOWN => {
@@ -3821,24 +3239,24 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             self.press_y = yOf(lparam);
             // The overlay thumb (T1878) takes the press on its own height,
             // ahead of the resize band it overlaps.
-            if (self.thumbAt(which, self.press_x, self.press_y)) |grab| {
-                self.thumb_drag = .{ .which = which, .grab = grab };
+            if (self.thumbAt(self.press_x, self.press_y)) |grab| {
+                self.thumb_drag = .{ .grab = grab };
                 _ = w32.SetCapture(hwnd);
-                self.invalidate(hwnd);
-                log.info("pane sidebar thumb drag start surface={s}", .{@tagName(which)});
+                _ = w32.InvalidateRect(hwnd, null, 0);
+                log.info("pane sidebar thumb drag start surface=rail", .{});
                 return 0;
             }
-            if (self.onEdgeAt(which, self.press_x, self.press_y)) {
-                self.edgeBegin(which, hwnd, self.press_x, self.press_y);
+            if (self.onEdgeAt(self.press_x, self.press_y)) {
+                self.edgeBegin(hwnd, self.press_x, self.press_y);
                 return 0;
             }
-            self.pressed = self.hitAt(which, self.press_x, self.press_y);
+            self.pressed = self.hitAt(self.press_x, self.press_y);
             // Alt is the click's modifier when it is down at the PRESS (a
             // swap the user started holding Alt is a swap even if Alt comes
             // up first).
             self.press_alt = altDown();
             _ = w32.SetCapture(hwnd);
-            self.invalidate(hwnd);
+            _ = w32.InvalidateRect(hwnd, null, 0);
             return 0;
         },
         w32.WM_LBUTTONUP => {
@@ -3846,43 +3264,36 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 // Cleared here as well as on CAPTURECHANGED: a press whose
                 // SetCapture did not take never gets that message.
                 self.thumb_drag = null;
-                self.invalidate(hwnd);
+                _ = w32.InvalidateRect(hwnd, null, 0);
                 _ = w32.ReleaseCapture();
-                if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
                 return 0;
             }
             if (self.edge != null) {
                 // The release lands where the last move did; ending here
                 // rather than only on WM_CAPTURECHANGED keeps the log line
                 // ahead of anything the release triggers.
-                self.edgeMove(which, hwnd, xOf(lparam), yOf(lparam));
+                self.edgeMove(hwnd, xOf(lparam), yOf(lparam));
                 self.edgeEnd();
                 _ = w32.ReleaseCapture();
-                if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
                 return 0;
             }
             _ = w32.ReleaseCapture();
-            const hit = self.hitAt(which, xOf(lparam), yOf(lparam));
+            const hit = self.hitAt(xOf(lparam), yOf(lparam));
             const pressed = self.pressed;
             self.pressed = .none;
-            self.invalidate(hwnd);
+            _ = w32.InvalidateRect(hwnd, null, 0);
             const alt = self.press_alt or altDown();
             self.press_alt = false;
             if (std.meta.eql(hit, pressed)) {
                 // A click in the search field puts the caret where it landed.
-                if (hit == .search) self.search.setCaret(self.searchCaretAt(which, xOf(lparam)));
-                self.activate(which, hit, alt);
+                if (hit == .search) self.search.setCaret(self.searchCaretAt(xOf(lparam)));
+                self.activate(hit, alt);
             }
-            // Let go off the card while it was held open: the grace period
-            // the hold deferred starts now.
-            if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
             return 0;
         },
-        // The search field's keyboard (T1877). Only the column ever takes
-        // focus (the card never activates), so the keys arrive here whichever
-        // surface shows the field.
+        // The search field's keyboard (T1877).
         w32.WM_SETFOCUS => {
-            if (which == .rail and self.searchShown()) {
+            if (self.searchShown()) {
                 self.search_focus = true;
                 log.info("pane sidebar search focus=true", .{});
                 self.repaint();
@@ -3890,20 +3301,19 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_KILLFOCUS => {
-            if (which == .rail and self.search_focus) {
+            if (self.search_focus) {
                 self.search_focus = false;
                 log.info("pane sidebar search focus=false", .{});
                 self.repaint();
-                if (self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
             }
             return 0;
         },
         w32.WM_KEYDOWN => {
-            if (which == .rail and self.searchShown() and self.searchKey(@intCast(wparam & 0xFFFF), wparam, lparam)) return 0;
+            if (self.searchShown() and self.searchKey(@intCast(wparam & 0xFFFF), wparam, lparam)) return 0;
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_CHAR => {
-            if (which != .rail or !self.searchShown()) return 0;
+            if (!self.searchShown()) return 0;
             const unit: u16 = @truncate(wparam);
             // Return / Escape / Backspace arrive here too, translated from
             // their key: the key handler already acted on them.
@@ -3917,8 +3327,8 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         w32.WM_RBUTTONUP => {
             const x = xOf(lparam);
             const y = yOf(lparam);
-            switch (self.hitAt(which, x, y)) {
-                .item, .item_button => |i| self.openRowMenu(which, hwnd, i, x, y),
+            switch (self.hitAt(x, y)) {
+                .item, .item_button => |i| self.openRowMenu(hwnd, i, x, y),
                 else => {},
             }
             return 0;

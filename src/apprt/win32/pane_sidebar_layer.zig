@@ -16,6 +16,12 @@
 //! Clicks follow the card's SHAPE, not its alpha: a shadow pixel is visible
 //! but passes the click through to the pane under it (`hits`), which is what
 //! the region used to guarantee for the trailing margin.
+//!
+//! T2289 retired the hover-open card with Mac's hover-open. What still runs
+//! is the glass sheet (`buildGlass`), which the rail is drawn as with glass
+//! panes; the mask, `apply`, `hits`, `frostPanes` and `composeOver` wait on
+//! T2290, which draws the expanded sidebar as the rail's own raised card and
+//! keeps or trims them.
 
 const std = @import("std");
 const banner_card = @import("banner_card.zig");

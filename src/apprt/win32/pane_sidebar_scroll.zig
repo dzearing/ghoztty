@@ -5,7 +5,7 @@
 //! The layout (`pane_sidebar.zig`) places every row as if the column were as
 //! tall as its content. `apply` then takes a wanted offset and turns that
 //! layout into the scrolled one: it finds the viewport - everything below the
-//! header and the search field, or the rail's tiles below its pin - clamps
+//! header and the search field, or the rail's tiles below its toggle - clamps
 //! the offset to what the content can scroll, moves every scrolled rect up
 //! by it, and pins the project header whose windows are passing under the
 //! viewport's top. The layout records the viewport, and `hitTest` refuses a
@@ -30,15 +30,15 @@ pub fn viewportOf(l: *const Layout, scale: f32) Rect {
     switch (l.mode) {
         .hidden => return .{},
         .expanded => {},
-        .mini => if (!l.open) {
-            // The rail: from just under the pin to the card's bottom inset,
-            // so the first tile's corner badges (which overhang it by 2 DIP)
-            // stay inside.
-            const top = l.pin.bottom + sm;
+        .mini => {
+            // The rail: from just under the toggle to the card's bottom
+            // inset, so the first tile's corner badges (which overhang it by
+            // 2 DIP) stay inside.
+            const top = l.toggle.bottom + sm;
             return .{ .left = l.card.left, .top = top, .right = l.card.right, .bottom = @max(l.card.bottom - sm, top) };
         },
     }
-    const area: Rect = if (l.open) l.card else .{ .right = l.width, .bottom = l.height };
+    const area: Rect = .{ .right = l.width, .bottom = l.height };
     // Where the rows start: the outline's below the search field (and its
     // `sm`), the single roster's straight under the header.
     const top = if (l.search.width() > 0) l.search.bottom + sm else l.header.bottom;
@@ -223,7 +223,7 @@ pub fn thumb(l: *const Layout, scale: f32) ?Rect {
     const h = @max(min_h, @divTrunc(track * track, total));
     const range = track - h;
     const y = if (range <= 0) 0 else @divTrunc(range * l.scroll + @divTrunc(l.max_scroll, 2), l.max_scroll);
-    const rows = l.mode == .expanded or l.open;
+    const rows = l.mode == .expanded;
     const w = @max(px(if (rows) thumb_dip else rail_thumb_dip, scale), 2);
     const right = vp.right - px(thumb_edge_dip, scale);
     return .{ .left = right - w, .top = vp.top + y, .right = right, .bottom = vp.top + y + h };
@@ -286,7 +286,7 @@ test "pane_sidebar_scroll: the header and its buttons never move; rows past the 
         const raw = sb.layout(.expanded, px(240, s), px(300, s), &lots, tm(s), s);
         var l = raw;
         apply(&l, px(200, s), s);
-        try testing.expectEqual(raw.pin, l.pin);
+        try testing.expectEqual(raw.toggle, l.toggle);
         try testing.expectEqual(raw.header, l.header);
         try testing.expectEqual(raw.header.bottom, l.viewport.top);
         // A row past the fold before the scroll: unreachable, then hit.
@@ -300,21 +300,21 @@ test "pane_sidebar_scroll: the header and its buttons never move; rows past the 
         // A row scrolled up under the header is no longer a hit there, and
         // the header's own buttons still are.
         try testing.expect(l.items[0].bottom <= l.viewport.top);
-        try testing.expectEqual(sb.Hit.pin, sb.hitTest(&l, l.pin.centerX(), l.pin.centerY(), s));
+        try testing.expectEqual(sb.Hit.toggle, sb.hitTest(&l, l.toggle.centerX(), l.toggle.centerY(), s));
         try testing.expectEqual(Rect{}, visible(&l, l.items[0]));
     }
 }
 
-test "pane_sidebar_scroll: the rail scrolls its tiles under a fixed pin" {
+test "pane_sidebar_scroll: the rail scrolls its tiles under a fixed toggle" {
     for (scales) |s| {
         const lots = manyItems(20);
         const raw = sb.layout(.mini, px(68, s), px(300, s), &lots, tm(s), s);
         var l = raw;
         apply(&l, 1_000_000, s);
         try testing.expect(l.max_scroll > 0);
-        try testing.expectEqual(raw.pin, l.pin);
+        try testing.expectEqual(raw.toggle, l.toggle);
         try testing.expectEqual(raw.card, l.card);
-        try testing.expect(l.viewport.top >= raw.pin.bottom);
+        try testing.expect(l.viewport.top >= raw.toggle.bottom);
         const last = l.items[19];
         try testing.expect(last.bottom <= l.viewport.bottom);
         try testing.expectEqual(sb.Hit{ .item = 19 }, sb.hitTest(&l, last.centerX(), last.centerY(), s));

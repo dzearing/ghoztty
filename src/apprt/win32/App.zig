@@ -3669,7 +3669,8 @@ fn captureWindow(
         .active_tab = @intCast(win.active_tab),
         .tabs = tabs,
         .desk_variant = if (win.desk_variant) |v| v.seed else null,
-        .pane_sidebar_pinned = win.pane_sidebar_pinned,
+        // Written under its pre-T2289 name, as Mac writes it: pinned WAS expanded.
+        .pane_sidebar_pinned = win.pane_sidebar_expanded,
         .pane_sidebar_hidden = win.pane_sidebar_hidden,
     };
 }

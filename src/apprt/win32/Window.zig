@@ -33,7 +33,6 @@ const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const pane_stash = @import("pane_stash.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
-const pane_sidebar_hover = @import("pane_sidebar_hover.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const PaneGrabHandle = @import("PaneGrabHandle.zig");
 const pane_grab_handle = @import("pane_grab_handle.zig");
@@ -610,12 +609,13 @@ occluded: bool = false,
 /// top band holds the pointer. Created on the first mouse move; null on the
 /// Quick Terminal, which has no other window or tab to drag a pane to.
 grab_handle: ?*PaneGrabHandle.PaneGrabHandle = null,
-/// Pinned = the flat panel; unpinned = the mini rail. Hidden = no column.
-/// Layout state, so new windows start from the last choice
-/// (`PaneSidebar.remembered`), as Mac's do.
-pane_sidebar_pinned: bool = false,
+/// Expanded = the flat panel; collapsed = the mini rail (T2289: one toggle
+/// switches them, Mac e77422577). Hidden = no column. Layout state, so new
+/// windows start from the last choice (`PaneSidebar.remembered`), as Mac's
+/// do.
+pane_sidebar_expanded: bool = false,
 pane_sidebar_hidden: bool = false,
-/// The pinned panel's preferred width.
+/// The expanded panel's preferred width.
 pane_sidebar_width_dip: f32 = pane_sidebar.default_width_dip,
 /// `tabBarLeft()` as the strip last saw it (T1900): the sidebar's column
 /// moving under a strip that starts at its edge moves the tabs too.
@@ -1616,7 +1616,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         .is_quick_terminal = options.is_quick_terminal,
         .pending_surface_overrides = options.surface_overrides,
         .background_first_show = options.background,
-        .pane_sidebar_pinned = PaneSidebar.remembered.pinned,
+        .pane_sidebar_expanded = PaneSidebar.remembered.expanded,
         .pane_sidebar_hidden = PaneSidebar.remembered.hidden,
         .pane_sidebar_width_dip = PaneSidebar.remembered.width_dip,
         .desk_variant = options.desk_variant,
@@ -2615,7 +2615,7 @@ pub fn paneSidebarMode(self: *const Window) pane_sidebar.Mode {
     var rc: w32.RECT = undefined;
     if (w32.GetClientRect(hwnd, &rc) == 0) return .hidden;
     const w_dip = @as(f32, @floatFromInt(rc.right - rc.left)) / self.scale;
-    return pane_sidebar.mode(self.pane_sidebar_pinned, self.pane_sidebar_hidden, w_dip);
+    return pane_sidebar.mode(self.pane_sidebar_expanded, self.pane_sidebar_hidden, w_dip);
 }
 
 /// The width the sidebar's column takes from the grid, in pixels.
@@ -2703,20 +2703,35 @@ pub fn togglePaneSidebar(self: *Window) void {
     self.paneSidebarLayoutChanged();
 }
 
-/// The pin: flat panel <-> mini rail. Unpinning leaves the card open over
-/// the grid - the pin was just clicked, so the pointer is on it - until the
-/// pointer leaves (Mac `setPaneSidebarPinned`, T1842); pinning closes it.
-pub fn togglePaneSidebarPin(self: *Window) void {
-    self.pane_sidebar_pinned = !self.pane_sidebar_pinned;
+/// Collapse or expand the sidebar (T2289, Mac `setPaneSidebarExpanded`):
+/// flat panel <-> mini rail, from the one header toggle or a rail pulled out
+/// by its edge. Refused while the window is too narrow for the panel - the
+/// rail is forced there and its toggle is off - so a click on a disabled
+/// toggle cannot quietly flip a choice the user cannot see.
+pub fn setPaneSidebarExpanded(self: *Window, expanded: bool, cause: []const u8) void {
+    if (expanded == self.pane_sidebar_expanded) return;
+    if (expanded and !self.paneSidebarCanExpand()) {
+        log.info("pane sidebar expand refused: window too narrow cause={s}", .{cause});
+        return;
+    }
+    self.pane_sidebar_expanded = expanded;
+    log.info("pane sidebar expanded={} cause={s}", .{ expanded, cause });
     self.paneSidebarLayoutChanged();
-    const sb = self.sidebar orelse return;
-    if (pane_sidebar_hover.openAfterPinToggle(self.pane_sidebar_pinned)) sb.openCard(.unpin) else sb.closeCard(.pin);
+}
+
+/// Whether this window is wide enough for the expanded panel
+/// (`pane_sidebar.canExpand`).
+pub fn paneSidebarCanExpand(self: *const Window) bool {
+    const hwnd = self.hwnd orelse return false;
+    var rc: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &rc) == 0) return false;
+    return pane_sidebar.canExpand(@as(f32, @floatFromInt(rc.right - rc.left)) / self.scale);
 }
 
 /// The panel's edge was dragged (T1846): set the panel width. It is ONE
 /// preference for every window (Mac `PaneSidebarState.width`), so every
-/// window takes it - a pinned panel relays its grid out, an open card
-/// regrows - and new windows start from it.
+/// window takes it - an expanded panel relays its grid out - and new windows
+/// start from it.
 pub fn setPaneSidebarWidth(self: *Window, dip: f32) void {
     const w = pane_sidebar.clampWidth(dip);
     PaneSidebar.remembered.width_dip = w;
@@ -2726,26 +2741,28 @@ pub fn setPaneSidebarWidth(self: *Window, dip: f32) void {
         if (win.paneSidebarMode() == .expanded) {
             win.layoutSplits();
             win.syncPaneSidebar();
-        } else if (win.sidebar) |sb| sb.widthChanged();
+        }
     }
 }
 
-/// A restored window takes back the pin and hidden flags its session layout
-/// recorded (T1847; Mac `SessionLayoutRestore` sets `isPinned`/`isHidden`).
+/// A restored window takes back the expanded and hidden flags its session
+/// layout recorded (T1847; Mac `SessionLayoutRestore` sets
+/// `isExpanded`/`isHidden`). The manifest keeps the pre-rename name,
+/// `pane_sidebar_pinned`, as Mac's does: pinned WAS the expanded panel.
 /// Absent in a manifest written before the fields existed, and then the
 /// new-window defaults the window opened with stand. Like Mac's setters, a
 /// restored choice also becomes the default for the next new window.
-pub fn restorePaneSidebar(self: *Window, pinned: ?bool, hidden: ?bool) void {
-    const p = pinned orelse self.pane_sidebar_pinned;
+pub fn restorePaneSidebar(self: *Window, expanded: ?bool, hidden: ?bool) void {
+    const p = expanded orelse self.pane_sidebar_expanded;
     const h = hidden orelse self.pane_sidebar_hidden;
-    if (p == self.pane_sidebar_pinned and h == self.pane_sidebar_hidden) return;
-    self.pane_sidebar_pinned = p;
+    if (p == self.pane_sidebar_expanded and h == self.pane_sidebar_hidden) return;
+    self.pane_sidebar_expanded = p;
     self.pane_sidebar_hidden = h;
     self.paneSidebarLayoutChanged();
 }
 
 fn paneSidebarLayoutChanged(self: *Window) void {
-    PaneSidebar.remembered.pinned = self.pane_sidebar_pinned;
+    PaneSidebar.remembered.expanded = self.pane_sidebar_expanded;
     PaneSidebar.remembered.hidden = self.pane_sidebar_hidden;
     PaneSidebar.saveRemembered(self.app.core_app.alloc);
     self.layoutSplits();
@@ -4542,8 +4559,8 @@ fn grabTargetFor(self: *Window, view: *PaneView, inner_client: w32.RECT) PaneGra
     };
 }
 
-/// Is the pointer over this window's own panes, rather than over a dialog,
-/// the sidebar's open card, or another application in front?
+/// Is the pointer over this window's own panes, rather than over a dialog or
+/// another application in front?
 ///
 /// `WindowFromPoint` names the topmost window at the point. Its root is this
 /// window for every child (terminal surfaces, viewer panes, the page inside a
@@ -4551,11 +4568,11 @@ fn grabTargetFor(self: *Window, view: *PaneView, inner_client: w32.RECT) PaneGra
 /// window's passive popups (a pane's banner, the handle) the OWNER is: those
 /// are `WS_EX_NOACTIVATE`, which a dialog never is.
 fn pointerOverOwnContent(self: *Window, pt: w32.POINT, hwnd: w32.HWND, handle_hwnd: w32.HWND) bool {
+    _ = self;
     const under = w32.WindowFromPoint(pt) orelse return false;
     const root = w32.GetAncestor(under, w32.GA_ROOT) orelse return false;
     if (root == hwnd or root == handle_hwnd) return true;
     if (w32.GetWindow(root, w32.GW_OWNER) != hwnd) return false;
-    if (self.sidebar) |sb| if (sb.card_hwnd) |card| if (card == root) return false;
     const ex: u32 = @bitCast(w32.GetWindowLongW(root, w32.GWL_EXSTYLE));
     return ex & w32.WS_EX_NOACTIVATE != 0;
 }

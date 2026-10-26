@@ -1,6 +1,6 @@
 # T1850 acceptance: the pane sidebar in the elevated pane style (Mac main
 # 91ba7c08c + 557e4f978). Mac runs the window's gradient desk UNDER the
-# sidebar: the pinned panel is translucent over it with no rule against the
+# sidebar: the expanded panel is translucent over it with no rule against the
 # grid, and the mini rail takes the panes' own 10 DIP margin leading, top and
 # bottom and none trailing - the grid's margin is the gap on that side - so
 # the gutters either side of the rail are equal.
@@ -15,30 +15,28 @@
 #      not the terminal background; the card itself is the card material, not
 #      the desk; and just inside the column's trailing edge the colour meets
 #      the grid margin beside it without a seam.
-#   3. THE PINNED PANEL. Pinned, the column is the 240 DIP panel; its empty
+#   3. THE EXPANDED PANEL. Expanded, the column is the 240 DIP panel; its empty
 #      lower part lets the desk show through (blue over red on a black
 #      terminal), and just inside its trailing edge it is exactly the glass
 #      mix of the desk in the margin beside it - 38% terminal background, then
 #      the card's 6% wash - and there is no divider rule at that edge.
-#   4. Unpinning brings the 54 DIP rail back.
+#   4. The toggle (T2289: on the same pixels in the panel's header as on the
+#      rail) collapses it back to the 54 DIP rail.
 #   5. GLASS (T1887, Mac ec71db251 / 733b03e58). With glass panes on (the
-#      default) the unpinned card is Mac's lighter glass sheet: the rail's
-#      card is the desk under 30% terminal background (step 2 checks it
-#      against the desk at the same height), and the card the unpin opens is
-#      see-through - it is a layered window, whose pixels cannot be read back
-#      off the test desktop, so it logs the alpha it handed the window manager
-#      low in its empty middle (30% tint, plus the grounding shade: 70-100).
-#      A second launch with --macos-pane-glass=false keeps the opaque card:
-#      the rail is card material, not the desk, and the open card's middle is
-#      alpha 255.
+#      default) the rail is Mac's lighter glass sheet: the rail's card is the
+#      desk under 30% terminal background (step 2 checks it against the desk
+#      at the same height). A second launch with --macos-pane-glass=false
+#      keeps the opaque card: the rail is card material, not the desk. (The
+#      hover-open card's own glass sections went with it in T2289.)
 #   7. BESIDE THE TAB STRIP (T1900, Mac 3ac40dc8b). With glass panes and the
 #      strip showing, the sidebar's column runs the window's height: it starts
 #      at the client's top, its card running up beside the tabs, and the strip
 #      starts at the column's edge (the published band, not a re-derivation).
 #      The tabs sit one 10 DIP gap above the panes. Up there the column only
 #      draws - WM_NCHITTEST on it is HTTRANSPARENT and the window answers
-#      HTCAPTION, so the stretch drags the window - while the rail's pin, now
-#      a strip's height lower, still pins; the strip follows the 240 DIP panel.
+#      HTCAPTION, so the stretch drags the window - while the rail's toggle,
+#      now a strip's height lower, still expands; the strip follows the 240
+#      DIP panel.
 #      Solid panes keep the column under the chrome and the strip full width.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
@@ -89,15 +87,13 @@ function Get-ColorDistance($a, $b) {
 }
 function Fmt($c) { if ($null -eq $c) { 'null' } else { "$($c.R),$($c.G),$($c.B)" } }
 
-# The rail's pin (pane_sidebar.zig layoutMini) with the elevated insets.
-function Get-RailPinCenter($sb) {
+# The collapse/expand toggle (pane_sidebar.zig toggleRect) with the elevated
+# insets: the rail's first item, and the panel header's first item on the
+# same pixels (T2289).
+function Get-ToggleCenter($sb) {
     $m = Get-MarginPx; $card = Px 44; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $sb.Left + $m + $inset + [int]($tile / 2); Y = $sb.Top + $m + $inset + [int]($tile / 2) }
-}
-# The pinned panel's pin: 28 DIP, sm (4) from the trailing edge, 18 DIP down.
-function Get-PanelPinCenter($sb) {
-    return @{ X = $sb.Right - (Px 4) - [int]((Px 28) / 2); Y = $sb.Top + (Px 18) }
 }
 function Click($top, $target, $pt) {
     return Send-TestMouse -Window $top -Target ([IntPtr]$target) -X $pt.X -Y $pt.Y -Action click
@@ -123,20 +119,6 @@ function Get-Shot($top, [string]$Name) {
     }
     try { $shot.Bitmap.Save((Join-Path $env:TEMP "t1850-$Name.png"), [System.Drawing.Imaging.ImageFormat]::Png) } catch { }
     return $shot
-}
-
-# The open card's first present logs what it sent (PaneSidebar.presentCard):
-# the line carries `glass=<bool> interior_alpha=<n>`.
-function Get-GlassLine([string]$Log, [int]$Skip, [int]$Ms = 4000) {
-    $deadline = (Get-Date).AddMilliseconds($Ms)
-    $line = $null
-    do {
-        $line = @(Get-Content $Log -ErrorAction SilentlyContinue | Select-Object -Skip $Skip |
-            Where-Object { $_ -match 'pane sidebar card glass=' }) | Select-Object -Last 1
-        if ($line) { break }
-        Start-Sleep -Milliseconds 150
-    } while ((Get-Date) -lt $deadline)
-    return $line
 }
 
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
@@ -165,7 +147,7 @@ try {
     if ($dpi -gt 0) { $script:scale = $dpi / 96.0 }
     $m = Get-MarginPx; $i = Get-InsetPx
     "  (window dpi $dpi, scale $($script:scale), margin $m, rim $i)"
-    # Wide enough for the pinned panel (>= 720 DIP).
+    # Wide enough for the expanded panel (>= 720 DIP).
     [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
     Start-Sleep -Milliseconds 800
 
@@ -217,11 +199,11 @@ try {
         } finally { Close-TestWindowPixels $shot }
     }
 
-    "== 3: pinned, the panel is translucent over the desk, with no rule"
-    $r = Click $top $sb.Hwnd (Get-RailPinCenter $sb)
-    Assert "pin click delivered" $r
+    "== 3: expanded, the panel is translucent over the desk, with no rule"
+    $r = Click $top $sb.Hwnd (Get-ToggleCenter $sb)
+    Assert "toggle click delivered" $r
     $sb = Wait-SidebarWidth $top (Px 240)
-    Assert "the pinned panel is 240 DIP ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+    Assert "the expanded panel is 240 DIP ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
     Start-Sleep -Milliseconds 500
     $p = (@(Get-Panes $top))[0]
     $gutter = $p.Left - $sb.Right - $i
@@ -252,78 +234,11 @@ try {
         } finally { Close-TestWindowPixels $shot }
     }
 
-    "== 4: unpinning brings the 54 DIP rail back"
-    $logBefore = @(Get-Content $errlog -ErrorAction SilentlyContinue).Count
-    [void](Click $top $sb.Hwnd (Get-PanelPinCenter $sb))
+    "== 4: the toggle brings the 54 DIP rail back"
+    [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
     $sb = Wait-SidebarWidth $top $railW
     Assert "back to the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - $railW) -le 1)
 
-    "== 5: the card the unpin opens is a frosted glass sheet the panes cannot show through (T1887, T1939)"
-    $gl = Get-GlassLine $errlog $logBefore; "  $gl"
-    $gm = [regex]::Match([string]$gl, 'glass=(\w+) interior_alpha=(\d+)')
-    Assert "the open card logged its layer" $gm.Success
-    if ($gm.Success) {
-        Assert "the open card is glass" ($gm.Groups[1].Value -eq 'true')
-        $ia = [int]$gm.Groups[2].Value
-        # T1939: a 30% sheet with no blur behind it (alpha ~85) left the
-        # terminal's text and the pane banner legible through the card. The
-        # sheet now lies on the panes as a blur leaves them, so its middle is
-        # opaque and nothing behind it reaches the eye.
-        Assert "its empty middle is opaque - no terminal text can show through (alpha $ia of 255)" ($ia -eq 255)
-    }
-
-    "== 5b: a banner shown while the card is open stays below the card (T1939)"
-    # A press held on the card keeps it open (`onCloseTimer`: capture) for
-    # as long as the probe below needs; it lands on the card's empty middle,
-    # where the glass line samples, so it activates nothing.
-    $am = [regex]::Match([string]$gl, ' at=(\d+),(\d+)')
-    Assert "setup: the glass line names the card's empty middle" $am.Success
-    Start-Sleep -Milliseconds 900   # section 5's card has contracted
-    [void](Click $top $sb.Hwnd (Get-RailPinCenter $sb))
-    $sb = Wait-SidebarWidth $top (Px 240)
-    Start-Sleep -Milliseconds 400
-    "  pinned again: column $($sb.Width) (want $(Px 240))"
-    Assert "setup: window is active for the card's press" (Set-TestActiveWindow -Window $top)
-    $mark5 = @(Get-Content $errlog -ErrorAction SilentlyContinue).Count
-    [void](Click $top $sb.Hwnd (Get-PanelPinCenter $sb))   # unpin: the card opens
-    # The press must beat the 280 ms grace period the open started, so it is
-    # the very next thing.
-    $card = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard'
-    $held = $false
-    $px = 0; $py = 0
-    if ($card -ne [IntPtr]::Zero -and $am.Success) {
-        $ccr = Get-TestWindowRect -Window $card
-        $px = $ccr.Left + [int]$am.Groups[1].Value; $py = $ccr.Top + [int]$am.Groups[2].Value
-        $held = Send-TestMouse -Window $top -Target $card -X $px -Y $py -Action down
-    }
-    "  card=$card press=$px,$py"
-    Assert "setup: the press reached the open card" $held
-    $cli = [System.IO.Path]::ChangeExtension($Exe, '.com')
-    if (-not (Test-Path $cli)) { $cli = $Exe }
-    # The banner is SHOWN while the card is open. In the T1939 report its text
-    # crossed the card's rows; measured here (with and without a z-order fix),
-    # a banner shown under an open card stays BELOW it - its text came through
-    # the see-through sheet, as the terminal's did. This keeps that true.
-    & $cli +set-banner --target=window-1 '**T1939** banner shown under an open card' 2>$null | Out-Null
-    $bn = $null
-    for ($t = 0; $t -lt 25 -and -not $bn; $t++) {
-        $bn = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)[0]
-        if (-not $bn) { Start-Sleep -Milliseconds 200 }
-    }
-    Assert "setup: the banner is up" ($null -ne $bn)
-    Start-Sleep -Milliseconds 300
-    $closedEarly = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $mark5 | Where-Object { $_ -match 'pane sidebar card close' }).Count
-    Assert "setup: the card stayed open through the banner ($closedEarly closes)" ($closedEarly -eq 0)
-    if ($null -ne $bn -and $card -ne [IntPtr]::Zero) {
-        $zCard = Get-TestZIndex -Window $card
-        $zBanner = Get-TestZIndex -Window ([IntPtr]$bn.Hwnd)
-        $zTop = Get-TestZIndex -Window $top
-        "  z-index (0 = top): card=$zCard banner=$zBanner window=$zTop"
-        Assert "the banner sits below the open card (card=$zCard < banner=$zBanner)" ($zCard -ge 0 -and $zBanner -ge 0 -and $zCard -lt $zBanner)
-        Assert "...and still above its own window (banner=$zBanner < window=$zTop)" ($zBanner -lt $zTop)
-    }
-    if ($held) { [void](Send-TestMouse -Window $top -Target $card -X $px -Y $py -Action up) }
-    & $cli +set-banner --target=window-1 --clear 2>$null | Out-Null
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
 
@@ -377,17 +292,18 @@ try {
             Assert "the rail's card runs up beside the strip: its glass, not the bare desk (distance $dg)" ($dg -ge 15 -and $card.B -ge $card.R + 6)
         } finally { Close-TestWindowPixels $shot }
     }
-    # The pin is a strip's height lower than in section 3, and still pins.
+    # The toggle is a strip's height lower than in section 3, and still
+    # expands.
     $reach = $regions.Band.Bottom
-    $pin = Get-RailPinCenter $sb
+    $pin = Get-ToggleCenter $sb
     $pin.Y += $reach
     [void](Click $top $sb.Hwnd $pin)
     $sb = Wait-SidebarWidth $top (Px 240)
-    Assert "the rail's pin, below the strip's row, still pins ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+    Assert "the rail's toggle, below the strip's row, still expands ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
     Start-Sleep -Milliseconds 500
     $regions = Get-TestStripRegions -Window $top -Exe $Exe
     $colRight = $sb.Right - $cr.Left
-    Assert "the strip follows the pinned panel's edge (band $($regions.Band.Left) vs $colRight + $(Px 4))" ($null -ne $regions -and $regions.Band.Left -eq $colRight + (Px 4))
+    Assert "the strip follows the expanded panel's edge (band $($regions.Band.Left) vs $colRight + $(Px 4))" ($null -ne $regions -and $regions.Band.Left -eq $colRight + (Px 4))
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
 
@@ -418,18 +334,16 @@ try {
             Assert "the rail's card is the card material, not the desk" (-not (Test-DeskPixel $card))
         } finally { Close-TestWindowPixels $shot }
     }
-    [void](Click $top $sb.Hwnd (Get-RailPinCenter $sb))
+    # T2289: the toggle expands the solid window too, and the panel's header
+    # toggle - on the same pixels - collapses it straight back to the rail.
+    $railSolid = $sb.Width
+    [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
     $sb = Wait-SidebarWidth $top (Px 240)
+    Assert "solid: the toggle expands the panel ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
     Start-Sleep -Milliseconds 500
-    $logBefore = @(Get-Content $errlog2 -ErrorAction SilentlyContinue).Count
-    [void](Click $top $sb.Hwnd (Get-PanelPinCenter $sb))
-    $gl = Get-GlassLine $errlog2 $logBefore; "  $gl"
-    $gm = [regex]::Match([string]$gl, 'glass=(\w+) interior_alpha=(\d+)')
-    Assert "the solid open card logged its layer" $gm.Success
-    if ($gm.Success) {
-        Assert "the open card is not glass ($($gm.Groups[1].Value))" ($gm.Groups[1].Value -eq 'false')
-        Assert "its middle is opaque (alpha $($gm.Groups[2].Value))" ([int]$gm.Groups[2].Value -eq 255)
-    }
+    [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
+    $sb = Wait-SidebarWidth $top $railSolid
+    Assert "solid: the panel's toggle collapses it back to the rail ($($sb.Width) vs $railSolid)" ($null -ne $sb -and [math]::Abs($sb.Width - $railSolid) -le 1)
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

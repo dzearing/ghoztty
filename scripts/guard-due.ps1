@@ -5230,7 +5230,7 @@ $GuardTable = @(
     },
     # The pane sidebar (T1828): its rules and geometry are unit-tested in every
     # lane, but whether the column is placed, pushes the grid over, paints, and
-    # routes its clicks, pin and chord is only answered on the box. Covers the
+    # routes its clicks, toggle and chord is only answered on the box. Covers the
     # sidebar's own two files and the harness; Window.zig is left out for the
     # ipc-stash row's reason.
     [pscustomobject]@{
@@ -5239,7 +5239,7 @@ $GuardTable = @(
         Stamp  = 'test\win32\pane-sidebar.stamp.json'
         Covers = @(
             'src\apprt\win32\pane_sidebar.zig',
-            'src\apprt\win32\pane_sidebar_hover.zig',
+            'src\apprt\win32\pane_sidebar_tips.zig',
             'src\apprt\win32\PaneSidebar.zig',
             'test\win32\pane-sidebar.ps1'
         )

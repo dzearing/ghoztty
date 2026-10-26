@@ -172,13 +172,13 @@ function At($top, $sb, $pt, [string]$Button = 'left', [string[]]$Mods = @()) {
     Start-Sleep -Milliseconds 120
     return Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $x -Y $y -Button $Button -Action click -Modifiers $Mods
 }
-function Get-PinCenter($sb, [string]$Mode) {
-    if ($Mode -eq 'mini') {
-        $margin = Px 12; $card = Px 44; $tile = Px 28
-        $inset = [int][math]::Truncate(($card - $tile) / 2)
-        return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
-    }
-    return @{ X = $sb.Width - (Px 4) - [int]((Px 28) / 2); Y = Px 18 }
+# The collapse/expand toggle (T2289): the rail's first item and the panel
+# header's first item, on the same pixels in both modes - centered in the
+# rail card, the card's inset below its top (client coordinates).
+function Get-ToggleCenter($sb) {
+    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $inset = [int][math]::Truncate(($card - $tile) / 2)
+    return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
 }
 
 function Get-MenuItems([IntPtr]$menuWnd) {
@@ -236,7 +236,7 @@ try {
     if ($dpi -gt 0) { $script:scale = $dpi / 96.0 }
     "  (window dpi $dpi, scale $($script:scale))"
     # Wide enough for all five panes at the stacked-panes minimum (T2108:
-    # 300 DIP each) beside the pinned 240 DIP sidebar - 1400 DIP stacked the
+    # 300 DIP each) beside the expanded 240 DIP sidebar - 1400 DIP stacked the
     # row, so "on screen" counted what was on show, not what was in the grid
     # (T2139). 1850 DIP leaves ~100 DIP for gutters and chrome and still fits
     # a 1920-wide screen at 100%.
@@ -259,12 +259,12 @@ try {
     # Pin: the panel lays out the rows the menu is opened on.
     $sb = Get-Sidebar $top
     if ($null -eq $sb) { "  SETUP FAIL: no sidebar"; $script:failures++; return }
-    [void](At $top $sb (Get-PinCenter $sb 'mini'))
+    [void](At $top $sb (Get-ToggleCenter $sb))
     $rows = Wait-Rows { param($r) $r.Mode -eq 'expanded' -and $r.Items.Count -eq 5 }
     $sb = Get-Sidebar $top
-    Assert "setup: pinned, the rows line lists all five rows" ($null -ne $rows -and $rows.Mode -eq 'expanded' -and $rows.Items.Count -eq 5)
+    Assert "setup: expanded, the rows line lists all five rows" ($null -ne $rows -and $rows.Mode -eq 'expanded' -and $rows.Items.Count -eq 5)
     if ($null -eq $rows -or $rows.Items.Count -lt 5) { return }
-    Assert "setup: all five panes on show beside the pinned sidebar (none stacked)" `
+    Assert "setup: all five panes on show beside the expanded sidebar (none stacked)" `
         (Wait-Until { (@(Get-Panes $top | Where-Object Visible)).Count -eq 5 })
 
     "== 1: right-click a grid row -> Stash Pane / Move to New Window / Close Pane"
@@ -348,12 +348,10 @@ try {
     $mark = Get-LogCount
     [void](At $top $sb $rows.Trash)
     Assert "trash mode on again (log)" ($null -ne (Wait-Log 'pane sidebar trash mode on=true' $mark))
-    [void](At $top $sb (Get-PinCenter $sb 'expanded'))   # unpin: the rail
+    [void](At $top $sb (Get-ToggleCenter $sb))   # collapse: the rail
     $rows = Wait-Rows { param($r) $r.Mode -eq 'mini' -and $r.Items.Count -eq 2 }
     $sb = Get-Sidebar $top
     Assert "back on the rail with two tiles" ($rows.Mode -eq 'mini' -and $rows.Items.Count -eq 2)
-    # Let the card that unpinning opened contract (the pointer is elsewhere).
-    [void](Wait-Log 'pane sidebar card close' $mark 3000)
     $tileS1 = Row $rows $ids['s1']
     $tileP = Row $rows $idP
     # A click on P's tile BODY (its bottom-right) still only focuses.

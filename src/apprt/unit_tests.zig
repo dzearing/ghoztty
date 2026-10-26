@@ -72,10 +72,10 @@ test {
     // only the TOC layout and the shared split tree. Every lane.
     _ = @import("win32/pane_sidebar.zig");
 
-    // Pure win32 pane sidebar hover-open card and tooltips (T1842): Mac's
-    // timing, the close verdict, the card's z-order seat and the tip text.
+    // Pure win32 pane sidebar tooltips (T1842; the hover-open card went with
+    // T2289): the tip text, the toggle's wording and the tile tip's cut.
     // Imports only pane_sidebar.zig. Every lane.
-    _ = @import("win32/pane_sidebar_hover.zig");
+    _ = @import("win32/pane_sidebar_tips.zig");
 
     // Pure win32 pane sidebar all-windows outline (T1829): the
     // `<project>: <worktree>` split, Finder's name order, the grouping, the
@@ -94,9 +94,9 @@ test {
     _ = @import("win32/pane_sidebar_motion.zig");
     _ = @import("win32/pane_sidebar_transition.zig");
 
-    // Pure win32 pane sidebar open-card layer (T1865): the per-pixel alpha
-    // that lets the hover-open card's antialiased corners and soft shadow
-    // fall on the grid, and the shape its clicks follow. Imports only
+    // Pure win32 pane sidebar card layer (T1865/T1887): the glass sheet the
+    // rail is drawn as with glass panes, and the per-pixel alpha the retired
+    // hover-open card (T2289) was presented with. Imports only
     // banner_card.zig. Every lane.
     _ = @import("win32/pane_sidebar_layer.zig");
 

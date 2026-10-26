@@ -20,7 +20,7 @@
 #   6. All windows, as a project: scrolled into the project's rows, its
 #      header is pinned to the viewport's top (sticky), and a click on the
 #      pinned header is the header's (it folds the project).
-#   7. Unpinned, the rail's tiles scroll with the wheel too.
+#   7. Collapsed, the rail's tiles scroll with the wheel too.
 #
 # Geometry comes from the `pane sidebar rows` / `outline` log lines (rows,
 # heads, and since T1878 `scroll=<offset>/<max> view=<top>,<bottom>
@@ -143,16 +143,19 @@ function ClickAt($top, $sb, $pt) {
 function WheelAt($top, $sb, $pt, [int]$Delta) {
     return Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + $pt.X) -Y ($sb.Top + $pt.Y) -Action wheel -Delta $Delta
 }
-function Get-PinCenter($sb, [string]$Mode) {
-    if ($Mode -eq 'mini') {
-        $margin = Px 12; $card = Px 44; $tile = Px 28
-        $inset = [int][math]::Truncate(($card - $tile) / 2)
-        return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
-    }
-    return @{ X = $sb.Width - (Px 4) - [int]((Px 28) / 2); Y = Px 18 }
+# The collapse/expand toggle (T2289): the rail's first item and the panel
+# header's first item, on the same pixels in both modes - centered in the
+# rail card, the card's inset below its top (client coordinates).
+function Get-ToggleCenter($sb) {
+    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $inset = [int][math]::Truncate(($card - $tile) / 2)
+    return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
 }
+# The all-windows toggle (T2289 header order): the toggle leads, then the
+# caption; at the trailing edge sit this button and trash, 2 DIP apart, the
+# last one sm (4) in - all on the toggle's row.
 function Get-ScopeCenter($sb) {
-    return @{ X = $sb.Width - (Px 4) - 2 * ((Px 28) + (Px 2)) - [int]((Px 28) / 2); Y = Px 18 }
+    return @{ X = $sb.Width - (Px 4) - ((Px 28) + (Px 2)) - [int]((Px 28) / 2); Y = (Get-ToggleCenter $sb).Y }
 }
 
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
@@ -193,15 +196,15 @@ try {
     Assert "setup: twelve panes split and stashed ($made)" ($made -eq 12)
     Assert "setup: s12 reads stashed" (Wait-Stashed 's12' $true)
 
-    "== 1: pinned, a long list overflows the panel"
+    "== 1: expanded, a long list overflows the panel"
     $sb = Get-Sidebar $top
     Assert "the window has a sidebar" ($null -ne $sb -and $sb.Visible)
     if ($null -eq $sb) { return }
     $mark = Get-LogCount
-    [void](ClickAt $top $sb (Get-PinCenter $sb 'mini'))
+    [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     $o = Read-Geometry (Wait-Log 'pane sidebar rows mode=expanded' $mark)
     $sb = Get-Sidebar $top
-    Assert "the pinned panel logged its rows with a scroll state" ($null -ne $o -and $o.Max -ge 0)
+    Assert "the expanded panel logged its rows with a scroll state" ($null -ne $o -and $o.Max -ge 0)
     if ($null -eq $o) { return }
     "  rows=$($o.Items.Count) scroll=$($o.Scroll)/$($o.Max) view=$($o.Top),$($o.Bottom)"
     Assert "fourteen rows" ($o.Items.Count -eq 14)
@@ -307,13 +310,12 @@ try {
     if ($p9) { [void](ClickAt $top $sb @{ X = $p9.X; Y = $p9.Y }) }
     Assert "...and a second click unfolds it (log)" ($null -ne (Wait-Log 'pane sidebar unfold' $mark 2000))
 
-    "== 7: unpinned, the rail's tiles scroll"
+    "== 7: collapsed, the rail's tiles scroll"
     $mark = Get-LogCount
-    [void](ClickAt $top $sb (Get-PinCenter $sb 'expanded'))
+    [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     $r1 = Read-Geometry (Wait-Log 'pane sidebar outline mode=mini' $mark 3000)
     $sb = Get-Sidebar $top
     Assert "the rail logged its tiles with a scroll range ($(if ($r1) { "$($r1.Items.Count) tiles, max $($r1.Max)" }))" ($null -ne $r1 -and $r1.Items.Count -ge 14 -and $r1.Max -gt 0)
-    Start-Sleep -Milliseconds 1200   # let the unpin's open card contract
     $mark = Get-LogCount
     $railPt = @{ X = (Px 12) + (Px 22); Y = [int](($r1.Top + $r1.Bottom) / 2) }
     [void](WheelAt $top $sb $railPt -2400)

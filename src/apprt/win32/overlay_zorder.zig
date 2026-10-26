@@ -59,18 +59,16 @@
 //!     `WS_EX_TOPMOST` itself and takes the keyboard (Escape cancels), and it
 //!     lives only as long as the drag. Healing it would demote the one popup
 //!     whose whole job is to be above everything.
-//!   - SEATED ON EVERY SHOW, by its own walk: the pane sidebar's hover-open
-//!     card (`PaneSidebar.positionCard`, T1842). Passive like the HEALED set,
-//!     but it must sit ABOVE them - it opens over the grid, and a pane's dim
-//!     overlay or banner strip must not paint through it - so instead of
-//!     `healOverlayZOrder`'s directly-above-the-owner it is inserted below the
-//!     first visible window that is not the top-level's own
-//!     (`pane_sidebar_hover.seatAfter`), after the same stray-topmost check.
-//!     It is only ever visible under the pointer and contracts when the
-//!     pointer leaves, so it cannot linger over another app. The pane grab
-//!     handle (`PaneGrabHandle`, T1830) is seated the same way and for the
-//!     same reasons: it is drawn over a pane's banner strip, and it hides the
-//!     moment the pointer is not over its window's own content.
+//!   - SEATED ON EVERY SHOW, by its own walk: the pane grab handle
+//!     (`PaneGrabHandle`, T1830). Passive like the HEALED set, but it must
+//!     sit ABOVE them - it is drawn over a pane's banner strip, which must not
+//!     paint through it - so instead of `healOverlayZOrder`'s
+//!     directly-above-the-owner it is inserted below the first visible window
+//!     that is not the top-level's own (`seatAfter`), after the same
+//!     stray-topmost check. It hides the moment the pointer is not over its
+//!     window's own content, so it cannot linger over another app. (The pane
+//!     sidebar's hover-open card was seated the same way until T2289 retired
+//!     it with Mac's hover-open.)
 //!   - NOT OURS: the tooltips (`ViewerNavBar`, `ViewerFeedbackBar`,
 //!     `KeyStateIndicator`, `Window`) are system `TOOLTIPS_CLASS` windows the
 //!     OS places and tears down itself, and the modal dialogs
@@ -132,6 +130,52 @@ pub const band_change_attempts: u8 = 3;
 /// because the API's own success value does not imply it.
 pub fn bandSettled(ex_style: u32, want_topmost: bool) bool {
     return isTopmost(ex_style) == want_topmost;
+}
+
+/// One window in the run directly above a top-level window, nearest first
+/// (`GetWindow(.., GW_HWNDPREV)` from the root): what `seatAfter` needs to
+/// know about it.
+pub const ZStep = struct {
+    /// The popup being seated.
+    is_self: bool = false,
+    /// Owned by the same top-level window: a pane's banner strip, dim
+    /// overlay, scrollbar, badge. A seated popup goes ABOVE these.
+    is_sibling: bool = false,
+    is_visible: bool = true,
+};
+
+/// The index in `above` the popup is inserted AFTER (i.e. placed directly
+/// below), or null for the top of the band. That is the first visible window
+/// above the root that is not one of the root's own popups: the popup lands
+/// above all of its siblings and below everything that is not this window's,
+/// so one shown on a background window never floats over another app (the
+/// T142 shape this file describes).
+pub fn seatAfter(above: []const ZStep) ?usize {
+    for (above, 0..) |s, i| {
+        if (s.is_self or s.is_sibling or !s.is_visible) continue;
+        return i;
+    }
+    return null;
+}
+
+test "seatAfter: above its siblings, below the first foreign window" {
+    // Nothing above the root: top of the band.
+    try testing.expectEqual(@as(?usize, null), seatAfter(&.{}));
+    // Banner + dim overlay of this window, then another app's window.
+    try testing.expectEqual(@as(?usize, 2), seatAfter(&.{
+        .{ .is_sibling = true },
+        .{ .is_sibling = true },
+        .{},
+    }));
+    // The popup itself and a hidden foreign window are passed over.
+    try testing.expectEqual(@as(?usize, 3), seatAfter(&.{
+        .{ .is_self = true },
+        .{ .is_visible = false },
+        .{ .is_sibling = true },
+        .{},
+    }));
+    // Only siblings: the top.
+    try testing.expectEqual(@as(?usize, null), seatAfter(&.{ .{ .is_sibling = true }, .{ .is_self = true } }));
 }
 
 test "bandSettled: only the ex-style answers, in both directions" {

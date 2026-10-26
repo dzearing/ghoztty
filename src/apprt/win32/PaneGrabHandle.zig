@@ -30,7 +30,6 @@ const grab = @import("pane_grab_handle.zig");
 const color_math = @import("color_math.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
-const PaneSidebar = @import("PaneSidebar.zig");
 const PaneView = @import("PaneView.zig");
 const Window = @import("Window.zig");
 
@@ -278,7 +277,7 @@ pub const PaneGrabHandle = struct {
             chrome_fanout.noteMove(.badge);
             _ = w32.SetWindowPos(
                 self.hwnd,
-                PaneSidebar.seatAfterFor(self.owner, self.hwnd),
+                seatAfterFor(self.owner, self.hwnd),
                 rect.left,
                 rect.top,
                 rect.right - rect.left,
@@ -362,6 +361,29 @@ pub const PaneGrabHandle = struct {
         self.evaluate();
     }
 };
+
+/// Where in the z-order a popup `c` owned by `root` goes when it has to sit
+/// above its sibling popups (`overlay_zorder.seatAfter`): directly below the
+/// first visible window above the root that is not one of the root's own, or
+/// the top of the band.
+fn seatAfterFor(root: w32.HWND, c: w32.HWND) ?w32.HWND {
+    var steps: [64]overlay_zorder.ZStep = undefined;
+    var hwnds: [64]w32.HWND = undefined;
+    var n: usize = 0;
+    var cur = w32.GetWindow(root, w32.GW_HWNDPREV);
+    while (cur) |h| : (cur = w32.GetWindow(h, w32.GW_HWNDPREV)) {
+        if (n == steps.len) break;
+        steps[n] = .{
+            .is_self = h == c,
+            .is_sibling = w32.GetWindow(h, w32.GW_OWNER) == root,
+            .is_visible = w32.IsWindowVisible(h) != 0,
+        };
+        hwnds[n] = h;
+        n += 1;
+    }
+    const i = overlay_zorder.seatAfter(steps[0..n]) orelse return null; // HWND_TOP
+    return hwnds[i];
+}
 
 var class_registered: bool = false;
 

@@ -9,7 +9,7 @@
 # wB "ghoztty: main" (b1 + b2, b2 stashed), wC "ghoztty: feature-2", and
 # wD "Build logs". What it checks, all in A's sidebar:
 #
-#   1. The pin, then the all-windows toggle: the roster becomes four groups in
+#   1. The collapse/expand toggle, then the all-windows toggle: the roster becomes four groups in
 #      name order - Build logs, then the ghoztty project (feature-2, main),
 #      then zeta - with one project head and four window heads, every pane
 #      listed (B's stashed one too), and a hairline before zeta and before
@@ -25,7 +25,7 @@
 #   6b. The search field (T1877): every word must match (window, pane,
 #      banner, folder), accents fold, "No matching panes" when empty, Escape
 #      clears, Return reveals the first hit through the click's own path.
-#   7. Unpinned, the rail shows every pane as a tile with a hairline between
+#   7. Collapsed, the rail shows every pane as a tile with a hairline between
 #      windows and no header rows.
 #   8. The toggle switches back to this window's panes only, and clears a
 #      query: back on, every window is listed (T1877).
@@ -159,19 +159,19 @@ function Head($o, [string]$Kind, [int]$Group) { $o.Heads | Where-Object { $_.Kin
 function ClickAt($top, $sb, $pt) {
     return Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + $pt.X) -Y ($sb.Top + $pt.Y) -Action click
 }
-function Get-PinCenter($sb, [string]$Mode) {
-    if ($Mode -eq 'mini') {
-        $margin = Px 12; $card = Px 44; $tile = Px 28
-        $inset = [int][math]::Truncate(($card - $tile) / 2)
-        return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
-    }
-    return @{ X = $sb.Width - (Px 4) - [int]((Px 28) / 2); Y = Px 18 }
+# The collapse/expand toggle (T2289): the rail's first item and the panel
+# header's first item, on the same pixels in both modes - centered in the
+# rail card, the card's inset below its top (client coordinates).
+function Get-ToggleCenter($sb) {
+    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $inset = [int][math]::Truncate(($card - $tile) / 2)
+    return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
 }
-# The all-windows toggle: the 28 DIP button 2 DIP left of the pin.
+# The all-windows toggle (T2289 header order): the toggle leads, then the
+# caption; at the trailing edge sit this button and trash, 2 DIP apart, the
+# last one sm (4) in - all on the toggle's row.
 function Get-ScopeCenter($sb) {
-    # Mac's header order, trailing edge first: pin, trash (T1845), then this
-    # toggle - two 28 DIP buttons and two 2 DIP gaps in from the pin's sm inset.
-    return @{ X = $sb.Width - (Px 4) - 2 * ((Px 28) + (Px 2)) - [int]((Px 28) / 2); Y = Px 18 }
+    return @{ X = $sb.Width - (Px 4) - ((Px 28) + (Px 2)) - [int]((Px 28) / 2); Y = (Get-ToggleCenter $sb).Y }
 }
 
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
@@ -225,10 +225,10 @@ try {
     $sb = Get-Sidebar $top
     Assert "A has a sidebar" ($null -ne $sb -and $sb.Visible)
     if ($null -eq $sb) { return }
-    [void](ClickAt $top $sb (Get-PinCenter $sb 'mini'))
+    [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     Start-Sleep -Milliseconds 700
     $sb = Get-Sidebar $top
-    Assert "pinned: the 240 DIP panel ($($sb.Width))" ([math]::Abs($sb.Width - (Px 240)) -le 1)
+    Assert "expanded: the 240 DIP panel ($($sb.Width))" ([math]::Abs($sb.Width - (Px 240)) -le 1)
     $mark = Get-LogCount
     if ($NegativeControl) {
         "  NEGATIVE CONTROL: the toggle is never clicked - this run MUST fail"
@@ -420,9 +420,9 @@ try {
     [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)
     Assert "Escape clears it again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*search=0 ' $mark))
 
-    "== 7: unpinned, the rail shows every pane with a hairline between windows"
+    "== 7: collapsed, the rail shows every pane with a hairline between windows"
     $mark = Get-LogCount
-    [void](ClickAt $top $sb (Get-PinCenter $sb 'expanded'))
+    [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     $o6 = Read-Outline (Wait-Log 'pane sidebar outline mode=mini' $mark)
     $sb = Get-Sidebar $top
     Assert "the column is the 68 DIP rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
@@ -430,65 +430,13 @@ try {
     Assert "every pane is a tile (5) and there are no header rows" ($null -ne $o6 -and $o6.Items.Count -eq 5 -and $o6.Heads.Count -eq 0)
     Assert "two hairlines between the three windows ($($o6.Rules))" ($null -ne $o6 -and $o6.Rules -eq 2)
 
-    "== 7b: the open card carries the field, and stays open while it has the caret (T1877)"
-    Start-Sleep -Milliseconds 900   # section 7's card has contracted
-    $o7 = Wait-Log 'pane sidebar card open reason=unpin' 0 1000
-    $fx = $null; $fy = $null
-    if ($o7 -match 'search=(-?\d+),(-?\d+),(-?\d+),(-?\d+)') {
-        $fx = [int](([int]$Matches[1] + [int]$Matches[3]) / 2); $fy = [int](([int]$Matches[2] + [int]$Matches[4]) / 2)
-        Assert "the open card lays out a search field ($($Matches[1])..$($Matches[3]))" ([int]$Matches[3] -gt [int]$Matches[1])
-    } else { Assert "the open card logged its search field" $false }
-    [void](ClickAt $top $sb (Get-PinCenter $sb 'mini'))   # pin
-    Start-Sleep -Milliseconds 600
-    $sb = Get-Sidebar $top
-    Assert "setup: window A is active for the card's click" (Set-TestActiveWindow -Window $top)
-    $mark = Get-LogCount
-    [void](ClickAt $top $sb (Get-PinCenter $sb 'expanded'))   # unpin: the card opens
-    # The click in its field must beat the 280 ms grace period the open
-    # started, so it is the very next thing (pane-sidebar.ps1 7b's shape).
-    $card = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard'
-    $clicked = $false
-    if ($card -ne [IntPtr]::Zero -and $null -ne $fx) {
-        $cr = Get-TestWindowRect -Window $card
-        $clicked = Send-TestMouse -Window $top -Target $card -X ($cr.Left + $fx) -Y ($cr.Top + $fy) -Action click
-    }
-    Assert "the click reached the open card's field" $clicked
-    Assert "...and the column took the keyboard for it (log)" ($null -ne (Wait-Log 'pane sidebar search focus=true' $mark 2000))
-    Start-Sleep -Milliseconds 900
-    $closedEarly = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $mark | Where-Object { $_ -match 'pane sidebar card close' }).Count
-    Assert "with the caret in its field the card did not contract in 3x the grace period ($closedEarly)" ($closedEarly -eq 0)
-    # T1880 on the layered card: a fold there animates too (presented over
-    # its glass), and the caret keeps it open while it runs. Folded, then
-    # back, so the sections after see the outline as it was.
-    $openLine = Wait-Log 'pane sidebar card open reason=unpin' $mark 500
-    if ($card -ne [IntPtr]::Zero -and $openLine -match ' chev0=(-?\d+),(-?\d+)') {
-        $cx = [int]$Matches[1]; $cy = [int]$Matches[2]
-        $cr = Get-TestWindowRect -Window $card
-        foreach ($step in 'fold', 'unfold') {
-            $fmark = Get-LogCount
-            [void](Send-TestMouse -Window $top -Target $card -X ($cr.Left + $cx) -Y ($cr.Top + $cy) -Action click)
-            Assert "the card's first chevron did $step its group (log)" ($null -ne (Wait-Log "pane sidebar $step" $fmark 2000))
-            Assert "...animated on the card, in place, to the end (log)" (($null -ne (Wait-Log 'pane sidebar transition fold surface=card ms=220' $fmark 2000)) -and ($null -ne (Wait-Log 'pane sidebar transition done surface=card' $fmark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $fmark 200)))
-        }
-    } else { Assert "the card logged its first chevron" $false }
-    $mark = Get-LogCount
-    [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text 'zeta')
-    Assert "the card's field filters its outline" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 .*order=zeta$' $mark))
-    [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)   # clears
-    [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)   # gives the caret back
-    $closeLine = Wait-Log 'pane sidebar card close reason=left' $mark 3000
-    Assert "with the caret given back, the card contracted (log)" ($null -ne $closeLine)
-    $g = Wait-Log 'pane sidebar all-windows groups=' $mark
-    Assert "...and the rail lists every pane again" ($null -ne $g -and $g -match 'search=0 ')
-
     "== 8: the toggle switches back to this window's panes"
-    Start-Sleep -Milliseconds 900   # let the unpin's open card contract
-    [void](ClickAt $top $sb (Get-PinCenter $sb 'mini'))
+    [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     Start-Sleep -Milliseconds 700
     $sb = Get-Sidebar $top
     $mark = Get-LogCount
     [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text 'zeta')
-    Assert "re-pinned, a query filters the panel again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 .*order=zeta$' $mark))
+    Assert "re-expanded, a query filters the panel again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 .*order=zeta$' $mark))
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ScopeCenter $sb))
     # A frame from inside the slide, for a human to look at (not asserted:

@@ -1,7 +1,7 @@
 # T1846 acceptance: dragging the pane sidebar's edge on Windows (Mac
-# 7855941f7, PaneSidebarChrome.resizeHandle). The pinned panel's trailing
-# edge resizes it between 180 and 380 DIP and never unpins it however far it
-# is pushed; pulling the mini rail's edge out past 120 DIP pins it open; and
+# 7855941f7, PaneSidebarChrome.resizeHandle). The expanded panel's trailing
+# edge resizes it between 180 and 380 DIP and never collapses it however far
+# it is pushed; pulling the mini rail's edge out past 120 DIP expands it; and
 # the width is ONE preference shared by every window.
 #
 # Layout: one window, first pane P plus `+split right` -> s1. Every drag is a
@@ -9,24 +9,24 @@
 # coordinates, as the other sidebar harnesses drive it). What it checks:
 #
 #   1. The rail's edge: a 40 DIP pull does nothing (still the 68 DIP rail, no
-#      pin in the log); pulled on past 120 DIP it pins, the column becomes
+#      expand in the log); pulled on past 120 DIP it expands, the column becomes
 #      the panel, and the release leaves it where the pointer is (the 180
 #      minimum, since the drag measured from the rail's 44 DIP card).
-#   2. The pinned panel's edge follows the pointer: +100 DIP -> 280, and the
+#   2. The expanded panel's edge follows the pointer: +100 DIP -> 280, and the
 #      grid's first pane starts right after the new column.
 #   3. Pulled far right it stops at 380; pushed far left it stops at 180 and
-#      STAYS PINNED (Mac dropped the old 140 DIP unpin-on-drag).
+#      STAYS EXPANDED (Mac dropped the old 140 DIP collapse-on-drag).
 #   4. A press on the edge band is not a click: nothing is focused or
-#      stashed, and the pin is still pinned.
+#      stashed, and the panel is still expanded.
 #   5. One preference for every window: a second window opened now starts at
 #      the last width, and dragging the first window's edge resizes the
 #      second's panel too.
-#   6. The edge drags the open card as well: unpinned, the card opened over
-#      the grid takes the dragged width (its window grows with it).
+#   6. (T2289) Collapsing with the toggle and expanding again comes back at
+#      the dragged width - the width is the panel's, not lost with the rail.
 #   2b. T2265 (Mac a81db68f9 + 5e4f30144): the flat grip shows the split
 #      dividers' accent gutter bar - hovered, then at full strength while
 #      dragged - and letting go leaves none lit.
-#   7. T2265, elevated: the pinned panel resizes from the GUTTER beside it
+#   7. T2265, elevated: the expanded panel resizes from the GUTTER beside it
 #      (the grid's margin, the window's own pixels), not from a band inside
 #      the panel; the gutter lights its bar on hover and while dragged, and
 #      none is left lit after the release.
@@ -69,10 +69,13 @@ function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'Ghoztty
 function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
 function Near([int]$A, [int]$B) { [math]::Abs($A - $B) -le 2 }
 
-# The pin, for the "still pinned" checks: a 28 DIP square sm (4) from the
-# panel's trailing edge, centered 18 DIP down (pane-sidebar.ps1's Get-PinCenter).
-function Get-PinCenter($sb) {
-    return @{ X = $sb.Right - (Px 4) - [int]((Px 28) / 2); Y = $sb.Top + (Px 18) }
+# The collapse/expand toggle (T2289): the rail's first item and the panel
+# header's first item on the same pixels (pane-sidebar.ps1's
+# Get-ToggleCenter), flat insets.
+function Get-ToggleCenter($sb) {
+    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $inset = [int][math]::Truncate(($card - $tile) / 2)
+    return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
 }
 
 # One edge drag on window $target: press at ($x0, $y), move by each of $steps
@@ -128,7 +131,7 @@ try {
     Start-Sleep -Milliseconds 900
     Assert "setup: two visible panes" ((@(Get-Panes $top | Where-Object Visible)).Count -eq 2)
 
-    "== 1: the rail's edge pins once pulled past 120 DIP, and not before"
+    "== 1: the rail's edge expands once pulled past 120 DIP, and not before"
     $sb = Get-Sidebar $top
     Assert "setup: the 68 DIP rail is up ($($sb.Width))" ($null -ne $sb -and (Near $sb.Width (Px 68)))
     if ($null -eq $sb) { return }
@@ -142,16 +145,16 @@ try {
     $lines = Get-LogSince $from
     Assert "a 40 DIP pull leaves the rail alone ($($sb.Width))" (Near $sb.Width (Px 68))
     Assert "the drag ran (log: edge drag start surface=rail mode=mini from=44)" (@($lines | Where-Object { $_ -match 'pane sidebar edge drag start surface=rail mode=mini from=44' }).Count -ge 1)
-    Assert "and pinned nothing" (@($lines | Where-Object { $_ -match 'edge drag pinned' }).Count -eq 0)
+    Assert "and expanded nothing" (@($lines | Where-Object { $_ -match 'edge drag expanded' }).Count -eq 0)
     $from = Get-LogCount
     [void](Invoke-EdgeDrag $top $sb.Hwnd $ex $ey @(40, 80, 90))
     $sb = Get-Sidebar $top
     $lines = Get-LogSince $from
-    Assert "pulled past 120 it pinned (log)" (@($lines | Where-Object { $_ -match 'pane sidebar edge drag pinned' }).Count -eq 1)
+    Assert "pulled past 120 it expanded (log)" (@($lines | Where-Object { $_ -match 'pane sidebar edge drag expanded' }).Count -eq 1)
     Assert "the column is the panel at the 180 minimum ($($sb.Width) vs $(Px 180))" (Near $sb.Width (Px 180))
-    Assert "the drag ended pinned (log)" (@($lines | Where-Object { $_ -match 'edge drag end pinned=true width=180' }).Count -eq 1)
+    Assert "the drag ended expanded (log)" (@($lines | Where-Object { $_ -match 'edge drag end expanded=true width=180' }).Count -eq 1)
 
-    "== 2: the pinned panel's edge follows the pointer"
+    "== 2: the expanded panel's edge follows the pointer"
     $step = if ($NegativeControl) { 0 } else { 100 }
     if ($NegativeControl) { "  NEGATIVE CONTROL: dragging by 0 DIP - this run MUST fail" }
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(($step / 2), $step))
@@ -175,7 +178,7 @@ try {
     $sb = Get-Sidebar $top
     Assert "a there-and-back drag kept the width ($($sb.Width) vs $(Px 280))" (Near $sb.Width (Px 280))
 
-    "== 3: it stops at 380 and at 180, and never unpins"
+    "== 3: it stops at 380 and at 180, and never collapses"
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(200, 500))
     $sb = Get-Sidebar $top
     Assert "far right stops at 380 ($($sb.Width) vs $(Px 380))" (Near $sb.Width (Px 380))
@@ -184,7 +187,7 @@ try {
     $sb = Get-Sidebar $top
     $lines = Get-LogSince $from
     Assert "far left stops at 180 ($($sb.Width) vs $(Px 180)), not the 68 rail" (Near $sb.Width (Px 180))
-    Assert "and it is still pinned (log)" (@($lines | Where-Object { $_ -match 'edge drag end pinned=true width=180' }).Count -eq 1)
+    Assert "and it is still expanded (log)" (@($lines | Where-Object { $_ -match 'edge drag end expanded=true width=180' }).Count -eq 1)
 
     "== 4: a press on the edge is not a click on the row under it"
     $from = Get-LogCount
@@ -193,7 +196,7 @@ try {
     $sb = Get-Sidebar $top
     $lines = Get-LogSince $from
     Assert "the click was delivered" $r
-    Assert "it started and ended a drag of nothing (log)" (@($lines | Where-Object { $_ -match 'edge drag end pinned=true width=180' }).Count -eq 1)
+    Assert "it started and ended a drag of nothing (log)" (@($lines | Where-Object { $_ -match 'edge drag end expanded=true width=180' }).Count -eq 1)
     Assert "the panel kept its width ($($sb.Width))" (Near $sb.Width (Px 180))
 
     "== 5: one width for every window"
@@ -209,7 +212,7 @@ try {
     [void](Set-TestWindowSize -Window $top2 -Width (Px 1000) -Height (Px 600))
     Start-Sleep -Milliseconds 700
     $sb2 = Get-Sidebar $top2
-    Assert "the new window starts pinned at the last width ($($sb2.Width) vs $(Px 300))" ($null -ne $sb2 -and (Near $sb2.Width (Px 300)))
+    Assert "the new window starts expanded at the last width ($($sb2.Width) vs $(Px 300))" ($null -ne $sb2 -and (Near $sb2.Width (Px 300)))
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(-40, -80))
     Start-Sleep -Milliseconds 300
     $sb = Get-Sidebar $top
@@ -217,34 +220,19 @@ try {
     Assert "window A's panel moved to 220 ($($sb.Width))" (Near $sb.Width (Px 220))
     Assert "and window B's followed it ($($sb2.Width) vs $(Px 220))" ($null -ne $sb2 -and (Near $sb2.Width (Px 220)))
 
-    "== 6: the open card's edge drags the same width"
-    $pin = Get-PinCenter $sb
-    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $pin.X -Y $pin.Y -Action click)   # unpin: the card opens
-    $card = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard'
-    Assert "unpinning opened the card" ($card -ne [IntPtr]::Zero)
-    if ($card -ne [IntPtr]::Zero) {
-        $cr = Get-TestWindowRect -Window $card
-        # The card window is margin + panel + margin; its card's trailing edge
-        # sits one margin in from the window's right.
-        $cx = $cr.Right - (Px 12) - 1; $cy = $cr.Top + (Px 300)
-        $from = Get-LogCount
-        $down = Send-TestMouse -Window $top -Target $card -X $cx -Y $cy -Action down
-        foreach ($s in @(30, 60)) {
-            [void](Send-TestMouse -Window $top -Target $card -X ($cx + (Px $s)) -Y $cy -Action move)
-            Start-Sleep -Milliseconds 120
-        }
-        [void](Send-TestMouse -Window $top -Target $card -X ($cx + (Px 60)) -Y $cy -Action up)
-        Start-Sleep -Milliseconds 400
-        $lines = Get-LogSince $from
-        $cr2 = Get-TestWindowRect -Window $card
-        Assert "the press reached the card" $down
-        Assert "the card's drag ran (log: surface=card)" (@($lines | Where-Object { $_ -match 'edge drag start surface=card mode=mini from=220' }).Count -ge 1)
-        Assert "the card grew by 60 DIP ($($cr.Width) -> $($cr2.Width))" (Near ($cr2.Width - $cr.Width) (Px 60))
-        Assert "and stayed unpinned (log)" (@($lines | Where-Object { $_ -match 'edge drag end pinned=false width=280' }).Count -eq 1)
-    }
+    "== 6: collapsing and expanding keeps the dragged width (T2289)"
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-ToggleCenter $sb).X -Y (Get-ToggleCenter $sb).Y -Action click)
+    Start-Sleep -Milliseconds 600
+    $sb = Get-Sidebar $top
+    Assert "the toggle collapsed it to the rail ($($sb.Width) vs $(Px 68))" ($null -ne $sb -and (Near $sb.Width (Px 68)))
+    Assert "no card opened over the grid" ((Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard' -AllowHidden) -eq [IntPtr]::Zero)
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-ToggleCenter $sb).X -Y (Get-ToggleCenter $sb).Y -Action click)
+    Start-Sleep -Milliseconds 600
+    $sb = Get-Sidebar $top
+    Assert "expanded again at the dragged 220 ($($sb.Width) vs $(Px 220))" ($null -ne $sb -and (Near $sb.Width (Px 220)))
     Assert "no crash (flat)" (-not ($app.Process -and $app.Process.HasExited))
 
-    "== 7: elevated, the pinned panel resizes from the gutter beside it (T2265)"
+    "== 7: elevated, the expanded panel resizes from the gutter beside it (T2265)"
     $launched += $script:GhozttyTestDesktopPids
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
     $script:errlog = Join-Path $tmp 'app-stderr-elevated.log'
@@ -265,7 +253,7 @@ try {
     $ey = $sb.Top + (Px 300)
     [void](Invoke-EdgeDrag $top $sb.Hwnd ($sb.Right - 1) $ey @(40, 80, 90))
     $sb = Get-Sidebar $top
-    Assert "setup: the rail pulled out pins at the 180 minimum ($($sb.Width))" (Near $sb.Width (Px 180))
+    Assert "setup: the rail pulled out expands at the 180 minimum ($($sb.Width))" (Near $sb.Width (Px 180))
     $from = Get-LogCount
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Right - 2) -Y $ey -Action click)
     Start-Sleep -Milliseconds 400

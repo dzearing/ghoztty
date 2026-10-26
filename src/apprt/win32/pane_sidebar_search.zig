@@ -5,15 +5,16 @@
 //! header: a magnifier, a "Search" placeholder, a clear button once there is a
 //! query. Return goes to the first hit, as clicking it would; Escape clears
 //! the query, and on an empty field gives the caret back. Only the all-windows
-//! scope has one, and only the panel and the open card - the rail has no room.
+//! scope has one, and only the expanded panel - the rail has no room.
 //!
-//! The field is painted by `PaneSidebar.zig` rather than being a native EDIT:
-//! the open card is a layered popup fed through `UpdateLayeredWindow`
-//! (T1865), and a child control of such a window never reaches the screen. One
-//! painted field serves both surfaces, so the panel's and the card's cannot
-//! drift apart. What it edits - a single line of UTF-16, a caret, the keys a
-//! one-line text box answers - is this file, unit-tested in every lane. The
-//! search rules themselves are `pane_sidebar_outline.matches`.
+//! The field is painted by `PaneSidebar.zig` rather than being a native EDIT.
+//! That was forced while the hover-open card - a layered popup, whose child
+//! controls never reach the screen (T1865) - carried the field too; T2289
+//! retired the card, and the painted field stays because it matches the
+//! sidebar's own type and capsule exactly. What it edits - a single line of
+//! UTF-16, a caret, the keys a one-line text box answers - is this file,
+//! unit-tested in every lane. The search rules themselves are
+//! `pane_sidebar_outline.matches`.
 
 const std = @import("std");
 
@@ -176,10 +177,10 @@ pub fn escapeVerb(empty: bool) EscapeVerb {
 }
 
 /// Whether the outline is filtered: a query, in the all-windows scope, on a
-/// surface that shows the field - the panel, or the open card. The rail has
-/// no field, so it never filters (Mac `searchMatches`: "nil ... the rail").
-pub fn filters(has_query: bool, all_windows: bool, expanded: bool, card_open: bool) bool {
-    return has_query and all_windows and (expanded or card_open);
+/// surface that shows the field - the expanded panel. The rail has no
+/// field, so it never filters (Mac `searchMatches`: "nil ... the rail").
+pub fn filters(has_query: bool, all_windows: bool, expanded: bool) bool {
+    return has_query and all_windows and expanded;
 }
 
 /// The text's horizontal scroll so the caret stays in view: zero until the
@@ -282,12 +283,11 @@ test "search field: Escape clears a query, then gives the caret back" {
     try testing.expectEqual(EscapeVerb.release, escapeVerb(true));
 }
 
-test "search field: only the panel and the open card filter, and only all-windows" {
-    try testing.expect(filters(true, true, true, false));
-    try testing.expect(filters(true, true, false, true));
-    try testing.expect(!filters(true, true, false, false)); // the rail
-    try testing.expect(!filters(true, false, true, false)); // this window only
-    try testing.expect(!filters(false, true, true, true)); // no query
+test "search field: only the panel filters, and only all-windows" {
+    try testing.expect(filters(true, true, true));
+    try testing.expect(!filters(true, true, false)); // the rail
+    try testing.expect(!filters(true, false, true)); // this window only
+    try testing.expect(!filters(false, true, true)); // no query
 }
 
 test "search field: the text scrolls only once the caret passes the edge" {
