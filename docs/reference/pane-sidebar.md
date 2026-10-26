@@ -84,7 +84,8 @@ A per-window list of **every pane in the window**, into which a pane can be
   tray has only while it holds panes (with their count). In **all windows**
   the tray has no divider or caption at all, in either mode: a window's
   stashed panes simply follow its other panes, so collapsing or expanding
-  moves nothing.
+  moves nothing — and the empty tray's well shows only while a pane is
+  dragged.
 - Click focuses / restores to the exact slot it left; **Option-click** swaps a
   stashed pane with the focused one. Hovering an expanded row offers −/↩
   (stash/restore) and **×**; another window's rows offer the × alone. See

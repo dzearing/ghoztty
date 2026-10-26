@@ -525,7 +525,9 @@ struct PaneSidebarView: View {
         // An empty tray is still somewhere to drop: a slot that says so,
         // always there in this window's list, lit while a drag would land in
         // it. It stays put; the rows open the gap above it.
-        if stashed.isEmpty && isThisWindow {
+        // In all windows it is there only while a pane is dragged: the list
+        // is every window's panes and nothing else.
+        if stashed.isEmpty && isThisWindow && (!state.showsAllWindows || dragSession.isDragging) {
             PaneSidebarEmptyStashSlot(isRail: isRail, isHot: drag?.stashTarget != nil,
                                       isDragging: drag != nil)
         }
