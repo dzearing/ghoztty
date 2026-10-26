@@ -401,7 +401,7 @@ test "pane_stack_grid: a roomy row tiles the pixel rect with the engine's gutter
         .{ .leaf = &v[0] },
         .{ .leaf = &v[1] },
     };
-    // 1.5x: 1500 px is 1000 DIP, room for two 300 DIP panes.
+    // 1.5x: 1500 px is 1000 DIP, room for two 225 DIP panes.
     const rect: PxRect = .{ .left = 10, .top = 40, .right = 1510, .bottom = 940 };
     var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, rect, 1.5, metrics(null), .{});
     defer g.deinit();
@@ -427,7 +427,7 @@ test "pane_stack_grid: a roomy row tiles the pixel rect with the engine's gutter
 test "pane_stack_grid: shared DIP edges stay shared in pixels at a fractional scale" {
     var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 }, .{ .id = 4 } };
     const n = rowOfFour(&v);
-    // 1.25x, 1601 px: 1280.8 DIP - roomy for four 300 DIP panes plus gutters.
+    // 1.25x, 1601 px: 1280.8 DIP - roomy for four 225 DIP panes plus gutters.
     var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 1601, .bottom = 700 }, 1.25, metrics(16), .{});
     defer g.deinit();
     try testing.expectEqual(@as(usize, 0), g.result.stacks.items.len);
@@ -456,20 +456,20 @@ test "pane_stack_grid: a whole-pixel gap that is not a whole DIP stays whole eve
         for (1..5) |id| {
             const p = g.placement(id).?;
             if (id > 1) try testing.expectEqual(@as(i32, 3), p.rect.left - prev_right);
-            // Still never under 300 DIP = 375 px.
-            try testing.expect(p.rect.width() >= 375);
+            // Still never under the 225 DIP minimum = 281.25 px.
+            try testing.expect(p.rect.width() >= 281);
             prev_right = p.rect.right;
         }
         try testing.expectEqual(w, prev_right);
     }
 }
 
-test "pane_stack_grid: four panes narrower than 4 x 300 DIP stack, and a strip is hit" {
+test "pane_stack_grid: four panes narrower than 4 x 225 DIP stack, and a strip is hit" {
     var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 }, .{ .id = 4 } };
     const n = rowOfFour(&v);
-    // 2x DPI, 1520 px = 760 DIP: two on show, two tucked (the engine's own
-    // 760 DIP case, through the adapter).
-    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 1520, .bottom = 1200 }, 2, metrics(10), .{});
+    // 2x DPI, 1200 px = 600 DIP: two 225 DIP panes on show, two tucked -
+    // three would need 3 x 225 plus the gutters and a strip, past 700 DIP.
+    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 1200, .bottom = 1200 }, 2, metrics(10), .{});
     defer g.deinit();
     try testing.expectEqual(@as(usize, 1), g.result.stacks.items.len);
     try testing.expectEqual(layout.Range{ .lo = 0, .hi = 1 }, g.result.stacks.items[0].run);
@@ -516,7 +516,8 @@ test "pane_stack_grid: T2125 every resizer answers in its gutter and nowhere els
     // three dividers.
     var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 }, .{ .id = 4 } };
     const n = rowOfFour(&v);
-    for ([_]i32{ 1520, 2800 }) |w| {
+    // 1200 px = 600 DIP: two 225 DIP cards on show, two strips.
+    for ([_]i32{ 1200, 2800 }) |w| {
         var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = w, .bottom = 1200 }, 2, metrics(null), .{});
         defer g.deinit();
         const gap: i32 = 12; // the 6 DIP flat gutter at 2x

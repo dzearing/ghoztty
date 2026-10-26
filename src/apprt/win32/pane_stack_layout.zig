@@ -11,7 +11,7 @@
 //! It owns two rules a per-binary-split walk cannot express, because both need
 //! to see a whole ROW of panes at once:
 //!
-//! - **A pane has a real minimum size** (`Metrics.minimum_pane_*`, 300 x 200
+//! - **A pane has a real minimum size** (`Metrics.minimum_pane_*`, 225 x 125
 //!   DIP). A row whose ratios would squeeze a pane below it is laid out as if
 //!   the ratios had been honored as far as they can be (`waterFill`), without
 //!   touching the stored ratios — so shrinking a window and growing it back
@@ -130,12 +130,13 @@ pub const Metrics = struct {
     /// `minimum_peek` in this layout's units (`scaled` multiplies it).
     floor_peek: f64 = minimum_peek,
 
-    /// The size floor: 300 is about 35 columns of a typical font, the point
-    /// below which a terminal (or a page) stops being readable; 200 is about a
-    /// dozen rows. Mac's points are DIPs here, scaled by the window's DPI by
-    /// whoever turns frames into pixels.
-    pub const default_minimum_width: f64 = 300;
-    pub const default_minimum_height: f64 = 200;
+    /// The size floor: 225 is about 26 columns of a typical font and 125
+    /// about seven rows - narrow, but still a terminal you can read a prompt
+    /// and its output in (Mac afc64dc53 lowered it from 300 x 200, which
+    /// stacked a row sooner than people wanted; T2284). Mac's points are DIPs
+    /// here, scaled by the window's DPI by whoever turns frames into pixels.
+    pub const default_minimum_width: f64 = 225;
+    pub const default_minimum_height: f64 = 125;
 
     /// A tucked card shows this much of itself: room for the vertical title
     /// strip and a few columns of what is in it.
@@ -403,8 +404,15 @@ pub fn dragged(gpa: Allocator, row: Row, boundary: usize, position: f64, start_s
         fn step(g: @This()) f64 {
             return g.row.peek + g.row.gap;
         }
+        /// An item's floor for this drag: its minimum, or the size the drag
+        /// found it at when that is less. The grid snaps sizes to whole
+        /// pixels, so a pane at its minimum can be laid out a fraction under
+        /// it (337 px against 337.5 at 150%, T2284); measured against the bare
+        /// minimum it would not fit where it already is, and a grip pressed
+        /// and let go without moving would fold it away.
         fn minimum(g: @This(), i: usize) f64 {
-            return if (i < g.row.minimums.len) g.row.minimums[i] else 0;
+            const m = if (i < g.row.minimums.len) g.row.minimums[i] else 0;
+            return if (g.start(i)) |s| @min(m, s) else m;
         }
         fn start(g: @This(), i: usize) ?f64 {
             return if (i < g.start_sizes.len) g.start_sizes[i] else null;
@@ -2064,6 +2072,29 @@ test "pane_stack_layout: a strip pulled out brings out its pane alone" {
     const far = try dragged(gpa, row, 2, 1200, &sizes);
     defer gpa.free(far.sizes);
     try testing.expectEqual(Range{ .lo = 1, .hi = 1 }, far.run);
+}
+
+test "pane_stack_layout: T2284 a pane snapped a fraction under its minimum stays on show at its own grip" {
+    const gpa = testing.allocator;
+    // s0 [b] s2 at 150%: 54 px strips, 15 px gutters, a 337.5 px minimum, and
+    // b laid out at 337 - whole pixels. The grip where the run meets s2, at
+    // its press, is the row as the drag found it; a step either way still
+    // moves it.
+    const row: Row = .{
+        .items = &three_items,
+        .run = .{ .lo = 1, .hi = 1 },
+        .sizes = &.{337},
+        .extent = 475.5,
+        .minimums = &.{ 337.5, 337.5, 337.5 },
+        .gap = 15,
+        .peek = 54,
+    };
+    const sizes = [_]?f64{ null, 337, null };
+    // The run holds; b takes back the half pixel the snap left.
+    try expectDragged(1, 1, &.{337.5}, try dragged(gpa, row, 2, 413.5, &sizes));
+    const back = try dragged(gpa, row, 2, 0, &sizes);
+    defer gpa.free(back.sizes);
+    try testing.expectEqual(Range{ .lo = 2, .hi = 2 }, back.run);
 }
 
 test "pane_stack_layout: a gutter dragged back puts the row back exactly" {

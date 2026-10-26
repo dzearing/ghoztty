@@ -1,6 +1,7 @@
 # T2108 acceptance: the win32 grid places panes through the stacked-panes
-# layout - a pane stops at 300 DIP, and a row that cannot fit even at that
-# minimum shows a run of panes and tucks the rest.
+# layout - a pane stops at 225 DIP (300 until T2284 followed Mac afc64dc53),
+# and a row that cannot fit even at that minimum shows a run of panes and
+# tucks the rest.
 #
 # THE CLAIM. Until T2108 every split handed its two sides `ratio` and
 # `1 - ratio` of its rect, whatever that came to, so a row of four could
@@ -13,10 +14,11 @@
 #
 # Claims:
 #   A) in a window 1500 DIP wide all four panes are on show side by side, and
-#      EVERY one is at least 300 DIP wide - the 1/8 panes asked for ~185
-#   B) in a window 900 DIP wide (four panes need 4 x 300 DIP) exactly two are
-#      on show, each at least 300 DIP, without overlapping; the other two are
-#      tucked - hidden, but still sized to a slot of at least 300 DIP, so
+#      EVERY one is at least 225 DIP wide - the 1/8 panes asked for ~185
+#   B) in a window 680 DIP wide (three panes need 3 x 225 DIP plus gutters
+#      and a strip, two need about 540, the 68 DIP sidebar rail or not) exactly
+#      two are on show, each at least 225 DIP, without overlapping; the other
+#      two are tucked - hidden, but still sized to a slot of at least 225 DIP, so
 #      bringing one forward is a move rather than a terminal resize
 #   C) widened back to 1500 DIP, the four come back at the widths of claim A:
 #      the minimum never rewrote the ratios the user made
@@ -24,7 +26,7 @@
 #   minimized - none, two, none - in --json and in the text listing, and
 #   never the focused pane
 #
-# -NegativeControl inverts claim A to "some pane is under 300 DIP" - the
+# -NegativeControl inverts claim A to "some pane is under 225 DIP" - the
 # answer the per-split layout gave - and MUST fail.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
@@ -47,6 +49,11 @@ $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
 if ($ExePath) { $exe = $ExePath }
 $agent = Join-Path $repo 'zig-out\bin\ghoztty-agent.exe'
 if ($AgentExe) { $agent = $AgentExe }
+
+# The engine's pane minimum (pane_stack_layout.zig Metrics.default_minimum_width)
+# and a window with room for two of the four at it, not three.
+$minDip = 225
+$narrowDip = 680
 
 $script:pass = 0
 $script:fail = 0
@@ -164,7 +171,7 @@ try {
     Assert (Test-Path $agent) 'ghoztty-agent exe exists in zig-out'
     [void](Assert-GhozttyIsolatedBuild -Exe $exe)
     if ($NegativeControl) {
-        Say 'NEGATIVE CONTROL: claim A is inverted to "some pane is under 300 DIP" - this run MUST fail'
+        Say "NEGATIVE CONTROL: claim A is inverted to `"some pane is under $minDip DIP`" - this run MUST fail"
     }
 
     # ---- setup: P | (s1 | (s2 | s3)) -----------------------------------------
@@ -185,8 +192,8 @@ try {
     }
     if ($dpi -le 0) { $dpi = 96 }
     $script:scale = $dpi / 96.0
-    $minPx = [int][math]::Floor(300 * $script:scale) - 2
-    Say ("      dpi {0} (scale {1:N2}); 300 DIP = {2}px, asserted as >= {3}px" -f $dpi, $script:scale, (Get-TestChromeDip -Dip 300 -Scale $script:scale), $minPx)
+    $minPx = [int][math]::Floor($minDip * $script:scale) - 2
+    Say ("      dpi {0} (scale {1:N2}); {4} DIP = {2}px, asserted as >= {3}px" -f $dpi, $script:scale, (Get-TestChromeDip -Dip $minDip -Scale $script:scale), $minPx, $minDip)
     [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 1500 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
     Start-Sleep -Seconds 2
     & $exe +split --direction=right --name=s1 | Out-Null
@@ -217,9 +224,9 @@ try {
     Assert ($wide.Count -eq 4) "A: four panes on show at 1500 DIP (got $($wide.Count))"
     $narrowest = if ($wide.Count -gt 0) { ($wide | Measure-Object -Property Width -Minimum).Minimum } else { 0 }
     if ($NegativeControl) {
-        Assert ($narrowest -lt $minPx) "NEGATIVE: some pane is under 300 DIP (narrowest $narrowest px)"
+        Assert ($narrowest -lt $minPx) "NEGATIVE: some pane is under $minDip DIP (narrowest $narrowest px)"
     } else {
-        Assert ($narrowest -ge $minPx) "A: every pane is at least 300 DIP wide (narrowest $narrowest px, floor $minPx px)"
+        Assert ($narrowest -ge $minPx) "A: every pane is at least $minDip DIP wide (narrowest $narrowest px, floor $minPx px)"
     }
     $overlap = $false
     for ($i = 1; $i -lt $wide.Count; $i++) { if ($wide[$i].Left -lt $wide[$i - 1].Right) { $overlap = $true } }
@@ -228,22 +235,22 @@ try {
     Assert-ListMinimized 'A' 0
 
     # ---- B: narrow - a run of two, the rest tucked -----------------------------
-    Say '== B: 900 DIP wide'
-    $narrow = @(Set-WidthDip $top 900 2)
+    Say "== B: $narrowDip DIP wide"
+    $narrow = @(Set-WidthDip $top $narrowDip 2)
     $all = @(Get-Panes $top)
     Say ("      panes: {0}" -f (Format-Cols $all))
     Assert ($all.Count -eq 4) "B: all four pane windows still exist (got $($all.Count))"
-    Assert ($narrow.Count -eq 2) "B: exactly two panes on show at 900 DIP (got $($narrow.Count))"
+    Assert ($narrow.Count -eq 2) "B: exactly two panes on show at $narrowDip DIP (got $($narrow.Count))"
     if ($narrow.Count -eq 2) {
         Assert ($narrow[0].Width -ge $minPx -and $narrow[1].Width -ge $minPx) `
-            "B: both panes on show are at least 300 DIP ($($narrow[0].Width), $($narrow[1].Width) px)"
+            "B: both panes on show are at least $minDip DIP ($($narrow[0].Width), $($narrow[1].Width) px)"
         Assert ($narrow[1].Left -ge $narrow[0].Right) 'B: the two panes on show do not overlap'
     }
     $tucked = @($all | Where-Object { -not $_.Visible })
     Assert ($tucked.Count -eq 2) "B: the other two are tucked (hidden) (got $($tucked.Count))"
     $smallTuck = @($tucked | Where-Object { $_.Width -lt $minPx })
     Assert ($tucked.Count -gt 0 -and $smallTuck.Count -eq 0) `
-        ("B: every tucked pane keeps a slot of at least 300 DIP ({0} px)" -f (($tucked | ForEach-Object { $_.Width }) -join ', '))
+        ("B: every tucked pane keeps a slot of at least {1} DIP ({0} px)" -f (($tucked | ForEach-Object { $_.Width }) -join ', '), $minDip)
     Assert-ListMinimized 'B' 2
 
     # ---- C: wide again - the layout the user made comes back -------------------
