@@ -72,9 +72,12 @@ A per-window list of **every pane in the window**, into which a pane can be
   accent while a drag would land in it.
 - Click focuses / restores to the exact slot it left; **Option-click** swaps a
   stashed pane with the focused one. Hovering an expanded row offers −/↩
-  (stash/restore) and **×**, the ordinary close (`closePaneFromSidebar`, as
-  right-click → Close Pane: confirmation when something runs or the pane is
-  remote, and undo). There is no trash mode (an unconfirmed, unundoable kill).
+  (stash/restore) and **×**; another window's rows offer the × alone. See
+  *Closing from the sidebar* below.
+- **Every item button** — a row's −/↩/×, a window row's and a project
+  header's × — is one `PaneSidebarItemButton`: an 18pt circle whose wash
+  deepens (8% → 18%; on the accent pill, white 20% → 35%) and whose glyph
+  brightens to primary under the pointer, so it reads as clickable.
 
 ## Drag to reorder (both modes)
 
@@ -140,6 +143,34 @@ A per-window list of **every pane in the window**, into which a pane can be
   (`PaneSidebarFilter`); Return goes to the first hit, Escape clears.
 - Switching scopes slides the lists past each other (this window on the left,
   all windows on the right).
+- Hovering a **window** row or a **project** header puts a × where its count
+  was (nothing shifts). A window's closes that window (that tab, in a tab
+  group); a project's closes every window under it — while searching, the
+  matching windows it shows and counts.
+
+## Closing from the sidebar
+
+- **Every close from the sidebar asks nothing and takes no focus** — a pane's
+  × (and right-click → Close Pane), a window's ×, a project's ×, in this
+  window or any other. No running-process confirmation, no remote
+  Close/Disconnect alert, no `makeKeyAndOrderFront`, no app activation.
+- **It ends what it closes**: the panes' processes and their agent sessions
+  — CLOSE-on-free, never a detach. A pane leaves its tree through
+  `closeSurface(withConfirmation: false)` (the IPC `+close` path), so
+  `surfaceTreeDidChange` marks it (`SessionCloseIntentPolicy`); a window
+  closes with `closeTabImmediately` (`window.close()`, never
+  `performClose`/`windowShouldClose`, which confirm), so `windowWillClose`
+  marks every pane. Nothing pins a detach (`SessionDetachPin` is set only by
+  answering Disconnect). Undo still works for the usual undo window; the
+  sessions end when it expires.
+- **A window's last pane closes the window** (`PaneSidebarClosePolicy`):
+  through `closeSurface` the root would go to `closeTab`/`closeWindow`, which
+  confirm.
+- The window close runs on the next main-loop turn, so a window can close
+  itself from its own sidebar.
+- Tests: `PaneSidebarClosePolicyTests`, `PaneSidebarCloseWindowTests` (another
+  window's pane, its last pane, a window, a group, the sidebar's own window —
+  each closed, never made key, no sheet, `sessionClosesOnFree`).
 
 ## Stashing invariants
 

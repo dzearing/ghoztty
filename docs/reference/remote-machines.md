@@ -66,6 +66,9 @@ session and resume it later from the Cmd-Shift-N chooser.
   `closeSurface`, because that is the path IPC `+close`, AppleScript, App
   Intents and viewer panes take: a modal there wedges every later `ghoztty +…`
   command until someone dismisses it.
+- **The pane sidebar's closes never prompt** — a pane's, a window's or a
+  project's ×, remote or not: they end the sessions outright (see
+  [pane-sidebar.md → Closing from the sidebar](pane-sidebar.md#closing-from-the-sidebar)).
 - **`confirm-close-surface = false` still means no prompt.** A user who turned
   confirmation off does not get one invented for them.
 - **Local-agent (session-persistence) windows are excluded on purpose.** Their
