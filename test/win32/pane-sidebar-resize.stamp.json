@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-resize",
     "script":  "test/win32/pane-sidebar-resize.ps1",
-    "generated":  "2026-10-26T06:17:02-07:00",
-    "commit":  "4034daebd",
+    "generated":  "2026-10-26T09:05:23-07:00",
+    "commit":  "f4ad4fc19",
     "uncommitted":  [
 
                     ],

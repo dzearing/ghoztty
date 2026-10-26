@@ -67,6 +67,18 @@ pub fn shouldRelease(s: Settle) bool {
     return s.landed and s.quiet_ms >= SETTLE_QUIET_MS;
 }
 
+/// The window the frozen copy is seated directly beneath (T2261).
+pub const Seat = enum { card, dim };
+
+/// Mac stacks an unfocused pane's dim above everything in the pane, the
+/// frozen terminal included (`SurfaceView`'s ZStack), so the copy must sit
+/// under the card AND under a shown dim, whichever of the two is lower.
+/// Seated under the card alone, it lands above a dim the card covers, and
+/// for the length of the glide the unfocused pane shows undimmed.
+pub fn copySeat(dim_shown: bool, dim_below_card: bool) Seat {
+    return if (dim_shown and dim_below_card) .dim else .card;
+}
+
 test "travel: collapse moves content up by the band it gives back" {
     // Band 120 -> 48, a shell at the top of a fresh screen: no grid shift.
     try std.testing.expectEqual(@as(i32, -72), travel(120, 48, 0));
@@ -113,4 +125,14 @@ test "shouldRelease: never mid-glide, then landed and quiet, or the cap" {
     try std.testing.expect(shouldRelease(.{ .anim_done = true, .elapsed_ms = 200, .landed = true, .quiet_ms = 40 }));
     // A terminal that never redraws is released at the cap regardless.
     try std.testing.expect(shouldRelease(.{ .anim_done = false, .elapsed_ms = 500, .landed = false, .quiet_ms = 0 }));
+}
+
+test "copySeat: under the card, or under the dim when the dim is the lower" {
+    // A focused pane (no dim): the card is the only thing to sit under.
+    try std.testing.expectEqual(Seat.card, copySeat(false, false));
+    try std.testing.expectEqual(Seat.card, copySeat(false, true));
+    // The dim is above the card: under the card is under the dim too.
+    try std.testing.expectEqual(Seat.card, copySeat(true, false));
+    // The dim is below the card: under the card alone would cover it.
+    try std.testing.expectEqual(Seat.dim, copySeat(true, true));
 }

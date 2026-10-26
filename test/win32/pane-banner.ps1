@@ -1853,6 +1853,45 @@ try {
     Assert ($b -ceq 'focused pane banner') "window target hits the focused pane (got $b)"
     & $exe +set-banner --target=bp1 --clear | Out-Null
 
+    # --- 7b. T2261: an UNFOCUSED pane's frozen copy stays under its dim -------
+    # Mac stacks the unfocused-split dim over everything in the pane, the
+    # frozen terminal included (SurfaceView's ZStack). The copy used to be
+    # seated directly under the card, which put it ABOVE a dim the card
+    # covers, so toggling an unfocused pane's banner showed the pane undimmed
+    # for the length of the glide. The copy is up ~200ms and cannot be
+    # photographed on the background desktop, so the order is read from the
+    # app's own measurement taken the moment the copy is seated.
+    $w7b = Get-Win 'bw'
+    $p7b = @(Get-Leaves $w7b.tabs[0].splits)[0]
+    & $exe +set-banner "--target=$($p7b.id)" "dimA\ndimB\ndimC" | Out-Null
+    $null = Wait-Banner 'bw' 0 "dimA`ndimB`ndimC"
+    Start-Sleep -Milliseconds 500
+    $ov7b = Get-Overlay $appPid $top 0
+    $dim7b = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyDimOverlay' | Where-Object { $_.Visible })
+    Assert ($null -ne $ov7b) 'T2261: the unfocused pane carries a banner card'
+    Assert ($dim7b.Count -ge 1) "T2261: the unfocused pane is dimmed ($($dim7b.Count) dim overlay(s) visible)"
+    if ($ov7b -and $dim7b.Count -ge 1 -and (Test-Path $errlog)) {
+        foreach ($dir in @('collapse', 'expand')) {
+            Clear-Content $errlog -ErrorAction SilentlyContinue
+            $ovNow = Get-Overlay $appPid $top 0
+            if (-not $ovNow) { Assert $false "T2261 ($dir): overlay missing before the toggle"; continue }
+            Send-TestMouse -Window $top -Target ([IntPtr]$ovNow.Hwnd) `
+                -X ($ovNow.Left + [int]($ovNow.Width / 2)) -Y ($ovNow.Top + [int]($oneLineH / 2)) | Out-Null
+            Start-Sleep -Milliseconds 700
+            $seat = @(Select-String -Path $errlog -Pattern 'banner glide dim=(\w+)' -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
+            Write-Host "INFO  T2261 $dir : dim=$($seat -join ',')"
+            Assert ($seat.Count -eq 1) "T2261 ($dir): one frozen copy went up for the unfocused pane ($($seat.Count))"
+            Assert ($seat.Count -eq 1 -and $seat[0] -eq 'over') `
+                "T2261 ($dir): the pane's dim is stacked OVER the frozen copy, so the pane stays dimmed through the glide (dim=$($seat -join ','))"
+            $dimAfter = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyDimOverlay' | Where-Object { $_.Visible })
+            Assert ($dimAfter.Count -ge 1) `
+                "T2261 ($dir): the toggle left the pane unfocused, so its dim stayed up ($($dimAfter.Count) visible)"
+        }
+    }
+    & $exe +set-banner "--target=$($p7b.id)" --clear | Out-Null
+    $null = Wait-Banner 'bw' 0 'NONE'
+
     # --- 8. markdown link renders (overlay still paints with styles) ----------
     # (Rendering correctness is pinned by the banner_markdown unit tests; here
     # we only prove a styled multi-run banner paints without crashing.)

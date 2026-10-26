@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const banner_glide = @import("banner_glide.zig");
 
 const BannerFreeze = @This();
 
@@ -85,12 +86,14 @@ pub const Placement = struct {
 };
 
 /// Put the captured frame (already in `buffer`) on screen over the pane, just
-/// behind `card` (the banner popup), both owned by `owner` (the terminal).
+/// behind `card` (the banner popup) and under `dim` (the pane's unfocused
+/// dim, when shown), all owned by `owner` (the terminal).
 pub fn show(
     self: *BannerFreeze,
     hinstance: w32.HINSTANCE,
     owner: w32.HWND,
     card: w32.HWND,
+    dim: ?w32.HWND,
     w: u32,
     h: u32,
     at: Placement,
@@ -109,24 +112,73 @@ pub fn show(
     }
     // Paint before showing, so the first composited frame is the copy and
     // never this window's empty client.
-    _ = w32.SetWindowPos(hwnd, card, at.left, at.top, @max(at.width, 1), @max(at.height, 1), w32.SWP_NOACTIVATE);
+    const seat = seatAfter(owner, card, dim);
+    _ = w32.SetWindowPos(hwnd, seat, at.left, at.top, @max(at.width, 1), @max(at.height, 1), w32.SWP_NOACTIVATE);
     _ = w32.InvalidateRect(hwnd, null, 0);
-    _ = w32.SetWindowPos(hwnd, card, 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_SHOWWINDOW);
+    _ = w32.SetWindowPos(hwnd, seat, 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_SHOWWINDOW);
     _ = w32.UpdateWindow(hwnd);
     return true;
 }
 
 /// Move the copy along its glide and the mask with the card's edge.
-pub fn update(self: *BannerFreeze, card: w32.HWND, offset: i32, edge: i32) void {
+pub fn update(self: *BannerFreeze, owner: w32.HWND, card: w32.HWND, dim: ?w32.HWND, offset: i32, edge: i32) void {
     const hwnd = self.hwnd orelse return;
     if (offset == self.offset and edge == self.edge) return;
     self.offset = offset;
     self.edge = edge;
     // Re-seat behind the card every step: anything that lifted another popup
-    // between them must not leave the copy over the card.
-    _ = w32.SetWindowPos(hwnd, card, 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE);
+    // between them must not leave the copy over the card, or over the dim.
+    _ = w32.SetWindowPos(hwnd, seatAfter(owner, card, dim), 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE);
     _ = w32.InvalidateRect(hwnd, null, 0);
     _ = w32.UpdateWindow(hwnd);
+}
+
+/// Negative control for `pane-banner.ps1`'s T2261 section. Flipping it seats
+/// the copy under the card alone, as before T2261, so it can land above an
+/// unfocused pane's dim and the section's "dim over the copy" goes red.
+pub const T2261_NEUTERED = false;
+
+/// The window the copy goes directly beneath (T2261, `banner_glide.copySeat`):
+/// the card, or a shown dim when the dim is the lower of the two. The order of
+/// two popups with one owner is whatever last moved them, so it is read, not
+/// assumed.
+fn seatAfter(owner: w32.HWND, card: w32.HWND, dim: ?w32.HWND) w32.HWND {
+    if (T2261_NEUTERED) return card;
+    const d = dim orelse return card;
+    const shown = w32.IsWindowVisible_(d) != 0;
+    return switch (banner_glide.copySeat(shown, shown and isBelow(owner, card, d))) {
+        .card => card,
+        .dim => d,
+    };
+}
+
+/// Is `lower` anywhere beneath `upper` before their owner's top-level window?
+/// Owned popups always sit above their owner, so the walk ends there.
+fn isBelow(owner: w32.HWND, upper: w32.HWND, lower: w32.HWND) bool {
+    const root = w32.GetAncestor(owner, w32.GA_ROOT) orelse owner;
+    var next = w32.GetWindow(upper, w32.GW_HWNDNEXT);
+    // Bounded: a pathological chain answers "not below", which seats under
+    // the card exactly as before.
+    for (0..512) |_| {
+        const cur = next orelse return false;
+        if (cur == lower) return true;
+        if (cur == root) return false;
+        next = w32.GetWindow(cur, w32.GW_HWNDNEXT);
+    }
+    return false;
+}
+
+/// Debug oracle for `pane-banner.ps1`'s T2261 section: is a shown `dim`
+/// stacked over the copy right now?
+pub fn dimOver(self: *const BannerFreeze, owner: w32.HWND, dim: ?w32.HWND) enum { none, over, under } {
+    const d = dim orelse return .none;
+    const hwnd = self.hwnd orelse return .none;
+    if (w32.IsWindowVisible_(d) == 0) return .none;
+    return if (isBelow(owner, d, hwnd)) .over else .under;
+}
+
+test "BannerFreeze: the T2261 negative control ships clear" {
+    try std.testing.expect(!T2261_NEUTERED);
 }
 
 pub fn hide(self: *BannerFreeze) void {

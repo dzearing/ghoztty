@@ -2297,7 +2297,8 @@ pub const BannerOverlay = struct {
         // one motion, and the cap counts from the click.
         const now = self.collapse_anim.?.start;
         const bg =@as(u32, self.pane_bg_rgb.r) | (@as(u32, self.pane_bg_rgb.g) << 8) | (@as(u32, self.pane_bg_rgb.b) << 16);
-        if (!self.freeze.show(self.hinstance, self.owner, self.hwnd, @intCast(w), @intCast(h), .{
+        const dim = self.shownDim();
+        if (!self.freeze.show(self.hinstance, self.owner, self.hwnd, dim, @intCast(w), @intCast(h), .{
             .left = screen.left,
             .top = screen.top - @max(old_inset, 0),
             .width = w,
@@ -2309,7 +2310,18 @@ pub const BannerOverlay = struct {
         // Debug-build oracle for pane-banner.ps1's T2252 section: where the
         // copy is going and why (the inset change plus the grid's shift).
         log.debug("banner glide begin delta={} shift={} inset={}->{} w={} h={}->{}", .{ delta, shift, old_inset, new_inset, w, h, new_h });
+        // T2261 oracle: an unfocused pane's dim is stacked over the copy, as
+        // Mac stacks it over its frozen terminal.
+        log.debug("banner glide dim={s}", .{@tagName(self.freeze.dimOver(self.owner, dim))});
         _ = w32.SetTimer(self.hwnd, GLIDE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS, null);
+    }
+
+    /// The pane's unfocused dim, when it is on screen: the frozen copy goes
+    /// under it (T2261).
+    fn shownDim(self: *const BannerOverlay) ?w32.HWND {
+        const s = self.surface orelse return null;
+        const d = s.dim_overlay orelse return null;
+        return if (d.shown) d.hwnd else null;
     }
 
     /// Take the copy down and hand the pane back to the live terminal.
@@ -2335,7 +2347,7 @@ pub const BannerOverlay = struct {
         const now = std.time.Instant.now() catch return self.endGlide("no-clock");
         const p = self.collapseProgress();
         const off = banner_glide.offset(g.delta, p orelse 1.0);
-        self.freeze.update(self.hwnd, off, banner_layout.bandHeight(self.paintedCardHeight(), self.px(MARGIN)));
+        self.freeze.update(self.owner, self.hwnd, self.shownDim(), off, banner_layout.bandHeight(self.paintedCardHeight(), self.px(MARGIN)));
 
         const seq = s.present_seq.load(.acquire);
         if (seq != g.seq) {
@@ -2870,6 +2882,7 @@ test "T283: the banner's negative controls are clear and non-empty" {
     try std.testing.expect(!T833_NEUTERED);
     try std.testing.expect(!T1344_NEUTERED);
     try std.testing.expect(!T2252_NEUTERED);
+    try std.testing.expect(!BannerFreeze.T2261_NEUTERED);
 
     const CellWrap = BannerOverlay.CellWrap;
     try std.testing.expectEqual(CellWrap.shipped, CellWrap.forCell());

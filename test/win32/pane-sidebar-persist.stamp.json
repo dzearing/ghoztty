@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-persist",
     "script":  "test/win32/pane-sidebar-persist.ps1",
-    "generated":  "2026-10-26T06:18:27-07:00",
-    "commit":  "4034daebd",
+    "generated":  "2026-10-26T09:06:38-07:00",
+    "commit":  "f4ad4fc19",
     "uncommitted":  [
 
                     ],
