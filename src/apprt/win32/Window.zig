@@ -9435,6 +9435,46 @@ fn applyRowDrag(self: *Window, step: stack_drag.Step) void {
     }
 }
 
+/// One step of a row drag, the gutter at `position` (the gesture's own
+/// measure). The pane sidebar's part comes first (T2277, Mac 075d787d1
+/// `sidebarAwareRow`): in a row spanning the grid, a gutter pushed past the
+/// panes it has tucked away tucks the expanded sidebar into its rail, and
+/// dragged back in the same drag brings it out; tucked, the row measures the
+/// room it gained. Null when the step failed (logged).
+fn rowDragMoved(self: *Window, position: f64) ?stack_drag.Step {
+    const rd = &(self.row_drag orelse return null);
+    self.rowDragSidebar(rd, position);
+    return rd.moved(self.stackState(), position) catch |err| {
+        log.warn("row drag step failed: {}", .{err});
+        return null;
+    };
+}
+
+fn rowDragSidebar(self: *Window, rd: *stack_drag.RowDrag, position: f64) void {
+    if (self.pane_sidebar_hidden or self.tab_count == 0) return;
+    // Only a row spanning the grid has the sidebar as its first item.
+    var n: usize = 0;
+    for (rd.row.items) |item| n += item.len;
+    if (n != self.visibleLeafCount(self.active_tab)) return;
+    const give = pane_sidebar.dividerTuckGiveDip(self.pane_sidebar_width_dip) * self.scale;
+    const hysteresis = pane_sidebar.divider_tuck_hysteresis_dip * self.scale;
+    switch (rd.sidebarTuck(position, give, hysteresis, self.paneSidebarMode() == .expanded)) {
+        .none => {},
+        .tuck => {
+            const before = self.paneSidebarColumnPx();
+            self.setPaneSidebarExpanded(false, "divider drag");
+            const gained = before - self.paneSidebarColumnPx();
+            if (gained > 0) rd.tucked_sidebar = @floatFromInt(gained);
+        },
+        .untuck => {
+            self.setPaneSidebarExpanded(true, "divider drag back");
+            // Refused (the window too narrow for the panel): still the rail,
+            // and the row still has its room.
+            if (self.pane_sidebar_expanded) rd.tucked_sidebar = null;
+        },
+    }
+}
+
 fn endRowDrag(self: *Window) void {
     if (self.row_drag) |*rd| {
         if (self.pane_stacks) |*st| rd.deinit(st) else rd.* = undefined;
@@ -9480,14 +9520,10 @@ fn startGripDrag(self: *Window, hit: GripHit, x: i32, y: i32) void {
 
 fn updateGripDrag(self: *Window, x: i32, y: i32) void {
     const g = self.grip_drag orelse return;
-    const rd = &(self.row_drag orelse return);
+    if (self.row_drag == null) return;
     const pos = if (g.direction == .horizontal) x else y;
     self.grip_drag.?.at = pos;
-    const delta: f64 = @floatFromInt(pos - g.start);
-    const step = rd.moved(self.stackState(), delta) catch |err| {
-        log.warn("stack grip drag step failed: {}", .{err});
-        return;
-    };
+    const step = self.rowDragMoved(@floatFromInt(pos - g.start)) orelse return;
     self.applyRowDrag(step);
     self.rowDragStepped(step);
     self.layoutSplitsLive();
@@ -10075,11 +10111,9 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     // resizing, then the next giving way, then the outermost folding into a
     // strip once there is no room for them all at their minimums - and back
     // where the drag began it is exactly as it was.
-    if (self.row_drag) |*rd| moved: {
-        const step = rd.moved(self.stackState(), @floatFromInt(pos - start)) catch |err| {
-            log.warn("divider row drag step failed: {}", .{err});
-            break :moved;
-        };
+    if (self.row_drag != null) moved: {
+        const step = self.rowDragMoved(@floatFromInt(pos - start)) orelse break :moved;
+        const rd = &self.row_drag.?;
         self.applyRowDrag(step);
         self.rowDragStepped(step);
         if (step.restacked) log.info("divider drag run={d}..{d} of {d}", .{ rd.run.lo, rd.run.hi, rd.row.items.len });

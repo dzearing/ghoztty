@@ -575,6 +575,21 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T2277: a divider pushed past the panes it tucked tucks the expanded
+    # pane sidebar into its rail, and back out brings it out (Mac 075d787d1).
+    # The rule is `RowDrag.sidebarTuck` in `stack_drag.zig`, the give is
+    # `pane_sidebar.dividerTuckGiveDip`, the wiring `Window.rowDragSidebar`.
+    [pscustomobject]@{
+        Name   = 'sidebar-divider-tuck'
+        Script = 'test\win32\sidebar-divider-tuck.ps1'
+        Stamp  = 'test\win32\sidebar-divider-tuck.stamp.json'
+        Covers = @(
+            'test\win32\sidebar-divider-tuck.ps1',
+            'src\apprt\win32\stack_drag.zig',
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # T2108: the grid places panes through the stacked-panes layout - a pane
     # stops at 300 DIP and a row that cannot fit stacks. The engine is
     # `pane_stack_layout.zig`, the window's adapter `pane_stack_grid.zig`, the

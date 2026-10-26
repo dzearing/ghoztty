@@ -61,6 +61,10 @@ pub const RowDrag = struct {
     /// of room, say, stays unpinned rather than pinned at the run it had, and
     /// a stale pin a step cleared (`PaneStackState.show`) comes back too.
     origin: stack_state.Saved,
+    /// This drag tucked the expanded pane sidebar into its rail, which widened
+    /// the row by this much (T2277, Mac `RowDrag.tuckedSidebar`): every later
+    /// step measures against the row that much wider.
+    tucked_sidebar: ?f64 = null,
 
     /// Begin a drag on the gutter before item `boundary` of `row` (copied: the
     /// layout result it came from is freed long before the drag ends).
@@ -115,7 +119,12 @@ pub const RowDrag = struct {
     /// One step: the gutter at `position` (the gesture's own measure). The
     /// row as the gutter's position makes it.
     pub fn moved(self: *RowDrag, state: *PaneStackState, position: f64) Allocator.Error!Step {
-        const d = try layout.dragged(self.gpa, self.row, self.boundary, self.offset + position, self.sizes);
+        // Tucked, the sidebar's column is the row's now: the row starts that
+        // much further back, so the gutter is that much further along it.
+        const widened = self.tucked_sidebar orelse 0;
+        var row = self.row;
+        row.extent += widened;
+        const d = try layout.dragged(self.gpa, row, self.boundary, self.offset + position + widened, self.sizes);
         defer self.gpa.free(d.sizes);
         if (self.isOrigin(d)) {
             try state.restore(&self.origin);
@@ -129,6 +138,22 @@ pub const RowDrag = struct {
             for (self.shares, d.sizes) |*sh, s| sh.* = s / @max(total, 1);
         }
         return .{ .all_shown = all, .restacked = restacked };
+    }
+
+    /// The pane sidebar in a gutter drag of a row spanning the grid (T2277,
+    /// Mac 075d787d1 `sidebarAwareRow`): it is the row's first item too. Once
+    /// every item before the gutter is a strip, the gutter pushed past them by
+    /// `give` tucks the expanded sidebar into its rail, and dragged back out
+    /// past that point by `hysteresis` brings it out again - within the drag,
+    /// both ways, as a pane tucks at its minimum. `position` is the gesture's
+    /// own measure, as `moved` takes it; the caller decides whether the row
+    /// spans the grid, and records the width a tuck gave in `tucked_sidebar`.
+    pub fn sidebarTuck(self: *const RowDrag, position: f64, give: f64, hysteresis: f64, expanded: bool) SidebarTuck {
+        if (self.direction != .horizontal) return .none;
+        const tuck_at = layout.Metrics.blades(self.boundary, self.row.peek) - give;
+        const at = self.offset + position;
+        if (self.tucked_sidebar == null) return if (expanded and at < tuck_at) .tuck else .none;
+        return if (at > tuck_at + hysteresis) .untuck else .none;
     }
 
     /// Whether `d` is the row as the drag found it.
@@ -191,6 +216,9 @@ pub fn gripBoundary(h: layout.StackHandle) usize {
         },
     };
 }
+
+/// What a step of a gutter drag does to the pane sidebar (`sidebarTuck`).
+pub const SidebarTuck = enum { none, tuck, untuck };
 
 /// What one step of a drag did.
 pub const Step = struct {
@@ -372,6 +400,52 @@ test "a row stacked for want of room, let go where it was pressed, stays unpinne
     _ = try drag.moved(&state, 0);
     try testing.expect(state.pin(&key_3) == null);
     try testing.expect(state.sharesFor(&key_3) == null);
+}
+
+test "T2277 sidebar: a divider pushed past the panes it tucked tucks the expanded sidebar, and back out brings it out" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    // The divider after the first pane: once that pane is a strip the gutter
+    // sits at 36, and the sidebar gives 40 before it tucks - at -4.
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0);
+    defer drag.deinit(&state);
+    try testing.expectEqual(SidebarTuck.none, drag.sidebarTuck(700, 40, 24, true));
+    try testing.expectEqual(SidebarTuck.none, drag.sidebarTuck(36, 40, 24, true));
+    try testing.expectEqual(SidebarTuck.none, drag.sidebarTuck(-3, 40, 24, true));
+    try testing.expectEqual(SidebarTuck.tuck, drag.sidebarTuck(-5, 40, 24, true));
+    // A rail already, nothing to tuck.
+    try testing.expectEqual(SidebarTuck.none, drag.sidebarTuck(-500, 40, 24, false));
+
+    drag.tucked_sidebar = 200;
+    // Tucked: further in, or back within the hysteresis, it stays tucked.
+    try testing.expectEqual(SidebarTuck.none, drag.sidebarTuck(-300, 40, 24, false));
+    try testing.expectEqual(SidebarTuck.none, drag.sidebarTuck(20, 40, 24, false));
+    // Past it, out again.
+    try testing.expectEqual(SidebarTuck.untuck, drag.sidebarTuck(21, 40, 24, false));
+}
+
+test "T2277 sidebar: tucked, the row measures the room it gained" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0);
+    defer drag.deinit(&state);
+    // At 300 the first pane has no room for its 300 minimum: it folds.
+    var step = try drag.moved(&state, 300);
+    try testing.expect(!step.all_shown);
+    // The sidebar gave the row 200: the same pointer leaves it 495.
+    drag.tucked_sidebar = 200;
+    step = try drag.moved(&state, 300);
+    try testing.expect(step.all_shown and step.restacked);
+    try testing.expectApproxEqAbs(@as(f64, 495.0 / 1400.0), drag.shares[0], 1e-6);
+}
+
+test "T2277 sidebar: a column's gutter never tucks the sidebar" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    var drag = try RowDrag.begin(testing.allocator, &state, rowOf3(), 1, 0);
+    defer drag.deinit(&state);
+    drag.direction = .vertical;
+    try testing.expectEqual(SidebarTuck.none, drag.sidebarTuck(-500, 40, 24, true));
 }
 
 test "focus: the caret leaves a pane that folded, for the nearest one on show" {

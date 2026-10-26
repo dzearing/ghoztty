@@ -1245,7 +1245,7 @@ pub const expand_threshold_dip: f32 = 120;
 /// `resizeHandleOffset`): expanded, the band is the card's own trailing
 /// margin (T2290, Mac 0a547522d `edgeGrip`) - the gutter between the card and
 /// the panes, never over the card; on the rail it lies just inside the card's
-/// trailing edge (the rail's gutter is T2277's).
+/// trailing edge (the rail's gutter is T2299's).
 pub fn onEdge(l: *const Layout, x: i32, y: i32, scale: f32) bool {
     return onEdgeIn(l, x, y, scale, false);
 }
@@ -1313,6 +1313,19 @@ pub fn edgeDrag(m: Mode, start_dip: f32, dx_dip: f32) ?EdgeDrag {
         .expanded => .{ .width = clampWidth(proposed) },
     };
 }
+
+/// How far past the panes it has tucked into strips a gutter of a row
+/// spanning the grid is pushed before the expanded panel tucks into its rail
+/// (T2277, Mac 075d787d1 `dividerTuckGive`): what the panel would give before
+/// reaching its minimum, as a pane gives down to its own - kept between a
+/// nudge and a deliberate push.
+pub fn dividerTuckGiveDip(panel_w_dip: f32) f32 {
+    return @min(@max(clampWidth(panel_w_dip) - min_width_dip, 24), 80);
+}
+
+/// Dragged back, the panel comes back out this far past where it tucked, so
+/// the edge never flickers at one point (Mac `dividerTuckHysteresis`).
+pub const divider_tuck_hysteresis_dip: f32 = 24;
 
 /// Rows span to the card's edges for hit purposes - the fill inset is
 /// paint, and a click in it still means that row; the margin round the card
@@ -2123,6 +2136,16 @@ test "pane_sidebar: the pinned grip is the gutter when elevated, the card's own 
     const r = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
     try testing.expectEqual(edgeBand(&r, s, false).?, edgeBand(&r, s, true).?);
     try testing.expect(onEdgeIn(&r, r.card.right - 1, r.card.centerY(), s, true));
+}
+
+test "pane_sidebar: T2277 a divider tucks the panel after the give it has above its minimum, between a nudge and a push" {
+    // At its minimum the panel still gives a nudge's worth...
+    try testing.expectEqual(@as(f32, 24), dividerTuckGiveDip(min_width_dip));
+    // ...a little wider, what it has above the minimum...
+    try testing.expectEqual(@as(f32, 50), dividerTuckGiveDip(min_width_dip + 50));
+    // ...and never more than a deliberate push.
+    try testing.expectEqual(@as(f32, 80), dividerTuckGiveDip(max_width_dip));
+    try testing.expect(divider_tuck_hysteresis_dip > 0);
 }
 
 test "pane_sidebar: dragging the rail out past 120 expands it; a panel only resizes, clamped, and never collapses" {
