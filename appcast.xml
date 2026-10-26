@@ -980,5 +980,35 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.46.0/Ghoztty-1.46.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="GMQWeKxgmZa2iZUs83BnApd9VDVcEVDc85mLcJ+mt9m2SmUGfsfwU4yiE81nfrR+YVAqlkn72CCRX1YNYwzLBQ==" length="26732422" />
         </item>
+        <item>
+            <title>Version 1.47.0</title>
+            <sparkle:version>1.47.0</sparkle:version>
+            <sparkle:shortVersionString>1.47.0</sparkle:shortVersionString>
+            <pubDate>Mon, 26 Oct 2026 15:20:21 +0000</pubDate>
+            <description>{
+  "version": "1.47.0",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "Close windows from the sidebar", "text": "Every window row and project header in the all-windows list has a ×. It closes that window, or the whole group, without asking or taking focus, and ends its sessions." },
+        { "title": "Tiles that read as buttons", "text": "Tiles on the collapsed rail get a soft glassy rim, like the panes' own edges, that fades away as the sidebar expands." },
+        { "title": "A calmer busy shimmer", "text": "A busy pane's shine sweeps at an angle over a slow, faint gradient that keeps the row outlined between sweeps, and fades in and out as work starts and stops." },
+        { "title": "Room to breathe", "text": "Rows, tiles and headers never touch any more, collapsed or expanded." },
+        { "title": "A quieter tray", "text": "An empty tray is just its drop box, with no label. In the all-windows list, stashed panes sit with each window's other panes, and the drop box appears only while you drag." }
+      ]
+    },
+    {
+      "title": "Panes",
+      "items": [
+        { "title": "Every pane is the same glass", "text": "New splits no longer come out a shade lighter than the pane they split from." },
+        { "title": "Collapsed panes hold still", "text": "When a pane collapses onto a stack of strips, the strip beside it no longer jiggles." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.47.0/Ghoztty-1.47.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="ZC3A718jErRC0unP3ZJ5cAyCrrTeNwkT2yzgfmaN7+T6DsF6BM6vMFVP3VwDzhdm13RpBGT07ZqJMLMx+3kHAw==" length="26756668" />
+        </item>
     </channel>
 </rss>
