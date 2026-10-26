@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-narrow-pane",
     "script":  "test/win32/viewer-narrow-pane.ps1",
-    "generated":  "2026-10-25T20:25:02-07:00",
-    "commit":  "4edb33abe",
+    "generated":  "2026-10-25T21:31:35-07:00",
+    "commit":  "47090a0e3",
     "uncommitted":  [
 
                     ],
