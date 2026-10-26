@@ -293,10 +293,31 @@ struct PaneSidebarSheenTests {
 
     @Test(arguments: [36.0, 240.0, 380.0])
     func aSweepStartsOffTheRowAndLeavesItEntirely(width: CGFloat) {
-        let (from, to) = Sheen.travel(width: width)
+        let height = PaneSidebarRow.height - 1
+        let (from, to) = Sheen.travel(width: width, height: height)
         #expect(light(at: from, width: width).lowerBound > width, "starts past the right edge")
-        #expect(light(at: to, width: width).upperBound < 0, "ends past the left edge")
+        // Its top is `slant * height` right of its bottom.
+        #expect(light(at: to, width: width).upperBound + Sheen.slant * height < 0,
+                "ends past the left edge, top included")
         #expect(from > to, "right to left")
+    }
+
+    /// The drift covers the whole row at every point of its cycle — no bare
+    /// corner, no gap — and a cycle moves it exactly one period left, so it
+    /// loops without a jump.
+    @Test(arguments: [36.0, 240.0, 380.0])
+    func theDriftCoversTheRowAndLoopsSeamlessly(width: CGFloat) {
+        let height = PaneSidebarRow.height - 1
+        let drift = Sheen.Drift(width: width, height: height)
+        #expect(drift.period >= width, "stretched: wider than the row")
+        #expect(drift.from - drift.to == drift.period, "one period a cycle, right to left")
+        for x in [drift.from, drift.to] {
+            #expect(x <= 0 && x + Sheen.slant * height <= 0, "covers the left edge at bottom and top")
+            #expect(x + drift.length >= width, "covers the right edge")
+        }
+        #expect(drift.locations.count % 2 == 1, "starts and ends on a trough")
+        let periods = drift.length / drift.period
+        #expect(periods == periods.rounded(), "whole periods, so the pattern repeats exactly")
     }
 }
 

@@ -59,6 +59,13 @@ A per-window list of **every pane in the window**, into which a pane can be
   wash, accent selection), the same kind glyph at the same place — the rail
   card is exactly that pill (`railCardWidth` = 52) — so collapsing or
   expanding moves no icon.
+- **A rail tile has a hairline border** (`PaneSidebarRow.tileBorder`: 1pt,
+  the label color at 12%, 20% hovered; white 18% on the accent pill), so a
+  bare glyph reads as a button. A full row has none. It lives in the rail, so
+  it fades out with the rail as the panel crossfades in on expand and back in
+  on collapse (`columnAnimation`) — never snapped at the mode switch. Solid,
+  so it is not the empty tray's dashed well
+  (`railTilesHaveABorderThatFadesWithTheMode`).
 - The glyph is in the pane's own hue (`PaneSidebarHue`: golden-ratio steps
   along its tree position; light and soft on a dark theme, deeper on a light
   one), a touch quieter unless its pane is focused or hovered. **Hovering a row
@@ -115,10 +122,20 @@ A per-window list of **every pane in the window**, into which a pane can be
 
 ## Activity
 
-- A **busy** pane's row — or tile — sheens: a faint upright band of light
-  (25%) sweeps across its pill from right to left every 2s
-  (`PaneSidebarTileSheenLayer`; travel in `PaneSidebarSheen`), starting and
-  ending fully off it. No spinner, no glow, no glyph shimmer.
+- A **busy** pane's row — or tile — sheens, in two Core Animation layers
+  (`PaneSidebarTileSheenLayer`), both slanted 45° (an upright band turned
+  clockwise, "/": `PaneSidebarSheen.slant`, a shear) and both moving right to
+  left, in phase across tiles:
+  - the **glint**: a faint band of light (25%) sweeps across the pill every
+    2s, starting and ending fully off it, top corner included
+    (`PaneSidebarSheen.travel`);
+  - the **drift**: a wide, soft, seamless gradient (`PaneSidebarSheen.Drift`:
+    one period ≥ 1.5× the row, 3–13% white on dark, 2–8% black on light)
+    sliding one period every 5s with no gap, so a busy pill's silhouette is
+    always visible — between glints, and on an expanded row.
+  Both fade in and out together over 0.6s as work starts and stops
+  (`PaneSidebarRow.busyFade`), never popping. No spinner, no glow, no glyph
+  shimmer. Tests: `PaneSidebarSheenTests`.
 - **Busy is `PaneView.isWorking`**: the hook-set activity state OR a progress
   report on screen (OSC 9;4 — what animates the pane's border,
   `SurfaceBusyBorder`), so an icon animates whenever its pane's border does.

@@ -183,6 +183,7 @@ struct PaneSidebarRow: View {
             .frame(height: Self.height - 1)
             .background(busySheen)
             .background(rowFill)
+            .overlay(tileBorder)
             .background(rowHover)
 
             if pane.bell && isStashed {
@@ -201,17 +202,36 @@ struct PaneSidebarRow: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    /// Busy: a faint band of light sweeps across the row's pill from right to
-    /// left — the same in both modes, so a tile is its row without the text.
+    /// A tile's hairline border, so a bare glyph on the rail reads as a
+    /// button. Rail only: a full row has its text to say that. It fades with
+    /// the rail itself as the sidebar expands or collapses (the rail and the
+    /// panel crossfade on `PaneSidebarState.columnAnimation`), so it never
+    /// snaps at the mode switch. Solid and in the label color — the empty
+    /// tray's well is dashed, the selection is the accent fill — and quieter
+    /// on that fill, where a dark rim would muddy the accent.
+    private var tileBorder: some View {
+        RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+            .strokeBorder(
+                onAccent ? Color.white.opacity(0.18) : Color.primary.opacity(isHovered ? 0.2 : 0.12),
+                lineWidth: 1)
+            .allowsHitTesting(false)
+    }
+
+    /// Busy: a slanted band of light sweeps across the row's pill from right
+    /// to left over a slow, soft drift — the same in both modes, so a tile is
+    /// its row without the text.
     @ViewBuilder
     private var busySheen: some View {
         if isBusy && !reduceMotion {
-            // Faded in, so it never pops on when work starts.
+            // Faded in and out, slowly, so it never pops on or off as work
+            // starts and stops.
             PaneSidebarTileSheenLayer(cornerRadius: SidePanelRow.cornerRadius)
                 .accessibilityLabel("Busy")
-                .transition(.opacity.animation(.easeOut(duration: 0.25)))
+                .transition(.opacity.animation(Self.busyFade))
         }
     }
+
+    static let busyFade: Animation = .easeInOut(duration: 0.6)
 
     // MARK: Interaction
 
