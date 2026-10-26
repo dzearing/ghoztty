@@ -1985,10 +1985,17 @@ AND the stashed-pane slots, so a restored pane never reflows.
   recorded as the window server composites them: one bar in every frame
   while held, in the gutter), `theExpandedSidebarResizesFromTheGutterBesideIt`
   (stops at the panel's widest).
-- **Resizers live in the gutters**: every card on show and every strip is
-  separated from the next by the same gutter (`Metrics.gap`: 10pt elevated,
-  6pt flat), whatever the run's position — so moving the run never resizes a
-  card. Every resizer takes the mouse in its gutter and nowhere else
+- **Strips are blades**: two strips lie side by side with no gap between
+  them (`Metrics.bladeGap` = 0), each casting a tight, strong shadow on the
+  next one out (the nearer the run, the higher), so they read as blades tucked
+  behind the panes on show rather than as cards with gutters between. They
+  used to be spaced by a full gutter each.
+- **Resizers live in the gutters**: every card on show is separated from the
+  next by the same gutter (`Metrics.gap`: 10pt elevated, 6pt flat), and so is
+  the run from each group of strips beside it — the grip that pulls a strip
+  back out lives there. A run with strips on both sides has one more such
+  gutter than a run at an end, so its cards are that much narrower there (they
+  take it after the glide, one resize each). Every resizer takes the mouse in its gutter and nowhere else
   (`Divider.gutter`, `StackHandle.gutter`): split dividers, grips between
   cards, the grip where the run meets its strips, and the pane sidebar's edge
   — expanded, ALL of the gutter between the panel and the panes, and none of

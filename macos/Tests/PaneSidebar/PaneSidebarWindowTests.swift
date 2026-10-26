@@ -286,7 +286,11 @@ struct PaneSidebarWindowTests {
         let focused = occlusion(focus2, pane: card, edgeX: card.maxX, inward: -1, desk: desk, in: window)
         let report = "stacked card: focused \(focused) unfocused \(unfocused)\nframes \(frames2)"
         try? report.write(toFile: "/tmp/pane-sidebar-snapshots/glass-stack.txt", atomically: true, encoding: .utf8)
-        #expect(unfocused + 4 < focused, "\(report)")
+        // Glass either way — the desk reads through a stacked card on show as
+        // through any pane (stacked cards were once filled 92% opaque) — and
+        // the same glass focused or not: focus changes only its rim and glow.
+        #expect(focused < 70 && unfocused < 70, "a stacked card on show is not glass: \(report)")
+        #expect(abs(focused - unfocused) < 2.5, "focus changed the card's glass: \(report)")
     }
 
     /// Hero mode on glass shows its pane as the same glass card a focused

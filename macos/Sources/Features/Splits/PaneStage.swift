@@ -618,7 +618,13 @@ final class PaneCardView: NSView {
         // Shadow: only where cards overlap.
         let shape = Self.rounded(paneRect, style.cornerRadius)
         shadowView.layer?.shadowPath = shape
-        shadowView.layer?.shadowOpacity = card.isStacked ? (style.isLight ? 0.16 : 0.4) : 0
+        // A strip is a blade tucked behind the panes on show, lying against
+        // the next blade out: a stronger, tighter shadow than a card's, so
+        // each one plainly darkens the edge of the one behind it.
+        let isBlade = shown.isTucked
+        shadowView.layer?.shadowRadius = isBlade ? 6 : 10
+        shadowView.layer?.shadowOpacity = card.isStacked
+            ? (isBlade ? (style.isLight ? 0.28 : 0.7) : (style.isLight ? 0.16 : 0.4)) : 0
         let outside = CAShapeLayer()
         let mask = CGMutablePath()
         mask.addRect(CGRect(origin: .zero, size: size))

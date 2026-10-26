@@ -2285,7 +2285,7 @@ class BaseTerminalController: NSWindowController,
         let spansGrid = drag.direction == .horizontal
             && Set(drag.row.items.joined()) == Set(surfaceTree.visibleLeaves.map(\.id))
         if spansGrid, !paneSidebarState.isHidden {
-            let strips = (drag.row.peek + drag.row.gap) * CGFloat(drag.boundary) - drag.row.gap
+            let strips = PaneLayout.Metrics.blades(drag.boundary, peek: drag.row.peek)
             let tuckAt = strips - PaneSidebarState.dividerTuckGive(panelWidth: paneSidebarState.width)
             let windowWidth = window?.contentView?.bounds.width ?? 0
             if drag.tuckedSidebar == nil, position < tuckAt,

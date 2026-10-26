@@ -105,7 +105,7 @@ struct PaneStackWindowTests {
                 guard let cardLayer = c.layer, let clip = c.clipLayer else { continue }
                 let right = cardLayer.frame.minX + clip.frame.maxX
                 let paneRight = cardLayer.frame.maxX - PaneCardView.outset
-                if paneRight > stage.bounds.maxX {
+                if paneRight > stage.bounds.maxX + 0.5 {
                     #expect(right <= stage.bounds.maxX + 0.5, "cut at the stack's edge mid-glide: pane \(panes.firstIndex { $0.id == c.paneID } ?? -1) frame \(cardLayer.frame) clip \(clip.frame) stage \(stage.bounds) placed \(String(describing: c.placedFrame)) collapse \(c.collapse)")
                 }
             }
@@ -1144,11 +1144,12 @@ struct PaneStackWindowTests {
         let point = NSPoint(x: firstOnShow.minX - 5, y: firstOnShow.midY)
         let hit = window.contentView?.superview?.hitTest(point)
         let grip = try #require(hit as? DividerHandle.DividerHandleView, "the gutter at \(point) hit \(String(describing: hit))")
-        // Far enough for a pane's minimum on this side, not so far that the
-        // other side (710pt: two cards of 300 and their strips) has no room
-        // left for one card and a strip: 259...269 slides by exactly one.
+        // Far enough for a pane's minimum on this side (a 300pt card, a strip
+        // and the gutter between: 346pt), not so far that the other side
+        // (710pt: two cards of 300 and their strips) has no room left for one
+        // card and a strip: 274...282 slides by exactly one.
         grip.onDragBegan?()
-        for step in 1...24 { grip.onDragDelta?(CGFloat(step) * 11, 0.5); await settle(0.01) }
+        for step in 1...24 { grip.onDragDelta?(CGFloat(step) * 278 / 24, 0.5); await settle(0.01) }
         grip.onDragEnded?()
         await settle(0.8)
         try await capture(window, "nested-slid")
@@ -1266,9 +1267,15 @@ struct PaneStackWindowTests {
                     shown.append((r, id))
                 }
                 shown.sort { $0.0.minX < $1.0.minX }
+                let target = controller.paneStackState.layoutGrid?()
                 for (a, b) in zip(shown, shown.dropFirst()) {
+                    // Two strips lie side by side as blades: on the way there,
+                    // anything from touching to a gutter apart. Anything else,
+                    // a gutter apart.
+                    let blades = target?.leaves[a.1]?.isTucked == true && target?.leaves[b.1]?.isTucked == true
+                    let space = b.0.minX - a.0.maxX
                     if a.0.maxX > b.0.minX + 0.5 { problems.append("overlap \(Int(a.0.maxX)) > \(Int(b.0.minX))") }
-                    else if abs(b.0.minX - a.0.maxX - gap) > 1.5 {
+                    else if blades ? space > gap + 1.5 : abs(space - gap) > 1.5 {
                         let ia = panes.firstIndex { $0.id == a.1 } ?? -1, ib = panes.firstIndex { $0.id == b.1 } ?? -1
                         let la = controller.paneStackState.layoutGrid?().leaves[a.1], lb = controller.paneStackState.layoutGrid?().leaves[b.1]
                         let ca = self.all(PaneCardView.self, in: window.contentView!).first { $0.paneID == a.1 }
@@ -1286,12 +1293,16 @@ struct PaneStackWindowTests {
                     for id in startStrips where layout.leaves[id]?.isTucked == false {
                         layoutProblems.append("strip \(panes.firstIndex { $0.id == id } ?? -1) came out")
                     }
-                    let items = panes.compactMap { p -> CGRect? in
+                    let items = panes.compactMap { p -> (rect: CGRect, tucked: Bool)? in
                         guard let leaf = layout.leaves[p.id] else { return nil }
-                        return leaf.isTucked ? leaf.tab : leaf.frame
-                    }.sorted { $0.minX < $1.minX }
-                    for (a, b) in zip(items, items.dropFirst()) where abs(b.minX - a.maxX - gap) > 1.5 {
-                        layoutProblems.append("layout gutter \(Int(b.minX - a.maxX)) at \(Int(a.maxX))")
+                        return (leaf.isTucked ? (leaf.tab ?? leaf.frame) : leaf.frame, leaf.isTucked)
+                    }.sorted { $0.rect.minX < $1.rect.minX }
+                    // A gutter between each, but none between two strips.
+                    for (a, b) in zip(items, items.dropFirst()) {
+                        let want = a.tucked && b.tucked ? PaneLayout.Metrics.bladeGap : gap
+                        if abs(b.rect.minX - a.rect.maxX - want) > 1.5 {
+                            layoutProblems.append("layout gutter \(Int(b.rect.minX - a.rect.maxX)) at \(Int(a.rect.maxX))")
+                        }
                     }
                 }
             }
