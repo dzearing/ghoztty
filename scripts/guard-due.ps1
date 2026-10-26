@@ -5296,6 +5296,23 @@ $GuardTable = @(
             'test\win32\pane-sidebar-resize.ps1'
         )
     },
+    # The sidebar collapsing and expanding (T2291, Mac 543489bca): the grid's
+    # cards glide over from where they were, each terminal resized once at the
+    # end, while the column's width animates and the rail and panel crossfade.
+    # The curve, the width and the compose are unit-tested; whether the column
+    # and the panes actually pass through the middle on screen is the box's.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-glide'
+        Script = 'test\win32\pane-sidebar-glide.ps1'
+        Stamp  = 'test\win32\pane-sidebar-glide.stamp.json'
+        Covers = @(
+            'src\apprt\win32\PaneSidebar.zig',
+            'src\apprt\win32\pane_sidebar_xfade.zig',
+            'src\apprt\win32\pane_sidebar_transition.zig',
+            'src\apprt\win32\pane_stack_slide.zig',
+            'test\win32\pane-sidebar-glide.ps1'
+        )
+    },
     # The sidebar's pin, hidden flag and width surviving a restart (T1847):
     # the new-window defaults file, the per-window session-layout fields and
     # which of the two a restore obeys. The parse/format and the manifest

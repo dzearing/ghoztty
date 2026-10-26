@@ -127,6 +127,13 @@ function Wait-Until([scriptblock]$Cond, [int]$Ms = 4000) {
 }
 
 function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal') }
+# Collapsing or expanding glides (T2291): the rows line is logged as the mode
+# flips, while the column and the panes are still on their way. Geometry is
+# read once the sidebar and every pane hold still.
+function Wait-Settled($top) {
+    $shape = { (@(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') + @(Get-Panes $top) | ForEach-Object { "$($_.Left),$($_.Width)" }) -join ';' }
+    $null = Wait-Until { $a = & $shape; Start-Sleep -Milliseconds 120; $a -eq (& $shape) }
+}
 function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
 function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
 
@@ -267,6 +274,7 @@ try {
     if ($null -eq $sb) { "  SETUP FAIL: no sidebar"; $script:failures++; return }
     [void](At $top $sb (Get-ToggleCenter $sb))
     $rows = Wait-Rows { param($r) $r.Mode -eq 'expanded' -and $r.Items.Count -eq 5 }
+    Wait-Settled $top
     $sb = Get-Sidebar $top
     Assert "setup: expanded, the rows line lists all five rows" ($null -ne $rows -and $rows.Mode -eq 'expanded' -and $rows.Items.Count -eq 5)
     if ($null -eq $rows -or $rows.Items.Count -lt 5) { return }
@@ -363,6 +371,7 @@ try {
     Assert "and closed nothing" (-not (Test-LogSince 'pane sidebar close pane' $mark))
     [void](At $top $sb (Get-ToggleCenter $sb))   # collapse: the rail
     $rows = Wait-Rows { param($r) $r.Mode -eq 'mini' -and $r.Items.Count -eq 2 }
+    Wait-Settled $top
     $sb = Get-Sidebar $top
     Assert "back on the rail with two tiles" ($rows.Mode -eq 'mini' -and $rows.Items.Count -eq 2)
     $tileP = Row $rows $idP

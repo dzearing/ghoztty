@@ -28,6 +28,9 @@ pub const scope_slide_dip: f32 = 48;
 /// The frame cadence while a transition runs: a 48-DIP slide over 300 ms
 /// wants every display frame, unlike the shimmer's slow band.
 pub const frame_ms: u32 = 16;
+/// The column collapsing or expanding (T2291; Mac
+/// `PaneSidebarState.columnAnimation`, 0.24 s on the same curve).
+pub const column_ms: u64 = 240;
 
 /// Mac's curve for both: `.timingCurve(0.2, 0.8, 0.2, 1)`, a strong ease-out.
 const curve = [4]f64{ 0.2, 0.8, 0.2, 1 };
@@ -174,6 +177,39 @@ pub fn composeFold(out: []u32, bg: []const u32, tall: []const u32, short: []cons
             var acc = channels(bg[row + xi]);
             addDelta(&acc, short[srow + xi], bg[srow + xi], 1);
             out[row + xi] = pack(acc);
+        }
+    }
+}
+
+/// The column's width at eased progress `p` of a collapse or expand (T2291):
+/// from the width it was shown at to the one its new mode takes.
+pub fn columnWidthAt(from_w: i32, to_w: i32, p: f64) i32 {
+    const a: f64 = @floatFromInt(from_w);
+    const b: f64 = @floatFromInt(to_w);
+    return @intFromFloat(@round(a + (b - a) * std.math.clamp(p, 0, 1)));
+}
+
+/// One frame of a collapse or expand into `out` (`w` x `h`, the column as
+/// wide as it is drawn now; T2291, Mac `PaneSidebarChrome`): the frame it
+/// left (`old`, `old_w` wide) fading out and the frame it goes to (`new`,
+/// `new_w` wide) fading in, both anchored at the column's leading edge and
+/// cut at its trailing one, the way Mac's panel is clipped by the host whose
+/// width animates. Where a frame does not reach, what it shows is `under`
+/// (the window's backdrop, `w` wide), so the narrower frame fades out over
+/// the desk rather than over black.
+pub fn composeColumn(out: []u32, w: i32, h: i32, old: []const u32, old_w: i32, new: []const u32, new_w: i32, under: []const u32, p: f64) void {
+    const q = std.math.clamp(p, 0, 1);
+    const uw: usize = @intCast(@max(w, 0));
+    const ow: usize = @intCast(@max(old_w, 0));
+    const nw: usize = @intCast(@max(new_w, 0));
+    for (0..@intCast(@max(h, 0))) |y| {
+        for (0..uw) |x| {
+            const bg = under[y * uw + x];
+            const o = if (x < ow) old[y * ow + x] else bg;
+            const n = if (x < nw) new[y * nw + x] else bg;
+            var acc = channels(o);
+            addDelta(&acc, n, o, q);
+            out[y * uw + x] = pack(acc);
         }
     }
 }
@@ -357,6 +393,38 @@ test "a fold closing covers the group from the bottom up and pulls the rows belo
     composeFold(&out, &bg, &open, &closed, &closed, w, h, region, 2, 3, false, 2.0 / 3.0);
     try std.testing.expectEqual(@as(u32, 0x00010101), out[2]);
     try std.testing.expectEqual(@as(u32, 0x00555555), out[3]);
+}
+
+test "T2291: the column's width runs from where it was shown to its new mode's" {
+    try std.testing.expectEqual(@as(i32, 60), columnWidthAt(60, 264, 0));
+    try std.testing.expectEqual(@as(i32, 264), columnWidthAt(60, 264, 1));
+    try std.testing.expectEqual(@as(i32, 162), columnWidthAt(60, 264, 0.5));
+    // Collapsing is the same line the other way.
+    try std.testing.expectEqual(@as(i32, 162), columnWidthAt(264, 60, 0.5));
+    try std.testing.expectEqual(@as(i32, 60), columnWidthAt(264, 60, 7));
+    try std.testing.expectEqual(column_ms, 240);
+}
+
+test "T2291: rail and panel crossfade, each cut at the column's edge, over the backdrop where it does not reach" {
+    // Two rows; the rail frame 2 wide, the panel frame 5 wide, the column
+    // drawn 4 wide.
+    const h = 2;
+    const rail = [_]u32{ ink, ink, ink, ink };
+    const panel = [_]u32{0x00FF0000} ** (5 * h);
+    const under = [_]u32{bgc} ** (4 * h);
+    var out = [_]u32{0} ** (4 * h);
+
+    // Start: the rail as it was, the desk beyond it - the panel not yet in.
+    composeColumn(&out, 4, h, &rail, 2, &panel, 5, &under, 0);
+    try std.testing.expectEqualSlices(u32, &.{ ink, ink, bgc, bgc }, out[0..4]);
+    // End: the panel, cut at the column's edge (its fifth column is not drawn).
+    composeColumn(&out, 4, h, &rail, 2, &panel, 5, &under, 1);
+    try std.testing.expectEqualSlices(u32, &([_]u32{0x00FF0000} ** 4), out[4..8]);
+    // Halfway: over the rail, half rail half panel; past the rail, half desk
+    // half panel.
+    composeColumn(&out, 4, h, &rail, 2, &panel, 5, &under, 0.5);
+    try std.testing.expectEqual(@as(u32, 0x00F07070), out[0]);
+    try std.testing.expectEqual(@as(u32, 0x00901010), out[3]);
 }
 
 test "rows that would come from outside the viewport are bare material" {

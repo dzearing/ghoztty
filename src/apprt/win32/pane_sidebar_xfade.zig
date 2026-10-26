@@ -25,6 +25,38 @@ pub const Fold = struct {
     scroll: i32,
 };
 
+/// The column collapsing or expanding (T2291): the width it is leaving from
+/// and the one it goes to, and the picture it left (`old_w` x `h`). The
+/// column is drawn `tr.columnWidthAt` wide meanwhile, the two frames
+/// crossfading in it (`tr.composeColumn`).
+pub const Column = struct {
+    start_ms: u64 = 0,
+    from_w: i32,
+    to_w: i32,
+    h: i32,
+    old: ?Dib32 = null,
+    /// How long it runs: `tr.column_ms`, or the stretched one an acceptance
+    /// script asks for (`GHOZTTY_SIDEBAR_COLUMN_MS`) to catch it mid-glide.
+    ms: u64 = tr.column_ms,
+
+    pub fn progress(self: *const Column, now_ms: u64) f64 {
+        return tr.progress(now_ms -| self.start_ms, self.ms);
+    }
+
+    pub fn widthAt(self: *const Column, now_ms: u64) i32 {
+        return tr.columnWidthAt(self.from_w, self.to_w, self.progress(now_ms));
+    }
+
+    pub fn done(self: *const Column, now_ms: u64) bool {
+        return now_ms -| self.start_ms >= self.ms;
+    }
+
+    pub fn deinit(self: *Column) void {
+        if (self.old) |d| d.destroy();
+        self.old = null;
+    }
+};
+
 pub const Xfade = struct {
     kind: Kind,
     start_ms: u64 = 0,

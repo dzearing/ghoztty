@@ -349,6 +349,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2102. pane-stack-slide.ps1 stretches the stacked-pane carousel slide to 2 s so its sampler sees cards mid-slide (and to 0 ms for its negative control); unset is Mac's 0.38 s, which pane-stack-strip.ps1's strip click runs through."
         },
+        "GHOZTTY_SIDEBAR_COLUMN_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "T2291. pane-sidebar-glide.ps1 stretches the pane sidebar's collapse/expand glide to 2 s so it can sample the column mid-glide (and to 0 ms for its negative control); unset is Mac's 0.24 s, which pane-sidebar.ps1's toggle clicks run through."
+        },
         "GHOZTTY_RELAUNCH_GUARD": {
             "class": "isolation",
             "unset": "shipped-elsewhere",

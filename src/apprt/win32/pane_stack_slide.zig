@@ -609,6 +609,35 @@ test "plan: a card that changes size holds its old size until it has caught up" 
     try testing.expectEqual(r(100, 0, 500, 600), s.placed(1).?);
 }
 
+test "plan: the sidebar expanding glides every card over from where it was, each resized once at the end (T2291)" {
+    // Two cards side by side; the sidebar's column grows by 200 px, so the
+    // grid starts 200 px further right and is 200 px narrower. No run
+    // changed - only the grid moved under the cards.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(60, 0, 500, 600), .tucked = false },
+        .{ .id = 2, .rect = r(570, 0, 500, 600), .tucked = false },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(260, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(670, 0, 400, 600), .tucked = false },
+    };
+    try testing.expect(!runsChanged(&before, &after));
+    var s = plan(&before, &after, null, glide_ms, false);
+    try testing.expectEqual(@as(usize, 2), s.len);
+    // The first frame is where the cards were on screen.
+    try testing.expectEqual(r(60, 0, 500, 600), s.placed(1).?);
+    _ = s.step(30);
+    const mid = s.placed(2).?;
+    // On the way: moved, its terminal still the size it had...
+    try testing.expectEqual(@as(i32, 500), mid.width());
+    try testing.expect(mid.left > 570 and mid.left < 670);
+    // ...and cut to the card it is going to, so it never covers its neighbour.
+    try testing.expectEqual(@as(i32, 400), s.cardRect(2).?.width());
+    _ = runOut(&s);
+    try testing.expectEqual(r(260, 0, 400, 600), s.placed(1).?);
+    try testing.expectEqual(r(670, 0, 400, 600), s.placed(2).?);
+}
+
 test "cardOf: an unfold cuts the widening neighbour to its new card at once (T2187)" {
     // A | B with B folded: A fills the row. B unfolds; A keeps its place and
     // goes from 900 to 450 wide, B slides in from the row's edge.

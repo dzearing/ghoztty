@@ -1,10 +1,12 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-26T12:01:40-07:00",
-    "commit":  "efb796142",
+    "generated":  "2026-10-26T12:36:01-07:00",
+    "commit":  "67d0c2e87",
     "uncommitted":  [
-
+                        "test/win32/pane-sidebar-actions.ps1",
+                        "test/win32/pane-sidebar-glide.ps1",
+                        "test/win32/pane-sidebar-hue.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -330,12 +332,13 @@
                   "test/win32/pane-ingest-ab.ps1":  "8a1c931c42ef7e346459a13bbd3c4a8e31a581ca00247520423b3d2bca6e984b",
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
                   "test/win32/pane-sidebar.ps1":  "1a927b657cb05b2875c269788b68a0efe38a44377205592cc571559c2753d84b",
-                  "test/win32/pane-sidebar-actions.ps1":  "10cb08470e1f95d6db80da56978786052a20d6362554df98766ff03442e7c4b0",
+                  "test/win32/pane-sidebar-actions.ps1":  "a7d141194ca86cf978ee75b58213a3b870e828424d010ab03b820fb0ff4b55b1",
                   "test/win32/pane-sidebar-activity.ps1":  "ab40c66009a724dbb5a9b72a8e0b017de067cc7f22e1f34f2643f70ad34e86f9",
                   "test/win32/pane-sidebar-all-windows.ps1":  "0d0dd5249465728ba8be66e4936d1a5019c06cf077148d7b59320458b33adfed",
                   "test/win32/pane-sidebar-drag.ps1":  "36eb78616d344e05dbeb5d760fdb19933e8f169593b4c588e2898bf2f5d257cd",
                   "test/win32/pane-sidebar-elevated.ps1":  "58c826deda2c6eab145fabacf4938110a3c96ae7aa4a371b6bf5914fe37c2304",
-                  "test/win32/pane-sidebar-hue.ps1":  "53ac7b6b088f9c35d9992ff807d33c685b525a940c8cd34b4e2560eb422d8c19",
+                  "test/win32/pane-sidebar-glide.ps1":  "3eba0ac2c846cc6ad40fa9c1626ff756225e1aac8fcef7b80c9d689b0af9afa7",
+                  "test/win32/pane-sidebar-hue.ps1":  "d7e71a22b07a3ad7cc888b1c70180126feb25ec8cd245e89be5b75c17798c134",
                   "test/win32/pane-sidebar-persist.ps1":  "180d6cb19a9d1314c760426c1ccb4dae59c76bb89bf328b51de9245cd67938ca",
                   "test/win32/pane-sidebar-resize.ps1":  "5b8e2ab28811631608c3727e8f89e234b801cf17b16481d6bfe57accbc0a2df2",
                   "test/win32/pane-sidebar-scroll.ps1":  "de29f0c67a12bbae87452bf6c826cf6381a56052299753cac94d6e52231ed6c9",
@@ -423,7 +426,6 @@
                   "test/win32/session-vanished.ps1":  "e0019c099845add5401f0faf816a19db34eb148ba1dc8a4b7d8b390ad86ab0a5",
                   "test/win32/share-machine.ps1":  "eba316515b7f90d758ce528b6832cdb1573b2ccc86f456a4b1ffce5655f0091d",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
-                  "test/win32/sidebar-divider-tuck.ps1":  "c7dcd8e840f712da3b33b6bf884cd0b89078eb89c3622affbb46e57b8d5eb5a1",
                   "test/win32/side-pane-featured.ps1":  "9c5ba23581dc36c34fcef162b15e0c109a2dc5bd71e409a111425af6cb3fdae7",
                   "test/win32/single-instance-join.ps1":  "5b182fa1d110e5a2eb1cba34f90e80e4ff8dd811838b6d5c4c69de85c2f648f0",
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",

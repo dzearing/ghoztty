@@ -188,6 +188,11 @@ try {
     $pin = Get-RailPinCenter $sb
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $pin.X -Y $pin.Y -Action click)
     $null = Wait-Until { $r = Get-Rows; $r -and $r.Mode -eq 'expanded' -and $r.Items.Count -eq 3 } 5000
+    # Expanding glides (T2291): the rows line is logged as the mode flips,
+    # while the column and the panes are still on their way. Read the
+    # geometry once they all hold still.
+    $shape = { (@(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') + @(Get-Panes $top) | ForEach-Object { "$($_.Left),$($_.Width)" }) -join ';' }
+    $null = Wait-Until { $a = & $shape; Start-Sleep -Milliseconds 120; $a -eq (& $shape) }
     $rows = Get-Rows
     $sb = Get-Sidebar $top
     $panes = @(Get-Panes $top)

@@ -841,6 +841,12 @@ stack_placed: [pane_stack_slide.max_cards]pane_stack_slide.Placed = undefined,
 stack_placed_len: usize = 0,
 stack_placed_tab: usize = 0,
 stack_placed_grid: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+/// When the pane sidebar's column last changed width under a collapse,
+/// expand, hide or show (T2291; Mac `PaneStackState.noteColumnShift`): the
+/// next layout whose grid rect moved glides its cards over from where they
+/// were rather than snapping. Taken by that layout; stale after
+/// `column_shift_ms`.
+column_shift_at: ?u64 = null,
 
 /// True after the last tab has been closed and WM_CLOSE has been posted.
 /// Input handlers must bail when this is set — between PostMessage(WM_CLOSE)
@@ -2708,8 +2714,30 @@ fn syncPaneSidebarScoped(self: *Window, scopes: ScopeRefresh) void {
 /// `toggle_pane_sidebar` (Mac Ctrl+Cmd+S, here Ctrl+Shift+S): hide or show
 /// the sidebar entirely. The grid takes the column back, or gives it up.
 pub fn togglePaneSidebar(self: *Window) void {
+    const before = self.paneSidebarColumnPx();
     self.pane_sidebar_hidden = !self.pane_sidebar_hidden;
+    self.noteColumnShift(before);
     self.paneSidebarLayoutChanged();
+}
+
+/// How long a noted column shift waits for the layout that takes it (Mac
+/// `PaneStackState.columnShiftLifetime`, 0.5 s).
+const column_shift_ms: u64 = 500;
+
+/// The sidebar's column just changed from `before` pixels wide (T2291; Mac
+/// `changingPaneSidebarColumn`): tell the grid, so the layout that follows
+/// glides its cards over rather than snapping. A change that leaves the
+/// column as wide as it was is no shift.
+fn noteColumnShift(self: *Window, before: i32) void {
+    if (self.paneSidebarColumnPx() == before) return;
+    self.column_shift_at = w32.GetTickCount64();
+}
+
+/// The pending column shift, taken: whether one was noted recently enough.
+fn takeColumnShift(self: *Window) bool {
+    const at = self.column_shift_at orelse return false;
+    self.column_shift_at = null;
+    return w32.GetTickCount64() -| at < column_shift_ms;
 }
 
 /// Collapse or expand the sidebar (T2289, Mac `setPaneSidebarExpanded`):
@@ -2723,8 +2751,10 @@ pub fn setPaneSidebarExpanded(self: *Window, expanded: bool, cause: []const u8) 
         log.info("pane sidebar expand refused: window too narrow cause={s}", .{cause});
         return;
     }
+    const before = self.paneSidebarColumnPx();
     self.pane_sidebar_expanded = expanded;
     log.info("pane sidebar expanded={} cause={s}", .{ expanded, cause });
+    self.noteColumnShift(before);
     self.paneSidebarLayoutChanged();
 }
 
@@ -8193,9 +8223,26 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
     }
     const rect = self.gridRect();
     const before = self.stack_placed[0..self.stack_placed_len];
-    const same_view = self.stack_placed_tab == self.active_tab and
-        std.meta.eql(self.stack_placed_grid, rect) and before.len > 0;
-    if (!same_view) {
+    const same_tab = self.stack_placed_tab == self.active_tab and before.len > 0;
+    const same_view = same_tab and std.meta.eql(self.stack_placed_grid, rect);
+    // The pane sidebar collapsing or expanding moved the grid (T2291; Mac
+    // `PaneStageView.apply`'s column shift): every card glides over from where
+    // it is on screen, as for a run change - a move at the size it had, its
+    // terminal resized once when it lands. Any other resize lays out at once.
+    const shifted = same_tab and !same_view and self.takeColumnShift();
+    if (shifted) {
+        const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
+        const next = if (App.clientAreaAnimationsEnabled())
+            pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), false)
+        else
+            pane_stack_slide.Slide{};
+        if (next.len > 0) {
+            log.info("pane grid glides for the sidebar column: cards={d}", .{next.len});
+            self.stack_slide = next;
+            self.orderStackCards(tree, grid);
+            self.runStackSlide();
+        } else self.endStackSlide();
+    } else if (!same_view) {
         self.endStackSlide();
     } else if (pane_stack_slide.runsChanged(before, now[0..n])) {
         if (App.clientAreaAnimationsEnabled()) {

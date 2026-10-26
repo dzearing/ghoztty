@@ -78,6 +78,8 @@ pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPaneSideba
 const TIMER_ANIM: usize = 3;
 /// A list transition's frame clock (T1880).
 const TIMER_XFADE: usize = 4;
+/// The column collapsing or expanding (T2291).
+const TIMER_COLUMN: usize = 5;
 
 /// Tooltip tool ids: the toggle, then one per item, then one per row button.
 const tool_toggle: usize = 0;
@@ -298,6 +300,10 @@ anim_armed: bool = false,
 /// The list transition running on the panel (T1880): the scope slide or a
 /// fold, composed from a picture of the frame before it (`xf`).
 xfade: ?xf.Xfade = null,
+/// The column collapsing or expanding (T2291): its width animates while the
+/// rail and the panel crossfade in it. Meanwhile the layout is the new
+/// mode's at the width it goes to, whatever the column is drawn at.
+column: ?xf.Column = null,
 /// Paint the material alone - no header, no rows: the backdrop a transition
 /// lays the moving lists over.
 paint_bare: bool = false,
@@ -412,6 +418,8 @@ pub fn destroy(self: *PaneSidebar) void {
     self.folded_projects.deinit(self.alloc);
     if (self.xfade) |*v| v.deinit();
     self.xfade = null;
+    if (self.column) |*v| v.deinit();
+    self.column = null;
     self.card.release();
     self.releaseFonts();
     self.alloc.destroy(self);
@@ -429,10 +437,26 @@ fn fromHwnd(hwnd: w32.HWND) ?*PaneSidebar {
 
 /// Place the column at `rect` (window client coordinates) in `mode`, hiding
 /// it when there is nothing to show.
-pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale: f32) void {
+pub fn place(self: *PaneSidebar, target: w32.RECT, mode: pane_sidebar.Mode, scale: f32) void {
     const changed = mode != self.mode or scale != self.scale;
+    // Collapsing or expanding glides (T2291): picture the column as it is
+    // shown, before the mode it paints in changes.
+    const flipping = changed and scale == self.scale and
+        self.mode != .hidden and mode != .hidden;
+    const leaving: ?xf.Column = if (flipping) self.snapshotColumn() else null;
+    if (changed and !flipping) self.dropColumn();
     self.mode = mode;
     self.scale = scale;
+    var rect = target;
+    if (leaving) |c| self.startColumn(c, rect.right - rect.left);
+    if (self.column) |*c| {
+        // Placed again mid-glide (a layout pass, a window resize): it goes to
+        // the width the window gives it now, from where it is drawn.
+        c.to_w = rect.right - rect.left;
+        if (c.h != rect.bottom - rect.top) {
+            self.dropColumn();
+        } else rect.right = rect.left + c.widthAt(w32.GetTickCount64());
+    }
     // T1877: a field that is no longer on screen gives the caret back, and a
     // query filters the panel but never the rail - a mode change re-asks.
     if (self.search_focus and !self.searchShown()) self.releaseSearchFocus();
@@ -1058,6 +1082,10 @@ fn currentLayout(self: *PaneSidebar) pane_sidebar.Layout {
 fn rawLayout(self: *PaneSidebar) pane_sidebar.Layout {
     var r: w32.RECT = undefined;
     if (w32.GetClientRect(self.hwnd, &r) == 0) return .{};
+    // Mid-glide the column is drawn narrower or wider than its mode lays out
+    // (T2291): the layout - what is painted, hit and scrolled - is the one it
+    // is going to.
+    if (self.column) |c| r.right = r.left + c.to_w;
     var items: [pane_sidebar.max_items]pane_sidebar.Item = undefined;
     const n = @min(self.entries.items.len, items.len);
     for (self.entries.items[0..n], 0..) |e, i| {
@@ -1402,6 +1430,9 @@ fn glyph(hdc: w32.HDC, scale: f32, r: pane_sidebar.Rect, cp: u16, dip: f32, colo
 }
 
 fn paint(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
+    if (!self.paint_bare and self.column != null) {
+        if (self.paintColumn(hdc, width, height)) return;
+    }
     defer self.paintEdgeBar(hdc, width, height);
     if (!self.paint_bare and self.xfade != null) {
         if (self.paintTransition(hdc, width, height)) return;
@@ -1613,6 +1644,108 @@ fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
             );
         },
     }
+    _ = w32.BitBlt(hdc, 0, 0, w, h, out.dc, 0, 0, w32.SRCCOPY);
+    return true;
+}
+
+// -------------------------------------------------------------------------
+// Collapse and expand (T2291)
+// -------------------------------------------------------------------------
+
+/// Picture the column as it is shown now, for a collapse or expand to leave
+/// from - or null when the change should simply land: animations are off, or
+/// the column is not on screen. Taken mid-glide, it is the frame as drawn, so
+/// a second click glides back from where the eye is.
+fn snapshotColumn(self: *PaneSidebar) ?xf.Column {
+    if (!App.clientAreaAnimationsEnabled()) return null;
+    if (w32.IsWindowVisible(self.hwnd) == 0) return null;
+    const size = self.surfaceSize() orelse return null;
+    const screen = w32.GetDC(null) orelse return null;
+    defer _ = w32.ReleaseDC(null, screen);
+    const d = Dib32.create(screen, size[0], size[1]) orelse return null;
+    self.paint(d.dc, size[0], size[1]);
+    _ = w32.GdiFlush();
+    return .{ .from_w = size[0], .to_w = size[0], .h = size[1], .old = d };
+}
+
+/// Run collapse-or-expand `c` toward a column `to_w` wide, replacing any
+/// glide or list transition already running. The column is put over the
+/// grid for the length of it: Mac's sidebar is an overlay on the stage, so
+/// the cards gliding over glide under it.
+fn startColumn(self: *PaneSidebar, c: xf.Column, to_w: i32) void {
+    var next = c;
+    self.dropColumn();
+    self.dropTransition();
+    if (w32.SetTimer(self.hwnd, TIMER_COLUMN, transition.frame_ms, null) == 0) return next.deinit();
+    next.start_ms = w32.GetTickCount64();
+    next.to_w = to_w;
+    if (std.process.parseEnvVarInt("GHOZTTY_SIDEBAR_COLUMN_MS", u32, 10)) |ms| {
+        next.ms = ms;
+    } else |_| {}
+    self.column = next;
+    // HWND_TOP is null: without SWP_NOZORDER, the top of the children.
+    _ = w32.SetWindowPos(self.hwnd, null, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE);
+    log.info("pane sidebar column glide {s} from={d} to={d} ms={d}", .{ @tagName(self.mode), next.from_w, to_w, next.ms });
+}
+
+/// Stop the glide, if one runs, without placing or repainting.
+fn dropColumn(self: *PaneSidebar) void {
+    if (self.column) |*c| c.deinit();
+    self.column = null;
+    _ = w32.KillTimer(self.hwnd, TIMER_COLUMN);
+}
+
+/// A frame of the glide: the column a step wider or narrower and repainted;
+/// once it is over, placed at its new width by the window, as any layout
+/// places it.
+fn onColumnTick(self: *PaneSidebar) void {
+    const c = self.column orelse {
+        _ = w32.KillTimer(self.hwnd, TIMER_COLUMN);
+        return;
+    };
+    const now = w32.GetTickCount64();
+    if (c.done(now)) {
+        self.dropColumn();
+        log.info("pane sidebar column glide done width={d}", .{c.to_w});
+        self.window.syncPaneSidebar();
+        _ = w32.InvalidateRect(self.hwnd, null, 0);
+        return;
+    }
+    var cur: w32.RECT = undefined;
+    if (w32.GetClientRect(self.hwnd, &cur) == 0) return;
+    const w = c.widthAt(now);
+    if (w != cur.right - cur.left) {
+        _ = w32.SetWindowPos(self.hwnd, null, 0, 0, w, cur.bottom - cur.top, w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+    }
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+}
+
+/// One frame of the glide into `hdc` (`w` x `h`, the column as wide as it is
+/// drawn now): the frame it left fading out and the new mode's - painted
+/// live, at the width it goes to - fading in, both cut at the column's edge
+/// (`transition.composeColumn`). False when there is nothing to compose and
+/// the plain frame is painted instead.
+fn paintColumn(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
+    const c = &(self.column.?);
+    const old = c.old orelse return false;
+    if (c.h != h or w <= 0 or h <= 0 or c.to_w <= 0) return false;
+    const p = c.progress(w32.GetTickCount64());
+    const new = Dib32.create(hdc, c.to_w, h) orelse return false;
+    defer new.destroy();
+    const under = Dib32.create(hdc, w, h) orelse return false;
+    defer under.destroy();
+    const out = Dib32.create(hdc, w, h) orelse return false;
+    defer out.destroy();
+    self.paintFrame(new.dc, c.to_w, h);
+    self.paintEdgeBar(new.dc, c.to_w, h);
+    _ = w32.GdiFlush();
+    // What the window draws where neither card reaches: the desk in the
+    // elevated style, else the terminal background.
+    const t = self.theme();
+    if (self.window.deskBackdrop()) |d| copyDesk(under.pixels, w, h, d, t.bg) else {
+        @memset(under.pixels, (@as(u32, t.bg.r) << 16) | (@as(u32, t.bg.g) << 8) | t.bg.b);
+    }
+    transition.composeColumn(out.pixels, w, h, old.pixels, c.from_w, new.pixels, c.to_w, under.pixels, p);
     _ = w32.BitBlt(hdc, 0, 0, w, h, out.dc, 0, 0, w32.SRCCOPY);
     return true;
 }
@@ -3022,6 +3155,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             switch (wparam) {
                 TIMER_ANIM => self.onMotionTick(),
                 TIMER_XFADE => self.onTransitionTick(),
+                TIMER_COLUMN => self.onColumnTick(),
                 else => {},
             }
             return 0;

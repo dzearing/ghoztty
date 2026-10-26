@@ -1,8 +1,8 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-26T11:16:07-07:00",
-    "commit":  "1cd06080d",
+    "generated":  "2026-10-26T11:45:11-07:00",
+    "commit":  "67d0c2e87",
     "uncommitted":  [
                         "scripts/guard-due.ps1"
                     ],
@@ -37,7 +37,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "93e8a2126b7e7c3cd8b164991c2309984ec7962fa824fd71bc233dea2b88ca9b",
+                  "scripts/guard-due.ps1":  "888de4e1e1738b0031d60d16edc0cc4f582ddbd212910338565a74b2a57df696",
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "f055b029eedf4387b748f3e8e0e2b545e90023a017eddf18e5662024a1244ac8",
