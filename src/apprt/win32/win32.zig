@@ -2071,6 +2071,14 @@ pub const PS_SOLID: i32 = 0;
 /// (T711) is drawn with it, so a row seeded from the device cache is visibly
 /// unsettled by SHAPE rather than by color alone.
 pub const PS_DOT: i32 = 2;
+/// A pen with a caller-given dash pattern: the pane sidebar's empty tray is
+/// Mac's dashed well, 4 on / 3 off (T2276), which neither PS_DOT nor PS_DASH
+/// draws. A cosmetic user-style pen must be 1 pixel wide.
+pub const LOGBRUSH = extern struct { lbStyle: u32, lbColor: u32, lbHatch: usize };
+pub const BS_SOLID: u32 = 0;
+pub const PS_COSMETIC: u32 = 0;
+pub const PS_USERSTYLE: u32 = 7;
+pub extern "gdi32" fn ExtCreatePen(iPenStyle: u32, cWidth: u32, plbrush: *const LOGBRUSH, cStyle: u32, pstyle: ?[*]const u32) callconv(.winapi) ?*anyopaque;
 pub extern "gdi32" fn MoveToEx(hdc: HDC, x: i32, y: i32, lppt: ?*anyopaque) callconv(.winapi) i32;
 pub extern "gdi32" fn LineTo(hdc: HDC, x: i32, y: i32) callconv(.winapi) i32;
 

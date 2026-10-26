@@ -826,7 +826,8 @@ pub const Layout = struct {
     header: Rect = .{},
     /// Where the "PANES" caption starts (expanded).
     caption_x: i32 = 0,
-    /// The STASHED caption band, when anything is stashed (expanded), and the
+    /// The STASHED caption band - over the stashed rows, or the empty tray's
+    /// well (expanded) - and the
     /// hairline between the sections (both modes).
     stashed_caption: ?Rect = null,
     section_rule: ?Rect = null,
@@ -835,9 +836,8 @@ pub const Layout = struct {
     count: usize = 0,
     /// The grid/stashed boundary for the rail and the panel.
     first_stashed: usize = 0,
-    /// The empty "Drop to stash" slot a drag with nothing stashed shows
-    /// (T1844, `addDropSlot`): a row below the grid rows, or a tile on the
-    /// rail.
+    /// The empty tray's dashed well, while nothing is stashed (T1844, T2276,
+    /// `addEmptyTray`): a row below the grid rows, or a tile on the rail.
     drop_slot: ?Rect = null,
     /// The scrolled region (T1878, `pane_sidebar_scroll.apply`): the rows
     /// below the header and search field, or the rail's tiles below its
@@ -1152,12 +1152,15 @@ fn layoutMini(l: *Layout, items: []const Item, scale: f32, insets: RailInsets) v
     }
 }
 
-/// Add the empty "Drop to stash - it keeps running" slot below the grid
-/// rows (T1844, Mac's empty stash target): shown only during a pane drag
-/// with nothing stashed, so the target is visible. Behind the same section
-/// rule a stash would have; a one-line row in the panel, a tile on the rail.
-/// A no-op when something is stashed or nothing is shown.
-pub fn addDropSlot(l: *Layout, tm: TextMetrics, scale: f32) void {
+/// Add the empty tray below the grid rows (T1844, T2276; Mac 543489bca's
+/// `PaneSidebarEmptyStashSlot`): with nothing stashed, the tray is still
+/// there - it is a drop target - behind the same section rule a stash would
+/// have. The panel lays out the STASHED caption above it, as `layoutRows`
+/// does for a tray with rows; the slot is a one-line row there, a tile on the
+/// rail. Always laid out, drag or not: at rest it says what it is for, during
+/// a drag where to let go. A no-op when something is stashed or nothing is
+/// shown.
+pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
     if (l.mode == .hidden) return;
     // The outline places no empty slot: its own group sits among others, and
     // the whole sidebar is the stash target either way.
@@ -1171,7 +1174,9 @@ pub fn addDropSlot(l: *Layout, tm: TextMetrics, scale: f32) void {
         const below = if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom;
         const rule_y = below + sm;
         l.section_rule = .{ .left = area.left + fill, .top = rule_y, .right = area.right - fill, .bottom = rule_y + hair };
-        const top = rule_y + hair + sm;
+        const cap_h = toc.headerHeight(tm.caption_h, scale);
+        l.stashed_caption = .{ .left = area.left, .top = rule_y + sm, .right = area.right, .bottom = rule_y + sm + cap_h };
+        const top = rule_y + sm + cap_h;
         l.drop_slot = .{ .left = area.left + fill, .top = top, .right = area.right - fill, .bottom = top + rowHeight(false, tm, scale) };
         return;
     }
@@ -1754,22 +1759,30 @@ test "pane_sidebar: hit testing finds the toggle, rows, row buttons and nothing"
     try testing.expectEqual(Hit.none, hitTest(&hidden, 0, 0, s));
 }
 
-test "pane_sidebar: a drag with nothing stashed shows the drop slot below the grid (T1844)" {
+test "pane_sidebar: with nothing stashed the empty tray sits below the grid, caption and all (T1844, T2276)" {
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .two_line = true } };
     for (scales) |s| {
         const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
-        // The panel: a one-line row behind a rule, under the last row.
+        // The panel: a rule, the STASHED caption, then a one-line well -
+        // the same header a tray with rows has (Mac: always there).
         var l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
-        addDropSlot(&l, tm, s);
+        addEmptyTray(&l, tm, s);
         const slot = l.drop_slot.?;
         const rule = l.section_rule.?;
-        try testing.expect(rule.top >= l.items[1].bottom and slot.top >= rule.bottom);
+        const cap = l.stashed_caption.?;
+        try testing.expect(rule.top >= l.items[1].bottom and cap.top >= rule.bottom and slot.top >= cap.bottom);
+        // Laid out as a stashed row would be: where one lands, the caption
+        // does not move.
+        const one = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .two_line = true }, .{ .section = .stashed } };
+        const with = layout(.expanded, px(240, s), px(600, s), &one, tm, s);
+        try testing.expectEqual(with.stashed_caption.?, cap);
+        try testing.expectEqual(with.items[2].top, slot.top);
         try testing.expectEqual(rowHeight(false, tm, s), slot.height());
         try testing.expectEqual(l.items[1].left, slot.left);
         try testing.expectEqual(l.items[1].right, slot.right);
         // The rail: a tile on the tiles' column, spaced like a stashed group.
         var m = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
-        addDropSlot(&m, tm, s);
+        addEmptyTray(&m, tm, s);
         const tile = m.drop_slot.?;
         try testing.expectEqual(m.items[0].left, tile.left);
         try testing.expectEqual(m.items[0].width(), tile.width());
@@ -1778,16 +1791,28 @@ test "pane_sidebar: a drag with nothing stashed shows the drop slot below the gr
     }
 }
 
-test "pane_sidebar: no drop slot once something is stashed, or while hidden (T1844)" {
+test "pane_sidebar: no empty tray once something is stashed, or while hidden (T1844, T2276)" {
     const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
     const stashed = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
     var l = layout(.expanded, 240, 600, &stashed, tm, 1.0);
-    addDropSlot(&l, tm, 1.0);
+    const cap = l.stashed_caption.?;
+    addEmptyTray(&l, tm, 1.0);
     try testing.expectEqual(@as(?Rect, null), l.drop_slot);
+    // The tray's own caption is left where its rows put it.
+    try testing.expectEqual(cap, l.stashed_caption.?);
     const grid = [_]Item{.{ .section = .grid }};
     var h = layout(.hidden, 240, 600, &grid, tm, 1.0);
-    addDropSlot(&h, tm, 1.0);
+    addEmptyTray(&h, tm, 1.0);
     try testing.expectEqual(@as(?Rect, null), h.drop_slot);
+    try testing.expectEqual(@as(?Rect, null), h.stashed_caption);
+}
+
+test "pane_sidebar: an empty roster still lays out the tray under the header (T2276)" {
+    const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+    var l = layout(.expanded, 240, 600, &[_]Item{}, tm, 1.0);
+    addEmptyTray(&l, tm, 1.0);
+    try testing.expect(l.section_rule.?.top >= l.header.bottom);
+    try testing.expect(l.drop_slot.?.top >= l.stashed_caption.?.bottom);
 }
 
 // ---------------------------------------------------------------------------
@@ -1958,7 +1983,7 @@ test "pane_sidebar: the outline never adds the empty drop slot" {
     var f = outlineFixture(s);
     f.items[2].section = .grid; // nothing stashed here
     var l = layoutWith(.expanded, 240, 900, &f.items, f.lines[0..3], f.tm, s);
-    addDropSlot(&l, f.tm, s);
+    addEmptyTray(&l, f.tm, s);
     try testing.expect(l.drop_slot == null);
 }
 

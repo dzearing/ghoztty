@@ -262,8 +262,8 @@ edge: ?struct { start_dip: f32, start_x: i32, gutter: bool = false } = null,
 edge_hover: bool = false,
 /// The edge bar last painted, for the debug-log oracle.
 edge_bar_logged: ?gutter_bar.Strength = null,
-/// A pane drag is live somewhere (T1844): the empty "Drop to stash" slot
-/// shows while nothing is stashed.
+/// A pane drag is live somewhere (T1844): the empty tray's well brightens
+/// and says "Drop to stash" (T2276; it is there at rest too).
 drag_active: bool = false,
 
 /// Trash mode (T1845, Mac `isQuickKill`): every row and tile grows a red x
@@ -650,6 +650,11 @@ fn logRows(self: *PaneSidebar) void {
     w.print(" rules={d} scope={d},{d} trash={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY(), l.trash.centerX(), l.trash.centerY() }) catch {};
     self.logToggle(w, &l);
     logScroll(w, &l);
+    // The empty tray (T2276): its well's center, or `-` while something is
+    // stashed, and whether the STASHED caption is laid out over it.
+    if (l.drop_slot) |sl| {
+        w.print(" tray={d},{d} cap={d}", .{ sl.centerX(), sl.centerY(), @intFromBool(l.stashed_caption != null) }) catch {};
+    } else w.writeAll(" tray=-") catch {};
     log.debug("pane sidebar rows {s}", .{fbs.getWritten()});
 }
 
@@ -1077,7 +1082,9 @@ fn rawLayout(self: *PaneSidebar) pane_sidebar.Layout {
     const lines: ?[]const pane_sidebar.Line = if (self.all_windows) self.lines.items else null;
     const insets = self.window.paneSidebarInsets();
     var l = pane_sidebar.layoutIn(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, insets);
-    if (self.drag_active) pane_sidebar.addDropSlot(&l, self.metrics, self.scale);
+    // The empty tray is always there (T2276, Mac 543489bca): a drop target
+    // says so before a drag starts, not only once one is under way.
+    pane_sidebar.addEmptyTray(&l, self.metrics, self.scale);
     l.quick_kill = self.quick_kill;
     l.search_text = !self.search.isEmpty();
     return l;
@@ -1334,7 +1341,17 @@ const Theme = struct {
     secondary: u32,
     accent: color_math.Rgb,
     dark: bool,
+    /// The primary text as a color, for blends against the surface.
+    ink: color_math.Rgb,
 };
+
+/// The sidebar's hairlines - above all the tray's, the line a pane is dragged
+/// below to stash it: the primary at 22% over the surface, so it reads on
+/// glass (Mac 0a547522d `PaneSidebarDivider`; a 24-step shade, ~9%, all but
+/// vanished there).
+fn ruleColor(t: Theme) u32 {
+    return rgb(color_math.mix(t.surface, t.ink, 0.22));
+}
 
 fn theme(self: *const PaneSidebar) Theme {
     const c = self.window.app.config.background;
@@ -1351,6 +1368,7 @@ fn theme(self: *const PaneSidebar) Theme {
         .secondary = w32.RGB(secondary.r, secondary.g, secondary.b),
         .accent = chrome_theme.accentOn(surface, system_colors.accentCached()),
         .dark = !color_math.isLight(bg),
+        .ink = text,
     };
 }
 
@@ -1857,11 +1875,13 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("No matching panes"), r, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
     }
 
-    if (l.section_rule) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
+    if (l.section_rule) |r| fillRect(hdc, r, ruleColor(t));
     if (l.stashed_caption) |cap| {
         var buf: [32]u8 = undefined;
         const stashed = self.entries.items.len - l.first_stashed;
-        const text8 = std.fmt.bufPrint(&buf, "STASHED \u{00B7} {d}", .{stashed}) catch "STASHED";
+        // An empty tray's caption carries no count (Mac: the count only
+        // when the tray holds something).
+        const text8 = if (stashed == 0) "STASHED" else std.fmt.bufPrint(&buf, "STASHED \u{00B7} {d}", .{stashed}) catch "STASHED";
         var wbuf: [32]u16 = undefined;
         const wn = std.unicode.utf8ToUtf16Le(&wbuf, text8) catch 0;
         if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
@@ -2146,7 +2166,7 @@ fn paintKill(self: *PaneSidebar, hdc: w32.HDC, b: pane_sidebar.Rect, hot: bool, 
 /// before a stash, each window's STASHED caption, and the project and window
 /// headers. Rows are painted by the caller, as in the single roster.
 fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
-    const rule_color = rgb(shade(t.surface, if (t.dark) 24 else -24));
+    const rule_color = ruleColor(t);
     for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, rule_color);
     for (l.captions[0..l.caption_count]) |cap| {
         const stashed = if (cap.index < self.groups.items.len) self.groups.items[cap.index].stashed else 0;
@@ -2239,13 +2259,18 @@ fn textWidth(hdc: w32.HDC, text: []const u16) i32 {
     return r.right - r.left;
 }
 
-/// The empty "Drop to stash" slot (T1844), shown during a drag with nothing
-/// stashed: a recessed well with the stash glyph - and, as a row, Mac's
-/// label - so the target is visible before anything is in it.
+/// The empty tray's well (T1844, T2276; Mac 543489bca
+/// `PaneSidebarEmptyStashSlot`): a dashed outline with the stash glyph - and,
+/// as a row, what it is for. Faint at rest ("Drag a pane here to stash it"),
+/// brighter during a drag ("Drop to stash - it keeps running"). Lit when a
+/// drag would land in it by the drop highlight, which washes the slot
+/// (`drop_highlight` `.stash_slot`). Mac's tertiary ink is the secondary here:
+/// the design system's contrast floor has no fainter text, so the outline
+/// carries the rest/drag difference.
 fn paintDropSlot(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     const r = l.drop_slot orelse return;
     const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
-    fillRound(hdc, r, radius, rgb(shade(t.surface, if (t.dark) 10 else -10)));
+    strokeDashed(hdc, r, radius, self.scale, rgb(color_math.mix(t.surface, t.ink, if (self.drag_active) 0.30 else 0.14)));
     if (l.mode != .expanded) {
         glyph(hdc, self.scale, r, glyph_stash, 12, t.secondary);
         return;
@@ -2255,12 +2280,30 @@ fn paintDropSlot(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout
     const icon_r: pane_sidebar.Rect = .{ .left = r.left + text_inset, .top = r.top, .right = r.left + text_inset + icon_box, .bottom = r.bottom };
     glyph(hdc, self.scale, icon_r, glyph_stash, 12, t.secondary);
     if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-    drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("Drop to stash \u{2014} it keeps running"), .{
+    const label = if (self.drag_active)
+        std.unicode.utf8ToUtf16LeStringLiteral("Drop to stash \u{2014} it keeps running")
+    else
+        std.unicode.utf8ToUtf16LeStringLiteral("Drag a pane here to stash it");
+    drawText(hdc, label, .{
         .left = icon_r.right + pane_sidebar.px(8, self.scale),
         .top = r.top,
         .right = r.right - text_inset,
         .bottom = r.bottom,
     }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+}
+
+/// A 1 px dashed rounded outline on `r`: Mac's 4-on, 3-off dash, scaled to
+/// the DPI, with nothing filled.
+fn strokeDashed(hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, scale: f32, color: u32) void {
+    const dash = [2]u32{ @intCast(@max(pane_sidebar.px(4, scale), 1)), @intCast(@max(pane_sidebar.px(3, scale), 1)) };
+    const brush: w32.LOGBRUSH = .{ .lbStyle = w32.BS_SOLID, .lbColor = color, .lbHatch = 0 };
+    const pen = w32.ExtCreatePen(w32.PS_COSMETIC | w32.PS_USERSTYLE, 1, &brush, dash.len, &dash) orelse return;
+    defer _ = w32.DeleteObject(pen);
+    const old_pen = w32.SelectObject(hdc, pen);
+    defer _ = w32.SelectObject(hdc, old_pen);
+    const old_brush = w32.SelectObject(hdc, w32.GetStockObject(w32.NULL_BRUSH));
+    defer _ = w32.SelectObject(hdc, old_brush);
+    _ = w32.RoundRect(hdc, r.left, r.top, r.right, r.bottom, 2 * radius, 2 * radius);
 }
 
 fn paintRowButton(self: *PaneSidebar, hdc: w32.HDC, i: usize, b: pane_sidebar.Rect, section: pane_sidebar.Section, t: Theme) void {
@@ -2309,8 +2352,8 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     defer _ = w32.RestoreDC(hdc, saved);
     const vp = l.viewport;
     if (vp.height() > 0) _ = w32.IntersectClipRect(hdc, vp.left, vp.top, vp.right, vp.bottom);
-    if (l.section_rule) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
-    for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
+    if (l.section_rule) |r| fillRect(hdc, r, ruleColor(t));
+    for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, ruleColor(t));
 
     const emphasized = self.isEmphasized();
     const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);

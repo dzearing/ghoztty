@@ -15,6 +15,11 @@
 #      back on screen.
 #   3. The toggle turns the rail into the 240 DIP panel and the grid moves
 #      over by exactly the difference; the panel paints content too.
+#  3b. (T2276, Mac 543489bca) With nothing stashed and no drag live, the
+#      empty tray is still laid out: in the panel its STASHED caption over a
+#      painted dashed well below the last row, on the rail the well alone
+#      (the `tray=` field of the rows line). Step 4 checks it gives way to
+#      the stashed row once P is stashed.
 #   4. The first row's hover button stashes P (a grid pane); a click on the
 #      stashed tile in the rail brings it back.
 #   5. ctrl+shift+s hides the sidebar: no column, the grid starts at the
@@ -155,6 +160,31 @@ function Get-RowsLine([string]$Mode) {
         Items = $items
     }
 }
+# The empty tray on a rows line (T2276): ` tray=<x>,<y> cap=<0|1>` while
+# nothing is stashed, ` tray=-` once something is. Y and the last row's Y are
+# client coordinates.
+function Get-TrayState($rows) {
+    if ($null -eq $rows) { return $null }
+    $m = [regex]::Match($rows.Line, ' tray=(-|(-?\d+),(-?\d+) cap=(\d))')
+    if (-not $m.Success) { return @{ Present = $false; Raw = 'no tray field'; Cap = -1 } }
+    if ($m.Groups[1].Value -eq '-') { return @{ Present = $false; Raw = 'tray=-'; Cap = -1 } }
+    $last = if ($rows.Items.Count -gt 0) { $rows.Items[$rows.Items.Count - 1].Y } else { -1 }
+    return @{
+        Present = $true; Raw = $m.Value.Trim()
+        X = [int]$m.Groups[2].Value; Y = [int]$m.Groups[3].Value; Cap = [int]$m.Groups[4].Value
+        LastRowY = $last
+    }
+}
+# Distinct colors along the sidebar's client row $Y (a flat fill is 1).
+function Get-RowInk($sb, [int]$Y) {
+    try {
+        $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
+        $seen = @{}
+        for ($x = 0; $x -lt $shot.Bitmap.Width; $x++) { $seen[$shot.Bitmap.GetPixel($x, $Y).ToArgb()] = 1 }
+        Close-TestWindowPixels -Shot $shot
+        return $seen.Count
+    } catch { return 0 }
+}
 function Click($top, $target, $pt) {
     return Send-TestMouse -Window $top -Target ([IntPtr]$target) -X $pt.X -Y $pt.Y -Action click
 }
@@ -250,6 +280,20 @@ try {
     $c = Save-Shot $sb 'panel'
     Assert "the panel paints content, not one flat fill" ($null -ne $c -and $c.Distinct -ge 3)
 
+    "== 3b: with nothing stashed, the empty tray is there at rest (T2276)"
+    # Mac 543489bca: the tray is a drop target, so it is always in the list -
+    # the STASHED caption over a dashed well - not only during a drag.
+    $panelTray = Get-TrayState (Get-RowsLine 'expanded')
+    Assert "the panel lays out the empty tray with no drag live ($($panelTray.Raw))" ($null -ne $panelTray -and $panelTray.Present)
+    if ($panelTray -and $panelTray.Present) {
+        Assert "its STASHED caption is laid out over it" ($panelTray.Cap -eq 1)
+        Assert "it sits below the last pane row ($($panelTray.Y) vs $($panelTray.LastRowY))" ($panelTray.Y -gt $panelTray.LastRowY)
+        $ink = Get-RowInk $sb $panelTray.Y
+        Assert "the well paints something (distinct colors across it: $ink)" ($ink -ge 3)
+    }
+    $railTray = Get-TrayState $railRows
+    Assert "the rail lays out the empty tray too, with no caption ($($railTray.Raw))" ($null -ne $railTray -and $railTray.Present -and $railTray.Cap -eq 0)
+
     "== 4: a row's hover button stashes, a rail tile restores"
     # Row 0 is P. Its compact button: 20 DIP, sm (4) from the row's trailing
     # edge, which is the 8 DIP fill inset in from the panel's; the button is
@@ -265,6 +309,10 @@ try {
     Assert "P is stashed by its row's button" (Wait-Stashed $pId0 $true)
     Start-Sleep -Milliseconds 400
     Assert "s1 holds the screen alone" ((@(Get-Panes $top | Where-Object Visible)).Count -eq 1)
+    # The tray holds P now: its rows take the well's place (T2276).
+    Start-Sleep -Milliseconds 300
+    $heldTray = Get-TrayState (Get-RowsLine 'expanded')
+    Assert "with P stashed the empty well is gone ($(if ($heldTray) { $heldTray.Raw }))" ($null -ne $heldTray -and -not $heldTray.Present)
     # Back to the rail, where the stashed tile is at a computable spot.
     $sb = Get-Sidebar $top
     [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
