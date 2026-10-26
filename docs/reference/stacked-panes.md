@@ -120,6 +120,13 @@ from the run onto the blade behind it and stops at its own sides; the shadow
 follows `collapse`, so it comes on as a card narrows into its strip rather than
 snapping in when the glide lands.
 
+**A strip that stays a strip never moves** when another pane collapses between
+it and the run: in a glide it moves by its outer edge (the one that shows), and
+takes its new reach under the newcomer (`bladeTuck`) only when the glide is
+over, once the newcomer has landed over it — reaching out sooner put its edge
+in the gutter ahead of the newcomer and jiggled a trailing strip's outer edge
+(`PaneStageView.stepGlide`, `aStripStaysPutWhenAnotherCollapsesOntoIt`).
+
 Every resizer takes the mouse **in its gutter and nowhere else** (`Divider.gutter`, `StackHandle.gutter`): split
 dividers, grips between cards, the grip where the run meets its strips, and the
 pane sidebar's edge — expanded, ALL of the gutter between panel and panes and

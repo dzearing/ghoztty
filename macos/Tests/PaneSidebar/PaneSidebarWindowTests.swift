@@ -669,6 +669,157 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 
+    /// A rail tile has a hairline border, so a bare glyph reads as a button
+    /// — on glass and flat, light and dark — and the expanded panel's rows
+    /// do not. Renders the tiles offscreen (TCC-free; `ImageRenderer`) and
+    /// checks the border is darker/lighter than the tile's inside, then
+    /// captures the real window through an expand and a collapse, mid-glide
+    /// included, to /tmp/pane-sidebar-snapshots/rail-border-*.png.
+    @Test func railTilesHaveABorderThatFadesWithTheMode() async throws {
+        let h = try await open(expanded: false)
+        h.panes[1].surfaceView?.activityState = .busy
+        await settle(0.2)
+        try? FileManager.default.createDirectory(atPath: "/tmp/pane-sidebar-snapshots", withIntermediateDirectories: true)
+        let tree = h.controller.surfaceTree
+        let scale: CGFloat = 2
+        let width = PaneSidebarState.railCardWidth
+        for (name, rail, dark, glass) in [
+            ("glass-dark", true, true, true), ("glass-light", true, false, true),
+            ("flat-dark", true, true, false), ("flat-light", true, false, false),
+            ("rows-dark", false, true, true),
+        ] {
+            let base = dark ? Color(white: 0.12) : Color(white: 0.96)
+            let rows = VStack(spacing: 0) {
+                ForEach(tree.visibleLeaves) { pane in
+                    PaneSidebarRow(pane: pane, owner: h.controller, isStashed: false,
+                                   isSelected: pane === tree.visibleLeaves.first, isForeign: false,
+                                   isRail: rail, isBeingDragged: false)
+                }
+            }
+            .padding(.vertical, 8)
+            .frame(width: rail ? width : 240, alignment: .top)
+            .background(glass ? GlassCard.fill(isLightBackground: !dark) : AnyShapeStyle(Color.clear))
+            .background(glass
+                ? AnyShapeStyle(LinearGradient(colors: dark ? [.indigo, .black] : [.mint, .white],
+                                               startPoint: .top, endPoint: .bottom))
+                : AnyShapeStyle(base))
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .environment(\.paneSidebarEmphasized, true)
+            .environment(\.paneSidebarInteractive, false)
+            let renderer = ImageRenderer(content: rows)
+            renderer.scale = scale
+            let image = try #require(renderer.cgImage)
+            let rep = NSBitmapImageRep(cgImage: image)
+            try? rep.representation(using: .png, properties: [:])?.write(
+                to: URL(fileURLWithPath: "/tmp/pane-sidebar-snapshots/rail-border-\(name).png"))
+            // The last tile (not selected, not busy): its left edge against
+            // just inside it, at its middle.
+            let y = Int((8 + PaneSidebarRow.height * CGFloat(tree.visibleLeaves.count - 1)
+                         + PaneSidebarRow.height / 2) * scale)
+            func px(_ x: CGFloat) -> Double {
+                let c = rep.colorAt(x: Int(x * scale), y: y)!.usingColorSpace(.sRGB)!
+                return Double(c.redComponent + c.greenComponent + c.blueComponent) / 3 * 255
+            }
+            let edge = px(SidePanelRow.fillInset + 0.25), inside = px(SidePanelRow.fillInset + 4)
+            if rail {
+                #expect(abs(edge - inside) > 4, "\(name): no border on the tile (edge \(edge), inside \(inside))")
+            } else {
+                #expect(abs(edge - inside) < 2, "\(name): a full row drew a border (edge \(edge), inside \(inside))")
+            }
+        }
+
+        // The real window: the border goes with the rail as it crossfades
+        // into the panel, and comes back with it.
+        for appearance in [NSAppearance.Name.darkAqua, .aqua] {
+            h.window.appearance = NSAppearance(named: appearance)
+            let tag = appearance == .darkAqua ? "dark" : "light"
+            await settle(0.4)
+            _ = try await captureComposited(h.window, "rail-border-window-\(tag)-collapsed")
+            h.controller.setPaneSidebarExpanded(true, cause: "test")
+            await settle(0.07)
+            _ = try await captureComposited(h.window, "rail-border-window-\(tag)-expanding")
+            await settle(0.5)
+            _ = try await captureComposited(h.window, "rail-border-window-\(tag)-expanded")
+            h.controller.setPaneSidebarExpanded(false, cause: "test")
+            await settle(0.07)
+            _ = try await captureComposited(h.window, "rail-border-window-\(tag)-collapsing")
+            await settle(0.5)
+        }
+
+        // The busy sheen: the glint at a few moments, and the drift fading
+        // out and back in as work stops and starts, in both modes.
+        h.window.appearance = NSAppearance(named: .darkAqua)
+        for expanded in [false, true] {
+            h.controller.setPaneSidebarExpanded(expanded, cause: "test")
+            await settle(0.6)
+            let mode = expanded ? "expanded" : "rail"
+            for i in 0..<5 {
+                _ = try await captureComposited(h.window, "busy-\(mode)-\(i)")
+                await settle(0.25)
+            }
+            h.panes[1].surfaceView?.activityState = .idle
+            await settle(0.2)
+            _ = try await captureComposited(h.window, "busy-\(mode)-stopping")
+            await settle(0.8)
+            _ = try await captureComposited(h.window, "busy-\(mode)-stopped")
+            h.panes[1].surfaceView?.activityState = .busy
+            await settle(0.2)
+            _ = try await captureComposited(h.window, "busy-\(mode)-starting")
+            await settle(0.8)
+        }
+        await close(h)
+    }
+
+    /// Every pane is the same glass: a split of an untinted pane is
+    /// untinted, however many generations down, and a split of a `--color`
+    /// pane takes that exact color — never a lighter shade of it.
+    @Test func everySplitIsTheSameGlass() async throws {
+        let h = try await open(expanded: true, width: 1400)
+        var parent = try #require(h.panes[2].surfaceView)
+        for _ in 0..<3 {
+            let child = try #require(h.controller.newSplit(at: parent, direction: .right, focus: false))
+            #expect(child.backgroundTintNSColor == nil, "a split of an untinted pane got a tint")
+            parent = child
+        }
+        let red = NSColor(srgbRed: 0.3, green: 0.05, blue: 0.05, alpha: 1)
+        var config = Ghostty.SurfaceConfiguration()
+        config.backgroundTint = Color(red)
+        config.backgroundTintNSColor = red
+        let tinted = try #require(h.controller.newSplit(at: parent, direction: .down, baseConfig: config, focus: false))
+        let child = try #require(h.controller.newSplit(at: tinted, direction: .down, focus: false))
+        #expect(child.backgroundTintNSColor == red, "a --color pane's split is not its color")
+        await settle(0.8)
+        _ = try await captureComposited(h.window, "same-glass")
+        await close(h)
+    }
+
+    /// Nothing in the list touches: pills, tiles, window and project headers
+    /// and the tray all stand apart, in both modes. Captures the real window
+    /// (all windows, grouped by project; this window's list; the rail) to
+    /// /tmp/pane-sidebar-snapshots/spacing-*.png.
+    @Test func sidebarItemsNeverTouch() async throws {
+        var others: [Harness] = []
+        for title in ["proj: a", "proj: b", "zeta: c"] {
+            let o = try await open(expanded: true)
+            o.controller.titleOverride = title
+            others.append(o)
+        }
+        let h = try await open(expanded: true)
+        h.controller.titleOverride = "proj: this"
+        h.panes[1].surfaceView?.activityState = .busy
+        h.controller.paneSidebarState.showsAllWindows = true
+        await settle(1.0)
+        _ = try await captureComposited(h.window, "spacing-all-windows")
+        h.controller.paneSidebarState.showsAllWindows = false
+        await settle(0.6)
+        _ = try await captureComposited(h.window, "spacing-this-window")
+        h.controller.setPaneSidebarExpanded(false, cause: "test")
+        await settle(0.6)
+        _ = try await captureComposited(h.window, "spacing-rail")
+        await close(h)
+        for o in others { await close(o) }
+    }
+
     // MARK: Layout
 
     /// Expanded is the rail's card, wider: the same margins, top and

@@ -40,6 +40,11 @@ terminals their theme color. An explicit `--color=#hex`, `random` on a split,
 and `random` in the `flat` style still tint the terminal background.
 (See also `docs/design/window-color.md`.)
 
+**Every pane in a window is the same glass.** A split inherits its parent's
+`--color` tint unchanged, or none (`newSplit`); nothing shifts a new pane's
+shade. (Splits used to be lightened 5% per generation "for depth", so each new
+pane came out brighter than the last.)
+
 ## Glass panes (`macos-pane-glass`, default `true`, elevated only)
 
 Each pane is a translucent sheet tinted with the terminal's own background

@@ -37,8 +37,11 @@ struct PaneSidebarRow: View {
     private var onAccent: Bool { isSelected && isEmphasized }
 
     /// Every row's height, full or rail: one number, so a pane's icon sits at
-    /// the same height whether the sidebar is expanded or collapsed.
-    static let height: CGFloat = 38
+    /// the same height whether the sidebar is expanded or collapsed. Its pill
+    /// is `height - gap` (37), centered…
+    static let height: CGFloat = 41
+    /// …so no two pills — or a pill and anything next to it — ever touch.
+    static let gap: CGFloat = 4
 
     var body: some View {
         Group {
@@ -83,7 +86,7 @@ struct PaneSidebarRow: View {
                 // Room for the trailing button, so text never runs under it.
                 Color.clear.frame(width: trailingButtonWidth, height: 1)
             }
-            .frame(height: Self.height - 1)
+            .frame(height: Self.height - Self.gap)
             .padding(.leading, SidePanelRow.textInset + indent)
             .padding(.trailing, SidePanelRow.textInset)
             .background(busySheen)
@@ -108,7 +111,7 @@ struct PaneSidebarRow: View {
                 .padding(.trailing, Self.trailingButtonInset)
         }
         .padding(.horizontal, SidePanelRow.fillInset)
-        .padding(.vertical, 0.5)
+        .padding(.vertical, Self.gap / 2)
         .help(rowHelp)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
@@ -180,9 +183,10 @@ struct PaneSidebarRow: View {
                 interaction
             }
             .frame(maxWidth: .infinity)
-            .frame(height: Self.height - 1)
+            .frame(height: Self.height - Self.gap)
             .background(busySheen)
             .background(rowFill)
+            .overlay(tileBorder)
             .background(rowHover)
 
             if pane.bell && isStashed {
@@ -194,24 +198,60 @@ struct PaneSidebarRow: View {
             }
         }
         .padding(.horizontal, SidePanelRow.fillInset)
-        .padding(.vertical, 0.5)
+        .padding(.vertical, Self.gap / 2)
         .help(rowHelp)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    /// Busy: a faint band of light sweeps across the row's pill from right to
-    /// left — the same in both modes, so a tile is its row without the text.
+    /// A tile's rim, so a bare glyph on the rail reads as a button. Rail
+    /// only: a full row has its text to say that. Glassy, as a pane card's
+    /// rim is (`PaneCard.glassCard`): the same 0.5pt hairline at the same
+    /// strength, lit from above — brighter along the top edge, fading down
+    /// it — rather than one solid line. It fades with the rail itself as the
+    /// sidebar expands or collapses (the rail and the panel crossfade on
+    /// `PaneSidebarState.columnAnimation`), never snapping at the mode switch.
+    private var tileBorder: some View {
+        RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+            .strokeBorder(Self.rim(onAccent: onAccent, emphasized: isHovered, scheme: colorScheme),
+                          lineWidth: Self.rimWidth)
+            .allowsHitTesting(false)
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// A pane card's hairline.
+    static let rimWidth: CGFloat = 0.5
+
+    /// Lit from above: the top edge at about twice the pane rim's strength,
+    /// the bottom at about half of it.
+    static func rim(onAccent: Bool, emphasized: Bool, scheme: ColorScheme) -> LinearGradient {
+        let (top, bottom): (Color, Color) = if onAccent {
+            (.white.opacity(0.35), .white.opacity(0.1))
+        } else if scheme == .dark {
+            (.white.opacity(emphasized ? 0.32 : 0.22), .white.opacity(emphasized ? 0.1 : 0.05))
+        } else {
+            (.black.opacity(emphasized ? 0.16 : 0.1), .black.opacity(emphasized ? 0.08 : 0.04))
+        }
+        return LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom)
+    }
+
+    /// Busy: a slanted band of light sweeps across the row's pill from right
+    /// to left over a slow, soft drift — the same in both modes, so a tile is
+    /// its row without the text.
     @ViewBuilder
     private var busySheen: some View {
         if isBusy && !reduceMotion {
-            // Faded in, so it never pops on when work starts.
+            // Faded in and out, slowly, so it never pops on or off as work
+            // starts and stops.
             PaneSidebarTileSheenLayer(cornerRadius: SidePanelRow.cornerRadius)
                 .accessibilityLabel("Busy")
-                .transition(.opacity.animation(.easeOut(duration: 0.25)))
+                .transition(.opacity.animation(Self.busyFade))
         }
     }
+
+    static let busyFade: Animation = .easeInOut(duration: 0.6)
 
     // MARK: Interaction
 

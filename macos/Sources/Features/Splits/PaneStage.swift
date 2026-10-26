@@ -158,6 +158,11 @@ final class PaneStageView: NSView {
         var goingInSize: [UUID: CGSize] = [:]
         /// The size a card coming out of its strip was held at there.
         var comingOutSize: [UUID: CGSize] = [:]
+        /// How long a strip was along the stack when the glide found it (or
+        /// when it reached its strip): a strip gaining its reach under the
+        /// strip in front (`bladeTuck`) takes it only when the glide is over,
+        /// once that one has landed over it.
+        var stripLength: [UUID: CGFloat] = [:]
         var targets: [UUID: PaneStage.Card] = [:]
         var environment: EnvironmentValues
         var style: PaneStage.Style
@@ -215,6 +220,7 @@ final class PaneStageView: NSView {
                 let wasCard = view.placedFrame != nil && !view.isContentHidden
                 glide.drawn[id] = (view.placedTab?.rect ?? view.placedFrame)?.offsetBy(dx: seedOffset, dy: 0) ?? to
                 glide.asCard[id] = view.placedFrame == nil ? !card.leaf.isTucked : wasCard
+                if let tab = view.placedTab { glide.stripLength[id] = Self.length(tab.rect, tab.axis) }
                 if wasCard, let size = view.laidOutSize ?? view.placedFrame?.size { glide.startSize[id] = size }
             }
             let drawn = glide.drawn[id] ?? to
@@ -259,7 +265,7 @@ final class PaneStageView: NSView {
             for key in [id] {
                 glide.drawn[key] = nil; glide.asCard[key] = nil; glide.startSize[key] = nil
                 glide.stripLeads[key] = nil; glide.goingInSize[key] = nil; glide.targets[key] = nil
-                glide.comingOutSize[key] = nil
+                glide.comingOutSize[key] = nil; glide.stripLength[key] = nil
             }
         }
         if subviews != order { subviews = order }
@@ -273,6 +279,11 @@ final class PaneStageView: NSView {
             glideTimer = timer
         }
         stepGlide()
+    }
+
+    /// How long `rect` is along a stack running along `axis`.
+    private static func length(_ rect: CGRect, _ axis: PaneLayout.Direction) -> CGFloat {
+        axis == .vertical ? rect.height : rect.width
     }
 
     /// Whether `strip` lies on the leading side of `card`, along the stack.
@@ -299,6 +310,9 @@ final class PaneStageView: NSView {
             if next != to { settled = false }
             // A card that reached its strip is the strip.
             if card.leaf.isTucked, next == to {
+                if glide.asCard[id] == true, let axis = card.leaf.tabAxis {
+                    glide.stripLength[id] = Self.length(to, axis)
+                }
                 glide.asCard[id] = false
                 glide.startSize[id] = nil
                 glide.goingInSize[id] = nil
@@ -325,10 +339,31 @@ final class PaneStageView: NSView {
                 leaf.tab = nil
                 leaf.isSliver = false
             } else {
-                // A strip, moved along with the row.
-                let dx = next.minX - to.minX, dy = next.minY - to.minY
+                // A strip, moved along with the row by its OUTER edge — the
+                // one that shows. A strip that gains its reach under the
+                // strip in front (a pane collapsing between it and the run)
+                // keeps its length until the glide is over: reaching out
+                // sooner put its edge in the gutter ahead of the newcomer,
+                // and a trailing strip's outer edge jumped out by the reach
+                // and eased back — a jiggle in a strip that should not move.
+                // Losing the reach is immediate, under the strip in front.
+                let axis = card.leaf.tabAxis ?? .horizontal
+                let leads = card.leaf.stripLeads ?? true
+                let target = Self.length(to, axis)
+                let length = Swift.min(glide.stripLength[id] ?? target, target)
+                var tab = next
+                switch (axis, leads) {
+                case (.horizontal, true): tab.size.width = length
+                case (.horizontal, false): tab = CGRect(x: next.maxX - length, y: next.minY, width: length, height: next.height)
+                case (.vertical, true): tab.size.height = length
+                case (.vertical, false): tab = CGRect(x: next.minX, y: next.maxY - length, width: next.width, height: length)
+                }
+                // Across the stack the strip is the target's size.
+                if axis == .horizontal { tab.size.height = to.height } else { tab.size.width = to.width }
+                let dx = leads || axis == .vertical ? next.minX - to.minX : next.maxX - to.maxX
+                let dy = leads || axis == .horizontal ? next.minY - to.minY : next.maxY - to.maxY
                 leaf.frame = leaf.frame.offsetBy(dx: dx, dy: dy)
-                leaf.tab = leaf.tab?.offsetBy(dx: dx, dy: dy)
+                leaf.tab = tab
             }
             if glide.asCard[id] != true { view.glideAnchor = nil }
             view.apply(
