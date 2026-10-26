@@ -23,6 +23,13 @@
 #      second's panel too.
 #   6. The edge drags the open card as well: unpinned, the card opened over
 #      the grid takes the dragged width (its window grows with it).
+#   2b. T2265 (Mac a81db68f9 + 5e4f30144): the flat grip shows the split
+#      dividers' accent gutter bar - hovered, then at full strength while
+#      dragged - and letting go leaves none lit.
+#   7. T2265, elevated: the pinned panel resizes from the GUTTER beside it
+#      (the grid's margin, the window's own pixels), not from a band inside
+#      the panel; the gutter lights its bar on hover and while dragged, and
+#      none is left lit after the release.
 #
 # The app runs on a background desktop throughout and never takes the user's
 # foreground - asserted by the foreground watcher, not assumed.
@@ -86,6 +93,10 @@ function Invoke-EdgeDrag($top, $target, [int]$x0, [int]$y, [double[]]$steps) {
 function Get-PanelEdgeX($sb) { $sb.Right - 2 }
 function Get-LogSince([int]$From) { @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $From) }
 function Get-LogCount { @(Get-Content $script:errlog -ErrorAction SilentlyContinue).Count }
+# The strengths a log slice names for one bar, in order (`<prefix> (\w+)`).
+function Get-BarStates([string[]]$Lines, [string]$Prefix) {
+    @($Lines | ForEach-Object { if ($_ -match "$Prefix (\w+)") { $Matches[1] } })
+}
 
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
 $transcript = New-TestTranscript -Name 't1846'
@@ -148,6 +159,21 @@ try {
     Assert "+100 DIP -> 280 ($($sb.Width) vs $(Px 280))" (Near $sb.Width (Px 280))
     $p = Get-Panes $top | Where-Object { $_.Hwnd -eq $hP }
     Assert "the grid starts right after the new column (P.left $($p.Left), panel.right $($sb.Right))" ($p.Left -ge $sb.Right -and $p.Left - $sb.Right -le (Px 4))
+
+    "== 2b: the flat grip shows Mac's accent gutter bar (T2265)"
+    $from = Get-LogCount
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-PanelEdgeX $sb) -Y $ey -Action move)
+    Start-Sleep -Milliseconds 400
+    $lines = Get-LogSince $from
+    Assert "hovering the grip lights its bar (log: edge hover=rail)" (@($lines | Where-Object { $_ -match 'pane sidebar edge hover=rail' }).Count -ge 1)
+    $from = Get-LogCount
+    [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(10, 0))
+    $lines = Get-LogSince $from
+    $bars = @(Get-BarStates $lines 'pane sidebar edge bar')
+    Assert "dragging it shows the bar at full strength (painted: $($bars -join ','))" ($bars -contains 'drag')
+    Assert "letting go leaves no bar lit (last painted: $(if ($bars.Count) { $bars[-1] }))" ($bars.Count -gt 0 -and $bars[-1] -eq 'none')
+    $sb = Get-Sidebar $top
+    Assert "a there-and-back drag kept the width ($($sb.Width) vs $(Px 280))" (Near $sb.Width (Px 280))
 
     "== 3: it stops at 380 and at 180, and never unpins"
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(200, 500))
@@ -216,6 +242,56 @@ try {
         Assert "the card grew by 60 DIP ($($cr.Width) -> $($cr2.Width))" (Near ($cr2.Width - $cr.Width) (Px 60))
         Assert "and stayed unpinned (log)" (@($lines | Where-Object { $_ -match 'edge drag end pinned=false width=280' }).Count -eq 1)
     }
+    Assert "no crash (flat)" (-not ($app.Process -and $app.Process.HasExited))
+
+    "== 7: elevated, the pinned panel resizes from the gutter beside it (T2265)"
+    $launched += $script:GhozttyTestDesktopPids
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+    $script:errlog = Join-Path $tmp 'app-stderr-elevated.log'
+    $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false', '--macos-pane-style=elevated')
+    Start-Sleep -Seconds 3
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: elevated top window not found"; $script:failures++; return }
+    [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
+    Start-Sleep -Milliseconds 600
+    $hP = (@(Get-Panes $top))[0].Hwnd
+    [void](Invoke-Cli "+split --direction=right --name=s1")
+    Start-Sleep -Milliseconds 900
+    $sb = Get-Sidebar $top
+    Assert "setup: the elevated rail is up ($($sb.Width) vs $(Px 54))" ($null -ne $sb -and (Near $sb.Width (Px 54)))
+    if ($null -eq $sb) { return }
+    # The elevated rail's card: a 10 DIP leading margin, the 44 DIP card,
+    # no trailing inset - its edge band ends at the column's.
+    $ey = $sb.Top + (Px 300)
+    [void](Invoke-EdgeDrag $top $sb.Hwnd ($sb.Right - 1) $ey @(40, 80, 90))
+    $sb = Get-Sidebar $top
+    Assert "setup: the rail pulled out pins at the 180 minimum ($($sb.Width))" (Near $sb.Width (Px 180))
+    $from = Get-LogCount
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Right - 2) -Y $ey -Action click)
+    Start-Sleep -Milliseconds 400
+    $lines = Get-LogSince $from
+    Assert "a press just inside the panel's edge is not a drag any more (Mac pinnedEdgeGrip)" (@($lines | Where-Object { $_ -match 'edge drag start' }).Count -eq 0)
+    # The gutter: the grid's 10 DIP margin, right of the panel.
+    $gx = $sb.Right + [int]((Px 10) / 2)
+    $from = Get-LogCount
+    [void](Send-TestMouse -Window $top -Target $top -X $gx -Y $ey -Action move)
+    Start-Sleep -Milliseconds 400
+    $lines = Get-LogSince $from
+    Assert "hovering the gutter lights its bar (log: sidebar edge hover=true)" (@($lines | Where-Object { $_ -match 'sidebar edge hover=true' }).Count -ge 1)
+    $step = if ($NegativeControl) { 0 } else { 100 }
+    $from = Get-LogCount
+    $ok = Invoke-EdgeDrag $top $top $gx $ey @(($step / 2), $step)
+    $sb = Get-Sidebar $top
+    $lines = Get-LogSince $from
+    $bars = @(Get-BarStates $lines 'gutter bar sidebar_edge')
+    Assert "the press reached the gutter" $ok
+    Assert "the gutter drags the panel (log: edge drag start surface=rail mode=expanded from=180)" (@($lines | Where-Object { $_ -match 'pane sidebar edge drag start surface=rail mode=expanded from=180' }).Count -eq 1)
+    Assert "+100 DIP -> 280 ($($sb.Width) vs $(Px 280))" (Near $sb.Width (Px 280))
+    Assert "the dragged gutter shows the bar at full strength (painted: $($bars -join ','))" ($bars -contains 'drag')
+    $last = @($lines | Where-Object { $_ -match 'gutter bar ' } | Select-Object -Last 1)
+    Assert "letting go leaves no bar lit (last: $last)" ($last.Count -eq 1 -and $last[0] -match 'gutter bar none')
+    $p = Get-Panes $top | Where-Object { $_.Hwnd -eq $hP }
+    Assert "the grid keeps its margin beside the new panel (P.left $($p.Left), panel.right $($sb.Right))" ($p.Left - $sb.Right -ge (Px 10) - 1 -and $p.Left - $sb.Right -le (Px 14))
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

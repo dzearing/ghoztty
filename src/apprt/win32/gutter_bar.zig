@@ -58,10 +58,13 @@ pub const Strength = enum {
     }
 };
 
-/// A gutter the window can name: a split divider, or a stack grip.
+/// A gutter the window can name: a split divider, a stack grip, or the
+/// gutter beside the pinned pane sidebar that resizes it (T2265; the elevated
+/// style's - the flat one's grip lies inside the panel, which paints its own).
 pub const Gutter = union(enum) {
     divider: u16,
     grip: usize,
+    sidebar_edge,
 
     pub fn eql(a: Gutter, b: Gutter) bool {
         return std.meta.eql(a, b);
@@ -75,6 +78,15 @@ pub const Lit = struct { gutter: Gutter, strength: Strength };
 pub fn lit(hovered: ?Gutter, dragged: ?Gutter) ?Lit {
     if (dragged) |d| return .{ .gutter = d, .strength = .drag };
     if (hovered) |h| return .{ .gutter = h, .strength = .hover };
+    return null;
+}
+
+/// The bar a view with ONE draggable edge shows (T2265: the pinned sidebar's
+/// and the viewer side panel's, Mac `SidePanelResizeHandle.gutterBar`): full
+/// while that edge is dragged, half while it is hovered, else none.
+pub fn single(hovered: bool, dragged: bool) ?Strength {
+    if (dragged) return .drag;
+    if (hovered) return .hover;
     return null;
 }
 
@@ -193,6 +205,14 @@ test "lit: one bar at a time, the drag's outranks the hover" {
     const drg = lit(b, a).?;
     try std.testing.expect(drg.gutter.eql(a));
     try std.testing.expectEqual(Strength.drag, drg.strength);
+}
+
+test "single: a one-edge view's bar - the drag's full, the hover's half" {
+    try std.testing.expect(single(false, false) == null);
+    try std.testing.expectEqual(Strength.hover, single(true, false).?);
+    try std.testing.expectEqual(Strength.drag, single(false, true).?);
+    // A drag the pointer has wandered off is still the drag's bar.
+    try std.testing.expectEqual(Strength.drag, single(true, true).?);
 }
 
 test "Strength: half on hover, full while dragged" {

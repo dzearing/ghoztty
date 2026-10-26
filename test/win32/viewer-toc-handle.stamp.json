@@ -1,0 +1,17 @@
+{
+    "guard":  "viewer-toc-handle",
+    "script":  "test/win32/viewer-toc-handle.ps1",
+    "generated":  "2026-10-25T20:04:21-07:00",
+    "commit":  "6ee39e9f9",
+    "uncommitted":  [
+                        "src/apprt/win32/gutter_bar_dc.zig",
+                        "src/apprt/win32/ViewerTOCPanel.zig",
+                        "test/win32/viewer-toc-handle.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/gutter_bar_dc.zig":  "01173ddfd1b088710c95a3ac53ef549e3d944b0fb35df79c7760174c8b87ec4d",
+                  "src/apprt/win32/viewer_toc_layout.zig":  "41065c7977554bceb2594fd41bad14d46379f43409565bc29f42995e0ef42f52",
+                  "src/apprt/win32/ViewerTOCPanel.zig":  "e499a3ebb048b005cf83c9691c8675b042a746eb19cd9fc512d1c346d4c11bec",
+                  "test/win32/viewer-toc-handle.ps1":  "c03d9bea47d45df56e8df941ddc0e2156e4af4b5474a2ecf2ec4e1672b97ab9d"
+              }
+}

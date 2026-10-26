@@ -798,6 +798,9 @@ hover_split: ?SplitTree(PaneView).Node.Handle = null,
 /// whose gutter the pointer is over (T2253): it shows the gutter's accent
 /// bar, as a hovered divider does. Dropped with `hover_split`.
 hover_grip: ?usize = null,
+/// The pointer is over the gutter beside the pinned pane sidebar - the
+/// elevated style's grip that resizes it (T2265) - so its accent bar shows.
+hover_sidebar_edge: bool = false,
 /// The gutter bar the last paint showed, so the debug oracle logs a change
 /// rather than every frame of a drag (T2253).
 gutter_bar_logged: ?gutter_bar.Lit = null,
@@ -8701,9 +8704,9 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     }
     // The hovered or dragged gutter's accent bar (T2253).
     const bar: ?PaneDesk.Bar = blk: {
-        var grid = self.stackGrid() orelse break :blk null;
-        defer grid.deinit();
-        const lit = self.litGutterBar(&grid) orelse break :blk null;
+        var grid = self.stackGrid();
+        defer if (grid) |*g| g.deinit();
+        const lit = self.litGutterBar(if (grid) |*g| g else null) orelse break :blk null;
         break :blk .{
             .core = .{
                 .left = lit.core.left - area.left,
@@ -9390,12 +9393,71 @@ fn recheckGutterHover(self: *Window) void {
     if (w32.GetCursorPos_(&pt) == 0) {
         self.setDividerHover(null);
         self.setGripHover(null);
+        self.setSidebarEdgeHover(false);
         return;
     }
+    const over = w32.WindowFromPoint(pt) == hwnd;
     _ = w32.ScreenToClient(hwnd, &pt);
+    self.setSidebarEdgeHover(over and self.onSidebarEdge(pt.x, pt.y));
     const div = self.hitTestDivider(pt.x, pt.y);
     self.setDividerHover(if (div) |hit| hit.handle else null);
     self.setGripHover(if (div == null) if (self.hitTestStackGrip(pt.x, pt.y)) |g| g.index else null else null);
+}
+
+/// The gutter beside the pinned pane sidebar that resizes it, in client
+/// pixels (T2265; Mac a81db68f9 `PaneSidebarState.pinnedEdgeGrip`): elevated,
+/// all of the grid's margin between the panel and the panes, as every
+/// resizer lives in a gutter. Null when the panel is not pinned, or in the
+/// flat style, whose grip lies inside the panel (`pane_sidebar.edgeBand`).
+pub fn sidebarEdgeGutter(self: *const Window) ?w32.RECT {
+    if (self.sidebar == null) return null;
+    if (self.paneSidebarMode() != .expanded) return null;
+    if (!pane_sidebar.pinnedGripInGutter(self.paneStyle() == .elevated)) return null;
+    const surface = self.surfaceRect();
+    const grid = self.gridRect();
+    if (grid.left <= surface.left or surface.bottom <= surface.top) return null;
+    return .{ .left = surface.left, .top = surface.top, .right = grid.left, .bottom = surface.bottom };
+}
+
+fn onSidebarEdge(self: *const Window, x: i32, y: i32) bool {
+    const r = self.sidebarEdgeGutter() orelse return false;
+    return x >= r.left and x < r.right and y >= r.top and y < r.bottom;
+}
+
+fn sidebarEdgeDragging(self: *const Window) bool {
+    const sb = self.sidebar orelse return false;
+    return sb.gutterDragging();
+}
+
+/// Set (or clear) the hover on the gutter beside the pinned sidebar (T2265),
+/// repainting its bar on a change.
+fn setSidebarEdgeHover(self: *Window, on: bool) void {
+    if (self.hover_sidebar_edge == on) return;
+    self.hover_sidebar_edge = on;
+    log.debug("sidebar edge hover={}", .{on});
+    self.refreshSidebarEdge();
+}
+
+/// Repaint the gutter beside the pinned sidebar and its bar's glow (T2265).
+fn refreshSidebarEdge(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    var r = gutterBarReach(self.sidebarEdgeGutter() orelse return, self.scale);
+    _ = w32.InvalidateRect(hwnd, &r, 0);
+    _ = w32.UpdateWindow(hwnd);
+}
+
+/// A drag of the gutter beside the pinned sidebar ended (T2265): the panel
+/// settles its width, the bar goes out, and the gutter the pointer let go
+/// over is asked again (Mac 5e4f30144's release-then-leave). The drag is
+/// cleared before the capture is released, so the WM_CAPTURECHANGED that
+/// re-enters here is a no-op.
+fn endSidebarEdgeDrag(self: *Window) void {
+    const sb = self.sidebar orelse return;
+    if (!sb.gutterDragging()) return;
+    sb.gutterDragEnd();
+    _ = w32.ReleaseCapture();
+    self.recheckGutterHover();
+    self.refreshSidebarEdge();
 }
 
 /// A gutter's accent bar to paint, in client pixels (T2253).
@@ -9410,13 +9472,16 @@ const GutterPaint = struct {
 /// one's at half. A grip drag's bar sits on the grip of its kind nearest the
 /// pointer, since the layout replaces the grip the drag began on as panes
 /// fold and come out (Mac `GutterBar.replacement`).
-fn litGutterBar(self: *Window, grid: *const pane_stack_grid.Grid) ?GutterPaint {
+fn litGutterBar(self: *Window, grid_opt: ?*const pane_stack_grid.Grid) ?GutterPaint {
     const hovered: ?gutter_bar.Gutter = if (self.hover_split) |h|
         .{ .divider = @intCast(h.idx()) }
-    else if (self.hover_grip) |g| .{ .grip = g } else null;
+    else if (self.hover_grip) |g|
+        .{ .grip = g }
+    else if (self.hover_sidebar_edge) .sidebar_edge else null;
     const dragged: ?gutter_bar.Gutter = if (self.dragging_split)
         .{ .divider = @intCast(self.drag_split_handle.idx()) }
     else if (self.grip_drag) |g| blk: {
+        const grid = grid_opt orelse break :blk null;
         var best: ?usize = null;
         var best_d: i32 = std.math.maxInt(i32);
         for (grid.result.stack_handles.items, 0..) |sh, i| {
@@ -9431,22 +9496,25 @@ fn litGutterBar(self: *Window, grid: *const pane_stack_grid.Grid) ?GutterPaint {
             }
         }
         break :blk if (best) |b| .{ .grip = b } else null;
-    } else null;
+    } else if (self.sidebarEdgeDragging()) .sidebar_edge else null;
     const l = gutter_bar.lit(hovered, dragged) orelse {
         self.logGutterBar(null, .{ .r = 0, .g = 0, .b = 0 });
         return null;
     };
     const found: struct { gutter: w32.RECT, dir: pane_stack_layout.Direction } = switch (l.gutter) {
         .divider => |node| blk: {
+            const grid = grid_opt orelse return null;
             for (grid.result.dividers.items, 0..) |d, i| {
                 if (d.node == node) break :blk .{ .gutter = winRect(grid.dividerGutter(i)), .dir = d.direction };
             }
             return null;
         },
         .grip => |i| blk: {
+            const grid = grid_opt orelse return null;
             if (i >= grid.result.stack_handles.items.len) return null;
             break :blk .{ .gutter = winRect(grid.stackHandleGutter(i)), .dir = grid.result.stack_handles.items[i].direction };
         },
+        .sidebar_edge => .{ .gutter = self.sidebarEdgeGutter() orelse return null, .dir = .horizontal },
     };
     const core = gutter_bar.barIn(.{
         .left = found.gutter.left,
@@ -15154,6 +15222,8 @@ pub fn windowWndProc(
         // committing wherever the pointer happened to be (T1531).
         w32.WM_CAPTURECHANGED => {
             if (window.rearrange_drag != null) window.endRearrangeDrag(false);
+            // The sidebar's gutter drag ends where it stands (T2265).
+            window.endSidebarEdgeDrag();
             // A grip drag keeps what it has folded so far (T2124): there is
             // no snapshot to cancel to that the user would recognise, and a
             // drag left armed would go on resizing with no button held.
@@ -15169,6 +15239,14 @@ pub fn windowWndProc(
         w32.WM_LBUTTONDOWN => {
             const x: i32 = @as(i16, @truncate(lparam & 0xFFFF));
             const y: i32 = @as(i16, @truncate((lparam >> 16) & 0xFFFF));
+            // The gutter beside the pinned sidebar resizes it (T2265).
+            if (window.onSidebarEdge(x, y)) {
+                if (window.sidebar) |sb| {
+                    sb.gutterDragBegin(hwnd, x, y);
+                    window.refreshSidebarEdge();
+                    return 0;
+                }
+            }
             if (window.heroHitDivider(x, y)) {
                 window.heroStartDividerDrag(x);
                 return 0;
@@ -15220,6 +15298,14 @@ pub fn windowWndProc(
             window.clearCaptionPress();
             if (window.rearrange_drag != null) {
                 window.endRearrangeDrag(true);
+                return 0;
+            }
+            if (window.sidebarEdgeDragging()) {
+                // The release lands where the last move did.
+                const x: i32 = @as(i16, @truncate(lparam & 0xFFFF));
+                const y: i32 = @as(i16, @truncate((lparam >> 16) & 0xFFFF));
+                if (window.sidebar) |sb| sb.gutterDragMove(hwnd, x, y);
+                window.endSidebarEdgeDrag();
                 return 0;
             }
             if (window.hero_divider_drag) {
@@ -15299,6 +15385,10 @@ pub fn windowWndProc(
                 window.updateRearrangeDrag(x, y);
                 return 0;
             }
+            if (window.sidebarEdgeDragging()) {
+                if (window.sidebar) |sb| sb.gutterDragMove(hwnd, x, y);
+                return 0;
+            }
             if (window.hero_divider_drag) {
                 window.heroUpdateDividerDrag(x);
                 return 0;
@@ -15349,6 +15439,7 @@ pub fn windowWndProc(
             // the ones that land in it — walking down into a pane leaves the
             // strip without ever raising WM_MOUSELEAVE.
             window.setPointerInStrip(window.inTabBar(y));
+            window.setSidebarEdgeHover(!window.inTabBar(y) and window.onSidebarEdge(x, y));
             if (window.inTabBar(y)) {
                 window.handleTabBarMouseMove(@truncate(x), @truncate(window.toStripY(y)));
                 // Leaving the content area upward is a divider un-hover: the
@@ -15394,6 +15485,11 @@ pub fn windowWndProc(
                         }
                         return 1;
                     }
+                }
+                // The gutter beside the pinned sidebar is its sizer (T2265).
+                if (window.sidebarEdgeDragging() or window.onSidebarEdge(pt.x, pt.y)) {
+                    if (w32.LoadCursorW(null, w32.IDC_SIZEWE)) |hc| _ = w32.SetCursor(hc);
+                    return 1;
                 }
                 if (window.heroHitDivider(pt.x, pt.y) or window.hero_divider_drag) {
                     if (w32.LoadCursorW(null, split_geometry.HERO_DIVIDER_CURSOR.idc())) |cursor| {
@@ -15449,6 +15545,7 @@ pub fn windowWndProc(
             window.setDividerHover(null);
             window.setGripHover(null);
             window.setStripHover(null);
+            window.setSidebarEdgeHover(false);
             return 0;
         },
         w32.WM_ACTIVATE => {

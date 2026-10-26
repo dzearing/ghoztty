@@ -1269,18 +1269,43 @@ pub const grab_dip: f32 = 7;
 /// under a drag, which read as the panel jumping away mid-resize.
 pub const expand_threshold_dip: f32 = 120;
 
-/// Whether (`x`, `y`) is on the edge that drags. Like every resizer it is
-/// never over a pane (T2125, Mac 2811a3043 `resizeHandleOffset`): the band
-/// lies just inside the trailing edge of the pinned panel (the column, and so
-/// this window, ends there) and of a card - the rail's, or the open one's -
-/// which floats over the grid, so a press just past its edge is the pane's.
+/// Whether (`x`, `y`) is on the edge that drags, in the flat style. Like
+/// every resizer it is never over a pane (T2125, Mac 2811a3043
+/// `resizeHandleOffset`): the band lies just inside the trailing edge of the
+/// pinned panel (the column, and so this window, ends there) and of a card -
+/// the rail's, or the open one's - which floats over the grid, so a press
+/// just past its edge is the pane's.
 pub fn onEdge(l: *const Layout, x: i32, y: i32, scale: f32) bool {
+    return onEdgeIn(l, x, y, scale, false);
+}
+
+/// `onEdge` in either pane style. Elevated, the pinned panel's grip is not
+/// in the panel at all (T2265, Mac a81db68f9 `pinnedEdgeGrip`): it is the
+/// whole gutter between the panel and the panes - the grid's margin, which
+/// is the window's (`pinnedGripInGutter`) - so nothing in this window drags.
+pub fn onEdgeIn(l: *const Layout, x: i32, y: i32, scale: f32, elevated: bool) bool {
+    const band = edgeBand(l, scale, elevated) orelse return false;
+    if (!band.contains(x, y)) return false;
+    return l.mode != .expanded or !onButton(l, x, y, scale);
+}
+
+/// The band in this window that drags the edge - where its accent bar shows
+/// (T2265, Mac `SidePanelResizeHandle.gutterBar`) - or null when it has none.
+pub fn edgeBand(l: *const Layout, scale: f32, elevated: bool) ?Rect {
     const g = @max(px(grab_dip, scale), 1);
     return switch (l.mode) {
-        .hidden => false,
-        .expanded => x >= l.width - g and x < l.width and y >= 0 and y < l.height and !onButton(l, x, y, scale),
-        .mini => x >= l.card.right - g and x < l.card.right and y >= l.card.top and y < l.card.bottom,
+        .hidden => null,
+        .expanded => if (pinnedGripInGutter(elevated)) null else .{ .left = l.width - g, .top = 0, .right = l.width, .bottom = l.height },
+        .mini => .{ .left = l.card.right - g, .top = l.card.top, .right = l.card.right, .bottom = l.card.bottom },
     };
+}
+
+/// Whether the pinned panel's grip is the gutter beside it rather than a
+/// band inside it (Mac `PaneSidebarState.pinnedEdgeGrip`): elevated, the
+/// grid's margin lies between the panel and the panes and every resizer
+/// lives in a gutter; flat, the grid starts right at the panel's edge.
+pub fn pinnedGripInGutter(elevated: bool) bool {
+    return elevated;
 }
 
 /// The pin and the row buttons sit `sm` from the panel's edge, inside the
@@ -2032,6 +2057,27 @@ test "pane_sidebar: the edge band sits inside the pinned panel's edge and inside
         const hidden: Layout = .{ .mode = .hidden, .width = w, .height = h };
         try testing.expect(!onEdge(&hidden, w - 1, 10, s));
     }
+}
+
+test "pane_sidebar: the pinned grip is the gutter when elevated, a band inside the panel when flat (T2265)" {
+    const s: f32 = 1.5;
+    const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    const w = px(220, s);
+    const e = layout(.expanded, w, px(600, s), &items, tm, s);
+    const g = px(grab_dip, s);
+    // Flat: the band just inside the edge, the panel's full height.
+    const band = edgeBand(&e, s, false).?;
+    try testing.expectEqual(Rect{ .left = w - g, .top = 0, .right = w, .bottom = px(600, s) }, band);
+    try testing.expect(onEdgeIn(&e, w - 1, px(300, s), s, false));
+    // Elevated: nothing in the panel drags - the window's gutter does.
+    try testing.expect(edgeBand(&e, s, true) == null);
+    try testing.expect(!onEdgeIn(&e, w - 1, px(300, s), s, true));
+    try testing.expect(pinnedGripInGutter(true) and !pinnedGripInGutter(false));
+    // The rail keeps its band inside the card in both styles.
+    const r = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
+    try testing.expectEqual(edgeBand(&r, s, false).?, edgeBand(&r, s, true).?);
+    try testing.expect(onEdgeIn(&r, r.card.right - 1, r.card.centerY(), s, true));
 }
 
 test "pane_sidebar: dragging the rail out past 120 pins; a panel only resizes, clamped, and never unpins" {

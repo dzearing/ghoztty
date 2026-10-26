@@ -68,6 +68,8 @@ const drop_highlight = @import("drop_highlight.zig");
 const PaneView = @import("PaneView.zig");
 const Window = @import("Window.zig");
 const PaneDesk = @import("PaneDesk.zig");
+const gutter_bar = @import("gutter_bar.zig");
+const gutter_bar_dc = @import("gutter_bar_dc.zig");
 const ActivityState = @import("../../terminal/main.zig").osc.Command.ActivityState;
 
 const log = std.log.scoped(.pane_sidebar);
@@ -254,8 +256,15 @@ press_alt: bool = false,
 /// An edge drag in progress (T1846): the width it measures from
 /// (`pane_sidebar.edgeStartDip`) and the screen x it went down at. Screen,
 /// not client, so the measure survives the rail turning into the panel
-/// under the pointer. Null otherwise.
-edge: ?struct { start_dip: f32, start_x: i32 } = null,
+/// under the pointer. `which` is the surface it went down on; `gutter` says
+/// it went down in the window's gutter beside the pinned panel (the elevated
+/// style's grip, T2265), whose bar the window paints. Null otherwise.
+edge: ?struct { start_dip: f32, start_x: i32, which: Surface = .rail, gutter: bool = false } = null,
+/// The surface whose edge band the pointer is over (T2265): its accent bar
+/// shows at half strength.
+edge_hover: ?Surface = null,
+/// The edge bar last painted, for the debug-log oracle.
+edge_bar_logged: ?gutter_bar.Strength = null,
 /// A pane drag is live somewhere (T1844): the empty "Drop to stash" slot
 /// shows while nothing is stashed, and the open card does not contract.
 drag_active: bool = false,
@@ -1469,10 +1478,47 @@ fn glyph(hdc: w32.HDC, scale: f32, r: pane_sidebar.Rect, cp: u16, dip: f32, colo
 }
 
 fn paint(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
+    defer self.paintEdgeBar(hdc, which, width, height);
     if (!self.paint_bare and self.xfade[@intFromEnum(which)] != null) {
         if (self.paintTransition(hdc, which, width, height)) return;
     }
     self.paintFrame(hdc, which, width, height);
+}
+
+/// The edge's accent bar (T2265; Mac `SidePanelResizeHandle.gutterBar`): down
+/// the middle of the band that drags it, half strength while hovered, full
+/// while dragged, never after. The rail's window only: the open card is a
+/// layered window whose premultiplied pixels this does not compose (T2272).
+fn paintEdgeBar(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
+    if (which != .rail) return;
+    const dragged = if (self.edge) |d| d.which == which and !d.gutter else false;
+    const strength = gutter_bar.single(self.edge_hover == which, dragged);
+    const band = if (strength != null) pane_sidebar.edgeBand(&self.layoutFor(which), self.scale, self.elevated()) else null;
+    const shown: ?gutter_bar.Strength = if (band != null) strength else null;
+    if (!std.meta.eql(shown, self.edge_bar_logged)) {
+        self.edge_bar_logged = shown;
+        log.debug("pane sidebar edge bar {s}", .{if (shown) |v| @tagName(v) else "none"});
+    }
+    const b = band orelse return;
+    const core = gutter_bar.barIn(.{ .left = b.left, .top = b.top, .right = b.right, .bottom = b.bottom }, .across_x, self.scale);
+    const color = chrome_theme.accentOn(self.theme().bg, system_colors.accentCached());
+    gutter_bar_dc.paintOn(hdc, core, .{ .left = 0, .top = 0, .right = width, .bottom = height }, color, self.scale, shown.?);
+}
+
+fn elevated(self: *const PaneSidebar) bool {
+    return self.window.paneStyle() == .elevated;
+}
+
+/// Set (or clear) the surface whose edge the pointer is over, repainting it
+/// on a change.
+fn setEdgeHover(self: *PaneSidebar, which: Surface, on: bool) void {
+    const now: ?Surface = if (on) which else if (self.edge_hover == which) null else self.edge_hover;
+    if (now == self.edge_hover) return;
+    self.edge_hover = now;
+    // Debug-build oracle (the `divider hover=` idiom): a posted move's hover
+    // is gone within a frame on a background desktop, often before a paint.
+    log.debug("pane sidebar edge hover={s}", .{if (now) |s| @tagName(s) else "none"});
+    if (self.surfaceHwnd(which)) |h| self.invalidate(h);
 }
 
 fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
@@ -2506,7 +2552,7 @@ fn setHover(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit) void {
 
 fn onEdgeAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) bool {
     const l = self.layoutFor(which);
-    return pane_sidebar.onEdge(&l, x, y, self.scale);
+    return pane_sidebar.onEdgeIn(&l, x, y, self.scale, self.elevated());
 }
 
 fn screenX(hwnd: w32.HWND, x: i32, y: i32) i32 {
@@ -2523,8 +2569,9 @@ fn edgeBegin(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, x: i32, y: i32)
     self.disarm();
     self.pressed = .none;
     const start = pane_sidebar.edgeStartDip(self.mode, which == .card, self.window.pane_sidebar_width_dip);
-    self.edge = .{ .start_dip = start, .start_x = screenX(hwnd, x, y) };
+    self.edge = .{ .start_dip = start, .start_x = screenX(hwnd, x, y), .which = which };
     _ = w32.SetCapture(hwnd);
+    if (self.surfaceHwnd(which)) |h| self.invalidate(h);
     setSizeCursor();
     log.info("pane sidebar edge drag start surface={s} mode={s} from={d:.0}", .{ @tagName(which), @tagName(self.mode), start });
 }
@@ -2547,12 +2594,46 @@ fn edgeMove(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, x: i32, y: i32) 
 
 /// The drag ended - released, or the capture was taken away.
 fn edgeEnd(self: *PaneSidebar) void {
-    if (self.edge == null) return;
+    const d = self.edge orelse return;
     self.edge = null;
+    // The bar goes out with the drag, and the edge the pointer let go over
+    // is asked again from where it is (T2265; Mac 5e4f30144).
+    if (!d.gutter) self.recheckEdgeHover(d.which);
     // The drag moved `remembered.width_dip` live; the file is written once,
     // when it settles (T1847).
     saveRemembered(self.window.app.core_app.alloc);
     log.info("pane sidebar edge drag end pinned={} width={d:.0}", .{ self.window.pane_sidebar_pinned, self.window.pane_sidebar_width_dip });
+}
+
+/// Ask again whether the pointer is on `which`'s edge, from where it is. No
+/// readable cursor (a background desktop) reads as "off it".
+fn recheckEdgeHover(self: *PaneSidebar, which: Surface) void {
+    const hwnd = self.surfaceHwnd(which) orelse return;
+    var pt: w32.POINT = undefined;
+    const on = self.pointerOn(which, null) and w32.GetCursorPos_(&pt) != 0 and
+        w32.ScreenToClient(hwnd, &pt) != 0 and self.onEdgeAt(which, pt.x, pt.y);
+    self.setEdgeHover(which, on);
+    if (self.surfaceHwnd(which)) |h| self.invalidate(h);
+}
+
+/// An edge drag begun in the WINDOW's gutter beside the pinned panel (T2265:
+/// the elevated style's grip, Mac `pinnedEdgeGrip`). `hwnd` is the window's,
+/// which takes the capture; the drag is the panel's own from there on.
+pub fn gutterDragBegin(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) void {
+    self.edgeBegin(.rail, hwnd, x, y);
+    if (self.edge) |*d| d.gutter = true;
+}
+
+pub fn gutterDragMove(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) void {
+    self.edgeMove(.rail, hwnd, x, y);
+}
+
+pub fn gutterDragEnd(self: *PaneSidebar) void {
+    self.edgeEnd();
+}
+
+pub fn gutterDragging(self: *const PaneSidebar) bool {
+    return if (self.edge) |d| d.gutter else false;
 }
 
 /// The shared panel width moved (another window's edge, or this one's open
@@ -3636,6 +3717,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             // and not the rail's hover-open either.
             const on_edge = self.onEdgeAt(which, x, y);
             self.setHover(which, if (on_edge) .none else self.hitAt(which, x, y));
+            self.setEdgeHover(which, on_edge);
             const tracked = switch (which) {
                 .rail => &self.tracking,
                 .card => &self.card_tracking,
@@ -3671,6 +3753,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             }
             if (w32.GetCapture() != hwnd) self.pressed = .none;
             self.setHover(which, .none);
+            self.setEdgeHover(which, false);
             return 0;
         },
         w32.WM_LBUTTONDOWN => {

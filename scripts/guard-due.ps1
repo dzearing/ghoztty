@@ -1081,6 +1081,21 @@ $GuardTable = @(
             'test\win32\lib\SelectionBar.ps1'
         )
     },
+    # The contents card's RESIZE HANDLE and its accent gutter bar (T2265, Mac
+    # 5e4f30144): hover lights it, a drag widens the card with the bar at full
+    # strength, the release leaves none lit. The bar is laid over the panel's
+    # paint by gutter_bar_dc, which nothing else on the viewer side exercises.
+    [pscustomobject]@{
+        Name   = 'viewer-toc-handle'
+        Script = 'test\win32\viewer-toc-handle.ps1'
+        Stamp  = 'test\win32\viewer-toc-handle.stamp.json'
+        Covers = @(
+            'test\win32\viewer-toc-handle.ps1',
+            'src\apprt\win32\ViewerTOCPanel.zig',
+            'src\apprt\win32\viewer_toc_layout.zig',
+            'src\apprt\win32\gutter_bar_dc.zig'
+        )
+    },
     # The feedback composer (T644): its typing, undo, quote and send paths
     # live in ViewerFeedbackBar, the page it hosts and the pure document module,
     # and are proved end to end only by this harness - the unit lanes see the
@@ -5258,6 +5273,8 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\pane_sidebar.zig',
             'src\apprt\win32\PaneSidebar.zig',
+            # T2265: the grip's accent bar, in the panel and in the gutter
+            'src\apprt\win32\gutter_bar_dc.zig',
             'test\win32\pane-sidebar-resize.ps1'
         )
     },

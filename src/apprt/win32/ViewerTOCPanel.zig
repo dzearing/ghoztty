@@ -58,6 +58,8 @@ const ViewerPane = @import("ViewerPane.zig");
 
 const log = std.log.scoped(.viewer_toc);
 const paint_probe = @import("paint_probe.zig");
+const gutter_bar = @import("gutter_bar.zig");
+const gutter_bar_dc = @import("gutter_bar_dc.zig");
 
 pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyViewerTOC");
 const class_name_utf8 = "GhozttyViewerTOC";
@@ -171,6 +173,11 @@ measured_scale: f32 = 0,
 /// Resize drag state: the card width (DIP) when the drag started, and the
 /// mouse x (client px) it started at. Null when not dragging.
 drag: ?struct { start_dip: f32, start_x: i32 } = null,
+/// The pointer is over the resize handle (T2265): its accent bar shows at
+/// half strength, as a split divider's does.
+handle_hover: bool = false,
+/// The handle bar last painted, for the debug-log oracle.
+handle_bar_logged: ?gutter_bar.Strength = null,
 
 /// Compact-overlay slide (T543). `slide` is where the card IS — 0 parked off
 /// the pane's left edge, 1 fully in — and `slide_want` is where the toggle
@@ -1273,6 +1280,50 @@ fn fillRoundRect(hdc: w32.HDC, r: w32.RECT, radius: i32, color: u32) void {
 }
 
 fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
+    self.paintCard(hdc, width, height);
+    self.paintHandleBar(hdc, width, height);
+}
+
+/// The resize handle's accent bar (T2265; Mac 5e4f30144 gave
+/// `SidePanelResizeHandle` the split dividers' `GutterBar`): down the middle
+/// of the handle, which straddles the card's edge in the gutter beside it -
+/// half strength while hovered, full while dragged, never after.
+fn paintHandleBar(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
+    const l = self.layout;
+    const strength = if (l.which == .gutter and l.handle.width() > 0) gutter_bar.single(self.handle_hover, self.drag != null) else null;
+    if (!std.meta.eql(strength, self.handle_bar_logged)) {
+        self.handle_bar_logged = strength;
+        log.debug("viewer tree pane={s} handle bar {s}", .{ self.pane.paneId(), if (strength) |v| @tagName(v) else "none" });
+    }
+    const st = strength orelse return;
+    const h = l.handle;
+    const core = gutter_bar.barIn(.{ .left = h.left, .top = h.top, .right = h.right, .bottom = h.bottom }, .across_x, self.scale);
+    const color = chrome_theme.accentOn(self.doc_bg, system_colors.accentCached());
+    gutter_bar_dc.paintOn(hdc, core, .{ .left = 0, .top = 0, .right = width, .bottom = height }, color, self.scale, st);
+}
+
+/// Set (or clear) the hover on the resize handle, repainting on a change.
+fn setHandleHover(self: *ViewerTOCPanel, hwnd: w32.HWND, on: bool) void {
+    if (self.handle_hover == on) return;
+    self.handle_hover = on;
+    // Debug-build oracle: a posted move's hover is gone within a frame on a
+    // background desktop, often before a paint.
+    log.debug("viewer tree pane={s} handle hover={}", .{ self.pane.paneId(), on });
+    _ = w32.InvalidateRect(hwnd, null, 0);
+}
+
+/// Ask again whether the pointer is on the handle, from where it is: a drag's
+/// end leaves it on the handle or off it, and the bar follows the pointer, not
+/// the drag (Mac 5e4f30144). No readable cursor reads as "off it".
+fn recheckHandleHover(self: *ViewerTOCPanel, hwnd: w32.HWND) void {
+    var pt: w32.POINT = undefined;
+    const on = w32.GetCursorPos_(&pt) != 0 and w32.WindowFromPoint(pt) == hwnd and
+        w32.ScreenToClient(hwnd, &pt) != 0 and self.onHandle(pt.x, pt.y);
+    self.handle_hover = on;
+    _ = w32.InvalidateRect(hwnd, null, 0);
+}
+
+fn paintCard(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
     const l = self.layout;
     if (l.which == .hidden) return;
     self.ensureFonts();
@@ -1919,6 +1970,7 @@ fn wndProc(
                 self.pane.setTOCWidthLive(d.start_dip + dx);
                 return 0;
             }
+            self.setHandleHover(hwnd, self.onHandle(x, y));
             const hot = self.hitRow(x, y);
             const clear_hot = self.onClear(x, y);
             if (hot != self.hover or clear_hot != self.clear_hover) {
@@ -1940,6 +1992,7 @@ fn wndProc(
 
         w32.WM_MOUSELEAVE => {
             self.tracking = false;
+            if (self.drag == null) self.setHandleHover(hwnd, false);
             if (self.hover != -1 or self.clear_hover) {
                 self.hover = -1;
                 self.clear_hover = false;
@@ -1965,6 +2018,7 @@ fn wndProc(
             if (self.onHandle(x, y)) {
                 self.drag = .{ .start_dip = self.layout.card_w_dip, .start_x = x };
                 _ = w32.SetCapture(hwnd);
+                _ = w32.InvalidateRect(hwnd, null, 0);
                 return 0;
             }
             if (self.onClear(x, y)) {
@@ -1991,6 +2045,7 @@ fn wndProc(
                 self.drag = null;
                 _ = w32.ReleaseCapture();
                 self.pane.commitTOCWidth();
+                self.recheckHandleHover(hwnd);
                 return 0;
             }
             if (self.clear_pressed) {
