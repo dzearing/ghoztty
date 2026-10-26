@@ -273,8 +273,13 @@ struct PaneSidebarView: View {
         ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
             if let project = section.project, !isRail {
                 let folded = matches == nil && state.foldedProjects.contains(project)
+                // A gap above the header's band, so it never touches what
+                // ends the list above it (a row's hover, the tray's well).
+                if index > 0 { PaneSidebarOutline.headerGapView }
                 Section {
                     if !folded {
+                        // ...and below it, before its first window.
+                        PaneSidebarOutline.headerGapView
                         ForEach(section.windows, id: \.id) { entry in
                             if let owner = byID[entry.id] {
                                 windowGroup(owner, isThisWindow: owner === controller,
@@ -673,7 +678,7 @@ struct PaneSidebarView: View {
         let frames = geometry.rowFrames
         let height = frames.first { $0.id == pane.id }?.frame.height
             ?? frames.first?.frame.height
-            ?? (isRail ? 34 : 38)
+            ?? PaneSidebarRow.height
         return .init(pane: pane, paneTarget: paneTarget, stashTarget: stashTarget, height: height)
     }
 
@@ -778,6 +783,8 @@ private struct PaneSidebarWindowHeader: View {
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                 .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: isDropTarget ? 2 : 0))
         .padding(.horizontal, SidePanelRow.fillInset)
+        // Clear of its neighbours' pills, as a row is (`PaneSidebarRow.gap`).
+        .padding(.vertical, PaneSidebarRow.gap / 2)
         .contentShape(Rectangle())
         // Not `.onHover`: it blinks off for a frame when a fold re-lays out
         // the list (see `HoverTrackingView`).
@@ -850,7 +857,7 @@ private struct PaneSidebarProjectHeader: View {
         .padding(.leading, PaneSidebarOutline.headerLeading)
         .padding(.trailing, SidePanelRow.textInset)
         .padding(.horizontal, SidePanelRow.fillInset)
-        .padding(.top, isFirst ? 4 : 10)
+        .padding(.top, isFirst ? 4 : 6)
         .padding(.bottom, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(HoverTrackingArea(isHovered: $isHovered))
@@ -875,6 +882,13 @@ enum PaneSidebarOutline {
     /// How far a list slides as it leaves or arrives: enough to read as a
     /// direction, not a full page turn.
     static let scopeSlide: CGFloat = 48
+    /// Clear space between a project header's band and the content above
+    /// and below it. Outside the band (a sticky header's backdrop), in the
+    /// scrolling list, so a pinned header is still just its band.
+    static let headerGap: CGFloat = 6
+    static var headerGapView: some View {
+        Color.clear.frame(height: headerGap).accessibilityHidden(true)
+    }
     static let foldTransition: AnyTransition = .modifier(
         active: FoldReveal(fraction: 0), identity: FoldReveal(fraction: 1))
     static let chevronWidth: CGFloat = 12

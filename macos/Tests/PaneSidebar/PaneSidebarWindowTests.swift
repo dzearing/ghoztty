@@ -770,6 +770,56 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 
+    /// Every pane is the same glass: a split of an untinted pane is
+    /// untinted, however many generations down, and a split of a `--color`
+    /// pane takes that exact color — never a lighter shade of it.
+    @Test func everySplitIsTheSameGlass() async throws {
+        let h = try await open(expanded: true, width: 1400)
+        var parent = try #require(h.panes[2].surfaceView)
+        for _ in 0..<3 {
+            let child = try #require(h.controller.newSplit(at: parent, direction: .right, focus: false))
+            #expect(child.backgroundTintNSColor == nil, "a split of an untinted pane got a tint")
+            parent = child
+        }
+        let red = NSColor(srgbRed: 0.3, green: 0.05, blue: 0.05, alpha: 1)
+        var config = Ghostty.SurfaceConfiguration()
+        config.backgroundTint = Color(red)
+        config.backgroundTintNSColor = red
+        let tinted = try #require(h.controller.newSplit(at: parent, direction: .down, baseConfig: config, focus: false))
+        let child = try #require(h.controller.newSplit(at: tinted, direction: .down, focus: false))
+        #expect(child.backgroundTintNSColor == red, "a --color pane's split is not its color")
+        await settle(0.8)
+        _ = try await captureComposited(h.window, "same-glass")
+        await close(h)
+    }
+
+    /// Nothing in the list touches: pills, tiles, window and project headers
+    /// and the tray all stand apart, in both modes. Captures the real window
+    /// (all windows, grouped by project; this window's list; the rail) to
+    /// /tmp/pane-sidebar-snapshots/spacing-*.png.
+    @Test func sidebarItemsNeverTouch() async throws {
+        var others: [Harness] = []
+        for title in ["proj: a", "proj: b", "zeta: c"] {
+            let o = try await open(expanded: true)
+            o.controller.titleOverride = title
+            others.append(o)
+        }
+        let h = try await open(expanded: true)
+        h.controller.titleOverride = "proj: this"
+        h.panes[1].surfaceView?.activityState = .busy
+        h.controller.paneSidebarState.showsAllWindows = true
+        await settle(1.0)
+        _ = try await captureComposited(h.window, "spacing-all-windows")
+        h.controller.paneSidebarState.showsAllWindows = false
+        await settle(0.6)
+        _ = try await captureComposited(h.window, "spacing-this-window")
+        h.controller.setPaneSidebarExpanded(false, cause: "test")
+        await settle(0.6)
+        _ = try await captureComposited(h.window, "spacing-rail")
+        await close(h)
+        for o in others { await close(o) }
+    }
+
     // MARK: Layout
 
     /// Expanded is the rail's card, wider: the same margins, top and

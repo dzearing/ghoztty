@@ -293,7 +293,7 @@ struct PaneSidebarSheenTests {
 
     @Test(arguments: [36.0, 240.0, 380.0])
     func aSweepStartsOffTheRowAndLeavesItEntirely(width: CGFloat) {
-        let height = PaneSidebarRow.height - 1
+        let height = PaneSidebarRow.height - PaneSidebarRow.gap
         let (from, to) = Sheen.travel(width: width, height: height)
         #expect(light(at: from, width: width).lowerBound > width, "starts past the right edge")
         // Its top is `slant * height` right of its bottom.
@@ -307,7 +307,7 @@ struct PaneSidebarSheenTests {
     /// loops without a jump.
     @Test(arguments: [36.0, 240.0, 380.0])
     func theDriftCoversTheRowAndLoopsSeamlessly(width: CGFloat) {
-        let height = PaneSidebarRow.height - 1
+        let height = PaneSidebarRow.height - PaneSidebarRow.gap
         let drift = Sheen.Drift(width: width, height: height)
         #expect(drift.period >= width, "stretched: wider than the row")
         #expect(drift.from - drift.to == drift.period, "one period a cycle, right to left")

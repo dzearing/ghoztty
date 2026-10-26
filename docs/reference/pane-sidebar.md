@@ -16,7 +16,10 @@ A per-window list of **every pane in the window**, into which a pane can be
   **collapsed** at the 44pt rail's width, **expanded** at the panel's width
   (full rows). Every row is one height (`PaneSidebarRow.height`), so a pane's
   icon sits at the same height in both
-  (`iconsStayAtTheSameHeightExpandedOrCollapsed`).
+  (`iconsStayAtTheSameHeightExpandedOrCollapsed`). **Nothing in the list
+  touches**: a row's pill is inset `PaneSidebarRow.gap / 2` (2pt) top and
+  bottom, as is a window header's hover fill, so any two items — pills, tiles,
+  headers, the tray's well — are at least 4pt apart in both modes.
 - **No pin, no hover-open**: hovering the rail opens nothing, because the rail
   is where its tiles are dragged.
 - **Collapse/expand glides**: the grid's cards glide to their new places
@@ -59,12 +62,13 @@ A per-window list of **every pane in the window**, into which a pane can be
   wash, accent selection), the same kind glyph at the same place — the rail
   card is exactly that pill (`railCardWidth` = 52) — so collapsing or
   expanding moves no icon.
-- **A rail tile has a hairline border** (`PaneSidebarRow.tileBorder`: 1pt,
-  the label color at 12%, 20% hovered; white 18% on the accent pill), so a
-  bare glyph reads as a button. A full row has none. It lives in the rail, so
-  it fades out with the rail as the panel crossfades in on expand and back in
-  on collapse (`columnAnimation`) — never snapped at the mode switch. Solid,
-  so it is not the empty tray's dashed well
+- **A rail tile has a glassy rim** (`PaneSidebarRow.tileBorder`): a pane
+  card's 0.5pt hairline, lit from above — white 22% along the top fading to 5%
+  at the bottom on dark (32→10% hovered), black 10→4% on light, white 35→10%
+  on the accent pill — so a bare glyph reads as a button without a solid
+  outline. A full row has none. It lives in the rail, so it fades out with the
+  rail as the panel crossfades in on expand and back in on collapse
+  (`columnAnimation`) — never snapped at the mode switch
   (`railTilesHaveABorderThatFadesWithTheMode`).
 - The glyph is in the pane's own hue (`PaneSidebarHue`: golden-ratio steps
   along its tree position; light and soft on a dark theme, deeper on a light
@@ -130,9 +134,10 @@ A per-window list of **every pane in the window**, into which a pane can be
     2s, starting and ending fully off it, top corner included
     (`PaneSidebarSheen.travel`);
   - the **drift**: a wide, soft, seamless gradient (`PaneSidebarSheen.Drift`:
-    one period ≥ 1.5× the row, 3–13% white on dark, 2–8% black on light)
-    sliding one period every 5s with no gap, so a busy pill's silhouette is
-    always visible — between glints, and on an expanded row.
+    one period ≥ 1.5× the row, 2–8% white on dark, 1.5–5% black on light)
+    sliding one period every 5s with no gap, inside a pane card's hairline rim (0.5pt, white 10%
+    / black 8%), so a busy pill's silhouette is always visible — between
+    glints, and on an expanded row — without hanging loose in the list.
   Both fade in and out together over 0.6s as work starts and stops
   (`PaneSidebarRow.busyFade`), never popping. No spinner, no glow, no glyph
   shimmer. Tests: `PaneSidebarSheenTests`.
@@ -152,7 +157,9 @@ A per-window list of **every pane in the window**, into which a pane can be
   unfolds all; `PaneSidebarState.isWindowFolded`).
 - Windows are **sorted by name** (Finder order; stable as focus moves), and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
-  **sticky** project header and labeled by its worktree alone
+  **sticky** project header (a clear 6pt gap above and below its band —
+  `PaneSidebarOutline.headerGap` — so it never touches a row's hover or the
+  tray's well) and labeled by its worktree alone
   (`PaneSidebarWindowGrouping`, `PaneSidebarWindowGroupingTests`). Other
   windows sort among the projects at the top level.
 - A **search field**: whitespace-separated terms, all of which must appear in a

@@ -21,8 +21,8 @@ import SwiftUI
 /// - the **glint**: a band of light sweeping across the pill now and then
 ///   (`period`), faint (`peak`);
 /// - the **drift**: a wide, soft, seamless gradient crossing it slowly and
-///   without a gap (`PaneSidebarSheen.Drift`), so a busy pill's silhouette is
-///   always on screen, between glints too.
+///   without a gap (`PaneSidebarSheen.Drift`), inside a hairline rim, so a
+///   busy pill's silhouette is always on screen, between glints too.
 /// Core Animation, as the shimmer is (see the top of this file): played by
 /// the render server, it costs the main thread nothing per frame. Its
 /// arrival and departure are faded by the row (`PaneSidebarRow.busySheen`).
@@ -103,6 +103,9 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
             self.drift.transform = shear
             self.drift.locations = drift.locations.map { NSNumber(value: Double($0)) }
             self.drift.colors = driftColors(count: drift.locations.count)
+            // Drawn over the sublayers, and faded with them by the row.
+            layer?.borderWidth = PaneSidebarRow.rimWidth
+            layer?.borderColor = rimColor()
             CATransaction.commit()
             animate()
         }
@@ -114,6 +117,12 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
             let ink = (dark ? NSColor.white : NSColor.black).cgColor
             let (low, high) = dark ? PaneSidebarSheen.Drift.darkAlpha : PaneSidebarSheen.Drift.lightAlpha
             return (0..<count).map { ink.copy(alpha: $0.isMultiple(of: 2) ? low : high)! }
+        }
+
+        private func rimColor() -> CGColor {
+            let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let (onDark, onLight) = PaneSidebarSheen.Drift.rimAlpha
+            return (dark ? NSColor.white : NSColor.black).withAlphaComponent(dark ? onDark : onLight).cgColor
         }
 
         private func animate() {
@@ -203,8 +212,12 @@ enum PaneSidebarSheen {
         /// One cycle; the glint is 2s. Slow enough to read as a breath.
         static let duration: CFTimeInterval = 5
         /// (between, at) the crests' alpha: dark appearance, then light.
-        static let darkAlpha: (CGFloat, CGFloat) = (0.03, 0.13)
-        static let lightAlpha: (CGFloat, CGFloat) = (0.02, 0.08)
+        static let darkAlpha: (CGFloat, CGFloat) = (0.02, 0.08)
+        static let lightAlpha: (CGFloat, CGFloat) = (0.015, 0.05)
+        /// The busy pill's hairline rim, so the drift sits in an outline
+        /// instead of hanging in the list: dark appearance, then light.
+        /// A pane card's rim: its 0.5pt hairline at its strength.
+        static let rimAlpha: (dark: CGFloat, light: CGFloat) = (0.1, 0.08)
 
         /// Stretched: wider than the row, so a tile shows one soft crest at
         /// a time, never stripes.
