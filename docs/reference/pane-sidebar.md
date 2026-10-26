@@ -80,7 +80,8 @@ A per-window list of **every pane in the window**, into which a pane can be
   them**, under a divider, in the same scrolling list — the **tray** of
   stashed panes. An empty tray is still a visible target: a faint dashed well
   with a tray glyph ("Drag a pane here to stash it" when expanded), lit in the
-  accent while a drag would land in it.
+  accent while a drag would land in it — and no "Stashed" caption, which the
+  tray has only while it holds panes (with their count).
 - Click focuses / restores to the exact slot it left; **Option-click** swaps a
   stashed pane with the focused one. Hovering an expanded row offers −/↩
   (stash/restore) and **×**; another window's rows offer the × alone. See

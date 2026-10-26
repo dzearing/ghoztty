@@ -473,13 +473,13 @@ struct PaneSidebarView: View {
         if !stashed.isEmpty || (isThisWindow && (dragSession.isDragging || !state.showsAllWindows)) {
           VStack(alignment: .leading, spacing: 0) {
             PaneSidebarDivider(isRail: isRail, indent: indent)
-            if !isRail {
+            // Captioned only when it holds something: an empty tray is its
+            // drop slot, whose own text says what it is.
+            if !isRail && !stashed.isEmpty {
                 HStack(alignment: .firstTextBaseline) {
                     SidePanelCaption(text: "Stashed")
                     Spacer()
-                    if !stashed.isEmpty {
-                        PaneSidebarCount(value: stashed.count)
-                    }
+                    PaneSidebarCount(value: stashed.count)
                 }
                 .padding(.leading, SidePanelRow.labelInset + indent)
                 .padding(.trailing, SidePanelRow.labelInset)
