@@ -1077,6 +1077,68 @@ struct PaneStackWindowTests {
         #expect(s > d * 0.75, "the strip is a dark bar, not glass: \(s) against the desk's \(d)")
     }
 
+    /// A pane collapsing onto a stack of strips lands between the run and
+    /// the strip that was nearest it — and that strip does not move: its
+    /// outer edge stays put, and none of it ever shows past where it showed
+    /// before (it reaches under the newcomer, `bladeTuck`, only where the
+    /// newcomer covers it). Both sides of the run.
+    @Test(arguments: [true, false])
+    func aStripStaysPutWhenAnotherCollapsesOntoIt(leading: Bool) async throws {
+        let (controller, window, panes) = try await stackedWindow(count: 4, width: 1300)
+        defer { controller.close() }
+        // Leading: tuck pane 0, then pane 1 onto it. Trailing: 3, then 2.
+        let (first, second) = leading ? (panes[0], panes[1]) : (panes[3], panes[2])
+        let dx: CGFloat = leading ? -700 : 700
+        func gutter(_ index: Int) throws -> NSPoint {
+            let h = try #require(handles(window)[safe: index])
+            let r = h.convert(h.bounds, to: nil)
+            return NSPoint(x: r.midX, y: r.midY)
+        }
+        func path() -> [CGFloat] {
+            Array(stride(from: dx / 35, through: dx, by: dx / 35)) + Array(repeating: dx, count: 10)
+        }
+        _ = try await recordedDrag(window, from: try gutter(leading ? 0 : handles(window).count - 1), through: path())
+        await settle(0.8)
+        #expect(controller.paneStackState.pin(for: Set([first.id])) != nil || cardRect(window, first).map { $0.width < 60 } == true,
+                "the first pane is a strip")
+        let cards = all(PaneCardView.self, in: window.contentView!)
+        let a = try #require(cards.first { $0.paneID == second.id })
+        let b = try #require(cards.first { $0.paneID == first.id })
+        let before = try #require(b.placedTab?.rect, "the first pane is a strip")
+
+        // Where B is drawn, and how far of it shows past A (A is above it).
+        var outer: [CGFloat] = [], shows: [CGFloat] = []
+        let timer = Timer(timeInterval: 0.004, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard let tab = b.placedTab?.rect else { return }
+                let over = a.placedTab?.rect ?? a.placedFrame
+                outer.append(leading ? tab.minX : tab.maxX)
+                if leading {
+                    shows.append(Swift.min(tab.maxX, over.map { $0.minX } ?? .infinity) - tab.minX)
+                } else {
+                    shows.append(tab.maxX - Swift.max(tab.minX, over.map { $0.maxX } ?? -.infinity))
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        // The divider between the second pane and the run (past the grip
+        // where the run meets the first strip).
+        let next = try gutter(leading ? 1 : handles(window).count - 2)
+        _ = try await recordedDrag(window, from: next, through: path())
+        await settle(0.8)
+        timer.invalidate()
+
+        let after = try #require(b.placedTab?.rect)
+        let visible = before.width
+        let report = "before \(before) after \(after); outer \(outer.map { Int($0) }); shows \(shows.map { String(format: "%.1f", $0) })"
+        try? report.write(toFile: "/tmp/pane-stack-snapshots/strip-stays-\(leading ? "leading" : "trailing").txt",
+                          atomically: true, encoding: .utf8)
+        #expect(cardRect(window, second).map { $0.width < 60 } == true, "the second pane is a strip: \(report)")
+        #expect(!outer.isEmpty)
+        #expect(outer.allSatisfy { abs($0 - outer[0]) < 0.5 }, "its outer edge moved: \(report)")
+        #expect(shows.allSatisfy { $0 <= visible + 0.5 }, "more of it showed than before: \(report)")
+    }
+
     private func expectOneBar(
         _ frames: [(image: CGImage, pointer: ClosedRange<CGFloat>)], _ window: NSWindow, y: CGFloat,
         where placed: (ClosedRange<CGFloat>, CGFloat) -> Bool

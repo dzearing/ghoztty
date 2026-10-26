@@ -176,9 +176,16 @@ extension Ghostty {
         /// `pinSessionDetachOnFree()`.
         func setSessionCloseIntent(_ closeOnFree: Bool) {
             guard let intent = sessionDetachPin.resolve(closeOnFree) else { return }
+            sessionClosesOnFree = intent
             guard let surface = self.surface else { return }
             ghostty_surface_set_session_close_intent(surface, intent)
         }
+
+        /// The intent last pushed down: whether freeing this surface CLOSES
+        /// its agent session (true) or DETACHES it (false). What a close
+        /// decided, readable by tests even for a local exec surface, where
+        /// the push itself is a no-op.
+        private(set) var sessionClosesOnFree = false
 
         /// Records whether the user answered "Disconnect" to a close involving
         /// this surface. See `pinSessionDetachOnFree()` and `SessionDetachPin`,
@@ -199,6 +206,7 @@ extension Ghostty {
         /// it is alive again, so a LATER close is a close like any other.
         func pinSessionDetachOnFree() {
             sessionDetachPin.pin()
+            sessionClosesOnFree = false
             guard let surface = self.surface else { return }
             ghostty_surface_set_session_close_intent(surface, false)
         }

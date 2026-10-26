@@ -273,8 +273,13 @@ struct PaneSidebarView: View {
         ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
             if let project = section.project, !isRail {
                 let folded = matches == nil && state.foldedProjects.contains(project)
+                // A gap above the header's band, so it never touches what
+                // ends the list above it (a row's hover, the tray's well).
+                if index > 0 { PaneSidebarOutline.headerGapView }
                 Section {
                     if !folded {
+                        // ...and below it, before its first window.
+                        PaneSidebarOutline.headerGapView
                         ForEach(section.windows, id: \.id) { entry in
                             if let owner = byID[entry.id] {
                                 windowGroup(owner, isThisWindow: owner === controller,
@@ -290,6 +295,10 @@ struct PaneSidebarView: View {
                         windowCount: section.windows.count,
                         isFolded: folded,
                         isFirst: index == 0,
+                        onClose: {
+                            BaseTerminalController.closeWindowsFromSidebar(
+                                section.windows.compactMap { byID[$0.id] })
+                        },
                         onFold: {
                             withAnimation(PaneSidebarOutline.foldAnimation) {
                                 if folded { state.foldedProjects.remove(project) }
@@ -463,14 +472,20 @@ struct PaneSidebarView: View {
 
         if !stashed.isEmpty || (isThisWindow && (dragSession.isDragging || !state.showsAllWindows)) {
           VStack(alignment: .leading, spacing: 0) {
-            PaneSidebarDivider(isRail: isRail, indent: indent)
-            if !isRail {
+            // All windows: no divider and no caption — a window's stashed
+            // panes follow its others in one list, the same in the rail and
+            // the panel, so collapsing or expanding moves nothing. (Still
+            // here, at no height, for where the tray begins.)
+            if !state.showsAllWindows {
+                PaneSidebarDivider(isRail: isRail, indent: indent)
+            }
+            // Captioned only when it holds something: an empty tray is its
+            // drop slot, whose own text says what it is.
+            if !isRail && !stashed.isEmpty && !state.showsAllWindows {
                 HStack(alignment: .firstTextBaseline) {
                     SidePanelCaption(text: "Stashed")
                     Spacer()
-                    if !stashed.isEmpty {
-                        PaneSidebarCount(value: stashed.count)
-                    }
+                    PaneSidebarCount(value: stashed.count)
                 }
                 .padding(.leading, SidePanelRow.labelInset + indent)
                 .padding(.trailing, SidePanelRow.labelInset)
@@ -510,7 +525,9 @@ struct PaneSidebarView: View {
         // An empty tray is still somewhere to drop: a slot that says so,
         // always there in this window's list, lit while a drag would land in
         // it. It stays put; the rows open the gap above it.
-        if stashed.isEmpty && isThisWindow {
+        // In all windows it is there only while a pane is dragged: the list
+        // is every window's panes and nothing else.
+        if stashed.isEmpty && isThisWindow && (!state.showsAllWindows || dragSession.isDragging) {
             PaneSidebarEmptyStashSlot(isRail: isRail, isHot: drag?.stashTarget != nil,
                                       isDragging: drag != nil)
         }
@@ -669,7 +686,7 @@ struct PaneSidebarView: View {
         let frames = geometry.rowFrames
         let height = frames.first { $0.id == pane.id }?.frame.height
             ?? frames.first?.frame.height
-            ?? (isRail ? 34 : 38)
+            ?? PaneSidebarRow.height
         return .init(pane: pane, paneTarget: paneTarget, stashTarget: stashTarget, height: height)
     }
 
@@ -717,6 +734,7 @@ private struct PaneSidebarWindowHeader: View {
     let onFold: () -> Void
 
     @State private var isHovered = false
+    @Environment(\.paneSidebarInteractive) private var isInteractive
 
     var body: some View {
         HStack(spacing: PaneSidebarOutline.chevronSpacing) {
@@ -749,7 +767,19 @@ private struct PaneSidebarWindowHeader: View {
             }
             Spacer(minLength: 4)
 
-            PaneSidebarCount(value: owner.surfaceTree.count)
+            // Hovered, the count gives way to × in its place (so nothing
+            // shifts): close the window, no questions, no focus taken.
+            ZStack(alignment: .trailing) {
+                PaneSidebarCount(value: owner.surfaceTree.count)
+                    .opacity(isHovered && isInteractive ? 0 : 1)
+                if isHovered && isInteractive {
+                    PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
+                        owner.closeWindowFromSidebar()
+                    }
+                    .offset(x: PaneSidebarItemButton.headerOffset)
+                }
+            }
+            .frame(height: 14)
         }
         .padding(.vertical, 6)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
@@ -761,6 +791,8 @@ private struct PaneSidebarWindowHeader: View {
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                 .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: isDropTarget ? 2 : 0))
         .padding(.horizontal, SidePanelRow.fillInset)
+        // Clear of its neighbours' pills, as a row is (`PaneSidebarRow.gap`).
+        .padding(.vertical, PaneSidebarRow.gap / 2)
         .contentShape(Rectangle())
         // Not `.onHover`: it blinks off for a frame when a fold re-lays out
         // the list (see `HoverTrackingView`).
@@ -784,38 +816,60 @@ private struct PaneSidebarProjectHeader: View {
     let windowCount: Int
     let isFolded: Bool
     let isFirst: Bool
+    /// Close every window in the group: no questions, no focus taken.
+    let onClose: () -> Void
     let onFold: () -> Void
 
+    @State private var isHovered = false
+    @Environment(\.paneSidebarInteractive) private var isInteractive
+
     var body: some View {
-        Button(action: onFold) {
-            HStack(spacing: PaneSidebarOutline.chevronSpacing) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .rotationEffect(.degrees(isFolded ? -90 : 0))
-                    .foregroundStyle(.secondary)
-                    .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
-                Text(project.uppercased())
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .tracking(0.6)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 4)
-                PaneSidebarCount(value: windowCount)
+        HStack(spacing: 0) {
+            Button(action: onFold) {
+                HStack(spacing: PaneSidebarOutline.chevronSpacing) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(.degrees(isFolded ? -90 : 0))
+                        .foregroundStyle(.secondary)
+                        .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
+                    Text(project.uppercased())
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .tracking(0.6)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.leading, PaneSidebarOutline.headerLeading)
-            .padding(.trailing, SidePanelRow.textInset)
-            .padding(.horizontal, SidePanelRow.fillInset)
-            .padding(.top, isFirst ? 4 : 10)
-            .padding(.bottom, 5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .help(isFolded ? "Show \(project)’s windows" : "Hide \(project)’s windows")
+            .accessibilityLabel("\(project), \(windowCount) windows")
+            .accessibilityAddTraits(.isHeader)
+
+            // As a window row: hovered, the count gives way to ×.
+            ZStack(alignment: .trailing) {
+                PaneSidebarCount(value: windowCount)
+                    .opacity(isHovered && isInteractive ? 0 : 1)
+                if isHovered && isInteractive {
+                    PaneSidebarItemButton(
+                        symbol: "xmark",
+                        help: windowCount == 1 ? "Close its window" : "Close its \(windowCount) windows",
+                        action: onClose)
+                    .offset(x: PaneSidebarItemButton.headerOffset)
+                }
+            }
+            .frame(height: 14)
         }
-        .buttonStyle(.plain)
+        .padding(.leading, PaneSidebarOutline.headerLeading)
+        .padding(.trailing, SidePanelRow.textInset)
+        .padding(.horizontal, SidePanelRow.fillInset)
+        .padding(.top, isFirst ? 4 : 6)
+        .padding(.bottom, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HoverTrackingArea(isHovered: $isHovered))
         .glassBackdrop()
-        .help(isFolded ? "Show \(project)’s windows" : "Hide \(project)’s windows")
-        .accessibilityLabel("\(project), \(windowCount) windows")
-        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -836,6 +890,13 @@ enum PaneSidebarOutline {
     /// How far a list slides as it leaves or arrives: enough to read as a
     /// direction, not a full page turn.
     static let scopeSlide: CGFloat = 48
+    /// Clear space between a project header's band and the content above
+    /// and below it. Outside the band (a sticky header's backdrop), in the
+    /// scrolling list, so a pinned header is still just its band.
+    static let headerGap: CGFloat = 6
+    static var headerGapView: some View {
+        Color.clear.frame(height: headerGap).accessibilityHidden(true)
+    }
     static let foldTransition: AnyTransition = .modifier(
         active: FoldReveal(fraction: 0), identity: FoldReveal(fraction: 1))
     static let chevronWidth: CGFloat = 12

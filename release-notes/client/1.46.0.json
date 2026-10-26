@@ -1,0 +1,22 @@
+{
+  "version": "1.46.0",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "Collapsed or expanded, one click", "text": "The pin and hover-to-open are gone. A button at the top of the bar switches between an icon rail and the full list, and the sidebar glides open and shut." },
+        { "title": "Drag to reorder", "text": "Drag icons or rows up and down and the others shift to make room, in either mode. The order is the sidebar's own; your split layout doesn't move." },
+        { "title": "A tray for stashed panes", "text": "Below the last pane, past a divider, sits the tray. Drag a pane in to stash it, or drag it out to bring it back." },
+        { "title": "Tiles you can tell apart", "text": "Each icon is a raised tile in its pane's own hue with a kind glyph. Busy panes shine, a waiting question shows as an accent rim, and rows have a close button in place of trash mode." }
+      ]
+    },
+    {
+      "title": "Stacked panes",
+      "items": [
+        { "title": "Collapsed panes are blades", "text": "Minimized panes tuck under each other as overlaid bars with shadows leaning outward, and panes can be smaller before they stack." },
+        { "title": "Calmer focus on glass", "text": "Changing focus now changes only a pane's rim and glow, not its whole sheet." },
+        { "title": "Fixes", "text": "Double-clicking a divider evens out panes only in that divider's direction, and a collapsed pane with a banner no longer shows a pale patch on its strip." }
+      ]
+    }
+  ]
+}

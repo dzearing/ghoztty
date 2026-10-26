@@ -24,6 +24,11 @@ its partition.
 | Writing or running ANY test or acceptance script; the harness audit rules | `docs/claude/testing.md` |
 | Any pixel of win32 chrome | `docs/design/win32-design-system.md` + `docs/claude/win32-ui.md` |
 
+`docs/reference/` (from main) holds the **Mac** seat's topic reference docs —
+how each area behaves on macOS now, with Swift code pointers and test names.
+Read the matching one when porting a Mac behavior; the `docs/claude/` file for
+the area stays the authority for the Windows side.
+
 The Windows session protocol lives in `go.md`; parity work is tracked in
 `docs/design/windows-parity-tasks/` (one file per task) with
 `docs/design/windows-parity-tasks.md` as the narrative index.
