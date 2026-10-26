@@ -306,8 +306,7 @@ struct PaneCard: ViewModifier {
                     PaneGlass(tint: background, isLight: isLight, tintStrength: strength)
                         // Under the pane banner the sheet is thinner, so the
                         // card reads as a pane of glass of its own, layered
-                        // on top — but never thinner than an unfocused pane,
-                        // whose sheet terminal text is already read through.
+                        // on top — as much as the banner is showing.
                         .mask {
                             ZStack(alignment: .topLeading) {
                                 Rectangle()
@@ -316,7 +315,7 @@ struct PaneCard: ViewModifier {
                                     RoundedRectangle(cornerRadius: card.cornerRadius, style: .continuous)
                                         .frame(width: rect.width, height: rect.height)
                                         .offset(x: rect.minX, y: rect.minY)
-                                        .opacity(1 - min(1, PaneGlass.bannerTint / strength))
+                                        .opacity((1 - min(1, PaneGlass.bannerTint / strength)) * card.shown)
                                         .blendMode(.destinationOut)
                                 }
                             }
@@ -332,6 +331,11 @@ struct PaneCard: ViewModifier {
 struct PaneBannerCard: Equatable {
     let bounds: Anchor<CGRect>
     let cornerRadius: CGFloat
+    /// How much of the banner is showing: its pane's content fades out as
+    /// the pane goes into its strip (`paneCollapse`), and so must the thinner
+    /// sheet under the card — left at full strength, it drew a pale patch on
+    /// the strip where the banner had been.
+    var shown: Double = 1
 }
 
 struct PaneBannerCardKey: PreferenceKey {

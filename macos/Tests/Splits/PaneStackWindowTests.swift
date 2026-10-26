@@ -526,6 +526,47 @@ struct PaneStackWindowTests {
             .map { $0.pane?.id }
     }
 
+    /// A strip whose pane has a banner is the same glass top to bottom: the
+    /// pane's sheet is thinner under its banner card on show, and that patch
+    /// fades with the banner as the pane goes into its strip — left behind,
+    /// it was a pale rectangle at the strip's top. Measured on the composited
+    /// window: the strip's brightness where the card is, against below it.
+    @Test func aStripWithABannerIsTheSameGlassTopToBottom() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        panes[0].surfaceView?.paneBanner = "## Bedtime story\n**Status:** Working"
+        await settle(1.0)
+        let strip = try #require(all(PaneStackTabView.self, in: window.contentView!)
+            .first { $0.isStrip && $0.pane === panes[0] })
+        let rect = strip.convert(strip.bounds, to: nil)
+        let content = try await SCShareableContent.currentProcess
+        let scWindow = try #require(content.windows.first { $0.windowID == CGWindowID(window.windowNumber) })
+        let cfg = SCStreamConfiguration()
+        cfg.width = Int(scWindow.frame.width * 2)
+        cfg.height = Int(scWindow.frame.height * 2)
+        cfg.showsCursor = false
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg)
+        try await capture(window, "strip-with-banner")
+        let rep = NSBitmapImageRep(cgImage: image)
+        let scale = CGFloat(image.width) / window.frame.width
+        func brightness(atTop offset: CGFloat) -> Double {
+            // A band across the strip's middle, `offset` points below its top,
+            // clear of its title (which runs down its middle lower down).
+            var total = 0.0, n = 0.0
+            for x in stride(from: rect.minX + 4, to: rect.maxX - 4, by: 1) {
+                let y = rect.maxY - offset
+                guard let c = rep.colorAt(x: Int(x * scale), y: Int((window.frame.height - y) * scale))?
+                    .usingColorSpace(.sRGB) else { continue }
+                total += Double(c.redComponent + c.greenComponent + c.blueComponent) / 3 * 255
+                n += 1
+            }
+            return total / max(n, 1)
+        }
+        let underCard = brightness(atTop: 30), below = brightness(atTop: 150)
+        #expect(abs(underCard - below) < 3, "the strip is paler where the banner was: \(underCard) vs \(below)")
+    }
+
     @Test(arguments: [false, true])
     func closingAPaneOnShowKeepsTheStripsMinimized(vertical: Bool) async throws {
         let direction: SplitTree<PaneView>.NewDirection = vertical ? .down : .right

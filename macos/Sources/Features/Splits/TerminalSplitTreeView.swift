@@ -478,6 +478,13 @@ private struct PaneLeafView: View {
             }
             .frame(width: freeze?.width, height: freeze?.height)
             .opacity(1 - collapse)
+            // The banner's glass (the sheet's thinner patch under its card)
+            // fades with it, and is gone on a strip.
+            .transformPreference(PaneBannerCardKey.self) { card in
+                card = card.map {
+                    PaneBannerCard(bounds: $0.bounds, cornerRadius: $0.cornerRadius, shown: $0.shown * (1 - collapse))
+                }
+            }
         }
         .clipped()
         // The source pane fades for the duration of the drag, so the layout
