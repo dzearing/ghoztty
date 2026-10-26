@@ -1842,7 +1842,7 @@ pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).
 
 ## Stacked panes
 
-**A pane is never narrower (or shorter) than 300pt.** A row of panes that
+**A pane is never narrower than 225pt, or shorter than 125pt.** A row of panes that
 cannot fit side by side at that minimum becomes a **stack**: as many panes as
 fit stay on show (the **run**), and the rest are **minimized** into strips at
 the edge they live on — the pane's own card at the strip's size (the same
@@ -1985,11 +1985,15 @@ AND the stashed-pane slots, so a restored pane never reflows.
   recorded as the window server composites them: one bar in every frame
   while held, in the gutter), `theExpandedSidebarResizesFromTheGutterBesideIt`
   (stops at the panel's widest).
-- **Strips are blades**: two strips lie side by side with no gap between
-  them (`Metrics.bladeGap` = 0), each casting a tight, strong shadow on the
-  next one out (the nearer the run, the higher), so they read as blades tucked
-  behind the panes on show rather than as cards with gutters between. They
-  used to be spaced by a full gutter each.
+- **Strips are blades**: no gap between two strips (`Metrics.bladeGap` = 0),
+  and a strip that has another between it and the run reaches 12pt under that
+  one (`Metrics.bladeTuck`), its rounded edge out of sight — overlaid bars, not
+  pills touching at their corners; each still shows 36pt, its title centered on
+  what shows (`PaneCardView.titleRect`). Each casts a tight shadow that leans
+  AWAY from the run onto the blade behind it and stops at its own sides, and
+  the shadow follows `collapse`, so it comes on as a card narrows into its
+  strip rather than snapping in when the glide lands. They used to be spaced
+  by a full gutter each.
 - **Resizers live in the gutters**: every card on show is separated from the
   next by the same gutter (`Metrics.gap`: 10pt elevated, 6pt flat), and so is
   the run from each group of strips beside it — the grip that pulls a strip

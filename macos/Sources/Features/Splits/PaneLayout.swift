@@ -44,10 +44,11 @@ enum PaneLayout {
         /// The smallest a pane may be before its row starts stacking.
         var minimumPaneSize: CGSize
 
-        /// The size floor: 300pt is about 35 columns of a typical font, the
-        /// point below which a terminal (or a page) stops being readable; 200pt
-        /// is about a dozen rows.
-        static let minimumPaneSize = CGSize(width: 300, height: 200)
+        /// The size floor: 225pt is about 26 columns of a typical font and
+        /// 125pt about seven rows — narrow, but still a terminal you can read
+        /// a prompt and its output in. (It was 300×200, which stacked a row
+        /// sooner than people wanted.)
+        static let minimumPaneSize = CGSize(width: 225, height: 125)
 
         /// A tucked card shows this much of itself: room for the vertical title
         /// strip and a few columns of what is in it.
@@ -65,6 +66,15 @@ enum PaneLayout {
         /// gutter each, which read as cards with gutters that had no reason
         /// to be there.)
         static let bladeGap: CGFloat = 0
+
+        /// How far a strip reaches under the strip in front of it (the one
+        /// nearer the run, drawn above it): enough to put its rounded edge
+        /// out of sight, so a stack of strips reads as bars laid over one
+        /// another rather than rounded pills touching at their corners. It
+        /// adds nothing to a strip's footprint — each still shows `peek` —
+        /// and the strip next to the run reaches under nothing, so the gutter
+        /// there stays clear.
+        static let bladeTuck: CGFloat = 12
 
         /// The extent `count` strips take side by side.
         static func blades(_ count: Int, peek: CGFloat) -> CGFloat {
@@ -103,6 +113,11 @@ enum PaneLayout {
         /// The card is tucked into its stack, so it is drawn as its tab alone:
         /// the rest of it would lie under its neighbours.
         var isSliver = false
+
+        /// A strip: whether it lies before its stack's run (true) or after it
+        /// — the side away from the panes on show, where its blade's shadow
+        /// falls. Nil for a card on show.
+        var stripLeads: Bool?
 
         /// Where the card is painted: leaves are painted in ascending
         /// lexicographic order of this, one entry per stack the pane is in,
@@ -856,10 +871,21 @@ private extension PaneLayout {
                 // The sliver that shows, across every pane in the card. It
                 // replaces a tab from a stack nested inside the card: that one
                 // is under this card's neighbours now.
-                let tabSpan = rect.span(along: d, from: offset, length: Swift.min(peek, size))
+                // A strip that has another between it and the run reaches
+                // under that one by `bladeTuck`, toward the run.
+                let tuck = i < run.lowerBound - 1 || i > run.upperBound + 1 ? Metrics.bladeTuck : 0
+                let shown = Swift.min(peek, size)
+                let tabSpan = i < run.lowerBound
+                    ? rect.span(along: d, from: offset, length: shown + tuck)
+                    : rect.span(along: d, from: offset - tuck, length: shown + tuck)
                 for leaf in item.leaves() {
                     guard var placed = result.leaves[leaf.id] else { continue }
-                    let tab = placed.frame.intersection(tabSpan)
+                    // The card, widened along the stack by the tuck, so the
+                    // reach back toward the run is not cut off by it.
+                    let reach = d == .horizontal
+                        ? placed.frame.insetBy(dx: -tuck, dy: 0)
+                        : placed.frame.insetBy(dx: 0, dy: -tuck)
+                    let tab = reach.intersection(tabSpan)
                     let shows = !tab.isNull && !tab.isEmpty
                     placed.tab = shows ? tab.integral() : nil
                     placed.tabAxis = shows ? d : nil
@@ -867,6 +893,7 @@ private extension PaneLayout {
                     // its sliver alone: nothing of it lies under a card on
                     // show, so a glass card never shows one through itself.
                     placed.isSliver = shows
+                    placed.stripLeads = shows ? i < run.lowerBound : nil
                     result.leaves[leaf.id] = placed
                 }
             }

@@ -147,7 +147,8 @@ struct PaneLayoutTests {
     @Test func thePaintOrderShowsTheRunAndEveryTab() throws {
         // Panes are painted by elevation. Wherever a higher pane overlaps a
         // lower one, the lower one must be tucked — the run is never
-        // covered — and every tab must be uncovered.
+        // covered — and of every tab no more than its tuck is covered (the
+        // part a strip reaches under the strip in front, `bladeTuck`).
         let (node, views) = try row(5)
         for width in [420.0, 600, 900, 1200] {
             for focused in views {
@@ -166,7 +167,8 @@ struct PaneLayoutTests {
                         #expect(lower.isTucked, "a pane on show is under another at \(width)")
                         if let tab = lower.tab {
                             let covered = tab.intersection(drawn[j])
-                            #expect(covered.isNull || covered.width <= 0, "a tab is covered at \(width)")
+                            #expect(covered.isNull || covered.width <= PaneLayout.Metrics.bladeTuck + 0.5,
+                                    "more than a tab's tuck is covered at \(width)")
                         }
                     }
                 }
@@ -174,10 +176,12 @@ struct PaneLayoutTests {
         }
     }
 
-    @Test func noCardIsDrawnOverAnother() throws {
+    @Test func onlyStripsOverlapAndOnlyByTheirTuck() throws {
         // A tucked card, on either side of the run, is drawn as its sliver
-        // alone — so no card, a translucent glass card on show above all, ever
-        // has another card under it to show through itself.
+        // alone — so no card ON SHOW ever has another card under it to show
+        // through its glass. Strips are blades laid over one another: two of
+        // them overlap by the tuck (`bladeTuck`) and no more, and never a
+        // card on show.
         let (node, views) = try row(5)
         for width in [420.0, 600, 900, 1200, 1400] {
             for focused in views {
@@ -191,7 +195,9 @@ struct PaneLayoutTests {
                 for i in drawn.indices {
                     for j in drawn.indices where j > i {
                         let o = drawn[i].intersection(drawn[j])
-                        #expect(o.isNull || o.width <= 0 || o.height <= 0,
+                        guard !o.isNull, o.width > 0, o.height > 0 else { continue }
+                        let blades = result.leaves[views[i].id]!.isTucked && result.leaves[views[j].id]!.isTucked
+                        #expect(blades && o.width <= PaneLayout.Metrics.bladeTuck + 0.5,
                                 "cards \(i) and \(j) overlap at \(width), focus \(views.firstIndex(of: focused)!)")
                     }
                 }
@@ -220,7 +226,9 @@ struct PaneLayoutTests {
         // Strips on both sides: a gutter between the run and each group.
         let w: CGFloat = 600 - 3 * 36 - 2 * 10
         #expect(result.leaves[views[2].id]?.tab == CGRect(x: 46 + w + 10, y: 0, width: 36, height: 600))
-        #expect(result.leaves[views[3].id]?.tab == CGRect(x: 46 + w + 46, y: 0, width: 36, height: 600))
+        // d has c between it and the run: it reaches under c by the tuck.
+        let tuck = PaneLayout.Metrics.bladeTuck
+        #expect(result.leaves[views[3].id]?.tab == CGRect(x: 46 + w + 46 - tuck, y: 0, width: 36 + tuck, height: 600))
         #expect(result.leaves[views[3].id]?.tabAxis == .horizontal)
     }
 
@@ -262,7 +270,8 @@ struct PaneLayoutTests {
         #expect(stack.direction == .vertical)
         #expect(stack.run == 2...2)
         #expect(result.leaves[a.id]?.tabAxis == .vertical)
-        #expect(result.leaves[a.id]?.tab?.height == 36)
+        // a has b between it and the run: it reaches under b by the tuck.
+        #expect(result.leaves[a.id]?.tab?.height == 36 + PaneLayout.Metrics.bladeTuck)
         #expect(result.leaves[c.id]?.frame.height == CGFloat(400 - 2 * 36 - 10))
     }
 
@@ -332,17 +341,21 @@ struct PaneLayoutTests {
     // MARK: - Minimums the divider clamps against
 
     @Test func theDividerClampFallsBackToStackedMinimumsWhenNeeded() throws {
-        // a | (b | c) in 700pt: side by side needs 900; with b|c allowed to
-        // stack it needs 300 + 336.
+        // a | (b | c) in a width too narrow for three minimums side by side;
+        // with b|c allowed to stack it needs a minimum and a strip beside it
+        // (the clamp counts no gaps).
+        let m = PaneLayout.Metrics.minimumPaneSize.width
+        let width = 3 * m - 75
+        let stacked = m + PaneLayout.Metrics.peek
         let a = MockView(), b = MockView(), c = MockView()
         let node = SplitTree<MockView>.Node.split(.init(
             direction: .horizontal, ratio: 0.5, left: .leaf(view: a),
             right: .split(.init(direction: .horizontal, ratio: 0.5, left: .leaf(view: b), right: .leaf(view: c)))))
-        let moved = node.movingDivider(to: 600, in: 700)
+        let moved = node.movingDivider(to: width - 50, in: width)
 
         guard case .split(let split) = moved else { Issue.record("expected a split"); return }
         // The divider moved, stopping where b|c can still stack.
-        #expect(abs(split.ratio - (700.0 - 336.0) / 700.0) < 0.0001)
+        #expect(abs(split.ratio - Double((width - stacked) / width)) < 0.0001)
     }
 
     // MARK: - Adopting the displayed layout
