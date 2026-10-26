@@ -46,7 +46,7 @@ pub fn viewportOf(l: *const Layout, scale: f32) Rect {
 }
 
 /// The bottom of everything that scrolls (unscrolled coordinates).
-fn contentBottom(l: *const Layout, floor: i32) i32 {
+pub fn contentBottom(l: *const Layout, floor: i32) i32 {
     var b = floor;
     for (0..l.count) |i| {
         if (l.shown(i)) b = @max(b, l.items[i].bottom);

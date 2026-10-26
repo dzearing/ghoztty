@@ -91,6 +91,7 @@ test {
     // question-ring timing, and when the column needs a clock at all.
     // Imports only std. Every lane.
     _ = @import("win32/pane_sidebar_motion.zig");
+    _ = @import("win32/pane_sidebar_transition.zig");
 
     // Pure win32 pane sidebar open-card layer (T1865): the per-pixel alpha
     // that lets the hover-open card's antialiased corners and soft shadow

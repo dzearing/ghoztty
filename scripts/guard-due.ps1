@@ -5364,6 +5364,8 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\pane_sidebar.zig',
             'src\apprt\win32\pane_sidebar_outline.zig',
+            'src\apprt\win32\pane_sidebar_transition.zig',
+            'src\apprt\win32\pane_sidebar_xfade.zig',
             'src\apprt\win32\PaneSidebar.zig',
             'test\win32\pane-sidebar-all-windows.ps1'
         )

@@ -29,6 +29,12 @@
 #      windows and no header rows.
 #   8. The toggle switches back to this window's panes only, and clears a
 #      query: back on, every window is listed (T1877).
+#   9. Motion (T1880): sections 1, 4, 5 and 8 also assert that the switch
+#      slid and each fold animated in place (`pane sidebar transition` log
+#      lines; the pixel math is unit-tested in pane_sidebar_transition.zig).
+#      With the effects off (the remote-session seam, never the user's
+#      machine-wide "Animation effects"), the switch and a fold land with no
+#      transition at all.
 #
 # Geometry comes from the `pane sidebar outline` log line (heads, items,
 # rules, the toggle, in the column's client coordinates): a background
@@ -59,6 +65,15 @@ function Assert($name, $cond) {
 [void](Set-GhozttyTestIsolation -Tag 't1829')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 Add-Type -AssemblyName System.Drawing
+if (-not ('SidebarSessionPost' -as [type])) {
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class SidebarSessionPost {
+    [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint msg, IntPtr wp, IntPtr lp);
+}
+"@
+}
 
 $Cli = [System.IO.Path]::ChangeExtension($Exe, '.com')
 if (-not (Test-Path $Cli)) { $Cli = $Exe }
@@ -172,6 +187,12 @@ $script:scale = 1.0
 try {
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
     Assert-GhozttyPrivateEndpoint -Exe $Exe
+    # Section 9 turns motion off through the remote-session seam (T1951), the
+    # same switch "Animation effects" off throws - never the user's real
+    # setting, which is machine-wide.
+    $script:seam = Join-Path $tmp 'remote-session.txt'
+    Set-Content -Path $script:seam -Value '0' -NoNewline -Encoding ascii
+    $env:GHOZTTY_TEST_REMOTE_SESSION_FILE = $script:seam
     $script:errlog = Join-Path $tmp 'app-stderr.log'
     $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false', '--macos-pane-style=flat')
     Start-Sleep -Seconds 3
@@ -216,6 +237,9 @@ try {
     }
     $scopeLine = Wait-Log 'pane sidebar scope all_windows=true' $mark
     Assert "the toggle turned the all-windows scope on (log)" ($null -ne $scopeLine)
+    # T1880: the switch slides (Mac 0.3 s), toward all windows, and ends.
+    Assert "...and slid there: a scope transition ran on the panel (log)" ($null -ne (Wait-Log 'pane sidebar transition scope surface=rail ms=300' $mark 2000))
+    Assert "...which finished on its own (log)" ($null -ne (Wait-Log 'pane sidebar transition done surface=rail' $mark 2000))
     $groups = Wait-Log 'pane sidebar all-windows groups=' $mark
     "  $groups"
     Assert "four groups, every pane" ($groups -match 'groups=4 panes=6 ')
@@ -291,11 +315,16 @@ try {
     if ($h) { [void](ClickAt $top $sb $h) }
     $o2 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
     Assert "folded: zeta's rows are gone, its header stays" ($null -ne $o2 -and @($o2.Items | Where-Object Group -eq 3).Count -eq 0 -and $null -ne (Head $o2 'W' 3))
+    # T1880: the fold covers the rows top-down (Mac 0.22 s) - measured against
+    # the list after it, not dropped because the head moved.
+    Assert "the fold animated (log)" ($null -ne (Wait-Log 'pane sidebar transition fold surface=rail ms=220' $mark 2000))
+    Assert "...and finished without landing early" (($null -ne (Wait-Log 'pane sidebar transition done surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
     $mark = Get-LogCount
     $h = Head $o2 'W' 3
     if ($h) { [void](ClickAt $top $sb $h) }
     $o3 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
     Assert "unfolded: zeta's two rows are back" ($null -ne $o3 -and @($o3.Items | Where-Object Group -eq 3).Count -eq 2)
+    Assert "...revealed top-down: the unfold animated and finished in place" (($null -ne (Wait-Log 'pane sidebar transition fold surface=rail' $mark 2000)) -and ($null -ne (Wait-Log 'pane sidebar transition done surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
 
     "== 5: the project header folds its windows, and unfolds them"
     $mark = Get-LogCount
@@ -304,6 +333,7 @@ try {
     $o4 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
     Assert "folded: the project's window heads and rows are gone" ($null -ne $o4 -and $null -eq (Head $o4 'W' 1) -and $null -eq (Head $o4 'W' 2) -and @($o4.Items | Where-Object { $_.Group -in 1, 2 }).Count -eq 0)
     Assert "folded: the project head itself stays" ($null -ne $o4 -and $null -ne (Head $o4 'P' 1))
+    Assert "...and the project's fold animated in place too (log)" (($null -ne (Wait-Log 'pane sidebar transition fold surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
     $mark = Get-LogCount
     $h = Head $o4 'P' 1
     if ($h) { [void](ClickAt $top $sb $h) }
@@ -427,6 +457,20 @@ try {
     Start-Sleep -Milliseconds 900
     $closedEarly = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $mark | Where-Object { $_ -match 'pane sidebar card close' }).Count
     Assert "with the caret in its field the card did not contract in 3x the grace period ($closedEarly)" ($closedEarly -eq 0)
+    # T1880 on the layered card: a fold there animates too (presented over
+    # its glass), and the caret keeps it open while it runs. Folded, then
+    # back, so the sections after see the outline as it was.
+    $openLine = Wait-Log 'pane sidebar card open reason=unpin' $mark 500
+    if ($card -ne [IntPtr]::Zero -and $openLine -match ' chev0=(-?\d+),(-?\d+)') {
+        $cx = [int]$Matches[1]; $cy = [int]$Matches[2]
+        $cr = Get-TestWindowRect -Window $card
+        foreach ($step in 'fold', 'unfold') {
+            $fmark = Get-LogCount
+            [void](Send-TestMouse -Window $top -Target $card -X ($cr.Left + $cx) -Y ($cr.Top + $cy) -Action click)
+            Assert "the card's first chevron did $step its group (log)" ($null -ne (Wait-Log "pane sidebar $step" $fmark 2000))
+            Assert "...animated on the card, in place, to the end (log)" (($null -ne (Wait-Log 'pane sidebar transition fold surface=card ms=220' $fmark 2000)) -and ($null -ne (Wait-Log 'pane sidebar transition done surface=card' $fmark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $fmark 200)))
+        }
+    } else { Assert "the card logged its first chevron" $false }
     $mark = Get-LogCount
     [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text 'zeta')
     Assert "the card's field filters its outline" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 .*order=zeta$' $mark))
@@ -447,7 +491,18 @@ try {
     Assert "re-pinned, a query filters the panel again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 .*order=zeta$' $mark))
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ScopeCenter $sb))
+    # A frame from inside the slide, for a human to look at (not asserted:
+    # where in its 300 ms the capture lands is up to the box).
+    try {
+        Start-Sleep -Milliseconds 60
+        $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
+        $path = Join-Path $env:TEMP 't1880-scope-midflight.png'
+        $shot.Bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+        Close-TestWindowPixels -Shot $shot
+        "  (saved $path)"
+    } catch { "  (mid-flight capture failed: $($_.Exception.Message))" }
     Assert "the toggle turned the scope off (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=false' $mark 2000))
+    Assert "...sliding back the other way (log)" ($null -ne (Wait-Log 'pane sidebar transition scope surface=rail' $mark 2000))
     # Turning the scope off clears the filter (Mac): back on, nothing is hidden.
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ScopeCenter $sb))
@@ -455,6 +510,27 @@ try {
     "  $g"
     Assert "the scope came back with no filter" ($null -ne $g -and $g -match 'groups=3 .*search=0 ')
     Assert "...and the flipped folds forgotten: the other two windows fold again (T1924)" ($null -ne $g -and $g -match ' windows=3 folded=2 ')
+
+    "== 9: with animations off, the switch and the folds just land (T1880)"
+    Start-Sleep -Milliseconds 500
+    Set-Content -Path $script:seam -Value '1' -NoNewline -Encoding ascii
+    $mark = Get-LogCount
+    [void][SidebarSessionPost]::PostMessageW($top, [uint32]0x02B1, [IntPtr]0, [IntPtr]::Zero)
+    Assert "setup: the effects went off (log)" ($null -ne (Wait-Log 'low-power: visual effects off' $mark 6000))
+    Start-Sleep -Milliseconds 800
+    $sb = Get-Sidebar $top
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb (Get-ScopeCenter $sb))
+    Assert "the switch still switched (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=false' $mark 2000))
+    [void](ClickAt $top $sb (Get-ScopeCenter $sb))
+    Assert "...both ways (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=true' $mark 2000))
+    $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $h = if ($o) { Head $o 'W' 2 } else { $null }
+    if ($h) { [void](ClickAt $top $sb $h) }
+    Assert "a header still folds (log)" ($null -ne (Wait-Log 'pane sidebar (un)?fold' $mark 2000))
+    Assert "...and none of it animated: no transition started" ($null -eq (Wait-Log 'pane sidebar transition' $mark 500))
+    Set-Content -Path $script:seam -Value '0' -NoNewline -Encoding ascii
+    [void][SidebarSessionPost]::PostMessageW($top, [uint32]0x02B1, [IntPtr]0, [IntPtr]::Zero)
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

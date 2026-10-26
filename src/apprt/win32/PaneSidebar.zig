@@ -47,6 +47,9 @@ const row_menu = @import("pane_sidebar_menu.zig");
 const search_field = @import("pane_sidebar_search.zig");
 const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
+const transition = @import("pane_sidebar_transition.zig");
+const xf = @import("pane_sidebar_xfade.zig");
+const Dib32 = @import("dib32.zig");
 const layer = @import("pane_sidebar_layer.zig");
 const App = @import("App.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
@@ -79,6 +82,8 @@ const TIMER_OPEN: usize = 1;
 const TIMER_CLOSE: usize = 2;
 /// The motion clock (T1843), on whichever window shows something moving.
 const TIMER_ANIM: usize = 3;
+/// A list transition's frame clock (T1880), on the surface it runs on.
+const TIMER_XFADE: usize = 4;
 
 /// Which of the sidebar's two windows a message or a paint is for.
 const Surface = enum { rail, card };
@@ -314,6 +319,12 @@ paint_ms: u64 = 0,
 paint_motion: bool = true,
 marks: [2]motion.Marks = .{ .{}, .{} },
 anim_armed: [2]bool = .{ false, false },
+/// The list transition running on each surface (T1880): the scope slide or a
+/// fold, composed from a picture of the frame before it (`xf`).
+xfade: [2]?xf.Xfade = .{ null, null },
+/// Paint the material alone - no header, no rows: the backdrop a transition
+/// lays the moving lists over.
+paint_bare: bool = false,
 /// The last roster tally logged (busy, question, bell), so the log says when
 /// it moved rather than on every refresh.
 logged_marks: [3]usize = .{ 0, 0, 0 },
@@ -447,6 +458,10 @@ pub fn destroy(self: *PaneSidebar) void {
     self.lines.deinit(self.alloc);
     self.toggled.deinit(self.alloc);
     self.folded_projects.deinit(self.alloc);
+    for (&self.xfade) |*x| {
+        if (x.*) |*v| v.deinit();
+        x.* = null;
+    }
     self.rail_card.release();
     self.open_card.release();
     if (self.layer_cells.len > 0) self.alloc.free(self.layer_cells);
@@ -1454,6 +1469,13 @@ fn glyph(hdc: w32.HDC, scale: f32, r: pane_sidebar.Rect, cp: u16, dip: f32, colo
 }
 
 fn paint(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
+    if (!self.paint_bare and self.xfade[@intFromEnum(which)] != null) {
+        if (self.paintTransition(hdc, which, width, height)) return;
+    }
+    self.paintFrame(hdc, which, width, height);
+}
+
+fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
     const t = self.theme();
     const l = self.layoutFor(which);
     _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
@@ -1501,6 +1523,150 @@ fn onMotionTick(self: *PaneSidebar, which: Surface) void {
     _ = w32.KillTimer(hwnd, TIMER_ANIM);
     self.anim_armed[k] = false;
     log.info("pane sidebar motion off surface={s}", .{@tagName(which)});
+}
+
+// -------------------------------------------------------------------------
+// List transitions (T1880)
+// -------------------------------------------------------------------------
+
+/// `which`'s size as its paints see it: the column's client area, the
+/// layered card's window (`presentCard`).
+fn surfaceSize(self: *PaneSidebar, which: Surface) ?[2]i32 {
+    const hwnd = self.surfaceHwnd(which) orelse return null;
+    var r: w32.RECT = undefined;
+    const ok = if (which == .card) w32.GetWindowRect(hwnd, &r) else w32.GetClientRect(hwnd, &r);
+    if (ok == 0 or r.right <= r.left or r.bottom <= r.top) return null;
+    return .{ r.right - r.left, r.bottom - r.top };
+}
+
+/// Picture `which` as it is now, before a change to its list - or null when
+/// the change should simply land: animations are off (Mac's Reduce Motion),
+/// the surface is not on screen, or it shows no list (the rail's tiles).
+/// The picture is the frame as presented, so a switch made mid-transition
+/// leaves from where the eye is.
+fn snapshot(self: *PaneSidebar, which: Surface, kind: xf.Kind) ?xf.Xfade {
+    if (!App.clientAreaAnimationsEnabled()) return null;
+    const hwnd = self.surfaceHwnd(which) orelse return null;
+    if (w32.IsWindowVisible(hwnd) == 0) return null;
+    const l = self.layoutFor(which);
+    if (!l.open and l.mode != .expanded) return null;
+    const size = self.surfaceSize(which) orelse return null;
+    const screen = w32.GetDC(null) orelse return null;
+    defer _ = w32.ReleaseDC(null, screen);
+    var x: xf.Xfade = .{ .kind = kind, .w = size[0], .h = size[1] };
+    const saved = self.card_key;
+    defer self.card_key = saved;
+    const n: usize = if (which == .card) xf.keys.len else 1;
+    for (0..n) |v| {
+        const d = Dib32.create(screen, size[0], size[1]) orelse {
+            x.deinit();
+            return null;
+        };
+        x.old[v] = d;
+        self.card_key = xf.keys[v];
+        self.paint(d.dc, which, size[0], size[1]);
+    }
+    _ = w32.GdiFlush();
+    return x;
+}
+
+/// Run `snap` on `which`, replacing any transition already running there.
+fn startTransition(self: *PaneSidebar, which: Surface, snap: ?xf.Xfade) void {
+    var x = snap orelse return;
+    self.dropTransition(which);
+    const hwnd = self.surfaceHwnd(which) orelse return x.deinit();
+    if (w32.SetTimer(hwnd, TIMER_XFADE, transition.frame_ms, null) == 0) return x.deinit();
+    x.start_ms = w32.GetTickCount64();
+    self.xfade[@intFromEnum(which)] = x;
+    log.info("pane sidebar transition {s} surface={s} ms={d}", .{ @tagName(x.kind), @tagName(which), x.duration() });
+}
+
+/// Stop `which`'s transition, if one runs, without a repaint.
+fn dropTransition(self: *PaneSidebar, which: Surface) void {
+    const k = @intFromEnum(which);
+    if (self.xfade[k]) |*x| x.deinit();
+    self.xfade[k] = null;
+    if (self.surfaceHwnd(which)) |hwnd| _ = w32.KillTimer(hwnd, TIMER_XFADE);
+}
+
+fn onTransitionTick(self: *PaneSidebar, which: Surface) void {
+    const hwnd = self.surfaceHwnd(which) orelse return;
+    const x = self.xfade[@intFromEnum(which)] orelse {
+        _ = w32.KillTimer(hwnd, TIMER_XFADE);
+        return;
+    };
+    if (w32.GetTickCount64() -| x.start_ms >= x.duration()) {
+        self.dropTransition(which);
+        log.info("pane sidebar transition done surface={s}", .{@tagName(which)});
+    }
+    self.invalidate(hwnd);
+}
+
+/// One frame of `which`'s transition into `hdc`: the frame after the change
+/// painted live, the material alone, and the picture from before, composed
+/// by `transition`. False when there is nothing to compose - the transition
+/// has run out or the surface changed size under it - and the plain frame is
+/// painted instead. A fold whose head moved (the list re-scrolled under it)
+/// is dropped the same way: the fold just lands.
+fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, which: Surface, w: i32, h: i32) bool {
+    const k = @intFromEnum(which);
+    const x = &(self.xfade[k].?);
+    const old = x.old[xf.variantOf(self.card_key)] orelse return false;
+    const elapsed = w32.GetTickCount64() -| x.start_ms;
+    if (x.w != w or x.h != h or elapsed >= x.duration()) {
+        self.dropTransition(which);
+        return false;
+    }
+    const p = transition.progress(elapsed, x.duration());
+    const bg = Dib32.create(hdc, w, h) orelse return false;
+    defer bg.destroy();
+    const new = Dib32.create(hdc, w, h) orelse return false;
+    defer new.destroy();
+    const out = Dib32.create(hdc, w, h) orelse return false;
+    defer out.destroy();
+    // The material first, so the motion tally the live frame leaves is the
+    // one that stands.
+    self.paint_bare = true;
+    self.paintFrame(bg.dc, which, w, h);
+    self.paint_bare = false;
+    self.paintFrame(new.dc, which, w, h);
+    _ = w32.GdiFlush();
+    const l = self.layoutFor(which);
+    const vp = l.viewport;
+    const bottom = if (vp.height() > 0) vp.bottom else l.height;
+    switch (x.kind) {
+        .scope => |to_all| transition.composeSlide(out.pixels, bg.pixels, old.pixels, new.pixels, w, h, .{
+            .left = l.header.left,
+            .top = l.header.bottom,
+            .right = l.header.right,
+            .bottom = bottom,
+        }, p, to_all, pane_sidebar.px(transition.scope_slide_dip, self.scale)),
+        .fold => |f| {
+            const nb = scroll_mod.contentBottom(&l, vp.top);
+            if (f.head >= l.head_count or l.heads[f.head].rect.bottom != f.y0 or l.scroll != f.scroll or nb == f.bottom) {
+                log.info("pane sidebar transition fold lands: the list moved under it", .{});
+                self.dropTransition(which);
+                return false;
+            }
+            const opening = nb > f.bottom;
+            transition.composeFold(
+                out.pixels,
+                bg.pixels,
+                if (opening) new.pixels else old.pixels,
+                if (opening) old.pixels else new.pixels,
+                new.pixels,
+                w,
+                h,
+                .{ .left = vp.left, .top = vp.top, .right = vp.right, .bottom = bottom },
+                f.y0,
+                if (opening) nb - f.bottom else f.bottom - nb,
+                opening,
+                p,
+            );
+        },
+    }
+    _ = w32.BitBlt(hdc, 0, 0, w, h, out.dc, 0, 0, w32.SRCCOPY);
+    return true;
 }
 
 fn unrgb(c: u32) color_math.Rgb {
@@ -1672,6 +1838,7 @@ fn paintOpen(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
 /// The header (caption + pin), the section rule and caption, and the rows -
 /// shared by the pinned panel and the open card, whose layouts place them.
 fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    if (self.paint_bare) return;
     // Header: "PANES" (or "ALL WINDOWS") on the label inset, the
     // all-windows toggle and the pin at the trailing edge.
     if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
@@ -2534,15 +2701,23 @@ fn logCard(self: *PaneSidebar, what: []const u8, reason: CardReason) void {
     // Where the card's search field is (T1877), in its client coordinates: a
     // script clicks it before the card's grace period runs out.
     var sf: pane_sidebar.Rect = .{};
-    if (self.card_open) sf = self.layoutFor(.card).search;
-    log.info("pane sidebar card {s} reason={s} column={d},{d},{d},{d} card={d},{d},{d},{d} search={d},{d},{d},{d}", .{
-        what,      @tagName(reason),
-        col.left,  col.top,
-        col.right, col.bottom,
-        card.left, card.top,
-        card.right, card.bottom,
-        sf.left,   sf.top,
-        sf.right,  sf.bottom,
+    // And the first head's chevron, so it can fold a group in the card too
+    // (T1880's fold transition on the layered card).
+    var chev: pane_sidebar.Rect = .{};
+    if (self.card_open) {
+        const l = self.layoutFor(.card);
+        sf = l.search;
+        if (l.head_count > 0) chev = l.heads[0].chevron;
+    }
+    log.info("pane sidebar card {s} reason={s} column={d},{d},{d},{d} card={d},{d},{d},{d} search={d},{d},{d},{d} chev0={d},{d}", .{
+        what,             @tagName(reason),
+        col.left,         col.top,
+        col.right,        col.bottom,
+        card.left,        card.top,
+        card.right,       card.bottom,
+        sf.left,          sf.top,
+        sf.right,         sf.bottom,
+        chev.centerX(),   chev.centerY(),
     });
 }
 
@@ -3025,7 +3200,7 @@ fn activate(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit, alt: bool
     switch (hit) {
         .none => {},
         .pin => self.window.togglePaneSidebarPin(),
-        .scope => self.toggleScope(),
+        .scope => self.toggleScope(which),
         .trash => self.setQuickKill(!self.quick_kill),
         .search => self.focusSearch(),
         .search_clear => {
@@ -3061,7 +3236,10 @@ fn activate(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit, alt: bool
 /// The all-windows switch (T1829). Nothing is persisted. Each look starts
 /// from the default folds (T1924): this window open, every other folded.
 /// Project folds survive a round trip, as Mac's do.
-fn toggleScope(self: *PaneSidebar) void {
+fn toggleScope(self: *PaneSidebar, which: Surface) void {
+    // Started before the switch, so the paint the refresh below brings is
+    // already the transition's first frame rather than the new list.
+    self.startTransition(which, self.snapshot(which, .{ .scope = !self.all_windows }));
     self.all_windows = !self.all_windows;
     self.hover = .none;
     self.signature = 0;
@@ -3286,6 +3464,12 @@ fn activateHead(self: *PaneSidebar, which: Surface, k: usize, fold: bool) void {
     const hd = l.heads[k];
     if (hd.index >= self.groups.items.len) return;
     const g = self.groups.items[hd.index];
+    if (hd.kind == .project or fold or g.own) self.startTransition(which, self.snapshot(which, .{ .fold = .{
+        .head = k,
+        .y0 = hd.rect.bottom,
+        .bottom = scroll_mod.contentBottom(&l, l.viewport.top),
+        .scroll = l.scroll,
+    } }));
     if (hd.kind == .project) return self.toggleFold(&self.folded_projects, g.project_key);
     if (fold or g.own) return self.toggleFold(&self.toggled, g.key);
     self.raiseGroup(g);
@@ -3350,6 +3534,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 TIMER_OPEN => if (which == .rail) self.onOpenTimer(),
                 TIMER_CLOSE => if (which == .card) self.onCloseTimer(),
                 TIMER_ANIM => self.onMotionTick(which),
+                TIMER_XFADE => self.onTransitionTick(which),
                 else => {},
             }
             return 0;
