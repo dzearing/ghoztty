@@ -155,7 +155,8 @@ function Get-ToggleCenter($sb) {
 # caption; at the trailing edge sits this button alone, sm (4) in, on the
 # toggle's row - trash mode's button that sat after it is gone (T2280).
 function Get-ScopeCenter($sb) {
-    return @{ X = $sb.Width - (Px 4) - [int]((Px 28) / 2); Y = (Get-ToggleCenter $sb).Y }
+    # sm in from the card's edge, 12 DIP in from the column's (T2290).
+    return @{ X = $sb.Width - (Px 12) - (Px 4) - [int]((Px 28) / 2); Y = (Get-ToggleCenter $sb).Y }
 }
 
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
@@ -262,7 +263,8 @@ try {
     [void](WheelAt $top $sb $mid 2400)
     $o5 = Read-Geometry (Wait-Log 'pane sidebar rows mode=expanded' $mark 3000)
     Assert "the wheel took the list back to the top" ($null -ne $o5 -and $o5.Scroll -eq 0)
-    $thumbX = $sb.Width - (Px 4)
+    # On the card's trailing edge, 12 DIP in from the column's (T2290).
+    $thumbX = $sb.Width - (Px 12) - (Px 4)
     $mark = Get-LogCount
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + $thumbX) -Y ($sb.Top + $o5.Top + (Px 5)) -Action down)
     Start-Sleep -Milliseconds 100

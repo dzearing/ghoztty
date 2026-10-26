@@ -15,19 +15,21 @@
 #      not the terminal background; the card itself is the card material, not
 #      the desk; and just inside the column's trailing edge the colour meets
 #      the grid margin beside it without a seam.
-#   3. THE EXPANDED PANEL. Expanded, the column is the 240 DIP panel; its empty
-#      lower part lets the desk show through (blue over red on a black
-#      terminal), and just inside its trailing edge it is exactly the glass
-#      mix of the desk in the margin beside it - 38% terminal background, then
-#      the card's 6% wash - and there is no divider rule at that edge.
+#   3. THE EXPANDED CARD (T2290, Mac 0a547522d + 351868cb5). Expanded is the
+#      rail's own card at the panel's width, in the same insets: the column is
+#      10 + 240 DIP, its leading margin is the desk as the rail's is, and the
+#      card is an UNFOCUSED PANE's - its empty lower part lets the desk show
+#      through (blue over red on a black terminal), and just inside its
+#      trailing edge it is exactly a pane's glass sheet over the desk in the
+#      margin beside it (40% terminal background, no wash).
 #   4. The toggle (T2289: on the same pixels in the panel's header as on the
 #      rail) collapses it back to the 54 DIP rail.
-#   5. GLASS (T1887, Mac ec71db251 / 733b03e58). With glass panes on (the
-#      default) the rail is Mac's lighter glass sheet: the rail's card is the
-#      desk under 30% terminal background (step 2 checks it against the desk
-#      at the same height). A second launch with --macos-pane-glass=false
-#      keeps the opaque card: the rail is card material, not the desk. (The
-#      hover-open card's own glass sections went with it in T2289.)
+#   5. GLASS (T1887; T2290, Mac 351868cb5). With glass panes on (the
+#      default) the rail's card is an unfocused pane's glass sheet: the desk
+#      under 40% terminal background (step 2 checks it against the desk at the
+#      same height). A second launch with --macos-pane-glass=false keeps the
+#      opaque card: the rail is card material, not the desk. (The hover-open
+#      card's own glass sections went with it in T2289.)
 #   7. BESIDE THE TAB STRIP (T1900, Mac 3ac40dc8b). With glass panes and the
 #      strip showing, the sidebar's column runs the window's height: it starts
 #      at the client's top, its card running up beside the tabs, and the strip
@@ -35,8 +37,8 @@
 #      The tabs sit one 10 DIP gap above the panes. Up there the column only
 #      draws - WM_NCHITTEST on it is HTTRANSPARENT and the window answers
 #      HTCAPTION, so the stretch drags the window - while the rail's toggle,
-#      now a strip's height lower, still expands; the strip follows the 240
-#      DIP panel.
+#      now a strip's height lower, still expands; the strip follows the
+#      expanded card's column.
 #      Solid panes keep the column under the chrome and the strip full width.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
@@ -74,6 +76,24 @@ function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale, [MidpointRo
 # pane_elevation.zig: the margin/gap, and the card's rim inset.
 function Get-MarginPx { [math]::Max((Px 10), 1) }
 function Get-InsetPx { [math]::Max([int][math]::Ceiling(0.5 * $script:scale), 1) }
+# The expanded column (T2290): the rail's card at the panel's width in the
+# rail's insets - the panes' margin leading, none trailing.
+function Get-PanelColumnPx([double]$Dip) { (Get-MarginPx) + (Px $Dip) }
+# A pane's glass sheet over one desk pixel on the black terminal
+# (pane_elevation.glassMix): 40% black mixed in LINEAR light, so the desk keeps
+# 60% of its linear value - not of its sRGB one.
+function Get-PaneSheet($desk) {
+    if ($null -eq $desk) { return $null }
+    $f = {
+        param($v)
+        $c = $v / 255.0
+        $lin = if ($c -le 0.04045) { $c / 12.92 } else { [math]::Pow(($c + 0.055) / 1.055, 2.4) }
+        $lin *= 0.6
+        $out = if ($lin -le 0.0031308) { $lin * 12.92 } else { 1.055 * [math]::Pow($lin, 1 / 2.4) - 0.055 }
+        [int][math]::Round($out * 255)
+    }
+    return [pscustomobject]@{ R = (& $f $desk.R); G = (& $f $desk.G); B = (& $f $desk.B) }
+}
 
 # The ocean desk on a dark theme: dark, blue above red, and neither the black
 # terminal nor a neutral gray (pane-elevation.ps1's oracle).
@@ -183,15 +203,12 @@ try {
             $inGrid = Get-TestPixel -Shot $shot -X ($sb.Right + 1) -Y $y
             "  leading inset=$(Fmt $lead) card=$(Fmt $card) column-edge=$(Fmt $inCol) grid-margin=$(Fmt $inGrid)"
             Assert "the rail's leading inset is the ocean desk, not the terminal background" (Test-DeskPixel $lead)
-            # Glass (T1887): black at 30% over the desk, then the card's sheen
-            # and grounding shade (a few levels either way) - and no wash.
-            $want = $null
-            if ($null -ne $deskAtCard) {
-                $want = [pscustomobject]@{ R = [int]($deskAtCard.R * 0.7); G = [int]($deskAtCard.G * 0.7); B = [int]($deskAtCard.B * 0.7) }
-            }
+            # An unfocused pane's glass sheet (T2290, Mac 351868cb5): black at
+            # pane_elevation.GLASS_TINT (40%) over the desk - and no wash.
+            $want = Get-PaneSheet $deskAtCard
             $dg = if ($null -ne $want -and $null -ne $card) { Get-ColorDistance $card $want } else { 999 }
             "  desk beside the card=$(Fmt $deskAtCard) glass expected=$(Fmt $want) (distance $dg)"
-            Assert "the rail's card is the desk under 30% terminal background - glass, no wash (distance $dg)" ($dg -le 15)
+            Assert "the rail's card is a pane's sheet: the desk under 40% terminal background, no wash (distance $dg)" ($dg -le 9)
             Assert "the desk shows through the rail's card (blue over red)" ($null -ne $card -and $card.B -ge $card.R + 6)
             Assert "the column's top inset is the desk too" (Test-DeskPixel $inCol)
             $d = Get-ColorDistance $inCol $inGrid
@@ -199,11 +216,12 @@ try {
         } finally { Close-TestWindowPixels $shot }
     }
 
-    "== 3: expanded, the panel is translucent over the desk, with no rule"
+    "== 3: expanded, the rail's card is wider - an unfocused pane's card in the same insets"
     $r = Click $top $sb.Hwnd (Get-ToggleCenter $sb)
     Assert "toggle click delivered" $r
-    $sb = Wait-SidebarWidth $top (Px 240)
-    Assert "the expanded panel is 240 DIP ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+    $panelW = Get-PanelColumnPx 240
+    $sb = Wait-SidebarWidth $top $panelW
+    Assert "the expanded column is the 240 DIP card in the rail's insets ($($sb.Width) vs $panelW)" ($null -ne $sb -and [math]::Abs($sb.Width - $panelW) -le 1)
     Start-Sleep -Milliseconds 500
     $p = (@(Get-Panes $top))[0]
     $gutter = $p.Left - $sb.Right - $i
@@ -214,23 +232,20 @@ try {
         try {
             $y = $sb.Bottom - (Px 24)
             $panel = Get-TestPixel -Shot $shot -X ($sb.Left + [int]($sb.Width / 2)) -Y $y
-            $edge = Get-TestPixel -Shot $shot -X ($sb.Right - 1) -Y $y
+            $lead = Get-TestPixel -Shot $shot -X ($sb.Left + [int][math]::Floor($m / 2)) -Y $y
             $inner = Get-TestPixel -Shot $shot -X ($sb.Right - (Px 8)) -Y $y
             $desk = Get-TestPixel -Shot $shot -X ($sb.Right + 1) -Y $y
-            "  panel=$(Fmt $panel) trailing-edge=$(Fmt $edge) inside-edge=$(Fmt $inner) margin-desk=$(Fmt $desk)"
-            Assert "the desk shows through the panel (blue over red)" ($null -ne $panel -and $panel.B -ge $panel.R + 6)
-            # banner_card.glassPanel over the desk a few pixels away: black at
-            # 38%, then the card's 6% white wash (a dark terminal).
-            $want = $null
-            if ($null -ne $desk) {
-                $f = { param($v) [int][math]::Round(($v * 0.62) * 0.94 + 255 * 0.06) }
-                $want = [pscustomobject]@{ R = (& $f $desk.R); G = (& $f $desk.G); B = (& $f $desk.B) }
-            }
+            "  card=$(Fmt $panel) leading-margin=$(Fmt $lead) inside-edge=$(Fmt $inner) margin-desk=$(Fmt $desk)"
+            # The same margin the rail keeps from the window's edge: a card on
+            # the desk, not a panel down the window's side.
+            Assert "the expanded card's leading margin is the ocean desk, as the rail's is" (Test-DeskPixel $lead)
+            Assert "the desk shows through the card (blue over red)" ($null -ne $panel -and $panel.B -ge $panel.R + 6)
+            # An unfocused pane's glass sheet over the desk a few pixels away:
+            # black at 40%, no wash (the old panel's 38% + 6% wash is gone).
+            $want = Get-PaneSheet $desk
             $dg = if ($null -ne $want -and $null -ne $inner) { Get-ColorDistance $inner $want } else { 999 }
-            "  glass expected beside the desk=$(Fmt $want) (distance $dg)"
-            Assert "the panel is the terminal background at 38% plus the wash over the desk (distance $dg)" ($dg -le 9)
-            $d = Get-ColorDistance $edge $inner
-            Assert "no divider rule at the panel's trailing edge (distance $d)" ($d -le 12)
+            "  pane sheet expected beside the desk=$(Fmt $want) (distance $dg)"
+            Assert "the card is a pane's glass sheet: 40% terminal background over the desk, no wash (distance $dg)" ($dg -le 9)
         } finally { Close-TestWindowPixels $shot }
     }
 
@@ -298,8 +313,8 @@ try {
     $pin = Get-ToggleCenter $sb
     $pin.Y += $reach
     [void](Click $top $sb.Hwnd $pin)
-    $sb = Wait-SidebarWidth $top (Px 240)
-    Assert "the rail's toggle, below the strip's row, still expands ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+    $sb = Wait-SidebarWidth $top (Get-PanelColumnPx 240)
+    Assert "the rail's toggle, below the strip's row, still expands ($($sb.Width) vs $(Get-PanelColumnPx 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Get-PanelColumnPx 240)) -le 1)
     Start-Sleep -Milliseconds 500
     $regions = Get-TestStripRegions -Window $top -Exe $Exe
     $colRight = $sb.Right - $cr.Left
@@ -338,8 +353,8 @@ try {
     # toggle - on the same pixels - collapses it straight back to the rail.
     $railSolid = $sb.Width
     [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
-    $sb = Wait-SidebarWidth $top (Px 240)
-    Assert "solid: the toggle expands the panel ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+    $sb = Wait-SidebarWidth $top (Get-PanelColumnPx 240)
+    Assert "solid: the toggle expands the panel ($($sb.Width) vs $(Get-PanelColumnPx 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Get-PanelColumnPx 240)) -le 1)
     Start-Sleep -Milliseconds 500
     [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
     $sb = Wait-SidebarWidth $top $railSolid

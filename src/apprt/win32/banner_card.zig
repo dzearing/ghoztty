@@ -136,28 +136,6 @@ pub fn fillColor(bg: Rgb) Rgb {
     return color_math.wash(bg, if (color_math.isLight(bg)) FILL_DARKEN else FILL_LIGHTEN);
 }
 
-/// How much of the terminal background the pinned pane sidebar keeps over
-/// the elevated style's gradient desk (Mac 91ba7c08c,
-/// `background.opacity(elevated ? 0.38 : 1)`).
-pub const PANEL_TINT: f32 = 0.38;
-
-/// The pinned pane sidebar's material in the elevated style (T1850): `bg` at
-/// `PANEL_TINT` over whatever `pixels` already hold - the window's desk -
-/// and the card's wash over that, the way Mac stacks `GlassCard.fill` on the
-/// translucent background. The wash leans the way `fillColor`'s does, by the
-/// TERMINAL background's lightness, so the panel's text colour (chosen
-/// against `fillColor(bg)`) keeps reading on it. Over a backdrop of `bg`
-/// itself this IS `fillColor(bg)`.
-pub fn glassPanel(pixels: []u32, bg: Rgb) void {
-    const light = color_math.isLight(bg);
-    const toward: Frgb = if (light) BLACK else WHITE;
-    const a: f32 = if (light) FILL_DARKEN else FILL_LIGHTEN;
-    const tint = Frgb.from(bg);
-    for (pixels) |*p| {
-        p.* = Frgb.unpack(p.*).over(tint, PANEL_TINT).over(toward, a).pack();
-    }
-}
-
 /// Scaled-pixel geometry of one card inside its band.
 pub const Metrics = struct {
     /// Band size in px (the overlay window's client area).
@@ -876,27 +854,6 @@ test "T1884: renderGlassOn's card is a wash over the sheet, so the desk reads th
     // And the colour it reports for the card's middle is that wash.
     const f = glassFillColor(.{ .r = 0x20, .g = 0x30, .b = 0x60 }, DARK);
     try testing.expect(f.r > 0x20 and f.b > 0x60);
-}
-
-test "T1850: glassPanel is fillColor over a backdrop of bg, and lets a desk show through" {
-    for ([_]Rgb{ DARK, .{ .r = 240, .g = 240, .b = 236 } }) |bg| {
-        // Over the terminal background itself: exactly the flat panel.
-        var same = [_]u32{Frgb.from(bg).pack()} ** 4;
-        glassPanel(&same, bg);
-        const want = Frgb.from(fillColor(bg)).pack();
-        for (same) |p| {
-            const d = @abs(@as(i32, @intCast(lum(p))) - @as(i32, @intCast(lum(want))));
-            try testing.expect(d <= 3);
-        }
-    }
-    // Over two different desk colours the panel differs: the desk shows
-    // through (62% of it), so the gradient runs under the sidebar.
-    var desk = [_]u32{ 0x00204080, 0x00106050 };
-    glassPanel(&desk, DARK);
-    try testing.expect(desk[0] != desk[1]);
-    // ...and the terminal background pulls each toward itself.
-    const blue_before: u32 = 0x80;
-    try testing.expect((desk[0] & 0xFF) < blue_before);
 }
 
 test "sdRoundRect: inside negative, outside positive, corner clipped" {

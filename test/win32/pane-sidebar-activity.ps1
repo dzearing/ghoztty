@@ -185,7 +185,9 @@ try {
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-RailPinCenter $sb).X -Y (Get-RailPinCenter $sb).Y -Action click)
     Start-Sleep -Milliseconds 700
     $sb = Get-Sidebar $top
-    Assert "expanded: the 240 DIP panel ($($sb.Width))" ([math]::Abs($sb.Width - (Px 240)) -le 1)
+    # T2290: the rail's card at 240 DIP, in the rail's 12 DIP insets (flat).
+    $panelW = (Px 12) + (Px 240) + (Px 12)
+    Assert "expanded: the 240 DIP card in its insets ($($sb.Width) vs $panelW)" ([math]::Abs($sb.Width - $panelW) -le 1)
     $mark = Get-LogCount
     $asking = Get-Frames $sb 4 300
     Assert "no clock while it asks (log)" ($null -eq (Wait-Log $mark 'pane sidebar motion on' 200))

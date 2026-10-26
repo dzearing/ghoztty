@@ -99,7 +99,6 @@ test {
     // rail is drawn as with glass panes, and the per-pixel alpha the retired
     // hover-open card (T2289) was presented with. Imports only
     // banner_card.zig. Every lane.
-    _ = @import("win32/pane_sidebar_layer.zig");
 
     // Pure win32 pane sidebar row actions (T1845): what a click, an
     // Alt-click and the right-click menu do, and which rows offer stash

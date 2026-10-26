@@ -89,7 +89,10 @@ function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
 function Near([int]$A, [int]$B) { [math]::Abs($A - $B) -le 2 }
 function Width-Is($top, [double]$Dip) {
     $sb = Get-Sidebar $top
-    return ($null -ne $sb -and $sb.Visible -and (Near $sb.Width (Px $Dip)))
+    # T2290: an expanded column is the card at $Dip in the rail's 12 DIP
+    # insets; the 68 DIP rail is already a column width.
+    $want = if ($Dip -eq 68) { Px 68 } else { (Px 12) + (Px $Dip) + (Px 12) }
+    return ($null -ne $sb -and $sb.Visible -and (Near $sb.Width $want))
 }
 function Describe($top) {
     $sb = Get-Sidebar $top

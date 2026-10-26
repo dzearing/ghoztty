@@ -33,7 +33,7 @@ const order_mod = @import("pane_sidebar_order.zig");
 pub const Mode = enum {
     /// Hidden outright (`toggle_pane_sidebar`): no column, not a target.
     hidden,
-    /// Expanded: the flat panel at the preferred width.
+    /// Expanded: the rail's raised card at the panel's width (T2290).
     expanded,
     /// Collapsed, or a window too narrow for the panel: the mini rail.
     mini,
@@ -133,10 +133,19 @@ pub fn columnDip(m: Mode, panel_w_dip: f32) f32 {
 }
 
 pub fn columnDipFor(m: Mode, panel_w_dip: f32, elevated: bool) f32 {
+    if (m == .hidden) return 0;
+    const in = railInsets(elevated);
+    return in.leading + cardDip(m, panel_w_dip) + in.trailing;
+}
+
+/// The sidebar's card (T2290, Mac 0a547522d `cardWidth`): ONE raised card in
+/// both modes, in the same insets with the same top and height - the rail's
+/// width collapsed, the panel's expanded. Its width.
+pub fn cardDip(m: Mode, panel_w_dip: f32) f32 {
     return switch (m) {
         .hidden => 0,
         .expanded => clampWidth(panel_w_dip),
-        .mini => railColumnDipFor(elevated),
+        .mini => rail_card_dip,
     };
 }
 
@@ -145,15 +154,11 @@ pub fn columnPx(m: Mode, panel_w_dip: f32, scale: f32) i32 {
 }
 
 pub fn columnPxFor(m: Mode, panel_w_dip: f32, scale: f32, elevated: bool) i32 {
-    return switch (m) {
-        // Summed from the rounded parts, so the column is exactly the
-        // card's pixels plus its insets' at every scale.
-        .mini => blk: {
-            const in = railInsets(elevated);
-            break :blk in.leadingPx(scale) + px(rail_card_dip, scale) + in.trailingPx(scale);
-        },
-        else => px(columnDipFor(m, panel_w_dip, elevated), scale),
-    };
+    if (m == .hidden) return 0;
+    // Summed from the rounded parts, so the column is exactly the card's
+    // pixels plus its insets' at every scale.
+    const in = railInsets(elevated);
+    return in.leadingPx(scale) + px(cardDip(m, panel_w_dip), scale) + in.trailingPx(scale);
 }
 
 pub fn clampWidth(w: f32) f32 {
@@ -752,7 +757,8 @@ pub const Layout = struct {
     mode: Mode = .hidden,
     width: i32 = 0,
     height: i32 = 0,
-    /// The raised card (mini only).
+    /// The raised card, in both modes (T2290): the rail's, or the expanded
+    /// list's at the panel's width - the same insets, top and height.
     card: Rect = .{},
     /// The collapse/expand button's painted square (T2289): the header's
     /// first item, on the same spot in both modes (`toggleRect`).
@@ -889,7 +895,11 @@ pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Li
     switch (m) {
         .hidden => l.count = 0,
         .expanded => {
-            const area: Rect = .{ .top = @min(insets.reach_px, h), .right = w, .bottom = h };
+            layoutCard(&l, w - insets.leadingPx(scale) - insets.trailingPx(scale), insets, scale);
+            // The card runs up beside the tab strip (T1900); its content
+            // starts below it.
+            const c = l.card;
+            const area: Rect = .{ .left = c.left, .top = @min(c.top + insets.reach_px, c.bottom), .right = c.right, .bottom = c.bottom };
             layoutHeader(&l, area, tm, scale, insets);
             if (lines) |ls| {
                 layoutSearch(&l, area, tm, scale);
@@ -1090,11 +1100,18 @@ fn layoutLines(l: *Layout, area: Rect, items: []const Item, lines: []const Line,
     }
 }
 
-fn layoutMini(l: *Layout, items: []const Item, scale: f32, insets: RailInsets) void {
+/// The card at `card_w` pixels wide, inside `insets` of the column (T2290):
+/// the same rect in both modes but its width, so the rail and the expanded
+/// list share their leading edge, top and bottom.
+fn layoutCard(l: *Layout, card_w: i32, insets: RailInsets, scale: f32) void {
     const lead = insets.leadingPx(scale);
     const v = insets.verticalPx(scale);
-    const card_w = px(rail_card_dip, scale);
-    l.card = .{ .left = lead, .top = v, .right = lead + card_w, .bottom = @max(l.height - v, v + insets.reach_px + card_w) };
+    const min_h = px(rail_card_dip, scale);
+    l.card = .{ .left = lead, .top = v, .right = lead + @max(card_w, 0), .bottom = @max(l.height - v, v + insets.reach_px + min_h) };
+}
+
+fn layoutMini(l: *Layout, items: []const Item, scale: f32, insets: RailInsets) void {
+    layoutCard(l, px(rail_card_dip, scale), insets, scale);
     const tile = px(tile_dip, scale);
     // The toggle first; the tiles hang under it on its column.
     l.toggle = toggleRect(scale, insets);
@@ -1140,7 +1157,7 @@ pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
     const sm = px(sm_dip, scale);
     const hair = @max(px(1, scale), 1);
     if (l.mode == .expanded) {
-        const area: Rect = .{ .right = l.width, .bottom = l.height };
+        const area = l.card;
         const fill = px(toc.fill_inset_dip, scale);
         const below = if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom;
         const rule_y = below + sm;
@@ -1225,9 +1242,10 @@ pub const expand_threshold_dip: f32 = 120;
 
 /// Whether (`x`, `y`) is on the edge that drags, in the flat style. Like
 /// every resizer it is never over a pane (T2125, Mac 2811a3043
-/// `resizeHandleOffset`): the band lies just inside the trailing edge of the
-/// expanded panel (the column, and so this window, ends there) and of the
-/// rail's card, so a press just past its edge is the pane's.
+/// `resizeHandleOffset`): expanded, the band is the card's own trailing
+/// margin (T2290, Mac 0a547522d `edgeGrip`) - the gutter between the card and
+/// the panes, never over the card; on the rail it lies just inside the card's
+/// trailing edge (the rail's gutter is T2277's).
 pub fn onEdge(l: *const Layout, x: i32, y: i32, scale: f32) bool {
     return onEdgeIn(l, x, y, scale, false);
 }
@@ -1248,7 +1266,7 @@ pub fn edgeBand(l: *const Layout, scale: f32, elevated: bool) ?Rect {
     const g = @max(px(grab_dip, scale), 1);
     return switch (l.mode) {
         .hidden => null,
-        .expanded => if (pinnedGripInGutter(elevated)) null else .{ .left = l.width - g, .top = 0, .right = l.width, .bottom = l.height },
+        .expanded => if (pinnedGripInGutter(elevated)) null else .{ .left = l.card.right, .top = l.card.top, .right = @max(l.width, l.card.right + g), .bottom = l.card.bottom },
         .mini => .{ .left = l.card.right - g, .top = l.card.top, .right = l.card.right, .bottom = l.card.bottom },
     };
 }
@@ -1296,11 +1314,12 @@ pub fn edgeDrag(m: Mode, start_dip: f32, dx_dip: f32) ?EdgeDrag {
     };
 }
 
-/// Rows span to the panel's edges for hit purposes - the fill inset is
-/// paint, and a click in it still means that row. A rail tile is just its
-/// square.
+/// Rows span to the card's edges for hit purposes - the fill inset is
+/// paint, and a click in it still means that row; the margin round the card
+/// is nobody's (Mac `PaneSidebarHostView`: clicks land only on the drawn
+/// card). A rail tile is just its square.
 fn rowHitRect(l: *const Layout, r: Rect) Rect {
-    if (l.mode == .expanded) return .{ .left = 0, .top = r.top, .right = l.width, .bottom = r.bottom };
+    if (l.mode == .expanded) return .{ .left = l.card.left, .top = r.top, .right = l.card.right, .bottom = r.bottom };
     return r;
 }
 
@@ -1308,6 +1327,7 @@ fn rowHitRect(l: *const Layout, r: Rect) Rect {
 // Tests
 
 const testing = std.testing;
+const scroll = @import("pane_sidebar_scroll.zig");
 const scales = [_]f32{ 1.0, 1.25, 1.5, 2.0 };
 
 test "pane_sidebar: mode follows pin, hidden and the narrow-window fallback" {
@@ -1322,10 +1342,15 @@ test "pane_sidebar: the rail column is Mac's 68, and the panel width is clamped"
     try testing.expectEqual(@as(f32, 68), railColumnDip());
     try testing.expectEqual(@as(f32, 0), columnDip(.hidden, 240));
     try testing.expectEqual(@as(f32, 68), columnDip(.mini, 240));
-    try testing.expectEqual(@as(f32, 240), columnDip(.expanded, 240));
-    try testing.expectEqual(@as(f32, 180), columnDip(.expanded, 50));
-    try testing.expectEqual(@as(f32, 380), columnDip(.expanded, 900));
+    // Expanded is the card at the panel's width in the rail's own insets
+    // (T2290, Mac 0a547522d `columnWidth`): 12 + 240 + 12.
+    try testing.expectEqual(@as(f32, 264), columnDip(.expanded, 240));
+    try testing.expectEqual(@as(f32, 204), columnDip(.expanded, 50));
+    try testing.expectEqual(@as(f32, 404), columnDip(.expanded, 900));
+    try testing.expectEqual(@as(f32, 240), cardDip(.expanded, 240));
+    try testing.expectEqual(rail_card_dip, cardDip(.mini, 240));
     try testing.expectEqual(@as(i32, 85), columnPx(.mini, 240, 1.25));
+    try testing.expectEqual(@as(i32, 330), columnPx(.expanded, 240, 1.25));
 }
 
 fn expectMono(want: []const u8, title: []const u8) !void {
@@ -1612,7 +1637,8 @@ test "T1850: the elevated rail takes the panes' margin leading, top and bottom, 
     // Mac: 10 + 44 + 0.
     try testing.expectEqual(@as(f32, 54), railColumnDipFor(true));
     try testing.expectEqual(@as(f32, 68), railColumnDipFor(false));
-    try testing.expectEqual(@as(f32, 240), columnDipFor(.expanded, 240, true));
+    // Mac: 10 + 240 + 0 - the card in the rail's insets (T2290).
+    try testing.expectEqual(@as(f32, 250), columnDipFor(.expanded, 240, true));
     for (scales) |s| {
         const w = columnPxFor(.mini, 240, s, true);
         const h = px(600, s);
@@ -1678,6 +1704,45 @@ test "T2289: the toggle is the rail's first item and the panel header's first it
     }
 }
 
+test "T2290: expanded is the rail's card, wider - same leading edge, top and bottom, in the same insets" {
+    const items = [_]Item{ .{ .section = .grid, .two_line = true }, .{ .section = .grid }, .{ .section = .stashed } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        const h = px(600, s);
+        for ([_]bool{ false, true }) |elev| {
+            for ([_]i32{ 0, px(36, s) }) |reach| {
+                var ins = railInsets(elev);
+                ins.reach_px = reach;
+                const rail = layoutIn(.mini, columnPxFor(.mini, 240, s, elev), h, &items, null, tm, s, ins);
+                const w = columnPxFor(.expanded, 240, s, elev);
+                var panel = layoutIn(.expanded, w, h, &items, null, tm, s, ins);
+                // One card: only its width differs.
+                try testing.expectEqual(rail.card.left, panel.card.left);
+                try testing.expectEqual(rail.card.top, panel.card.top);
+                try testing.expectEqual(rail.card.bottom, panel.card.bottom);
+                try testing.expectEqual(px(240, s), panel.card.width());
+                // The column is the card plus the rail's own insets.
+                try testing.expectEqual(w - ins.trailingPx(s), panel.card.right);
+                // Everything the list lays out sits inside the card.
+                try testing.expect(panel.header.left >= panel.card.left and panel.header.right <= panel.card.right);
+                try testing.expect(panel.scope.right <= panel.card.right);
+                for (0..panel.count) |i| {
+                    try testing.expect(panel.items[i].left >= panel.card.left and panel.items[i].right <= panel.card.right);
+                }
+                // So does the empty tray, and the scrolled region.
+                const no_stash = [_]Item{ .{ .section = .grid }, .{ .section = .grid } };
+                var tray = layoutIn(.expanded, w, h, &no_stash, null, tm, s, ins);
+                addEmptyTray(&tray, tm, s);
+                const slot = tray.drop_slot.?;
+                try testing.expect(slot.left >= tray.card.left and slot.right <= tray.card.right);
+                const vp = scroll.viewportOf(&panel, s);
+                try testing.expect(vp.left >= panel.card.left and vp.right <= panel.card.right and vp.bottom <= panel.card.bottom);
+                panel.viewport = vp;
+            }
+        }
+    }
+}
+
 test "T2289: a window too narrow for the panel cannot expand, and its rail stands in" {
     try testing.expect(canExpand(narrow_window_dip));
     try testing.expect(!canExpand(narrow_window_dip - 1));
@@ -1695,7 +1760,7 @@ test "pane_sidebar: expanded rows stack under the header, with the STASHED capti
         // sits sm in from the trailing edge.
         const sm = px(sm_dip, s);
         try testing.expect(l.toggle.top - l.header.top >= sm and l.header.bottom - l.toggle.bottom >= sm);
-        try testing.expectEqual(w - sm, l.scope.right);
+        try testing.expectEqual(l.card.right - sm, l.scope.right);
         // Rows are below the header, in order, without overlap.
         try testing.expect(l.items[0].top >= l.header.bottom);
         try testing.expect(l.items[1].top >= l.items[0].bottom);
@@ -1720,7 +1785,10 @@ test "pane_sidebar: hit testing finds the toggle, rows, row buttons and nothing"
     const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
     const l = layout(.expanded, 240, 600, &items, tm, s);
     try testing.expectEqual(Hit.toggle, hitTest(&l, l.toggle.centerX(), l.toggle.centerY(), s));
-    try testing.expectEqual(Hit{ .item = 0 }, hitTest(&l, 2, l.items[0].centerY(), s));
+    // A row is hit across the card; the margin round the card is nobody's.
+    try testing.expectEqual(Hit{ .item = 0 }, hitTest(&l, l.card.left + 2, l.items[0].centerY(), s));
+    try testing.expectEqual(Hit.none, hitTest(&l, l.card.left - 2, l.items[0].centerY(), s));
+    try testing.expectEqual(Hit.none, hitTest(&l, l.card.right + 2, l.items[0].centerY(), s));
     const b = l.rowButton(1, s);
     try testing.expectEqual(Hit{ .item_button = 1 }, hitTest(&l, b.centerX(), b.centerY(), s));
     const x = l.rowClose(1, s);
@@ -1846,7 +1914,7 @@ test "pane_sidebar: the outline stacks heads, indented rows, rules and captions 
         try testing.expectEqual(l.items[0].left, l.heads[0].rect.left);
         try testing.expectEqual(px(outline_step_dip, s), l.indent[0]);
         // The chevron sits on the label column; the name right after it.
-        try testing.expectEqual(px(toc.label_inset_dip, s), l.heads[0].chevron.left);
+        try testing.expectEqual(l.card.left + px(toc.label_inset_dip, s), l.heads[0].chevron.left);
         try testing.expect(l.heads[0].label_x > l.heads[0].chevron.right);
         // The pane icons line up under the window's name.
         try testing.expectEqual(l.heads[0].label_x, l.items[0].left + px(toc.text_inset_dip, s) + l.indent[0]);
@@ -1893,8 +1961,8 @@ test "pane_sidebar: the all-windows search field sits under the header, the outl
         // Under the header, inset like a row's fill, at least the standard
         // control height, the clear button inside it with sm to spare.
         try testing.expectEqual(l.header.bottom, l.search.top);
-        try testing.expectEqual(px(toc.fill_inset_dip, s), l.search.left);
-        try testing.expectEqual(px(240, s) - px(toc.fill_inset_dip, s), l.search.right);
+        try testing.expectEqual(l.card.left + px(toc.fill_inset_dip, s), l.search.left);
+        try testing.expectEqual(l.card.right - px(toc.fill_inset_dip, s), l.search.right);
         try testing.expect(l.search.height() >= px(button_dip, s));
         try testing.expect(l.search.height() >= f.tm.title_h + 2 * sm);
         try testing.expectEqual(px(row_button_dip, s), l.search_clear.width());
@@ -1930,7 +1998,7 @@ test "pane_sidebar: an outline with no lines says No matching panes under the fi
         const l = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &.{}, f.tm, s);
         const r = l.no_match.?;
         try testing.expect(r.top >= l.search.bottom + px(sm_dip, s));
-        try testing.expectEqual(px(toc.label_inset_dip, s), r.left);
+        try testing.expectEqual(l.card.left + px(toc.label_inset_dip, s), r.left);
         try testing.expectEqual(@as(usize, 0), l.head_count);
         for (0..l.count) |i| try testing.expect(!l.shown(i));
     }
@@ -1968,7 +2036,7 @@ test "pane_sidebar: the header reads toggle, then all-windows at the trailing ed
         const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
         const l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
         try testing.expect(l.toggle.right <= l.scope.left);
-        try testing.expectEqual(px(240, s) - px(sm_dip, s), l.scope.right);
+        try testing.expectEqual(l.card.right - px(sm_dip, s), l.scope.right);
         try testing.expect(l.scope.top >= l.header.top and l.scope.bottom <= l.header.bottom);
         try testing.expectEqual(@as(Hit, .scope), hitTest(&l, l.scope.centerX(), l.scope.centerY(), s));
         try testing.expectEqual(@as(Hit, .toggle), hitTest(&l, l.toggle.centerX(), l.toggle.centerY(), s));
@@ -1997,23 +2065,26 @@ test "T2280: another window's row offers no buttons (T2298 adds its x); a tile h
     }
 }
 
-test "pane_sidebar: the edge band sits inside the expanded panel's edge and inside the rail card's" {
+test "pane_sidebar: the edge band is the expanded card's trailing margin, and inside the rail card's edge" {
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid } };
     for (scales) |s| {
         const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
         const g = px(grab_dip, s);
-        const w = px(240, s);
+        const w = columnPx(.expanded, 240, s);
         const h = px(600, s);
         const e = layout(.expanded, w, h, &items, tm, s);
+        // The gutter between the card and the panes, never over the card
+        // (T2290, Mac 0a547522d `edgeGrip`): the column's last pixel and the
+        // first past the card drag; the card's last pixel is its row's.
         try testing.expect(onEdge(&e, w - 1, px(300, s), s));
-        try testing.expect(onEdge(&e, w - g, px(300, s), s));
-        try testing.expect(!onEdge(&e, w - g - 1, px(300, s), s));
-        // The panel's last pixel is the edge, not its row...
-        try testing.expect(onEdge(&e, w - 1, e.items[0].centerY(), s));
-        // ...but the trailing header button and a row's button keep their
-        // own pixels.
+        try testing.expect(onEdge(&e, e.card.right, px(300, s), s));
+        try testing.expect(!onEdge(&e, e.card.right - 1, px(300, s), s));
+        try testing.expect(!onEdge(&e, e.card.right - 1, e.items[0].centerY(), s));
+        try testing.expect(w - e.card.right >= g);
+        // Only along the card: the margin above it is not a grip.
+        try testing.expect(!onEdge(&e, w - 1, e.card.top - 1, s));
+        // The buttons keep their own pixels.
         try testing.expect(!onEdge(&e, e.scope.right - 1, e.scope.centerY(), s));
-        try testing.expect(onEdge(&e, w - 1, e.scope.centerY(), s));
         const b = e.rowClose(0, s);
         try testing.expect(!onEdge(&e, b.right - 1, b.centerY(), s));
 
@@ -2034,16 +2105,15 @@ test "pane_sidebar: the edge band sits inside the expanded panel's edge and insi
     }
 }
 
-test "pane_sidebar: the pinned grip is the gutter when elevated, a band inside the panel when flat (T2265)" {
+test "pane_sidebar: the pinned grip is the gutter when elevated, the card's own margin when flat (T2265, T2290)" {
     const s: f32 = 1.5;
     const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
-    const w = px(220, s);
+    const w = columnPx(.expanded, 220, s);
     const e = layout(.expanded, w, px(600, s), &items, tm, s);
-    const g = px(grab_dip, s);
-    // Flat: the band just inside the edge, the panel's full height.
+    // Flat: the card's trailing margin, along the card (T2290).
     const band = edgeBand(&e, s, false).?;
-    try testing.expectEqual(Rect{ .left = w - g, .top = 0, .right = w, .bottom = px(600, s) }, band);
+    try testing.expectEqual(Rect{ .left = e.card.right, .top = e.card.top, .right = w, .bottom = e.card.bottom }, band);
     try testing.expect(onEdgeIn(&e, w - 1, px(300, s), s, false));
     // Elevated: nothing in the panel drags - the window's gutter does.
     try testing.expect(edgeBand(&e, s, true) == null);

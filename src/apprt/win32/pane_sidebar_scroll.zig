@@ -38,7 +38,8 @@ pub fn viewportOf(l: *const Layout, scale: f32) Rect {
             return .{ .left = l.card.left, .top = top, .right = l.card.right, .bottom = @max(l.card.bottom - sm, top) };
         },
     }
-    const area: Rect = .{ .right = l.width, .bottom = l.height };
+    // The expanded list's card (T2290), to its bottom inset like the rail's.
+    const area: Rect = .{ .left = l.card.left, .right = l.card.right, .bottom = l.card.bottom - sm };
     // Where the rows start: the outline's below the search field (and its
     // `sm`), the single roster's straight under the header.
     const top = if (l.search.width() > 0) l.search.bottom + sm else l.header.bottom;
@@ -283,17 +284,18 @@ test "pane_sidebar_scroll: a list that fits never scrolls, one that does not cla
 test "pane_sidebar_scroll: the header and its buttons never move; rows past the fold are reachable" {
     for (scales) |s| {
         const lots = manyItems(30);
-        const raw = sb.layout(.expanded, px(240, s), px(300, s), &lots, tm(s), s);
-        var l = raw;
-        apply(&l, px(200, s), s);
-        try testing.expectEqual(raw.toggle, l.toggle);
-        try testing.expectEqual(raw.header, l.header);
-        try testing.expectEqual(raw.header.bottom, l.viewport.top);
-        // A row past the fold before the scroll: unreachable, then hit.
+        const raw = sb.layout(.expanded, sb.columnPx(.expanded, 240, s), px(300, s), &lots, tm(s), s);
+        // A row past the fold before the scroll: unreachable, then hit once
+        // scrolled to the middle of the viewport.
         const i: usize = 12;
         const x = raw.items[i].centerX();
         var before = raw;
         apply(&before, 0, s);
+        var l = raw;
+        apply(&l, raw.items[i].centerY() - before.viewport.centerY(), s);
+        try testing.expectEqual(raw.toggle, l.toggle);
+        try testing.expectEqual(raw.header, l.header);
+        try testing.expectEqual(raw.header.bottom, l.viewport.top);
         try testing.expect(raw.items[i].centerY() > before.viewport.bottom);
         try testing.expectEqual(sb.Hit.none, sb.hitTest(&before, x, raw.items[i].centerY(), s));
         try testing.expectEqual(sb.Hit{ .item = i }, sb.hitTest(&l, x, l.items[i].centerY(), s));

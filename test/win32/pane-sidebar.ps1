@@ -122,6 +122,10 @@ function Wait-Stashed([string]$Id, [bool]$Want, [int]$Ms = 4000) {
 function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal') }
 function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
 function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
+# The expanded column (T2290, Mac 0a547522d): the rail's card at the panel's
+# width, in the rail's own 12 DIP insets (flat style), summed from the rounded
+# parts the way the layout does.
+function PanelColumn([double]$Dip) { (Px 12) + (Px $Dip) + (Px 12) }
 
 # The rail's geometry, from pane_sidebar.zig's numbers (layoutMini): the
 # toggle at the top of the card, then one 28 DIP tile per pane with a 4 DIP gap, and
@@ -274,7 +278,7 @@ try {
     Assert "toggle click delivered" $r
     Start-Sleep -Milliseconds 600
     $sb = Get-Sidebar $top
-    Assert "the expanded panel is 240 DIP ($($sb.Width) vs $(Px 240))" ([math]::Abs($sb.Width - (Px 240)) -le 1)
+    Assert "the expanded card is 240 DIP in the rail's insets ($($sb.Width) vs $(PanelColumn 240))" ([math]::Abs($sb.Width - (PanelColumn 240)) -le 1)
     $p = Get-Panes $top | Where-Object { $_.Hwnd -eq $hP }
     Assert "the grid starts right after the panel (P.left $($p.Left), panel.right $($sb.Right))" ($p.Left -ge $sb.Right -and $p.Left - $sb.Right -le (Px 4))
     $c = Save-Shot $sb 'panel'
@@ -297,11 +301,11 @@ try {
     "== 4: a row's hover button stashes, a rail tile restores"
     # Row 0 is P. Its stash button: 20 DIP, 4 DIP before the row's x (T2280),
     # which is sm (4) from the row's trailing edge - the 8 DIP fill inset in
-    # from the panel's; both are centered in the row, whose middle the
-    # geometry line names.
+    # from the card's, which is the 12 DIP inset in from the column's (T2290);
+    # both are centered in the row, whose middle the geometry line names.
     $panelRows = Get-RowsLine 'expanded'
     Assert "setup: the panel logged its rows" ($null -ne $panelRows -and $panelRows.Items.Count -ge 1)
-    $bx = $sb.Right - (Px 8) - (Px 4) - (Px 20) - (Px 4) - [int]((Px 20) / 2)
+    $bx = $sb.Right - (Px 12) - (Px 8) - (Px 4) - (Px 20) - (Px 4) - [int]((Px 20) / 2)
     $by = $sb.Top + $(if ($null -ne $panelRows -and $panelRows.Items.Count -ge 1) { $panelRows.Items[0].Y } else { (Px 56) + (Px 16) })
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $bx -Y $by -Action move)
     Start-Sleep -Milliseconds 200
@@ -343,7 +347,7 @@ try {
     [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
     Start-Sleep -Milliseconds 600
     $sb = Get-Sidebar $top
-    Assert "expanded again ($($sb.Width))" ([math]::Abs($sb.Width - (Px 240)) -le 1)
+    Assert "expanded again ($($sb.Width))" ([math]::Abs($sb.Width - (PanelColumn 240)) -le 1)
     [void](Set-TestWindowSize -Window $top -Width (Px 600) -Height (Px 600))
     Start-Sleep -Milliseconds 800
     $sb = Get-Sidebar $top
@@ -351,7 +355,7 @@ try {
     [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
     Start-Sleep -Milliseconds 800
     $sb = Get-Sidebar $top
-    Assert "wide again, the panel comes back ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+    Assert "wide again, the panel comes back ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - (PanelColumn 240)) -le 1)
 
     "== 7: the toggle never moves, and collapsing opens no card over the grid (T2289)"
     $panelRows = Get-RowsLine 'expanded'

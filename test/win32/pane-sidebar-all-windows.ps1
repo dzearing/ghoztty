@@ -228,7 +228,9 @@ try {
     [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     Start-Sleep -Milliseconds 700
     $sb = Get-Sidebar $top
-    Assert "expanded: the 240 DIP panel ($($sb.Width))" ([math]::Abs($sb.Width - (Px 240)) -le 1)
+    # T2290: the rail's card at 240 DIP, in the rail's 12 DIP insets (flat).
+    $panelW = (Px 12) + (Px 240) + (Px 12)
+    Assert "expanded: the 240 DIP card in its insets ($($sb.Width) vs $panelW)" ([math]::Abs($sb.Width - $panelW) -le 1)
     $mark = Get-LogCount
     if ($NegativeControl) {
         "  NEGATIVE CONTROL: the toggle is never clicked - this run MUST fail"

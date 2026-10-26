@@ -334,15 +334,16 @@ try {
     $rows = Wait-Rows { param($r) $r.Items.Count -eq 3 }
     Assert "the rows line carries no trash toggle" ($rows.Line -notmatch 'trash=')
     # The all-windows toggle is the header's trailing button now: 28 DIP,
-    # sm (4) in from the panel's edge.
-    $wantScopeX = $sb.Width - (Px 4) - [int]((Px 28) / 2)
+    # sm (4) in from the card's edge, which is 12 DIP in from the column's
+    # (T2290).
+    $wantScopeX = $sb.Width - (Px 12) - (Px 4) - [int]((Px 28) / 2)
     Assert "the all-windows toggle sits alone at the trailing edge ($($rows.Scope.X) vs $wantScopeX)" ([math]::Abs($rows.Scope.X - $wantScopeX) -le 1)
     [void](Invoke-Cli "+send-keys --target=s2 `"ping -n 120 127.0.0.1`" Enter")
     Start-Sleep -Milliseconds 1200
     $rowS2 = Row $rows $ids['s2']
     # The x is the row's trailing button: 20 DIP, sm (4) inside the 8 DIP
     # fill inset. Hover first so the buttons show, as a person would.
-    $kx = $sb.Width - (Px 8) - (Px 4) - [int]((Px 20) / 2)
+    $kx = $sb.Width - (Px 12) - (Px 8) - (Px 4) - [int]((Px 20) / 2)
     $mark = Get-LogCount
     [void](At $top $sb @{ X = $kx; Y = $rowS2.Y })
     Assert "the x closed it (log)" ($null -ne (Wait-Log 'pane sidebar close pane \(x\)' $mark))

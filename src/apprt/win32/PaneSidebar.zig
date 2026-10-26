@@ -48,7 +48,6 @@ const pane_sidebar_order = @import("pane_sidebar_order.zig");
 const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
 const Dib32 = @import("dib32.zig");
-const layer = @import("pane_sidebar_layer.zig");
 const App = @import("App.zig");
 const toc = @import("viewer_toc_layout.zig");
 const color_math = @import("color_math.zig");
@@ -60,7 +59,7 @@ const type_ramp = @import("type_ramp.zig");
 const list_selection = @import("list_selection.zig");
 const icon_button = @import("icon_button.zig");
 const icon_button_paint = @import("icon_button_paint.zig");
-const split_geometry = @import("split_geometry.zig");
+const pane_elevation = @import("pane_elevation.zig");
 const pane_drop = @import("pane_drop.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const PaneView = @import("PaneView.zig");
@@ -308,10 +307,9 @@ logged_marks: [2]usize = .{ 0, 0 },
 /// The hash of the last row text logged (`logText`), for the same reason.
 logged_text: u64 = 0,
 
-// The card material behind the rail, cached like the TOC card's.
-rail_card: CardCache = .{},
-/// The expanded panel's glass over the desk, in the elevated style (T1850).
-glass_panel: CardCache = .{},
+/// The card material behind the rail and the expanded list (one card in
+/// both modes, T2290), cached like the TOC card's.
+card: CardCache = .{},
 /// The desk generation the window last told this sidebar about.
 last_desk_gen: u32 = 0,
 
@@ -325,7 +323,8 @@ const CardCache = struct {
     /// The desk generation it was composited over (T1850); 0 = none, the
     /// flat style's terminal background.
     desk_gen: u32 = 0,
-    insets: [3]i32 = .{ 0, 0, 0 },
+    /// The card rect it was built for.
+    insets: [4]i32 = .{ 0, 0, 0, 0 },
     material: Material = .card,
 
     fn release(self: *CardCache) void {
@@ -413,8 +412,7 @@ pub fn destroy(self: *PaneSidebar) void {
     self.folded_projects.deinit(self.alloc);
     if (self.xfade) |*v| v.deinit();
     self.xfade = null;
-    self.rail_card.release();
-    self.glass_panel.release();
+    self.card.release();
     self.releaseFonts();
     self.alloc.destroy(self);
 }
@@ -1757,25 +1755,28 @@ fn paintToggle(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, 
     glyph(hdc, self.scale, l.toggle, if (self.mode == .expanded) glyph_close_pane else glyph_open_pane, 12, ink);
 }
 
+/// The expanded list (T2290, Mac 0a547522d): the rail's own raised card at
+/// the panel's width - no flat panel down the window's side any more.
 fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
-    // Elevated (T1850, Mac 91ba7c08c): translucent, so the window's gradient
-    // runs under the panel and it reads as part of the surface the panes are
-    // raised from - and no rule, since the grid's margin already parts them.
-    if (self.window.deskBackdrop()) |desk| {
-        ensureMaterial(&self.glass_panel, hdc, l.width, l.height, t.bg, self.scale, .glass, desk, null);
-        if (self.glass_panel.dc) |mem| {
-            _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
-        } else fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.surface));
-        return self.paintRows(hdc, l, t);
-    }
-    // The flat panel: the lifted surface, square, edge to edge.
-    fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.surface));
-    // The rule against the grid, in the split divider's own color and width,
-    // so the panel reads as one more column of the window.
-    const rule_w = split_geometry.bandPx(self.scale);
-    const divider = split_geometry.dividerPaint(self.window.dividerConfiguredColor(), t.bg, false);
-    fillRect(hdc, .{ .left = l.width - rule_w, .right = l.width, .bottom = l.height }, rgb(divider));
+    self.paintCard(hdc, l, t);
     self.paintRows(hdc, l, t);
+}
+
+/// The sidebar's card, in either mode, and the column round it (T2290; Mac
+/// 351868cb5 `PaneSidebarCard`). Elevated, it is an UNFOCUSED PANE's card -
+/// the pane corner radius, hairline rim, sheet (glass or solid) and shadow
+/// over the desk - so it reads as one more card beside the panes. Flat, whose
+/// panes have no card, it keeps the side panel's (the banner's material).
+fn paintCard(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    const desk = self.window.deskBackdrop();
+    const material: Material = if (desk != null) .{ .pane = self.window.paneGlass() } else .card;
+    ensureMaterial(&self.card, hdc, l.width, l.height, t.bg, self.scale, material, desk, l.card);
+    if (self.card.dc) |mem| {
+        _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
+    } else {
+        fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.bg));
+        fillRound(hdc, l.card, pane_sidebar.px(8, self.scale), rgb(t.surface));
+    }
 }
 
 /// The header (toggle + caption + buttons), the section rule and caption,
@@ -1924,10 +1925,8 @@ fn paintSticky(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, 
     const hd = l.heads[k];
     if (hd.index >= self.groups.items.len) return;
     const band: pane_sidebar.Rect = .{ .left = l.viewport.left, .top = hd.rect.top, .right = l.viewport.right, .bottom = hd.rect.bottom };
-    // The material under it: the elevated panel's glass, or the flat
-    // panel's solid surface.
-    const mem: ?w32.HDC = if (self.window.deskBackdrop() != null) self.glass_panel.dc else null;
-    if (mem) |m| {
+    // The card's own material under it (T2290: one card in both styles).
+    if (self.card.dc) |m| {
         _ = w32.BitBlt(hdc, band.left, band.top, band.width(), band.height(), m, band.left, band.top, w32.SRCCOPY);
     } else fillRect(hdc, band, rgb(t.surface));
     self.paintHead(hdc, hd, k, self.groups.items[hd.index], t);
@@ -2221,18 +2220,8 @@ fn rowHovered(self: *const PaneSidebar, i: usize) bool {
 
 fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     // The column is the terminal background - the desk, in the elevated
-    // style (T1850) - and the rail is the raised card on it: the banner's
-    // material, so the two read as the same family.
-    const desk = self.window.deskBackdrop();
-    // Glass panes (T1887): the rail is Mac's lighter glass card.
-    const material: Material = if (desk != null and self.window.paneGlass()) .overlay_glass else .card;
-    ensureMaterial(&self.rail_card, hdc, l.width, l.height, t.bg, self.scale, material, desk, if (desk != null) self.window.paneSidebarInsets() else null);
-    if (self.rail_card.dc) |mem| {
-        _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
-    } else {
-        fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.bg));
-        fillRound(hdc, l.card, pane_sidebar.px(8, self.scale), rgb(t.surface));
-    }
+    // style (T1850) - and the rail is the raised card on it.
+    self.paintCard(hdc, l, t);
 
     self.paintToggle(hdc, l, t);
     // The tiles scroll under the toggle (T1878), clipped to the card's inset.
@@ -2271,16 +2260,19 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     self.paintThumb(hdc, l, t);
 }
 
-/// What a cache holds: the rail's raised card, the expanded panel's glass
-/// (elevated only), or the rail as Mac's lighter glass card over the desk
-/// (glass panes, T1887).
-const Material = enum { card, glass, overlay_glass };
+/// What a cache holds (T2290): the side panel's card on the flat terminal
+/// background, or - elevated - an unfocused pane's card over the desk, its
+/// sheet glass when the panes are.
+const Material = union(enum) {
+    card,
+    pane: bool,
+};
 
 /// Build `cache` when anything it was built from changed. With a `desk`
-/// (the elevated style, T1850) the material is composited over the
-/// window's gradient - this window sits at the desk's left edge, so its
-/// pixels are the desk's first `w` columns - and the card takes `insets`;
-/// without one it is the card on the flat terminal background.
+/// (the elevated style, T1850) the card is composited over the window's
+/// gradient - this window sits at the desk's left edge, so its pixels are the
+/// desk's first `w` columns - at the layout's own `card` rect; without one it
+/// is the side panel's card on the flat terminal background.
 fn ensureMaterial(
     cache: *CardCache,
     hdc: w32.HDC,
@@ -2290,13 +2282,13 @@ fn ensureMaterial(
     scale: f32,
     material: Material,
     desk: ?PaneDesk.Backdrop,
-    insets: ?pane_sidebar.RailInsets,
+    card: pane_sidebar.Rect,
 ) void {
     const gen: u32 = if (desk) |d| d.gen else 0;
-    const ins: [3]i32 = if (insets) |in| .{ in.leadingPx(scale), in.verticalPx(scale), in.trailingPx(scale) } else .{ 0, 0, 0 };
+    const ins: [4]i32 = .{ card.left, card.top, card.right, card.bottom };
     const stale = cache.dc == null or cache.w != w or cache.h != h or
         !std.meta.eql(cache.bg, bg) or cache.scale != scale or
-        cache.desk_gen != gen or !std.meta.eql(cache.insets, ins) or cache.material != material;
+        cache.desk_gen != gen or !std.meta.eql(cache.insets, ins) or !std.meta.eql(cache.material, material);
     if (!stale) return;
     cache.release();
     if (w <= 0 or h <= 0) return;
@@ -2323,22 +2315,19 @@ fn ensureMaterial(
     const pixels = @as([*]u32, @ptrCast(@alignCast(raw)))[0..@intCast(w * h)];
     if (desk) |d| {
         copyDesk(pixels, w, h, d, bg);
-        // The card at the layout's own rounded insets, so it lands exactly
-        // on `layout().card` in this style too.
-        var m = banner_card.Metrics.init(w, h, scale);
-        m.insets = .{
-            .left = @floatFromInt(ins[0]),
-            .top = @floatFromInt(ins[1]),
-            .right = @floatFromInt(ins[2]),
-            .bottom = @floatFromInt(ins[1]),
-        };
-        switch (material) {
-            .glass => banner_card.glassPanel(pixels, bg),
-            .card => banner_card.renderOn(pixels, m, bg),
-            // The sheet over the desk, composited here: the rail's column
-            // is opaque, and the desk is all that lies under it.
-            .overlay_glass => layer.buildGlass(pixels, w, h, layer.Geometry.init(0, m), .{ .tint = bg, .scale = scale }, w, pixels),
-        }
+        // The pane card exactly on `layout().card`, drawn by the painter the
+        // panes' own cards are: no glow (it is never the focused card), the
+        // resting rim, and the sheet a pane wears.
+        const cards = [1]pane_elevation.Card{.{ .left = card.left, .top = card.top, .right = card.right, .bottom = card.bottom }};
+        pane_elevation.paintCards(pixels, @intCast(w), @intCast(h), &cards, .{
+            .fill = bg,
+            .is_light = color_math.isLight(bg),
+            .scale = scale,
+            .glass = switch (material) {
+                .pane => |glass| glass,
+                .card => false,
+            },
+        });
     } else {
         // The banner card's margin IS the rail margin (12 DIP), so the card
         // the material draws lands exactly on `layout().card`.

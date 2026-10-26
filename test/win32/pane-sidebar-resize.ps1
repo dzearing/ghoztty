@@ -68,6 +68,12 @@ function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTe
 function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
 function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
 function Near([int]$A, [int]$B) { [math]::Abs($A - $B) -le 2 }
+# The expanded column (T2290, Mac 0a547522d): the rail's card at the panel's
+# width, in the rail's own insets - 12 DIP either side flat, the panes' 10 DIP
+# leading and none trailing elevated - summed from the rounded parts the way
+# the layout does.
+function FlatColumn([double]$Dip) { (Px 12) + (Px $Dip) + (Px 12) }
+function ElevColumn([double]$Dip) { (Px 10) + (Px $Dip) }
 
 # The collapse/expand toggle (T2289): the rail's first item and the panel
 # header's first item on the same pixels (pane-sidebar.ps1's
@@ -151,7 +157,7 @@ try {
     $sb = Get-Sidebar $top
     $lines = Get-LogSince $from
     Assert "pulled past 120 it expanded (log)" (@($lines | Where-Object { $_ -match 'pane sidebar edge drag expanded' }).Count -eq 1)
-    Assert "the column is the panel at the 180 minimum ($($sb.Width) vs $(Px 180))" (Near $sb.Width (Px 180))
+    Assert "the column is the panel at the 180 minimum ($($sb.Width) vs $(Px 180))" (Near $sb.Width (FlatColumn 180))
     Assert "the drag ended expanded (log)" (@($lines | Where-Object { $_ -match 'edge drag end expanded=true width=180' }).Count -eq 1)
 
     "== 2: the expanded panel's edge follows the pointer"
@@ -159,7 +165,7 @@ try {
     if ($NegativeControl) { "  NEGATIVE CONTROL: dragging by 0 DIP - this run MUST fail" }
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(($step / 2), $step))
     $sb = Get-Sidebar $top
-    Assert "+100 DIP -> 280 ($($sb.Width) vs $(Px 280))" (Near $sb.Width (Px 280))
+    Assert "+100 DIP -> 280 ($($sb.Width) vs $(Px 280))" (Near $sb.Width (FlatColumn 280))
     $p = Get-Panes $top | Where-Object { $_.Hwnd -eq $hP }
     Assert "the grid starts right after the new column (P.left $($p.Left), panel.right $($sb.Right))" ($p.Left -ge $sb.Right -and $p.Left - $sb.Right -le (Px 4))
 
@@ -176,17 +182,17 @@ try {
     Assert "dragging it shows the bar at full strength (painted: $($bars -join ','))" ($bars -contains 'drag')
     Assert "letting go leaves no bar lit (last painted: $(if ($bars.Count) { $bars[-1] }))" ($bars.Count -gt 0 -and $bars[-1] -eq 'none')
     $sb = Get-Sidebar $top
-    Assert "a there-and-back drag kept the width ($($sb.Width) vs $(Px 280))" (Near $sb.Width (Px 280))
+    Assert "a there-and-back drag kept the width ($($sb.Width) vs $(Px 280))" (Near $sb.Width (FlatColumn 280))
 
     "== 3: it stops at 380 and at 180, and never collapses"
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(200, 500))
     $sb = Get-Sidebar $top
-    Assert "far right stops at 380 ($($sb.Width) vs $(Px 380))" (Near $sb.Width (Px 380))
+    Assert "far right stops at 380 ($($sb.Width) vs $(Px 380))" (Near $sb.Width (FlatColumn 380))
     $from = Get-LogCount
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(-150, -300, -360))
     $sb = Get-Sidebar $top
     $lines = Get-LogSince $from
-    Assert "far left stops at 180 ($($sb.Width) vs $(Px 180)), not the 68 rail" (Near $sb.Width (Px 180))
+    Assert "far left stops at 180 ($($sb.Width) vs $(Px 180)), not the 68 rail" (Near $sb.Width (FlatColumn 180))
     Assert "and it is still expanded (log)" (@($lines | Where-Object { $_ -match 'edge drag end expanded=true width=180' }).Count -eq 1)
 
     "== 4: a press on the edge is not a click on the row under it"
@@ -197,12 +203,12 @@ try {
     $lines = Get-LogSince $from
     Assert "the click was delivered" $r
     Assert "it started and ended a drag of nothing (log)" (@($lines | Where-Object { $_ -match 'edge drag end expanded=true width=180' }).Count -eq 1)
-    Assert "the panel kept its width ($($sb.Width))" (Near $sb.Width (Px 180))
+    Assert "the panel kept its width ($($sb.Width))" (Near $sb.Width (FlatColumn 180))
 
     "== 5: one width for every window"
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(60, 120))
     $sb = Get-Sidebar $top
-    Assert "window A's panel is at 300 ($($sb.Width))" (Near $sb.Width (Px 300))
+    Assert "window A's panel is at 300 ($($sb.Width))" (Near $sb.Width (FlatColumn 300))
     Assert "setup: window B opened" ((Invoke-Cli "+new-window --target=t1846b --name=b1") -eq 0)
     Start-Sleep -Milliseconds 1500
     $tops = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | Where-Object { [IntPtr]$_.Hwnd -ne $top })
@@ -212,13 +218,13 @@ try {
     [void](Set-TestWindowSize -Window $top2 -Width (Px 1000) -Height (Px 600))
     Start-Sleep -Milliseconds 700
     $sb2 = Get-Sidebar $top2
-    Assert "the new window starts expanded at the last width ($($sb2.Width) vs $(Px 300))" ($null -ne $sb2 -and (Near $sb2.Width (Px 300)))
+    Assert "the new window starts expanded at the last width ($($sb2.Width) vs $(Px 300))" ($null -ne $sb2 -and (Near $sb2.Width (FlatColumn 300)))
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(-40, -80))
     Start-Sleep -Milliseconds 300
     $sb = Get-Sidebar $top
     $sb2 = Get-Sidebar $top2
-    Assert "window A's panel moved to 220 ($($sb.Width))" (Near $sb.Width (Px 220))
-    Assert "and window B's followed it ($($sb2.Width) vs $(Px 220))" ($null -ne $sb2 -and (Near $sb2.Width (Px 220)))
+    Assert "window A's panel moved to 220 ($($sb.Width))" (Near $sb.Width (FlatColumn 220))
+    Assert "and window B's followed it ($($sb2.Width) vs $(Px 220))" ($null -ne $sb2 -and (Near $sb2.Width (FlatColumn 220)))
 
     "== 6: collapsing and expanding keeps the dragged width (T2289)"
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-ToggleCenter $sb).X -Y (Get-ToggleCenter $sb).Y -Action click)
@@ -229,7 +235,7 @@ try {
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-ToggleCenter $sb).X -Y (Get-ToggleCenter $sb).Y -Action click)
     Start-Sleep -Milliseconds 600
     $sb = Get-Sidebar $top
-    Assert "expanded again at the dragged 220 ($($sb.Width) vs $(Px 220))" ($null -ne $sb -and (Near $sb.Width (Px 220)))
+    Assert "expanded again at the dragged 220 ($($sb.Width) vs $(Px 220))" ($null -ne $sb -and (Near $sb.Width (FlatColumn 220)))
     Assert "no crash (flat)" (-not ($app.Process -and $app.Process.HasExited))
 
     "== 7: elevated, the expanded panel resizes from the gutter beside it (T2265)"
@@ -253,7 +259,7 @@ try {
     $ey = $sb.Top + (Px 300)
     [void](Invoke-EdgeDrag $top $sb.Hwnd ($sb.Right - 1) $ey @(40, 80, 90))
     $sb = Get-Sidebar $top
-    Assert "setup: the rail pulled out expands at the 180 minimum ($($sb.Width))" (Near $sb.Width (Px 180))
+    Assert "setup: the rail pulled out expands at the 180 minimum ($($sb.Width))" (Near $sb.Width (ElevColumn 180))
     $from = Get-LogCount
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Right - 2) -Y $ey -Action click)
     Start-Sleep -Milliseconds 400
@@ -274,7 +280,7 @@ try {
     $bars = @(Get-BarStates $lines 'gutter bar sidebar_edge')
     Assert "the press reached the gutter" $ok
     Assert "the gutter drags the panel (log: edge drag start surface=rail mode=expanded from=180)" (@($lines | Where-Object { $_ -match 'pane sidebar edge drag start surface=rail mode=expanded from=180' }).Count -eq 1)
-    Assert "+100 DIP -> 280 ($($sb.Width) vs $(Px 280))" (Near $sb.Width (Px 280))
+    Assert "+100 DIP -> 280 ($($sb.Width) vs $(Px 280))" (Near $sb.Width (ElevColumn 280))
     Assert "the dragged gutter shows the bar at full strength (painted: $($bars -join ','))" ($bars -contains 'drag')
     $last = @($lines | Where-Object { $_ -match 'gutter bar ' } | Select-Object -Last 1)
     Assert "letting go leaves no bar lit (last: $last)" ($last.Count -eq 1 -and $last[0] -match 'gutter bar none')
