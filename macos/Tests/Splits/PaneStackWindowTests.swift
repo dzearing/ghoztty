@@ -105,7 +105,7 @@ struct PaneStackWindowTests {
                 guard let cardLayer = c.layer, let clip = c.clipLayer else { continue }
                 let right = cardLayer.frame.minX + clip.frame.maxX
                 let paneRight = cardLayer.frame.maxX - PaneCardView.outset
-                if paneRight > stage.bounds.maxX {
+                if paneRight > stage.bounds.maxX + 0.5 {
                     #expect(right <= stage.bounds.maxX + 0.5, "cut at the stack's edge mid-glide: pane \(panes.firstIndex { $0.id == c.paneID } ?? -1) frame \(cardLayer.frame) clip \(clip.frame) stage \(stage.bounds) placed \(String(describing: c.placedFrame)) collapse \(c.collapse)")
                 }
             }
@@ -150,6 +150,39 @@ struct PaneStackWindowTests {
         let start = handle.currentSplit?() ?? 0.5
         for step in 1...10 { handle.onDragDelta?(delta * CGFloat(step) / 10, start) }
         handle.onDragEnded?()
+    }
+
+    /// The pane sidebar is the row's first item too: a divider pushed left
+    /// past every pane it has tucked away tucks the expanded sidebar into
+    /// its rail, as a pane tucks at its minimum — and dragged back, in the
+    /// same drag, brings it out again.
+    @Test func aDividerPushedPastTheTuckedPanesTucksTheSidebarToo() async throws {
+        let (controller, window, _) = try await stackedWindow(count: 3, width: 1400)
+        defer { controller.close() }
+        controller.paneSidebarState.width = 240
+        controller.paneSidebarState.isHidden = false
+        controller.setPaneSidebarExpanded(true)
+        await settle(1.0)
+        let divider = try #require(handles(window).last)
+        let start = divider.currentSplit?() ?? 0.5
+        divider.onDragBegan?()
+        // Left, step by step, until the panes before it are strips and past.
+        var tuckedAt: CGFloat?
+        for step in 1...40 {
+            divider.onDragDelta?(-CGFloat(step) * 40, start)
+            await settle(0.02)
+            if tuckedAt == nil, !controller.paneSidebarState.isExpanded { tuckedAt = CGFloat(step) * 40 }
+        }
+        #expect(tuckedAt != nil, "the sidebar tucked into its rail")
+        await settle(0.4)
+        // Back where it began, still held: out again.
+        for step in (0...39).reversed() {
+            divider.onDragDelta?(-CGFloat(step) * 40, start)
+            await settle(0.02)
+        }
+        divider.onDragEnded?()
+        await settle(0.6)
+        #expect(controller.paneSidebarState.isExpanded, "dragged back, the sidebar came back out")
     }
 
     @Test func squeezingAPanePastItsMinimumTucksItAsideAndAGripBringsItBack() async throws {
@@ -493,6 +526,47 @@ struct PaneStackWindowTests {
             .map { $0.pane?.id }
     }
 
+    /// A strip whose pane has a banner is the same glass top to bottom: the
+    /// pane's sheet is thinner under its banner card on show, and that patch
+    /// fades with the banner as the pane goes into its strip — left behind,
+    /// it was a pale rectangle at the strip's top. Measured on the composited
+    /// window: the strip's brightness where the card is, against below it.
+    @Test func aStripWithABannerIsTheSameGlassTopToBottom() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        panes[0].surfaceView?.paneBanner = "## Bedtime story\n**Status:** Working"
+        await settle(1.0)
+        let strip = try #require(all(PaneStackTabView.self, in: window.contentView!)
+            .first { $0.isStrip && $0.pane === panes[0] })
+        let rect = strip.convert(strip.bounds, to: nil)
+        let content = try await SCShareableContent.currentProcess
+        let scWindow = try #require(content.windows.first { $0.windowID == CGWindowID(window.windowNumber) })
+        let cfg = SCStreamConfiguration()
+        cfg.width = Int(scWindow.frame.width * 2)
+        cfg.height = Int(scWindow.frame.height * 2)
+        cfg.showsCursor = false
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg)
+        try await capture(window, "strip-with-banner")
+        let rep = NSBitmapImageRep(cgImage: image)
+        let scale = CGFloat(image.width) / window.frame.width
+        func brightness(atTop offset: CGFloat) -> Double {
+            // A band across the strip's middle, `offset` points below its top,
+            // clear of its title (which runs down its middle lower down).
+            var total = 0.0, n = 0.0
+            for x in stride(from: rect.minX + 4, to: rect.maxX - 4, by: 1) {
+                let y = rect.maxY - offset
+                guard let c = rep.colorAt(x: Int(x * scale), y: Int((window.frame.height - y) * scale))?
+                    .usingColorSpace(.sRGB) else { continue }
+                total += Double(c.redComponent + c.greenComponent + c.blueComponent) / 3 * 255
+                n += 1
+            }
+            return total / max(n, 1)
+        }
+        let underCard = brightness(atTop: 30), below = brightness(atTop: 150)
+        #expect(abs(underCard - below) < 3, "the strip is paler where the banner was: \(underCard) vs \(below)")
+    }
+
     @Test(arguments: [false, true])
     func closingAPaneOnShowKeepsTheStripsMinimized(vertical: Bool) async throws {
         let direction: SplitTree<PaneView>.NewDirection = vertical ? .down : .right
@@ -719,7 +793,7 @@ struct PaneStackWindowTests {
         #expect(!controller.paneStackState.isGesturing)
     }
 
-    /// A terminal beside a viewer, the sidebar pinned, the divider dragged to
+    /// A terminal beside a viewer, the sidebar expanded, the divider dragged to
     /// the window's edge so the terminal is a strip; then the grip between
     /// the strip and the viewer pulled away from the strip, with real mouse
     /// events, like the divider it stands in for. The terminal comes out
@@ -746,7 +820,7 @@ struct PaneStackWindowTests {
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         defer { controller.close() }
         controller.paneSidebarState.isHidden = false
-        controller.paneSidebarState.isPinned = true
+        controller.paneSidebarState.isExpanded = true
         for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 1400, height: 800))
@@ -1070,11 +1144,12 @@ struct PaneStackWindowTests {
         let point = NSPoint(x: firstOnShow.minX - 5, y: firstOnShow.midY)
         let hit = window.contentView?.superview?.hitTest(point)
         let grip = try #require(hit as? DividerHandle.DividerHandleView, "the gutter at \(point) hit \(String(describing: hit))")
-        // Far enough for a pane's minimum on this side, not so far that the
-        // other side (710pt: two cards of 300 and their strips) has no room
-        // left for one card and a strip: 259...269 slides by exactly one.
+        // Far enough for a pane's minimum on this side (a 300pt card, a strip
+        // and the gutter between: 346pt), not so far that the other side
+        // (710pt: two cards of 300 and their strips) has no room left for one
+        // card and a strip: 274...282 slides by exactly one.
         grip.onDragBegan?()
-        for step in 1...24 { grip.onDragDelta?(CGFloat(step) * 11, 0.5); await settle(0.01) }
+        for step in 1...24 { grip.onDragDelta?(CGFloat(step) * 278 / 24, 0.5); await settle(0.01) }
         grip.onDragEnded?()
         await settle(0.8)
         try await capture(window, "nested-slid")
@@ -1192,9 +1267,15 @@ struct PaneStackWindowTests {
                     shown.append((r, id))
                 }
                 shown.sort { $0.0.minX < $1.0.minX }
+                let target = controller.paneStackState.layoutGrid?()
                 for (a, b) in zip(shown, shown.dropFirst()) {
+                    // Two strips lie side by side as blades: on the way there,
+                    // anything from touching to a gutter apart. Anything else,
+                    // a gutter apart.
+                    let blades = target?.leaves[a.1]?.isTucked == true && target?.leaves[b.1]?.isTucked == true
+                    let space = b.0.minX - a.0.maxX
                     if a.0.maxX > b.0.minX + 0.5 { problems.append("overlap \(Int(a.0.maxX)) > \(Int(b.0.minX))") }
-                    else if abs(b.0.minX - a.0.maxX - gap) > 1.5 {
+                    else if blades ? space > gap + 1.5 : abs(space - gap) > 1.5 {
                         let ia = panes.firstIndex { $0.id == a.1 } ?? -1, ib = panes.firstIndex { $0.id == b.1 } ?? -1
                         let la = controller.paneStackState.layoutGrid?().leaves[a.1], lb = controller.paneStackState.layoutGrid?().leaves[b.1]
                         let ca = self.all(PaneCardView.self, in: window.contentView!).first { $0.paneID == a.1 }
@@ -1212,12 +1293,16 @@ struct PaneStackWindowTests {
                     for id in startStrips where layout.leaves[id]?.isTucked == false {
                         layoutProblems.append("strip \(panes.firstIndex { $0.id == id } ?? -1) came out")
                     }
-                    let items = panes.compactMap { p -> CGRect? in
+                    let items = panes.compactMap { p -> (rect: CGRect, tucked: Bool)? in
                         guard let leaf = layout.leaves[p.id] else { return nil }
-                        return leaf.isTucked ? leaf.tab : leaf.frame
-                    }.sorted { $0.minX < $1.minX }
-                    for (a, b) in zip(items, items.dropFirst()) where abs(b.minX - a.maxX - gap) > 1.5 {
-                        layoutProblems.append("layout gutter \(Int(b.minX - a.maxX)) at \(Int(a.maxX))")
+                        return (leaf.isTucked ? (leaf.tab ?? leaf.frame) : leaf.frame, leaf.isTucked)
+                    }.sorted { $0.rect.minX < $1.rect.minX }
+                    // A gutter between each, but none between two strips.
+                    for (a, b) in zip(items, items.dropFirst()) {
+                        let want = a.tucked && b.tucked ? PaneLayout.Metrics.bladeGap : gap
+                        if abs(b.rect.minX - a.rect.maxX - want) > 1.5 {
+                            layoutProblems.append("layout gutter \(Int(b.rect.minX - a.rect.maxX)) at \(Int(a.rect.maxX))")
+                        }
                     }
                 }
             }
@@ -1704,12 +1789,12 @@ struct PaneStackWindowTests {
         await settle(1.0)
         try expectResizersInGutters(window, "side by side")
 
-        // The sidebar pinned beside them.
+        // The sidebar expanded beside them.
         controller.paneSidebarState.isHidden = false
-        controller.setPaneSidebarPinned(true)
+        controller.setPaneSidebarExpanded(true)
         await settle(1.0)
-        try expectResizersInGutters(window, "pinned sidebar")
-        controller.setPaneSidebarPinned(false)
+        try expectResizersInGutters(window, "expanded sidebar")
+        controller.setPaneSidebarExpanded(false)
         await settle(1.0)
         try expectResizersInGutters(window, "sidebar rail")
     }
@@ -1718,12 +1803,12 @@ struct PaneStackWindowTests {
     /// panes — all of that gutter, and not from inside the sidebar, whose
     /// edge is a click on the list. It used to straddle the edge: half
     /// inside the sidebar, and only part of the gutter.
-    @Test func thePinnedSidebarResizesFromTheGutterBesideIt() async throws {
+    @Test func theExpandedSidebarResizesFromTheGutterBesideIt() async throws {
         let (controller, window, _) = try await stackedWindow(count: 2, width: 1300)
         defer { controller.close() }
         try #require(controller.ghostty.config.macosPaneStyle == .elevated)
         controller.paneSidebarState.isHidden = false
-        controller.setPaneSidebarPinned(true)
+        controller.setPaneSidebarExpanded(true)
         await settle(1.0)
         let host = try #require(all(PaneSidebarHostView.self, in: window.contentView!).first)
         let edge = host.convert(host.cardRect, to: nil).maxX
@@ -1951,13 +2036,15 @@ struct PaneStackWindowTests {
         #expect(panes[3].isFocusedPane)
     }
 
-    /// The same, for the sidebar's trash mode (`killPane`).
-    @Test func killingTheFocusedPaneNeverFocusesAStrip() async throws {
+    /// The same, for a close from the sidebar (its row's ×), past any
+    /// confirmation (`closeSurface` is what the × reaches).
+    @Test func closingTheFocusedPaneNeverFocusesAStrip() async throws {
         let (controller, window, panes) = try await collapsedRow(.right)
         defer { controller.close() }
         window.makeFirstResponder(panes[2].surfaceView)
         await settle(0.4)
-        controller.killPane(panes[2])
+        let node = try #require(controller.surfaceTree.root?.node(view: panes[2]))
+        controller.closeSurface(node, withConfirmation: false)
         await settle(1.0)
         #expect(strips(window) == [panes[0], panes[1], panes[4], panes[5]].map(\.id), "a strip came out")
         #expect(panes[3].isFocusedPane)

@@ -45,7 +45,7 @@ struct PaneSidebarWindowTests {
     }
 
     /// a | (b / c), three terminals, in a 1100×700 window.
-    private func open(pinned: Bool) async throws -> Harness {
+    private func open(expanded: Bool, width: CGFloat = 1100) async throws -> Harness {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         let app = try #require(ghostty.app)
         let a = terminalPane(app), b = terminalPane(app), c = terminalPane(app)
@@ -54,11 +54,11 @@ struct PaneSidebarWindowTests {
             .inserting(view: c, at: b, direction: .down)
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         controller.paneSidebarState.isHidden = false
-        controller.paneSidebarState.isPinned = pinned
+        controller.paneSidebarState.isExpanded = expanded
         controller.paneSidebarState.width = 240
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
-        window.setContentSize(NSSize(width: 1100, height: 700))
+        window.setContentSize(NSSize(width: width, height: 700))
         await settle(0.8)
         return Harness(controller: controller, window: window, panes: [a, b, c])
     }
@@ -162,7 +162,7 @@ struct PaneSidebarWindowTests {
         }
         let main = controllers[2]
         main.paneSidebarState.isHidden = false
-        main.paneSidebarState.isPinned = true
+        main.paneSidebarState.isExpanded = true
         main.paneSidebarState.width = 260
         main.paneSidebarState.showsAllWindows = true
         _ = await poll(timeout: 10) { controllers.allSatisfy { $0.window?.isVisible == true } }
@@ -286,7 +286,11 @@ struct PaneSidebarWindowTests {
         let focused = occlusion(focus2, pane: card, edgeX: card.maxX, inward: -1, desk: desk, in: window)
         let report = "stacked card: focused \(focused) unfocused \(unfocused)\nframes \(frames2)"
         try? report.write(toFile: "/tmp/pane-sidebar-snapshots/glass-stack.txt", atomically: true, encoding: .utf8)
-        #expect(unfocused + 4 < focused, "\(report)")
+        // Glass either way — the desk reads through a stacked card on show as
+        // through any pane (stacked cards were once filled 92% opaque) — and
+        // the same glass focused or not: focus changes only its rim and glow.
+        #expect(focused < 70 && unfocused < 70, "a stacked card on show is not glass: \(report)")
+        #expect(abs(focused - unfocused) < 2.5, "focus changed the card's glass: \(report)")
     }
 
     /// Hero mode on glass shows its pane as the same glass card a focused
@@ -351,11 +355,12 @@ struct PaneSidebarWindowTests {
         #expect(apart < 2, "the hero is not the glass a focused pane is: \(report)")
     }
 
-    /// Glass panes: an UNFOCUSED pane is more see-through than the focused
-    /// one — the desk reads through it more — and the focused pane is the
-    /// solid one. Measured on the composited window, per pane against itself
-    /// in both states, for terminals and a viewer alike.
-    @Test func unfocusedGlassPanesAreMoreTransparent() async throws {
+    /// Glass panes: focus changes only the rim and the glow — the pane itself
+    /// (its sheet, its text) looks the same focused or not. Measured on the
+    /// composited window, per pane against itself in both states, for
+    /// terminals and a viewer alike. (An unfocused pane used to be more
+    /// see-through and its text faded, so focusing it lit the pane up.)
+    @Test func glassPanesLookTheSameFocusedOrNot() async throws {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         try #require(ghostty.config.paneGlass, "needs the default elevated + glass pane style")
         let app = try #require(ghostty.app)
@@ -410,8 +415,8 @@ struct PaneSidebarWindowTests {
         }.joined(separator: "\n")
         try? report.write(toFile: "/tmp/pane-sidebar-snapshots/glass-focus.txt", atomically: true, encoding: .utf8)
 
-        // A terminal fades AS A WHOLE, text included: the brightest pixel of
-        // its first row (the shell's "Last login" line) is dimmer unfocused.
+        // A terminal's text does not fade unfocused: the brightest pixel of
+        // its first row (the shell's "Last login" line) is the same.
         func brightestText(_ image: CGImage, _ pane: CGRect) -> Double {
             let scale = CGFloat(image.width) / window.frame.width
             let rep = NSBitmapImageRep(cgImage: image)
@@ -429,12 +434,12 @@ struct PaneSidebarWindowTests {
         try? (report + "\ntext a: focused \(textFocused) unfocused \(textUnfocused)\n")
             .write(toFile: "/tmp/pane-sidebar-snapshots/glass-focus.txt", atomically: true, encoding: .utf8)
         #expect(textFocused > 150, "no text found to measure: \(textFocused)")
-        #expect(textUnfocused + 20 < textFocused, "an unfocused terminal's text fades with it: \(textFocused) → \(textUnfocused)")
+        #expect(abs(textUnfocused - textFocused) < 6, "an unfocused terminal's text changed: \(textFocused) → \(textUnfocused)")
 
-        // Noticeably: a few levels of difference would be invisible.
-        let margin = 4.0
+        // The same glass: within a couple of levels (the rim and glow sit
+        // outside the sampled band).
         for p in 0..<3 {
-            #expect(occ[p][unfocused[p]] + margin < occ[p][p], "\(names[p]) hides as much of the desk unfocused: \(report)")
+            #expect(abs(occ[p][unfocused[p]] - occ[p][p]) < 2.5, "\(names[p]) changes with focus: \(report)")
         }
     }
 
@@ -530,7 +535,7 @@ struct PaneSidebarWindowTests {
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         controller.deskVariant = PaneDeskVariant(seed: 7)
         controller.paneSidebarState.isHidden = false
-        controller.paneSidebarState.isPinned = true
+        controller.paneSidebarState.isExpanded = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 1200, height: 760))
@@ -554,16 +559,13 @@ struct PaneSidebarWindowTests {
         window.makeFirstResponder(b.surfaceView)
         await settle(0.6)
         try await captureComposited(window, "glass-window-b")
-        // Unpinned: the mini rail, then the card opened over the grid. (A
-        // viewer page may come out blank in these two: the test window opens
-        // behind others, occluded, and WebKit skips repaints after the
-        // column change while occluded — the page is there, unpainted.)
-        controller.paneSidebarState.isPinned = false
+        // Collapsed: the rail. (A viewer page may come out blank here: the
+        // test window opens behind others, occluded, and WebKit skips
+        // repaints after the column change while occluded — the page is
+        // there, unpainted.)
+        controller.paneSidebarState.isExpanded = false
         await settle(0.8)
         try await captureComposited(window, "glass-rail")
-        controller.paneSidebarState.isHoverOpen = true
-        await settle(0.8)
-        try await captureComposited(window, "glass-overlay")
         controller.close()
         await settle(0.3)
     }
@@ -571,9 +573,9 @@ struct PaneSidebarWindowTests {
     /// Diagnostic: the sidebar host alone, captured two ways, plus a dump
     /// of what is mounted in it.
     @Test func diagnoseSidebarRendering() async throws {
-        let other = try await open(pinned: true)
+        let other = try await open(expanded: true)
         other.panes[1].surfaceView?.activityState = .needsInput
-        let h = try await open(pinned: true)
+        let h = try await open(expanded: true)
         defer { other.controller.close() }
         h.controller.stashPane(h.panes[2])
         await settle(0.8)
@@ -607,10 +609,8 @@ struct PaneSidebarWindowTests {
         }
         // SwiftUI's own renderer: draws the view tree itself (AppKit
         // representables — the rows' click/drag views — are invisible anyway).
-        for (name, rail, quick, all) in [("render-pinned", false, false, false), ("render-rail", true, false, false),
-                                          ("render-trash", false, true, false), ("render-all", false, false, true),
-                                          ("render-all-trash", false, true, true)] {
-            h.controller.paneSidebarState.isQuickKill = quick
+        for (name, rail, all) in [("render-expanded", false, false), ("render-rail", true, false),
+                                  ("render-all", false, true)] {
             h.controller.paneSidebarState.showsAllWindows = all
             await settle(0.1)
             let bg = h.controller.ghostty.config.backgroundColor
@@ -635,20 +635,20 @@ struct PaneSidebarWindowTests {
         h.panes[2].surfaceView?.activityState = .needsInput
         h.panes[1].surfaceView?.paneBanner = "**Pane sidebar** — building the _rows_"
         await settle(0.2)
-        for (name, rail, quick) in [("rows", false, false), ("rows-trash", false, true), ("tiles", true, false)] {
+        for (name, rail) in [("rows", false), ("tiles", true)] {
             let tree = h.controller.surfaceTree
             let bg = h.controller.ghostty.config.backgroundColor
             let rows = VStack(alignment: .leading, spacing: 0) {
                 ForEach(tree.visibleLeaves) { pane in
                     PaneSidebarRow(pane: pane, owner: h.controller, isStashed: false,
                                    isSelected: pane === tree.visibleLeaves.first, isForeign: false,
-                                   isRail: rail, isQuickKill: quick, isBeingDragged: false)
+                                   isRail: rail, isBeingDragged: false)
                 }
                 PaneSidebarDivider(isRail: rail)
                 ForEach(tree.stashedViews) { pane in
                     PaneSidebarRow(pane: pane, owner: h.controller, isStashed: true,
                                    isSelected: false, isForeign: false,
-                                   isRail: rail, isQuickKill: quick, isBeingDragged: false)
+                                   isRail: rail, isBeingDragged: false)
                 }
             }
             .padding(.vertical, 8)
@@ -665,45 +665,64 @@ struct PaneSidebarWindowTests {
                     to: URL(fileURLWithPath: "/tmp/pane-sidebar-snapshots/\(name).png"))
             }
         }
-        h.controller.paneSidebarState.isQuickKill = false
         h.controller.paneSidebarState.showsAllWindows = false
         await close(h)
     }
 
     // MARK: Layout
 
-    @Test func pinnedIsAFlatColumnTheGridSitsBeside() async throws {
-        let h = try await open(pinned: true)
+    /// Expanded is the rail's card, wider: the same margins, top and
+    /// height, the grid beside its column, the grip in the gutter.
+    @Test func expandedIsTheRailsCardWider() async throws {
+        let h = try await open(expanded: true)
         defer { Task { await close(h) } }
 
         let host = try #require(h.controller.paneSidebarHost)
         let hostFrame = host.convert(host.bounds, to: nil)
         let elevated = h.controller.ghostty.config.macosPaneStyle == .elevated
-        let grip = PaneSidebarState.pinnedEdgeGrip(elevated: elevated)
-        #expect(abs(hostFrame.width - (240 + PaneSidebarState.pinnedEdgeReach(elevated: elevated))) < 1,
+        let insets = PaneSidebarState.railInsets(elevated: elevated)
+        let column = PaneSidebarState.columnWidth(for: .expanded, panelWidth: 240, elevated: elevated)
+        let grip = PaneSidebarState.edgeGrip(for: .expanded, elevated: elevated)
+        #expect(abs(hostFrame.width - (column + PaneSidebarState.edgeReach(for: .expanded, elevated: elevated))) < 1,
                 "the column, plus the gutter its resize grip lies in")
         #expect(abs(hostFrame.minX) < 1, "flush with the window's left edge")
-        #expect(abs(host.cardRect.width - 240) < 1, "the panel fills its column, no card margin")
-        // The resize grip takes the mouse over all of its span (past the
-        // panel too, which is outside the panel's own bounds), and the host
-        // nothing past it.
+        #expect(host.cardRect == NSRect(x: insets.leading, y: insets.vertical, width: 240,
+                                        height: host.bounds.height - 2 * insets.vertical),
+                "the rail's card at the panel's width: its margins, its top, its height")
         let edgeX = host.frame.minX + host.cardRect.maxX
         let y = host.frame.midY
         #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + 1, y: y)) is SidePanelResizeHandle, "its start")
         #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + grip.width - 1, y: y)) is SidePanelResizeHandle,
                 "its end")
+        #expect(!(host.hitTest(NSPoint(x: edgeX - 3, y: y)) is SidePanelResizeHandle), "not over the card")
         #expect(host.hitTest(NSPoint(x: edgeX + grip.offset + grip.width + 1, y: y)) == nil,
                 "nothing past the grip")
 
         // The grid starts where the column ends (plus the elevated margin).
         let leftPane = frameInWindow(h.panes[0])
-        #expect(abs(leftPane.minX - (240 + gridMargin(h))) < 1)
-        snapshot(h, "pinned")
+        #expect(abs(leftPane.minX - (column + gridMargin(h))) < 1)
+        snapshot(h, "expanded")
         await close(h)
     }
 
-    @Test func unpinnedIsTheMiniRailAndHoverOpenDoesNotMoveTheGrid() async throws {
-        let h = try await open(pinned: false)
+    /// A pane's icon is at the same height expanded and collapsed: one card,
+    /// one row height.
+    @Test func iconsStayAtTheSameHeightExpandedOrCollapsed() async throws {
+        let h = try await open(expanded: true)
+        let host = try #require(h.controller.paneSidebarHost)
+        let expanded = h.panes.compactMap { rowFrame($0, in: host)?.midY }
+        h.controller.setPaneSidebarExpanded(false)
+        await settle(0.8)
+        let collapsed = h.panes.compactMap { rowFrame($0, in: host)?.midY }
+        #expect(expanded.count == 3 && collapsed.count == 3)
+        for (e, c) in zip(expanded, collapsed) {
+            #expect(abs(e - c) < 1, "a row at \(e) expanded is at \(c) collapsed")
+        }
+        await close(h)
+    }
+
+    @Test func collapsedIsTheRailAndOnlyTheButtonExpandsIt() async throws {
+        let h = try await open(expanded: false)
 
         let host = try #require(h.controller.paneSidebarHost)
         let elevated = gridMargin(h) > 0
@@ -713,6 +732,8 @@ struct PaneSidebarWindowTests {
         #expect(abs(gridLeft - (column + gridMargin(h))) < 1, "the grid sits beside the rail column")
         #expect(host.cardRect.width == PaneSidebarState.railCardWidth)
         #expect(host.cardRect.minX == insets.leading, "the raised card keeps its margin")
+        #expect(abs(host.frame.width - (column + PaneSidebarState.edgeReach(for: .collapsed, elevated: elevated))) < 1,
+                "the column, plus the gutter its grip lies in — no room for a card opening over the grid")
         // Equal gutters: window edge → rail, and rail → panes.
         let railFrame = host.convert(host.cardRect, to: nil)
         #expect(abs(railFrame.minX - (gridLeft - railFrame.maxX)) < 1,
@@ -722,38 +743,237 @@ struct PaneSidebarWindowTests {
             let paneGap = frameInWindow(h.panes[1]).minX - frameInWindow(h.panes[0]).maxX
             #expect(abs(paneGap - railFrame.minX) < 1, "pane gap \(paneGap) == rail gutter \(railFrame.minX)")
         }
-        let sizeBefore = gridSize(h.panes[0])
-        snapshot(h, "mini")
+        snapshot(h, "rail")
 
-        // Open it as the pointer would.
-        h.controller.paneSidebarState.isHoverOpen = true
-        await settle(0.5)
-        #expect(host.cardRect.width == 240, "the card opens to the panel width")
-        #expect(abs(frameInWindow(h.panes[0]).minX - gridLeft) < 1,
-                "hover-open floats over the grid: the column does not widen")
-        let sizeOpen = gridSize(h.panes[0])
-        #expect(sizeBefore?.cols == sizeOpen?.cols, "no terminal resized on hover")
-        snapshot(h, "mini-open")
+        // The button at the top of the bar is the way out (and in again) —
+        // and the grid glides over rather than snapping: part way there a
+        // moment in, its terminal still at its old size until the motion is
+        // over, then resized once.
+        let expandedLeft = PaneSidebarState.columnWidth(for: .expanded, panelWidth: 240, elevated: elevated)
+            + gridMargin(h)
+        let sizeBefore = try #require(gridSize(h.panes[0]))
+        h.controller.setPaneSidebarExpanded(true)
+        await settle(0.04)
+        let midway = frameInWindow(h.panes[0]).minX
+        #expect(midway > gridLeft + 1 && midway < expandedLeft - 1,
+                "the grid glides: \(gridLeft) → \(midway) → \(expandedLeft)")
+        #expect(gridSize(h.panes[0])?.cols == sizeBefore.cols, "no resize mid-glide")
+        await settle(0.6)
+        #expect(abs(frameInWindow(h.panes[0]).minX - expandedLeft) < 1, "expanded: the panel's column")
+        #expect(gridSize(h.panes[0])?.cols != sizeBefore.cols, "resized once the glide is over")
+        h.controller.setPaneSidebarExpanded(false)
+        await settle(0.6)
+        #expect(abs(frameInWindow(h.panes[0]).minX - gridLeft) < 1, "collapsed again")
 
         await close(h)
     }
 
-    @Test func clicksOutsideTheClosedRailFallThroughToTheGrid() async throws {
-        let h = try await open(pinned: false)
+    /// The rail's grip is the gutter between it and the panes — all of it,
+    /// and none of the rail (it used to sit inside the card, its bar over the
+    /// tiles). Past it, clicks fall through to the grid.
+    @Test func theRailsGripIsTheGutterBesideIt() async throws {
+        let h = try await open(expanded: false)
         let host = try #require(h.controller.paneSidebarHost)
-        // The host is wide enough for the open card; with it closed, the
-        // part to the right of the rail must not swallow clicks.
-        let inGap = NSPoint(x: host.frame.minX + 120, y: host.frame.midY)
-        #expect(host.hitTest(inGap) == nil)
-        let onRail = NSPoint(x: host.frame.minX + GlassCard.outerMargin + 10, y: host.frame.midY)
-        #expect(host.hitTest(onRail) != nil)
+        let elevated = gridMargin(h) > 0
+        let grip = PaneSidebarState.edgeGrip(for: .collapsed, elevated: elevated)
+        let edge = host.frame.minX + host.cardRect.maxX
+        let y = host.frame.midY
+        #expect(host.hitTest(NSPoint(x: edge + grip.offset + 1, y: y)) is SidePanelResizeHandle, "its start")
+        #expect(host.hitTest(NSPoint(x: edge + grip.offset + grip.width - 1, y: y)) is SidePanelResizeHandle, "its end")
+        #expect(!(host.hitTest(NSPoint(x: edge - 3, y: y)) is SidePanelResizeHandle), "not over the rail")
+        #expect(host.hitTest(NSPoint(x: edge + grip.offset + grip.width + 2, y: y)) == nil, "the grid's past it")
+        if elevated {
+            #expect(abs(edge + grip.offset + grip.width - frameInWindow(h.panes[0]).minX) < 1,
+                    "the grip ends where the panes begin")
+        }
+        await close(h)
+    }
+
+    /// Each tile is its pane's own shade, and a hovered tile tints its pane
+    /// in that hue (sidebar-hue-*.png, by eye) — and the tint goes when the
+    /// pointer leaves.
+    @Test func aHoveredTileTintsItsPaneInItsHue() async throws {
+        let h = try await open(expanded: false)
+        let hover = PaneSidebarHover.shared
+        let b = h.panes[1]
+        hover.hover(b.id, color: PaneSidebarHue.color(for: b, in: h.controller))
+        await settle(0.4)
+        try await captureComposited(h.window, "sidebar-hue-hover")
+        #expect(hover.pane == b.id)
+        hover.leave(b.id)
+        await settle(0.4)
+        #expect(hover.pane == nil)
+        try await captureComposited(h.window, "sidebar-hue-rest")
+        // Neighbours never share a shade.
+        let hues = (0..<6).map(PaneSidebarHue.hue(index:))
+        for (x, y) in zip(hues, hues.dropFirst()) { #expect(abs(x - y) > 0.15) }
+        await close(h)
+    }
+
+    /// A busy pane's tile carries a diagonal sheen, and the collapse/expand
+    /// button sits at the same place in both modes (sidebar-busy-*.png, by
+    /// eye: the sheen is Core Animation, the button SwiftUI).
+    @Test func aBusyTileShinesAndTheToggleStaysPut() async throws {
+        let h = try await open(expanded: false)
+        h.panes[1].surfaceView?.activityState = .busy
+        await settle(0.5)
+        try await captureComposited(h.window, "sidebar-busy-rail")
+        await settle(0.35)
+        try await captureComposited(h.window, "sidebar-busy-rail-later")
+        // A run of frames across a sweep, for checking its direction.
+        for i in 0..<16 {
+            try await captureComposited(h.window, "sidebar-busy-sweep-\(i)")
+            await settle(0.05)
+        }
+        h.controller.setPaneSidebarExpanded(true)
+        await settle(0.8)
+        try await captureComposited(h.window, "sidebar-busy-expanded")
+        h.panes[1].surfaceView?.activityState = .idle
+        await close(h)
+    }
+
+    // MARK: Drag to reorder, into and out of the tray
+
+    /// The dragged row is the row itself, following the pointer up and down
+    /// only (`PaneSidebarRowDrag`), the list leaving its gap; let go, it
+    /// settles where it landed. Captured composited, in both modes
+    /// (drag-ghost-*.png): a check by eye, since no synthetic event drives a
+    /// real drag.
+    @Test(arguments: [true, false])
+    func theDraggedRowFollowsThePointerVertically(expanded: Bool) async throws {
+        let h = try await open(expanded: expanded)
+        let (a, c) = (h.panes[0], h.panes[2])
+        let session = PaneDragSession.shared
+        let rowDrag = PaneSidebarRowDrag.shared
+        let start = try screenPoint(on: a, h)
+        session.begin(pane: a, from: h.controller, isListDrag: true)
+        rowDrag.begin(a, screenY: start.y)
+        session.update(screenPoint: start)
+        await settle(0.3)
+        // c's lower part, as laid out (the rows' own views slide).
+        let cRow = try #require(h.controller.paneSidebarHost?.dropGeometry()?.paneRows.first { $0.id == c.id }?.rect)
+        let end = CGPoint(x: cRow.midX, y: cRow.minY + cRow.height * 0.2)
+        // Sideways too: the row must not follow that.
+        let moved = CGPoint(x: end.x + 300, y: end.y)
+        session.update(screenPoint: moved)
+        rowDrag.move(screenY: moved.y)
+        await settle(0.4)
+        // Off the bar, over the grid: still a place in the list — a row
+        // dragged in the list only rearranges, wherever it is let go.
+        #expect(session.target == .sidebarOrder(window: PaneDropWindowRef(h.controller), index: 2),
+                "released off the bar: \(String(describing: session.target))")
+        // ...and past the window, too.
+        session.update(screenPoint: CGPoint(x: moved.x + 3000, y: moved.y))
+        #expect(session.target == .sidebarOrder(window: PaneDropWindowRef(h.controller), index: 2),
+                "released past the window: \(String(describing: session.target))")
+        session.update(screenPoint: moved)
+        #expect(rowDrag.frame != nil, "the dragged row's place is known")
+        #expect(rowDrag.dy > 0, "it follows the pointer down")
+        try await captureComposited(h.window, expanded ? "drag-ghost-expanded" : "drag-ghost-rail")
+        session.update(screenPoint: end)
+        await settle(0.4)
+        // b and c slide up into a's gap — and the geometry the drop is read
+        // from still has them where they are laid out, so the index does not
+        // chase them.
+        #expect(session.target == .sidebarOrder(window: PaneDropWindowRef(h.controller), index: 2))
+        let rows = try #require(h.controller.paneSidebarHost?.dropGeometry()?.paneRows)
+        #expect(rows.first { $0.id == c.id }?.rect == cRow, "c's laid-out row did not move with its slide")
+        #expect(Set(rows.map(\.rect.minY)).count == 3, "no two rows report the same place")
+        session.end(commit: true)
+        rowDrag.finish(a)
+        await settle(0.5)
+        #expect(rowDrag.pane == nil, "settled")
+        #expect(h.controller.paneSidebarPanes.last === a)
+        await close(h)
+    }
+
+    /// The drag source views of a pane's sidebar row, in window coordinates.
+    private func rowFrame(_ pane: PaneView, in host: NSView) -> NSRect? {
+        func all(_ view: NSView) -> [PaneDragSourceView] {
+            ((view as? PaneDragSourceView).map { [$0] } ?? []) + view.subviews.flatMap(all)
+        }
+        return all(host).first { $0.pane === pane }.map { $0.convert($0.bounds, to: nil) }
+    }
+
+    /// A point on `pane`'s row, in screen coordinates; `fraction` of the way
+    /// down it. Where the row is LAID OUT — the drop geometry, once a drag
+    /// has the rows reporting it — not where its view has slid to.
+    private func screenPoint(on pane: PaneView, _ h: Harness, fraction: CGFloat = 0.5) throws -> CGPoint {
+        let host = try #require(h.controller.paneSidebarHost)
+        if let geo = host.dropGeometry(),
+           let rect = (geo.paneRows + geo.stashRows).first(where: { $0.id == pane.id })?.rect {
+            return CGPoint(x: rect.midX, y: rect.maxY - rect.height * fraction)
+        }
+        let row = try #require(rowFrame(pane, in: host), "no row for the pane")
+        let inWindow = NSPoint(x: row.midX, y: row.maxY - row.height * fraction)
+        return h.window.convertPoint(toScreen: inWindow)
+    }
+
+    /// Drag-reorder, and dragging into and out of the tray, through the
+    /// sidebar's own drag: the session, the resolver, and the coordinator
+    /// as a row drag drives them. In both modes. Reordering changes the
+    /// list and never the grid.
+    @Test(arguments: [true, false])
+    func dragReordersTheListAndTheTrayStashesAndRestores(expanded: Bool) async throws {
+        let h = try await open(expanded: expanded)
+        defer { PaneDragSession.shared.end(commit: false) }
+        let (a, b, c) = (h.panes[0], h.panes[1], h.panes[2])
+        let session = PaneDragSession.shared
+        let host = try #require(h.controller.paneSidebarHost)
+        let grid = h.controller.surfaceTree.root
+        #expect(h.controller.paneSidebarPanes.map(\.id) == [a.id, b.id, c.id], "the tree's order to start")
+
+        // a, dragged to c's lower half: the end of the list. While it is
+        // held there, b and c slide up into the room it left.
+        let bBefore = try #require(rowFrame(b, in: host))
+        session.begin(pane: a, from: h.controller)
+        session.update(screenPoint: try screenPoint(on: b, h))
+        await settle(0.3)     // the rows report their frames once a drag is on
+        session.update(screenPoint: try screenPoint(on: c, h, fraction: 0.8))
+        #expect(session.target == .sidebarOrder(window: PaneDropWindowRef(h.controller), index: 2))
+        await settle(0.5)
+        let bDuring = try #require(rowFrame(b, in: host))
+        #expect(bDuring.maxY > bBefore.maxY + bBefore.height * 0.5,
+                "b slid up to make room: \(bBefore.maxY) → \(bDuring.maxY)")
+        session.end(commit: true)
+        await settle(0.4)
+        #expect(h.controller.paneSidebarPanes.map(\.id) == [b.id, c.id, a.id])
+        #expect(h.controller.surfaceTree.root == grid, "the grid did not change")
+        #expect(h.controller.surfaceTree.stashed.isEmpty)
+
+        // b, dragged below the tray's divider: stashed.
+        session.begin(pane: b, from: h.controller)
+        session.update(screenPoint: try screenPoint(on: c, h))
+        await settle(0.3)
+        let tray = try #require(host.dropGeometry()?.trayTop, "the tray reports where it begins")
+        session.update(screenPoint: CGPoint(x: try screenPoint(on: c, h).x, y: tray - 12))
+        #expect(session.target == .stash(window: PaneDropWindowRef(h.controller), index: 0))
+        session.end(commit: true)
+        await settle(0.5)
+        #expect(h.controller.surfaceTree.stashed == [b.id])
+        #expect(h.controller.paneSidebarPanes.map(\.id) == [c.id, a.id])
+        snapshot(h, expanded ? "drag-tray-expanded" : "drag-tray-rail")
+
+        // b, dragged out of the tray to the top of the list: restored, and
+        // first in the list.
+        session.begin(pane: b, from: h.controller)
+        session.update(screenPoint: try screenPoint(on: b, h))
+        await settle(0.3)
+        session.update(screenPoint: try screenPoint(on: c, h, fraction: 0.1))
+        #expect(session.target == .sidebarOrder(window: PaneDropWindowRef(h.controller), index: 0))
+        session.end(commit: true)
+        await settle(0.5)
+        #expect(h.controller.surfaceTree.stashed.isEmpty, "back on the grid")
+        #expect(h.controller.paneSidebarPanes.map(\.id) == [b.id, c.id, a.id])
+        #expect(h.controller.surfaceTree.root == grid, "in the slot it left")
+
         await close(h)
     }
 
     // MARK: Geometry: a stashed pane keeps its size
 
     @Test func aStashedTerminalKeepsItsGridAndComesBackAtTheSameSize() async throws {
-        let h = try await open(pinned: true)
+        let h = try await open(expanded: true)
         let b = h.panes[1], c = h.panes[2]
 
         let bBefore = try #require(gridSize(b))
@@ -799,7 +1019,7 @@ struct PaneSidebarWindowTests {
             .stashing(b)
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         controller.paneSidebarState.isHidden = false
-        controller.paneSidebarState.isPinned = true
+        controller.paneSidebarState.isExpanded = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 1100, height: 700))
@@ -868,7 +1088,7 @@ struct PaneSidebarWindowTests {
         let tree = try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right)
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         controller.paneSidebarState.isHidden = false
-        controller.paneSidebarState.isPinned = true
+        controller.paneSidebarState.isExpanded = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
         // Wide enough for the full panel (narrower shows the rail).
@@ -895,16 +1115,16 @@ struct PaneSidebarWindowTests {
         await settle(0.3)
     }
 
-    /// A busy pane's sidebar icon shimmers: two captures a moment apart
-    /// differ around the icon (and only while busy). Writes busy-a/b.png.
-    @Test func aBusyPaneShimmersInTheSidebar() async throws {
+    /// A busy pane's sidebar row sheens: captures a moment apart differ
+    /// around it (and only while busy). Writes busy-a/b.png.
+    @Test func aBusyPaneShinesInTheSidebar() async throws {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         let app = try #require(ghostty.app)
         let a = terminalPane(app), b = terminalPane(app)
         let tree = try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right)
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         controller.paneSidebarState.isHidden = false
-        controller.paneSidebarState.isPinned = true
+        controller.paneSidebarState.isExpanded = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 1000, height: 600))
@@ -913,11 +1133,11 @@ struct PaneSidebarWindowTests {
         b.surfaceView?.activityState = .busy
         await settle(0.3)
         #expect(b.activityState == .busy)
-        // Frames across one whole shimmer period: two captures alone can both
-        // land while the band is parked off the glyph.
+        // Frames across a whole sheen period (2s): two captures alone can
+        // both land while the band is parked off the row.
         let first = try await captureImage(window)
         var frames: [CGImage] = []
-        for _ in 0..<6 {
+        for _ in 0..<10 {
             await settle(0.23)
             frames.append(try await captureImage(window))
         }
@@ -971,7 +1191,7 @@ struct PaneSidebarWindowTests {
             .inserting(view: viewer, at: b, direction: .down)
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         controller.paneSidebarState.isHidden = false
-        controller.paneSidebarState.isPinned = true
+        controller.paneSidebarState.isExpanded = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
         await settle(0.8)
@@ -1007,7 +1227,7 @@ struct PaneSidebarWindowTests {
     }
 
     @Test func aStashedPaneIsStillInTheTreeAndAlive() async throws {
-        let h = try await open(pinned: true)
+        let h = try await open(expanded: true)
         let b = h.panes[1]
         h.controller.stashPane(b)
         await settle(0.3)
@@ -1020,7 +1240,7 @@ struct PaneSidebarWindowTests {
     }
 
     @Test func theLastVisiblePaneCannotBeStashed() async throws {
-        let h = try await open(pinned: true)
+        let h = try await open(expanded: true)
         #expect(h.controller.stashPane(h.panes[1]))
         #expect(h.controller.stashPane(h.panes[2]))
         #expect(!h.controller.stashPane(h.panes[0]), "refused: it is the only pane on screen")
@@ -1030,7 +1250,7 @@ struct PaneSidebarWindowTests {
     }
 
     @Test func undoBringsAStashedPaneBack() async throws {
-        let h = try await open(pinned: true)
+        let h = try await open(expanded: true)
         let b = h.panes[1]
         h.controller.stashPane(b)
         await settle(0.2)
@@ -1040,13 +1260,9 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 
-    @Test func trashModeAndAllWindowsRender() async throws {
-        let h = try await open(pinned: true)
+    @Test func allWindowsRenders() async throws {
+        let h = try await open(expanded: true)
         h.controller.stashPane(h.panes[2])
-        h.controller.paneSidebarState.isQuickKill = true
-        await settle(0.4)
-        snapshot(h, "trash")
-        h.controller.paneSidebarState.isQuickKill = false
         h.controller.paneSidebarState.showsAllWindows = true
         await settle(0.4)
         snapshot(h, "all-windows")

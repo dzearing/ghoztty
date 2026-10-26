@@ -1,4 +1,10 @@
 import AppKit
+import OSLog
+
+/// Every collapse/expand, with its cause, at `.notice` (persisted): the
+/// sidebar must never change mode on its own, and when someone sees it do so
+/// this is how the cause is found.
+private let paneSidebarLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.dzearing.ghoztty", category: "PaneSidebar")
 
 /// The pane sidebar's operations on a window: stash, restore, exchange,
 /// close, kill. See `docs/design/pane-sidebar.md`.
@@ -133,33 +139,83 @@ extension BaseTerminalController {
 
     // MARK: Sidebar visibility
 
-    /// The pin: flat panel ⇄ raised mini rail. Unpinning leaves the card open
-    /// under the pointer (it was just clicked) until the pointer leaves.
-    func togglePaneSidebarPin() {
-        setPaneSidebarPinned(!paneSidebarState.isPinned)
+    /// The button at the top of the bar: the full list ⇄ the icon rail.
+    func togglePaneSidebarExpanded() {
+        setPaneSidebarExpanded(!paneSidebarState.isExpanded, cause: "toggle")
     }
 
-    func setPaneSidebarPinned(_ pinned: Bool) {
+    /// `cause` names who asked, for the log: "button", "edge drag",
+    /// "divider drag", ….
+    func setPaneSidebarExpanded(_ expanded: Bool, cause: String = "unspecified") {
         let state = paneSidebarState
-        guard state.isPinned != pinned else { return }
-        state.isPinned = pinned
-        state.isHoverOpen = !pinned
+        guard state.isExpanded != expanded else { return }
+        paneSidebarLog.notice("sidebar \(expanded ? "expanded" : "collapsed", privacy: .public) by \(cause, privacy: .public) in window \(self.window?.title ?? "?", privacy: .public)")
+        changingPaneSidebarColumn { state.isExpanded = expanded }
         syncPaneSidebarLayout()
     }
 
     /// Ctrl+Cmd+S: hide or show the sidebar entirely.
     func togglePaneSidebar() {
-        paneSidebarState.isHidden.toggle()
-        paneSidebarState.isHoverOpen = false
+        changingPaneSidebarColumn { paneSidebarState.isHidden.toggle() }
         syncPaneSidebarLayout()
     }
 
-    /// The pin and hidden flags are layout: persist them with the window.
+    /// The sidebar's column width now, as its container lays it out.
+    var paneSidebarColumn: CGFloat {
+        let windowWidth = window?.contentView?.bounds.width ?? .greatestFiniteMagnitude
+        let state = paneSidebarState
+        return PaneSidebarState.columnWidth(
+            for: state.mode(windowWidth: windowWidth), panelWidth: state.width,
+            elevated: ghostty.config.macosPaneStyle == .elevated)
+    }
+
+    /// Make a change that moves the sidebar's column, telling the grid first
+    /// so it glides over rather than snapping (`PaneStackState.noteColumnShift`).
+    /// The sidebar animates its own width to match (`PaneSidebarContainer`).
+    private func changingPaneSidebarColumn(_ change: () -> Void) {
+        let before = paneSidebarColumn
+        change()
+        paneStackState.noteColumnShift(paneSidebarColumn - before)
+    }
+
+    /// The expanded and hidden flags and the sidebar's order are layout:
+    /// persist them with the window.
     func syncPaneSidebarLayout() {
         window?.invalidateRestorableState()
         if sessionLayoutEntryID != nil {
             SessionLayoutManifest.shared.scheduleSync(self)
         }
+    }
+
+    // MARK: Sidebar order
+
+    /// This window's grid panes in the sidebar's order (`PaneSidebarOrder`).
+    var paneSidebarPanes: [PaneView] {
+        let visible = surfaceTree.visibleLeaves
+        let byID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        return PaneSidebarOrder.arranged(visible.map(\.id), by: paneSidebarState.order)
+            .compactMap { byID[$0] }
+    }
+
+    /// The order as persisted: only panes still in the window, and nothing
+    /// at all until the list has been reordered.
+    var paneSidebarPersistedOrder: [UUID] {
+        let existing = Set(surfaceTree.map(\.id))
+        return paneSidebarState.order.filter(existing.contains)
+    }
+
+    /// Put `pane`, which must be on the grid, at `index` of the sidebar's
+    /// list. The list only: the grid does not change.
+    func placeInPaneSidebar(_ pane: PaneView, at index: Int) {
+        let visible = surfaceTree.visibleLeaves.map(\.id)
+        guard visible.contains(pane.id) else { return }
+        let state = paneSidebarState
+        let order = PaneSidebarOrder.moving(
+            pane.id, to: index, visible: visible, order: state.order,
+            existing: Set(surfaceTree.map(\.id)))
+        guard order != state.order else { return }
+        state.order = order
+        syncPaneSidebarLayout()
     }
 
     // MARK: Close / kill
@@ -173,34 +229,5 @@ extension BaseTerminalController {
         // remote pane even when idle.
         let confirm = pane.needsConfirmQuit || !disconnectableViews(in: [pane]).isEmpty
         closeSurface(node, withConfirmation: confirm)
-    }
-
-    /// Trash mode: kill `pane` now. No confirmation, and no undo window —
-    /// the tree is replaced WITHOUT registering an undo, so nothing retains
-    /// the pane and its surface (and the process or agent session behind it)
-    /// is freed as soon as the layout lets go of it, rather than when an undo
-    /// window expires. That is what "just kill the terminal" means.
-    func killPane(_ pane: PaneView) {
-        guard let node = surfaceTree.root?.node(view: pane) else { return }
-
-        // A window's last pane: killing it is closing the window, which has
-        // its own path (and its own confirmation bypass is the point here).
-        guard surfaceTree.count > 1 else {
-            window?.close()
-            return
-        }
-
-        let nextFocus: PaneView? = focusedPane === pane
-            ? focusTargetAfterRemoving(node, leaving: surfaceTree.removing(node))
-            : nil
-
-        // Assigning directly is what skips the undo registration. The
-        // `surfaceTreeDidChange` bookkeeping still runs: the pane is marked
-        // CLOSE-on-free, so its agent session ends rather than detaching.
-        surfaceTree = surfaceTree.removing(node)
-
-        if let nextFocus {
-            DispatchQueue.main.async { Ghostty.moveFocus(to: nextFocus) }
-        }
     }
 }

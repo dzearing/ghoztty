@@ -12,7 +12,7 @@ for divider drags; captures to `/tmp/pane-stack-snapshots`).
 
 ## The rule
 
-**A pane is never narrower (or shorter) than 300pt.** A row of panes that
+**A pane is never narrower than 225pt, or shorter than 125pt.** A row of panes that
 cannot fit side by side at that minimum becomes a **stack**: as many panes as
 fit stay on show (the **run**), and the rest are **minimized** into strips at
 the edge they live on — the pane's own card at the strip's size (same glass,
@@ -72,7 +72,7 @@ pane sidebar, `ghoztty://focus/…` all just focus the pane, and the row follows
   stayed there — the caller of a side pane, below.) Every handoff picks the
   pane on show nearest the candidate (`paneOnShow`,
   `focusTargetAfterRemoving`): a close, Cmd-W in a viewer, a stash, the
-  sidebar's trash kill, the window becoming key with nothing focused.
+  close from the sidebar, the window becoming key with nothing focused.
 - Only a pane that **really has the caret** counts as focused to a stack
   (`PaneView.holdsKeyboardFocus`): `focusedPane` falls back to the last focused
   terminal while the caret is elsewhere, and that terminal may have been
@@ -104,15 +104,28 @@ tree order.
 
 ## Gutters: where resizers live
 
-Every card on show and every strip is separated from the next by the same
-gutter (`Metrics.gap`: 10pt elevated, 6pt flat), whatever the run's position —
-so moving the run never resizes a card. Every resizer takes the mouse **in its
-gutter and nowhere else** (`Divider.gutter`, `StackHandle.gutter`): split
+Every card on show is separated from the next by the same gutter
+(`Metrics.gap`: 10pt elevated, 6pt flat), and so is the run from each group of
+strips beside it — the grip that pulls a strip back out lives there. A run with
+strips on both sides has one more such gutter than a run at an end, so its
+cards are that much narrower there (they take it after the glide, one resize
+each).
+
+**Strips are blades**: no gap between two strips (`Metrics.bladeGap` = 0), and
+a strip that has another between it and the run reaches 12pt under that one
+(`Metrics.bladeTuck`), its rounded edge out of sight — overlaid bars, not pills
+touching at their corners. Each still shows 36pt, its title centered on what
+shows (`PaneCardView.titleRect`). Each casts a tight shadow that leans AWAY
+from the run onto the blade behind it and stops at its own sides; the shadow
+follows `collapse`, so it comes on as a card narrows into its strip rather than
+snapping in when the glide lands.
+
+Every resizer takes the mouse **in its gutter and nowhere else** (`Divider.gutter`, `StackHandle.gutter`): split
 dividers, grips between cards, the grip where the run meets its strips, and the
-pane sidebar's edge — pinned, ALL of the gutter between panel and panes and
+pane sidebar's edge — expanded, ALL of the gutter between panel and panes and
 none of the panel (`PaneSidebarState.pinnedEdgeGrip`;
-`thePinnedSidebarResizesFromTheGutterBesideIt`); flat, or on the card floating
-over the grid, just inside its edge. A click just inside a card's edge is the
+`theExpandedSidebarResizesFromTheGutterBesideIt`); flat, or on the rail card,
+just inside its edge. A click just inside a card's edge is the
 card's — its grab handle sits at its top edge, and a strip is its own drag
 source. Pinned by `everyResizerSitsInAGutter` /
 `everyResizerOfAStackSitsInAGutter` (real windows: every resizer frame against
@@ -154,6 +167,16 @@ in row coordinates, so `(a | b) | c` and `a | (b | c)` behave the same. (This
 replaced three disagreeing, path-dependent mechanisms: a squeeze chain for
 dividers, a one-strip-at-a-time pull for edge grips, a two-slot resize for
 grips between cards.)
+
+**Double-clicking a divider evens out the panes across it — in its direction
+only** (`TerminalSplitOperation.equalize`, `SplitTree.equalized(only:)`): a
+horizontal divider evens the heights and leaves every width as set, and the
+other way round. `equalize_splits` itself still evens out both. Test:
+`equalizedInOneDirectionKeepsTheOther`.
+
+**The pane sidebar is a row's first item** in a divider drag
+([pane-sidebar.md](pane-sidebar.md)): a gutter pushed past every pane it has
+tucked away tucks the expanded sidebar into its rail.
 
 **A row nested across the divider counts as it is laid out**: a column holding
 a collapsed row (or one stacked for want of room) is only as wide as that row's
@@ -205,7 +228,8 @@ Tests: `aDividerShowsABarOnHoverThatFollowsTheDrag`,
 `theBarStaysInTheGutterAsAStripComesOutAndGoesBack`,
 `theBarStaysInTheGutterAsADividerCollapsesAPaneAndBack` (paced drags recorded
 as the window server composites them: one bar in every frame while held, in
-the gutter), `thePinnedSidebarResizesFromTheGutterBesideIt`.
+the gutter), `theExpandedSidebarResizesFromTheGutterBesideIt` (stops at the panel's
+widest).
 
 ## Tree changes keep collapses
 

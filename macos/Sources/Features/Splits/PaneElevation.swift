@@ -242,18 +242,12 @@ struct PaneDesk: View {
 struct PaneCard: ViewModifier {
     let isElevated: Bool
     var isGlass: Bool = false
+    /// The focused pane among several: its rim is lighter and it is backlit
+    /// (`PaneFocusGlow`). On glass that is ALL focus changes — the pane's
+    /// sheet and content are the same focused or not. (An unfocused pane
+    /// used to get a thinner sheet and fade its text; focusing it read as the
+    /// pane itself lighting up.)
     var isFocused: Bool = false
-    /// One of several panes, and not the focused one. On glass its sheet is
-    /// thinner (`PaneGlass.unfocusedTint`), so the desk reads through it more
-    /// than through the focused pane — glass's version of
-    /// `unfocused-split-opacity`, whose background-colored wash would do the
-    /// opposite here and is not drawn on glass.
-    var isDimmed: Bool = false
-    /// How opaque a dimmed glass card is: its content, and its (already
-    /// thinner) sheet, each faded by this. 1 leaves the card alone, which is
-    /// what a viewer gets — its page is its own business, an HTML pane's
-    /// especially. A terminal passes `unfocused-split-opacity`.
-    var dimmedOpacity: Double = 1
     let background: Color
     let isLight: Bool
 
@@ -296,24 +290,23 @@ struct PaneCard: ViewModifier {
     @ViewBuilder
     private func glassCard(_ content: Content) -> some View {
         content
-            .modifier(FocusFade(opacity: isDimmed ? dimmedOpacity : 1))
             .clipShape(PaneElevation.cardShape)
             .overlay(
                 PaneElevation.cardShape
-                    // The focused pane's rim is a touch brighter, with its glow.
+                    // The focused pane's rim is lighter, with its glow — the
+                    // only things focus changes on glass.
                     .strokeBorder(isLight
-                                  ? Color.black.opacity(isFocused ? 0.12 : 0.08)
-                                  : Color.white.opacity(isFocused ? 0.20 : 0.10),
+                                  ? Color.black.opacity(isFocused ? 0.2 : 0.08)
+                                  : Color.white.opacity(isFocused ? 0.34 : 0.10),
                                   lineWidth: 0.5)
                     .allowsHitTesting(false))
             .backgroundPreferenceValue(PaneBannerCardKey.self) { card in
-                let strength = isDimmed ? PaneGlass.unfocusedTint : PaneGlass.tint
+                let strength = PaneGlass.tint
                 GeometryReader { proxy in
                     PaneGlass(tint: background, isLight: isLight, tintStrength: strength)
                         // Under the pane banner the sheet is thinner, so the
                         // card reads as a pane of glass of its own, layered
-                        // on top — but never thinner than an unfocused pane,
-                        // whose sheet terminal text is already read through.
+                        // on top — as much as the banner is showing.
                         .mask {
                             ZStack(alignment: .topLeading) {
                                 Rectangle()
@@ -322,14 +315,13 @@ struct PaneCard: ViewModifier {
                                     RoundedRectangle(cornerRadius: card.cornerRadius, style: .continuous)
                                         .frame(width: rect.width, height: rect.height)
                                         .offset(x: rect.minX, y: rect.minY)
-                                        .opacity(1 - min(1, PaneGlass.bannerTint / strength))
+                                        .opacity((1 - min(1, PaneGlass.bannerTint / strength)) * card.shown)
                                         .blendMode(.destinationOut)
                                 }
                             }
                             .compositingGroup()
                         }
                 }
-                .modifier(FocusFade(opacity: isDimmed ? dimmedOpacity : 1))
             }
     }
 }
@@ -339,6 +331,11 @@ struct PaneCard: ViewModifier {
 struct PaneBannerCard: Equatable {
     let bounds: Anchor<CGRect>
     let cornerRadius: CGFloat
+    /// How much of the banner is showing: its pane's content fades out as
+    /// the pane goes into its strip (`paneCollapse`), and so must the thinner
+    /// sheet under the card — left at full strength, it drew a pale patch on
+    /// the strip where the banner had been.
+    var shown: Double = 1
 }
 
 struct PaneBannerCardKey: PreferenceKey {
@@ -402,15 +399,10 @@ struct PaneGlass: View {
     /// app so the gradient's light and shade carry through more strongly,
     /// while text keeps its contrast.
     static let tint: Double = 0.4
-    /// An unfocused pane among several: well under half the focused pane's
-    /// sheet, so the desk visibly reads through it, while terminal text —
-    /// drawn at full strength, never washed over — stays readable.
-    static let unfocusedTint: Double = 0.15
     /// A glass card floating over glass panes (the unpinned sidebar).
     static let overlayTint: Double = 0.3
-    /// Under the pane banner's card: a bit thinner than the focused pane's
-    /// sheet, so the desk reads through the banner more than through the
-    /// pane, and still thicker than an unfocused pane's.
+    /// Under the pane banner's card: a bit thinner than the pane's sheet, so
+    /// the desk reads through the banner more than through the pane.
     static let bannerTint: Double = 0.25
 
     var body: some View {

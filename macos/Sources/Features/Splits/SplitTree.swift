@@ -295,9 +295,14 @@ extension SplitTree {
 
     /// Equalize all splits in the tree so that each split's ratio is based on the
     /// relative weight (number of leaves) of its children.
-    func equalized() -> Self {
+    ///
+    /// With `direction`, only the splits laid out that way: a divider's
+    /// double-click evens out the panes ACROSS that divider and leaves every
+    /// ratio running the other way as the user set it (a pane made narrow
+    /// stays narrow when its column's heights are evened out).
+    func equalized(only direction: Direction? = nil) -> Self {
         guard let root else { return self }
-        let newRoot = root.equalize()
+        let newRoot = root.equalize(only: direction)
         let newZoomed = zoomed.flatMap { root.path(to: $0) }.flatMap { newRoot.node(at: $0) }
         return rebuilt(root: newRoot, zoomed: newZoomed)
     }
@@ -956,13 +961,14 @@ extension SplitTree.Node {
     /// Equalize this node and all its children, returning a new node with splits
     /// adjusted so that each split's ratio is based on the relative weight
     /// (number of leaves) of its children.
-    func equalize() -> Node {
-        let (equalizedNode, _) = equalizeWithWeight()
+    func equalize(only direction: SplitTree.Direction? = nil) -> Node {
+        let (equalizedNode, _) = equalizeWithWeight(only: direction)
         return equalizedNode
     }
 
     /// Internal helper that equalizes and returns both the node and its weight.
-    private func equalizeWithWeight() -> (node: Node, weight: Int) {
+    /// With `direction`, a split laid out the other way keeps its ratio.
+    private func equalizeWithWeight(only direction: SplitTree.Direction? = nil) -> (node: Node, weight: Int) {
         switch self {
         case .leaf:
             // A leaf has weight 1 and doesn't change
@@ -975,11 +981,13 @@ extension SplitTree.Node {
 
             // Calculate new ratio based on relative weights
             let totalWeight = leftWeight + rightWeight
-            let newRatio = Double(leftWeight) / Double(totalWeight)
+            let newRatio = direction.map { $0 == split.direction } ?? true
+                ? Double(leftWeight) / Double(totalWeight)
+                : split.ratio
 
             // Recursively equalize children
-            let (leftNode, _) = split.left.equalizeWithWeight()
-            let (rightNode, _) = split.right.equalizeWithWeight()
+            let (leftNode, _) = split.left.equalizeWithWeight(only: direction)
+            let (rightNode, _) = split.right.equalizeWithWeight(only: direction)
 
             // Create new split with equalized ratio
             let newSplit = Split(

@@ -13,7 +13,7 @@ anything painted behind or over a pane. Settled in the pane-sidebar mock
 - **`elevated`** (default): panes are slightly raised rounded cards (11pt
   radius, a soft two-layer shadow, a hairline rim) on a soft blue-to-teal
   **ocean** gradient. ONE spacing, 10pt, is every gutter: pane to pane (the
-  gaps are still the dividers), pane to window edge, and around the mini rail
+  gaps are still the dividers), pane to window edge, and around the rail
   (which takes no trailing margin of its own — the grid's is that gap).
 - **`flat`**: the classic edge-to-edge look with a 1px `split-divider-color`
   line drawn down the middle of a 6pt gutter (`PaneLayout.Metrics.flatGap`) —
@@ -23,7 +23,7 @@ anything painted behind or over a pane. Settled in the pane-sidebar mock
   (`Features/Splits/PaneElevation.swift`), used by the grid AND the hidden
   stashed-pane slots — the slots must lay out exactly like the grid or a
   restored pane would reflow.
-- The pinned pane sidebar goes translucent so the gradient runs under it.
+- The expanded pane sidebar goes translucent so the gradient runs under it.
 - A translucent terminal (`background-opacity` < 1) gets an equally
   translucent gradient.
 
@@ -46,9 +46,8 @@ Each pane is a translucent sheet tinted with the terminal's own background
 (Liquid Glass on macOS 26, a plain tint before — `PaneGlass`), so the
 gradient's light and shade read through every pane.
 
-**Tint levels**: focused pane `PaneGlass.tint` 40%; unfocused pane
-`PaneGlass.unfocusedTint` 15%; under a banner card `PaneGlass.bannerTint` 25%
-(never below an unfocused pane's 15%).
+**Tint levels**: every pane, focused or not, `PaneGlass.tint` 40%; under a
+banner card `PaneGlass.bannerTint` 25%.
 
 - The renderer stops drawing the terminal's background (`generic.zig`
   `pane_glass`, the same switch the `macos-glass-*` blur styles use).
@@ -69,9 +68,11 @@ gradient's light and shade read through every pane.
   content stack. Any `.background(Color)` in that stack must pass
   `ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the
   titlebar.
-- **Sidebar on glass**: the unpinned sidebar's card is the same tinted glass
-  (`SidePanelCard(isGlass:)`); the header is no band of its own (the list
-  starts below it); the pinned panel's edge is a pane-rim hairline; glyphs are
+- **Sidebar on glass**: the sidebar's card, in both modes, is an **unfocused
+  pane's card** (`PaneSidebarCard` → `PaneCard`): the same corner radius,
+  hairline rim, glass sheet and shadow as the panes beside it (not the viewer
+  side panel's rounder, specular glass card). The header is no band of its own
+  (the list starts below it); glyphs are
   the mock's icon set drawn natively (`PaneSidebarSymbol`), not SF Symbols.
   Folding a window or project group animates.
 - **Hero mode** shows its pane as the same glass card — the hero container
@@ -80,33 +81,33 @@ gradient's light and shade read through every pane.
   strip's size, so nothing lies under a card on show and every card and strip
   is glass (see [stacked-panes.md](stacked-panes.md)).
 
-## Focus: backlit focused pane, see-through unfocused panes
+## Focus: rim and glow only
 
 - In the elevated style the **focused pane** (of several) is **backlit**: a
   soft white light behind the card spills past its edges onto the desk, masked
   to outside the card so it never lightens the pane's own glass
   (`PaneFocusGlow`, driven by `PaneView.isFocusedPane`; `PaneFocusGlowTests`).
-- **On glass, an unfocused pane is the MORE see-through one.** Its tint drops
-  to `unfocusedTint`, and an unfocused **terminal** also fades as a whole — its
-  content (text included) and its sheet, each at `unfocused-split-opacity`
-  (default 0.7) — animated with the focus change. A **viewer** gets the thinner
-  sheet only; its page is never faded.
+- **On glass, focus changes only the rim and the glow.** The focused pane's
+  hairline rim is lighter (34% white, against 10%); its sheet and content are
+  exactly those of every other pane (`PaneGlass.tint`), nothing faded. (An
+  unfocused pane used to get a thinner sheet and fade its terminal by
+  `unfocused-split-opacity`, so focusing read as the pane lighting up; that is
+  gone.)
 - Upstream's unfocused dimming (a wash of `unfocused-split-fill` at
-  `1 - unfocused-split-opacity` drawn OVER the pane) is not drawn on glass —
-  over a translucent sheet it made unfocused panes the more opaque ones.
+  `1 - unfocused-split-opacity` drawn OVER the pane) is not drawn on glass.
   `flat`, and `elevated` without glass, keep the wash and honor both keys.
-- Switches: `PaneCard.isDimmed` (one of several panes, not the focused one)
-  and `PaneCard.dimmedOpacity`. The fades animate opacity ONLY (`FocusFade`) —
-  a strip click changes focus and a card's size in one update, and an
+- Any focus-driven fade animates opacity ONLY (`FocusFade`) — a strip click
+  changes focus and a card's size in one update, and an
   `.animation(_:value:)` over the card would animate the frame too, resizing
-  the terminal on every frame.
+  the terminal on every frame. `PaneCard.isDimmed` (one of several panes, not
+  the focused one) is the switch for the non-glass wash.
 
 ## Tests
 
 Measured on the composited window (how much of the desk in the gutter beside a
 pane its glass hides): `glassPanesLetTheGradientThrough` (also writes a
 ScreenCaptureKit capture of its own window),
-`unfocusedGlassPanesAreMoreTransparent`, `stackedRowCardsOnShowStayGlass`,
+`glassPanesLookTheSameFocusedOrNot`, `stackedRowCardsOnShowStayGlass`,
 `heroModeIsGlassLikeAFocusedPane` (`PaneSidebarWindowTests`),
 `bannerOnGlassLetsTheGradientThrough`; layout rule `noCardIsDrawnOverAnother`
 (`PaneLayoutTests`).

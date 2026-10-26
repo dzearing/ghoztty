@@ -305,7 +305,7 @@ struct PaneStackFuzzTests {
             // Nothing on show is under its minimum width (there is always
             // room for at least one card: 700pt).
             for (id, leaf) in after.leaves where !leaf.isTucked {
-                #expect(leaf.frame.width >= 299, "seed \(seed) step \(step): \(id) is \(leaf.frame.width) wide after \(description)")
+                #expect(leaf.frame.width >= PaneLayout.Metrics.minimumPaneSize.width - 1, "seed \(seed) step \(step): \(id) is \(leaf.frame.width) wide after \(description)")
             }
         }
     }

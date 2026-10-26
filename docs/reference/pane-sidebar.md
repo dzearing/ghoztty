@@ -1,67 +1,168 @@
 # Pane sidebar
 
-Per-window list of every pane, and stashing. Read before touching
-`PaneSidebar*`, `SplitTree.stashed`, or `StashedPaneSlots`. Design and the
-alternatives considered: `docs/design/pane-sidebar.md`.
-
-
 A per-window list of **every pane in the window**, into which a pane can be
-**stashed**: out of the split grid, still running. Design:
-`docs/design/pane-sidebar.md` (it records the alternatives and the choices
-the interactive mock settled).
+**stashed**: out of the split grid, still running. Read before touching
+`PaneSidebar*`, sidebar drag-and-drop, `SplitTree.stashed`, or
+`StashedPaneSlots`. Design, alternatives and the interactive mock's choices:
+`docs/design/pane-sidebar.md`. CLI: `+stash` / `+restore` in
+[cli-commands.md](cli-commands.md).
 
-- **Pinned** (pin button, or drag the edge out) = a flat edge-to-edge panel the
-  grid sits beside. **Unpinned** = the raised glass card collapsed to a 68pt
-  **mini rail** of tiles that opens to full width while the pointer is over it.
-  Dragging a pinned panel's edge only resizes it (min/max, never unpins).
-  The hover-open card FLOATS over the grid — the column never widens on hover,
-  so no terminal resizes; only pin/unpin change the column. A window narrower
-  than 720pt shows the rail even when pinned. **Ctrl+Cmd+S** hides/shows the
-  sidebar entirely.
-- A row (and a rail tile's monogram) names its pane the way a stacked strip
-  does: the **banner's title** when it has one, else the pane's title
-  (`PaneView.displayLabel`; see Stacked panes). The subtitle is then the
-  working directory — a titled banner's first line IS the title, so showing
-  it again said nothing — and the banner's first line only when the banner
-  has no title. The all-windows search still matches the pane's own title.
-  The all-windows **window** names are not affected: they group by window
+## Modes: collapsed ⇄ expanded
+
+- Two modes, switched by ONE button, the header's first item, centered on the
+  rail's width (`PaneSidebarView.toggleLeading`) so it does not move when
+  toggled (`setPaneSidebarExpanded`). Both are ONE raised glass card, in the
+  same margins (the grid's gutters), with the same top and height —
+  **collapsed** at the 44pt rail's width, **expanded** at the panel's width
+  (full rows). Every row is one height (`PaneSidebarRow.height`), so a pane's
+  icon sits at the same height in both
+  (`iconsStayAtTheSameHeightExpandedOrCollapsed`).
+- **No pin, no hover-open**: hovering the rail opens nothing, because the rail
+  is where its tiles are dragged.
+- **Collapse/expand glides**: the grid's cards glide to their new places
+  (`PaneStackState.noteColumnShift` → `PaneStageView.apply` seeds the glide
+  from where they were on screen), each terminal held at its size and resized
+  once after the motion, while the sidebar's width animates on the same curve
+  and rail and panel crossfade (`PaneSidebarState.columnAnimation`).
+- **The edge grip is the gutter beside the sidebar in both modes**
+  (`PaneSidebarState.edgeGrip`: the grid's margin, elevated; the rail card's
+  own margin, flat) — never over the rail's tiles. Expanded, it is ALL of the
+  gutter between panel and panes and none of the panel
+  (`PaneSidebarState.pinnedEdgeGrip`; `theExpandedSidebarResizesFromTheGutterBesideIt`,
+  stops at the panel's widest). Dragging it resizes the panel; pulling the
+  rail's gutter past the panel's minimum (180) brings the panel out at that
+  width, and pushing the panel well under it (< 120) tucks it back into the
+  rail, both ways within one drag (`PaneSidebarState.edgeDrag`; between the two
+  it stops at its minimum).
+- **The sidebar is a row's first item in a divider drag**: in a row spanning
+  the grid, a gutter pushed left past every pane it has tucked away tucks the
+  expanded sidebar into its rail as a pane tucks at its minimum
+  (`BaseTerminalController.sidebarAwareRow`, after `dividerTuckGive` —
+  24–80pt), and dragged back in the same drag brings it out; tucked, the row
+  measures the room it gained (see [stacked-panes.md](stacked-panes.md)).
+- **It must never change mode on its own**: every mode change is logged at
+  `.notice` with its cause (category `PaneSidebar`). Only collapse/expand and
+  hide/show change the column, so nothing else resizes a terminal.
+- A window narrower than 720pt shows the rail even when expanded (its expand
+  button is off). **Ctrl+Cmd+S** hides/shows the sidebar entirely.
+
+## Rows and tiles
+
+- A row (and a rail tile) names its pane the way a stacked strip does: the
+  **banner's title** when it has one, else the pane's title
+  (`PaneView.displayLabel`; see [stacked-panes.md](stacked-panes.md) → Strip
+  labels). The subtitle is then the working directory — and the banner's
+  first line only when the banner has no title. The all-windows search still
+  matches the pane's own title. All-windows **window** names group by window
   title (`<project>: <worktree>`), which a pane banner has no say in.
-- Rows: grid panes (focused one selected), then **STASHED**. Click focuses /
-  restores to the exact slot it left; **Option-click** swaps a stashed pane with
-  the focused one; drag a pane's grab handle onto the list to stash it, a row
-  into the grid to place it (ONE resolver: `PaneDropTarget.stash` /
-  `.joinWindow`). Hover offers only stash (−) / restore (↩). **There are no
-  close buttons** except in **trash mode** (header trash button): a red × on
-  every row that kills with no confirmation and no undo window; Escape leaves
-  it. Right-click → Close Pane is the ordinary confirmed close.
-- Activity: a **busy** pane's icon shimmers (no spinner, no glow); `needs_input`
-  shows a **question** badge — the human label, never the machine token. Both
-  animate on **Core Animation**, never an endless SwiftUI animation, which
-  re-renders the whole sidebar every frame (measured: ~90% of the main thread
-  at rest with 40 windows; `PaneSidebarAnimationLayers.swift`).
-- **All-windows** header toggle (off by default) groups every window's panes.
-  Its caption counts the windows. Every window starts **folded** except this
-  one (search unfolds all; `PaneSidebarState.isWindowFolded`).
-  Windows are **sorted by name** (Finder order; stable as focus moves), and a
+- **A rail tile is its row with the text taken away**: the same pill (hover
+  wash, accent selection), the same kind glyph at the same place — the rail
+  card is exactly that pill (`railCardWidth` = 52) — so collapsing or
+  expanding moves no icon.
+- The glyph is in the pane's own hue (`PaneSidebarHue`: golden-ratio steps
+  along its tree position; light and soft on a dark theme, deeper on a light
+  one), a touch quieter unless its pane is focused or hovered. **Hovering a row
+  or tile tints its pane in that hue** — a wash and a rim on the pane's card
+  (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim), in over
+  0.12s, out over 0.2s — so the sidebar says which pane an icon is.
+- Rows: grid panes (focused one selected), then — **right after the last of
+  them**, under a divider, in the same scrolling list — the **tray** of
+  stashed panes. An empty tray is still a visible target: a faint dashed well
+  with a tray glyph ("Drag a pane here to stash it" when expanded), lit in the
+  accent while a drag would land in it.
+- Click focuses / restores to the exact slot it left; **Option-click** swaps a
+  stashed pane with the focused one. Hovering an expanded row offers −/↩
+  (stash/restore) and **×**, the ordinary close (`closePaneFromSidebar`, as
+  right-click → Close Pane: confirmation when something runs or the pane is
+  remote, and undo). There is no trash mode (an unconfirmed, unundoable kill).
+
+## Drag to reorder (both modes)
+
+- A drag over the sidebar resolves to one of two lists, split at the tray's
+  divider (`PaneDropCandidate.Sidebar.trayTop`): above it
+  `PaneDropTarget.sidebarOrder` — a grid pane moves in the LIST ONLY (the grid
+  never changes), a stashed pane is restored into it, another window's pane
+  joins this window there; below it `.stash`. Any pane — a row, a tile, a grid
+  pane's grab handle — goes into the tray to stash and out to restore; a row
+  into the grid places it. ONE resolver, ONE drag (`PaneDragSession`), no
+  parallel drop path.
+- **A row dragged in the list only ever rearranges**
+  (`PaneDragSession.isListDrag`): the pointer is held to its own sidebar before
+  resolving, so letting go beside the bar, over the grid or past the window is
+  the place in the list (or tray) level with the pointer — never a grid move
+  or `.newWindow`. A pane's grab handle still drops anywhere.
+- **The row itself follows the pointer — up and down only, kept inside the
+  bar** — not a drag image (`PaneSidebarRowDrag`: the row's drag source draws
+  no preview and feeds the pointer's travel; `PaneSidebarView.ghost` draws the
+  row there, lifted, over a solid backing). Let go, it glides to where it
+  landed. The others **slide by its height** to make room
+  (`PaneSidebarOrder.shift`, a bounded 0.2s animation, none at the drop). The
+  list, the tray's header and the tray slide as one sequence, so a row crossing
+  into the tray moves the divider with it (`PaneSidebarView.slideIndices`).
+- The index is read off the rows **as laid out**: each row's frame is measured
+  by a background attached OUTSIDE its slide offset (`rowFrameReader`) — a
+  reader inside an `.offset` moves with it, and the index then chases the
+  sliding rows.
+- The order is per window (`PaneSidebarState.order`, reconciled by
+  `PaneSidebarOrder.arranged`): a new pane goes after its tree neighbour (a
+  split lands beside its parent), a stashed pane keeps its place for when it
+  comes back, closed panes are pruned, and empty means tree order.
+- Tests: `PaneSidebarOrderTests`, `PaneDropResolverSidebarTests`,
+  `dragReordersTheListAndTheTrayStashesAndRestores` (both modes).
+
+## Activity
+
+- A **busy** pane's row — or tile — sheens: a faint upright band of light
+  (25%) sweeps across its pill from right to left every 2s
+  (`PaneSidebarTileSheenLayer`; travel in `PaneSidebarSheen`), starting and
+  ending fully off it. No spinner, no glow, no glyph shimmer.
+- **Busy is `PaneView.isWorking`**: the hook-set activity state OR a progress
+  report on screen (OSC 9;4 — what animates the pane's border,
+  `SurfaceBusyBorder`), so an icon animates whenever its pane's border does.
+- **The sidebar shows no question state** — no badge on a row, tile or window
+  header (it was unreliable and was removed).
+- Animations run on **Core Animation**, never an endless SwiftUI animation,
+  which re-renders the whole sidebar every frame (measured: ~90% of the main
+  thread at rest with 40 windows; `PaneSidebarAnimationLayers.swift`).
+
+## All windows
+
+- Header toggle (off by default) groups every window's panes. Its caption
+  counts the windows. Every window starts **folded** except this one (search
+  unfolds all; `PaneSidebarState.isWindowFolded`).
+- Windows are **sorted by name** (Finder order; stable as focus moves), and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
   **sticky** project header and labeled by its worktree alone
   (`PaneSidebarWindowGrouping`, `PaneSidebarWindowGroupingTests`). Other
-  windows sort among the projects at the top level. All windows also brings a **search
-  field**: whitespace-separated terms, all of which must appear in a pane's
-  window title, title, banner, or directory/location (`PaneSidebarFilter`);
-  Return goes to the first hit, Escape clears. Switching scopes slides the
-  lists past each other (this window on the left, all windows on the right).
+  windows sort among the projects at the top level.
+- A **search field**: whitespace-separated terms, all of which must appear in a
+  pane's window title, title, banner, or directory/location
+  (`PaneSidebarFilter`); Return goes to the first hit, Escape clears.
+- Switching scopes slides the lists past each other (this window on the left,
+  all windows on the right).
+
+## Stashing invariants
+
 - **A stashed pane never leaves the tree** — `SplitTree.stashed` sits beside
   `zoomed`; the grid renders `visibleTree` and spatial ops lift their ratios
-  back. That is what keeps stashing from marking a session CLOSE-on-free
+  back. That keeps stashing from marking a session CLOSE-on-free
   (`PaneStashSessionSafetyTests`) and keeps every tree walker (IPC, close
   confirmation, the manifest) seeing the pane.
-- **A stashed pane keeps its geometry**: it stays mounted, invisible, behind the
-  grid, in the slot it would occupy (`StashedPaneSlots`), so it is never sized
-  to the 800×600 placeholder (49×17) — even when stashed at launch — and
+- **A stashed pane keeps its geometry**: it stays mounted, invisible, behind
+  the grid, in the slot it would occupy (`StashedPaneSlots`), so it is never
+  sized to the 800×600 placeholder (49×17) — even when stashed at launch — and
   restoring it is not a reflow. Tested in `PaneSidebarWindowTests`.
+
+## Persistence and keybinds
+
 - Persisted: the stash (manifest per-leaf `stashIndex`; `SplitTree` coding for
-  AppKit restoration) and the pinned/hidden flags. Hover-open, trash mode and
-  the all-windows scope are never persisted.
+  AppKit restoration), the expanded/hidden flags and the list's order
+  (`paneSidebarOrder`, by pane id). The expanded flag is stored under its
+  pre-rename name `paneSidebarPinned` (UserDefaults: `PaneSidebarExpanded`,
+  falling back to `PaneSidebarPinned`) — pinned WAS the full panel, so old
+  state decodes unchanged. The all-windows scope is never persisted.
 - Keybinds (macOS defaults): `toggle_pane_sidebar` Ctrl+Cmd+S, `stash_pane`
   Shift+Cmd+M, `restore_stashed_pane` (unbound); Window menu items for all three.
+
+The sidebar's look on glass (its card is an unfocused pane's card) is in
+[pane-style.md](pane-style.md).

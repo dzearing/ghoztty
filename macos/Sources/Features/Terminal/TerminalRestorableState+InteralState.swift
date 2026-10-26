@@ -23,8 +23,14 @@ extension TerminalRestorableState {
         // The pane sidebar's layout flags. The STASH itself rides in
         // `surfaceTree` (SplitTree encodes it). Optional: older archives
         // decode with nil and take the defaults for new windows.
+        // `paneSidebarPinned` keeps the name it had when the expanded panel
+        // was called "pinned": true is expanded, false collapsed — the same
+        // meaning, so archives from either side of the rename decode as-is.
         let paneSidebarPinned: Bool?
         let paneSidebarHidden: Bool?
+        // The sidebar's own order of the panes (`PaneSidebarState.order`), as
+        // pane ids. Optional/additive like the flags.
+        let paneSidebarOrder: [UUID]?
 
         // The window's own gradient seed (`--color=random`, elevated style).
         let deskVariant: PaneDeskVariant?
@@ -38,6 +44,7 @@ extension TerminalRestorableState {
             windowTitleOverride: String? = nil,
             paneSidebarPinned: Bool? = nil,
             paneSidebarHidden: Bool? = nil,
+            paneSidebarOrder: [UUID]? = nil,
             deskVariant: PaneDeskVariant? = nil,
         ) {
             self.focusedSurface = focusedSurface
@@ -48,6 +55,7 @@ extension TerminalRestorableState {
             self.windowTitleOverride = windowTitleOverride
             self.paneSidebarPinned = paneSidebarPinned
             self.paneSidebarHidden = paneSidebarHidden
+            self.paneSidebarOrder = paneSidebarOrder
             self.deskVariant = deskVariant
         }
     }
@@ -57,7 +65,8 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
     init(from controller: TerminalController) {
         // Window state is only ever encoded on the main thread.
         let sidebar = MainActor.assumeIsolated {
-            (controller.paneSidebarState.isPinned, controller.paneSidebarState.isHidden, controller.deskVariant)
+            (controller.paneSidebarState.isExpanded, controller.paneSidebarState.isHidden,
+             controller.deskVariant, controller.paneSidebarPersistedOrder)
         }
         self.init(
             focusedSurface: controller.focusedSurface?.id.uuidString,
@@ -68,6 +77,7 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
             windowTitleOverride: controller.windowTitleOverride,
             paneSidebarPinned: sidebar.0,
             paneSidebarHidden: sidebar.1,
+            paneSidebarOrder: sidebar.3,
             deskVariant: sidebar.2,
         )
     }

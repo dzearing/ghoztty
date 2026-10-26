@@ -80,8 +80,8 @@ struct PaneLayoutTests {
 
     @Test func aRowThatCantFitStacksAndShowsWhatFits() throws {
         // 4 × 300 + gaps = 1230 > 760: a stack. Two cards fit side by side
-        // with two slivers, each with its gutter (2×46 + 2×300 + 10 ≤ 760);
-        // three don't.
+        // with two slivers as blades — no gap between them, one gutter to the
+        // run (2×36 + 10 + 2×300 + 10 ≤ 760); three don't.
         let (node, views) = try row()
         let result = layout(node, width: 760)
 
@@ -89,9 +89,10 @@ struct PaneLayoutTests {
         #expect(result.stacks.count == 1)
         #expect(stack.run == 0...1, "nothing focused yet: the first cards show")
         #expect(result.dividers.isEmpty, "a stack has no dividers")
-        // Every card is the same width, so moving the run never resizes one.
+        // Every card is its slot's width (a tucked one too).
         #expect(Set(frames(result, views).map(\.width)).count == 1)
-        #expect(frames(result, views)[0].width == CGFloat(760 - 2 * 46 - 10) / 2)
+        let card: CGFloat = (760 - 2 * 36 - 10 - 10) / 2
+        #expect(frames(result, views)[0].width == card)
     }
 
     @Test func theFocusedPaneIsOnShow() throws {
@@ -122,13 +123,14 @@ struct PaneLayoutTests {
         #expect(before.stacks.first?.run == 3...3)
         #expect(after.stacks.first?.run == 0...0)
 
-        // Each strip is 36pt and its gutter 10.
-        let w: CGFloat = 600 - 3 * 46
+        // Each strip is 36pt, side by side as blades, and one 10pt gutter
+        // parts them from the card.
+        let w: CGFloat = 600 - 3 * 36 - 10
         // Before: a, b, c tucked on the left; d in front.
-        #expect(frames(before, views).map(\.minX) == [0, 46, 92, 138])
+        #expect(frames(before, views).map(\.minX) == [0, 36, 72, 118])
         // After: a pops into place at the left; b, c, d slide right to be
         // tucked at the far end, each showing its leading edge.
-        #expect(frames(after, views).map(\.minX) == [0, w + 10, w + 56, w + 102])
+        #expect(frames(after, views).map(\.minX) == [0, w + 10, w + 46, w + 82])
         // Nothing changed size.
         #expect(frames(before, views).map(\.size) == frames(after, views).map(\.size))
     }
@@ -145,7 +147,8 @@ struct PaneLayoutTests {
     @Test func thePaintOrderShowsTheRunAndEveryTab() throws {
         // Panes are painted by elevation. Wherever a higher pane overlaps a
         // lower one, the lower one must be tucked — the run is never
-        // covered — and every tab must be uncovered.
+        // covered — and of every tab no more than its tuck is covered (the
+        // part a strip reaches under the strip in front, `bladeTuck`).
         let (node, views) = try row(5)
         for width in [420.0, 600, 900, 1200] {
             for focused in views {
@@ -164,7 +167,8 @@ struct PaneLayoutTests {
                         #expect(lower.isTucked, "a pane on show is under another at \(width)")
                         if let tab = lower.tab {
                             let covered = tab.intersection(drawn[j])
-                            #expect(covered.isNull || covered.width <= 0, "a tab is covered at \(width)")
+                            #expect(covered.isNull || covered.width <= PaneLayout.Metrics.bladeTuck + 0.5,
+                                    "more than a tab's tuck is covered at \(width)")
                         }
                     }
                 }
@@ -172,10 +176,12 @@ struct PaneLayoutTests {
         }
     }
 
-    @Test func noCardIsDrawnOverAnother() throws {
+    @Test func onlyStripsOverlapAndOnlyByTheirTuck() throws {
         // A tucked card, on either side of the run, is drawn as its sliver
-        // alone — so no card, a translucent glass card on show above all, ever
-        // has another card under it to show through itself.
+        // alone — so no card ON SHOW ever has another card under it to show
+        // through its glass. Strips are blades laid over one another: two of
+        // them overlap by the tuck (`bladeTuck`) and no more, and never a
+        // card on show.
         let (node, views) = try row(5)
         for width in [420.0, 600, 900, 1200, 1400] {
             for focused in views {
@@ -189,7 +195,9 @@ struct PaneLayoutTests {
                 for i in drawn.indices {
                     for j in drawn.indices where j > i {
                         let o = drawn[i].intersection(drawn[j])
-                        #expect(o.isNull || o.width <= 0 || o.height <= 0,
+                        guard !o.isNull, o.width > 0, o.height > 0 else { continue }
+                        let blades = result.leaves[views[i].id]!.isTucked && result.leaves[views[j].id]!.isTucked
+                        #expect(blades && o.width <= PaneLayout.Metrics.bladeTuck + 0.5,
                                 "cards \(i) and \(j) overlap at \(width), focus \(views.firstIndex(of: focused)!)")
                     }
                 }
@@ -215,16 +223,19 @@ struct PaneLayoutTests {
 
         #expect(result.leaves[views[1].id]?.tab == nil, "the card on show has no tab")
         #expect(result.leaves[views[0].id]?.tab == CGRect(x: 0, y: 0, width: 36, height: 600))
-        let w: CGFloat = 600 - 3 * 46
+        // Strips on both sides: a gutter between the run and each group.
+        let w: CGFloat = 600 - 3 * 36 - 2 * 10
         #expect(result.leaves[views[2].id]?.tab == CGRect(x: 46 + w + 10, y: 0, width: 36, height: 600))
-        #expect(result.leaves[views[3].id]?.tab == CGRect(x: 46 + w + 56, y: 0, width: 36, height: 600))
+        // d has c between it and the run: it reaches under c by the tuck.
+        let tuck = PaneLayout.Metrics.bladeTuck
+        #expect(result.leaves[views[3].id]?.tab == CGRect(x: 46 + w + 46 - tuck, y: 0, width: 36 + tuck, height: 600))
         #expect(result.leaves[views[3].id]?.tabAxis == .horizontal)
     }
 
     @Test func cardsPastTheRunAreClippedToTheStack() throws {
         let (node, views) = try row()
         let result = layout(node, width: 600, focus: [views[0]])
-        let w: CGFloat = 600 - 3 * 46
+        let w: CGFloat = 600 - 3 * 36 - 10
 
         let d = try #require(result.leaves[views[3].id])
         #expect(d.frame.maxX > 600, "d hangs past the stack")
@@ -232,18 +243,19 @@ struct PaneLayoutTests {
         #expect(clip.maxX == 600, "cut at the stack's far end")
         #expect(clip.minX < d.frame.minX && clip.minY < 0 && clip.maxY > 600,
                 "and nowhere else, so its shadow falls on the card behind")
-        #expect(d.frame.intersection(clip) == CGRect(x: w + 102, y: 0, width: 600 - (w + 102), height: 600))
+        #expect(d.frame.intersection(clip) == CGRect(x: w + 82, y: 0, width: 600 - (w + 82), height: 600))
         #expect(result.leaves[views[0].id]?.clip == nil)
     }
 
     @Test func aTooNarrowStackShrinksItsSliversBeforeItsCards() throws {
         let (node, views) = try row()
-        // 300 + 3 × (36 + 10) = 438 > 380: slivers shrink to whole points of
-        // (380 - 300) / 3 less their gutter, and the card keeps the rest.
+        // 300 + 3 × 36 + 10 = 418 > 380: slivers shrink to whole points of
+        // (380 - 300 - the gutters it could need) / 3, and the card keeps the
+        // rest.
         let result = layout(node, width: 380, focus: [views[0]])
 
-        #expect(result.leaves[views[1].id]?.tab?.width == 16)
-        #expect(frames(result, views)[0].width == CGFloat(380 - 3 * (16 + 10)))
+        #expect(result.leaves[views[1].id]?.tab?.width == 20)
+        #expect(frames(result, views)[0].width == CGFloat(380 - 3 * 20 - 10))
     }
 
     @Test func columnsStackToo() throws {
@@ -258,8 +270,9 @@ struct PaneLayoutTests {
         #expect(stack.direction == .vertical)
         #expect(stack.run == 2...2)
         #expect(result.leaves[a.id]?.tabAxis == .vertical)
-        #expect(result.leaves[a.id]?.tab?.height == 36)
-        #expect(result.leaves[c.id]?.frame.height == CGFloat(400 - 2 * 46))
+        // a has b between it and the run: it reaches under b by the tuck.
+        #expect(result.leaves[a.id]?.tab?.height == 36 + PaneLayout.Metrics.bladeTuck)
+        #expect(result.leaves[c.id]?.frame.height == CGFloat(400 - 2 * 36 - 10))
     }
 
     // MARK: - Nesting
@@ -328,17 +341,21 @@ struct PaneLayoutTests {
     // MARK: - Minimums the divider clamps against
 
     @Test func theDividerClampFallsBackToStackedMinimumsWhenNeeded() throws {
-        // a | (b | c) in 700pt: side by side needs 900; with b|c allowed to
-        // stack it needs 300 + 336.
+        // a | (b | c) in a width too narrow for three minimums side by side;
+        // with b|c allowed to stack it needs a minimum and a strip beside it
+        // (the clamp counts no gaps).
+        let m = PaneLayout.Metrics.minimumPaneSize.width
+        let width = 3 * m - 75
+        let stacked = m + PaneLayout.Metrics.peek
         let a = MockView(), b = MockView(), c = MockView()
         let node = SplitTree<MockView>.Node.split(.init(
             direction: .horizontal, ratio: 0.5, left: .leaf(view: a),
             right: .split(.init(direction: .horizontal, ratio: 0.5, left: .leaf(view: b), right: .leaf(view: c)))))
-        let moved = node.movingDivider(to: 600, in: 700)
+        let moved = node.movingDivider(to: width - 50, in: width)
 
         guard case .split(let split) = moved else { Issue.record("expected a split"); return }
         // The divider moved, stopping where b|c can still stack.
-        #expect(abs(split.ratio - (700.0 - 336.0) / 700.0) < 0.0001)
+        #expect(abs(split.ratio - Double((width - stacked) / width)) < 0.0001)
     }
 
     // MARK: - Adopting the displayed layout
@@ -538,7 +555,7 @@ struct PaneLayoutTests {
         // And at the edge, b too: its side is all strips, a has the rest.
         let edge = PaneLayout.dragged(row, boundary: 1, at: 1210, sizes: [400, 400, 400])
         #expect(edge.run == 0...0, "b tucked too")
-        let rest: CGFloat = 1220 - 82 - 10
+        let rest: CGFloat = 1220 - 2 * 36 - 10
         #expect(edge.sizes == [rest])
         // The row never empties: a can't tuck from this gutter too.
         #expect(PaneLayout.dragged(row, boundary: 1, at: 0, sizes: [400, 400, 400]).run.count >= 1)
