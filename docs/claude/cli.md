@@ -1446,7 +1446,7 @@ an opaque slab where every other pane is glass. Measured on the composited windo
 much of the desk in the gutter beside a pane its glass hides — by
 `glassPanesLookTheSameFocusedOrNot`, `stackedRowCardsOnShowStayGlass` and
 `heroModeIsGlassLikeAFocusedPane` (`PaneSidebarWindowTests`); the layout rule by `noCardIsDrawnOverAnother`
-(`PaneLayoutTests`). **Windows:** the unfocused-is-thinner sheet and the whole-terminal fade landed in T2086 (the wash there is the desk slice under the pane, `DimOverlay.DeskWash`; measured by `pane-elevation.ps1` run 1d). Hero as a glass card is T2104, stacked rows on glass T2105, the eased fade T2106. Glass itself is T1833.
+(`PaneLayoutTests`). **Windows:** focus on glass changes only the rim (34% / 20%) and the glow since T2281 - every pane keeps the 40% sheet and no glass pane carries a dim wash (`dim_math.shouldDim`'s `glass`); measured by `pane-elevation.ps1` run 1d. T2086's thinner, faded unfocused sheet is gone with it. Hero as a glass card is T2104, stacked rows on glass T2105, the eased fade T2106. Glass itself is T1833.
 
 **Resizes are debounced before they reach the program** (`src/termio/Thread.zig`
 `Coalesce`): applied once resizes stop arriving for 100ms, never held back more

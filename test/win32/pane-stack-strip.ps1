@@ -149,11 +149,11 @@ function Get-ExpectedStrip([int[]]$bg, [switch]$Hovered) {
     })
 }
 # T2160: the strip on a glass pane over desk pixel `desk`, as
-# `pane_stack_strip.GlassLut` resolves it - the tucked card's thin sheet
-# (`GLASS_UNFOCUSED_TINT` 15% of the background over the desk, in linear
-# light, quantised to 4096 steps as `pane_elevation.mixChannel` is), faded
-# back toward the desk by the dim wash (1 - unfocused-split-opacity 0.7, as a
-# byte), then the scrim and the 82% strip over that. Each channel alone.
+# `pane_stack_strip.GlassLut` resolves it - the tucked card's sheet, which is
+# every pane's since T2281 (`GLASS_TINT` 40% of the background over the desk,
+# in linear light, quantised to 4096 steps as `pane_elevation.mixChannel` is;
+# T2086's thinner, faded unfocused sheet is gone with Mac 9da9618f8), then
+# the scrim and the 82% strip over that. Each channel alone.
 function ConvertTo-Linear([double]$c) {
     $c = $c / 255.0
     if ($c -le 0.04045) { return $c / 12.92 }
@@ -170,14 +170,13 @@ function ConvertTo-Srgb([double]$l) {
 function Get-ExpectedGlassStrip([int[]]$bg, $desk, [switch]$Hovered) {
     if ($null -eq $desk) { return $null }
     $aw = [MidpointRounding]::AwayFromZero
-    $t = 0.15
-    $fade = [math]::Round(0.3 * 255, $aw) / 255.0
+    $t = 0.4
     $scrim = if ($Hovered) { 0.2 } else { 0.45 }
     $d = @([int]$desk.R, [int]$desk.G, [int]$desk.B)
     $out = @()
     for ($i = 0; $i -lt 3; $i++) {
         $m = ConvertTo-Srgb ((ConvertTo-Linear $d[$i]) * (1 - $t) + (ConvertTo-Linear $bg[$i]) * $t)
-        $sheet = [math]::Round($m * (1 - $fade) + $d[$i] * $fade, $aw)
+        $sheet = $m
         $base = [math]::Round($bg[$i] * 0.65, $aw)
         $under = [math]::Round($sheet * (1 - $scrim), $aw)
         $out += [int][math]::Round($under * 0.18 + $base * 0.82, $aw)

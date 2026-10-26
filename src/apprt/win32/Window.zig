@@ -159,7 +159,6 @@ const pane_stack_slide = @import("pane_stack_slide.zig");
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
 const PaneDesk = @import("PaneDesk.zig");
-const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const desk_palette = @import("desk_palette.zig");
 const chrome_glass = @import("chrome_glass.zig");
 const rearrange_header = @import("rearrange_header.zig");
@@ -7178,25 +7177,9 @@ pub fn updateDimOverlays(self: *Window) void {
     const alpha = dim_math.overlayAlpha(config.@"unfocused-split-opacity");
     const fill = config.@"unfocused-split-fill" orelse config.background;
     const color = w32.RGB(fill.r, fill.g, fill.b);
-    // Glass panes fade toward the desk, not the fill (T2086; Mac 89848fd59):
-    // a background-coloured wash would make the unfocused pane the MORE
-    // opaque one, so the wash is the desk under the pane instead.
-    const desk_wash: ?DimOverlay.DeskWash = if (self.paneGlass()) blk: {
-        const parent = self.hwnd orelse break :blk null;
-        const area = self.deskRect();
-        const bg = config.background;
-        const is_light = color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
-        const d = self.pane_desk.backdrop(area.right - area.left, area.bottom - area.top, is_light, self.desk_variant) orelse break :blk null;
-        break :blk .{
-            .parent = parent,
-            .left = area.left,
-            .top = area.top,
-            .pixels = d.pixels,
-            .w = d.w,
-            .h = d.h,
-            .gen = d.gen,
-        };
-    } else null;
+    // Glass panes never dim (T2281, Mac 9da9618f8): focus changes only a
+    // glass pane's rim and glow.
+    const glass = self.paneGlass();
 
     // T1345: every unfocused pane's wash moves on the same layout pass, so
     // they move together. One `SetWindowPos` per popup is one window-manager
@@ -7232,9 +7215,10 @@ pub fn updateDimOverlays(self: *Window) void {
                     w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0
                 else
                     true,
+                .glass = glass,
             });
             if (dim) {
-                entry.view.showDimOverlay(color, alpha, desk_wash, &hdwp);
+                entry.view.showDimOverlay(color, alpha, &hdwp);
             } else {
                 entry.view.hideDimOverlay();
             }
@@ -7278,27 +7262,6 @@ fn focusGlowTarget(self: *Window) ?*PaneView {
     const tree = self.tab_trees[tab];
     if (!pane_stash.isVisiblySplit(tree) or tree.zoomed != null) return null;
     return self.tab_active_pane[tab];
-}
-
-/// The glass sheet `view` gets (T2086; Mac 89848fd59 `PaneCard.isDimmed`):
-/// one of several panes and not the focused one gets the thin sheet, so the
-/// desk reads through it MORE than through the focused pane, and a terminal
-/// then fades whole by the dim wash's alpha (the wash, on glass, being the
-/// desk: `updateDimOverlays`). A viewer gets the thin sheet only - viewers
-/// never dim (T1809). A lone, zoomed or hero pane keeps the default sheet.
-/// Only meaningful for a pane of the active tab's grid.
-fn glassSheetFor(self: *Window, view: *PaneView) pane_elevation.Sheet {
-    if (self.tab_count == 0) return .{};
-    const tab = self.active_tab;
-    if (self.tab_hero_active[tab]) return .{};
-    const tree = self.tab_trees[tab];
-    if (!pane_stash.isVisiblySplit(tree) or tree.zoomed != null) return .{};
-    if (view == self.tab_active_pane[tab]) return .{};
-    const fade: f32 = if (view.kind == .viewer)
-        0
-    else
-        @as(f32, @floatFromInt(dim_math.overlayAlpha(self.app.config.@"unfocused-split-opacity"))) / 255.0;
-    return pane_elevation.sheetFor(true, fade);
 }
 
 /// Start the glow's move when the lit pane changes; the fade clock does the
@@ -8644,8 +8607,6 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         // page below - so its corners are curves in those colours, not a
         // terminal-coloured rim round them.
         const inner = self.cardInner(slot.rect);
-        // Its glass sheet, thinner when it is not the focused pane (T2086).
-        cards[i].sheet = self.glassSheetFor(slot.view);
         if (self.rearrangeHeaderFor(slot.rect)) |l| {
             cards[i].head = self.rearrangeBandRgb(slot.view, pal);
             cards[i].head_bottom = l.band.bottom - area.top;
@@ -8733,9 +8694,9 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             },
             .axis = s.axis,
             .rgb = pane_stack_strip.stripRgb(strip_bg, hovered),
-            // A glass card's strip is laid over its sheet (T2160): the
-            // tucked pane's, which is never the focused one's.
-            .glass = if (glass) .{ .bg = strip_bg, .sheet = self.glassSheetFor(s.view), .hovered = hovered } else null,
+            // A glass card's strip is laid over its sheet (T2160) - every
+            // pane's is the same since T2281.
+            .glass = if (glass) .{ .bg = strip_bg, .sheet = .{}, .hovered = hovered } else null,
         };
     }
     // The hovered or dragged gutter's accent bar (T2253).
@@ -8798,8 +8759,9 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
                 if (slot.view == entry.view) break true;
             } else false;
             // The sheet this pane wears (T2086): the banner strip over it
-            // lays the same one, and the pane draws it itself.
-            const sheet: pane_elevation.Sheet = if (on_grid) self.glassSheetFor(entry.view) else .{};
+            // lays the same one, and the pane draws it itself. Focused or
+            // not, it is the same sheet (T2281, Mac 9da9618f8).
+            const sheet: pane_elevation.Sheet = .{};
             if (s) |sf| sf.setBannerGlass(if (banner_glass) |bg| blk: {
                 var g = bg;
                 g.sheet = sheet;

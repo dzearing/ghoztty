@@ -1,15 +1,15 @@
 {
     "guard":  "pane-stack-focus",
     "script":  "test/win32/pane-stack-focus.ps1",
-    "generated":  "2026-10-25T21:24:30-07:00",
-    "commit":  "47090a0e3",
+    "generated":  "2026-10-25T22:46:35-07:00",
+    "commit":  "b44cb7cbc",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/IpcHandlers.zig":  "21b49f0725205a2566fef868112468a7f6629b48b04c3918fb0c902f87d0688b",
                   "src/apprt/win32/pane_stack_state.zig":  "c15d1ccdc76fbfe92e93fb3602b93ddb062b4320a7748105d9896d2ef4404454",
-                  "src/apprt/win32/Window.zig":  "641a0e1868131914cf500fe85ea213ab6979d2396074f1e26e67fac45321f121",
+                  "src/apprt/win32/Window.zig":  "f5dfb8886f32d7f00878ff926e2fb46d8fc93b07465166c0180d016ba1bbca76",
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08"
               }
 }

@@ -35,7 +35,6 @@ const w32 = @import("win32.zig");
 const RefCount = @import("pane_refcount.zig").RefCount;
 const Surface = @import("Surface.zig");
 const ViewerPane = @import("ViewerPane.zig");
-const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const Window = @import("Window.zig");
 const session_disconnect = @import("session_disconnect.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
@@ -229,9 +228,9 @@ pub fn bannerLayoutInset(self: *PaneView, slot_w: i32, slot_h: i32) i32 {
 /// panes never dim (T1809, user directive 2026-10-10, reversing T380), the
 /// same as Mac. `dim_math.shouldDim` already says no for a viewer; this arm
 /// is the second lock, so no caller can put a wash over a viewer by asking.
-pub fn showDimOverlay(self: *PaneView, color: u32, alpha: u8, desk: ?DimOverlay.DeskWash, batch: ?*?w32.HDWP) void {
+pub fn showDimOverlay(self: *PaneView, color: u32, alpha: u8, batch: ?*?w32.HDWP) void {
     switch (self.kind) {
-        .terminal => |s| s.showDimOverlay(color, alpha, desk, batch),
+        .terminal => |s| s.showDimOverlay(color, alpha, batch),
         .viewer => |v| v.hideDimOverlay(),
     }
 }

@@ -1841,7 +1841,7 @@ pub fn showDimOverlay(self: *ViewerPane, alloc: Allocator, color: u32, alpha: u8
             return;
         };
     }
-    _ = self.dim_overlay.?.show(color, alpha, null, batch);
+    _ = self.dim_overlay.?.show(color, alpha, batch);
 }
 
 /// Hide this pane's dim overlay if it exists.
@@ -8077,10 +8077,10 @@ test "host floor: a real controller on a real window, on this box" {
             // And the sheet is not a flat fill: the desk runs through it.
             try testing.expect(want[0] != want[@as(usize, sw) * sh - 1]);
 
-            // An unfocused viewer among several takes the thin sheet, and no
-            // fade - its page is its own business (T2086, T1809).
+            // A thinner sheet is honoured too (the T2086 mechanism, which
+            // nothing sets per pane since T2281; T2293 removes it).
             var thin = spec;
-            thin.sheet = pane_elevation.sheetFor(true, 0);
+            thin.sheet = .{ .t = 0.15 };
             pane.setGlassBackdrop(thin);
             pane.paint(dib.dc, sw, sh);
             const thin_want = try alloc.alloc(u32, sw * sh);
@@ -11902,43 +11902,27 @@ test "T1295: a redundant dim-overlay show does not re-blend" {
     // Every steady-state event - a focus change elsewhere, a WM_MOVE that did
     // not move this pane, a config reload that changed nothing - lands here
     // with identical arguments and must do nothing at all.
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null, null));
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null, null));
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null));
 
     // A real change still gets through: the pane moves...
     _ = w32.MoveWindow(host, 40, 30, 150, 100, 0);
-    try testing.expect(d.show(w32.RGB(16, 16, 20), 77, null, null));
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null, null));
+    try testing.expect(d.show(w32.RGB(16, 16, 20), 77, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 77, null));
 
     // ...unfocused-split-opacity changes...
-    try testing.expect(d.show(w32.RGB(16, 16, 20), 128, null, null));
-    try testing.expect(!d.show(w32.RGB(16, 16, 20), 128, null, null));
+    try testing.expect(d.show(w32.RGB(16, 16, 20), 128, null));
+    try testing.expect(!d.show(w32.RGB(16, 16, 20), 128, null));
 
     // ...unfocused-split-fill changes...
-    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null, null));
-    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, null, null));
-
-    // ...a glass pane's wash turns to the desk under it (T2086): steady while
-    // nothing moves, re-cropped when the desk is re-rendered...
-    var desk_px: [64 * 64]u32 = undefined;
-    for (&desk_px, 0..) |*p, k| p.* = @intCast(k & 0xFF_FFFF);
-    var wash: @TypeOf(d.*).DeskWash = .{ .parent = host, .left = 0, .top = 0, .pixels = &desk_px, .w = 64, .h = 64, .gen = 1 };
-    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, wash, null));
-    try testing.expect(d.wash != null);
-    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, wash, null));
-    wash.gen = 2;
-    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, wash, null));
-    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, wash, null));
-    // ...and is the fill again when glass goes off.
-    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null, null));
-    try testing.expect(d.wash == null);
-    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, null, null));
+    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null));
+    try testing.expect(!d.show(w32.RGB(32, 0, 0), 128, null));
 
     // ...and a hide/show flip (focus out and back) always replaces it.
     d.hide();
     try testing.expect(!d.shown);
-    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null, null));
+    try testing.expect(d.show(w32.RGB(32, 0, 0), 128, null));
 }
 
 // -------------------------------------------------------------------------

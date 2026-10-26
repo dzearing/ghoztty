@@ -62,8 +62,8 @@ pub fn stripOver(pane: Rgb, bg: Rgb, hovered: bool) Rgb {
 }
 
 /// A strip on a glass pane (T2160): the pane's background, the sheet the
-/// tucked card shows (`Window.glassSheetFor` - the thin one, faded, since a
-/// tucked pane is never the focused one), and whether it is hovered.
+/// tucked card shows (every pane's is the same since T2281), and whether it
+/// is hovered.
 pub const Glass = struct {
     bg: Rgb,
     sheet: pane_elevation.Sheet,
@@ -413,7 +413,7 @@ test "pane_stack_strip: on glass the strip is resolved over the sheet, so the de
     const bg: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
     // Over a desk pixel that is the background itself, glass changes
     // nothing: the sheet over it is the background.
-    const thin = pane_elevation.sheetFor(true, 0);
+    const thin: pane_elevation.Sheet = .{};
     const lut = GlassLut.init(.{ .bg = bg, .sheet = thin, .hovered = false });
     const same = lut.at(desk_palette.packRgb(bg.r, bg.g, bg.b));
     try testing.expectEqual(stripRgb(bg, false), same);
@@ -454,7 +454,7 @@ test "pane_stack_strip: a glass band follows the desk under each pixel and keeps
         desk[y * w + x] = desk_palette.packRgb(@intCast(t), 40, @intCast(255 - t)) | 0xFF00_0000;
     };
     var buf = desk;
-    const glass: Glass = .{ .bg = bg, .sheet = pane_elevation.sheetFor(true, 0), .hovered = false };
+    const glass: Glass = .{ .bg = bg, .sheet = .{}, .hovered = false };
     const tab: Rect = .{ .left = 5, .top = 5, .right = 25, .bottom = 55 };
     paintGlassBand(&buf, &desk, w, h, tab, .horizontal, glass, 8);
     const lut = GlassLut.init(glass);

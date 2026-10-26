@@ -219,7 +219,8 @@ pub const GlassBackdrop = struct {
     full_w: i32,
     full_h: i32,
     palette: desk_palette.Palette,
-    /// The pane's sheet (T2086): thinner on an unfocused pane among several.
+    /// The pane's sheet (T2086). Every pane's is the same since T2281 (Mac
+    /// 9da9618f8): focus changes only a glass pane's rim and glow.
     sheet: Sheet = .{},
 };
 
@@ -229,16 +230,11 @@ pub const GlassBackdrop = struct {
 /// while text keeps its contrast (T1833).
 pub const GLASS_TINT: f32 = 0.4;
 
-/// Mac `PaneGlass.unfocusedTint` (89848fd59, T2086): an unfocused pane among
-/// several keeps well under half the focused pane's sheet, so the desk reads
-/// through it more - glass's version of `unfocused-split-opacity`, whose
-/// background-coloured wash would make the unfocused pane the MORE opaque one.
-pub const GLASS_UNFOCUSED_TINT: f32 = 0.15;
-
 /// One pane's glass sheet (T2086): `t` of the terminal's background over the
-/// desk, and then - a dimmed terminal fading whole, Mac's
-/// `FocusFade(opacity: dimmedOpacity)` - `fade` of the desk back over that,
-/// mixed in sRGB the way the layered dim wash over the pane child blends.
+/// desk, and then `fade` of the desk back over that, mixed in sRGB the way a
+/// layered wash over the pane child blends. Nothing varies it per pane since
+/// T2281 (Mac 9da9618f8 dropped the unfocused pane's thinner, faded sheet);
+/// T2293 collapses it back to `GLASS_TINT`.
 pub const Sheet = struct {
     t: f32 = GLASS_TINT,
     fade: f32 = 0,
@@ -248,16 +244,6 @@ pub const Sheet = struct {
         return self.t * (1 - self.fade);
     }
 };
-
-/// The sheet a glass pane gets (T2086; Mac `PaneCard.glassCard`). A pane
-/// that is `dimmed` - one of several, and not the focused one - gets the
-/// thin sheet; a dimmed terminal then fades whole by `fade` (the dim wash's
-/// alpha, 1 - `unfocused-split-opacity`), sheet included. A viewer passes 0:
-/// its page is its own business (T1809), so it gets the thinner sheet only.
-pub fn sheetFor(dimmed: bool, fade: f32) Sheet {
-    if (!dimmed) return .{};
-    return .{ .t = GLASS_UNFOCUSED_TINT, .fade = std.math.clamp(fade, 0, 1) };
-}
 
 /// How much of the header band's colour a glass pane's rearrange header
 /// keeps over the sheet (T1884) - the stand-in for Mac's `.regularMaterial`,
@@ -595,10 +581,12 @@ pub const CardStyle = struct {
 
 /// The rim's strength. Mac: white 7% on a dark card, black 6% on a light
 /// one; a glass sheet's is brighter (white 10%, black 8%); and the focused
-/// card's brighter again (51573daf0) - solid 16% / 10%, glass 20% / 12%.
+/// card's brighter again (51573daf0) - solid 16% / 10%. On glass the rim and
+/// the glow are ALL focus changes (9da9618f8, T2281), so its focused rim is
+/// lighter still: white 34%, black 20%.
 pub fn rimAlpha(glass: bool, is_light: bool, focus: f32) f32 {
     const rest: f32, const lit: f32 = if (glass)
-        (if (is_light) .{ 0.08, 0.12 } else .{ 0.10, 0.20 })
+        (if (is_light) .{ 0.08, 0.20 } else .{ 0.10, 0.34 })
     else if (is_light) .{ 0.06, 0.10 } else .{ 0.07, 0.16 };
     return rest + (lit - rest) * std.math.clamp(focus, 0, 1);
 }
@@ -1190,16 +1178,8 @@ test "T1833: a glass card shows the desk through its fill and keeps its shadow o
     try testing.expectEqual(packRgb(30, 30, 30), rgbOf(buf[a]));
 }
 
-test "T2086: an unfocused glass pane is the MORE see-through one, and a dimmed terminal fades whole" {
-    // Mac 89848fd59: focused 40%, unfocused 15%, and a terminal's sheet then
-    // fades by its dim; a focused or lone pane keeps the default sheet.
-    try testing.expectEqual(Sheet{}, sheetFor(false, 0.3));
-    try testing.expectEqual(GLASS_TINT, sheetFor(false, 0.3).t);
-    try testing.expectEqual(GLASS_UNFOCUSED_TINT, sheetFor(true, 0).t);
-    try testing.expect(GLASS_UNFOCUSED_TINT < GLASS_TINT / 2);
-    try testing.expectEqual(@as(f32, 0.3), sheetFor(true, 0.3).fade);
-    try testing.expectEqual(@as(f32, 1), sheetFor(true, 7).fade);
-
+test "T2281: on glass a focused pane's sheet and an unfocused one's are the same; only the rim differs" {
+    // Mac 9da9618f8: every glass pane keeps `PaneGlass.tint`, focused or not.
     const w = 120;
     const h = 100;
     var desk: [w * h]u32 = undefined;
@@ -1207,55 +1187,37 @@ test "T2086: an unfocused glass pane is the MORE see-through one, and a dimmed t
         desk[y * w + x] = packRgb(@intCast(x * 2), 200, @intCast(y * 2));
     };
     const bg: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
-    const style: CardStyle = .{ .fill = bg, .is_light = false, .scale = 1.0, .glass = true };
-    const at = 45 * w + 60;
     const card: Card = .{ .left = 20, .top = 20, .right = 100, .bottom = 70 };
+    const glows = [_]Glow{.{ .card = 0 }};
+    const plain: CardStyle = .{ .fill = bg, .is_light = false, .scale = 1.0, .glass = true };
+    var lit_style = plain;
+    lit_style.glows = &glows;
     var focused = desk;
-    paintCards(&focused, w, h, &.{card}, style);
-    var thin_card = card;
-    thin_card.sheet = sheetFor(true, 0);
-    var thin = desk;
-    paintCards(&thin, w, h, &.{thin_card}, style);
-    var faded_card = card;
-    faded_card.sheet = sheetFor(true, 0.3);
-    var faded = desk;
-    paintCards(&faded, w, h, &.{faded_card}, style);
-
-    // How far each one moved the desk's green: the less, the more of the
-    // desk reads through.
-    const d = unpack(desk[at]).g;
-    const lift_focused = d - unpack(focused[at]).g;
-    const lift_thin = d - unpack(thin[at]).g;
-    const lift_faded = d - unpack(faded[at]).g;
-    try testing.expect(lift_thin < lift_focused * 0.6);
-    try testing.expect(lift_faded < lift_thin);
-    try testing.expect(lift_faded > 0);
-    // The fade is the sRGB lerp the layered dim wash makes over the pane.
-    try testing.expectEqual(sheetMix(desk[at], bg, faded_card.sheet), rgbOf(faded[at]));
-    const s = unpack(glassMix(desk[at], bg, GLASS_UNFOCUSED_TINT)).g;
-    try testing.expect(@abs(unpack(faded[at]).g - (s * 0.7 + d * 0.3)) <= 0.5);
-    // A sheet hides only what it covers (T1852).
-    try testing.expect(@abs(@as(i32, @intCast(faded[at] >> 24)) - @as(i32, @intFromFloat(@round(GLASS_UNFOCUSED_TINT * 0.7 * 255)))) <= 1);
-
-    // Negative control: at the old tint the "unfocused" pane is not thinner.
-    var old_card = card;
-    old_card.sheet = .{ .t = GLASS_TINT };
-    var old = desk;
-    paintCards(&old, w, h, &.{old_card}, style);
-    try testing.expect(!(d - unpack(old[at]).g < lift_focused * 0.6));
+    paintCards(&focused, w, h, &.{card}, lit_style);
+    var unfocused = desk;
+    paintCards(&unfocused, w, h, &.{card}, plain);
+    // The sheet: identical inside the card.
+    const at = 45 * w + 60;
+    try testing.expectEqual(unfocused[at], focused[at]);
+    try testing.expectEqual(glassMix(desk[at], bg, GLASS_TINT), rgbOf(focused[at]));
+    // The rim: lighter on the focused card.
+    try testing.expect(unpack(focused[20 * w + 60]).r > unpack(unfocused[20 * w + 60]).r);
 }
 
-test "T2086: a head band takes its card's thin sheet but never the terminal's fade" {
+test "T2086: a faded sheet fades back to the desk, and a head band never takes the fade" {
+    // The mechanism stays until T2293 removes it; nothing sets it per pane.
+    const thin: Sheet = .{ .t = 0.15, .fade = 0.3 };
     const desk = packRgb(90, 160, 200);
     const fill: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
     const head: color_math.Rgb = .{ .r = 44, .g = 46, .b = 52 };
+    const s = unpack(glassMix(desk, fill, 0.15)).g;
+    try testing.expect(@abs(unpack(sheetMix(desk, fill, thin)).g - (s * 0.7 + 160 * 0.3)) <= 0.5);
     const pal = desk_palette.Palette.ocean(false);
     var a: [1]u32 = undefined;
     var b: [1]u32 = undefined;
-    glassHeadRegion(&a, 1, 1, 100, 40, 800, 600, pal, fill, head, sheetFor(true, 0.3));
-    glassHeadRegion(&b, 1, 1, 100, 40, 800, 600, pal, fill, head, sheetFor(true, 0));
+    glassHeadRegion(&a, 1, 1, 100, 40, 800, 600, pal, fill, head, thin);
+    glassHeadRegion(&b, 1, 1, 100, 40, 800, 600, pal, fill, head, .{ .t = 0.15 });
     try testing.expectEqual(a[0], b[0]);
-    try testing.expect(glassHeadMixAt(desk, fill, head, GLASS_UNFOCUSED_TINT) != glassHeadMix(desk, fill, head));
     try testing.expectEqual(HEAD_COVER, headCover(GLASS_TINT));
 }
 
@@ -1348,10 +1310,12 @@ test "T1834: the focused rim is brighter, in both styles and both themes" {
     for ([_]bool{ true, false }) |glass| for ([_]bool{ true, false }) |light| {
         try testing.expect(rimAlpha(glass, light, 1) > rimAlpha(glass, light, 0));
     };
-    try testing.expectApproxEqAbs(@as(f32, 0.20), rimAlpha(true, false, 1), 1e-6);
+    // Glass: Mac 9da9618f8's lighter focused rim (T2281) - 34% / 20%.
+    try testing.expectApproxEqAbs(@as(f32, 0.34), rimAlpha(true, false, 1), 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 0.10), rimAlpha(true, false, 0), 1e-6);
     try testing.expectApproxEqAbs(@as(f32, 0.16), rimAlpha(false, false, 1), 1e-6);
-    try testing.expectApproxEqAbs(@as(f32, 0.12), rimAlpha(true, true, 1), 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.20), rimAlpha(true, true, 1), 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.08), rimAlpha(true, true, 0), 1e-6);
 
     // And painted: the focused card's top rim row is lighter than the
     // unfocused one's.
@@ -1604,12 +1568,12 @@ test "T1856: the table-driven paint matches the direct rasteriser bit for bit" {
             .{ .left = 15, .top = 15, .right = 121, .bottom = 175, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = 45, .head_glass = true },
             .{ .left = 136, .top = -20, .right = 245, .bottom = 175, .head = .{ .r = 236, .g = 236, .b = 240 }, .head_bottom = 12, .head_glass = true },
         },
-        // An unfocused glass terminal fading whole beside a focused one, and
-        // an unfocused viewer's thin sheet under a glass head (T2086).
+        // A thin, faded sheet beside a default one, and a thin sheet under a
+        // glass head (T2086's mechanism, kept bit-exact until T2293).
         &.{
-            .{ .left = 15, .top = 15, .right = 121, .bottom = 175, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = 45, .head_glass = true, .sheet = sheetFor(true, 0.3) },
+            .{ .left = 15, .top = 15, .right = 121, .bottom = 175, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = 45, .head_glass = true, .sheet = .{ .t = 0.15, .fade = 0.3 } },
             .{ .left = 136, .top = 15, .right = 245, .bottom = 90 },
-            .{ .left = 136, .top = 105, .right = 245, .bottom = 175, .sheet = sheetFor(true, 0) },
+            .{ .left = 136, .top = 105, .right = 245, .bottom = 175, .sheet = .{ .t = 0.15 } },
         },
     };
     const glows = [_]Glow{ .{ .card = 1, .level = 0.6 }, .{ .card = 0, .level = 0.4 } };
