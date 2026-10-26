@@ -121,9 +121,6 @@ struct PaneSidebarRow: View {
     @ViewBuilder
     private var stateAccessories: some View {
         HStack(spacing: 5) {
-            if pane.activityState == .needsInput {
-                PaneSidebarQuestionBadge(isOnAccent: onAccent)
-            }
             if pane.bell && isStashed {
                 Circle()
                     .fill(onAccent ? Color.white : Color(nsColor: .controlAccentColor))
@@ -181,8 +178,7 @@ struct PaneSidebarRow: View {
             ZStack {
                 PaneSidebarTileButton(
                     hue: hue,
-                    isSelected: isSelected, isEmphasized: isEmphasized, isHovered: isHovered,
-                    hasQuestion: pane.activityState == .needsInput)
+                    isSelected: isSelected, isEmphasized: isEmphasized, isHovered: isHovered)
                 // One letter of the pane's name — the same name its row and
                 // its stacked strip show — for every kind of pane.
                 // Busy: a sheen sweeps diagonally across the tile — its own
@@ -320,8 +316,7 @@ struct PaneSidebarRow: View {
         if isStashed { parts.append("stashed") }
         switch pane.activityState {
         case .busy: parts.append("busy")
-        case .needsInput: parts.append("has a question")
-        case .idle: break
+        case .needsInput, .idle: break
         }
         return parts.joined(separator: ", ")
     }
@@ -332,9 +327,9 @@ struct PaneSidebarRow: View {
 /// specular rim, a masked drop shadow scaled to its size), so the color
 /// behind shows through it as it does through a banner — tinted with the
 /// pane's own hue (`PaneSidebarHue`), so each tile is its own shade. Hover
-/// deepens the tint; the selected pane's is deeper still, with a white rim.
-/// A pane with a question gets an accent rim — no badge on the tile. All
-/// static: nothing here animates.
+/// deepens the tint; the selected pane's is deeper still, ringed in white.
+/// No activity badge on the tile: busy is its sheen. All static: nothing here
+/// animates.
 struct PaneSidebarTileButton: View {
     var hue: Color? = nil
     let isSelected: Bool
@@ -342,7 +337,6 @@ struct PaneSidebarTileButton: View {
     /// draws a sidebar's); otherwise it is the plain glass, thickened.
     var isEmphasized: Bool = true
     let isHovered: Bool
-    let hasQuestion: Bool
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -366,11 +360,6 @@ struct PaneSidebarTileButton: View {
             .modifier(GlassCardBackground(
                 fill: AnyShapeStyle(fill), cornerRadius: Self.cornerRadius,
                 shadowRadius: 2.5, shadowOffset: 1.5))
-            .overlay {
-                if hasQuestion {
-                    shape.strokeBorder(accent.opacity(selected ? 0.95 : 0.85), lineWidth: 1.5)
-                }
-            }
             // The selection is a ring OUTSIDE the tile, a point clear of it,
             // so the tile's own glass edge stays whole.
             .overlay {

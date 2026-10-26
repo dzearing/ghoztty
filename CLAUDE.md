@@ -1642,8 +1642,7 @@ the interactive mock settled).
   and its glyph, is muted (13% tint, secondary glyph) until hovered. A row's icon takes the same hue. **Hovering a
   tile or row tints its pane in that hue** — a wash and a rim on the pane's
   card (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim — a
-  hint, halved from the first take), in over 0.12s, out over 0.2s — so the sidebar says which pane an icon is. All static at rest. **No
-  `?` badge on a tile**: a question is an accent rim.
+  hint, halved from the first take), in over 0.12s, out over 0.2s — so the sidebar says which pane an icon is. All static at rest.
 - Rows: grid panes (focused one selected), then — **right after the last of
   them**, under a divider, in the same scrolling list — the **tray** of
   stashed panes. (It was first anchored at the bottom of the bar, far from the
@@ -1692,14 +1691,15 @@ the interactive mock settled).
   rail's width (`PaneSidebarView.toggleLeading`), so it does not move when
   toggled.
 - Activity: a **busy** pane's icon shimmers (no spinner, no glow) — on a rail
-  tile, a faint band of light (25%) sweeps diagonally across the whole glass
-  tile every 2s (`PaneSidebarTileSheenLayer`, Core Animation), starting and
+  tile, a faint upright band of light (25%) sweeps across the whole glass
+  tile from its right edge to its left every 2s (`PaneSidebarTileSheenLayer`, Core Animation), starting and
   ending fully off it. **Busy is `PaneView.isWorking`**: the hook-set activity
   state OR a progress report on screen (OSC 9;4 — what animates the pane's
   border, `SurfaceBusyBorder`), so an icon animates whenever its pane's border
-  does (it read only the activity state, and the two disagreed); `needs_input`
-  shows a **question** badge — the human label, never the machine token. Both
-  animate on **Core Animation**, never an endless SwiftUI animation, which
+  does (it read only the activity state, and the two disagreed). **The sidebar
+  shows no question state** — no badge on a row, a tile or a window header:
+  it did not work reliably, and was removed. Both animations run on **Core
+  Animation**, never an endless SwiftUI animation, which
   re-renders the whole sidebar every frame (measured: ~90% of the main thread
   at rest with 40 windows; `PaneSidebarAnimationLayers.swift`).
 - **All-windows** header toggle (off by default) groups every window's panes.

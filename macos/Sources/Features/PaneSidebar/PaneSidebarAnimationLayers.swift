@@ -2,8 +2,8 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-// The sidebar's two endless animations — the busy shimmer and the question
-// ring — run on Core Animation, not SwiftUI.
+// The sidebar's endless animations — the busy shimmer on a row's glyph and
+// the sheen across a rail tile — run on Core Animation, not SwiftUI.
 //
 // Measured: a SwiftUI animation that never ends (`TimelineView(.animation)`,
 // `.repeatForever`) re-runs the whole sidebar's update on the main thread
@@ -139,80 +139,8 @@ struct PaneSidebarShimmerLayer: NSViewRepresentable {
     }
 }
 
-/// The question badge's breathing ring: a 3pt capsule outline, `color` at
-/// 22%, fading in and out. Laid out 1.5pt outside the badge on every side.
-struct PaneSidebarPulseRing: NSViewRepresentable {
-    let color: Color
-
-    func makeNSView(context: Context) -> View { View() }
-
-    func updateNSView(_ view: View, context: Context) {
-        view.color = NSColor(color)
-    }
-
-    final class View: NSView {
-        var color: NSColor = .controlAccentColor { didSet { if color != oldValue { applyColor() } } }
-
-        private let ring = CAShapeLayer()
-
-        override init(frame: NSRect) {
-            super.init(frame: frame)
-            wantsLayer = true
-            layerContentsRedrawPolicy = .never
-            ring.fillColor = nil
-            ring.lineWidth = 3
-            layer?.addSublayer(ring)
-            applyColor()
-        }
-
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-        override func viewDidChangeEffectiveAppearance() {
-            super.viewDidChangeEffectiveAppearance()
-            applyColor()
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if window != nil { breathe() }
-        }
-
-        override func layout() {
-            super.layout()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            ring.frame = bounds
-            let radius = bounds.height / 2
-            ring.path = CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
-            CATransaction.commit()
-            breathe()
-        }
-
-        private func applyColor() {
-            effectiveAppearance.performAsCurrentDrawingAppearance {
-                ring.strokeColor = color.withAlphaComponent(0.22).cgColor
-            }
-        }
-
-        private func breathe() {
-            guard window != nil, ring.animation(forKey: "breathe") == nil else { return }
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 0
-            fade.toValue = 1
-            fade.duration = 1.2
-            fade.autoreverses = true
-            fade.repeatCount = .infinity
-            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            fade.isRemovedOnCompletion = false
-            ring.add(fade, forKey: "breathe")
-        }
-    }
-}
-
-/// A busy rail tile's sheen: a band of light sweeping diagonally across the
-/// whole glass tile — the tile's own sheen, set moving — now and then
+/// A busy rail tile's sheen: an upright band of light sweeping across the
+/// whole glass tile from its right edge to its left — now and then
 /// (`period`), faint (`peak`), and in phase with every other busy tile.
 /// Core Animation, as the shimmer is (see the top of this file): played by
 /// the render server, it costs the main thread nothing per frame.
@@ -245,11 +173,11 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
             let light = NSColor.white.cgColor
             // Faint: a glint that says "working", not a flash.
             band.colors = [light.copy(alpha: 0)!, light.copy(alpha: View.peak)!, light.copy(alpha: 0)!]
-            band.locations = [0.33, 0.5, 0.67]
-            // Top-left to bottom-right, in CA's y-up unit space: a band
-            // running from the lower left up to the upper right.
-            band.startPoint = CGPoint(x: 0, y: 1)
-            band.endPoint = CGPoint(x: 1, y: 0)
+            // Left to right across the band layer: an upright band of light
+            // in its middle fifth (see `animateBand` for where that lands).
+            band.locations = [0.4, 0.5, 0.6]
+            band.startPoint = CGPoint(x: 0, y: 0.5)
+            band.endPoint = CGPoint(x: 1, y: 0.5)
             band.anchorPoint = .zero
         }
 
@@ -269,28 +197,27 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
             CATransaction.setDisableActions(true)
             layer?.cornerRadius = cornerRadius
             layer?.cornerCurve = .continuous
-            // Square, so the 45° band crosses the tile corner to corner.
-            let side = Swift.max(bounds.width, bounds.height)
-            band.bounds = CGRect(x: 0, y: 0, width: side * PaneSidebarShimmer.bandWidthFactor,
-                                 height: side * PaneSidebarShimmer.bandWidthFactor)
-            band.position = CGPoint(x: 0, y: -(band.bounds.height - bounds.height) / 2)
+            band.bounds = CGRect(x: 0, y: 0, width: bounds.width * View.bandWidthFactor,
+                                 height: bounds.height)
+            band.position = .zero
             CATransaction.commit()
             animateBand()
         }
 
-        /// The band's travel runs past the shimmer's at each end: the
-        /// diagonal band is wide enough that at the shimmer's ends it still
-        /// lay over a corner of the tile — each sweep jumped in there and
-        /// stopped short of leaving. Parked further out, it starts off the
-        /// tile, sweeps through, and leaves it entirely.
+        /// The band layer is `bandWidthFactor` tiles wide, its light in the
+        /// middle fifth of it — 1.2 to 1.8 tile widths from its left. Parked
+        /// with that light just past the tile's right edge, it sweeps left
+        /// until the light is wholly past the left edge: it starts off the
+        /// tile, crosses it, and leaves it entirely (a sweep that stops short
+        /// at either end jumps in or never quite leaves).
+        static let bandWidthFactor: CGFloat = 3
+
         private func animateBand() {
-            let width = Swift.max(bounds.width, bounds.height)
+            let width = bounds.width
             guard width > 0, window != nil else { return }
-            // The bright band (40% of the gradient's diagonal) clears a
-            // square tile at -3w before and +w after; a fifth of a tile more
-            // either way, for its soft edges.
-            let from = PaneSidebarShimmer.offset(position: 1, width: width) - width * 1.2
-            let to = PaneSidebarShimmer.offset(position: 0, width: width) + width * 1.2
+            let margin = width * 0.15
+            let from = width - 1.2 * width + margin   // light starts right of the tile
+            let to = -1.8 * width - margin            // light ends left of it
             if let existing = band.animation(forKey: "sweep") as? CAKeyframeAnimation,
                existing.values?.first as? CGFloat == from {
                 return

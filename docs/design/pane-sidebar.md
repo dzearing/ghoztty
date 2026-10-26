@@ -28,7 +28,7 @@ The sidebar lists **every pane in the window**, in two sections:
 │   README.md               │
 │ ───────────────────────── │   ← right after the last pane
 │   STASHED                 │
-│   claude — relay   question│   ← out of the layout, still running
+│   claude — relay          │   ← out of the layout, still running
 │   tail -f app.log         │
 └───────────────────────────┘
 ```
@@ -376,8 +376,8 @@ kill mode, was removed in favour of a row's ordinary `×`.)
     slid within left the icon clipped for most of each sweep). The title does
     not shimmer, so a list of several busy agents stays calm. Under Reduce
     Motion the glyph is drawn plain.
-  - **Both endless animations — the shimmer and the question badge's
-    breathing ring — run on Core Animation**, not SwiftUI
+  - **The endless animations — the row glyph's shimmer and the rail tile's
+    sheen — run on Core Animation**, not SwiftUI
     (`PaneSidebarAnimationLayers.swift`): the glyph is drawn once into a mask
     and the band is a CA keyframe animation under it. A SwiftUI animation that
     never ends (`TimelineView(.animation)`, `.repeatForever`) re-runs the whole
@@ -386,9 +386,9 @@ kill mode, was removed in favour of a row's ordinary `×`.)
     held the main thread at 86–99% of a core with nothing happening, and
     scrolling the all-windows list cost 31–50 ms of main-thread time a step;
     on CA it is under 1% at rest and ~8 ms a step with every window expanded.
-  - `needs_input`: a **question** badge in the accent color — the same label
-    the title suffix shows — gently pulsing on a stashed row. A stashed pane
-    that goes from `busy` to `needs_input` is the row to look at next.
+  - `needs_input`: nothing in the sidebar. A **question** badge (and, on a
+    tile, an accent rim) were shown at first, and removed: the state did not
+    reach the sidebar reliably, so the badge was wrong as often as right.
   - `idle`: nothing.
   - A **bell** on a stashed pane shows a dot until the pane is restored.
 
@@ -434,9 +434,9 @@ the whole drag, so nothing re-lays out under the pointer.
 - It persists with the other sidebar layout (session manifest
   `paneSidebarOrder`, window restoration), by stable pane id.
 
-**While the sidebar is hidden,** a stashed pane asking a question still shows,
-because the window title's activity suffix is aggregated across every leaf in
-the tree and stashed panes are still in it.
+**A stashed pane asking a question still shows in the window title,** whose
+activity suffix is aggregated across every leaf in the tree — stashed panes
+are still in it.
 
 ### The rail
 
@@ -456,10 +456,10 @@ selection pill, and the tray under a hairline at the bottom.
   not key). All static — nothing on a tile animates but the busy shimmer. (A
   first take was an opaque bevelled button with a gradient; it read as a
   control from another app, not as Ghoztty's glass.)
-- **Activity without badges**: a question is an accent rim round the tile —
-  no `?` badge (it read as clutter); a bell is a dot; busy is a faint band of
-  light sweeping diagonally across the tile every 2s, entering and leaving
-  fully off it. Busy means `PaneView.isWorking` — the activity state OR a
+- **Activity without badges**: no question state on a tile (a `?` badge,
+  then an accent rim, were tried and removed); a bell is a dot; busy is a
+  faint upright band of light sweeping across the tile from its right edge to
+  its left every 2s, entering and leaving fully off it. Busy means `PaneView.isWorking` — the activity state OR a
   progress report on screen, which is what animates the pane's own border.
 - **The selected tile** is its hue, deeper, ringed in white outside the tile
   with a 1pt gap; the others are muted until hovered.
@@ -536,8 +536,7 @@ to every Ghoztty window, so window management can happen from one list.
   icons line up under the name). This window comes first (tagged *This
   Window*), then the others front to back. A header shows the window's name —
   a user-set title, else its focused pane's name, never the raw title with its
-  activity suffix — its pane count, and a **question** badge when any pane in
-  it has one. Click it to raise the window; the chevron folds the group.
+  activity suffix — and its pane count. Click it to raise the window; the chevron folds the group.
   Windows are separated by a hairline.
 - **Windows start folded** — one row per window, the overview this scope is
   for — except **this window**, which starts open: it holds the selection

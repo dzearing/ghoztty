@@ -815,6 +815,11 @@ struct PaneSidebarWindowTests {
         try await captureComposited(h.window, "sidebar-busy-rail")
         await settle(0.35)
         try await captureComposited(h.window, "sidebar-busy-rail-later")
+        // A run of frames across a sweep, for checking its direction.
+        for i in 0..<16 {
+            try await captureComposited(h.window, "sidebar-busy-sweep-\(i)")
+            await settle(0.05)
+        }
         h.controller.setPaneSidebarExpanded(true)
         await settle(0.8)
         try await captureComposited(h.window, "sidebar-busy-expanded")

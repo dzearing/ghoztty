@@ -753,11 +753,7 @@ private struct PaneSidebarWindowHeader: View {
             }
             Spacer(minLength: 4)
 
-            if hasQuestion {
-                PaneSidebarQuestionBadge(isOnAccent: false)
-            } else {
-                PaneSidebarCount(value: owner.surfaceTree.count)
-            }
+            PaneSidebarCount(value: owner.surfaceTree.count)
         }
         .padding(.vertical, 6)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
@@ -779,10 +775,6 @@ private struct PaneSidebarWindowHeader: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         .help(isThisWindow ? "This window" : "Raise this window")
-    }
-
-    private var hasQuestion: Bool {
-        owner.surfaceTree.contains { $0.activityState == .needsInput }
     }
 }
 
@@ -947,33 +939,6 @@ private struct PaneSidebarEmptyStashSlot: View {
         .animation(.easeOut(duration: 0.15), value: isHot)
         .help("Drag a pane here to stash it — out of the grid, still running")
         .allowsHitTesting(false)
-    }
-}
-
-/// The `needs_input` badge — the human label, never the machine token.
-struct PaneSidebarQuestionBadge: View {
-    /// On the accent selection pill the badge inverts, or it would vanish.
-    let isOnAccent: Bool
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let accent = Color(nsColor: .controlAccentColor)
-        Text("question")
-            .font(.system(size: 9.5, weight: .semibold))
-            .padding(.horizontal, 6)
-            .frame(height: 15)
-            .foregroundStyle(isOnAccent ? accent : .white)
-            .background(Capsule().fill(isOnAccent ? Color.white : accent))
-            .background {
-                // A soft ring that breathes, so a question in an otherwise
-                // quiet list is the thing that draws the eye. On Core
-                // Animation — see `PaneSidebarShimmerLayer` for why.
-                if !reduceMotion && !isOnAccent {
-                    PaneSidebarPulseRing(color: accent).padding(-1.5)
-                }
-            }
-            .accessibilityLabel("Has a question")
     }
 }
 
