@@ -1,18 +1,15 @@
 {
     "guard":  "pane-sidebar-resize",
     "script":  "test/win32/pane-sidebar-resize.ps1",
-    "generated":  "2026-10-25T20:04:52-07:00",
-    "commit":  "6ee39e9f9",
+    "generated":  "2026-10-25T23:52:28-07:00",
+    "commit":  "1f7862919",
     "uncommitted":  [
-                        "src/apprt/win32/gutter_bar_dc.zig",
-                        "src/apprt/win32/pane_sidebar.zig",
-                        "src/apprt/win32/PaneSidebar.zig",
-                        "test/win32/pane-sidebar-resize.ps1"
+                        "src/apprt/win32/PaneSidebar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/gutter_bar_dc.zig":  "01173ddfd1b088710c95a3ac53ef549e3d944b0fb35df79c7760174c8b87ec4d",
                   "src/apprt/win32/pane_sidebar.zig":  "839b805980d59418edd057a302261b37ba2d2de12ace87169334de705c16b915",
-                  "src/apprt/win32/PaneSidebar.zig":  "6a21110cc777f87b339ac1d5099cd52582a857e85706b6a429c2c22c65cacbb7",
+                  "src/apprt/win32/PaneSidebar.zig":  "d247ac1f3f53f4174641e7d8456cd92995f9430ff87a343e4b30f3e862037622",
                   "test/win32/pane-sidebar-resize.ps1":  "96b065446817cd0281230bc94e0588a3744ac4f52532757e28949f725229414c"
               }
 }
