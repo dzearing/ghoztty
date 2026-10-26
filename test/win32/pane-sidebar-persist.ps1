@@ -90,8 +90,8 @@ function Near([int]$A, [int]$B) { [math]::Abs($A - $B) -le 2 }
 function Width-Is($top, [double]$Dip) {
     $sb = Get-Sidebar $top
     # T2290: an expanded column is the card at $Dip in the rail's 12 DIP
-    # insets; the 68 DIP rail is already a column width.
-    $want = if ($Dip -eq 68) { Px 68 } else { (Px 12) + (Px $Dip) + (Px 12) }
+    # insets; the 76 DIP rail is already a column width.
+    $want = if ($Dip -eq 76) { Px 76 } else { (Px 12) + (Px $Dip) + (Px 12) }
     return ($null -ne $sb -and $sb.Visible -and (Near $sb.Width $want))
 }
 function Describe($top) {
@@ -100,10 +100,10 @@ function Describe($top) {
     return "visible=$($sb.Visible) width=$($sb.Width)"
 }
 
-# The rail's pin: centered in the 28 DIP tile at the top of the 44 DIP card,
+# The rail's pin: centered in the 28 DIP tile at the top of the 52 DIP card,
 # which sits a 12 DIP margin in (pane-sidebar.ps1's Get-PinCenter).
 function Get-RailPin($sb) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $margin = Px 12; $card = Px 52; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
 }
@@ -176,7 +176,7 @@ try {
     $top = Launch $false
     if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: top window not found"; $script:failures++; return }
     Assert "window is NOT enumerable on the interactive desktop" (-not (Test-TestDesktopLeak -ProcessId $script:app.Pid))
-    Assert "the 68 DIP rail is up ($(Describe $top))" (Width-Is $top 68)
+    Assert "the 76 DIP rail is up ($(Describe $top))" (Width-Is $top 76)
     Assert "no defaults file yet ($(Read-Pref))" ((Read-Pref) -eq '<absent>')
 
     "== 2: the pin and an edge drag write the defaults file"
@@ -242,7 +242,7 @@ try {
     Write-NoBom $prefFile "0 0 240`n"
     $top = Launch $true
     Assert "restored" ($top -ne [IntPtr]::Zero)
-    Assert "the window is on the rail, the default ($(Describe $top))" (Width-Is $top 68)
+    Assert "the window is on the rail, the default ($(Describe $top))" (Width-Is $top 76)
     Stop-App
 
     "== 8: the sidebar's own order (T2302) is restored and re-recorded, pruned to the window's panes"

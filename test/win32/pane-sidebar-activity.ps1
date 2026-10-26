@@ -1,22 +1,31 @@
+#   5. A bell on a STASHED pane leaves a dot: s1 stashed, a BEL printed in
 # T1843 acceptance: the pane sidebar's activity marks on Windows, as Mac
-# draws them (PaneSidebarView.swift `PaneSidebarGlyph`; PaneSidebarRow.swift
-# accessories). Since T2280 (Mac 2924ea5cc) a question has NO mark in the
-# sidebar at all - no row chip, no tile disc, no breathing ring.
+# draws them (PaneSidebarRow.swift `busySheen`, PaneSidebarAnimationLayers
+# `PaneSidebarTileSheenLayer`; the row's accessories). Since T2280 (Mac
+# 2924ea5cc) a question has NO mark in the sidebar at all - no row chip, no
+# tile disc, no breathing ring. Since T2279 (Mac 75dc046e3, 919fba868) busy
+# is a sheen across the row's pill, the same on a rail tile, and a progress
+# report counts as busy.
 #
 # Layout: the first pane P, then `+split right --shell=powershell` -> s1 (a
 # known shell, so section 5 can make it print a BEL). What it checks:
 #
-#   1. Busy shimmers: `+set-state busy` on s1 starts the sidebar's motion
+#   1. Busy sheens: `+set-state busy` on s1 starts the sidebar's motion
 #      clock (log `motion on surface=rail busy=1`) and the rail really moves -
-#      eight synchronous WM_PRINTCLIENT frames ~175 ms apart are not all the
-#      same picture. There is no busy dot any more; the moving band IS the
-#      signal.
+#      fourteen synchronous WM_PRINTCLIENT frames ~175 ms apart (more than
+#      the sheen's 2s period) are not all the same picture. There is no busy
+#      dot; the moving band IS the signal.
 #   2. Idle again, the clock stops itself (log `motion off`) and the rail
 #      holds still: consecutive frames are identical.
+#   2b. A progress report alone (OSC 9;4;3 printed by s1's shell, the state
+#      left idle) is work too, as it is what lights the pane's border: the
+#      tally counts it busy, the rail moves, and 9;4;0 stops it again.
 #   3. A question in the RAIL draws nothing: no clock starts, and the rail
 #      is the SAME picture it was before the question - no corner disc.
 #   4. A question in the expanded PANEL draws nothing either: no clock, no
 #      chip, and the panel is the same picture with the question as without.
+#   4b. A busy row in the expanded panel sheens the same way, and once it
+#      is idle and faded out the panel is the quiet picture again.
 #   5. A bell on a STASHED pane leaves a dot: s1 stashed, a BEL printed in
 #      it, the tally says bell=1 and the panel picture changed. Then
 #      `+restore --focus` looks at it - the bell clears on focus, as Mac's
@@ -69,7 +78,7 @@ function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
 # The rail's pin, from pane_sidebar.zig's numbers (layoutMini), as
 # pane-sidebar.ps1 computes it.
 function Get-RailPinCenter($sb) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $margin = Px 12; $card = Px 52; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
 }
@@ -141,9 +150,9 @@ try {
     Start-Sleep -Milliseconds 1500
     Assert "setup: two visible panes" ((@(Get-Panes $top | Where-Object Visible)).Count -eq 2)
     $sb = Get-Sidebar $top
-    Assert "setup: the rail is up" ($null -ne $sb -and $sb.Visible -and [math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "setup: the rail is up" ($null -ne $sb -and $sb.Visible -and [math]::Abs($sb.Width - (Px 76)) -le 1)
 
-    "== 1: a busy pane's mark shimmers in the rail"
+    "== 1: a busy pane's tile sheens in the rail"
     $mark = Get-LogCount
     Assert "+set-state busy exit 0" ((Invoke-Cli "+set-state --target=s1 --state=busy") -eq 0)
     $tally = Wait-Log $mark 'pane sidebar marks busy=1 bell=0'
@@ -152,7 +161,9 @@ try {
     $on = Wait-Log $mark 'pane sidebar motion on surface=rail busy=1'
     "  $on"
     Assert "the motion clock started for it (log)" ($null -ne $on)
-    $frames = Get-Frames $sb
+    # T2279: the sheen sweeps for 0.8s of every 2s and rests off the pill
+    # between, so the frames span more than one whole period.
+    $frames = Get-Frames $sb 14 175
     $distinct = Get-Distinct $frames
     "  ($distinct distinct of $($frames.Count) frames)"
     if ($NegativeControl) {
@@ -169,6 +180,31 @@ try {
     Assert "the motion clock stopped itself (log)" ($null -ne $off)
     $frames = Get-Frames $sb 4 200
     Assert "an idle rail is one picture ($(Get-Distinct $frames) distinct)" ((Get-Distinct $frames) -eq 1)
+
+    "== 2b: a progress report alone is work too - the tile sheens while it lights the border (T2279)"
+    # Mac 919fba868: busy is the activity state OR a progress report on
+    # screen (OSC 9;4), what animates the pane's border. s1 stays idle; only
+    # the program inside it reports progress.
+    $osc = Join-Path $tmp 'osc-on.txt'
+    [System.IO.File]::WriteAllText($osc, "[Console]::Out.Write([char]27 + ']9;4;3;' + [char]7)")
+    $mark = Get-LogCount
+    Assert "+send-keys (OSC 9;4;3 from s1's shell) exit 0 ($(Get-CliErr))" ((Invoke-Cli "+send-keys --target=s1 `"--keys-file=$osc`" Enter") -eq 0)
+    $tally = Wait-Log $mark 'pane sidebar marks busy=1 bell=0' 6000
+    "  $tally"
+    Assert "a report in force counts the pane busy (log)" ($null -ne $tally)
+    Assert "the motion clock started for it (log)" ($null -ne (Wait-Log $mark 'pane sidebar motion on surface=rail busy=1'))
+    $frames = Get-Frames $sb 14 175
+    Assert "the rail moves while the report is in force ($(Get-Distinct $frames) distinct, want >= 3)" ((Get-Distinct $frames) -ge 3)
+    $off = Join-Path $tmp 'osc-off.txt'
+    [System.IO.File]::WriteAllText($off, "[Console]::Out.Write([char]27 + ']9;4;0;' + [char]7)")
+    $mark = Get-LogCount
+    Assert "+send-keys (OSC 9;4;0) exit 0 ($(Get-CliErr))" ((Invoke-Cli "+send-keys --target=s1 `"--keys-file=$off`" Enter") -eq 0)
+    Assert "the report removed, the pane is not busy (log)" ($null -ne (Wait-Log $mark 'pane sidebar marks busy=0 bell=0' 6000))
+    Assert "and the clock stopped itself (log)" ($null -ne (Wait-Log $mark 'pane sidebar motion off surface=rail' 6000))
+    Start-Sleep -Milliseconds 400
+    # Any paints the shell's own echo caused are over by now.
+    $frames = Get-Frames $sb 4 200
+    Assert "the rail holds still again ($(Get-Distinct $frames) distinct)" ((Get-Distinct $frames) -eq 1)
 
     "== 3: a question in the rail draws nothing (T2280)"
     $before = Get-FrameHash $sb
@@ -201,6 +237,19 @@ try {
     } else {
         Assert "the panel is the same picture with the question as without" ($null -ne $quiet -and $asking[0] -eq $quiet)
     }
+
+    "== 4b: the same sheen crosses a busy row in the expanded panel (T2279)"
+    $mark = Get-LogCount
+    Assert "+set-state busy exit 0" ((Invoke-Cli "+set-state --target=s1 --state=busy") -eq 0)
+    Assert "the panel's motion clock started (log)" ($null -ne (Wait-Log $mark 'pane sidebar motion on surface=rail busy=1'))
+    $frames = Get-Frames $sb 14 175
+    Assert "the busy row moves in the panel ($(Get-Distinct $frames) distinct, want >= 3)" ((Get-Distinct $frames) -ge 3)
+    $mark = Get-LogCount
+    [void](Invoke-Cli "+set-state --target=s1 --state=idle")
+    Assert "idle, the panel's clock stopped (log)" ($null -ne (Wait-Log $mark 'pane sidebar motion off surface=rail'))
+    Start-Sleep -Milliseconds 300
+    $after = Get-FrameHash $sb
+    Assert "faded out, the row is the quiet picture again" ($null -ne $after -and $after -eq $quiet)
 
     "== 5: a bell on a stashed pane leaves a dot until the pane is looked at"
     Assert "+stash s1 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+stash --target=s1") -eq 0)

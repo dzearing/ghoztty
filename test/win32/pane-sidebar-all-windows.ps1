@@ -163,7 +163,7 @@ function ClickAt($top, $sb, $pt) {
 # header's first item, on the same pixels in both modes - centered in the
 # rail card, the card's inset below its top (client coordinates).
 function Get-ToggleCenter($sb) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $margin = Px 12; $card = Px 52; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
 }
@@ -427,7 +427,7 @@ try {
     [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     $o6 = Read-Outline (Wait-Log 'pane sidebar outline mode=mini' $mark)
     $sb = Get-Sidebar $top
-    Assert "the column is the 68 DIP rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "the column is the 76 DIP rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     if ($o6) { "  rail items: $(($o6.Items | ForEach-Object { "g$($_.Group)$($_.Sec)" }) -join ' ') rules=$($o6.Rules)" }
     Assert "every pane is a tile (5) and there are no header rows" ($null -ne $o6 -and $o6.Items.Count -eq 5 -and $o6.Heads.Count -eq 0)
     Assert "two hairlines between the three windows ($($o6.Rules))" ($null -ne $o6 -and $o6.Rules -eq 2)

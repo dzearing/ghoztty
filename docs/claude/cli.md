@@ -1260,7 +1260,7 @@ the interactive mock settled).
   (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim), in over
   0.12s, out over 0.2s — so the sidebar says which pane an icon is. (Earlier
   takes — one letter per tile, then glass tiles tinted whole — made the two
-  modes look like two different things.) **Windows:** T2279 (rail = rows
+  modes look like two different things.) **Windows:** T2279 (landed: rail = rows
   minus text), T2278 (hues, hover tint).
 - Rows: grid panes (focused one selected), then — **right after the last of
   them**, under a divider, in the same scrolling list — the **tray** of
@@ -1330,7 +1330,10 @@ the interactive mock settled).
   Animation**, never an endless SwiftUI animation, which
   re-renders the whole sidebar every frame (measured: ~90% of the main thread
   at rest with 40 windows; `PaneSidebarAnimationLayers.swift`). **Windows:**
-  T2279 (sheen, busy includes OSC 9;4), T2280 (landed: no question state -
+  T2279 (landed: tiles are the rows minus their text on a 52 DIP rail card,
+  kind glyphs, the right-to-left pill sheen with its 0.6s fade on a window
+  timer - `pane_sidebar_motion.zig` - and busy includes a live OSC 9;4
+  report, `PaneSidebar.isWorking`), T2280 (landed: no question state -
   no row chip, tile disc, header badge or breathing ring).
 - **All-windows** header toggle (off by default) groups every window's panes.
   Its caption counts the windows. Every window starts **folded** except this

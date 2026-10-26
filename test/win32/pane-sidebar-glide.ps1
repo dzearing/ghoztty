@@ -8,7 +8,7 @@
 # land mid-glide: the column to 2 s (`GHOZTTY_SIDEBAR_COLUMN_MS`), the grid's
 # glide to about the same (`GHOZTTY_STACK_SLIDE_MS`). What it checks:
 #
-#   1. At rest: the 68 DIP rail, the grid right after it.
+#   1. At rest: the 76 DIP rail, the grid right after it.
 #   2. The toggle expands: part-way through, the column is wider than the rail
 #      and narrower than the panel, and s1 is on its way over - right of where
 #      it was, short of where it goes - at the width it had (its terminal is
@@ -64,7 +64,7 @@ function Px([double]$Dip) { Get-TestChromeDip -Dip $Dip -Scale $script:scale }
 function PanelColumn([double]$Dip) { (Px 12) + (Px $Dip) + (Px 12) }
 # The collapse/expand toggle (T2289): the same pixels in both modes.
 function Get-ToggleCenter($sb) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $margin = Px 12; $card = Px 52; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
 }
@@ -118,7 +118,7 @@ try {
     if ($null -eq $sb) { return }
     $railW = $sb.Width
     $panelW = PanelColumn 240
-    Assert "it is the 68 DIP rail ($railW)" ([math]::Abs($railW - (Px 68)) -le 1)
+    Assert "it is the 76 DIP rail ($railW)" ([math]::Abs($railW - (Px 76)) -le 1)
     $s1Rail = Get-Pane $top $h1
     "  s1 at rest: left=$($s1Rail.Left) width=$($s1Rail.Width)"
 

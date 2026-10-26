@@ -123,15 +123,17 @@ function Test-VisibleChild($top, [int64]$Hwnd) {
 # The rail's tile centers, from pane_sidebar.zig's numbers (layoutMini) - the
 # same model pane-sidebar.ps1 scores its clicks with.
 function Get-TileCenter($sb, [int]$Index, [int]$GridCount) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28; $gap = Px 4; $group = Px 8
-    $inset = [int][math]::Truncate(($card - $tile) / 2)
-    $pinTop = $margin + $inset
-    $y = $pinTop + $tile + $group
+    # T2279: a tile is a row's pill (Mac's 38 DIP row less its hairline),
+    # starting the toggle's clearance below the toggle.
+    $margin = Px 12; $card = Px 52; $btn = Px 28; $group = Px 8
+    $hair = [math]::Max((Px 1), 1); $pill = (Px 38) - $hair
+    $inset = [int][math]::Truncate(($card - $btn) / 2)
+    $y = $margin + $inset + $btn + $inset
     for ($i = 0; $i -lt $Index; $i++) {
-        $y += $tile + $gap
-        if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $gap }
+        $y += $pill + $hair
+        if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $hair }
     }
-    return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $y + [int]($tile / 2) }
+    return @{ X = $sb.Left + $margin + [int]($card / 2); Y = $sb.Top + $y + [int]($pill / 2) }
 }
 
 # The visible drop preview's screen rect, or $null when none is up.
@@ -215,7 +217,7 @@ try {
     $byLeft = @(Get-VisiblePanes $top | Sort-Object Left | ForEach-Object { [int64]$_.Hwnd })
     Assert "setup: screen order is P | s1 | s2 (the tile order scored below)" ($byLeft.Count -eq 3 -and $byLeft[0] -eq [int64]$hP -and $byLeft[1] -eq [int64]$h1 -and $byLeft[2] -eq [int64]$h2)
     $sb = Get-Sidebar $top
-    Assert "setup: the mini rail is up" ($null -ne $sb -and $sb.Visible -and [math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "setup: the mini rail is up" ($null -ne $sb -and $sb.Visible -and [math]::Abs($sb.Width - (Px 76)) -le 1)
     if ($null -eq $sb) { return }
     # Grid panes are listed in SCREEN order: P, s1, s2.
 

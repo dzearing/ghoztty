@@ -557,6 +557,10 @@ pub fn setProgress(self: *Surface, report: busy_light.Report) void {
     self.progress = if (report.state == .remove) null else report;
     self.progress_at_ms = std.time.milliTimestamp();
     self.parent_window.syncBusyLights();
+    // A report in force is work, so the pane's sidebar row sheens (T2279,
+    // Mac `PaneView.isWorking`). Coalesced, and a no-op when the row's busy
+    // state did not move.
+    self.parent_window.scheduleSidebarSync();
 }
 
 /// The report still in force, or null once it has expired.

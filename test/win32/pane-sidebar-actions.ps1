@@ -190,7 +190,7 @@ function At($top, $sb, $pt, [string]$Button = 'left', [string[]]$Mods = @()) {
 # header's first item, on the same pixels in both modes - centered in the
 # rail card, the card's inset below its top (client coordinates).
 function Get-ToggleCenter($sb) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $margin = Px 12; $card = Px 52; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
 }

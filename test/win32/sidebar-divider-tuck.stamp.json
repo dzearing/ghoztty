@@ -1,16 +1,16 @@
 {
     "guard":  "sidebar-divider-tuck",
     "script":  "test/win32/sidebar-divider-tuck.ps1",
-    "generated":  "2026-10-26T13:32:40-07:00",
-    "commit":  "38e1367d3",
+    "generated":  "2026-10-26T14:01:54-07:00",
+    "commit":  "84dacb5c1",
     "uncommitted":  [
                         "src/apprt/win32/pane_sidebar.zig",
-                        "src/apprt/win32/Window.zig"
+                        "test/win32/sidebar-divider-tuck.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/pane_sidebar.zig":  "093bf09731aaedcba110a7d55a54253e348b47b2f22927ada74664ed81c1a379",
+                  "src/apprt/win32/pane_sidebar.zig":  "a0c5ae9c544539a83b7607a7c3feaec878d8eee31d32cdc172c0c0283f1cac75",
                   "src/apprt/win32/stack_drag.zig":  "e9c12988e8b1d380d6326fb2a0e77e2f8dc33c07728ac5c45011f1b8855669a1",
-                  "src/apprt/win32/Window.zig":  "e403de23dfdeff813ee53987b3398b6a8c667ce33d80b6445c9669fa35b13c61",
-                  "test/win32/sidebar-divider-tuck.ps1":  "c7dcd8e840f712da3b33b6bf884cd0b89078eb89c3622affbb46e57b8d5eb5a1"
+                  "src/apprt/win32/Window.zig":  "7ca932a84831715321e8168475c11f3c1c3d1d41e30cae68f74123ecadff1147",
+                  "test/win32/sidebar-divider-tuck.ps1":  "7ad507d8bd0a5c5690dd22984c819003693fc9ee04c09ccabce11aab01df3d0a"
               }
 }

@@ -8,7 +8,7 @@
 # What is asserted, and how (a PrintWindow of the top-level window, which
 # carries the sidebar's own GDI paint; the OpenGL panes come back flat):
 #
-#   1. RAIL GEOMETRY. The column is 10 + 44 DIP (Mac 54), and the first pane
+#   1. RAIL GEOMETRY. The column is 10 + 52 DIP (Mac 62), and the first pane
 #      starts one grid margin (plus the card's rim) after it: the rail's card
 #      is flush with the column, so rail-to-pane equals edge-to-rail.
 #   2. THE DESK UNDER THE RAIL. The rail's leading inset is the ocean desk,
@@ -23,7 +23,7 @@
 #      trailing edge it is exactly a pane's glass sheet over the desk in the
 #      margin beside it (40% terminal background, no wash).
 #   4. The toggle (T2289: on the same pixels in the panel's header as on the
-#      rail) collapses it back to the 54 DIP rail.
+#      rail) collapses it back to the 62 DIP rail.
 #   5. GLASS (T1887; T2290, Mac 351868cb5). With glass panes on (the
 #      default) the rail's card is an unfocused pane's glass sheet: the desk
 #      under 40% terminal background (step 2 checks it against the desk at the
@@ -43,7 +43,7 @@
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
-# -NegativeControl expects the flat style's 68 DIP rail in step 1 and MUST
+# -NegativeControl expects the flat style's 76 DIP rail in step 1 and MUST
 # fail.
 #
 #   powershell -NoProfile -File test\win32\pane-sidebar-elevated.ps1
@@ -111,7 +111,7 @@ function Fmt($c) { if ($null -eq $c) { 'null' } else { "$($c.R),$($c.G),$($c.B)"
 # insets: the rail's first item, and the panel header's first item on the
 # same pixels (T2289).
 function Get-ToggleCenter($sb) {
-    $m = Get-MarginPx; $card = Px 44; $tile = Px 28
+    $m = Get-MarginPx; $card = Px 52; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $sb.Left + $m + $inset + [int]($tile / 2); Y = $sb.Top + $m + $inset + [int]($tile / 2) }
 }
@@ -171,16 +171,16 @@ try {
     [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
     Start-Sleep -Milliseconds 800
 
-    "== 1: the rail is 10 + 44 DIP, and the rail-to-pane gutter is the edge-to-rail one"
+    "== 1: the rail is 10 + 52 DIP, and the rail-to-pane gutter is the edge-to-rail one"
     $sb = Get-Sidebar $top
     Assert "a GhozttyPaneSidebar child exists and is visible" ($null -ne $sb -and $sb.Visible)
     if ($null -eq $sb) { return }
-    $railW = (Get-MarginPx) + (Px 44)
+    $railW = (Get-MarginPx) + (Px 52)
     if ($NegativeControl) {
-        "  NEGATIVE CONTROL: expecting the flat style's 68 DIP rail - this run MUST fail"
-        $railW = Px 68
+        "  NEGATIVE CONTROL: expecting the flat style's 76 DIP rail - this run MUST fail"
+        $railW = Px 76
     }
-    Assert "the rail column is Mac's elevated 54 DIP ($($sb.Width) vs $railW)" ([math]::Abs($sb.Width - $railW) -le 1)
+    Assert "the rail column is Mac's elevated 62 DIP ($($sb.Width) vs $railW)" ([math]::Abs($sb.Width - $railW) -le 1)
     $panes = @(Get-Panes $top)
     Assert "setup: one visible pane ($($panes.Count))" ($panes.Count -eq 1)
     if ($panes.Count -lt 1) { return }
@@ -249,7 +249,7 @@ try {
         } finally { Close-TestWindowPixels $shot }
     }
 
-    "== 4: the toggle brings the 54 DIP rail back"
+    "== 4: the toggle brings the 62 DIP rail back"
     [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
     $sb = Wait-SidebarWidth $top $railW
     Assert "back to the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - $railW) -le 1)

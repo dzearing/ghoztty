@@ -31,10 +31,10 @@ pub fn viewportOf(l: *const Layout, scale: f32) Rect {
         .hidden => return .{},
         .expanded => {},
         .mini => {
-            // The rail: from just under the toggle to the card's bottom
-            // inset, so the first tile's corner badges (which overhang it by
-            // 2 DIP) stay inside.
-            const top = l.toggle.bottom + sm;
+            // The rail: from the header band's bottom - where the expanded
+            // list's rows start too, so a scrolled tile is cut where its row
+            // would be (T2279) - to the card's bottom inset.
+            const top = l.header.bottom;
             return .{ .left = l.card.left, .top = top, .right = l.card.right, .bottom = @max(l.card.bottom - sm, top) };
         },
     }

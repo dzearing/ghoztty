@@ -7,7 +7,7 @@
 # Layout: the first pane P, then `+split right` -> s1. What it checks:
 #
 #   1. Default (Mac's default): the mini rail is up - a visible
-#      GhozttyPaneSidebar child at the client's left edge, 68 DIP wide, and
+#      GhozttyPaneSidebar child at the client's left edge, 76 DIP wide, and
 #      the grid starts right after it (P's left edge == the rail's right).
 #      It paints real content (a synchronous WM_PRINTCLIENT capture is not
 #      one flat fill).
@@ -27,7 +27,7 @@
 #   6. Expanded, a window narrower than 720 DIP shows the rail, not the panel.
 #   7. (T2289, Mac e77422577/dc2bbab6b) The toggle never moves: the panel's
 #      header logs its toggle at the very pixels the rail's does, and a click
-#      there collapses straight back to the 68 DIP rail - no card opens over
+#      there collapses straight back to the 76 DIP rail - no card opens over
 #      the grid, and no pane moves past the rail.
 #   8. (T2289) No hover-open: a pointer resting on the rail's tiles opens
 #      nothing - no GhozttyPaneSidebarCard popup, no width change, no open
@@ -127,26 +127,28 @@ function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
 # parts the way the layout does.
 function PanelColumn([double]$Dip) { (Px 12) + (Px $Dip) + (Px 12) }
 
-# The rail's geometry, from pane_sidebar.zig's numbers (layoutMini): the
-# toggle at the top of the card, then one 28 DIP tile per pane with a 4 DIP gap, and
-# an extra 4 between the grid and stashed groups. Returns the tile's SCREEN
-# center for item $Index, given how many items are in the grid section.
+# The rail's geometry, from pane_sidebar.zig's numbers (layoutMini, T2279):
+# the 28 DIP toggle centred in the 52 DIP card, the header band the same
+# clearance below it, then one row per pane - Mac's 38 DIP row, a pill and a
+# hairline, the pill across the card less the 8 DIP fill inset - and an 8 DIP
+# gap between the grid and stashed groups. Returns the tile's SCREEN center
+# for item $Index, given how many items are in the grid section.
 function Get-TileCenter($sb, [int]$Index, [int]$GridCount) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28; $gap = Px 4; $group = Px 8
-    $inset = [int][math]::Truncate(($card - $tile) / 2)
-    $toggleTop = $margin + $inset
-    $y = $toggleTop + $tile + $group
+    $margin = Px 12; $card = Px 52; $btn = Px 28; $group = Px 8
+    $hair = [math]::Max((Px 1), 1); $pill = (Px 38) - $hair
+    $inset = [int][math]::Truncate(($card - $btn) / 2)
+    $y = $margin + $inset + $btn + $inset
     for ($i = 0; $i -lt $Index; $i++) {
-        $y += $tile + $gap
-        if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $gap }
+        $y += $pill + $hair
+        if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $hair }
     }
-    return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $y + [int]($tile / 2) }
+    return @{ X = $sb.Left + $margin + [int]($card / 2); Y = $sb.Top + $y + [int]($pill / 2) }
 }
 # The collapse/expand toggle (T2289): the rail's first item and the panel
 # header's first item, on the same pixels in both modes - centered in the
 # rail card, the card's inset below its top.
 function Get-ToggleCenter($sb) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $margin = Px 12; $card = Px 52; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
 }
@@ -252,7 +254,7 @@ try {
     if ($null -eq $sb) { return }
     $client = Get-TestWindowRect -Window $top -Client
     Assert "it sits at the client's left edge ($($sb.Left) vs $($client.Left))" ([math]::Abs($sb.Left - $client.Left) -le 1)
-    Assert "it is the 68 DIP rail ($($sb.Width) vs $(Px 68))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "it is the 76 DIP rail ($($sb.Width) vs $(Px 76))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     $p = Get-Panes $top | Where-Object { $_.Hwnd -eq $hP }
     Assert "the grid starts right after the rail (P.left $($p.Left), rail.right $($sb.Right))" ($p.Left -ge $sb.Right -and $p.Left - $sb.Right -le (Px 4))
     $c = Save-Shot $sb 'rail'
@@ -323,7 +325,7 @@ try {
     [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
     Start-Sleep -Milliseconds 600
     $sb = Get-Sidebar $top
-    Assert "collapsed back to the rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "collapsed back to the rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     # Roster now: s1 (grid), P (stashed).
     [void](Click $top $sb.Hwnd (Get-TileCenter $sb 1 1))
     Assert "clicking P's tile restored it" (Wait-Stashed $pId0 $false)
@@ -351,7 +353,7 @@ try {
     [void](Set-TestWindowSize -Window $top -Width (Px 600) -Height (Px 600))
     Start-Sleep -Milliseconds 800
     $sb = Get-Sidebar $top
-    Assert "under 720 DIP the column is the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "under 720 DIP the column is the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 76)) -le 1)
     [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
     Start-Sleep -Milliseconds 800
     $sb = Get-Sidebar $top
@@ -374,7 +376,7 @@ try {
     Start-Sleep -Milliseconds 700
     $new = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore)
     $sb = Get-Sidebar $top
-    Assert "the header's toggle collapsed it to the 68 DIP rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "the header's toggle collapsed it to the 76 DIP rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     Assert "...through the one toggle (log: expanded=false cause=header button)" (@($new | Where-Object { $_ -match 'pane sidebar expanded=false cause=header button' }).Count -ge 1)
     Assert "no card opened over the grid (no GhozttyPaneSidebarCard)" ((Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard' -AllowHidden) -eq [IntPtr]::Zero)
     Assert "...and nothing logged a card (log)" (@($new | Where-Object { $_ -match 'pane sidebar card ' }).Count -eq 0)
@@ -390,7 +392,7 @@ try {
     Start-Sleep -Milliseconds 600
     $new = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore)
     $sb = Get-Sidebar $top
-    Assert "the column is still the rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "the column is still the rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     Assert "no card window exists" ((Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard' -AllowHidden) -eq [IntPtr]::Zero)
     Assert "nothing armed or opened (log)" (@($new | Where-Object { $_ -match 'hover-open|pane sidebar card ' }).Count -eq 0)
 
@@ -398,7 +400,7 @@ try {
     [void](Set-TestWindowSize -Window $top -Width (Px 600) -Height (Px 600))
     Start-Sleep -Milliseconds 800
     $sb = Get-Sidebar $top
-    Assert "narrow: the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "narrow: the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 76)) -le 1)
     $tip = @(Get-Content $errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar tips ' }) | Select-Object -Last 1
     "  $tip"
     Assert "the toggle's tip says why it is off" ($tip -match 'toggle="Too narrow to expand')
@@ -409,12 +411,12 @@ try {
     Start-Sleep -Milliseconds 600
     $new = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore)
     $sb = Get-Sidebar $top
-    Assert "a click on the disabled toggle changed nothing ($($sb.Width))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "a click on the disabled toggle changed nothing ($($sb.Width))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     Assert "...and flipped no hidden choice (log: no expanded=true)" (@($new | Where-Object { $_ -match 'pane sidebar expanded=true' }).Count -eq 0)
     [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
     Start-Sleep -Milliseconds 800
     $sb = Get-Sidebar $top
-    Assert "wide again, still the rail: the dead click did not expand it later ($($sb.Width))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
+    Assert "wide again, still the rail: the dead click did not expand it later ($($sb.Width))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     $tip = @(Get-Content $errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar tips ' }) | Select-Object -Last 1
     Assert "...and the toggle is on again (tip)" ($tip -match 'toggle="Expand the sidebar"')
 

@@ -16,7 +16,7 @@
 #   B) a nudge of the P|s1 divider leaves the panel expanded and logs no
 #      divider-drag cause
 #   C) the divider dragged to the window's left edge tucks the panel into the
-#      68 DIP rail, logged `expanded=false cause=divider drag`
+#      76 DIP rail, logged `expanded=false cause=divider drag`
 #   D) still held, dragged back to where it began: the panel comes out again,
 #      logged `expanded=true cause=divider drag back`, and let go there the
 #      three panes are all on show
@@ -76,7 +76,7 @@ function Wait-Columns([IntPtr]$top, [int]$n, [int]$timeoutSec = 20) {
 }
 function Get-NewLog([int]$Skip) { @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $Skip) }
 function Get-LogCount { @(Get-Content $script:errlog -ErrorAction SilentlyContinue).Count }
-function Test-IsRail($sb) { $null -ne $sb -and [math]::Abs($sb.Width - (Px 68)) -le 1 }
+function Test-IsRail($sb) { $null -ne $sb -and [math]::Abs($sb.Width - (Px 76)) -le 1 }
 
 # -----------------------------------------------------------------------------
 
@@ -126,7 +126,7 @@ try {
     if (Test-IsRail $sb) {
         # The toggle: centered in the rail card, the card's inset below its top
         # (pane-sidebar.ps1 Get-ToggleCenter).
-        $margin = Px 12; $card = Px 44; $tile = Px 28
+        $margin = Px 12; $card = Px 52; $tile = Px 28
         $inset = [int][math]::Truncate(($card - $tile) / 2)
         $pt = @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
         [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $pt.X -Y $pt.Y -Action click)
@@ -134,7 +134,7 @@ try {
     }
     $sb = Get-Sidebar $top
     $panelW = $sb.Width
-    Assert ((-not (Test-IsRail $sb)) -and $panelW -gt (Px 150)) "A: the sidebar is the expanded panel ($panelW px, the rail is $(Px 68))"
+    Assert ((-not (Test-IsRail $sb)) -and $panelW -gt (Px 150)) "A: the sidebar is the expanded panel ($panelW px, the rail is $(Px 76))"
     if (Test-IsRail $sb) { Write-TestAssertedNothing -Reason 'the sidebar never expanded' }
     Start-Sleep -Milliseconds 500
     $c3 = @(Get-VisiblePanes $top)
@@ -185,7 +185,7 @@ try {
     if ($NegativeControl) {
         Assert (-not (Test-IsRail $sb)) 'NEGATIVE: the sidebar stayed expanded at the window''s edge'
     } else {
-        Assert (Test-IsRail $sb) "C: at the window's edge the panel tucked into the 68 DIP rail ($($sb.Width) px)"
+        Assert (Test-IsRail $sb) "C: at the window's edge the panel tucked into the 76 DIP rail ($($sb.Width) px)"
         Assert (@($new | Where-Object { $_ -match 'pane sidebar expanded=false cause=divider drag\s*$' }).Count -eq 1) 'C: ...once, logged with its cause (divider drag)'
         Assert ($null -ne $tuckedAt -and $tuckedAt -lt $x0 - (Px 100)) "C: ...only once pushed well past the nudge (at x=$tuckedAt, began at $x0)"
     }

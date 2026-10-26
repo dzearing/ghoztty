@@ -8,10 +8,10 @@
 # posted press / moves / release on the sidebar window itself (screen
 # coordinates, as the other sidebar harnesses drive it). What it checks:
 #
-#   1. The rail's edge: a 40 DIP pull does nothing (still the 68 DIP rail, no
+#   1. The rail's edge: a 40 DIP pull does nothing (still the 76 DIP rail, no
 #      expand in the log); pulled on past 120 DIP it expands, the column becomes
 #      the panel, and the release leaves it where the pointer is (the 180
-#      minimum, since the drag measured from the rail's 44 DIP card).
+#      minimum, since the drag measured from the rail's 52 DIP card).
 #   2. The expanded panel's edge follows the pointer: +100 DIP -> 280, and the
 #      grid's first pane starts right after the new column.
 #   3. Pulled far right it stops at 380; pushed far left it stops at 180 and
@@ -79,7 +79,7 @@ function ElevColumn([double]$Dip) { (Px 10) + (Px $Dip) }
 # header's first item on the same pixels (pane-sidebar.ps1's
 # Get-ToggleCenter), flat insets.
 function Get-ToggleCenter($sb) {
-    $margin = Px 12; $card = Px 44; $tile = Px 28
+    $margin = Px 12; $card = Px 52; $tile = Px 28
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
 }
@@ -139,18 +139,18 @@ try {
 
     "== 1: the rail's edge expands once pulled past 120 DIP, and not before"
     $sb = Get-Sidebar $top
-    Assert "setup: the 68 DIP rail is up ($($sb.Width))" ($null -ne $sb -and (Near $sb.Width (Px 68)))
+    Assert "setup: the 76 DIP rail is up ($($sb.Width))" ($null -ne $sb -and (Near $sb.Width (Px 76)))
     if ($null -eq $sb) { return }
-    # Just inside the rail card's trailing edge (12 DIP margin + 44 DIP
+    # Just inside the rail card's trailing edge (12 DIP margin + 52 DIP
     # card): the band never reaches past the card (T2125).
-    $ex = $sb.Left + (Px 56) - 1; $ey = $sb.Top + (Px 300)
+    $ex = $sb.Left + (Px 64) - 1; $ey = $sb.Top + (Px 300)
     $from = Get-LogCount
     $ok = Invoke-EdgeDrag $top $sb.Hwnd $ex $ey @(20, 40)
     Assert "the press reached the rail" $ok
     $sb = Get-Sidebar $top
     $lines = Get-LogSince $from
-    Assert "a 40 DIP pull leaves the rail alone ($($sb.Width))" (Near $sb.Width (Px 68))
-    Assert "the drag ran (log: edge drag start surface=rail mode=mini from=44)" (@($lines | Where-Object { $_ -match 'pane sidebar edge drag start surface=rail mode=mini from=44' }).Count -ge 1)
+    Assert "a 40 DIP pull leaves the rail alone ($($sb.Width))" (Near $sb.Width (Px 76))
+    Assert "the drag ran (log: edge drag start surface=rail mode=mini from=52)" (@($lines | Where-Object { $_ -match 'pane sidebar edge drag start surface=rail mode=mini from=52' }).Count -ge 1)
     Assert "and expanded nothing" (@($lines | Where-Object { $_ -match 'edge drag expanded' }).Count -eq 0)
     $from = Get-LogCount
     [void](Invoke-EdgeDrag $top $sb.Hwnd $ex $ey @(40, 80, 90))
@@ -192,7 +192,7 @@ try {
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(-150, -300, -360))
     $sb = Get-Sidebar $top
     $lines = Get-LogSince $from
-    Assert "far left stops at 180 ($($sb.Width) vs $(Px 180)), not the 68 rail" (Near $sb.Width (FlatColumn 180))
+    Assert "far left stops at 180 ($($sb.Width) vs $(Px 180)), not the 76 rail" (Near $sb.Width (FlatColumn 180))
     Assert "and it is still expanded (log)" (@($lines | Where-Object { $_ -match 'edge drag end expanded=true width=180' }).Count -eq 1)
 
     "== 4: a press on the edge is not a click on the row under it"
@@ -230,7 +230,7 @@ try {
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-ToggleCenter $sb).X -Y (Get-ToggleCenter $sb).Y -Action click)
     Start-Sleep -Milliseconds 600
     $sb = Get-Sidebar $top
-    Assert "the toggle collapsed it to the rail ($($sb.Width) vs $(Px 68))" ($null -ne $sb -and (Near $sb.Width (Px 68)))
+    Assert "the toggle collapsed it to the rail ($($sb.Width) vs $(Px 76))" ($null -ne $sb -and (Near $sb.Width (Px 76)))
     Assert "no card opened over the grid" ((Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard' -AllowHidden) -eq [IntPtr]::Zero)
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-ToggleCenter $sb).X -Y (Get-ToggleCenter $sb).Y -Action click)
     Start-Sleep -Milliseconds 600
@@ -252,9 +252,9 @@ try {
     [void](Invoke-Cli "+split --direction=right --name=s1")
     Start-Sleep -Milliseconds 900
     $sb = Get-Sidebar $top
-    Assert "setup: the elevated rail is up ($($sb.Width) vs $(Px 54))" ($null -ne $sb -and (Near $sb.Width (Px 54)))
+    Assert "setup: the elevated rail is up ($($sb.Width) vs $(Px 62))" ($null -ne $sb -and (Near $sb.Width (Px 62)))
     if ($null -eq $sb) { return }
-    # The elevated rail's card: a 10 DIP leading margin, the 44 DIP card,
+    # The elevated rail's card: a 10 DIP leading margin, the 52 DIP card,
     # no trailing inset - its edge band ends at the column's.
     $ey = $sb.Top + (Px 300)
     [void](Invoke-EdgeDrag $top $sb.Hwnd ($sb.Right - 1) $ey @(40, 80, 90))

@@ -4,23 +4,25 @@
 //! The sidebar is a per-window column, left of the split grid, that lists
 //! every pane of the active tab: the panes in the grid (focused one selected)
 //! and then the stashed ones (T1827). Expanded, it is a flat panel;
-//! collapsed, it is a raised card holding one tile per pane — the mini rail.
+//! collapsed, it is a raised card holding one tile per pane — the mini rail,
+//! each tile its row with the text taken away.
 //! One button switches the two (T2289, Mac e77422577): the header's first
 //! item, centred on the rail's column in both modes so it never moves. There
 //! is no pin and no hover-open. Hidden outright, it takes no space at all.
 //!
 //! Everything here is arithmetic and string rules — modes, column widths,
-//! the rail tile monogram, the row text, and the geometry the window paints
+//! the row text, and the geometry the window paints
 //! and hit-tests — so it is asserted at 1.0 / 1.25 / 1.5 / 2.0 without a
 //! window, in every lane. The HWND that paints it is `PaneSidebar.zig`.
 //!
 //! Numbers. The ROWS reuse the viewer side panel's (`viewer_toc_layout`):
 //! Mac's design says the pane sidebar is "the same card, not a lookalike" of
 //! the table of contents, so its fill inset, text inset, vertical padding and
-//! corner are imported, not restated. The rail card is Mac's 44 DIP inside the
-//! design system's `lg` card margin (12, which IS `GlassCard.outerMargin`), and
-//! a tile is the standard 28 DIP icon-button square, so the rail's column is
-//! Mac's 68 exactly.
+//! corner are imported, not restated. A rail tile is a row without its text
+//! (T2279, Mac 75dc046e3): the same pill, the same icon at the same place, so
+//! the rail card is that pill and its insets (52 DIP) inside the design
+//! system's `lg` card margin (12, which IS `GlassCard.outerMargin`) - the
+//! rail's column is Mac's 76 exactly.
 
 const std = @import("std");
 const toc = @import("viewer_toc_layout.zig");
@@ -47,15 +49,24 @@ pub const default_width_dip: f32 = 240;
 pub const min_width_dip: f32 = 180;
 pub const max_width_dip: f32 = 380;
 
-/// The rail's card, and the margin around it (design system `lg`).
-pub const rail_card_dip: f32 = 44;
+/// A row's icon box (Mac `PaneSidebarRow.iconWidth`).
+pub const icon_dip: f32 = 16;
+
+/// The rail's card (T2279, Mac 75dc046e3 `railCardWidth`): exactly a row's
+/// pill around its icon - the pill `fill_inset` in from each side, the icon
+/// `text_inset` into the pill - so a tile is its row without the text and
+/// collapsing or expanding the sidebar moves no icon. 52 DIP.
+pub const rail_card_dip: f32 = 2 * (toc.fill_inset_dip + toc.text_inset_dip) + icon_dip;
+/// The margin around the card (design system `lg`).
 pub const rail_margin_dip: f32 = 12;
 
-/// A rail tile: the standard icon-button square, so a tile and the toggle
-/// above it are the same control size (design system §2.1).
-pub const tile_dip: f32 = 28;
-/// Between tiles (`sm`), and between the toggle and the first tile (`md`).
-pub const tile_gap_dip: f32 = 4;
+/// Every pane row's height, a full row or a rail tile (T2279, Mac
+/// `PaneSidebarRow.height`): one number, so a pane's icon sits at the same
+/// height in both modes. Its pill is a pixel short of it - the hairline gap
+/// between two rows.
+pub const row_dip: f32 = 38;
+/// Between this window's grid and its stash on the rail (`md`), the hairline
+/// in the middle of it.
 pub const rail_group_gap_dip: f32 = 8;
 
 /// The standard icon button the header's buttons are drawn as.
@@ -175,75 +186,9 @@ pub fn px(dip: f32, scale: f32) i32 {
 /// The title a terminal has before anything sets one (Ghostty's ghost).
 pub const placeholder_title = "\u{1F47B}";
 
-/// A rail tile's label (Mac `PaneSidebarText.monogram`). Every terminal shares
-/// one icon, so a tile needs text that tells panes apart: the part of the
-/// title after a dash (`claude — relay` → `RE`, `claude — pane sidebar` →
-/// `PS`), else a path's last component (`~/git/ghoztty` → `gho`), else the
-/// command's first word with its path and extension gone (`pwsh`, `zsh`), up
-/// to three characters. Windows adds the drive-letter and UNC path shapes a
-/// shell titles itself with here (`C:\Program Files\PowerShell\7\pwsh.exe` →
-/// `pws`). Written into `buf` as UTF-8.
-pub fn monogram(title_raw: []const u8, buf: *[16]u8) []const u8 {
-    const title = std.mem.trim(u8, title_raw, " \t");
-
-    // `<command> — <what>`: the part that tells two panes apart.
-    if (dashTail(title)) |tail| {
-        var words: [2][]const u8 = undefined;
-        var n: usize = 0;
-        var it = WordIter{ .s = tail };
-        while (it.next()) |w| {
-            if (n < 2) words[n] = w;
-            n += 1;
-        }
-        if (n >= 2) {
-            var len: usize = 0;
-            len += upperFirst(words[0], buf[len..]);
-            len += upperFirst(words[1], buf[len..]);
-            return buf[0..len];
-        }
-        if (n == 1) return upperPrefix(words[0], 2, buf);
-    }
-
-    // A path - what a shell titles itself by default: its last component,
-    // and home is "~" itself (a mark, not a bullet).
-    if (isPath(title)) {
-        const last = lastComponent(title);
-        if (last.len == 0 or std.mem.eql(u8, last, "~")) {
-            buf[0] = if (std.mem.eql(u8, title, "/")) '/' else '~';
-            return buf[0..1];
-        }
-        const m = lowerAlnumPrefix(stripExe(last), 3, buf);
-        if (m.len > 0) return m;
-    }
-
-    // A command: its first word, minus any path ("/bin/zsh" -> "zsh").
-    const first = blk: {
-        const sp = std.mem.indexOfScalar(u8, title, ' ') orelse title.len;
-        break :blk title[0..sp];
-    };
-    const m = lowerAlnumPrefix(stripExe(lastComponent(first)), 3, buf);
-    if (m.len > 0) return m;
-
-    // No letters at all: show what there is rather than nothing.
-    var len: usize = 0;
-    var cps: usize = 0;
-    var view = std.unicode.Utf8View.init(title) catch return bullet(buf);
-    var cit = view.iterator();
-    while (cit.nextCodepointSlice()) |cp| {
-        if (cp.len == 1 and std.ascii.isWhitespace(cp[0])) continue;
-        if (len + cp.len > buf.len) break;
-        @memcpy(buf[len..][0..cp.len], cp);
-        len += cp.len;
-        cps += 1;
-        if (cps == 2) break;
-    }
-    if (len == 0) return bullet(buf);
-    return buf[0..len];
-}
-
 /// The name a row shows (Mac `PaneSidebarText.title`). A terminal that never
-/// set a title carries the ghost placeholder, which names nothing and gives a
-/// rail tile no letters — so it falls back to the working directory's name,
+/// set a title carries the ghost placeholder, which names nothing - so it
+/// falls back to the working directory's name,
 /// then to the pane kind.
 pub fn displayTitle(raw: ?[]const u8, pwd: ?[]const u8, kind: []const u8) []const u8 {
     if (raw) |r| {
@@ -383,77 +328,12 @@ pub fn abbreviatePath(path: []const u8, home: ?[]const u8, buf: []u8) []const u8
     return buf[0 .. 1 + rest.len];
 }
 
-fn bullet(buf: *[16]u8) []const u8 {
-    const b = "\u{2022}";
-    @memcpy(buf[0..b.len], b);
-    return buf[0..b.len];
-}
-
-/// The text after " — " (em dash) or " - ", trimmed; null when neither.
-fn dashTail(title: []const u8) ?[]const u8 {
-    const seps = [_][]const u8{ " \u{2014} ", " - " };
-    for (seps) |sep| {
-        if (std.mem.indexOf(u8, title, sep)) |i| {
-            return std.mem.trim(u8, title[i + sep.len ..], " \t");
-        }
-    }
-    return null;
-}
-
-fn isPath(t: []const u8) bool {
-    if (std.mem.eql(u8, t, "~")) return true;
-    if (std.mem.startsWith(u8, t, "~/") or std.mem.startsWith(u8, t, "~\\")) return true;
-    if (std.mem.startsWith(u8, t, "/") or std.mem.startsWith(u8, t, "\\\\")) return true;
-    // `C:\...` / `C:/...`
-    return t.len >= 3 and std.ascii.isAlphabetic(t[0]) and t[1] == ':' and
-        (t[2] == '\\' or t[2] == '/');
-}
-
 fn lastComponent(p: []const u8) []const u8 {
     const trimmed = std.mem.trimRight(u8, p, "/\\");
     if (trimmed.len == 0) return p[0..@min(p.len, 1)];
     const i = std.mem.lastIndexOfAny(u8, trimmed, "/\\") orelse return trimmed;
     return trimmed[i + 1 ..];
 }
-
-/// `pwsh.exe` -> `pwsh`: Windows titles a shell by its executable.
-fn stripExe(name: []const u8) []const u8 {
-    if (name.len > 4 and std.ascii.eqlIgnoreCase(name[name.len - 4 ..], ".exe"))
-        return name[0 .. name.len - 4];
-    return name;
-}
-
-/// Whether a codepoint counts as a letter or digit. ASCII is classified;
-/// anything beyond it is taken as a letter (a CJK or accented title still
-/// gets a monogram rather than a bullet).
-fn isWordCp(cp: []const u8) bool {
-    if (cp.len == 1) return std.ascii.isAlphanumeric(cp[0]);
-    return true;
-}
-
-const WordIter = struct {
-    s: []const u8,
-    i: usize = 0,
-
-    fn next(self: *WordIter) ?[]const u8 {
-        // Skip separators.
-        while (self.i < self.s.len) {
-            const n = std.unicode.utf8ByteSequenceLength(self.s[self.i]) catch 1;
-            const end = @min(self.i + n, self.s.len);
-            if (isWordCp(self.s[self.i..end])) break;
-            self.i = end;
-        }
-        if (self.i >= self.s.len) return null;
-        const start = self.i;
-        while (self.i < self.s.len) {
-            const n = std.unicode.utf8ByteSequenceLength(self.s[self.i]) catch 1;
-            const end = @min(self.i + n, self.s.len);
-            if (!isWordCp(self.s[self.i..end])) break;
-            self.i = end;
-        }
-        return self.s[start..self.i];
-    }
-};
 
 const LineIter = struct {
     s: []const u8,
@@ -479,53 +359,6 @@ const LineIter = struct {
         return self.s[start..];
     }
 };
-
-/// The first codepoint of `word`, uppercased when ASCII. Returns bytes written.
-fn upperFirst(word: []const u8, out: []u8) usize {
-    if (word.len == 0) return 0;
-    const n = @min(std.unicode.utf8ByteSequenceLength(word[0]) catch 1, word.len);
-    if (n > out.len) return 0;
-    @memcpy(out[0..n], word[0..n]);
-    if (n == 1) out[0] = std.ascii.toUpper(out[0]);
-    return n;
-}
-
-/// The first `max` codepoints of `word`, ASCII uppercased.
-fn upperPrefix(word: []const u8, max: usize, buf: *[16]u8) []const u8 {
-    var len: usize = 0;
-    var count: usize = 0;
-    var i: usize = 0;
-    while (i < word.len and count < max) {
-        const n = @min(std.unicode.utf8ByteSequenceLength(word[i]) catch 1, word.len - i);
-        if (len + n > buf.len) break;
-        @memcpy(buf[len..][0..n], word[i..][0..n]);
-        if (n == 1) buf[len] = std.ascii.toUpper(buf[len]);
-        len += n;
-        i += n;
-        count += 1;
-    }
-    return buf[0..len];
-}
-
-/// The first `max` letters/digits of `s`, ASCII lowercased, skipping anything
-/// else ("ghoztty-wt" -> "gho").
-fn lowerAlnumPrefix(s: []const u8, max: usize, buf: *[16]u8) []const u8 {
-    var len: usize = 0;
-    var count: usize = 0;
-    var i: usize = 0;
-    while (i < s.len and count < max) {
-        const n = @min(std.unicode.utf8ByteSequenceLength(s[i]) catch 1, s.len - i);
-        const cp = s[i..][0..n];
-        i += n;
-        if (!isWordCp(cp)) continue;
-        if (len + n > buf.len) break;
-        @memcpy(buf[len..][0..n], cp);
-        if (n == 1) buf[len] = std.ascii.toLower(buf[len]);
-        len += n;
-        count += 1;
-    }
-    return buf[0..len];
-}
 
 fn isThematicBreak(line: []const u8) bool {
     var first: u8 = 0;
@@ -892,6 +725,22 @@ pub fn rowHeight(two_line: bool, tm: TextMetrics, scale: f32) i32 {
     return lines + 2 * px(toc.row_v_pad_dip, scale);
 }
 
+/// A pane row's pill - a full row's or a rail tile's, one height for both
+/// (T2279, Mac `PaneSidebarRow.height` less the hairline between rows), so
+/// a pane's icon sits at the same height expanded or collapsed. Never short
+/// of the two lines a full row can hold, should the system's text run large.
+pub fn pillHeight(tm: TextMetrics, scale: f32) i32 {
+    // A line's height already carries its leading, so two lines touching
+    // the pill's edges still read as padded.
+    const min = tm.title_h + tm.caption_h;
+    return @max(px(row_dip, scale) - rowGap(scale), min);
+}
+
+/// The hairline between two pane rows (and two tiles).
+pub fn rowGap(scale: f32) i32 {
+    return @max(px(1, scale), 1);
+}
+
 /// Lay the sidebar out in a `w` x `h` client area.
 pub fn layout(m: Mode, w: i32, h: i32, items: []const Item, tm: TextMetrics, scale: f32) Layout {
     return layoutWith(m, w, h, items, null, tm, scale);
@@ -923,10 +772,10 @@ pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Li
             layoutHeader(&l, area, tm, scale, insets);
             if (lines) |ls| {
                 layoutSearch(&l, area, tm, scale);
-                layoutLines(&l, area, items[0..n], ls, tm, scale);
+                layoutLines(&l, area, ls, tm, scale);
             } else layoutRows(&l, area, items[0..n], tm, scale);
         },
-        .mini => layoutMini(&l, items[0..n], scale, insets),
+        .mini => layoutMini(&l, items[0..n], tm, scale, insets),
     }
     return l;
 }
@@ -950,38 +799,48 @@ fn findStash(l: *Layout, items: []const Item) void {
 }
 
 /// The collapse/expand button (T2289, Mac dc2bbab6b `toggleLeading`): the
-/// rail's first item - a tile's square, centred in the rail's card, `inset`
-/// below where the card's content starts - and the panel header's first
-/// item at exactly the same pixels, so toggling never moves it under the
-/// pointer. Laid out from the column's own insets in either mode, since the
-/// column starts at the window's edge whichever it is.
+/// rail's first item - the standard icon-button square, centred in the
+/// rail's card, `inset` below where the card's content starts - and the panel
+/// header's first item at exactly the same pixels, so toggling never moves it
+/// under the pointer. Laid out from the column's own insets in either mode,
+/// since the column starts at the window's edge whichever it is.
 pub fn toggleRect(scale: f32, insets: RailInsets) Rect {
-    const card_w = px(rail_card_dip, scale);
-    const tile = px(tile_dip, scale);
-    // Centred in the card from ONE rounded inset, so the left and right
-    // clearances cannot round apart.
-    const inset = @divTrunc(card_w - tile, 2);
+    const btn = px(button_dip, scale);
+    const inset = toggleClear(scale);
     const x = insets.leadingPx(scale) + inset;
     // The card runs up beside the tab strip (T1900); its content starts
     // below it.
     const y = insets.verticalPx(scale) + insets.reach_px + inset;
-    return .{ .left = x, .top = y, .right = x + tile, .bottom = y + tile };
+    return .{ .left = x, .top = y, .right = x + btn, .bottom = y + btn };
+}
+
+/// The toggle's clearance from the card's edges: centred in the card from
+/// ONE rounded inset, so the left and right clearances cannot round apart.
+fn toggleClear(scale: f32) i32 {
+    return @divTrunc(px(rail_card_dip, scale) - px(button_dip, scale), 2);
+}
+
+/// The header band round the toggle, in BOTH modes (T2279): it holds the
+/// toggle with the same clearance above and below it that it keeps from the
+/// rail card's edges, and is never shorter than the caption's own header
+/// height (design system §0: the band is sized to its control, never the
+/// reverse). The first row starts at its bottom expanded and collapsed alike,
+/// so a pane's icon is at the same height in both.
+fn headerBand(l: *Layout, area: Rect, tm: TextMetrics, scale: f32) void {
+    const clear = toggleClear(scale);
+    const top = @max(area.top, l.toggle.top - clear);
+    const bottom = @max(l.toggle.bottom + clear, top + toc.headerHeight(tm.caption_h, scale));
+    l.header = .{ .left = area.left, .top = top, .right = area.right, .bottom = bottom };
 }
 
 /// The header band: the toggle first (`toggleRect`), the caption after it,
 /// then the all-windows button at the trailing edge, all on the toggle's
-/// row. The band holds the toggle with the same clearance above
-/// and below it that it keeps from the rail card's edges, and is never
-/// shorter than the caption's own header height (design system §0: the band
-/// is sized to its control, never the reverse).
+/// row (`headerBand`).
 fn layoutHeader(l: *Layout, area: Rect, tm: TextMetrics, scale: f32, insets: RailInsets) void {
     const sm = px(sm_dip, scale);
     const btn = px(button_dip, scale);
     l.toggle = toggleRect(scale, insets);
-    const clear = @divTrunc(px(rail_card_dip, scale) - px(tile_dip, scale), 2);
-    const top = @max(area.top, l.toggle.top - clear);
-    const bottom = @max(l.toggle.bottom + clear, top + toc.headerHeight(tm.caption_h, scale));
-    l.header = .{ .left = area.left, .top = top, .right = area.right, .bottom = bottom };
+    headerBand(l, area, tm, scale);
     // Mac's header buttons sit 2 pt apart, and the caption is padded 4 more
     // past the toggle.
     const gap = px(2, scale);
@@ -1018,9 +877,10 @@ fn bodyTop(l: *const Layout, scale: f32) i32 {
 fn layoutRows(l: *Layout, area: Rect, items: []const Item, tm: TextMetrics, scale: f32) void {
     const sm = px(sm_dip, scale);
     const fill = px(toc.fill_inset_dip, scale);
-    const gap = @max(px(1, scale), 1);
+    const gap = rowGap(scale);
+    const rh = pillHeight(tm, scale);
     var y = l.header.bottom;
-    for (items, 0..) |it, i| {
+    for (items, 0..) |_, i| {
         if (i == l.first_stashed) {
             // A hairline, then the STASHED caption at the header's padding.
             const rule_y = y + sm;
@@ -1031,8 +891,7 @@ fn layoutRows(l: *Layout, area: Rect, items: []const Item, tm: TextMetrics, scal
         } else if (i != 0) {
             y += gap;
         }
-        const rh = rowHeight(it.two_line, tm, scale);
-        l.items[i] = .{ .left = area.left + fill, .top = y, .right = area.right - fill, .bottom = y + rh };
+        l.items[i] =.{ .left = area.left + fill, .top = y, .right = area.right - fill, .bottom = y + rh };
         y += rh;
     }
 }
@@ -1044,7 +903,7 @@ fn layoutRows(l: *Layout, area: Rect, items: []const Item, tm: TextMetrics, scal
 /// pane row's FILL spans the panel, as a row's does; only its content is
 /// indented, by one chevron and its gap per level. Items no line names - the
 /// panes of a folded group - get an empty rect.
-fn layoutLines(l: *Layout, area: Rect, items: []const Item, lines: []const Line, tm: TextMetrics, scale: f32) void {
+fn layoutLines(l: *Layout, area: Rect, lines: []const Line, tm: TextMetrics, scale: f32) void {
     const sm = px(sm_dip, scale);
     const fill = px(toc.fill_inset_dip, scale);
     const label = px(toc.label_inset_dip, scale);
@@ -1091,7 +950,7 @@ fn layoutLines(l: *Layout, area: Rect, items: []const Item, lines: []const Line,
             .pane => {
                 if (prev == .pane) y += hair;
                 if (ln.index >= l.count) continue;
-                const rh = rowHeight(items[ln.index].two_line, tm, scale);
+                const rh = pillHeight(tm, scale);
                 l.items[ln.index] = .{ .left = area.left + fill, .top = y, .right = area.right - fill, .bottom = y + rh };
                 l.indent[ln.index] = depth * step;
                 y += rh;
@@ -1130,14 +989,21 @@ fn layoutCard(l: *Layout, card_w: i32, insets: RailInsets, scale: f32) void {
     l.card = .{ .left = lead, .top = v, .right = lead + @max(card_w, 0), .bottom = @max(l.height - v, v + insets.reach_px + min_h) };
 }
 
-fn layoutMini(l: *Layout, items: []const Item, scale: f32, insets: RailInsets) void {
+/// The rail (T2279, Mac 75dc046e3): the toggle, then one tile per pane, each
+/// the row it is in the expanded list without its text - the same pill
+/// (`fill_inset` in from the card), the same height, from the same top - so
+/// toggling the sidebar moves no icon.
+fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, insets: RailInsets) void {
     layoutCard(l, px(rail_card_dip, scale), insets, scale);
-    const tile = px(tile_dip, scale);
-    // The toggle first; the tiles hang under it on its column.
     l.toggle = toggleRect(scale, insets);
-    const x = l.toggle.left;
-    const gap = px(tile_gap_dip, scale);
-    var y = l.toggle.bottom + px(rail_group_gap_dip, scale);
+    const c = l.card;
+    headerBand(l, .{ .left = c.left, .top = @min(c.top + insets.reach_px, c.bottom), .right = c.right, .bottom = c.bottom }, tm, scale);
+    const fill = px(toc.fill_inset_dip, scale);
+    const left = c.left + fill;
+    const right = c.right - fill;
+    const tile = pillHeight(tm, scale);
+    const gap = rowGap(scale);
+    var y = l.header.bottom;
     for (0..l.count) |i| {
         // A hairline between this window's grid and its stash; in the
         // outline, also between one window's tiles and the next's (Mac: "in
@@ -1151,11 +1017,11 @@ fn layoutMini(l: *Layout, items: []const Item, scale: f32, insets: RailInsets) v
             // The hairline sits in the middle of an `md` gap.
             const group = px(rail_group_gap_dip, scale);
             const rule_y = y - gap + @divTrunc(group, 2);
-            const rule: Rect = .{ .left = x, .top = rule_y, .right = x + tile, .bottom = rule_y + @max(px(1, scale), 1) };
+            const rule: Rect = .{ .left = left, .top = rule_y, .right = right, .bottom = rule_y + @max(px(1, scale), 1) };
             if (l.outline) l.addRule(rule) else l.section_rule = rule;
             y += group - gap;
         }
-        l.items[i] = .{ .left = x, .top = y, .right = x + tile, .bottom = y + tile };
+        l.items[i] = .{ .left = left, .top = y, .right = right, .bottom = y + tile };
         y += tile + gap;
     }
 }
@@ -1188,16 +1054,18 @@ pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
         l.drop_slot = .{ .left = area.left + fill, .top = top, .right = area.right - fill, .bottom = top + rowHeight(false, tm, scale) };
         return;
     }
-    const tile = px(tile_dip, scale);
+    const tile = pillHeight(tm, scale);
     const group = px(rail_group_gap_dip, scale);
-    const x = l.toggle.left;
+    const fill = px(toc.fill_inset_dip, scale);
+    const left = l.card.left + fill;
+    const right = l.card.right - fill;
     // The same spacing a stashed group gets: `md` below the last tile, the
     // hairline in the middle of it.
-    const below = if (l.count > 0) l.items[l.count - 1].bottom else l.toggle.bottom;
+    const below = if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom;
     const rule_y = below + @divTrunc(group, 2);
-    l.section_rule = .{ .left = x, .top = rule_y, .right = x + tile, .bottom = rule_y + hair };
+    l.section_rule = .{ .left = left, .top = rule_y, .right = right, .bottom = rule_y + hair };
     const top = below + group;
-    l.drop_slot = .{ .left = x, .top = top, .right = x + tile, .bottom = top + tile };
+    l.drop_slot = .{ .left = left, .top = top, .right = right, .bottom = top + tile };
 }
 
 pub const Hit = union(enum) {
@@ -1377,10 +1245,10 @@ test "pane_sidebar: mode follows pin, hidden and the narrow-window fallback" {
     try testing.expectEqual(Mode.mini, mode(false, false, 1200));
 }
 
-test "pane_sidebar: the rail column is Mac's 68, and the panel width is clamped" {
-    try testing.expectEqual(@as(f32, 68), railColumnDip());
+test "pane_sidebar: the rail column is Mac's 76 (T2279: a row's pill and its insets), and the panel width is clamped" {
+    try testing.expectEqual(@as(f32, 76), railColumnDip());
     try testing.expectEqual(@as(f32, 0), columnDip(.hidden, 240));
-    try testing.expectEqual(@as(f32, 68), columnDip(.mini, 240));
+    try testing.expectEqual(@as(f32, 76), columnDip(.mini, 240));
     // Expanded is the card at the panel's width in the rail's own insets
     // (T2290, Mac 0a547522d `columnWidth`): 12 + 240 + 12.
     try testing.expectEqual(@as(f32, 264), columnDip(.expanded, 240));
@@ -1388,31 +1256,10 @@ test "pane_sidebar: the rail column is Mac's 68, and the panel width is clamped"
     try testing.expectEqual(@as(f32, 404), columnDip(.expanded, 900));
     try testing.expectEqual(@as(f32, 240), cardDip(.expanded, 240));
     try testing.expectEqual(rail_card_dip, cardDip(.mini, 240));
-    try testing.expectEqual(@as(i32, 85), columnPx(.mini, 240, 1.25));
+    // The rail card is a row's pill around its icon: 8 + 10 + 16 + 10 + 8.
+    try testing.expectEqual(@as(f32, 52), rail_card_dip);
+    try testing.expectEqual(@as(i32, 95), columnPx(.mini, 240, 1.25));
     try testing.expectEqual(@as(i32, 330), columnPx(.expanded, 240, 1.25));
-}
-
-fn expectMono(want: []const u8, title: []const u8) !void {
-    var buf: [16]u8 = undefined;
-    try testing.expectEqualStrings(want, monogram(title, &buf));
-}
-
-test "pane_sidebar: monogram rules (Mac's cases, plus Windows paths)" {
-    try expectMono("RE", "claude \u{2014} relay");
-    try expectMono("PS", "claude \u{2014} pane-sidebar");
-    try expectMono("PS", "claude - pane sidebar");
-    try expectMono("zsh", "zsh");
-    try expectMono("npm", "npm run dev");
-    try expectMono("zsh", "/bin/zsh");
-    try expectMono("gho", "~/git/ghoztty");
-    try expectMono("~", "~");
-    try expectMono("~", "~/");
-    try expectMono("/", "/");
-    try expectMono("pws", "C:\\Program Files\\PowerShell\\7\\pwsh.exe");
-    try expectMono("cmd", "C:\\WINDOWS\\system32\\cmd.exe");
-    try expectMono("gho", "D:\\git\\ghoztty");
-    try expectMono("\u{2022}", "   ");
-    try expectMono("??", "???");
 }
 
 test "pane_sidebar: displayTitle falls back from the ghost to the directory, then the kind" {
@@ -1649,17 +1496,19 @@ test "pane_sidebar: rail tiles are centered in the card from one inset, at every
         const l = layout(.mini, w, px(600, s), &items, .{ .title_h = 19, .caption_h = 16 }, s);
         try testing.expectEqual(@as(usize, 3), l.count);
         try testing.expectEqual(@as(usize, 2), l.first_stashed);
-        // Left and right clearances inside the card are equal.
+        // Left and right clearances inside the card are equal: a row's fill
+        // inset (T2279).
         const left = l.items[0].left - l.card.left;
         const right = l.card.right - l.items[0].right;
         try testing.expect(@abs(left - right) <= 1);
-        // The toggle is the same square as a tile, on the same column.
-        try testing.expectEqual(l.items[0].width(), l.toggle.width());
-        try testing.expectEqual(l.items[0].left, l.toggle.left);
-        // Nothing touches: >= sm between consecutive tiles and toggle/first tile.
+        try testing.expectEqual(px(toc.fill_inset_dip, s), left);
+        // The toggle is centred on the same column.
+        try testing.expect(@abs(l.items[0].centerX() - l.toggle.centerX()) <= 1);
+        // Nothing touches: sm under the toggle, the rows' hairline between
+        // consecutive tiles.
         const sm = px(sm_dip, s);
         try testing.expect(l.items[0].top - l.toggle.bottom >= sm);
-        try testing.expect(l.items[1].top - l.items[0].bottom >= sm);
+        try testing.expect(l.items[1].top - l.items[0].bottom >= rowGap(s));
         // The section hairline sits strictly between the groups.
         const rule = l.section_rule.?;
         try testing.expect(rule.top >= l.items[1].bottom and rule.bottom <= l.items[2].top);
@@ -1673,9 +1522,9 @@ test "T1850: the elevated rail takes the panes' margin leading, top and bottom, 
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
     const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
     const ins = railInsets(true);
-    // Mac: 10 + 44 + 0.
-    try testing.expectEqual(@as(f32, 54), railColumnDipFor(true));
-    try testing.expectEqual(@as(f32, 68), railColumnDipFor(false));
+    // Mac: 10 + 52 + 0 (T2279).
+    try testing.expectEqual(@as(f32, 62), railColumnDipFor(true));
+    try testing.expectEqual(@as(f32, 76), railColumnDipFor(false));
     // Mac: 10 + 240 + 0 - the card in the rail's insets (T2290).
     try testing.expectEqual(@as(f32, 250), columnDipFor(.expanded, 240, true));
     for (scales) |s| {
@@ -1703,9 +1552,9 @@ test "T1850: the elevated rail takes the panes' margin leading, top and bottom, 
         const e = layoutIn(.expanded, px(240, s), h, &items, null, tm, s, ins);
         try testing.expectEqual(l.toggle, e.toggle);
     }
-    // Flat is the pre-T1850 geometry exactly.
+    // Flat: the card margin either side of the 52 DIP card.
     for (scales) |s| {
-        try testing.expectEqual(px(68, s), columnPx(.mini, 240, s));
+        try testing.expectEqual(px(76, s), columnPx(.mini, 240, s));
     }
 }
 
@@ -1723,9 +1572,9 @@ test "T2289: the toggle is the rail's first item and the panel header's first it
                 // Toggling never moves it under the pointer.
                 try testing.expectEqual(rail.toggle, panel.toggle);
                 try testing.expectEqual(toggleRect(s, ins), rail.toggle);
-                // Centred on the rail card, as wide as a tile.
+                // Centred on the rail card, the standard icon button.
                 try testing.expect(@abs((rail.toggle.left - rail.card.left) - (rail.card.right - rail.toggle.right)) <= 1);
-                try testing.expectEqual(px(tile_dip, s), rail.toggle.width());
+                try testing.expectEqual(px(button_dip, s), rail.toggle.width());
                 // First: above every tile, and left of everything in the
                 // header - the caption starts past it, the other buttons sit
                 // at the trailing edge on its row.
@@ -1782,6 +1631,48 @@ test "T2290: expanded is the rail's card, wider - same leading edge, top and bot
     }
 }
 
+test "T2279: a rail tile is its row without the text - same pill, same height, same place - so toggling moves no icon" {
+    const items = [_]Item{ .{ .section = .grid, .two_line = true }, .{ .section = .grid }, .{ .section = .grid } };
+    for (scales) |s| {
+        for ([_]TextMetrics{ .{ .title_h = px(19, s), .caption_h = px(16, s) }, .{ .title_h = px(16, s), .caption_h = px(14, s) } }) |tm| {
+            const h = px(600, s);
+            for ([_]bool{ false, true }) |elev| {
+                for ([_]i32{ 0, px(36, s) }) |reach| {
+                    var ins = railInsets(elev);
+                    ins.reach_px = reach;
+                    const rail = layoutIn(.mini, columnPxFor(.mini, 240, s, elev), h, &items, null, tm, s, ins);
+                    const panel = layoutIn(.expanded, columnPxFor(.expanded, 240, s, elev), h, &items, null, tm, s, ins);
+                    for (0..items.len) |i| {
+                        const t = rail.items[i];
+                        const r = panel.items[i];
+                        // The same pill: from the same leading edge, the
+                        // same top and the same height - so its icon,
+                        // `text_inset` into it and centred on it, is on the
+                        // same pixels in both modes.
+                        try testing.expectEqual(r.left, t.left);
+                        try testing.expectEqual(r.top, t.top);
+                        try testing.expectEqual(r.height(), t.height());
+                        // Mac's one row height, whatever the row holds.
+                        try testing.expectEqual(pillHeight(tm, s), t.height());
+                        // The tile is the icon with a row's text inset either
+                        // side of it: the rail card is exactly that pill.
+                        const icon = px(icon_dip, s);
+                        const inset = px(toc.text_inset_dip, s);
+                        try testing.expect(@abs(t.width() - (icon + 2 * inset)) <= 1);
+                    }
+                    // Rows a hairline apart in both.
+                    try testing.expectEqual(rail.items[0].bottom + rowGap(s), rail.items[1].top);
+                    try testing.expectEqual(panel.items[0].bottom + rowGap(s), panel.items[1].top);
+                    // And they scroll from the same line.
+                    try testing.expectEqual(scroll.viewportOf(&panel, s).top, scroll.viewportOf(&rail, s).top);
+                }
+            }
+        }
+        // At Mac's sizes the row is Mac's 38 (a 37 pill and its hairline).
+        try testing.expectEqual(px(row_dip, s), pillHeight(.{ .title_h = px(16, s), .caption_h = px(14, s) }, s) + rowGap(s));
+    }
+}
+
 test "T2289: a window too narrow for the panel cannot expand, and its rail stands in" {
     try testing.expect(canExpand(narrow_window_dip));
     try testing.expect(!canExpand(narrow_window_dip - 1));
@@ -1803,7 +1694,10 @@ test "pane_sidebar: expanded rows stack under the header, with the STASHED capti
         // Rows are below the header, in order, without overlap.
         try testing.expect(l.items[0].top >= l.header.bottom);
         try testing.expect(l.items[1].top >= l.items[0].bottom);
-        try testing.expect(l.items[0].height() > l.items[1].height());
+        // Every pane row is one height, one line or two (T2279, Mac
+        // `PaneSidebarRow.height`).
+        try testing.expectEqual(l.items[0].height(), l.items[1].height());
+        try testing.expectEqual(pillHeight(tm, s), l.items[0].height());
         const cap = l.stashed_caption.?;
         try testing.expect(cap.top >= l.items[1].bottom and l.items[2].top >= cap.bottom);
         // The hover x sits inside its row, sm from the trailing edge, and
@@ -1834,7 +1728,7 @@ test "pane_sidebar: hit testing finds the toggle, rows, row buttons and nothing"
     try testing.expectEqual(Hit{ .item_close = 1 }, hitTest(&l, x.centerX(), x.centerY(), s));
     try testing.expectEqual(Hit.none, hitTest(&l, 100, 590, s));
 
-    const rail = layout(.mini, 68, 600, &items, tm, s);
+    const rail = layout(.mini, columnPx(.mini, 240, s), 600, &items, tm, s);
     try testing.expectEqual(Hit{ .item = 1 }, hitTest(&rail, rail.items[1].centerX(), rail.items[1].centerY(), s));
     try testing.expectEqual(Hit.toggle, hitTest(&rail, rail.toggle.centerX(), rail.toggle.centerY(), s));
 
@@ -1947,8 +1841,8 @@ test "pane_sidebar: the outline stacks heads, indented rows, rules and captions 
         try testing.expect(l.rules[1].top > l.items[2].bottom);
         try testing.expect(l.heads[1].rect.top > l.rules[1].bottom);
         try testing.expect(l.items[3].top >= l.heads[1].rect.bottom);
-        // A two-line row is taller.
-        try testing.expect(l.items[1].height() > l.items[0].height());
+        // Every pane row is one height, one line or two (T2279).
+        try testing.expectEqual(l.items[1].height(), l.items[0].height());
         // Fills span the panel; only the content is indented, one step.
         try testing.expectEqual(l.items[0].left, l.heads[0].rect.left);
         try testing.expectEqual(px(outline_step_dip, s), l.indent[0]);
@@ -2199,7 +2093,7 @@ test "pane_sidebar: dragging the rail out past 120 expands it; a panel only resi
     // A rail expanded mid-drag keeps measuring from the rail's card, so the
     // panel's edge then follows the pointer from the minimum up.
     try testing.expectEqual(@as(?EdgeDrag, .{ .width = min_width_dip }), edgeDrag(.expanded, rail_card_dip, 100));
-    try testing.expectEqual(@as(?EdgeDrag, .{ .width = 260 }), edgeDrag(.expanded, rail_card_dip, 216));
+    try testing.expectEqual(@as(?EdgeDrag, .{ .width = 268 }), edgeDrag(.expanded, rail_card_dip, 216));
 
     try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.hidden, 240, 40));
 }

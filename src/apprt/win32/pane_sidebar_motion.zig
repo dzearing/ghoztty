@@ -1,128 +1,209 @@
-//! The pane sidebar's motion (T1843), pure so it is testable: a busy pane's
-//! mark shimmers - drawn dim, with a brighter band sweeping across it. It is
-//! Mac's (`PaneSidebarShimmer` in PaneSidebarView.swift), translated from
-//! SwiftUI's animation clock to a window timer that repaints the column, and
-//! it stops outright when the user turned off "Animation effects"
-//! (SPI_GETCLIENTAREAANIMATION, Mac's Reduce Motion): the busy mark is then
-//! drawn plain. The question badge's breathing ring that was the second
-//! motion went with the badge (T2280, Mac 2924ea5cc).
+//! The pane sidebar's motion (T1843, T2279), pure so it is testable: a busy
+//! pane's row sheens - an upright band of light crosses its pill from the
+//! right edge to the left, now and then, starting and ending fully off it.
+//! It is the SAME sheen on a full row and on a rail tile, since a tile is its
+//! row without the text (Mac 75dc046e3, 2924ea5cc, 919fba868:
+//! `PaneSidebarTileSheenLayer` / `PaneSidebarSheen`). It replaced the glyph
+//! shimmer that ran across the icon alone. Mac's Core Animation clock is a
+//! window timer that repaints the column here, and it stops outright when the
+//! user turned off "Animation effects" (SPI_GETCLIENTAREAANIMATION, Mac's
+//! Reduce Motion): a busy row then shows no sheen at all, as Mac's does not.
+//! The question badge's breathing ring that was the other motion went with
+//! the badge (T2280, Mac 2924ea5cc).
 
 const std = @import("std");
 
-/// One shimmer cycle: a sweep, then a short rest before the next (Mac 1.4s).
-pub const shimmer_period_ms: u64 = 1400;
-/// The part of the period the band spends moving (Mac 0.8).
-pub const shimmer_sweep_fraction: f64 = 0.8;
-/// The band layer is this many times the mark's width, so that at either end
-/// of its travel the bright band is fully off the mark (Mac 3).
+/// One sheen cycle: a sweep, then a rest before the next - an occasional
+/// glint, not a strobe (Mac `period` 2s).
+pub const sheen_period_ms: u64 = 2000;
+/// The part of the period the band spends crossing (Mac `sweep` 0.8s).
+pub const sheen_sweep_ms: u64 = 800;
+/// The band's light at its brightest: faint, a glint that says "working"
+/// rather than a flash (Mac `peak` 0.25 white).
+pub const sheen_peak: f64 = 0.25;
+/// The band layer is this many pills wide… (Mac `bandWidthFactor`)
 pub const band_width_factor: f64 = 3;
-/// The mark's opacity under the band (Mac 0.3: at 0.62 the band read as no
-/// busy indication at all on a 14pt glyph).
-pub const base_opacity: f64 = 0.3;
-/// Where the band's gradient stops sit across the band layer (Mac
-/// `LinearGradient` stops: clear at 0.35, solid at 0.5, clear at 0.65).
-pub const band_stops = [3]f64{ 0.35, 0.5, 0.65 };
+/// …and its light lies in this stretch of it, brightest in the middle (Mac
+/// `PaneSidebarSheen.light`).
+pub const light_lo: f64 = 0.4;
+pub const light_hi: f64 = 0.6;
+/// How far past each edge of the pill the light starts and ends, as a share
+/// of the pill's width (Mac `travel`'s margin).
+pub const travel_margin: f64 = 0.15;
 
+/// The sheen fades in as work starts and out as it stops, so it never pops
+/// on or off (Mac `busyFade`, easeInOut 0.6s).
+pub const fade_ms: u64 = 600;
 
 /// The repaint cadence while anything moves: 30 frames a second is smooth
-/// for a band crossing a 12-16 DIP mark, at half the cost of 60.
+/// for a faint band crossing a row, at half the cost of 60.
 pub const frame_ms: u32 = 33;
 
-/// 1 = band parked off the LEADING edge, 0 = off the TRAILING edge; the
-/// sweep runs 1 -> 0 (left to right), eased, then rests at 0. Mac
-/// `PaneSidebarShimmer.bandPosition`.
-pub fn bandPosition(ms: u64) f64 {
-    const phase = @as(f64, @floatFromInt(ms % shimmer_period_ms)) / @as(f64, @floatFromInt(shimmer_period_ms));
-    const t = @min(1.0, phase / shimmer_sweep_fraction);
-    const eased = if (t < 0.5) 2 * t * t else 1 - std.math.pow(f64, -2 * t + 2, 2) / 2;
-    return 1 - eased;
+pub const Travel = struct { from: f64, to: f64 };
+
+/// Where the band layer's left edge travels for a pill `width` wide: from
+/// the light just past the pill's right edge to just past its left, so a
+/// sweep starts off the pill, crosses it right to left, and leaves it
+/// entirely (Mac `PaneSidebarSheen.travel`; one that stopped short at either
+/// end jumped in, or never quite left).
+pub fn travel(width: f64) Travel {
+    const margin = width * travel_margin;
+    const light_start = light_lo * band_width_factor * width;
+    const light_end = light_hi * band_width_factor * width;
+    return .{ .from = width - light_start + margin, .to = -light_end - margin };
 }
 
-/// How opaque the mark is at `x` across it (0 = leading edge, 1 = trailing)
-/// with the band at `position`: the dim base, plus the band's light on top
-/// (source-over of the same color, so `band + base * (1 - band)`).
-pub fn shimmerAlpha(x: f64, position: f64) f64 {
-    // The band layer is `band_width_factor` marks wide and starts at
-    // -(factor - 1) * position marks (Mac `PaneSidebarShimmer.offset`), so a
-    // point x of the mark sits at u across the layer.
-    const offset = -(band_width_factor - 1) * position;
-    const u = (x - offset) / band_width_factor;
-    const band = bandWeight(u);
-    return band + base_opacity * (1 - band);
+/// Mac's sweep curve, `CAMediaTimingFunction(0.455, 0.03, 0.515, 0.955)`:
+/// the classic ease-in-out, which a quadratic tracks to within a pixel on a
+/// row.
+fn easeInOut(t: f64) f64 {
+    const c = std.math.clamp(t, 0, 1);
+    return if (c < 0.5) 2 * c * c else 1 - std.math.pow(f64, -2 * c + 2, 2) / 2;
 }
 
-/// The gradient's opacity at `u` across the band layer: a triangle on the
-/// three stops.
-fn bandWeight(u: f64) f64 {
-    const lo, const mid, const hi = band_stops;
-    if (u <= lo or u >= hi) return 0;
-    if (u <= mid) return (u - lo) / (mid - lo);
-    return (hi - u) / (hi - mid);
+/// The band layer's left edge at `ms`, for a pill `width` wide. Every busy
+/// row shares the one clock, so they all sweep in phase (Mac phases its
+/// animation to the reference date for the same reason).
+pub fn bandLeft(ms: u64, width: f64) f64 {
+    const tr = travel(width);
+    const phase = ms % sheen_period_ms;
+    if (phase >= sheen_sweep_ms) return tr.to;
+    const t = @as(f64, @floatFromInt(phase)) / @as(f64, @floatFromInt(sheen_sweep_ms));
+    return tr.from + (tr.to - tr.from) * easeInOut(t);
 }
 
+/// The white's opacity at `x` across a pill `width` wide, with the band
+/// layer's left edge at `left`: a triangle over the light's stretch of the
+/// layer, `sheen_peak` at its middle (Mac's three gradient stops).
+pub fn sheenAlpha(x: f64, left: f64, width: f64) f64 {
+    if (width <= 0) return 0;
+    const u = (x - left) / (band_width_factor * width);
+    if (u <= light_lo or u >= light_hi) return 0;
+    const mid = (light_lo + light_hi) / 2;
+    const half = (light_hi - light_lo) / 2;
+    return sheen_peak * (1 - @abs(u - mid) / half);
+}
+
+/// One pane's sheen fading in or out: which way, and since when.
+pub const Fade = struct {
+    on: bool,
+    since_ms: u64,
+
+    /// How far in, 0 (gone) to 1 (full), eased.
+    pub fn level(self: Fade, now_ms: u64) f64 {
+        return easeInOut(self.progress(now_ms));
+    }
+
+    /// Whether it has finished fading, so it needs no clock.
+    pub fn settled(self: Fade, now_ms: u64) bool {
+        return now_ms -| self.since_ms >= fade_ms;
+    }
+
+    /// The linear share of the way to where it is heading: 1 means full on
+    /// the way in, gone on the way out.
+    fn progress(self: Fade, now_ms: u64) f64 {
+        const t = @min(1.0, @as(f64, @floatFromInt(now_ms -| self.since_ms)) / @as(f64, @floatFromInt(fade_ms)));
+        return if (self.on) t else 1 - t;
+    }
+
+    /// Head the other way at `now_ms` from wherever it has got to, so a
+    /// pane that stops mid-fade-in fades out from there rather than jumping
+    /// (the ease is symmetric, so the level is continuous).
+    pub fn retarget(self: Fade, on: bool, now_ms: u64) Fade {
+        if (on == self.on) return self;
+        const p = self.progress(now_ms);
+        const done = if (on) p else 1 - p;
+        const back: u64 = @intFromFloat(done * @as(f64, @floatFromInt(fade_ms)));
+        return .{ .on = on, .since_ms = now_ms -| back };
+    }
+};
 
 /// What the column shows right now, and so whether it needs a clock.
 pub const Marks = struct {
-    /// Busy marks drawn (each shimmers when motion is on).
+    /// Busy rows drawn (each sheens when motion is on).
     busy: usize = 0,
+    /// Sheens still fading in or out.
+    fading: usize = 0,
 
     /// Bell dots on stashed rows: shown, never animated.
     bells: usize = 0,
 
     pub fn moving(self: Marks, motion: bool) bool {
-        return motion and self.busy > 0;
+        return motion and (self.busy > 0 or self.fading > 0);
     }
 };
 
-test "the band sweeps leading to trailing, then rests off the trailing edge" {
-    try std.testing.expectApproxEqAbs(@as(f64, 1), bandPosition(0), 1e-9);
-    // Halfway through the sweep (0.8 * 1400 / 2 = 560 ms) the ease is at 0.5.
-    try std.testing.expectApproxEqAbs(@as(f64, 0.5), bandPosition(560), 1e-9);
-    // The sweep ends at 1120 ms and the band rests at 0 until the period ends.
-    try std.testing.expectApproxEqAbs(@as(f64, 0), bandPosition(1120), 1e-9);
-    try std.testing.expectApproxEqAbs(@as(f64, 0), bandPosition(1399), 1e-9);
-    // And starts again.
-    try std.testing.expectApproxEqAbs(@as(f64, 1), bandPosition(1400), 1e-9);
-    // Monotone over the sweep.
-    var prev: f64 = 2;
-    var ms: u64 = 0;
-    while (ms <= 1120) : (ms += 10) {
-        const p = bandPosition(ms);
-        try std.testing.expect(p <= prev);
-        prev = p;
-    }
-}
-
-test "parked at either end, the band is fully off the mark: the mark is its dim base" {
-    var i: usize = 0;
-    while (i <= 20) : (i += 1) {
-        const x = @as(f64, @floatFromInt(i)) / 20;
-        try std.testing.expectApproxEqAbs(base_opacity, shimmerAlpha(x, 1), 1e-9);
-        try std.testing.expectApproxEqAbs(base_opacity, shimmerAlpha(x, 0), 1e-9);
-    }
-}
-
-test "mid-sweep the band's bright middle is on the mark, and never dims it below its base" {
-    // position 0.5: offset -1 mark, layer 3 marks wide - the solid stop
-    // (u = 0.5) lands on x = 0.5, the mark's middle.
-    try std.testing.expectApproxEqAbs(@as(f64, 1), shimmerAlpha(0.5, 0.5), 1e-9);
-    try std.testing.expect(shimmerAlpha(0.3, 0.5) < 1);
-    try std.testing.expect(shimmerAlpha(0.3, 0.5) > base_opacity);
-    var i: usize = 0;
-    while (i <= 100) : (i += 1) {
-        const p = @as(f64, @floatFromInt(i)) / 100;
-        var j: usize = 0;
-        while (j <= 10) : (j += 1) {
-            const a = shimmerAlpha(@as(f64, @floatFromInt(j)) / 10, p);
-            try std.testing.expect(a >= base_opacity - 1e-9 and a <= 1 + 1e-9);
+test "T2279: a sweep starts off the pill and leaves it entirely, right to left" {
+    // Mac's PaneSidebarSheenTests widths: a tile, and two panel widths.
+    for ([_]f64{ 36, 240, 380 }) |w| {
+        const tr = travel(w);
+        const bw = band_width_factor * w;
+        try std.testing.expect(tr.from + light_lo * bw > w); // starts past the right edge
+        try std.testing.expect(tr.to + light_hi * bw < 0); // ends past the left edge
+        try std.testing.expect(tr.from > tr.to); // right to left
+        // So at both ends of its travel no pixel of the pill is lit.
+        var x: f64 = 0;
+        while (x < w) : (x += 1) {
+            try std.testing.expectEqual(@as(f64, 0), sheenAlpha(x + 0.5, tr.from, w));
+            try std.testing.expectEqual(@as(f64, 0), sheenAlpha(x + 0.5, tr.to, w));
         }
     }
 }
 
+test "T2279: one sweep every 2s, taking 0.8s, then resting off the pill" {
+    const w: f64 = 36;
+    const tr = travel(w);
+    try std.testing.expectApproxEqAbs(tr.from, bandLeft(0, w), 1e-9);
+    try std.testing.expectApproxEqAbs((tr.from + tr.to) / 2, bandLeft(400, w), 1e-9);
+    try std.testing.expectApproxEqAbs(tr.to, bandLeft(800, w), 1e-9);
+    try std.testing.expectApproxEqAbs(tr.to, bandLeft(1999, w), 1e-9);
+    try std.testing.expectApproxEqAbs(tr.from, bandLeft(2000, w), 1e-9);
+    // Monotone right to left over the sweep.
+    var prev = std.math.inf(f64);
+    var ms: u64 = 0;
+    while (ms <= 800) : (ms += 10) {
+        const b = bandLeft(ms, w);
+        try std.testing.expect(b <= prev);
+        prev = b;
+    }
+}
+
+test "T2279: the light is a faint upright band, at most 25% white, brightest in its middle" {
+    const w: f64 = 100;
+    // Left edge at -150: the light spans -150 + [120, 180] = [-30, 30],
+    // brightest at x = 0.
+    try std.testing.expectApproxEqAbs(sheen_peak, sheenAlpha(0, -150, w), 1e-9);
+    try std.testing.expect(sheenAlpha(15, -150, w) < sheen_peak);
+    try std.testing.expect(sheenAlpha(15, -150, w) > 0);
+    try std.testing.expectEqual(@as(f64, 0), sheenAlpha(31, -150, w));
+    var i: usize = 0;
+    while (i <= 200) : (i += 1) {
+        const a = sheenAlpha(@as(f64, @floatFromInt(i)) - 100, -150, w);
+        try std.testing.expect(a >= 0 and a <= sheen_peak + 1e-12);
+    }
+}
+
+test "T2279: the sheen fades in over 0.6s, and out from wherever it got to" {
+    const in: Fade = .{ .on = true, .since_ms = 1000 };
+    try std.testing.expectEqual(@as(f64, 0), in.level(1000));
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), in.level(1300), 1e-9);
+    try std.testing.expectEqual(@as(f64, 1), in.level(1600));
+    try std.testing.expect(!in.settled(1599));
+    try std.testing.expect(in.settled(1600));
+    // Stopped a third of the way in: it fades out from that level, with no
+    // jump, and is gone a third of a fade later.
+    const mid_level = in.level(1200);
+    const out = in.retarget(false, 1200);
+    try std.testing.expectApproxEqAbs(mid_level, out.level(1200), 1e-3);
+    try std.testing.expectEqual(@as(f64, 0), out.level(1400));
+    // Retargeting the way it is already heading changes nothing.
+    try std.testing.expectEqual(in, in.retarget(true, 1300));
+}
 
 test "the clock runs only for something that moves, and never with motion off" {
     try std.testing.expect(!(Marks{}).moving(true));
     try std.testing.expect(!(Marks{ .bells = 3 }).moving(true));
     try std.testing.expect((Marks{ .busy = 1 }).moving(true));
+    try std.testing.expect((Marks{ .fading = 1 }).moving(true));
     try std.testing.expect(!(Marks{ .busy = 1, .bells = 2 }).moving(false));
 }

@@ -6,9 +6,11 @@
 //! Expanded, it is a flat panel down the window's side: one more column of
 //! the window, on the terminal background lifted by the card wash, separated
 //! from the grid by a divider-colored rule. Collapsed, it is the raised card
-//! the banner and the viewer side panel use, as the mini rail — one 28 DIP
-//! tile per pane, each labeled with a monogram. Hidden
-//! (`toggle_pane_sidebar`), it takes no space.
+//! the banner and the viewer side panel use, as the mini rail — one tile per
+//! pane, each its row without the text: the same pill, the same kind glyph
+//! in the pane's hue at the same place (T2279, Mac 75dc046e3). A busy pane's
+//! row or tile carries the same sheen. Hidden (`toggle_pane_sidebar`), it
+//! takes no space.
 //!
 //! Clicking a row focuses that pane, or restores it when it is stashed. A
 //! row's hover button stashes a grid pane or restores a stashed one. One
@@ -21,7 +23,7 @@
 //! decides and routes the clicks back to `Window`.
 //!
 //! Every tile, row, row button and the toggle carries a tooltip (Mac
-//! `.help`); a tile's names its pane, since the rail shows only a monogram.
+//! `.help`); a tile's names its pane, since the rail shows only its glyph.
 //! The wording is `pane_sidebar_tips.zig`.
 //!
 //! The roster is rebuilt only when what it shows changed — `refresh` hashes
@@ -67,7 +69,7 @@ const Window = @import("Window.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const gutter_bar = @import("gutter_bar.zig");
 const gutter_bar_dc = @import("gutter_bar_dc.zig");
-const ActivityState = @import("../../terminal/main.zig").osc.Command.ActivityState;
+const busy_light = @import("busy_light.zig");
 
 const log = std.log.scoped(.pane_sidebar);
 
@@ -167,6 +169,21 @@ const glyph_search: u16 = 0xE721; // Search: the field's magnifier (T1877)
 const glyph_chevron_down: u16 = 0xE70D;
 const glyph_chevron_right: u16 = 0xE76C;
 
+const FadeSlot = struct { pane: *const PaneView, fade: motion.Fade };
+
+/// Working, as anything that shows it is concerned (T2279, Mac
+/// `PaneView.isWorking`, 919fba868): its activity state says busy (the agent
+/// hooks), or a progress report (OSC 9;4) is in force - what lights the
+/// pane's border (T1899, `Window.busyReportFor`). Mac read only the activity
+/// state before, and a working Claude pane's border moved while its icon sat
+/// still.
+fn isWorking(v: *PaneView, now_ms: i64) bool {
+    const s = v.surface() orelse return false;
+    if (s.activity_state == .busy) return true;
+    const r = s.liveProgress(now_ms) orelse return false;
+    return busy_light.shapeFor(r) != null;
+}
+
 const Entry = struct {
     pane: *PaneView,
     /// The window and tab the pane lives in: this sidebar's own, or - in the
@@ -181,13 +198,13 @@ const Entry = struct {
     section: pane_sidebar.Section,
     title: []u16,
     subtitle: []u16,
-    mono: []u16,
     icon: u16,
     /// Its place in its tab's tree, stashed panes included: what its hue is
     /// spaced by (T2278, `pane_hue`), so a reorder of the list recolors
     /// nothing.
     hue: u16 = 0,
-    state: ActivityState,
+    /// Working, as its border shows it (`isWorking`): its row sheens.
+    busy: bool,
     /// The bell rang and the pane has not been looked at since.
     bell: bool,
     selected: bool,
@@ -304,6 +321,14 @@ paint_ms: u64 = 0,
 paint_motion: bool = true,
 marks: motion.Marks = .{},
 anim_armed: bool = false,
+/// Each pane's sheen fading in or out (T2279, Mac `busyFade`), by pane: kept
+/// across roster refreshes, which rebuild the entries. A slot whose sheen has
+/// finished fading out is free.
+fades: [pane_sidebar.max_items]FadeSlot = undefined,
+fade_count: usize = 0,
+/// When a motion tick last re-read the roster, so a progress report that
+/// expired without a "done" stops its row's sheen (`onMotionTick`).
+busy_poll_ms: u64 = 0,
 /// The list transition running on the panel (T1880): the scope slide or a
 /// fold, composed from a picture of the frame before it (`xf`).
 xfade: ?xf.Xfade = null,
@@ -571,6 +596,8 @@ fn hashView(h: *std.hash.Wyhash, v: *PaneView, selected: bool) void {
     switch (v.kind) {
         .terminal => |s| {
             h.update(std.mem.asBytes(&s.activity_state));
+            const working: u8 = @intFromBool(isWorking(v, std.time.milliTimestamp()));
+            h.update(std.mem.asBytes(&working));
             h.update(std.mem.asBytes(&s.bell));
             if (s.banner_text) |b| h.update(b);
             h.update("\x00");
@@ -697,7 +724,7 @@ fn logRows(self: *PaneSidebar) void {
 fn logMarks(self: *PaneSidebar) void {
     var tally: [2]usize = .{ 0, 0 };
     for (self.entries.items) |e| {
-        if (e.state == .busy) tally[0] += 1;
+        if (e.busy) tally[0] += 1;
         if (e.bell and e.section == .stashed) tally[1] += 1;
     }
     if (std.mem.eql(usize, &tally, &self.logged_marks)) return;
@@ -966,7 +993,6 @@ fn clearEntries(self: *PaneSidebar) void {
     for (self.entries.items) |e| {
         self.alloc.free(e.title);
         self.alloc.free(e.subtitle);
-        self.alloc.free(e.mono);
     }
     self.entries.clearRetainingCapacity();
 }
@@ -989,11 +1015,12 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
     var home_buf: [512]u8 = undefined;
     const home = std.process.getEnvVarOwned(self.alloc, "USERPROFILE") catch null;
     defer if (home) |hm| self.alloc.free(hm);
+    const now_ms = std.time.milliTimestamp();
     for (views) |v| {
         const kind_name: []const u8 = if (v.isViewer()) "Viewer" else "Terminal";
         const pwd: ?[]const u8 = if (v.surface()) |s| (if (s.pwd) |p| p else null) else null;
-        // The banner's title names the row (and so the tile's monogram and
-        // tip) when it has one (T2085).
+        // The banner's title names the row (and so the tile's tip) when it
+        // has one (T2085).
         var title_buf: [512]u8 = undefined;
         const title8 = pane_sidebar.paneLabel(if (v.title()) |t| t else null, pwd, kind_name, bannerOf(v), &title_buf);
 
@@ -1015,17 +1042,9 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
         };
         const sub8 = pane_sidebar.distinct(subtitle8, title8) orelse "";
 
-        var mono_buf: [16]u8 = undefined;
-        const mono8 = pane_sidebar.monogram(title8, &mono_buf);
-
         const title = std.unicode.utf8ToUtf16LeAlloc(self.alloc, title8) catch continue;
         const subtitle = std.unicode.utf8ToUtf16LeAlloc(self.alloc, sub8) catch {
             self.alloc.free(title);
-            continue;
-        };
-        const mono = std.unicode.utf8ToUtf16LeAlloc(self.alloc, mono8) catch {
-            self.alloc.free(title);
-            self.alloc.free(subtitle);
             continue;
         };
         self.entries.append(self.alloc, .{
@@ -1037,10 +1056,9 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
             .section = if (v.stash_seq != 0) .stashed else .grid,
             .title = title,
             .subtitle = subtitle,
-            .mono = mono,
             .icon = iconFor(v),
             .hue = @intCast(@min(pane_hue.treeIndex(window.tab_trees[tab], v), std.math.maxInt(u16))),
-            .state = if (v.surface()) |s| s.activity_state else .idle,
+            .busy = isWorking(v, now_ms),
             .bell = if (v.surface()) |s| s.bell else false,
             // Only THIS window has a selection (Mac 55352e377): another
             // window's focus is not focus here.
@@ -1048,7 +1066,6 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
         }) catch {
             self.alloc.free(title);
             self.alloc.free(subtitle);
-            self.alloc.free(mono);
         };
     }
 }
@@ -1174,18 +1191,16 @@ fn scrollTo(self: *PaneSidebar, want: i32) void {
 const SPI_GETWHEELSCROLLLINES: u32 = 0x0068;
 const WHEEL_PAGESCROLL: u32 = 0xFFFF_FFFF;
 
-/// A wheel notch: the system's lines per notch, a line being a one-line row
-/// (a tile and its gap on the rail); "one screen" scrolls by the viewport.
+/// A wheel notch: the system's lines per notch, a line being one pane row
+/// and its gap, on the rail or the panel; "one screen" scrolls by the
+/// viewport.
 fn onWheel(self: *PaneSidebar, delta: i32) void {
     const l = self.currentLayout();
     if (l.max_scroll <= 0) return;
     var lines: u32 = 3;
     _ = w32.SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, @ptrCast(&lines), 0);
-    const rows = l.mode == .expanded;
-    var line_h = if (rows)
-        pane_sidebar.rowHeight(false, self.metrics, self.scale)
-    else
-        pane_sidebar.px(pane_sidebar.tile_dip + pane_sidebar.tile_gap_dip, self.scale);
+    // A line is one pane row - a full row and a tile are one height (T2279).
+    var line_h = pane_sidebar.pillHeight(self.metrics, self.scale) + pane_sidebar.rowGap(self.scale);
     if (lines == WHEEL_PAGESCROLL) {
         lines = 1;
         line_h = l.viewport.height();
@@ -1519,6 +1534,9 @@ fn armMotion(self: *PaneSidebar) void {
     log.info("pane sidebar motion on surface=rail busy={d}", .{m.busy});
 }
 
+/// How often a running motion clock re-reads the roster (`onMotionTick`).
+const busy_poll_every_ms: u64 = 1000;
+
 /// A motion frame: repaint while the last paint drew something that moves
 /// and the window can be seen; otherwise stop. A paint that draws something
 /// moving again re-arms it, so the clock never runs for a still column.
@@ -1527,6 +1545,15 @@ fn onMotionTick(self: *PaneSidebar) void {
     const root = w32.GetAncestor(hwnd, w32.GA_ROOT);
     const seen = w32.IsWindowVisible(hwnd) != 0 and !(root != null and w32.IsIconic(root.?) != 0);
     if (seen and self.marks.moving(App.clientAreaAnimationsEnabled())) {
+        // A progress report that lapses without a "done" stops being work
+        // by the clock alone (T2279: busy includes the report lighting the
+        // border), so re-read the roster now and then while a row sheens.
+        // Cheap: it hashes and returns when nothing changed.
+        const now = w32.GetTickCount64();
+        if (now -| self.busy_poll_ms >= busy_poll_every_ms) {
+            self.busy_poll_ms = now;
+            self.refresh();
+        }
         _ = w32.InvalidateRect(hwnd, null, 0);
         return;
     }
@@ -1767,61 +1794,126 @@ fn unrgb(c: u32) color_math.Rgb {
     return .{ .r = @truncate(c), .g = @truncate(c >> 8), .b = @truncate(c >> 16) };
 }
 
-/// What a pane's mark is drawn with: an icon-font glyph, or the rail's
-/// monogram.
-const Mark = union(enum) { glyph: u16, text: []const u16 };
-
-fn drawMark(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, mark: Mark, color: u32) void {
-    switch (mark) {
-        .glyph => |cp| glyph(hdc, self.scale, r, cp, 12, color),
-        .text => |s| {
-            if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-            drawText(hdc, s, r, color, w32.DT_CENTER | w32.DT_VCENTER);
-        },
-    }
-}
-
-/// A pane's mark, shimmering while it is busy (Mac `PaneSidebarGlyph`): a
-/// solid dim base with a brighter band sweeping across it - the whole busy
-/// signal, no spinner and no glow. GDI has no gradient mask for text, so the
-/// mark is drawn in vertical slices, each in the band's color at that x over
-/// `under` (whatever the mark sits on); adjacent slices of one color are one
-/// draw. With motion off it is the plain mark in `ink`, as Mac's is.
-fn paintMarkFor(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, mark: Mark, ink: u32, under: color_math.Rgb, busy: bool) void {
-    if (!busy) return self.drawMark(hdc, r, mark, ink);
-    self.paint_marks.busy += 1;
-    if (!self.paint_motion or r.width() <= 0) return self.drawMark(hdc, r, mark, ink);
-
-    // The band runs across the mark itself, not the box it is centered in.
-    const w: i32 = switch (mark) {
-        .glyph => pane_sidebar.px(12, self.scale),
-        .text => |s| blk: {
-            if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-            break :blk @max(textWidth(hdc, s), 1);
-        },
-    };
-    const left = r.centerX() - @divTrunc(w, 2);
-    const pos = motion.bandPosition(self.paint_ms);
-    const fg = unrgb(ink);
-    const colorAt = struct {
-        fn f(x: i32, l0: i32, width: i32, p: f64, u: color_math.Rgb, c: color_math.Rgb) u32 {
-            const frac = (@as(f64, @floatFromInt(x - l0)) + 0.5) / @as(f64, @floatFromInt(width));
-            return rgb(color_math.mix(u, c, motion.shimmerAlpha(frac, p)));
+/// How strongly pane `e`'s sheen shows right now, 0 to 1 (T2279, Mac
+/// `busyFade`): it fades in as work starts and out as it stops, from
+/// wherever it had got to. Tallies a sheen still fading, so the clock runs
+/// until it settles.
+fn sheenLevel(self: *PaneSidebar, e: Entry) f64 {
+    const now = self.paint_ms;
+    // A busy pane is tallied whatever its sheen's level, so the clock (and its
+    // log) starts with the fade-in rather than a frame after it.
+    if (e.busy) self.paint_marks.busy += 1;
+    var free: ?usize = null;
+    for (self.fades[0..self.fade_count], 0..) |*s, k| {
+        if (s.pane == e.pane) {
+            s.fade = s.fade.retarget(e.busy, now);
+            if (!s.fade.settled(now)) self.paint_marks.fading += 1;
+            return s.fade.level(now);
         }
-    }.f;
-    var x = r.left;
-    while (x < r.right) {
-        const color = colorAt(x, left, w, pos, under, fg);
-        var end = x + 1;
-        while (end < r.right and colorAt(end, left, w, pos, under, fg) == color) end += 1;
-        const saved = w32.SaveDC(hdc);
-        _ = w32.IntersectClipRect(hdc, x, r.top, end, r.bottom);
-        self.drawMark(hdc, r, mark, color);
-        _ = w32.RestoreDC(hdc, saved);
-        x = end;
+        if (free == null and !s.fade.on and s.fade.settled(now)) free = k;
     }
+    if (!e.busy) return 0;
+    const k = free orelse blk: {
+        // No slot to spare: shown at full strength, without the fade.
+        if (self.fade_count == self.fades.len) return 1;
+        self.fade_count += 1;
+        break :blk self.fade_count - 1;
+    };
+    self.fades[k] = .{ .pane = e.pane, .fade = .{ .on = true, .since_ms = now } };
+    self.paint_marks.fading += 1;
+    return 0;
 }
 
+/// The busy sheen across a pill (T2279, Mac `PaneSidebarTileSheenLayer`): a
+/// faint upright band of white crossing it from its right edge to its left
+/// every 2s, at `level` of its strength while it fades. Built as a
+/// premultiplied-alpha strip the pill's size - zero outside its rounded
+/// corners - and blended over whatever the pill sits on (the card's glass
+/// included), under the pill's glyph and text. Nothing at all with motion
+/// off (Mac's Reduce Motion drops it the same way).
+fn paintSheen(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, level: f64) void {
+    if (level <= 0) return;
+    if (!self.paint_motion) return;
+    const w = r.width();
+    const h = r.height();
+    if (w <= 0 or h <= 0) return;
+    const wf: f64 = @floatFromInt(w);
+    const left = motion.bandLeft(self.paint_ms, wf);
+    var lit = false;
+    var column: [512]u32 = undefined;
+    const cw: usize = @intCast(@min(w, column.len));
+    for (column[0..cw], 0..) |*c, x| {
+        const a = motion.sheenAlpha(@as(f64, @floatFromInt(x)) + 0.5, left, wf) * level;
+        c.* = @intFromFloat(@round(std.math.clamp(a, 0, 1) * 255));
+        if (c.* != 0) lit = true;
+    }
+    // Resting off the pill between sweeps: nothing to blend.
+    if (!lit) return;
+    const dib = Dib32.create(hdc, w, h) orelse return;
+    defer dib.destroy();
+    const uw: usize = @intCast(w);
+    for (0..@intCast(h)) |y| {
+        for (dib.pixels[y * uw ..][0..uw], 0..) |*p, x| {
+            const a: u32 = if (x < cw and insideRound(@intCast(x), @intCast(y), w, h, radius)) column[x] else 0;
+            p.* = (a << 24) | (a << 16) | (a << 8) | a;
+        }
+    }
+    _ = w32.AlphaBlend(hdc, r.left, r.top, w, h, dib.dc, 0, 0, w, h, .{
+        .SourceConstantAlpha = 255,
+        .AlphaFormat = w32.AC_SRC_ALPHA,
+    });
+}
+
+/// Whether pixel (`x`, `y`) of a `w` x `h` box lies inside its corners
+/// rounded to `radius`.
+fn insideRound(x: i32, y: i32, w: i32, h: i32, radius: i32) bool {
+    if (radius <= 0) return true;
+    const cx = if (x < radius) radius else if (x >= w - radius) w - radius else return true;
+    const cy = if (y < radius) radius else if (y >= h - radius) h - radius else return true;
+    const dx = @as(f64, @floatFromInt(x - cx)) + 0.5;
+    const dy = @as(f64, @floatFromInt(y - cy)) + 0.5;
+    const rr: f64 = @floatFromInt(radius);
+    return dx * dx + dy * dy <= rr * rr;
+}
+
+/// What a pane's pill drew its glyph on.
+const Pill = struct { icon: pane_sidebar.Rect, under: color_math.Rgb };
+
+/// A pane's pill - a full row's, or a rail tile's, which is the row without
+/// its text (T2279, Mac 75dc046e3): the selection or hover fill and its
+/// indicator, the busy sheen across it, and the pane kind's glyph in its hue
+/// `text_inset` into the pill and centred on it - the same place in both
+/// modes, so toggling the sidebar moves no icon. `indent` moves the content
+/// of an outline row, never its fill.
+fn paintPill(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, e: Entry, indent: i32, hovered: bool, emphasized: bool, t: Theme) Pill {
+    const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+    const sel = list_selection.rowPaint(t.surface, t.accent, .{
+        .selected = e.selected,
+        .focused = emphasized,
+        .hovered = hovered,
+        .focus_visible = false,
+    });
+    if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
+    if (sel.indicator) |c| {
+        const bar = toc.selectionIndicator(r.height(), self.scale);
+        fillRound(hdc, .{
+            .left = r.left + bar.left,
+            .top = r.top + bar.top,
+            .right = r.left + bar.left + bar.width,
+            .bottom = r.top + bar.top + bar.height,
+        }, bar.radius, rgb(c));
+    }
+    self.paintSheen(hdc, r, radius, self.sheenLevel(e));
+    const under = sel.fill orelse t.surface;
+    const icon_w = pane_sidebar.px(pane_sidebar.icon_dip, self.scale);
+    const left = r.left + pane_sidebar.px(toc.text_inset_dip, self.scale) + indent;
+    const top = r.top + @divTrunc(r.height() - self.metrics.title_h, 2);
+    const icon_r: pane_sidebar.Rect = .{ .left = left, .top = top, .right = left + icon_w, .bottom = top + self.metrics.title_h };
+    // The pane's own hue (T2278, Mac iconColor): full on the focused row and
+    // a hovered one, a touch quieter elsewhere.
+    glyph(hdc, self.scale, icon_r, e.icon, 12, self.hueInk(e, under, hovered, emphasized, t));
+    return .{ .icon = icon_r, .under = under };
+}
 
 /// A stashed pane's bell (Mac: a 7 pt accent dot until it is restored).
 fn paintBellDot(self: *PaneSidebar, hdc: w32.HDC, cx: i32, cy: i32, t: Theme) void {
@@ -1986,46 +2078,15 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     if (l.outline) self.paintOutline(hdc, l, t);
 
     const emphasized = self.isEmphasized();
-    const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
     for (self.entries.items[0..l.count], 0..) |e, i| {
         if (!l.shown(i)) continue;
         const r = l.items[i];
         const hovered = self.rowHovered(i);
-        const sel = list_selection.rowPaint(t.surface, t.accent, .{
-            .selected = e.selected,
-            .focused = emphasized,
-            .hovered = hovered,
-            .focus_visible = false,
-        });
-        if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
-        if (sel.indicator) |c| {
-            const bar = toc.selectionIndicator(r.height(), self.scale);
-            fillRound(hdc, .{
-                .left = r.left + bar.left,
-                .top = r.top + bar.top,
-                .right = r.left + bar.left + bar.width,
-                .bottom = r.top + bar.top + bar.height,
-            }, bar.radius, rgb(c));
-        }
-
+        // The pill, its sheen and its glyph: what a rail tile is too.
+        const pill = self.paintPill(hdc, r, e, l.indent[i], hovered, emphasized, t);
+        const icon_r = pill.icon;
         const ink = if (e.selected) t.text else t.secondary;
-        const under = sel.fill orelse t.surface;
-        const pad_v = pane_sidebar.px(toc.row_v_pad_dip, self.scale);
-        const icon_box = pane_sidebar.px(16, self.scale);
         const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
-        // The outline indents a row's content, never its fill (Mac).
-        const content = r.left + text_inset + l.indent[i];
-        const icon_r: pane_sidebar.Rect = .{
-            .left = content,
-            .top = r.top + pad_v,
-            .right = content + icon_box,
-            .bottom = r.top + pad_v + self.metrics.title_h,
-        };
-        // The icon is drawn in the pane's own hue (T2278, Mac iconColor):
-        // full on the focused row and a hovered one, a touch quieter
-        // elsewhere. A busy pane's shimmers.
-        const busy = e.state == .busy;
-        self.paintMarkFor(hdc, icon_r, .{ .glyph = e.icon }, self.hueInk(e, under, hovered, emphasized, t), under, busy);
 
         // The trailing edge: the hover buttons (T2280, Mac dc2bbab6b -
         // stash/restore on this window's rows, then the x on every row,
@@ -2052,15 +2113,20 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             text_right -= d + sm;
         }
 
+        // The title, and the subtitle under it, centred as one block on the
+        // pill beside the glyph (Mac's row is one height whatever it holds).
+        const block = self.metrics.title_h + if (e.subtitle.len > 0) self.metrics.caption_h else 0;
+        const text_top = r.top + @divTrunc(r.height() - block, 2);
+        const title_bottom = text_top + self.metrics.title_h;
         if (self.title_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-        drawText(hdc, e.title, .{ .left = text_left, .top = icon_r.top, .right = text_right, .bottom = icon_r.bottom }, ink, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+        drawText(hdc, e.title, .{ .left = text_left, .top = text_top, .right = text_right, .bottom = title_bottom }, ink, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
         if (e.subtitle.len > 0) {
             if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
             drawText(hdc, e.subtitle, .{
                 .left = text_left,
-                .top = icon_r.bottom,
+                .top = title_bottom,
                 .right = text_right,
-                .bottom = icon_r.bottom + self.metrics.caption_h,
+                .bottom = title_bottom + self.metrics.caption_h,
             }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
         }
     }
@@ -2402,27 +2468,18 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, ruleColor(t));
 
     const emphasized = self.isEmphasized();
-    const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
     for (self.entries.items[0..l.count], 0..) |e, i| {
         const r = l.items[i];
-        const sel = list_selection.rowPaint(t.surface, t.accent, .{
-            .selected = e.selected,
-            .focused = emphasized,
-            .hovered = self.hoverIs(.{ .item = i }),
-            .focus_visible = false,
-        });
-        if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
-        const busy = e.state == .busy;
-        const under = sel.fill orelse t.surface;
-        const hovered = self.rowHovered(i);
-        const mark: Mark = if (e.icon == glyph_terminal) .{ .text = e.mono } else .{ .glyph = e.icon };
-        self.paintMarkFor(hdc, r, mark, self.hueInk(e, under, hovered, emphasized, t), under, busy);
-        // The corner (Mac): a stashed pane's bell dot. The question disc
-        // that sat there went with T2280 (Mac 2924ea5cc).
-        const two = pane_sidebar.px(2, self.scale);
+        // The row without its text (T2279): the same pill, sheen and glyph.
+        _ = self.paintPill(hdc, r, e, 0, self.rowHovered(i), emphasized, t);
+        // The corner (Mac `tile`): a stashed pane's bell dot, at the pill's
+        // top trailing corner. The question disc that sat there went with
+        // T2280 (Mac 2924ea5cc).
         if (e.bell and e.section == .stashed) {
             const d = @max(pane_sidebar.px(7, self.scale), 3);
-            self.paintBellDot(hdc, r.right - @divTrunc(d, 2) + @divTrunc(two, 2), r.top + @divTrunc(d, 2) - @divTrunc(two, 2), t);
+            const one = pane_sidebar.px(1, self.scale);
+            const three = pane_sidebar.px(3, self.scale);
+            self.paintBellDot(hdc, r.right + one - @divTrunc(d, 2), r.top + three + @divTrunc(d, 2), t);
         }
     }
     self.paintDropSlot(hdc, l, t);
