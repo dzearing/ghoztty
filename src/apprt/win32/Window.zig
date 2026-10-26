@@ -10459,6 +10459,13 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
 
 /// Equalize all splits in the active tab.
 pub fn equalizeSplits(self: *Window) void {
+    self.equalizeSplitsOnly(null);
+}
+
+/// Equalize the active tab's splits laid out `only` that way (every split
+/// when null); the other direction keeps its ratios. A divider's
+/// double-click passes its own layout (T2285, Mac 6362115c8).
+pub fn equalizeSplitsOnly(self: *Window, only: ?SplitTree(PaneView).Split.Layout) void {
     if (self.tab_count == 0) return;
     const alloc = self.app.core_app.alloc;
     const tab = self.active_tab;
@@ -10471,14 +10478,14 @@ pub fn equalizeSplits(self: *Window) void {
         // restored pane returns at the size it left.
         var vis = pane_stash.visibleClone(self.tab_trees[tab], alloc) catch return;
         defer vis.deinit();
-        var eq = vis.equalize(alloc) catch return;
+        var eq = vis.equalizeOnly(alloc, only) catch return;
         defer eq.deinit();
         pane_stash.liftRatios(&self.tab_trees[tab], eq);
         self.layoutSplits();
         self.app.markLayoutDirty();
         return;
     }
-    const new_tree = self.tab_trees[tab].equalize(alloc) catch return;
+    const new_tree = self.tab_trees[tab].equalizeOnly(alloc, only) catch return;
     // Swap-then-release (T1356), same rule as everywhere else.
     var old_tree = self.tab_trees[tab];
     self.tab_trees[tab] = new_tree;
@@ -15397,7 +15404,8 @@ pub fn windowWndProc(
             const x: i32 = @as(i16, @truncate(lparam & 0xFFFF));
             const y: i32 = @as(i16, @truncate((lparam >> 16) & 0xFFFF));
             // Double-click the hero divider: reset the carousel ratio to
-            // the default (parity with tree-divider double-click → 0.5).
+            // the default (the hero's counterpart of evening out a tree
+            // divider's panes).
             if (window.heroHitDivider(x, y)) {
                 window.tab_hero_ratio[window.active_tab] = hero_math.RATIO_DEFAULT;
                 window.layoutSplits();
@@ -15416,10 +15424,12 @@ pub fn windowWndProc(
                 }
                 return 0;
             }
+            // Double-click a tree divider: even out the panes across it - every
+            // split laid out its way - and leave the other direction as set
+            // (T2285, Mac 6362115c8). Setting just this split to 0.5 gave
+            // three panes in a row 50/25/25.
             if (window.hitTestDivider(x, y)) |hit| {
-                window.tab_trees[window.active_tab].resizeInPlace(hit.handle, @as(f16, 0.5));
-                window.layoutSplits();
-                window.app.markLayoutDirty(); // T110: double-click reset ratio
+                window.equalizeSplitsOnly(hit.layout);
                 return 0;
             }
             return 0;

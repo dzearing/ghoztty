@@ -297,7 +297,7 @@ $win = @($sweep | Where-Object { $_.Path -like '*\Window.zig' })
 Assert "D1 Window.zig: at least 15 release sites recognised ($($win.Count))" ($win.Count -ge 15)
 $winFns = @($win | ForEach-Object { $_.Function })
 foreach ($f in @('replaceTabRoot', 'replaceTabLeaf', 'closeSplitPane', 'insertPaneAsSplit',
-        'swapSplit', 'equalizeSplits', 'cleanupAllSurfaces', 'closeTabByIndex')) {
+        'swapSplit', 'equalizeSplitsOnly', 'cleanupAllSurfaces', 'closeTabByIndex')) {
     Assert "D the sweep judged $f" ($winFns -contains $f)
 }
 $kinds = @($sweep | ForEach-Object { $_.Kind } | Sort-Object -Unique)

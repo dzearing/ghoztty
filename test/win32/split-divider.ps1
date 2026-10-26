@@ -1,4 +1,6 @@
 # T73 acceptance: split divider lines honor `split-divider-color`.
+# T2285 acceptance (T495 section): double-clicking either divider of a three-pane
+# row gives all three panes the same width (Mac 6362115c8), not 50/25/25.
 # T2125 acceptance (run 2 tail; replaced T94's ~9 DIP grab band): the flat
 # gutter is Mac's 6 DIP with the 2 DIP line down its middle, and the divider
 # takes the mouse in that gutter and nowhere else - the panes keep the hit on
@@ -1499,6 +1501,48 @@ if ($a495.Process -and $a495.Process.HasExited) {
             }
             Assert ($fPrev -eq $panesK[0]) `
                 "T1149: the default super+ctrl+[ moves focus back to the previous pane (focused=$fPrev, want=$($panesK[0]))"
+
+            # ---------------------------------------------------------------
+            # T2285 (Mac 6362115c8): double-clicking a divider evens out every
+            # pane in its direction. It used to set only the clicked split to
+            # 0.5, and this row is split[p1, split[p2, p3]], so a double-click
+            # on the second divider left p1 at half the row (50/25/25).
+            #
+            # Control first: the row is made visibly uneven by a drag, so a
+            # double-click that does nothing cannot pass as "already even".
+            # ---------------------------------------------------------------
+            function Get-PaneWidths([IntPtr]$top) {
+                @(Get-Panes $top | Sort-Object Left | ForEach-Object { $_.Right - $_.Left })
+            }
+            $e0 = Get-SecondDividerX $t495
+            Invoke-DividerDrag -Top $t495 -X0 $e0.X -Y0 $e0.Y -X1 ($e0.X + 150) -Y1 $e0.Y
+            $ew0 = @(Get-PaneWidths $t495)
+            $espread0 = ($ew0 | Measure-Object -Maximum -Minimum)
+            Assert ($ew0.Count -eq 3 -and ($espread0.Maximum - $espread0.Minimum) -gt 100) `
+                "T2285 control: the row is uneven before the double-click (widths $($ew0 -join '/'))"
+            $e1 = Get-SecondDividerX $t495
+            [void](Send-TestMouse -Window $t495 -Target $t495 -X $e1.X -Y $e1.Y -Action doubleclick)
+            Start-Sleep -Milliseconds 400
+            $ew1 = @(Get-PaneWidths $t495)
+            $espread1 = ($ew1 | Measure-Object -Maximum -Minimum)
+            Assert ($ew1.Count -eq 3 -and ($espread1.Maximum - $espread1.Minimum) -le 8) `
+                "T2285: double-clicking the second divider gives all three panes the same width (widths $($ew0 -join '/') -> $($ew1 -join '/'))"
+
+            # The first divider is the same gesture: uneven it again, then
+            # double-click it.
+            $e2 = Get-SecondDividerX $t495
+            Invoke-DividerDrag -Top $t495 -X0 $e2.FirstX -Y0 $e2.Y -X1 ($e2.FirstX - 120) -Y1 $e2.Y
+            $ew2 = @(Get-PaneWidths $t495)
+            $espread2 = ($ew2 | Measure-Object -Maximum -Minimum)
+            Assert ($ew2.Count -eq 3 -and ($espread2.Maximum - $espread2.Minimum) -gt 80) `
+                "T2285 control: the first-divider drag made the row uneven again (widths $($ew2 -join '/'))"
+            $e3 = Get-SecondDividerX $t495
+            [void](Send-TestMouse -Window $t495 -Target $t495 -X $e3.FirstX -Y $e3.Y -Action doubleclick)
+            Start-Sleep -Milliseconds 400
+            $ew3 = @(Get-PaneWidths $t495)
+            $espread3 = ($ew3 | Measure-Object -Maximum -Minimum)
+            Assert ($ew3.Count -eq 3 -and ($espread3.Maximum - $espread3.Minimum) -le 8) `
+                "T2285: double-clicking the first divider evens the row too (widths $($ew2 -join '/') -> $($ew3 -join '/'))"
 
             Assert (-not ($a495.Process -and $a495.Process.HasExited)) 'T495: no crash'
         }

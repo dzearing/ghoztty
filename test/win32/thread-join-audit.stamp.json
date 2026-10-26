@@ -1,12 +1,10 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-10-24T01:26:11-07:00",
-    "commit":  "c6e62c7b5",
+    "generated":  "2026-10-25T23:55:06-07:00",
+    "commit":  "ae6a60959",
     "uncommitted":  [
-                        "src/remote/agent/main.zig",
-                        "src/remote/agent/pty_child.zig",
-                        "src/remote/agent/pty_holder_child.zig"
+                        "src/datastruct/split_tree.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -19,7 +17,7 @@
                   "src/datastruct/main.zig":  "210ee529695b0e5b1e889d09dcfb63b202da1b2d1728622032106f2fd5f9c3e2",
                   "src/datastruct/message_data.zig":  "d28cf26bdaabe6ec2372d80c1e735b3ce20acdf5079daf5c89037b462a1d1588",
                   "src/datastruct/segmented_pool.zig":  "1acefe4cc755f7268e6116b76eb7fb82085a95db9115efca70efbcb14bfdb968",
-                  "src/datastruct/split_tree.zig":  "16a9e4fdfd0071c1a14116dabb723ce76497ff3ecb50291c51b716e4e4b06a25",
+                  "src/datastruct/split_tree.zig":  "6162e03a0db6615bf4efdad046729d0dcecf017455fd9eb92797d2a5a2ae475b",
                   "src/remote/agent/adopt.zig":  "4c168a5c270f708e5e3d1dbde9fa03cb0d96f47ee6f55fb5c499a4b5fc80d984",
                   "src/remote/agent/atomic_write.zig":  "74bfecbb79a06425c8e32bb7b0381d23605355a90983191cbaf2758f0b002222",
                   "src/remote/agent/conpty_smoke.zig":  "3f650db98cbffa0f247ff4078441ad6d1f00607432548b5935e7bb0b349e0395",

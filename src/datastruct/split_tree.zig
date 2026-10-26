@@ -889,6 +889,19 @@ pub fn SplitTree(comptime V: type) type {
             self: *const Self,
             gpa: Allocator,
         ) Allocator.Error!Self {
+            return self.equalizeOnly(gpa, null);
+        }
+
+        /// Equalize as `equalize`, but with `only` set, only the splits laid
+        /// out that way; every split running the other way keeps its ratio.
+        /// A divider's double-click evens out the panes across that divider
+        /// and leaves a pane made narrow narrow when its column's heights
+        /// are evened out (Mac `SplitTree.equalized(only:)`, 6362115c8).
+        pub fn equalizeOnly(
+            self: *const Self,
+            gpa: Allocator,
+            only: ?Split.Layout,
+        ) Allocator.Error!Self {
             if (self.isEmpty()) return .empty;
 
             // Create a new arena allocator for the clone.
@@ -903,6 +916,7 @@ pub fn SplitTree(comptime V: type) type {
             for (nodes) |*node| switch (node.*) {
                 .leaf => {},
                 .split => |*s| {
+                    if (only) |layout| if (s.layout != layout) continue;
                     const weight_left = self.weight(s.left, s.layout, 0);
                     const weight_right = self.weight(s.right, s.layout, 0);
                     assert(weight_left > 0);
@@ -2507,6 +2521,111 @@ test "SplitTree: spatial goto" {
             \\
         );
     }
+}
+
+test "SplitTree: equalizeOnly evens one direction and keeps the other" {
+    // Mac `equalizedInOneDirectionKeepsTheOther` (6362115c8): A | (B / C)
+    // with A made narrow and B's row made short.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var v1: TestTree.View = .{ .label = "A" };
+    var t1: TestTree = try .init(alloc, &v1);
+    defer t1.deinit();
+    var v2: TestTree.View = .{ .label = "B" };
+    var t2: TestTree = try .init(alloc, &v2);
+    defer t2.deinit();
+    var v3: TestTree.View = .{ .label = "C" };
+    var t3: TestTree = try .init(alloc, &v3);
+    defer t3.deinit();
+
+    var row = try t1.split(alloc, .root, .right, 0.5, &t2);
+    defer row.deinit();
+    var tree = try row.split(alloc, leaf: {
+        var it = row.iterator();
+        break :leaf while (it.next()) |e| {
+            if (std.mem.eql(u8, e.view.label, "B")) break e.handle;
+        } else return error.NotFound;
+    }, .down, 0.5, &t3);
+    defer tree.deinit();
+
+    const Ratios = struct { h: f16, v: f16 };
+    const ratios = struct {
+        fn of(t: *const TestTree) Ratios {
+            var r: Ratios = .{ .h = -1, .v = -1 };
+            for (t.nodes) |n| switch (n) {
+                .leaf => {},
+                .split => |s| switch (s.layout) {
+                    .horizontal => r.h = s.ratio,
+                    .vertical => r.v = s.ratio,
+                },
+            };
+            return r;
+        }
+    }.of;
+    for (tree.nodes, 0..) |n, i| switch (n) {
+        .leaf => {},
+        .split => |s| tree.resizeInPlace(@enumFromInt(i), switch (s.layout) {
+            .horizontal => 0.2,
+            .vertical => 0.8,
+        }),
+    };
+
+    var heights = try tree.equalizeOnly(alloc, .vertical);
+    defer heights.deinit();
+    try testing.expectApproxEqAbs(@as(f16, 0.2), ratios(&heights).h, 0.001);
+    try testing.expectApproxEqAbs(@as(f16, 0.5), ratios(&heights).v, 0.001);
+
+    // The column counts as one pane across a horizontal divider, so A and
+    // the column come out half and half, as on Mac.
+    var widths = try tree.equalizeOnly(alloc, .horizontal);
+    defer widths.deinit();
+    try testing.expectApproxEqAbs(@as(f16, 0.5), ratios(&widths).h, 0.001);
+    try testing.expectApproxEqAbs(@as(f16, 0.8), ratios(&widths).v, 0.001);
+
+    // No direction: both even out, the same as `equalize`.
+    var both = try tree.equalizeOnly(alloc, null);
+    defer both.deinit();
+    try testing.expectApproxEqAbs(@as(f16, 0.5), ratios(&both).h, 0.001);
+    try testing.expectApproxEqAbs(@as(f16, 0.5), ratios(&both).v, 0.001);
+}
+
+test "SplitTree: equalizeOnly gives three panes in a row thirds" {
+    // The Windows double-click used to set only the hit split to 0.5,
+    // which for A | B | C gave 50/25/25.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var v1: TestTree.View = .{ .label = "A" };
+    var t1: TestTree = try .init(alloc, &v1);
+    defer t1.deinit();
+    var v2: TestTree.View = .{ .label = "B" };
+    var t2: TestTree = try .init(alloc, &v2);
+    defer t2.deinit();
+    var v3: TestTree.View = .{ .label = "C" };
+    var t3: TestTree = try .init(alloc, &v3);
+    defer t3.deinit();
+
+    var ab = try t1.split(alloc, .root, .right, 0.5, &t2);
+    defer ab.deinit();
+    var abc = try ab.split(alloc, leaf: {
+        var it = ab.iterator();
+        break :leaf while (it.next()) |e| {
+            if (std.mem.eql(u8, e.view.label, "B")) break e.handle;
+        } else return error.NotFound;
+    }, .right, 0.5, &t3);
+    defer abc.deinit();
+
+    var eq = try abc.equalizeOnly(alloc, .horizontal);
+    defer eq.deinit();
+    const str = try std.fmt.allocPrint(alloc, "{f}", .{std.fmt.alt(eq, .formatDiagram)});
+    defer alloc.free(str);
+    try testing.expectEqualStrings(
+        \\+---++---++---+
+        \\| A || B || C |
+        \\+---++---++---+
+        \\
+    , str);
 }
 
 test "SplitTree: resize" {
