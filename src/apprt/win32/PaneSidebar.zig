@@ -92,9 +92,12 @@ fn toolHead(k: usize) usize {
     return 1 + 2 * pane_sidebar.max_items + k;
 }
 const tool_scope: usize = 1 + 2 * pane_sidebar.max_items + pane_sidebar.max_heads;
-const tool_trash: usize = tool_scope + 1;
-const tool_search: usize = tool_trash + 1;
-const tool_search_clear: usize = tool_trash + 2;
+const tool_search: usize = tool_scope + 1;
+const tool_search_clear: usize = tool_scope + 2;
+/// A row's hover x (T2280), after every fixed tool.
+fn toolClose(i: usize) usize {
+    return tool_search_clear + 1 + i;
+}
 
 /// What new windows start from: the most recently chosen expanded and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`),
@@ -135,7 +138,6 @@ const Group = struct {
     project_size: usize,
     panes: usize,
     stashed: usize,
-    question: bool,
     own: bool,
     /// The top-level has other tabs: "This Tab" rather than "This Window".
     tabbed: bool,
@@ -155,8 +157,7 @@ const glyph_close_pane: u16 = 0xE89F; // ClosePane: "collapse it to icons"
 const glyph_stash: u16 = 0xE921; // ChromeMinimize: "put this away"
 const glyph_restore: u16 = 0xE7A7; // Undo: "bring it back"
 const glyph_windows: u16 = 0xE7C4; // TaskView: "every window"
-const glyph_trash: u16 = 0xE74D; // Delete: trash mode (T1845)
-const glyph_kill: u16 = 0xE711; // Cancel: trash mode's x
+const glyph_close: u16 = 0xE711; // Cancel: a row's x, the search's clear
 const glyph_search: u16 = 0xE721; // Search: the field's magnifier (T1877)
 const glyph_chevron_down: u16 = 0xE70D;
 const glyph_chevron_right: u16 = 0xE76C;
@@ -266,10 +267,7 @@ edge_bar_logged: ?gutter_bar.Strength = null,
 /// and says "Drop to stash" (T2276; it is there at rest too).
 drag_active: bool = false,
 
-/// Trash mode (T1845, Mac `isQuickKill`): every row and tile grows a red x
-/// that kills its pane with no confirmation. Transient - never persisted,
-/// and per window, as Mac's state object is.
-quick_kill: bool = false,
+
 // Tooltips: one control. A tile's text names its pane, so it lives here (a
 // tool keeps a pointer to its text); every other tip is a constant.
 tip: ?w32.HWND = null,
@@ -285,9 +283,7 @@ title_font: ?*anyopaque = null,
 title_bold_font: ?*anyopaque = null,
 caption_font: ?*anyopaque = null,
 caption_bold_font: ?*anyopaque = null,
-/// The question chip's last logged size (w, h), so the log names it once
-/// per change rather than every frame the ring breathes.
-logged_chip: [2]i32 = .{ 0, 0 },
+
 font_scale: f32 = 0,
 metrics: pane_sidebar.TextMetrics = .{ .title_h = 19, .caption_h = 16 },
 
@@ -306,9 +302,9 @@ xfade: ?xf.Xfade = null,
 /// Paint the material alone - no header, no rows: the backdrop a transition
 /// lays the moving lists over.
 paint_bare: bool = false,
-/// The last roster tally logged (busy, question, bell), so the log says when
-/// it moved rather than on every refresh.
-logged_marks: [3]usize = .{ 0, 0, 0 },
+/// The last roster tally logged (busy, bell), so the log says when it moved
+/// rather than on every refresh.
+logged_marks: [2]usize = .{ 0, 0 },
 /// The hash of the last row text logged (`logText`), for the same reason.
 logged_text: u64 = 0,
 
@@ -580,9 +576,9 @@ fn rosterChanged(self: *PaneSidebar) void {
 ///
 /// The single-window roster logs the same shape as `pane sidebar rows ...`
 /// (T1845), with each item's pane id after a `#`, so the row-actions script
-/// can right-click and Alt-click the row of the pane it means. The trash
-/// toggle's center rides at the end. Both lines name the collapse/expand
-/// toggle's center and whether it can expand (T2289), so a script clicks it
+/// can right-click and Alt-click the row of the pane it means. Both lines
+/// name the collapse/expand toggle's center and whether it can expand
+/// (T2289), so a script clicks it
 /// rather than re-deriving where it sits.
 fn logOutline(self: *PaneSidebar) void {
     if (self.mode == .hidden) return;
@@ -647,7 +643,7 @@ fn logRows(self: *PaneSidebar) void {
         w.print("g0{c}@{d},{d}#{s};", .{ sec, l.items[i].centerX(), l.items[i].centerY(), e.pane.paneId() }) catch break;
     }
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
-    w.print(" rules={d} scope={d},{d} trash={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY(), l.trash.centerX(), l.trash.centerY() }) catch {};
+    w.print(" rules={d} scope={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY() }) catch {};
     self.logToggle(w, &l);
     logScroll(w, &l);
     // The empty tray (T2276): its well's center, or `-` while something is
@@ -659,19 +655,19 @@ fn logRows(self: *PaneSidebar) void {
 }
 
 /// The roster's activity marks, logged when the tally moves: how many rows
-/// are busy, have a question, and carry a bell dot (a stashed pane whose bell
-/// rang). The acceptance script scores the bell from this line, since a dot
-/// is a few pixels on a background desktop.
+/// are busy and carry a bell dot (a stashed pane whose bell rang). The
+/// acceptance script scores the bell from this line, since a dot is a few
+/// pixels on a background desktop. A question has no mark in the sidebar
+/// (T2280, Mac 2924ea5cc), so it is not counted.
 fn logMarks(self: *PaneSidebar) void {
-    var tally: [3]usize = .{ 0, 0, 0 };
+    var tally: [2]usize = .{ 0, 0 };
     for (self.entries.items) |e| {
         if (e.state == .busy) tally[0] += 1;
-        if (e.state == .needs_input) tally[1] += 1;
-        if (e.bell and e.section == .stashed) tally[2] += 1;
+        if (e.bell and e.section == .stashed) tally[1] += 1;
     }
     if (std.mem.eql(usize, &tally, &self.logged_marks)) return;
     self.logged_marks = tally;
-    log.info("pane sidebar marks busy={d} question={d} bell={d}", .{ tally[0], tally[1], tally[2] });
+    log.info("pane sidebar marks busy={d} bell={d}", .{ tally[0], tally[1] });
 }
 
 /// What each row says - pane id, title and subtitle - logged when it changes,
@@ -806,7 +802,6 @@ fn refreshAll(self: *PaneSidebar) void {
             .project_size = if (outline.opensProject(placed[0..np], gi)) outline.projectSize(placed[0..np], gi) else 0,
             .panes = sp.grid + sp.stashed,
             .stashed = sp.stashed,
-            .question = treeHasQuestion(r.window, r.tab),
             .own = own,
             .tabbed = r.window.tab_count > 1,
         }, p.label, p.project);
@@ -913,15 +908,7 @@ fn projectKey(name: []const u8) u64 {
     return std.hash.Wyhash.hash(0x70726f6a, name);
 }
 
-fn treeHasQuestion(w: *Window, t: usize) bool {
-    var it = w.tab_trees[t].iterator();
-    while (it.next()) |entry| {
-        if (entry.view.surface()) |s| {
-            if (s.activity_state == .needs_input) return true;
-        }
-    }
-    return false;
-}
+
 
 fn appendGroup(self: *PaneSidebar, g_in: Group, label8: []const u8, project8: ?[]const u8) void {
     var g = g_in;
@@ -1085,7 +1072,6 @@ fn rawLayout(self: *PaneSidebar) pane_sidebar.Layout {
     // The empty tray is always there (T2276, Mac 543489bca): a drop target
     // says so before a drag starts, not only once one is under way.
     pane_sidebar.addEmptyTray(&l, self.metrics, self.scale);
-    l.quick_kill = self.quick_kill;
     l.search_text = !self.search.isEmpty();
     return l;
 }
@@ -1488,7 +1474,7 @@ fn armMotion(self: *PaneSidebar) void {
     if (w32.SetTimer(self.hwnd, TIMER_ANIM, motion.frame_ms, null) == 0) return;
     self.anim_armed = true;
     const m = self.marks;
-    log.info("pane sidebar motion on surface=rail busy={d} pulse={d}", .{ m.busy, m.pulsing });
+    log.info("pane sidebar motion on surface=rail busy={d}", .{m.busy});
 }
 
 /// A motion frame: repaint while the last paint drew something that moves
@@ -1692,38 +1678,6 @@ fn paintMarkFor(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, mark: Ma
     }
 }
 
-/// The question chip with its breathing ring (Mac `PaneSidebarQuestionBadge`
-/// in a row or a window header, T1889): the word "question" in an accent
-/// capsule ending at `right` and centred on `center_y`, with a soft accent
-/// ring around the capsule so a question in an otherwise quiet list is what
-/// draws the eye. `under` is what the ring fades into. Returns the chip, so
-/// the caller knows where its text has to stop.
-///
-/// Mac inverts the chip on its accent selection pill; Windows has no accent
-/// pill (design system: selection is a neutral fill plus the accent bar), so
-/// the chip is always accent-on-surface and always breathes.
-fn paintQuestion(self: *PaneSidebar, hdc: w32.HDC, right: i32, center_y: i32, under: color_math.Rgb, t: Theme) pane_sidebar.Rect {
-    const label = std.unicode.utf8ToUtf16LeStringLiteral(pane_sidebar.question_label);
-    if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-    const chip = pane_sidebar.questionChip(right, center_y, textWidth(hdc, label), self.scale);
-    if (chip.width() != self.logged_chip[0] or chip.height() != self.logged_chip[1]) {
-        self.logged_chip = .{ chip.width(), chip.height() };
-        log.info("pane sidebar question chip w={d} h={d}", .{ chip.width(), chip.height() });
-    }
-    self.paint_marks.pulsing += 1;
-    if (self.paint_motion) {
-        const a = motion.pulseAlpha(self.paint_ms);
-        const ring = @max(pane_sidebar.px(motion.pulse_ring_dip, self.scale), 1);
-        // Below one shade step the ring is invisible: skip the fill.
-        if (a * 255 >= 1) {
-            const halo = pane_sidebar.questionRing(chip, ring);
-            fillRound(hdc, halo, @divTrunc(halo.height(), 2), rgb(color_math.mix(under, t.accent, a)));
-        }
-    }
-    fillRound(hdc, chip, @divTrunc(chip.height(), 2), rgb(t.accent));
-    drawText(hdc, label, chip, rgb(chrome_theme.textOn(t.accent)), w32.DT_CENTER | w32.DT_VCENTER);
-    return chip;
-}
 
 /// A stashed pane's bell (Mac: a 7 pt accent dot until it is restored).
 fn paintBellDot(self: *PaneSidebar, hdc: w32.HDC, cx: i32, cy: i32, t: Theme) void {
@@ -1749,7 +1703,7 @@ fn hueInk(self: *const PaneSidebar, e: Entry, under: color_math.Rgb, hovered: bo
 fn syncHoverTint(self: *PaneSidebar) void {
     const app = self.window.app;
     const want: ?Entry = switch (self.hover) {
-        .item, .item_button => |i| if (i < self.entries.items.len) self.entries.items[i] else null,
+        .item, .item_button, .item_close => |i| if (i < self.entries.items.len) self.entries.items[i] else null,
         else => null,
     };
     const pane: ?*const PaneView = if (want) |e| e.pane else null;
@@ -1829,13 +1783,9 @@ fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout
 fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     if (self.paint_bare) return;
     // Header: the toggle first, "PANES" (or "ALL WINDOWS") after it, the
-    // all-windows and trash buttons at the trailing edge.
+    // all-windows button at the trailing edge.
     if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-    // Trash mode says what a click now does, in the destructive red (Mac's
-    // "Click × to kill" caption).
-    const caption = if (self.quick_kill)
-        std.unicode.utf8ToUtf16LeStringLiteral(row_menu.kill_caption)
-    else if (self.all_windows)
+    const caption = if (self.all_windows)
         std.unicode.utf8ToUtf16LeStringLiteral("ALL WINDOWS")
     else
         std.unicode.utf8ToUtf16LeStringLiteral("PANES");
@@ -1845,10 +1795,10 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         .top = l.header.top,
         .right = caption_right,
         .bottom = l.header.bottom,
-    }, if (self.quick_kill) rgb(chrome_theme.dangerInkOn(t.surface)) else t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
     // ALL WINDOWS carries how many windows, styled as a project header's
     // count (T1924; Mac `PaneSidebarCount` beside the caption, 6pt after it).
-    if (self.all_windows and !self.quick_kill) {
+    if (self.all_windows) {
         var nb: [16]u8 = undefined;
         const count8 = std.fmt.bufPrint(&nb, "{d}", .{self.window_count}) catch "";
         var cw: [16]u16 = undefined;
@@ -1861,7 +1811,6 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     }
     self.paintToggle(hdc, l, t);
     self.paintScope(hdc, l, t);
-    self.paintTrash(hdc, l, t);
     self.paintSearch(hdc, l, t);
     // Below the controls, everything scrolls (T1878): clipped to the
     // viewport, so a row passing under the header is cut there.
@@ -1894,19 +1843,14 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     for (self.entries.items[0..l.count], 0..) |e, i| {
         if (!l.shown(i)) continue;
         const r = l.items[i];
-        const hovered = self.hoverIs(.{ .item = i }) or self.hoverIs(.{ .item_button = i });
-        // Trash mode: a hovered row (not the selected one) washes red, so the
-        // row a click would kill is the one that says so (Mac: red at 12%).
-        const kill_wash = self.quick_kill and hovered and !e.selected;
+        const hovered = self.rowHovered(i);
         const sel = list_selection.rowPaint(t.surface, t.accent, .{
             .selected = e.selected,
             .focused = emphasized,
-            .hovered = hovered and !kill_wash,
+            .hovered = hovered,
             .focus_visible = false,
         });
-        if (kill_wash) {
-            fillRound(hdc, r, radius, rgb(color_math.mix(t.surface, chrome_theme.dangerInkOn(t.surface), 0.12)));
-        } else if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
+        if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
         if (sel.indicator) |c| {
             const bar = toc.selectionIndicator(r.height(), self.scale);
             fillRound(hdc, .{
@@ -1936,31 +1880,23 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         const busy = e.state == .busy;
         self.paintMarkFor(hdc, icon_r, .{ .glyph = e.icon }, self.hueInk(e, under, hovered, emphasized, t), under, busy);
 
-        // The trailing edge: the hover button replaces the state accessories
-        // while the pointer is on the row, so the two never crowd each other.
-        const button = l.rowButton(i, self.scale);
+        // The trailing edge: the hover buttons (T2280, Mac dc2bbab6b -
+        // stash/restore on this window's rows, then the x) replace the bell
+        // dot while the pointer is on the row, so the two never crowd each
+        // other. A question has no accessory any more (Mac 2924ea5cc).
         const text_left = icon_r.right + pane_sidebar.px(8, self.scale);
         var text_right = r.right - text_inset;
         const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
-        if (self.quick_kill) {
-            // Trash mode's x is always there - no hover needed to find it.
+        if (hovered and row_menu.rowOffersButtons(e.own)) {
+            const button = l.rowButton(i, self.scale);
             text_right = button.left - sm;
-            self.paintKill(hdc, button, self.hoverIs(.{ .item_button = i }), t);
-        } else if (hovered) {
-            text_right = button.left - sm;
-            self.paintRowButton(hdc, i, button, e.section, t);
-        } else {
-            // Mac's accessories, trailing first: a stashed pane's bell dot,
-            // then the question badge before it.
-            if (e.bell and e.section == .stashed) {
-                const d = @max(pane_sidebar.px(7, self.scale), 3);
-                self.paintBellDot(hdc, text_right - @divTrunc(d, 2), icon_r.centerY(), t);
-                text_right -= d + sm;
-            }
-            if (e.state == .needs_input) {
-                const chip = self.paintQuestion(hdc, text_right, icon_r.centerY(), under, t);
-                text_right = chip.left - sm;
-            }
+            self.paintRowButton(hdc, .{ .item_button = i }, button, if (e.section == .stashed) glyph_restore else glyph_stash, t);
+            self.paintRowButton(hdc, .{ .item_close = i }, l.rowClose(i, self.scale), glyph_close, t);
+        } else if (e.bell and e.section == .stashed) {
+            // Mac's accessory: a stashed pane's bell dot.
+            const d = @max(pane_sidebar.px(7, self.scale), 3);
+            self.paintBellDot(hdc, text_right - @divTrunc(d, 2), icon_r.centerY(), t);
+            text_right -= d + sm;
         }
 
         if (self.title_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
@@ -2077,7 +2013,7 @@ fn paintSearch(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, 
         if (icon_button.paintsFill(state)) {
             fillRound(hdc, b, radius, rgb(shade(well, icon_button.fillDelta(state, t.dark))));
         }
-        glyph(hdc, s, b, glyph_kill, 10, t.secondary);
+        glyph(hdc, s, b, glyph_close, 10, t.secondary);
     }
 }
 
@@ -2123,44 +2059,6 @@ fn paintScope(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t
     glyph(hdc, self.scale, l.scope, glyph_windows, 12, t.text);
 }
 
-/// The trash-mode toggle (T1845, Mac's `trash` header button): the trash can,
-/// red and held filled while trash mode is on - the same checked-toggle
-/// vocabulary as the all-windows button beside it.
-fn paintTrash(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
-    if (l.trash.width() <= 0) return;
-    const state: icon_button.State = if (self.hoverIs(.trash))
-        (if (std.meta.eql(self.pressed, pane_sidebar.Hit.trash)) .pressed else .hover)
-    else
-        .normal;
-    const inset = pane_sidebar.px(2, self.scale); // design system: fill inset xs
-    const f: pane_sidebar.Rect = .{ .left = l.trash.left + inset, .top = l.trash.top + inset, .right = l.trash.right - inset, .bottom = l.trash.bottom - inset };
-    const red = chrome_theme.dangerInkOn(t.surface);
-    if (self.quick_kill) {
-        const wash: f64 = if (state == .normal) 0.18 else 0.28;
-        fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(color_math.mix(t.surface, red, wash)));
-    } else if (icon_button.paintsFill(state)) {
-        fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark))));
-    }
-    glyph(hdc, self.scale, l.trash, glyph_trash, 12, if (self.quick_kill) rgb(red) else t.text);
-}
-
-/// Trash mode's kill button: a solid red disc with a white x (Mac's
-/// `PaneSidebarKillButton`; Windows' own close-button red and white, the one
-/// destructive pairing the chrome uses). Darker under the pointer.
-fn paintKill(self: *PaneSidebar, hdc: w32.HDC, b: pane_sidebar.Rect, hot: bool, t: Theme) void {
-    const d = @min(b.width(), b.height());
-    const r: pane_sidebar.Rect = .{
-        .left = b.left + @divTrunc(b.width() - d, 2),
-        .top = b.top + @divTrunc(b.height() - d, 2),
-        .right = b.left + @divTrunc(b.width() - d, 2) + d,
-        .bottom = b.top + @divTrunc(b.height() - d, 2) + d,
-    };
-    const fill = chrome_theme.dangerFillOn(t.surface);
-    fillRound(hdc, r, @divTrunc(d, 2), rgb(if (hot) shade(fill, -24) else fill));
-    const on = chrome_theme.on_danger_fixed;
-    const dip: f32 = @max(@as(f32, @floatFromInt(d)) / self.scale * 0.5, 6);
-    glyph(hdc, self.scale, r, glyph_kill, dip, rgb(on));
-}
 
 /// The outline's own furniture (T1829): the hairlines between windows and
 /// before a stash, each window's STASHED caption, and the project and window
@@ -2187,8 +2085,9 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
 
 /// A window header (Mac `PaneSidebarWindowHeader`) or a project header
 /// (`PaneSidebarProjectHeader`): chevron, name, and at the trailing edge the
-/// window's pane count - or its question badge - or the project's window
-/// count. Another window's header lights on hover, since a click raises it.
+/// window's pane count or the project's window count (a window's question
+/// badge went with T2280, Mac 2924ea5cc). Another window's header lights on
+/// hover, since a click raises it.
 fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, g: Group, t: Theme) void {
     const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
@@ -2205,13 +2104,10 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     const folded = if (project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
 
-    // The trailing count (or badge) first, so the name knows its room.
+    // The trailing count first, so the name knows its room.
     var right = hd.rect.right - text_inset;
     const text_r: pane_sidebar.Rect = .{ .left = hd.label_x, .top = hd.chevron.top - pane_sidebar.px(6, self.scale), .right = right, .bottom = hd.chevron.bottom + pane_sidebar.px(6, self.scale) };
-    if (!project and g.question) {
-        const chip = self.paintQuestion(hdc, right, hd.chevron.centerY(), under, t);
-        right = chip.left - sm;
-    } else {
+    {
         var nb: [16]u8 = undefined;
         const count8 = std.fmt.bufPrint(&nb, "{d}", .{if (project) g.project_size else g.panes}) catch "";
         var cw: [16]u16 = undefined;
@@ -2306,29 +2202,21 @@ fn strokeDashed(hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, scale: f32, col
     _ = w32.RoundRect(hdc, r.left, r.top, r.right, r.bottom, 2 * radius, 2 * radius);
 }
 
-fn paintRowButton(self: *PaneSidebar, hdc: w32.HDC, i: usize, b: pane_sidebar.Rect, section: pane_sidebar.Section, t: Theme) void {
-    const on_button = self.hoverIs(.{ .item_button = i });
-    if (on_button) {
-        const pressed = std.meta.eql(self.pressed, pane_sidebar.Hit{ .item_button = i });
+/// One of a hovered row's compact buttons (stash / restore, or the x, T2280):
+/// the glyph, on the icon-button hover fill while the pointer is on it. The x
+/// is an ordinary button, not trash mode's red disc - it closes undoably.
+fn paintRowButton(self: *PaneSidebar, hdc: w32.HDC, hit: pane_sidebar.Hit, b: pane_sidebar.Rect, g: u16, t: Theme) void {
+    if (self.hoverIs(hit)) {
+        const pressed = std.meta.eql(self.pressed, hit);
         const state: icon_button.State = if (pressed) .pressed else .hover;
         fillRound(hdc, b, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark) * 2)));
     }
-    glyph(hdc, self.scale, b, if (section == .stashed) glyph_restore else glyph_stash, 10, t.text);
+    glyph(hdc, self.scale, b, g, 10, t.text);
 }
 
-/// The rail tile's corner badge: `needs_input` is the accent "?" disc (Mac's
-/// rail corner; rows and headers get the "question" chip, `paintQuestion`).
-/// Busy has no badge: its mark shimmers instead (T1843).
-fn paintBadge(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, state: ActivityState, t: Theme) void {
-    switch (state) {
-        .idle, .busy => {},
-        .needs_input => {
-            fillRound(hdc, r, @divTrunc(r.width(), 2), rgb(t.accent));
-            const on = chrome_theme.textOn(t.accent);
-            if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-            drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("?"), r, rgb(on), w32.DT_CENTER | w32.DT_VCENTER);
-        },
-    }
+/// The pointer is on row `i` or one of its buttons.
+fn rowHovered(self: *const PaneSidebar, i: usize) bool {
+    return self.hoverIs(.{ .item = i }) or self.hoverIs(.{ .item_button = i }) or self.hoverIs(.{ .item_close = i });
 }
 
 fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
@@ -2368,21 +2256,16 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
         const busy = e.state == .busy;
         const under = sel.fill orelse t.surface;
-        const hovered = self.hoverIs(.{ .item = i }) or self.hoverIs(.{ .item_button = i });
+        const hovered = self.rowHovered(i);
         const mark: Mark = if (e.icon == glyph_terminal) .{ .text = e.mono } else .{ .glyph = e.icon };
         self.paintMarkFor(hdc, r, mark, self.hueInk(e, under, hovered, emphasized, t), under, busy);
-        // The corner (Mac): the question disc top-right - still, unlike a
-        // row's - or else a stashed pane's bell dot.
+        // The corner (Mac): a stashed pane's bell dot. The question disc
+        // that sat there went with T2280 (Mac 2924ea5cc).
         const two = pane_sidebar.px(2, self.scale);
-        if (e.state == .needs_input) {
-            const d = pane_sidebar.px(12, self.scale);
-            self.paintBadge(hdc, .{ .left = r.right - d + two, .top = r.top - two, .right = r.right + two, .bottom = r.top - two + d }, .needs_input, t);
-        } else if (e.bell and e.section == .stashed) {
+        if (e.bell and e.section == .stashed) {
             const d = @max(pane_sidebar.px(7, self.scale), 3);
             self.paintBellDot(hdc, r.right - @divTrunc(d, 2) + @divTrunc(two, 2), r.top + @divTrunc(d, 2) - @divTrunc(two, 2), t);
         }
-        // Trash mode's x on the opposite corner from the question disc.
-        if (self.quick_kill) self.paintKill(hdc, l.tileKill(i, self.scale), self.hoverIs(.{ .item_button = i }), t);
     }
     self.paintDropSlot(hdc, l, t);
     self.paintThumb(hdc, l, t);
@@ -2694,10 +2577,7 @@ const tip_head_other = W("Raise this window");
 const tip_head_project = W("Hide or show this project\u{2019}s windows");
 const tip_search = W("Search windows and panes \u{2014} every word must match");
 const tip_search_clear = W("Clear search");
-// Trash mode (T1845).
-const tip_trash_on = W(row_menu.trashTip(true));
-const tip_trash_off = W(row_menu.trashTip(false));
-const tip_kill = W(row_menu.kill_tip);
+const tip_close = W(row_menu.close_tip);
 const tip_restore_row = W(tips.stashed_row_tip);
 
 /// The toggle's tip: what a click does, or why it does nothing.
@@ -2721,6 +2601,7 @@ fn syncTips(self: *PaneSidebar) void {
     if (self.tip_items > n) for (n..self.tip_items) |i| {
         delTool(tip, hwnd, toolItem(i));
         delTool(tip, hwnd, toolButton(i));
+        delTool(tip, hwnd, toolClose(i));
     };
     const nh = if (live) l.head_count else 0;
     if (self.tip_heads > nh) for (nh..self.tip_heads) |k| delTool(tip, hwnd, toolHead(k));
@@ -2742,16 +2623,13 @@ fn syncTips(self: *PaneSidebar) void {
     if (!live) {
         delTool(tip, hwnd, tool_toggle);
         delTool(tip, hwnd, tool_scope);
-        delTool(tip, hwnd, tool_trash);
     } else {
         addTool(tip, hwnd, tool_toggle, l.toggle, self.toggleTipText());
         const rows = l.mode == .expanded;
         if (rows) {
             addTool(tip, hwnd, tool_scope, l.scope, if (self.all_windows) tip_scope_off else tip_scope_on);
-            addTool(tip, hwnd, tool_trash, l.trash, if (self.quick_kill) tip_trash_on else tip_trash_off);
         } else {
             delTool(tip, hwnd, tool_scope);
-            delTool(tip, hwnd, tool_trash);
         }
         for (l.heads[0..nh], 0..) |hd, k| {
             const own = hd.index < self.groups.items.len and self.groups.items[hd.index].own;
@@ -2766,6 +2644,7 @@ fn syncTips(self: *PaneSidebar) void {
                 // row on screen, so no tip.
                 delTool(tip, hwnd, toolItem(i));
                 delTool(tip, hwnd, toolButton(i));
+                delTool(tip, hwnd, toolClose(i));
                 continue;
             }
             if (rows) {
@@ -2773,9 +2652,11 @@ fn syncTips(self: *PaneSidebar) void {
                 const row_tip = if (e.section != .stashed) tip_focus else if (e.own) tip_restore_row else tip_restore;
                 addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), row_tip);
                 in_view += 1;
-                const btn_tip = if (self.quick_kill) tip_kill else if (e.section == .stashed) tip_restore_btn else tip_stash_btn;
+                const btn_tip = if (e.section == .stashed) tip_restore_btn else tip_stash_btn;
                 const b = scroll_mod.visible(&l, l.rowButton(i, self.scale));
                 if (b.height() > 0) addTool(tip, hwnd, toolButton(i), b, btn_tip) else delTool(tip, hwnd, toolButton(i));
+                const x = scroll_mod.visible(&l, l.rowClose(i, self.scale));
+                if (x.height() > 0) addTool(tip, hwnd, toolClose(i), x, tip_close) else delTool(tip, hwnd, toolClose(i));
             } else {
                 // Another window's tile names its window too (Mac: "in
                 // the mini rail ... the hover label names the window").
@@ -2784,9 +2665,8 @@ fn syncTips(self: *PaneSidebar) void {
                 const len = tips.tileTip(&self.tip_text[i], title, e.section);
                 addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), self.tip_text[i][0..len :0]);
                 in_view += 1;
-                if (self.quick_kill) {
-                    addTool(tip, hwnd, toolButton(i), l.tileKill(i, self.scale), tip_kill);
-                } else delTool(tip, hwnd, toolButton(i));
+                delTool(tip, hwnd, toolButton(i));
+                delTool(tip, hwnd, toolClose(i));
             }
         }
     }
@@ -2849,7 +2729,6 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
         // the click and does nothing, as Mac's `.disabled` button does.
         .toggle => if (self.toggleEnabled()) self.window.setPaneSidebarExpanded(self.mode != .expanded, if (self.mode == .expanded) "header button" else "rail button"),
         .scope => self.toggleScope(),
-        .trash => self.setQuickKill(!self.quick_kill),
         .search => self.focusSearch(),
         .search_clear => {
             log.info("pane sidebar search cleared by button", .{});
@@ -2867,15 +2746,15 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
         .item_button => |i| {
             if (i >= self.entries.items.len) return;
             const e = self.entries.items[i];
-            // Trash mode: the button is the red x. The kill can close this
-            // very window (its last pane), so nothing here is touched after.
-            if (self.quick_kill) return killEntry(self.window, e);
-            if (e.own) return self.window.paneSidebarToggleStash(e.pane);
-            // Another window's pane is stashed or restored in ITS window; a
-            // pane in a background tab there is left alone (its window's own
-            // check refuses it).
-            if (!self.window.app.hasWindow(e.window)) return;
-            e.window.paneSidebarToggleStash(e.pane);
+            // Only this window's rows have one (`rowOffersButtons`).
+            if (row_menu.rowOffersButtons(e.own)) self.window.paneSidebarToggleStash(e.pane);
+        },
+        // The x (T2280): close the pane. That can close this very window
+        // (its last pane), so nothing here is touched after.
+        .item_close => |i| {
+            if (i >= self.entries.items.len) return;
+            const e = self.entries.items[i];
+            if (row_menu.rowOffersButtons(e.own)) return self.window.paneSidebarCloseNow(e.pane);
         },
         .head, .head_fold => |k| self.activateHead(k, std.meta.activeTag(hit) == .head_fold),
     }
@@ -2906,18 +2785,6 @@ fn toggleScope(self: *PaneSidebar) void {
     self.refresh();
 }
 
-/// Trash mode on or off (T1845): the header button, or Escape. Repaints -
-/// the rail's tiles carry the x too - and re-sets the tips, whose row
-/// buttons now mean "kill".
-pub fn setQuickKill(self: *PaneSidebar, on: bool) void {
-    if (self.quick_kill == on) return;
-    self.quick_kill = on;
-    self.hover = .none;
-    self.syncHoverTint();
-    log.info("pane sidebar trash mode on={}", .{on});
-    _ = w32.InvalidateRect(self.hwnd, null, 0);
-    self.syncTips();
-}
 
 // -------------------------------------------------------------------------
 // The all-windows search field (T1877)
@@ -3033,15 +2900,7 @@ fn rowWindow(self: *PaneSidebar, e: Entry) ?*Window {
     return e.window;
 }
 
-/// Kill an entry's pane in the window that holds it. May close that window -
-/// THIS one, when it is the last pane here - so callers return right after.
-fn killEntry(own_window: *Window, e: Entry) void {
-    const w = if (e.own) own_window else blk: {
-        if (!own_window.app.hasWindow(e.window)) return;
-        break :blk e.window;
-    };
-    w.paneSidebarKill(e.pane);
-}
+
 
 /// A row's or tile's right-click menu (T1845, Mac `PaneSidebarRow
 /// .contextMenu`). The menu's modal loop pumps messages, so the roster can be
@@ -3375,7 +3234,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             const x = xOf(lparam);
             const y = yOf(lparam);
             switch (self.hitAt(x, y)) {
-                .item, .item_button => |i| self.openRowMenu(hwnd, i, x, y),
+                .item, .item_button, .item_close => |i| self.openRowMenu(hwnd, i, x, y),
                 else => {},
             }
             return 0;

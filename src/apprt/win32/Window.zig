@@ -2906,15 +2906,16 @@ pub fn paneSidebarClose(self: *Window, pane: *PaneView) void {
     self.closeSplitPane(pane);
 }
 
-/// Trash mode's red x (T1845, Mac `killPane`): close `pane` NOW - no
-/// confirmation and no undo window, so nothing holds the pane and its session
-/// ends with it. A window's last pane takes its window with it, which is what
-/// "kill" means there too. May free `pane` before returning.
-pub fn paneSidebarKill(self: *Window, pane: *PaneView) void {
+/// A row's hover x (T2280, Mac dc2bbab6b / 345be6b02 `closePaneFromSidebar`):
+/// close `pane` with no confirmation - nothing running is asked about, a
+/// remote pane is not offered Disconnect - and without moving focus to this
+/// window. It is undoable like any close: the pane is parked, and its session
+/// ends (CLOSE, never detach) when the undo expires. A window's last pane
+/// takes its window with it, parked the same way. May free `pane` before
+/// returning. It replaced trash mode's kill, which skipped the undo too.
+pub fn paneSidebarCloseNow(self: *Window, pane: *PaneView) void {
     if (self.findTabIndex(pane) == null) return;
-    log.info("pane sidebar kill pane", .{});
-    self.app.close_undo.bypass = true;
-    defer self.app.close_undo.bypass = false;
+    log.info("pane sidebar close pane (x)", .{});
     self.closeSplitPane(pane);
 }
 

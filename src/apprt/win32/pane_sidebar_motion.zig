@@ -1,11 +1,11 @@
-//! The pane sidebar's two motions (T1843), pure so they are testable: a busy
-//! pane's mark shimmers - drawn dim, with a brighter band sweeping across it -
-//! and a question badge breathes a soft ring. Both are Mac's
-//! (`PaneSidebarShimmer` and `PaneSidebarQuestionBadge` in
-//! PaneSidebarView.swift), translated from SwiftUI's animation clock to a
-//! window timer that repaints the column, and both stop outright when the
-//! user turned off "Animation effects" (SPI_GETCLIENTAREAANIMATION, Mac's
-//! Reduce Motion): the busy mark is then drawn plain and the ring not at all.
+//! The pane sidebar's motion (T1843), pure so it is testable: a busy pane's
+//! mark shimmers - drawn dim, with a brighter band sweeping across it. It is
+//! Mac's (`PaneSidebarShimmer` in PaneSidebarView.swift), translated from
+//! SwiftUI's animation clock to a window timer that repaints the column, and
+//! it stops outright when the user turned off "Animation effects"
+//! (SPI_GETCLIENTAREAANIMATION, Mac's Reduce Motion): the busy mark is then
+//! drawn plain. The question badge's breathing ring that was the second
+//! motion went with the badge (T2280, Mac 2924ea5cc).
 
 const std = @import("std");
 
@@ -23,14 +23,6 @@ pub const base_opacity: f64 = 0.3;
 /// `LinearGradient` stops: clear at 0.35, solid at 0.5, clear at 0.65).
 pub const band_stops = [3]f64{ 0.35, 0.5, 0.65 };
 
-/// The question ring breathes 0 -> peak -> 0, each half this long (Mac
-/// `.easeInOut(duration: 1.2).repeatForever(autoreverses: true)`).
-pub const pulse_half_ms: u64 = 1200;
-/// The ring's opacity at its fullest (Mac 0.22).
-pub const pulse_peak: f64 = 0.22;
-/// The ring's width outside the badge, in DIP (Mac lineWidth 3, padded out
-/// by half of it, so the ring sits wholly outside the capsule).
-pub const pulse_ring_dip: f32 = 3;
 
 /// The repaint cadence while anything moves: 30 frames a second is smooth
 /// for a band crossing a 12-16 DIP mark, at half the cost of 60.
@@ -68,31 +60,17 @@ fn bandWeight(u: f64) f64 {
     return (hi - u) / (hi - mid);
 }
 
-/// The question ring's opacity at `ms`: up and back down, eased at both ends.
-pub fn pulseAlpha(ms: u64) f64 {
-    const cycle = 2 * pulse_half_ms;
-    const phase = ms % cycle;
-    const half = @as(f64, @floatFromInt(pulse_half_ms));
-    const t = if (phase < pulse_half_ms)
-        @as(f64, @floatFromInt(phase)) / half
-    else
-        @as(f64, @floatFromInt(cycle - phase)) / half;
-    // SwiftUI's easeInOut is a cubic bezier; smoothstep is its close twin.
-    return pulse_peak * (t * t * (3 - 2 * t));
-}
 
 /// What the column shows right now, and so whether it needs a clock.
 pub const Marks = struct {
     /// Busy marks drawn (each shimmers when motion is on).
     busy: usize = 0,
-    /// Question badges with a ring (rows and window headers - a rail tile's
-    /// corner "?" holds still, as Mac's does).
-    pulsing: usize = 0,
+
     /// Bell dots on stashed rows: shown, never animated.
     bells: usize = 0,
 
     pub fn moving(self: Marks, motion: bool) bool {
-        return motion and (self.busy > 0 or self.pulsing > 0);
+        return motion and self.busy > 0;
     }
 };
 
@@ -141,21 +119,10 @@ test "mid-sweep the band's bright middle is on the mark, and never dims it below
     }
 }
 
-test "the question ring breathes from clear to its peak and back, eased" {
-    try std.testing.expectApproxEqAbs(@as(f64, 0), pulseAlpha(0), 1e-9);
-    try std.testing.expectApproxEqAbs(pulse_peak, pulseAlpha(1200), 1e-9);
-    try std.testing.expectApproxEqAbs(@as(f64, 0), pulseAlpha(2400), 1e-9);
-    try std.testing.expectApproxEqAbs(pulse_peak / 2, pulseAlpha(600), 1e-9);
-    // Symmetric on the way back down.
-    try std.testing.expectApproxEqAbs(pulseAlpha(300), pulseAlpha(2100), 1e-9);
-    // Eased: slow off the bottom.
-    try std.testing.expect(pulseAlpha(120) < pulse_peak * 0.1 * 0.5);
-}
 
 test "the clock runs only for something that moves, and never with motion off" {
     try std.testing.expect(!(Marks{}).moving(true));
     try std.testing.expect(!(Marks{ .bells = 3 }).moving(true));
     try std.testing.expect((Marks{ .busy = 1 }).moving(true));
-    try std.testing.expect((Marks{ .pulsing = 1 }).moving(true));
-    try std.testing.expect(!(Marks{ .busy = 1, .pulsing = 2 }).moving(false));
+    try std.testing.expect(!(Marks{ .busy = 1, .bells = 2 }).moving(false));
 }

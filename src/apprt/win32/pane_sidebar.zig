@@ -25,7 +25,6 @@
 const std = @import("std");
 const toc = @import("viewer_toc_layout.zig");
 const pane_elevation = @import("pane_elevation.zig");
-const type_ramp = @import("type_ramp.zig");
 const order_mod = @import("pane_sidebar_order.zig");
 
 // ---------------------------------------------------------------------------
@@ -63,8 +62,8 @@ pub const rail_group_gap_dip: f32 = 8;
 pub const button_dip: f32 = 28;
 /// The compact button a row's hover action is drawn as (dense list rows).
 pub const row_button_dip: f32 = 20;
-/// Trash mode's x disc on a rail tile (Mac's 13 pt kill button).
-pub const tile_kill_dip: f32 = 13;
+/// Between a row's two hover buttons (Mac `trailingButtonSpacing`).
+pub const row_button_gap_dip: f32 = 4;
 /// The design system's default inset (`sm`).
 pub const sm_dip: f32 = 4;
 
@@ -682,35 +681,6 @@ pub const Rect = struct {
     }
 };
 
-/// The question chip (T1889, Mac `PaneSidebarQuestionBadge` in a row or a
-/// window header): the word "question" in an accent capsule. A STATUS CHIP
-/// by design system §3.1's named exception, so it is the chooser's chip
-/// exactly - one caption line plus `sm` tall (Mac's 15 pt), `sm` of padding
-/// either side of the word (Mac's 6 pt, onto the scale), radius half its
-/// height. The rail's corner keeps its small "?" disc, as Mac's does.
-pub const question_label = "question";
-pub const question_chip_pad_dip: f32 = sm_dip;
-
-pub fn questionChipHeight(scale: f32) i32 {
-    return px(type_ramp.caption_dip, scale) + px(sm_dip, scale);
-}
-
-/// The chip for a label `text_w` pixels wide, ending at `right` and centred
-/// on `center_y`. Never narrower than it is tall, so it is always a capsule.
-pub fn questionChip(right: i32, center_y: i32, text_w: i32, scale: f32) Rect {
-    const h = questionChipHeight(scale);
-    const w = @max(@max(text_w, 0) + 2 * px(question_chip_pad_dip, scale), h);
-    const top = center_y - @divTrunc(h, 2);
-    return .{ .left = right - w, .top = top, .right = right, .bottom = top + h };
-}
-
-/// The breathing ring around a chip (Mac: a 3 pt stroke padded 1.5 pt out):
-/// the chip grown by `ring` on every side, so its radius - half ITS height -
-/// keeps it the chip's shape rather than a disc's.
-pub fn questionRing(chip: Rect, ring: i32) Rect {
-    return .{ .left = chip.left - ring, .top = chip.top - ring, .right = chip.right + ring, .bottom = chip.bottom + ring };
-}
-
 /// What the layout needs to know about each item: its section, and whether
 /// the expanded row carries a subtitle line.
 pub const Item = struct {
@@ -787,26 +757,22 @@ pub const Layout = struct {
     /// The collapse/expand button's painted square (T2289): the header's
     /// first item, on the same spot in both modes (`toggleRect`).
     toggle: Rect = .{},
-    /// The all-windows toggle, left of the trash button (panel only; Mac
-    /// drops its header buttons from the rail).
+    /// The all-windows toggle, at the header's trailing edge (panel only;
+    /// Mac drops its header buttons from the rail). The trash-mode button
+    /// that sat after it went with trash mode (T2280, Mac dc2bbab6b).
     scope: Rect = .{},
-    /// The trash-mode toggle, at the header's trailing edge after the
-    /// all-windows toggle - Mac's header order (T1845).
-    trash: Rect = .{},
     /// The all-windows search field under the header (T1877; outline in the
     /// panel only - empty otherwise), and its clear button at the trailing
     /// edge.
     search: Rect = .{},
     search_clear: Rect = .{},
     /// The field holds a query, so its clear button is a hit target. Set by
-    /// the caller, as `quick_kill` is.
+    /// the caller - the layout itself does not depend on it.
     search_text: bool = false,
     /// "No matching panes": the outline has no line to show (a search with
     /// no hit - an unfiltered outline always lists this window).
     no_match: ?Rect = null,
-    /// Trash mode is on (T1845): a rail tile's corner x is a hit target. Set
-    /// by the caller - the layout itself does not depend on it.
-    quick_kill: bool = false,
+
     /// Laid out as the all-windows outline (T1829).
     outline: bool = false,
     /// THIS window's stashed items are `first_stashed..stash_end` - the rows
@@ -814,6 +780,9 @@ pub const Layout = struct {
     stash_end: usize = 0,
     /// Each item's content indent (outline level), in pixels.
     indent: [max_items]i32 = [_]i32{0} ** max_items,
+    /// Each item is THIS window's (`Item.own`): only those rows offer hover
+    /// buttons (T2280, `pane_sidebar_menu.rowOffersButtons`).
+    own: [max_items]bool = [_]bool{true} ** max_items,
     heads: [max_heads]Head = undefined,
     head_count: usize = 0,
     /// The outline's hairlines and STASHED captions (the single-window
@@ -867,24 +836,26 @@ pub const Layout = struct {
         self.rule_count += 1;
     }
 
-    /// An expanded row's hover button (stash / restore): the compact square
-    /// at the row's trailing edge, `sm` inside its fill.
-    /// Trash mode's x on a rail tile (T1845): a small disc on the tile's
-    /// top-left corner, overhanging it the way the question badge overhangs
-    /// the top-right one - so the two never cover each other.
-    pub fn tileKill(self: *const Layout, i: usize, scale: f32) Rect {
-        const r = self.items[i];
-        const d = px(tile_kill_dip, scale);
-        const over = px(2, scale);
-        return .{ .left = r.left - over, .top = r.top - over, .right = r.left - over + d, .bottom = r.top - over + d };
-    }
-
-    pub fn rowButton(self: *const Layout, i: usize, scale: f32) Rect {
+    /// An expanded row's hover x (T2280, Mac dc2bbab6b): the compact square
+    /// at the row's trailing edge, `sm` inside its fill. Empty for another
+    /// window's row, which offers no buttons.
+    pub fn rowClose(self: *const Layout, i: usize, scale: f32) Rect {
+        if (!self.own[i]) return .{};
         const r = self.items[i];
         const b = px(row_button_dip, scale);
         const inset = px(sm_dip, scale);
         const top = r.top + @divTrunc(r.height() - b, 2);
         return .{ .left = r.right - inset - b, .top = top, .right = r.right - inset, .bottom = top + b };
+    }
+
+    /// An expanded row's hover stash / restore button: the same square,
+    /// `row_button_gap_dip` before the x (Mac's minus/restore, then the x).
+    /// Empty wherever the x is.
+    pub fn rowButton(self: *const Layout, i: usize, scale: f32) Rect {
+        if (!self.own[i]) return .{};
+        const x = self.rowClose(i, scale);
+        const shift = x.width() + px(row_button_gap_dip, scale);
+        return .{ .left = x.left - shift, .top = x.top, .right = x.right - shift, .bottom = x.bottom };
     }
 };
 
@@ -913,6 +884,7 @@ pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Li
     const n = @min(items.len, max_items);
     l.count = n;
     l.outline = lines != null;
+    for (items[0..n], 0..) |it, i| l.own[i] = it.own;
     findStash(&l, items[0..n]);
     switch (m) {
         .hidden => l.count = 0,
@@ -967,8 +939,8 @@ pub fn toggleRect(scale: f32, insets: RailInsets) Rect {
 }
 
 /// The header band: the toggle first (`toggleRect`), the caption after it,
-/// then the all-windows and trash buttons at the trailing edge, all on the
-/// toggle's row. The band holds the toggle with the same clearance above
+/// then the all-windows button at the trailing edge, all on the toggle's
+/// row. The band holds the toggle with the same clearance above
 /// and below it that it keeps from the rail card's edges, and is never
 /// shorter than the caption's own header height (design system §0: the band
 /// is sized to its control, never the reverse).
@@ -985,8 +957,7 @@ fn layoutHeader(l: *Layout, area: Rect, tm: TextMetrics, scale: f32, insets: Rai
     const gap = px(2, scale);
     l.caption_x = l.toggle.right + gap + sm;
     const bt = l.toggle.top + @divTrunc(l.toggle.height() - btn, 2);
-    l.trash = .{ .left = area.right - sm - btn, .top = bt, .right = area.right - sm, .bottom = bt + btn };
-    l.scope = .{ .left = l.trash.left - gap - btn, .top = bt, .right = l.trash.left - gap, .bottom = bt + btn };
+    l.scope = .{ .left = area.right - sm - btn, .top = bt, .right = area.right - sm, .bottom = bt + btn };
 }
 
 /// The all-windows search field, under the header (T1877; Mac's capsule
@@ -1198,12 +1169,12 @@ pub const Hit = union(enum) {
     toggle,
     /// An item's body (row or tile).
     item: usize,
-    /// An expanded row's hover button.
+    /// An expanded row's hover stash / restore button.
     item_button: usize,
+    /// An expanded row's hover x (T2280).
+    item_close: usize,
     /// The all-windows toggle.
     scope,
-    /// The trash-mode toggle (T1845).
-    trash,
     /// The all-windows search field, and its clear button (T1877).
     search,
     search_clear,
@@ -1218,17 +1189,14 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     if (l.toggle.contains(x, y)) return .toggle;
     const rows = l.mode == .expanded;
     if (rows and l.scope.contains(x, y)) return .scope;
-    if (rows and l.trash.contains(x, y)) return .trash;
+
     if (rows and l.search.contains(x, y)) {
         return if (l.search_text and l.search_clear.contains(x, y)) .search_clear else .search;
     }
     // Below the controls everything scrolls (T1878): what the scroll moved
     // out of the viewport is out of reach, whatever its rect says.
     if (l.viewport.height() > 0 and !l.viewport.contains(x, y)) return .none;
-    // Trash mode's corner x on a tile wins over the tile it sits on.
-    if (!rows and l.quick_kill) for (0..l.count) |i| {
-        if (l.tileKill(i, scale).contains(x, y)) return .{ .item_button = i };
-    };
+
     for (l.heads[0..l.head_count], 0..) |hd, k| {
         const hit_r = rowHitRect(l, hd.rect);
         if (!hit_r.contains(x, y)) continue;
@@ -1238,6 +1206,7 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
         if (!l.shown(i)) continue;
         const hit_r = rowHitRect(l, l.items[i]);
         if (!hit_r.contains(x, y)) continue;
+        if (rows and l.rowClose(i, scale).contains(x, y)) return .{ .item_close = i };
         if (rows and l.rowButton(i, scale).contains(x, y)) return .{ .item_button = i };
         return .{ .item = i };
     }
@@ -1295,9 +1264,9 @@ pub fn pinnedGripInGutter(elevated: bool) bool {
 /// The header's and the rows' buttons sit `sm` from the panel's edge, inside
 /// the band: a press on one of them is that button's, never a resize.
 fn onButton(l: *const Layout, x: i32, y: i32, scale: f32) bool {
-    if (l.toggle.contains(x, y) or l.scope.contains(x, y) or l.trash.contains(x, y)) return true;
+    if (l.toggle.contains(x, y) or l.scope.contains(x, y)) return true;
     for (0..l.count) |i| {
-        if (l.shown(i) and l.rowButton(i, scale).contains(x, y)) return true;
+        if (l.shown(i) and (l.rowClose(i, scale).contains(x, y) or l.rowButton(i, scale).contains(x, y))) return true;
     }
     return false;
 }
@@ -1698,7 +1667,7 @@ test "T2289: the toggle is the rail's first item and the panel header's first it
                 try testing.expect(rail.toggle.bottom < rail.items[0].top);
                 try testing.expect(panel.caption_x > panel.toggle.right);
                 try testing.expect(panel.scope.left > panel.caption_x);
-                try testing.expectEqual(panel.toggle.centerY(), panel.trash.centerY());
+                try testing.expectEqual(panel.toggle.centerY(), panel.scope.centerY());
                 // Inside the header band, which the rows start under.
                 try testing.expect(panel.toggle.top >= panel.header.top and panel.toggle.bottom <= panel.header.bottom);
                 try testing.expect(panel.items[0].top >= panel.header.bottom);
@@ -1726,17 +1695,22 @@ test "pane_sidebar: expanded rows stack under the header, with the STASHED capti
         // sits sm in from the trailing edge.
         const sm = px(sm_dip, s);
         try testing.expect(l.toggle.top - l.header.top >= sm and l.header.bottom - l.toggle.bottom >= sm);
-        try testing.expectEqual(w - sm, l.trash.right);
+        try testing.expectEqual(w - sm, l.scope.right);
         // Rows are below the header, in order, without overlap.
         try testing.expect(l.items[0].top >= l.header.bottom);
         try testing.expect(l.items[1].top >= l.items[0].bottom);
         try testing.expect(l.items[0].height() > l.items[1].height());
         const cap = l.stashed_caption.?;
         try testing.expect(cap.top >= l.items[1].bottom and l.items[2].top >= cap.bottom);
-        // The hover button sits inside its row, sm from the trailing edge.
+        // The hover x sits inside its row, sm from the trailing edge, and
+        // the stash button 4 DIP before it (T2280).
+        const x = l.rowClose(0, s);
+        try testing.expectEqual(l.items[0].right - sm, x.right);
+        try testing.expect(x.top >= l.items[0].top and x.bottom <= l.items[0].bottom);
         const b = l.rowButton(0, s);
-        try testing.expectEqual(l.items[0].right - sm, b.right);
-        try testing.expect(b.top >= l.items[0].top and b.bottom <= l.items[0].bottom);
+        try testing.expectEqual(x.left - px(row_button_gap_dip, s), b.right);
+        try testing.expectEqual(x.width(), b.width());
+        try testing.expectEqual(x.top, b.top);
     }
 }
 
@@ -1749,6 +1723,8 @@ test "pane_sidebar: hit testing finds the toggle, rows, row buttons and nothing"
     try testing.expectEqual(Hit{ .item = 0 }, hitTest(&l, 2, l.items[0].centerY(), s));
     const b = l.rowButton(1, s);
     try testing.expectEqual(Hit{ .item_button = 1 }, hitTest(&l, b.centerX(), b.centerY(), s));
+    const x = l.rowClose(1, s);
+    try testing.expectEqual(Hit{ .item_close = 1 }, hitTest(&l, x.centerX(), x.centerY(), s));
     try testing.expectEqual(Hit.none, hitTest(&l, 100, 590, s));
 
     const rail = layout(.mini, 68, 600, &items, tm, s);
@@ -1877,8 +1853,7 @@ test "pane_sidebar: the outline stacks heads, indented rows, rules and captions 
         // Only this window's stash is a drop target.
         try testing.expectEqual(@as(usize, 2), l.first_stashed);
         try testing.expectEqual(@as(usize, 3), l.stash_end);
-        // The all-windows toggle sits left of trash, inside the header.
-        try testing.expect(l.scope.right <= l.trash.left);
+        // The all-windows toggle sits inside the header.
         try testing.expect(l.scope.top >= l.header.top and l.scope.bottom <= l.header.bottom);
     }
 }
@@ -1987,38 +1962,38 @@ test "pane_sidebar: the outline never adds the empty drop slot" {
     try testing.expect(l.drop_slot == null);
 }
 
-test "pane_sidebar: the header reads toggle, then all-windows and trash at the trailing edge - Mac's order - and each is its own hit (T1845, T2289)" {
+test "pane_sidebar: the header reads toggle, then all-windows at the trailing edge - Mac's order, no trash button - and each is its own hit (T2280, T2289)" {
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
     for (scales) |s| {
         const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
         const l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
         try testing.expect(l.toggle.right <= l.scope.left);
-        try testing.expect(l.scope.right <= l.trash.left);
-        try testing.expect(l.trash.width() > 0);
-        try testing.expect(l.trash.top >= l.header.top and l.trash.bottom <= l.header.bottom);
-        try testing.expectEqual(@as(Hit, .trash), hitTest(&l, l.trash.centerX(), l.trash.centerY(), s));
+        try testing.expectEqual(px(240, s) - px(sm_dip, s), l.scope.right);
+        try testing.expect(l.scope.top >= l.header.top and l.scope.bottom <= l.header.bottom);
         try testing.expectEqual(@as(Hit, .scope), hitTest(&l, l.scope.centerX(), l.scope.centerY(), s));
         try testing.expectEqual(@as(Hit, .toggle), hitTest(&l, l.toggle.centerX(), l.toggle.centerY(), s));
     }
 }
 
-test "pane_sidebar: on the rail, a tile's corner x is a target only in trash mode (T1845)" {
-    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+test "T2280: another window's row offers no buttons (T2298 adds its x); a tile has none at all" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .group = 1, .own = false } };
     for (scales) |s| {
         const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
-        var l = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
-        // The rail has no header buttons, so no trash toggle either.
-        try testing.expectEqual(@as(i32, 0), l.trash.width());
-        const k = l.tileKill(1, s);
-        const kx = k.centerX();
-        const ky = k.centerY();
-        // Inside the tile's own square, so a plain click there is the tile.
-        try testing.expect(l.items[1].contains(kx, ky));
-        try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, kx, ky, s));
-        l.quick_kill = true;
-        try testing.expectEqual(Hit{ .item_button = 1 }, hitTest(&l, kx, ky, s));
-        // The rest of the tile is still the tile.
-        try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, l.items[1].right - 2, l.items[1].bottom - 2, s));
+        const l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        try testing.expectEqual(@as(i32, 0), l.rowButton(1, s).width());
+        try testing.expectEqual(@as(i32, 0), l.rowClose(1, s).width());
+        // Where this window's row has its buttons, another's is all row.
+        const own_x = l.rowClose(0, s);
+        const own_b = l.rowButton(0, s);
+        const y1 = l.items[1].centerY();
+        try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, own_x.centerX(), y1, s));
+        try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, own_b.centerX(), y1, s));
+
+        // The rail: every point of a tile is the tile (no corner x).
+        const rail = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
+        const t = rail.items[0];
+        try testing.expectEqual(Hit{ .item = 0 }, hitTest(&rail, t.left + 1, t.top + 1, s));
+        try testing.expectEqual(Hit{ .item = 0 }, hitTest(&rail, t.right - 2, t.bottom - 2, s));
     }
 }
 
@@ -2037,9 +2012,9 @@ test "pane_sidebar: the edge band sits inside the expanded panel's edge and insi
         try testing.expect(onEdge(&e, w - 1, e.items[0].centerY(), s));
         // ...but the trailing header button and a row's button keep their
         // own pixels.
-        try testing.expect(!onEdge(&e, e.trash.right - 1, e.trash.centerY(), s));
-        try testing.expect(onEdge(&e, w - 1, e.trash.centerY(), s));
-        const b = e.rowButton(0, s);
+        try testing.expect(!onEdge(&e, e.scope.right - 1, e.scope.centerY(), s));
+        try testing.expect(onEdge(&e, w - 1, e.scope.centerY(), s));
+        const b = e.rowClose(0, s);
         try testing.expect(!onEdge(&e, b.right - 1, b.centerY(), s));
 
         const r = layout(.mini, px(railColumnDip(), s), h, &items, tm, s);
@@ -2104,41 +2079,6 @@ test "pane_sidebar: dragging the rail out past 120 expands it; a panel only resi
     try testing.expectEqual(@as(?EdgeDrag, .{ .width = 260 }), edgeDrag(.expanded, rail_card_dip, 216));
 
     try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.hidden, 240, 40));
-}
-
-test "T1889: the question chip is the status chip - caption line plus sm tall, sm padding, ending at its right edge" {
-    for (scales) |s| {
-        const text_w = px(46, s);
-        const c = questionChip(200, 50, text_w, s);
-        try testing.expectEqual(px(12, s) + px(4, s), c.height());
-        try testing.expectEqual(questionChipHeight(s), c.height());
-        try testing.expectEqual(@as(i32, 200), c.right);
-        try testing.expectEqual(text_w + 2 * px(4, s), c.width());
-        // Centred on the line it sits beside (within the odd pixel).
-        try testing.expect(@abs(c.centerY() - 50) <= 1);
-        // A word, so a capsule wider than tall - not the rail's disc.
-        try testing.expect(c.width() > c.height());
-    }
-}
-
-test "T1889: a chip never gets narrower than it is tall" {
-    for (scales) |s| {
-        const c = questionChip(100, 20, 0, s);
-        try testing.expectEqual(c.height(), c.width());
-        const neg = questionChip(100, 20, -10, s);
-        try testing.expectEqual(neg.height(), neg.width());
-    }
-}
-
-test "T1889: the breathing ring follows the capsule, grown evenly on every side" {
-    const c = questionChip(200, 50, 46, 1.0);
-    const r = questionRing(c, 2);
-    try testing.expectEqual(c.width() + 4, r.width());
-    try testing.expectEqual(c.height() + 4, r.height());
-    try testing.expectEqual(c.centerX(), r.centerX());
-    try testing.expectEqual(c.centerY(), r.centerY());
-    // Still wider than tall: a capsule's ring, not a disc's.
-    try testing.expect(r.width() > r.height());
 }
 
 test "T1900: beside the tab strip the column reaches up, its content where it was" {

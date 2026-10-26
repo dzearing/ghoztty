@@ -139,9 +139,10 @@ next_group: u64 = 1,
 /// throw away the redo history the way a fresh close does.
 replaying: bool = false,
 
-/// True while the pane sidebar's trash mode is killing a pane (T1845): that
-/// close is immediate by definition - no undo window, so nothing holds the
-/// pane and its session ends now rather than when the window would expire.
+/// True while a close is immediate by definition - Close All Windows, whose
+/// last window can never be parked (T1874) - so nothing holds the pane and
+/// its session ends now rather than when the undo would expire. (The pane
+/// sidebar's trash mode was the other user until T2280 removed it.)
 bypass: bool = false,
 
 pub fn init(app: *App) CloseUndo {

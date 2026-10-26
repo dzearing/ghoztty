@@ -1,6 +1,7 @@
 # T1845 acceptance: acting on a pane from the Windows pane sidebar (Mac
-# 597a193cc's PaneSidebarRow.contextMenu / click, PaneSidebarView's trash
-# header button, BaseTerminalController.killPane).
+# 597a193cc's PaneSidebarRow.contextMenu / click), and T2280's hover x (Mac
+# dc2bbab6b / 345be6b02 PaneSidebarRow.trailingButton, closePaneFromSidebar)
+# that replaced trash mode.
 #
 # Layout: the first pane P, then four `+split right`s -> s1..s4, sidebar
 # pinned to the panel. Rows are found from the app's own `pane sidebar rows`
@@ -18,11 +19,15 @@
 #   5. The menu's Move to New Window takes s4 into a second window.
 #   6. The menu's Close Pane closes s3 through the ordinary (interactive)
 #      close - an idle shell, so no confirmation - and +list loses it.
-#   7. Trash mode: the header's trash button turns it on (log, and the header
-#      caption turns red); a row's x kills s2 at once - no undo parking - and
-#      Escape posted to the window leaves trash mode.
-#   8. On the rail, trash mode puts the x on each tile's corner: a click on
-#      the corner kills s1, and a click on the tile's body only focuses.
+#   7. The hover x (T2280): s2 is made busy with a long-running command;
+#      hovering its row and clicking the x at the row's trailing edge closes
+#      it - no confirmation dialog, even with something running - and the
+#      close is PARKED for undo (the ordinary undoable close, not trash
+#      mode's kill). The header has no trash button any more: the all-windows
+#      toggle sits alone at the trailing edge.
+#   8. The stash button sits 4 DIP before the x: clicking it stashes s1, and
+#      on the rail a click where trash mode's corner x used to be only
+#      focuses - tiles have no buttons.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -145,11 +150,12 @@ function Test-LogSince([string]$Pattern, [int]$Skip) {
 }
 
 # The latest `pane sidebar rows` line: every row's center (column client
-# coordinates), its section and its pane id, plus the trash toggle's center.
+# coordinates), its section and its pane id, plus the all-windows toggle's
+# center (the header's trailing button since trash mode went, T2280).
 function Get-Rows {
     $line = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar rows ' }) | Select-Object -Last 1
-    if (-not $line -or $line -notmatch 'mode=(\w+) heads=\S* items=(\S*) rules=\d+ scope=-?\d+,-?\d+ trash=(-?\d+),(-?\d+)') { return $null }
-    $o = @{ Mode = $Matches[1]; Trash = @{ X = [int]$Matches[3]; Y = [int]$Matches[4] }; Items = @() }
+    if (-not $line -or $line -notmatch 'mode=(\w+) heads=\S* items=(\S*) rules=\d+ scope=(-?\d+),(-?\d+)') { return $null }
+    $o = @{ Mode = $Matches[1]; Scope = @{ X = [int]$Matches[3]; Y = [int]$Matches[4] }; Line = $line; Items = @() }
     foreach ($i in ($Matches[2] -split ';' | Where-Object { $_ })) {
         if ($i -match '^g\d+([gs])@(-?\d+),(-?\d+)#(\S+)$') { $o.Items += , @{ Sec = $Matches[1]; X = [int]$Matches[2]; Y = [int]$Matches[3]; Id = $Matches[4] } }
     }
@@ -324,50 +330,49 @@ try {
     Assert "it went through the interactive close (log)" ($null -ne (Wait-Log 'pane sidebar close pane \(interactive\)' $mark))
     Assert "s3 is gone from +list" (Wait-Until { $null -eq (Get-Leaf $ids['s3']) })
 
-    "== 7: trash mode - the header button, a one-click kill, Escape"
+    "== 7: the hover x closes a busy pane with no confirmation, undoably"
     $rows = Wait-Rows { param($r) $r.Items.Count -eq 3 }
-    $mark = Get-LogCount
-    [void](At $top $sb $rows.Trash)
-    Assert "the trash button turned trash mode on (log)" ($null -ne (Wait-Log 'pane sidebar trash mode on=true' $mark))
-    # The x is the row's trailing button: 20 DIP, sm (4) inside the 8 DIP fill inset.
+    Assert "the rows line carries no trash toggle" ($rows.Line -notmatch 'trash=')
+    # The all-windows toggle is the header's trailing button now: 28 DIP,
+    # sm (4) in from the panel's edge.
+    $wantScopeX = $sb.Width - (Px 4) - [int]((Px 28) / 2)
+    Assert "the all-windows toggle sits alone at the trailing edge ($($rows.Scope.X) vs $wantScopeX)" ([math]::Abs($rows.Scope.X - $wantScopeX) -le 1)
+    [void](Invoke-Cli "+send-keys --target=s2 `"ping -n 120 127.0.0.1`" Enter")
+    Start-Sleep -Milliseconds 1200
     $rowS2 = Row $rows $ids['s2']
+    # The x is the row's trailing button: 20 DIP, sm (4) inside the 8 DIP
+    # fill inset. Hover first so the buttons show, as a person would.
     $kx = $sb.Width - (Px 8) - (Px 4) - [int]((Px 20) / 2)
     $mark = Get-LogCount
     [void](At $top $sb @{ X = $kx; Y = $rowS2.Y })
-    Assert "the x killed it (log)" ($null -ne (Wait-Log 'pane sidebar kill pane' $mark))
+    Assert "the x closed it (log)" ($null -ne (Wait-Log 'pane sidebar close pane \(x\)' $mark))
     Assert "s2 is gone from +list" (Wait-Until { $null -eq (Get-Leaf $ids['s2']) })
+    Start-Sleep -Milliseconds 500
     Assert "no confirmation dialog came up" ((Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyConfirmDialog') -eq [IntPtr]::Zero)
-    Assert "and nothing was parked for undo" (-not (Test-LogSince 'parked closed pane for undo' $mark))
-    Assert "trash mode is still on after a kill" (-not (Test-LogSince 'pane sidebar trash mode on=false' $mark))
-    $mark = Get-LogCount
-    $pane0 = (@(Get-Panes $top))[0].Hwnd
-    [void](Send-TestControlKey -Control ([IntPtr]$pane0) -Key 'Escape')
-    Assert "Escape left trash mode (log)" ($null -ne (Wait-Log 'pane sidebar trash mode on=false' $mark))
+    Assert "the close was parked for undo (log)" (Test-LogSince 'parked closed pane for undo' $mark)
+    Assert "it did not go through the interactive close" (-not (Test-LogSince 'pane sidebar close pane \(interactive\)' $mark))
 
-    "== 8: on the rail, the x sits on a tile's corner"
+    "== 8: the stash button sits before the x; the rail's tiles have no buttons"
+    $rows = Wait-Rows { param($r) $r.Items.Count -eq 2 }
+    $rowS1 = Row $rows $ids['s1']
+    $bx = $kx - (Px 20) - (Px 4)
     $mark = Get-LogCount
-    [void](At $top $sb $rows.Trash)
-    Assert "trash mode on again (log)" ($null -ne (Wait-Log 'pane sidebar trash mode on=true' $mark))
+    [void](At $top $sb @{ X = $bx; Y = $rowS1.Y })
+    Assert "the stash button stashed s1" (Wait-Until { Test-Stashed (Get-Leaf $ids['s1']) })
+    Assert "and closed nothing" (-not (Test-LogSince 'pane sidebar close pane' $mark))
     [void](At $top $sb (Get-ToggleCenter $sb))   # collapse: the rail
     $rows = Wait-Rows { param($r) $r.Mode -eq 'mini' -and $r.Items.Count -eq 2 }
     $sb = Get-Sidebar $top
     Assert "back on the rail with two tiles" ($rows.Mode -eq 'mini' -and $rows.Items.Count -eq 2)
-    $tileS1 = Row $rows $ids['s1']
     $tileP = Row $rows $idP
-    # A click on P's tile BODY (its bottom-right) still only focuses.
+    # Where trash mode's 13 DIP corner x sat: 2 DIP over the tile's top-left.
     $half = [int]((Px 28) / 2)
-    $mark = Get-LogCount
-    [void](At $top $sb @{ X = $tileP.X + $half - (Px 3); Y = $tileP.Y + $half - (Px 3) })
-    Start-Sleep -Milliseconds 500
-    Assert "a click on the tile's body killed nothing" ((-not (Test-LogSince 'pane sidebar kill pane' $mark)) -and $null -ne (Get-Leaf $idP))
-    # The corner x: 13 DIP, 2 DIP over the tile's top-left corner.
-    $kcx = $tileS1.X - $half - (Px 2) + [int]((Px 13) / 2)
-    $kcy = $tileS1.Y - $half - (Px 2) + [int]((Px 13) / 2)
+    $kcx = $tileP.X - $half - (Px 2) + [int]((Px 13) / 2)
+    $kcy = $tileP.Y - $half - (Px 2) + [int]((Px 13) / 2)
     $mark = Get-LogCount
     [void](At $top $sb @{ X = $kcx; Y = $kcy })
-    Assert "the tile's x killed s1 (log)" ($null -ne (Wait-Log 'pane sidebar kill pane' $mark))
-    Assert "s1 is gone from +list" (Wait-Until { $null -eq (Get-Leaf $ids['s1']) })
-    Assert "P is still there" ($null -ne (Get-Leaf $idP))
+    Start-Sleep -Milliseconds 600
+    Assert "a click on the tile's corner closed nothing" ((-not (Test-LogSince 'pane sidebar close pane' $mark)) -and $null -ne (Get-Leaf $idP))
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

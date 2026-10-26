@@ -1308,8 +1308,10 @@ the interactive mock settled).
   any more (its unconfirmed, unundoable kill went with its header button).
   The **collapse/expand button is the header's first item**, centered on the
   rail's width (`PaneSidebarView.toggleLeading`), so it does not move when
-  toggled. **Windows:** T2275 (order), T2276 (tray), T2280 (hover ×, no
-  trash mode).
+  toggled. **Windows:** T2275 (order), T2276 (tray), T2280 (landed: this
+  window's rows offer stash/restore and ×, which closes with no confirmation
+  and is undoable - `Window.paneSidebarCloseNow`; trash mode is gone). Another
+  window's row offers no buttons yet: its × is T2298, with the no-focus close.
 - Activity: a **busy** pane's row — or tile — sheens: a faint upright band
   of light (25%) sweeps across its pill from right to left every 2s
   (`PaneSidebarTileSheenLayer`, Core Animation; travel in `PaneSidebarSheen`),
@@ -1322,7 +1324,8 @@ the interactive mock settled).
   Animation**, never an endless SwiftUI animation, which
   re-renders the whole sidebar every frame (measured: ~90% of the main thread
   at rest with 40 windows; `PaneSidebarAnimationLayers.swift`). **Windows:**
-  T2279 (sheen, busy includes OSC 9;4), T2280 (no question state).
+  T2279 (sheen, busy includes OSC 9;4), T2280 (landed: no question state -
+  no row chip, tile disc, header badge or breathing ring).
 - **All-windows** header toggle (off by default) groups every window's panes.
   Its caption counts the windows. Every window starts **folded** except this
   one (search unfolds all; `PaneSidebarState.isWindowFolded`). **Windows:**

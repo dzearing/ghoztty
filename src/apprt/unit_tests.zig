@@ -102,7 +102,8 @@ test {
     _ = @import("win32/pane_sidebar_layer.zig");
 
     // Pure win32 pane sidebar row actions (T1845): what a click, an
-    // Alt-click and the right-click menu do, and trash mode's Escape rule.
+    // Alt-click and the right-click menu do, and which rows offer stash
+    // beside their hover x (T2280).
     // Imports only pane_sidebar.zig. Every lane.
     _ = @import("win32/pane_sidebar_menu.zig");
 

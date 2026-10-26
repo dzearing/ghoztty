@@ -1,6 +1,7 @@
 # T1843 acceptance: the pane sidebar's activity marks on Windows, as Mac
-# draws them (PaneSidebarView.swift `PaneSidebarGlyph`,
-# `PaneSidebarQuestionBadge`; PaneSidebarRow.swift accessories).
+# draws them (PaneSidebarView.swift `PaneSidebarGlyph`; PaneSidebarRow.swift
+# accessories). Since T2280 (Mac 2924ea5cc) a question has NO mark in the
+# sidebar at all - no row chip, no tile disc, no breathing ring.
 #
 # Layout: the first pane P, then `+split right --shell=powershell` -> s1 (a
 # known shell, so section 5 can make it print a BEL). What it checks:
@@ -12,11 +13,10 @@
 #      signal.
 #   2. Idle again, the clock stops itself (log `motion off`) and the rail
 #      holds still: consecutive frames are identical.
-#   3. A question in the RAIL holds still, as Mac's corner "?" does: the
-#      tally says question=1, no clock starts, frames are identical.
-#   4. A question in the pinned PANEL breathes: the clock starts with
-#      pulse=1 and the frames move. Its badge is Mac's "question" capsule
-#      (T1889): the status chip's height and a word wide, logged once.
+#   3. A question in the RAIL draws nothing: no clock starts, and the rail
+#      is the SAME picture it was before the question - no corner disc.
+#   4. A question in the expanded PANEL draws nothing either: no clock, no
+#      chip, and the panel is the same picture with the question as without.
 #   5. A bell on a STASHED pane leaves a dot: s1 stashed, a BEL printed in
 #      it, the tally says bell=1 and the panel picture changed. Then
 #      `+restore --focus` looks at it - the bell clears on focus, as Mac's
@@ -146,10 +146,10 @@ try {
     "== 1: a busy pane's mark shimmers in the rail"
     $mark = Get-LogCount
     Assert "+set-state busy exit 0" ((Invoke-Cli "+set-state --target=s1 --state=busy") -eq 0)
-    $tally = Wait-Log $mark 'pane sidebar marks busy=1 question=0'
+    $tally = Wait-Log $mark 'pane sidebar marks busy=1 bell=0'
     "  $tally"
     Assert "the roster counts one busy pane (log)" ($null -ne $tally)
-    $on = Wait-Log $mark 'pane sidebar motion on surface=rail busy=1 pulse=0'
+    $on = Wait-Log $mark 'pane sidebar motion on surface=rail busy=1'
     "  $on"
     Assert "the motion clock started for it (log)" ($null -ne $on)
     $frames = Get-Frames $sb
@@ -170,41 +170,35 @@ try {
     $frames = Get-Frames $sb 4 200
     Assert "an idle rail is one picture ($(Get-Distinct $frames) distinct)" ((Get-Distinct $frames) -eq 1)
 
-    "== 3: a question in the rail is a still corner badge"
+    "== 3: a question in the rail draws nothing (T2280)"
+    $before = Get-FrameHash $sb
     $mark = Get-LogCount
     Assert "+set-state needs_input exit 0" ((Invoke-Cli "+set-state --target=s1 --state=needs_input") -eq 0)
-    $tally = Wait-Log $mark 'pane sidebar marks busy=0 question=1'
-    "  $tally"
-    Assert "the roster counts one question (log)" ($null -ne $tally)
+    Start-Sleep -Milliseconds 800
     $frames = Get-Frames $sb 4 300
     $started = Wait-Log $mark 'pane sidebar motion on' 200
-    Assert "no clock for the rail's corner badge" ($null -eq $started)
+    Assert "no clock for a question" ($null -eq $started)
     Assert "the rail holds still ($(Get-Distinct $frames) distinct)" ((Get-Distinct $frames) -eq 1)
-    # T1889: the rail's corner keeps Mac's small disc - no "question" chip.
-    Assert "the rail paints no question chip (log)" ($null -eq (Wait-Log $mark 'pane sidebar question chip' 100))
+    Assert "the rail is the same picture it was before the question (no corner disc)" ($null -ne $before -and $frames[0] -eq $before)
 
-    "== 4: in the pinned panel the question badge breathes"
-    $mark = Get-LogCount
+    "== 4: in the expanded panel a question draws nothing either"
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-RailPinCenter $sb).X -Y (Get-RailPinCenter $sb).Y -Action click)
     Start-Sleep -Milliseconds 700
     $sb = Get-Sidebar $top
-    Assert "pinned: the 240 DIP panel ($($sb.Width))" ([math]::Abs($sb.Width - (Px 240)) -le 1)
-    $on = Wait-Log $mark 'pane sidebar motion on surface=rail busy=0 pulse=1'
-    "  $on"
-    Assert "the motion clock started for the ring (log)" ($null -ne $on)
-    # T1889: in a row it is Mac's "question" capsule, not the rail's disc -
-    # the status chip's height, and a word wide.
-    $chip = Wait-Log $mark 'pane sidebar question chip w=\d+ h=\d+'
-    "  $chip"
-    $cw = 0; $ch = 0
-    if ($chip -match 'w=(\d+) h=(\d+)') { $cw = [int]$Matches[1]; $ch = [int]$Matches[2] }
-    Assert "the row's badge is the status chip's height ($ch, want $((Px 12) + (Px 4)))" ($ch -eq ((Px 12) + (Px 4)))
-    Assert "the row's badge is a capsule holding a word, not a disc ($cw x $ch, want w >= 2h)" ($ch -gt 0 -and $cw -ge 2 * $ch)
-    $frames = Get-Frames $sb 8 175
-    Assert "the panel moves while it asks ($(Get-Distinct $frames) distinct, want >= 3)" ((Get-Distinct $frames) -ge 3)
+    Assert "expanded: the 240 DIP panel ($($sb.Width))" ([math]::Abs($sb.Width - (Px 240)) -le 1)
     $mark = Get-LogCount
+    $asking = Get-Frames $sb 4 300
+    Assert "no clock while it asks (log)" ($null -eq (Wait-Log $mark 'pane sidebar motion on' 200))
+    Assert "the panel holds still while it asks ($(Get-Distinct $asking) distinct)" ((Get-Distinct $asking) -eq 1)
+    Assert "no question chip was painted (log)" ($null -eq (Wait-Log 0 'pane sidebar question chip' 100))
     [void](Invoke-Cli "+set-state --target=s1 --state=idle")
-    Assert "idle again, the clock stops (log)" ($null -ne (Wait-Log $mark 'pane sidebar motion off surface=rail'))
+    Start-Sleep -Milliseconds 800
+    $quiet = Get-FrameHash $sb
+    if ($NegativeControl) {
+        Assert "NEGATIVE CONTROL: the question changed the panel" ($asking[0] -ne $quiet)
+    } else {
+        Assert "the panel is the same picture with the question as without" ($null -ne $quiet -and $asking[0] -eq $quiet)
+    }
 
     "== 5: a bell on a stashed pane leaves a dot until the pane is looked at"
     Assert "+stash s1 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+stash --target=s1") -eq 0)
@@ -214,7 +208,7 @@ try {
     $bell = $null
     for ($try = 0; $try -lt 4 -and -not $bell; $try++) {
         [void](Invoke-Cli "+send-keys --target=s1 `"[char]7`" Enter")
-        $bell = Wait-Log $mark 'pane sidebar marks busy=0 question=0 bell=1' 2500
+        $bell = Wait-Log $mark 'pane sidebar marks busy=0 bell=1' 2500
     }
     "  $bell"
     Assert "the BEL left a bell mark on the stashed row (log)" ($null -ne $bell)

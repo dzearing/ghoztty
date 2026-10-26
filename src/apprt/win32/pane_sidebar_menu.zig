@@ -1,6 +1,6 @@
-//! What a pane sidebar row does when it is clicked, right-clicked or killed,
-//! as rules (T1845; Mac `PaneSidebarRow.click` / `contextMenu`,
-//! `PaneSidebarView.headerButtons`, `BaseTerminalController.killPane`).
+//! What a pane sidebar row does when it is clicked, right-clicked or closed
+//! from its hover x, as rules (T1845, T2280; Mac `PaneSidebarRow.click` /
+//! `contextMenu` / `trailingButton`).
 //!
 //! - **Click.** A grid row focuses its pane; a stashed row restores it; with
 //!   Alt held (Mac's Option) a stashed row SWAPS with the focused pane - it
@@ -12,9 +12,11 @@
 //!   Window / Close Pane. Another window's grid row offers Show Pane in place
 //!   of Stash, and its stashed row no Swap. Close Pane is the ordinary close -
 //!   confirmation and a remote pane's Disconnect included.
-//! - **Trash mode.** The header's trash button gives every row and tile a red
-//!   x that kills its pane at once: no confirmation, and no undo window.
-//!   Escape or the button again leaves it, and nothing about it is persisted.
+//! - **Hover x** (T2280, Mac dc2bbab6b / 345be6b02). A hovered row offers
+//!   stash/restore (this window's rows only), then an x that closes the pane
+//!   with no confirmation and without taking focus. It is undoable; the
+//!   session ends when the undo expires. It replaced trash mode, whose red x
+//!   killed with no undo at all.
 //!
 //! No OS imports, so this unit-tests in every app-runtime lane; the window
 //! half is `PaneSidebar.zig`.
@@ -117,26 +119,15 @@ pub fn build(f: Facts, out: *[max_items]Item) []const Item {
     return out[0..n];
 }
 
-/// Trash mode's caption, in place of "PANES" (Mac "Click × to kill").
-pub const kill_caption = "CLICK \u{00D7} TO KILL";
+/// The hover x's tooltip (Mac's `.help`).
+pub const close_tip = "Close pane";
 
-/// The trash button's tooltip (Mac's `.help`, em dash as Mac writes it).
-pub fn trashTip(on: bool) []const u8 {
-    return if (on)
-        "Done killing panes (Esc)"
-    else
-        "Quick close \u{2014} kill panes with one click, no confirmation";
-}
-
-/// The red x's tooltip.
-pub const kill_tip = "Kill now \u{2014} no confirmation";
-
-/// What Escape does to trash mode: it leaves it, and is consumed, only in the
-/// window whose sidebar is in it (Mac: "only this window's sidebar answers")
-/// and only when no pane drag is in flight - a drag owns Escape first, since
-/// cancelling it is the innermost thing Escape can mean.
-pub fn escapeLeavesTrash(quick_kill: bool, key_in_this_window: bool, drag_active: bool) bool {
-    return quick_kill and key_in_this_window and !drag_active;
+/// Whether a hovered row offers its buttons - stash/restore, then the x
+/// (Mac dc2bbab6b `trailingButton`): this window's rows do. Another window's
+/// row offers none yet; its x arrives with the no-focus close T2298 ports
+/// (Mac 345be6b02), since closing there must not hand that window focus.
+pub fn rowOffersButtons(own: bool) bool {
+    return own;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,15 +200,8 @@ test "pane_sidebar_menu: every id is non-zero, so a dismissed menu is never a co
     inline for (std.meta.fields(Id)) |f| try testing.expect(f.value != 0);
 }
 
-test "pane_sidebar_menu: Escape leaves trash mode only in its own window, and never under a drag" {
-    try testing.expect(escapeLeavesTrash(true, true, false));
-    try testing.expect(!escapeLeavesTrash(false, true, false));
-    try testing.expect(!escapeLeavesTrash(true, false, false));
-    try testing.expect(!escapeLeavesTrash(true, true, true));
-}
-
-test "pane_sidebar_menu: trash wording is Mac's" {
-    try testing.expect(std.mem.startsWith(u8, trashTip(false), "Quick close"));
-    try testing.expect(std.mem.endsWith(u8, trashTip(true), "(Esc)"));
-    try testing.expect(std.mem.startsWith(u8, kill_tip, "Kill now"));
+test "T2280: this window's row offers stash and close, another window's row nothing yet" {
+    try testing.expect(rowOffersButtons(true));
+    try testing.expect(!rowOffersButtons(false));
+    try testing.expectEqualStrings("Close pane", close_tip);
 }

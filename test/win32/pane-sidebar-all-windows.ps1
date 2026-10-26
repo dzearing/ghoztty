@@ -168,10 +168,10 @@ function Get-ToggleCenter($sb) {
     return @{ X = $margin + $inset + [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
 }
 # The all-windows toggle (T2289 header order): the toggle leads, then the
-# caption; at the trailing edge sit this button and trash, 2 DIP apart, the
-# last one sm (4) in - all on the toggle's row.
+# caption; at the trailing edge sits this button alone, sm (4) in, on the
+# toggle's row - trash mode's button that sat after it is gone (T2280).
 function Get-ScopeCenter($sb) {
-    return @{ X = $sb.Width - (Px 4) - ((Px 28) + (Px 2)) - [int]((Px 28) / 2); Y = (Get-ToggleCenter $sb).Y }
+    return @{ X = $sb.Width - (Px 4) - [int]((Px 28) / 2); Y = (Get-ToggleCenter $sb).Y }
 }
 
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')

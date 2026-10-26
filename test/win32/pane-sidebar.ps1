@@ -295,12 +295,13 @@ try {
     Assert "the rail lays out the empty tray too, with no caption ($($railTray.Raw))" ($null -ne $railTray -and $railTray.Present -and $railTray.Cap -eq 0)
 
     "== 4: a row's hover button stashes, a rail tile restores"
-    # Row 0 is P. Its compact button: 20 DIP, sm (4) from the row's trailing
-    # edge, which is the 8 DIP fill inset in from the panel's; the button is
-    # centered in the row, whose middle the geometry line names.
+    # Row 0 is P. Its stash button: 20 DIP, 4 DIP before the row's x (T2280),
+    # which is sm (4) from the row's trailing edge - the 8 DIP fill inset in
+    # from the panel's; both are centered in the row, whose middle the
+    # geometry line names.
     $panelRows = Get-RowsLine 'expanded'
     Assert "setup: the panel logged its rows" ($null -ne $panelRows -and $panelRows.Items.Count -ge 1)
-    $bx = $sb.Right - (Px 8) - (Px 4) - [int]((Px 20) / 2)
+    $bx = $sb.Right - (Px 8) - (Px 4) - (Px 20) - (Px 4) - [int]((Px 20) / 2)
     $by = $sb.Top + $(if ($null -ne $panelRows -and $panelRows.Items.Count -ge 1) { $panelRows.Items[0].Y } else { (Px 56) + (Px 16) })
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $bx -Y $by -Action move)
     Start-Sleep -Milliseconds 200
