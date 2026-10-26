@@ -245,16 +245,14 @@ private struct PaneSidebarChrome: View {
             }
         }
         .padding(.top, state.tabRowHeight)
-        .modifier(SidePanelCard(
+        .modifier(PaneSidebarCard(
             width: PaneSidebarState.cardWidth(for: mode, panelWidth: state.width),
-            maxHeight: .infinity,
-            accessibilityLabel: "Panes",
-            base: background,
-            isLightBase: OSColor(background).isLightColor,
             margins: EdgeInsets(
                 top: insets.vertical, leading: insets.leading,
                 bottom: insets.vertical, trailing: insets.trailing),
-            isGlass: controller.ghostty.config.paneGlass))
+            isElevated: elevated,
+            isGlass: controller.ghostty.config.paneGlass,
+            background: background))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay(alignment: .topLeading) {
             if mode != .hidden { resizeHandle }
@@ -314,5 +312,44 @@ private struct PaneSidebarResizeHandle: NSViewRepresentable {
     private func configure(_ view: SidePanelResizeHandle) {
         view.widthAtDragStart = currentWidth
         view.onDrag = onDrag
+    }
+}
+
+/// The sidebar's card. In the elevated style it is an UNFOCUSED PANE's card
+/// (`PaneCard`): the same corner radius, hairline rim, glass sheet and shadow
+/// as the panes beside it, so it reads as one more card on the desk. (It was
+/// the viewer side panel's glass card — rounder, with a specular rim and a
+/// thinner sheet — and stood out from the panes.) The flat style, whose panes
+/// have no card, keeps the side panel's.
+private struct PaneSidebarCard: ViewModifier {
+    let width: CGFloat
+    let margins: EdgeInsets
+    let isElevated: Bool
+    let isGlass: Bool
+    let background: Color
+
+    func body(content: Content) -> some View {
+        let isLight = OSColor(background).isLightColor
+        if isElevated {
+            content
+                .font(.system(size: 12))
+                .frame(width: width, alignment: .topLeading)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .modifier(PaneCard(
+                    isElevated: true, isGlass: isGlass, isFocused: false,
+                    background: background, isLight: isLight))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Panes")
+                .padding(margins)
+        } else {
+            content.modifier(SidePanelCard(
+                width: width,
+                maxHeight: .infinity,
+                accessibilityLabel: "Panes",
+                base: background,
+                isLightBase: isLight,
+                margins: margins,
+                isGlass: isGlass))
+        }
     }
 }

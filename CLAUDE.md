@@ -1776,9 +1776,11 @@ titlebar window turns on `.fullSizeContentView` and `titlebarAppearsTransparent`
 (macOS 26 otherwise backs it with a material), and the desk sits behind the
 whole content stack. Any `.background(Color)` in that stack must pass
 `ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the titlebar
-(the debug-build warning did). The collapsed sidebar's rail card is the same tinted glass
-(`SidePanelCard(isGlass:)`) instead of an opaque slab. On glass the sidebar header is no band of its
-own (the list starts below it), the expanded panel's edge is a pane-rim hairline,
+(the debug-build warning did). The sidebar's card, in both modes, is an
+**unfocused pane's card** (`PaneSidebarCard` → `PaneCard`): the same corner radius, hairline
+rim, glass sheet and shadow as the panes beside it (it was the viewer side panel's glass card —
+rounder, a specular rim, a thinner sheet — and did not match). On glass the sidebar header is no band of its
+own (the list starts below it),
 and the sidebar's glyphs are the mock's icon set drawn natively
 (`PaneSidebarSymbol`), not SF Symbols. Folding a window or project group animates. In the elevated style the
 **focused pane** (of several) reads as **backlit**: a soft white light behind the
