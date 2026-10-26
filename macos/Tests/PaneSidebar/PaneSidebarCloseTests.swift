@@ -198,4 +198,54 @@ struct PaneSidebarCloseWindowTests {
             #expect(pane.surfaceView?.sessionClosesOnFree == true)
         }
     }
+
+    /// A real click on a window row's ×, through the sidebar's own event
+    /// routing: the row's tap (which raises its window) must not also fire.
+    @Test func clickingAWindowRowsCloseDoesNotRaiseIt() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let main = try await sidebarWindow(ghostty)
+        let (other, _) = try window(ghostty, title: "Other", panes: 1)
+        _ = await poll(timeout: 10) { other.window?.isVisible == true }
+        let mainWindow = try #require(main.window)
+        mainWindow.makeKeyAndOrderFront(nil)
+        await settle(1.0)
+        let otherWindow = try #require(other.window)
+
+        func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+            (view as? T).map { [$0] } ?? [] + view.subviews.flatMap { all(type, in: $0) }
+        }
+        // "Main" sorts first and is unfolded; "Other" is folded below it, so
+        // the lowest hover area is Other's header.
+        let content = try #require(mainWindow.contentView)
+        let header = try #require(all(HoverTrackingArea.View.self, in: content)
+            .filter { $0.window != nil && $0.bounds.width > 150 }
+            .min { $0.convert($0.bounds, to: nil).minY < $1.convert($1.bounds, to: nil).minY })
+        header.onHoverChanged?(true)
+        await settle(0.4)
+        let frame = header.convert(header.bounds, to: nil)
+        let point = NSPoint(
+            x: frame.maxX - SidePanelRow.fillInset - PaneSidebarRow.trailingButtonInset
+                - PaneSidebarItemButton.size / 2,
+            y: frame.midY)
+
+        let watch = Watch([otherWindow])
+        var raisedOrder: [Int] = []
+        let order = { NSApp.orderedWindows.firstIndex(of: otherWindow) ?? -1 }
+        raisedOrder.append(order())
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: mainWindow.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                pressure: type == .leftMouseDown ? 1 : 0))
+            mainWindow.sendEvent(event)
+            raisedOrder.append(order())
+            await settle(0.05)
+        }
+        #expect(await poll(timeout: 5) { !otherWindow.isVisible }, "the click reached the ×")
+        #expect(watch.becameKey == 0, "the closed window was raised and made key first")
+        #expect(raisedOrder.allSatisfy { $0 == raisedOrder[0] }, "it was ordered front: \(raisedOrder)")
+        #expect(mainWindow.isKeyWindow || !NSApp.isActive)
+        main.close()
+        await settle(0.3)
+    }
 }
