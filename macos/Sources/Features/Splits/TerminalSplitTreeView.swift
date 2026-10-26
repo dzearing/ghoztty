@@ -499,10 +499,6 @@ private struct PaneLeafView: View {
             isGlass: ghostty.config.paneGlass,
             // Only among siblings: a lone pane has nothing to stand out from.
             isFocused: isSplit && pane.isFocusedPane,
-            isDimmed: isSplit && !pane.isFocusedPane,
-            // A terminal fades as a whole, text included, by the user's
-            // `unfocused-split-opacity`; a viewer's page is left as it is.
-            dimmedOpacity: pane.surfaceView != nil ? 1 - ghostty.config.unfocusedSplitOpacity : 1,
             background: ghostty.config.backgroundColor,
             isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
     }

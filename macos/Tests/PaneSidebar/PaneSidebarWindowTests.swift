@@ -351,11 +351,12 @@ struct PaneSidebarWindowTests {
         #expect(apart < 2, "the hero is not the glass a focused pane is: \(report)")
     }
 
-    /// Glass panes: an UNFOCUSED pane is more see-through than the focused
-    /// one — the desk reads through it more — and the focused pane is the
-    /// solid one. Measured on the composited window, per pane against itself
-    /// in both states, for terminals and a viewer alike.
-    @Test func unfocusedGlassPanesAreMoreTransparent() async throws {
+    /// Glass panes: focus changes only the rim and the glow — the pane itself
+    /// (its sheet, its text) looks the same focused or not. Measured on the
+    /// composited window, per pane against itself in both states, for
+    /// terminals and a viewer alike. (An unfocused pane used to be more
+    /// see-through and its text faded, so focusing it lit the pane up.)
+    @Test func glassPanesLookTheSameFocusedOrNot() async throws {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         try #require(ghostty.config.paneGlass, "needs the default elevated + glass pane style")
         let app = try #require(ghostty.app)
@@ -410,8 +411,8 @@ struct PaneSidebarWindowTests {
         }.joined(separator: "\n")
         try? report.write(toFile: "/tmp/pane-sidebar-snapshots/glass-focus.txt", atomically: true, encoding: .utf8)
 
-        // A terminal fades AS A WHOLE, text included: the brightest pixel of
-        // its first row (the shell's "Last login" line) is dimmer unfocused.
+        // A terminal's text does not fade unfocused: the brightest pixel of
+        // its first row (the shell's "Last login" line) is the same.
         func brightestText(_ image: CGImage, _ pane: CGRect) -> Double {
             let scale = CGFloat(image.width) / window.frame.width
             let rep = NSBitmapImageRep(cgImage: image)
@@ -429,12 +430,12 @@ struct PaneSidebarWindowTests {
         try? (report + "\ntext a: focused \(textFocused) unfocused \(textUnfocused)\n")
             .write(toFile: "/tmp/pane-sidebar-snapshots/glass-focus.txt", atomically: true, encoding: .utf8)
         #expect(textFocused > 150, "no text found to measure: \(textFocused)")
-        #expect(textUnfocused + 20 < textFocused, "an unfocused terminal's text fades with it: \(textFocused) → \(textUnfocused)")
+        #expect(abs(textUnfocused - textFocused) < 6, "an unfocused terminal's text changed: \(textFocused) → \(textUnfocused)")
 
-        // Noticeably: a few levels of difference would be invisible.
-        let margin = 4.0
+        // The same glass: within a couple of levels (the rim and glow sit
+        // outside the sampled band).
         for p in 0..<3 {
-            #expect(occ[p][unfocused[p]] + margin < occ[p][p], "\(names[p]) hides as much of the desk unfocused: \(report)")
+            #expect(abs(occ[p][unfocused[p]] - occ[p][p]) < 2.5, "\(names[p]) changes with focus: \(report)")
         }
     }
 

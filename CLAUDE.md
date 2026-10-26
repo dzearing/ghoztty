@@ -1763,8 +1763,7 @@ and shade read through every pane. The renderer stops drawing the terminal's
 background (`generic.zig` `pane_glass`, the same switch the `macos-glass-*`
 blur styles use), the banner strip skips its base fill and the **banner card is
 a pane of glass of its own, layered on top** — the pane's sheet thins out
-under the card (`PaneGlass.bannerTint`, 25% against the focused pane's 40%, never
-below an unfocused pane's 15%; the card publishes its frame up to `PaneCard` as
+under the card (`PaneGlass.bannerTint`, 25% against the pane's 40%; the card publishes its frame up to `PaneCard` as
 `PaneBannerCardKey`), and the card itself is rim and drop shadow only, no white
 wash and no sheen (`SurfacePaneBanner.isGlass`): a white lift over glass greyed
 the gradient into a flat slab ~17 levels lighter than the pane, and a second
@@ -1787,22 +1786,15 @@ card spills past its edges onto the desk (masked to outside the card, so it neve
 lightens the pane's own glass) — a subtle outer glow only, nothing inside the
 pane (`PaneFocusGlow`, driven by
 `PaneView.isFocusedPane`; `PaneFocusGlowTests`).
-**On glass, an unfocused pane is the MORE see-through one.** Its sheet's tint
-drops from `PaneGlass.tint` (40%) to `PaneGlass.unfocusedTint` (15%), and an
-unfocused **terminal** also fades as a whole — its content (text included) and
-its sheet, each at `unfocused-split-opacity` (default 0.7) — animated with the
-focus change, so the desk reads through every pane but the focused one, which
-stays solid and backlit. A **viewer** gets the thinner sheet only: its page is
-never faded (an HTML pane's especially). Upstream's unfocused dimming — a wash
-of `unfocused-split-fill` (default: the terminal background) at
-`1 - unfocused-split-opacity` drawn OVER the pane — is not drawn on glass: over
-a translucent sheet it made the unfocused panes the more opaque ones.
-`PaneCard.isDimmed` (one of several panes, not the focused one) and
-`PaneCard.dimmedOpacity` (content and sheet fade) are the switches; the fades
-animate opacity ONLY (`FocusFade`) — a strip click changes focus and a card's
-size in one update, and an `.animation(_:value:)` over the card animated the
-frame too, resizing the terminal on every frame of the fade. `flat`, and
-`elevated` without glass, keep the wash and honor both config keys as before.
+**On glass, focus changes only the rim and the glow.** The focused pane's
+hairline rim is lighter (34% white, against 10%) and it is backlit
+(`PaneFocusGlow`); its sheet and its content are exactly those of every other
+pane (`PaneGlass.tint`, 40%), nothing faded. An unfocused pane used to get a
+thinner sheet (15%) and fade its terminal by `unfocused-split-opacity`, so
+focusing a pane read as the pane itself lighting up; that is gone. Upstream's
+unfocused dimming — a wash of `unfocused-split-fill` drawn OVER the pane — is
+still not drawn on glass; `flat`, and `elevated` without glass, keep the wash
+and honor both config keys as before.
 **A stacked row has no solid cards.** A tucked card, on either side of the
 run, is a card of the strip's size (see Stacked panes), so nothing lies under
 a card on show and every card — every strip too — is glass. (Cards used to be drawn whole with most of them under
@@ -1812,7 +1804,7 @@ same glass card — the hero container paints no fill of its own on glass
 (`HeroPaneContainer.isGlass`); it used to fill with the terminal background,
 an opaque slab where every other pane is glass. Measured on the composited window — how
 much of the desk in the gutter beside a pane its glass hides — by
-`unfocusedGlassPanesAreMoreTransparent`, `stackedRowCardsOnShowStayGlass` and
+`glassPanesLookTheSameFocusedOrNot`, `stackedRowCardsOnShowStayGlass` and
 `heroModeIsGlassLikeAFocusedPane` (`PaneSidebarWindowTests`); the layout rule by `noCardIsDrawnOverAnother`
 (`PaneLayoutTests`).
 
