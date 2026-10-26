@@ -19,6 +19,11 @@
 #           (Mac parity) the restored choice becomes the next default.
 #        7. A manifest with the fields stripped (a pre-T1847 one) restores the
 #           window on the defaults instead: the rail.
+#   C. The sidebar's own list ORDER (T2302), persistence ON:
+#        8. No order is written until a reorder; a manifest carrying one
+#           (a closed pane's id, then the live pane's) is restored and
+#           re-recorded holding the live pane alone - Mac never persists a
+#           closed pane.
 #
 # Isolation: LOCALAPPDATA points at a throwaway dir for every launched
 # instance, so the defaults file, the manifest and the agent state dir are all
@@ -235,6 +240,28 @@ try {
     $top = Launch $true
     Assert "restored" ($top -ne [IntPtr]::Zero)
     Assert "the window is on the rail, the default ($(Describe $top))" (Width-Is $top 68)
+    Stop-App
+
+    "== 8: the sidebar's own order (T2302) is restored and re-recorded, pruned to the window's panes"
+    $m = Read-Manifest
+    Assert "no order is written before the first reorder" ($m -notmatch 'pane_sidebar_order')
+    $leafId = $null
+    try {
+        $j = $m | ConvertFrom-Json
+        foreach ($n in @($j.windows[0].tabs[0].nodes)) {
+            if ($n.leaf -and $n.leaf.pane_id) { $leafId = [string]$n.leaf.pane_id; break }
+        }
+    } catch { }
+    Assert "setup: the restored pane has a stable id ($leafId)" ($leafId -match '^[0-9A-Fa-f-]{36}$')
+    $ghost = '00000000-0000-4000-8000-0000000000AA'
+    $withOrder = ([regex]'\{\s*"id"\s*:').Replace($m, "{`"pane_sidebar_order`":[`"$ghost`",`"$leafId`"],`"id`":", 1)
+    Assert "setup: an order naming a closed pane and the live one is in the manifest" ($withOrder -match 'pane_sidebar_order')
+    Write-NoBom $manifest $withOrder
+    $top = Launch $true
+    Assert "restored" ($top -ne [IntPtr]::Zero)
+    [void](Set-TestWindowSize -Window $top -Width (Px 1120) -Height (Px 700))
+    Assert "the re-recorded order keeps the live pane" (Wait-Manifest ('"pane_sidebar_order"\s*:\s*\[\s*"' + $leafId + '"\s*\]'))
+    Assert "and drops the pane the window does not hold" ((Read-Manifest) -notmatch $ghost)
     Stop-App
 
     $script:reachedEnd = $true

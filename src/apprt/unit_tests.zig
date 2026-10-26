@@ -92,6 +92,7 @@ test {
     // question-ring timing, and when the column needs a clock at all.
     // Imports only std. Every lane.
     _ = @import("win32/pane_sidebar_motion.zig");
+    _ = @import("win32/pane_sidebar_order.zig");
     _ = @import("win32/pane_sidebar_transition.zig");
 
     // Pure win32 pane sidebar card layer (T1865/T1887): the glass sheet the

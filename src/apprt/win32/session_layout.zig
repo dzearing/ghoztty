@@ -320,6 +320,11 @@ pub const Window = struct {
     /// spellings are `paneSidebarPinned` / `paneSidebarHidden`.
     pane_sidebar_pinned: ?bool = null,
     pane_sidebar_hidden: ?bool = null,
+    /// The pane sidebar's own list order (T2302): stable pane ids, only
+    /// panes the window held at capture. Additive: absent until the first
+    /// reorder, and an older build ignores it. Mac's spelling is
+    /// `paneSidebarOrder`.
+    pane_sidebar_order: ?[]const []const u8 = null,
 };
 
 /// The whole file. `windows` is a present (possibly empty) array so a reader
@@ -1088,6 +1093,31 @@ test "T1847: a window's pane sidebar pin and hidden flags round-trip" {
     try testing.expectEqual(@as(?bool, true), w[1].pane_sidebar_hidden);
     try testing.expectEqual(@as(?bool, null), w[2].pane_sidebar_pinned);
     try testing.expectEqual(@as(?bool, null), w[2].pane_sidebar_hidden);
+}
+
+test "T2302: a window's pane sidebar order round-trips, and none is written until there is one" {
+    const alloc = testing.allocator;
+    const nodes = [_]Node{.{ .leaf = .{ .session_id = "0123456789abcdef0123456789abcdef" } }};
+    const tabs = [_]Tab{.{ .nodes = &nodes, .active = true }};
+    const order = [_][]const u8{
+        "1D0A0B0C-0000-4000-8000-000000000002",
+        "1D0A0B0C-0000-4000-8000-000000000001",
+    };
+    const windows = [_]Window{
+        .{ .id = "win-0", .tabs = &tabs, .pane_sidebar_order = &order },
+        .{ .id = "win-1", .tabs = &tabs },
+    };
+    const body = try serialize(alloc, .{ .windows = &windows });
+    defer alloc.free(body);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "pane_sidebar_order"));
+
+    var parsed = try parse(alloc, body);
+    defer parsed.deinit();
+    const w = parsed.value.windows;
+    try testing.expectEqual(@as(usize, 2), w[0].pane_sidebar_order.?.len);
+    try testing.expectEqualStrings(order[0], w[0].pane_sidebar_order.?[0]);
+    try testing.expectEqualStrings(order[1], w[0].pane_sidebar_order.?[1]);
+    try testing.expect(w[1].pane_sidebar_order == null);
 }
 
 test "T422: a pre-banner manifest still loads, with a null banner" {

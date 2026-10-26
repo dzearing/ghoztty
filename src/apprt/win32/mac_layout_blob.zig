@@ -100,6 +100,9 @@ pub const Entry = struct {
     /// pane sidebar layout. Null when the blob predates them.
     pane_sidebar_pinned: ?bool = null,
     pane_sidebar_hidden: ?bool = null,
+    /// `Entry.paneSidebarOrder` (T2302): that controller's sidebar list order,
+    /// by stable pane id. Empty when the blob predates it or it was never set.
+    pane_sidebar_order: []const []const u8 = &.{},
     /// The tree, flattened to win32's `nodes[0] = root` representation.
     nodes: []const session_layout.Node = &.{},
 };
@@ -151,6 +154,7 @@ pub fn parseEntry(arena: Allocator, v: std.json.Value) !Entry {
         .desk_variant = deskSeed(obj.get("deskVariant")),
         .pane_sidebar_pinned = boolean(obj.get("paneSidebarPinned")),
         .pane_sidebar_hidden = boolean(obj.get("paneSidebarHidden")),
+        .pane_sidebar_order = try strings(arena, obj.get("paneSidebarOrder")),
         .nodes = try nodes.toOwnedSlice(arena),
     };
 }
@@ -205,6 +209,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
         var desk_variant: ?u64 = null;
         var sidebar_pinned: ?bool = null;
         var sidebar_hidden: ?bool = null;
+        var sidebar_order: std.ArrayList([]const u8) = .empty;
         for (g.items, 0..) |entry, ti| {
             tabs[ti] = .{
                 .nodes = entry.nodes,
@@ -221,6 +226,9 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             // group shares, so any entry speaks for the group.
             if (sidebar_pinned == null) sidebar_pinned = entry.pane_sidebar_pinned;
             if (sidebar_hidden == null) sidebar_hidden = entry.pane_sidebar_hidden;
+            // Every tab of a group is a Mac controller with an order of its own;
+            // pane ids are unique, so one window list is all of them in tab order.
+            try sidebar_order.appendSlice(arena, entry.pane_sidebar_order);
         }
 
         try out.append(arena, .{
@@ -242,6 +250,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             .desk_variant = desk_variant,
             .pane_sidebar_pinned = sidebar_pinned,
             .pane_sidebar_hidden = sidebar_hidden,
+            .pane_sidebar_order = if (sidebar_order.items.len == 0) null else sidebar_order.items,
         });
     }
     return out.toOwnedSlice(arena);
@@ -396,6 +405,18 @@ fn deskSeed(v: ?std.json.Value) ?u64 {
 
 /// A JSON boolean, else null (T1847): Swift's `Bool?` encodes as `true` /
 /// `false` or not at all.
+/// A JSON array of strings, borrowed; anything else (or a non-string member)
+/// is skipped rather than failing the entry.
+fn strings(arena: Allocator, v: ?std.json.Value) ![]const []const u8 {
+    const arr = switch (v orelse return &.{}) {
+        .array => |a| a,
+        else => return &.{},
+    };
+    var out: std.ArrayList([]const u8) = .empty;
+    for (arr.items) |item| if (str(item)) |s| try out.append(arena, s);
+    return out.toOwnedSlice(arena);
+}
+
 fn boolean(v: ?std.json.Value) ?bool {
     return switch (v orelse return null) {
         .bool => |b| b,
@@ -569,6 +590,38 @@ test "T337: a nested Mac tree flattens to win32's indexed nodes array" {
     try testing.expectEqualStrings("bbbb", right.session_id.?);
     try testing.expectEqualStrings("logs", right.ipc_name.?);
     try testing.expect(right.title == null);
+}
+
+test "T2302: a Mac window's pane sidebar order comes across, a tab group's in tab order" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const first =
+        \\{"id":"e1","tabGroupID":"g","tabIndex":0,"paneSidebarOrder":["B","A",7],
+        \\"tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+    ;
+    const second =
+        \\{"id":"e2","tabGroupID":"g","tabIndex":1,"paneSidebarOrder":["C"],
+        \\"tree":{"leaf":{"_0":{"sessionID":"bbbb"}}}}
+    ;
+    const e1 = try translate(arena, first);
+    // The non-string member is skipped, not fatal.
+    try testing.expectEqual(@as(usize, 2), e1.pane_sidebar_order.len);
+    const e2 = try translate(arena, second);
+    const windows = try groupIntoWindows(arena, &.{ e2, e1 });
+    try testing.expectEqual(@as(usize, 1), windows.len);
+    const order = windows[0].pane_sidebar_order.?;
+    try testing.expectEqual(@as(usize, 3), order.len);
+    try testing.expectEqualStrings("B", order[0]);
+    try testing.expectEqualStrings("A", order[1]);
+    try testing.expectEqualStrings("C", order[2]);
+
+    // A blob from before the field has none.
+    const older = try translate(arena,
+        \\{"id":"e","tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+    );
+    const lone = try groupIntoWindows(arena, &.{older});
+    try testing.expect(lone[0].pane_sidebar_order == null);
 }
 
 test "T1847: a Mac window's pane sidebar pin and hidden flags come across" {

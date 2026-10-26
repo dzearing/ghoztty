@@ -44,6 +44,7 @@ const row_menu = @import("pane_sidebar_menu.zig");
 const search_field = @import("pane_sidebar_search.zig");
 const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
+const pane_sidebar_order = @import("pane_sidebar_order.zig");
 const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
 const Dib32 = @import("dib32.zig");
@@ -519,7 +520,8 @@ pub fn refresh(self: *PaneSidebar) void {
     const tree = win.tab_trees[win.active_tab];
     const active = win.tab_active_pane[win.active_tab];
     var views: [pane_sidebar.max_items]*PaneView = undefined;
-    const n = pane_sidebar.roster(tree, &views);
+    var order_buf: [pane_sidebar_order.max_ids][]const u8 = undefined;
+    const n = pane_sidebar.rosterOrdered(tree, win.paneSidebarOrder(&order_buf), &views);
 
     var h = std.hash.Wyhash.init(0);
     h.update("one");
@@ -738,7 +740,9 @@ fn refreshAll(self: *PaneSidebar) void {
         const r = refs[p.index];
         const own = self.isOwn(r);
         const active = r.window.tab_active_pane[r.tab];
-        const listed = pane_sidebar.roster(r.window.tab_trees[r.tab], views[nv..]);
+        var order_buf: [pane_sidebar_order.max_ids][]const u8 = undefined;
+        const order = r.window.paneSidebarOrder(&order_buf);
+        const listed = pane_sidebar.rosterOrdered(r.window.tab_trees[r.tab], order, views[nv..]);
         // Keep the hits, in roster order (the grid, then the stash).
         var got: usize = 0;
         var grid: usize = 0;

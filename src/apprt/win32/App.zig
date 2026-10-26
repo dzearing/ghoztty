@@ -53,6 +53,7 @@ const Window = @import("Window.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const desk_palette = @import("desk_palette.zig");
 const pane_sidebar_menu = @import("pane_sidebar_menu.zig");
+const pane_sidebar_order = @import("pane_sidebar_order.zig");
 const dial_failure = @import("dial_failure.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const relay_signout = @import("relay_signout.zig");
@@ -3672,7 +3673,18 @@ fn captureWindow(
         // Written under its pre-T2289 name, as Mac writes it: pinned WAS expanded.
         .pane_sidebar_pinned = win.pane_sidebar_expanded,
         .pane_sidebar_hidden = win.pane_sidebar_hidden,
+        .pane_sidebar_order = try captureSidebarOrder(arena, win),
     };
+}
+
+/// The pane sidebar's own order (T2302), copied out of the window: only the
+/// panes it still holds, and null until the first reorder.
+fn captureSidebarOrder(arena: Allocator, win: *Window) !?[]const []const u8 {
+    var buf: [pane_sidebar_order.max_ids][]const u8 = undefined;
+    const live = win.paneSidebarOrderLive(&buf) orelse return null;
+    const out = try arena.alloc([]const u8, live.len);
+    for (live, 0..) |id, i| out[i] = try arena.dupe(u8, id);
+    return out;
 }
 
 /// Capture ONE window on its own, with a fresh snapshot budget (T366). The
@@ -5421,6 +5433,7 @@ fn restoreWindow(
     // Window-level presentation: title pin, active tab, outer placement.
     if (win.title_override) |t| window.setTitleOverride(t);
     window.restorePaneSidebar(win.pane_sidebar_pinned, win.pane_sidebar_hidden);
+    if (win.pane_sidebar_order) |order| window.setPaneSidebarOrder(order);
     if (window.tab_count > 0) {
         const active: usize = @min(@as(usize, win.active_tab), window.tab_count - 1);
         window.selectTabIndex(active);

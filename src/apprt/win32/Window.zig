@@ -33,6 +33,7 @@ const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const pane_stash = @import("pane_stash.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
+const sidebar_order = @import("pane_sidebar_order.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const PaneGrabHandle = @import("PaneGrabHandle.zig");
 const pane_grab_handle = @import("pane_grab_handle.zig");
@@ -617,6 +618,12 @@ grab_handle: ?*PaneGrabHandle.PaneGrabHandle = null,
 /// do.
 pane_sidebar_expanded: bool = false,
 pane_sidebar_hidden: bool = false,
+/// The pane sidebar's own list order (T2302, Mac `PaneSidebarState.order`):
+/// stable pane ids, empty until the first reorder, which means the tree's
+/// order. One list for every tab - pane ids are unique across them - read
+/// through `pane_sidebar.rosterOrdered`. Layout state: it persists.
+pane_sidebar_order: [sidebar_order.max_ids]pane_id.Buf = undefined,
+pane_sidebar_order_len: usize = 0,
 /// The expanded panel's preferred width.
 pane_sidebar_width_dip: f32 = pane_sidebar.default_width_dip,
 /// `tabBarLeft()` as the strip last saw it (T1900): the sidebar's column
@@ -2761,6 +2768,51 @@ pub fn restorePaneSidebar(self: *Window, expanded: ?bool, hidden: ?bool) void {
     self.pane_sidebar_expanded = p;
     self.pane_sidebar_hidden = h;
     self.paneSidebarLayoutChanged();
+}
+
+/// The sidebar's own order (T2302) as slices into `out`, borrowed from this
+/// window. Empty until the first reorder.
+pub fn paneSidebarOrder(self: *const Window, out: [][]const u8) []const []const u8 {
+    const n = @min(self.pane_sidebar_order_len, out.len);
+    for (0..n) |i| out[i] = &self.pane_sidebar_order[i];
+    return out[0..n];
+}
+
+/// Replace the sidebar's order: a restore, or a reorder's result. Anything
+/// that is not a pane id is dropped, and `ids` may borrow the current order.
+pub fn setPaneSidebarOrder(self: *Window, ids: []const []const u8) void {
+    var next: [sidebar_order.max_ids]pane_id.Buf = undefined;
+    var n: usize = 0;
+    for (ids) |id| {
+        if (id.len != pane_id.len or n == next.len) continue;
+        @memcpy(&next[n], id);
+        n += 1;
+    }
+    if (n == self.pane_sidebar_order_len and std.mem.eql(
+        u8,
+        std.mem.sliceAsBytes(next[0..n]),
+        std.mem.sliceAsBytes(self.pane_sidebar_order[0..n]),
+    )) return;
+    @memcpy(self.pane_sidebar_order[0..n], next[0..n]);
+    self.pane_sidebar_order_len = n;
+    if (self.sidebar) |sb| sb.refresh();
+    self.app.markLayoutDirty();
+}
+
+/// The order as it persists: only panes some tab of this window still holds
+/// (Mac: closed panes are never persisted). Null when that leaves nothing.
+pub fn paneSidebarOrderLive(self: *Window, out: [][]const u8) ?[]const []const u8 {
+    var n: usize = 0;
+    for (0..self.pane_sidebar_order_len) |i| {
+        const id: []const u8 = &self.pane_sidebar_order[i];
+        const held = for (0..self.tab_count) |ti| {
+            if (self.paneById(ti, id) != null) break true;
+        } else false;
+        if (!held or n == out.len) continue;
+        out[n] = id;
+        n += 1;
+    }
+    return if (n == 0) null else out[0..n];
 }
 
 fn paneSidebarLayoutChanged(self: *Window) void {

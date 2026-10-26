@@ -26,6 +26,7 @@ const std = @import("std");
 const toc = @import("viewer_toc_layout.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const type_ramp = @import("type_ramp.zig");
+const order_mod = @import("pane_sidebar_order.zig");
 
 // ---------------------------------------------------------------------------
 // Modes and the column
@@ -632,6 +633,26 @@ pub fn roster(tree: anytype, out: []*@TypeOf(tree).View) usize {
         out[at] = entry.view;
         n += 1;
     }
+    return n;
+}
+
+/// The roster with its grid section in the sidebar's own order (T2302, Mac
+/// `PaneSidebarOrder.arranged`): `order` is the window's list of pane ids,
+/// empty until the first reorder (the tree's order). The stash keeps its own
+/// order. Generic as `roster` is; `V` also carries `paneId()`.
+pub fn rosterOrdered(tree: anytype, order: []const []const u8, out: []*@TypeOf(tree).View) usize {
+    const n = roster(tree, out);
+    if (order.len == 0) return n;
+    var grid: usize = 0;
+    while (grid < n and out[grid].stash_seq == 0) grid += 1;
+    if (grid > order_mod.max_ids) return n;
+    var ids: [order_mod.max_ids][]const u8 = undefined;
+    for (out[0..grid], 0..) |v, i| ids[i] = v.paneId();
+    var idx: [order_mod.max_ids]usize = undefined;
+    const got = order_mod.arranged(ids[0..grid], order, &idx);
+    var views: [order_mod.max_ids]*@TypeOf(tree).View = undefined;
+    for (idx[0..got], 0..) |vi, i| views[i] = out[vi];
+    @memcpy(out[0..got], views[0..got]);
     return n;
 }
 
@@ -1501,7 +1522,49 @@ const TestView = struct {
     pub fn splitTreeLabel(self: *const TestView) []const u8 {
         return self.label;
     }
+    pub fn paneId(self: *const TestView) []const u8 {
+        return self.label;
+    }
 };
+
+test "pane_sidebar: the ordered roster draws the grid in the sidebar's order and leaves the stash alone" {
+    const Tree = SplitTree(TestView);
+    const alloc = testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var d: TestView = .{ .label = "D" };
+    var ta = try Tree.init(alloc, &a);
+    defer ta.deinit();
+    var tb = try Tree.init(alloc, &b);
+    defer tb.deinit();
+    var tc = try Tree.init(alloc, &c);
+    defer tc.deinit();
+    var td = try Tree.init(alloc, &d);
+    defer td.deinit();
+    var cd = try tc.split(alloc, .root, .right, 0.5, &td);
+    defer cd.deinit();
+    var bcd = try tb.split(alloc, .root, .right, 0.5, &cd);
+    defer bcd.deinit();
+    var tree = try ta.split(alloc, .root, .right, 0.5, &bcd);
+    defer tree.deinit();
+
+    // A | B | C | D with D stashed; the order puts C first and knows D's
+    // place, which the stash section does not follow.
+    d.stash_seq = 3;
+    var out: [8]*TestView = undefined;
+    const n = rosterOrdered(tree, &.{ "C", "D", "A", "B" }, &out);
+    try testing.expectEqual(@as(usize, 4), n);
+    try testing.expectEqualStrings("C", out[0].label);
+    try testing.expectEqualStrings("A", out[1].label);
+    try testing.expectEqualStrings("B", out[2].label);
+    try testing.expectEqualStrings("D", out[3].label);
+
+    // An empty order is the plain roster.
+    const m = rosterOrdered(tree, &.{}, &out);
+    try testing.expectEqual(@as(usize, 4), m);
+    try testing.expectEqualStrings("A", out[0].label);
+}
 
 test "pane_sidebar: roster lists grid panes in tree order, then the stash newest first" {
     const Tree = SplitTree(TestView);
