@@ -472,10 +472,16 @@ struct PaneSidebarView: View {
 
         if !stashed.isEmpty || (isThisWindow && (dragSession.isDragging || !state.showsAllWindows)) {
           VStack(alignment: .leading, spacing: 0) {
-            PaneSidebarDivider(isRail: isRail, indent: indent)
+            // All windows: no divider and no caption — a window's stashed
+            // panes follow its others in one list, the same in the rail and
+            // the panel, so collapsing or expanding moves nothing. (Still
+            // here, at no height, for where the tray begins.)
+            if !state.showsAllWindows {
+                PaneSidebarDivider(isRail: isRail, indent: indent)
+            }
             // Captioned only when it holds something: an empty tray is its
             // drop slot, whose own text says what it is.
-            if !isRail && !stashed.isEmpty {
+            if !isRail && !stashed.isEmpty && !state.showsAllWindows {
                 HStack(alignment: .firstTextBaseline) {
                     SidePanelCaption(text: "Stashed")
                     Spacer()
