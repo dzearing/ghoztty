@@ -2103,9 +2103,9 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             if (row_menu.rowOffersStash(e.own)) {
                 const button = l.rowButton(i, self.scale);
                 text_right = button.left - sm;
-                self.paintRowButton(hdc, .{ .item_button = i }, button, if (e.section == .stashed) glyph_restore else glyph_stash, under, t);
+                self.paintRowButton(hdc, .{ .item_button = i }, button, if (e.section == .stashed) glyph_restore else glyph_stash, pill.under, t);
             }
-            self.paintRowButton(hdc, .{ .item_close = i }, x, glyph_close, under, t);
+            self.paintRowButton(hdc, .{ .item_close = i }, x, glyph_close, pill.under, t);
         } else if (e.bell and e.section == .stashed) {
             // Mac's accessory: a stashed pane's bell dot.
             const d = @max(pane_sidebar.px(7, self.scale), 3);
