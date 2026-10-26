@@ -184,6 +184,9 @@ pub const StripCard = struct {
     /// drag's glide out of a strip, whose target moves with the hand).
     held: ?Size,
     anchor: Anchor,
+    /// The axis its stack runs along, which its strip's name reads by
+    /// (T2288's face).
+    axis: Direction = .horizontal,
 };
 
 /// A rect's four edges as the glide carries them, in fractional pixels.
@@ -254,6 +257,17 @@ pub const Slide = struct {
         const c = self.find(id) orelse return null;
         if (c.drawn.eql(c.to)) return null;
         return cardOf(c, self.resize);
+    }
+
+    /// The card `id` is drawn at on its way into or out of its strip (T2288,
+    /// for the strip's face over it), and its stack's axis; null when it is
+    /// not such a card, or has caught up - a card at its strip IS the strip,
+    /// which the window paints, and one out of it is a card like any other.
+    pub fn stripFace(self: *const Slide, id: Id) ?struct { card: PxRect, axis: Direction } {
+        const c = self.find(id) orelse return null;
+        const s = c.strip orelse return null;
+        if (c.drawn.eql(c.to)) return null;
+        return .{ .card = cardOf(c, self.resize), .axis = s.axis };
     }
 
     /// Where card `id`'s pane is drawn, caught up or not; null when this glide
@@ -473,6 +487,7 @@ fn stripCard(b: Placed, a: Placed, from: PxRect, resize: bool) ?StripCard {
         return .{
             .held = .{ .w = a.rect.width(), .h = a.rect.height() },
             .anchor = Anchor.of(a.axis, leads(strip, from, a.axis)),
+            .axis = a.axis,
         };
     }
     if (!a.tucked and b.tucked) {
@@ -483,6 +498,7 @@ fn stripCard(b: Placed, a: Placed, from: PxRect, resize: bool) ?StripCard {
         return .{
             .held = if (resize) null else .{ .w = b.rect.width(), .h = b.rect.height() },
             .anchor = Anchor.of(b.axis, leads(strip, a.rect, b.axis)),
+            .axis = b.axis,
         };
     }
     return null;
@@ -958,6 +974,28 @@ test "plan: a card coming out of its strip widens from it, its pane held and pin
     var g = plan(&before, &after, null, glide_ms, true);
     _ = g.step(20);
     try testing.expectEqual(@as(i32, 400), g.rect(3).?.width());
+}
+
+test "stripFace: a card on its way into or out of its strip, by its stack's axis, until it catches up (T2288)" {
+    const strip = r(0, 0, 400, 30);
+    // A column's card folding up into a strip across the top.
+    const before = [_]Placed{.{ .id = 1, .rect = r(0, 40, 400, 300), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(0, 0, 400, 300), .tucked = true, .strip = strip, .axis = .vertical }};
+    var s = plan(&before, &after, null, glide_ms, false);
+    _ = s.step(20);
+    const f = s.stripFace(1).?;
+    try testing.expectEqual(s.cardRect(1).?, f.card);
+    try testing.expectEqual(Direction.vertical, f.axis);
+    // Caught up it is the strip, which the window paints: no face.
+    _ = runOut(&s);
+    try testing.expectEqual(@as(@TypeOf(s.stripFace(1)), null), s.stripFace(1));
+    // A card that only moves along the run has no strip and so no face.
+    const b2 = [_]Placed{.{ .id = 2, .rect = r(0, 0, 400, 600), .tucked = false }};
+    const a2 = [_]Placed{.{ .id = 2, .rect = r(100, 0, 400, 600), .tucked = false }};
+    var m = plan(&b2, &a2, null, glide_ms, false);
+    _ = m.step(20);
+    try testing.expect(m.cardRect(2) != null);
+    try testing.expectEqual(@as(@TypeOf(m.stripFace(2)), null), m.stripFace(2));
 }
 
 test "plan: a card turned back mid-glide carries on from where its card is drawn (T2287)" {

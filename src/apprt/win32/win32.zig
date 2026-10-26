@@ -166,6 +166,10 @@ pub const WM_PAINT: u32 = 0x000F;
 /// DWM `PW_RENDERFULLCONTENT` path is asynchronous and hands back torn
 /// frames instead (T835).
 pub const WM_PRINTCLIENT: u32 = 0x0318;
+/// What `PrintWindow` actually sends: paint the window whole into this DC.
+/// Its default asks for WM_ERASEBKGND and WM_PRINTCLIENT in turn; a window
+/// with no frame can answer it directly (T2288).
+pub const WM_PRINT: u32 = 0x0317;
 pub const WM_TIMER: u32 = 0x0113;
 pub const WM_ENTERSIZEMOVE: u32 = 0x0231;
 pub const WM_EXITSIZEMOVE: u32 = 0x0232;

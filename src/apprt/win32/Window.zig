@@ -155,6 +155,8 @@ const pane_stack_grid = @import("pane_stack_grid.zig");
 const pane_stack_layout = @import("pane_stack_layout.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
 const pane_stack_slide = @import("pane_stack_slide.zig");
+const strip_face = @import("strip_face.zig");
+const StripFace = @import("StripFace.zig").StripFace;
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
 const PaneDesk = @import("PaneDesk.zig");
@@ -7218,6 +7220,10 @@ pub fn updateDimOverlays(self: *Window) void {
     else
         null;
 
+    // The strip's face over a card gliding into or out of its strip (T2288)
+    // is laid first: a pane wearing one yields its dim wash to it.
+    self.updateStripFaces();
+
     for (0..self.tab_count) |tab| {
         const tree = self.tab_trees[tab];
         var it = tree.iterator();
@@ -7240,7 +7246,8 @@ pub fn updateDimOverlays(self: *Window) void {
                     true,
                 .glass = glass,
             });
-            if (dim) {
+            const face_up = if (entry.view.strip_face) |f| f.shown else false;
+            if (dim and !face_up) {
                 entry.view.showDimOverlay(color, alpha, &hdwp);
             } else {
                 entry.view.hideDimOverlay();
@@ -7469,6 +7476,107 @@ pub fn updateHoverTints(self: *Window) void {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| entry.view.updateHoverTint(entry.view == target, c, self.scale);
     }
+}
+
+/// Lay the strip's face over every card of the active tab gliding into or
+/// out of its strip, and take it off every other pane (T2288; Mac a81db68f9
+/// `PaneCardView.collapse`). Rides every layout pass, so it is repainted on
+/// each frame of the glide; once a card reaches its strip the glide drops it
+/// and the strip the window paints - the same band, the same name - takes
+/// over, so nothing pops.
+fn updateStripFaces(self: *Window) void {
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            if (tab == self.active_tab and self.paintStripFace(entry.view)) continue;
+            if (entry.view.strip_face) |f| f.hide();
+        }
+    }
+}
+
+/// The face over `view`'s card, at the card's collapse: the strip's band and
+/// name over what of the card is drawn, so the content reads through it at
+/// `1 - collapse` as the title comes in. False when it has none to show - not
+/// gliding to or from a strip, or still too wide for any of the face.
+fn paintStripFace(self: *Window, view: *PaneView) bool {
+    const slide = if (self.stack_slide) |*s| s else return false;
+    const face = slide.stripFace(pane_stack_grid.viewId(view)) orelse return false;
+    const parent = self.hwnd orelse return false;
+    const h = view.hwnd() orelse return false;
+    if (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) return false;
+    // What of the card is drawn (Mac `paneRect.intersection(clip)`): the pane
+    // window cut to its card, inside the client area.
+    const at = childClientRect(parent, h) orelse return false;
+    const inner = self.leafRect(view, winRect(face.card));
+    var client: w32.RECT = undefined;
+    if (w32.GetClientRect(parent, &client) == 0) return false;
+    const vis: pane_stack_grid.PxRect = .{
+        .left = @max(@max(at.left, inner.left), client.left),
+        .top = @max(@max(at.top, inner.top), client.top),
+        .right = @min(@min(at.right, inner.right), client.right),
+        .bottom = @min(@min(at.bottom, inner.bottom), client.bottom),
+    };
+    if (vis.width() <= 0 or vis.height() <= 0) return false;
+    const alpha = strip_face.alphaOf(strip_face.collapseOf(vis, self.scale));
+    if (alpha == 0) return false;
+
+    if (view.strip_face == null) {
+        view.strip_face = StripFace.create(self.app.core_app.alloc, h, self.app.hinstance) catch |err| {
+            log.warn("strip face create failed err={}", .{err});
+            return false;
+        };
+    }
+    const f = view.strip_face.?;
+    const w = vis.width();
+    const ht = vis.height();
+    const frame = f.begin(w, ht) orelse return f.shown;
+
+    // The band, as the strip paints it once the card is in: over the glass
+    // sheet over the desk (T2160), else solid.
+    const bg = self.stripBackground();
+    const strip_rgb = pane_stack_strip.stripRgb(bg, false);
+    if (self.glassDesk()) |g| {
+        const lut = pane_stack_strip.GlassLut.init(.{ .bg = bg, .sheet = .{}, .hovered = false });
+        strip_face.fillGlass(frame.pixels, @intCast(w), @intCast(ht), .{
+            .pixels = g.desk.pixels,
+            .w = g.desk.w,
+            .h = g.desk.h,
+            .x = vis.left - g.area.left,
+            .y = vis.top - g.area.top,
+        }, &lut);
+    } else strip_face.fillSolid(frame.pixels, strip_rgb);
+
+    // The name along it, laid out over the face as the strip lays it out
+    // over itself.
+    const axis = face.axis;
+    if (self.stripFont(if (axis == .horizontal) 2700 else 0)) |font| {
+        defer _ = w32.DeleteObject(font);
+        const old_mode = w32.SetBkMode(frame.dc, w32.TRANSPARENT);
+        defer _ = w32.SetBkMode(frame.dc, old_mode);
+        const ink = pane_stack_strip.inkRgb(strip_rgb, color_math.isLight(bg), false);
+        self.paintStripLabel(frame.dc, view, .{ .left = 0, .top = 0, .right = w, .bottom = ht }, axis, font, ink);
+    }
+    _ = w32.GdiFlush();
+    strip_face.makeOpaque(frame.pixels);
+
+    // Cut to the pane's own region - its card's rounded shape, or its slide
+    // cut - from where the face sits inside the pane window.
+    var region: ?*anyopaque = null;
+    if (w32.CreateRectRgn(0, 0, 0, 0)) |rgn| {
+        if (w32.GetWindowRgn(h, rgn) == 0) {
+            _ = w32.DeleteObject(rgn);
+        } else {
+            _ = w32.OffsetRgn(rgn, at.left - vis.left, at.top - vis.top);
+            region = rgn;
+        }
+    }
+    var pt: w32.POINT = .{ .x = vis.left, .y = vis.top };
+    _ = w32.ClientToScreen(parent, &pt);
+    // The acceptance oracle (stack-fold-slide.ps1 F10-F12): how far in, and
+    // the band, read at the face's corner where no name is drawn.
+    log.debug("strip face alpha={d} band={x:0>6} size={d}x{d}", .{ alpha, frame.pixels[0] & 0xFF_FFFF, w, ht });
+    f.commit(pt.x, pt.y, alpha, region);
+    return f.shown;
 }
 
 pub fn updateReadonlyBadges(self: *Window) void {

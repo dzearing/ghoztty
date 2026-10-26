@@ -691,7 +691,10 @@ $GuardTable = @(
             'test\win32\stack-fold-slide.ps1',
             'src\apprt\win32\pane_stack_slide.zig',
             'src\apprt\win32\stack_drag.zig',
-            'src\apprt\win32\Window.zig'
+            'src\apprt\win32\Window.zig',
+            # The strip's face over a card gliding into its strip (T2288, F10-F13).
+            'src\apprt\win32\StripFace.zig',
+            'src\apprt\win32\strip_face.zig'
         )
     },
     # A collapsed row carried across a tree change (T2083/T2119): a pane on

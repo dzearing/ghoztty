@@ -310,6 +310,8 @@ test {
     _ = @import("win32/gutter_bar.zig");
     // How a card glides when a stack's run changes (T2102) - same deal.
     _ = @import("win32/pane_stack_slide.zig");
+    // The strip face a card fades to as it narrows into its strip (T2288).
+    _ = @import("win32/strip_face.zig");
     // A divider or stack-grip drag that folds panes into strips and back
     // (T2124, Mac's RowDrag) - same deal.
     _ = @import("win32/stack_drag.zig");

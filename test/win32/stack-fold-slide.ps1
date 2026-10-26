@@ -48,9 +48,21 @@
 #       full-size card that slides off and vanishes at the end
 #   F9) unfolding, s2's card widens out of its strip the same way: seen cut
 #       to 2+ partial widths on its way back
+#   F10) as s2's card narrows, the strip's face fades in over it (T2288; Mac
+#       a81db68f9 `PaneCardView.collapse`): the face popup is seen on show,
+#       at 2+ alphas strictly between none and all of it, rising - so the
+#       content fades out as the title fades in. Read from the debug build's
+#       `strip face alpha=` oracle line.
+#   F11) unfolding, the face fades back out the same way: 2+ partial alphas,
+#       falling
+#   F12) at rest - folded, and unfolded again - no face is on show: the
+#       window's own strip takes over, and a card on show wears none
+#   F13) the face IS the strip's band (flat style): photographed mid-glide
+#       through WM_PRINTCLIENT, its commonest pixel is the band the oracle
+#       logged and covers most of it - not the pane's colour, not a hole
 #
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
-# before any slide) and keeps F1/F2/F7/F8 as written: they MUST fail.
+# before any slide) and keeps F1/F2/F7/F8/F10 as written: they MUST fail.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -170,7 +182,12 @@ function Get-Samples([IntPtr]$top, [int]$ms) {
         $w = $null
         $q = Find-Pane $panes $script:watchPane
         if ($null -ne $q -and $q.Visible) { $w = [pscustomobject]@{ Width = $q.Width; Shown = (Get-ShownWidth $q) } }
-        $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $panes; Stray = @(Get-StrayPopups $script:appPid $top); Watch = $w })
+        $faces = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyStripFace' | Where-Object Visible)
+        # One photograph of the face mid-glide (F13); it may hide under us.
+        if ($null -eq $script:faceShot -and $faces.Count -gt 0) {
+            try { $script:faceShot = Get-TestWindowPixels -Window ([IntPtr]$faces[0].Hwnd) -Sync -AllowUniform -UniformTimeoutMs 0 } catch { }
+        }
+        $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $panes; Stray = @(Get-StrayPopups $script:appPid $top); Watch = $w; Faces = $faces.Count })
         Start-Sleep -Milliseconds 15
     }
     return $out
@@ -192,6 +209,36 @@ function Get-GlidingBar([int]$from) {
         }
     }
     return $out
+}
+# The `strip face alpha=N band=RRGGBB` oracle lines (T2288) from line $from
+# to line $to of the app's stderr: each as its alpha and band.
+function Get-FaceAlphas([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'strip face alpha=(\d+) band=([0-9a-f]{6})') {
+            $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Band = $Matches[2] }
+        }
+    }
+    return $out
+}
+# The commonest colour of a capture (as RRGGBB) and its share of a sample grid.
+function Get-TopColor($shot) {
+    $hist = @{}
+    $n = 0
+    $sx = [math]::Max(1, [int]($shot.Width / 24))
+    $sy = [math]::Max(1, [int]($shot.Height / 24))
+    # pixel-region: the capture is the strip face popup alone, so the whole of it is the subject
+    for ($y = 0; $y -lt $shot.Height; $y += $sy) {
+        for ($x = 0; $x -lt $shot.Width; $x += $sx) {
+            $c = '{0:x6}' -f ($shot.Bitmap.GetPixel($x, $y).ToArgb() -band 0xFFFFFF)
+            $n++
+            if ($hist.ContainsKey($c)) { $hist[$c]++ } else { $hist[$c] = 1 }
+        }
+    }
+    $topKey = $null
+    foreach ($k in $hist.Keys) { if ($null -eq $topKey -or $hist[$k] -gt $hist[$topKey]) { $topKey = $k } }
+    return [pscustomobject]@{ Color = $topKey; Share = if ($n -gt 0) { $hist[$topKey] / $n } else { 0 } }
 }
 function Get-LogLength { return @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue).Count }
 function Find-Pane($panes, [int64]$hwnd) {
@@ -231,6 +278,7 @@ $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
 Reset-TestBody
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
+$script:faceShot = $null
 
 try {
     Assert (Test-Path $exe) 'ghoztty exe exists in zig-out'
@@ -385,6 +433,19 @@ try {
     Say ("      s2 cut to its narrowing card at: {0} px" -f ($narrow -join ', '))
     Assert ($narrow.Count -ge 2) "F8: folding, s2 is seen cut to $($narrow.Count) partial widths (need 2+): its card narrows into the strip, it does not slide off full size"
 
+    # F10: the strip's face fades in over the narrowing card (T2288).
+    $fadeIn = @(Get-FaceAlphas $logFold $logBack)
+    $inMid = @($fadeIn | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
+    $faceSeen = @($fold | Where-Object { $_.Faces -gt 0 }).Count
+    Say ("      face alphas folding: {0}; face on show in {1} of {2} samples" -f (($fadeIn | ForEach-Object Alpha) -join ' > '), $faceSeen, $fold.Count)
+    Assert ($faceSeen -ge 1) "F10: folding, the strip's face is seen on show over s2's card ($faceSeen samples)"
+    Assert ($inMid.Count -ge 2) "F10: folding, the face is drawn at $($inMid.Count) partial alphas (need 2+): the title fades in as the content fades out"
+    if ($fadeIn.Count -ge 2) {
+        Assert ($fadeIn[-1].Alpha -gt $fadeIn[0].Alpha) "F10: folding, the face's alpha rises ($($fadeIn[0].Alpha) -> $($fadeIn[-1].Alpha))"
+    }
+    $facesFolded = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
+    Assert ($facesFolded -eq 0) "F12: folded and at rest, no face is on show ($facesFolded): the window's strip has taken over"
+
     # F4: the T2124 layout at rest.
     $shown = @($rest | Where-Object Visible)
     Assert ($shown.Count -eq 2) "F4: at rest two panes are on show (got $($shown.Count))"
@@ -396,6 +457,8 @@ try {
     # its widening was over before the sampler started (T2287's F9).
     [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action move -HoldMs 0)
     $back = @(Get-Samples $top ($slideMs + 1000))
+    $logEnd = Get-LogLength
+    $facesAtRest = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
     $again = @(Get-Panes $top)
     $s2Back = Find-Pane $again $hS2
     $s2Home = if ($s2Back) { $s2Back.Left } else { $s2Tuck }
@@ -413,6 +476,32 @@ try {
     if (-not $NegativeControl) {
         Assert ($barBackAt.Count -ge 2) "F7: unfolding, the dragged bar is drawn at $($barBackAt.Count) places past its laid-out gutter (need 2+)"
     }
+    # F11: the face fades back out as the card widens.
+    $fadeOut = @(Get-FaceAlphas $logBack $logEnd)
+    $outMid = @($fadeOut | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
+    Say ("      face alphas unfolding: {0}" -f (($fadeOut | ForEach-Object Alpha) -join ' > '))
+    if (-not $NegativeControl) {
+        Assert ($outMid.Count -ge 2) "F11: unfolding, the face is drawn at $($outMid.Count) partial alphas (need 2+): the title fades out as the content comes back"
+        if ($fadeOut.Count -ge 2) {
+            Assert ($fadeOut[-1].Alpha -lt $fadeOut[0].Alpha) "F11: unfolding, the face's alpha falls ($($fadeOut[0].Alpha) -> $($fadeOut[-1].Alpha))"
+        }
+    }
+    Assert ($facesAtRest -eq 0) "F12: unfolded and at rest, no face is on show ($facesAtRest)"
+
+    # F13: the face's pixels are the strip's band (flat: one solid band).
+    if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
+        $bands = @(@($fadeIn) + @($fadeOut) | ForEach-Object Band | Sort-Object -Unique)
+        if ($null -eq $script:faceShot) {
+            Assert $false 'F13: the face was photographed mid-glide (no capture landed)'
+        } else {
+            $tc = Get-TopColor $script:faceShot
+            Say ("      face photo {0}x{1}: top colour {2} ({3:p0}); logged bands {4}" -f $script:faceShot.Width, $script:faceShot.Height, $tc.Color, $tc.Share, ($bands -join ', '))
+            Assert ($bands -contains $tc.Color) "F13: the face's commonest pixel $($tc.Color) is the strip band the face logged ($($bands -join ', '))"
+            Assert ($tc.Share -ge 0.6) "F13: the band covers most of the face ($([math]::Round($tc.Share * 100))%)"
+            Close-TestWindowPixels -Shot $script:faceShot
+        }
+    }
+
     $strayBack = @($back | Where-Object { $_.Stray.Count -gt 0 })
     $firstBack = if ($strayBack.Count -gt 0) { "at $($strayBack[0].Ms) ms: $($strayBack[0].Stray -join ' | ')" } else { '' }
     Assert ($strayBack.Count -eq 0) "F6: no popup reaches outside the window during the unfold ($($strayBack.Count) of $($back.Count) samples) $firstBack"

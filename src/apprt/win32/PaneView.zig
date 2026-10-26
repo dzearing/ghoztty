@@ -36,6 +36,7 @@ const RefCount = @import("pane_refcount.zig").RefCount;
 const Surface = @import("Surface.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const HoverTint = @import("HoverTint.zig").HoverTint;
+const StripFace = @import("StripFace.zig").StripFace;
 const pane_hue = @import("pane_hue.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const color_math = @import("color_math.zig");
@@ -87,6 +88,11 @@ stack_held: ?pane_stack_slide.Size = null,
 /// lives here rather than on the leaf, and goes with the PaneView.
 hover_tint: ?*HoverTint = null,
 
+/// The strip's face over this pane's card while it glides into or out of
+/// its strip (T2288), created on the first such glide. Kind-generic for the
+/// same reason as `hover_tint`.
+strip_face: ?*StripFace = null,
+
 /// Wrap an existing Surface as a terminal pane. Takes one reference on the
 /// surface, which is released when this PaneView is freed. The surface's
 /// back-pointer is set here so `Surface` destroy paths can find the leaf.
@@ -127,6 +133,10 @@ pub fn unref(self: *PaneView, alloc: Allocator) void {
     if (self.hover_tint) |t| {
         t.destroy();
         self.hover_tint = null;
+    }
+    if (self.strip_face) |f| {
+        f.destroy();
+        self.strip_face = null;
     }
     switch (self.kind) {
         // Surface.unref runs its own hide/deinit/destroy at zero. The
@@ -261,6 +271,7 @@ pub fn hideDimOverlay(self: *PaneView) void {
 /// its dim wash.
 pub fn hideOverlays(self: *PaneView) void {
     if (self.hover_tint) |t| t.hide();
+    if (self.strip_face) |f| f.hide();
     switch (self.kind) {
         .terminal => |s| s.hideOverlays(),
         .viewer => |v| v.hideDimOverlay(),
@@ -270,6 +281,7 @@ pub fn hideOverlays(self: *PaneView) void {
 /// Re-check the z-order of this pane's layered popups (T142).
 pub fn healOverlayZOrders(self: *PaneView) void {
     if (self.hover_tint) |t| if (self.hwnd()) |owner| w32.healOverlayZOrder(t.hwnd, owner);
+    if (self.strip_face) |f| if (self.hwnd()) |owner| w32.healOverlayZOrder(f.hwnd, owner);
     switch (self.kind) {
         .terminal => |s| s.healOverlayZOrders(),
         .viewer => |v| v.healOverlayZOrders(),
