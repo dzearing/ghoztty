@@ -572,6 +572,13 @@ struct PaneSidebarHoverTint: View {
 struct PaneSidebarItemButton: View {
     static let size: CGFloat = 18
 
+    /// A header's × stands where its count ends (`textInset` from its
+    /// fill), a row's × closer to the edge (`trailingButtonInset`): shifted
+    /// by the difference, the two line up in one column.
+    static var headerOffset: CGFloat {
+        SidePanelRow.textInset - PaneSidebarRow.trailingButtonInset
+    }
+
     let symbol: String
     let help: String
     /// On the accent selection pill: white, not the secondary label color.

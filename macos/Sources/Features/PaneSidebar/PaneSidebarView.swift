@@ -763,6 +763,7 @@ private struct PaneSidebarWindowHeader: View {
                     PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
                         owner.closeWindowFromSidebar()
                     }
+                    .offset(x: PaneSidebarItemButton.headerOffset)
                 }
             }
             .frame(height: 14)
@@ -841,6 +842,7 @@ private struct PaneSidebarProjectHeader: View {
                         symbol: "xmark",
                         help: windowCount == 1 ? "Close its window" : "Close its \(windowCount) windows",
                         action: onClose)
+                    .offset(x: PaneSidebarItemButton.headerOffset)
                 }
             }
             .frame(height: 14)
