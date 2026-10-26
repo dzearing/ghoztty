@@ -38,6 +38,7 @@ const desk_palette = @import("desk_palette.zig");
 const busy_light = @import("busy_light.zig");
 const color_math = @import("color_math.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
+const gutter_bar = @import("gutter_bar.zig");
 
 const log = std.log.scoped(.pane_desk);
 
@@ -100,6 +101,14 @@ pub const Light = struct {
     card: pane_elevation.Card,
     shape: busy_light.Shape,
     color: color_math.Rgb,
+};
+
+/// A hovered or dragged gutter's accent bar (T2253), its core in
+/// content-area pixels.
+pub const Bar = struct {
+    core: gutter_bar.Rect,
+    color: color_math.Rgb,
+    strength: gutter_bar.Strength,
 };
 
 /// More busy panes than this in one tab are drawn without a light; a grid
@@ -197,6 +206,9 @@ pub fn paint(
     variant: ?desk_palette.Variant,
     lights: []const Light,
     head: f32,
+    /// The one gutter bar on show, if any (T2253): over the desk and the
+    /// strips, under the lights.
+    bar: ?Bar,
     /// `background-opacity` as a byte when the window is translucent, null
     /// when it is opaque (T1852).
     opacity: ?u8,
@@ -215,6 +227,7 @@ pub fn paint(
         else
             pane_stack_strip.paintBand(comp.pixels(), @intCast(w), @intCast(h), s.tab, s.axis, s.rgb, radius);
     }
+    if (bar) |b| gutter_bar.paint(comp.pixels(), @intCast(w), @intCast(h), b.core, b.color, style.scale, b.strength);
     self.syncLights(comp, lights, style.scale);
     for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
     if (opacity) |o| {

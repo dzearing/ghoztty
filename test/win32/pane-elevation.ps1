@@ -116,11 +116,15 @@ function Test-DeskPixel($c) {
     return ($c.B -gt $c.R + 12) -and ($sum -gt 45) -and ($sum -lt 3 * 140)
 }
 
+# The app's debug log: the gutter bar's colour is read from it (T2253).
+$errlog = Join-Path $env:TEMP "ghoztty-pane-elevation-stderr-$PID.log"
+
 function Start-Gui([string]$label, [string[]]$extraArgs, [switch]$Split) {
     Kill-RepoInstances
     # persistence: off - every caller passes $common (--session-persistence=false);
     # a restored layout would seed panes whose geometry this script did not make.
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $extraArgs
+    Remove-Item $errlog -ErrorAction SilentlyContinue
+    $app = Start-OnTestDesktop -Exe $exe -Arguments $extraArgs -StdErr $errlog
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host "SETUP FAIL ($label): GUI died at launch"; exit 1 }
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -278,16 +282,73 @@ if ($panes.Count -eq 2) {
         }
     } finally { Close-TestWindowPixels $shot }
 
-    # The gap is the grab band: a drag from its middle moves the split.
-    $h0 = $A.Bottom - $A.Top
+    # T2253 (Mac a81db68f9 + 5e4f30144): the gutter shows a 4 DIP accent bar
+    # down its middle - half strength while hovered, full while dragged - and
+    # none once the drag lets go. The colour is the app's (system accent held
+    # to 3:1 against the terminal), read from its debug line; the blend
+    # arithmetic is gutter_bar.zig's unit tests'. In the core the bar is the
+    # accent at 0.5 (hover) or 1 (drag) over the desk pixel measured above.
+    $deskGap = $c
     $gx = [int](($A.Left + $A.Right) / 2)
     $gy = [int](($A.Bottom + $B.Top) / 2)
+    function Get-BarRgb([string]$strength) {
+        if (-not (Test-Path $errlog)) { return $null }
+        $mm = @(Select-String -Path $errlog -Pattern "gutter bar divider $strength rgb=(\d+),(\d+),(\d+)" -ErrorAction SilentlyContinue)
+        if ($mm.Count -eq 0) { return $null }
+        $gg = $mm[-1].Matches[0].Groups
+        return @([int]$gg[1].Value, [int]$gg[2].Value, [int]$gg[3].Value)
+    }
+    function Test-Near($px, [int[]]$rgb, [int]$tol = 8) {
+        return ([math]::Abs($px.R - $rgb[0]) -le $tol) -and ([math]::Abs($px.G - $rgb[1]) -le $tol) -and ([math]::Abs($px.B - $rgb[2]) -le $tol)
+    }
+    $hoverShot = Get-TestHoverCapture -Hwnd $top -X $gx -Y $gy
+    if ($null -eq $hoverShot -or $null -eq $deskGap) {
+        $script:skipped++; Write-Host "SKIP  T2253 hover bar: no hovered capture ($(Get-LastHoverCaptureError))"
+    } else {
+        try {
+            $hb = Get-BarRgb 'hover'
+            $hp = Get-TestPixel -Shot $hoverShot -X $gx -Y $gy
+            if ($null -eq $hb) {
+                Assert $false 'T2253 hover: the app reported a hover bar (debug line missing)'
+            } else {
+                $want = @([int][math]::Round($deskGap.R + ($hb[0] - $deskGap.R) * 0.5), [int][math]::Round($deskGap.G + ($hb[1] - $deskGap.G) * 0.5), [int][math]::Round($deskGap.B + ($hb[2] - $deskGap.B) * 0.5))
+                Write-Host "      hover mid-gap pixel = $($hp.R),$($hp.G),$($hp.B) (bar $($hb -join ','), want $($want -join ','))"
+                Assert ([bool]$hoverShot.Changed) 'T2253 hover: hovering the gap changed the frame'
+                Assert (Test-Near $hp $want) 'T2253 hover: the gap shows the accent bar at half strength over the desk'
+            }
+        } finally { Close-TestHoverCapture $hoverShot }
+    }
+
+    # The gap is the grab band: a drag from its middle moves the split.
+    $h0 = $A.Bottom - $A.Top
     [void](Send-TestMouse -Window $top -Target $top -X $gx -Y $gy -Action down)
     for ($k = 1; $k -le 8; $k++) {
         [void](Send-TestMouse -Window $top -Target $top -X $gx -Y ($gy + 8 * $k) -Action move)
     }
+    # Mid-drag, before the release: the bar is full strength over the gap
+    # where the divider now is.
+    Start-Sleep -Milliseconds 250
+    $db = Get-BarRgb 'drag'
+    $mid = @(Get-Panes $top | Sort-Object Top)
+    if ($null -eq $db -or $mid.Count -ne 2) {
+        Assert $false "T2253 drag: the app reported a drag bar (bar=$db, panes=$($mid.Count))"
+    } else {
+        $dy = [int](($mid[0].Bottom + $mid[1].Top) / 2)
+        $ds = Get-TestWindowPixels -Window $top -Sync
+        try { $dp = Get-TestPixel -Shot $ds -X $gx -Y $dy } finally { Close-TestWindowPixels $ds }
+        Write-Host "      drag mid-gap pixel = $($dp.R),$($dp.G),$($dp.B) (bar $($db -join ','))"
+        Assert (Test-Near $dp $db) 'T2253 drag: the dragged gap shows the accent bar at full strength'
+    }
     [void](Send-TestMouse -Window $top -Target $top -X $gx -Y ($gy + 64) -Action up)
     Start-Sleep -Milliseconds 400
+    # Released, the pointer not moved: no readable cursor off the input
+    # desktop, so the hover re-asked at release is "nowhere" - nothing lit.
+    if ($null -ne $db -and $mid.Count -eq 2) {
+        $rs = Get-TestWindowPixels -Window $top -Sync
+        try { $rp = Get-TestPixel -Shot $rs -X $gx -Y $dy } finally { Close-TestWindowPixels $rs }
+        Write-Host "      released mid-gap pixel = $($rp.R),$($rp.G),$($rp.B)"
+        Assert (Test-DeskPixel $rp) 'T2253 release: the gap is the plain desk again once the drag lets go'
+    }
     $A2 = Get-Panes $top | Sort-Object Top | Select-Object -First 1
     $grew = ($A2.Bottom - $A2.Top) - $h0
     Write-Host "      drag from mid-gap: top pane grew $grew px (asked 64)"
@@ -1147,6 +1208,7 @@ Remove-Item $html -ErrorAction SilentlyContinue
     Remove-TestDesktop
     Kill-RepoInstances
     Remove-Item $conf -ErrorAction SilentlyContinue
+    Remove-Item $errlog -ErrorAction SilentlyContinue
 }
 
 $fgSeen = @(Stop-TestForegroundWatch)

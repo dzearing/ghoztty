@@ -304,6 +304,8 @@ test {
     _ = @import("win32/pane_stack_grid.zig");
     // What a tucked pane's strip looks like (T2109) - same deal.
     _ = @import("win32/pane_stack_strip.zig");
+    // The accent bar a hovered or dragged gutter shows (T2253) - same deal.
+    _ = @import("win32/gutter_bar.zig");
     // How a card glides when a stack's run changes (T2102) - same deal.
     _ = @import("win32/pane_stack_slide.zig");
     // A divider or stack-grip drag that folds panes into strips and back

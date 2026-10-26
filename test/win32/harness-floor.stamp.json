@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-25T16:17:03-07:00",
-    "commit":  "318359028",
+    "generated":  "2026-10-25T17:13:07-07:00",
+    "commit":  "99018c93d",
     "uncommitted":  [
-
+                        "test/win32/pane-elevation.ps1",
+                        "test/win32/split-divider.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -323,7 +324,7 @@
                   "test/win32/pane-banner.ps1":  "f6714584eddae2b45003fbb5df28a0aad06b4cbc29c479e96fecf99292c3bf2f",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
-                  "test/win32/pane-elevation.ps1":  "0ec2001d57d1cc6739d10a45b0bb68e74653ea1d3b4fb57d08c9d23712ec6b9f",
+                  "test/win32/pane-elevation.ps1":  "00d12fa56f132c5635bcd0d9c34d8d138f8e10976ad2542def08fd40efe897ff",
                   "test/win32/pane-grab-handle.ps1":  "d0abccbdc04d0e399b5fda02f14e3d701d8f6e99ed1d54f217023af089745c6c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
@@ -429,7 +430,7 @@
                   "test/win32/soak-daemon.ps1":  "266cee53040004b1a1c4189de4a94d25521563339cda9927632decdc1006b1ac",
                   "test/win32/split-dim.ps1":  "a863ae465cd6447b8b63ae38c057a0e5ec8c319d8d7c41be7058a7f10acdfa07",
                   "test/win32/split-dim-viewer.ps1":  "f45535282b14c9c829db5e3e8bf943252988f8488ccbcbf80ca57a7278f4ec6d",
-                  "test/win32/split-divider.ps1":  "b9cc35cc3995da33bfc4bf8963d6e6926d402d2d8cf93dee2b27d21b0daf16da",
+                  "test/win32/split-divider.ps1":  "85b11d34b817e2933e47cf73f37a237c54a20e90759f4c87fc4af08186dfb9a4",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-name-collision.ps1":  "5064c7b9a869a94f8023ec1afc83d5a5ea9ff17291e1e922f7840910c46299d2",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",

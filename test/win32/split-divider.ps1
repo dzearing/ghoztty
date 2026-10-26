@@ -676,6 +676,30 @@ if ($null -eq $gapNow) {
 $d = Get-DividerLine $top
 $paneCenterY = [int](($d.B.Top + $d.B.Bottom) / 2)
 
+# T2253 (Mac a81db68f9 + 5e4f30144): a hovered or dragged gutter shows a 4 DIP
+# accent bar down its middle - half strength on hover, full while dragged -
+# that covers the 2 DIP line, and never stays lit after release. The colour is
+# the system accent held to the 3:1 floor against the terminal, which the
+# script reads from the app's own debug line rather than re-deriving the
+# floor (chrome_theme.zig's sweep owns that arithmetic; gutter_bar.zig's unit
+# tests own the blend). Over the hot line a half-strength bar is the midpoint.
+function Get-BarRgb([string]$strength) {
+    if (-not (Test-Path $errlog)) { return $null }
+    $m = @(Select-String -Path $errlog -Pattern "gutter bar divider $strength rgb=(\d+),(\d+),(\d+)" -ErrorAction SilentlyContinue)
+    if ($m.Count -eq 0) { return $null }
+    $g2 = $m[-1].Matches[0].Groups
+    return @([int]$g2[1].Value, [int]$g2[2].Value, [int]$g2[3].Value)
+}
+function Gap-HasRgb([IntPtr]$top, [int[]]$rgb, $shot = $null) {
+    $gap = Get-GapStrip $top 'down' $shot
+    if ($null -eq $gap -or $null -eq $gap.Strip) { return $null }
+    foreach ($px in $gap.Strip) { if (Pixel-Matches $px $rgb[0] $rgb[1] $rgb[2] $TOL) { return $true } }
+    return $false
+}
+function Mix-Half([int[]]$rgb, [int]$under) {
+    return @($rgb | ForEach-Object { [int][math]::Round($under + ($_ - $under) * 0.5) })
+}
+
 # Rest: pointer parked deep inside a pane, far outside the grab band.
 [void](Send-TestMouse -Window $top -Target $top -X $d.X -Y $paneCenterY -Action move)
 Start-Sleep -Milliseconds 300
@@ -716,7 +740,8 @@ if (-not $hoverLogged) {
 # the message loop is never reached in the middle of, so the posted
 # WM_MOUSELEAVE cannot get in between the move and the paint.
 $hoverShot = Get-TestHoverCapture -Hwnd $top -X $d.X -Y $d.Y
-$hoverIsHot = Gap-Has $top $HOT_G $hoverShot
+$hoverBar = Get-BarRgb 'hover'
+$hoverIsHot = if ($null -eq $hoverBar) { $null } else { Gap-HasRgb $top (Mix-Half $hoverBar $HOT_G) $hoverShot }
 $hoverIsRest = Gap-Has $top $REST_G $hoverShot
 # T946: the app also says whether the move altered a single pixel of the frame
 # (T845). Reading the gray alone infers "the hover took" from how the band
@@ -728,7 +753,7 @@ if ($null -eq $hoverIsHot -or $null -eq $hoverIsRest) {
     Write-Host "SKIP T233 (hover color): no usable hovered capture ($(Get-LastHoverCaptureError))"; $script:skipped++
 } else {
     Assert ($hoverChanged -eq $true) "T946 hover: the hovered capture is a frame the move CHANGED (changed=$hoverChanged)"
-    Assert ($hoverIsHot -eq $true) "T233 hover: the hovered band is painted the HOVER gray (changed=$hoverChanged)"
+    Assert ($hoverIsHot -eq $true) "T2253 hover: the hovered gutter shows the accent bar at half strength over the hot line (bar $($hoverBar -join ','), changed=$hoverChanged)"
     Assert ($hoverIsRest -eq $false) "T233 hover: ...and no longer the rest gray (changed=$hoverChanged)"
 }
 
@@ -738,11 +763,27 @@ if ($null -eq $hoverIsHot -or $null -eq $hoverIsRest) {
 [void](Send-TestMouse -Window $top -Target $top -X $d.X -Y $d.Y -Action down)
 [void](Send-TestMouse -Window $top -Target $top -X $d.X -Y ($d.Y + 20) -Action move)
 Start-Sleep -Milliseconds 250
-$dragIsHot = Gap-Has $top $HOT_G
+$dragBar = Get-BarRgb 'drag'
+$dragIsHot = if ($null -eq $dragBar) { $null } else { Gap-HasRgb $top $dragBar }
 [void](Send-TestMouse -Window $top -Target $top -X $d.X -Y ($d.Y + 20) -Action up)
 Start-Sleep -Milliseconds 250
-if ($null -eq $dragIsHot) { Write-Host 'SKIP T233 (drag): empty capture'; $script:skipped++ }
-else { Assert ($dragIsHot -eq $true) 'T233 drag: the band stays lit while being dragged' }
+if ($null -eq $dragIsHot) { Write-Host 'SKIP T2253 (drag): empty capture or no debug log'; $script:skipped++ }
+else { Assert ($dragIsHot -eq $true) "T2253 drag: the dragged gutter shows the accent bar at full strength (bar $($dragBar -join ','))" }
+
+# T2253 release (Mac 5e4f30144): let go, and the bar goes out with the drag.
+# Off the input desktop there is no readable cursor, so the re-asked hover is
+# "over nothing" - exactly the pointer-already-left case the Mac fix is about:
+# nothing may keep it lit. Read with the pointer not moved since the release.
+if ($null -ne $dragBar) {
+    $relLit = Gap-HasRgb $top $dragBar
+    $relHalf = Gap-HasRgb $top (Mix-Half $dragBar $HOT_G)
+    $relLog = @(Select-String -Path $errlog -Pattern 'divider drag released hover=null' -ErrorAction SilentlyContinue)
+    if ($null -eq $relLit) { Write-Host 'SKIP T2253 (release): empty capture'; $script:skipped++ }
+    else {
+        Assert ($relLit -eq $false -and $relHalf -eq $false) 'T2253 release: no bar is left lit after the drag lets go'
+        Assert ($relLog.Count -gt 0) 'T2253 release: the drag end re-asked the hover and found the pointer off the gutter'
+    }
+}
 
 # And back to rest once the pointer leaves it again.
 [void](Send-TestMouse -Window $top -Target $top -X $d.X -Y $paneCenterY -Action move)
@@ -754,6 +795,9 @@ if ($null -eq $backIsRest -or $null -eq $backIsHot) {
 } else {
     Assert ($backIsRest -eq $true) 'T233 un-hover: the band returns to the rest gray'
     Assert ($backIsHot -eq $false) 'T233 un-hover: the hover shade is gone'
+    if ($null -ne $dragBar) {
+        Assert ((Gap-HasRgb $top $dragBar) -eq $false) 'T2253 un-hover: no accent bar at rest'
+    }
 }
 
 Assert (-not ($app.Process -and $app.Process.HasExited)) 'default: no crash'
@@ -981,7 +1025,7 @@ function Measure-GapLine($gap, [int]$band) {
 # `Raw` is the same scan on the un-composited parent capture, carried for the
 # assertion label: it is the number T228 measured, and printing it beside the
 # scored one is what keeps the difference between them honest.
-function Measure-CrossPaneRuns([IntPtr]$top, [string]$axis) {
+function Measure-CrossPaneRuns([IntPtr]$top, [string]$axis, $barRgb = $null) {
     $shot = Get-TestWindowComposite -Window $top -Exe $exe
     if ($null -eq $shot) { return $null }
     try {
@@ -1003,7 +1047,14 @@ function Measure-CrossPaneRuns([IntPtr]$top, [string]$axis) {
         $runs = Count-ColorRuns $strip 0 255 0
         $raw = $null
         $rawShot = Get-TestWindowPixels -Window $top -Sync -AllowUniform
-        try { $raw = Count-ColorRuns (Read-ShotLine $rawShot $fixed $lo $hi $horiz) 0 255 0 }
+        try {
+            $rawLine = Read-ShotLine $rawShot $fixed $lo $hi $horiz
+            $raw = Count-ColorRuns $rawLine 0 255 0
+            # T2253: mid-drag the line is under the gutter's accent bar, so
+            # what a drag frame leaves behind in the parent is a bar, not a
+            # green line - count those too.
+            if ($null -ne $barRgb) { $raw += Count-ColorRuns $rawLine $barRgb[0] $barRgb[1] $barRgb[2] }
+        }
         finally { Close-TestWindowPixels $rawShot }
         return [pscustomobject]@{
             Ok = ($runs -eq 1); Runs = $runs; Raw = $raw
@@ -1038,7 +1089,10 @@ function Test-PanesTile($gap, [string]$axis) {
 # One GUI per axis: a single split each, so a run count of 1 is unambiguous.
 function Start-T155Gui([string]$direction) {
     Kill-RepoInstances
-    $a = Start-OnTestDesktop -Exe $exe -Arguments ($common + @('--split-divider-color=00ff00'))
+    # The debug log names the drag bar's colour (T2253), which the raw
+    # control in Measure-CrossPaneRuns counts beside the green lines.
+    Remove-Item $errlog -ErrorAction SilentlyContinue
+    $a = Start-OnTestDesktop -Exe $exe -Arguments ($common + @('--split-divider-color=00ff00')) -StdErr $errlog
     Start-Sleep -Seconds 3
     if ($a.Process -and $a.Process.HasExited) { return $null }
     $t = Wait-TestWindow -ProcessId $a.Pid -Class 'GhozttyWindow'
@@ -1064,6 +1118,14 @@ foreach ($axis in @('down', 'right')) {
 
     # Three drags, each landing somewhere new. Every one of them used to
     # leave its old line behind.
+    #
+    # In two steps each (T2253): a dragged gutter now shows its accent bar
+    # over the line, so a drag frame leaves a BAR behind in the parent, and
+    # the bar's glow repaints ~9 DIP either side of the gutter every frame -
+    # the default 8-step drag (7.5 px a step) blurred each stale bar into the
+    # next one's glow. Steps of 20+ px leave whole bars for T734's
+    # un-composited control to count, and change nothing the composited
+    # claims score.
     foreach ($delta in 60, -40, 70) {
         $panes = Get-Panes $top
         if ($axis -eq 'down') {
@@ -1071,13 +1133,13 @@ foreach ($axis in @('down', 'right')) {
             $pb = $panes | Sort-Object Top | Select-Object -Last 1
             $lineY = [int](($pa.Bottom + $pb.Top) / 2)
             $x = [int](($pa.Left + $pa.Right) / 2)
-            Invoke-DividerDrag -Top $top -X0 $x -Y0 $lineY -X1 $x -Y1 ($lineY + $delta)
+            Invoke-DividerDrag -Top $top -X0 $x -Y0 $lineY -X1 $x -Y1 ($lineY + $delta) -Steps 2
         } else {
             $pa = $panes | Sort-Object Left | Select-Object -First 1
             $pb = $panes | Sort-Object Left | Select-Object -Last 1
             $lineX = [int](($pa.Right + $pb.Left) / 2)
             $y = [int](($pa.Top + $pa.Bottom) / 2)
-            Invoke-DividerDrag -Top $top -X0 $lineX -Y0 $y -X1 ($lineX + $delta) -Y1 $y
+            Invoke-DividerDrag -Top $top -X0 $lineX -Y0 $y -X1 ($lineX + $delta) -Y1 $y -Steps 2
         }
         Start-Sleep -Milliseconds 300
     }
@@ -1108,7 +1170,7 @@ foreach ($axis in @('down', 'right')) {
     # half a background desktop could not express between 2026-07-31 and now -
     # a stale line UNDER a pane, scored where the pane covers it exactly as it
     # does on screen.
-    $wide = Measure-CrossPaneRuns $top $axis
+    $wide = Measure-CrossPaneRuns $top $axis (Get-BarRgb 'drag')
     if ($null -eq $wide) {
         Write-Host "SKIP T734/$axis (after drags): no composite ($(Get-LastCompositeError))"; $script:skipped++
     } else {

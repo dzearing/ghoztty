@@ -150,6 +150,7 @@ const chrome_alpha = @import("chrome_alpha.zig");
 const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
 const split_geometry = @import("split_geometry.zig");
+const gutter_bar = @import("gutter_bar.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const pane_stack_grid = @import("pane_stack_grid.zig");
 const pane_stack_layout = @import("pane_stack_layout.zig");
@@ -796,6 +797,13 @@ kbd_resize: split_resize.KeyboardGesture = .{},
 /// up on no screenshot. Active-tab state, so it is dropped alongside the
 /// hero transients whenever the tab or the tree changes.
 hover_split: ?SplitTree(PaneView).Node.Handle = null,
+/// The stack grip (an index into the active tab's grid `stack_handles`)
+/// whose gutter the pointer is over (T2253): it shows the gutter's accent
+/// bar, as a hovered divider does. Dropped with `hover_split`.
+hover_grip: ?usize = null,
+/// The gutter bar the last paint showed, so the debug oracle logs a change
+/// rather than every frame of a drag (T2253).
+gutter_bar_logged: ?gutter_bar.Lit = null,
 
 /// Which panes of a stacked row are on show (T2108): the window's pane focus
 /// history and the rows the user collapsed, read by `stackGrid` as the
@@ -6330,6 +6338,7 @@ fn resetPointerTransients(self: *Window) void {
     self.hero_hover_tile = -1;
     self.hero_divider_hover = false;
     self.hover_split = null;
+    self.hover_grip = null;
     self.rearrange_hover = null;
     if (self.hero_divider_drag) {
         self.hero_divider_drag = false;
@@ -8256,6 +8265,66 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
     }
     if (saved != 0) _ = w32.RestoreDC(hdc, saved);
     for (lines[0..nl]) |*l| _ = w32.FillRect(hdc, &l.rect, if (l.hot) hot_brush orelse brush else brush);
+    // The hovered or dragged gutter's accent bar over its line (T2253).
+    if (self.litGutterBar(&grid)) |lit| {
+        var line_rects: [MAX_DRAG_NODES * 2]w32.RECT = undefined;
+        var line_hot: [MAX_DRAG_NODES * 2]bool = undefined;
+        for (lines[0..nl], 0..) |l, i| {
+            line_rects[i] = l.rect;
+            line_hot[i] = l.hot;
+        }
+        self.paintFlatGutterBar(hdc, lit, .{ .r = cfg_bg.r, .g = cfg_bg.g, .b = cfg_bg.b }, rest, hot_rgb, line_rects[0..nl], line_hot[0..nl]);
+    }
+}
+
+/// The flat style's gutter bar (T2253): composed over what the gutter shows
+/// under it - the terminal background and the divider lines - in a small
+/// buffer, and blitted. The window paints with `WS_CLIPCHILDREN`, so the
+/// glow's edge over a pane is clipped off by the DC, as the desk's is.
+fn paintFlatGutterBar(
+    self: *Window,
+    hdc: w32.HDC,
+    lit: GutterPaint,
+    bg: color_math.Rgb,
+    rest: color_math.Rgb,
+    hot: color_math.Rgb,
+    lines: []const w32.RECT,
+    lines_hot: []const bool,
+) void {
+    const reach = gutterBarReach(lit.core, self.scale);
+    const w: usize = @intCast(@max(0, reach.right - reach.left));
+    const h: usize = @intCast(@max(0, reach.bottom - reach.top));
+    if (w == 0 or h == 0) return;
+    const buf = self.app.core_app.alloc.alloc(u32, w * h) catch return;
+    defer self.app.core_app.alloc.free(buf);
+    const pack = struct {
+        fn f(c: color_math.Rgb) u32 {
+            return 0xFF00_0000 | (@as(u32, c.r) << 16) | (@as(u32, c.g) << 8) | c.b;
+        }
+    }.f;
+    @memset(buf, pack(bg));
+    for (lines, lines_hot) |l, is_hot| {
+        const x0: usize = @intCast(std.math.clamp(l.left - reach.left, 0, @as(i32, @intCast(w))));
+        const x1: usize = @intCast(std.math.clamp(l.right - reach.left, 0, @as(i32, @intCast(w))));
+        const y0: usize = @intCast(std.math.clamp(l.top - reach.top, 0, @as(i32, @intCast(h))));
+        const y1: usize = @intCast(std.math.clamp(l.bottom - reach.top, 0, @as(i32, @intCast(h))));
+        var y = y0;
+        while (y < y1) : (y += 1) @memset(buf[y * w + x0 .. y * w + x1], pack(if (is_hot) hot else rest));
+    }
+    gutter_bar.paint(buf, w, h, .{
+        .left = lit.core.left - reach.left,
+        .top = lit.core.top - reach.top,
+        .right = lit.core.right - reach.left,
+        .bottom = lit.core.bottom - reach.top,
+    }, lit.color, self.scale, lit.strength);
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = @intCast(w),
+        .biHeight = -@as(i32, @intCast(h)),
+        .biPlanes = 1,
+        .biBitCount = 32,
+        .biCompression = w32.BI_RGB,
+    } };
+    _ = w32.StretchDIBits(hdc, reach.left, reach.top, @intCast(w), @intCast(h), 0, 0, @intCast(w), @intCast(h), buf.ptr, &bmi, w32.DIB_RGB_COLORS, w32.SRCCOPY);
 }
 
 /// The flat style's divider line inside `gutter` (T2125): `bandPx` wide down
@@ -8633,13 +8702,29 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             .glass = if (glass) .{ .bg = strip_bg, .sheet = self.glassSheetFor(s.view), .hovered = hovered } else null,
         };
     }
+    // The hovered or dragged gutter's accent bar (T2253).
+    const bar: ?PaneDesk.Bar = blk: {
+        var grid = self.stackGrid() orelse break :blk null;
+        defer grid.deinit();
+        const lit = self.litGutterBar(&grid) orelse break :blk null;
+        break :blk .{
+            .core = .{
+                .left = lit.core.left - area.left,
+                .top = lit.core.top - area.top,
+                .right = lit.core.right - area.left,
+                .bottom = lit.core.bottom - area.top,
+            },
+            .color = lit.color,
+            .strength = lit.strength,
+        };
+    };
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..n], bands[0..nt], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
         .glass = glass,
         .glows = glows[0..ng],
-    }, self.desk_variant, lights[0..nl], self.busyHead(), self.deskOpacity());
+    }, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
     if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
 }
@@ -9052,6 +9137,10 @@ const GripDrag = struct {
     direction: pane_stack_layout.Direction,
     /// Where the press was along the row, in client pixels.
     start: i32,
+    /// Where the pointer is now along the row, in client pixels: which grip
+    /// the drag's accent bar sits on once the layout has replaced the one it
+    /// began on (T2253, Mac `GutterBar.replacement`).
+    at: i32,
 };
 
 /// Hit-test the stack grips at (x, y) in window client coords (T2124): the
@@ -9153,6 +9242,7 @@ fn startGripDrag(self: *Window, hit: GripHit, x: i32, y: i32) void {
         .kind = h.kind,
         .direction = h.direction,
         .start = if (h.direction == .horizontal) x else y,
+        .at = if (h.direction == .horizontal) x else y,
     };
     log.info("stack grip drag started kind={s}", .{@tagName(h.kind)});
     if (self.hwnd) |hwnd| _ = w32.SetCapture(hwnd);
@@ -9162,6 +9252,7 @@ fn updateGripDrag(self: *Window, x: i32, y: i32) void {
     const g = self.grip_drag orelse return;
     const rd = &(self.row_drag orelse return);
     const pos = if (g.direction == .horizontal) x else y;
+    self.grip_drag.?.at = pos;
     const delta: f64 = @floatFromInt(pos - g.start);
     const step = rd.gripMoved(self.stackState(), g.kind, delta, self.paneMinimum(g.direction)) catch |err| {
         log.warn("stack grip drag step failed: {}", .{err});
@@ -9177,6 +9268,9 @@ fn endGripDrag(self: *Window) void {
     self.endRowDrag();
     _ = w32.ReleaseCapture();
     self.layoutSplits();
+    // The bar goes out with the drag, and whichever gutter the pointer let
+    // go over is asked again (T2253): Mac 5e4f30144's release-then-leave.
+    self.recheckGutterHover();
     self.app.markLayoutDirty();
 }
 
@@ -9249,9 +9343,145 @@ fn splitRegionRect(self: *Window, target: SplitTree(PaneView).Node.Handle) ?w32.
 fn refreshDividerBand(self: *Window, handle: ?SplitTree(PaneView).Node.Handle) void {
     const hwnd = self.hwnd orelse return;
     const h = handle orelse return;
-    var r = self.dividerBandRect(h) orelse return;
+    // With the accent bar's glow round it (T2253); the panes the glow
+    // reaches over are children, which the window's DC never paints.
+    var r = gutterBarReach(self.dividerBandRect(h) orelse return, self.scale);
     _ = w32.InvalidateRect(hwnd, &r, 0);
     _ = w32.UpdateWindow(hwnd);
+}
+
+/// `gutter` grown by how far a gutter bar's glow reaches past it (T2253).
+fn gutterBarReach(gutter: w32.RECT, scale: f32) w32.RECT {
+    const g = gutter_bar.glowReach(scale);
+    return .{ .left = gutter.left - g, .top = gutter.top - g, .right = gutter.right + g, .bottom = gutter.bottom + g };
+}
+
+/// Repaint stack grip `index`'s gutter and its bar's glow (T2253).
+fn refreshGripBand(self: *Window, index: ?usize) void {
+    const hwnd = self.hwnd orelse return;
+    const i = index orelse return;
+    var grid = self.stackGrid() orelse return;
+    defer grid.deinit();
+    if (i >= grid.result.stack_handles.items.len) return;
+    var r = gutterBarReach(winRect(grid.stackHandleGutter(i)), self.scale);
+    _ = w32.InvalidateRect(hwnd, &r, 0);
+    _ = w32.UpdateWindow(hwnd);
+}
+
+/// Set (or clear) the hovered stack grip (T2253), repainting on a change.
+fn setGripHover(self: *Window, index: ?usize) void {
+    if (self.hover_grip == index) return;
+    const old = self.hover_grip;
+    self.hover_grip = index;
+    log.debug("grip hover={?d}", .{index});
+    self.refreshGripBand(old);
+    self.refreshGripBand(index);
+}
+
+/// Ask again which gutter the pointer is over, from where it actually is
+/// (T2253; Mac 5e4f30144): a drag's end leaves the pointer on the gutter it
+/// let go of, or off it - a drag pushed to a pane's minimum leaves the gutter
+/// behind - and the bar must follow the pointer, not the drag. No readable
+/// cursor (a background desktop) reads as "over nothing", the safe answer.
+fn recheckGutterHover(self: *Window) void {
+    var pt: w32.POINT = undefined;
+    const hwnd = self.hwnd orelse return;
+    if (w32.GetCursorPos_(&pt) == 0) {
+        self.setDividerHover(null);
+        self.setGripHover(null);
+        return;
+    }
+    _ = w32.ScreenToClient(hwnd, &pt);
+    const div = self.hitTestDivider(pt.x, pt.y);
+    self.setDividerHover(if (div) |hit| hit.handle else null);
+    self.setGripHover(if (div == null) if (self.hitTestStackGrip(pt.x, pt.y)) |g| g.index else null else null);
+}
+
+/// A gutter's accent bar to paint, in client pixels (T2253).
+const GutterPaint = struct {
+    core: w32.RECT,
+    strength: gutter_bar.Strength,
+    color: color_math.Rgb,
+};
+
+/// The one gutter bar on show in the active tab, if any (T2253; Mac
+/// `GutterBar`): the dragged gutter's at full strength, else the hovered
+/// one's at half. A grip drag's bar sits on the grip of its kind nearest the
+/// pointer, since the layout replaces the grip the drag began on as panes
+/// fold and come out (Mac `GutterBar.replacement`).
+fn litGutterBar(self: *Window, grid: *const pane_stack_grid.Grid) ?GutterPaint {
+    const hovered: ?gutter_bar.Gutter = if (self.hover_split) |h|
+        .{ .divider = @intCast(h.idx()) }
+    else if (self.hover_grip) |g| .{ .grip = g } else null;
+    const dragged: ?gutter_bar.Gutter = if (self.dragging_split)
+        .{ .divider = @intCast(self.drag_split_handle.idx()) }
+    else if (self.grip_drag) |g| blk: {
+        var best: ?usize = null;
+        var best_d: i32 = std.math.maxInt(i32);
+        for (grid.result.stack_handles.items, 0..) |sh, i| {
+            if (sh.direction != g.direction) continue;
+            if (std.meta.activeTag(sh.kind) != std.meta.activeTag(g.kind)) continue;
+            const r = grid.stackHandleGutter(i);
+            const mid = if (g.direction == .horizontal) @divFloor(r.left + r.right, 2) else @divFloor(r.top + r.bottom, 2);
+            const d: i32 = @intCast(@abs(mid - g.at));
+            if (d < best_d) {
+                best_d = d;
+                best = i;
+            }
+        }
+        break :blk if (best) |b| .{ .grip = b } else null;
+    } else null;
+    const l = gutter_bar.lit(hovered, dragged) orelse {
+        self.logGutterBar(null, .{ .r = 0, .g = 0, .b = 0 });
+        return null;
+    };
+    const found: struct { gutter: w32.RECT, dir: pane_stack_layout.Direction } = switch (l.gutter) {
+        .divider => |node| blk: {
+            for (grid.result.dividers.items, 0..) |d, i| {
+                if (d.node == node) break :blk .{ .gutter = winRect(grid.dividerGutter(i)), .dir = d.direction };
+            }
+            return null;
+        },
+        .grip => |i| blk: {
+            if (i >= grid.result.stack_handles.items.len) return null;
+            break :blk .{ .gutter = winRect(grid.stackHandleGutter(i)), .dir = grid.result.stack_handles.items[i].direction };
+        },
+    };
+    const core = gutter_bar.barIn(.{
+        .left = found.gutter.left,
+        .top = found.gutter.top,
+        .right = found.gutter.right,
+        .bottom = found.gutter.bottom,
+    }, switch (found.dir) {
+        .horizontal => .across_x,
+        .vertical => .across_y,
+    }, self.scale);
+    // Mac paints `controlAccentColor` as-is; here it is held to the design
+    // system's 3:1 floor against the panes' background, as every other
+    // accent the window draws is (`chrome_theme.accentOn`), so a dark accent
+    // on a dark terminal still shows its gutter.
+    const bg = self.app.config.background;
+    const color = chrome_theme.accentOn(.{ .r = bg.r, .g = bg.g, .b = bg.b }, system_colors.accentCached());
+    self.logGutterBar(l, color);
+    return .{
+        .core = .{ .left = core.left, .top = core.top, .right = core.right, .bottom = core.bottom },
+        .strength = l.strength,
+        .color = color,
+    };
+}
+
+/// Debug-build oracle for `split-divider.ps1`: which gutter bar a paint
+/// showed, and in what colour, logged when it changes.
+fn logGutterBar(self: *Window, l: ?gutter_bar.Lit, color: color_math.Rgb) void {
+    const same = if (self.gutter_bar_logged) |old|
+        (if (l) |new| old.gutter.eql(new.gutter) and old.strength == new.strength else false)
+    else
+        l == null;
+    if (same) return;
+    self.gutter_bar_logged = l;
+    if (l) |v| {
+        log.debug("gutter bar {s} {s} rgb={d},{d},{d}", .{ @tagName(v.gutter), @tagName(v.strength), color.r, color.g, color.b });
+    } else log.debug("gutter bar none", .{});
 }
 
 /// Repaint EVERY divider band of the active tab through the paint cycle
@@ -9335,7 +9565,10 @@ fn updateDividerHover(self: *Window, x: i32, y: i32) void {
             self.tracking_mouse = true;
         }
     }
-    self.setDividerHover(if (self.hitTestDivider(x, y)) |hit| hit.handle else null);
+    const div = self.hitTestDivider(x, y);
+    self.setDividerHover(if (div) |hit| hit.handle else null);
+    // A grip's gutter lights the same way (T2253); never both at once.
+    self.setGripHover(if (div == null) if (self.hitTestStackGrip(x, y)) |g| g.index else null else null);
     self.setStripHover(self.stackStripAt(x, y));
 }
 
@@ -9591,6 +9824,15 @@ fn endDividerDrag(self: *Window) void {
     self.hover_split = hover;
     self.refreshDividerBand(was);
     self.refreshDividerBand(hover);
+    // A gutter bar never stays lit after release (T2253): log what the drag
+    // left lit, which is the oracle `split-divider.ps1` reads.
+    log.debug("divider drag released hover={?d}", .{if (hover) |h| @as(?u16, @intFromEnum(h)) else null});
+    if (hover == null) {
+        if (w32.GetCursorPos_(&pt) != 0) if (self.hwnd) |hwnd| {
+            _ = w32.ScreenToClient(hwnd, &pt);
+            self.setGripHover(if (self.hitTestStackGrip(pt.x, pt.y)) |g| g.index else null);
+        };
+    } else self.setGripHover(null);
     // T110: persist the dragged split ratio. Armed at drag END (not on every
     // motion tick) so a drag is one debounced write, the same coalescing
     // `persistPlacement` does for window frames at WM_EXITSIZEMOVE.
@@ -15131,6 +15373,7 @@ pub fn windowWndProc(
                 // pointer never crosses WM_MOUSELEAVE to get here. The pane
                 // headers un-hover for the same reason (T1530).
                 window.setDividerHover(null);
+                window.setGripHover(null);
                 window.updateRearrangeHover(x, y);
             } else if (window.tab_count > 0 and window.tab_hero_active[window.active_tab]) {
                 window.heroMouseMove(x, y);
@@ -15222,6 +15465,7 @@ pub fn windowWndProc(
             window.handleTabBarMouseLeave();
             window.heroMouseLeave();
             window.setDividerHover(null);
+            window.setGripHover(null);
             window.setStripHover(null);
             return 0;
         },
