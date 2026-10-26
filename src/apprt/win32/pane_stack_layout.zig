@@ -129,6 +129,8 @@ pub const Metrics = struct {
     minimum_height: f64 = default_minimum_height,
     /// `minimum_peek` in this layout's units (`scaled` multiplies it).
     floor_peek: f64 = minimum_peek,
+    /// `blade_tuck` in this layout's units (`scaled` multiplies it).
+    tuck: f64 = blade_tuck,
 
     /// The size floor: 225 is about 26 columns of a typical font and 125
     /// about seven rows - narrow, but still a terminal you can read a prompt
@@ -145,6 +147,26 @@ pub const Metrics = struct {
     /// Below this a tucked card can no longer be hit; past it a window too
     /// small for even one pane plus strips lets the front panes shrink.
     pub const minimum_peek: f64 = 8;
+
+    /// Between two strips: none (Mac 5a9a2e2a4 `Metrics.bladeGap`). Strips lie
+    /// side by side as blades rather than as cards spaced like panes; the
+    /// gutter stays only between the panes on show and their strips, where
+    /// the grip that pulls one back out lives.
+    pub const blade_gap: f64 = 0;
+
+    /// How far a strip reaches under the strip in front of it - the one
+    /// nearer the run, painted above it - so its rounded edge is out of sight
+    /// and a stack of strips reads as bars laid over one another (Mac
+    /// afc64dc53 `Metrics.bladeTuck`). It adds nothing to a strip's footprint,
+    /// and the strip next to the run reaches under nothing.
+    pub const blade_tuck: f64 = 12;
+
+    /// The extent `count` strips take side by side.
+    pub fn blades(count: usize, peek: f64) f64 {
+        if (count == 0) return 0;
+        const c: f64 = @floatFromInt(count);
+        return c * peek + (c - 1) * blade_gap;
+    }
 
     /// The flat style's gutter: its line runs down the middle. A real gutter,
     /// because the gutters are where every resize grip lives.
@@ -167,6 +189,7 @@ pub const Metrics = struct {
             .minimum_width = m.minimum_width * s,
             .minimum_height = m.minimum_height * s,
             .floor_peek = m.floor_peek * s,
+            .tuck = m.tuck * s,
         };
     }
 
@@ -174,6 +197,13 @@ pub const Metrics = struct {
         return if (d == .horizontal) m.minimum_width else m.minimum_height;
     }
 };
+
+/// The gutters between a stack's run and its strips, for `strips` of them:
+/// at most one on each side. Before the run is placed, the most it could need
+/// (Mac 5a9a2e2a4 `stripGutters`).
+fn stripGutters(strips: usize, gap: f64) f64 {
+    return @as(f64, @floatFromInt(@min(strips, 2))) * gap;
+}
 
 /// The input tree: a flat node array whose `split` children are indices into
 /// it. The window builds it from `SplitTree(PaneView).nodes`, index for index.
@@ -207,6 +237,14 @@ pub const Leaf = struct {
     /// The card is tucked into its stack, so it is drawn as its tab alone: the
     /// rest of it would lie under its neighbours.
     is_sliver: bool = false,
+    /// A strip: whether it lies before its stack's run (true) or after it -
+    /// the side away from the panes on show (Mac afc64dc53 `stripLeads`).
+    /// Null for a pane on show.
+    strip_leads: ?bool = null,
+    /// How far the strip's `tab` reaches under the strip in front of it,
+    /// toward the run (`Metrics.blade_tuck`, 0 beside the run): that much of
+    /// it is hidden, so its name centres on the rest.
+    strip_tuck: f64 = 0,
     /// Paint order: leaves are painted in ascending lexicographic order of
     /// this, one entry per stack the pane is in, outermost first. Ties keep
     /// the tree's order (`paintOrder`).
@@ -401,8 +439,11 @@ pub fn dragged(gpa: Allocator, row: Row, boundary: usize, position: f64, start_s
         start_sizes: []const ?f64,
         boundary: usize,
 
-        fn step(g: @This()) f64 {
-            return g.row.peek + g.row.gap;
+        /// The extent `m` strips of a side take, and the gutter between them
+        /// and that side's cards when it has some on show (Mac 5a9a2e2a4).
+        fn strips(g: @This(), m: usize, beside: usize) f64 {
+            if (m == 0) return 0;
+            return Metrics.blades(m, g.row.peek) + (if (beside > 0) g.row.gap else 0);
         }
         /// An item's floor for this drag: its minimum, or the size the drag
         /// found it at when that is less. The grid snaps sizes to whole
@@ -428,12 +469,11 @@ pub fn dragged(gpa: Allocator, row: Row, boundary: usize, position: f64, start_s
         /// The extent the first `k` of `side` need on show, the rest of it as
         /// strips.
         fn need(g: @This(), side: Side, k: usize) f64 {
-            const count: f64 = @floatFromInt(g.len(side));
-            if (k == 0) return g.step() * count - g.row.gap;
+            if (k == 0) return Metrics.blades(g.len(side), g.row.peek);
             var total: f64 = 0;
             for (0..k) |j| total += g.minimum(g.at(side, j));
             const kf: f64 = @floatFromInt(k);
-            return total + g.row.gap * (kf - 1) + g.step() * (count - kf);
+            return total + g.row.gap * (kf - 1) + g.strips(g.len(side) - k, k);
         }
         /// A drag only collapses panes, and brings out at most one: a side
         /// shows no more than it had on show when the drag began - or, all
@@ -455,9 +495,8 @@ pub fn dragged(gpa: Allocator, row: Row, boundary: usize, position: f64, start_s
         fn fill(g: @This(), side: Side, space: f64, out: []?f64) void {
             const count = g.fits(side, space);
             if (count == 0) return;
-            const strips: f64 = @floatFromInt(g.len(side) - count);
             const gaps: f64 = @floatFromInt(count - 1);
-            const cards = space - g.step() * strips - g.row.gap * gaps;
+            const cards = space - g.strips(g.len(side) - count, count) - g.row.gap * gaps;
             var rest: f64 = 0;
             for (1..count) |j| {
                 const i = g.at(side, j);
@@ -994,8 +1033,11 @@ const Engine = struct {
             var card: f64 = 0;
             for (row) |it| card = @max(card, try e.compact(it.node, d));
             const pc: f64 = @floatFromInt(pin.count);
+            const leading = pin.start;
+            const trailing = row.len - pin.start - pin.count;
             return card * pc + m.gap * (pc - 1) +
-                (m.peek + m.gap) * @as(f64, @floatFromInt(row.len - pin.count));
+                Metrics.blades(leading, m.peek) + (if (leading > 0) m.gap else 0) +
+                Metrics.blades(trailing, m.peek) + (if (trailing > 0) m.gap else 0);
         }
         var total: f64 = 0;
         for (row) |it| total += try e.comfortable(it.node, d);
@@ -1013,7 +1055,7 @@ const Engine = struct {
         const row = try e.items(node, d);
         var widest: f64 = 0;
         for (row) |it| widest = @max(widest, try e.compact(it.node, d));
-        return widest + (e.metrics.peek + e.metrics.gap) * @as(f64, @floatFromInt(row.len - 1));
+        return widest + Metrics.blades(row.len - 1, e.metrics.peek) + (if (row.len > 1) e.metrics.gap else 0);
     }
 
     fn layout(e: *Engine, node: u32, rect: Rect, tucked: bool, clip: ?Rect) Allocator.Error!void {
@@ -1138,10 +1180,12 @@ const Engine = struct {
     }
 
     /// A row that doesn't fit: as many items side by side as fit, the rest
-    /// tucked at either end. Every card on show and every strip is separated
-    /// from the next by the same gutter as panes side by side: that is where
-    /// the grips live. The gutters are the same wherever the run is, so moving
-    /// it never resizes one.
+    /// tucked at either end as blades (`Metrics.blade_gap`: none between two
+    /// strips; Mac 5a9a2e2a4). The cards on show are separated by the same
+    /// gutter as panes side by side, and so is the run from each group of
+    /// strips beside it - that is where the grip that brings a strip back out
+    /// lives. A run with strips on both sides has one more such gutter than a
+    /// run at an end, so its cards are that much narrower there.
     fn layoutStack(e: *Engine, row: []const Item, rect: Rect, d: Direction, tucked: bool, clip: ?Rect, fits_side_by_side: bool) Allocator.Error!void {
         const n = row.len;
         const nf: f64 = @floatFromInt(n);
@@ -1151,44 +1195,25 @@ const Engine = struct {
         var card: f64 = 0;
         for (row) |it| card = @max(card, try e.compact(it.node, d));
         if (n == 0) card = e.metrics.minimum(d);
-        const peek = @max(e.metrics.floor_peek, @min(e.metrics.peek, @floor((extent - card) / (nf - 1) - gap)));
+        const peek = @max(e.metrics.floor_peek, @min(e.metrics.peek, @floor((extent - card - stripGutters(n - 1, gap)) / (nf - 1))));
         const Needed = struct {
-            n: f64,
+            n: usize,
             peek: f64,
             gap: f64,
             card: f64,
             fn at(self: @This(), on_show: usize) f64 {
                 const o: f64 = @floatFromInt(on_show);
-                return (self.n - o) * (self.peek + self.gap) + o * self.card + (o - 1) * self.gap;
+                return Metrics.blades(self.n - on_show, self.peek) + stripGutters(self.n - on_show, self.gap) +
+                    o * self.card + (o - 1) * self.gap;
             }
         };
-        const needed: Needed = .{ .n = nf, .peek = peek, .gap = gap, .card = card };
+        const needed: Needed = .{ .n = n, .peek = peek, .gap = gap, .card = card };
         const pin = try e.pinned(row);
         var fits: usize = 1;
         while (fits + 1 < n and needed.at(fits + 1) <= extent) fits += 1;
         const count = @min(fits, if (pin) |p| p.count else n - 1);
         const cf: f64 = @floatFromInt(count);
         if (fits_side_by_side) fits = n;
-        // The run's slots: equal, or as the user sized them (`shares`), never
-        // under a card's minimum. In whole DIPs, so a card that moves to a
-        // slot of the same size is not resized by rounding.
-        const run_space = @floor(extent - (nf - cf) * (peek + gap) - (cf - 1) * gap);
-        const key = try e.keyOf(row);
-        const user_shares: ?[]const f64 = if (e.provider.shares) |f| f(e.provider.ctx, key) else null;
-        const wanted = try e.a.alloc(f64, count);
-        const mins = try e.a.alloc(f64, count);
-        for (0..count) |i| {
-            wanted[i] = if (user_shares != null and user_shares.?.len == count)
-                user_shares.?[i] * run_space
-            else
-                run_space / cf;
-            mins[i] = @min(card, run_space / cf);
-        }
-        const slots = try waterFill(e.a, wanted, mins, run_space);
-        for (slots) |*sl| sl.* = @max(1, @floor(sl.*));
-        var head: f64 = 0;
-        for (slots[0 .. count - 1]) |sl| head += sl;
-        slots[count - 1] = @max(1, run_space - head);
 
         const ranks = try e.a.alloc(?u32, n);
         for (row, 0..) |it, i| {
@@ -1215,8 +1240,36 @@ const Engine = struct {
             run = stickyRun(before, ranks, count);
         }
 
+        // Strips each side of the run, and the gutter between each group and
+        // the run.
+        const leading = run.lo;
+        const trailing = n - 1 - run.hi;
+        const strip_space = Metrics.blades(leading, peek) + (if (leading > 0) gap else 0) +
+            Metrics.blades(trailing, peek) + (if (trailing > 0) gap else 0);
+        // The run's slots: equal, or as the user sized them (`shares`), never
+        // under a card's minimum. In whole DIPs, so a card that moves to a
+        // slot of the same size is not resized by rounding.
+        const run_space = @floor(extent - strip_space - (cf - 1) * gap);
+        const key = try e.keyOf(row);
+        const user_shares: ?[]const f64 = if (e.provider.shares) |f| f(e.provider.ctx, key) else null;
+        const wanted = try e.a.alloc(f64, count);
+        const mins = try e.a.alloc(f64, count);
+        for (0..count) |i| {
+            wanted[i] = if (user_shares != null and user_shares.?.len == count)
+                user_shares.?[i] * run_space
+            else
+                run_space / cf;
+            mins[i] = @min(card, run_space / cf);
+        }
+        const slots = try waterFill(e.a, wanted, mins, run_space);
+        for (slots) |*sl| sl.* = @max(1, @floor(sl.*));
+        var head: f64 = 0;
+        for (slots[0 .. count - 1]) |sl| head += sl;
+        slots[count - 1] = @max(1, run_space - head);
+
         const end = if (d == .horizontal) rect.maxX() else rect.maxY();
-        const run_start = @as(f64, @floatFromInt(run.lo)) * (peek + gap);
+        const blade = peek + Metrics.blade_gap;
+        const run_start = if (leading > 0) Metrics.blades(leading, peek) + gap else 0;
         const Slot = struct {
             slots: []const f64,
             run_start: f64,
@@ -1235,11 +1288,11 @@ const Engine = struct {
             // into: the run's first, or its last.
             const size = if (i < run.lo) slots[0] else if (i <= run.hi) slots[i - run.lo] else slots[count - 1];
             const offset = if (i < run.lo)
-                @as(f64, @floatFromInt(i)) * (peek + gap)
+                @as(f64, @floatFromInt(i)) * blade
             else if (i <= run.hi)
                 slot.start(i - run.lo)
             else
-                run_end + gap + @as(f64, @floatFromInt(i - run.hi - 1)) * (peek + gap);
+                run_end + gap + @as(f64, @floatFromInt(i - run.hi - 1)) * blade;
             const frame = rect.span(d, offset, size);
             const is_tucked = !run.contains(i);
             // Past the run, cards run off the stack's far end; draw only the
@@ -1264,16 +1317,36 @@ const Engine = struct {
             // The strip that shows, across every pane in the card. It replaces
             // a tab from a stack nested inside the card: that one is under
             // this card's neighbours now.
-            const tab_span = rect.span(d, offset, @min(peek, size));
+            // A strip with another between it and the run reaches under that
+            // one by `tuck`, toward the run (Mac afc64dc53).
+            const tuck: f64 = if (i + 1 < run.lo or i > run.hi + 1) e.metrics.tuck else 0;
+            const leads = i < run.lo;
+            const shown_len = @min(peek, size);
+            const tab_span = if (leads)
+                rect.span(d, offset, shown_len + tuck)
+            else
+                rect.span(d, offset - tuck, shown_len + tuck);
             for (try leavesOf(e.a, e.nodes, it.node)) |id| {
                 const placed = e.result.leaves.getPtr(id) orelse continue;
-                const tab = placed.frame.intersect(tab_span);
+                // The card, widened along the stack by the tuck, so the reach
+                // back toward the run is not cut off by it.
+                var reach = placed.frame;
+                if (d == .horizontal) {
+                    reach.x -= tuck;
+                    reach.w += 2 * tuck;
+                } else {
+                    reach.y -= tuck;
+                    reach.h += 2 * tuck;
+                }
+                const tab = reach.intersect(tab_span);
                 placed.tab = if (tab) |t| t.integral() else null;
                 placed.tab_axis = if (tab != null) d else null;
                 // On either side of the run a tucked card is drawn as its
                 // strip alone: nothing of it lies under a card on show, so a
                 // glass card never shows one through itself.
                 placed.is_sliver = tab != null;
+                placed.strip_leads = if (tab != null) leads else null;
+                placed.strip_tuck = if (tab != null) tuck else 0;
             }
         }
         try e.result.stacks.append(e.a, .{ .frame = rect, .direction = d, .items = item_ids, .run = run, .fits = fits });
@@ -1488,7 +1561,8 @@ test "pane_stack_layout: waterFill keeps proportions among the rest" {
 
 test "pane_stack_layout: a row that can't fit stacks and shows what fits" {
     // 4 x 300 + gaps = 1230 > 760: a stack. Two cards fit side by side with
-    // two strips, each with its gutter (2x46 + 2x300 + 10 <= 760); three don't.
+    // two strips as blades and one gutter between them and the run
+    // (2x36 + 10 + 2x300 + 10 <= 760); three don't.
     var t: TestTree = .{};
     defer t.deinit();
     const root = try t.row(4, .horizontal);
@@ -1500,8 +1574,8 @@ test "pane_stack_layout: a row that can't fit stacks and shows what fits" {
     // Nothing focused yet: the first cards show.
     try testing.expectEqual(Range{ .lo = 0, .hi = 1 }, run);
     try testing.expectEqual(@as(usize, 0), r.dividers.items.len);
-    // Every card is the same width, so moving the run never resizes one.
-    for (1..5) |i| try testing.expectEqual((760.0 - 2 * 46 - 10) / 2, frameOf(&r, i).w);
+    // Every card is the same width, tucked ones included.
+    for (1..5) |i| try testing.expectEqual((760.0 - 2 * 36 - 10 - 10) / 2, frameOf(&r, i).w);
 }
 
 test "pane_stack_layout: the focused pane is on show" {
@@ -1548,9 +1622,10 @@ test "pane_stack_layout: clicking the leftmost card slides the others right" {
     // 600 fits one 300 card plus three strips: a single-card run.
     try testing.expectEqual(Range{ .lo = 3, .hi = 3 }, before.stacks.items[0].run);
     try testing.expectEqual(Range{ .lo = 0, .hi = 0 }, after.stacks.items[0].run);
-    const w: f64 = 600 - 3 * 46;
-    const xb = [_]f64{ 0, 46, 92, 138 };
-    const xa = [_]f64{ 0, w + 10, w + 56, w + 102 };
+    // Three blades side by side and one gutter beside the run.
+    const w: f64 = 600 - 3 * 36 - 10;
+    const xb = [_]f64{ 0, 36, 72, 118 };
+    const xa = [_]f64{ 0, w + 10, w + 46, w + 82 };
     for (1..5) |i| {
         try testing.expectEqual(xb[i - 1], frameOf(&before, i).x);
         try testing.expectEqual(xa[i - 1], frameOf(&after, i).x);
@@ -1580,7 +1655,9 @@ fn drawnRect(l: Leaf) Rect {
 
 test "pane_stack_layout: the paint order shows the run and every tab" {
     // Wherever a higher pane overlaps a lower one, the lower one must be
-    // tucked — the run is never covered — and every tab must be uncovered.
+    // tucked — the run is never covered — and of every tab no more than its
+    // tuck is covered (the part a strip reaches under the strip in front,
+    // `blade_tuck`; Mac afc64dc53).
     var t: TestTree = .{};
     defer t.deinit();
     const root = try t.row(5, .horizontal);
@@ -1596,15 +1673,19 @@ test "pane_stack_layout: the paint order shows the run and every tab" {
                 const upper = drawnRect(r.leaves.get(hi_id).?);
                 if (drawnRect(lower).intersect(upper) == null) continue;
                 try testing.expect(lower.is_tucked);
-                if (lower.tab) |tab| try testing.expect(tab.intersect(upper) == null);
+                if (lower.tab) |tab| if (tab.intersect(upper)) |covered| {
+                    try testing.expect(covered.w <= Metrics.blade_tuck + 0.5);
+                };
             };
         }
     }
 }
 
-test "pane_stack_layout: no card is drawn over another" {
+test "pane_stack_layout: only strips overlap, and only by their tuck" {
     // A tucked card, on either side of the run, is drawn as its strip alone —
-    // so no card, a translucent glass one above all, ever has another under it.
+    // so no card ON SHOW, a translucent glass one above all, ever has another
+    // under it. Strips are blades laid over one another: two of them overlap
+    // by the tuck and no more (Mac afc64dc53).
     var t: TestTree = .{};
     defer t.deinit();
     const root = try t.row(5, .horizontal);
@@ -1614,12 +1695,18 @@ test "pane_stack_layout: no card is drawn over another" {
             var r = try testLayout(&t, root, width, 600, &p);
             defer r.deinit();
             var drawn: [5]Rect = undefined;
+            var tucked: [5]bool = undefined;
             for (1..6) |id| {
                 const l = r.leaves.get(id).?;
                 if (l.is_tucked) try testing.expect(l.is_sliver);
                 drawn[id - 1] = drawnRect(l);
+                tucked[id - 1] = l.is_tucked;
             }
-            for (0..5) |i| for (i + 1..5) |j| try testing.expect(drawn[i].intersect(drawn[j]) == null);
+            for (0..5) |i| for (i + 1..5) |j| {
+                const o = drawn[i].intersect(drawn[j]) orelse continue;
+                if (o.w <= 0 or o.h <= 0) continue;
+                try testing.expect(tucked[i] and tucked[j] and o.w <= Metrics.blade_tuck + 0.5);
+            };
         }
     }
 }
@@ -1648,12 +1735,20 @@ test "pane_stack_layout: tabs are the visible strips" {
     const p: TestProvider = .{ .focus = &.{2} };
     var r = try testLayout(&t, root, 600, 600, &p);
     defer r.deinit();
-    const w: f64 = 600 - 3 * 46;
+    // a [b] c d: strips both sides, so a gutter each side of the run.
+    const w: f64 = 600 - 3 * 36 - 2 * 10;
+    const tuck = Metrics.blade_tuck;
     try testing.expect(r.leaves.get(2).?.tab == null);
     try testing.expectEqual(Rect{ .x = 0, .y = 0, .w = 36, .h = 600 }, r.leaves.get(1).?.tab.?);
     try testing.expectEqual(Rect{ .x = 46 + w + 10, .y = 0, .w = 36, .h = 600 }, r.leaves.get(3).?.tab.?);
-    try testing.expectEqual(Rect{ .x = 46 + w + 56, .y = 0, .w = 36, .h = 600 }, r.leaves.get(4).?.tab.?);
+    // d has c between it and the run: it reaches under c by the tuck.
+    try testing.expectEqual(Rect{ .x = 46 + w + 46 - tuck, .y = 0, .w = 36 + tuck, .h = 600 }, r.leaves.get(4).?.tab.?);
     try testing.expectEqual(Direction.horizontal, r.leaves.get(4).?.tab_axis.?);
+    try testing.expectEqual(@as(?bool, false), r.leaves.get(4).?.strip_leads);
+    try testing.expectEqual(tuck, r.leaves.get(4).?.strip_tuck);
+    try testing.expectEqual(@as(?bool, true), r.leaves.get(1).?.strip_leads);
+    try testing.expectEqual(@as(f64, 0), r.leaves.get(1).?.strip_tuck);
+    try testing.expectEqual(@as(?bool, null), r.leaves.get(2).?.strip_leads);
 }
 
 test "pane_stack_layout: cards past the run are clipped to the stack" {
@@ -1674,16 +1769,17 @@ test "pane_stack_layout: cards past the run are clipped to the stack" {
 }
 
 test "pane_stack_layout: a too-narrow stack shrinks its strips before its cards" {
-    // 300 + 3 x (36 + 10) = 438 > 380: strips shrink to whole DIPs of
-    // (380 - 300) / 3 less their gutter, and the card keeps the rest.
+    // 300 + 3 x 36 + 10 = 418 > 380: strips shrink to whole DIPs of
+    // (380 - 300 - 2 x 10) / 3 - room left for a gutter each side of a run
+    // that could have strips on both - and the card keeps the rest.
     var t: TestTree = .{};
     defer t.deinit();
     const root = try t.row(4, .horizontal);
     const p: TestProvider = .{ .focus = &.{1} };
     var r = try testLayout(&t, root, 380, 600, &p);
     defer r.deinit();
-    try testing.expectEqual(@as(f64, 16), r.leaves.get(2).?.tab.?.w);
-    try testing.expectEqual(@as(f64, 380 - 3 * (16 + 10)), frameOf(&r, 1).w);
+    try testing.expectEqual(@as(f64, 20), r.leaves.get(2).?.tab.?.w);
+    try testing.expectEqual(@as(f64, 380 - 3 * 20 - 10), frameOf(&r, 1).w);
 }
 
 test "pane_stack_layout: columns stack too" {
@@ -1697,8 +1793,10 @@ test "pane_stack_layout: columns stack too" {
     try testing.expectEqual(Direction.vertical, stack.direction);
     try testing.expectEqual(Range{ .lo = 2, .hi = 2 }, stack.run);
     try testing.expectEqual(Direction.vertical, r.leaves.get(1).?.tab_axis.?);
-    try testing.expectEqual(@as(f64, 36), r.leaves.get(1).?.tab.?.h);
-    try testing.expectEqual(@as(f64, 400 - 2 * 46), frameOf(&r, 3).h);
+    // a has b between it and the run: it reaches under b by the tuck.
+    try testing.expectEqual(@as(f64, 36 + Metrics.blade_tuck), r.leaves.get(1).?.tab.?.h);
+    try testing.expectEqual(@as(f64, 36), r.leaves.get(2).?.tab.?.h);
+    try testing.expectEqual(@as(f64, 400 - 2 * 36 - 10), frameOf(&r, 3).h);
 }
 
 /// a | (b / (c | d)), ids 1..4.
@@ -2014,8 +2112,9 @@ test "pane_stack_layout: a gutter dragged on tucks panes away one after another"
     const two = try dragged(gpa, three_across, 1, 800, &all_400);
     defer gpa.free(two.sizes);
     try testing.expectEqual(@as(usize, 1), two.run.hi);
-    // At the edge b too: its side is all strips, a has the rest.
-    try expectDragged(0, 0, &.{1220 - 82 - 10}, try dragged(gpa, three_across, 1, 1210, &all_400));
+    // At the edge b too: its side is all strips - two blades, no gutter
+    // between them - and a has the rest.
+    try expectDragged(0, 0, &.{1220 - 72 - 10}, try dragged(gpa, three_across, 1, 1210, &all_400));
     // The row never empties: a cannot tuck from this gutter too.
     const zero = try dragged(gpa, three_across, 1, 0, &all_400);
     defer gpa.free(zero.sizes);

@@ -143,6 +143,11 @@ pub const Placement = struct {
     tab_axis: ?layout.Direction,
     /// Where the card may draw when it hangs off its stack's far end.
     clip: ?PxRect,
+    /// A strip: whether it lies before its stack's run (`Leaf.strip_leads`).
+    strip_leads: ?bool = null,
+    /// How far, in pixels, the strip's `tab` reaches under the strip in front
+    /// of it, toward the run (`Leaf.strip_tuck`).
+    strip_tuck: i32 = 0,
 };
 
 /// A tree laid out in a pixel rect: the engine's result plus what turns its
@@ -183,6 +188,8 @@ pub const Grid = struct {
             .tab = if (l.tab) |t| self.px(t) else null,
             .tab_axis = l.tab_axis,
             .clip = if (l.clip) |c| self.px(c) else null,
+            .strip_leads = l.strip_leads,
+            .strip_tuck = @intFromFloat(@round(l.strip_tuck * self.scale)),
         };
     }
 
@@ -549,10 +556,16 @@ test "pane_stack_grid: T2125 every resizer answers in its gutter and nowhere els
             // Mac a81db68f9).
             try testing.expectEqual(@as(usize, 2), resizers);
             try testing.expectEqual(@as(usize, 2), g.result.stack_handles.items.len);
-            // Strips get gutters too: the same 6 DIP between the two strips.
-            const t3 = g.placement(3).?.tab.?;
-            const t4 = g.placement(4).?.tab.?;
-            try testing.expectEqual(gap, t4.left - t3.right);
+            // Strips are blades (T2283, Mac 5a9a2e2a4/afc64dc53): no gutter
+            // between two, and the outer one reaches the 12 DIP tuck under
+            // the one in front of it.
+            const p3 = g.placement(3).?;
+            const p4 = g.placement(4).?;
+            const tuck: i32 = 24; // the 12 DIP tuck at 2x
+            try testing.expectEqual(-tuck, p4.tab.?.left - p3.tab.?.right);
+            try testing.expectEqual(@as(i32, 0), p3.strip_tuck);
+            try testing.expectEqual(tuck, p4.strip_tuck);
+            try testing.expectEqual(@as(?bool, false), p4.strip_leads);
         } else {
             try testing.expectEqual(@as(usize, 3), resizers);
             try testing.expectEqual(@as(usize, 3), g.result.dividers.items.len);

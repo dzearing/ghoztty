@@ -23,9 +23,13 @@ const Direction = @import("pane_stack_layout.zig").Direction;
 const PxRect = grid.PxRect;
 const Rgb = color_math.Rgb;
 
-/// A strip's thickness, in DIP (Mac `PaneLayout.Metrics.peek`): a card drawn
-/// no wider than this is all strip.
+/// A strip's thickness, in DIP (Mac `PaneLayout.Metrics.peek`).
 pub const peek_dip: f64 = 36;
+
+/// A card drawn no wider than this is all strip: its peek and the tuck that
+/// reaches under the strip in front of it, which is still just a strip (Mac
+/// afc64dc53; T2283).
+pub const strip_dip: f64 = peek_dip + @import("pane_stack_layout.zig").Metrics.blade_tuck;
 
 /// Over how many DIP wider than a strip the fade runs (Mac
 /// `PaneCardView.fadeSpan`): a card drawn this much wider than a strip shows
@@ -42,7 +46,7 @@ pub fn collapseOf(visible: PxRect, scale: f32) f64 {
     if (w <= 0 or h <= 0) return 0;
     const s: f64 = @floatCast(scale);
     const extent: f64 = @floatFromInt(@min(w, h));
-    return pane_stack_slide.collapse(extent, peek_dip * s, fade_span_dip * s);
+    return pane_stack_slide.collapse(extent, strip_dip * s, fade_span_dip * s);
 }
 
 /// The face's constant alpha for `collapse` (0..1).
@@ -101,21 +105,23 @@ pub fn makeOpaque(buf: []u32) void {
     for (buf) |*p| p.* |= 0xFF00_0000;
 }
 
-test "collapseOf: none wide, all at a strip, half way between (T2288)" {
+test "collapseOf: none wide, all at a strip and its tuck, half way between (T2288, T2283)" {
     const r = struct {
         fn of(w: i32, h: i32) PxRect {
             return .{ .left = 10, .top = 20, .right = 10 + w, .bottom = 20 + h };
         }
     }.of;
     try testing.expectEqual(@as(f64, 0), collapseOf(r(400, 600), 1));
-    try testing.expectEqual(@as(f64, 0), collapseOf(r(156, 600), 1));
-    try testing.expectApproxEqAbs(@as(f64, 0.5), collapseOf(r(96, 600), 1), 1e-9);
+    try testing.expectEqual(@as(f64, 0), collapseOf(r(168, 600), 1));
+    try testing.expectApproxEqAbs(@as(f64, 0.5), collapseOf(r(108, 600), 1), 1e-9);
+    // A strip reaching 12 DIP under the one in front is still all strip.
+    try testing.expectEqual(@as(f64, 1), collapseOf(r(48, 600), 1));
     try testing.expectEqual(@as(f64, 1), collapseOf(r(36, 600), 1));
     // The smaller side, whichever it is: a short strip across the top.
-    try testing.expectApproxEqAbs(@as(f64, 0.5), collapseOf(r(600, 96), 1), 1e-9);
-    // In DIP: at 150% a strip is 54 px and the span 180.
-    try testing.expectApproxEqAbs(@as(f64, 0.5), collapseOf(r(144, 900), 1.5), 1e-9);
-    try testing.expectEqual(@as(f64, 1), collapseOf(r(54, 900), 1.5));
+    try testing.expectApproxEqAbs(@as(f64, 0.5), collapseOf(r(600, 108), 1), 1e-9);
+    // In DIP: at 150% a strip and its tuck are 72 px and the span 180.
+    try testing.expectApproxEqAbs(@as(f64, 0.5), collapseOf(r(162, 900), 1.5), 1e-9);
+    try testing.expectEqual(@as(f64, 1), collapseOf(r(72, 900), 1.5));
     // Nothing drawn is no face.
     try testing.expectEqual(@as(f64, 0), collapseOf(r(0, 600), 1));
 }

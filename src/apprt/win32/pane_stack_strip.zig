@@ -143,12 +143,13 @@ pub const Band = struct {
 
 /// Paint a strip's band into a desk composite (`PaneDesk`; 0x00RRGGBB with
 /// coverage in the alpha byte, `desk_palette.coverage`), in the elevated
-/// style (T2121): its two LEADING corners - top and bottom of a tall strip's
-/// left edge, left and right of a short strip's top - are the card's
-/// `radius`, antialiased against what is already there, as Mac's
-/// `UnevenRoundedRectangle` cuts them. The trailing edge is square: the card
-/// it belongs to goes on under the card in front. `tab` is in buffer pixels
-/// and is clipped to the buffer; `radius` 0 paints a plain band.
+/// style (T2121): the pane's own card at the strip's size, so all four
+/// corners are the card's `radius`, antialiased against what is already there
+/// (Mac `PaneCardView`'s clip, T2283). A strip that reaches under the one in
+/// front of it (`pane_stack_layout.Metrics.blade_tuck`) has its run-side
+/// corners out of sight under that one, so a stack of strips reads as bars
+/// laid over one another. `tab` is in buffer pixels and is clipped to the
+/// buffer; `radius` 0 paints a plain band.
 pub fn paintBand(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, rgb: Rgb, radius: i32) void {
     paintWith(buf, w, h, tab, axis, radius, Solid{ .rgb = rgb });
 }
@@ -217,18 +218,14 @@ fn paintWith(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, radius:
     }
 }
 
-/// How much of pixel (x, y) the band covers, 0..1: all of it off the leading
-/// corner squares, and inside one the antialiased quarter circle of radius
-/// `rad` (pixel centre, half a pixel either side of the curve).
+/// How much of pixel (x, y) the band covers, 0..1: all of it off the corner
+/// squares, and inside one the antialiased quarter circle of radius `rad`
+/// (pixel centre, half a pixel either side of the curve).
 pub fn bandCoverage(tab: Rect, axis: Direction, rad: i32, x: i32, y: i32) f32 {
+    _ = axis;
     if (rad <= 0) return 1;
-    const left_corner = x < tab.left + rad;
-    const in_corner = switch (axis) {
-        // A tall strip: top-left and bottom-left.
-        .horizontal => left_corner and (y < tab.top + rad or y >= tab.bottom - rad),
-        // A short strip: top-left and top-right.
-        .vertical => y < tab.top + rad and (left_corner or x >= tab.right - rad),
-    };
+    const in_corner = (x < tab.left + rad or x >= tab.right - rad) and
+        (y < tab.top + rad or y >= tab.bottom - rad);
     if (!in_corner) return 1;
     const r: f32 = @floatFromInt(rad);
     const px: f32 = @as(f32, @floatFromInt(x)) + 0.5;
@@ -241,6 +238,34 @@ pub fn bandCoverage(tab: Rect, axis: Direction, rad: i32, x: i32, y: i32) f32 {
     const cy = if (py < t + r) t + r else b - r;
     const d = @sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy)) - r;
     return std.math.clamp(0.5 - d, 0, 1);
+}
+
+/// The part of a strip that shows, where its name is centred (Mac afc64dc53
+/// `PaneCardView.titleRect`): `tab` less the `tuck` pixels that reach under
+/// the strip in front of it, toward the run - past the trailing edge of a
+/// strip before the run (`leads`), past the leading edge of one after it. A
+/// strip no longer than its tuck is left whole.
+pub fn visiblePart(tab: Rect, axis: Direction, leads: bool, tuck: i32) Rect {
+    if (tuck <= 0) return tab;
+    const along = switch (axis) {
+        .horizontal => tab.width(),
+        .vertical => tab.height(),
+    };
+    if (along <= tuck) return tab;
+    var r = tab;
+    switch (axis) {
+        .horizontal => if (leads) {
+            r.right -= tuck;
+        } else {
+            r.left += tuck;
+        },
+        .vertical => if (leads) {
+            r.bottom -= tuck;
+        } else {
+            r.top += tuck;
+        },
+    }
+    return r;
 }
 
 /// The length the label may run along a strip, in pixels: the strip's long
@@ -363,7 +388,7 @@ test "pane_stack_strip: hovering a strip lightens its card's scrim, so the strip
     try testing.expect(color_math.luminance(dh) < color_math.luminance(dark_bg));
 }
 
-test "pane_stack_strip: an elevated band rounds its leading corners only, antialiased" {
+test "pane_stack_strip: an elevated band is a card at strip size - every corner rounded, antialiased" {
     const w = 60;
     const h = 120;
     const desk: u32 = desk_palette.packRgb(10, 200, 10);
@@ -373,14 +398,15 @@ test "pane_stack_strip: an elevated band rounds its leading corners only, antial
     // A tall strip at x 10..40, y 10..110, radius 12.
     const tab: Rect = .{ .left = 10, .top = 10, .right = 40, .bottom = 110 };
     paintBand(&buf, w, h, tab, .horizontal, rgb, 12);
-    // The very corner pixels of the leading edge are desk; the trailing
-    // edge's corners are band.
+    // The very corner pixels, at both ends of both edges, are desk (T2283:
+    // Mac's strip is the card's own clip, rounded all round).
     try testing.expectEqual(desk, buf[10 * w + 10]);
     try testing.expectEqual(desk, buf[109 * w + 10]);
-    try testing.expectEqual(solid, buf[10 * w + 39]);
-    try testing.expectEqual(solid, buf[109 * w + 39]);
+    try testing.expectEqual(desk, buf[10 * w + 39]);
+    try testing.expectEqual(desk, buf[109 * w + 39]);
     // Mid-edge and inside: band.
     try testing.expectEqual(solid, buf[60 * w + 10]);
+    try testing.expectEqual(solid, buf[60 * w + 39]);
     try testing.expectEqual(solid, buf[10 * w + 25]);
     // Outside the tab: untouched.
     try testing.expectEqual(desk, buf[60 * w + 9]);
@@ -393,14 +419,26 @@ test "pane_stack_strip: an elevated band rounds its leading corners only, antial
     };
     try testing.expect(blended);
 
-    // A short strip: top-left and top-right round, the bottom stays square.
+    // A short strip: all four round too.
     var buf2 = [_]u32{desk} ** (w * h);
     const across: Rect = .{ .left = 5, .top = 5, .right = 55, .bottom = 35 };
     paintBand(&buf2, w, h, across, .vertical, rgb, 12);
     try testing.expectEqual(desk, buf2[5 * w + 5]);
     try testing.expectEqual(desk, buf2[5 * w + 54]);
-    try testing.expectEqual(solid, buf2[34 * w + 5]);
-    try testing.expectEqual(solid, buf2[34 * w + 54]);
+    try testing.expectEqual(desk, buf2[34 * w + 5]);
+    try testing.expectEqual(desk, buf2[34 * w + 54]);
+    try testing.expectEqual(solid, buf2[20 * w + 30]);
+
+    // Two blades, the outer one reaching under the inner (painted after it):
+    // where the inner one's corner curves away, the outer one's band shows,
+    // not the desk - bars laid over one another, not pills touching.
+    var buf4 = [_]u32{desk} ** (w * h);
+    paintBand(&buf4, w, h, .{ .left = 0, .top = 10, .right = 40, .bottom = 110 }, .horizontal, rgb, 12);
+    paintBand(&buf4, w, h, .{ .left = 18, .top = 10, .right = 48, .bottom = 110 }, .horizontal, rgb, 12);
+    try testing.expectEqual(solid, buf4[10 * w + 18]);
+    try testing.expectEqual(solid, buf4[109 * w + 18]);
+    // The outer one's own outward corner still curves away from the desk.
+    try testing.expectEqual(desk, buf4[10 * w + 0]);
 
     // Radius 0 is a plain band; a band off the buffer is clipped, not a crash.
     var buf3 = [_]u32{desk} ** (w * h);
@@ -464,10 +502,11 @@ test "pane_stack_strip: a glass band follows the desk under each pixel and keeps
     try testing.expectEqual(desk_palette.packRgb(top.r, top.g, top.b) | 0xFF00_0000, buf[10 * w + 15]);
     try testing.expectEqual(desk_palette.packRgb(bottom.r, bottom.g, bottom.b) | 0xFF00_0000, buf[50 * w + 15]);
     try testing.expect(top.b > bottom.b and bottom.r > top.r);
-    // The leading corner is still desk, the trailing one band.
+    // Every corner is still desk (T2283), and mid-edge is band.
     try testing.expectEqual(desk[5 * w + 5], buf[5 * w + 5]);
-    const tr = lut.at(desk[5 * w + 24]);
-    try testing.expectEqual(desk_palette.packRgb(tr.r, tr.g, tr.b) | 0xFF00_0000, buf[5 * w + 24]);
+    try testing.expectEqual(desk[5 * w + 24], buf[5 * w + 24]);
+    const me = lut.at(desk[30 * w + 24]);
+    try testing.expectEqual(desk_palette.packRgb(me.r, me.g, me.b) | 0xFF00_0000, buf[30 * w + 24]);
     // Outside the tab: untouched.
     try testing.expectEqual(desk[30 * w + 30], buf[30 * w + 30]);
 }
@@ -492,6 +531,21 @@ test "pane_stack_strip: a tall strip's label runs down its middle; a short one's
     try testing.expectEqual(@as(i32, 28), v.y);
     // A strip shorter than both insets has no room at all.
     try testing.expectEqual(@as(i32, 0), labelRoom(.{ .left = 0, .top = 0, .right = 20, .bottom = 30 }, .vertical, 1.25));
+}
+
+test "pane_stack_strip: a tucked strip's name centres on the part that shows" {
+    const tab: Rect = .{ .left = 100, .top = 0, .right = 160, .bottom = 400 };
+    // Before the run: the tuck is past its trailing edge.
+    try testing.expectEqual(Rect{ .left = 100, .top = 0, .right = 145, .bottom = 400 }, visiblePart(tab, .horizontal, true, 15));
+    // After it: past its leading edge.
+    try testing.expectEqual(Rect{ .left = 115, .top = 0, .right = 160, .bottom = 400 }, visiblePart(tab, .horizontal, false, 15));
+    // A column's strips tuck down the stack.
+    const across: Rect = .{ .left = 0, .top = 50, .right = 400, .bottom = 110 };
+    try testing.expectEqual(Rect{ .left = 0, .top = 50, .right = 400, .bottom = 95 }, visiblePart(across, .vertical, true, 15));
+    try testing.expectEqual(Rect{ .left = 0, .top = 65, .right = 400, .bottom = 110 }, visiblePart(across, .vertical, false, 15));
+    // No tuck, or a strip no longer than it: whole.
+    try testing.expectEqual(tab, visiblePart(tab, .horizontal, true, 0));
+    try testing.expectEqual(Rect{ .left = 0, .top = 0, .right = 10, .bottom = 400 }, visiblePart(.{ .left = 0, .top = 0, .right = 10, .bottom = 400 }, .horizontal, true, 15));
 }
 
 test "pane_stack_strip: a long name is cut in the middle, keeping both ends" {

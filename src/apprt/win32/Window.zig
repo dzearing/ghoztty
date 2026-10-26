@@ -8613,7 +8613,7 @@ fn paintStackStrips(self: *Window, hdc: w32.HDC) void {
         }
         const ink = pane_stack_strip.inkRgb(if (hovered) hover_rgb else strip_rgb, light, hovered);
         const font = (if (s.axis == .horizontal) down else across) orelse continue;
-        self.paintStripLabel(hdc, s.view, s.tab, s.axis, font, ink);
+        self.paintStripLabel(hdc, s.view, s.label, s.axis, font, ink);
     }
 }
 
@@ -8622,6 +8622,9 @@ const TuckedStrip = struct {
     view: *PaneView,
     tab: pane_stack_strip.Rect,
     axis: pane_stack_layout.Direction,
+    /// The part of `tab` that shows, where its name is centred: less what
+    /// reaches under the strip in front of it (T2283, Mac afc64dc53).
+    label: pane_stack_strip.Rect,
 };
 
 /// Every tucked pane's strip in the active tab, bottom first in the engine's
@@ -8654,10 +8657,13 @@ fn tuckedStrips(self: *Window, out: []TuckedStrip) usize {
     for (ids[0..n]) |id| {
         const p = grid.placement(id) orelse continue;
         const t = p.tab orelse continue;
+        const tab: pane_stack_strip.Rect = .{ .left = t.left, .top = t.top, .right = t.right, .bottom = t.bottom };
+        const axis = p.tab_axis orelse .horizontal;
         out[m] = .{
             .view = @ptrFromInt(id),
-            .tab = .{ .left = t.left, .top = t.top, .right = t.right, .bottom = t.bottom },
-            .axis = p.tab_axis orelse .horizontal,
+            .tab = tab,
+            .axis = axis,
+            .label = pane_stack_strip.visiblePart(tab, axis, p.strip_leads orelse true, p.strip_tuck),
         };
         m += 1;
     }
@@ -8898,9 +8904,10 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         _ = w32.ExcludeClipRect(desk_dc, sp.divider.left, sp.carousel.top, sp.carousel.right, sp.carousel.bottom);
         if (self.hero_slide != null) _ = w32.ExcludeClipRect(desk_dc, sp.hero.left, sp.hero.top, sp.hero.right, sp.hero.bottom);
     }
-    // The tucked panes' strips (T2121): laid on the desk, so their leading
-    // corners are a card's antialiased curve (Mac `PaneStackTabFace`'s
-    // `UnevenRoundedRectangle`); `paintStackStrips` lays the names on after.
+    // The tucked panes' strips (T2121): laid on the desk, bottom first, so
+    // their corners are a card's antialiased curve and each blade's run-side
+    // corners lie under the one in front (T2283); `paintStackStrips` lays the
+    // names on after.
     var tucked: [MAX_DRAG_NODES]TuckedStrip = undefined;
     const nt = self.tuckedStrips(&tucked);
     var bands: [MAX_DRAG_NODES]pane_stack_strip.Band = undefined;
