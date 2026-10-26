@@ -5,7 +5,7 @@
 # the folding pane vanished on the spot, and the panes left on show held
 # their old size for the whole slide and then snapped to the new one - a
 # 490 -> 1000 px jump in one frame at the slide's end, with a gap of desk in
-# between. Now (Mac `PaneStageView`, `gestureSlideDuration`):
+# between. Now (Mac `PaneStageView`; since T2268 its a81db68f9 follower):
 #   - the folding pane slides to its tucked place at the stack's edge and is
 #     hidden only when the slide is over
 #   - a drag's slide is a resize slide: the panes on show pass through every

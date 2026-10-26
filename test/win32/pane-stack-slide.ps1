@@ -5,7 +5,7 @@
 # THE CLAIM. Before T2102 a click on a tucked pane's strip (T2109) re-laid the
 # row out in one step: the cards jumped. `Window.planStackSlide` now sees the
 # run change and moves each card on show from where it was to its new slot on
-# Mac's curve (`pane_stack_slide.ease`), a frame at a time; a card that keeps
+# Mac's follower (`pane_stack_slide.followK`, T2268), a frame at a time; a card that keeps
 # its size is only ever MOVED, so its window gets no WM_SIZE and its ConPTY is
 # never resized, and a card whose size changes holds its old size until the
 # slide ends and then resizes once.

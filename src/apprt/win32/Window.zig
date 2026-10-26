@@ -314,7 +314,8 @@ const SIDEBAR_SYNC_TIMER_ID: usize = 0x5353; // 'SS'
 const FULLSCREEN_POLL_TIMER_ID: usize = 0x4653; // 'FS'
 
 /// The stacked-pane carousel slide's clock (T2102): ~16ms, alive only while
-/// cards glide to their new slots (`pane_stack_slide.duration_ms`).
+/// cards are still catching up with their slots (`pane_stack_slide.glide_ms`,
+/// T2268) - a glide that has caught up under a drag stops it and rests.
 const STACK_SLIDE_TIMER_ID: usize = 0x534C; // 'SL'
 const STACK_SLIDE_TICK_MS: u32 = 16;
 pub const SIDEBAR_SYNC_MS: u32 = 250;
@@ -814,10 +815,12 @@ pane_stacks: ?pane_stack_state.PaneStackState = null,
 /// Mac's stronger hover ink. Compared, never dereferenced.
 strip_hover: ?*PaneView = null,
 
-/// The carousel slide under way (T2102), and when it started: the cards
-/// gliding to their new slots after a stack's run changed. Null at rest.
+/// The carousel slide under way (T2102): the cards gliding to their new slots
+/// after a stack's run changed. Null at rest.
 stack_slide: ?pane_stack_slide.Slide = null,
-stack_slide_start: ?std.time.Instant = null,
+/// When the glide last stepped, while its clock runs (T2268): each frame eases
+/// by the time since. Null while it rests (caught up under a drag) or is over.
+stack_slide_last: ?std.time.Instant = null,
 /// Where the last layout put each card of the active tab, the tab and the
 /// grid rect it laid out in: what the next layout compares against to tell a
 /// run change (a slide) from a resize or a tab switch (none).
@@ -8009,24 +8012,24 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
         self.endStackSlide();
     } else if (pane_stack_slide.runsChanged(before, now[0..n])) {
         if (App.clientAreaAnimationsEnabled()) {
-            const elapsed = self.stackSlideElapsedMs();
             const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
             // A drag's fold or unfold resizes on the way, as the drag does
             // on every move (T2186).
-            const next = pane_stack_slide.plan(before, now[0..n], current, elapsed, self.stackSlideDurationMs(), self.stackGesturing());
+            const next = pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing());
             if (next.len > 0) {
                 self.stack_slide = next;
-                self.stack_slide_start = std.time.Instant.now() catch null;
-                if (self.stack_slide_start != null) {
-                    self.orderStackCards(tree, grid);
-                    if (self.hwnd) |h| _ = w32.SetTimer(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS, null);
-                } else self.endStackSlide();
+                self.orderStackCards(tree, grid);
+                self.runStackSlide();
             } else self.endStackSlide();
         } else self.endStackSlide();
     } else if (self.stack_slide) |*s| {
-        // The drag goes on under a slide: the cards head for where the hand
-        // has the layout now, not where it was at the fold (T2186).
-        s.retarget(now[0..n]);
+        // The drag goes on under a slide: the cards ease toward where the
+        // hand has the layout now, from where they are drawn (T2186, T2268),
+        // and a glide resting under the drag wakes up. One that has caught up
+        // once the drag is over is done.
+        if (s.retarget(now[0..n])) {
+            self.runStackSlide();
+        } else if (s.settled() and !self.stackGesturing()) self.endStackSlide();
     }
     @memcpy(self.stack_placed[0..n], now[0..n]);
     self.stack_placed_len = n;
@@ -8034,14 +8037,14 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
     self.stack_placed_grid = rect;
 }
 
-/// How long a slide takes: Mac's, or its quicker gesture time while a divider
-/// drag reshapes the row. `GHOZTTY_STACK_SLIDE_MS` stretches it so an
-/// acceptance script can watch a card mid-slide.
-fn stackSlideDurationMs(self: *Window) f64 {
+/// The glide's time constant: Mac's, for a click's glide and a drag's alike
+/// (T2268). `GHOZTTY_STACK_SLIDE_MS` stretches it so an acceptance script can
+/// watch a card mid-slide (`pane_stack_slide.stretchedGlideMs`; 0 is no glide).
+fn stackGlideMs() f64 {
     if (std.process.parseEnvVarInt("GHOZTTY_STACK_SLIDE_MS", u32, 10)) |ms| {
-        return @floatFromInt(ms);
+        return pane_stack_slide.stretchedGlideMs(@floatFromInt(ms));
     } else |_| {}
-    return if (self.stackGesturing()) pane_stack_slide.gesture_duration_ms else pane_stack_slide.duration_ms;
+    return pane_stack_slide.glide_ms;
 }
 
 /// A divider or stack-grip drag is reshaping the row (Mac
@@ -8082,46 +8085,74 @@ fn orderStackCards(self: *Window, tree: SplitTree(PaneView), grid: *const pane_s
     }
 }
 
-fn stackSlideElapsedMs(self: *Window) f64 {
-    const start = self.stack_slide_start orelse return 0;
-    const now = std.time.Instant.now() catch return std.math.inf(f64);
-    return @as(f64, @floatFromInt(now.since(start))) / std.time.ns_per_ms;
-}
-
-/// Where the slide under way has card `id`'s pane right now, or null when it
-/// is not sliding (or the slide is over): it sits at its slot.
+/// Where the slide under way has card `id`'s pane drawn right now, or null when
+/// it is not sliding: it sits at its slot.
 fn stackSlideRect(self: *Window, id: pane_stack_grid.Id) ?pane_stack_grid.PxRect {
-    const s = &(self.stack_slide orelse return null);
-    const elapsed = self.stackSlideElapsedMs();
-    if (s.done(elapsed)) return null;
-    return s.rectAt(id, elapsed);
+    if (self.stack_slide) |*s| return s.rect(id);
+    return null;
 }
 
 /// The card that card `id` shows right now: where its pane is, at the size it
-/// slides to (`pane_stack_slide.cardAt`). Null when it is not sliding.
+/// slides to (`pane_stack_slide.cardOf`). Null when it is not sliding.
 fn stackSlideCardRect(self: *Window, id: pane_stack_grid.Id) ?pane_stack_grid.PxRect {
-    const s = &(self.stack_slide orelse return null);
-    const elapsed = self.stackSlideElapsedMs();
-    if (s.done(elapsed)) return null;
-    return s.cardRectAt(id, elapsed);
+    if (self.stack_slide) |*s| return s.cardRect(id);
+    return null;
 }
 
-fn endStackSlide(self: *Window) void {
-    if (self.stack_slide == null) return;
-    self.stack_slide = null;
-    self.stack_slide_start = null;
+/// Start the glide's clock, or leave it running (T2268): a glide resting under
+/// a drag starts again from now, so the time it rested is not one long frame.
+fn runStackSlide(self: *Window) void {
+    if (self.stack_slide_last != null) return;
+    self.stack_slide_last = std.time.Instant.now() catch {
+        self.endStackSlide();
+        return;
+    };
+    if (self.hwnd) |h| _ = w32.SetTimer(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS, null);
+}
+
+/// Stop the clock of a glide that has caught up under a drag (Mac: "caught up:
+/// rest until the layout moves again"). The cards stay where they are - at
+/// their slots - and the next layout the hand makes wakes it.
+fn restStackSlide(self: *Window) void {
+    self.stack_slide_last = null;
     if (self.hwnd) |h| _ = w32.KillTimer(h, STACK_SLIDE_TIMER_ID);
 }
 
-/// One frame of the slide: every card one step further along. The last frame
-/// ends the slide and lays every card out at its slot - which is where a card
-/// that changes size takes its new size, once.
+fn endStackSlide(self: *Window) void {
+    self.restStackSlide();
+    self.stack_slide = null;
+}
+
+/// A drag let go (T2268; Mac `onGestureEnd`): a glide resting under it is
+/// over, and one still catching up runs on and ends when it does.
+fn stackDragEnded(self: *Window) void {
+    const s = &(self.stack_slide orelse return);
+    if (s.settled()) self.endStackSlide() else self.runStackSlide();
+}
+
+/// One frame of the glide: every card eased toward its slot by the time since
+/// the last (Mac `PaneStageView.stepGlide`). Once every card has caught up the
+/// glide ends and lays every card out at its slot - which is where a card that
+/// changes size takes its new size, once - unless a drag is still under way,
+/// when it rests instead until the hand moves the layout again.
 fn stackSlideTick(self: *Window) void {
-    const s = self.stack_slide orelse {
-        if (self.hwnd) |h| _ = w32.KillTimer(h, STACK_SLIDE_TIMER_ID);
+    const s = if (self.stack_slide) |*sl| sl else {
+        self.restStackSlide();
         return;
     };
-    if (s.done(self.stackSlideElapsedMs())) self.endStackSlide();
+    const now = std.time.Instant.now() catch {
+        self.endStackSlide();
+        self.layoutSplits();
+        return;
+    };
+    const dt: f64 = if (self.stack_slide_last) |last|
+        @as(f64, @floatFromInt(now.since(last))) / std.time.ns_per_ms
+    else
+        0;
+    self.stack_slide_last = now;
+    if (s.step(dt)) {
+        if (self.stackGesturing()) self.restStackSlide() else self.endStackSlide();
+    }
     self.layoutSplits();
 }
 
@@ -9271,6 +9302,7 @@ fn endGripDrag(self: *Window) void {
     self.grip_drag = null;
     self.endRowDrag();
     _ = w32.ReleaseCapture();
+    self.stackDragEnded();
     self.layoutSplits();
     // The bar goes out with the drag, and whichever gutter the pointer let
     // go over is asked again (T2253): Mac 5e4f30144's release-then-leave.
@@ -9856,6 +9888,7 @@ fn endDividerDrag(self: *Window) void {
     self.dragging_split = false;
     self.drag_node_len = 0;
     self.endRowDrag();
+    self.stackDragEnded();
     self.reportDragCost();
     _ = w32.ReleaseCapture();
     // Re-derive hover from where the pointer actually ended up: the ratio is

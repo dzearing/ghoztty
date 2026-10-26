@@ -3,7 +3,7 @@
 //!
 //! When a stack's run changes - a strip clicked, focus moved onto a tucked
 //! pane - the cards on show do not jump to their new slots: they glide there,
-//! on Mac's curve and in Mac's time. A card that keeps its size is only ever
+//! the way Mac's do. A card that keeps its size is only ever
 //! MOVED on the way, so its terminal is never told to resize (a child window
 //! moved without a size change gets no WM_SIZE, and so no ConPTY resize). A
 //! card whose size changes too (a row gaining or losing a card on show) holds
@@ -24,7 +24,15 @@
 //! size and snapping when the slide ends. While a drag is under way the
 //! slide's targets follow the hand (`Slide.retarget`).
 //!
-//! Pure, so the tests need no window: the curve, which cards slide, and where
+//! The motion itself is Mac's a81db68f9 follower (T2268), not a curve with a
+//! duration: every frame each card's edges close `1 - exp(-dt / 45 ms)` of the
+//! way on where the layout puts the card NOW - about 90% in 0.1 s - and snap
+//! onto it within half a pixel. A drag that moves the target mid-glide is
+//! followed from wherever the card is drawn, without a restart; a glide that
+//! catches up under a drag rests until the hand moves again, and ends only
+//! once the drag is over.
+//!
+//! Pure, so the tests need no window: the follower, which cards slide, and where
 //! each one is at a given moment.
 
 const std = @import("std");
@@ -33,34 +41,39 @@ const grid = @import("pane_stack_grid.zig");
 const PxRect = grid.PxRect;
 const Id = grid.Id;
 
-/// How long a card takes to slide: Mac's `slideDuration` (0.38 s), or, while a
-/// divider drag is reshaping the row, its quicker `gestureSlideDuration`
-/// (0.2 s) so the layout keeps up with the hand.
-pub const duration_ms: f64 = 380;
-pub const gesture_duration_ms: f64 = 200;
+/// How quickly a glide closes on its target (T2268; Mac `PaneStageView.glideTime`,
+/// a81db68f9): every frame each edge goes `1 - exp(-dt / glide_ms)` of the way
+/// from where it is drawn to where the layout puts it NOW - about 90% in 0.1 s.
+/// There is no duration: a glide is over when every card has caught up, and a
+/// target that moves (a drag reshaping the row) is simply followed.
+pub const glide_ms: f64 = 45;
 
-/// The slide's curve: Mac's `CAMediaTimingFunction(controlPoints: 0.2, 0.8,
-/// 0.2, 1)` - the HTML mock's `cubic-bezier(0.2, 0.8, 0.2, 1)` - as the eased
-/// progress at linear progress `t` (clamped to 0..1).
-pub fn ease(t: f64) f64 {
-    if (t <= 0) return 0;
-    if (t >= 1) return 1;
-    // x(s) is monotonic on 0..1 for these control points: bisect for the s
-    // whose x is `t`, then read y there. 30 halvings is far below a pixel.
-    var lo: f64 = 0;
-    var hi: f64 = 1;
-    var s: f64 = t;
-    for (0..30) |_| {
-        s = (lo + hi) / 2;
-        if (bezier(0.2, 0.2, s) < t) lo = s else hi = s;
-    }
-    return bezier(0.8, 1, s);
+/// An edge within this many pixels of its target is snapped onto it (Mac's
+/// 0.5 pt), so a glide ends instead of creeping forever.
+pub const snap_px: f64 = 0.5;
+
+/// The time constant for a glide stretched to last about `slide_ms`, for an
+/// acceptance script that has to catch a card mid-motion
+/// (`GHOZTTY_STACK_SLIDE_MS`): scaled from Mac's old 380 ms slide, which the
+/// follower replaced at about the same feel, so 2000 ms is a glide about five
+/// times slower and 0 is none.
+pub fn stretchedGlideMs(slide_ms: f64) f64 {
+    return @max(slide_ms, 0) * glide_ms / 380;
 }
 
-/// One coordinate of a cubic Bezier from 0 to 1 with inner points `p1`, `p2`.
-fn bezier(p1: f64, p2: f64, s: f64) f64 {
-    const u = 1 - s;
-    return 3 * u * u * s * p1 + 3 * u * s * s * p2 + s * s * s;
+/// The fraction of the way to its target an edge goes in `dt_ms`, for a glide
+/// of time constant `tau_ms`. No time constant is no glide: all the way.
+pub fn followK(dt_ms: f64, tau_ms: f64) f64 {
+    if (tau_ms <= 0) return 1;
+    if (dt_ms <= 0) return 0;
+    return 1 - @exp(-dt_ms / tau_ms);
+}
+
+/// One edge one frame on: `k` of the way from `a` to `b`, or onto `b` once it
+/// is within `snap_px`.
+pub fn follow(a: f64, b: f64, k: f64) f64 {
+    if (@abs(b - a) < snap_px) return b;
+    return a + (b - a) * k;
 }
 
 /// A card as the layout placed it: its full card rect, and whether it is
@@ -97,11 +110,43 @@ pub fn heldRect(slot: PxRect, s: Size) PxRect {
     return .{ .left = slot.left, .top = slot.top, .right = slot.left + s.w, .bottom = slot.top + s.h };
 }
 
-/// One card's slide: from where it was on screen to its slot.
+/// One card's glide: the pane rect it started from, where the layout puts it
+/// now, and where it is drawn (each edge on its own, unrounded).
 pub const Card = struct {
     id: Id,
     from: PxRect,
     to: PxRect,
+    drawn: Edges,
+};
+
+/// A rect's four edges as the glide carries them, in fractional pixels.
+pub const Edges = struct {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+
+    pub fn of(px: PxRect) Edges {
+        return .{
+            .left = @floatFromInt(px.left),
+            .top = @floatFromInt(px.top),
+            .right = @floatFromInt(px.right),
+            .bottom = @floatFromInt(px.bottom),
+        };
+    }
+
+    pub fn round(e: Edges) PxRect {
+        return .{
+            .left = @intFromFloat(@round(e.left)),
+            .top = @intFromFloat(@round(e.top)),
+            .right = @intFromFloat(@round(e.right)),
+            .bottom = @intFromFloat(@round(e.bottom)),
+        };
+    }
+
+    fn eql(e: Edges, px: PxRect) bool {
+        return std.meta.eql(e, of(px));
+    }
 };
 
 /// The most cards one slide tracks; a window holds far fewer panes.
@@ -110,8 +155,9 @@ pub const max_cards = 64;
 pub const Slide = struct {
     cards: [max_cards]Card = undefined,
     len: usize = 0,
-    duration_ms: f64 = duration_ms,
-    /// A drag's slide: sizes move with positions (see `at`).
+    /// The glide's time constant (`glide_ms`, or a test's stretched one).
+    tau_ms: f64 = glide_ms,
+    /// A drag's slide: sizes move with positions (see `rectOf`).
     resize: bool = false,
 
     pub fn items(self: *const Slide) []const Card {
@@ -123,78 +169,102 @@ pub const Slide = struct {
         return null;
     }
 
-    /// Where card `id` is `elapsed_ms` into the slide, or null when it is not
-    /// sliding (it sits at its slot). See `at` for the shape.
-    pub fn rectAt(self: *const Slide, id: Id, elapsed_ms: f64) ?PxRect {
+    /// Where card `id`'s pane is drawn now, or null when it is not sliding -
+    /// not in this glide, or caught up with its slot, where it sits like any
+    /// other card. A card going behind the run that has caught up is its strip
+    /// (Mac `stepGlide`: "a card that reached its strip is the strip"), so it
+    /// is hidden though the glide may still be resting under a drag. See
+    /// `rectOf` for the shape.
+    pub fn rect(self: *const Slide, id: Id) ?PxRect {
         const c = self.find(id) orelse return null;
-        return at(c, self.progress(elapsed_ms), self.resize);
+        if (c.drawn.eql(c.to)) return null;
+        return rectOf(c, self.resize);
     }
 
-    /// Linear progress, 0..1.
-    pub fn progress(self: *const Slide, elapsed_ms: f64) f64 {
-        if (self.duration_ms <= 0) return 1;
-        return std.math.clamp(elapsed_ms / self.duration_ms, 0, 1);
-    }
-
-    /// The card that card `id` shows `elapsed_ms` into the slide, or null when it
-    /// is not sliding. See `cardAt`.
-    pub fn cardRectAt(self: *const Slide, id: Id, elapsed_ms: f64) ?PxRect {
+    /// The card that card `id` shows now, or null when it is not sliding (see
+    /// `rect`). See `cardOf`.
+    pub fn cardRect(self: *const Slide, id: Id) ?PxRect {
         const c = self.find(id) orelse return null;
-        return cardAt(c, self.progress(elapsed_ms), self.resize);
+        if (c.drawn.eql(c.to)) return null;
+        return cardOf(c, self.resize);
     }
 
-    pub fn done(self: *const Slide, elapsed_ms: f64) bool {
-        return elapsed_ms >= self.duration_ms;
+    /// Where card `id`'s pane is drawn, caught up or not; null when this glide
+    /// does not carry it.
+    pub fn placed(self: *const Slide, id: Id) ?PxRect {
+        const c = self.find(id) orelse return null;
+        return rectOf(c, self.resize);
+    }
+
+    /// One frame, `dt_ms` after the last: every edge of every card eases
+    /// toward its target (Mac `PaneStageView.stepGlide`). True once every card
+    /// has caught up.
+    pub fn step(self: *Slide, dt_ms: f64) bool {
+        const k = followK(dt_ms, self.tau_ms);
+        for (self.cards[0..self.len]) |*c| {
+            const to = Edges.of(c.to);
+            c.drawn = .{
+                .left = follow(c.drawn.left, to.left, k),
+                .top = follow(c.drawn.top, to.top, k),
+                .right = follow(c.drawn.right, to.right, k),
+                .bottom = follow(c.drawn.bottom, to.bottom, k),
+            };
+        }
+        return self.settled();
+    }
+
+    /// Every card is where the layout puts it. Under a drag a settled glide
+    /// RESTS - the next layout the hand makes starts it again - and only once
+    /// the drag is over does catching up end it (Mac `isGesturing`).
+    pub fn settled(self: *const Slide) bool {
+        for (self.items()) |c| if (!c.drawn.eql(c.to)) return false;
+        return true;
     }
 
     /// Point every sliding card at where the layout puts it NOW (T2186): a
-    /// drag goes on reshaping the row while the fold's slide runs, and the
-    /// cards head for the hand's layout rather than the one at the fold.
-    /// `now` holds each card's current placement (a tucked card's held rect).
-    pub fn retarget(self: *Slide, now: []const Placed) void {
+    /// drag goes on reshaping the row while the fold's glide runs, and each
+    /// card eases toward the hand's layout from where it is drawn, rather than
+    /// the one at the fold. `now` holds each card's current placement (a
+    /// tucked card's held rect). True when a target moved.
+    pub fn retarget(self: *Slide, now: []const Placed) bool {
+        var moved = false;
         for (self.cards[0..self.len]) |*c| {
             for (now) |p| if (p.id == c.id) {
+                if (!std.meta.eql(c.to, p.rect)) moved = true;
                 c.to = p.rect;
                 break;
             };
         }
+        return moved;
     }
 };
 
-/// Where `c` is at linear progress `t`. Its origin moves along the curve; its
-/// size is the size it slid FROM until the slide is over, and its slot's
-/// size only then - so a card that changes size resizes once, at the end.
-/// With `resize` (a drag's slide, T2186) every edge moves along the curve, so
-/// the size passes through each width on the way.
-pub fn at(c: Card, t: f64, resize: bool) PxRect {
-    if (t >= 1) return c.to;
-    const e = ease(t);
-    if (resize) return .{
-        .left = lerp(c.from.left, c.to.left, e),
-        .top = lerp(c.from.top, c.to.top, e),
-        .right = lerp(c.from.right, c.to.right, e),
-        .bottom = lerp(c.from.bottom, c.to.bottom, e),
-    };
-    const x = lerp(c.from.left, c.to.left, e);
-    const y = lerp(c.from.top, c.to.top, e);
+/// Where `c`'s pane is drawn. A click's glide moves its origin and holds the
+/// size it slid FROM until the glide is over, so a card that changes size
+/// resizes once, at the end. With `resize` (a drag's glide, T2186) every edge
+/// moves, so the size passes through each width on the way.
+pub fn rectOf(c: Card, resize: bool) PxRect {
+    if (c.drawn.eql(c.to)) return c.to;
+    const d = c.drawn.round();
+    if (resize) return d;
     return .{
-        .left = x,
-        .top = y,
-        .right = x + c.from.width(),
-        .bottom = y + c.from.height(),
+        .left = d.left,
+        .top = d.top,
+        .right = d.left + c.from.width(),
+        .bottom = d.top + c.from.height(),
     };
 }
 
-/// The card `c` shows at linear progress `t` (T2187; Mac `PaneCardView.apply`'s
-/// resizing slide): at the same place as its pane (`at`), but already at its
-/// slot's size. Its pane is held at the old size until the slide ends, so the
-/// card is what is SEEN of it: a pane that shrinks is cut to its new card at
-/// once rather than covering its neighbours for the whole slide - which hid a
-/// pane unfolding beside it until the very end, so the unfold looked instant -
-/// and one that grows shows its card's backdrop beyond it. A `resize` slide
-/// (a drag's, T2186) resizes the pane on the way, so card and pane agree.
-pub fn cardAt(c: Card, t: f64, resize: bool) PxRect {
-    const p = at(c, t, resize);
+/// The card `c` shows (T2187; Mac `PaneCardView.apply`'s resizing slide): at
+/// the same place as its pane (`rectOf`), but already at its slot's size. Its
+/// pane is held at the old size until the glide ends, so the card is what is
+/// SEEN of it: a pane that shrinks is cut to its new card at once rather than
+/// covering its neighbours for the whole glide - which hid a pane unfolding
+/// beside it until the very end, so the unfold looked instant - and one that
+/// grows shows its card's backdrop beyond it. A `resize` glide (a drag's,
+/// T2186) resizes the pane on the way, so card and pane agree.
+pub fn cardOf(c: Card, resize: bool) PxRect {
+    const p = rectOf(c, resize);
     if (resize) return p;
     return .{ .left = p.left, .top = p.top, .right = p.left + c.to.width(), .bottom = p.top + c.to.height() };
 }
@@ -204,12 +274,6 @@ pub fn cardAt(c: Card, t: f64, resize: bool) PxRect {
 pub fn clip(window: Size, card: Size) ?Size {
     if (window.w <= card.w and window.h <= card.h) return null;
     return .{ .w = @max(@min(window.w, card.w), 1), .h = @max(@min(window.h, card.h), 1) };
-}
-
-fn lerp(a: i32, b: i32, e: f64) i32 {
-    const fa: f64 = @floatFromInt(a);
-    const fb: f64 = @floatFromInt(b);
-    return @intFromFloat(@round(fa + (fb - fa) * e));
 }
 
 /// Whether going from `before` to `after` changed which cards are on show -
@@ -226,23 +290,22 @@ pub fn runsChanged(before: []const Placed, after: []const Placed) bool {
 
 /// The slide from `before` to `after`: every card on show afterwards that the
 /// layout knew before and that is not already at its slot. Each starts from
-/// where it is ON SCREEN - its place in `current` (a slide under way, read
-/// `elapsed_ms` in) when it has one, else its last placement - so a slide
-/// that interrupts another carries on from there. A card that comes forward
+/// where it is ON SCREEN - its place in `current` (a glide under way) when it
+/// has one, else its last placement - so a slide that interrupts another
+/// carries on from there. A card that comes forward
 /// from behind the run starts at its tucked card's rect, which lies under the
 /// run at its stack's edge. A card that goes behind the run (on show before,
 /// tucked after) slides to its tucked rect and is hidden when the slide ends
 /// (T2186); a card that stays tucked does not slide. `resize`: a drag's slide
-/// (see `at`).
+/// (see `rectOf`). `tau_ms`: the glide's time constant (`glide_ms`).
 pub fn plan(
     before: []const Placed,
     after: []const Placed,
     current: ?*const Slide,
-    elapsed_ms: f64,
-    duration: f64,
+    tau_ms: f64,
     resize: bool,
 ) Slide {
-    var out: Slide = .{ .duration_ms = duration, .resize = resize };
+    var out: Slide = .{ .tau_ms = tau_ms, .resize = resize };
     for (after) |a| {
         const last: ?Placed = for (before) |b| {
             if (b.id == a.id) break b;
@@ -250,13 +313,13 @@ pub fn plan(
         // Tucked now: it slides only if it was on show (it is going away).
         if (a.tucked) if (last) |b| if (b.tucked) continue;
         const from = blk: {
-            if (current) |cur| if (cur.rectAt(a.id, elapsed_ms)) |rect| break :blk rect;
+            if (current) |cur| if (cur.placed(a.id)) |rect| break :blk rect;
             if (last) |b| break :blk b.rect;
             break :blk null;
         } orelse continue;
         if (std.meta.eql(from, a.rect)) continue;
         if (out.len == max_cards) break;
-        out.cards[out.len] = .{ .id = a.id, .from = from, .to = a.rect };
+        out.cards[out.len] = .{ .id = a.id, .from = from, .to = a.rect, .drawn = Edges.of(from) };
         out.len += 1;
     }
     return out;
@@ -268,22 +331,31 @@ fn r(left: i32, top: i32, w: i32, h: i32) PxRect {
     return .{ .left = left, .top = top, .right = left + w, .bottom = top + h };
 }
 
-test "ease: Mac's curve - fast out of the gate, settling into place" {
-    try testing.expectEqual(@as(f64, 0), ease(0));
-    try testing.expectEqual(@as(f64, 1), ease(1));
-    try testing.expectEqual(@as(f64, 0), ease(-1));
-    try testing.expectEqual(@as(f64, 1), ease(2));
-    // cubic-bezier(0.2, 0.8, 0.2, 1) is past 80% of the way by the halfway
-    // mark, and only creeps after that.
-    try testing.expect(ease(0.5) > 0.8 and ease(0.5) < 0.95);
-    try testing.expect(ease(0.1) > 0.2);
-    var prev: f64 = 0;
-    var i: usize = 1;
-    while (i <= 100) : (i += 1) {
-        const e = ease(@as(f64, @floatFromInt(i)) / 100);
-        try testing.expect(e >= prev);
-        prev = e;
-    }
+/// Run `s` at 16 ms frames until it settles; the frames it took.
+fn runOut(s: *Slide) usize {
+    var frames: usize = 1;
+    while (!s.step(16)) : (frames += 1) if (frames > 1000) break;
+    return frames;
+}
+
+test "followK: Mac's follower - about 90% of the way in 0.1 s, whatever the frame rate" {
+    // One 100 ms step closes 1 - e^(-100/45) = 89% of the gap.
+    const k = followK(100, glide_ms);
+    try testing.expect(k > 0.88 and k < 0.9);
+    // Six 16.7 ms frames close the same gap as one 100 ms step: the follower
+    // is frame-rate independent.
+    var gap: f64 = 1;
+    for (0..6) |_| gap *= 1 - followK(100.0 / 6.0, glide_ms);
+    try testing.expectApproxEqAbs(1 - k, gap, 1e-9);
+    // No time, no motion; no time constant, all the way.
+    try testing.expectEqual(@as(f64, 0), followK(0, glide_ms));
+    try testing.expectEqual(@as(f64, 1), followK(16, 0));
+}
+
+test "follow: an edge within half a pixel snaps onto its target" {
+    try testing.expectEqual(@as(f64, 100), follow(99.6, 100, 0.01));
+    try testing.expectEqual(@as(f64, 100), follow(100.4, 100, 0.01));
+    try testing.expectEqual(@as(f64, 50), follow(0, 100, 0.5));
 }
 
 test "plan: a strip click slides the cards on show to their new slots" {
@@ -302,40 +374,63 @@ test "plan: a strip click slides the cards on show to their new slots" {
         .{ .id = 4, .rect = r(430, 0, 400, 600), .tucked = false },
     };
     try testing.expect(runsChanged(&before, &after));
-    const s = plan(&before, &after, null, 0, duration_ms, false);
+    var s = plan(&before, &after, null, glide_ms, false);
     // The cards on show afterwards slide, and so does card 2, going behind
     // the run (T2186); card 1 is already at its tucked place.
     try testing.expectEqual(@as(usize, 3), s.len);
     try testing.expectEqual(@as(Id, 2), s.cards[0].id);
-    try testing.expectEqual(r(20, 0, 400, 600), s.rectAt(2, duration_ms).?);
     try testing.expectEqual(@as(Id, 3), s.cards[1].id);
     try testing.expectEqual(r(780, 0, 400, 600), s.cards[1].from);
     try testing.expectEqual(@as(Id, 4), s.cards[2].id);
-    // Mid-slide each card is between its two places, at its own size: a
+    // It starts where the cards were.
+    try testing.expectEqual(r(790, 0, 400, 600), s.placed(4).?);
+    // Mid-glide each card is between its two places, at its own size: a
     // move, never a resize.
-    const mid = s.rectAt(4, duration_ms / 2).?;
+    try testing.expect(!s.step(30));
+    const mid = s.placed(4).?;
     try testing.expect(mid.left < 790 and mid.left > 430);
     try testing.expectEqual(@as(i32, 400), mid.width());
     try testing.expectEqual(@as(i32, 600), mid.height());
-    try testing.expectEqual(r(430, 0, 400, 600), s.rectAt(4, duration_ms).?);
-    try testing.expect(s.done(duration_ms));
-    try testing.expect(!s.done(duration_ms - 1));
-    // A card that is not sliding has no slide rect.
-    try testing.expectEqual(@as(?PxRect, null), s.rectAt(1, 10));
+    // It catches up, and is exactly there.
+    _ = runOut(&s);
+    try testing.expect(s.settled());
+    try testing.expectEqual(r(430, 0, 400, 600), s.placed(4).?);
+    try testing.expectEqual(r(20, 0, 400, 600), s.placed(2).?);
+    // A card that is not sliding has no slide rect, and one that has caught
+    // up is no longer sliding: it sits at its slot.
+    try testing.expectEqual(@as(?PxRect, null), s.rect(1));
+    try testing.expectEqual(@as(?PxRect, null), s.rect(4));
 }
 
-test "plan: a card that changes size holds its old size until the end" {
-    const c: Card = .{ .id = 1, .from = r(0, 0, 400, 600), .to = r(100, 0, 500, 600) };
-    const mid = at(c, 0.5, false);
+test "step: 90% of the way in 0.1 s, settled within about a third of a second" {
+    const before = [_]Placed{.{ .id = 1, .rect = r(1000, 0, 400, 600), .tucked = true }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false }};
+    var s = plan(&before, &after, null, glide_ms, false);
+    _ = s.step(100);
+    // 1000 px to go: about 110 left after 0.1 s.
+    const left = s.placed(1).?.left;
+    try testing.expect(left > 100 and left < 120);
+    // 16 ms frames from the start: it settles, by snapping, well inside 0.4 s.
+    var t = plan(&before, &after, null, glide_ms, false);
+    const frames = runOut(&t);
+    try testing.expect(frames * 16 <= 400);
+    try testing.expectEqual(r(0, 0, 400, 600), t.placed(1).?);
+}
+
+test "plan: a card that changes size holds its old size until it has caught up" {
+    const before = [_]Placed{.{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(100, 0, 500, 600), .tucked = true }};
+    var s = plan(&before, &after, null, glide_ms, false);
+    _ = s.step(40);
+    const mid = s.placed(1).?;
     try testing.expectEqual(@as(i32, 400), mid.width());
     try testing.expect(mid.left > 0 and mid.left < 100);
-    const near_end = at(c, 0.999, false);
-    try testing.expectEqual(@as(i32, 400), near_end.width());
-    // One size change in the whole slide, at its end.
-    try testing.expectEqual(r(100, 0, 500, 600), at(c, 1, false));
+    // One size change in the whole glide, at its end.
+    _ = runOut(&s);
+    try testing.expectEqual(r(100, 0, 500, 600), s.placed(1).?);
 }
 
-test "cardAt: an unfold cuts the widening neighbour to its new card at once (T2187)" {
+test "cardOf: an unfold cuts the widening neighbour to its new card at once (T2187)" {
     // A | B with B folded: A fills the row. B unfolds; A keeps its place and
     // goes from 900 to 450 wide, B slides in from the row's edge.
     const before = [_]Placed{
@@ -346,16 +441,16 @@ test "cardAt: an unfold cuts the widening neighbour to its new card at once (T21
         .{ .id = 1, .rect = r(0, 0, 450, 600), .tucked = false },
         .{ .id = 2, .rect = r(450, 0, 450, 600), .tucked = false },
     };
-    const s = plan(&before, &after, null, 0, duration_ms, false);
+    var s = plan(&before, &after, null, glide_ms, false);
     try testing.expectEqual(@as(usize, 2), s.len);
-    const t = duration_ms / 4;
-    // A's pane is held at 900 (no resize mid-slide) - and before T2187 that
+    _ = s.step(16);
+    // A's pane is held at 900 (no resize mid-glide) - and before T2187 that
     // was all there was of it, covering B everywhere B could be.
-    try testing.expectEqual(@as(i32, 900), s.rectAt(1, t).?.width());
+    try testing.expectEqual(@as(i32, 900), s.placed(1).?.width());
     // Its card is 450 from the first frame, so B's way in is not under it.
-    const card_a = s.cardRectAt(1, t).?;
+    const card_a = s.cardRect(1).?;
     try testing.expectEqual(r(0, 0, 450, 600), card_a);
-    const card_b = s.cardRectAt(2, t).?;
+    const card_b = s.cardRect(2).?;
     try testing.expect(card_b.left > 450 and card_b.left < 880);
     try testing.expect(card_a.right <= card_b.left);
     try testing.expectEqual(@as(i32, 450), card_b.width());
@@ -363,12 +458,15 @@ test "cardAt: an unfold cuts the widening neighbour to its new card at once (T21
     // fits its 450 card and is not cut.
     try testing.expectEqual(Size{ .w = 450, .h = 600 }, clip(.{ .w = 900, .h = 600 }, .{ .w = card_a.width(), .h = 600 }).?);
     try testing.expectEqual(@as(?Size, null), clip(.{ .w = 375, .h = 600 }, .{ .w = card_b.width(), .h = 600 }));
-    // At the end card and pane agree.
-    try testing.expectEqual(s.rectAt(1, duration_ms).?, s.cardRectAt(1, duration_ms).?);
-    try testing.expectEqual(r(450, 0, 450, 600), s.cardRectAt(2, duration_ms).?);
-    // A drag's slide resizes the pane on the way: its card is the pane.
-    const g = plan(&before, &after, null, 0, gesture_duration_ms, true);
-    try testing.expectEqual(g.rectAt(1, t).?, g.cardRectAt(1, t).?);
+    // At the end card and pane agree, and neither is sliding any more.
+    _ = runOut(&s);
+    try testing.expectEqual(r(0, 0, 450, 600), s.placed(1).?);
+    try testing.expectEqual(r(450, 0, 450, 600), s.placed(2).?);
+    try testing.expectEqual(@as(?PxRect, null), s.cardRect(2));
+    // A drag's glide resizes the pane on the way: its card is the pane.
+    var g = plan(&before, &after, null, glide_ms, true);
+    _ = g.step(16);
+    try testing.expectEqual(g.rect(1).?, g.cardRect(1).?);
 }
 
 test "plan: a slide mid-slide starts from where the cards are on screen" {
@@ -380,21 +478,21 @@ test "plan: a slide mid-slide starts from where the cards are on screen" {
         .{ .id = 1, .rect = r(5, 0, 400, 600), .tucked = true },
         .{ .id = 2, .rect = r(20, 0, 400, 600), .tucked = false },
     };
-    const first = plan(&before, &after, null, 0, duration_ms, false);
-    const where = first.rectAt(2, 100).?;
-    // Back again, 100 ms in: card 1 comes forward from its tucked rect, and
-    // card 2 is tucked (no slide); but were card 2 to stay on show, it would
-    // start from `where`, not from its slot.
+    var first = plan(&before, &after, null, glide_ms, false);
+    _ = first.step(20);
+    const where = first.placed(2).?;
+    // Back again, 20 ms in: both cards carry on from where the first glide
+    // has them, not from their slots.
     const again = [_]Placed{
         .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
         .{ .id = 2, .rect = r(400, 0, 400, 600), .tucked = false },
     };
-    const second = plan(&after, &again, &first, 100, duration_ms, false);
+    const second = plan(&after, &again, &first, glide_ms, false);
     try testing.expectEqual(@as(usize, 2), second.len);
-    try testing.expectEqual(where, second.rectAt(2, 0).?);
+    try testing.expectEqual(where, second.placed(2).?);
     // Card 1 was sliding behind the run (T2186): it comes back from where
-    // that slide had it, not from its tucked place.
-    try testing.expectEqual(first.rectAt(1, 100).?, second.rectAt(1, 0).?);
+    // that glide had it, not from its tucked place.
+    try testing.expectEqual(first.placed(1).?, second.placed(1).?);
 }
 
 test "runsChanged: a resize or a new pane alone is not a slide" {
@@ -434,12 +532,14 @@ test "plan: a held card comes forward at its held size and resizes at the end" {
         .{ .id = 1, .rect = r(0, 0, 450, 600), .tucked = true },
         .{ .id = 2, .rect = r(10, 0, 450, 600), .tucked = false },
     };
-    const s = plan(&before, &after, null, 0, duration_ms, false);
+    var s = plan(&before, &after, null, glide_ms, false);
     // Card 2 comes forward; card 1 goes behind the run but is already at its
     // tucked place.
     try testing.expectEqual(@as(usize, 1), s.len);
-    try testing.expectEqual(@as(i32, 375), s.rectAt(2, duration_ms / 2).?.width());
-    try testing.expectEqual(r(10, 0, 450, 600), s.rectAt(2, duration_ms).?);
+    _ = s.step(30);
+    try testing.expectEqual(@as(i32, 375), s.placed(2).?.width());
+    _ = runOut(&s);
+    try testing.expectEqual(r(10, 0, 450, 600), s.placed(2).?);
 }
 
 test "plan: a fold under a drag - the folding card tucks away, the others pass through every width" {
@@ -456,30 +556,31 @@ test "plan: a fold under a drag - the folding card tucks away, the others pass t
         .{ .id = 3, .rect = r(1480, 0, 490, 600), .tucked = true },
     };
     try testing.expect(runsChanged(&before, &after));
-    const s = plan(&before, &after, null, 0, gesture_duration_ms, true);
+    var s = plan(&before, &after, null, glide_ms, true);
     try testing.expectEqual(@as(usize, 3), s.len);
-    // P widens through the slide - no 490 -> 1000 jump at its end.
+    // P widens through the glide - no 490 -> 1000 jump at its end.
     var last_w: i32 = 490;
     var steps: usize = 0;
-    var t: f64 = 16;
-    while (t < gesture_duration_ms) : (t += 16) {
-        const w = s.rectAt(1, t).?.width();
+    var mid: ?PxRect = null;
+    while (!s.step(8)) {
+        const w = s.placed(1).?.width();
         try testing.expect(w >= last_w and w <= 1000);
         if (w != last_w) steps += 1;
         last_w = w;
+        if (mid == null and w > 745) mid = s.placed(3).?;
     }
     try testing.expect(steps >= 5);
     // s2 slides to its tucked place at its own size, and is there at the end.
-    const mid = s.rectAt(3, gesture_duration_ms / 2).?;
-    try testing.expect(mid.left > 1000 and mid.left < 1480);
-    try testing.expectEqual(@as(i32, 490), mid.width());
-    try testing.expectEqual(r(1480, 0, 490, 600), s.rectAt(3, gesture_duration_ms).?);
-    // A click's slide (no resize) still holds sizes, as T2102 has it.
-    const click = plan(&before, &after, null, 0, duration_ms, false);
-    try testing.expectEqual(@as(i32, 490), click.rectAt(1, duration_ms / 2).?.width());
+    try testing.expect(mid.?.left > 1000 and mid.?.left < 1480);
+    try testing.expectEqual(@as(i32, 490), mid.?.width());
+    try testing.expectEqual(r(1480, 0, 490, 600), s.placed(3).?);
+    // A click's glide (no resize) still holds sizes, as T2102 has it.
+    var click = plan(&before, &after, null, glide_ms, false);
+    _ = click.step(30);
+    try testing.expectEqual(@as(i32, 490), click.placed(1).?.width());
 }
 
-test "retarget: the slide heads for the hand's layout" {
+test "retarget: the glide eases toward the hand's latest layout, from where it is drawn" {
     const before = [_]Placed{
         .{ .id = 1, .rect = r(0, 0, 490, 600), .tucked = false },
         .{ .id = 2, .rect = r(500, 0, 490, 600), .tucked = false },
@@ -488,15 +589,64 @@ test "retarget: the slide heads for the hand's layout" {
         .{ .id = 1, .rect = r(0, 0, 980, 600), .tucked = false },
         .{ .id = 2, .rect = r(980, 0, 490, 600), .tucked = true },
     };
-    var s = plan(&before, &after, null, 0, gesture_duration_ms, true);
-    // The drag moves on: P's slot is a little wider now.
+    var s = plan(&before, &after, null, glide_ms, true);
+    _ = s.step(30);
+    const drawn = s.placed(1).?;
+    // The drag moves on: P's slot is a little wider now. Nothing jumps: the
+    // card is still where it was drawn, and heads for the new target.
     const moved = [_]Placed{
         .{ .id = 1, .rect = r(0, 0, 990, 600), .tucked = false },
         .{ .id = 2, .rect = r(990, 0, 490, 600), .tucked = true },
     };
-    s.retarget(&moved);
-    try testing.expectEqual(r(0, 0, 990, 600), s.rectAt(1, gesture_duration_ms).?);
-    try testing.expectEqual(r(990, 0, 490, 600), s.rectAt(2, gesture_duration_ms).?);
-    // A retarget never adds a card the slide does not carry.
+    try testing.expect(s.retarget(&moved));
+    try testing.expectEqual(drawn, s.placed(1).?);
+    _ = runOut(&s);
+    try testing.expectEqual(r(0, 0, 990, 600), s.placed(1).?);
+    try testing.expectEqual(r(990, 0, 490, 600), s.placed(2).?);
+    // A retarget never adds a card the slide does not carry, and one that
+    // moves nothing says so.
     try testing.expectEqual(@as(usize, 2), s.len);
+    try testing.expect(!s.retarget(&moved));
+}
+
+test "settled: a glide that has caught up rests, and a moved target wakes it" {
+    const before = [_]Placed{.{ .id = 1, .rect = r(0, 0, 490, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(0, 0, 900, 600), .tucked = true }};
+    var s = plan(&before, &after, null, glide_ms, true);
+    _ = runOut(&s);
+    try testing.expect(s.settled());
+    // Resting: further frames move nothing, and the card that went behind
+    // the run is its strip - not sliding, so the window hides it.
+    try testing.expect(s.step(16));
+    try testing.expectEqual(r(0, 0, 900, 600), s.placed(1).?);
+    try testing.expectEqual(@as(?PxRect, null), s.rect(1));
+    // The hand moves the layout: no longer settled, and it follows.
+    const moved = [_]Placed{.{ .id = 1, .rect = r(0, 0, 950, 600), .tucked = true }};
+    _ = s.retarget(&moved);
+    try testing.expect(!s.settled());
+    try testing.expect(!s.step(16));
+    const w = s.placed(1).?.width();
+    try testing.expect(w > 900 and w < 950);
+}
+
+test "stretchedGlideMs: a stretched slide is a slower glide, and 0 is none" {
+    try testing.expectApproxEqAbs(glide_ms, stretchedGlideMs(380), 1e-9);
+    try testing.expect(stretchedGlideMs(2000) > 5 * glide_ms);
+    try testing.expectEqual(@as(f64, 0), stretchedGlideMs(0));
+    // Stretched to 2 s, a 400 px glide is still in motion half a second in.
+    const before = [_]Placed{.{ .id = 1, .rect = r(400, 0, 400, 600), .tucked = true }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false }};
+    var s = plan(&before, &after, null, stretchedGlideMs(2000), false);
+    var t: f64 = 0;
+    while (t < 500) : (t += 16) _ = s.step(16);
+    try testing.expect(!s.settled());
+    try testing.expect(s.placed(1).?.left > 0);
+}
+
+test "a zero time constant is no glide: the first frame lands" {
+    const before = [_]Placed{.{ .id = 1, .rect = r(1000, 0, 400, 600), .tucked = true }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false }};
+    var s = plan(&before, &after, null, 0, false);
+    try testing.expect(s.step(16));
+    try testing.expectEqual(r(0, 0, 400, 600), s.placed(1).?);
 }
