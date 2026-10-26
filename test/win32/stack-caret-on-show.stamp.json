@@ -1,16 +1,16 @@
 {
     "guard":  "stack-caret-on-show",
     "script":  "test/win32/stack-caret-on-show.ps1",
-    "generated":  "2026-10-26T03:07:47-07:00",
-    "commit":  "9a27febae",
+    "generated":  "2026-10-26T04:03:04-07:00",
+    "commit":  "29ef0f725",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "dca43c061cabac5b1d997affb534150f4c6988edae83ac0b33b6296c30e4490b",
+                  "src/apprt/win32/App.zig":  "347cb54ae7dad4c4454500a14681ecc66f2ecbc6585f8ae11afbc15a21e4fed3",
                   "src/apprt/win32/pane_stack_state.zig":  "c15d1ccdc76fbfe92e93fb3602b93ddb062b4320a7748105d9896d2ef4404454",
                   "src/apprt/win32/ViewerPane.zig":  "de8a0fd92ce6651ae3febb6e6f1c050bf187c453e676e298698835468d373aba",
-                  "src/apprt/win32/Window.zig":  "76fbae1356abd7e4b2121929d3add398961e017689cd60749588007faf0171dc",
+                  "src/apprt/win32/Window.zig":  "378da0450ba037e704855b4573b901e9cc7f24583c359518ffca94e76750420f",
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541"
               }
 }
