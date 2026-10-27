@@ -319,7 +319,7 @@ struct PaneSidebarSyncWindowTests {
         #expect(PaneSidebarSharedState.shared.foldedProjects == ["beta"], "the folds are back")
         #expect(windows.map { $0.window?.frame } == frames, "no window moved")
         // Persisted: the shared order is what a relaunch reads.
-        let stored = UserDefaults.standard.stringArray(forKey: PaneSidebarSharedState.windowOrderKey) ?? []
+        let stored = PaneSidebarSharedState.shared.defaults.stringArray(forKey: PaneSidebarSharedState.windowOrderKey) ?? []
         #expect(stored.filter { $0.hasPrefix("project:") } == ["project:gamma", "project:alpha", "project:beta"])
         await close(windows, restoring: saved)
     }

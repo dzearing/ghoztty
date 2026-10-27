@@ -17,9 +17,13 @@ import SwiftUI
 ///   scroll position (`PaneSidebarScrollSync`).
 @MainActor
 final class PaneSidebarSharedState: ObservableObject {
-    static let shared = PaneSidebarSharedState(defaults: .standard)
+    /// A test host keeps its own throwaway store: window tests hide and
+    /// resize sidebars, and that must never reach the user's real debug app.
+    static let shared = PaneSidebarSharedState(defaults: AppDelegate.isTestHost
+        ? UserDefaults(suiteName: "PaneSidebarTestHost-\(UUID().uuidString)")!
+        : .standard)
 
-    private let defaults: UserDefaults
+    let defaults: UserDefaults
 
     /// The full list (true) or the icon-only rail (false).
     @Published var isExpanded: Bool {
