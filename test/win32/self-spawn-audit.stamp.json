@@ -1,11 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-27T00:47:55-07:00",
-    "commit":  "e196e1e95",
+    "generated":  "2026-10-27T01:22:39-07:00",
+    "commit":  "7e6f481a7",
     "uncommitted":  [
-                        "src/apprt/win32/pane_stack_slide.zig",
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -249,7 +248,7 @@
                   "src/apprt/win32/pane_id.zig":  "52eb9e09bad8aff68127e9026db67d8cd4277a3c53ec6923958f46a1d1a55165",
                   "src/apprt/win32/pane_refcount.zig":  "ea4cb30787d3ff3582bf7a6615bc1c75688c51c25d0c2319ffb34cef6c28c1ea",
                   "src/apprt/win32/pane_relocate.zig":  "142dafc0a932792f9f994d3f6bb2563040fefba8c9e0fac3dddfb9d291f00045",
-                  "src/apprt/win32/pane_sidebar.zig":  "b47bdcfd20026aed487df169784b34fb305dff2cbb2b143f7639c861c680d4f8",
+                  "src/apprt/win32/pane_sidebar.zig":  "e91d803b25f1c2e2c0b7d4d223b5d245cd43a5e289d492c066a0bf2c09e68e3f",
                   "src/apprt/win32/pane_sidebar_menu.zig":  "83d3f0de8028dcee0dc83d43c8bdedeab5c2745efe5cb1e3e2cf9806d73fb0b4",
                   "src/apprt/win32/pane_sidebar_motion.zig":  "c9e2a85c1029183d5de79b8ef3822b7e80e1a5d5aad7f8b979548869c23d6e50",
                   "src/apprt/win32/pane_sidebar_order.zig":  "6afbbebacc04913a15aad696d4502a5535d73cf13ad0018a77eea6b72fd4efe6",
