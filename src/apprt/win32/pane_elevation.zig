@@ -117,6 +117,10 @@ pub const Card = struct {
     /// faded - on an unfocused pane among several. Read only when the style
     /// is glass.
     sheet: Sheet = .{},
+    /// How much of its shadow the card casts, 0..1 (T2307): a card gliding
+    /// into or out of its strip trades it for the strip's blade shadow
+    /// (`blade_shadow`) by how far into the strip it is.
+    shadow: f32 = 1,
 
     /// The card's colour on row `y`, or null for the style's (glass-able)
     /// terminal fill.
@@ -699,6 +703,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
     paintGlows(buf, wi, hi, cards, style, scratch);
 
     for (cards) |c| {
+        if (c.shadow <= 0) continue;
         const f = Frame.of(c, radius);
         const y0: i32 = @max(c.top - reach, 0);
         const y1: i32 = @min(c.bottom + reach, hi);
@@ -748,7 +753,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                         (if (t) |tab| tab.a[l][k] else shadowAlpha(f.edge(qx), s))
                     else
                         row_a[l];
-                    p = blend(p, black, a * outside);
+                    p = blend(p, black, a * outside * c.shadow);
                 }
                 buf[i] = p;
             }
@@ -959,6 +964,32 @@ test "T1831: paintCards - fill inside, desk outside, shadow below, rim on the ed
     const sh_far = buf[76 * w + 60] >> 24;
     try testing.expect(sh_near > 0 and sh_near < 0xFF);
     try testing.expect(sh_far > 0 and sh_far <= sh_near);
+}
+
+test "T2307: a card's shadow strength scales its shadow, and 0 casts none" {
+    const w = 120;
+    const h = 100;
+    const desk = packRgb(40, 60, 90);
+    const bg: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    const style: CardStyle = .{ .fill = bg, .is_light = false, .scale = 1.0 };
+    var full: [w * h]u32 = undefined;
+    var half: [w * h]u32 = undefined;
+    var none: [w * h]u32 = undefined;
+    for ([_]*[w * h]u32{ &full, &half, &none }, [_]f32{ 1, 0.5, 0 }) |buf, k| {
+        @memset(buf, desk);
+        paintCards(buf, w, h, &.{.{ .left = 20, .top = 20, .right = 100, .bottom = 70, .shadow = k }}, style);
+    }
+    const below = 76 * w + 60;
+    try testing.expectEqual(desk, none[below]);
+    try testing.expect(unpack(full[below]).b < unpack(half[below]).b);
+    try testing.expect(unpack(half[below]).b < 90);
+    // The card itself is the same however much shadow it casts.
+    try testing.expectEqual(full[45 * w + 60], none[45 * w + 60]);
+    // And the fast path still matches the reference rasteriser.
+    var ref: [w * h]u32 = undefined;
+    @memset(&ref, desk);
+    refPaintCards(&ref, w, h, &.{.{ .left = 20, .top = 20, .right = 100, .bottom = 70, .shadow = 0.5 }}, style);
+    try testing.expectEqualSlices(u32, &ref, &half);
 }
 
 test "T1851: a head band takes the card's curve in its own colour, and the rest keeps the fill" {
@@ -1446,7 +1477,7 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
                 var p = buf[i];
                 for (layers) |s| {
                     const d = roundRectDistance(fx, fy - s.dy, c, radius);
-                    p = blend(p, black, shadowAlpha(d, s) * outside);
+                    p = blend(p, black, shadowAlpha(d, s) * outside * c.shadow);
                 }
                 buf[i] = p;
             }

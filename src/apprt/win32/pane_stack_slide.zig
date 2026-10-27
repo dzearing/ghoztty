@@ -263,11 +263,13 @@ pub const Slide = struct {
     /// for the strip's face over it), and its stack's axis; null when it is
     /// not such a card, or has caught up - a card at its strip IS the strip,
     /// which the window paints, and one out of it is a card like any other.
-    pub fn stripFace(self: *const Slide, id: Id) ?struct { card: PxRect, axis: Direction } {
+    pub fn stripFace(self: *const Slide, id: Id) ?struct { card: PxRect, axis: Direction, leads: bool } {
         const c = self.find(id) orelse return null;
         const s = c.strip orelse return null;
         if (c.drawn.eql(c.to)) return null;
-        return .{ .card = cardOf(c, self.resize), .axis = s.axis };
+        // The pane is pinned away from a strip on its leading side
+        // (`Anchor.of`), so the anchor says which side the strip is on.
+        return .{ .card = cardOf(c, self.resize), .axis = s.axis, .leads = s.anchor != .top_left };
     }
 
     /// Where card `id`'s pane is drawn, caught up or not; null when this glide

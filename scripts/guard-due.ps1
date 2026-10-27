@@ -625,6 +625,20 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # Each strip casts a blade shadow on the next one out, leaning away from
+    # the run (T2307, Mac 5a9a2e2a4/afc64dc53). The parameters, the pixels and
+    # the mid-glide fade are unit-tested in blade_shadow.zig; this proves the
+    # desk lays it in paint order on a real stack.
+    [pscustomobject]@{
+        Name   = 'blade-shadow'
+        Script = 'test\win32\blade-shadow.ps1'
+        Stamp  = 'test\win32\blade-shadow.stamp.json'
+        Covers = @(
+            'test\win32\blade-shadow.ps1',
+            'src\apprt\win32\blade_shadow.zig',
+            'src\apprt\win32\PaneDesk.zig'
+        )
+    },
     # Every focus path brings a tucked pane on show (T2110): a
     # ghoztty://focus link (the IPC focus), goto_split, a sidebar row - all
     # through `Window.showFocusedPane`.

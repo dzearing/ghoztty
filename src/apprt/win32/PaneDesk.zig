@@ -38,6 +38,7 @@ const desk_palette = @import("desk_palette.zig");
 const busy_light = @import("busy_light.zig");
 const color_math = @import("color_math.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
+const blade_shadow = @import("blade_shadow.zig");
 const gutter_bar = @import("gutter_bar.zig");
 
 const log = std.log.scoped(.pane_desk);
@@ -200,7 +201,9 @@ pub fn paint(
     h: i32,
     cards: []const pane_elevation.Card,
     /// The strips of the panes tucked into a stack (T2121), bottom first:
-    /// laid on the desk with their leading corners rounded like a card's.
+    /// laid on the desk with their leading corners rounded like a card's,
+    /// each after its blade shadow (T2307) - and a card gliding into or out
+    /// of its strip as its shadow alone, at its place in that order.
     strips: []const pane_stack_strip.Band,
     style: pane_elevation.CardStyle,
     variant: ?desk_palette.Variant,
@@ -220,6 +223,10 @@ pub fn paint(
     pane_elevation.paintCards(comp.pixels(), @intCast(w), @intCast(h), cards, style);
     const radius = pane_elevation.radiusPx(style.scale);
     for (strips) |s| {
+        // Each blade's shadow lands on the blade behind it, which is already
+        // down (T2307): leaning away from the run, stopping at its sides.
+        blade_shadow.paint(comp.pixels(), @intCast(w), @intCast(h), s.tab, s.axis, s.leads, s.collapse, style.is_light, style.scale, radius);
+        if (!s.band) continue;
         // On glass the band sits over the tucked card's sheet, so the desk
         // under it tints it (T2160).
         if (s.glass) |g|

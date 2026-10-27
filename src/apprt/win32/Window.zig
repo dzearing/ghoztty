@@ -8772,6 +8772,9 @@ fn paintStackStrips(self: *Window, hdc: w32.HDC) void {
     defer _ = w32.SetBkMode(hdc, old_mode);
 
     for (strips[0..n]) |s| {
+        // A card on its way to or from its strip has no band or name yet:
+        // its face carries the name (T2288).
+        if (s.glide != null) continue;
         const hovered = if (self.strip_hover) |h| h == s.view else false;
         if (!elevated) {
             var band: w32.RECT = .{ .left = s.tab.left, .top = s.tab.top, .right = s.tab.right, .bottom = s.tab.bottom };
@@ -8791,10 +8794,31 @@ const TuckedStrip = struct {
     /// The part of `tab` that shows, where its name is centred: less what
     /// reaches under the strip in front of it (T2283, Mac afc64dc53).
     label: pane_stack_strip.Rect,
+    /// Whether it lies before its stack's run: its shadow leans the other way.
+    leads: bool,
+    /// Set for a card still gliding into or out of its strip (T2307): `tab`
+    /// is the card as drawn and this how far into the strip it is. It casts
+    /// the blade shadow at that strength and is no band yet.
+    glide: ?f32 = null,
 };
 
+/// How far into its strip card `id` is while it glides in or out (T2307;
+/// `strip_face.collapseOf` of the card as drawn), with the card; null when
+/// it is not gliding to or from a strip.
+fn stripGlide(self: *Window, id: pane_stack_grid.Id) ?struct { card: pane_stack_grid.PxRect, axis: pane_stack_layout.Direction, leads: bool, collapse: f32 } {
+    const slide = if (self.stack_slide) |*s| s else return null;
+    const face = slide.stripFace(id) orelse return null;
+    return .{
+        .card = face.card,
+        .axis = face.axis,
+        .leads = face.leads,
+        .collapse = @floatCast(strip_face.collapseOf(face.card, self.scale)),
+    };
+}
+
 /// Every tucked pane's strip in the active tab, bottom first in the engine's
-/// paint order (T2109). None in a hero tab or a zoomed one.
+/// paint order (T2109), with the cards gliding into or out of one at their
+/// place in it (T2307). None in a hero tab or a zoomed one.
 fn tuckedStrips(self: *Window, out: []TuckedStrip) usize {
     if (self.tab_count == 0) return 0;
     if (self.tab_hero_active[self.active_tab]) return 0;
@@ -8810,10 +8834,12 @@ fn tuckedStrips(self: *Window, out: []TuckedStrip) usize {
         if (pane_stash.isStashed(entry.view)) continue;
         const id = pane_stack_grid.viewId(entry.view);
         const p = grid.placement(id) orelse continue;
-        if (p.tab == null) continue;
-        // Still narrowing into its strip (T2287): it is a card until the
-        // glide reaches the strip, and the band appears then.
-        if (self.stackSlideRect(id) != null) continue;
+        // Still narrowing into its strip, or widening out of it (T2287): it
+        // is a card until the glide reaches the strip, and the band appears
+        // then - but its shadow is already on its way to a blade's (T2307).
+        if (self.stackSlideRect(id) != null) {
+            if (self.stripGlide(id) == null) continue;
+        } else if (p.tab == null) continue;
         ids[n] = id;
         n += 1;
     }
@@ -8822,14 +8848,23 @@ fn tuckedStrips(self: *Window, out: []TuckedStrip) usize {
     var m: usize = 0;
     for (ids[0..n]) |id| {
         const p = grid.placement(id) orelse continue;
+        if (self.stackSlideRect(id) != null) {
+            const g = self.stripGlide(id) orelse continue;
+            const tab: pane_stack_strip.Rect = .{ .left = g.card.left, .top = g.card.top, .right = g.card.right, .bottom = g.card.bottom };
+            out[m] = .{ .view = @ptrFromInt(id), .tab = tab, .axis = g.axis, .label = tab, .leads = g.leads, .glide = g.collapse };
+            m += 1;
+            continue;
+        }
         const t = p.tab orelse continue;
         const tab: pane_stack_strip.Rect = .{ .left = t.left, .top = t.top, .right = t.right, .bottom = t.bottom };
         const axis = p.tab_axis orelse .horizontal;
+        const leads = p.strip_leads orelse true;
         out[m] = .{
             .view = @ptrFromInt(id),
             .tab = tab,
             .axis = axis,
-            .label = pane_stack_strip.visiblePart(tab, axis, p.strip_leads orelse true, p.strip_tuck),
+            .label = pane_stack_strip.visiblePart(tab, axis, leads, p.strip_tuck),
+            .leads = leads,
         };
         m += 1;
     }
@@ -9092,7 +9127,16 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             // A glass card's strip is laid over its sheet (T2160) - every
             // pane's is the same since T2281.
             .glass = if (glass) .{ .bg = strip_bg, .sheet = .{}, .hovered = hovered } else null,
+            .leads = s.leads,
+            .collapse = s.glide orelse 1,
+            .band = s.glide == null,
         };
+    }
+    // A card gliding into or out of its strip trades its own shadow for the
+    // blade's (T2307; Mac mixes one into the other by the collapse).
+    for (slots[0..n], 0..) |slot, i| {
+        const g = self.stripGlide(pane_stack_grid.viewId(slot.view)) orelse continue;
+        cards[i].shadow = 1 - g.collapse;
     }
     // The hovered or dragged gutter's accent bar (T2253).
     const bar: ?PaneDesk.Bar = blk: {

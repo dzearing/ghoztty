@@ -139,6 +139,15 @@ pub const Band = struct {
     /// Set on a glass pane (T2160): the band is resolved per pixel over the
     /// sheet on the desk under it, and `rgb` is only the label's reference.
     glass: ?Glass = null,
+    /// Whether the strip lies before its stack's run (`Leaf.strip_leads`):
+    /// its blade shadow leans the other way, away from the run (T2307).
+    leads: bool = true,
+    /// How far into its strip the card is (T2307): 1 for a strip at rest,
+    /// less for a card still gliding in or out, whose shadow is faded by it.
+    collapse: f32 = 1,
+    /// False for a card still gliding (T2287): it is a card until the glide
+    /// reaches the strip, so only its shadow is laid here, in paint order.
+    band: bool = true,
 };
 
 /// Paint a strip's band into a desk composite (`PaneDesk`; 0x00RRGGBB with
