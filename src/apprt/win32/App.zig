@@ -639,6 +639,12 @@ update_download_inflight: bool = false,
 /// that interrupts nobody".
 update_prompt_open: bool = false,
 
+/// True once an attempt to install the current offer failed to start in this
+/// session (T2322), clicked or automatic. The menu row says so: for an
+/// automatic attempt it is the only trace on screen, and for a clicked one it
+/// outlives the dialog. Not persisted - the next launch is a fresh try.
+update_last_install_failed: bool = false,
+
 /// The last automatic-install verdict logged (T1934), so a tick that reaches
 /// the same conclusion as the one before it stays out of the log.
 update_auto_apply_last: ?update_auto_apply.Reason = null,
@@ -10249,6 +10255,8 @@ pub const PendingUpdate = struct {
     version: []const u8,
     staged: bool,
     urgency: update_badge.Urgency,
+    /// An install of this offer already failed this session (T2322).
+    failed: bool = false,
 };
 
 pub fn pendingUpdate(self: *const App) ?PendingUpdate {
@@ -10257,6 +10265,7 @@ pub fn pendingUpdate(self: *const App) ?PendingUpdate {
     return .{
         .version = version,
         .staged = self.update_staged_msi != null,
+        .failed = self.update_last_install_failed,
         .urgency = update_badge.urgencyFor(
             self.update_first_offered_ms,
             std.time.milliTimestamp(),
@@ -10982,17 +10991,56 @@ pub fn offerUpdate(self: *App) bool {
 /// the app does not quit, so the user keeps the terminal they have.
 fn applyStagedUpdate(self: *App) void {
     const msi = self.update_staged_msi orelse return;
-    if (!update_install.arm(self.core_app.alloc, msi)) {
-        self.showUpdateBalloon(
-            "Ghoztty",
-            "The update could not be started.\nClick to open the releases page.",
-        );
+    update_install.arm(self.core_app.alloc, msi) catch |err| {
+        self.reportInstallNotStarted(err);
         return;
-    }
+    };
     log.warn("update: applier armed, quitting to install", .{});
     recordUpdateClose(self.core_app.alloc, .updater);
     self.quit_requested = true;
     w32.PostQuitMessage(0);
+}
+
+/// Flag the offer's row as "last try failed" (T2322) and repaint the chrome
+/// that carries it.
+fn markInstallFailed(self: *App) void {
+    self.update_last_install_failed = true;
+    self.refreshUpdateAffordance();
+    log.warn("update: the install row now says the last try failed", .{});
+}
+
+/// A clicked "Install and Restart" whose applier could not be armed (T2322).
+///
+/// Said in Ghoztty's own dialog, owned by the window the click came from - the
+/// Windows translation of Sparkle's in-app alert. It used to be a tray balloon,
+/// which Do Not Disturb or the notification settings swallow whole, so the
+/// 2026-10-26 report was a click that visibly did nothing. The terminal never
+/// closed, so the dialog's first sentence says that.
+fn reportInstallNotStarted(self: *App, err: anyerror) void {
+    self.markInstallFailed();
+
+    const alloc = self.core_app.alloc;
+    var text_buf: [update_apply.max_failure_message]u8 = undefined;
+    const text = update_apply.describeArmFailure(&text_buf, @errorName(err));
+    const text_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, text) catch return;
+    defer alloc.free(text_w);
+
+    const owner: ?*Window = if (self.windows.items.len > 0) self.windows.items[0] else null;
+    log.warn("update: install could not start ({t}); telling the user in a dialog", .{err});
+    const result = ConfirmDialog.show(
+        self,
+        if (owner) |win| win.hwnd else null,
+        if (owner) |win| win.scale else 1.0,
+        if (owner) |win| (if (win.getActiveSurface()) |sf| sf.hwnd else null) else null,
+        .{
+            .title = std.unicode.utf8ToUtf16LeStringLiteral(update_apply.arm_failure_title),
+            .text = text_w,
+            .icon = .warning,
+            .ok_label = std.unicode.utf8ToUtf16LeStringLiteral("Open Releases Page"),
+            .cancel_label = std.unicode.utf8ToUtf16LeStringLiteral("Close"),
+        },
+    );
+    if (result == .ok) self.openUpdateReleasePage();
 }
 
 /// Install the staged update without a click when this is a moment that
@@ -11062,10 +11110,13 @@ fn maybeAutoApplyUpdate(self: *App, moment: update_auto_apply.Moment) bool {
     log.warn("update: installing win-v{s} automatically ({t}; moment={t} idle={d}ms persistence={})", .{
         version.?, verdict.reason, moment, idle, self.config.@"session-persistence",
     });
-    if (!update_install.arm(alloc, msi.?)) {
-        log.err("update: automatic install of win-v{s} could not be started; the offer stays up", .{version.?});
+    update_install.arm(alloc, msi.?) catch |err| {
+        // No dialog: nobody asked for this install, and the attempt record
+        // above already holds the next one off. The menu row is where it shows.
+        log.err("update: automatic install of win-v{s} could not be started ({t}); the offer stays up", .{ version.?, err });
+        self.markInstallFailed();
         return false;
-    }
+    };
     log.warn("update: applier armed, quitting to install", .{});
     recordUpdateClose(alloc, .updater);
     if (moment == .tick) {

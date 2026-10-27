@@ -198,13 +198,25 @@ pub const label_cap: usize = 64;
 /// and one that still has to be fetched is a download they will wait through.
 /// The balloon already makes exactly this distinction (`showUpdateNotification`),
 /// so the row and the balloon cannot say different things about the same offer.
-pub fn menuLabel(buf: []u8, version: []const u8, staged: bool) []const u8 {
+///
+/// `failed` (T2322): an attempt to install this offer already failed in this
+/// session. The row stays - the offer is still real and trying again is the
+/// remedy - but it says so, which is the one trace an AUTOMATIC attempt that
+/// failed leaves, since that path raises nothing on screen.
+pub fn menuLabel(buf: []u8, version: []const u8, staged: bool, failed: bool) []const u8 {
     const verb = if (staged) "Install" else "Download";
-    return std.fmt.bufPrint(buf, "{s} Update {s}", .{ verb, version }) catch
+    const tail = if (failed) failed_suffix else "";
+    return std.fmt.bufPrint(buf, "{s} Update {s}{s}", .{ verb, version, tail }) catch
         // A version long enough to overflow 64 bytes is not a version; say the
         // true thing that always fits rather than showing nothing.
-        if (staged) "Install Update" else "Download Update";
+        if (failed)
+            (if (staged) "Install Update" ++ failed_suffix else "Download Update" ++ failed_suffix)
+        else if (staged) "Install Update" else "Download Update";
 }
+
+/// What a failed attempt adds to the row (T2322). A constant so the
+/// acceptance script asserts on the same words.
+pub const failed_suffix = " (last try failed)";
 
 // =============================================================================
 // The durable record
@@ -422,15 +434,26 @@ test "Metrics: never degenerate, and monotonic in scale" {
 
 test "menuLabel: the verb says whether a download is still coming" {
     var buf: [label_cap]u8 = undefined;
-    try testing.expectEqualStrings("Install Update 1.36.30", menuLabel(&buf, "1.36.30", true));
-    try testing.expectEqualStrings("Download Update 1.36.30", menuLabel(&buf, "1.36.30", false));
+    try testing.expectEqualStrings("Install Update 1.36.30", menuLabel(&buf, "1.36.30", true, false));
+    try testing.expectEqualStrings("Download Update 1.36.30", menuLabel(&buf, "1.36.30", false, false));
+}
+
+test "menuLabel: a failed attempt is named on the row and still fits (T2322)" {
+    var buf: [label_cap]u8 = undefined;
+    try testing.expectEqualStrings("Install Update 1.36.30 (last try failed)", menuLabel(&buf, "1.36.30", true, true));
+    // A long-but-real version with a commit stamp still fits the cap.
+    const l = menuLabel(&buf, "1.36.30+0123456789ab", true, true);
+    try testing.expect(std.mem.endsWith(u8, l, failed_suffix));
+    try testing.expect(l.len <= label_cap);
+    const long = "1." ++ ("9" ** 200) ++ ".0";
+    try testing.expectEqualStrings("Install Update (last try failed)", menuLabel(&buf, long, true, true));
 }
 
 test "menuLabel: an absurd version degrades to the true short sentence" {
     var buf: [label_cap]u8 = undefined;
     const long = "1." ++ ("9" ** 200) ++ ".0";
-    try testing.expectEqualStrings("Install Update", menuLabel(&buf, long, true));
-    try testing.expectEqualStrings("Download Update", menuLabel(&buf, long, false));
+    try testing.expectEqualStrings("Install Update", menuLabel(&buf, long, true, false));
+    try testing.expectEqualStrings("Download Update", menuLabel(&buf, long, false, false));
 }
 
 test "record: round-trips, with and without a staged package" {

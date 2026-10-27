@@ -14030,7 +14030,7 @@ pub fn openMenuBarAt(self: *Window, anchor: MenuAnchor) void {
     if (self.app.pendingUpdate()) |pending| blk: {
         var utf8: [update_badge.label_cap]u8 = undefined;
         var wide: [update_badge.label_cap + 1]u16 = undefined;
-        const text = update_badge.menuLabel(&utf8, pending.version, pending.staged);
+        const text = update_badge.menuLabel(&utf8, pending.version, pending.staged, pending.failed);
         const n = std.unicode.utf8ToUtf16Le(wide[0 .. wide.len - 1], text) catch break :blk;
         wide[n] = 0;
         _ = w32.AppendMenuW(

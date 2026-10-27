@@ -2483,6 +2483,19 @@ $GuardTable = @(
         )
     },
     [pscustomobject]@{
+        Name   = 'update-arm-failure'
+        Script = 'test\win32\update-arm-failure.ps1'
+        Stamp  = 'test\win32\update-arm-failure.stamp.json'
+        Covers = @(
+            'src\apprt\win32\update_install.zig',
+            'src\apprt\win32\update_apply.zig',
+            'src\apprt\win32\update_badge.zig',
+            'src\apprt\win32\ConfirmDialog.zig',
+            'test\win32\update-arm-failure.ps1',
+            'test\win32\lib\ApplierSandbox.ps1'
+        )
+    },
+    [pscustomobject]@{
         Name   = 'website-windows-links'
         Script = 'test\win32\website-windows-download.ps1'
         Stamp  = 'test\win32\website-windows-links.stamp.json'

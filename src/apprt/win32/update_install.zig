@@ -358,20 +358,41 @@ pub fn sweep(alloc: Allocator, keep: ?[]const u8) void {
 /// unlike the relaunch guard (whose absence only removes a safety net), an
 /// applier that never runs while the app quits anyway would close the user's
 /// terminal and install nothing.
-pub fn arm(alloc: Allocator, msi_path: []const u8) bool {
-    if (comptime builtin.os.tag != .windows) return false;
-    return armImpl(alloc, msi_path) catch |err| {
+///
+/// The error comes back to the caller (T2322) because the user is owed the
+/// reason: a click on "Install and Restart" that only reached the log looked
+/// like a click that did nothing at all.
+pub fn arm(alloc: Allocator, msi_path: []const u8) anyerror!void {
+    if (comptime builtin.os.tag != .windows) return error.Unsupported;
+    armImpl(alloc, msi_path) catch |err| {
         log.err("update apply: NOT armed err={} (nothing installed, app stays up)", .{err});
-        return false;
+        return err;
     };
 }
 
-fn armImpl(alloc: Allocator, msi_path: []const u8) !bool {
+/// DEBUG-ONLY seam (T2322): make `arm` fail with the error the 2026-10-26
+/// report hit (`AccessDenied`, an applier image a leftover held), so the
+/// acceptance script can drive the shipping failure report from a real click.
+/// Same shape as `GHOZTTY_UPDATE_MSI_CODE`; compiled out of every release.
+const arm_fail_seam_var = "GHOZTTY_UPDATE_ARM_FAIL";
+
+fn forcedArmFailure(arena: Allocator) bool {
+    if (comptime builtin.mode != .Debug) return false;
+    const raw = std.process.getEnvVarOwned(arena, arm_fail_seam_var) catch return false;
+    return std.mem.eql(u8, std.mem.trim(u8, raw, " \t\r\n"), "1");
+}
+
+fn armImpl(alloc: Allocator, msi_path: []const u8) !void {
     const windows = std.os.windows;
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+
+    if (forcedArmFailure(arena)) {
+        log.warn("update apply: {s}=1; failing the arm", .{arm_fail_seam_var});
+        return error.AccessDenied;
+    }
 
     // The exe to relaunch is resolved NOW: after the upgrade there is no app
     // left to ask, and `productExePathAlloc` is the same resolution the
@@ -419,7 +440,6 @@ fn armImpl(alloc: Allocator, msi_path: []const u8) !bool {
         "update apply: ARMED (applier pid {d} waiting on app pid {d}; package {s}; escape={s})",
         .{ applier_pid, pid, msi_path, spawned.tier.name() },
     );
-    return true;
 }
 
 /// Copy `exe` to the applier path and return it. A fresh copy every time: an

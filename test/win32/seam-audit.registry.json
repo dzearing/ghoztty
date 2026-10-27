@@ -434,6 +434,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the shipped manual-check delay."
         },
+        "GHOZTTY_UPDATE_ARM_FAIL": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the applier is armed for real; =1 fails the arm with AccessDenied before anything is spawned. T2322."
+        },
         "GHOZTTY_UPDATE_MSI_CODE": {
             "class": "fault",
             "unset": "shipped-elsewhere",

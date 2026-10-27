@@ -368,11 +368,66 @@ pub fn describeAppStillRunning(buf: []u8) []const u8 {
     ) catch buf[0..0];
 }
 
+/// The dialog title for an update that could not even START (T2322): the
+/// applier was never armed, so nothing closed and nothing was installed. A
+/// different sentence from `failure_title` because the user's terminal never
+/// went anywhere, and the acceptance script tells the two apart by it.
+pub const arm_failure_title = "Ghoztty could not start the update";
+
+/// Why arming failed, in words. The error names are the ones `arm` can
+/// actually return on this path; anything else gets the honest generic.
+pub fn armFailureCause(err_name: []const u8) []const u8 {
+    if (std.mem.eql(u8, err_name, "AccessDenied"))
+        return "Windows would not let Ghoztty prepare the installer - usually because " ++
+            "an earlier update is still finishing in the background.";
+    if (std.mem.eql(u8, err_name, "FileNotFound"))
+        return "The downloaded update could not be found on disk.";
+    if (std.mem.eql(u8, err_name, "NoSpaceLeft"))
+        return "There is not enough free disk space to prepare the installer.";
+    return "Ghoztty could not prepare the installer.";
+}
+
+/// The whole dialog body for an update that could not be started (T2322).
+///
+/// Same order as `describeFailure`: first what the user still has (their
+/// terminal never closed), then the cause, then what to do, and the error name
+/// last - the one part a bug report is matched on.
+pub fn describeArmFailure(buf: []u8, err_name: []const u8) []const u8 {
+    return std.fmt.bufPrint(
+        buf,
+        "The update was not installed, and Ghoztty is still running the version " ++
+            "you already had.\n\n{s}\n\nTry again from Ghoztty's menu in a minute. " ++
+            "If it keeps failing, install the new version from the Ghoztty " ++
+            "releases page.\n\n(Error: {s})",
+        .{ armFailureCause(err_name), err_name },
+    ) catch buf[0..0];
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
 
 const testing = std.testing;
+
+test "describeArmFailure: says the terminal is untouched, the cause, the way forward and the error (T2322)" {
+    var buf: [max_failure_message]u8 = undefined;
+    const t = describeArmFailure(&buf, "AccessDenied");
+    try testing.expect(std.mem.indexOf(u8, t, "still running the version") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "earlier update is still finishing") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "Try again from Ghoztty's menu") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "releases page") != null);
+    try testing.expect(std.mem.endsWith(u8, t, "(Error: AccessDenied)"));
+
+    // An error this path has no words for still gets a cause and its name.
+    const g = describeArmFailure(&buf, "Unexpected");
+    try testing.expect(std.mem.indexOf(u8, g, "could not prepare the installer") != null);
+    try testing.expect(std.mem.endsWith(u8, g, "(Error: Unexpected)"));
+    try testing.expect(g.len < max_failure_message);
+}
+
+test "the two failure dialogs are told apart by their titles (T2322)" {
+    try testing.expect(!std.mem.eql(u8, arm_failure_title, failure_title));
+}
 
 /// A realistic compact releases-list body: a Mac release first (newest), then
 /// the Windows release with both its assets, then an older Windows release.
