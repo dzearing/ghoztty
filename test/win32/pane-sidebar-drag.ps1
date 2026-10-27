@@ -39,6 +39,15 @@
 #   G) a tile released over ANOTHER window stays in its own window's list:
 #      the pane is still this window's child, and that window is untouched
 #
+# T2304 (Mac e77422577 / 543489bca): a drop into the list or a non-empty tray
+# is shown by the rows SLIDING to open a gap there, not by a caret - so B and
+# D-G assert no preview window, and the app's `pane sidebar drag slide` line
+# names the gap (source and target in the list + header + tray sequence). The
+# dragged tile IS the tile: `pane sidebar row held top=` follows the pointer
+# up and down the rail, and a release logs the glide to where it landed
+# (`row settle from=` ... `row settled`). Mid-drag captures of the rail are
+# saved as evidence (t2304-*.png).
+#
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
 # -NegativeControl expects claim A's release NOT to stash and MUST fail.
@@ -166,6 +175,22 @@ function Get-LogLines([int]$Skip, [string]$Pattern) {
     return @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $Skip | Where-Object { $_ -match $Pattern })
 }
 function Get-LogCount { @(Get-Content $script:errlog -ErrorAction SilentlyContinue).Count }
+# The last held-row top the rail drew since line $Skip (T2304), or $null.
+function Get-HeldTop([int]$Skip) {
+    $line = Get-LogLines $Skip 'pane sidebar row held top=' | Select-Object -Last 1
+    if ($line -and $line -match 'held top=(-?\d+)') { return [int]$Matches[1] }
+    return $null
+}
+# Evidence, not an oracle: the rail as it is drawn right now.
+function Save-RailShot($sb, [string]$Name) {
+    try {
+        $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
+        $png = Join-Path $env:TEMP $Name
+        $shot.Bitmap.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+        Close-TestWindowPixels -Shot $shot
+        "  (the rail mid-drag: $png)"
+    } catch { "  (capture failed: $($_.Exception.Message))" }
+}
 # The sidebar's grid rows in LIST order, from its latest `pane sidebar rows`
 # log line (T2303): pane ids, top to bottom. The list is the sidebar's own
 # order, which the grid's layout cannot show.
@@ -293,7 +318,10 @@ try {
     Assert "B: press and travel on s1's tile delivered" (Start-TileDrag $top $sb $from)
     Assert "B: move below s2's tile delivered" (Move-Drag $top $below.X ($below.Y + (Px 20)) 'move')
     Start-Sleep -Milliseconds 300
-    Assert "B: the reorder is previewed" ($null -ne (Get-PreviewRect $app.Pid))
+    # Rail: P, then the tray s1, s2. s1 (tray 0) below s2: the tray index 2
+    # counts s1 itself, so of the sequence P | header | tray-without-s1 the
+    # gap opens at 3.
+    Assert "B: the tray opens a gap, no caret (log)" (@(Get-LogLines $logB 'pane sidebar drag slide source=2 target=3 list=1').Count -ge 1 -and $null -eq (Get-PreviewRect $app.Pid))
     Assert "B: release delivered" (Move-Drag $top $below.X ($below.Y + (Px 20)) 'up')
     Start-Sleep -Milliseconds 600
     $lineB = Get-LogLines $logB 'pane drop stashed index=' | Select-Object -Last 1
@@ -319,15 +347,17 @@ try {
     $pBox = (@(Get-VisiblePanes $top))[0]
     $cx = $pBox.Left + [int]($pBox.Width / 2); $cy = $pBox.Top + [int]($pBox.Height / 2)
     $from = Get-TileCenter $sb 1 1
+    $logD = Get-LogCount
     Assert "D: press and travel on a stashed tile delivered" (Start-TileDrag $top $sb $from)
     Assert "D: move onto P's center delivered" (Move-Drag $top $cx $cy 'move')
     Start-Sleep -Milliseconds 300
-    # A list drag (T2303): over the grid, the pointer is held to the rail.
-    Assert "D: the drag is previewed" ($null -ne (Get-PreviewRect $app.Pid))
+    # A list drag (T2303): over the grid, the pointer is held to the rail,
+    # so the rail's rows make room for it there (T2304).
+    Assert "D: the drag is live on the rail - the rows make room (log)" (@(Get-LogLines $logD 'pane sidebar drag slide source=2 ').Count -ge 1)
     $k = Send-TestKeys -Window $top -Target ([IntPtr]$hP) -Key Escape
     Start-Sleep -Milliseconds 400
     Assert "D: Escape delivered" $k
-    Assert "D: Escape took the preview away" ($null -eq (Get-PreviewRect $app.Pid))
+    Assert "D: Escape ended it - the held tile glides back (log)" (@(Get-LogLines $logD 'pane sidebar row settle from=').Count -ge 1)
     [void](Move-Drag $top $cx $cy 'up')
     Start-Sleep -Milliseconds 500
     Assert "D: nothing was restored - both still stashed" ((Test-StashedId 's1') -and (Test-StashedId 's2'))
@@ -349,15 +379,22 @@ try {
     Assert "E: press and travel on s2's tile delivered" (Start-TileDrag $top $sb $from)
     Assert "E: move over the grid, level with the list, delivered" (Move-Drag $top $ex $ey 'move')
     Start-Sleep -Milliseconds 300
-    $pv = Get-PreviewRect $app.Pid
-    if ($pv) { "  (preview $($pv.Left),$($pv.Top)-$($pv.Right),$($pv.Bottom); rail $($sb.Left)..$($sb.Left + $sb.Width))" }
-    Assert "E: the list place is previewed ON the rail, not over the grid" ($null -ne $pv -and $pv.Left -ge $sb.Left -and $pv.Right -le ($sb.Left + $sb.Width))
+    # s2 is tray row 0 under one list row (P): sequence index 2, landing at
+    # the list's 0 - P and the header slide down to open the gap.
+    Assert "E: the list opens a gap at 0 for the stashed tile, no caret (log)" (@(Get-LogLines $logE 'pane sidebar drag slide source=2 target=0 list=1').Count -ge 1 -and $null -eq (Get-PreviewRect $app.Pid))
+    # The tile itself follows the pointer up the rail (in rail coordinates).
+    $heldE = Get-HeldTop $logE
+    $s2TileTop = $from.Y - $sb.Top
+    "  (held top $heldE; s2's tile centre was $s2TileTop in the rail)"
+    Assert "E: s2's tile is held above where it was, by the pointer (log)" ($null -ne $heldE -and $heldE -lt ($s2TileTop - (Px 20)))
+    Save-RailShot $sb 't2304-held-from-tray.png'
     Assert "E: release delivered" (Move-Drag $top $ex $ey 'up')
     Start-Sleep -Milliseconds 700
     Assert "E: s2 is no longer stashed (+list)" (Wait-Stashed 's2' $false)
     Assert "E: the SAME handle is back on screen" (Test-VisibleChild $top $h2)
     Assert "E: two panes on screen, s1 still stashed" (@(Get-VisiblePanes $top).Count -eq 2 -and (Test-StashedId 's1'))
     Assert "E: the drop placed it in the list at 0, out of the tray (log)" (@(Get-LogLines $logE 'pane drop placed in list index=0 restored=true').Count -ge 1)
+    Assert "E: the tile glided to its new place and was let back into the list (log)" (@(Get-LogLines $logE 'pane sidebar row settle from=').Count -ge 1 -and @(Get-LogLines $logE 'pane sidebar row settled').Count -ge 1)
     $orderE = Get-ListOrder
     "  (list: $($orderE -join ', '))"
     Assert "E: the list reads s2, P" ($orderE.Count -eq 2 -and $orderE[0] -eq $id2 -and $orderE[1] -eq $idP)
@@ -375,8 +412,10 @@ try {
     Assert "F: press and travel on P's tile delivered" (Start-TileDrag $top $sb $from)
     Assert "F: move above s2's tile delivered" (Move-Drag $top $s2Tile.X $fy 'move')
     Start-Sleep -Milliseconds 300
-    $pv = Get-PreviewRect $app.Pid
-    Assert "F: the list place is previewed on the rail" ($null -ne $pv -and $pv.Left -ge $sb.Left -and $pv.Right -le ($sb.Left + $sb.Width))
+    Assert "F: the list opens a gap above s2 for P, no caret (log)" (@(Get-LogLines $logF 'pane sidebar drag slide source=1 target=0 list=2').Count -ge 1 -and $null -eq (Get-PreviewRect $app.Pid))
+    $heldF = Get-HeldTop $logF
+    Assert "F: P's tile is held up the rail, by the pointer (log)" ($null -ne $heldF -and $heldF -lt (($from.Y - $sb.Top) - (Px 20)))
+    Save-RailShot $sb 't2304-held-in-list.png'
     Assert "F: release delivered" (Move-Drag $top $s2Tile.X $fy 'up')
     Start-Sleep -Milliseconds 700
     Assert "F: the drop placed P in the list at 0 (log)" (@(Get-LogLines $logF 'pane drop placed in list index=0 restored=false').Count -ge 1)
@@ -416,8 +455,7 @@ try {
     Assert "G: press and travel on s2's tile delivered" (Start-TileDrag $top $sb $from)
     Assert "G: move over the other window delivered" (Move-Drag $top $gx $gy 'move')
     Start-Sleep -Milliseconds 400
-    $pv = Get-PreviewRect $app.Pid
-    Assert "G: the preview stays on THIS window's rail" ($null -ne $pv -and $pv.Left -ge $sb.Left -and $pv.Right -le ($sb.Left + $sb.Width))
+    Assert "G: the gap opens in THIS window's list (log)" (@(Get-LogLines $logG 'pane sidebar drag slide source=1 target=0 list=2').Count -ge 1 -and $null -eq (Get-PreviewRect $app.Pid))
     Assert "G: release delivered" (Move-Drag $top $gx $gy 'up')
     Start-Sleep -Milliseconds 1200
     Assert "G: s2's handle is still this window's child, on screen" (Test-VisibleChild $top $h2)

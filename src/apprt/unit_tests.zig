@@ -93,6 +93,7 @@ test {
     // Imports only std. Every lane.
     _ = @import("win32/pane_sidebar_motion.zig");
     _ = @import("win32/pane_sidebar_order.zig");
+    _ = @import("win32/pane_sidebar_reorder.zig");
     _ = @import("win32/pane_sidebar_transition.zig");
 
     // Pure win32 pane sidebar card layer (T1865/T1887): the glass sheet the

@@ -4712,6 +4712,24 @@ pub fn beginStripDrag(self: *Window, view: *PaneView, x: i32, y: i32) void {
     if (self.rearrange_drag) |*d| d.blade = true;
 }
 
+/// Tell every sidebar where the drag stands (T2304): the one it would land
+/// in opens a gap for it, the others close any they had open, and the row a
+/// list drag holds follows the pointer (`pointer_y`, screen).
+fn noteSidebarsDrag(self: *Window, d: *const RearrangeDrag, pointer_y: i32) void {
+    const dest = d.dest orelse self;
+    for (self.app.windows.items) |win| {
+        const sb = win.sidebar orelse continue;
+        var at: PaneSidebar.DragAt = .{ .pane = d.view };
+        if (win == dest) if (d.drop) |drop| switch (drop) {
+            .sidebar_order => |o| at.list = o.index,
+            .stash => |o| at.stash = o.index,
+            else => {},
+        };
+        if (d.list and win == self) at.pointer_y = pointer_y;
+        sb.noteDrag(at);
+    }
+}
+
 /// Every window's sidebar shows its empty drop slot while a drag is live,
 /// so whichever window the pane is carried to shows its target (T1844).
 fn setSidebarsDragActive(self: *Window, on: bool) void {
@@ -5122,6 +5140,13 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             over_other_window = true;
         }
     }
+    // A drop into a sidebar's list or tray shows where it lands by the rows
+    // opening a gap there (T2304, Mac `PaneSidebarShift`), not a caret; the
+    // empty tray's well still lights.
+    if (d.highlight) |hl| if (hl.kind == .sidebar_order or hl.kind == .stash) {
+        d.highlight = null;
+    };
+    self.noteSidebarsDrag(d, point.y);
     if (d.highlight) |hl| self.showDropPreview(hl, over_other_window) else self.hideDropPreview();
 
     // The dwell (T1537): resting on a tab button opens that tab so the drag

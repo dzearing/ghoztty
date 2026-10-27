@@ -46,6 +46,7 @@ const row_menu = @import("pane_sidebar_menu.zig");
 const search_field = @import("pane_sidebar_search.zig");
 const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
+const reorder = @import("pane_sidebar_reorder.zig");
 const pane_sidebar_order = @import("pane_sidebar_order.zig");
 const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
@@ -82,6 +83,9 @@ const TIMER_ANIM: usize = 3;
 const TIMER_XFADE: usize = 4;
 /// The column collapsing or expanding (T2291).
 const TIMER_COLUMN: usize = 5;
+/// Rows sliding to make room for a dragged pane, or the held row gliding to
+/// where it landed (T2304).
+const TIMER_REORDER: usize = 6;
 
 /// Tooltip tool ids: the toggle, then one per item, then one per row button.
 const tool_toggle: usize = 0;
@@ -170,6 +174,36 @@ const glyph_chevron_down: u16 = 0xE70D;
 const glyph_chevron_right: u16 = 0xE76C;
 
 const FadeSlot = struct { pane: *const PaneView, fade: motion.Fade };
+
+/// One row's slide, by pane: a roster refresh mid-drag rebuilds the entries.
+const RowShift = struct { pane: *const PaneView, tween: reorder.Tween };
+
+/// A pane dragged over this sidebar (T2304, Mac `PaneSidebarShift` /
+/// `PaneSidebarRowDrag`).
+const DragMotion = struct {
+    pane: *const PaneView,
+    /// Where it is and would land in this sidebar's sequence; null while it
+    /// would land elsewhere (the rows stay put) and once the drag ended.
+    slide: ?reorder.Slide = null,
+    shifts: [pane_sidebar.max_items]RowShift = undefined,
+    shift_count: usize = 0,
+    /// The tray's header - its hairline and caption - slides with the rows.
+    header: reorder.Tween = .{},
+    /// A drag of this sidebar's own row: the row follows the pointer.
+    held: ?Held = null,
+};
+
+/// The dragged row, held by the pointer (Mac `PaneSidebarRowDrag`): how far
+/// the pointer has travelled since the press, where the row was last drawn,
+/// and - let go - the glide from there to where it landed.
+const Held = struct {
+    press_y: i32,
+    dy: i32 = 0,
+    drawn_top: ?i32 = null,
+    settle: ?Settle = null,
+
+    const Settle = struct { from: i32, start_ms: u64 };
+};
 
 /// Working, as anything that shows it is concerned (T2279, Mac
 /// `PaneView.isWorking`, 919fba868): its activity state says busy (the agent
@@ -288,6 +322,12 @@ edge_bar_logged: ?gutter_bar.Strength = null,
 /// A pane drag is live somewhere (T1844): the empty tray's well brightens
 /// and says "Drop to stash" (T2276; it is there at rest too).
 drag_active: bool = false,
+/// What the rows do for a pane dragged over this sidebar (T2304): slide to
+/// make room, and - a row dragged from here - follow the pointer.
+drag: ?DragMotion = null,
+/// The row a paint leaves out: lifted out of the list by a drag (T2304).
+paint_lifted: ?usize = null,
+reorder_armed: bool = false,
 
 
 // Tooltips: one control. A tile's text names its pane, so it lives here (a
@@ -1316,6 +1356,7 @@ fn toScreen(r: pane_sidebar.Rect, origin: w32.POINT) pane_drop.Rect {
 pub fn setDragActive(self: *PaneSidebar, on: bool) void {
     if (self.drag_active == on) return;
     self.drag_active = on;
+    if (!on) self.endDragMotion();
     // The empty "Drop to stash" slot sits under the last row: a long list
     // scrolls it into view, so the target is there to aim at (T1878).
     if (on) {
@@ -1348,6 +1389,9 @@ fn maybeStartRowDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     var cur = w32.POINT{ .x = x, .y = y };
     _ = w32.ClientToScreen(hwnd, &cur);
     log.info("pane sidebar row drag start item={d} section={s}", .{ i, @tagName(self.entries.items[i].section) });
+    // The row itself follows the pointer from here (T2304).
+    self.stopReorderClock();
+    self.drag = .{ .pane = pane, .held = .{ .press_y = self.press_y } };
     self.window.beginSidebarDrag(pane, press, cur);
     return true;
 }
@@ -1545,18 +1589,310 @@ fn setEdgeHover(self: *PaneSidebar, on: bool) void {
 
 fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     const t = self.theme();
-    const l = self.currentLayout();
+    var l = self.currentLayout();
     _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
     self.paint_marks = .{};
     self.paint_ms = w32.GetTickCount64();
     self.paint_motion = App.clientAreaAnimationsEnabled();
+    // A drag over the column: the rows as they slide, the dragged one lifted
+    // out (T2304). The layout itself - hit-testing, the drop geometry - stays
+    // where the rows are laid out, so the drop index never chases them.
+    const laid = l;
+    self.paint_lifted = self.applyDragMotion(&l, self.paint_ms);
+    defer self.paint_lifted = null;
     switch (l.mode) {
         .hidden => fillRect(hdc, .{ .right = width, .bottom = height }, rgb(t.bg)),
         .expanded => self.paintExpanded(hdc, &l, t),
         .mini => self.paintMini(hdc, &l, t),
     }
+    if (l.mode != .hidden) self.paintHeld(hdc, &laid, height, t);
     self.marks = self.paint_marks;
     if (self.paint_marks.moving(self.paint_motion)) self.armMotion();
+}
+
+// -------------------------------------------------------------------------
+// Reorder motion (T2304; Mac `PaneSidebarShift`, `PaneSidebarRowDrag`)
+// -------------------------------------------------------------------------
+
+/// Where a live pane drag stands for this sidebar: the pane, and - when a
+/// release now would land HERE - the list or tray index it would land at, as
+/// the resolver counts it. `pointer_y` (screen) moves a row held by the
+/// pointer, which only a drag of this sidebar's own row has.
+pub const DragAt = struct {
+    pane: *const PaneView,
+    list: ?usize = null,
+    stash: ?usize = null,
+    pointer_y: ?i32 = null,
+};
+
+/// A pane drag moved (T2304): slide the rows to make room for it, and move
+/// the held row with the pointer.
+pub fn noteDrag(self: *PaneSidebar, at: DragAt) void {
+    if (self.drag) |d| {
+        const settling = if (d.held) |h| h.settle != null else false;
+        if (d.pane != at.pane or settling) self.drag = null;
+    }
+    if (self.drag == null) self.drag = .{ .pane = at.pane };
+    const d = &self.drag.?;
+    if (d.held) |*h| if (at.pointer_y) |py| {
+        var pt = w32.POINT{ .x = 0, .y = py };
+        _ = w32.ScreenToClient(self.hwnd, &pt);
+        h.dy = pt.y - h.press_y;
+    };
+
+    // The sequence: this window's list rows, the tray's header, its tray.
+    const l = self.currentLayout();
+    var seq: [pane_sidebar.max_items]usize = undefined;
+    const q = self.dragSequence(&l, &seq);
+    var in_list: ?usize = null;
+    var in_tray: ?usize = null;
+    for (seq[0..q.len], 0..) |ei, k| if (self.entries.items[ei].pane == at.pane) {
+        if (k < q.list) in_list = k else in_tray = k - q.list;
+    };
+    const was = d.slide;
+    d.slide = reorder.slide(
+        q.list,
+        in_list,
+        in_tray,
+        at.list,
+        if (at.stash) |s| reorder.trayTargetWithout(s, in_tray) else null,
+    );
+    if (!std.meta.eql(was, d.slide)) {
+        if (d.slide) |sl| {
+            log.info("pane sidebar drag slide source={?d} target={?d} list={d}", .{ sl.source, sl.target, q.list });
+        } else log.info("pane sidebar drag slide none", .{});
+    }
+
+    const now = w32.GetTickCount64();
+    const animate = App.clientAreaAnimationsEnabled();
+    const pitch: f64 = @floatFromInt(rowPitch(&l, seq[0..q.len]));
+    const header_rows: i32 = if (d.slide) |sl| sl.rows(reorder.trayIndex(q.list, null)) else 0;
+    d.header.retarget(@as(f64, @floatFromInt(header_rows)) * pitch, now, animate);
+    for (seq[0..q.len], 0..) |ei, k| {
+        const k_seq = if (k < q.list) k else reorder.trayIndex(q.list, k - q.list);
+        const rows: i32 = if (d.slide) |sl| sl.rows(k_seq) else 0;
+        const tw = shiftFor(d, self.entries.items[ei].pane) orelse continue;
+        tw.retarget(@as(f64, @floatFromInt(rows)) * pitch, now, animate);
+    }
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.armReorderClock();
+}
+
+/// The entries of this window's list (`list` of them, in the list's order)
+/// then of its tray, as indices into `entries`: the rows a drop here lands
+/// among, and the ones that slide. A folded row has no place.
+fn dragSequence(self: *PaneSidebar, l: *const pane_sidebar.Layout, out: []usize) struct { len: usize, list: usize } {
+    var n: usize = 0;
+    const count = @min(l.count, self.entries.items.len);
+    for (0..count) |i| {
+        const e = self.entries.items[i];
+        if (!e.own or e.section != .grid or !l.shown(i) or n == out.len) continue;
+        out[n] = i;
+        n += 1;
+    }
+    const list = n;
+    for (0..count) |i| {
+        const e = self.entries.items[i];
+        if (!e.own or e.section != .stashed or !l.shown(i) or n == out.len) continue;
+        out[n] = i;
+        n += 1;
+    }
+    return .{ .len = n, .list = list };
+}
+
+/// How far a row slides to make room: one row's place - from one row's top
+/// to the next's, the gap between them included - else a row's height.
+fn rowPitch(l: *const pane_sidebar.Layout, seq: []const usize) i32 {
+    var best: i32 = 0;
+    var k: usize = 1;
+    while (k < seq.len) : (k += 1) {
+        const d = l.items[seq[k]].top - l.items[seq[k - 1]].top;
+        if (d > 0 and (best == 0 or d < best)) best = d;
+    }
+    if (best > 0) return best;
+    return if (seq.len > 0) l.items[seq[0]].height() else 0;
+}
+
+/// The slide of `pane`'s row, made when first asked for.
+fn shiftFor(d: *DragMotion, pane: *const PaneView) ?*reorder.Tween {
+    for (d.shifts[0..d.shift_count]) |*s| if (s.pane == pane) return &s.tween;
+    if (d.shift_count == d.shifts.len) return null;
+    d.shifts[d.shift_count] = .{ .pane = pane, .tween = .{} };
+    d.shift_count += 1;
+    return &d.shifts[d.shift_count - 1].tween;
+}
+
+/// The drag ended - dropped or cancelled. Nothing slides back: the drop
+/// re-lays the list out where the rows were drawn (Mac: no animation once the
+/// drag ends). A held row glides from where it was drawn to where it lands,
+/// read off the layout each frame, so it arrives at the place the drop gave
+/// it whenever the roster catches up.
+fn endDragMotion(self: *PaneSidebar) void {
+    if (self.drag) |*d| {
+        d.slide = null;
+        d.shift_count = 0;
+        d.header = .{};
+        if (d.held) |*h| if (h.drawn_top) |top| if (h.settle == null) {
+            h.settle = .{ .from = top, .start_ms = w32.GetTickCount64() };
+            log.info("pane sidebar row settle from={d}", .{top});
+            _ = w32.InvalidateRect(self.hwnd, null, 0);
+            self.armReorderClock();
+            return;
+        };
+        self.drag = null;
+        _ = w32.InvalidateRect(self.hwnd, null, 0);
+    }
+}
+
+/// Slide `l`'s rows (and the tray's header) where the drag has them at
+/// `now`, and answer the row it lifts out: the dragged pane's own, while it
+/// is held, or while a drop here would take it from its place.
+fn applyDragMotion(self: *PaneSidebar, l: *pane_sidebar.Layout, now: u64) ?usize {
+    const d = if (self.drag) |*x| x else return null;
+    const count = @min(l.count, self.entries.items.len);
+    const lifts = d.held != null or (if (d.slide) |sl| sl.source != null else false);
+    var lifted: ?usize = null;
+    for (0..count) |i| {
+        const pane = self.entries.items[i].pane;
+        if (pane == d.pane and lifts) lifted = i;
+        for (d.shifts[0..d.shift_count]) |s| if (s.pane == pane) {
+            const dy: i32 = @intFromFloat(@round(s.tween.at(now)));
+            l.items[i].top += dy;
+            l.items[i].bottom += dy;
+        };
+    }
+    const hy: i32 = @intFromFloat(@round(d.header.at(now)));
+    if (hy != 0 and !l.outline) {
+        if (l.section_rule) |*r| {
+            r.top += hy;
+            r.bottom += hy;
+        }
+        if (l.stashed_caption) |*r| {
+            r.top += hy;
+            r.bottom += hy;
+        }
+    }
+    return lifted;
+}
+
+/// The held row, over everything else: at its laid-out place moved by the
+/// pointer's travel, up or down only and kept inside the bar, on a solid
+/// backing with a shadow - or, let go, gliding to where it landed while the
+/// lift fades (Mac `ghost`).
+fn paintHeld(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout, height: i32, t: Theme) void {
+    const d = if (self.drag) |*x| x else return;
+    const h = if (d.held) |*x| x else return;
+    const count = @min(laid.count, self.entries.items.len);
+    const i = for (0..count) |k| {
+        if (self.entries.items[k].pane == d.pane) break k;
+    } else return;
+    const r = laid.items[i];
+    if (r.width() <= 0) return;
+    const clip = laid.viewport.height() > 0;
+    const lo = if (clip) laid.viewport.top else 0;
+    const hi = if (clip) laid.viewport.bottom else height;
+    const top = if (h.settle) |s|
+        reorder.settleTop(s.from, r.top, self.paint_ms -| s.start_ms)
+    else
+        reorder.heldTop(r.top, h.dy, r.height(), lo, hi);
+    if (h.drawn_top != top) log.debug("pane sidebar row held top={d}", .{top});
+    h.drawn_top = top;
+    const lift: f64 = if (h.settle) |s| 1 - transition.progress(self.paint_ms -| s.start_ms, reorder.settle_ms) else 1;
+    const at: pane_sidebar.Rect = .{ .left = r.left, .top = top, .right = r.right, .bottom = top + r.height() };
+    const saved = w32.SaveDC(hdc);
+    defer _ = w32.RestoreDC(hdc, saved);
+    if (clip) _ = w32.IntersectClipRect(hdc, laid.viewport.left, laid.viewport.top, laid.viewport.right, laid.viewport.bottom);
+    if (lift > 0) {
+        const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+        const g = reorder.liftInset(at.width(), at.height());
+        const back: pane_sidebar.Rect = .{
+            .left = at.left - g.x,
+            .top = at.top - g.y,
+            .right = at.right + g.x,
+            .bottom = at.bottom + g.y,
+        };
+        self.paintHeldShadow(hdc, back, radius, lift);
+        const solid = color_math.mix(t.surface, t.ink, reorder.backing_ink);
+        fillRound(hdc, back, radius, rgb(color_math.mix(t.surface, solid, lift)));
+    }
+    if (laid.mode == .mini)
+        self.paintTile(hdc, i, at, false, self.isEmphasized(), t)
+    else
+        self.paintRow(hdc, laid, i, at, false, self.isEmphasized(), t);
+}
+
+/// The held row's shadow (Mac: radius 6 pt, 3 pt down, 0.3 black), blended
+/// over whatever lies under it at `strength` of its full weight.
+fn paintHeldShadow(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, strength: f64) void {
+    const blur = pane_sidebar.px(reorder.shadow_radius_dip, self.scale);
+    const dy = pane_sidebar.px(reorder.shadow_y_dip, self.scale);
+    const box: pane_sidebar.Rect = .{ .left = r.left - blur, .top = r.top - blur + dy, .right = r.right + blur, .bottom = r.bottom + blur + dy };
+    const w = box.width();
+    const bh = box.height();
+    if (w <= 0 or bh <= 0) return;
+    const dib = Dib32.create(hdc, w, bh) orelse return;
+    defer dib.destroy();
+    const uw: usize = @intCast(w);
+    for (0..@intCast(bh)) |y| {
+        for (dib.pixels[y * uw ..][0..uw], 0..) |*p, x| {
+            const dist = roundRectDistance(@as(i32, @intCast(x)) - blur, @as(i32, @intCast(y)) - blur, r.width(), r.height(), radius);
+            const a = reorder.shadowAlpha(dist, @floatFromInt(blur)) * strength;
+            // Black, premultiplied: only the alpha.
+            p.* = @as(u32, @intFromFloat(@round(std.math.clamp(a, 0, 1) * 255))) << 24;
+        }
+    }
+    _ = w32.AlphaBlend(hdc, box.left, box.top, w, bh, dib.dc, 0, 0, w, bh, .{
+        .SourceConstantAlpha = 255,
+        .AlphaFormat = w32.AC_SRC_ALPHA,
+    });
+}
+
+/// How far pixel (`x`, `y`) lies outside a `w` x `h` box with corners rounded
+/// to `radius` (0 inside it).
+fn roundRectDistance(x: i32, y: i32, w: i32, h: i32, radius: i32) f64 {
+    const fx = @as(f64, @floatFromInt(x)) + 0.5;
+    const fy = @as(f64, @floatFromInt(y)) + 0.5;
+    const rr: f64 = @floatFromInt(@max(radius, 0));
+    const fw: f64 = @floatFromInt(w);
+    const fh: f64 = @floatFromInt(h);
+    // From the inner box the corners are drawn round, less the radius.
+    const dx = @max(@max(rr - fx, fx - (fw - rr)), 0);
+    const dy = @max(@max(rr - fy, fy - (fh - rr)), 0);
+    return @max(@sqrt(dx * dx + dy * dy) - rr, 0);
+}
+
+fn armReorderClock(self: *PaneSidebar) void {
+    if (self.reorder_armed) return;
+    if (!self.reorderMoving(w32.GetTickCount64())) return;
+    if (w32.SetTimer(self.hwnd, TIMER_REORDER, reorder.frame_ms, null) == 0) return;
+    self.reorder_armed = true;
+}
+
+fn stopReorderClock(self: *PaneSidebar) void {
+    if (!self.reorder_armed) return;
+    _ = w32.KillTimer(self.hwnd, TIMER_REORDER);
+    self.reorder_armed = false;
+}
+
+/// Whether anything of the drag's motion is still on its way at `now`.
+fn reorderMoving(self: *PaneSidebar, now: u64) bool {
+    const d = self.drag orelse return false;
+    if (d.held) |h| if (h.settle) |s| return now -| s.start_ms < reorder.settle_ms;
+    if (!d.header.done(now)) return true;
+    for (d.shifts[0..d.shift_count]) |s| if (!s.tween.done(now)) return true;
+    return false;
+}
+
+/// A frame of the reorder motion: repaint, and stop the clock - and let a
+/// settled row back into the list - once nothing moves.
+fn onReorderTick(self: *PaneSidebar) void {
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    if (self.reorderMoving(w32.GetTickCount64())) return;
+    self.stopReorderClock();
+    if (self.drag) |d| if (d.held) |h| if (h.settle != null) {
+        log.info("pane sidebar row settled", .{});
+        self.drag = null;
+    };
 }
 
 // -------------------------------------------------------------------------
@@ -2118,61 +2454,66 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     if (l.outline) self.paintOutline(hdc, l, t);
 
     const emphasized = self.isEmphasized();
-    for (self.entries.items[0..l.count], 0..) |e, i| {
-        if (!l.shown(i)) continue;
-        const r = l.items[i];
-        const hovered = self.rowHovered(i);
-        // The pill, its sheen and its glyph: what a rail tile is too.
-        const pill = self.paintPill(hdc, r, e, l.indent[i], hovered, emphasized, t);
-        const icon_r = pill.icon;
-        const ink = if (e.selected) t.text else t.secondary;
-        const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
-
-        // The trailing edge: the hover buttons (T2280, Mac dc2bbab6b -
-        // stash/restore on this window's rows, then the x on every row,
-        // T2298) replace the bell
-        // dot while the pointer is on the row, so the two never crowd each
-        // other. A question has no accessory any more (Mac 2924ea5cc).
-        const text_left = icon_r.right + pane_sidebar.px(8, self.scale);
-        var text_right = r.right - text_inset;
-        const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
-        if (hovered) {
-            // Another window's row offers the x alone (T2298).
-            const x = l.rowClose(i, self.scale);
-            text_right = x.left - sm;
-            if (row_menu.rowOffersStash(e.own)) {
-                const button = l.rowButton(i, self.scale);
-                text_right = button.left - sm;
-                self.paintRowButton(hdc, .{ .item_button = i }, button, if (e.section == .stashed) glyph_restore else glyph_stash, pill.under, t);
-            }
-            self.paintRowButton(hdc, .{ .item_close = i }, x, glyph_close, pill.under, t);
-        } else if (e.bell and e.section == .stashed) {
-            // Mac's accessory: a stashed pane's bell dot.
-            const d = @max(pane_sidebar.px(7, self.scale), 3);
-            self.paintBellDot(hdc, text_right - @divTrunc(d, 2), icon_r.centerY(), t);
-            text_right -= d + sm;
-        }
-
-        // The title, and the subtitle under it, centred as one block on the
-        // pill beside the glyph (Mac's row is one height whatever it holds).
-        const block = self.metrics.title_h + if (e.subtitle.len > 0) self.metrics.caption_h else 0;
-        const text_top = r.top + @divTrunc(r.height() - block, 2);
-        const title_bottom = text_top + self.metrics.title_h;
-        if (self.title_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-        drawText(hdc, e.title, .{ .left = text_left, .top = text_top, .right = text_right, .bottom = title_bottom }, ink, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
-        if (e.subtitle.len > 0) {
-            if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-            drawText(hdc, e.subtitle, .{
-                .left = text_left,
-                .top = title_bottom,
-                .right = text_right,
-                .bottom = title_bottom + self.metrics.caption_h,
-            }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
-        }
+    for (0..l.count) |i| {
+        if (!l.shown(i) or self.paint_lifted == i) continue;
+        self.paintRow(hdc, l, i, l.items[i], self.rowHovered(i), emphasized, t);
     }
     self.paintDropSlot(hdc, l, t);
     self.paintSticky(hdc, l, t);
     self.paintThumb(hdc, l, t);
+}
+
+/// One expanded row at `r` - where the layout put it, slid (T2304), or held
+/// by the pointer.
+fn paintRow(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, i: usize, r: pane_sidebar.Rect, hovered: bool, emphasized: bool, t: Theme) void {
+    const e = self.entries.items[i];
+    // The pill, its sheen and its glyph: what a rail tile is too.
+    const pill = self.paintPill(hdc, r, e, l.indent[i], hovered, emphasized, t);
+    const icon_r = pill.icon;
+    const ink = if (e.selected) t.text else t.secondary;
+    const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
+
+    // The trailing edge: the hover buttons (T2280, Mac dc2bbab6b -
+    // stash/restore on this window's rows, then the x on every row,
+    // T2298) replace the bell
+    // dot while the pointer is on the row, so the two never crowd each
+    // other. A question has no accessory any more (Mac 2924ea5cc).
+    const text_left = icon_r.right + pane_sidebar.px(8, self.scale);
+    var text_right = r.right - text_inset;
+    const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
+    if (hovered) {
+        // Another window's row offers the x alone (T2298).
+        const x = l.rowClose(i, self.scale);
+        text_right = x.left - sm;
+        if (row_menu.rowOffersStash(e.own)) {
+            const button = l.rowButton(i, self.scale);
+            text_right = button.left - sm;
+            self.paintRowButton(hdc, .{ .item_button = i }, button, if (e.section == .stashed) glyph_restore else glyph_stash, pill.under, t);
+        }
+        self.paintRowButton(hdc, .{ .item_close = i }, x, glyph_close, pill.under, t);
+    } else if (e.bell and e.section == .stashed) {
+        // Mac's accessory: a stashed pane's bell dot.
+        const d = @max(pane_sidebar.px(7, self.scale), 3);
+        self.paintBellDot(hdc, text_right - @divTrunc(d, 2), icon_r.centerY(), t);
+        text_right -= d + sm;
+    }
+
+    // The title, and the subtitle under it, centred as one block on the
+    // pill beside the glyph (Mac's row is one height whatever it holds).
+    const block = self.metrics.title_h + if (e.subtitle.len > 0) self.metrics.caption_h else 0;
+    const text_top = r.top + @divTrunc(r.height() - block, 2);
+    const title_bottom = text_top + self.metrics.title_h;
+    if (self.title_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+    drawText(hdc, e.title, .{ .left = text_left, .top = text_top, .right = text_right, .bottom = title_bottom }, ink, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    if (e.subtitle.len > 0) {
+        if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        drawText(hdc, e.subtitle, .{
+            .left = text_left,
+            .top = title_bottom,
+            .right = text_right,
+            .bottom = title_bottom + self.metrics.caption_h,
+        }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    }
 }
 
 /// The stuck project header (T1878, Mac's sticky section header): painted
@@ -2508,22 +2849,28 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, ruleColor(t));
 
     const emphasized = self.isEmphasized();
-    for (self.entries.items[0..l.count], 0..) |e, i| {
-        const r = l.items[i];
-        // The row without its text (T2279): the same pill, sheen and glyph.
-        _ = self.paintPill(hdc, r, e, 0, self.rowHovered(i), emphasized, t);
-        // The corner (Mac `tile`): a stashed pane's bell dot, at the pill's
-        // top trailing corner. The question disc that sat there went with
-        // T2280 (Mac 2924ea5cc).
-        if (e.bell and e.section == .stashed) {
-            const d = @max(pane_sidebar.px(7, self.scale), 3);
-            const one = pane_sidebar.px(1, self.scale);
-            const three = pane_sidebar.px(3, self.scale);
-            self.paintBellDot(hdc, r.right + one - @divTrunc(d, 2), r.top + three + @divTrunc(d, 2), t);
-        }
+    for (0..l.count) |i| {
+        if (self.paint_lifted == i) continue;
+        self.paintTile(hdc, i, l.items[i], self.rowHovered(i), emphasized, t);
     }
     self.paintDropSlot(hdc, l, t);
     self.paintThumb(hdc, l, t);
+}
+
+/// One rail tile at `r` (see `paintRow`).
+fn paintTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.Rect, hovered: bool, emphasized: bool, t: Theme) void {
+    const e = self.entries.items[i];
+    // The row without its text (T2279): the same pill, sheen and glyph.
+    _ = self.paintPill(hdc, r, e, 0, hovered, emphasized, t);
+    // The corner (Mac `tile`): a stashed pane's bell dot, at the pill's
+    // top trailing corner. The question disc that sat there went with
+    // T2280 (Mac 2924ea5cc).
+    if (e.bell and e.section == .stashed) {
+        const d = @max(pane_sidebar.px(7, self.scale), 3);
+        const one = pane_sidebar.px(1, self.scale);
+        const three = pane_sidebar.px(3, self.scale);
+        self.paintBellDot(hdc, r.right + one - @divTrunc(d, 2), r.top + three + @divTrunc(d, 2), t);
+    }
 }
 
 /// What a cache holds (T2290): the side panel's card on the flat terminal
@@ -3340,6 +3687,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 TIMER_ANIM => self.onMotionTick(),
                 TIMER_XFADE => self.onTransitionTick(),
                 TIMER_COLUMN => self.onColumnTick(),
+                TIMER_REORDER => self.onReorderTick(),
                 else => {},
             }
             return 0;
