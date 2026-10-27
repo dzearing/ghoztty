@@ -8664,7 +8664,11 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
     for (lines[0..nl]) |l| _ = w32.ExcludeClipRect(hdc, l.rect.left, l.rect.top, l.rect.right, l.rect.bottom);
     var leaves = grid.result.leaves.iterator();
     while (leaves.next()) |e| {
-        const shown = if (e.value_ptr.tab) |t| grid.px(t) else if (!e.value_ptr.is_tucked) grid.px(e.value_ptr.frame) else continue;
+        // A strip held short of its reach (T2312) is painted that short, so
+        // the rest of its tab is background here.
+        const shown = if (e.value_ptr.tab != null)
+            (if (grid.placement(e.key_ptr.*)) |p| self.shownStripTab(e.key_ptr.*, p) orelse continue else continue)
+        else if (!e.value_ptr.is_tucked) grid.px(e.value_ptr.frame) else continue;
         _ = w32.ExcludeClipRect(hdc, shown.left, shown.top, shown.right, shown.bottom);
     }
     if (w32.CreateSolidBrush(w32.RGB(cfg_bg.r, cfg_bg.g, cfg_bg.b))) |bg_brush| {
@@ -8841,6 +8845,16 @@ fn stripGlide(self: *Window, id: pane_stack_grid.Id) ?struct { card: pane_stack_
     };
 }
 
+/// Where tucked card `id`'s strip shows right now: its laid-out tab, or - for
+/// a strip gaining its reach under a newcomer while the glide is under way -
+/// that tab held at its old length by its outer edge (T2312,
+/// `pane_stack_slide.Slide.shownStrip`). Null for a card with no strip.
+fn shownStripTab(self: *Window, id: pane_stack_grid.Id, p: pane_stack_grid.Placement) ?pane_stack_grid.PxRect {
+    const t = p.tab orelse return null;
+    const slide = if (self.stack_slide) |*s| s else return t;
+    return slide.shownStrip(id, t, p.tab_axis orelse .horizontal, p.strip_leads orelse true);
+}
+
 /// Every tucked pane's strip in the active tab, bottom first in the engine's
 /// paint order (T2109), with the cards gliding into or out of one at their
 /// place in it (T2307). None in a hero tab or a zoomed one.
@@ -8880,15 +8894,19 @@ fn tuckedStrips(self: *Window, out: []TuckedStrip) usize {
             m += 1;
             continue;
         }
-        const t = p.tab orelse continue;
-        const tab: pane_stack_strip.Rect = .{ .left = t.left, .top = t.top, .right = t.right, .bottom = t.bottom };
+        const laid = p.tab orelse continue;
         const axis = p.tab_axis orelse .horizontal;
         const leads = p.strip_leads orelse true;
+        // Held short of its reach until the glide is over (T2312): what it
+        // has not reached yet is not under anything, so none of it is hidden.
+        const t = self.shownStripTab(id, p) orelse continue;
+        const tuck = @max(0, p.strip_tuck - (pane_stack_slide.along(laid, axis) - pane_stack_slide.along(t, axis)));
+        const tab: pane_stack_strip.Rect = .{ .left = t.left, .top = t.top, .right = t.right, .bottom = t.bottom };
         out[m] = .{
             .view = @ptrFromInt(id),
             .tab = tab,
             .axis = axis,
-            .label = pane_stack_strip.visiblePart(tab, axis, leads, p.strip_tuck),
+            .label = pane_stack_strip.visiblePart(tab, axis, leads, tuck),
             .leads = leads,
         };
         m += 1;

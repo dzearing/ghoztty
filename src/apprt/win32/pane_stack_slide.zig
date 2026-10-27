@@ -222,6 +222,38 @@ pub const Edges = struct {
 /// The most cards one slide tracks; a window holds far fewer panes.
 pub const max_cards = 64;
 
+/// A strip held at the length it had when the glide found it (T2312).
+pub const HeldStrip = struct {
+    id: Id,
+    length: i32,
+};
+
+/// How long `rect` is along a stack running along `axis`.
+pub fn along(rect: PxRect, axis: Direction) i32 {
+    return if (axis == .vertical) rect.height() else rect.width();
+}
+
+/// `tab` cut to `length` along `axis`, kept by its outer edge - the one away
+/// from the run (`strip_leads`: the strip lies before it). A tab no longer
+/// than `length` is itself.
+pub fn heldStrip(tab: PxRect, axis: Direction, strip_leads: bool, length: i32) PxRect {
+    if (along(tab, axis) <= length) return tab;
+    var t = tab;
+    switch (axis) {
+        .horizontal => if (strip_leads) {
+            t.right = t.left + length;
+        } else {
+            t.left = t.right - length;
+        },
+        .vertical => if (strip_leads) {
+            t.bottom = t.top + length;
+        } else {
+            t.top = t.bottom - length;
+        },
+    }
+    return t;
+}
+
 pub const Slide = struct {
     cards: [max_cards]Card = undefined,
     len: usize = 0,
@@ -229,9 +261,32 @@ pub const Slide = struct {
     tau_ms: f64 = glide_ms,
     /// A drag's slide: sizes move with positions (see `rectOf`).
     resize: bool = false,
+    /// Strips that stay strips and gain their reach under a newcomer (T2312):
+    /// each is shown no longer than it was until the glide is over.
+    held: [max_cards]HeldStrip = undefined,
+    held_len: usize = 0,
 
     pub fn items(self: *const Slide) []const Card {
         return self.cards[0..self.len];
+    }
+
+    /// How long strip `id` is held at along its stack, or null when it is
+    /// shown as the layout has it.
+    pub fn heldLength(self: *const Slide, id: Id) ?i32 {
+        for (self.held[0..self.held_len]) |h| if (h.id == id) return h.length;
+        return null;
+    }
+
+    /// Where strip `id`, laid out at `tab`, shows while this glide is under
+    /// way (T2312; Mac 760272563 `PaneStageView.stepGlide`): a strip gaining
+    /// its reach under the strip in front - a pane collapsing between it and
+    /// the run - keeps its length until the glide is over, measured from its
+    /// OUTER edge, the one that shows. Reaching out sooner put its edge in
+    /// the gutter ahead of the newcomer. `strip_leads`: it lies before the
+    /// run. Losing the reach is immediate: `tab` is never lengthened.
+    pub fn shownStrip(self: *const Slide, id: Id, tab: PxRect, axis: Direction, strip_leads: bool) PxRect {
+        const length = self.heldLength(id) orelse return tab;
+        return heldStrip(tab, axis, strip_leads, length);
     }
 
     fn find(self: *const Slide, id: Id) ?Card {
@@ -449,8 +504,12 @@ pub fn plan(
         const last: ?Placed = for (before) |b| {
             if (b.id == a.id) break b;
         } else null;
-        // Tucked now: it slides only if it was on show (it is going away).
-        if (a.tucked) if (last) |b| if (b.tucked) continue;
+        // Tucked now: it slides only if it was on show (it is going away). A
+        // strip that stays a strip and gains its reach is held (T2312).
+        if (a.tucked) if (last) |b| if (b.tucked) {
+            holdReach(&out, a, b, current);
+            continue;
+        };
         const from = blk: {
             if (current) |cur| if (cur.find(a.id)) |c| break :blk shownAt(c, cur.resize);
             if (last) |b| break :blk b.target();
@@ -469,6 +528,23 @@ pub fn plan(
         out.len += 1;
     }
     return out;
+}
+
+/// Hold strip `a` (a strip before, `b`, and after) at the length it shows now
+/// - its last strip's, or less if the glide under way holds it shorter - when
+/// its strip grew: it takes the reach once the glide is over (T2312).
+fn holdReach(out: *Slide, a: Placed, b: Placed, current: ?*const Slide) void {
+    const now = a.strip orelse return;
+    const was = b.strip orelse return;
+    if (a.axis != b.axis) return;
+    var length = along(was, a.axis);
+    if (current) |cur| if (cur.heldLength(a.id)) |h| {
+        length = @min(length, h);
+    };
+    if (length >= along(now, a.axis)) return;
+    if (out.held_len == max_cards) return;
+    out.held[out.held_len] = .{ .id = a.id, .length = length };
+    out.held_len += 1;
 }
 
 /// Where card `c` of a glide under way is on screen, for the next glide to
@@ -1062,4 +1138,43 @@ test "clip: a window inside its card is not cut" {
     try testing.expectEqual(@as(?PxRect, null), clip(r(10, 10, 100, 100), r(0, 0, 200, 200)));
     // Bigger than its card: cut to it, from the window's own origin.
     try testing.expectEqual(PxRect{ .left = 0, .top = 0, .right = 450, .bottom = 600 }, clip(r(0, 0, 900, 600), r(0, 0, 450, 600)).?);
+}
+
+test "plan: a strip that stays a strip keeps its length by its outer edge until the glide is over (T2312, Mac 760272563)" {
+    // Trailing stack: strip 3 at the right edge, 24 px; card 2 collapses onto
+    // the stack between it and the run, so 3 now reaches 12 px under 2.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(400, 0, 370, 600), .tucked = false },
+        .{ .id = 3, .rect = r(776, 0, 400, 600), .tucked = true, .strip = r(776, 0, 24, 600) },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 740, 600), .tucked = false },
+        .{ .id = 2, .rect = r(752, 0, 370, 600), .tucked = true, .strip = r(752, 0, 36, 600) },
+        .{ .id = 3, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    try testing.expect(s.len > 0);
+    try testing.expectEqual(@as(?i32, 24), s.heldLength(3));
+    // Mid-glide its outer edge is where it was, and none of it shows past
+    // where it showed before: the reach waits for the newcomer.
+    _ = s.step(16);
+    try testing.expectEqual(r(776, 0, 24, 600), s.shownStrip(3, r(764, 0, 36, 600), .horizontal, false));
+    // The leading side keeps its left edge.
+    try testing.expectEqual(r(0, 0, 24, 600), heldStrip(r(0, 0, 36, 600), .horizontal, true, 24));
+    try testing.expectEqual(r(0, 0, 600, 24), heldStrip(r(0, 0, 600, 36), .vertical, true, 24));
+    try testing.expectEqual(r(0, 12, 600, 24), heldStrip(r(0, 0, 600, 36), .vertical, false, 24));
+    // Losing the reach is immediate: a shorter tab is never lengthened.
+    try testing.expectEqual(r(776, 0, 12, 600), s.shownStrip(3, r(776, 0, 12, 600), .horizontal, false));
+    // A strip not held, and one held by no glide, shows as laid out.
+    try testing.expectEqual(r(752, 0, 36, 600), s.shownStrip(2, r(752, 0, 36, 600), .horizontal, false));
+    // A glide that interrupts this one holds it no longer than it shows now.
+    var shorter = after;
+    shorter[2].strip = r(770, 0, 30, 600);
+    const later = [_]Placed{ after[0], after[1], .{ .id = 3, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(760, 0, 40, 600) } };
+    const next = plan(&shorter, &later, &s, glide_ms, false);
+    try testing.expectEqual(@as(?i32, 24), next.heldLength(3));
+    // A strip that does not grow is not held.
+    const same = plan(&after, &after, null, glide_ms, false);
+    try testing.expectEqual(@as(?i32, null), same.heldLength(3));
 }
