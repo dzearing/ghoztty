@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-26T21:59:21-07:00",
-    "commit":  "94a6b4488",
+    "generated":  "2026-10-26T22:21:59-07:00",
+    "commit":  "87ced143e",
     "uncommitted":  [
-                        "test/win32/window-color.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -332,7 +332,7 @@
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
                   "test/win32/pane-sidebar.ps1":  "2e26965d253e6af49f6e3e919217e95cd38285fd826d438a5dd724ae7bb5b3b7",
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
-                  "test/win32/pane-sidebar-activity.ps1":  "d4624555edb059afe748bcd8b34a18fa870666ad13a322fd9e25e64d06641cfa",
+                  "test/win32/pane-sidebar-activity.ps1":  "6703d4bcce8e551c08795e5cf2a81091d22a49460d78a5f75abebf0ed6818a95",
                   "test/win32/pane-sidebar-all-windows.ps1":  "6763743d456d2cb1e1ea12bafa2eeae81b560539470b60024cfb0a3b26a66867",
                   "test/win32/pane-sidebar-close.ps1":  "10c16a9c6a2275091868b0f3818189e5a6c38f009b86211a4bfd667a2ab6bc64",
                   "test/win32/pane-sidebar-drag.ps1":  "9f7464df9da879d99d24f3998c4687ec1a2941629d162e575d0c8c45f7b0cabb",
