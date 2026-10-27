@@ -1041,7 +1041,9 @@ powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness -HarnessFull   
   pure-logic check of a shared gate — no GUI, no app launch, no `zig build`
   (which is why `test-filter-guard.ps1` is excluded and why the acceptance
   asserts that it stays excluded). That line is what keeps the whole set to
-  fifteen minutes.
+  minutes rather than hours - about 40 serially by 2026-10, which is why the
+  floor runs its members four at a time (`-Jobs`, T1657) and why
+  `floor-lane -Lane harness` takes the floor's declared 3600s budget as its cap.
 - **It runs them through `suite-run.ps1`**, not a scorer of its own: per-script
   timeouts, the verdict contract, the leak sweep and the re-run-red-alone pass
   are already there, and a second implementation of any of them is a second

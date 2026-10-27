@@ -536,9 +536,10 @@ try {
     $dry = (& powershell -NoProfile -File (Join-Path $Repo 'scripts\floor-lane.ps1') -Lane harness -DryRun 2>&1 | ForEach-Object { "$_" } | Out-String)
     $dryFull = (& powershell -NoProfile -File (Join-Path $Repo 'scripts\floor-lane.ps1') -Lane harness -DryRun -HarnessFull 2>&1 | ForEach-Object { "$_" } | Out-String)
     Assert 'H14 floor-lane -Lane harness runs the scoped sweep; -HarnessFull runs the full one' (
-        # T2026 names the checkout under test (`-Repo "<tree>"`) after the script.
+        # T2026 names the checkout under test (`-Repo "<tree>"`) after the script,
+        # and T1657 the lane's cap (`[cap Ns]`) after that.
         $dry -match 'harness-floor\.ps1"?( -Repo "[^"]*")? -Scoped' -and
-        $dryFull -match 'harness-floor\.ps1"?( -Repo "[^"]*")?\s*$' -and $dryFull -notmatch '-Scoped') "$dry`n$dryFull"
+        $dryFull -match 'harness-floor\.ps1"?( -Repo "[^"]*")?( \[cap \d+s\])?\s*$' -and $dryFull -notmatch '-Scoped') "$dry`n$dryFull"
     $gdText = Get-Content -Raw (Join-Path $Repo 'scripts\guard-due.ps1')
     Assert 'H15 the guard row names the scoped sweep as the command a due floor runs' (
         $gdText -match "(?s)Name\s+=\s+'harness-floor'.{0,400}RunArgs = '-Scoped'") ''

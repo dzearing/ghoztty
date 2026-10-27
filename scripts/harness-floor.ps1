@@ -70,6 +70,15 @@ param(
     # the slowest measured here is test-reach-audit at about seven minutes.
     [int]$TimeoutSec = 900,
 
+    # T1657: how many audits run side by side, through suite-run's -Jobs (the
+    # T1960 worker engine). Serial, the full set took about 41 minutes on
+    # 2026-10-26 against floor-lane's 30-minute cap, so the daily sweep was cut
+    # off every morning. Members that cannot share the box (installer, HKCU,
+    # builds, tree kills) are still run alone - the engine classifies them.
+    # 1 is the old serial run.
+    [ValidateRange(1, 16)]
+    [int]$Jobs = 4,
+
     # Score an existing suite-run summary instead of running anything. This is
     # how the acceptance harness exercises the scoring against planted rows
     # without waiting fifteen minutes for a real sweep.
@@ -234,7 +243,7 @@ else {
             Write-Host "FLOOR LOCK: running the sweep anyway - two sweeps at once are slower, not wrong"
         }
     }
-    Write-Host "harness floor: $($audits.Count) audit(s) via suite-run -> $OutDir"
+    Write-Host "harness floor: $($audits.Count) audit(s) via suite-run -Jobs $Jobs -> $OutDir"
     # T1969: a scoped sweep tells its members which top-level scripts changed,
     # so the heavy ones (foreground, argv-hazard, unroll-count, neuter,
     # persistence-flag) read only those; test\win32\lib\HarnessScope.ps1 is the
@@ -252,7 +261,7 @@ else {
     Write-Host ''
     try {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $suite run `
-            -Repo $Repo -Include ($names -join ',') -OutDir $OutDir -TimeoutSec $TimeoutSec
+            -Repo $Repo -Include ($names -join ',') -OutDir $OutDir -TimeoutSec $TimeoutSec -Jobs $Jobs
     } finally {
         [Environment]::SetEnvironmentVariable($onlyName, $null)
     }

@@ -1,16 +1,15 @@
 {
     "guard":  "build-cache",
     "script":  "test/win32/build-cache.ps1",
-    "generated":  "2026-10-24T14:04:00-07:00",
-    "commit":  "128d1afdf",
+    "generated":  "2026-10-27T03:37:56-07:00",
+    "commit":  "e9040e01d",
     "uncommitted":  [
-                        "scripts/launch-upgrade.ps1",
-                        "test/win32/build-cache.ps1"
+                        "scripts/floor-lane.ps1"
                     ],
     "files":  {
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
-                  "scripts/floor-lane.ps1":  "5862c35e43e85b89dfcb917e77b32fb461b7b22a2fc84aeceee976513fb1b312",
+                  "scripts/floor-lane.ps1":  "ef15ae0ab6494dce31fc765870eff93c9619525eb43a5af5134cfb6eb3f32ff3",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",

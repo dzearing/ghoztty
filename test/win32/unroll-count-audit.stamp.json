@@ -1,10 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-27T02:42:48-07:00",
-    "commit":  "f8f0714bc",
+    "generated":  "2026-10-27T02:57:25-07:00",
+    "commit":  "e9040e01d",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/floor-lane.ps1",
+                        "scripts/harness-floor.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -25,7 +26,7 @@
                   "scripts/delivery-version.ps1":  "0e13b53aff9be9cf6c7c4c35cbe4fc3293dccf5fef434bef769806b966eb62ce",
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",
                   "scripts/fetch-symbols.ps1":  "ef40b9f0b393b5662331bb7fdca267fe87d2dcf64f6ce9b83e99a3d7cc39c35a",
-                  "scripts/floor-lane.ps1":  "5862c35e43e85b89dfcb917e77b32fb461b7b22a2fc84aeceee976513fb1b312",
+                  "scripts/floor-lane.ps1":  "ef15ae0ab6494dce31fc765870eff93c9619525eb43a5af5134cfb6eb3f32ff3",
                   "scripts/focus-pull-scan.ps1":  "ce1ebfa8aac19eed0eb7cc7578fb0a1df8b39974204777a9991ac2fea1eec8e8",
                   "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
@@ -37,8 +38,8 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "437798df26a7520c9bc2ebc2ae0bc666ae6a59779b29ff7783d78356c78e1b46",
-                  "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
+                  "scripts/guard-due.ps1":  "c50bc71eb652b06271d24243d1dc3d637345c9792684559e0478b8049218627a",
+                  "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "f055b029eedf4387b748f3e8e0e2b545e90023a017eddf18e5662024a1244ac8",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",

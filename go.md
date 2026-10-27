@@ -682,8 +682,10 @@ Concretely, in order, with no stops in between:
    powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness
    ```
 
-   It is not part of `-Lane all` (about fifteen minutes of source scanning whose
-   answer can only change when the test sources change), so the guard row is
+   It is not part of `-Lane all` (source scanning whose answer can only change
+   when the test sources change - about 40 minutes for the full set run one at a
+   time, so since T1657 it runs four at a time under the 3600s budget
+   `harness-floor.ps1` declares, not the 1800s zig-lane cap), so the guard row is
    what makes it standing: touch any script under `test\win32\` and the floor is
    DUE, and step 6's `validate` refuses the commit until it has been run green.
    A member that is red against a filed task is reported as PENDING and does not

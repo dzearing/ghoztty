@@ -123,7 +123,10 @@
     when the canary is worth having.
 
 .PARAMETER TimeoutSeconds
-    Wall-clock cap per lane run. Default 1800.
+    Wall-clock cap per lane run. Default 1800. The `harness` lane, when this is
+    not given, takes the larger of 1800 and the budget scripts\harness-floor.ps1
+    declares for itself (`# suite-timeout-sec:`), because the 1800s cap cut the
+    full sweep off every morning over a run that was still going green (T1657).
 
 .PARAMETER StallSeconds
     Zero-CPU-delta window that counts as wedged. Default 420 -- see the comment
@@ -327,6 +330,27 @@ if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 # T1982: the box-wide floor lock, so two loop lanes never sweep the harness
 # floor at once.
 . "$PSScriptRoot\lib\MachineLock.ps1"
+# T1657: the `# suite-timeout-sec:` reader, so the harness lane's cap is the
+# budget harness-floor.ps1 declares rather than a second number kept here.
+. "$PSScriptRoot\lib\RunVerdict.ps1"
+
+<#
+The wall-clock cap for the harness lane (T1657). An explicit -TimeoutSeconds
+always wins. Otherwise it is the larger of the lane default and the budget the
+floor script declares in its own header: the 1800s zig-lane cap killed the full
+sweep at 25-27 of 33 members, every one green, on at least eight runs between
+2026-10-17 and 10-26, and the number that knew better was already written
+beside the code that spends it.
+#>
+function Get-HarnessLaneTimeout {
+    param([int]$Requested, [bool]$Explicit, [string]$FloorScript)
+    if ($Explicit) { return $Requested }
+    $declared = 0
+    if ($FloorScript -and (Test-Path -LiteralPath $FloorScript)) {
+        $declared = Get-ScriptTimeout -Text ([IO.File]::ReadAllText($FloorScript))
+    }
+    return [math]::Max($Requested, $declared)
+}
 
 # Exit codes, named so a caller does not have to guess.
 $EXIT_PASS = 0
@@ -1658,8 +1682,12 @@ if ($DryRun) {
         if ($l -eq 'harness') {
             # Names the repo the real run passes (T2026), so a dry run can prove
             # which checkout the harness floor would grade.
-            Write-Host ("DRY-RUN {0}: powershell -NoProfile -File `"{1}`" -Repo `"{2}`"{3}" -f $l,
-                (Join-Path $Repo 'scripts\harness-floor.ps1'), $Repo, $(if (-not $HarnessFull) { ' -Scoped' }))
+            # And the cap it would run under (T1657).
+            $floorScript = Join-Path $Repo 'scripts\harness-floor.ps1'
+            $cap = Get-HarnessLaneTimeout -Requested $TimeoutSeconds `
+                -Explicit $PSBoundParameters.ContainsKey('TimeoutSeconds') -FloorScript $floorScript
+            Write-Host ("DRY-RUN {0}: powershell -NoProfile -File `"{1}`" -Repo `"{2}`"{3} [cap {4}s]" -f $l,
+                $floorScript, $Repo, $(if (-not $HarnessFull) { ' -Scoped' }), $cap)
             continue
         }
         Write-Host ("DRY-RUN {0}: zig build {1}" -f $l, (Get-LaneBuildArgs -Name $l))
@@ -1702,6 +1730,14 @@ foreach ($l in $lanes) {
             }
             $env:GHOZTTY_FLOOR_LOCK_HELD = '1'
         }
+        # T1657: Invoke-Lane reads the script-scope cap; this lane's is the
+        # floor's declared budget, restored after so a later lane keeps its own.
+        $laneDefaultTimeout = $TimeoutSeconds
+        if ($l -eq 'harness') {
+            $TimeoutSeconds = Get-HarnessLaneTimeout -Requested $TimeoutSeconds `
+                -Explicit $PSBoundParameters.ContainsKey('TimeoutSeconds') -FloorScript $floorScript
+            Write-Host "harness lane cap: ${TimeoutSeconds}s"
+        }
         for ($i = 1; $i -le $Repeat; $i++) {
             $r = Invoke-Lane -Name $l -Iteration $i -RawCommand $harnessCmd
             $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r -LogPath $script:LastLaneLog)
@@ -1716,6 +1752,7 @@ foreach ($l in $lanes) {
             }
             if ($r -ne 'PASS') { break }
         }
+        $TimeoutSeconds = $laneDefaultTimeout
         if ($l -eq 'harness') {
             Exit-MachineLock $floorLock
             Remove-Item Env:GHOZTTY_FLOOR_LOCK_HELD -ErrorAction SilentlyContinue

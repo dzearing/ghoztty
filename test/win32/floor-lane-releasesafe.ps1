@@ -167,6 +167,11 @@ try {
     $h = Invoke-CopiedFloorDryRun -FakeRepo $fake -LaneName 'harness'
     Check 'the harness floor is handed that checkout as -Repo' `
         (@($h | Where-Object { $_ -like "DRY-RUN harness:*-Repo `"$fake`"*" }).Count -eq 1) ($h -join ' | ')
+    # T1657 control: that checkout has no harness-floor.ps1, so nothing is
+    # declared and the cap falls back to the lane default - the cap below is
+    # read from the floor script, not hard-coded in floor-lane.
+    Check 'T1657 control: with no floor script to read, the harness cap is the 1800s lane default' `
+        (@($h | Where-Object { $_ -like 'DRY-RUN harness:*`[cap 1800s`]' }).Count -eq 1) ($h -join ' | ')
 
     $neg = Invoke-CopiedFloorDryRun -FakeRepo (Join-Path $scratch 'lane-neg') -LaneName 'all' -OldDefault
     Check 'negative control: the old literal default names D:\git\ghoztty, which the arms above reject' `
@@ -178,6 +183,28 @@ try {
 } finally {
     if (Test-Path $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
 }
+
+# ---- T1657: the harness lane runs under the floor's own declared budget ------
+# The 1800s zig-lane cap cut the full harness sweep off at 25-27 of 33 members,
+# all green, every morning. The lane now takes the `# suite-timeout-sec:` that
+# scripts\harness-floor.ps1 declares, unless the caller names a cap.
+
+$floorScript = Join-Path $RepoRoot 'scripts\harness-floor.ps1'
+. (Join-Path $RepoRoot 'scripts\lib\RunVerdict.ps1')
+$declared = Get-ScriptTimeout -Text ([IO.File]::ReadAllText($floorScript))
+$hDefault = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $floor -Lane harness -HarnessFull -DryRun 2>&1 |
+        ForEach-Object { $_.ToString() } | Where-Object { $_ -like 'DRY-RUN harness:*' })
+Check 'T1657: harness-floor.ps1 declares a budget above the 1800s lane default' `
+    ($declared -gt 1800) "declared=$declared"
+Check 'T1657: a bare -Lane harness runs under that declared budget, not 1800s' `
+    ($hDefault.Count -eq 1 -and $hDefault[0] -like "*``[cap ${declared}s``]") ($hDefault -join ' | ')
+$hExplicit = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $floor -Lane harness -DryRun -TimeoutSeconds 1234 2>&1 |
+        ForEach-Object { $_.ToString() } | Where-Object { $_ -like 'DRY-RUN harness:*' })
+Check 'T1657: an explicit -TimeoutSeconds still wins' `
+    ($hExplicit.Count -eq 1 -and $hExplicit[0] -like '*`[cap 1234s`]') ($hExplicit -join ' | ')
+$hfText = [IO.File]::ReadAllText($floorScript)
+Check 'T1657: harness-floor.ps1 hands its -Jobs to suite-run, so the sweep runs side by side' `
+    ($hfText -match '\[int\]\$Jobs = [2-9]' -and $hfText -match '-TimeoutSec \$TimeoutSec -Jobs \$Jobs') 'harness-floor.ps1 source'
 
 Complete-TestBody  # T1039: the run reached the end of its body
 
