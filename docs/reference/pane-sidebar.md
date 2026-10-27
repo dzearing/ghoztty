@@ -282,6 +282,21 @@ shows the same view of it (see *Shared across windows*). Read before touching
   enough — and the held header stays under the pointer as
   the list folds up beneath it (`PaneSidebarItemReorder.clamp(grabbed:)`).
   After the drop lands — or a cancel — the folds come back as they were.
+- **Dragging a window folds every window** to its row the same way
+  (`PaneSidebarSharedState.unfoldedWindows` emptied, put back once it lands),
+  so every window is one row high.
+- **The drop draws the new order where the item was let go, then glides.**
+  `landed` lives on `PaneSidebarItemDragMotion`, which the items observe, so
+  the pass that reorders them also redraws their lift and slide; without it
+  they kept their old offsets for that pass (the dragged item a slot past its
+  place, the one it passed slid up under the sticky header). The glide starts
+  only once the new order has been laid out (`framesChanged`, then the next
+  turn): started earlier, the reorder pass ran inside its animation and every
+  item eased out of its old offset.
+- **No hover while an item is dragged** (`HoverTrackingView.isHeld`, set by
+  the drag): rows it passes don't light up and the dragged one keeps its
+  controls; once it lands every row re-syncs from the pointer
+  (`HoverTrackingViewTests`).
 - **The order is shared and persisted** (`PaneSidebarSharedState.windowOrder`,
   UserDefaults `PaneSidebarWindowOrder`): one list of keys, `project:<name>`
   and `window:<windowID>`, read by `PaneSidebarWindowGrouping.sections(_:order:)`

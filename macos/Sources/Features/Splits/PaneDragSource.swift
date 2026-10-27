@@ -315,6 +315,24 @@ class HoverTrackingView: NSView {
     var onHoverChanged: ((Bool) -> Void)?
 
     private var isHovered = false
+    private var holdObserver: NSObjectProtocol?
+
+    /// While an item is dragged up and down the sidebar, every hover stays
+    /// as it is: the rows it passes do not light up under the pointer, and
+    /// the dragged one keeps its own look. Let go, each re-syncs from where
+    /// the pointer is.
+    static var isHeld = false {
+        didSet {
+            guard isHeld != oldValue, !isHeld else { return }
+            NotificationCenter.default.post(name: heldDidEnd, object: nil)
+        }
+    }
+
+    private static let heldDidEnd = Notification.Name("HoverTrackingView.heldDidEnd")
+
+    deinit {
+        if let holdObserver { NotificationCenter.default.removeObserver(holdObserver) }
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -334,6 +352,13 @@ class HoverTrackingView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { setHovered(false) }
+        if holdObserver == nil {
+            holdObserver = NotificationCenter.default.addObserver(
+                forName: Self.heldDidEnd, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.syncHover() }
+            }
+        }
     }
 
     /// The pointer in this view's coordinates, or nil when it can't be over
@@ -344,6 +369,7 @@ class HoverTrackingView: NSView {
     }
 
     func syncHover() {
+        guard !Self.isHeld else { return }
         guard let point = pointerLocation else { return setHovered(false) }
         setHovered(!isHiddenOrHasHiddenAncestor && bounds.contains(point))
     }

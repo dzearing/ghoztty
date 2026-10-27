@@ -88,7 +88,8 @@ enum PaneSidebarItemReorder {
 ///
 /// Dragging a group folds every group first, so they are all one header high
 /// and easy to place (with the fold's own animation), and puts the folds back
-/// once it has landed.
+/// once it has landed. Dragging a window does the same with the windows: each
+/// folds to its row, and the open ones open again once it has landed.
 @MainActor
 final class PaneSidebarItemDrag: ObservableObject {
     static let shared = PaneSidebarItemDrag()
@@ -132,10 +133,23 @@ final class PaneSidebarItemDrag: ObservableObject {
     private var grabbedTop: CGFloat = -.infinity
     /// Settling: where the item is laid out after the move. Its frame is
     /// only re-read a pass later, and drawing it from the old one for that
-    /// pass would flash it at the wrong place.
-    private var landed: CGFloat?
+    /// pass would flash it at the wrong place. On `motion`, so letting go
+    /// redraws the items in the pass that reorders them: otherwise they keep
+    /// their slide and lift for that pass, the dragged one a slot past its
+    /// place and the one it passed slid up under the header above.
+    private var landed: CGFloat? {
+        get { motion.landed }
+        set { motion.landed = newValue }
+    }
+    /// Settling: the glide has not started yet. It waits for the new order
+    /// to be laid out (`framesChanged`): started any earlier, the pass that
+    /// lays it out would run inside the glide's animation, and every item
+    /// would ease out of its old slide rather than stand where it was drawn.
+    private var awaitsGlide = false
     /// The group folds to put back after a group drag.
     private var foldsBefore: Set<String>?
+    /// The open windows to put back after a window drag.
+    private var unfoldedBefore: Set<UUID>?
     private var generation = 0
 
     static let settleDuration: TimeInterval = PaneSidebarRowDrag.settleDuration
@@ -200,6 +214,7 @@ final class PaneSidebarItemDrag: ObservableObject {
         frames = [:]
         target = siblings.firstIndex(of: key)
         pointer = y
+        HoverTrackingView.isHeld = true
     }
 
     func move(screenY: CGFloat) {
@@ -216,6 +231,13 @@ final class PaneSidebarItemDrag: ObservableObject {
             // The item's new place is laid out: measure from it (the glide
             // is already heading there).
             if let frame = frames[key] { landed = frame.minY }
+            // Reported mid-update, before that layout is on screen: glide
+            // from the next turn, once it is.
+            let generation = generation
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.generation == generation else { return }
+                self.glide()
+            }
             return
         }
         if grab == nil, let frame = frames[key], let controller {
@@ -224,8 +246,11 @@ final class PaneSidebarItemDrag: ObservableObject {
             grab = pointer - frame.minY
             top = frame.minY
             grabbedTop = frame.minY
+            let shared = controller.paneSidebarState.shared
             if key.hasPrefix(PaneSidebarWindowGrouping.key(project: "")) {
-                foldAllGroups(of: siblings, in: controller.paneSidebarState.shared)
+                foldAllGroups(of: siblings, in: shared)
+            } else {
+                foldAllWindows(in: shared)
             }
         }
         relayout()
@@ -263,14 +288,27 @@ final class PaneSidebarItemDrag: ObservableObject {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             isSettling = true
+            awaitsGlide = true
             landed = landing
             if target != source { controller.placeInAllWindowsList(key, at: target, among: siblings) }
         }
+        // Unmoved, nothing new is laid out to wait for: the others only slide
+        // back, which may as well ease with it. Moved, a list that never
+        // reports its new layout (gone mid-drop) must not hold the drag.
         let generation = generation
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + (target == source ? 0 : Self.settleDuration)) { [weak self] in
             guard let self, self.generation == generation else { return }
-            withAnimation(Self.settleAnimation) { self.top = self.landed ?? landing }
+            self.glide()
         }
+    }
+
+    /// Settling, once its new place is laid out: glide the item from where
+    /// it was let go to there, then end the drag.
+    private func glide() {
+        guard awaitsGlide, let landed else { return }
+        awaitsGlide = false
+        withAnimation(Self.settleAnimation) { top = landed }
+        let generation = generation
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleDuration) { [weak self] in
             guard let self, self.generation == generation else { return }
             self.reset()
@@ -279,20 +317,35 @@ final class PaneSidebarItemDrag: ObservableObject {
 
     private func reset() {
         let folds = foldsBefore
+        let unfolded = unfoldedBefore
         let shared = controller?.paneSidebarState.shared
         key = nil
         siblings = []
         controller = nil
         target = nil
         isSettling = false
+        awaitsGlide = false
         landed = nil
         frames = [:]
         grab = nil
         grabbedTop = -.infinity
         foldsBefore = nil
+        unfoldedBefore = nil
+        HoverTrackingView.isHeld = false
         if let folds, let shared {
             withAnimation(PaneSidebarOutline.foldAnimation) { shared.foldedProjects = folds }
         }
+        if let unfolded, let shared {
+            withAnimation(PaneSidebarOutline.foldAnimation) { shared.unfoldedWindows = unfolded }
+        }
+    }
+
+    /// A window is being dragged: fold every window to its row, so each is
+    /// one row high and easy to place, remembering which were open.
+    private func foldAllWindows(in shared: PaneSidebarSharedState) {
+        unfoldedBefore = shared.unfoldedWindows
+        guard !shared.unfoldedWindows.isEmpty else { return }
+        withAnimation(PaneSidebarOutline.foldAnimation) { shared.unfoldedWindows = [] }
     }
 
     /// A group is being dragged: fold every group, so each is one header
@@ -340,6 +393,7 @@ extension BaseTerminalController {
 final class PaneSidebarItemDragMotion: ObservableObject {
     @Published fileprivate(set) var top: CGFloat = 0
     @Published fileprivate(set) var target: Int?
+    @Published fileprivate(set) var landed: CGFloat?
 }
 
 // MARK: - Drag source

@@ -34,4 +34,24 @@ struct HoverTrackingViewTests {
         view.syncHover()
         #expect(reports == [true, false])
     }
+
+    @Test func aSidebarDragHoldsEveryHoverUntilItLands() {
+        let passed = Probe(frame: NSRect(x: 0, y: 0, width: 100, height: 20))
+        passed.pointer = NSPoint(x: 10, y: 40)
+        var reports: [Bool] = []
+        passed.onHoverChanged = { reports.append($0) }
+        defer { HoverTrackingView.isHeld = false }
+
+        // An item is dragged over the row: it does not light up.
+        HoverTrackingView.isHeld = true
+        passed.pointer = NSPoint(x: 10, y: 10)
+        passed.mouseEntered(with: event(.mouseEntered))
+        passed.syncHover()
+        #expect(reports.isEmpty)
+
+        // Let go over it: now it does.
+        HoverTrackingView.isHeld = false
+        passed.syncHover()
+        #expect(reports == [true])
+    }
 }

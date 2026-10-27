@@ -242,13 +242,21 @@ struct PaneSidebarSyncWindowTests {
         let siblings = alpha.windows.map(\.key)
         let two = siblings[1], one = siblings[0]
         // The list reports its frames once a drag is on; begin at the row
-        // as it lies before any of them is known.
+        // as it lies before any of them is known. An open window folds to
+        // its row while one is held, and opens again after.
+        let shared = PaneSidebarSharedState.shared
+        shared.unfoldedWindows = [a.paneSidebarState.windowID]
+        await settle(0.4)
         drag.begin(two, siblings: siblings, in: a, screenY: 0)
         await settle(0.4)
+        #expect(shared.unfoldedWindows.isEmpty, "every window folds while one is dragged")
         drag.end(commit: false)
         await settle(0.5)
         #expect(a.paneSidebarSections.first { $0.project == "alpha" }?.windows.map(\.label) == ["one", "two"],
                 "cancelled: nothing moved")
+        #expect(shared.unfoldedWindows == [a.paneSidebarState.windowID], "the open window opens again")
+        shared.unfoldedWindows = []
+        await settle(0.4)
 
         // For real: grab the row at its middle (frames from the cancelled
         // look), and move it up past `one`'s middle.
