@@ -285,6 +285,27 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - **Dragging a window folds every window** to its row the same way
   (`PaneSidebarSharedState.unfoldedWindows` emptied, put back once it lands),
   so every window is one row high.
+- **A window drags anywhere in the list, into or out of a group.** A window
+  drag reads the whole list as rows — each group's header, its windows, the
+  lone windows (`PaneSidebarCrossDrop`) — and every row slides on its own: a
+  group's windows report frames and slide under `<group>#windows`
+  (`PaneSidebarItemDrag.windowsSuffix`), apart from its header; a group drag
+  still moves the two as one. Right under a header or between a group's
+  windows it joins that group; just past a group's last row, the upper half
+  of the slot joins it and the lower half lands after it, at the top level.
+  Joining a group it is not in outlines that group's header
+  (`PaneSidebarJoinHighlight`). Dropped in another group it is renamed
+  `<project>: <name>`, dropped out of one just `<name>` — pinned, as Change
+  Window Title pins it. Grabbed open, it folds to its row under the pointer
+  (the grab point is kept within the folded row).
+  Tests: `PaneSidebarCrossDropTests`,
+  `PaneSidebarSyncWindowTests.dragMovesAWindowIntoAndOutOfAGroup`.
+- **Rename a window in place**: hovered, a window row's buttons are pencil,
+  +, ×. The pencil turns its name into a field holding the whole title
+  (`<project>: ` included, so the group can be changed there): Return or
+  clicking away keeps it, Escape cancels, an unchanged name pins nothing, an
+  empty one goes back to following the window's own title
+  (`PaneSidebarRename`; the row's drag source steps aside while it edits).
 - **The drop draws the new order where the item was let go, then glides.**
   `landed` lives on `PaneSidebarItemDragMotion`, which the items observe, so
   the pass that reorders them also redraws their lift and slide; without it

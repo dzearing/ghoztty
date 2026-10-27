@@ -69,6 +69,63 @@ enum PaneSidebarItemReorder {
     }
 }
 
+// MARK: - A window into or out of a group (pure)
+
+/// Where a dragged window lands in the whole all-windows list — not only
+/// among its own siblings: into another project group (it takes that
+/// group's `<project>: ` name), or out to the top level (it loses it).
+///
+/// The list is read as one run of rows: each group's header, then its
+/// windows (every window folded to its row while one is dragged), and the
+/// lone windows between. Pure, so pinned in `PaneSidebarCrossDropTests`.
+enum PaneSidebarCrossDrop {
+    struct Row: Equatable {
+        /// The window's key, or the group's for its header.
+        let key: String
+        /// The group it is in, or that it heads; nil for a lone window.
+        let project: String?
+        let isHeader: Bool
+        /// As laid out, before any slide.
+        let frame: CGRect
+    }
+
+    enum Destination: Equatable {
+        /// Into `project`'s windows at `index` (among them, without it).
+        case group(String, index: Int)
+        /// At `index` of the top level (groups and lone windows, without it).
+        case topLevel(index: Int)
+    }
+
+    /// Where it lands at slot `slot` of `rows` — the list without it, closed
+    /// up where it left — with its top at `top`. Right under a header, or
+    /// between two of a group's windows, it joins that group. Just after a
+    /// group's last window (or a folded group's header) it could be either:
+    /// held in the upper half of that slot it joins the group's end, in the
+    /// lower half it lands after the group, at the top level.
+    static func destination(rows: [Row], slot: Int, top: CGFloat) -> Destination {
+        let slot = Swift.min(Swift.max(slot, 0), rows.count)
+        let before = rows[..<slot]
+        let topLevel = Destination.topLevel(index: before.filter { $0.isHeader || $0.project == nil }.count)
+        guard let prev = before.last, let project = prev.project else { return topLevel }
+        let join = Destination.group(project, index: before.filter { !$0.isHeader && $0.project == project }.count)
+        let next = slot < rows.count ? rows[slot] : nil
+        if let next, !next.isHeader, next.project == project { return join }
+        // The slot runs from that last row's top to its bottom (and the
+        // list's end clamps it there): split at its middle.
+        return top < prev.frame.midY ? join : topLevel
+    }
+
+    /// The window's whole title once it lands in `destination`: its own
+    /// name (`label`: a grouped window's part after `<project>: `) under
+    /// the group's, or alone at the top level.
+    static func title(label: String, in destination: Destination) -> String {
+        switch destination {
+        case .group(let project, _): return "\(project): \(label)"
+        case .topLevel: return label
+        }
+    }
+}
+
 // MARK: - The drag
 
 /// A window row or project group header being dragged up and down the
@@ -123,6 +180,23 @@ final class PaneSidebarItemDrag: ObservableObject {
     /// (`PaneSidebarItemFrames`): only while a drag is on.
     private(set) var frames: [String: CGRect] = [:]
 
+    /// A window drag: the whole list as rows, the dragged one included
+    /// (`PaneSidebarCrossDrop`), so it can land in any group or none. Nil
+    /// for a group drag, which moves among its siblings only.
+    private var rows: [PaneSidebarCrossDrop.Row]?
+    /// A window drag: how far the others slide (its height and gap).
+    private var rowPitch: CGFloat = 0
+    /// Where a window drag would land, or nil.
+    private(set) var destination: PaneSidebarCrossDrop.Destination? {
+        get { motion.destination }
+        set { motion.destination = newValue }
+    }
+
+    /// A group's windows report their frames, and slide, under their own
+    /// key (the group's plus this): a window drag slides a header and the
+    /// windows under it apart; a group drag moves them as one.
+    static let windowsSuffix = "#windows"
+
     /// The pointer's distance below the item's top when it was grabbed:
     /// known once the list first reports its frames, which it does only
     /// while a drag is on.
@@ -164,29 +238,45 @@ final class PaneSidebarItemDrag: ObservableObject {
 
     /// The dragged item's offset from where it is laid out.
     func liftOffset(_ key: String) -> CGFloat? {
-        guard key == self.key else { return nil }
-        guard grab != nil, let laidOut = landed ?? frames[key]?.minY else { return 0 }
+        guard let dragged = self.key, key == dragged || key == dragged + Self.windowsSuffix else { return nil }
+        guard grab != nil, let laidOut = landed ?? frame(of: dragged)?.minY else { return 0 }
         return top - laidOut
     }
 
     /// How far sibling `key` slides to make room, in points.
     func shift(_ key: String) -> CGFloat {
-        guard let dragged = self.key, key != dragged, !isSettling,
+        guard let dragged = self.key, key != dragged, !isSettling else { return 0 }
+        if let rows {
+            // A window drag: every row slides on its own, a group's header
+            // apart from its windows.
+            guard let source = rows.firstIndex(where: { $0.key == dragged }),
+                  let index = rows.firstIndex(where: { $0.key == key }) else { return 0 }
+            return CGFloat(PaneSidebarOrder.shift(index: index, source: source, target: target)) * rowPitch
+        }
+        let base = key.hasSuffix(Self.windowsSuffix) ? String(key.dropLast(Self.windowsSuffix.count)) : key
+        guard base != dragged,
               let source = siblings.firstIndex(of: dragged),
-              let index = siblings.firstIndex(of: key)
+              let index = siblings.firstIndex(of: base)
         else { return 0 }
         let rows = PaneSidebarOrder.shift(index: index, source: source, target: target)
         return CGFloat(rows) * PaneSidebarItemReorder.pitch(dragged: source, frames: siblingFrames)
+    }
+
+    /// An item's laid-out frame: a group's is its header and its windows.
+    private func frame(of key: String) -> CGRect? {
+        let windows = frames[key + Self.windowsSuffix]
+        guard let own = frames[key] else { return windows }
+        return windows.map { own.union($0) } ?? own
     }
 
     /// The siblings' frames, in order. A lazy list lays out only what is
     /// near the viewport: a sibling it has not laid out stands in at the far
     /// end it is on, so it counts as passed (above) or not (below).
     private var siblingFrames: [CGRect] {
-        let known = siblings.indices.filter { frames[siblings[$0]] != nil }
+        let known = siblings.indices.filter { frame(of: siblings[$0]) != nil }
         guard let first = known.first else { return siblings.map { _ in .zero } }
         return siblings.indices.map { index in
-            frames[siblings[index]]
+            frame(of: siblings[index])
                 ?? CGRect(x: 0, y: index < first ? -Self.farAway : Self.farAway, width: 0, height: 0)
         }
     }
@@ -195,7 +285,23 @@ final class PaneSidebarItemDrag: ObservableObject {
 
     /// The laid-out siblings only, for the span the item is kept in.
     private var knownFrames: [CGRect] {
-        siblings.compactMap { frames[$0] }
+        siblings.compactMap { frame(of: $0) }
+    }
+
+    /// The whole list as rows, as laid out (`PaneSidebarCrossDrop`): each
+    /// group's header (its band and the gaps around it), then its windows,
+    /// and the lone windows. Only what the list has laid out.
+    private func listRows(in controller: BaseTerminalController) -> [PaneSidebarCrossDrop.Row] {
+        controller.paneSidebarSections.flatMap { section -> [PaneSidebarCrossDrop.Row] in
+            let windows = section.windows.compactMap { entry in
+                frames[entry.key].map {
+                    PaneSidebarCrossDrop.Row(key: entry.key, project: section.project, isHeader: false, frame: $0)
+                }
+            }
+            guard let project = section.project else { return windows }
+            guard let header = frames[section.id] else { return windows }
+            return [PaneSidebarCrossDrop.Row(key: section.id, project: project, isHeader: true, frame: header)] + windows
+        }
     }
 
     // MARK: Lifecycle
@@ -212,6 +318,8 @@ final class PaneSidebarItemDrag: ObservableObject {
         landed = nil
         grab = nil
         frames = [:]
+        rows = nil
+        destination = nil
         target = siblings.firstIndex(of: key)
         pointer = y
         HoverTrackingView.isHeld = true
@@ -230,7 +338,7 @@ final class PaneSidebarItemDrag: ObservableObject {
         if isSettling {
             // The item's new place is laid out: measure from it (the glide
             // is already heading there).
-            if let frame = frames[key] { landed = frame.minY }
+            if let frame = frame(of: key) { landed = frame.minY }
             // Reported mid-update, before that layout is on screen: glide
             // from the next turn, once it is.
             let generation = generation
@@ -240,7 +348,7 @@ final class PaneSidebarItemDrag: ObservableObject {
             }
             return
         }
-        if grab == nil, let frame = frames[key], let controller {
+        if grab == nil, let frame = frame(of: key), let controller {
             // First frames: where in the item it was grabbed — before a
             // group drag folds the groups and moves it.
             grab = pointer - frame.minY
@@ -261,8 +369,9 @@ final class PaneSidebarItemDrag: ObservableObject {
     private func relayout() {
         // Before the list has reported its frames there is nothing to place
         // against: hold still.
-        guard let key, let grab, let dragged = siblings.firstIndex(of: key),
-              let frame = self.frames[key] else { return }
+        guard let key, let grab, let frame = frame(of: key) else { return }
+        if isWindow(key), let controller { return relayoutRows(controller, grab: grab, frame: frame) }
+        guard let dragged = siblings.firstIndex(of: key) else { return }
         let frames = siblingFrames
         let known = knownFrames
         let top = PaneSidebarItemReorder.clamp(
@@ -272,13 +381,49 @@ final class PaneSidebarItemDrag: ObservableObject {
         if target != self.target { self.target = target }
     }
 
+    private func isWindow(_ key: String) -> Bool {
+        key.hasPrefix(PaneSidebarWindowGrouping.key(window: ""))
+    }
+
+    /// A window drag: it follows the pointer anywhere in the list, and the
+    /// slot and destination follow it.
+    private func relayoutRows(_ controller: BaseTerminalController, grab: CGFloat, frame: CGRect) {
+        let rows = listRows(in: controller)
+        self.rows = rows
+        guard let source = rows.firstIndex(where: { $0.key == key }) else { return }
+        let frames = rows.map(\.frame)
+        rowPitch = PaneSidebarItemReorder.pitch(dragged: source, frames: frames)
+        // Grabbed open, it folds to its row under the pointer: held by a
+        // point below that row, it would hang above the pointer.
+        let grab = Swift.min(grab, frame.height / 2)
+        let top = PaneSidebarItemReorder.clamp(top: pointer - grab, dragged: source, frames: frames, grabbed: grabbedTop)
+        if top != self.top { self.top = top }
+        // The others, closed up where it left.
+        var others = rows
+        others.remove(at: source)
+        others = others.enumerated().map { index, row in
+            guard index >= source else { return row }
+            return .init(key: row.key, project: row.project, isHeader: row.isHeader,
+                         frame: row.frame.offsetBy(dx: 0, dy: -rowPitch))
+        }
+        let middle = top + frame.height / 2
+        let slot = others.filter { $0.frame.midY < middle }.count
+        if slot != target { target = slot }
+        let destination = PaneSidebarCrossDrop.destination(rows: others, slot: slot, top: top)
+        if destination != self.destination { self.destination = destination }
+        // Joining a group it is not in already: its header says so.
+        var joining: String?
+        if case .group(let project, _) = destination, project != rows[source].project { joining = project }
+        if joining != motion.joining { motion.joining = joining }
+    }
+
     /// Let go — or, with `commit` false, cancelled (Escape): the order
     /// changes (every window's list), and the item glides from the pointer to
     /// its place. A group drag's folds come back once it has landed.
     func end(commit: Bool) {
-        guard let key, let controller, !isSettling,
-              let source = siblings.firstIndex(of: key)
-        else { return reset() }
+        guard let key, let controller, !isSettling else { return reset() }
+        if let rows, isWindow(key) { return endWindow(key, rows: rows, in: controller, commit: commit) }
+        guard let source = siblings.firstIndex(of: key) else { return reset() }
         let frames = siblingFrames
         let target = commit && grab != nil ? (self.target ?? source) : source
         let landing = PaneSidebarItemReorder.landingTop(dragged: source, target: target, frames: frames)
@@ -300,6 +445,54 @@ final class PaneSidebarItemDrag: ObservableObject {
             guard let self, self.generation == generation else { return }
             self.glide()
         }
+    }
+
+    /// A window let go: moved among its own group's windows (or the top
+    /// level), it only reorders; into another group, or out of its own, it
+    /// is renamed to say so — `<project>: <name>`, or its name alone — and
+    /// lands where it was let go.
+    private func endWindow(
+        _ key: String, rows: [PaneSidebarCrossDrop.Row], in controller: BaseTerminalController, commit: Bool
+    ) {
+        guard let source = rows.firstIndex(where: { $0.key == key }) else { return reset() }
+        let slot = commit && grab != nil ? (target ?? source) : source
+        let destination = commit && grab != nil ? self.destination : nil
+        let landing = PaneSidebarItemReorder.landingTop(dragged: source, target: slot, frames: rows.map(\.frame))
+        let sections = controller.paneSidebarSections
+        let own = sections.first { $0.windows.contains { $0.key == key } }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isSettling = true
+            awaitsGlide = true
+            landed = landing
+            guard let destination, let own, let entry = own.windows.first(where: { $0.key == key }) else { return }
+            switch destination {
+            case .group(let project, let index):
+                if project != own.project {
+                    rename(entry.id, to: PaneSidebarCrossDrop.title(label: entry.label, in: destination), in: controller)
+                }
+                let windows = sections.first { $0.project == project }?.windows.map(\.key) ?? []
+                controller.placeInAllWindowsList(key, at: index, among: windows.filter { $0 != key })
+            case .topLevel(let index):
+                if own.project != nil {
+                    rename(entry.id, to: PaneSidebarCrossDrop.title(label: entry.label, in: destination), in: controller)
+                }
+                controller.placeInAllWindowsList(key, at: index, among: sections.map(\.id).filter { $0 != key })
+            }
+        }
+        let generation = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + (slot == source ? 0 : Self.settleDuration)) { [weak self] in
+            guard let self, self.generation == generation else { return }
+            self.glide()
+        }
+    }
+
+    /// Pin window `id`'s title (as Change Window Title does).
+    private func rename(_ id: UUID, to title: String, in controller: BaseTerminalController) {
+        controller.paneSidebarAllControllers
+            .first { $0.paneSidebarState.windowID == id }?
+            .setWindowTitle(title)
     }
 
     /// Settling, once its new place is laid out: glide the item from where
@@ -327,6 +520,9 @@ final class PaneSidebarItemDrag: ObservableObject {
         awaitsGlide = false
         landed = nil
         frames = [:]
+        rows = nil
+        destination = nil
+        motion.joining = nil
         grab = nil
         grabbedTop = -.infinity
         foldsBefore = nil
@@ -394,6 +590,9 @@ final class PaneSidebarItemDragMotion: ObservableObject {
     @Published fileprivate(set) var top: CGFloat = 0
     @Published fileprivate(set) var target: Int?
     @Published fileprivate(set) var landed: CGFloat?
+    @Published fileprivate(set) var destination: PaneSidebarCrossDrop.Destination?
+    /// The group a window drag would join, when it is not its own.
+    @Published fileprivate(set) var joining: String?
 }
 
 // MARK: - Drag source
@@ -534,10 +733,12 @@ private struct PaneSidebarItemDragOverlay: ViewModifier {
     let onClick: () -> Void
 
     @Environment(\.paneSidebarInteractive) private var isInteractive
+    @ObservedObject private var rename = PaneSidebarRename.shared
 
     func body(content: Content) -> some View {
         content.overlay {
-            if isInteractive {
+            // Renamed in place: the field takes the clicks.
+            if isInteractive && rename.editing != key {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: leading).allowsHitTesting(false)
                     PaneSidebarItemDragSource(
@@ -601,6 +802,26 @@ struct PaneSidebarItemShift: ViewModifier {
             .animation(isActive && lift == nil && !drag.isSettling ? PaneSidebarShift.animation : nil, value: slide)
             .paneSidebarItemFrame(key, isOn: isActive)
             .zIndex(lift != nil ? 1 : 0)
+    }
+}
+
+/// A project header while a window is dragged into its group: outlined in
+/// the accent color, so a drop just past its last window reads as joining
+/// it rather than landing after it (`PaneSidebarCrossDrop.destination`).
+struct PaneSidebarJoinHighlight: ViewModifier {
+    let project: String
+    @ObservedObject var motion: PaneSidebarItemDragMotion
+
+    func body(content: Content) -> some View {
+        let joins = motion.joining == project
+        content.overlay {
+            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+                .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2)
+                .padding(.horizontal, SidePanelRow.fillInset)
+                .opacity(joins ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: joins)
+                .allowsHitTesting(false)
+        }
     }
 }
 

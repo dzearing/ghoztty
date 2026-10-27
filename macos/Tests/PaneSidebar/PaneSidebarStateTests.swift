@@ -710,3 +710,47 @@ struct PaneSidebarItemReorderTests {
         #expect(R.clamp(top: 200, dragged: 2, frames: frames, grabbed: 260) == 200)
     }
 }
+
+/// A window dragged into or out of a project group (`PaneSidebarCrossDrop`):
+/// where it lands, and the name it takes.
+struct PaneSidebarCrossDropTests {
+    typealias C = PaneSidebarCrossDrop
+
+    /// lone `a`, then `[p]` with `p1` and `p2`, lone `b`, then folded `[q]`:
+    /// every row 32pt, the list without the dragged window.
+    private let rows: [C.Row] = {
+        let items: [(String, String?, Bool)] = [
+            ("window:a", nil, false),
+            ("project:p", "p", true), ("window:p1", "p", false), ("window:p2", "p", false),
+            ("window:b", nil, false),
+            ("project:q", "q", true),
+        ]
+        return items.enumerated().map { index, item in
+            C.Row(key: item.0, project: item.1, isHeader: item.2,
+                  frame: CGRect(x: 0, y: CGFloat(index) * 32, width: 200, height: 32))
+        }
+    }()
+
+    @Test func underAHeaderOrBetweenItsWindowsItJoinsTheGroup() {
+        #expect(C.destination(rows: rows, slot: 0, top: 0) == .topLevel(index: 0))
+        #expect(C.destination(rows: rows, slot: 2, top: 64) == .group("p", index: 0))
+        #expect(C.destination(rows: rows, slot: 3, top: 96) == .group("p", index: 1))
+        // Between two lone items: the top level.
+        #expect(C.destination(rows: rows, slot: 1, top: 32) == .topLevel(index: 1))
+    }
+
+    @Test func pastAGroupsLastWindowTheSlotIsSplitInHalf() {
+        // After `p2` (96…128), before `b` (128): upper half joins `p`'s end,
+        // lower half lands after the group, at the top level.
+        #expect(C.destination(rows: rows, slot: 4, top: 100) == .group("p", index: 2))
+        #expect(C.destination(rows: rows, slot: 4, top: 120) == .topLevel(index: 2))
+        // Past a folded group's header, at the end of the list: the same.
+        #expect(C.destination(rows: rows, slot: 6, top: 165) == .group("q", index: 0))
+        #expect(C.destination(rows: rows, slot: 6, top: 190) == .topLevel(index: 4))
+    }
+
+    @Test func itsNameSaysWhichGroupItIsIn() {
+        #expect(C.title(label: "main", in: .group("ghoztty", index: 0)) == "ghoztty: main")
+        #expect(C.title(label: "main", in: .topLevel(index: 3)) == "main")
+    }
+}

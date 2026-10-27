@@ -336,7 +336,9 @@ struct PaneSidebarView: View {
                                     .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
                             }
                         }
-                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
+                        .modifier(PaneSidebarItemShift(
+                            key: section.id + PaneSidebarItemDrag.windowsSuffix, drag: itemDrag,
+                            isActive: reporting, showsBacking: false))
                     }
                 } header: {
                     PaneSidebarProjectHeader(
@@ -359,6 +361,7 @@ struct PaneSidebarView: View {
                             help: folded ? "Show \(project)’s windows — drag to reorder"
                                 : "Hide \(project)’s windows — drag to reorder",
                             onClick: onFold)
+                        .modifier(PaneSidebarJoinHighlight(project: project, motion: itemDrag.motion))
                         .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                 }
             } else {
@@ -808,6 +811,18 @@ struct PaneSidebarHeaderButton: View {
     }
 }
 
+// MARK: - Renaming in place
+
+/// The sidebar item being renamed in place, by its key: a window's
+/// (`PaneSidebarWindowGrouping.key(window:)`). One at a time across every
+/// window's sidebar; while it is set, that item's drag source steps aside so
+/// its field takes the clicks.
+@MainActor
+final class PaneSidebarRename: ObservableObject {
+    static let shared = PaneSidebarRename()
+    @Published var editing: String?
+}
+
 // MARK: - Window header (this window's list, and each window in all windows)
 
 struct PaneSidebarWindowHeader: View {
@@ -825,8 +840,14 @@ struct PaneSidebarWindowHeader: View {
     let onFold: () -> Void
 
     @State private var isHovered = false
+    @ObservedObject private var rename = PaneSidebarRename.shared
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
     @Environment(\.paneSidebarInteractive) private var isInteractive
     @Environment(\.paneSidebarEmphasized) private var windowIsKey
+
+    private var key: String { PaneSidebarWindowGrouping.key(window: owner.paneSidebarState.windowID) }
+    private var isEditing: Bool { rename.editing == key }
 
     /// This window folded: the selected pane is inside the fold, so its
     /// header carries the selection, as a row would.
@@ -856,12 +877,16 @@ struct PaneSidebarWindowHeader: View {
             // The PARENT row: the window's own name, at the weight a sidebar
             // gives a group, with its panes indented beneath it.
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(SidePanelRow.foreground(isActive: isSelected, isEmphasized: windowIsKey))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if showsThisWindowTag {
+                if isEditing {
+                    nameField
+                } else {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(SidePanelRow.foreground(isActive: isSelected, isEmphasized: windowIsKey))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if showsThisWindowTag && !isEditing {
                     Text("This Window")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(onAccent
@@ -878,9 +903,12 @@ struct PaneSidebarWindowHeader: View {
             // the window — no questions, no focus taken.
             ZStack(alignment: .trailing) {
                 PaneSidebarCount(value: owner.surfaceTree.count, onAccent: onAccent)
-                    .opacity(isHovered && isInteractive ? 0 : 1)
-                if isHovered && isInteractive {
+                    .opacity(isHovered && isInteractive && !isEditing ? 0 : 1)
+                if isHovered && isInteractive && !isEditing {
                     HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
+                        PaneSidebarItemButton(symbol: "pencil", help: "Rename window", onAccent: onAccent) {
+                            beginRename()
+                        }
                         PaneSidebarItemButton(symbol: "plus", help: "New pane", onAccent: onAccent) {
                             owner.addPaneFromSidebar()
                         }
@@ -915,17 +943,51 @@ struct PaneSidebarWindowHeader: View {
         // `paneSidebarItemDrag`, between its chevron and its count.
     }
 
+    /// The whole title in place of the name — a grouped window's
+    /// `<project>: ` too, so the group can be changed here. Return keeps it,
+    /// Escape or an unchanged name leaves the window as it was, and an
+    /// empty one goes back to following the window's own title.
+    private var nameField: some View {
+        TextField("Window name", text: $draft)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, weight: .semibold))
+            .lineLimit(1)
+            .focused($fieldFocused)
+            .onSubmit(commitRename)
+            .onExitCommand { rename.editing = nil }
+            .onChange(of: fieldFocused) { focused in
+                // Clicked away: keep what was typed, as Return does.
+                if !focused { commitRename() }
+            }
+            .onAppear { fieldFocused = true }
+    }
+
+    private func beginRename() {
+        draft = owner.effectiveWindowTitleOverride ?? PaneSidebarText.windowTitle(of: owner)
+        rename.editing = key
+    }
+
+    private func commitRename() {
+        guard isEditing else { return }
+        rename.editing = nil
+        let name = draft.trimmingCharacters(in: .whitespaces)
+        let pinned = owner.effectiveWindowTitleOverride
+        // Unchanged: don't pin a title that was following the shell.
+        guard name != (pinned ?? PaneSidebarText.windowTitle(of: owner)) else { return }
+        owner.setWindowTitle(name.isEmpty ? nil : name)
+    }
+
     /// The chevron's end, from the row's leading edge: the drag source
     /// starts there.
     static func leadingControls(indent: CGFloat) -> CGFloat {
         SidePanelRow.fillInset + PaneSidebarOutline.headerLeading + indent + PaneSidebarOutline.chevronWidth
     }
 
-    /// The count's (or + and ×'s) start, from the row's trailing edge: the
-    /// drag source stops there.
+    /// The count's (or pencil, + and ×'s) start, from the row's trailing
+    /// edge: the drag source stops there.
     static var trailingControls: CGFloat {
         SidePanelRow.fillInset + SidePanelRow.textInset
-            + 2 * PaneSidebarItemButton.size + PaneSidebarRow.trailingButtonSpacing
+            + 3 * PaneSidebarItemButton.size + 2 * PaneSidebarRow.trailingButtonSpacing
     }
 }
 

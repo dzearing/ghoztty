@@ -271,7 +271,7 @@ struct PaneSidebarSyncWindowTests {
         let oneTop = try screenY(of: one, in: a, fraction: 0.1)
         drag.move(screenY: oneTop)
         await settle(0.4)
-        #expect(drag.target == 0, "above one: \(String(describing: drag.target))")
+        #expect(drag.destination == .group("alpha", index: 0), "above one: \(String(describing: drag.destination))")
         #expect(drag.shift(one) > 0, "one slides down to make room")
         #expect((drag.liftOffset(two) ?? 0) < -10, "two follows the pointer up")
         drag.end(commit: true)
@@ -329,6 +329,70 @@ struct PaneSidebarSyncWindowTests {
         // Persisted: the shared order is what a relaunch reads.
         let stored = PaneSidebarSharedState.shared.defaults.stringArray(forKey: PaneSidebarSharedState.windowOrderKey) ?? []
         #expect(stored.filter { $0.hasPrefix("project:") } == ["project:gamma", "project:alpha", "project:beta"])
+        await close(windows, restoring: saved)
+    }
+
+    /// A window dragged into another group takes its name, `<project>: `;
+    /// one dragged out to the top level loses it. Every window's list agrees.
+    @Test func dragMovesAWindowIntoAndOutOfAGroup() async throws {
+        let saved = save()
+        let windows = try await open(["alpha: one", "alpha: two", "beta: main", "solo"])
+        let a = windows[0], other = windows[3]
+        a.paneSidebarState.showsAllWindows = true
+        await settle(0.8)
+        let drag = PaneSidebarItemDrag.shared
+        let key = { (c: TerminalController) in PaneSidebarWindowGrouping.key(window: c.paneSidebarState.windowID) }
+        let one = key(windows[0]), main = key(windows[2])
+        // `main` open: grabbed at its middle, it folds to its row under the
+        // pointer, not above it.
+        PaneSidebarSharedState.shared.unfoldedWindows = [windows[2].paneSidebarState.windowID]
+        await settle(0.4)
+
+        // Frames come only with a drag on: a look first, then the real one,
+        // grabbed at its middle.
+        drag.begin(main, siblings: [main], in: a, screenY: 0)
+        await settle(0.4)
+        // Half a row below its folded row: inside its open pane list.
+        let mainY = try screenY(of: main, in: a, fraction: 1.5)
+        drag.end(commit: false)
+        await settle(0.5)
+        drag.begin(main, siblings: [main], in: a, screenY: mainY)
+        await settle(0.5)
+        let held = try #require(a.paneSidebarHost?.geometry.itemFrames[main])
+        let drawnTop = held.minY + (drag.liftOffset(main) ?? 0)
+        let pointer = try #require(a.paneSidebarHost?.sidebarY(screenY: mainY))
+        #expect(pointer >= drawnTop && pointer <= drawnTop + held.height + 1,
+                "folded under the pointer: \(drawnTop)…\(drawnTop + held.height) vs \(pointer)")
+        // Its middle at `one`'s bottom: between `one` and `two`.
+        drag.move(screenY: try screenY(of: one, in: a, fraction: 1))
+        await settle(0.4)
+        #expect(drag.destination == .group("alpha", index: 1), "\(String(describing: drag.destination))")
+        drag.end(commit: true)
+        await settle(0.8)
+        #expect(windows[2].windowTitleOverride == "alpha: main")
+        for viewer in [a, other] {
+            #expect(viewer.paneSidebarSections.first { $0.project == "alpha" }?.windows.map(\.label)
+                    == ["one", "main", "two"], "every window's list has it in alpha")
+            #expect(!viewer.paneSidebarSections.contains { $0.project == "beta" }, "beta is gone")
+        }
+
+        // `one` out, past `solo` at the end of the list.
+        drag.begin(one, siblings: [one], in: a, screenY: 0)
+        await settle(0.4)
+        let oneY = try screenY(of: one, in: a)
+        let end = try screenY(of: key(other), in: a, fraction: 1)
+        drag.end(commit: false)
+        await settle(0.5)
+        drag.begin(one, siblings: [one], in: a, screenY: oneY)
+        await settle(0.4)
+        drag.move(screenY: end)
+        await settle(0.4)
+        #expect(drag.destination == .topLevel(index: 2), "\(String(describing: drag.destination))")
+        drag.end(commit: true)
+        await settle(0.8)
+        #expect(windows[0].windowTitleOverride == "one")
+        #expect(a.paneSidebarSections.map(\.id) == ["project:alpha", key(other), one])
+        #expect(other.paneSidebarSections.map(\.id) == ["project:alpha", key(other), one])
         await close(windows, restoring: saved)
     }
 
