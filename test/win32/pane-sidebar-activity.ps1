@@ -14,7 +14,11 @@
 #      clock (log `motion on surface=rail busy=1`) and the rail really moves -
 #      fourteen synchronous WM_PRINTCLIENT frames ~175 ms apart (more than
 #      the sheen's 2s period) are not all the same picture. There is no busy
-#      dot; the moving band IS the signal.
+#      dot; the moving band IS the signal. Since T2309 (Mac dcdc59712) a slow
+#      drift slides under the glint all the time, inside a hairline rim, so
+#      nearly every frame differs - between glints too - and none, once faded
+#      in, is the idle picture. 4b asks the drift of an expanded row as well.
+#      -SaveFrames <dir> keeps the sampled frames as PNGs.
 #   2. Idle again, the clock stops itself (log `motion off`) and the rail
 #      holds still: consecutive frames are identical.
 #   2b. A progress report alone (OSC 9;4;3 printed by s1's shell, the state
@@ -44,7 +48,9 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [switch]$NegativeControl,
-    [switch]$Interactive
+    [switch]$Interactive,
+    # A directory to save the sampled frames into as PNGs (T2309).
+    [string]$SaveFrames = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -83,12 +89,17 @@ function Get-RailPinCenter($sb) {
     return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
 }
 
-# One synchronous frame of the sidebar, as an MD5 of its pixels.
-function Get-FrameHash($sb) {
+# One synchronous frame of the sidebar, as an MD5 of its pixels. With
+# -SaveFrames, `$Name` also lands there as a PNG, to look at by eye.
+function Get-FrameHash($sb, [string]$Name = '') {
     try {
         $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
         $ms = New-Object System.IO.MemoryStream
         $shot.Bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+        if ($SaveFrames -and $Name) {
+            New-Item -ItemType Directory -Force $SaveFrames | Out-Null
+            [System.IO.File]::WriteAllBytes((Join-Path $SaveFrames "$Name.png"), $ms.ToArray())
+        }
         Close-TestWindowPixels -Shot $shot
         $md5 = [System.Security.Cryptography.MD5]::Create()
         return [BitConverter]::ToString($md5.ComputeHash($ms.ToArray()))
@@ -97,10 +108,10 @@ function Get-FrameHash($sb) {
         return $null
     }
 }
-function Get-Frames($sb, [int]$Count = 8, [int]$GapMs = 175) {
+function Get-Frames($sb, [int]$Count = 8, [int]$GapMs = 175, [string]$Name = '') {
     $out = @()
     for ($i = 0; $i -lt $Count; $i++) {
-        $out += (Get-FrameHash $sb)
+        $out += (Get-FrameHash $sb $(if ($Name) { "$Name-$i" } else { '' }))
         Start-Sleep -Milliseconds $GapMs
     }
     return , $out
@@ -153,6 +164,7 @@ try {
     Assert "setup: the rail is up" ($null -ne $sb -and $sb.Visible -and [math]::Abs($sb.Width - (Px 76)) -le 1)
 
     "== 1: a busy pane's tile sheens in the rail"
+    $restRail = Get-FrameHash $sb 'rail-idle'
     $mark = Get-LogCount
     Assert "+set-state busy exit 0" ((Invoke-Cli "+set-state --target=s1 --state=busy") -eq 0)
     $tally = Wait-Log $mark 'pane sidebar marks busy=1 bell=0'
@@ -163,7 +175,7 @@ try {
     Assert "the motion clock started for it (log)" ($null -ne $on)
     # T2279: the sheen sweeps for 0.8s of every 2s and rests off the pill
     # between, so the frames span more than one whole period.
-    $frames = Get-Frames $sb 14 175
+    $frames = Get-Frames $sb 14 175 'rail-busy'
     $distinct = Get-Distinct $frames
     "  ($distinct distinct of $($frames.Count) frames)"
     if ($NegativeControl) {
@@ -171,6 +183,15 @@ try {
     } else {
         Assert "the rail moves while busy ($distinct distinct frames, want >= 3)" ($distinct -ge 3)
     }
+    # T2309 (Mac dcdc59712): under the glint a slow drift slides all the time,
+    # so a busy tile keeps moving BETWEEN glints too. An upright glint alone
+    # rests off the pill for 1.2s of every 2s - about eight of these frames
+    # the same picture - so this wants nearly every frame different.
+    Assert "between glints the drift keeps the tile moving ($distinct distinct of 14, want >= 11)" ($distinct -ge 11)
+    # Once faded in (0.6s), no busy frame is the idle picture: the drift and
+    # its hairline rim are always on the pill.
+    $settled = @($frames | Select-Object -Skip 4)
+    Assert "a faded-in busy tile is never the idle picture (drift + rim always on)" ($null -ne $restRail -and @($settled | Where-Object { $_ -eq $restRail }).Count -eq 0)
 
     "== 2: idle again, the clock stops and the rail holds still"
     $mark = Get-LogCount
@@ -242,8 +263,9 @@ try {
     $mark = Get-LogCount
     Assert "+set-state busy exit 0" ((Invoke-Cli "+set-state --target=s1 --state=busy") -eq 0)
     Assert "the panel's motion clock started (log)" ($null -ne (Wait-Log $mark 'pane sidebar motion on surface=rail busy=1'))
-    $frames = Get-Frames $sb 14 175
+    $frames = Get-Frames $sb 14 175 'panel-busy'
     Assert "the busy row moves in the panel ($(Get-Distinct $frames) distinct, want >= 3)" ((Get-Distinct $frames) -ge 3)
+    Assert "between glints the drift keeps the row moving ($(Get-Distinct $frames) distinct of 14, want >= 11)" ((Get-Distinct $frames) -ge 11)
     $mark = Get-LogCount
     [void](Invoke-Cli "+set-state --target=s1 --state=idle")
     Assert "idle, the panel's clock stopped (log)" ($null -ne (Wait-Log $mark 'pane sidebar motion off surface=rail'))

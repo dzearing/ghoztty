@@ -2200,56 +2200,48 @@ fn sheenLevel(self: *PaneSidebar, e: Entry) f64 {
     return 0;
 }
 
-/// The busy sheen across a pill (T2279, Mac `PaneSidebarTileSheenLayer`): a
-/// faint upright band of white crossing it from its right edge to its left
-/// every 2s, at `level` of its strength while it fades. Built as a
-/// premultiplied-alpha strip the pill's size - zero outside its rounded
+/// What lies over a pill's fill (T2279, T2309; Mac
+/// `PaneSidebarTileSheenLayer` and `PaneSidebarRow.tileBorder`): while its
+/// pane is busy, the sheen - a slow slanted drift, a faint slanted glint
+/// crossing it right to left every 2s, and the hairline rim they sit in - at
+/// `level` of its strength while it fades; and on a rail tile (`tile`) the
+/// glassy rim lit from above, which a full row never has. Built as a
+/// premultiplied-alpha bitmap the pill's size - zero outside its rounded
 /// corners - and blended over whatever the pill sits on (the card's glass
-/// included), under the pill's glyph and text. Nothing at all with motion
-/// off (Mac's Reduce Motion drops it the same way).
-fn paintSheen(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, level: f64) void {
-    if (level <= 0) return;
-    if (!self.paint_motion) return;
+/// included), under the pill's glyph and text. With motion off the sheen
+/// goes entirely (Mac's Reduce Motion drops it the same way); a tile keeps
+/// its rim, which is not motion. The rim fades with the rail on expand and
+/// collapse because the rail's whole column crossfades
+/// (`transition.composeColumn`), never snapping at the mode switch.
+fn paintOverlay(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, level: f64, tile: ?motion.TileRim, t: Theme) void {
     const w = r.width();
     const h = r.height();
     if (w <= 0 or h <= 0) return;
-    const wf: f64 = @floatFromInt(w);
-    const left = motion.bandLeft(self.paint_ms, wf);
-    var lit = false;
-    var column: [512]u32 = undefined;
-    const cw: usize = @intCast(@min(w, column.len));
-    for (column[0..cw], 0..) |*c, x| {
-        const a = motion.sheenAlpha(@as(f64, @floatFromInt(x)) + 0.5, left, wf) * level;
-        c.* = @intFromFloat(@round(std.math.clamp(a, 0, 1) * 255));
-        if (c.* != 0) lit = true;
-    }
-    // Resting off the pill between sweeps: nothing to blend.
-    if (!lit) return;
+    var o = motion.Overlay.init(
+        @floatFromInt(w),
+        @floatFromInt(h),
+        @floatFromInt(radius),
+        motion.rim_dip * @as(f64, self.scale),
+        t.dark,
+    );
+    if (self.paint_motion and level > 0) o.busyAt(level, self.paint_ms);
+    o.tile_rim = tile;
+    if (!o.visible()) return;
     const dib = Dib32.create(hdc, w, h) orelse return;
     defer dib.destroy();
     const uw: usize = @intCast(w);
     for (0..@intCast(h)) |y| {
         for (dib.pixels[y * uw ..][0..uw], 0..) |*p, x| {
-            const a: u32 = if (x < cw and insideRound(@intCast(x), @intCast(y), w, h, radius)) column[x] else 0;
-            p.* = (a << 24) | (a << 16) | (a << 8) | a;
+            const px = o.pixel(x, y);
+            const a: u32 = @intFromFloat(@round(std.math.clamp(px.alpha, 0, 1) * 255));
+            const c: u32 = @intFromFloat(@round(std.math.clamp(px.white, 0, px.alpha) * 255));
+            p.* = (a << 24) | (c << 16) | (c << 8) | c;
         }
     }
     _ = w32.AlphaBlend(hdc, r.left, r.top, w, h, dib.dc, 0, 0, w, h, .{
         .SourceConstantAlpha = 255,
         .AlphaFormat = w32.AC_SRC_ALPHA,
     });
-}
-
-/// Whether pixel (`x`, `y`) of a `w` x `h` box lies inside its corners
-/// rounded to `radius`.
-fn insideRound(x: i32, y: i32, w: i32, h: i32, radius: i32) bool {
-    if (radius <= 0) return true;
-    const cx = if (x < radius) radius else if (x >= w - radius) w - radius else return true;
-    const cy = if (y < radius) radius else if (y >= h - radius) h - radius else return true;
-    const dx = @as(f64, @floatFromInt(x - cx)) + 0.5;
-    const dy = @as(f64, @floatFromInt(y - cy)) + 0.5;
-    const rr: f64 = @floatFromInt(radius);
-    return dx * dx + dy * dy <= rr * rr;
 }
 
 /// What a pane's pill drew its glyph on.
@@ -2260,8 +2252,9 @@ const Pill = struct { icon: pane_sidebar.Rect, under: color_math.Rgb };
 /// indicator, the busy sheen across it, and the pane kind's glyph in its hue
 /// `text_inset` into the pill and centred on it - the same place in both
 /// modes, so toggling the sidebar moves no icon. `indent` moves the content
-/// of an outline row, never its fill.
-fn paintPill(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, e: Entry, indent: i32, hovered: bool, emphasized: bool, t: Theme) Pill {
+/// of an outline row, never its fill. A rail `tile` also wears its glassy
+/// rim (T2309), brighter under the pointer.
+fn paintPill(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, e: Entry, indent: i32, hovered: bool, emphasized: bool, tile: bool, t: Theme) Pill {
     const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
     const sel = list_selection.rowPaint(t.surface, t.accent, .{
         .selected = e.selected,
@@ -2279,7 +2272,7 @@ fn paintPill(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, e: Entry, i
             .bottom = r.top + bar.top + bar.height,
         }, bar.radius, rgb(c));
     }
-    self.paintSheen(hdc, r, radius, self.sheenLevel(e));
+    self.paintOverlay(hdc, r, radius, self.sheenLevel(e), if (tile) motion.tileRim(t.dark, hovered) else null, t);
     const under = sel.fill orelse t.surface;
     const icon_w = pane_sidebar.px(pane_sidebar.icon_dip, self.scale);
     const left = r.left + pane_sidebar.px(toc.text_inset_dip, self.scale) + indent;
@@ -2468,7 +2461,7 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
 fn paintRow(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, i: usize, r: pane_sidebar.Rect, hovered: bool, emphasized: bool, t: Theme) void {
     const e = self.entries.items[i];
     // The pill, its sheen and its glyph: what a rail tile is too.
-    const pill = self.paintPill(hdc, r, e, l.indent[i], hovered, emphasized, t);
+    const pill = self.paintPill(hdc, r, e, l.indent[i], hovered, emphasized, false, t);
     const icon_r = pill.icon;
     const ink = if (e.selected) t.text else t.secondary;
     const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
@@ -2860,8 +2853,9 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
 /// One rail tile at `r` (see `paintRow`).
 fn paintTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.Rect, hovered: bool, emphasized: bool, t: Theme) void {
     const e = self.entries.items[i];
-    // The row without its text (T2279): the same pill, sheen and glyph.
-    _ = self.paintPill(hdc, r, e, 0, hovered, emphasized, t);
+    // The row without its text (T2279): the same pill, sheen and glyph, and
+    // the glassy rim a bare glyph needs to read as a button (T2309).
+    _ = self.paintPill(hdc, r, e, 0, hovered, emphasized, true, t);
     // The corner (Mac `tile`): a stashed pane's bell dot, at the pill's
     // top trailing corner. The question disc that sat there went with
     // T2280 (Mac 2924ea5cc).

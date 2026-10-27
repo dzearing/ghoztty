@@ -1318,10 +1318,15 @@ the interactive mock settled).
   the focused one closes without moving the caret; a header's × is
   `App.closeTabsQuietly`, run on the next loop turn as one undo group, so a
   window closes itself from its own sidebar. `test\win32\pane-sidebar-close.ps1`).
-- Activity: a **busy** pane's row — or tile — sheens: a faint upright band
-  of light (25%) sweeps across its pill from right to left every 2s
-  (`PaneSidebarTileSheenLayer`, Core Animation; travel in `PaneSidebarSheen`),
-  starting and ending fully off it. No spinner, no glow, no glyph shimmer. **Busy is `PaneView.isWorking`**: the hook-set activity
+- Activity: a **busy** pane's row — or tile — sheens, in two layers both
+  slanted 45° ("/") and moving right to left: a faint band of light (25%)
+  sweeps across its pill every 2s, starting and ending fully off it, top
+  corner included, over a slow seamless drift (one period every 5s, 2–8%
+  white on dark, 1.5–5% black on light) inside a 0.5pt hairline rim
+  (`PaneSidebarTileSheenLayer`, Core Animation; geometry in
+  `PaneSidebarSheen`). A **rail tile** (never a full row) also has a glassy
+  rim lit from above (`PaneSidebarRow.tileBorder`), fading with the rail on
+  expand/collapse. No spinner, no glow, no glyph shimmer. **Busy is `PaneView.isWorking`**: the hook-set activity
   state OR a progress report on screen (OSC 9;4 — what animates the pane's
   border, `SurfaceBusyBorder`), so an icon animates whenever its pane's border
   does (it read only the activity state, and the two disagreed). **The sidebar
@@ -1334,7 +1339,10 @@ the interactive mock settled).
   kind glyphs, the right-to-left pill sheen with its 0.6s fade on a window
   timer - `pane_sidebar_motion.zig` - and busy includes a live OSC 9;4
   report, `PaneSidebar.isWorking`), T2280 (landed: no question state -
-  no row chip, tile disc, header badge or breathing ring).
+  no row chip, tile disc, header badge or breathing ring), T2309 (landed:
+  the slant, the drift and its rim, and the tiles' glassy rim -
+  `pane_sidebar_motion.Overlay`, painted by `PaneSidebar.paintOverlay`; a
+  Windows selection is neutral, so Mac's on-accent rim has no counterpart).
 - **All-windows** header toggle (off by default) groups every window's panes.
   Its caption counts the windows. Every window starts **folded** except this
   one (search unfolds all; `PaneSidebarState.isWindowFolded`). **Windows:**
