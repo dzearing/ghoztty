@@ -316,6 +316,7 @@ class HoverTrackingView: NSView {
 
     private var isHovered = false
     private var holdObserver: NSObjectProtocol?
+    private var windowObservers: [NSObjectProtocol] = []
 
     /// While an item is dragged up and down the sidebar, every hover stays
     /// as it is: the rows it passes do not light up under the pointer, and
@@ -332,6 +333,7 @@ class HoverTrackingView: NSView {
 
     deinit {
         if let holdObserver { NotificationCenter.default.removeObserver(holdObserver) }
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     override func updateTrackingAreas() {
@@ -352,6 +354,19 @@ class HoverTrackingView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { setHovered(false) }
+        // Another window brought forward over this one (a row clicked in
+        // its sidebar) sends no exit: re-sync as the windows change places.
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        windowObservers = []
+        if let window {
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+                windowObservers.append(NotificationCenter.default.addObserver(
+                    forName: name, object: window, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.syncHover() }
+                })
+            }
+        }
         if holdObserver == nil {
             holdObserver = NotificationCenter.default.addObserver(
                 forName: Self.heldDidEnd, object: nil, queue: .main
@@ -362,9 +377,15 @@ class HoverTrackingView: NSView {
     }
 
     /// The pointer in this view's coordinates, or nil when it can't be over
-    /// it (no window, or the app inactive — the tracking area's own scope).
+    /// it (no window, the app inactive — the tracking area's own scope — or
+    /// another of the app's windows in front of this one there).
     var pointerLocation: NSPoint? {
         guard let window, NSApp.isActive else { return nil }
+        let screenPoint = NSEvent.mouseLocation
+        let front = NSApp.orderedWindows.first {
+            $0.isVisible && $0.level == window.level && $0.frame.contains(screenPoint)
+        }
+        guard front == nil || front === window else { return nil }
         return convert(window.mouseLocationOutsideOfEventStream, from: nil)
     }
 
