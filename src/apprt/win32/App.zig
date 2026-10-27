@@ -2261,7 +2261,6 @@ pub fn run(self: *App) !void {
             // without rearrange mode, whose own Escape would not apply.
             if (vk == w32.VK_ESCAPE and self.cancelPaneDrag()) continue :loop;
 
-
             // Modal "Rename Window" dialog: Enter/Escape/Tab are handled
             // by our code; every other key reaches the native controls
             // via Translate/Dispatch below. Checked first and exclusive —
@@ -7261,6 +7260,8 @@ pub fn hasWindow(self: *const App, window: *const Window) bool {
 fn cancelPaneDrag(self: *App) bool {
     for (self.windows.items) |w| {
         if (w.cancelPaneDrag()) return true;
+        // A window or group held in a sidebar's all-windows list (T2337).
+        if (w.sidebar) |sb| if (sb.cancelItemDrag()) return true;
     }
     return false;
 }

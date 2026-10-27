@@ -5495,6 +5495,21 @@ $GuardTable = @(
             'test\win32\pane-sidebar-shared.ps1'
         )
     },
+    # The all-windows list reorders by drag (T2337): the order's rules, the
+    # reorder index and the file are unit-tested in every lane; that a header
+    # drag folds, slides, lands, saves, cancels on Escape, reaches another
+    # window and survives a relaunch is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-window-order'
+        Script = 'test\win32\pane-sidebar-window-order.ps1'
+        Stamp  = 'test\win32\pane-sidebar-window-order.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar_window_order.zig',
+            'src\apprt\win32\pane_sidebar_order.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-window-order.ps1'
+        )
+    },
     # Closing from the sidebar (T2298): another window's row x, a window's
     # and a project's header x, and a window's own header x - none asks,
     # none raises a window, each ends what it closes. The geometry and the

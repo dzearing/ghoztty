@@ -28,119 +28,139 @@ const pane_id = @import("pane_id.zig");
 /// The most ids an order holds - every pane of every tab of one window.
 pub const max_ids: usize = 256;
 
-fn indexOf(ids: []const []const u8, id: []const u8) ?usize {
-    for (ids, 0..) |x, i| if (pane_id.eql(x, id)) return i;
-    return null;
+/// The rules over pane ids, which compare as pane ids (case-insensitively).
+const by_pane = By(pane_id.eql);
+pub const arranged = by_pane.arrange;
+pub const moving = by_pane.move;
+
+/// The same rules over keys that compare byte for byte - the all-windows
+/// list's `project:<name>` / `window:<id>` keys (T2337,
+/// `pane_sidebar_window_order`), where two projects differing only in case
+/// are two sections.
+pub const by_bytes = By(bytesEql);
+
+fn bytesEql(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
 }
 
-/// `visible` - the grid's panes, in tree order - in the sidebar's order, as
-/// indices into `visible` written to `out`. Returns how many (every visible
-/// pane, up to `out.len`). Mac `PaneSidebarOrder.arranged`.
-pub fn arranged(visible: []const []const u8, order: []const []const u8, out: []usize) usize {
-    const n = @min(visible.len, out.len, max_ids);
-    if (order.len == 0) {
-        for (0..n) |i| out[i] = i;
-        return n;
-    }
-    var known: [max_ids]bool = [_]bool{false} ** max_ids;
-    var len: usize = 0;
-    // The order's ids that are on show, in the order's sequence.
-    for (order) |id| {
-        const vi = indexOf(visible[0..n], id) orelse continue;
-        if (known[vi]) continue;
-        known[vi] = true;
-        out[len] = vi;
-        len += 1;
-    }
-    // Then each pane the order does not know, beside its tree neighbour.
-    for (0..n) |vi| {
-        if (known[vi]) continue;
-        const at: usize = blk: {
-            var before = vi;
-            while (before > 0) {
-                before -= 1;
-                if (known[before]) break :blk posOf(out[0..len], before) + 1;
-            }
-            for (vi + 1..n) |after| {
-                if (known[after]) break :blk posOf(out[0..len], after);
-            }
-            break :blk len;
-        };
-        std.mem.copyBackwards(usize, out[at + 1 .. len + 1], out[at..len]);
-        out[at] = vi;
-        len += 1;
-        known[vi] = true;
-    }
-    return len;
-}
-
-fn posOf(list: []const usize, v: usize) usize {
-    for (list, 0..) |x, i| if (x == v) return i;
-    unreachable;
-}
-
-/// The order after moving `id` to `to` of the arranged list, which `id` must
-/// be in (`visible`). Ids the order knows that are not on show (stashed panes,
-/// other tabs' panes) keep their place after whatever preceded them; ids in
-/// neither `visible` nor `existing` are dropped. The ids written to `out`
-/// borrow the inputs' memory. Mac `PaneSidebarOrder.moving`.
-pub fn moving(
-    id: []const u8,
-    to: usize,
-    visible: []const []const u8,
-    order: []const []const u8,
-    existing: []const []const u8,
-    out: [][]const u8,
-) usize {
-    // The arranged list without `id`, then `id` put back at `to`.
-    var idx: [max_ids]usize = undefined;
-    const n = arranged(visible, order, &idx);
-    var list: [max_ids][]const u8 = undefined;
-    var len: usize = 0;
-    for (idx[0..n]) |vi| {
-        if (pane_id.eql(visible[vi], id)) continue;
-        list[len] = visible[vi];
-        len += 1;
-    }
-    const at = @min(to, len);
-    std.mem.copyBackwards([]const u8, list[at + 1 .. len + 1], list[at..len]);
-    list[at] = id;
-    len += 1;
-
-    // Each pane not on show follows the on-show id it followed in the order
-    // (null: none - it led the order). Not after the moved pane: the others
-    // stay where they were.
-    var followers: [max_ids][]const u8 = undefined;
-    var follows: [max_ids]?usize = undefined;
-    var nf: usize = 0;
-    var previous: ?usize = null;
-    for (order, 0..) |entry, oi| {
-        if (indexOf(order[0..oi], entry) != null) continue;
-        if (indexOf(list[0..len], entry)) |li| {
-            if (!pane_id.eql(entry, id)) previous = li;
-        } else if (indexOf(existing, entry) != null and nf < max_ids) {
-            followers[nf] = entry;
-            follows[nf] = previous;
-            nf += 1;
+/// `arranged` and `moving` for ids that are equal when `eql` says so.
+pub fn By(comptime eql: fn ([]const u8, []const u8) bool) type {
+    return struct {
+        fn indexOf(ids: []const []const u8, id: []const u8) ?usize {
+            for (ids, 0..) |x, i| if (eql(x, id)) return i;
+            return null;
         }
-    }
 
-    var w: usize = 0;
-    for (0..nf) |f| if (follows[f] == null and w < out.len) {
-        out[w] = followers[f];
-        w += 1;
+        /// `visible` - the grid's panes, in tree order - in the sidebar's order, as
+        /// indices into `visible` written to `out`. Returns how many (every visible
+        /// pane, up to `out.len`). Mac `PaneSidebarOrder.arranged`.
+        pub fn arrange(visible: []const []const u8, order: []const []const u8, out: []usize) usize {
+            const n = @min(visible.len, out.len, max_ids);
+            if (order.len == 0) {
+                for (0..n) |i| out[i] = i;
+                return n;
+            }
+            var known: [max_ids]bool = [_]bool{false} ** max_ids;
+            var len: usize = 0;
+            // The order's ids that are on show, in the order's sequence.
+            for (order) |id| {
+                const vi = indexOf(visible[0..n], id) orelse continue;
+                if (known[vi]) continue;
+                known[vi] = true;
+                out[len] = vi;
+                len += 1;
+            }
+            // Then each pane the order does not know, beside its tree neighbour.
+            for (0..n) |vi| {
+                if (known[vi]) continue;
+                const at: usize = blk: {
+                    var before = vi;
+                    while (before > 0) {
+                        before -= 1;
+                        if (known[before]) break :blk posOf(out[0..len], before) + 1;
+                    }
+                    for (vi + 1..n) |after| {
+                        if (known[after]) break :blk posOf(out[0..len], after);
+                    }
+                    break :blk len;
+                };
+                std.mem.copyBackwards(usize, out[at + 1 .. len + 1], out[at..len]);
+                out[at] = vi;
+                len += 1;
+                known[vi] = true;
+            }
+            return len;
+        }
+
+        fn posOf(list: []const usize, v: usize) usize {
+            for (list, 0..) |x, i| if (x == v) return i;
+            unreachable;
+        }
+
+        /// The order after moving `id` to `to` of the arranged list, which `id` must
+        /// be in (`visible`). Ids the order knows that are not on show (stashed panes,
+        /// other tabs' panes) keep their place after whatever preceded them; ids in
+        /// neither `visible` nor `existing` are dropped. The ids written to `out`
+        /// borrow the inputs' memory. Mac `PaneSidebarOrder.moving`.
+        pub fn move(
+            id: []const u8,
+            to: usize,
+            visible: []const []const u8,
+            order: []const []const u8,
+            existing: []const []const u8,
+            out: [][]const u8,
+        ) usize {
+            // The arranged list without `id`, then `id` put back at `to`.
+            var idx: [max_ids]usize = undefined;
+            const n = arrange(visible, order, &idx);
+            var list: [max_ids][]const u8 = undefined;
+            var len: usize = 0;
+            for (idx[0..n]) |vi| {
+                if (eql(visible[vi], id)) continue;
+                list[len] = visible[vi];
+                len += 1;
+            }
+            const at = @min(to, len);
+            std.mem.copyBackwards([]const u8, list[at + 1 .. len + 1], list[at..len]);
+            list[at] = id;
+            len += 1;
+
+            // Each pane not on show follows the on-show id it followed in the order
+            // (null: none - it led the order). Not after the moved pane: the others
+            // stay where they were.
+            var followers: [max_ids][]const u8 = undefined;
+            var follows: [max_ids]?usize = undefined;
+            var nf: usize = 0;
+            var previous: ?usize = null;
+            for (order, 0..) |entry, oi| {
+                if (indexOf(order[0..oi], entry) != null) continue;
+                if (indexOf(list[0..len], entry)) |li| {
+                    if (!eql(entry, id)) previous = li;
+                } else if (indexOf(existing, entry) != null and nf < max_ids) {
+                    followers[nf] = entry;
+                    follows[nf] = previous;
+                    nf += 1;
+                }
+            }
+
+            var w: usize = 0;
+            for (0..nf) |f| if (follows[f] == null and w < out.len) {
+                out[w] = followers[f];
+                w += 1;
+            };
+            for (list[0..len], 0..) |entry, li| {
+                if (w < out.len) {
+                    out[w] = entry;
+                    w += 1;
+                }
+                for (0..nf) |f| if (follows[f] == li and w < out.len) {
+                    out[w] = followers[f];
+                    w += 1;
+                };
+            }
+            return w;
+        }
     };
-    for (list[0..len], 0..) |entry, li| {
-        if (w < out.len) {
-            out[w] = entry;
-            w += 1;
-        }
-        for (0..nf) |f| if (follows[f] == li and w < out.len) {
-            out[w] = followers[f];
-            w += 1;
-        };
-    }
-    return w;
 }
 
 /// Where row `index` of a section is drawn while a drag is over the sidebar,
@@ -264,4 +284,12 @@ test "pane_sidebar_order: shift opens the gap where the row would land and close
     try testing.expectEqual(@as(i32, -1), shift(2, 1, null));
     // Neither: nothing moves.
     try testing.expectEqual(@as(i32, 0), shift(3, null, null));
+}
+
+test "pane_sidebar_order: by_bytes keys compare exactly (T2337)" {
+    var out: [4]usize = undefined;
+    const n = by_bytes.arrange(&.{ "project:p", "project:P" }, &.{ "project:P", "project:p" }, &out);
+    try testing.expectEqual(@as(usize, 2), n);
+    try testing.expectEqual(@as(usize, 1), out[0]);
+    try testing.expectEqual(@as(usize, 0), out[1]);
 }

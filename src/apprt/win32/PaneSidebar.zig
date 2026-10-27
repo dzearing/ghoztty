@@ -51,6 +51,7 @@ const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
 const reorder = @import("pane_sidebar_reorder.zig");
 const pane_sidebar_order = @import("pane_sidebar_order.zig");
+const window_order = @import("pane_sidebar_window_order.zig");
 const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
 const Dib32 = @import("dib32.zig");
@@ -142,6 +143,13 @@ pub fn loadRemembered(alloc: std.mem.Allocator) void {
     if (remembered_loaded) return;
     remembered_loaded = true;
     if (sidebar_prefs.load(alloc)) |p| remembered = p;
+    // The all-windows list's order (T2337), kept with the shared state.
+    if (window_order.load(alloc)) |text| {
+        defer alloc.free(text);
+        var keys: [window_order.max_keys][]const u8 = undefined;
+        const n = window_order.parse(text, &keys);
+        _ = shared.setWindowOrder(alloc, keys[0..n]);
+    }
 }
 
 /// Write `remembered` back. Best-effort, like every chrome preference.
@@ -164,6 +172,10 @@ const Group = struct {
     /// The tab's stable identity, hashed - the fold key, and how a click
     /// finds the tab again after a reorder.
     key: u64,
+    /// Its key in the all-windows list's order (T2337): `window:<tab id>`,
+    /// and its project's `project:<name>` (empty for a lone window).
+    wkey: window_order.Key = .{},
+    pkey: window_order.Key = .{},
     /// The header's text: the worktree inside a project, else the name.
     label: []u16,
     /// The project it is grouped under, as shown (upper-cased), or empty.
@@ -228,6 +240,35 @@ const Held = struct {
     settle: ?Settle = null,
 
     const Settle = struct { from: i32, start_ms: u64 };
+};
+
+/// A window row or project header held by the pointer among its siblings in
+/// the all-windows list (T2337, Mac `PaneSidebarItemDrag`).
+const ItemDrag = struct {
+    key: window_order.Key,
+    kind: pane_sidebar.HeadKind,
+    /// The list it moves in, itself included, in the list's order: its
+    /// project's windows, or the top level (groups and lone windows).
+    siblings: [pane_sidebar.max_heads]window_order.Key = undefined,
+    count: usize = 0,
+    source: usize = 0,
+    /// The index it would land at, of the siblings without it.
+    target: usize = 0,
+    /// The pointer's client y, where in the item it was grabbed, and the
+    /// item's top then: a drag folds the list up from under it, and the held
+    /// item stays under the pointer (`window_order.clamp`).
+    pointer: i32,
+    grab: i32,
+    grabbed_top: i32,
+    /// Where the held item's top is drawn.
+    top: i32,
+    /// Each sibling's slide, by index.
+    shifts: [pane_sidebar.max_heads]reorder.Tween = [_]reorder.Tween{.{}} ** pane_sidebar.max_heads,
+    /// The folds the drag took, put back once it lands.
+    folds_before: ?shared_mod.KeySet = null,
+    unfolded_before: ?shared_mod.KeySet = null,
+    /// Let go: gliding from where it was drawn to its laid-out place.
+    settle: ?Held.Settle = null,
 };
 
 /// Working, as anything that shows it is concerned (T2279, Mac
@@ -395,7 +436,12 @@ drag: ?DragMotion = null,
 /// The row a paint leaves out: lifted out of the list by a drag (T2304).
 paint_lifted: ?usize = null,
 reorder_armed: bool = false,
-
+/// A window row or project header dragged up or down the all-windows list
+/// (T2337), and what a paint leaves out of the list for it: the dragged
+/// item's header and rows, drawn lifted instead.
+item_drag: ?ItemDrag = null,
+lifted_heads: std.StaticBitSet(pane_sidebar.max_heads) = .initEmpty(),
+lifted_items: std.StaticBitSet(pane_sidebar.max_items) = .initEmpty(),
 
 // Tooltips: one control. A tile's text names its pane, so it lives here (a
 // tool keeps a pointer to its text); every other tip is a constant.
@@ -619,6 +665,8 @@ fn takeScroll(self: *PaneSidebar) void {
 }
 
 pub fn destroy(self: *PaneSidebar) void {
+    // A drag cut short by the window closing still gives the folds back.
+    self.finishItemDrag();
     // Let go of the tint this sidebar handed out (T2278).
     self.hover = .none;
     self.syncHoverTint();
@@ -789,6 +837,7 @@ pub fn refresh(self: *PaneSidebar) void {
         .window = win,
         .tab = win.active_tab,
         .key = key,
+        .wkey = window_order.windowKey(&win.tab_uuid[win.active_tab]),
         .label = &.{},
         .project = &.{},
         .project_key = 0,
@@ -1043,8 +1092,18 @@ fn refreshAll(self: *PaneSidebar) void {
             nref += 1;
         }
     }
+    // Name order, then the user's (T2337): the order every window shares.
+    var wkey_bufs: [max_heads]window_order.Key = undefined;
+    var wkeys: [max_heads][]const u8 = undefined;
+    for (refs[0..nref], 0..) |r, i| {
+        wkey_bufs[i] = window_order.windowKey(&r.window.tab_uuid[r.tab]);
+        wkeys[i] = wkey_bufs[i].slice();
+    }
+    var by_name: [max_heads]outline.Placed = undefined;
+    const n_name = outline.outlineOrder(names[0..nref], &by_name);
+    var worder_buf: [window_order.max_keys][]const u8 = undefined;
     var all_placed: [max_heads]outline.Placed = undefined;
-    const n_all = outline.outlineOrder(names[0..nref], &all_placed);
+    const n_all = window_order.arrange(by_name[0..n_name], wkeys[0..nref], shared.windowOrder(&worder_buf), &all_placed);
 
     // Searching (T1877): only the panes the query matches, only the windows
     // holding one, and nothing folded - a hit inside a folded group would
@@ -1126,6 +1185,8 @@ fn refreshAll(self: *PaneSidebar) void {
             .window = r.window,
             .tab = r.tab,
             .key = key,
+            .wkey = wkey_bufs[p.index],
+            .pkey = if (p.project) |pr| window_order.projectKey(pr) else .{},
             .label = &.{},
             .project = &.{},
             .project_key = project_key,
@@ -1249,8 +1310,6 @@ fn tabKey(w: *const Window, t: usize) u64 {
 fn projectKey(name: []const u8) u64 {
     return std.hash.Wyhash.hash(0x70726f6a, name);
 }
-
-
 
 fn appendGroup(self: *PaneSidebar, g_in: Group, label8: []const u8, project8: ?[]const u8) void {
     var g = g_in;
@@ -1860,12 +1919,18 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     const laid = l;
     self.paint_lifted = self.applyDragMotion(&l, self.paint_ms);
     defer self.paint_lifted = null;
+    self.applyItemMotion(&l, self.paint_ms);
+    defer {
+        self.lifted_heads = .initEmpty();
+        self.lifted_items = .initEmpty();
+    }
     switch (l.mode) {
         .hidden => fillRect(hdc, .{ .right = width, .bottom = height }, rgb(t.bg)),
         .expanded => self.paintExpanded(hdc, &l, t),
         .mini => self.paintMini(hdc, &l, t),
     }
     if (l.mode != .hidden) self.paintHeld(hdc, &laid, height, t);
+    if (l.mode == .expanded) self.paintHeldItem(hdc, &laid, t);
     self.marks = self.paint_marks;
     self.dirty = self.paint_dirty;
     if (self.paint_marks.moving(self.paint_motion)) self.armMotion();
@@ -2137,6 +2202,11 @@ fn stopReorderClock(self: *PaneSidebar) void {
 
 /// Whether anything of the drag's motion is still on its way at `now`.
 fn reorderMoving(self: *PaneSidebar, now: u64) bool {
+    if (self.item_drag) |*d| {
+        if (d.settle) |st| if (now -| st.start_ms < reorder.settle_ms) return true;
+        for (d.shifts[0..d.count]) |tw| if (!tw.done(now)) return true;
+        if (d.settle != null) return false;
+    }
     const d = self.drag orelse return false;
     if (d.held) |h| if (h.settle) |s| return now -| s.start_ms < reorder.settle_ms;
     if (!d.header.done(now)) return true;
@@ -2154,6 +2224,357 @@ fn onReorderTick(self: *PaneSidebar) void {
         log.info("pane sidebar row settled", .{});
         self.drag = null;
     };
+    if (self.item_drag) |d| if (d.settle != null) self.finishItemDrag();
+}
+
+// -------------------------------------------------------------------------
+// Reordering windows and groups (T2337; Mac `PaneSidebarItemDrag`)
+// -------------------------------------------------------------------------
+
+/// Whether a line of group `g` belongs to the item keyed `key`: a project's
+/// header, windows and panes all do; a window's own header and panes do.
+/// `head` is the line's kind, null for a pane row.
+fn belongs(g: *const Group, key: []const u8, head: ?pane_sidebar.HeadKind) bool {
+    if (window_order.isProject(key)) return std.mem.eql(u8, g.pkey.slice(), key);
+    if (head) |k| if (k != .window) return false;
+    return std.mem.eql(u8, g.wkey.slice(), key);
+}
+
+/// Which of the drag's siblings a line of group `g` belongs to.
+fn itemSibling(d: *const ItemDrag, g: *const Group, head: ?pane_sidebar.HeadKind) ?usize {
+    for (d.siblings[0..d.count], 0..) |*k, j| {
+        if (belongs(g, k.slice(), head)) return j;
+    }
+    return null;
+}
+
+/// The item keyed `key` as laid out in `l`: its header and every row under
+/// it. Null when nothing of it is laid out (its window just closed).
+fn itemRect(self: *const PaneSidebar, l: *const pane_sidebar.Layout, key: []const u8) ?pane_sidebar.Rect {
+    var r: ?pane_sidebar.Rect = null;
+    for (l.heads[0..l.head_count]) |hd| {
+        if (hd.index >= self.groups.items.len) continue;
+        if (!belongs(&self.groups.items[hd.index], key, hd.kind)) continue;
+        r = unionRect(r, hd.rect);
+    }
+    const count = @min(l.count, self.entries.items.len);
+    for (0..count) |i| {
+        if (!l.shown(i)) continue;
+        const gi = self.entries.items[i].group;
+        if (gi >= self.groups.items.len) continue;
+        if (!belongs(&self.groups.items[gi], key, null)) continue;
+        r = unionRect(r, l.items[i]);
+    }
+    return r;
+}
+
+fn unionRect(a: ?pane_sidebar.Rect, b: pane_sidebar.Rect) pane_sidebar.Rect {
+    const x = a orelse return b;
+    return .{ .left = @min(x.left, b.left), .top = @min(x.top, b.top), .right = @max(x.right, b.right), .bottom = @max(x.bottom, b.bottom) };
+}
+
+/// The siblings' extents in `l`, by index. False when the dragged item has
+/// none; a sibling that has none (closed mid-drag) stands in as an empty
+/// span where the one before it ended, so it is passed with that one.
+fn siblingSpans(self: *const PaneSidebar, l: *const pane_sidebar.Layout, d: *const ItemDrag, out: []window_order.Span) bool {
+    var prev_bottom: ?i32 = null;
+    for (d.siblings[0..d.count], 0..) |*k, j| {
+        if (self.itemRect(l, k.slice())) |r| {
+            out[j] = .{ .top = r.top, .bottom = r.bottom };
+            prev_bottom = r.bottom;
+        } else {
+            if (j == d.source) return false;
+            const y = prev_bottom orelse 0;
+            out[j] = .{ .top = y, .bottom = y };
+        }
+    }
+    return true;
+}
+
+/// A press on a window row or a project header that has travelled past the
+/// drag threshold picks that item up (Mac `PaneSidebarItemDragView`), in the
+/// expanded all-windows list. While a search filters it, it moves among the
+/// items shown, and those the search hides keep their places
+/// (`window_order.moving`). The chevron, + and x are not drag sources (they
+/// are other hits). True when it did.
+fn maybeStartItemDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
+    if (self.item_drag != null or w32.GetCapture() != hwnd) return false;
+    const k = switch (self.pressed) {
+        .head => |k| k,
+        else => return false,
+    };
+    if (!drop_highlight.exceedsThreshold(x - self.press_x, y - self.press_y, drop_highlight.thresholdPx(self.scale))) return false;
+    if (!self.all_windows or self.mode != .expanded) return false;
+    const l = self.currentLayout();
+    if (!l.outline or k >= l.head_count) return false;
+    const hd = l.heads[k];
+    if (hd.index >= self.groups.items.len) return false;
+    const g = self.groups.items[hd.index];
+    var d: ItemDrag = .{
+        .key = if (hd.kind == .project) g.pkey else g.wkey,
+        .kind = hd.kind,
+        .pointer = y,
+        .grab = self.press_y - hd.rect.top,
+        .grabbed_top = hd.rect.top,
+        .top = hd.rect.top,
+    };
+    // Its siblings, in the list's order: a grouped window's group's windows,
+    // else the top level - each group once, by its first window, and every
+    // lone window.
+    const in_project = hd.kind == .window and g.pkey.len > 0;
+    for (self.groups.items, 0..) |*o, gi| {
+        if (d.count == d.siblings.len) break;
+        if (in_project) {
+            if (!std.mem.eql(u8, o.pkey.slice(), g.pkey.slice())) continue;
+            d.siblings[d.count] = o.wkey;
+        } else if (o.pkey.len == 0) {
+            d.siblings[d.count] = o.wkey;
+        } else if (gi == 0 or !std.mem.eql(u8, self.groups.items[gi - 1].pkey.slice(), o.pkey.slice())) {
+            d.siblings[d.count] = o.pkey;
+        } else continue;
+        d.count += 1;
+    }
+    d.source = for (d.siblings[0..d.count], 0..) |*sk, j| {
+        if (std.mem.eql(u8, sk.slice(), d.key.slice())) break j;
+    } else return false;
+    d.target = d.source;
+
+    self.pressed = .none;
+    self.hover = .none;
+    self.syncHoverTint();
+    // Every group folds to its header for a group drag, every window to its
+    // row for a window drag, so each is one line high and easy to place.
+    if (hd.kind == .project) {
+        var projects: [pane_sidebar.max_heads]u64 = undefined;
+        var np: usize = 0;
+        for (d.siblings[0..d.count]) |*sk| {
+            if (!window_order.isProject(sk.slice())) continue;
+            projects[np] = projectKey(sk.slice()[window_order.project_prefix.len..]);
+            np += 1;
+        }
+        d.folds_before = shared.foldProjects(self.alloc, projects[0..np]);
+    } else d.unfolded_before = shared.foldWindows(self.alloc);
+    self.stopReorderClock();
+    self.item_drag = d;
+    self.published();
+    log.info("pane sidebar item drag start kind={s} key={s} siblings={d} source={d}", .{ @tagName(hd.kind), d.key.slice(), d.count, d.source });
+    self.refresh();
+    self.itemRelayout();
+    return true;
+}
+
+/// The pointer or the layout moved: the item follows the pointer, kept in
+/// its list, the index follows the item, and the others slide to make room.
+fn itemRelayout(self: *PaneSidebar) void {
+    const d = if (self.item_drag) |*x| x else return;
+    if (d.settle != null) return;
+    const l = self.currentLayout();
+    var frames: [pane_sidebar.max_heads]window_order.Span = undefined;
+    if (!self.siblingSpans(&l, d, &frames)) return self.endItemDrag(false);
+    const f = frames[0..d.count];
+    const top = window_order.clamp(d.pointer - d.grab, d.source, f, d.grabbed_top);
+    const to = window_order.target(top, d.source, f);
+    const pitch: f64 = @floatFromInt(window_order.pitch(d.source, f));
+    const now = w32.GetTickCount64();
+    const animate = App.clientAreaAnimationsEnabled();
+    for (0..d.count) |j| {
+        if (j == d.source) continue;
+        const rows = pane_sidebar_order.shift(j, d.source, to);
+        d.shifts[j].retarget(@as(f64, @floatFromInt(rows)) * pitch, now, animate);
+    }
+    if (to != d.target) log.info("pane sidebar item drag target={d}", .{to});
+    d.target = to;
+    if (top != d.top) log.debug("pane sidebar item held top={d}", .{top});
+    d.top = top;
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.armReorderClock();
+}
+
+/// Let go - or, `commit` false, cancelled (Escape, the capture taken): the
+/// order changes in every window's list, and the item glides from where it
+/// was drawn to its place. Moved, nothing else slides: the new order is laid
+/// out where the others were drawn. Unmoved, they ease back with it.
+fn endItemDrag(self: *PaneSidebar, commit: bool) void {
+    const d = if (self.item_drag) |*x| x else return;
+    if (d.settle != null) return;
+    const moved = commit and d.target != d.source;
+    log.info("pane sidebar item drag end commit={} from={d} to={d}", .{ commit, d.source, if (moved) d.target else d.source });
+    const now = w32.GetTickCount64();
+    const animate = App.clientAreaAnimationsEnabled();
+    for (d.shifts[0..d.count]) |*tw| {
+        if (moved) tw.* = .{} else tw.retarget(0, now, animate);
+    }
+    d.settle = .{ .from = d.top, .start_ms = now };
+    if (moved) self.placeItem(d);
+    if (!animate) return self.finishItemDrag();
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.armReorderClock();
+}
+
+/// Put the dragged item at its target among its siblings in the shared
+/// order, store it, and lay the list out again (Mac
+/// `placeInAllWindowsList`). The list only: nothing moves on screen.
+fn placeItem(self: *PaneSidebar, d: *const ItemDrag) void {
+    var without: [pane_sidebar.max_heads][]const u8 = undefined;
+    var nw: usize = 0;
+    for (d.siblings[0..d.count], 0..) |*k, j| {
+        if (j == d.source) continue;
+        without[nw] = k.slice();
+        nw += 1;
+    }
+    // Every key the list has - every window's, whatever a search shows:
+    // anything else in the order is a closed window, pruned now.
+    var key_bufs: [pane_sidebar.max_heads * 2]window_order.Key = undefined;
+    var existing: [pane_sidebar.max_heads * 2][]const u8 = undefined;
+    const ne = self.allOrderKeys(&key_bufs, &existing);
+    var cur_buf: [window_order.max_keys][]const u8 = undefined;
+    const cur = shared.windowOrder(&cur_buf);
+    var out: [window_order.max_keys][]const u8 = undefined;
+    const n = window_order.moving(d.key.slice(), d.target, without[0..nw], cur, existing[0..ne], &out);
+    if (shared.setWindowOrder(self.alloc, out[0..n])) {
+        var saved: [window_order.max_keys][]const u8 = undefined;
+        window_order.save(self.alloc, shared.windowOrder(&saved));
+        log.info("pane sidebar window order saved keys={d}", .{n});
+    }
+    self.published();
+    self.refresh();
+}
+
+/// Every key of the all-windows list, unfiltered (Mac
+/// `PaneSidebarWindowGrouping.keys`): each window's, and each project's
+/// once. Keys go into `bufs`; returns how many were written to `out`.
+fn allOrderKeys(self: *const PaneSidebar, bufs: []window_order.Key, out: [][]const u8) usize {
+    var n: usize = 0;
+    for (self.window.app.windows.items) |w| {
+        if (w.closing or w.is_quick_terminal) continue;
+        for (0..w.tab_count) |t| {
+            if (n + 2 > out.len) return n;
+            bufs[n] = window_order.windowKey(&w.tab_uuid[t]);
+            out[n] = bufs[n].slice();
+            n += 1;
+            var name_buf: [name_cap]u8 = undefined;
+            const split = outline.splitWindowTitle(groupName(w, t, &name_buf)) orelse continue;
+            const pk = window_order.projectKey(split.project);
+            const seen = for (out[0..n]) |k| {
+                if (std.mem.eql(u8, k, pk.slice())) break true;
+            } else false;
+            if (seen) continue;
+            bufs[n] = pk;
+            out[n] = bufs[n].slice();
+            n += 1;
+        }
+    }
+    return n;
+}
+
+/// The glide is over (or the window is going): the drag ends, the folds it
+/// took come back as they were, and every row re-syncs from the pointer.
+fn finishItemDrag(self: *PaneSidebar) void {
+    var d = self.item_drag orelse return;
+    self.item_drag = null;
+    if (d.folds_before) |*b| shared.restoreFolds(self.alloc, .projects, b);
+    if (d.unfolded_before) |*b| shared.restoreFolds(self.alloc, .windows, b);
+    self.published();
+    log.info("pane sidebar item drag settled", .{});
+    self.refresh();
+    var pt: w32.POINT = undefined;
+    const over = self.pointerOn() and w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(self.hwnd, &pt) != 0;
+    self.setHover(if (over) self.hitAt(pt.x, pt.y) else .none);
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+}
+
+/// Escape (routed by the app's run loop, which sees the key whichever pane
+/// has the keyboard): cancel a held item. True when there was one.
+pub fn cancelItemDrag(self: *PaneSidebar) bool {
+    const d = self.item_drag orelse return false;
+    if (d.settle != null) return false;
+    self.endItemDrag(false);
+    _ = w32.ReleaseCapture();
+    return true;
+}
+
+/// Slide `l`'s lines where the drag has them at `now`, and mark the dragged
+/// item's lines for `paintHeldItem` to draw instead. The sticky header and
+/// the hairlines stand down while an item is held: neither follows a slide.
+fn applyItemMotion(self: *PaneSidebar, l: *pane_sidebar.Layout, now: u64) void {
+    const d = if (self.item_drag) |*x| x else return;
+    l.sticky = null;
+    l.rule_count = 0;
+    for (l.heads[0..l.head_count], 0..) |*hd, k| {
+        if (hd.index >= self.groups.items.len) continue;
+        const j = itemSibling(d, &self.groups.items[hd.index], hd.kind) orelse continue;
+        if (j == d.source) {
+            self.lifted_heads.set(k);
+            continue;
+        }
+        const dy: i32 = @intFromFloat(@round(d.shifts[j].at(now)));
+        hd.rect.top += dy;
+        hd.rect.bottom += dy;
+        hd.chevron.top += dy;
+        hd.chevron.bottom += dy;
+    }
+    const count = @min(l.count, self.entries.items.len);
+    for (0..count) |i| {
+        if (!l.shown(i)) continue;
+        const gi = self.entries.items[i].group;
+        if (gi >= self.groups.items.len) continue;
+        const j = itemSibling(d, &self.groups.items[gi], null) orelse continue;
+        if (j == d.source) {
+            self.lifted_items.set(i);
+            continue;
+        }
+        const dy: i32 = @intFromFloat(@round(d.shifts[j].at(now)));
+        l.items[i].top += dy;
+        l.items[i].bottom += dy;
+    }
+}
+
+/// The held item over everything else (Mac `PaneSidebarItemShift`'s lift):
+/// its header and rows moved to where the pointer has it, on a solid backing
+/// with a shadow - or, let go, gliding to its laid-out place while the lift
+/// fades. The dragged header keeps its hover controls.
+fn paintHeldItem(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout, t: Theme) void {
+    const d = if (self.item_drag) |*x| x else return;
+    const r = self.itemRect(laid, d.key.slice()) orelse return;
+    const top = if (d.settle) |st| reorder.settleTop(st.from, r.top, self.paint_ms -| st.start_ms) else d.top;
+    const dy = top - r.top;
+    const lift: f64 = if (d.settle) |st| 1 - transition.progress(self.paint_ms -| st.start_ms, reorder.settle_ms) else 1;
+    const saved = w32.SaveDC(hdc);
+    defer _ = w32.RestoreDC(hdc, saved);
+    const vp = laid.viewport;
+    if (vp.height() > 0) _ = w32.IntersectClipRect(hdc, vp.left, vp.top, vp.right, vp.bottom);
+    if (lift > 0) {
+        const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+        const g = reorder.liftInset(r.width(), r.height());
+        const back: pane_sidebar.Rect = .{ .left = r.left - g.x, .top = top - g.y, .right = r.right + g.x, .bottom = top + r.height() + g.y };
+        self.paintHeldShadow(hdc, back, radius, lift);
+        const solid = color_math.mix(t.surface, t.ink, reorder.backing_ink);
+        fillRound(hdc, back, radius, rgb(color_math.mix(t.surface, solid, lift)));
+    }
+    const hover_was = self.hover;
+    defer self.hover = hover_was;
+    for (laid.heads[0..laid.head_count], 0..) |hd, k| {
+        if (hd.index >= self.groups.items.len) continue;
+        if (!belongs(&self.groups.items[hd.index], d.key.slice(), hd.kind)) continue;
+        var moved = hd;
+        moved.rect.top += dy;
+        moved.rect.bottom += dy;
+        moved.chevron.top += dy;
+        moved.chevron.bottom += dy;
+        self.hover = .{ .head = k };
+        self.paintHead(hdc, moved, k, self.groups.items[hd.index], t);
+    }
+    self.hover = hover_was;
+    const count = @min(laid.count, self.entries.items.len);
+    for (0..count) |i| {
+        if (!laid.shown(i)) continue;
+        const gi = self.entries.items[i].group;
+        if (gi >= self.groups.items.len or !belongs(&self.groups.items[gi], d.key.slice(), null)) continue;
+        var at = laid.items[i];
+        at.top += dy;
+        at.bottom += dy;
+        self.paintRow(hdc, laid, i, at, false, self.isEmphasized(), t);
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -2210,7 +2631,7 @@ fn onMotionTick(self: *PaneSidebar) void {
 /// (a glide, a list transition, a drag), or when the pills were not all
 /// noted.
 fn invalidateMoving(self: *PaneSidebar) void {
-    if (!self.dirty.partial() or self.column != null or self.xfade != null or self.drag != null) {
+    if (!self.dirty.partial() or self.column != null or self.xfade != null or self.drag != null or self.item_drag != null) {
         _ = w32.InvalidateRect(self.hwnd, null, 0);
         return;
     }
@@ -2788,7 +3209,7 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     const emphasized = self.isEmphasized();
     const clip = clipOf(hdc);
     for (0..l.count) |i| {
-        if (!l.shown(i) or self.paint_lifted == i) continue;
+        if (!l.shown(i) or self.paint_lifted == i or self.lifted_items.isSet(i)) continue;
         const hovered = self.rowHovered(i);
         if (clip) |c| if (!motion.overlaps(c, l.items[i])) {
             const e = self.entries.items[i];
@@ -3033,8 +3454,9 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
     for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, rule_color);
     for (l.heads[0..l.head_count], 0..) |hd, k| {
         if (hd.index >= self.groups.items.len) continue;
-        // The pinned header is painted over the rows, by `paintSticky`.
-        if (l.sticky == k) continue;
+        // The pinned header is painted over the rows, by `paintSticky`; a
+        // held one over everything, by `paintHeldItem` (T2337).
+        if (l.sticky == k or self.lifted_heads.isSet(k)) continue;
         self.paintHead(hdc, hd, k, self.groups.items[hd.index], t);
     }
 }
@@ -3556,7 +3978,7 @@ fn toolInfo(hwnd: w32.HWND, id: usize, r: pane_sidebar.Rect, text: [*:0]const u1
         .uId = id,
         .rect = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom },
         .hinst = null,
-        .lpszText = @constCast(@ptrCast(text)),
+        .lpszText = @ptrCast(@constCast(text)),
         .lParam = 0,
         .lpReserved = null,
     };
@@ -3588,6 +4010,10 @@ const tip_scope_off = W("Show only this window\u{2019}s panes");
 const tip_head_this = W("This window \u{2014} click to hide or show its panes");
 const tip_head_other = W("Raise this window");
 const tip_head_project = W("Hide or show this project\u{2019}s windows");
+// In the all-windows list a header also drags (T2337, Mac's help text).
+const tip_head_this_drag = W("This window \u{2014} drag to reorder");
+const tip_head_other_drag = W("Raise this window \u{2014} drag to reorder");
+const tip_head_project_drag = W("Hide or show this project\u{2019}s windows \u{2014} drag to reorder");
 const tip_search = W("Search windows and panes \u{2014} every word must match");
 const tip_search_clear = W("Clear search");
 const tip_close = W(row_menu.close_tip);
@@ -3689,7 +4115,12 @@ fn syncTips(self: *PaneSidebar) void {
         }
         for (l.heads[0..nh], 0..) |hd, k| {
             const own = hd.index < self.groups.items.len and self.groups.items[hd.index].own;
-            const text = if (hd.kind == .project) tip_head_project else if (own) tip_head_this else tip_head_other;
+            const drags = self.all_windows and rows;
+            const text = if (hd.kind == .project)
+                (if (drags) tip_head_project_drag else tip_head_project)
+            else if (own)
+                (if (drags) tip_head_this_drag else tip_head_this)
+            else if (drags) tip_head_other_drag else tip_head_other;
             // Only the part of a head in view tips (T1878).
             const v = scroll_mod.visible(&l, hd.rect);
             if (v.height() > 0) addTool(tip, hwnd, toolHead(k), v, text) else delTool(tip, hwnd, toolHead(k));
@@ -3867,7 +4298,6 @@ fn toggleScope(self: *PaneSidebar) void {
     self.refresh();
     self.takeScroll();
 }
-
 
 // -------------------------------------------------------------------------
 // The all-windows search field (T1877)
@@ -4320,8 +4750,6 @@ fn rowWindow(self: *PaneSidebar, e: Entry) ?*Window {
     return e.window;
 }
 
-
-
 /// A row's or tile's right-click menu (T1845, Mac `PaneSidebarRow
 /// .contextMenu`). The menu's modal loop pumps messages, so the roster can be
 /// rebuilt while it is up: the pane and its window are captured first and
@@ -4610,6 +5038,8 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_CAPTURECHANGED => {
+            // Capture taken away mid-drag (another window, a menu): a cancel.
+            if (self.item_drag) |d| if (d.settle == null) self.endItemDrag(false);
             self.edgeEnd();
             if (self.thumb_drag != null) {
                 self.thumb_drag = null;
@@ -4636,6 +5066,16 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 self.edgeMove(hwnd, x, y);
                 return 0;
             }
+            // A window or group held: it follows the pointer, and no row
+            // under it lights up (T2337, Mac `HoverTrackingView.isHeld`).
+            if (self.item_drag) |*d| {
+                if (d.settle == null) {
+                    d.pointer = y;
+                    self.itemRelayout();
+                }
+                return 0;
+            }
+            if (self.maybeStartItemDrag(hwnd, x, y)) return 0;
             if (self.maybeStartRowDrag(hwnd, x, y)) return 0;
             // On the edge the pointer means the sizer, not the row under it.
             const on_edge = self.onEdgeAt(x, y);
@@ -4710,6 +5150,18 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 // ahead of anything the release triggers.
                 self.edgeMove(hwnd, xOf(lparam), yOf(lparam));
                 self.edgeEnd();
+                _ = w32.ReleaseCapture();
+                return 0;
+            }
+            if (self.item_drag) |d| {
+                // Let go: it lands (ended before the capture goes, so the
+                // CAPTURECHANGED that follows is not read as a cancel).
+                if (d.settle == null) {
+                    self.item_drag.?.pointer = yOf(lparam);
+                    self.itemRelayout();
+                    self.endItemDrag(true);
+                }
+                self.pressed = .none;
                 _ = w32.ReleaseCapture();
                 return 0;
             }

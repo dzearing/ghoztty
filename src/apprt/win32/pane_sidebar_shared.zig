@@ -24,6 +24,11 @@
 //! the scope off forgets the search and the window folds; project folds
 //! outlive it (Mac `setShowsAllWindows`).
 //!
+//! The all-windows list's own ORDER (T2337, Mac `windowOrder`) is shared too:
+//! one list of `project:<name>` / `window:<id>` keys
+//! (`pane_sidebar_window_order`), changed by a drag in any window's list and
+//! read by every one.
+//!
 //! Scroll (Mac `PaneSidebarScrollSync`): the all-windows list only, the
 //! last list scrolled wins, the rail and the panel each keep their own (their
 //! layouts differ), and a list takes the position up when its window is
@@ -65,12 +70,87 @@ pub const Shared = struct {
     /// Where the all-windows list was last scrolled, per layout; null until
     /// one has been.
     scroll: [2]?i32 = .{ null, null },
+    /// The all-windows list's order (T2337): owned keys, empty until the
+    /// first drag (the name order).
+    window_order: std.ArrayListUnmanaged([]u8) = .{},
 
     pub fn deinit(self: *Shared, alloc: Allocator) void {
         self.unfolded.deinit(alloc);
         self.folded_this.deinit(alloc);
         self.folded_projects.deinit(alloc);
+        self.freeOrder(alloc);
+        self.window_order.deinit(alloc);
         self.* = .{};
+    }
+
+    fn freeOrder(self: *Shared, alloc: Allocator) void {
+        for (self.window_order.items) |k| alloc.free(k);
+        self.window_order.clearRetainingCapacity();
+    }
+
+    /// The order as keys, borrowed until the next `setWindowOrder`.
+    pub fn windowOrder(self: *const Shared, out: [][]const u8) []const []const u8 {
+        const n = @min(out.len, self.window_order.items.len);
+        for (self.window_order.items[0..n], 0..) |k, i| out[i] = k;
+        return out[0..n];
+    }
+
+    /// Replace the order with copies of `keys` (which may borrow the old
+    /// one). True when it changed - a shared change every list catches up on.
+    pub fn setWindowOrder(self: *Shared, alloc: Allocator, keys: []const []const u8) bool {
+        if (keys.len == self.window_order.items.len) {
+            for (keys, self.window_order.items) |a, b| {
+                if (!std.mem.eql(u8, a, b)) break;
+            } else return false;
+        }
+        var next: std.ArrayListUnmanaged([]u8) = .{};
+        next.ensureTotalCapacity(alloc, keys.len) catch return false;
+        for (keys) |k| {
+            const d = alloc.dupe(u8, k) catch {
+                for (next.items) |x| alloc.free(x);
+                next.deinit(alloc);
+                return false;
+            };
+            next.appendAssumeCapacity(d);
+        }
+        self.freeOrder(alloc);
+        self.window_order.deinit(alloc);
+        self.window_order = next;
+        self.changed();
+        return true;
+    }
+
+    /// Fold every project in `projects` (a group drag folds every group,
+    /// T2337), answering the set as it was so the drop can put it back.
+    pub fn foldProjects(self: *Shared, alloc: Allocator, projects: []const u64) KeySet {
+        var before: KeySet = .{};
+        copySet(alloc, &before, &self.folded_projects);
+        for (projects) |p| self.folded_projects.put(alloc, p, {}) catch {};
+        self.changed();
+        return before;
+    }
+
+    /// Fold every window of the all-windows list to its row (a window drag,
+    /// T2337), answering which were open.
+    pub fn foldWindows(self: *Shared, alloc: Allocator) KeySet {
+        var before: KeySet = .{};
+        copySet(alloc, &before, &self.unfolded);
+        self.unfolded.clearRetainingCapacity();
+        self.changed();
+        return before;
+    }
+
+    /// Put back a fold set a drag took (`foldProjects` / `foldWindows`),
+    /// consuming `before`.
+    pub fn restoreFolds(self: *Shared, alloc: Allocator, which: enum { projects, windows }, before: *KeySet) void {
+        const set = switch (which) {
+            .projects => &self.folded_projects,
+            .windows => &self.unfolded,
+        };
+        set.deinit(alloc);
+        set.* = before.*;
+        before.* = .{};
+        self.changed();
     }
 
     pub fn changed(self: *Shared) void {
@@ -164,6 +244,45 @@ pub fn flagsBehind(window: Flags, shared: Flags) bool {
 }
 
 const testing = std.testing;
+
+test "T2337: the window order is copied in, unchanged is no change, and it survives its source" {
+    var s: Shared = .{};
+    defer s.deinit(testing.allocator);
+    const gen0 = s.gen;
+    var a = "project:p".*;
+    try testing.expect(s.setWindowOrder(testing.allocator, &.{ &a, "window:x" }));
+    try testing.expect(needsCatchUp(gen0, &s));
+    a[0] = 'X'; // the caller's buffer, not the stored key
+    var buf: [4][]const u8 = undefined;
+    const got = s.windowOrder(&buf);
+    try testing.expectEqual(@as(usize, 2), got.len);
+    try testing.expectEqualStrings("project:p", got[0]);
+    const gen1 = s.gen;
+    try testing.expect(!s.setWindowOrder(testing.allocator, &.{ "project:p", "window:x" }));
+    try testing.expectEqual(gen1, s.gen);
+    // Fed its own borrowed keys, reordered.
+    const view = s.windowOrder(&buf);
+    try testing.expect(s.setWindowOrder(testing.allocator, &.{ view[1], view[0] }));
+    try testing.expectEqualStrings("window:x", s.windowOrder(&buf)[0]);
+}
+
+test "T2337: a drag's folds come back as they were" {
+    var s: Shared = .{};
+    defer s.deinit(testing.allocator);
+    s.toggleProject(testing.allocator, 1);
+    var before = s.foldProjects(testing.allocator, &.{ 1, 2, 3 });
+    try testing.expectEqual(@as(u32, 3), s.folded_projects.count());
+    s.restoreFolds(testing.allocator, .projects, &before);
+    try testing.expectEqual(@as(u32, 1), s.folded_projects.count());
+    try testing.expect(s.folded_projects.contains(1));
+
+    _ = s.setAllWindows(testing.allocator, true, 7);
+    s.toggleGroup(testing.allocator, true, 8);
+    var open = s.foldWindows(testing.allocator);
+    try testing.expectEqual(@as(u32, 0), s.unfolded.count());
+    s.restoreFolds(testing.allocator, .windows, &open);
+    try testing.expect(s.unfolded.contains(7) and s.unfolded.contains(8));
+}
 
 test "T2336: the scope opens the window it was turned on from and folds every other" {
     var s: Shared = .{};
