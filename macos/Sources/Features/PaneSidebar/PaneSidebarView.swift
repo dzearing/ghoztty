@@ -157,6 +157,11 @@ struct PaneSidebarView: View {
 
     @ViewBuilder
     private var headerButtons: some View {
+        // Cmd-N, from here. Not in the rail, whose header is the expand
+        // button alone.
+        PaneSidebarHeaderButton(symbol: .plus, help: "New window") {
+            BaseTerminalController.newWindowFromSidebar(controller.ghostty, from: controller)
+        }
         PaneSidebarHeaderButton(
             symbol: .windows(filled: state.showsAllWindows),
             help: state.showsAllWindows ? "Show only this window’s panes" : "Show panes from all windows"
@@ -199,16 +204,26 @@ struct PaneSidebarView: View {
         }
     }
 
-    /// This window: its panes, then — right after the last of them, under a
-    /// divider — the tray of stashed panes, in one scrolling list. Two lists,
-    /// and a drag moves a pane within either or across: into the tray
-    /// stashes it, out restores. (The tray was first anchored at the bottom
-    /// of the bar, which left it far from the panes it is for.)
+    /// This window: its header (the window holding the panes, with its +
+    /// and ×, as in all windows), then its panes, then — right after the last
+    /// of them, under a divider — the tray of stashed panes, in one scrolling
+    /// list. Two lists, and a drag moves a pane within either or across: into
+    /// the tray stashes it, out restores. (The tray was first anchored at the
+    /// bottom of the bar, which left it far from the panes it is for.) In the
+    /// rail, the header is its + alone.
     @ViewBuilder
     private var thisWindowList: some View {
         let content = VStack(alignment: .leading, spacing: 0) {
-            paneRows(controller, isThisWindow: true, indent: 0)
-            tray(controller, isThisWindow: true, indent: 0)
+            if isRail {
+                // The header with its text taken away, as a tile is its row:
+                // the window's +, at the header's height, so no icon moves.
+                PaneSidebarRailAddSlot { controller.addPaneFromSidebar() }
+                paneRows(controller, isThisWindow: true, indent: 0)
+                tray(controller, isThisWindow: true, indent: 0)
+            } else {
+                windowGroup(controller, isThisWindow: true,
+                            label: PaneSidebarText.windowTitle(of: controller))
+            }
         }
         .padding(.vertical, SidePanelRow.fillInset)
         if isInteractive {
@@ -295,6 +310,11 @@ struct PaneSidebarView: View {
                         windowCount: section.windows.count,
                         isFolded: folded,
                         isFirst: index == 0,
+                        onAdd: {
+                            BaseTerminalController.newWindowInGroupFromSidebar(
+                                controller.ghostty, project: project,
+                                from: section.windows.first.flatMap { byID[$0.id] })
+                        },
                         onClose: {
                             BaseTerminalController.closeWindowsFromSidebar(
                                 section.windows.compactMap { byID[$0.id] })
@@ -338,6 +358,8 @@ struct PaneSidebarView: View {
                     owner: owner,
                     title: label,
                     isThisWindow: isThisWindow,
+                    // Only among other windows does it need saying.
+                    showsThisWindowTag: isThisWindow && state.showsAllWindows,
                     indent: indent,
                     isFolded: folded,
                     isDropTarget: isJoinTarget(owner),
@@ -720,13 +742,14 @@ struct PaneSidebarHeaderButton: View {
     }
 }
 
-// MARK: - Window group header (all-windows scope)
+// MARK: - Window header (this window's list, and each window in all windows)
 
-private struct PaneSidebarWindowHeader: View {
+struct PaneSidebarWindowHeader: View {
     @ObservedObject var owner: BaseTerminalController
     /// The window's name, or — inside a project group — its worktree.
     let title: String
     let isThisWindow: Bool
+    var showsThisWindowTag = false
     /// Inside a project group: one outline level in.
     var indent: CGFloat = 0
     let isFolded: Bool
@@ -735,6 +758,11 @@ private struct PaneSidebarWindowHeader: View {
 
     @State private var isHovered = false
     @Environment(\.paneSidebarInteractive) private var isInteractive
+
+    static let contentHeight: CGFloat = 16
+    static let verticalPadding: CGFloat = 6
+    /// Its whole height in the list, the gap to its neighbours included.
+    static var height: CGFloat { contentHeight + verticalPadding * 2 + PaneSidebarRow.gap }
 
     var body: some View {
         HStack(spacing: PaneSidebarOutline.chevronSpacing) {
@@ -757,7 +785,7 @@ private struct PaneSidebarWindowHeader: View {
                     .foregroundStyle(Color(nsColor: .labelColor))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if isThisWindow {
+                if showsThisWindowTag {
                     Text("This Window")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.tertiary)
@@ -767,21 +795,30 @@ private struct PaneSidebarWindowHeader: View {
             }
             Spacer(minLength: 4)
 
-            // Hovered, the count gives way to × in its place (so nothing
-            // shifts): close the window, no questions, no focus taken.
+            // Hovered, the count gives way to + and × in its place: a pane
+            // split the way the last one was (focused, as Cmd-D), and close
+            // the window — no questions, no focus taken.
             ZStack(alignment: .trailing) {
                 PaneSidebarCount(value: owner.surfaceTree.count)
                     .opacity(isHovered && isInteractive ? 0 : 1)
                 if isHovered && isInteractive {
-                    PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
-                        owner.closeWindowFromSidebar()
+                    HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
+                        PaneSidebarItemButton(symbol: "plus", help: "New pane") {
+                            owner.addPaneFromSidebar()
+                        }
+                        PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
+                            owner.closeWindowFromSidebar()
+                        }
                     }
                     .offset(x: PaneSidebarItemButton.headerOffset)
                 }
             }
             .frame(height: 14)
         }
-        .padding(.vertical, 6)
+        // One height, whatever the font's line: the rail's + slot matches it
+        // (`PaneSidebarRailAddSlot`), so collapsing moves no icon.
+        .frame(height: Self.contentHeight)
+        .padding(.vertical, Self.verticalPadding)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
         .padding(.trailing, SidePanelRow.textInset)
         .background(
@@ -806,6 +843,18 @@ private struct PaneSidebarWindowHeader: View {
     }
 }
 
+/// The rail's stand-in for this window's header: the window's + alone, in a
+/// slot exactly the header's height (`PaneSidebarWindowHeader.height`).
+struct PaneSidebarRailAddSlot: View {
+    let action: () -> Void
+
+    var body: some View {
+        PaneSidebarItemButton(symbol: "plus", help: "New pane", action: action)
+            .frame(maxWidth: .infinity)
+            .frame(height: PaneSidebarWindowHeader.height)
+    }
+}
+
 // MARK: - Project header (all-windows scope)
 
 /// A `<project>: …` group's header: sticky at the top of the list while its
@@ -816,6 +865,8 @@ private struct PaneSidebarProjectHeader: View {
     let windowCount: Int
     let isFolded: Bool
     let isFirst: Bool
+    /// A new window in the group, focused (as Cmd-N).
+    let onAdd: () -> Void
     /// Close every window in the group: no questions, no focus taken.
     let onClose: () -> Void
     let onFold: () -> Void
@@ -848,15 +899,19 @@ private struct PaneSidebarProjectHeader: View {
             .accessibilityLabel("\(project), \(windowCount) windows")
             .accessibilityAddTraits(.isHeader)
 
-            // As a window row: hovered, the count gives way to ×.
+            // As a window row: hovered, the count gives way to + and ×.
             ZStack(alignment: .trailing) {
                 PaneSidebarCount(value: windowCount)
                     .opacity(isHovered && isInteractive ? 0 : 1)
                 if isHovered && isInteractive {
-                    PaneSidebarItemButton(
-                        symbol: "xmark",
-                        help: windowCount == 1 ? "Close its window" : "Close its \(windowCount) windows",
-                        action: onClose)
+                    HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
+                        PaneSidebarItemButton(
+                            symbol: "plus", help: "New window in \(project)", action: onAdd)
+                        PaneSidebarItemButton(
+                            symbol: "xmark",
+                            help: windowCount == 1 ? "Close its window" : "Close its \(windowCount) windows",
+                            action: onClose)
+                    }
                     .offset(x: PaneSidebarItemButton.headerOffset)
                 }
             }
