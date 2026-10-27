@@ -1,5 +1,6 @@
 import AppKit
 import GhosttyKit
+import ScreenCaptureKit
 import SwiftUI
 import Testing
 @testable import Ghostty
@@ -311,4 +312,89 @@ struct PaneSidebarSyncWindowTests {
         #expect(stored.filter { $0.hasPrefix("project:") } == ["project:gamma", "project:alpha", "project:beta"])
         await close(windows, restoring: saved)
     }
+
+    // MARK: Captures (a check by eye: /tmp/pane-sidebar-snapshots/reorder-*.png)
+
+    private func capture(_ window: NSWindow, _ name: String) async throws {
+        let dir = "/tmp/pane-sidebar-snapshots"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let content = try await SCShareableContent.currentProcess
+        let scWindow = try #require(content.windows.first { $0.windowID == CGWindowID(window.windowNumber) })
+        let cfg = SCStreamConfiguration()
+        cfg.width = Int(scWindow.frame.width * 2)
+        cfg.height = Int(scWindow.frame.height * 2)
+        cfg.showsCursor = false
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg)
+        try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: "\(dir)/reorder-\(name).png"))
+    }
+
+    @Test func reorderCaptures() async throws {
+        let saved = save()
+        let windows = try await open(["Notes", "Build", "alpha: one", "alpha: two", "beta: main", "gamma: main"],
+                                     size: NSSize(width: 900, height: 620))
+        let a = windows[0]
+        let window = try #require(a.window)
+        a.paneSidebarState.showsAllWindows = true
+        PaneSidebarSharedState.shared.foldedProjects = ["alpha", "beta", "gamma"]
+        await settle(0.8)
+        try await capture(window, "0-folded")
+        let drag = PaneSidebarItemDrag.shared
+        let tops = a.paneSidebarSections.map(\.id)
+        // Frames from a look that folds nothing.
+        let notes = G.key(window: a.paneSidebarState.windowID)
+        drag.begin(notes, siblings: tops, in: a, screenY: 0)
+        await settle(0.3)
+        let gammaY = try screenY(of: "project:gamma", in: a)
+        let topY = try screenY(of: tops[0], in: a, fraction: 0.1)
+        drag.end(commit: false)
+        await settle(0.5)
+        drag.begin("project:gamma", siblings: tops, in: a, screenY: gammaY)
+        for (i, t) in [0.03, 0.08, 0.15, 0.3].enumerated() {
+            await settle(t)
+            try await capture(window, "1-group-begin-\(i)")
+        }
+        for step in 1...4 {
+            drag.move(screenY: gammaY + (topY - gammaY) * CGFloat(step) / 4)
+            await settle(0.06)
+            try await capture(window, "2-group-move-\(step)")
+            await settle(0.4)
+            try await capture(window, "2-group-rest-\(step)")
+        }
+        drag.end(commit: true)
+        await settle(0.05)
+        try await capture(window, "3-group-drop")
+        await settle(0.8)
+        try await capture(window, "4-group-settled")
+
+        // A window in an open group, dragged a step at a time.
+        PaneSidebarSharedState.shared.foldedProjects = []
+        await settle(0.6)
+        let alpha = try #require(a.paneSidebarSections.first { $0.project == "alpha" }).windows.map(\.key)
+        drag.begin(alpha[1], siblings: alpha, in: a, screenY: 0)
+        await settle(0.3)
+        let twoY = try screenY(of: alpha[1], in: a, fraction: 0.3)
+        let oneY = try screenY(of: alpha[0], in: a, fraction: 0.1)
+        drag.end(commit: false)
+        await settle(0.5)
+        drag.begin(alpha[1], siblings: alpha, in: a, screenY: twoY)
+        await settle(0.3)
+        var trace: [String] = []
+        for step in 1...8 {
+            drag.move(screenY: twoY + (oneY - twoY) * CGFloat(step) / 8)
+            await settle(0.03)
+            trace.append("\(step): top \(drag.top) lift \(drag.liftOffset(alpha[1]) ?? .nan) target \(drag.target ?? -1)")
+            if step % 2 == 0 { try await capture(window, "5-window-move-\(step)") }
+        }
+        print("WINDOW-DRAG-TRACE\n" + trace.joined(separator: "\n"))
+        drag.end(commit: true)
+        await settle(0.05)
+        try await capture(window, "6-window-drop")
+        await settle(0.6)
+        try await capture(window, "7-window-settled")
+        await close(windows, restoring: saved)
+    }
+
+    private typealias G = PaneSidebarWindowGrouping
 }

@@ -83,7 +83,8 @@ enum PaneSidebarItemReorder {
 /// pointer up and down — kept in its list — then gliding into place. It moves
 /// the item itself rather than a drawn copy, since a window drags its panes
 /// with it. No `NSDraggingSession`: an item never leaves its list, so the
-/// sidebar's own mouse tracking is its whole feed (`PaneSidebarItemDragView`).
+/// sidebar's own mouse tracking is its whole feed (`PaneSidebarItemDragView`,
+/// then app-level event monitors that outlive the view).
 ///
 /// Dragging a group folds every group first, so they are all one header high
 /// and easy to place (with the fold's own animation), and puts the folds back
@@ -340,56 +341,65 @@ final class PaneSidebarItemDragView: HoverTrackingView {
     var onEnd: ((Bool) -> Void)?
 
     private var downLocation: NSPoint?
-    private var isDragging = false
-    private var escapeMonitor: Any?
-
-    deinit {
-        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
-    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
         downLocation = event.locationInWindow
-        isDragging = false
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let downLocation, let window else { return }
-        let screenY = window.convertPoint(toScreen: event.locationInWindow).y
-        if isDragging {
-            onMove?(screenY)
-            return
-        }
         let moved = hypot(event.locationInWindow.x - downLocation.x, event.locationInWindow.y - downLocation.y)
         guard moved >= PaneDragSourceView.dragThreshold else { return }
-        isDragging = true
+        self.downLocation = nil
+        // From here the drag is the tracker's: an app-wide event feed that
+        // outlives this view, which the list may re-create mid-drag.
+        PaneSidebarItemDragTracker.start(onMove: onMove ?? { _ in }, onEnd: onEnd ?? { _ in })
         onBegin?(window.convertPoint(toScreen: downLocation).y)
-        onMove?(screenY)
-        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53, let self, self.isDragging else { return event }
-            self.finish(commit: false)
-            return nil
-        }
+        onMove?(window.convertPoint(toScreen: event.locationInWindow).y)
     }
 
     override func mouseUp(with event: NSEvent) {
-        if isDragging {
-            finish(commit: true)
-        } else if downLocation != nil {
-            onClick?()
-        }
+        // A press that never became a drag is a click.
+        if downLocation != nil { onClick?() }
         downLocation = nil
     }
+}
 
-    private func finish(commit: Bool) {
-        isDragging = false
-        downLocation = nil
-        if let escapeMonitor {
-            NSEvent.removeMonitor(escapeMonitor)
-            self.escapeMonitor = nil
+/// The pointer feed of a window row's or project header's drag: local event
+/// monitors for the drag, the release and Escape, so the drag goes on even
+/// if the view it started in is re-created or scrolled away mid-drag.
+@MainActor
+private enum PaneSidebarItemDragTracker {
+    private static var monitor: Any?
+
+    static func start(onMove: @escaping (CGFloat) -> Void, onEnd: @escaping (Bool) -> Void) {
+        stop()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp, .keyDown]) { event in
+            switch event.type {
+            case .leftMouseDragged:
+                let point = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) }
+                    ?? NSEvent.mouseLocation
+                onMove(point.y)
+                return nil
+            case .leftMouseUp:
+                stop()
+                onEnd(true)
+                return nil
+            case .keyDown where event.keyCode == 53: // Escape
+                stop()
+                onEnd(false)
+                return nil
+            default:
+                return event
+            }
         }
-        onEnd?(commit)
+    }
+
+    static func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
     }
 }
 
@@ -471,15 +481,23 @@ private struct PaneSidebarItemDragOverlay: ViewModifier {
 /// the dragged one drawn where the pointer has it, lifted over the rest; the
 /// others slid to make room (`PaneSidebarItemDrag.shift`) — a short bounded
 /// animation, none once it lands, as `PaneSidebarShift`.
+///
+/// It also reports the item's frame AS LAID OUT (`PaneSidebarItemFrames`),
+/// from outside its offset, and raises the dragged one OUTERMOST — a z-index
+/// under other modifiers does not reach its siblings.
 struct PaneSidebarItemShift: ViewModifier {
     let key: String
     @ObservedObject var drag: PaneSidebarItemDrag
     let isActive: Bool
+    /// Lifted, it is drawn over a solid backing and a shadow: a window, so
+    /// it reads as on top of the rows it passes. Not a group's parts — its
+    /// header is already its own glass band, and its gaps are empty space.
+    var showsBacking = true
 
     func body(content: Content) -> some View {
         let lift = isActive ? drag.liftOffset(key) : nil
         let slide = isActive ? drag.shift(key) : 0
-        let isLifted = lift != nil && !drag.isSettling
+        let isLifted = lift != nil && !drag.isSettling && showsBacking
         content
             .background {
                 if isLifted {
@@ -496,8 +514,9 @@ struct PaneSidebarItemShift: ViewModifier {
                 }
             }
             .offset(y: lift ?? slide)
-            .zIndex(lift != nil ? 1 : 0)
             .animation(isActive && lift == nil && !drag.isSettling ? PaneSidebarShift.animation : nil, value: slide)
+            .paneSidebarItemFrame(key, isOn: isActive)
+            .zIndex(lift != nil ? 1 : 0)
     }
 }
 

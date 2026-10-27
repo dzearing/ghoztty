@@ -215,11 +215,21 @@ shows the same view of it (see *Shared across windows*). Read before touching
   focus moves) until a window or group is dragged (*Reordering windows and
   groups* below) — and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
+  **32pt**
   **sticky** project header (a clear 6pt gap above and below its band —
   `PaneSidebarOutline.headerGap` — so it never touches a row's hover or the
   tray's well) and labeled by its worktree alone
   (`PaneSidebarWindowGrouping`, `PaneSidebarWindowGroupingTests`). Other
-  windows sort among the projects at the top level.
+  windows sort among the projects at the top level, with no divider between
+  them. A grouped window is NOT indented: every window's chevron lines up.
+- **Every row is one height**: a pane row (and a rail tile) is a window row's
+  height (`PaneSidebarRow.height` = `PaneSidebarWindowHeader.height`, 32pt
+  with its gap).
+- **This window, folded, is selected**: its selected pane is inside the fold,
+  so its header takes the selection pill (accent while the window is key).
+- In the "this window" list the window starts open and folds on its own
+  (`PaneSidebarSharedState.foldedThisWindowLists`), apart from the
+  all-windows folds.
 - A **search field**: whitespace-separated terms, all of which must appear in a
   pane's window title, title, banner, or directory/location
   (`PaneSidebarFilter`); Return goes to the first hit, Escape clears.
@@ -248,9 +258,19 @@ shows the same view of it (see *Shared across windows*). Read before touching
   glides into place on release. Items are not one height, so the index is
   read by the leading edge against the siblings' middles
   (`PaneSidebarItemReorder`). Its own mouse tracking, no `NSDraggingSession`:
-  an item never leaves its list. Escape cancels.
+  an item never leaves its list. Past the drag threshold the feed is app-level
+  event monitors, so the drag survives the list re-creating the header's view
+  (`PaneSidebarItemDragTracker`). Escape cancels.
+- **A window row's fold transition must not clip its slide**: a transition
+  wraps the whole inserted item, offsets included, so `FoldReveal` fully open
+  masks far past the item's frame — cut at the frame, a row slid past its own
+  height vanished (`FoldRevealTests`). The lifted item's z-index and frame
+  reader are the outermost modifiers (`PaneSidebarItemShift`).
+- Captures by eye: `PaneSidebarSyncWindowTests.reorderCaptures`
+  (`/tmp/pane-sidebar-snapshots/reorder-*.png`).
 - **Dragging a group folds every group** first (the fold's own animation), so
-  each is one header high, and the held header stays under the pointer as
+  each is one header high — no backing or shadow behind it, its glass band is
+  enough — and the held header stays under the pointer as
   the list folds up beneath it (`PaneSidebarItemReorder.clamp(grabbed:)`).
   After the drop lands — or a cancel — the folds come back as they were.
 - **The order is shared and persisted** (`PaneSidebarSharedState.windowOrder`,

@@ -73,6 +73,12 @@ final class PaneSidebarSharedState: ObservableObject {
     /// every window's list folds alike.
     @Published var unfoldedWindows: Set<UUID> = []
 
+    /// Windows folded to their header in the "this window" list (where a
+    /// window starts open), by `windowID`. Kept apart from
+    /// `unfoldedWindows`: the all-windows overview starts every other window
+    /// folded, this window's own list starts open.
+    @Published var foldedThisWindowLists: Set<UUID> = []
+
     /// Folded project groups in the all-windows list, by project name.
     @Published var foldedProjects: Set<String> = []
 
@@ -237,14 +243,19 @@ final class PaneSidebarState: ObservableObject {
         objectWillChange.send()
     }
 
-    /// Whether `windowID`'s panes are folded away in the all-windows list.
+    /// Whether `windowID`'s panes are folded away: in the all-windows list
+    /// (folded unless unfolded), or in its own "this window" list (open
+    /// unless folded).
     func isWindowFolded(_ windowID: UUID, isSearching: Bool) -> Bool {
-        Self.isWindowFolded(isUnfolded: shared.unfoldedWindows.contains(windowID), isSearching: isSearching)
+        guard showsAllWindows else { return shared.foldedThisWindowLists.contains(windowID) }
+        return Self.isWindowFolded(isUnfolded: shared.unfoldedWindows.contains(windowID), isSearching: isSearching)
     }
 
     func toggleWindowFold(_ windowID: UUID) {
         change {
-            if shared.unfoldedWindows.contains(windowID) {
+            if !showsAllWindows {
+                shared.foldedThisWindowLists.formSymmetricDifference([windowID])
+            } else if shared.unfoldedWindows.contains(windowID) {
                 shared.unfoldedWindows.remove(windowID)
             } else {
                 shared.unfoldedWindows.insert(windowID)

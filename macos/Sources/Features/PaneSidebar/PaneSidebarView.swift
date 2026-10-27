@@ -312,35 +312,35 @@ struct PaneSidebarView: View {
                 // and windows each report its frame and slide as one.
                 if index > 0 {
                     PaneSidebarOutline.headerGapView
-                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting))
-                        .paneSidebarItemFrame(section.id, isOn: reporting)
+                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                 }
                 Section {
                     if !folded {
                         // ...and below it, before its first window.
                         PaneSidebarOutline.headerGapView
-                            .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting))
-                            .paneSidebarItemFrame(section.id, isOn: reporting)
+                            .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                         ForEach(section.windows, id: \.id) { entry in
                             if let owner = byID[entry.id] {
+                                // Not indented: every window's chevron lines
+                                // up, grouped or not; the group's header says
+                                // which windows are its.
                                 windowGroup(owner, isThisWindow: owner === controller,
-                                            label: entry.label, indent: PaneSidebarOutline.childIndent,
+                                            label: entry.label,
                                             matches: matches?[entry.id], siblings: windows)
-                                    // Read outside each slide, as the rows are.
-                                    .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
-                                    .paneSidebarItemFrame(entry.key, isOn: reporting)
+                                    // INSIDE the slide: the fold's mask is the
+                                    // item's own frame, and outside it would
+                                    // cut away an item slid past its height.
                                     .transition(PaneSidebarOutline.foldTransition)
+                                    .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
                             }
                         }
-                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting))
-                        .paneSidebarItemFrame(section.id, isOn: reporting)
+                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                     }
                 } header: {
                     PaneSidebarProjectHeader(
                         project: project,
                         windowCount: section.windows.count,
                         isFolded: folded,
-                        isFirst: index == 0,
                         onAdd: {
                             BaseTerminalController.newWindowInGroupFromSidebar(
                                 controller.ghostty, project: project,
@@ -357,22 +357,16 @@ struct PaneSidebarView: View {
                             help: folded ? "Show \(project)’s windows — drag to reorder"
                                 : "Hide \(project)’s windows — drag to reorder",
                             onClick: onFold)
-                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting))
-                        .paneSidebarItemFrame(section.id, isOn: reporting)
+                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                 }
             } else {
                 ForEach(section.windows, id: \.id) { entry in
                     if let owner = byID[entry.id] {
-                        // One item, divider and all, so it moves as one.
-                        VStack(alignment: .leading, spacing: 0) {
-                            if !isRail, index > 0 {
-                                PaneSidebarDivider(isRail: false).padding(.bottom, 4)
-                            }
-                            windowGroup(owner, isThisWindow: owner === controller, label: entry.label,
-                                        matches: matches?[entry.id], siblings: topLevel)
-                        }
+                        // No divider between lone windows: their headers
+                        // set them apart, as grouped windows' do.
+                        windowGroup(owner, isThisWindow: owner === controller, label: entry.label,
+                                    matches: matches?[entry.id], siblings: topLevel)
                         .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
-                        .paneSidebarItemFrame(entry.key, isOn: reporting)
                     }
                 }
             }
@@ -809,6 +803,12 @@ struct PaneSidebarWindowHeader: View {
 
     @State private var isHovered = false
     @Environment(\.paneSidebarInteractive) private var isInteractive
+    @Environment(\.paneSidebarEmphasized) private var windowIsKey
+
+    /// This window folded: the selected pane is inside the fold, so its
+    /// header carries the selection, as a row would.
+    private var isSelected: Bool { isThisWindow && isFolded }
+    private var onAccent: Bool { isSelected && windowIsKey }
 
     static let contentHeight: CGFloat = 16
     static let verticalPadding: CGFloat = 6
@@ -821,7 +821,9 @@ struct PaneSidebarWindowHeader: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
                     .rotationEffect(.degrees(isFolded ? -90 : 0))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(onAccent
+                        ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.8))
+                        : AnyShapeStyle(.secondary))
                     .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
                     .contentShape(Rectangle())
             }
@@ -833,13 +835,15 @@ struct PaneSidebarWindowHeader: View {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color(nsColor: .labelColor))
+                    .foregroundStyle(SidePanelRow.foreground(isActive: isSelected, isEmphasized: windowIsKey))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if showsThisWindowTag {
                     Text("This Window")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(onAccent
+                            ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.7))
+                            : AnyShapeStyle(.tertiary))
                         .lineLimit(1)
                         .fixedSize()
                 }
@@ -850,14 +854,14 @@ struct PaneSidebarWindowHeader: View {
             // split the way the last one was (focused, as Cmd-D), and close
             // the window — no questions, no focus taken.
             ZStack(alignment: .trailing) {
-                PaneSidebarCount(value: owner.surfaceTree.count)
+                PaneSidebarCount(value: owner.surfaceTree.count, onAccent: onAccent)
                     .opacity(isHovered && isInteractive ? 0 : 1)
                 if isHovered && isInteractive {
                     HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
-                        PaneSidebarItemButton(symbol: "plus", help: "New pane") {
+                        PaneSidebarItemButton(symbol: "plus", help: "New pane", onAccent: onAccent) {
                             owner.addPaneFromSidebar()
                         }
-                        PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
+                        PaneSidebarItemButton(symbol: "xmark", help: "Close window", onAccent: onAccent) {
                             owner.closeWindowFromSidebar()
                         }
                     }
@@ -872,9 +876,8 @@ struct PaneSidebarWindowHeader: View {
         .padding(.vertical, Self.verticalPadding)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
         .padding(.trailing, SidePanelRow.textInset)
-        .background(
-            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                .fill(isHovered && !isThisWindow ? Color.primary.opacity(0.06) : .clear))
+        .background(SidePanelRow.fill(
+            isActive: isSelected, isHovered: isHovered && !isThisWindow, isEmphasized: windowIsKey))
         .overlay(
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                 .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: isDropTarget ? 2 : 0))
@@ -921,6 +924,9 @@ struct PaneSidebarRailAddSlot: View {
 /// windows scroll under it, and folds them away. On Liquid Glass so rows
 /// passing beneath stay legible (see `glassBackdrop`).
 private struct PaneSidebarProjectHeader: View {
+    /// Its band's height: a little under a row's, its caption centered in it.
+    static let height: CGFloat = 32
+
     /// The + and ×'s start, from the header's trailing edge: the drag source
     /// (`paneSidebarItemDrag`, which also folds on a click) stops there.
     static var trailingControls: CGFloat {
@@ -931,7 +937,6 @@ private struct PaneSidebarProjectHeader: View {
     let project: String
     let windowCount: Int
     let isFolded: Bool
-    let isFirst: Bool
     /// A new window in the group, focused (as Cmd-N).
     let onAdd: () -> Void
     /// Close every window in the group: no questions, no focus taken.
@@ -987,8 +992,7 @@ private struct PaneSidebarProjectHeader: View {
         .padding(.leading, PaneSidebarOutline.headerLeading)
         .padding(.trailing, SidePanelRow.textInset)
         .padding(.horizontal, SidePanelRow.fillInset)
-        .padding(.top, isFirst ? 4 : 6)
-        .padding(.bottom, 5)
+        .frame(height: Self.height)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(HoverTrackingArea(isHovered: $isHovered))
         .glassBackdrop()
@@ -1034,11 +1038,15 @@ enum PaneSidebarOutline {
 /// style for it.
 struct PaneSidebarCount: View {
     let value: Int
+    /// On the accent selection pill: white, not the tertiary label color.
+    var onAccent = false
 
     var body: some View {
         Text("\(value)")
             .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(onAccent
+                ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.7))
+                : AnyShapeStyle(.tertiary))
     }
 }
 
@@ -1283,14 +1291,25 @@ struct FoldReveal: ViewModifier, Animatable {
     }
 
     func body(content: Content) -> some View {
+        // Fully revealed, the mask reaches far past every edge: a transition
+        // wraps the WHOLE inserted item, offsets included, so a mask cut at
+        // its frame would hide a window row slid past its own height in a
+        // reorder (`PaneSidebarItemShift`), or its lifted shadow.
+        let open = fraction >= 1
         content
             .mask(alignment: .top) {
                 GeometryReader { proxy in
-                    Rectangle().frame(height: max(0, proxy.size.height * fraction))
+                    let reach = open ? Self.reach : 0
+                    Rectangle()
+                        .frame(width: proxy.size.width + 2 * reach,
+                               height: max(0, proxy.size.height * fraction) + 2 * reach)
+                        .offset(x: -reach, y: -reach)
                 }
             }
             .opacity(fraction > 0 ? 1 : 0)
     }
+
+    private static let reach: CGFloat = 10_000
 }
 
 /// The all-windows search's text: a borderless `NSTextField` (see

@@ -37,9 +37,11 @@ struct PaneSidebarRow: View {
     private var onAccent: Bool { isSelected && isEmphasized }
 
     /// Every row's height, full or rail: one number, so a pane's icon sits at
-    /// the same height whether the sidebar is expanded or collapsed. Its pill
-    /// is `height - gap` (37), centered…
-    static let height: CGFloat = 41
+    /// the same height whether the sidebar is expanded or collapsed — and a
+    /// window's header's (`PaneSidebarWindowHeader.height`), so every item of
+    /// the list is one height. Its pill is `height - gap` (28: a title and a
+    /// subtitle line), centered…
+    static let height: CGFloat = 32
     /// …so no two pills — or a pill and anything next to it — ever touch.
     static let gap: CGFloat = 4
 
