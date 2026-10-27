@@ -5495,6 +5495,19 @@ $GuardTable = @(
             'test\win32\pane-sidebar-shared.ps1'
         )
     },
+    # No stuck hover after switching windows (T2341): the resync rule is
+    # unit-tested in every lane; that a real activation and deactivation of
+    # the window asks the column's hover again, and drops it when the pointer
+    # is not on the column, is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-hover-resync'
+        Script = 'test\win32\pane-sidebar-hover-resync.ps1'
+        Stamp  = 'test\win32\pane-sidebar-hover-resync.stamp.json'
+        Covers = @(
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-hover-resync.ps1'
+        )
+    },
     # The all-windows list reorders by drag (T2337): the order's rules, the
     # reorder index and the file are unit-tested in every lane; that a header
     # drag folds, slides, lands, saves, cancels on Escape, reaches another

@@ -81,6 +81,11 @@ const log = std.log.scoped(.pane_sidebar);
 
 pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPaneSidebar");
 
+/// Posted to the column when its window is activated or deactivated (T2341):
+/// ask the hover again once the windows have changed places. wParam 1 is an
+/// activation, 0 a deactivation.
+const WM_RESYNC_HOVER: u32 = w32.WM_APP + 0x41;
+
 /// Timer ids. (1 and 2 were the hover-open card's, retired with it in T2289.)
 /// The motion clock (T1843), while something on the column moves.
 const TIMER_ANIM: usize = 3;
@@ -4141,6 +4146,39 @@ fn setHover(self: *PaneSidebar, hit: pane_sidebar.Hit) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
 
+/// This sidebar's window was activated or deactivated (T2341, Mac
+/// 8faf92148): ask the hover again once the windows have changed places.
+/// Posted rather than run, so the z-order the click or the switch set up has
+/// settled by the time the pointer's window is read.
+pub fn queueHoverResync(self: *PaneSidebar, activated: bool) void {
+    _ = w32.PostMessageW(self.hwnd, WM_RESYNC_HOVER, @intFromBool(activated), 0);
+}
+
+/// Re-read the hover from where the pointer really is. A row clicked through
+/// to another window brings that window forward over this one and sends no
+/// WM_MOUSELEAVE - the press held the capture, so the leave tracking was not
+/// watching - and the row kept its hover look, and its pane its tint, until
+/// the pointer next moved over the column.
+fn resyncHover(self: *PaneSidebar, reason: []const u8) void {
+    const held = self.item_drag != null or self.edge != null or self.thumb_drag != null;
+    var pt: w32.POINT = undefined;
+    const under = self.pointerOn() and w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(self.hwnd, &pt) != 0;
+    const on_edge = under and self.onEdgeAt(pt.x, pt.y);
+    const there: pane_sidebar.Hit = if (under and !on_edge) self.hitAt(pt.x, pt.y) else .none;
+    const was = self.hover;
+    self.setHover(pane_sidebar.resyncedHover(self.hover, held, under, there));
+    if (!held) self.setEdgeHover(on_edge);
+    // Off the column, the next move over it arms the leave tracking afresh.
+    if (!under) self.tracking = false;
+    log.info("pane sidebar hover resync reason={s} window={d} was={s} hover={s} under={}", .{
+        reason,
+        if (self.window.hwnd) |h| @intFromPtr(h) else 0,
+        @tagName(was),
+        @tagName(self.hover),
+        under,
+    });
+}
+
 // -------------------------------------------------------------------------
 // Edge drag (T1846; Mac `PaneSidebarChrome.resizeHandle`)
 // -------------------------------------------------------------------------
@@ -5303,6 +5341,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
     const self = fromHwnd(hwnd) orelse return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
     switch (msg) {
         w32.WM_ERASEBKGND => return 1,
+        WM_RESYNC_HOVER => {
+            self.resyncHover(if (wparam != 0) "activate" else "deactivate");
+            return 0;
+        },
         w32.WM_TIMER => {
             switch (wparam) {
                 TIMER_ANIM => self.onMotionTick(),
@@ -5368,6 +5410,9 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         w32.WM_CAPTURECHANGED => {
             // Capture taken away mid-drag (another window, a menu): a cancel.
             if (self.item_drag) |d| if (d.settle == null) self.endItemDrag(false);
+            // The capture ends any leave tracking: the next move re-arms it
+            // (T2341).
+            self.tracking = false;
             self.edgeEnd();
             if (self.thumb_drag != null) {
                 self.thumb_drag = null;

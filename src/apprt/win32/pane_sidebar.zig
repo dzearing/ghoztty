@@ -1318,6 +1318,19 @@ pub const Hit = union(enum) {
     rail_add,
 };
 
+/// The hover once it is asked again from where the pointer really is (T2341,
+/// Mac 8faf92148 `HoverTrackingView.pointerLocation`). A window brought
+/// forward over this one - a row clicked through to its window - sends no
+/// leave, so the hover is re-read as the windows change places. `under` is
+/// whether the topmost window at the pointer IS the column: another window in
+/// front there, or no readable cursor, reads as off it. `there` is what the
+/// pointer is over when it is. A held item, edge or thumb keeps every hover as
+/// it is (T2337, Mac `isHeld`).
+pub fn resyncedHover(current: Hit, held: bool, under: bool, there: Hit) Hit {
+    if (held) return current;
+    return if (under) there else .none;
+}
+
 pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     if (l.mode == .hidden) return .none;
     if (l.toggle.contains(x, y)) return .toggle;
@@ -2838,3 +2851,16 @@ test "T2311: a project header's band has 6 DIP clear above and below, and is Mac
     try testing.expectEqual(fl.heads[0].rect.bottom + 6, fl.heads[1].rect.top);
 }
 
+
+test "pane_sidebar: T2341 a resync drops a hover the pointer is no longer over, and keeps a held one" {
+    // Covered by another window (or no readable cursor): no row is hovered,
+    // whatever was lit before the windows changed places.
+    try testing.expectEqual(Hit.none, resyncedHover(.{ .item = 2 }, false, false, .{ .item = 2 }));
+    try testing.expectEqual(Hit.none, resyncedHover(.{ .head_close = 0 }, false, false, .none));
+    // Still the column's under the pointer: the hover is what is there now.
+    try testing.expectEqual(Hit{ .item = 1 }, resyncedHover(.{ .item = 2 }, false, true, .{ .item = 1 }));
+    try testing.expectEqual(Hit{ .item = 2 }, resyncedHover(.none, false, true, .{ .item = 2 }));
+    // An item held mid-drag keeps every hover as it is (T2337).
+    try testing.expectEqual(Hit{ .head = 1 }, resyncedHover(.{ .head = 1 }, true, false, .none));
+    try testing.expectEqual(Hit.none, resyncedHover(.none, true, true, .{ .item = 0 }));
+}
