@@ -172,14 +172,20 @@ extension BaseTerminalController {
     /// Make a change that moves the sidebar's column, telling the grid first
     /// so it glides over rather than snapping (`PaneStackState.noteColumnShift`).
     /// The sidebar animates its own width to match (`PaneSidebarContainer`).
+    /// This window only: the flags are shared (`PaneSidebarSharedState`), but
+    /// another window takes the change when it is next key
+    /// (`PaneSidebarState.catchUp`), so a collapse stays as quick as one
+    /// window's.
     private func changingPaneSidebarColumn(_ change: () -> Void) {
         let before = paneSidebarColumn
         change()
         paneStackState.noteColumnShift(paneSidebarColumn - before)
     }
 
-    /// The expanded and hidden flags and the sidebar's order are layout:
-    /// persist them with the window.
+    /// The sidebar's order of its panes and its identity in the all-windows
+    /// list are the window's layout: persist them with it. (The flags are
+    /// shared, and kept in the defaults — `PaneSidebarSharedState`; the
+    /// window still records them, for an older build reading its state.)
     func syncPaneSidebarLayout() {
         window?.invalidateRestorableState()
         if sessionLayoutEntryID != nil {

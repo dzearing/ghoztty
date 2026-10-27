@@ -184,6 +184,10 @@ final class SessionLayoutManifest {
         /// The sidebar's own order of the window's panes, by stable pane id
         /// (`PaneSidebarState.order`). Optional/additive.
         var paneSidebarOrder: [UUID]? = nil
+        /// The window's identity in the all-windows list
+        /// (`PaneSidebarState.windowID`): its fold and its place in the
+        /// list's shared order. Optional/additive.
+        var paneSidebarWindowID: UUID? = nil
         /// The window's own gradient (`--color=random` in the elevated pane
         /// style), as its seed. Optional/additive: nil is the default desk.
         var deskVariant: PaneDeskVariant? = nil
@@ -292,6 +296,7 @@ final class SessionLayoutManifest {
         paneSidebarPinned: Bool? = nil,
         paneSidebarHidden: Bool? = nil,
         paneSidebarOrder: [UUID]? = nil,
+        paneSidebarWindowID: UUID? = nil,
         deskVariant: PaneDeskVariant?? = nil
     ) {
         lock.lock()
@@ -301,6 +306,7 @@ final class SessionLayoutManifest {
         if let paneSidebarPinned { entry.paneSidebarPinned = paneSidebarPinned }
         if let paneSidebarHidden { entry.paneSidebarHidden = paneSidebarHidden }
         if let paneSidebarOrder { entry.paneSidebarOrder = paneSidebarOrder }
+        if let paneSidebarWindowID { entry.paneSidebarWindowID = paneSidebarWindowID }
         if let deskVariant { entry.deskVariant = deskVariant }
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
@@ -672,6 +678,7 @@ final class SessionLayoutManifest {
             paneSidebarPinned: controller.paneSidebarState.isExpanded,
             paneSidebarHidden: controller.paneSidebarState.isHidden,
             paneSidebarOrder: controller.paneSidebarPersistedOrder,
+            paneSidebarWindowID: controller.paneSidebarState.windowID,
             deskVariant: .some(controller.deskVariant))
     }
 

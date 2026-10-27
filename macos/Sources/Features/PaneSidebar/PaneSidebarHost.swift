@@ -186,6 +186,22 @@ final class PaneSidebarHostView: NSView {
 
     private var elevated: Bool { controller?.ghostty.config.macosPaneStyle == .elevated }
 
+    /// A screen y in the sidebar's own space (`PaneSidebarGeometry.space`,
+    /// top-down from the hosting view's top), where its frames are read.
+    func sidebarY(screenY: CGFloat) -> CGFloat? {
+        guard let window, let hosting else { return nil }
+        let inWindow = window.convertPoint(fromScreen: NSPoint(x: 0, y: screenY))
+        let local = hosting.convert(inWindow, from: nil)
+        return hosting.isFlipped ? local.y : hosting.bounds.height - local.y
+    }
+
+    /// `sidebarY`'s inverse: a y in the sidebar's space, on screen.
+    func screenY(sidebarY y: CGFloat) -> CGFloat? {
+        guard let window, let hosting else { return nil }
+        let local = NSPoint(x: 0, y: hosting.isFlipped ? y : hosting.bounds.height - y)
+        return window.convertPoint(toScreen: hosting.convert(local, to: nil)).y
+    }
+
     // MARK: Drop geometry
 
     /// The sidebar's droppable geometry in SCREEN coordinates, for

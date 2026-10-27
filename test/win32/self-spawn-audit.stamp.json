@@ -1,12 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-27T15:42:11-07:00",
-    "commit":  "64c1a1595",
+    "generated":  "2026-10-27T16:32:41-07:00",
+    "commit":  "4b000f1ca",
     "uncommitted":  [
-                        "src/apprt/unit_tests.zig",
-                        "src/apprt/win32/pane_sidebar_cross_drop.zig",
-                        "src/apprt/win32/PaneSidebar.zig"
+                        "src/config/Config.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -526,7 +524,7 @@
                   "src/config/ClipboardCodepointMap.zig":  "fcd1560f302af18ff1f94329b0ade3e025a64e88f8715ef4d73498f3a9173b4e",
                   "src/config/command.zig":  "7a9e6da3d47433a0c2245c4bc65bd7965bbcffd25cae635409718c6a367ed6ca",
                   "src/config/conditional.zig":  "ba7912c4a8bf02a3e39339799febd8dd6c3545f6d6d26641152a4580913c48f8",
-                  "src/config/Config.zig":  "89942ae61b9a55e01424d473b66ffee602fef7b763bc7ca4252321edca944f77",
+                  "src/config/Config.zig":  "fb59d1715f49cbf154b1d5be29e9ce3562990f2beeb0c3a66487d7b99dd62460",
                   "src/config/edit.zig":  "9fc0369523151068529c72200c5c8a8fddcfa448d68fcc8fd33ff77a793def7c",
                   "src/config/ErrorList.zig":  "8913d3844831b9d021466f3513f7f2c9a24c3264519b50ec6ef5179b59c32537",
                   "src/config/file_load.zig":  "96e8165c5a365808b7407d61f7073aa074189bcd96b3daa0a43d37f5e3d4c94f",

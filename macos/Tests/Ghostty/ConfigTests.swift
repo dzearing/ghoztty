@@ -56,14 +56,14 @@ struct ConfigTests {
         #expect(config.macosWindowShadow == true)
     }
 
-    @Test func maximizeDefaultsToFalse() throws {
+    @Test func maximizeDefaultsToTrue() throws {
         let config = try TemporaryConfig("")
-        #expect(config.maximize == false)
+        #expect(config.maximize == true)
     }
 
-    @Test func maximizeSetToTrue() throws {
-        let config = try TemporaryConfig("maximize = true")
-        #expect(config.maximize == true)
+    @Test func maximizeSetToFalse() throws {
+        let config = try TemporaryConfig("maximize = false")
+        #expect(config.maximize == false)
     }
 
     // MARK: - String / Optional String Properties

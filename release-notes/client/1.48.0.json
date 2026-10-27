@@ -1,0 +1,22 @@
+{
+  "version": "1.48.0",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "One sidebar for every window", "text": "The sidebar's all-windows list is shared across windows, so reordering, folding and renaming in one window shows up in all of them." },
+        { "title": "Drag to reorder", "text": "Drag windows and project groups into the order you want, and drag a window into a group or back out of one." },
+        { "title": "Rename in place", "text": "Rename windows, groups and panes right from their sidebar rows." },
+        { "title": "+ buttons", "text": "Start a new window, a new window inside a project group, or a new pane split the way you last split by hand, straight from the sidebar." },
+        { "title": "Clearer rows", "text": "Window rows get a window icon, this window's list sits under its own header with + and ×, and a grouped window's Panes list shows its group." },
+        { "title": "Smoother drags", "text": "Rows no longer vanish or stay lit mid-drag, drops land cleanly, and background windows don't redraw while you drag." }
+      ]
+    },
+    {
+      "title": "Windows",
+      "items": [
+        { "title": "New windows open maximized", "text": "New windows fill the screen by default." }
+      ]
+    }
+  ]
+}

@@ -28,6 +28,17 @@ struct FoldRevealTests {
         #expect(!isWhite(half, y: 95))
         let open = try render(1)
         #expect(isWhite(open, y: 95))
+        // Open, nothing is cut: an item slid past its own frame (a reorder)
+        // is still drawn.
+        let slid = Color.white.frame(width: 40, height: 100)
+            .offset(y: 60)
+            .modifier(FoldReveal(fraction: 1))
+            .frame(width: 40, height: 200, alignment: .top)
+            .background(Color.black)
+        let renderer = ImageRenderer(content: slid)
+        renderer.scale = 1
+        let slidRep = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+        #expect(isWhite(slidRep, y: 150), "drawn where it slid, past its own frame")
         let shut = try render(0)
         #expect(!isWhite(shut, y: 5))
     }

@@ -88,6 +88,9 @@ final class TerminalRestorableState: TerminalRestorable {
     var paneSidebarOrder: [UUID]? {
         internalState.paneSidebarOrder
     }
+    var paneSidebarWindowID: UUID? {
+        internalState.paneSidebarWindowID
+    }
     var deskVariant: PaneDeskVariant? {
         internalState.deskVariant
     }
@@ -174,10 +177,13 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
             appDelegate.ghostty,
             withSurfaceTree: state.surfaceTree)
 
-        // The pane sidebar's layout before the window lays out its terminals.
-        if let expanded = state.paneSidebarPinned { c.paneSidebarState.isExpanded = expanded }
-        if let hidden = state.paneSidebarHidden { c.paneSidebarState.isHidden = hidden }
+        // The pane sidebar's own layout before the window lays out its
+        // terminals. Not its expanded/hidden flags: every window shares
+        // those (`PaneSidebarSharedState`, restored from the defaults), and
+        // each window restoring its own would fight over them — the last one
+        // restored would win for every window.
         if let order = state.paneSidebarOrder { c.paneSidebarState.order = order }
+        if let id = state.paneSidebarWindowID { c.paneSidebarState.windowID = id }
         c.deskVariant = state.deskVariant
 
         guard let window = c.window else {
