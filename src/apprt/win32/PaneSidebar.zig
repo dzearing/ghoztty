@@ -2415,6 +2415,31 @@ fn paintCard(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     }
 }
 
+/// The card `paintCard` draws, in the window's client pixels, for the
+/// window's desk paint to cast its shadow (T1894): the card is flush with the
+/// column's trailing edge, and this child cannot paint past its own rect, so
+/// the shadow Mac spills onto the grid margin has to come from the window.
+/// Null when the column is not on screen, in the flat style, or mid-glide -
+/// the gliding column is an overlay, and the card under it settles when the
+/// glide does.
+pub fn deskCard(self: *PaneSidebar) ?w32.RECT {
+    if (!self.elevated() or self.column != null) return null;
+    if (w32.IsWindowVisible(self.hwnd) == 0) return null;
+    const parent = self.window.hwnd orelse return null;
+    const l = self.currentLayout();
+    if (l.card.right <= l.card.left or l.card.bottom <= l.card.top) return null;
+    var wr: w32.RECT = undefined;
+    if (w32.GetWindowRect(self.hwnd, &wr) == 0) return null;
+    var origin: w32.POINT = .{ .x = wr.left, .y = wr.top };
+    if (w32.ScreenToClient(parent, &origin) == 0) return null;
+    return .{
+        .left = origin.x + l.card.left,
+        .top = origin.y + l.card.top,
+        .right = origin.x + l.card.right,
+        .bottom = origin.y + l.card.bottom,
+    };
+}
+
 /// The header (toggle + caption + buttons), the section rule and caption,
 /// and the rows of the expanded panel.
 fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {

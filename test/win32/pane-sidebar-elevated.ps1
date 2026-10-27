@@ -40,6 +40,11 @@
 #      now a strip's height lower, still expands; the strip follows the
 #      expanded card's column.
 #      Solid panes keep the column under the chrome and the strip full width.
+#   8. THE SHADOW ON THE GRID MARGIN (T1894). The card is flush with the
+#      column, which cannot paint past its edge, so the window's desk paint
+#      casts the card's trailing shadow: at mid-height the margin between the
+#      sidebar's card and the pane's is symmetric (checked in steps 2, 3 and 6
+#      too), and on a light theme as well.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -106,6 +111,30 @@ function Get-ColorDistance($a, $b) {
     return [math]::Abs($a.R - $b.R) + [math]::Abs($a.G - $b.G) + [math]::Abs($a.B - $b.B)
 }
 function Fmt($c) { if ($null -eq $c) { 'null' } else { "$($c.R),$($c.G),$($c.B)" } }
+
+# T1894: the sidebar's card casts its shadow onto the grid margin the way the
+# pane's card beside it does. Both are the same card painter's shadow, so at
+# mid-height the margin is symmetric: the pixel j out from the sidebar's card
+# matches the pixel j out from the pane's. Clipped at the column's edge, the
+# side next to the sidebar is the bare desk under only the pane's faint tail.
+function Test-MarginShadow($shot, $sb, [string]$Label) {
+    $m = Get-MarginPx
+    $y = [int](($sb.Top + $sb.Bottom) / 2)
+    $worst = 0
+    foreach ($j in 0, 1) {
+        $nearCard = Get-TestPixel -Shot $shot -X ($sb.Right + $j) -Y $y
+        $nearPane = Get-TestPixel -Shot $shot -X ($sb.Right + $m - 1 - $j) -Y $y
+        # Brightness, not colour distance: the desk's hue drifts a unit or two
+        # across the margin on its own; the shadow is what darkens it. Clipped
+        # (before T1894) the card's side reads 5-26 brighter; cast, 0-2.
+        $d = if ($null -ne $nearCard -and $null -ne $nearPane) {
+            [math]::Abs(($nearCard.R + $nearCard.G + $nearCard.B) - ($nearPane.R + $nearPane.G + $nearPane.B))
+        } else { 999 }
+        "  ${Label}: margin $j px from the card=$(Fmt $nearCard), $j px from the pane=$(Fmt $nearPane) (brightness gap $d)"
+        $worst = [math]::Max($worst, $d)
+    }
+    Assert "${Label}: the card's shadow falls on the grid margin as the pane's does (worst brightness gap $worst)" ($worst -le 3)
+}
 
 # The collapse/expand toggle (pane_sidebar.zig toggleRect) with the elevated
 # insets: the rail's first item, and the panel header's first item on the
@@ -213,6 +242,7 @@ try {
             Assert "the column's top inset is the desk too" (Test-DeskPixel $inCol)
             $d = Get-ColorDistance $inCol $inGrid
             Assert "the column meets the grid margin without a seam (distance $d)" ($d -le 24)
+            Test-MarginShadow $shot $sb 'rail'
         } finally { Close-TestWindowPixels $shot }
     }
 
@@ -246,6 +276,7 @@ try {
             $dg = if ($null -ne $want -and $null -ne $inner) { Get-ColorDistance $inner $want } else { 999 }
             "  pane sheet expected beside the desk=$(Fmt $want) (distance $dg)"
             Assert "the card is a pane's glass sheet: 40% terminal background over the desk, no wash (distance $dg)" ($dg -le 9)
+            Test-MarginShadow $shot $sb 'expanded'
         } finally { Close-TestWindowPixels $shot }
     }
 
@@ -347,6 +378,7 @@ try {
             $card = Get-TestPixel -Shot $shot -X ($sb.Left + (Get-MarginPx) + (Px 22)) -Y ($sb.Bottom - (Px 60))
             "  solid rail card=$(Fmt $card)"
             Assert "the rail's card is the card material, not the desk" (-not (Test-DeskPixel $card))
+            Test-MarginShadow $shot $sb 'solid rail'
         } finally { Close-TestWindowPixels $shot }
     }
     # T2289: the toggle expands the solid window too, and the panel's header
@@ -359,6 +391,25 @@ try {
     [void](Click $top $sb.Hwnd (Get-ToggleCenter $sb))
     $sb = Wait-SidebarWidth $top $railSolid
     Assert "solid: the panel's toggle collapses it back to the rail ($($sb.Width) vs $railSolid)" ($null -ne $sb -and [math]::Abs($sb.Width - $railSolid) -le 1)
+
+    Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+
+    "== 8: on a light theme the rail's shadow falls on the grid margin too (T1894)"
+    $errlog4 = Join-Path $tmp 'app-stderr-light.log'
+    $app = Start-OnTestDesktop -Exe $Exe -StdErr $errlog4 -Arguments @('--config-default-files=false',
+        '--session-persistence=false', '--background=#ffffff', '--foreground=#000000', '--unfocused-split-opacity=1')
+    Start-Sleep -Seconds 3
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: light top window not found"; $script:failures++; return }
+    [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
+    Start-Sleep -Milliseconds 800
+    $sb = Get-Sidebar $top
+    $shot = Get-Shot $top 'rail-light'
+    Assert "the light window capture has content" ($null -ne $shot -and $null -ne $sb)
+    if ($null -ne $shot -and $null -ne $sb) {
+        try { Test-MarginShadow $shot $sb 'light rail' } finally { Close-TestWindowPixels $shot }
+    }
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

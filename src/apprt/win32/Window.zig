@@ -9066,7 +9066,8 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     if (w <= 0 or h <= 0) return;
     var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
     const n = self.deskSlots(&slots);
-    var cards: [MAX_DRAG_NODES]pane_elevation.Card = undefined;
+    // One slot past the panes' for the sidebar's card (T1894).
+    var cards: [MAX_DRAG_NODES + 1]pane_elevation.Card = undefined;
     const pal = self.chromePalette();
     for (slots[0..n], 0..) |slot, i| {
         cards[i] = .{
@@ -9182,6 +9183,21 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         const g = self.stripGlide(pane_stack_grid.viewId(slot.view)) orelse continue;
         cards[i].shadow = 1 - g.collapse;
     }
+    // The sidebar's card (T1894), last so the panes' glow and light indices
+    // stand: its column paints the card and the shadow inside it, but cannot
+    // reach the grid margin its trailing shadow falls on. Every shadow goes
+    // down before any card, so this one never lands on a pane's card, and its
+    // own fill is under the sidebar child, which the blit does not reach.
+    var nc = n;
+    if (self.sidebar) |sb| if (sb.deskCard()) |r| {
+        cards[nc] = .{
+            .left = r.left - area.left,
+            .top = r.top - area.top,
+            .right = r.right - area.left,
+            .bottom = r.bottom - area.top,
+        };
+        nc += 1;
+    };
     // The hovered or dragged gutter's accent bar (T2253).
     const bar: ?PaneDesk.Bar = blk: {
         var grid = self.stackGrid();
@@ -9198,7 +9214,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             .strength = lit.strength,
         };
     };
-    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..n], bands[0..nt], .{
+    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
