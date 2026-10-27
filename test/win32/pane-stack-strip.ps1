@@ -10,7 +10,7 @@
 # leading edge, with the pane's name along it - the banner's title first
 # (`pane_sidebar.paneLabel`, T2085).
 #
-# Layout: P | (s1 | (s2 | s3)) at 900 DIP wide, the T2108 shape: two on show,
+# Layout: P | (s1 | (s2 | s3)) at 760 DIP wide, the T2108 shape: two on show,
 # two tucked.
 #
 # Claims:
@@ -35,6 +35,16 @@
 #       moves the pane there (tree order from +list), same HWND
 #   D6) T2120: a strip dropped at the screen's right edge opens a window of
 #       its own over the right half of the work area, holding that pane
+#   D8) T2282 (Mac 8aedaae61, `aStripWithABannerIsTheSameGlassTopToBottom`),
+#       -Glass only: a tucked pane that carries a banner shows no banner card
+#       over its strip, and the strip is the same glass where the card would
+#       be as further down - each row reads the glass strip the desk beside
+#       it predicts. A glass pane's sheet is thinner under its banner card
+#       (T2255); left behind on a strip, that patch was a pale rectangle at
+#       its top. On Windows the thinned sheet lives only inside the banner's
+#       own popup, so it goes wherever the banner goes. The positive control
+#       after D3: the same pane brought on show shows its banner popup again,
+#       so the class filter can see one.
 #
 # The elevated leg pins `macos-pane-glass=false` (its default is on), so it
 # keeps checking the opaque colour; -Glass is the glass leg (T2160).
@@ -338,8 +348,12 @@ try {
         Say 'NEGATIVE CONTROL: D1 is inverted to "the leading edge is NOT the strip colour" - this run MUST fail'
     }
 
-    # ---- setup: P | (s1 | (s2 | s3)) at 900 DIP -------------------------------
-    Say '== setup: P | (s1 | (s2 | s3)), 900 DIP wide'
+    # ---- setup: P | (s1 | (s2 | s3)) at $rowDip DIP ---------------------------
+    # T2295: re-derived from the 225 DIP pane minimum (T2284, Mac afc64dc53) -
+    # two cards and two strips fit, three cards (675 DIP) do not. At the old
+    # 900 three fit and nothing tucked.
+    $rowDip = 760
+    Say "== setup: P | (s1 | (s2 | s3)), $rowDip DIP wide"
     $app = Start-App
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     # Two DPI readings in a row must agree (pane-stack-grid.ps1's reason).
@@ -369,13 +383,13 @@ try {
     $names = @($null, 's1', 's2', 's3')
     # Off the screen's edges: a strip dragged within 12 DIP of one tiles to it
     # (D6), which D4 and D5 must not do by accident.
-    [void](Set-TestWindowPos -Window $top -X 200 -Y 60 -Width (Get-TestChromeDip -Dip 900 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
+    [void](Set-TestWindowPos -Window $top -X 200 -Y 60 -Width (Get-TestChromeDip -Dip $rowDip -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
     Start-Sleep -Milliseconds 800
     $shown = @(Wait-Shown $top 2)
     Start-Sleep -Milliseconds 600
     $all = @(Get-Panes $top)
     Say ("      dpi {0}; panes: {1}" -f $dpi, (Format-Cols $all))
-    if ($shown.Count -ne 2 -or $all.Count -ne 4) { Write-TestAssertedNothing -Reason "the 900 DIP row never settled on two on show of four (got $($shown.Count) of $($all.Count))" }
+    if ($shown.Count -ne 2 -or $all.Count -ne 4) { Write-TestAssertedNothing -Reason "the $rowDip DIP row never settled on two on show of four (got $($shown.Count) of $($all.Count))" }
     $tucked = @()
     for ($i = 0; $i -lt $all.Count; $i++) {
         if (-not $all[$i].Visible) { $tucked += [pscustomobject]@{ Pane = $all[$i]; Name = $names[$i] } }
@@ -507,6 +521,40 @@ try {
     Assert ($shortInk -gt 0) "D2: the short banner title is drawn on $($t.Name)'s strip ($shortInk px)"
     Assert ($longInk -gt ($shortInk + (Get-TestChromeDip -Dip 40 -Scale $script:scale))) "D2: the long banner title runs further down the strip ($longInk px vs $shortInk px)"
 
+    # ---- D8: a strip with a banner is the same glass top to bottom (T2282) -----
+    if ($Glass -and -not $NegativeControl) {
+        Say '== D8: a tucked pane with a banner'
+        $p8 = $t.Pane
+        $cards = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object {
+                $_.Right -gt $p8.Left -and $_.Left -lt ($p8.Left + $sw) -and $_.Bottom -gt $p8.Top -and $_.Top -lt $p8.Bottom })
+        Assert ($cards.Count -eq 0) "D8: no banner card is on show over $($t.Name)'s strip ($($cards.Count))"
+        # Mac's two rows, 30 and 150 points below the strip's top - where the
+        # card sat, and well clear of it - read beside the label, and held to
+        # each other as Mac's are: the strip may change down its length only
+        # as much as the desk beside it does. A card or its thinned sheet
+        # left on the strip is what moves the top row on its own.
+        $x8 = $p8.Left + $sw - 3
+        $shot = Get-Shot $top
+        try {
+            $rows8 = foreach ($dip in 30, 150) {
+                $y8 = $p8.Top + (Get-TestChromeDip -Dip $dip -Scale $script:scale)
+                [pscustomobject]@{ Dip = $dip; Got = (Get-TestPixel -Shot $shot -X $x8 -Y $y8); Desk = (Get-DeskBeside $shot $p8 $y8) }
+            }
+        } finally { Close-TestWindowPixels -Shot $shot }
+        $a8 = $rows8[0]; $b8 = $rows8[1]
+        Say ("      30 DIP down {0} (desk beside {1}); 150 DIP down {2} (desk beside {3})" -f (Format-Rgb $a8.Got), (Format-Rgb $a8.Desk), (Format-Rgb $b8.Got), (Format-Rgb $b8.Desk))
+        $same8 = $false
+        if ($a8.Got -and $b8.Got -and $a8.Desk -and $b8.Desk) {
+            $same8 = $true
+            foreach ($ch in 'R', 'G', 'B') {
+                $ds = [math]::Abs([int]$a8.Got.$ch - [int]$b8.Got.$ch)
+                $dd = [math]::Abs([int]$a8.Desk.$ch - [int]$b8.Desk.$ch)
+                if ($ds -gt ($dd + 2)) { $same8 = $false }
+            }
+        }
+        Assert $same8 ("D8: $($t.Name)'s strip is the same glass where its banner card was as 150 DIP down ({0} vs {1})" -f (Format-Rgb $a8.Got), (Format-Rgb $b8.Got))
+    }
+
     # ---- D3: a click on the strip brings the pane on show ----------------------
     Say '== D3: strip click'
     $p = $t.Pane
@@ -521,6 +569,25 @@ try {
     Assert (@($after | Where-Object Visible).Count -eq 2) "D3: still two on show ($(@($after | Where-Object Visible).Count))"
     $focused = Focused-Pane-Name
     Assert ($focused -eq $t.Name) "D3: the clicked pane has focus (+list says '$focused')"
+    if ($Glass -and -not $NegativeControl) {
+        # D8's positive control: on show, the pane's banner card is back.
+        $mine = @($after | Where-Object { $_.Hwnd -eq $p.Hwnd })[0]
+        $cards = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object {
+                $mine -and $_.Right -gt $mine.Left -and $_.Left -lt $mine.Right -and $_.Bottom -gt ($mine.Top - $_.Height) -and $_.Top -lt $mine.Bottom })
+        Assert ($cards.Count -eq 1) "D8: brought on show, $($t.Name)'s banner card is on show again ($($cards.Count)) - the D8 probe can see one"
+        # And D8's two-row comparison tells a banner from none: the same two
+        # rows down this card, from the top of its banner band, differ.
+        if ($cards.Count -eq 1) {
+            $c8 = $cards[0]
+            $shot = Get-Shot $top
+            try {
+                $hi = Get-TestPixel -Shot $shot -X ($c8.Left + $sw - 3) -Y ($c8.Top + (Get-TestChromeDip -Dip 30 -Scale $script:scale))
+                $lo = Get-TestPixel -Shot $shot -X ($c8.Left + $sw - 3) -Y ($c8.Top + (Get-TestChromeDip -Dip 150 -Scale $script:scale))
+            } finally { Close-TestWindowPixels -Shot $shot }
+            $apart8 = if ($hi -and $lo) { [math]::Abs($hi.R - $lo.R) + [math]::Abs($hi.G - $lo.G) + [math]::Abs($hi.B - $lo.B) } else { 0 }
+            Assert ($apart8 -gt 6) ("D8: with its banner on show the two rows differ ({0} vs {1}, {2} levels) - the comparison can see a card" -f (Format-Rgb $hi), (Format-Rgb $lo), $apart8)
+        }
+    }
 
     # ---- D4-D6: a strip is a drag source (T2120) -------------------------------
     # Every pane keeps its HWND across a rearrange, so the HWND names it; the
