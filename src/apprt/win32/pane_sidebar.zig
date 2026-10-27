@@ -62,9 +62,17 @@ pub const rail_margin_dip: f32 = 12;
 
 /// Every pane row's height, a full row or a rail tile (T2279, Mac
 /// `PaneSidebarRow.height`): one number, so a pane's icon sits at the same
-/// height in both modes. Its pill is a pixel short of it - the hairline gap
-/// between two rows.
-pub const row_dip: f32 = 38;
+/// height in both modes. Its pill is `row_gap_dip` short of it, centred, so
+/// no two pills - or a pill and anything next to it - ever touch (T2311, Mac
+/// 157b08c48).
+pub const row_dip: f32 = 41;
+/// The clear space between two pane pills, rail tiles or window headers
+/// (Mac `PaneSidebarRow.gap`): half of it above each, half below.
+pub const row_gap_dip: f32 = 4;
+/// Clear space above and below a project header's band, outside the band
+/// (Mac `PaneSidebarOutline.headerGap`), so a pinned header is still just its
+/// band and never touches a row's hover or the tray's well.
+pub const header_gap_dip: f32 = 6;
 /// Between this window's grid and its stash on the rail (`md`), the hairline
 /// in the middle of it.
 pub const rail_group_gap_dip: f32 = 8;
@@ -726,7 +734,7 @@ pub fn rowHeight(two_line: bool, tm: TextMetrics, scale: f32) i32 {
 }
 
 /// A pane row's pill - a full row's or a rail tile's, one height for both
-/// (T2279, Mac `PaneSidebarRow.height` less the hairline between rows), so
+/// (T2279, Mac `PaneSidebarRow.height` less the gap between rows), so
 /// a pane's icon sits at the same height expanded or collapsed. Never short
 /// of the two lines a full row can hold, should the system's text run large.
 pub fn pillHeight(tm: TextMetrics, scale: f32) i32 {
@@ -736,9 +744,16 @@ pub fn pillHeight(tm: TextMetrics, scale: f32) i32 {
     return @max(px(row_dip, scale) - rowGap(scale), min);
 }
 
-/// The hairline between two pane rows (and two tiles).
+/// The clear space between two pane pills (and two tiles, and a pill and a
+/// window header): twice `rowHalfGap`, so it splits evenly round each pill.
 pub fn rowGap(scale: f32) i32 {
-    return @max(px(1, scale), 1);
+    return 2 * rowHalfGap(scale);
+}
+
+/// The space above and below each pill inside its row (Mac's
+/// `.padding(.vertical, gap / 2)`).
+pub fn rowHalfGap(scale: f32) i32 {
+    return @max(px(row_gap_dip / 2, scale), 1);
 }
 
 /// Lay the sidebar out in a `w` x `h` client area.
@@ -877,8 +892,9 @@ fn bodyTop(l: *const Layout, scale: f32) i32 {
 fn layoutRows(l: *Layout, area: Rect, items: []const Item, tm: TextMetrics, scale: f32) void {
     const sm = px(sm_dip, scale);
     const fill = px(toc.fill_inset_dip, scale);
-    const gap = rowGap(scale);
+    const half = rowHalfGap(scale);
     const rh = pillHeight(tm, scale);
+    // `y` is the bottom of the last row: its pill and the half gap below it.
     var y = l.header.bottom;
     for (items, 0..) |_, i| {
         if (i == l.first_stashed) {
@@ -888,18 +904,18 @@ fn layoutRows(l: *Layout, area: Rect, items: []const Item, tm: TextMetrics, scal
             const cap_h = toc.headerHeight(tm.caption_h, scale);
             l.stashed_caption = .{ .left = area.left, .top = rule_y + sm, .right = area.right, .bottom = rule_y + sm + cap_h };
             y = rule_y + sm + cap_h;
-        } else if (i != 0) {
-            y += gap;
         }
-        l.items[i] =.{ .left = area.left + fill, .top = y, .right = area.right - fill, .bottom = y + rh };
-        y += rh;
+        l.items[i] = .{ .left = area.left + fill, .top = y + half, .right = area.right - fill, .bottom = y + half + rh };
+        y += rh + 2 * half;
     }
 }
 
 /// The all-windows outline's lines inside `area`, below the header (T1829;
 /// Mac `PaneSidebarWindowHeader` / `PaneSidebarProjectHeader` / the outline
-/// rows). A window head is a one-line row; a project head is the caption-size
-/// label with Mac's 10 DIP above (4 for the very first line) and 5 below. A
+/// rows). A window head is a one-line row, its fill a half gap clear of its
+/// neighbours as a pill is (T2311); a project head is the caption-size label
+/// with Mac's 6 DIP above (4 for the very first line) and 5 below, inside its
+/// band, and `header_gap_dip` clear outside it above and below. A
 /// pane row's FILL spans the panel, as a row's does; only its content is
 /// indented, by one chevron and its gap per level. Items no line names - the
 /// panes of a folded group - get an empty rect.
@@ -911,6 +927,8 @@ fn layoutLines(l: *Layout, area: Rect, lines: []const Line, tm: TextMetrics, sca
     const step = px(outline_step_dip, scale);
     const chev = px(chevron_dip, scale);
     const chev_gap = px(chevron_gap_dip, scale);
+    const half = rowHalfGap(scale);
+    const head_gap = px(header_gap_dip, scale);
     for (0..l.count) |i| {
         l.items[i] = .{};
         l.indent[i] = 0;
@@ -924,13 +942,18 @@ fn layoutLines(l: *Layout, area: Rect, lines: []const Line, tm: TextMetrics, sca
     var prev: ?LineKind = null;
     for (lines) |ln| {
         const depth: i32 = ln.depth;
+        // Clear space below a project's band, before its first window (none
+        // when the project is folded: its next line is the next project).
+        if (prev == .project and ln.kind != .project) y += head_gap;
         switch (ln.kind) {
             .project, .window => {
                 const is_project = ln.kind == .project;
-                const top_pad = if (is_project) px(if (prev == null) 4 else 10, scale) else 0;
+                // ...and above it, after whatever ends the list above.
+                if (is_project and prev != null) y += head_gap;
+                const top_pad = if (is_project) px(if (prev == null) 4 else 6, scale) else 0;
                 const text_h = if (is_project) tm.caption_h else tm.title_h;
                 const h = if (is_project) top_pad + tm.caption_h + px(5, scale) else rowHeight(false, tm, scale);
-                if (!is_project and prev == .pane) y += hair;
+                if (!is_project) y += half;
                 const text_top = if (is_project) y + top_pad else y + @divTrunc(h - text_h, 2);
                 const cx = area.left + label + depth * step;
                 const cy = text_top + @divTrunc(text_h - chev, 2);
@@ -946,14 +969,14 @@ fn layoutLines(l: *Layout, area: Rect, lines: []const Line, tm: TextMetrics, sca
                     l.head_count += 1;
                 }
                 y += h;
+                if (!is_project) y += half;
             },
             .pane => {
-                if (prev == .pane) y += hair;
                 if (ln.index >= l.count) continue;
                 const rh = pillHeight(tm, scale);
-                l.items[ln.index] = .{ .left = area.left + fill, .top = y, .right = area.right - fill, .bottom = y + rh };
+                l.items[ln.index] = .{ .left = area.left + fill, .top = y + half, .right = area.right - fill, .bottom = y + half + rh };
                 l.indent[ln.index] = depth * step;
-                y += rh;
+                y += rh + 2 * half;
             },
             .rule => {
                 // Mac's divider: 8 above (here `sm` on both sides, as the
@@ -1003,7 +1026,8 @@ fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, inse
     const right = c.right - fill;
     const tile = pillHeight(tm, scale);
     const gap = rowGap(scale);
-    var y = l.header.bottom;
+    // The first tile a half gap below the header, as the first row is.
+    var y = l.header.bottom + rowHalfGap(scale);
     for (0..l.count) |i| {
         // A hairline between this window's grid and its stash; in the
         // outline, also between one window's tiles and the next's (Mac: "in
@@ -1045,12 +1069,14 @@ pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
     if (l.mode == .expanded) {
         const area = l.card;
         const fill = px(toc.fill_inset_dip, scale);
-        const below = if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom;
+        // The last row ends a half gap below its pill.
+        const below = (if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom) + rowHalfGap(scale);
         const rule_y = below + sm;
         l.section_rule = .{ .left = area.left + fill, .top = rule_y, .right = area.right - fill, .bottom = rule_y + hair };
         const cap_h = toc.headerHeight(tm.caption_h, scale);
         l.stashed_caption = .{ .left = area.left, .top = rule_y + sm, .right = area.right, .bottom = rule_y + sm + cap_h };
-        const top = rule_y + sm + cap_h;
+        // Inset like the stashed row it stands in for.
+        const top = rule_y + sm + cap_h + rowHalfGap(scale);
         l.drop_slot = .{ .left = area.left + fill, .top = top, .right = area.right - fill, .bottom = top + rowHeight(false, tm, scale) };
         return;
     }
@@ -1672,7 +1698,7 @@ test "T2279: a rail tile is its row without the text - same pill, same height, s
                 }
             }
         }
-        // At Mac's sizes the row is Mac's 38 (a 37 pill and its hairline).
+        // At Mac's sizes the row is Mac's 41 (a 37 pill and its 4 gap).
         try testing.expectEqual(px(row_dip, s), pillHeight(.{ .title_h = px(16, s), .caption_h = px(14, s) }, s) + rowGap(s));
     }
 }
@@ -2176,3 +2202,96 @@ test "T2298: a window's and a project's header x sit in the rows' x column, leve
         try testing.expectEqual(Rect{}, l.headClose(l.head_count, s));
     }
 }
+
+/// The clear space between two vertically stacked rects (negative: they
+/// overlap).
+fn vGap(a: Rect, b: Rect) i32 {
+    return if (a.top <= b.top) b.top - a.bottom else a.top - b.bottom;
+}
+
+test "T2311: no two sidebar items touch - pills, tiles, window headers and the tray's well keep Mac's 4 DIP gap in both modes (Mac 157b08c48)" {
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(16, s), .caption_h = px(14, s) };
+        const gap = rowGap(s);
+        // Mac's sizes: a 41 row, its pill 37, 4 between two pills.
+        try testing.expectEqual(px(row_dip, s), pillHeight(tm, s) + gap);
+        try testing.expect(gap >= px(row_gap_dip, s) - 1);
+        // The single roster, with a stash and with the empty tray, both modes.
+        const stashed = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .two_line = true }, .{ .section = .grid }, .{ .section = .stashed }, .{ .section = .stashed } };
+        const grid = [_]Item{ .{ .section = .grid }, .{ .section = .grid }, .{ .section = .grid } };
+        for ([_]Mode{ .expanded, .mini }) |m| {
+            for ([_][]const Item{ &stashed, &grid }) |its| {
+                var l = layout(m, columnPx(m, 240, s), px(900, s), its, tm, s);
+                addEmptyTray(&l, tm, s);
+                var rects: [max_items + 1]Rect = undefined;
+                var n: usize = 0;
+                for (0..l.count) |i| {
+                    rects[n] = l.items[i];
+                    n += 1;
+                }
+                if (l.drop_slot) |d| {
+                    rects[n] = d;
+                    n += 1;
+                }
+                for (0..n) |a| for (a + 1..n) |b| try testing.expect(vGap(rects[a], rects[b]) >= gap);
+                // The first pill starts a half gap below the header, as
+                // Mac's row pads its pill.
+                try testing.expectEqual(l.header.bottom + rowHalfGap(s), l.items[0].top);
+            }
+        }
+        // The outline: window headers and pills never touch, and a project
+        // header's band keeps 6 DIP clear above and below it.
+        const f = outlineFixture(s);
+        const l = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &f.lines, tm, s);
+        var rects: [max_items + max_heads]Rect = undefined;
+        var n: usize = 0;
+        for (0..l.count) |i| {
+            if (!l.shown(i)) continue;
+            rects[n] = l.items[i];
+            n += 1;
+        }
+        for (l.heads[0..l.head_count]) |hd| {
+            if (hd.kind != .window) continue;
+            rects[n] = hd.rect;
+            n += 1;
+        }
+        for (0..n) |a| for (a + 1..n) |b| try testing.expect(vGap(rects[a], rects[b]) >= gap);
+        const head_gap = px(header_gap_dip, s);
+        for (l.heads[0..l.head_count]) |hd| {
+            if (hd.kind != .project) continue;
+            for (rects[0..n]) |r| try testing.expect(vGap(hd.rect, r) >= head_gap);
+        }
+    }
+}
+
+test "T2311: a project header's band has 6 DIP clear above and below, and Mac's 6 inside its top (4 first)" {
+    const s: f32 = 1.0;
+    const tm: TextMetrics = .{ .title_h = 16, .caption_h = 14 };
+    const items = [_]Item{ .{ .section = .grid, .group = 0 }, .{ .section = .grid, .group = 1 } };
+    const lines = [_]Line{
+        .{ .kind = .project, .index = 0 },
+        .{ .kind = .window, .index = 0, .depth = 1 },
+        .{ .kind = .pane, .index = 0, .depth = 2 },
+        .{ .kind = .project, .index = 1 },
+        .{ .kind = .window, .index = 1, .depth = 1 },
+        .{ .kind = .pane, .index = 1, .depth = 2 },
+    };
+    const l = layoutWith(.expanded, 240, 900, &items, &lines, tm, s);
+    try testing.expectEqual(@as(usize, 4), l.head_count);
+    const p0 = l.heads[0];
+    const w0 = l.heads[1];
+    const p1 = l.heads[2];
+    try testing.expectEqual(project_band_first, p0.rect.height());
+    try testing.expectEqual(project_band, p1.rect.height());
+    // Below a band: the gap, then the window row's half gap.
+    try testing.expectEqual(p0.rect.bottom + 6 + 2, w0.rect.top);
+    // Above a band: the last pill's half gap, then the gap.
+    try testing.expectEqual(l.items[0].bottom + 2 + 6, p1.rect.top);
+    // A folded project (no lines under it) adds no gap below.
+    const folded = [_]Line{ .{ .kind = .project, .index = 0 }, .{ .kind = .project, .index = 1 } };
+    const fl = layoutWith(.expanded, 240, 900, &items, &folded, tm, s);
+    try testing.expectEqual(fl.heads[0].rect.bottom + 6, fl.heads[1].rect.top);
+}
+
+const project_band_first: i32 = 4 + 14 + 5;
+const project_band: i32 = 6 + 14 + 5;

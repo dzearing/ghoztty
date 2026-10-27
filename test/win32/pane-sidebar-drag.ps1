@@ -137,15 +137,15 @@ function Test-VisibleChild($top, [int64]$Hwnd) {
 # The rail's tile centers, from pane_sidebar.zig's numbers (layoutMini) - the
 # same model pane-sidebar.ps1 scores its clicks with.
 function Get-TileCenter($sb, [int]$Index, [int]$GridCount) {
-    # T2279: a tile is a row's pill (Mac's 38 DIP row less its hairline),
-    # starting the toggle's clearance below the toggle.
+    # T2279/T2311: a tile is a row's pill (Mac's 41 DIP row less its 4 DIP
+    # gap), starting the toggle's clearance and a half gap below the toggle.
     $margin = Px 12; $card = Px 52; $btn = Px 28; $group = Px 8
-    $hair = [math]::Max((Px 1), 1); $pill = (Px 38) - $hair
+    $half = [math]::Max([int][math]::Round(2 * $script:scale, [MidpointRounding]::AwayFromZero), 1); $gap = 2 * $half; $pill = (Px 41) - $gap
     $inset = [int][math]::Truncate(($card - $btn) / 2)
-    $y = $margin + $inset + $btn + $inset
+    $y = $margin + $inset + $btn + $inset + $half
     for ($i = 0; $i -lt $Index; $i++) {
-        $y += $pill + $hair
-        if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $hair }
+        $y += $pill + $gap
+        if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $gap }
     }
     return @{ X = $sb.Left + $margin + [int]($card / 2); Y = $sb.Top + $y + [int]($pill / 2) }
 }

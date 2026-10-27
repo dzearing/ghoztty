@@ -1,11 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-27T00:04:58-07:00",
-    "commit":  "bfb0611a3",
+    "generated":  "2026-10-27T00:35:44-07:00",
+    "commit":  "e196e1e95",
     "uncommitted":  [
-                        "test/win32/update-auto-apply.ps1",
-                        "test/win32/update-failure-visible.ps1"
+                        "test/win32/pane-sidebar.ps1",
+                        "test/win32/pane-sidebar-drag.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -331,12 +331,12 @@
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
                   "test/win32/pane-ingest-ab.ps1":  "8a1c931c42ef7e346459a13bbd3c4a8e31a581ca00247520423b3d2bca6e984b",
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
-                  "test/win32/pane-sidebar.ps1":  "2e26965d253e6af49f6e3e919217e95cd38285fd826d438a5dd724ae7bb5b3b7",
+                  "test/win32/pane-sidebar.ps1":  "d61b449791157d3b56555d737571945be07c487f2b478cd517fdf83efc990f53",
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
                   "test/win32/pane-sidebar-activity.ps1":  "6703d4bcce8e551c08795e5cf2a81091d22a49460d78a5f75abebf0ed6818a95",
                   "test/win32/pane-sidebar-all-windows.ps1":  "6763743d456d2cb1e1ea12bafa2eeae81b560539470b60024cfb0a3b26a66867",
                   "test/win32/pane-sidebar-close.ps1":  "10c16a9c6a2275091868b0f3818189e5a6c38f009b86211a4bfd667a2ab6bc64",
-                  "test/win32/pane-sidebar-drag.ps1":  "9f7464df9da879d99d24f3998c4687ec1a2941629d162e575d0c8c45f7b0cabb",
+                  "test/win32/pane-sidebar-drag.ps1":  "b8bf15d13e34a72c44f2d9377ffdece9bd2c2025897e6aa77594732f648edb9c",
                   "test/win32/pane-sidebar-elevated.ps1":  "4282cccf62b794dea6e69ed012cf80d2dc1bfcee889fa6d8929af816e3521465",
                   "test/win32/pane-sidebar-glide.ps1":  "7e2b71fe04fd82554f721632d6c67e88c37b238b25a8ba659edae0ea31509d54",
                   "test/win32/pane-sidebar-hue.ps1":  "a411654206674d11f76a1e10e64bef76822443ed84738f09b7b7e68832f47f16",
@@ -383,7 +383,7 @@
                   "test/win32/relaunch-guard.ps1":  "57d4631599209336af68e48649fb30ad1da5246958c47a42a1604648586b9af9",
                   "test/win32/relay-account.ps1":  "e2c8ca01022c00c5abd022db7c96966cb8e421f928ede841aa98b1d2510043be",
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
-                  "test/win32/release-artifacts.ps1":  "3d37f07ae9a09753befb03a45f6106813e16c8793495ee637d92334609791dc6",
+                  "test/win32/release-artifacts.ps1":  "a831b85c806498c3b0b1c69a0d0affb104d7b790ea631f7ae3e19c0790c1d46f",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862",
                   "test/win32/remote-disconnect.ps1":  "b028ff3675031fb478027e7b9010f1a39e6f3cf49fb56ca146a0d1bd580b2d59",

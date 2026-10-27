@@ -129,18 +129,19 @@ function PanelColumn([double]$Dip) { (Px 12) + (Px $Dip) + (Px 12) }
 
 # The rail's geometry, from pane_sidebar.zig's numbers (layoutMini, T2279):
 # the 28 DIP toggle centred in the 52 DIP card, the header band the same
-# clearance below it, then one row per pane - Mac's 38 DIP row, a pill and a
-# hairline, the pill across the card less the 8 DIP fill inset - and an 8 DIP
+# clearance below it, then one row per pane - Mac's 41 DIP row, a 37 pill
+# centred in it with 2 DIP above and below (T2311), the pill across the card
+# less the 8 DIP fill inset - and an 8 DIP
 # gap between the grid and stashed groups. Returns the tile's SCREEN center
 # for item $Index, given how many items are in the grid section.
 function Get-TileCenter($sb, [int]$Index, [int]$GridCount) {
     $margin = Px 12; $card = Px 52; $btn = Px 28; $group = Px 8
-    $hair = [math]::Max((Px 1), 1); $pill = (Px 38) - $hair
+    $half = [math]::Max([int][math]::Round(2 * $script:scale, [MidpointRounding]::AwayFromZero), 1); $gap = 2 * $half; $pill = (Px 41) - $gap
     $inset = [int][math]::Truncate(($card - $btn) / 2)
-    $y = $margin + $inset + $btn + $inset
+    $y = $margin + $inset + $btn + $inset + $half
     for ($i = 0; $i -lt $Index; $i++) {
-        $y += $pill + $hair
-        if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $hair }
+        $y += $pill + $gap
+        if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $gap }
     }
     return @{ X = $sb.Left + $margin + [int]($card / 2); Y = $sb.Top + $y + [int]($pill / 2) }
 }

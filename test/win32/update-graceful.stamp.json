@@ -1,14 +1,13 @@
 {
     "guard":  "update-graceful",
     "script":  "test/win32/update-graceful.ps1",
-    "generated":  "2026-10-26T23:41:07-07:00",
-    "commit":  "bfb0611a3",
+    "generated":  "2026-10-27T00:43:56-07:00",
+    "commit":  "e196e1e95",
     "uncommitted":  [
-                        "src/apprt/win32/update_apply.zig",
-                        "src/apprt/win32/update_install.zig"
+
                     ],
     "files":  {
-                  "dist/windows-installer/build-msi.sh":  "dc4ae4925631abf2594decdd6d3462b55d2f7c0416b40c2a3ec6c5f1e1d51011",
+                  "dist/windows-installer/build-msi.sh":  "abc8e70fb54ed0ed6e023b878e8963bf87ae7991e60425553dfc8f12b429b156",
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
                   "src/apprt/win32/install_prepare.zig":  "661e30c9ca180ca97b65a87d98517d1b8acb38caa27678533309ea357d780462",
                   "src/apprt/win32/update_apply.zig":  "c0554acb70e6722f32fa2f4a117aa9085dbe05bd511a0430dc419b12347d0b9f",
