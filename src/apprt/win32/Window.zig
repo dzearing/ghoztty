@@ -4277,6 +4277,13 @@ pub const RearrangeDrag = struct {
     /// brings the pane forward (T2109).
     blade: bool = false,
 
+    /// The drag started on one of this window's pane sidebar rows (T2303, Mac
+    /// 0a547522d `isListDrag`): a LIST drag. The pointer is held to this
+    /// window's sidebar (`pane_drop.listTarget`), so the row lands level with
+    /// it wherever the button comes up, and the pane never leaves the window.
+    /// No other window is a candidate and no tab dwell arms.
+    list: bool = false,
+
     /// The tab button the pointer is currently resting on, and therefore the
     /// tab the dwell timer will switch to when it fires (T1537). Null when the
     /// pointer is not on a tab button at all.
@@ -4335,6 +4342,9 @@ pub const RearrangeDrag = struct {
         /// Released on the pane sidebar: stash it there, at this index in
         /// the stash (T1844).
         stash: struct { index: usize },
+        /// Released on the pane sidebar's list: that place in the list
+        /// (T2303), out of the tray first if it was stashed.
+        sidebar_order: struct { index: usize },
         /// A strip released in a slot of its own row (T2120): beside the
         /// row's item made of exactly the panes `beside[0..n]`, on `side`.
         reorder: struct { beside: [MAX_BESIDE]pane_id.Buf, n: usize, side: pane_drop.Side },
@@ -4493,6 +4503,7 @@ fn ownedDrop(
         .new_tab => |sp| if (honoured) .{ .new_tab = .{ .index = sp.index } } else null,
         .new_window => null,
         .stash => |sp| if (honoured) .{ .stash = .{ .index = sp.index } } else null,
+        .sidebar_order => |sp| .{ .sidebar_order = .{ .index = sp.index } },
         // A strip's own targets (T2128): only `pane_drop.resolveBlade` makes
         // them, for a drag started on a strip (T2120).
         .reorder => |sp| blk: {
@@ -4535,6 +4546,7 @@ pub fn beginSidebarDrag(self: *Window, pane: *PaneView, press: w32.POINT, cur: w
     var c = cur;
     _ = w32.ScreenToClient(hwnd, &c);
     self.beginRearrangeDrag(pane, p.x, p.y);
+    if (self.rearrange_drag) |*d| d.list = true;
     self.updateRearrangeDrag(c.x, c.y);
 }
 
@@ -4803,6 +4815,7 @@ fn dropCandidateFor(
     rects: []pane_drop.PaneRect,
     tabs: []pane_drop.Rect,
     stash_rows: []pane_drop.Rect,
+    list_rows: []pane_drop.PaneRect,
 ) ?pane_drop.Candidate {
     if (win.hwnd == null) return null;
     const n = win.collectDropSlots(slots);
@@ -4822,7 +4835,7 @@ fn dropCandidateFor(
         };
     }
     // The pane sidebar (T1844). The quick terminal has none.
-    const sidebar: ?PaneSidebar.DropGeometry = if (win.sidebar) |sb| sb.dropGeometry(stash_rows) else null;
+    const sidebar: ?PaneSidebar.DropGeometry = if (win.sidebar) |sb| sb.dropGeometry(stash_rows, list_rows) else null;
     return .{
         .window = win.dropWindowRef(),
         .z_order = z,
@@ -4833,6 +4846,8 @@ fn dropCandidateFor(
         .tab_button_rects = if (strip) |st| st.tabs else &.{},
         .sidebar_rect = if (sidebar) |g| g.sidebar else null,
         .stash_row_rects = if (sidebar) |g| g.rows else &.{},
+        .pane_row_rects = if (sidebar) |g| g.list else &.{},
+        .tray_top = if (sidebar) |g| g.tray_top else null,
     };
 }
 
@@ -4954,21 +4969,25 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     var own_rects: [MAX_DRAG_NODES]pane_drop.PaneRect = undefined;
     var own_tabs: [MAX_TABS]pane_drop.Rect = undefined;
     var own_stash: [pane_sidebar.max_items]pane_drop.Rect = undefined;
+    var own_list: [pane_sidebar.max_items]pane_drop.PaneRect = undefined;
     var other_slots: [MAX_DROP_WINDOWS][MAX_DROP_PANES]PaneSlot = undefined;
     var other_rects: [MAX_DROP_WINDOWS][MAX_DROP_PANES]pane_drop.PaneRect = undefined;
     var other_tabs: [MAX_DROP_WINDOWS][MAX_DROP_TABS]pane_drop.Rect = undefined;
     var other_stash: [MAX_DROP_WINDOWS][pane_sidebar.max_items]pane_drop.Rect = undefined;
+    var other_list: [MAX_DROP_WINDOWS][pane_sidebar.max_items]pane_drop.PaneRect = undefined;
 
     var cands: [MAX_DROP_WINDOWS + 1]pane_drop.Candidate = undefined;
     var cand_windows: [MAX_DROP_WINDOWS + 1]*Window = undefined;
     var n: usize = 0;
 
-    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs, &own_stash)) |c| {
+    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs, &own_stash, &own_list)) |c| {
         cands[n] = c;
         cand_windows[n] = self;
         n += 1;
     }
-    for (d.others[0..d.other_count], 0..) |win, i| {
+    // A list drag has one candidate, its own window (T2303).
+    const others = if (d.list) d.others[0..0] else d.others[0..d.other_count];
+    for (others, 0..) |win, i| {
         // Re-checked every move, not trusted from the press: a window can
         // close while the button is down, and a candidate built out of a freed
         // Window is the one way this feature could take the app with it.
@@ -4980,6 +4999,7 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             &other_rects[i],
             &other_tabs[i],
             &other_stash[i],
+            &other_list[i],
         )) |c| {
             cands[n] = c;
             cand_windows[n] = win;
@@ -4994,7 +5014,10 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     // when the row cannot be read, and so does this.
     var blade_buf: BladeBuffers = undefined;
     const blade: ?pane_drop.BladeDrag = if (d.blade) self.bladeGeometry(d.view, &blade_buf) else null;
-    const target = if (blade) |b| pane_drop.resolveBlade(
+    const target = if (d.list) list: {
+        if (n == 0 or cand_windows[0] != self) break :list null;
+        break :list pane_drop.listTarget(point, cands[0], d.view.paneId());
+    } else if (blade) |b| pane_drop.resolveBlade(
         point,
         cands[0..n],
         b,
@@ -5052,7 +5075,8 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             var slot_rows: [pane_sidebar.max_items]pane_drop.Rect = undefined;
             const slot: ?pane_drop.Rect = if (t == .stash) blk: {
                 const sb = dest.sidebar orelse break :blk null;
-                const g = sb.dropGeometry(&slot_rows) orelse break :blk null;
+                var slot_list: [pane_sidebar.max_items]pane_drop.PaneRect = undefined;
+                const g = sb.dropGeometry(&slot_rows, &slot_list) orelse break :blk null;
                 break :blk g.slot;
             } else null;
             d.highlight = drop_highlight.forTarget(t, .{
@@ -5066,11 +5090,13 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
                 .stash_rows = cands[i].stash_row_rects,
                 .stash_slot = slot,
                 .can_stash = honoured,
+                .list_rows = cands[i].pane_row_rects,
+                .dragged = d.view.paneId(),
                 .scale = self.scale,
             });
-            // A stash preview may lie over the sidebar's open card, which is
+            // A sidebar preview may lie over the sidebar's open card, which is
             // a popup of its own and would otherwise cover it.
-            over_other_window = dest != self or t == .stash;
+            over_other_window = dest != self or t == .stash or t == .sidebar_order;
         } else {
             // Released over nothing: a window of its own (T1538). Refused for
             // a window's last pane — that trade closes one window and opens
@@ -5121,8 +5147,9 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
         }
         break :blk null;
     };
-    // A strip has no tab-strip targets, so nothing to dwell on either.
-    self.armTabDwell(d, if (d.blade) null else hovered);
+    // A strip has no tab-strip targets, so nothing to dwell on either; nor
+    // has a list drag, which never leaves its sidebar.
+    self.armTabDwell(d, if (d.blade or d.list) null else hovered);
 }
 
 /// The stack buffers one strip drag's row geometry is built in, on the
@@ -5187,6 +5214,7 @@ fn bladeGeometry(self: *Window, view: *PaneView, buf: *BladeBuffers) ?pane_drop.
         .window = self.dropWindowRef(),
         .slots = slots,
         .screens = buf.screens[0..workAreas(&buf.screens)],
+        .dragged = view.paneId(),
     };
 }
 
@@ -5388,6 +5416,12 @@ fn commitRearrangeDrop(
         return;
     }
 
+    // The pane sidebar's list (T2303): that place in the list.
+    if (drop == .sidebar_order) {
+        self.commitListDrop(view, source_tab, at, drop.sidebar_order.index, dest_window);
+        return;
+    }
+
     // A strip's own drops (T2120): a window over half a screen, and a move
     // along the row it is folded into.
     if (drop == .tile) {
@@ -5481,7 +5515,7 @@ fn commitRearrangeDrop(
             };
         },
         // All handled above, before the same-tab path is even chosen.
-        .new_tab, .new_window, .stash, .reorder, .tile => unreachable,
+        .new_tab, .new_window, .stash, .sidebar_order, .reorder, .tile => unreachable,
     };
 
     // Swap-then-release (T1356), the rule every other tree mutation follows.
@@ -5559,6 +5593,79 @@ fn commitStashDrop(
         pane_stash.stashIndex(self.tab_trees[source_tab], view),
         pane_stash.stashedCount(self.tab_trees[source_tab]),
     });
+}
+
+/// Place the dragged pane at `index` of a pane sidebar's list (T2303, Mac
+/// `PaneMoveCoordinator` `.sidebarOrder`). In its own tab: out of the tray
+/// first if it was stashed - back to the slot it left - then its place in the
+/// list; a pane already on the grid moves in the list only, and the grid does
+/// not change. From another tab or window it joins this one at the top level
+/// on the right, as any arrival does, and then takes that place in the list.
+fn commitListDrop(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    index: usize,
+    dest_window: ?*Window,
+) void {
+    const arrive: RearrangeDrag.Drop = .{ .top_level = .{ .side = .right } };
+    if (dest_window) |dest| {
+        if (dest == self) return;
+        if (!self.app.hasWindow(dest)) return;
+        if (dest.closing or dest.hwnd == null or dest.tab_count == 0) return;
+        if (dest.is_quick_terminal) return;
+        self.commitCrossWindowDrop(view, source_tab, at, dest, arrive, null);
+        dest.placeInPaneSidebar(view, index);
+        log.info("pane drop joined another window's list index={d}", .{index});
+        return;
+    }
+    if (source_tab != self.active_tab) {
+        self.commitCrossTabDrop(view, source_tab, at, self.active_tab, arrive, null);
+        self.placeInPaneSidebar(view, index);
+        log.info("pane drop joined this tab's list index={d}", .{index});
+        return;
+    }
+    const was_stashed = pane_stash.isStashed(view);
+    if (was_stashed) self.restorePane(view, true);
+    self.placeInPaneSidebar(view, index);
+    self.syncPaneSidebar();
+    log.info("pane drop placed in list index={d} restored={}", .{ index, was_stashed });
+}
+
+/// Put `view` at `index` of this window's pane sidebar list (T2303, Mac
+/// `placeInPaneSidebar`): the list's own order, with the pane moved there.
+/// `index` counts the list as it is drawn, without the pane itself. A pane not
+/// on this window's grid - stashed, or not one of its panes - is left alone.
+pub fn placeInPaneSidebar(self: *Window, view: *PaneView, index: usize) void {
+    const tab = self.findTabIndex(view) orelse return;
+    if (pane_stash.isStashed(view)) return;
+    var views: [pane_sidebar.max_items]*PaneView = undefined;
+    const n = pane_sidebar.roster(self.tab_trees[tab], &views);
+    var visible: [sidebar_order.max_ids][]const u8 = undefined;
+    var nv: usize = 0;
+    for (views[0..n]) |v| {
+        if (pane_stash.isStashed(v) or nv == visible.len) continue;
+        visible[nv] = v.paneId();
+        nv += 1;
+    }
+    // Every pane of every tab: one order covers the window, and a pane not on
+    // show keeps its place in it.
+    var existing: [sidebar_order.max_ids][]const u8 = undefined;
+    var ne: usize = 0;
+    for (0..self.tab_count) |ti| {
+        var it = self.tab_trees[ti].iterator();
+        while (it.next()) |entry| {
+            if (ne == existing.len) break;
+            existing[ne] = entry.view.paneId();
+            ne += 1;
+        }
+    }
+    var order_buf: [sidebar_order.max_ids][]const u8 = undefined;
+    const order = self.paneSidebarOrder(&order_buf);
+    var next: [sidebar_order.max_ids][]const u8 = undefined;
+    const got = sidebar_order.moving(view.paneId(), index, visible[0..nv], order, existing[0..ne], &next);
+    self.setPaneSidebarOrder(next[0..got]);
 }
 
 /// Move a dragged strip along the row it is folded into (T2120, Mac
@@ -5756,7 +5863,7 @@ fn commitCrossTabDrop(
             };
         },
         // All handled by the caller, which never reaches this path with one.
-        .new_tab, .new_window, .stash, .reorder, .tile => unreachable,
+        .new_tab, .new_window, .stash, .sidebar_order, .reorder, .tile => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];
@@ -5907,7 +6014,7 @@ fn commitCrossWindowDrop(
                 return;
             };
         },
-        .new_tab, .new_window, .stash, .reorder, .tile => unreachable,
+        .new_tab, .new_window, .stash, .sidebar_order, .reorder, .tile => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];

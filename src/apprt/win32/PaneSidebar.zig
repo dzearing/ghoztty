@@ -1231,12 +1231,17 @@ pub const DropGeometry = struct {
     rows: []const pane_drop.Rect,
     /// The empty "Drop to stash" slot, while a drag shows one.
     slot: ?pane_drop.Rect,
+    /// This window's LIST rows - its panes on the grid, in the list's order
+    /// (T2303) - and where the tray begins below them (`pane_drop.sidebarHit`).
+    list: []const pane_drop.PaneRect = &.{},
+    tray_top: ?i32 = null,
 };
 
 /// The drop target this sidebar presents right now, or null while it is
 /// hidden (Mac: a sidebar hidden outright is not a target; the rail always
-/// is). Rows are written into `rows_out` and borrowed by the answer.
-pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect) ?DropGeometry {
+/// is). Rows are written into `rows_out` (and the list's into `list_out`) and
+/// borrowed by the answer.
+pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect, list_out: []pane_drop.PaneRect) ?DropGeometry {
     if (self.mode == .hidden) return null;
     if (w32.IsWindowVisible(self.hwnd) == 0) return null;
     var col: w32.RECT = undefined;
@@ -1261,11 +1266,46 @@ pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect) ?DropGeometr
         const v = scroll_mod.visible(&l, sl);
         break :blk if (v.height() > 0) toScreen(v, origin) else null;
     } else null;
+    // The list: this window's grid rows (T2303). A row scrolled out of sight
+    // keeps its laid-out place - the index counts it either way - so it is
+    // listed unclipped, as the order is.
+    var nl: usize = 0;
+    var last_list: ?pane_sidebar.Rect = null;
+    for (0..@min(l.count, self.entries.items.len)) |li| {
+        const e = self.entries.items[li];
+        if (!e.own or e.section != .grid or !l.shown(li)) continue;
+        last_list = l.items[li];
+        if (nl == list_out.len) continue;
+        list_out[nl] = .{ .id = e.pane.paneId(), .rect = toScreen(l.items[li], origin) };
+        nl += 1;
+    }
     return .{
         .sidebar = area,
         .rows = rows_out[0..n],
         .slot = slot,
+        .list = list_out[0..nl],
+        .tray_top = if (trayTop(&l, last_list)) |y| y + origin.y else null,
     };
+}
+
+/// Where the tray begins, in client coordinates (T2303, Mac `trayTop`). The
+/// single roster draws it: the hairline over the STASHED caption, or over the
+/// empty tray's well. The all-windows outline has no hairline of this window's
+/// own, so the tray begins between this window's last list row and its first
+/// stashed one - or right under the last list row when nothing is stashed.
+fn trayTop(l: *const pane_sidebar.Layout, last_list: ?pane_sidebar.Rect) ?i32 {
+    if (!l.outline) {
+        const rule = l.section_rule orelse return null;
+        return rule.top;
+    }
+    const has_stash = l.first_stashed < l.stash_end and l.shown(l.first_stashed);
+    if (has_stash) {
+        const first = l.items[l.first_stashed];
+        const above = last_list orelse return first.top;
+        return @divFloor(above.bottom + first.top, 2);
+    }
+    const above = last_list orelse return null;
+    return above.bottom;
 }
 
 fn toScreen(r: pane_sidebar.Rect, origin: w32.POINT) pane_drop.Rect {

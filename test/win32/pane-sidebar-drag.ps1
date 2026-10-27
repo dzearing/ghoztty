@@ -28,11 +28,16 @@
 #      preview, and nothing is stashed
 #   D) Escape mid-drag CANCELS a drag that started from the sidebar (no
 #      rearrange mode): the preview goes and the pane stays stashed
-#   E) dragging a stashed tile onto the grid RESTORES it there in one step:
-#      the same HWND is back on screen and +list no longer says stashed
-#   F) dragging a pane onto ANOTHER window's rail moves it there and stashes
-#      it in one step: the same HWND is now that window's child, stashed, and
-#      that window still shows only its own pane
+#
+# T2303 (Mac e77422577 / 0a547522d): the sidebar is TWO lists split at the
+# tray's hairline, and a row's drag is a LIST drag, held to its own sidebar.
+#   E) a stashed tile dragged above the hairline - and released over the GRID,
+#      level with the list - comes back out of the tray at that place in the
+#      list: the same HWND is back on screen, and the list now reads s2, P
+#   F) a grid tile dragged up the list REORDERS THE LIST ONLY: the list reads
+#      P, s2 again, and the grid's screen order has not moved
+#   G) a tile released over ANOTHER window stays in its own window's list:
+#      the pane is still this window's child, and that window is untouched
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -161,6 +166,28 @@ function Get-LogLines([int]$Skip, [string]$Pattern) {
     return @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $Skip | Where-Object { $_ -match $Pattern })
 }
 function Get-LogCount { @(Get-Content $script:errlog -ErrorAction SilentlyContinue).Count }
+# The sidebar's grid rows in LIST order, from its latest `pane sidebar rows`
+# log line (T2303): pane ids, top to bottom. The list is the sidebar's own
+# order, which the grid's layout cannot show.
+function Get-ListOrder {
+    $line = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar rows ' }) | Select-Object -Last 1
+    if (-not $line -or $line -notmatch 'items=(\S*)') { return @() }
+    $ids = @()
+    foreach ($i in ($Matches[1] -split ';' | Where-Object { $_ })) {
+        if ($i -match '^g\d+g@-?\d+,-?\d+#(\S+)$') { $ids += $Matches[1].ToUpperInvariant() }
+    }
+    return , $ids
+}
+# A named pane's id, from +list.
+function Get-PaneId([string]$Name) {
+    foreach ($l in (Get-Leaves)) { if ($l.name -eq $Name) { return ([string]$l.id).ToUpperInvariant() } }
+    return $null
+}
+# The id of the leaf that is neither s1 nor s2 - the first pane, P.
+function Get-FirstPaneId {
+    foreach ($l in (Get-Leaves)) { if ($l.name -ne 's1' -and $l.name -ne 's2') { return ([string]$l.id).ToUpperInvariant() } }
+    return $null
+}
 # Evidence for a red run: which named panes +list says are stashed.
 function Show-State([string]$Label) {
     # Assigned, never piped: Get-Leaves returns a unary-comma array.
@@ -295,7 +322,8 @@ try {
     Assert "D: press and travel on a stashed tile delivered" (Start-TileDrag $top $sb $from)
     Assert "D: move onto P's center delivered" (Move-Drag $top $cx $cy 'move')
     Start-Sleep -Milliseconds 300
-    Assert "D: the drop onto the grid is previewed" ($null -ne (Get-PreviewRect $app.Pid))
+    # A list drag (T2303): over the grid, the pointer is held to the rail.
+    Assert "D: the drag is previewed" ($null -ne (Get-PreviewRect $app.Pid))
     $k = Send-TestKeys -Window $top -Target ([IntPtr]$hP) -Key Escape
     Start-Sleep -Milliseconds 400
     Assert "D: Escape delivered" $k
@@ -306,54 +334,97 @@ try {
     Assert "D: one pane on screen" (@(Get-VisiblePanes $top).Count -eq 1)
 
     Show-State "before E"
-    "== E: dragging a stashed tile onto the grid restores it there"
-    # Stash order: s2 (top), s1. Tile 1 is s2.
+    "== E: a stashed tile dragged above the hairline comes back into the list, even released over the grid"
+    $idP = Get-FirstPaneId
+    $id2 = Get-PaneId 's2'
+    Assert "setup: P's and s2's ids are known" ($idP -and $id2)
+    $windowsBefore = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow').Count
+    # Stash order: s2 (top), s1. Tile 1 is s2; tile 0 is P, the only list row.
+    $logE = Get-LogCount
     $from = Get-TileCenter $sb 1 1
-    # P's right edge zone, clear of the window's edge band: a split.
-    $rx = $pBox.Left + $pBox.Width - (Px 90); $ry = $cy
+    $pTile = Get-TileCenter $sb 0 1
+    # Over P's pane, level with the top quarter of P's tile: above its middle,
+    # so index 0 - and nowhere near the rail, which the drag must not need.
+    $ex = $cx; $ey = $pTile.Y - (Px 9)
     Assert "E: press and travel on s2's tile delivered" (Start-TileDrag $top $sb $from)
-    Assert "E: move onto P's right edge delivered" (Move-Drag $top $rx $ry 'move')
+    Assert "E: move over the grid, level with the list, delivered" (Move-Drag $top $ex $ey 'move')
     Start-Sleep -Milliseconds 300
-    Assert "E: the restore is previewed over the grid" ($null -ne (Get-PreviewRect $app.Pid))
-    Assert "E: release delivered" (Move-Drag $top $rx $ry 'up')
+    $pv = Get-PreviewRect $app.Pid
+    if ($pv) { "  (preview $($pv.Left),$($pv.Top)-$($pv.Right),$($pv.Bottom); rail $($sb.Left)..$($sb.Left + $sb.Width))" }
+    Assert "E: the list place is previewed ON the rail, not over the grid" ($null -ne $pv -and $pv.Left -ge $sb.Left -and $pv.Right -le ($sb.Left + $sb.Width))
+    Assert "E: release delivered" (Move-Drag $top $ex $ey 'up')
     Start-Sleep -Milliseconds 700
     Assert "E: s2 is no longer stashed (+list)" (Wait-Stashed 's2' $false)
     Assert "E: the SAME handle is back on screen" (Test-VisibleChild $top $h2)
     Assert "E: two panes on screen, s1 still stashed" (@(Get-VisiblePanes $top).Count -eq 2 -and (Test-StashedId 's1'))
+    Assert "E: the drop placed it in the list at 0, out of the tray (log)" (@(Get-LogLines $logE 'pane drop placed in list index=0 restored=true').Count -ge 1)
+    $orderE = Get-ListOrder
+    "  (list: $($orderE -join ', '))"
+    Assert "E: the list reads s2, P" ($orderE.Count -eq 2 -and $orderE[0] -eq $id2 -and $orderE[1] -eq $idP)
+    Assert "E: no window was made" (@(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow').Count -eq $windowsBefore)
 
     Show-State "before F"
-    "== F: dragging a pane onto ANOTHER window's rail moves it there, stashed"
+    "== F: a grid tile dragged up the list reorders the list, never the grid"
+    $gridBefore = @(Get-VisiblePanes $top | Sort-Object Left | ForEach-Object { [int64]$_.Hwnd })
+    $sb = Get-Sidebar $top
+    $logF = Get-LogCount
+    # Tiles: s2, P (the list), then s1 (the tray). Drag P above s2's middle.
+    $from = Get-TileCenter $sb 1 2
+    $s2Tile = Get-TileCenter $sb 0 2
+    $fy = $s2Tile.Y - (Px 9)
+    Assert "F: press and travel on P's tile delivered" (Start-TileDrag $top $sb $from)
+    Assert "F: move above s2's tile delivered" (Move-Drag $top $s2Tile.X $fy 'move')
+    Start-Sleep -Milliseconds 300
+    $pv = Get-PreviewRect $app.Pid
+    Assert "F: the list place is previewed on the rail" ($null -ne $pv -and $pv.Left -ge $sb.Left -and $pv.Right -le ($sb.Left + $sb.Width))
+    Assert "F: release delivered" (Move-Drag $top $s2Tile.X $fy 'up')
+    Start-Sleep -Milliseconds 700
+    Assert "F: the drop placed P in the list at 0 (log)" (@(Get-LogLines $logF 'pane drop placed in list index=0 restored=false').Count -ge 1)
+    $orderF = Get-ListOrder
+    "  (list: $($orderF -join ', '))"
+    if ($NegativeControl) {
+        Assert "NEGATIVE: the list did NOT change (pre-T2303 behavior)" ($orderF.Count -eq 2 -and $orderF[0] -eq $id2)
+    } else {
+        Assert "F: the list reads P, s2" ($orderF.Count -eq 2 -and $orderF[0] -eq $idP -and $orderF[1] -eq $id2)
+    }
+    $gridAfter = @(Get-VisiblePanes $top | Sort-Object Left | ForEach-Object { [int64]$_.Hwnd })
+    Assert "F: the grid's screen order did not move" (($gridBefore -join ',') -eq ($gridAfter -join ','))
+    Assert "F: nothing was stashed (log)" (@(Get-LogLines $logF 'pane drop stashed').Count -eq 0)
+
+    Show-State "before G"
+    "== G: a tile released over ANOTHER window stays in its own window's list"
     $wasThere = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | ForEach-Object { [int64]$_.Hwnd })
     [void](Invoke-Cli "+new-window")
     Start-Sleep -Milliseconds 2000
     $b = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | Where-Object { $wasThere -notcontains [int64]$_.Hwnd }) | Select-Object -First 1
-    Assert "F: a second window opened" ($null -ne $b)
+    Assert "G: a second window opened" ($null -ne $b)
     if ($null -eq $b) { return }
     $bTop = [IntPtr][int64]$b.Hwnd
     [void](Set-TestWindowPos -Window $bTop -X ((Px 1000) + 60) -Y 20 -Width (Px 800) -Height (Px 700))
     Start-Sleep -Milliseconds 900
     $bOwn = (@(Get-Panes $bTop))[0].Hwnd
     $bSb = Get-Sidebar $bTop
-    Assert "F: the other window shows its rail" ($null -ne $bSb -and $bSb.Visible)
+    Assert "G: the other window shows its rail" ($null -ne $bSb -and $bSb.Visible)
     if ($null -eq $bSb) { return }
-    # Window A's rail: P, s2 (grid, screen order), then s1. Drag s2's tile.
+    # Window A's tiles: P, s2 (the list), then s1. Drag s2's onto B's rail,
+    # level with A's list top: the capture carries the moves there.
     $sb = Get-Sidebar $top
-    $logF = Get-LogCount
+    $logG = Get-LogCount
     $from = Get-TileCenter $sb 1 2
-    $fx = $bSb.Left + [int]($bSb.Width / 2); $fy = $bSb.Top + [int]($bSb.Height * 0.7)
-    Assert "F: press and travel on s2's tile delivered" (Start-TileDrag $top $sb $from)
-    Assert "F: move onto the other window's rail delivered" (Move-Drag $top $fx $fy 'move')
+    $first = Get-TileCenter $sb 0 2
+    $gx = $bSb.Left + [int]($bSb.Width / 2); $gy = $first.Y - (Px 9)
+    Assert "G: press and travel on s2's tile delivered" (Start-TileDrag $top $sb $from)
+    Assert "G: move over the other window delivered" (Move-Drag $top $gx $gy 'move')
     Start-Sleep -Milliseconds 400
     $pv = Get-PreviewRect $app.Pid
-    Assert "F: the drop is previewed on THAT window's sidebar" ($null -ne $pv -and $pv.Left -ge $bSb.Left -and $pv.Right -le ($bSb.Left + $bSb.Width))
-    Assert "F: release delivered" (Move-Drag $top $fx $fy 'up')
+    Assert "G: the preview stays on THIS window's rail" ($null -ne $pv -and $pv.Left -ge $sb.Left -and $pv.Right -le ($sb.Left + $sb.Width))
+    Assert "G: release delivered" (Move-Drag $top $gx $gy 'up')
     Start-Sleep -Milliseconds 1200
-    Assert "F: s2's SAME handle is now a child of the other window" (Test-Child $bTop $h2)
-    Assert "F: and no longer of the source window" (-not (Test-Child $top $h2))
-    Assert "F: it arrived stashed (+list)" (Wait-Stashed 's2' $true)
-    Assert "F: the other window still shows only its own pane" (@(Get-VisiblePanes $bTop).Count -eq 1 -and (Test-VisibleChild $bTop $bOwn))
-    Assert "F: the source window kept P on screen" (Test-VisibleChild $top $hP)
-    Assert "F: the drop was a stash into another window (log)" (@(Get-LogLines $logF 'pane drop stashed into another window').Count -ge 1)
+    Assert "G: s2's handle is still this window's child, on screen" (Test-VisibleChild $top $h2)
+    Assert "G: and not the other window's" (-not (Test-Child $bTop $h2))
+    Assert "G: the other window still shows only its own pane" (@(Get-VisiblePanes $bTop).Count -eq 1 -and (Test-VisibleChild $bTop $bOwn))
+    Assert "G: the drop was a list place in this window (log)" (@(Get-LogLines $logG 'pane drop placed in list index=0 restored=false').Count -ge 1)
+    Assert "G: nothing moved between windows (log)" (@(Get-LogLines $logG 'another window').Count -eq 0)
 
     Show-State "end"
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))

@@ -64,6 +64,10 @@ pub const Kind = enum {
     /// - where the pane ends up depends on the row's relayout, and a footprint
     /// guessed here would be a preview that lies.
     reorder,
+    /// The dragged pane will take this place in the pane sidebar's LIST
+    /// (T2303): an insertion caret across the gap between two list rows, as
+    /// `stash`'s is in the tray.
+    sidebar_order,
 };
 
 pub const Highlight = struct {
@@ -119,6 +123,11 @@ pub const Context = struct {
     /// Whether a stash drop is one this window will HONOUR: stashing the last
     /// pane on screen is refused, so it is not previewed either.
     can_stash: bool = false,
+
+    /// The sidebar's list rows (T2303), and the dragged pane, whose own row
+    /// is no gap to land in: a `.sidebar_order` caret sits between the others.
+    list_rows: []const PaneRect = &.{},
+    dragged: []const u8 = "",
 };
 
 /// The preview for `target`, or null when there is nothing to draw in
@@ -181,6 +190,10 @@ pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
             };
         },
         .reorder => |s| .{ .rect = s.caret, .kind = .reorder },
+        .sidebar_order => |s| .{
+            .rect = listCaret(ctx.list_rows, ctx.dragged, s.index, ctx.scale) orelse return null,
+            .kind = .sidebar_order,
+        },
         // Answered above, before the per-window arms are reached.
         .new_window, .tile => unreachable,
     };
@@ -200,6 +213,31 @@ pub fn stashCaret(rows: []const Rect, index: usize, scale: f32) Rect {
         @divFloor(rows[index - 1].bottom + rows[index].top, 2);
     const top = y - @divFloor(h, 2);
     return .{ .left = first.left, .top = top, .right = first.right, .bottom = top + h };
+}
+
+/// The insertion caret for a list drop at `index` (T2303): `stashCaret` over
+/// the list's rows with the dragged pane's own row left out - the index counts
+/// the list without it. Null when no other row is there to stand between.
+pub fn listCaret(rows: []const PaneRect, dragged: []const u8, index: usize, scale: f32) ?Rect {
+    var before: ?Rect = null;
+    var after: ?Rect = null;
+    var first: ?Rect = null;
+    var n: usize = 0;
+    for (rows) |r| {
+        if (pane_id.eql(r.id, dragged)) continue;
+        if (first == null) first = r.rect;
+        if (n + 1 == index) before = r.rect;
+        if (n == index) after = r.rect;
+        n += 1;
+    }
+    const f = first orelse return null;
+    const h = caretPx(scale);
+    const y: i32 = if (before) |b|
+        (if (after) |a| @divFloor(b.bottom + a.top, 2) else b.bottom)
+    else
+        (if (after) |a| a.top else f.top);
+    const top = y - @divFloor(h, 2);
+    return .{ .left = f.left, .top = top, .right = f.right, .bottom = top + h };
 }
 
 /// How thick the new-tab insertion caret is, in DIP.
@@ -584,6 +622,43 @@ test "T1844: a stash the window would refuse is not previewed" {
     var hidden = stashCtx(&t_rows, null);
     hidden.sidebar_rect = null;
     try testing.expectEqual(@as(?Highlight, null), forTarget(.{ .stash = .{ .window = win, .index = 0 } }, hidden));
+}
+
+const list_a = "AAAAAAAA-0000-4000-8000-00000000000A";
+const list_b = "BBBBBBBB-0000-4000-8000-00000000000B";
+const list_c = "CCCCCCCC-0000-4000-8000-00000000000C";
+const t_list = [_]PaneRect{
+    .{ .id = list_a, .rect = .{ .left = 8, .top = 100, .right = 192, .bottom = 140 } },
+    .{ .id = list_b, .rect = .{ .left = 8, .top = 142, .right = 192, .bottom = 182 } },
+    .{ .id = list_c, .rect = .{ .left = 8, .top = 184, .right = 192, .bottom = 224 } },
+};
+
+fn listCtx(dragged: []const u8) Context {
+    var c = stashCtx(&.{}, null);
+    c.list_rows = &t_list;
+    c.dragged = dragged;
+    return c;
+}
+
+test "T2303: a list place is a caret on the gap between the OTHER rows" {
+    // a dragged, index 1: between b and c (a's own row is no gap).
+    const hl = forTarget(.{ .sidebar_order = .{ .window = win, .index = 1 } }, listCtx(list_a)).?;
+    try testing.expectEqual(Kind.sidebar_order, hl.kind);
+    try testing.expectEqual(@as(i32, 8), hl.rect.left);
+    try testing.expectEqual(@as(i32, 192), hl.rect.right);
+    // The gap is 182..184, centred at 183; the caret is 4px tall at 1.0.
+    try testing.expectEqual(@as(i32, 181), hl.rect.top);
+    // Index 0 is the top of the first other row, the end below the last.
+    const top = forTarget(.{ .sidebar_order = .{ .window = win, .index = 0 } }, listCtx(list_c)).?;
+    try testing.expectEqual(@as(i32, 98), top.rect.top);
+    const end = forTarget(.{ .sidebar_order = .{ .window = win, .index = 2 } }, listCtx(list_a)).?;
+    try testing.expectEqual(@as(i32, 222), end.rect.top);
+}
+
+test "T2303: a list with no other row previews nothing" {
+    var c = listCtx(list_a);
+    c.list_rows = t_list[0..1];
+    try testing.expectEqual(@as(?Highlight, null), forTarget(.{ .sidebar_order = .{ .window = win, .index = 0 } }, c));
 }
 
 test "T2128: a strip's row slot previews as its caret, in its own window only" {

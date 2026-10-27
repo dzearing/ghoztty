@@ -97,6 +97,12 @@ pub const Target = union(enum) {
     /// being the top of the stash (T1844, Mac `.stash(window:index:)`).
     stash: struct { window: WindowRef, index: usize },
 
+    /// Place the dragged pane at `index` of this window's pane sidebar LIST -
+    /// the list only, never the grid (T2303, Mac `.sidebarOrder`). A pane
+    /// already on that grid just moves in the list; a stashed one comes out of
+    /// the tray first; another tab's or window's joins this one.
+    sidebar_order: struct { window: WindowRef, index: usize },
+
     /// A strip dragged along its own row (T2128, Mac `.reorder`): move the
     /// pane to `side` of the row's item made of the panes `beside`. `caret`
     /// is the insertion line to draw, in screen coordinates.
@@ -116,6 +122,7 @@ pub const Target = union(enum) {
             .new_tab => |s| s.window,
             .new_window => null,
             .stash => |s| s.window,
+            .sidebar_order => |s| s.window,
             .reorder => |s| s.window,
             .tile => null,
         };
@@ -171,6 +178,16 @@ pub const Candidate = struct {
     /// The stashed rows (or rail tiles), top to bottom. Only their vertical
     /// midpoints are read: the stash index is the gap nearest the pointer.
     stash_row_rects: []const Rect = &.{},
+
+    /// The sidebar's LIST rows - this window's panes on the grid, in the
+    /// list's order (T2303). Only their ids and vertical midpoints are read.
+    pane_row_rects: []const PaneRect = &.{},
+
+    /// Where the tray begins (T2303, Mac `trayTop`): the hairline between the
+    /// list and the stash. Above it a drop places the pane in the list, at or
+    /// below it the drop stashes. Null - no tray geometry - makes the whole
+    /// sidebar the tray, as before the list had an order of its own.
+    tray_top: ?i32 = null,
 };
 
 /// The pixel distances the resolution rules are stated in.
@@ -280,15 +297,9 @@ pub fn resolve(
 
     // The sidebar next (T1844, Mac's precedence: tab bar, sidebar, edge band,
     // panes). It is chrome over the content - the rail's card opens OVER the
-    // grid - so a point on it never also means a pane, and anywhere on it
-    // means stash. The grid section stashes at the top, so a drop on the
-    // sidebar never does nothing.
-    if (sidebarContains(candidate, point)) {
-        return .{ .stash = .{
-            .window = candidate.window,
-            .index = stashIndexAt(candidate.stash_row_rects, point),
-        } };
-    }
+    // grid - so a point on it never also means a pane: above the tray it
+    // places the pane in the list, in the tray it stashes (T2303).
+    if (sidebarContains(candidate, point)) return sidebarHit(candidate, point, dragged);
 
     // Over the window but on neither the strip nor the split area — a border,
     // or the run of caption a strip does not claim. Nothing: a drop there is
@@ -446,6 +457,8 @@ pub const BladeDrag = struct {
     slots: []const Slot,
     /// Every monitor's work area, for tiling to an edge.
     screens: []const Rect,
+    /// The strip's own pane, left out of the sidebar list's index (T2303).
+    dragged: []const u8 = "",
 };
 
 /// The most items a row's slots are worked out over. A row wider than this
@@ -577,12 +590,9 @@ pub fn resolveBlade(
 ) ?Target {
     if (tileFrame(point, blade.screens, metrics)) |frame| return .{ .tile = frame };
 
-    // The pane sidebar is chrome, as for any pane: a strip stashes there.
+    // The pane sidebar is chrome, as for any pane: the list or the tray.
     if (frontmost(candidates, point, sidebarContains)) |c| {
-        return .{ .stash = .{
-            .window = c.window,
-            .index = stashIndexAt(c.stash_row_rects, point),
-        } };
+        return sidebarHit(c, point, blade.dragged);
     }
 
     // Its own row's slots answer over its own window, or over no window at
@@ -689,6 +699,50 @@ fn tabBarContains(c: Candidate, p: Point) bool {
 fn sidebarContains(c: Candidate, p: Point) bool {
     const r = c.sidebar_rect orelse return false;
     return r.contains(p);
+}
+
+/// What a point on `c`'s sidebar means (T2303, Mac `sidebarHit`): the sidebar
+/// is two lists split at the tray's hairline. Above it, the window's panes - a
+/// drop places the pane in the list; at or below it, the tray - a drop
+/// stashes. With no tray geometry the whole sidebar is the tray.
+pub fn sidebarHit(c: Candidate, point: Point, dragged: []const u8) Target {
+    if (c.tray_top) |top| if (point.y < top) return .{ .sidebar_order = .{
+        .window = c.window,
+        .index = listIndexAt(c.pane_row_rects, dragged, point),
+    } };
+    return .{ .stash = .{
+        .window = c.window,
+        .index = stashIndexAt(c.stash_row_rects, point),
+    } };
+}
+
+/// A LIST drag's target (T2303, Mac 0a547522d `PaneDragSession.listTarget`):
+/// a sidebar row dragged up or down its own list. The pointer is held to the
+/// source window's sidebar - at its middle, and inside its top and bottom - and
+/// resolved against that sidebar alone, so a release beside the bar, over the
+/// grid or past the window lands the row level with the pointer and never
+/// moves the pane anywhere else. Null when the window shows no sidebar.
+pub fn listTarget(point: Point, own: Candidate, dragged: []const u8) ?Target {
+    const r = own.sidebar_rect orelse return null;
+    if (r.height() <= 0) return null;
+    const held: Point = .{
+        .x = r.left + @divFloor(r.width(), 2),
+        .y = std.math.clamp(point.y, r.top, r.bottom - 1),
+    };
+    return sidebarHit(own, held, dragged);
+}
+
+/// Where in the list a drop at `point` lands: the number of list rows, the
+/// dragged one aside, whose vertical midpoint lies above it. Measured as the
+/// rows are laid out, not as they slide.
+pub fn listIndexAt(rows: []const PaneRect, dragged: []const u8, point: Point) usize {
+    var n: usize = 0;
+    for (rows) |r| {
+        if (pane_id.eql(r.id, dragged)) continue;
+        const mid = r.rect.top + @divFloor(r.rect.height(), 2);
+        if (point.y > mid) n += 1;
+    }
+    return n;
 }
 
 /// The gap between stashed rows nearest `point`: the number of rows whose
@@ -1264,6 +1318,105 @@ test "a point on another window's sidebar stashes THERE" {
 test "Target.window answers for a stash" {
     const s: Target = .{ .stash = .{ .window = 9, .index = 3 } };
     try testing.expectEqual(@as(?WindowRef, 9), s.window());
+}
+
+// -- two lists: the panes, and the tray under its hairline (T2303) --------
+// Mac PaneDropResolverSidebarTests e77422577, with y flipped: the panes a, b,
+// c top-down above the tray's hairline at y=280, the stashed B and A below.
+
+const pane_a = dragged_id;
+const pane_b = "CCCCCCCC-0000-4000-8000-000000000003";
+const pane_c = "DDDDDDDD-0000-4000-8000-000000000004";
+const stashed_a = "EEEEEEEE-0000-4000-8000-000000000005";
+const list_rows = [_]PaneRect{
+    .{ .id = pane_a, .rect = .{ .left = 0, .top = 20, .right = 240, .bottom = 60 } },
+    .{ .id = pane_b, .rect = .{ .left = 0, .top = 60, .right = 240, .bottom = 100 } },
+    .{ .id = pane_c, .rect = .{ .left = 0, .top = 100, .right = 240, .bottom = 140 } },
+};
+const tray_rows = [_]Rect{
+    .{ .left = 0, .top = 290, .right = 240, .bottom = 330 },
+    .{ .left = 0, .top = 330, .right = 240, .bottom = 370 },
+};
+
+fn twoLists() Candidate {
+    return .{
+        .window = 1,
+        .z_order = 0,
+        .content_rect = .{ .left = 240, .top = 0, .right = 1200, .bottom = 600 },
+        .pane_rects = &.{},
+        .sidebar_rect = .{ .left = 0, .top = 0, .right = 240, .bottom = 600 },
+        .stash_row_rects = &tray_rows,
+        .pane_row_rects = &list_rows,
+        .tray_top = 280,
+    };
+}
+
+fn resolveTwoLists(y: i32, dragging: []const u8) ?Target {
+    const cands = [_]Candidate{twoLists()};
+    return resolve(.{ .x = 100, .y = y }, &cands, dragging, m1);
+}
+
+test "above the tray a drop places the pane in the list" {
+    // a dragged below c's middle: the end of the list without it.
+    try testing.expectEqual(@as(usize, 2), resolveTwoLists(130, pane_a).?.sidebar_order.index);
+    // ...and above b's middle, where it was.
+    try testing.expectEqual(@as(usize, 0), resolveTwoLists(75, pane_a).?.sidebar_order.index);
+    // c dragged to the top.
+    try testing.expectEqual(@as(usize, 0), resolveTwoLists(10, pane_c).?.sidebar_order.index);
+    // The empty list below the rows, still above the tray: the end.
+    try testing.expectEqual(@as(usize, 2), resolveTwoLists(200, pane_b).?.sidebar_order.index);
+    try testing.expectEqual(@as(WindowRef, 1), resolveTwoLists(200, pane_b).?.sidebar_order.window);
+}
+
+test "below the tray's hairline a drop stashes" {
+    try testing.expectEqual(@as(usize, 0), resolveTwoLists(300, pane_a).?.stash.index);
+    try testing.expectEqual(@as(usize, 1), resolveTwoLists(345, pane_a).?.stash.index);
+    try testing.expectEqual(@as(usize, 2), resolveTwoLists(590, pane_a).?.stash.index);
+    // The hairline itself is the tray's.
+    try testing.expect(resolveTwoLists(280, pane_a).? == .stash);
+}
+
+test "a stashed pane dragged above the tray comes back into the list" {
+    // Below b's middle: between b and c.
+    try testing.expectEqual(@as(usize, 2), resolveTwoLists(90, stashed_a).?.sidebar_order.index);
+    // Within the tray: a move.
+    try testing.expectEqual(@as(usize, 0), resolveTwoLists(300, stashed_a).?.stash.index);
+}
+
+test "a row on a list row's middle has not yet passed it" {
+    // Mac counts a row only once its middle is strictly above the point.
+    try testing.expectEqual(@as(usize, 0), resolveTwoLists(80, pane_a).?.sidebar_order.index);
+    try testing.expectEqual(@as(usize, 1), resolveTwoLists(81, pane_a).?.sidebar_order.index);
+}
+
+test "a strip on the sidebar's list joins the list" {
+    var f: RowFixture = .{};
+    var b = f.blade();
+    b.dragged = stashed_a;
+    const cands = [_]Candidate{twoLists()};
+    const t = resolveBlade(.{ .x = 100, .y = 90 }, &cands, b, m1).?;
+    try testing.expectEqual(@as(usize, 2), t.sidebar_order.index);
+}
+
+test "a list drag is held to its own sidebar wherever the pointer goes" {
+    const own = twoLists();
+    // Over the grid, level with the gap under b: still the list, at that gap.
+    try testing.expectEqual(@as(usize, 1), listTarget(.{ .x = 900, .y = 90 }, own, pane_a).?.sidebar_order.index);
+    // Far past the window's top: the top of the list.
+    try testing.expectEqual(@as(usize, 0), listTarget(.{ .x = 100, .y = -500 }, own, pane_c).?.sidebar_order.index);
+    // Past its bottom: the tray's end - the sidebar's last line is the tray.
+    try testing.expectEqual(@as(usize, 2), listTarget(.{ .x = -300, .y = 5000 }, own, pane_a).?.stash.index);
+}
+
+test "a list drag over a hidden sidebar has no target" {
+    var own = twoLists();
+    own.sidebar_rect = null;
+    try testing.expect(listTarget(.{ .x = 100, .y = 90 }, own, pane_a) == null);
+}
+
+test "Target.window answers for a list place" {
+    const s: Target = .{ .sidebar_order = .{ .window = 7, .index = 1 } };
+    try testing.expectEqual(@as(?WindowRef, 7), s.window());
 }
 
 // -- a strip's targets (T2128, Mac PaneDropResolverTests 2811a3043) -------

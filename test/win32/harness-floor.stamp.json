@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-26T17:02:50-07:00",
+    "generated":  "2026-10-26T17:14:16-07:00",
     "commit":  "c1b4bd2ae",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-resize.ps1"
+                        "test/win32/pane-sidebar-drag.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -334,12 +334,12 @@
                   "test/win32/pane-sidebar-activity.ps1":  "d4624555edb059afe748bcd8b34a18fa870666ad13a322fd9e25e64d06641cfa",
                   "test/win32/pane-sidebar-all-windows.ps1":  "6763743d456d2cb1e1ea12bafa2eeae81b560539470b60024cfb0a3b26a66867",
                   "test/win32/pane-sidebar-close.ps1":  "10c16a9c6a2275091868b0f3818189e5a6c38f009b86211a4bfd667a2ab6bc64",
-                  "test/win32/pane-sidebar-drag.ps1":  "82c65fbd682d565eddda510b96ed74b2cddaf38403ce6dcebd0c02d41f847b4d",
+                  "test/win32/pane-sidebar-drag.ps1":  "bd04b4026e7a7b50bafd5ec75c9d1efc89f2c629e8ec1deb733a53e96b31d807",
                   "test/win32/pane-sidebar-elevated.ps1":  "4282cccf62b794dea6e69ed012cf80d2dc1bfcee889fa6d8929af816e3521465",
                   "test/win32/pane-sidebar-glide.ps1":  "7e2b71fe04fd82554f721632d6c67e88c37b238b25a8ba659edae0ea31509d54",
                   "test/win32/pane-sidebar-hue.ps1":  "a411654206674d11f76a1e10e64bef76822443ed84738f09b7b7e68832f47f16",
                   "test/win32/pane-sidebar-persist.ps1":  "f7b9d5de2cb9decf411f73f62e57b0858ca7016fa0e413491fbf40a708cfaa80",
-                  "test/win32/pane-sidebar-resize.ps1":  "7e93a1e160382f47a940e22fc047a8313bea6588177cd391d38e2168859ea686",
+                  "test/win32/pane-sidebar-resize.ps1":  "969db177852e0b88a2a01abb60f56615db9a13fe4ee7eb4292ddc29d3b2eb5ab",
                   "test/win32/pane-sidebar-scroll.ps1":  "7d154456b6ec5a0e25db1d2a010d9ca2891581066395d9144649053eceaa9329",
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",
