@@ -1,16 +1,16 @@
 {
     "guard":  "pane-sidebar-hue",
     "script":  "test/win32/pane-sidebar-hue.ps1",
-    "generated":  "2026-10-27T12:51:23-07:00",
-    "commit":  "0ef9c932a",
+    "generated":  "2026-10-27T13:18:45-07:00",
+    "commit":  "2ebe3f525",
     "uncommitted":  [
                         "src/apprt/win32/PaneSidebar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/HoverTint.zig":  "20498986c655672336fcd4fa5aa225ee594ecb849716a5e13f05b0f43c748eb9",
                   "src/apprt/win32/pane_hue.zig":  "a9728a736592c2792ef3ccb3e6016b3101113454f68fc527f80568ed0a849e64",
-                  "src/apprt/win32/PaneSidebar.zig":  "2c9cb02b7d710d6fd9bc3440a4df531e1ea0a63cb5d50b54c3c6103700d1950d",
-                  "src/apprt/win32/PaneView.zig":  "c64b80a1a3c65f4266f63843e0b6114fbcf8c3b773b0536797e50fa7e4e80226",
+                  "src/apprt/win32/PaneSidebar.zig":  "4a7712c0d2e13035b08836db9eb5f7ac5faadf253a3766e15afa9bf19993d4bd",
+                  "src/apprt/win32/PaneView.zig":  "2af884e92547f1413e77a22a652c51d3d21d224196b7fe863b0afb35a0d22f3d",
                   "test/win32/pane-sidebar-hue.ps1":  "576ac6eb12dee5b04364fdba582614f28dcf7b6a3967909c2f9518d49eccb88b"
               }
 }

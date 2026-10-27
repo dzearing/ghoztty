@@ -207,6 +207,7 @@ const glyph_close: u16 = 0xE711; // Cancel: a row's x, the search's clear
 const glyph_add: u16 = 0xE710; // Add: the header's and a header's + (T2323)
 const glyph_rename: u16 = 0xE70F; // Edit: the rename pencil (T2339)
 const glyph_search: u16 = 0xE721; // Search: the field's magnifier (T1877)
+const glyph_app_window: u16 = 0xECAA; // AppIconDefault: a window head's icon (Mac `macwindow`, T2340)
 const glyph_chevron_down: u16 = 0xE70D;
 const glyph_chevron_right: u16 = 0xE76C;
 
@@ -951,6 +952,7 @@ fn logOutline(self: *PaneSidebar) void {
     }
     w.print(" add={d},{d}", .{ l.add.centerX(), l.add.centerY() }) catch {};
     self.logPencils(w, &l);
+    self.logHeadLook(w, &l);
     // The drag-only well (T2313): its center, or `-` at rest.
     if (l.drop_slot) |sl| {
         w.print(" tray={d},{d}", .{ sl.centerX(), sl.centerY() }) catch {};
@@ -992,6 +994,29 @@ fn logPencils(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layou
     }
 }
 
+/// Each head's look on a geometry line (T2340), in heads order: its window
+/// icon's center (`hicon=`, `-` on a project head) and whether it is drawn
+/// selected (`hsel=`, this window's folded header).
+fn logHeadLook(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layout) void {
+    w.writeAll(" hicon=") catch return;
+    for (l.heads[0..l.head_count]) |hd| {
+        if (hd.icon.width() > 0) {
+            w.print("{d},{d};", .{ hd.icon.centerX(), hd.icon.centerY() }) catch return;
+        } else w.writeAll("-;") catch return;
+    }
+    w.writeAll(" hsel=") catch return;
+    for (l.heads[0..l.head_count]) |hd| {
+        const sel = hd.index < self.groups.items.len and self.headDrawnSelected(hd, self.groups.items[hd.index]);
+        w.print("{d}", .{@intFromBool(sel)}) catch return;
+    }
+}
+
+/// Whether `paintHead` draws header `hd` selected (`pane_sidebar.headSelected`).
+fn headDrawnSelected(self: *const PaneSidebar, hd: pane_sidebar.Head, g: Group) bool {
+    const folded = if (hd.kind == .project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
+    return pane_sidebar.headSelected(hd.kind, g.own, folded);
+}
+
 fn logRows(self: *PaneSidebar) void {
     const l = self.currentLayout();
     var buf: [4096]u8 = undefined;
@@ -1019,6 +1044,7 @@ fn logRows(self: *PaneSidebar) void {
         w.print(" chev={d},{d}; hx={d},{d}; ha={d},{d};", .{ hd.chevron.centerX(), hd.chevron.centerY(), x.centerX(), x.centerY(), a.centerX(), a.centerY() }) catch {};
     }
     self.logPencils(w, &l);
+    self.logHeadLook(w, &l);
     if (l.rail_add.width() > 0) {
         w.print(" radd={d},{d}", .{ l.rail_add.centerX(), l.rail_add.centerY() }) catch {};
     } else w.writeAll(" radd=-") catch {};
@@ -3238,7 +3264,7 @@ fn paintRow(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, i: 
     // T2298) replace the bell
     // dot while the pointer is on the row, so the two never crowd each
     // other. A question has no accessory any more (Mac 2924ea5cc).
-    const text_left = icon_r.right + pane_sidebar.px(8, self.scale);
+    const text_left = icon_r.right + pane_sidebar.px(pane_sidebar.icon_text_gap_dip, self.scale);
     var text_right = r.right - text_inset;
     const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     // Renamed in place (T2339): the field takes the buttons' room too, and
@@ -3465,7 +3491,9 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
 /// (`PaneSidebarProjectHeader`): chevron, name, and at the trailing edge the
 /// window's pane count or the project's window count (a window's question
 /// badge went with T2280, Mac 2924ea5cc). Another window's header lights on
-/// hover, since a click raises it.
+/// hover, since a click raises it. This window's, folded, carries the
+/// selection a row would (T2340, Mac c4dbe30be): its selected pane is inside
+/// the fold.
 fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, g: Group, t: Theme) void {
     const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
@@ -3475,15 +3503,24 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     // Renamed in place (T2339): the count stays, the buttons stay away.
     const editing = self.renamingHead(hd, g);
     var under = t.surface;
-    if (hovered and (project or !g.own)) {
-        const sel = list_selection.rowPaint(t.surface, t.accent, .{ .selected = false, .focused = false, .hovered = true, .focus_visible = false });
+    const folded = if (project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
+    const selected = self.headDrawnSelected(hd, g);
+    const emphasized = selected and self.isEmphasized();
+    if (selected or (hovered and (project or !g.own))) {
+        const sel = list_selection.rowPaint(t.surface, t.accent, .{ .selected = selected, .focused = emphasized, .hovered = hovered and !selected, .focus_visible = false });
         if (sel.fill) |f| {
             fillRound(hdc, hd.rect, pane_sidebar.px(toc.row_corner_dip, self.scale), rgb(f));
             under = f;
         }
+        if (sel.indicator) |c| {
+            const r = hd.rect;
+            const bar = toc.selectionIndicator(r.height(), self.scale);
+            fillRound(hdc, .{ .left = r.left + bar.left, .top = r.top + bar.top, .right = r.left + bar.left + bar.width, .bottom = r.top + bar.top + bar.height }, bar.radius, rgb(c));
+        }
     }
-    const folded = if (project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
+    // A window's icon, in its panes' icon column (T2340, Mac 28f6cde09).
+    if (hd.icon.width() > 0) glyph(hdc, self.scale, hd.icon, glyph_app_window, 12, t.secondary);
 
     // The trailing count first, so the name knows its room. Hovered, the
     // pencil, + and x take the count's place (T2298, T2323, T2339; Mac

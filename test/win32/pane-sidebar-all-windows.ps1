@@ -154,6 +154,15 @@ function Read-Outline([string]$Line) {
     foreach ($i in ($itemsRaw -split ';' | Where-Object { $_ })) {
         if ($i -match '^g(\d+)([gs])@(-?\d+),(-?\d+)$') { $o.Items += , @{ Group = [int]$Matches[1]; Sec = $Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
     }
+    # T2340: each head's chevron and window icon (`$null` on a project head),
+    # in heads order.
+    $o.Chev = @(); $o.HIcon = @()
+    if ($Line -match ' chev=(\S*)') { foreach ($c in ($Matches[1] -split ';' | Where-Object { $_ })) { $xy = $c -split ','; $o.Chev += , @{ X = [int]$xy[0]; Y = [int]$xy[1] } } }
+    if ($Line -match ' hicon=(\S*)') {
+        foreach ($c in ($Matches[1] -split ';' | Where-Object { $_ })) {
+            if ($c -eq '-') { $o.HIcon += , $null } else { $xy = $c -split ','; $o.HIcon += , @{ X = [int]$xy[0]; Y = [int]$xy[1] } }
+        }
+    }
     return $o
 }
 function Head($o, [string]$Kind, [int]$Group) { $o.Heads | Where-Object { $_.Kind -eq $Kind -and $_.Group -eq $Group } | Select-Object -First 1 }
@@ -281,8 +290,21 @@ try {
     Assert "every pane is a row, B's stash included" ($o.Items.Count -eq 6 -and @($o.Items | Where-Object { $_.Group -eq 2 -and $_.Sec -eq 's' }).Count -eq 1)
     # T2313 (Mac 47b39b1cb): a window's stash has no divider or caption in
     # all windows - B's stashed row follows its grid row at a grid row's own
-    # pitch - so the only hairline is the one before zeta.
-    Assert "one hairline, before zeta - none before B's stash ($($o.Rules))" ($o.Rules -eq 1)
+    # pitch - and since T2340 (Mac c4dbe30be) no hairline between top-level
+    # windows either: their headers set them apart.
+    Assert "no hairline at all - not before zeta, not before B's stash ($($o.Rules))" ($o.Rules -eq 0)
+    # T2340 (Mac c4dbe30be, 28f6cde09): grouped windows are not indented -
+    # every window head's chevron is in one column - and each carries a
+    # window icon; the project head has none.
+    $wChev = @(); $iconsOk = ($o.HIcon.Count -eq $o.Heads.Count -and $o.Chev.Count -eq $o.Heads.Count)
+    for ($k = 0; $iconsOk -and $k -lt $o.Heads.Count; $k++) {
+        if ($o.Heads[$k].Kind -eq 'W') {
+            $wChev += $o.Chev[$k].X
+            if ($null -eq $o.HIcon[$k] -or $o.HIcon[$k].X -le $o.Chev[$k].X) { $iconsOk = $false }
+        } elseif ($null -ne $o.HIcon[$k]) { $iconsOk = $false }
+    }
+    Assert "every window head carries a window icon after its chevron, the project head none (T2340)" $iconsOk
+    Assert "every window head's chevron is in one column, grouped or not ($($wChev -join ','), T2340)" ($wChev.Count -eq 4 -and @($wChev | Select-Object -Unique).Count -eq 1)
     $bRows = @($o.Items | Where-Object { $_.Group -eq 2 })
     $zRows = @($o.Items | Where-Object { $_.Group -eq 3 })
     if ($bRows.Count -eq 2 -and $zRows.Count -eq 2) {

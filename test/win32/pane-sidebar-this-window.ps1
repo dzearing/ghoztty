@@ -124,6 +124,10 @@ function Read-Rows([string]$Line) {
     $r.Hx = @(Read-Points $Line 'hx') | Select-Object -First 1
     $r.Ha = @(Read-Points $Line 'ha') | Select-Object -First 1
     $r.Radd = @(Read-Points $Line 'radd') | Select-Object -First 1
+    # T2340: the header's window icon, and whether it is drawn selected.
+    $r.HIcon = @(Read-Points $Line 'hicon') | Select-Object -First 1
+    $r.HSel = $null
+    if ($Line -match ' hsel=(\d*)') { $r.HSel = $Matches[1] }
     return $r
 }
 function Get-Rows([string]$Mode, [int]$Skip) { Read-Rows (Wait-Log "pane sidebar rows mode=$Mode " $Skip) }
@@ -207,6 +211,15 @@ try {
     for ($i = 0; $same -and $i -lt $railYs.Count; $i++) { if ([math]::Abs($railYs[$i] - $panelYs[$i]) -gt 1) { $same = $false } }
     Assert "every grid row is at its rail tile's height: rail $($railYs -join ',') vs panel $($panelYs -join ',')" $same
     Assert "the rail's + is level with the header ($($rail.Radd.Y) vs $($panel.Heads[0].Y))" ($null -ne $rail.Radd -and [math]::Abs($rail.Radd.Y - $panel.Heads[0].Y) -le 1)
+    # T2340 (Mac 28f6cde09, c4dbe30be): the header carries a window icon
+    # after its chevron, is one row's height, and is not selected while open.
+    Assert "the header carries a window icon after its chevron (T2340)" ($null -ne $panel.HIcon -and $null -ne $panel.Chev -and $panel.HIcon.X -gt $panel.Chev.X -and [math]::Abs($panel.HIcon.Y - $panel.Chev.Y) -le 1)
+    if ($panelYs.Count -ge 2) {
+        $pitch = $panelYs[1] - $panelYs[0]
+        $headPitch = $panelYs[0] - $panel.Heads[0].Y
+        Assert "the header is one row's height: header->row $headPitch vs row->row $pitch (T2340)" ([math]::Abs($headPitch - $pitch) -le 1)
+    } else { Assert "setup: at least two grid rows to measure the pitch ($($panelYs.Count))" $false }
+    Assert "open, the header is not drawn selected (hsel=$($panel.HSel))" ($panel.HSel -eq '0')
 
     "== 3: the header's hover + splits right too"
     $before = Get-PaneCount
@@ -230,11 +243,13 @@ try {
     Assert "it folded (log)" ($null -ne (Wait-Log 'pane sidebar fold$' $mark))
     $folded = Get-Rows 'expanded' $mark
     Assert "folded: the header stays, no row is listed ($(@($folded.Items).Count) items)" ($null -ne $folded -and $folded.Heads.Count -eq 1 -and @($folded.Items).Count -eq 0)
+    Assert "folded: the header takes the selection, its pane being inside the fold (hsel=$($folded.HSel), T2340)" ($null -ne $folded -and $folded.HSel -eq '1')
     $mark = Get-LogCount
     if ($null -ne $folded) { [void](ClickAt $top $sb $folded.Chev) }
     Assert "it unfolded (log)" ($null -ne (Wait-Log 'pane sidebar unfold$' $mark))
     $open = Get-Rows 'expanded' $mark
     Assert "unfolded: the three rows are back" ($null -ne $open -and @(Get-GridYs $open).Count -eq 3)
+    Assert "unfolded: the rows hold the selection again, not the header (hsel=$($open.HSel))" ($null -ne $open -and $open.HSel -eq '0')
 
     "== 5: the header's hover x closes this window"
     Assert "setup: wB opened to keep the app up ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wB --name=b1") -eq 0)

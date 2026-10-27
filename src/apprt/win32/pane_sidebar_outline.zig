@@ -198,13 +198,15 @@ pub fn buildLines(groups: []const GroupSpec, out: []Line) usize {
     for (groups, 0..) |g, gi| {
         const opens = if (g.project) |p| (gi == 0 or groups[gi - 1].project == null or
             !std.mem.eql(u8, p, groups[gi - 1].project.?)) else false;
+        // No hairline between top-level windows (T2340, Mac c4dbe30be):
+        // their headers set them apart, as grouped windows' do.
         if (opens) {
             if (!push(out, &n, .{ .kind = .project, .index = gi })) return n;
-        } else if (g.project == null and gi > 0) {
-            // A hairline between top-level sections that are windows; a
-            // project header carries its own space above it.
-            if (!push(out, &n, .{ .kind = .rule })) return n;
         }
+        // A grouped window is a level down in the outline - its project's
+        // section holds it (the sticky header reads that) - but it is not
+        // laid out indented (T2340): `pane_sidebar.layoutLines` lines every
+        // window's chevron up.
         const depth: u8 = if (g.project != null) 1 else 0;
         const panes = g.grid + g.stashed;
         defer item += panes;
@@ -419,12 +421,11 @@ fn kinds(lines: []const Line, buf: []u8) []const u8 {
         .project => 'P',
         .window => 'W',
         .pane => 'p',
-        .rule => '-',
     };
     return buf[0..lines.len];
 }
 
-test "lines: lone windows separated by hairlines, panes under their window" {
+test "lines: lone windows with no hairline between them, panes under their window (T2340)" {
     var lines: [32]Line = undefined;
     const n = buildLines(&.{
         .{ .grid = 2 },
@@ -433,14 +434,14 @@ test "lines: lone windows separated by hairlines, panes under their window" {
     var kb: [32]u8 = undefined;
     // The second window's stashed pane follows its grid pane: no divider,
     // no STASHED caption (T2313, Mac 47b39b1cb).
-    try testing.expectEqualStrings("Wpp-Wpp", kinds(lines[0..n], &kb));
+    try testing.expectEqualStrings("WppWpp", kinds(lines[0..n], &kb));
     // Panes are one level in; their items count across groups.
     try testing.expectEqual(@as(u8, 1), lines[1].depth);
     try testing.expectEqual(@as(usize, 0), lines[1].index);
     try testing.expectEqual(@as(usize, 1), lines[2].index);
-    try testing.expectEqual(@as(usize, 2), lines[5].index);
-    try testing.expectEqual(@as(usize, 3), lines[6].index);
-    try testing.expectEqual(@as(u8, 1), lines[6].depth);
+    try testing.expectEqual(@as(usize, 2), lines[4].index);
+    try testing.expectEqual(@as(usize, 3), lines[5].index);
+    try testing.expectEqual(@as(u8, 1), lines[5].depth);
 }
 
 test "lines: a project header, its windows one level in" {
@@ -453,7 +454,9 @@ test "lines: a project header, its windows one level in" {
         .{ .grid = 1 },
     }, &lines);
     var kb: [32]u8 = undefined;
-    try testing.expectEqualStrings("WpPWpWppPWp-Wp", kinds(lines[0..n], &kb));
+    try testing.expectEqualStrings("WpPWpWppPWpWp", kinds(lines[0..n], &kb));
+    // A grouped window is a level down in the outline (its section), though
+    // the layout does not indent it (T2340).
     try testing.expectEqual(@as(u8, 1), lines[3].depth); // window in a project
     try testing.expectEqual(@as(u8, 2), lines[4].depth); // its pane
     try testing.expectEqual(@as(usize, 1), lines[2].index); // the project names its first window
@@ -468,9 +471,9 @@ test "lines: folding drops the panes, and a folded project drops its windows" {
         .{ .grid = 1 },
     }, &lines);
     var kb: [32]u8 = undefined;
-    try testing.expectEqualStrings("WP-Wp", kinds(lines[0..n], &kb));
+    try testing.expectEqualStrings("WPWp", kinds(lines[0..n], &kb));
     // Items still count the folded panes: the last window's pane is item 4.
-    try testing.expectEqual(@as(usize, 4), lines[4].index);
+    try testing.expectEqual(@as(usize, 4), lines[3].index);
 }
 
 test "lines: a full buffer stops cleanly" {
