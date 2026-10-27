@@ -230,10 +230,19 @@ struct PaneSidebarView: View {
                 tray(controller, isThisWindow: true, indent: 0)
             } else {
                 // Its own name, as the all-windows list shows it: a
-                // `<project>: <name>` window is `<name>`.
+                // `<project>: <name>` window is `<name>`, under its group's
+                // header — folding it folds the group here and there.
                 let title = PaneSidebarText.windowTitle(of: controller)
-                windowGroup(controller, isThisWindow: true,
-                            label: PaneSidebarWindowGrouping.split(title)?.worktree ?? title)
+                if let parts = PaneSidebarWindowGrouping.split(title) {
+                    thisWindowsGroupHeader(parts.project)
+                    PaneSidebarOutline.headerGapView
+                    if !state.foldedProjects.contains(parts.project) {
+                        windowGroup(controller, isThisWindow: true, label: parts.worktree)
+                            .transition(PaneSidebarOutline.foldTransition)
+                    }
+                } else {
+                    windowGroup(controller, isThisWindow: true, label: title)
+                }
             }
         }
         .padding(.vertical, SidePanelRow.fillInset)
@@ -265,6 +274,35 @@ struct PaneSidebarView: View {
     }
 
     private var listContent: some View { allWindows }
+
+    /// This window's group header in its own Panes list: the all-windows
+    /// list's, with the whole group's count and buttons (pencil, + and ×).
+    private func thisWindowsGroupHeader(_ project: String) -> some View {
+        let windows = controller.paneSidebarSections.first { $0.project == project }?.windows ?? []
+        let byID = Dictionary(allControllers.map { ($0.paneSidebarState.windowID, $0) }, uniquingKeysWith: { a, _ in a })
+        let folded = state.foldedProjects.contains(project)
+        return PaneSidebarProjectHeader(
+            project: project,
+            windowCount: windows.count,
+            isFolded: folded,
+            onAdd: {
+                BaseTerminalController.newWindowInGroupFromSidebar(
+                    controller.ghostty, project: project, from: controller)
+            },
+            onClose: {
+                BaseTerminalController.closeWindowsFromSidebar(windows.compactMap { byID[$0.id] })
+            },
+            onFold: {
+                withAnimation(PaneSidebarOutline.foldAnimation) {
+                    if folded { state.foldedProjects.remove(project) } else { state.foldedProjects.insert(project) }
+                }
+            },
+            onRename: { name in
+                BaseTerminalController.renameGroupFromSidebar(
+                    project, to: name,
+                    windows: windows.compactMap { entry in byID[entry.id].map { ($0, entry.label) } })
+            })
+    }
 
     /// Every terminal window with a sidebar, this one included even before
     /// it is visible.

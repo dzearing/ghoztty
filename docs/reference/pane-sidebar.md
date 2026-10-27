@@ -318,7 +318,9 @@ shows the same view of it (see *Shared across windows*). Read before touching
     (`SurfaceView.setUserTitle`); that name outranks a banner title
     (`PaneSidebarText.label(userTitle:)`). Viewers have no pencil.
 - A window's own Panes list names it as the all-windows list does: `<name>`
-  for a `<project>: <name>` window.
+  for a `<project>: <name>` window, under its group's header (the same
+  header: the group's count, pencil, + and ×; folding it folds the group in
+  every list).
 - **A window row has an icon** (`macwindow`), in a pane row's icon column
   and spacing: its panes, indented one chevron, sit right under it.
 - **The drop draws the new order where the item was let go, then glides.**
