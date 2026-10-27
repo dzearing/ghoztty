@@ -16,9 +16,10 @@
 #   3. The toggle turns the rail into the 240 DIP panel and the grid moves
 #      over by exactly the difference; the panel paints content too.
 #  3b. (T2276, Mac 543489bca) With nothing stashed and no drag live, the
-#      empty tray is still laid out: in the panel its STASHED caption over a
-#      painted dashed well below the last row, on the rail the well alone
-#      (the `tray=` field of the rows line). Step 4 checks it gives way to
+#      empty tray is still laid out: a painted dashed well below the last
+#      row, with NO STASHED caption over it in either mode (T2313, Mac
+#      82b9c5501 - the well's own text says what it is; the `tray=` field of
+#      the rows line, `cap=0`). Step 4 checks it gives way to
 #      the stashed row once P is stashed.
 #   4. The first row's hover button stashes P (a grid pane); a click on the
 #      stashed tile in the rail brings it back.
@@ -289,11 +290,12 @@ try {
 
     "== 3b: with nothing stashed, the empty tray is there at rest (T2276)"
     # Mac 543489bca: the tray is a drop target, so it is always in the list -
-    # the STASHED caption over a dashed well - not only during a drag.
+    # a dashed well - not only during a drag. Mac 82b9c5501 (T2313): with no
+    # STASHED caption over it; the caption comes with the first stashed pane.
     $panelTray = Get-TrayState (Get-RowsLine 'expanded')
     Assert "the panel lays out the empty tray with no drag live ($($panelTray.Raw))" ($null -ne $panelTray -and $panelTray.Present)
     if ($panelTray -and $panelTray.Present) {
-        Assert "its STASHED caption is laid out over it" ($panelTray.Cap -eq 1)
+        Assert "no STASHED caption is laid out over the empty well (T2313)" ($panelTray.Cap -eq 0)
         Assert "it sits below the last pane row ($($panelTray.Y) vs $($panelTray.LastRowY))" ($panelTray.Y -gt $panelTray.LastRowY)
         $ink = Get-RowInk $sb $panelTray.Y
         Assert "the well paints something (distinct colors across it: $ink)" ($ink -ge 3)

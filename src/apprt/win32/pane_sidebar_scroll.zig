@@ -54,7 +54,6 @@ pub fn contentBottom(l: *const Layout, floor: i32) i32 {
     }
     for (l.heads[0..l.head_count]) |hd| b = @max(b, hd.rect.bottom);
     for (l.rules[0..l.rule_count]) |r| b = @max(b, r.bottom);
-    for (l.captions[0..l.caption_count]) |c| b = @max(b, c.rect.bottom);
     inline for (.{ l.section_rule, l.stashed_caption, l.drop_slot, l.no_match }) |opt| {
         if (opt) |r| b = @max(b, r.bottom);
     }
@@ -103,7 +102,6 @@ pub fn apply(l: *Layout, want: i32, scale: f32) void {
             shift(&hd.chevron, dy);
         }
         for (l.rules[0..l.rule_count]) |*r| shift(r, dy);
-        for (l.captions[0..l.caption_count]) |*c| shift(&c.rect, dy);
         shiftOpt(&l.section_rule, dy);
         shiftOpt(&l.stashed_caption, dy);
         shiftOpt(&l.drop_slot, dy);

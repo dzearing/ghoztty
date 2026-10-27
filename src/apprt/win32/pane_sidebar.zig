@@ -543,10 +543,10 @@ pub const max_items: usize = 64;
 
 /// One line of the all-windows outline the panel lays out
 /// (`pane_sidebar_outline.buildLines` makes them).
-pub const LineKind = enum { project, window, pane, rule, stashed_caption };
+pub const LineKind = enum { project, window, pane, rule };
 pub const Line = struct {
     kind: LineKind,
-    /// A pane line's item; a head's (or stashed caption's) window group.
+    /// A pane line's item; a head's window group.
     index: usize = 0,
     /// Outline level: a project head and a lone window are 0, a window in a
     /// project 1, a window's panes one deeper than the window.
@@ -567,14 +567,6 @@ pub const Head = struct {
     chevron: Rect,
     /// Where the name starts.
     label_x: i32,
-};
-
-/// A STASHED caption inside a window group.
-pub const Caption = struct {
-    rect: Rect,
-    x: i32,
-    /// The window group whose stash it captions.
-    index: usize,
 };
 
 pub const max_heads: usize = 48;
@@ -633,19 +625,18 @@ pub const Layout = struct {
     own: [max_items]bool = [_]bool{true} ** max_items,
     heads: [max_heads]Head = undefined,
     head_count: usize = 0,
-    /// The outline's hairlines and STASHED captions (the single-window
-    /// layout uses `section_rule` / `stashed_caption`).
+    /// The outline's hairlines (the single-window layout uses
+    /// `section_rule`). A window's stash has none, and no caption either
+    /// (T2313, Mac 47b39b1cb): its stashed panes follow its others.
     rules: [max_marks]Rect = undefined,
     rule_count: usize = 0,
-    captions: [max_marks]Caption = undefined,
-    caption_count: usize = 0,
     /// The header band (expanded) holding the "PANES" caption.
     header: Rect = .{},
     /// Where the "PANES" caption starts (expanded).
     caption_x: i32 = 0,
-    /// The STASHED caption band - over the stashed rows, or the empty tray's
-    /// well (expanded) - and the
-    /// hairline between the sections (both modes).
+    /// The STASHED caption band over the stashed rows (expanded; never over
+    /// the empty tray's well, whose own text says what it is - T2313, Mac
+    /// 82b9c5501) - and the hairline between the sections (both modes).
     stashed_caption: ?Rect = null,
     section_rule: ?Rect = null,
     /// One rect per item: an expanded row's fill, or a rail tile's square.
@@ -985,18 +976,6 @@ fn layoutLines(l: *Layout, area: Rect, lines: []const Line, tm: TextMetrics, sca
                 l.addRule(.{ .left = area.left + label + depth * step, .top = rule_y, .right = area.right - label, .bottom = rule_y + hair });
                 y = rule_y + hair + sm;
             },
-            .stashed_caption => {
-                const cap_h = toc.headerHeight(tm.caption_h, scale);
-                if (l.caption_count < max_marks) {
-                    l.captions[l.caption_count] = .{
-                        .rect = .{ .left = area.left, .top = y, .right = area.right, .bottom = y + cap_h },
-                        .x = area.left + label + depth * step,
-                        .index = ln.index,
-                    };
-                    l.caption_count += 1;
-                }
-                y += cap_h;
-            },
         }
         prev = ln.kind;
     }
@@ -1030,11 +1009,11 @@ fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, inse
     var y = l.header.bottom + rowHalfGap(scale);
     for (0..l.count) |i| {
         // A hairline between this window's grid and its stash; in the
-        // outline, also between one window's tiles and the next's (Mac: "in
-        // the mini rail, windows are separated by a hairline").
+        // outline, between one window's tiles and the next's instead (Mac:
+        // "in the mini rail, windows are separated by a hairline") - a
+        // window's stash just follows its grid there (T2313, Mac 47b39b1cb).
         const breaks = if (l.outline)
-            i != 0 and (items[i].group != items[i - 1].group or
-                (items[i].section == .stashed and items[i - 1].section != .stashed))
+            i != 0 and items[i].group != items[i - 1].group
         else
             i == l.first_stashed and i != 0;
         if (breaks) {
@@ -1053,15 +1032,13 @@ fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, inse
 /// Add the empty tray below the grid rows (T1844, T2276; Mac 543489bca's
 /// `PaneSidebarEmptyStashSlot`): with nothing stashed, the tray is still
 /// there - it is a drop target - behind the same section rule a stash would
-/// have. The panel lays out the STASHED caption above it, as `layoutRows`
-/// does for a tray with rows; the slot is a one-line row there, a tile on the
-/// rail. Always laid out, drag or not: at rest it says what it is for, during
-/// a drag where to let go. A no-op when something is stashed or nothing is
-/// shown.
+/// have, but with no STASHED caption (T2313, Mac 82b9c5501): the well's own
+/// text says what it is. The slot is a one-line row on the panel, a tile on
+/// the rail. Always laid out, drag or not: at rest it says what it is for,
+/// during a drag where to let go. A no-op when something is stashed or
+/// nothing is shown; the outline's well is `addDragWell`'s.
 pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
     if (l.mode == .hidden) return;
-    // The outline places no empty slot: its own group sits among others, and
-    // the whole sidebar is the stash target either way.
     if (l.outline) return;
     if (l.first_stashed != l.count) return;
     const sm = px(sm_dip, scale);
@@ -1073,10 +1050,9 @@ pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
         const below = (if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom) + rowHalfGap(scale);
         const rule_y = below + sm;
         l.section_rule = .{ .left = area.left + fill, .top = rule_y, .right = area.right - fill, .bottom = rule_y + hair };
-        const cap_h = toc.headerHeight(tm.caption_h, scale);
-        l.stashed_caption = .{ .left = area.left, .top = rule_y + sm, .right = area.right, .bottom = rule_y + sm + cap_h };
-        // Inset like the stashed row it stands in for.
-        const top = rule_y + sm + cap_h + rowHalfGap(scale);
+        // Inset like the stashed row it stands in for, `sm` under the rule
+        // (Mac's slot pads 4 above it).
+        const top = rule_y + hair + sm;
         l.drop_slot = .{ .left = area.left + fill, .top = top, .right = area.right - fill, .bottom = top + rowHeight(false, tm, scale) };
         return;
     }
@@ -1092,6 +1068,51 @@ pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
     l.section_rule = .{ .left = left, .top = rule_y, .right = right, .bottom = rule_y + hair };
     const top = below + group;
     l.drop_slot = .{ .left = left, .top = top, .right = right, .bottom = top + tile };
+}
+
+/// The empty tray's well in the all-windows outline (T2313, Mac b7de64ce8):
+/// there only while a pane is dragged - the list is every window's panes and
+/// nothing else - and only in THIS window's group while it stashes nothing,
+/// right under its last pane, with everything below opening to make room. A
+/// row on the panel (none while the group is folded: there is no pane to
+/// follow), a tile on the rail. The caller asks only during a drag.
+pub fn addDragWell(l: *Layout, tm: TextMetrics, scale: f32) void {
+    if (l.mode == .hidden or !l.outline) return;
+    var last: ?usize = null;
+    for (0..l.count) |i| {
+        if (!l.own[i]) continue;
+        // Something of this window's is stashed: its rows are the target.
+        if (i >= l.first_stashed) return;
+        last = i;
+    }
+    const k = last orelse return;
+    if (!l.shown(k)) return;
+    const above = l.items[k];
+    // A one-line row as the single roster's well is; a tile on the rail.
+    const slot_h = if (l.mode == .expanded) rowHeight(false, tm, scale) else pillHeight(tm, scale);
+    const grow = slot_h + rowGap(scale);
+    // Everything laid out below the last pane moves down by the well and
+    // its gap; nothing above it moves.
+    for (0..l.count) |i| {
+        // A folded pane's empty rect stays empty (`shown` reads width).
+        if (l.shown(i) and l.items[i].top > above.bottom) shiftDown(&l.items[i], grow);
+    }
+    for (l.heads[0..l.head_count]) |*hd| {
+        if (hd.rect.top <= above.bottom) continue;
+        shiftDown(&hd.rect, grow);
+        shiftDown(&hd.chevron, grow);
+    }
+    for (l.rules[0..l.rule_count]) |*r| {
+        if (r.top > above.bottom) shiftDown(r, grow);
+    }
+    // One pill gap below the last pane, as the next pill would sit.
+    const top = above.bottom + rowGap(scale);
+    l.drop_slot = .{ .left = above.left, .top = top, .right = above.right, .bottom = top + slot_h };
+}
+
+fn shiftDown(r: *Rect, dy: i32) void {
+    r.top += dy;
+    r.bottom += dy;
 }
 
 pub const Hit = union(enum) {
@@ -1766,24 +1787,27 @@ test "pane_sidebar: hit testing finds the toggle, rows, row buttons and nothing"
     try testing.expectEqual(Hit.none, hitTest(&hidden, 0, 0, s));
 }
 
-test "pane_sidebar: with nothing stashed the empty tray sits below the grid, caption and all (T1844, T2276)" {
+test "pane_sidebar: with nothing stashed the empty tray sits below the grid, uncaptioned (T1844, T2276, T2313)" {
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .two_line = true } };
     for (scales) |s| {
         const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
-        // The panel: a rule, the STASHED caption, then a one-line well -
-        // the same header a tray with rows has (Mac: always there).
+        // The panel: a rule, then a one-line well `sm` under it - and no
+        // STASHED caption: the well's own text says what it is (Mac
+        // 82b9c5501).
         var l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
         addEmptyTray(&l, tm, s);
         const slot = l.drop_slot.?;
         const rule = l.section_rule.?;
-        const cap = l.stashed_caption.?;
-        try testing.expect(rule.top >= l.items[1].bottom and cap.top >= rule.bottom and slot.top >= cap.bottom);
-        // Laid out as a stashed row would be: where one lands, the caption
-        // does not move.
+        try testing.expectEqual(@as(?Rect, null), l.stashed_caption);
+        try testing.expect(rule.top >= l.items[1].bottom);
+        try testing.expectEqual(rule.bottom + px(sm_dip, s), slot.top);
+        // The rule sits where a tray with rows puts it; only the caption
+        // that tray has is missing.
         const one = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .two_line = true }, .{ .section = .stashed } };
         const with = layout(.expanded, px(240, s), px(600, s), &one, tm, s);
-        try testing.expectEqual(with.stashed_caption.?, cap);
-        try testing.expectEqual(with.items[2].top, slot.top);
+        try testing.expectEqual(with.section_rule.?, rule);
+        try testing.expect(with.stashed_caption != null);
+        try testing.expect(with.items[2].top > slot.top);
         try testing.expectEqual(rowHeight(false, tm, s), slot.height());
         try testing.expectEqual(l.items[1].left, slot.left);
         try testing.expectEqual(l.items[1].right, slot.right);
@@ -1819,13 +1843,14 @@ test "pane_sidebar: an empty roster still lays out the tray under the header (T2
     var l = layout(.expanded, 240, 600, &[_]Item{}, tm, 1.0);
     addEmptyTray(&l, tm, 1.0);
     try testing.expect(l.section_rule.?.top >= l.header.bottom);
-    try testing.expect(l.drop_slot.?.top >= l.stashed_caption.?.bottom);
+    try testing.expect(l.drop_slot.?.top >= l.section_rule.?.bottom);
+    try testing.expectEqual(@as(?Rect, null), l.stashed_caption);
 }
 
 // ---------------------------------------------------------------------------
 // The all-windows outline (T1829)
 
-fn outlineFixture(s: f32) struct { items: [5]Item, lines: [11]Line, tm: TextMetrics } {
+fn outlineFixture(s: f32) struct { items: [5]Item, lines: [9]Line, tm: TextMetrics } {
     // Two lone windows: this one (2 grid + 1 stashed) and another (2 grid).
     return .{
         .items = .{
@@ -1839,8 +1864,6 @@ fn outlineFixture(s: f32) struct { items: [5]Item, lines: [11]Line, tm: TextMetr
             .{ .kind = .window, .index = 0 },
             .{ .kind = .pane, .index = 0, .depth = 1 },
             .{ .kind = .pane, .index = 1, .depth = 1 },
-            .{ .kind = .rule, .depth = 1 },
-            .{ .kind = .stashed_caption, .index = 0, .depth = 1 },
             .{ .kind = .pane, .index = 2, .depth = 1 },
             .{ .kind = .rule },
             .{ .kind = .window, .index = 1 },
@@ -1853,23 +1876,26 @@ fn outlineFixture(s: f32) struct { items: [5]Item, lines: [11]Line, tm: TextMetr
     };
 }
 
-test "pane_sidebar: the outline stacks heads, indented rows, rules and captions in order" {
+test "pane_sidebar: the outline stacks heads, indented rows and rules in order; a stash just follows its grid (T2313)" {
     for (scales) |s| {
         const f = outlineFixture(s);
         const w = px(240, s);
         const l = layoutWith(.expanded, w, px(900, s), &f.items, &f.lines, f.tm, s);
         try testing.expect(l.outline);
         try testing.expectEqual(@as(usize, 2), l.head_count);
-        try testing.expectEqual(@as(usize, 2), l.rule_count);
-        try testing.expectEqual(@as(usize, 1), l.caption_count);
+        // One hairline, between the windows: none before a stash (Mac
+        // 47b39b1cb), and no caption either.
+        try testing.expectEqual(@as(usize, 1), l.rule_count);
+        try testing.expectEqual(@as(?Rect, null), l.stashed_caption);
+        try testing.expect(l.section_rule == null);
         // Everything below the header, top to bottom.
         try testing.expect(l.heads[0].rect.top >= l.header.bottom);
         try testing.expect(l.items[0].top >= l.heads[0].rect.bottom);
         try testing.expect(l.items[1].top > l.items[0].bottom);
-        try testing.expect(l.captions[0].rect.top > l.items[1].bottom);
-        try testing.expect(l.items[2].top >= l.captions[0].rect.bottom);
-        try testing.expect(l.rules[1].top > l.items[2].bottom);
-        try testing.expect(l.heads[1].rect.top > l.rules[1].bottom);
+        // The stashed row is spaced exactly as the next grid row would be.
+        try testing.expectEqual(l.items[1].top - l.items[0].top, l.items[2].top - l.items[1].top);
+        try testing.expect(l.rules[0].top > l.items[2].bottom);
+        try testing.expect(l.heads[1].rect.top > l.rules[0].bottom);
         try testing.expect(l.items[3].top >= l.heads[1].rect.bottom);
         // Every pane row is one height, one line or two (T2279).
         try testing.expectEqual(l.items[1].height(), l.items[0].height());
@@ -1893,7 +1919,7 @@ test "pane_sidebar: a folded group's panes get no row and no hit" {
     const s: f32 = 1.0;
     const f = outlineFixture(s);
     // Fold the other window: its pane lines go.
-    const lines = f.lines[0..8];
+    const lines = f.lines[0..6];
     const l = layoutWith(.expanded, 240, 900, &f.items, lines, f.tm, s);
     try testing.expect(l.shown(0));
     try testing.expect(!l.shown(3));
@@ -1968,30 +1994,88 @@ test "pane_sidebar: an outline with no lines says No matching panes under the fi
     }
 }
 
-test "pane_sidebar: the outline's rail draws a hairline between windows and before a stash" {
+test "pane_sidebar: the outline's rail draws a hairline between windows, none before a stash (T2313)" {
     for (scales) |s| {
         const f = outlineFixture(s);
         const l = layoutWith(.mini, px(68, s), px(900, s), &f.items, &f.lines, f.tm, s);
         // Every pane is a tile, folded or not.
         for (0..5) |i| try testing.expect(l.shown(i));
-        // Two breaks: grid -> stash in this window, then window -> window.
-        try testing.expectEqual(@as(usize, 2), l.rule_count);
+        // One break, window -> window; the stashed tile follows its grid at
+        // the tiles' own spacing (Mac 47b39b1cb).
+        try testing.expectEqual(@as(usize, 1), l.rule_count);
         try testing.expect(l.section_rule == null);
-        try testing.expect(l.rules[0].top > l.items[1].bottom and l.rules[0].bottom <= l.items[2].top);
-        try testing.expect(l.rules[1].top > l.items[2].bottom and l.rules[1].bottom <= l.items[3].top);
+        try testing.expectEqual(l.items[1].bottom + rowGap(s), l.items[2].top);
+        try testing.expect(l.rules[0].top > l.items[2].bottom and l.rules[0].bottom <= l.items[3].top);
         // No header buttons on the rail beyond the toggle.
         try testing.expectEqual(@as(i32, 0), l.scope.width());
         try testing.expectEqual(@as(usize, 0), l.head_count);
     }
 }
 
-test "pane_sidebar: the outline never adds the empty drop slot" {
+test "pane_sidebar: at rest the outline has no empty well (T2313, Mac b7de64ce8)" {
     const s: f32 = 1.0;
     var f = outlineFixture(s);
     f.items[2].section = .grid; // nothing stashed here
     var l = layoutWith(.expanded, 240, 900, &f.items, f.lines[0..3], f.tm, s);
     addEmptyTray(&l, f.tm, s);
     try testing.expect(l.drop_slot == null);
+}
+
+test "pane_sidebar: during a drag the outline's well opens under this window's last pane, both modes (T2313, Mac b7de64ce8)" {
+    for (scales) |s| {
+        var f = outlineFixture(s);
+        f.items[2].section = .grid; // this window stashes nothing
+        for ([_]Mode{ .expanded, .mini }) |m| {
+            const w = if (m == .expanded) px(240, s) else px(68, s);
+            const before = layoutWith(m, w, px(900, s), &f.items, &f.lines, f.tm, s);
+            var l = before;
+            addDragWell(&l, f.tm, s);
+            const slot = l.drop_slot.?;
+            // Right under this window's last pane, one pill gap clear, on its
+            // column; a row on the panel, a tile on the rail.
+            try testing.expectEqual(l.items[2].bottom + rowGap(s), slot.top);
+            try testing.expectEqual(l.items[2].left, slot.left);
+            try testing.expectEqual(l.items[2].right, slot.right);
+            const h = if (m == .expanded) rowHeight(false, f.tm, s) else pillHeight(f.tm, s);
+            try testing.expectEqual(h, slot.height());
+            // Nothing above it moved; everything below it moved by the
+            // well and one gap, so nothing touches.
+            const grow = h + rowGap(s);
+            for (0..3) |i| try testing.expectEqual(before.items[i], l.items[i]);
+            for (3..5) |i| try testing.expectEqual(before.items[i].top + grow, l.items[i].top);
+            try testing.expectEqual(before.rules[0].top + grow, l.rules[0].top);
+            try testing.expect(l.rules[0].top > slot.bottom);
+            if (m == .expanded) {
+                try testing.expectEqual(before.heads[0], l.heads[0]);
+                try testing.expectEqual(before.heads[1].rect.top + grow, l.heads[1].rect.top);
+                try testing.expectEqual(before.heads[1].chevron.top + grow, l.heads[1].chevron.top);
+                try testing.expect(vGap(slot, l.heads[1].rect) >= rowGap(s));
+            }
+        }
+    }
+}
+
+test "pane_sidebar: no outline well while this window stashes, while its group is folded, or outside the outline (T2313)" {
+    const s: f32 = 1.0;
+    // The fixture's own window has a stashed pane: its rows are the target.
+    const f = outlineFixture(s);
+    var l = layoutWith(.expanded, 240, 900, &f.items, &f.lines, f.tm, s);
+    addDragWell(&l, f.tm, s);
+    try testing.expect(l.drop_slot == null);
+    // Folded on the panel: no pane to follow (the rail still shows them).
+    var g = outlineFixture(s);
+    g.items[2].section = .grid;
+    const folded = [_]Line{ .{ .kind = .window, .index = 0 }, .{ .kind = .rule }, .{ .kind = .window, .index = 1 } };
+    var p = layoutWith(.expanded, 240, 900, &g.items, &folded, g.tm, s);
+    addDragWell(&p, g.tm, s);
+    try testing.expect(p.drop_slot == null);
+    var r = layoutWith(.mini, 68, 900, &g.items, &folded, g.tm, s);
+    addDragWell(&r, g.tm, s);
+    try testing.expect(r.drop_slot != null);
+    // The single roster's well is `addEmptyTray`'s, drag or not.
+    var one = layout(.expanded, 240, 900, &g.items, g.tm, s);
+    addDragWell(&one, g.tm, s);
+    try testing.expect(one.drop_slot == null);
 }
 
 test "pane_sidebar: the header reads toggle, then all-windows at the trailing edge - Mac's order, no trash button - and each is its own hit (T2280, T2289)" {

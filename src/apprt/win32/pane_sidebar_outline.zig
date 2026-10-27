@@ -211,14 +211,11 @@ pub fn buildLines(groups: []const GroupSpec, out: []Line) usize {
         if (g.project_folded) continue;
         if (!push(out, &n, .{ .kind = .window, .index = gi, .depth = depth })) return n;
         if (g.folded) continue;
-        for (0..g.grid) |k| {
+        // The grid, then the stash with no divider or caption between them
+        // (T2313, Mac 47b39b1cb): a window's stashed panes simply follow its
+        // others, so collapsing or expanding the sidebar moves nothing.
+        for (0..panes) |k| {
             if (!push(out, &n, .{ .kind = .pane, .index = item + k, .depth = depth + 1 })) return n;
-        }
-        if (g.stashed == 0) continue;
-        if (!push(out, &n, .{ .kind = .rule, .depth = depth + 1 })) return n;
-        if (!push(out, &n, .{ .kind = .stashed_caption, .index = gi, .depth = depth + 1 })) return n;
-        for (0..g.stashed) |k| {
-            if (!push(out, &n, .{ .kind = .pane, .index = item + g.grid + k, .depth = depth + 1 })) return n;
         }
     }
     return n;
@@ -432,7 +429,6 @@ fn kinds(lines: []const Line, buf: []u8) []const u8 {
         .window => 'W',
         .pane => 'p',
         .rule => '-',
-        .stashed_caption => 'S',
     };
     return buf[0..lines.len];
 }
@@ -444,14 +440,16 @@ test "lines: lone windows separated by hairlines, panes under their window" {
         .{ .grid = 1, .stashed = 1 },
     }, &lines);
     var kb: [32]u8 = undefined;
-    try testing.expectEqualStrings("Wpp-Wp-Sp", kinds(lines[0..n], &kb));
+    // The second window's stashed pane follows its grid pane: no divider,
+    // no STASHED caption (T2313, Mac 47b39b1cb).
+    try testing.expectEqualStrings("Wpp-Wpp", kinds(lines[0..n], &kb));
     // Panes are one level in; their items count across groups.
     try testing.expectEqual(@as(u8, 1), lines[1].depth);
     try testing.expectEqual(@as(usize, 0), lines[1].index);
     try testing.expectEqual(@as(usize, 1), lines[2].index);
     try testing.expectEqual(@as(usize, 2), lines[5].index);
-    try testing.expectEqual(@as(usize, 3), lines[8].index);
-    try testing.expectEqual(@as(usize, 1), lines[7].index); // the caption names its group
+    try testing.expectEqual(@as(usize, 3), lines[6].index);
+    try testing.expectEqual(@as(u8, 1), lines[6].depth);
 }
 
 test "lines: a project header, its windows one level in" {

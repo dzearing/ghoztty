@@ -148,7 +148,6 @@ const Group = struct {
     /// How many windows the project holds (on its first window only).
     project_size: usize,
     panes: usize,
-    stashed: usize,
     own: bool,
     /// The top-level has other tabs: "This Tab" rather than "This Window".
     tabbed: bool,
@@ -715,6 +714,10 @@ fn logOutline(self: *PaneSidebar) void {
         const x = l.headClose(k, self.scale);
         w.print("{d},{d};", .{ x.centerX(), x.centerY() }) catch break;
     }
+    // The drag-only well (T2313): its center, or `-` at rest.
+    if (l.drop_slot) |sl| {
+        w.print(" tray={d},{d}", .{ sl.centerX(), sl.centerY() }) catch {};
+    } else w.writeAll(" tray=-") catch {};
     log.debug("pane sidebar outline {s}", .{fbs.getWritten()});
 }
 
@@ -749,7 +752,8 @@ fn logRows(self: *PaneSidebar) void {
     self.logToggle(w, &l);
     logScroll(w, &l);
     // The empty tray (T2276): its well's center, or `-` while something is
-    // stashed, and whether the STASHED caption is laid out over it.
+    // stashed, and whether a STASHED caption is laid out over it (never,
+    // since T2313 - the script asserts the 0).
     if (l.drop_slot) |sl| {
         w.print(" tray={d},{d} cap={d}", .{ sl.centerX(), sl.centerY(), @intFromBool(l.stashed_caption != null) }) catch {};
     } else w.writeAll(" tray=-") catch {};
@@ -903,7 +907,6 @@ fn refreshAll(self: *PaneSidebar) void {
             .project_key = project_key,
             .project_size = if (outline.opensProject(placed[0..np], gi)) outline.projectSize(placed[0..np], gi) else 0,
             .panes = sp.grid + sp.stashed,
-            .stashed = sp.stashed,
             .own = own,
             .tabbed = r.window.tab_count > 1,
         }, p.label, p.project);
@@ -1168,6 +1171,9 @@ fn rawLayout(self: *PaneSidebar) pane_sidebar.Layout {
     // The empty tray is always there (T2276, Mac 543489bca): a drop target
     // says so before a drag starts, not only once one is under way.
     pane_sidebar.addEmptyTray(&l, self.metrics, self.scale);
+    // All windows: the well only while a pane is dragged (T2313, Mac
+    // b7de64ce8) - at rest the list is every window's panes and nothing else.
+    if (self.drag_active) pane_sidebar.addDragWell(&l, self.metrics, self.scale);
     l.search_text = !self.search.isEmpty();
     return l;
 }
@@ -1364,6 +1370,13 @@ pub fn setDragActive(self: *PaneSidebar, on: bool) void {
         if (raw.drop_slot) |sl| self.scroll = scroll_mod.revealOffset(&raw, sl, self.scroll, self.scale);
     }
     _ = w32.InvalidateRect(self.hwnd, null, 0);
+    // All windows opens and closes its well with the drag (T2313): the
+    // rows below it move, so their tips follow, and the geometry line says
+    // where it is, or that it went.
+    if (self.all_windows) {
+        self.syncTips();
+        self.logOutline();
+    }
 }
 
 /// A press on a row that has travelled far enough is a DRAG of that pane:
@@ -2435,10 +2448,10 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     if (l.section_rule) |r| fillRect(hdc, r, ruleColor(t));
     if (l.stashed_caption) |cap| {
         var buf: [32]u8 = undefined;
+        // Only a tray that holds something is captioned (T2313, Mac
+        // 82b9c5501), so the caption always carries the count.
         const stashed = self.entries.items.len - l.first_stashed;
-        // An empty tray's caption carries no count (Mac: the count only
-        // when the tray holds something).
-        const text8 = if (stashed == 0) "STASHED" else std.fmt.bufPrint(&buf, "STASHED \u{00B7} {d}", .{stashed}) catch "STASHED";
+        const text8 = std.fmt.bufPrint(&buf, "STASHED \u{00B7} {d}", .{stashed}) catch "STASHED";
         var wbuf: [32]u16 = undefined;
         const wn = std.unicode.utf8ToUtf16Le(&wbuf, text8) catch 0;
         if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
@@ -2652,20 +2665,12 @@ fn paintScope(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t
 
 
 /// The outline's own furniture (T1829): the hairlines between windows and
-/// before a stash, each window's STASHED caption, and the project and window
-/// headers. Rows are painted by the caller, as in the single roster.
+/// the project and window headers - no divider or caption before a window's
+/// stash (T2313, Mac 47b39b1cb). Rows are painted by the caller, as in the
+/// single roster.
 fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     const rule_color = ruleColor(t);
     for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, rule_color);
-    for (l.captions[0..l.caption_count]) |cap| {
-        const stashed = if (cap.index < self.groups.items.len) self.groups.items[cap.index].stashed else 0;
-        var buf: [32]u8 = undefined;
-        const text8 = std.fmt.bufPrint(&buf, "STASHED \u{00B7} {d}", .{stashed}) catch "STASHED";
-        var wbuf: [32]u16 = undefined;
-        const wn = std.unicode.utf8ToUtf16Le(&wbuf, text8) catch 0;
-        if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-        drawText(hdc, wbuf[0..wn], .{ .left = cap.x, .top = cap.rect.top, .right = cap.rect.right, .bottom = cap.rect.bottom }, t.secondary, w32.DT_VCENTER);
-    }
     for (l.heads[0..l.head_count], 0..) |hd, k| {
         if (hd.index >= self.groups.items.len) continue;
         // The pinned header is painted over the rows, by `paintSticky`.

@@ -12,8 +12,9 @@
 #   1. The collapse/expand toggle, then the all-windows toggle: the roster becomes four groups in
 #      name order - Build logs, then the ghoztty project (feature-2, main),
 #      then zeta - with one project head and four window heads, every pane
-#      listed (B's stashed one too), and a hairline before zeta and before
-#      B's stash. The panel paints content.
+#      listed (B's stashed one too, right after its grid row with no
+#      divider or caption - T2313), one hairline before zeta, and no empty
+#      well at rest. The panel paints content.
 #   2. A click on B's STASHED row restores b2 in window B (the same verb as
 #      ghoztty://focus).
 #   3. A click on another window's header raises it (log).
@@ -145,7 +146,7 @@ function Wait-Log([string]$Pattern, [int]$Skip, [int]$Ms = 4000) {
 # Parse a `pane sidebar outline` line.
 function Read-Outline([string]$Line) {
     if (-not $Line -or $Line -notmatch 'mode=(\w+) heads=(\S*) items=(\S*) rules=(\d+) scope=(-?\d+),(-?\d+)') { return $null }
-    $o = @{ Mode = $Matches[1]; Rules = [int]$Matches[4]; Scope = @{ X = [int]$Matches[5]; Y = [int]$Matches[6] }; Heads = @(); Items = @() }
+    $o = @{ Raw = $Line; Mode = $Matches[1]; Rules = [int]$Matches[4]; Scope = @{ X = [int]$Matches[5]; Y = [int]$Matches[6] }; Heads = @(); Items = @() }
     $headsRaw = $Matches[2]; $itemsRaw = $Matches[3]
     foreach ($h in ($headsRaw -split ';' | Where-Object { $_ })) {
         if ($h -match '^([PW])(\d+)@(-?\d+),(-?\d+)$') { $o.Heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
@@ -278,7 +279,18 @@ try {
     Assert "one project head and four window heads" ((@($o.Heads | Where-Object Kind -eq 'P').Count -eq 1) -and (@($o.Heads | Where-Object Kind -eq 'W').Count -eq 4))
     Assert "the project head names its first window (group 1)" ($null -ne (Head $o 'P' 1))
     Assert "every pane is a row, B's stash included" ($o.Items.Count -eq 6 -and @($o.Items | Where-Object { $_.Group -eq 2 -and $_.Sec -eq 's' }).Count -eq 1)
-    Assert "two hairlines: before zeta, and before B's stash ($($o.Rules))" ($o.Rules -eq 2)
+    # T2313 (Mac 47b39b1cb): a window's stash has no divider or caption in
+    # all windows - B's stashed row follows its grid row at a grid row's own
+    # pitch - so the only hairline is the one before zeta.
+    Assert "one hairline, before zeta - none before B's stash ($($o.Rules))" ($o.Rules -eq 1)
+    $bRows = @($o.Items | Where-Object { $_.Group -eq 2 })
+    $zRows = @($o.Items | Where-Object { $_.Group -eq 3 })
+    if ($bRows.Count -eq 2 -and $zRows.Count -eq 2) {
+        $bPitch = $bRows[1].Y - $bRows[0].Y
+        $zPitch = $zRows[1].Y - $zRows[0].Y
+        Assert "B's stashed row sits a plain row's pitch under its grid row ($bPitch vs zeta's $zPitch)" ($bPitch -eq $zPitch)
+    } else { Assert "setup: B and zeta each list two rows ($($bRows.Count), $($zRows.Count))" $false }
+    Assert "at rest the outline lays out no empty well (T2313, Mac b7de64ce8)" ($o.Raw -match ' tray=-')
     $ordered = $true
     for ($k = 1; $k -lt $o.Heads.Count; $k++) { if ($o.Heads[$k].Y -le $o.Heads[$k - 1].Y) { $ordered = $false } }
     Assert "heads stack top to bottom in outline order" $ordered
