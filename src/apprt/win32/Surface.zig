@@ -300,7 +300,8 @@ key_state_model: key_state.Model = .{},
 key_state_indicator: ?*KeyStateIndicator = null,
 
 /// Background tint (T67): explicit `--color`/`--split-color`/picker color,
-/// or the auto-shifted split-inheritance tint. Null ⇒ config background.
+/// or the parent's tint a split inherited unchanged (T2310). Null ⇒ config
+/// background.
 /// The Mac stores this as backgroundTintNSColor; `+list --json` reports it
 /// additively as the pane's `background_tint`.
 background_tint: ?color_math.Rgb = null,
@@ -4981,9 +4982,9 @@ pub fn effectiveBackground(self: *Surface) color_math.Rgb {
 /// terminal background; with `adjust_palette` (explicit colors — CLI flag
 /// or picker) it also sets a black/white contrast foreground and shifts the
 /// ANSI 0–15 palette to keep WCAG 4.5:1 against the new background (the Mac
-/// applyColorScheme/applyPaletteForColor). Auto-shifted split inheritance
-/// passes false: bg only, default palette untouched (Mac parity — its
-/// auto-shift is an overlay that never touches terminal colors).
+/// applyColorScheme/applyPaletteForColor). Every caller passes true today —
+/// a split's inherited tint included, as Mac applies one through
+/// `applyPaletteForColor` (T2310); false sets the background alone.
 pub fn applyBackgroundTint(
     self: *Surface,
     rgb: color_math.Rgb,

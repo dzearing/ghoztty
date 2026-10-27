@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-26T21:47:49-07:00",
-    "commit":  "d0dd2accc",
+    "generated":  "2026-10-26T21:59:21-07:00",
+    "commit":  "94a6b4488",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-activity.ps1"
+                        "test/win32/window-color.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -332,7 +332,7 @@
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
                   "test/win32/pane-sidebar.ps1":  "2e26965d253e6af49f6e3e919217e95cd38285fd826d438a5dd724ae7bb5b3b7",
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
-                  "test/win32/pane-sidebar-activity.ps1":  "6703d4bcce8e551c08795e5cf2a81091d22a49460d78a5f75abebf0ed6818a95",
+                  "test/win32/pane-sidebar-activity.ps1":  "d4624555edb059afe748bcd8b34a18fa870666ad13a322fd9e25e64d06641cfa",
                   "test/win32/pane-sidebar-all-windows.ps1":  "6763743d456d2cb1e1ea12bafa2eeae81b560539470b60024cfb0a3b26a66867",
                   "test/win32/pane-sidebar-close.ps1":  "10c16a9c6a2275091868b0f3818189e5a6c38f009b86211a4bfd667a2ab6bc64",
                   "test/win32/pane-sidebar-drag.ps1":  "9f7464df9da879d99d24f3998c4687ec1a2941629d162e575d0c8c45f7b0cabb",
@@ -522,7 +522,7 @@
                   "test/win32/wheel-scroll.ps1":  "5ddcfef5925d88800a7bfe738e3df7d75a0df62fe400243070fba6f78cc8a2a1",
                   "test/win32/window-active.ps1":  "9151aa942d89c9db56f8fe9531b66c67285d311d17d50d8c43b8bec7b1b778df",
                   "test/win32/window-active-audit.ps1":  "713214a5212d2f50713ae9eaff05d788293b6f8ada9b6daa78d1dcf081406879",
-                  "test/win32/window-color.ps1":  "77a576a99dea7bd45ce24260a2039fe039690ac38ff250db0e53512f33e21a93",
+                  "test/win32/window-color.ps1":  "ee0cd62d72645ee63415938b2ca77b3b29b5cd7deb1b4ff3ee0fd11053465f93",
                   "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
                   "test/win32/window-name-env.ps1":  "b8e63bc0ba6c5d1914962c3ab97fe83bcfac811f185f3873a09ffa8cd6744a44",

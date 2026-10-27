@@ -1,5 +1,5 @@
 # T67 acceptance: window/pane background tint (`--color` / `--split-color`)
-# + split-inheritance shift + context-menu "Background Color..." picker.
+# + split tint inheritance + context-menu "Background Color..." picker.
 #
 # Oracles:
 #   - `+list --json` panes carry an additive `background_tint` (#rrggbb)
@@ -11,8 +11,9 @@
 #     its band corners. See the migration note below for why this replaced the
 #     old screen-pixel probe.
 #   - The plain-split inheritance value is pinned exactly: #334455 parent
-#     -> #384b5e child (the color_math.zig unit-test oracle, Mac
-#     shiftedTint parity: HSB brightness +5% toward white on dark parents).
+#     -> #334455 child, and an untinted parent's split reports no tint (T2310,
+#     Mac 157b08c48: every pane in a window is the same glass; splits used to
+#     come out 5% lighter, #384b5e, compounding per generation).
 #   - Picker: right-click menu -> "B" mnemonic -> ChooseColorW (comdlg
 #     #32770) -> Enter accepts the CC_RGBINIT initial color (= the pane's
 #     effective background) -> the untinted launch window gains an explicit
@@ -234,10 +235,10 @@ Assert (Test-PaneColorNear -Color $glassDom -R 51 -G 68 -B 85) `
     "new-window --color: the tint reached the GL clear color (dominant $glassDom)"
 if ($glass) { Close-TestPaneCapture $glass }
 
-# --- 2. plain +split inherits the shifted parent tint (exact oracle) -----
+# --- 2. plain +split inherits the parent tint UNCHANGED (exact oracle) --
 & $exe +split --target=cw --name=cp1 | Out-Null
-$tint = Wait-Tint 'cw' 1 '#384b5e'
-Assert ($tint -eq '#384b5e') "plain split: inherits #334455 shifted -> #384b5e (got $tint)"
+$tint = Wait-Tint 'cw' 1 '#334455'
+Assert ($tint -eq '#334455') "plain split: inherits #334455 unchanged, not 5% lighter (got $tint)"
 
 # --- 3. +split --color explicit tint -------------------------------------
 & $exe +split --pane=cp1 --name=cp2 --color=`#803020 | Out-Null
@@ -250,6 +251,19 @@ $tint = Wait-Tint 'cw2' 1 '#204060'
 Assert ($tint -eq '#204060') "inline split --split-color applied (got $tint)"
 $tint = Wait-Tint 'cw2' 0 'NONE'
 Assert ($tint -eq '(absent)') "no --color: first pane reports no tint (got $tint)"
+
+# --- 4b. a plain split of an UNTINTED pane stays untinted (T2310) ---------
+# The old shift gave it a 5%-lighter copy of the configured background, so a
+# reported tint here is the regression.
+& $exe +new-window --target=cw5 | Out-Null
+& $exe +split --target=cw5 --name=cp5 | Out-Null
+$null = Wait-Tint 'cw5' 1 'ANY'
+$tint = Wait-Tint 'cw5' 1 'NONE'
+$w5 = Get-Win 'cw5'
+$n5 = if ($w5) { @(Get-Leaves $w5.tabs[0].splits).Count } else { 0 }
+Assert ($n5 -eq 2) "untinted parent: the split landed (window has $n5 panes)"
+Assert ($tint -eq '(absent)') "untinted parent: the split reports no tint (got $tint)"
+& $exe +close --target=cw5 | Out-Null
 
 # --- 5. --color=random: dark, and TELLABLE APART -------------------------
 # T120: the darkness assertion alone was green through the whole defect. The

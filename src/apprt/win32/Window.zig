@@ -10575,18 +10575,15 @@ pub fn newSplitAt(
         self.pending_surface_overrides = null;
     };
 
-    // T67: every split inherits the parent pane's effective background
-    // shifted for visual depth (Mac newSplit parity: lighten dark parents,
-    // darken light ones). Captured before init; applied after so the core
-    // terminal exists. An explicit IPC `--color` overwrites this right
-    // after newSplitAt returns.
-    // A viewer parent has no terminal background to inherit from; fall back
-    // to the window's own so a split off a viewer still gets a valid tint.
-    const inherited_tint = color_math.shiftedTint(if (at.surface()) |s| s.effectiveBackground() else .{
-        .r = self.app.config.background.r,
-        .g = self.app.config.background.g,
-        .b = self.app.config.background.b,
-    });
+    // T67/T2310: every pane in a window is the same glass (Mac newSplit,
+    // 157b08c48). A split takes a `--color` parent's tint unchanged, with the
+    // same contrast palette the parent got (Mac applies an inherited tint
+    // through `applyPaletteForColor` once the surface is up); an untinted
+    // parent's split stays untinted, and so does a split off a viewer, which
+    // has no tint to give. Captured before init; applied after so the core
+    // terminal exists. An explicit IPC `--color` overwrites this right after
+    // newSplitAt returns.
+    const inherited_tint = color_math.splitTint(if (at.surface()) |s| s.background_tint else null);
 
     // Create new surface. Cleanup hands off in one direction and is never
     // doubled up: once `insert_tree` owns the pane, ITS deinit is the only
@@ -10598,7 +10595,7 @@ pub fn newSplitAt(
         alloc.destroy(new_surface);
         return err;
     };
-    new_surface.applyBackgroundTint(inherited_tint, false);
+    if (inherited_tint) |tint| new_surface.applyBackgroundTint(tint, true);
 
     // Wrap it as a pane and build a single-node tree to insert.
     const new_pane = PaneView.createTerminal(alloc, new_surface) catch |err| {

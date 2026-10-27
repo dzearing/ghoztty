@@ -5,7 +5,7 @@
 //!   - hex parsing            (OSColor+Extension.swift `init?(hex:)`)
 //!   - Rec.601 luminance      (`isLightColor` / `luminance`)
 //!   - HSB lighten/darken     (`lighten(by:)` / `darken(by:)`)
-//!   - split tint shift       (BaseTerminalController.shiftedTint)
+//!   - split tint inherit     (BaseTerminalController.newSplit)
 //!   - contrast foreground    (IPCServer.applyColorScheme)
 //!   - WCAG palette adjust    (SurfaceView_AppKit.adjustPaletteForContrast)
 //!   - random dark color      (IPCServer.randomDarkColor)
@@ -302,17 +302,13 @@ pub fn darken(rgb: Rgb, amount: f64) Rgb {
     return hsbToRgb(hsb);
 }
 
-/// Split-inheritance shift (BaseTerminalController.shiftedTint): lighten a
-/// dark parent, darken a light one, by 5% brightness. The design doc's
-/// worked example uses 15%, but the shipping Mac code uses 0.05 — parity
-/// follows the code.
-pub const shift_amount: f64 = 0.05;
-
-pub fn shiftedTint(rgb: Rgb) Rgb {
-    return if (isLight(rgb))
-        darken(rgb, shift_amount)
-    else
-        lighten(rgb, shift_amount);
+/// The tint a new split takes from its parent (Mac `newSplit`, 157b08c48):
+/// every pane in a window is the same glass, so a `--color` parent's tint
+/// passes through unchanged and an untinted parent's split stays untinted.
+/// (Splits used to be shifted 5% lighter "for depth" — compounding, so each
+/// new pane came out brighter.)
+pub fn splitTint(parent: ?Rgb) ?Rgb {
+    return parent;
 }
 
 /// `--color=random`: dark muted color (hue anywhere, sat 0.33–0.46,
@@ -721,27 +717,24 @@ test "rgb<->hsb round-trip" {
     }
 }
 
-test "shiftedTint: dark parents lighten, light parents darken, hue/sat kept" {
-    const dark: Rgb = .{ .r = 0x33, .g = 0x44, .b = 0x55 };
-    const shifted = shiftedTint(dark);
-    try testing.expect(luminance(shifted) > luminance(dark));
-    const hsb_in = rgbToHsb(dark);
-    const hsb_out = rgbToHsb(shifted);
-    try testing.expect(@abs(hsb_in.h - hsb_out.h) < 0.02);
-    try testing.expect(@abs(hsb_in.s - hsb_out.s) < 0.02);
-
+test "splitTint: a tinted parent's split is the exact same glass" {
+    // #334455 is window-color.ps1's oracle: the plain split reports it back
+    // unchanged (it used to read #384b5e, 5% lighter).
+    const parent: Rgb = .{ .r = 0x33, .g = 0x44, .b = 0x55 };
+    try testing.expectEqual(parent, splitTint(parent).?);
+    // Light and black parents too — no direction is shifted any more.
     const light: Rgb = .{ .r = 0xEE, .g = 0xEE, .b = 0xDD };
-    try testing.expect(luminance(shiftedTint(light)) < luminance(light));
-
-    // Exact expected value, doubling as the validation script's oracle:
-    // HSB(0.5833, 0.4, 0.3333) lightened to brightness 0.3667 → #384b5e.
-    try testing.expectEqual(Rgb{ .r = 0x38, .g = 0x4b, .b = 0x5e }, shifted);
+    try testing.expectEqual(light, splitTint(light).?);
+    const black: Rgb = .{ .r = 0, .g = 0, .b = 0 };
+    try testing.expectEqual(black, splitTint(black).?);
+    // A chain of splits never drifts: the fifth generation is the first.
+    var t: ?Rgb = parent;
+    for (0..5) |_| t = splitTint(t);
+    try testing.expectEqual(parent, t.?);
 }
 
-test "shiftedTint: pure black still lightens" {
-    const black: Rgb = .{ .r = 0, .g = 0, .b = 0 };
-    const shifted = shiftedTint(black);
-    try testing.expect(shifted.r > 0 and shifted.g > 0 and shifted.b > 0);
+test "splitTint: an untinted parent's split stays untinted" {
+    try testing.expectEqual(@as(?Rgb, null), splitTint(null));
 }
 
 test "randomDark: always dark and muted" {

@@ -655,7 +655,7 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         };
         if (new_surface) |s| {
             // `--split-color` (T67): explicit tint for the inline split
-            // (overwrites the auto-shifted inheritance newSplitAt applied).
+            // (overwrites the parent tint newSplitAt inherited, if any).
             if (resolveColor(args.split_color)) |tint| s.applyBackgroundTint(tint, true);
             if (args.name) |n| if (s.pane_view) |pv| app.ipcRegister(n, .{ .pane = pv }) catch {};
             if (s.pane_view) |pv| app.ipc_session_await.add(pv.paneId()); // T1612
@@ -1128,7 +1128,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
 
     // `--color` (T67): explicit tint for the new pane — bg + contrast fg +
-    // adjusted palette (overwrites newSplitAt's auto-shifted inheritance).
+    // adjusted palette (overwrites the parent tint newSplitAt inherited).
     if (resolveColor(args.color)) |tint| new_surface.applyBackgroundTint(tint, true);
 
     // A surface with no pane is not a pane anybody can see or target: say so
