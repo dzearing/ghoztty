@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-all-windows",
     "script":  "test/win32/pane-sidebar-all-windows.ps1",
-    "generated":  "2026-10-27T07:48:41-07:00",
-    "commit":  "1711842e8",
+    "generated":  "2026-10-27T07:58:34-07:00",
+    "commit":  "7756905b5",
     "uncommitted":  [
 
                     ],

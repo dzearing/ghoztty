@@ -1892,6 +1892,47 @@ try {
     & $exe +set-banner "--target=$($p7b.id)" --clear | Out-Null
     $null = Wait-Banner 'bw' 0 'NONE'
 
+    # --- 7c. T2308: an UNFOCUSED pane's dim covers its banner too ------------
+    # Mac's unfocused-split dim is the last layer of the pane, over the
+    # terminal and the banner alike (SurfaceView's ZStack). Windows' wash used
+    # to cover the terminal's window only, and the banner strip - in the band
+    # the layout reserves ABOVE that window - stayed at full brightness, its
+    # card stacked over the dim besides (T2261's negative control measured
+    # dim=under). The background desktop cannot photograph a composite, so
+    # the two halves of "the banner is dimmed" are read as geometry (the wash
+    # spans the strip's band) and z-order (EnumWindows lists top-to-bottom:
+    # the wash is above the strip). Negative control:
+    # DimOverlay.T2308_NEUTERED = true turns exactly the band-top and the
+    # stacking rows red (measured 2026-10-27: 2 FAILURE(S), 179 passed; dim
+    # top 237 against strip top 154, z index dim=1 strip=0).
+    & $exe +set-banner "--target=$($p7b.id)" "dim covers me" | Out-Null
+    $null = Wait-Banner 'bw' 0 'dim covers me'
+    Start-Sleep -Milliseconds 500
+    $ov7c = Get-Overlay $appPid $top 0
+    Assert ($null -ne $ov7c) 'T2308: the unfocused pane carries a banner strip'
+    if ($ov7c) {
+        $z7c = @(Get-TestWindows -ProcessId $appPid -Class '*')
+        $dim7c = @($z7c | Where-Object {
+                $_.Class -eq 'GhozttyDimOverlay' -and $_.Visible -and
+                [math]::Abs($_.Left - $ov7c.Left) -le 2 -and
+                $_.Bottom -gt $ov7c.Bottom })
+        Assert ($dim7c.Count -eq 1) "T2308: one dim wash over the unfocused pane ($($dim7c.Count))"
+        if ($dim7c.Count -eq 1) {
+            $d = $dim7c[0]
+            Write-Host "INFO  T2308 strip=($($ov7c.Left),$($ov7c.Top))-($($ov7c.Right),$($ov7c.Bottom)) dim=($($d.Left),$($d.Top))-($($d.Right),$($d.Bottom))"
+            Assert ([math]::Abs($d.Top - $ov7c.Top) -le 1) `
+                "T2308: the wash starts at the top of the banner band, so the strip is dimmed (dim top $($d.Top), strip top $($ov7c.Top))"
+            Assert ([math]::Abs($d.Right - $ov7c.Right) -le 2) `
+                "T2308: the wash spans the strip's full width (dim right $($d.Right), strip right $($ov7c.Right))"
+            $iDim = [array]::IndexOf(@($z7c | ForEach-Object { $_.Hwnd }), $d.Hwnd)
+            $iOv = [array]::IndexOf(@($z7c | ForEach-Object { $_.Hwnd }), $ov7c.Hwnd)
+            Assert ($iDim -ge 0 -and $iOv -ge 0 -and $iDim -lt $iOv) `
+                "T2308: the wash is stacked OVER the banner strip (z index dim=$iDim strip=$iOv)"
+        }
+    }
+    & $exe +set-banner "--target=$($p7b.id)" --clear | Out-Null
+    $null = Wait-Banner 'bw' 0 'NONE'
+
     # --- 8. markdown link renders (overlay still paints with styles) ----------
     # (Rendering correctness is pinned by the banner_markdown unit tests; here
     # we only prove a styled multi-run banner paints without crashing.)

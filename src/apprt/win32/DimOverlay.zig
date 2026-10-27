@@ -46,11 +46,39 @@ pub const DimOverlay = struct {
     /// The owner's region this wash was last clipped to (T1831); see
     /// `matchOwnerRegion`.
     region_key: u64 = 0,
-    /// Where this popup's top-left sits inside the owner (T2227): 0,0 unless
-    /// part of the owner is outside its window and the wash covers only the
-    /// part in view. The owner's card shape is shifted by it (`applyRegion`).
-    origin_x: i32 = 0,
-    origin_y: i32 = 0,
+    /// The banner band above the owner the wash also covers (T2308);
+    /// `setBand` feeds it before every `show`.
+    band: Band = .{},
+    /// The shape the window region was last cut for; `applyRegion` runs when
+    /// it changes.
+    shape: Shape = .{},
+
+    /// A pane's banner strip sits in a band the layout reserves ABOVE the
+    /// terminal's window (T101). Mac's unfocused-split dim is the last layer
+    /// of the whole pane - terminal, frozen terminal and banner alike
+    /// (`SurfaceView`'s ZStack) - so the wash grows upward over that band.
+    pub const Band = struct {
+        /// The band's height, px. 0 = no banner.
+        height: i32 = 0,
+        /// The banner strip's top-corner diameter (`BannerOverlay.card_corner`):
+        /// the band's top corners are the elevated card's, and the wash takes
+        /// the same cut (T1851). 0 = square.
+        corner: i32 = 0,
+    };
+
+    /// What the window region is cut from: where this popup's top-left sits
+    /// inside the owner - (0, -band) over a banner (T2308), or the part in
+    /// view of a pane partly outside its window (T2227) - plus the band's
+    /// own shape.
+    pub const Shape = struct {
+        origin_x: i32 = 0,
+        origin_y: i32 = 0,
+        band: i32 = 0,
+        corner: i32 = 0,
+        /// The popup's width, kept only while the band has a rounded cut,
+        /// whose right corner moves with it.
+        width: i32 = 0,
+    };
     pub fn create(
         alloc: std.mem.Allocator,
         owner: w32.HWND,
@@ -143,8 +171,16 @@ pub const DimOverlay = struct {
         // a pane that is wholly outside.
         var ox: i32 = 0;
         var oy: i32 = 0;
+        var band: Band = .{};
         switch (pane_clip.ownerClip(self.owner)) {
-            .whole => {},
+            // Over a banner the wash starts at the top of its band (T2308).
+            // A pane partly out of view hides its banner (T2227), so only a
+            // whole one carries the band.
+            .whole => if (!T2308_NEUTERED and self.band.height > 0) {
+                band = self.band;
+                oy = -band.height;
+                rect.top -= band.height;
+            },
             .none => {
                 if (self.shown) self.hide();
                 return false;
@@ -160,9 +196,15 @@ pub const DimOverlay = struct {
                 };
             },
         }
-        if (ox != self.origin_x or oy != self.origin_y) {
-            self.origin_x = ox;
-            self.origin_y = oy;
+        const shape: Shape = .{
+            .origin_x = ox,
+            .origin_y = oy,
+            .band = band.height,
+            .corner = band.corner,
+            .width = if (band.corner > 0) rect.right - rect.left else 0,
+        };
+        if (!std.meta.eql(shape, self.shape)) {
+            self.shape = shape;
             self.applyRegion();
         }
 
@@ -259,21 +301,71 @@ pub const DimOverlay = struct {
         self.applyRegion();
     }
 
+    /// The banner band above the owner this wash also covers (T2308), or
+    /// none. Read by the next `show`, which moves and re-cuts the wash when
+    /// it changed.
+    pub fn setBand(self: *DimOverlay, band: Band) void {
+        self.band = band;
+    }
+
+    /// Stack the wash over `card` - the pane's banner strip (T2308). Mac's
+    /// dim is the last layer of the pane, and two popups with one owner sit
+    /// in whatever order last moved them (T2261 measured the dim UNDER the
+    /// card), so the order is read and, when wrong, the wash is put directly
+    /// above the card. Returns whether it moved.
+    pub fn seatOver(self: *DimOverlay, card: w32.HWND) bool {
+        if (T2308_NEUTERED or !self.shown) return false;
+        if (w32.IsWindowVisible_(card) == 0) return false;
+        if (w32.isBelowInBand(self.owner, self.hwnd, card)) return false;
+        // Directly beneath whatever is directly above the card (null: the
+        // card is the top window, and so is the wash now).
+        _ = w32.SetWindowPos(
+            self.hwnd,
+            w32.GetWindow(card, w32.GW_HWNDPREV),
+            0,
+            0,
+            0,
+            0,
+            w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE,
+        );
+        return true;
+    }
+
     /// The wash's window region: the owner's card shape (`region_key`,
-    /// T1831), in this popup's coordinates - shifted by `origin_x/_y` when
-    /// the popup covers only the part of the owner in view (T2227).
+    /// T1831) in this popup's coordinates - shifted by the origin when the
+    /// popup covers only the part of the owner in view (T2227), or reaches
+    /// up over its banner (T2308) - plus that banner band, cut with the
+    /// strip's own top corners.
     fn applyRegion(self: *DimOverlay) void {
-        if (self.region_key == 0) {
+        const s = self.shape;
+        const rounded_band = s.band > 0 and s.corner > 0;
+        if (self.region_key == 0 and !rounded_band) {
             _ = w32.SetWindowRgn(self.hwnd, null, 1);
             return;
         }
         const rgn = w32.CreateRectRgn(0, 0, 0, 0) orelse return;
-        if (w32.GetWindowRgn(self.owner, rgn) == 0) {
+        var cut = false;
+        if (self.region_key != 0) {
+            if (w32.GetWindowRgn(self.owner, rgn) != 0) {
+                cut = true;
+                if (s.origin_x != 0 or s.origin_y != 0) _ = w32.OffsetRgn(rgn, -s.origin_x, -s.origin_y);
+            } else self.region_key = 0;
+        }
+        if (s.band > 0 and (cut or rounded_band)) {
+            // The owner uncut is its whole rect below the band (the window
+            // clips the open bottom).
+            if (!cut) _ = w32.SetRectRgn(rgn, 0, s.band, std.math.maxInt(i16), std.math.maxInt(i16));
+            if (bandRegion(s)) |b| {
+                _ = w32.CombineRgn(rgn, rgn, b, w32.RGN_OR);
+                _ = w32.DeleteObject(b);
+            }
+            cut = true;
+        }
+        if (!cut) {
             _ = w32.DeleteObject(rgn);
-            self.region_key = 0;
+            _ = w32.SetWindowRgn(self.hwnd, null, 1);
             return;
         }
-        if (self.origin_x != 0 or self.origin_y != 0) _ = w32.OffsetRgn(rgn, -self.origin_x, -self.origin_y);
         if (w32.SetWindowRgn(self.hwnd, rgn, 1) == 0) {
             _ = w32.DeleteObject(rgn);
             self.region_key = 0;
@@ -294,6 +386,107 @@ pub const DimOverlay = struct {
         _ = w32.FillRect(hdc, &rect, brush);
     }
 };
+
+/// The band rows of the wash's region (T2308): the banner strip's shape -
+/// the rounded rect `BannerOverlay.applyCardCorner` cuts, which runs a whole
+/// corner past the band so only its top corners fall inside - kept to the
+/// band. A square band is a plain rect.
+fn bandRegion(s: DimOverlay.Shape) ?*anyopaque {
+    const right = if (s.width > 0) s.width else std.math.maxInt(i16);
+    const full = w32.CreateRectRgn(0, 0, right, s.band) orelse return null;
+    if (s.corner <= 0) return full;
+    const round = w32.CreateRoundRectRgn(0, 0, s.width + 1, s.band + s.corner + 1, s.corner, s.corner) orelse return full;
+    defer _ = w32.DeleteObject(round);
+    _ = w32.CombineRgn(full, full, round, w32.RGN_AND);
+    return full;
+}
+
+/// Negative control for T2308 (`pane-banner.ps1` section 7c). Flipping it
+/// gives the wash back the terminal's rect alone and leaves its stacking to
+/// chance, as before T2308: an unfocused pane's banner stays undimmed.
+pub const T2308_NEUTERED = false;
+
+test "DimOverlay: the T2308 negative control ships clear" {
+    try std.testing.expect(!T2308_NEUTERED);
+}
+
+test "DimOverlay: the wash covers the banner band and stacks over the strip (T2308)" {
+    const testing = std.testing;
+    const hinstance = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
+    const class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyDimBandTest");
+    const wc = w32.WNDCLASSEXW{
+        .cbSize = @sizeOf(w32.WNDCLASSEXW),
+        .style = 0,
+        .lpfnWndProc = &w32.DefWindowProcW,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = hinstance,
+        .hIcon = null,
+        .hCursor = null,
+        .hbrBackground = null,
+        .lpszMenuName = null,
+        .lpszClassName = class,
+        .hIconSm = null,
+    };
+    _ = w32.RegisterClassExW(&wc);
+    defer _ = w32.UnregisterClassW(class, hinstance);
+    const title = std.unicode.utf8ToUtf16LeStringLiteral("dim band test");
+    const top = w32.CreateWindowExW(0, class, title, w32.WS_POPUP, 0, 0, 600, 400, null, null, hinstance, null) orelse return error.Win32Error;
+    defer _ = w32.DestroyWindow(top);
+    // The terminal's window, pushed down by a 60px banner band.
+    const owner = w32.CreateWindowExW(0, class, title, w32.WS_CHILD | w32.WS_VISIBLE_STYLE, 20, 100, 300, 200, top, null, hinstance, null) orelse return error.Win32Error;
+    // The banner strip: a popup with the same owner, in the band.
+    const strip = w32.CreateWindowExW(w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE, class, title, w32.WS_POPUP, 0, 0, 1, 1, owner, null, hinstance, null) orelse return error.Win32Error;
+
+    const d = try DimOverlay.create(testing.allocator, owner, hinstance);
+    defer d.destroy();
+
+    var orect: w32.RECT = undefined;
+    try testing.expect(w32.GetWindowRect(owner, &orect) != 0);
+
+    // No banner: the wash is the terminal's rect.
+    _ = d.show(w32.RGB(16, 16, 20), 77, null);
+    try testing.expectEqual(orect.top, d.placement.top);
+    try testing.expectEqual(orect.bottom - orect.top, d.placement.height);
+
+    // A banner: the wash starts at the top of its band.
+    d.setBand(.{ .height = 60 });
+    try testing.expect(d.show(w32.RGB(16, 16, 20), 77, null));
+    try testing.expectEqual(orect.top - 60, d.placement.top);
+    try testing.expectEqual(orect.bottom - orect.top + 60, d.placement.height);
+    try testing.expectEqual(orect.left, d.placement.left);
+
+    // A rounded band cuts the wash's top corners: the corner pixel is out,
+    // the middle of the band and the terminal's corner are in.
+    d.setBand(.{ .height = 60, .corner = 16 });
+    _ = d.show(w32.RGB(16, 16, 20), 77, null);
+    const rgn = w32.CreateRectRgn(0, 0, 0, 0) orelse return error.Win32Error;
+    defer _ = w32.DeleteObject(rgn);
+    try testing.expect(w32.GetWindowRgn(d.hwnd, rgn) != 0);
+    try testing.expect(w32.PtInRegion(rgn, 0, 0) == 0);
+    try testing.expect(w32.PtInRegion(rgn, 150, 30) != 0);
+    try testing.expect(w32.PtInRegion(rgn, 0, 60) != 0);
+    try testing.expect(w32.PtInRegion(rgn, 299, 259) != 0);
+
+    // The banner gone: back to the terminal's rect, uncut.
+    d.setBand(.{});
+    try testing.expect(d.show(w32.RGB(16, 16, 20), 77, null));
+    try testing.expectEqual(orect.top, d.placement.top);
+    try testing.expect(w32.GetWindowRgn(d.hwnd, rgn) == 0);
+
+    // Stacking: a strip lifted over the wash gets the wash put back on top.
+    _ = w32.SetWindowPos(strip, null, orect.left, orect.top - 60, 300, 60, w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW);
+    defer _ = w32.ShowWindow(strip, w32.SW_HIDE);
+    _ = w32.SetWindowPos(strip, null, 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE);
+    try testing.expect(w32.isBelowInBand(owner, strip, d.hwnd));
+    try testing.expect(d.seatOver(strip));
+    try testing.expect(w32.isBelowInBand(owner, d.hwnd, strip));
+    // ...and in order already, nothing moves.
+    try testing.expect(!d.seatOver(strip));
+    // A hidden wash never re-stacks.
+    d.hide();
+    try testing.expect(!d.seatOver(strip));
+}
 
 var class_registered: bool = false;
 

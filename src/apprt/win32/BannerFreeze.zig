@@ -152,20 +152,10 @@ fn seatAfter(owner: w32.HWND, card: w32.HWND, dim: ?w32.HWND) w32.HWND {
     };
 }
 
-/// Is `lower` anywhere beneath `upper` before their owner's top-level window?
-/// Owned popups always sit above their owner, so the walk ends there.
+/// Is `lower` anywhere beneath `upper`? A pathological chain answers "not
+/// below", which seats under the card exactly as before.
 fn isBelow(owner: w32.HWND, upper: w32.HWND, lower: w32.HWND) bool {
-    const root = w32.GetAncestor(owner, w32.GA_ROOT) orelse owner;
-    var next = w32.GetWindow(upper, w32.GW_HWNDNEXT);
-    // Bounded: a pathological chain answers "not below", which seats under
-    // the card exactly as before.
-    for (0..512) |_| {
-        const cur = next orelse return false;
-        if (cur == lower) return true;
-        if (cur == root) return false;
-        next = w32.GetWindow(cur, w32.GW_HWNDNEXT);
-    }
-    return false;
+    return w32.isBelowInBand(owner, upper, lower);
 }
 
 /// Debug oracle for `pane-banner.ps1`'s T2261 section: is a shown `dim`

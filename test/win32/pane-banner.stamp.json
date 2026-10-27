@@ -1,22 +1,22 @@
 {
     "guard":  "pane-banner",
     "script":  "test/win32/pane-banner.ps1",
-    "generated":  "2026-10-27T07:03:24-07:00",
-    "commit":  "df1efdf51",
+    "generated":  "2026-10-27T08:47:55-07:00",
+    "commit":  "7756905b5",
     "uncommitted":  [
-                        "src/apprt/win32/banner_card.zig",
-                        "src/apprt/win32/BannerOverlay.zig"
+                        "src/apprt/win32/BannerFreeze.zig",
+                        "test/win32/pane-banner.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/banner_card.zig":  "9697c5e10f7cbd77852c8d9318f8f1e65bffb6e934d6c8a673ccefc4ae5cb53f",
+                  "src/apprt/win32/banner_card.zig":  "d3189d5705b13587380436744a14ec0dd09d5d74528bf872ab15b031c56d4605",
                   "src/apprt/win32/banner_glide.zig":  "3975542db037c63aff42938225a925ca60996608cef458571279dd1b28126497",
                   "src/apprt/win32/banner_layout.zig":  "9a4fef1af1553e28f590f3bd5efab4791d03bddea0122b0b53b2cf92cd80f195",
                   "src/apprt/win32/banner_link.zig":  "0ca33afdba886a50a930f6cdb93f79e2a066ad776ea1a68b1215239d4bf020a7",
                   "src/apprt/win32/banner_markdown.zig":  "cc606914608fa4bca12b7c2efbc493c60bd37805d3cc3593d4b548139e28015d",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
-                  "src/apprt/win32/BannerFreeze.zig":  "b46bf9fb23df79671d0c308c099584e2800b212ba0d61221694c964edbbe8d13",
-                  "src/apprt/win32/BannerOverlay.zig":  "80f12ed29266e9770c98c1f6e9f1074c468376684bc64a754dc6d3ff7a9c70dc",
+                  "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
+                  "src/apprt/win32/BannerOverlay.zig":  "fd5d85aeb6926c67435bcf02792d8a78f031d10cfb67f593b098cc9bc15bf2e4",
                   "src/apprt/win32/ViewerPane.zig":  "de8a0fd92ce6651ae3febb6e6f1c050bf187c453e676e298698835468d373aba",
-                  "test/win32/pane-banner.ps1":  "f0b55e20e95c8cfdf78993514610b8b0e9b2dbb29ea36f217ead6a90db293887"
+                  "test/win32/pane-banner.ps1":  "cc7fa9d1d6904030d20d114028528e8f5c9b7b9206553cc157bcaa28056463ce"
               }
 }

@@ -1401,9 +1401,24 @@ pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, batch: ?*?w32.HDWP)
             return;
         };
     }
+    // The wash covers the banner band above the terminal too (T2308), the
+    // way Mac's dim covers the whole pane.
+    self.dim_overlay.?.setBand(if (self.banner_overlay) |b| .{
+        .height = @max(b.inset, 0),
+        .corner = b.card_corner,
+    } else .{});
     _ = self.dim_overlay.?.show(color, alpha, batch);
     // An elevated pane's wash takes its card's rounded shape (T1831).
     if (self.pane_view) |pv| self.dim_overlay.?.matchOwnerRegion(pv.card_region_key);
+}
+
+/// Stack this pane's dim over its banner strip (T2308): Mac's dim is the
+/// last layer of the pane. Run after the strips are placed, since placing
+/// one can re-seat it.
+pub fn seatDimOverBanner(self: *Surface) void {
+    const d = self.dim_overlay orelse return;
+    const b = self.banner_overlay orelse return;
+    _ = d.seatOver(b.hwnd);
 }
 
 /// Hide this pane's dim overlay if it exists.

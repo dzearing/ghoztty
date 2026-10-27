@@ -2100,6 +2100,13 @@ pub extern "gdi32" fn OffsetRgn(hrgn: *anyopaque, x: i32, y: i32) callconv(.wina
 /// the rail column OR its rounded card (T1842).
 pub extern "gdi32" fn CombineRgn(dst: *anyopaque, src1: *anyopaque, src2: *anyopaque, mode: i32) callconv(.winapi) i32;
 pub const RGN_OR: i32 = 2;
+pub const RGN_AND: i32 = 1;
+/// Reset an existing region to a rectangle - a dim wash over an uncut pane
+/// starts from the pane's whole rect below its banner band (T2308).
+/// Whether a point lies in a region - a unit test reads a dim wash's cut
+/// corners (T2308).
+pub extern "gdi32" fn PtInRegion(hrgn: *anyopaque, x: i32, y: i32) callconv(.winapi) i32;
+pub extern "gdi32" fn SetRectRgn(hrgn: *anyopaque, left: i32, top: i32, right: i32, bottom: i32) callconv(.winapi) i32;
 /// The window under a SCREEN point, honoring window regions - the pane
 /// sidebar asks whether the pointer is still on its card (T1842).
 pub extern "user32" fn WindowFromPoint(pt: POINT) callconv(.winapi) ?HWND;
@@ -2874,6 +2881,24 @@ pub fn healOverlayZOrderAfterMove(hwnd: HWND, owner: HWND, was_shown: bool) void
         .suppressed = chrome_fanout.state.suppressed(),
         .was_shown = was_shown,
     }));
+}
+
+/// Is `lower` anywhere beneath `upper` before `owner`'s top-level window?
+/// Two popups with one owner sit in whatever order last moved them, so the
+/// layering a pane needs - the frozen copy under the dim (T2261), the dim
+/// over the banner (T2308) - is read, not assumed. Owned popups always sit
+/// above their owner, so the walk ends there.
+pub fn isBelowInBand(owner: HWND, upper: HWND, lower: HWND) bool {
+    const root = GetAncestor(owner, GA_ROOT) orelse owner;
+    var next = GetWindow(upper, GW_HWNDNEXT);
+    // Bounded: a pathological chain answers "not below".
+    for (0..512) |_| {
+        const cur = next orelse return false;
+        if (cur == lower) return true;
+        if (cur == root) return false;
+        next = GetWindow(cur, GW_HWNDNEXT);
+    }
+    return false;
 }
 
 // -----------------------------------------------------------------------
