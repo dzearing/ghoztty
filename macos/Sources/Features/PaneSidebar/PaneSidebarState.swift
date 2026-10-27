@@ -21,35 +21,29 @@ final class PaneSidebarSharedState: ObservableObject {
 
     private let defaults: UserDefaults
 
-    /// The full list (true) or the icon-only rail (false). Moves every
-    /// window's column, so every window redraws for it at once
-    /// (`isChangingColumn`).
+    /// The full list (true) or the icon-only rail (false).
     @Published var isExpanded: Bool {
-        willSet { isChangingColumn = true }
-        didSet {
-            isChangingColumn = false
-            if isExpanded != oldValue { defaults.set(isExpanded, forKey: Self.expandedKey) }
-        }
+        didSet { if isExpanded != oldValue { defaults.set(isExpanded, forKey: Self.expandedKey) } }
     }
 
-    /// Hidden outright (Ctrl+Cmd+S). Moves every window's column, as
-    /// `isExpanded`.
+    /// Hidden outright (Ctrl+Cmd+S).
     @Published var isHidden: Bool {
-        willSet { isChangingColumn = true }
+        didSet { if isHidden != oldValue { defaults.set(isHidden, forKey: Self.hiddenKey) } }
+    }
+
+    /// The expanded panel's width. Written to the defaults once an edge drag
+    /// pauses, not on every frame of it.
+    @Published var width: CGFloat {
         didSet {
-            isChangingColumn = false
-            if isHidden != oldValue { defaults.set(isHidden, forKey: Self.hiddenKey) }
+            guard width != oldValue else { return }
+            widthWrite?.cancel()
+            let (defaults, width) = (defaults, width)
+            let write = DispatchWorkItem { defaults.set(Double(width), forKey: Self.widthKey) }
+            widthWrite = write
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: write)
         }
     }
-
-    /// The change being announced moves every window's sidebar column — and
-    /// so its grid — so no window may put off redrawing for it.
-    private(set) var isChangingColumn = false
-
-    /// The expanded panel's width.
-    @Published var width: CGFloat {
-        didSet { if width != oldValue { defaults.set(Double(width), forKey: Self.widthKey) } }
-    }
+    private var widthWrite: DispatchWorkItem?
 
     /// List panes from every window, grouped by window. Off at launch.
     @Published var showsAllWindows: Bool = false {
@@ -81,6 +75,19 @@ final class PaneSidebarSharedState: ObservableObject {
 
     /// Folded project groups in the all-windows list, by project name.
     @Published var foldedProjects: Set<String> = []
+
+    /// Another window's row (`windowID`) or pane row (pane id) just clicked
+    /// in the all-windows list: drawn selected at once, in the window it was
+    /// clicked in, while that window comes forward and draws its own
+    /// selection. Cleared as it becomes key (`clearClicked`).
+    @Published var clickedWindow: UUID?
+    @Published var clickedPane: UUID?
+
+    /// `windowID`'s window became key: it shows its own selection now.
+    func clearClicked(windowID: UUID, panes: Set<UUID>) {
+        if clickedWindow == windowID { clickedWindow = nil }
+        if let pane = clickedPane, panes.contains(pane) { clickedPane = nil }
+    }
 
     /// The all-windows list's own order of windows and project groups, by
     /// `PaneSidebarWindowGrouping` key, as a drag left it. Empty = by name.
@@ -132,11 +139,11 @@ final class PaneSidebarSharedState: ObservableObject {
 ///
 /// Only the window in use redraws for a shared change as it happens
 /// (`isLive`, or the change was made through this window's state); every
-/// other window catches up when it becomes key (`catchUp`), so a width drag
-/// or a search typed in one window never re-renders every other window's
-/// sidebar per keystroke or frame. The exception is the column —
-/// collapse/expand, hide/show — which moves each window's grid, so every
-/// window redraws for it at once (`PaneSidebarSharedState.isChangingColumn`).
+/// other window catches up when it becomes key (`catchUp`), so a width drag,
+/// a collapse, or a search typed in one window never re-renders — or
+/// re-lays out — every other window per keystroke or frame. The column too:
+/// a background window takes a collapse or expand, and resizes its grid for
+/// it, when it is next key.
 ///
 /// Per window: the sidebar's order of THIS window's panes (`order`), its
 /// identity in the all-windows list (`windowID`), and drawing details
@@ -148,6 +155,7 @@ final class PaneSidebarSharedState: ObservableObject {
 final class PaneSidebarState: ObservableObject {
     let shared: PaneSidebarSharedState
     private var sharedChanges: AnyCancellable?
+    private var rosterChanges: AnyCancellable?
 
     /// Whether this sidebar redraws for a shared change right away: its
     /// window is key (or has none yet). Set by the window's controller.
@@ -221,13 +229,21 @@ final class PaneSidebarState: ObservableObject {
     /// so the rows themselves stay below it. Never persisted.
     @Published var tabRowHeight: CGFloat = 0
 
-    init(shared: PaneSidebarSharedState = .shared) {
+    init(shared: PaneSidebarSharedState = .shared, roster: PaneRoster? = .shared) {
         self.shared = shared
+        // Another window opened, closed, came forward or changed its panes:
+        // the all-windows list redraws for it now in the window in use, and
+        // in the others when they are next key — a window switch must not
+        // re-render every window's sidebar.
+        rosterChanges = roster?.objectWillChange.sink { [weak self] _ in
+            guard let self else { return }
+            if self.isLive() { self.objectWillChange.send() } else { self.isStale = true }
+        }
         // A shared change is a change to every window's sidebar: now, in
         // the window in use; when it is next key, in the others.
         sharedChanges = shared.objectWillChange.sink { [weak self] _ in
             guard let self else { return }
-            if self.isChanging || self.isLive() || shared.isChangingColumn {
+            if self.isChanging || self.isLive() {
                 self.isStale = false
                 self.objectWillChange.send()
             } else {
@@ -614,6 +630,11 @@ enum PaneSidebarWindowGrouping {
     static func sections<ID: Hashable>(_ windows: [(id: ID, title: String)]) -> [Section<ID>] {
         var projects: [String: [Entry<ID>]] = [:]
         var sections: [Section<ID>] = []
+        // Windows come in frontmost first. Put them in one fixed order before
+        // anything else, so windows that share a name (two shells both
+        // called `~`) tie-break the same way in every window's list — not
+        // with whichever window you are in on top.
+        let windows = windows.sorted { "\($0.id)" < "\($1.id)" }
         for window in windows {
             if let parts = split(window.title) {
                 projects[parts.project, default: []].append(
@@ -624,9 +645,11 @@ enum PaneSidebarWindowGrouping {
             }
         }
         for (project, entries) in projects {
-            sections.append(.init(project: project, windows: entries.sorted { before($0.label, $1.label) }))
+            sections.append(.init(project: project, windows: entries.sorted { before($0.label, $1.label, $0.key, $1.key) }))
         }
-        return sections.sorted { before($0.project ?? $0.windows[0].title, $1.project ?? $1.windows[0].title) }
+        return sections.sorted {
+            before($0.project ?? $0.windows[0].title, $1.project ?? $1.windows[0].title, $0.id, $1.id)
+        }
     }
 
     /// `sections(windows)` in the user's order: the top level (groups and
@@ -663,6 +686,16 @@ enum PaneSidebarWindowGrouping {
     /// "wt-10").
     static func before(_ a: String, _ b: String) -> Bool {
         a.localizedStandardCompare(b) == .orderedAscending
+    }
+
+    /// `before`, names that compare equal ordered by `aKey`/`bKey`: one total
+    /// order, the same whatever order the windows came in.
+    static func before(_ a: String, _ b: String, _ aKey: String, _ bKey: String) -> Bool {
+        switch a.localizedStandardCompare(b) {
+        case .orderedAscending: true
+        case .orderedDescending: false
+        case .orderedSame: aKey < bKey
+        }
     }
 }
 

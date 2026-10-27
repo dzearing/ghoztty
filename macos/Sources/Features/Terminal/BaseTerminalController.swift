@@ -2770,8 +2770,11 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        // The pane sidebar shows what changed in other windows meanwhile.
+        // The pane sidebar shows what changed in other windows meanwhile,
+        // and this window's own selection in place of a clicked row's.
         paneSidebarState.catchUp()
+        paneSidebarState.shared.clearClicked(
+            windowID: paneSidebarState.windowID, panes: Set(surfaceTree.map(\.id)))
 
         // Closing the window's last other tab makes it key again.
         collapseForcedTabBarIfAlone()

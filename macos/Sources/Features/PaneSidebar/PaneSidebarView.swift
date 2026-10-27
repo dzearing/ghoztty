@@ -11,7 +11,6 @@ struct PaneSidebarView: View {
     @ObservedObject var controller: BaseTerminalController
     @ObservedObject var state: PaneSidebarState
     @ObservedObject var geometry: PaneSidebarGeometry
-    @ObservedObject private var roster = PaneRoster.shared
     @ObservedObject private var dragSession = PaneDragSession.shared
     @ObservedObject private var rowDrag = PaneSidebarRowDrag.shared
     @ObservedObject private var itemDrag = PaneSidebarItemDrag.shared
@@ -89,9 +88,12 @@ struct PaneSidebarView: View {
     private var ghost: some View {
         if let pane = rowDrag.pane, let frame = rowDrag.frame,
            controller.surfaceTree.contains(where: { $0 === pane }) {
+            // Only this observes the pointer's travel, so a move redraws the
+            // dragged row, not every window's list.
+            PaneSidebarObserving(rowDrag.motion) { motion in
             GeometryReader { proxy in
                 let origin = proxy.frame(in: .named(PaneSidebarGeometry.space)).origin
-                let top = rowDrag.isSettling ? frame.minY : frame.minY + rowDrag.dy
+                let top = rowDrag.isSettling ? frame.minY : frame.minY + motion.dy
                 let y = Swift.min(Swift.max(top - origin.y, 0), Swift.max(0, proxy.size.height - frame.height))
                 PaneSidebarRow(
                     pane: pane, owner: controller,
@@ -116,6 +118,7 @@ struct PaneSidebarView: View {
                     .offset(x: frame.minX - origin.x, y: y)
                     .animation(rowDrag.isSettling ? PaneSidebarRowDrag.settleAnimation : nil, value: y)
                     .animation(PaneSidebarRowDrag.settleAnimation, value: rowDrag.isSettling)
+            }
             }
             .allowsHitTesting(false)
         }
@@ -263,8 +266,7 @@ struct PaneSidebarView: View {
     /// Every terminal window with a sidebar, this one included even before
     /// it is visible.
     private var allControllers: [BaseTerminalController] {
-        _ = roster.controllers
-        return controller.paneSidebarAllControllers
+        controller.paneSidebarAllControllers
     }
 
     /// Every window, in the list's own order (by name until something is
@@ -401,6 +403,7 @@ struct PaneSidebarView: View {
                     showsThisWindowTag: isThisWindow && state.showsAllWindows,
                     indent: indent,
                     isFolded: folded,
+                    isClicked: !isThisWindow && state.shared.clickedWindow == id,
                     isDropTarget: isJoinTarget(owner),
                     onFold: onFold)
                     .paneSidebarItemDrag(
@@ -410,6 +413,8 @@ struct PaneSidebarView: View {
                         trailing: PaneSidebarWindowHeader.trailingControls,
                         help: isThisWindow ? "This window — drag to reorder" : "Raise this window — drag to reorder") {
                             guard !isThisWindow else { return onFold() }
+                            // Selected at once, while it comes forward.
+                            state.shared.clickedWindow = id
                             owner.window?.makeKeyAndOrderFront(nil)
                             NSApp.activate(ignoringOtherApps: true)
                         }
@@ -475,7 +480,8 @@ struct PaneSidebarView: View {
 
         ForEach(Array(visible.enumerated()), id: \.element.id) { index, pane in
             row(pane, owner: owner, isStashed: false,
-                isSelected: pane === focused, isThisWindow: isThisWindow, indent: indent)
+                isSelected: pane === focused || (!isThisWindow && state.shared.clickedPane == pane.id),
+                isThisWindow: isThisWindow, indent: indent)
                 .modifier(PaneSidebarShift(
                     rows: slide.map { PaneSidebarOrder.shift(index: index, source: $0.source, target: $0.target) } ?? 0,
                     height: drag?.height ?? 0,
@@ -763,6 +769,21 @@ struct PaneSidebarView: View {
     }
 }
 
+/// Observes `model` for its content alone: a part of a view that must redraw
+/// on every change of a fast-changing model (a drag's pointer travel) without
+/// the view around it observing that model too.
+struct PaneSidebarObserving<Model: ObservableObject, Content: View>: View {
+    @ObservedObject private var model: Model
+    private let content: (Model) -> Content
+
+    init(_ model: Model, @ViewBuilder content: @escaping (Model) -> Content) {
+        self.model = model
+        self.content = content
+    }
+
+    var body: some View { content(model) }
+}
+
 // MARK: - Header button
 
 /// A 24pt borderless glyph button, styled exactly like the viewer nav bar's
@@ -798,6 +819,8 @@ struct PaneSidebarWindowHeader: View {
     /// Inside a project group: one outline level in.
     var indent: CGFloat = 0
     let isFolded: Bool
+    /// Just clicked (another window): selected while it comes forward.
+    var isClicked = false
     let isDropTarget: Bool
     let onFold: () -> Void
 
@@ -807,7 +830,7 @@ struct PaneSidebarWindowHeader: View {
 
     /// This window folded: the selected pane is inside the fold, so its
     /// header carries the selection, as a row would.
-    private var isSelected: Bool { isThisWindow && isFolded }
+    private var isSelected: Bool { (isThisWindow && isFolded) || isClicked }
     private var onAccent: Bool { isSelected && windowIsKey }
 
     static let contentHeight: CGFloat = 16

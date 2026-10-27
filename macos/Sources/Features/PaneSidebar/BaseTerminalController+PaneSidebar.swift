@@ -169,20 +169,17 @@ extension BaseTerminalController {
             elevated: ghostty.config.macosPaneStyle == .elevated)
     }
 
-    /// Make a change that moves the sidebar's column, telling each grid first
+    /// Make a change that moves the sidebar's column, telling the grid first
     /// so it glides over rather than snapping (`PaneStackState.noteColumnShift`).
     /// The sidebar animates its own width to match (`PaneSidebarContainer`).
-    /// Every window's: the flags are shared (`PaneSidebarSharedState`), so
-    /// collapsing one window's sidebar collapses them all — each window by
-    /// its own column, since a narrow one was showing the rail anyway.
+    /// This window only: the flags are shared (`PaneSidebarSharedState`), but
+    /// another window takes the change when it is next key
+    /// (`PaneSidebarState.catchUp`), so a collapse stays as quick as one
+    /// window's.
     private func changingPaneSidebarColumn(_ change: () -> Void) {
-        let windows = paneSidebarAllControllers
-        let before = windows.map(\.paneSidebarColumn)
+        let before = paneSidebarColumn
         change()
-        for (window, before) in zip(windows, before) {
-            let shift = window.paneSidebarColumn - before
-            if shift != 0 { window.paneStackState.noteColumnShift(shift) }
-        }
+        paneStackState.noteColumnShift(paneSidebarColumn - before)
     }
 
     /// The sidebar's order of its panes and its identity in the all-windows

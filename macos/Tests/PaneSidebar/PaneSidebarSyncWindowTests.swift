@@ -104,12 +104,19 @@ struct PaneSidebarSyncWindowTests {
         let bHost = try #require(b.paneSidebarHost)
         #expect(bHost.mode == .expanded)
 
+        // A collapse is a's alone until b is next key: then b has it too.
         a.setPaneSidebarExpanded(false, cause: "test")
         await settle(0.5)
-        #expect(b.paneSidebarHost?.mode == .collapsed, "b collapsed with a")
-        a.setPaneSidebarExpanded(true, cause: "test")
+        #expect(a.paneSidebarHost?.mode == .collapsed)
+        #expect(b.paneSidebarHost?.mode == .expanded, "b, in the background, is not re-laid out")
+        use(b, among: windows)
         await settle(0.5)
-        #expect(b.paneSidebarHost?.mode == .expanded)
+        #expect(b.paneSidebarHost?.mode == .collapsed, "b collapsed as it became key")
+        b.setPaneSidebarExpanded(true, cause: "test")
+        await settle(0.5)
+        use(a, among: windows)
+        await settle(0.5)
+        #expect(a.paneSidebarHost?.mode == .expanded)
 
         // A width change redraws only the window in use; b catches up as
         // it becomes key.
@@ -126,10 +133,14 @@ struct PaneSidebarSyncWindowTests {
 
         a.togglePaneSidebar()
         await settle(0.5)
-        #expect(b.paneSidebarHost == nil, "b's sidebar hid with a's")
-        a.togglePaneSidebar()
+        use(b, among: windows)
         await settle(0.5)
-        #expect(b.paneSidebarHost?.mode == .expanded)
+        #expect(b.paneSidebarHost == nil, "b's sidebar hid with a's")
+        b.togglePaneSidebar()
+        await settle(0.5)
+        use(a, among: windows)
+        await settle(0.5)
+        #expect(a.paneSidebarHost?.mode == .expanded)
 
         // All windows, turned on in a: in b too, with the same folds.
         a.paneSidebarState.showsAllWindows = true

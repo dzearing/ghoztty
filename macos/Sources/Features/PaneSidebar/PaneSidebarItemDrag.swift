@@ -100,11 +100,22 @@ final class PaneSidebarItemDrag: ObservableObject {
     /// The sidebar it is dragged in.
     private(set) weak var controller: BaseTerminalController?
 
+    /// What changes as the pointer moves, apart from what changes once per
+    /// drag (`key`, `isSettling`): only the items that slide or lift observe
+    /// it, so a pointer move redraws them and not every window's whole list.
+    let motion = PaneSidebarItemDragMotion()
+
     /// Where the dragged item's top is drawn, in the sidebar's space
     /// (`PaneSidebarGeometry.space`).
-    @Published private(set) var top: CGFloat = 0
+    private(set) var top: CGFloat {
+        get { motion.top }
+        set { motion.top = newValue }
+    }
     /// The index it would land at among the siblings without it.
-    @Published private(set) var target: Int?
+    private(set) var target: Int? {
+        get { motion.target }
+        set { motion.target = newValue }
+    }
     /// Let go: gliding into place, the order already changed.
     @Published private(set) var isSettling = false
     /// The siblings' laid-out frames, by key, from the list
@@ -324,6 +335,13 @@ extension BaseTerminalController {
     }
 }
 
+/// `PaneSidebarItemDrag`'s per-pointer-move state.
+@MainActor
+final class PaneSidebarItemDragMotion: ObservableObject {
+    @Published fileprivate(set) var top: CGFloat = 0
+    @Published fileprivate(set) var target: Int?
+}
+
 // MARK: - Drag source
 
 /// A window row's or project header's AppKit half: click and drag. The
@@ -482,17 +500,29 @@ private struct PaneSidebarItemDragOverlay: ViewModifier {
 /// others slid to make room (`PaneSidebarItemDrag.shift`) — a short bounded
 /// animation, none once it lands, as `PaneSidebarShift`.
 ///
+/// It observes the drag's `motion`, so a pointer move redraws the items, not
+/// the list around them.
+///
 /// It also reports the item's frame AS LAID OUT (`PaneSidebarItemFrames`),
 /// from outside its offset, and raises the dragged one OUTERMOST — a z-index
 /// under other modifiers does not reach its siblings.
 struct PaneSidebarItemShift: ViewModifier {
     let key: String
-    @ObservedObject var drag: PaneSidebarItemDrag
+    let drag: PaneSidebarItemDrag
+    @ObservedObject private var motion: PaneSidebarItemDragMotion
     let isActive: Bool
     /// Lifted, it is drawn over a solid backing and a shadow: a window, so
     /// it reads as on top of the rows it passes. Not a group's parts — its
     /// header is already its own glass band, and its gaps are empty space.
-    var showsBacking = true
+    var showsBacking: Bool
+
+    init(key: String, drag: PaneSidebarItemDrag, isActive: Bool, showsBacking: Bool = true) {
+        self.key = key
+        self.drag = drag
+        self.motion = drag.motion
+        self.isActive = isActive
+        self.showsBacking = showsBacking
+    }
 
     func body(content: Content) -> some View {
         let lift = isActive ? drag.liftOffset(key) : nil
@@ -601,7 +631,12 @@ final class PaneSidebarScrollSyncView: NSView {
         observers.append(center.addObserver(
             forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.catchUp() }
+            // After the list has caught up (`PaneSidebarState.catchUp`) and
+            // laid out, so the position is measured against the list as it
+            // now is: a row clicked in another window lands in the same spot.
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.catchUp() }
+            }
         })
         // Appearing: start where the others are, once laid out.
         DispatchQueue.main.async { [weak self] in

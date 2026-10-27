@@ -20,14 +20,23 @@ shows the same view of it (see *Shared across windows*). Read before touching
   (`windowID`, persisted with the window) and drawing details
   (`tabRowHeight`).
 - **Only the window in use redraws as it happens.** Another window's
-  sidebar redraws for a shared change when it next becomes key
+  sidebar redraws for a shared change — or for another window opening,
+  closing or changing its panes (`PaneRoster`) — when it next becomes key
   (`PaneSidebarState.isLive` / `catchUp`, from `windowDidBecomeKey`), so a
-  width drag or a search typed in one window never re-renders every window
-  per frame or keystroke. A change made through a window's own state always
-  redraws that window. The exception is the **column**: collapse/expand and
-  hide/show move every window's grid, so every window redraws for them at
-  once (`PaneSidebarSharedState.isChangingColumn`), each grid gliding by its
-  own column's change (`changingPaneSidebarColumn`).
+  width drag, a collapse, a search or a window switch never re-renders or
+  re-lays out every window per frame or keystroke. That includes the
+  column: a background window takes a collapse/expand or hide/show, and
+  resizes its grid for it, when it is next key. A change made through a
+  window's own state always redraws that window.
+- **Drags redraw only what moves**: a drag's per-move state is published
+  apart (`PaneSidebarItemDrag.motion`, `PaneSidebarRowDrag.motion`) and
+  observed only by the items that slide or lift, and `PaneDragSession`
+  publishes its target only when it changes — every window's sidebar
+  observes the session.
+- **A clicked row is selected at once** (`clickedWindow` / `clickedPane`):
+  another window's row clicked in the all-windows list is drawn selected
+  in the window it was clicked in while its window comes forward, and
+  cleared as that window becomes key.
 - **The narrow-window rail stays per window**: a window under 720pt shows the
   rail whatever the shared flag says, and a wide one is never forced into
   it (`PaneSidebarState.mode` takes the window's width).

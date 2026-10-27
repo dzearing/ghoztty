@@ -158,7 +158,7 @@ struct PaneSidebarSharedStateTests {
         #expect(a.windowID != b.windowID)
     }
 
-    @Test func theLayoutAndTheOrderPersistTheScopeDoesNot() {
+    @Test func theLayoutAndTheOrderPersistTheScopeDoesNot() async throws {
         let store = defaults()
         let shared = PaneSidebarSharedState(defaults: store)
         shared.isExpanded = true
@@ -166,6 +166,8 @@ struct PaneSidebarSharedStateTests {
         shared.width = 300
         shared.windowOrder = ["project:relay", "project:ghoztty"]
         shared.setShowsAllWindows(true, from: UUID())
+        // The width is written once a drag pauses.
+        try await Task.sleep(nanoseconds: 500_000_000)
         let relaunched = PaneSidebarSharedState(defaults: store)
         #expect(relaunched.isExpanded && relaunched.isHidden && relaunched.width == 300)
         #expect(relaunched.windowOrder == ["project:relay", "project:ghoztty"])
@@ -576,6 +578,22 @@ struct PaneSidebarWindowOrderTests {
     @Test func noOrderIsByName() {
         #expect(shown(G.sections(windows(titles), order: [])) == [
             "Build logs", "[ghoztty]", "  alpha", "  wt-2", "  wt-10", "[relay]", "  main"])
+    }
+
+    /// Windows arrive frontmost first; the window you are in must not come
+    /// out on top of others with the same name.
+    @Test func sameNamedWindowsListTheSameWhicheverIsFrontmost() {
+        let titles = ["~", "~", "ghoztty: main", "ghoztty: main", "~"]
+        let open = windows(titles)
+        let expected = shown(G.sections(open, order: []))
+        let ids = G.sections(open, order: []).flatMap { $0.windows.map(\.id) }
+        for front in open.indices {
+            var frontFirst = open
+            frontFirst.insert(frontFirst.remove(at: front), at: 0)
+            #expect(shown(G.sections(frontFirst, order: [])) == expected)
+            #expect(G.sections(frontFirst, order: []).flatMap { $0.windows.map(\.id) } == ids,
+                    "window \(front + 1) frontmost")
+        }
     }
 
     @Test func theOrderWinsAtBothLevels() {

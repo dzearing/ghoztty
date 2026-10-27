@@ -32,7 +32,9 @@ struct PaneSidebarRow: View {
 
     /// The accent pill only while this window is key, and never for another
     /// window's focus — that one isn't focused HERE.
-    private var isEmphasized: Bool { windowIsKey && !isForeign }
+    /// Another window's row is selected only as it is clicked
+    /// (`PaneSidebarSharedState.clickedPane`), and then it is.
+    private var isEmphasized: Bool { windowIsKey && (!isForeign || isSelected) }
 
     private var onAccent: Bool { isSelected && isEmphasized }
 
@@ -278,6 +280,8 @@ struct PaneSidebarRow: View {
 
     private func click(_ event: NSEvent) {
         if isForeign {
+            // Selected at once, while its window comes forward.
+            PaneSidebarSharedState.shared.clickedPane = pane.id
             owner.revealPane(pane)
             return
         }
@@ -540,8 +544,19 @@ final class PaneSidebarRowDrag: ObservableObject {
     static let shared = PaneSidebarRowDrag()
 
     @Published private(set) var pane: PaneView?
+    /// The pointer's travel: published apart, observed only by the drawn
+    /// row, so a move redraws it and not every window's sidebar.
+    let motion = Motion()
     /// How far the pointer has moved down since the drag began.
-    @Published private(set) var dy: CGFloat = 0
+    private(set) var dy: CGFloat {
+        get { motion.dy }
+        set { motion.dy = newValue }
+    }
+
+    @MainActor
+    final class Motion: ObservableObject {
+        @Published fileprivate(set) var dy: CGFloat = 0
+    }
     /// Let go: gliding to its place in the list.
     @Published private(set) var isSettling = false
     /// The dragged row as laid out (before any slide), in the sidebar's
