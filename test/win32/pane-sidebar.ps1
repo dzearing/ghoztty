@@ -136,6 +136,12 @@ function PanelColumn([double]$Dip) { (Px 12) + (Px $Dip) + (Px 12) }
 # gap between the grid and stashed groups. Returns the tile's SCREEN center
 # for item $Index, given how many items are in the grid section.
 function Get-TileCenter($sb, [int]$Index, [int]$GridCount) {
+    # The app's own geometry first (T2324: this window's + slot heads the
+    # tiles, its height the header's - a font metric no arithmetic here has).
+    $rows = Get-RowsLine 'mini'
+    if ($null -ne $rows -and $Index -lt $rows.Items.Count) {
+        return @{ X = $sb.Left + $rows.Items[$Index].X; Y = $sb.Top + $rows.Items[$Index].Y }
+    }
     $margin = Px 12; $card = Px 52; $btn = Px 28; $group = Px 8
     $half = [math]::Max([int][math]::Round(2 * $script:scale, [MidpointRounding]::AwayFromZero), 1); $gap = 2 * $half; $pill = (Px 41) - $gap
     $inset = [int][math]::Truncate(($card - $btn) / 2)

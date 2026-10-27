@@ -143,6 +143,12 @@ function Get-TileCenter($sb, [int]$Index, [int]$GridCount) {
     $half = [math]::Max([int][math]::Round(2 * $script:scale, [MidpointRounding]::AwayFromZero), 1); $gap = 2 * $half; $pill = (Px 41) - $gap
     $inset = [int][math]::Truncate(($card - $btn) / 2)
     $y = $margin + $inset + $btn + $inset + $half
+    # T2324: this window's + slot heads the tiles, the header's height - a
+    # font metric no arithmetic here has. The app logs the slot's center
+    # (`radd=`), which sits half the slot below the header band; every
+    # window's rail lays it out alike, so any rail's line will do.
+    $line = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar rows mode=mini .* radd=\d+,(\d+)' }) | Select-Object -Last 1
+    if ($line -and $line -match ' radd=\d+,(\d+)') { $y += 2 * ([int]$Matches[1] - ($margin + $inset + $btn + $inset)) }
     for ($i = 0; $i -lt $Index; $i++) {
         $y += $pill + $gap
         if (($i + 1) -eq $GridCount -and $GridCount -gt 0) { $y += $group - $gap }

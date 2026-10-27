@@ -123,7 +123,9 @@ function Get-DarkHueRgb([int]$i) {
 function Get-HuePixelCount($shot, [double]$h, $row) {
     $bmp = $shot.Bitmap
     $y0 = [math]::Max(0, $row.Y - (Px 16)); $y1 = [math]::Min($bmp.Height, $row.Y + (Px 16))
-    $x1 = [math]::Min($bmp.Width, (Px 48))
+    # The icon column, one outline level (17 DIP) in under this window's
+    # header (T2324) - still short of the row's text.
+    $x1 = [math]::Min($bmp.Width, (Px 65))
     $n = 0
     for ($y = $y0; $y -lt $y1; $y++) {
         for ($x = 0; $x -lt $x1; $x++) {

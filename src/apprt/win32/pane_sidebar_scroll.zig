@@ -54,6 +54,7 @@ pub fn contentBottom(l: *const Layout, floor: i32) i32 {
     }
     for (l.heads[0..l.head_count]) |hd| b = @max(b, hd.rect.bottom);
     for (l.rules[0..l.rule_count]) |r| b = @max(b, r.bottom);
+    if (l.rail_add.width() > 0) b = @max(b, l.rail_add.bottom);
     inline for (.{ l.section_rule, l.stashed_caption, l.drop_slot, l.no_match }) |opt| {
         if (opt) |r| b = @max(b, r.bottom);
     }
@@ -106,6 +107,8 @@ pub fn apply(l: *Layout, want: i32, scale: f32) void {
         shiftOpt(&l.stashed_caption, dy);
         shiftOpt(&l.drop_slot, dy);
         shiftOpt(&l.no_match, dy);
+        // The rail's + slot heads the tiles and scrolls with them (T2324).
+        if (l.rail_add.width() > 0) shift(&l.rail_add, dy);
     }
     pinHead(l);
 }

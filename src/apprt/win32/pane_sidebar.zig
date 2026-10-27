@@ -661,6 +661,13 @@ pub const Layout = struct {
     /// The project head pinned to the viewport's top (Mac's sticky section
     /// header), an index into `heads`.
     sticky: ?usize = null,
+    /// The rail's stand-in for this window's header (T2324, Mac e94a9737e
+    /// `PaneSidebarRailAddSlot`): the window's + alone, centred in a slot the
+    /// header's exact height. Single roster on the rail only - empty otherwise.
+    rail_add: Rect = .{},
+    /// This window's header is folded (single roster, panel): its panes and
+    /// its tray have no place, so `addEmptyTray` lays out no well.
+    own_folded: bool = false,
 
     pub fn item(self: *const Layout, i: usize) Rect {
         return self.items[i];
@@ -1049,6 +1056,80 @@ fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, inse
     }
 }
 
+/// This window's header (T2324, Mac e94a9737e): the single roster is held by
+/// it exactly as a window is in all windows - chevron, name, and on hover +
+/// and x - with its panes and its tray one outline level in under it. On the
+/// rail the header is its + alone (`rail_add`), in a slot the header's exact
+/// height, so collapsing or expanding still moves no icon. `folded`: the
+/// chevron folded the panes away - the panel only; the rail always shows its
+/// tiles, as Mac's does. Called on a fresh layout, before `addEmptyTray`; a
+/// no-op for the all-windows outline, whose heads are its own.
+pub fn addThisWindowHead(l: *Layout, folded: bool, tm: TextMetrics, scale: f32) void {
+    if (l.mode == .hidden or l.outline) return;
+    const half = rowHalfGap(scale);
+    const head_h = rowHeight(false, tm, scale);
+    // The header's whole extent in the list, its gaps included (Mac
+    // `PaneSidebarWindowHeader.height`): what everything under it moves by.
+    const extent = head_h + 2 * half;
+    const top = l.header.bottom;
+    const c = l.card;
+    if (l.mode == .mini) {
+        const b = px(row_button_dip, scale);
+        const x = c.left + @divTrunc(c.width() - b, 2);
+        const y = top + @divTrunc(extent - b, 2);
+        l.rail_add = .{ .left = x, .top = y, .right = x + b, .bottom = y + b };
+        shiftBody(l, extent, 0);
+        return;
+    }
+    // Laid out as `layoutLines` lays out a window head at depth 0.
+    const fill = px(toc.fill_inset_dip, scale);
+    const chev = px(chevron_dip, scale);
+    const y = top + half;
+    const text_top = y + @divTrunc(head_h - tm.title_h, 2);
+    const cx = c.left + px(toc.label_inset_dip, scale);
+    const cy = text_top + @divTrunc(tm.title_h - chev, 2);
+    l.heads[0] = .{
+        .kind = .window,
+        .index = 0,
+        .depth = 0,
+        .rect = .{ .left = c.left + fill, .top = y, .right = c.right - fill, .bottom = y + head_h },
+        .chevron = .{ .left = cx, .top = cy, .right = cx + chev, .bottom = cy + chev },
+        .label_x = cx + chev + px(chevron_gap_dip, scale),
+    };
+    l.head_count = 1;
+    if (folded) {
+        // Its panes and its tray go with the fold.
+        for (0..l.count) |i| l.items[i] = .{};
+        l.section_rule = null;
+        l.stashed_caption = null;
+        l.own_folded = true;
+        return;
+    }
+    shiftBody(l, extent, px(outline_step_dip, scale));
+}
+
+/// Whether a window header says "This Window" (Mac `showsThisWindowTag`,
+/// e94a9737e): this window's, and only among other windows - heading the
+/// single roster, it is the only window there is.
+pub fn showsThisWindowTag(own: bool, all_windows: bool) bool {
+    return own and all_windows;
+}
+
+/// Move the single roster's rows and its tray's hairline and caption down by
+/// `dy`, their content in by `indent` (one outline level, under a header).
+fn shiftBody(l: *Layout, dy: i32, indent: i32) void {
+    for (0..l.count) |i| {
+        if (!l.shown(i)) continue;
+        shiftDown(&l.items[i], dy);
+        l.indent[i] += indent;
+    }
+    if (l.section_rule) |*r| {
+        shiftDown(r, dy);
+        r.left += indent;
+    }
+    if (l.stashed_caption) |*r| shiftDown(r, dy);
+}
+
 /// Add the empty tray below the grid rows (T1844, T2276; Mac 543489bca's
 /// `PaneSidebarEmptyStashSlot`): with nothing stashed, the tray is still
 /// there - it is a drop target - behind the same section rule a stash would
@@ -1059,7 +1140,7 @@ fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, inse
 /// nothing is shown; the outline's well is `addDragWell`'s.
 pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
     if (l.mode == .hidden) return;
-    if (l.outline) return;
+    if (l.outline or l.own_folded) return;
     if (l.first_stashed != l.count) return;
     const sm = px(sm_dip, scale);
     const hair = @max(px(1, scale), 1);
@@ -1069,7 +1150,9 @@ pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
         // The last row ends a half gap below its pill.
         const below = (if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom) + rowHalfGap(scale);
         const rule_y = below + sm;
-        l.section_rule = .{ .left = area.left + fill, .top = rule_y, .right = area.right - fill, .bottom = rule_y + hair };
+        // In by the rows' level under this window's header (T2324).
+        const indent = if (l.count > 0) l.indent[l.count - 1] else 0;
+        l.section_rule = .{ .left = area.left + fill + indent, .top = rule_y, .right = area.right - fill, .bottom = rule_y + hair };
         // Inset like the stashed row it stands in for, `sm` under the rule
         // (Mac's slot pads 4 above it).
         const top = rule_y + hair + sm;
@@ -1160,6 +1243,8 @@ pub const Hit = union(enum) {
     head_close: usize,
     /// An outline header's hover + (T2323).
     head_add: usize,
+    /// The rail's + in this window's header slot (T2324).
+    rail_add,
 };
 
 pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
@@ -1175,6 +1260,7 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     // Below the controls everything scrolls (T1878): what the scroll moved
     // out of the viewport is out of reach, whatever its rect says.
     if (l.viewport.height() > 0 and !l.viewport.contains(x, y)) return .none;
+    if (l.rail_add.contains(x, y)) return .rail_add;
 
     for (l.heads[0..l.head_count], 0..) |hd, k| {
         const hit_r = rowHitRect(l, hd.rect);
@@ -1811,6 +1897,119 @@ test "pane_sidebar: hit testing finds the toggle, rows, row buttons and nothing"
 
     const hidden = layout(.hidden, 0, 600, &items, tm, s);
     try testing.expectEqual(Hit.none, hitTest(&hidden, 0, 0, s));
+}
+
+test "pane_sidebar: this window's header holds the single roster, its panes one level in (T2324)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .two_line = true }, .{ .section = .stashed } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        const bare = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        var l = bare;
+        addThisWindowHead(&l, false, tm, s);
+        try testing.expectEqual(@as(usize, 1), l.head_count);
+        const hd = l.heads[0];
+        try testing.expectEqual(HeadKind.window, hd.kind);
+        // Straight under the header band, a half gap clear, one line tall.
+        try testing.expectEqual(l.header.bottom + rowHalfGap(s), hd.rect.top);
+        try testing.expectEqual(rowHeight(false, tm, s), hd.rect.height());
+        // Everything under it moves down by its whole extent, and in by one
+        // outline level - rows, the tray's hairline; the caption moves down.
+        const extent = rowHeight(false, tm, s) + rowGap(s);
+        for (0..items.len) |i| {
+            try testing.expectEqual(bare.items[i].top + extent, l.items[i].top);
+            try testing.expectEqual(bare.items[i].left, l.items[i].left);
+            try testing.expectEqual(px(outline_step_dip, s), l.indent[i]);
+        }
+        try testing.expectEqual(bare.section_rule.?.top + extent, l.section_rule.?.top);
+        try testing.expectEqual(bare.section_rule.?.left + px(outline_step_dip, s), l.section_rule.?.left);
+        try testing.expectEqual(bare.stashed_caption.?.top + extent, l.stashed_caption.?.top);
+        // The first row sits under the header as a pill under a pill.
+        try testing.expectEqual(hd.rect.bottom + rowGap(s), l.items[0].top);
+        // Its hover + and x hit, and the chevron folds.
+        const a = l.headAdd(0, s);
+        try testing.expectEqual(Hit{ .head_add = 0 }, hitTest(&l, a.centerX(), a.centerY(), s));
+        const x = l.headClose(0, s);
+        try testing.expectEqual(Hit{ .head_close = 0 }, hitTest(&l, x.centerX(), x.centerY(), s));
+        try testing.expectEqual(Hit{ .head_fold = 0 }, hitTest(&l, hd.chevron.centerX(), hd.chevron.centerY(), s));
+        try testing.expectEqual(Hit{ .head = 0 }, hitTest(&l, hd.label_x + px(4, s), hd.rect.centerY(), s));
+        try testing.expectEqual(Rect{}, l.rail_add);
+    }
+}
+
+test "pane_sidebar: on the rail this window's header is its + alone, so toggling moves no icon (T2324)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid }, .{ .section = .stashed } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        var panel = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        addThisWindowHead(&panel, false, tm, s);
+        var rail = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
+        const bare_rule = rail.section_rule.?;
+        addThisWindowHead(&rail, false, tm, s);
+        try testing.expectEqual(@as(usize, 0), rail.head_count);
+        // Every grid tile at its row's height: the slot is the header's
+        // exact extent (Mac `PaneSidebarWindowHeader.height`). (A stashed
+        // row sits under the panel's STASHED caption, which the rail has no
+        // room for - so it never matched its tile, header or not.)
+        for (0..items.len) |i| {
+            if (items[i].section == .grid) try testing.expectEqual(panel.items[i].top, rail.items[i].top);
+            try testing.expectEqual(@as(i32, 0), rail.indent[i]);
+        }
+        try testing.expectEqual(bare_rule.left, rail.section_rule.?.left);
+        // The + is the compact item button, centred in the card and in the
+        // header's band - level with the header's own +.
+        const b = rail.rail_add;
+        try testing.expectEqual(px(row_button_dip, s), b.width());
+        try testing.expectEqual(px(row_button_dip, s), b.height());
+        try testing.expect(@abs(b.centerX() - rail.card.centerX()) <= 1);
+        try testing.expect(@abs(b.centerY() - panel.heads[0].rect.centerY()) <= 1);
+        try testing.expectEqual(Hit.rail_add, hitTest(&rail, b.centerX(), b.centerY(), s));
+        try testing.expectEqual(Hit{ .item = 0 }, hitTest(&rail, rail.items[0].centerX(), rail.items[0].centerY(), s));
+    }
+}
+
+test "pane_sidebar: folding this window's header puts away its panes and its tray (T2324)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid } };
+    const s: f32 = 1.5;
+    const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+    var l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+    addThisWindowHead(&l, true, tm, s);
+    addEmptyTray(&l, tm, s);
+    try testing.expectEqual(@as(usize, 1), l.head_count);
+    for (0..items.len) |i| try testing.expect(!l.shown(i));
+    try testing.expectEqual(@as(?Rect, null), l.section_rule);
+    try testing.expectEqual(@as(?Rect, null), l.drop_slot);
+    // Unfolded, the empty tray's hairline is in at the rows' level.
+    var open = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+    addThisWindowHead(&open, false, tm, s);
+    addEmptyTray(&open, tm, s);
+    try testing.expect(open.drop_slot != null);
+    try testing.expectEqual(open.card.left + px(toc.fill_inset_dip, s) + px(outline_step_dip, s), open.section_rule.?.left);
+    // The rail never folds: its tiles stay.
+    var rail = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
+    addThisWindowHead(&rail, true, tm, s);
+    for (0..items.len) |i| try testing.expect(rail.shown(i));
+}
+
+test "pane_sidebar: \"This Window\" is said only among other windows (T2324)" {
+    try testing.expect(showsThisWindowTag(true, true));
+    try testing.expect(!showsThisWindowTag(true, false));
+    try testing.expect(!showsThisWindowTag(false, true));
+    try testing.expect(!showsThisWindowTag(false, false));
+}
+
+test "pane_sidebar: the all-windows outline keeps its own heads (T2324)" {
+    const items = [_]Item{.{ .section = .grid }};
+    const lines = [_]Line{ .{ .kind = .window, .index = 0 }, .{ .kind = .pane, .index = 0, .depth = 1 } };
+    const s: f32 = 1.0;
+    const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+    var l = layoutWith(.expanded, 240, 600, &items, &lines, tm, s);
+    const before = l;
+    addThisWindowHead(&l, false, tm, s);
+    try testing.expectEqual(before.head_count, l.head_count);
+    try testing.expectEqual(before.items[0], l.items[0]);
+    var rail = layoutWith(.mini, columnPx(.mini, 240, s), 600, &items, &lines, tm, s);
+    addThisWindowHead(&rail, false, tm, s);
+    try testing.expectEqual(Rect{}, rail.rail_add);
 }
 
 test "pane_sidebar: with nothing stashed the empty tray sits below the grid, uncaptioned (T1844, T2276, T2313)" {

@@ -5501,6 +5501,23 @@ $GuardTable = @(
             'test\win32\pane-sidebar-add.ps1'
         )
     },
+    # This window's list is held by its header (T2324, Mac e94a9737e): the
+    # header's + / fold / x in the panel and the rail's + slot of the
+    # header's height. The geometry is unit-tested in every lane; that the
+    # logged slot and header are where the clicks land, that they split, fold
+    # and close, and that no icon moves between rail and panel, is only
+    # answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-this-window'
+        Script = 'test\win32\pane-sidebar-this-window.ps1'
+        Stamp  = 'test\win32\pane-sidebar-this-window.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\pane_sidebar_scroll.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-this-window.ps1'
+        )
+    },
     # The sidebar scrolls (T1878): the wheel, the overlay thumb, revealing
     # the focused row, the sticky project header, and clicks and tips that
     # follow the offset. The pure half is unit-tested in every lane; that a
