@@ -1126,46 +1126,47 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
 
 /// The resize handle's grab band (Mac `SidePanelResizeHandle.grabWidth`).
 pub const grab_dip: f32 = 7;
-/// A rail pulled out past this expands (Mac `expandThreshold`). An expanded
-/// panel dragged narrow just stops at `min_width_dip`: it never collapses
-/// itself under a drag, which read as the panel jumping away mid-resize.
+/// An expanded panel's edge pushed in short of this tucks it back into the
+/// rail; between this and `min_width_dip` it stops at its minimum (T2299,
+/// Mac 543489bca `expandThreshold`).
 pub const expand_threshold_dip: f32 = 120;
 
 /// Whether (`x`, `y`) is on the edge that drags, in the flat style. Like
 /// every resizer it is never over a pane (T2125, Mac 2811a3043
-/// `resizeHandleOffset`): expanded, the band is the card's own trailing
-/// margin (T2290, Mac 0a547522d `edgeGrip`) - the gutter between the card and
-/// the panes, never over the card; on the rail it lies just inside the card's
-/// trailing edge (the rail's gutter is T2299's).
+/// `resizeHandleOffset`), and never over the card (T2290/T2299, Mac
+/// 543489bca `edgeGrip`): in both modes the band is the card's own trailing
+/// margin - the gutter between the card and the panes - so a press on a
+/// rail tile is always the tile's.
 pub fn onEdge(l: *const Layout, x: i32, y: i32, scale: f32) bool {
     return onEdgeIn(l, x, y, scale, false);
 }
 
-/// `onEdge` in either pane style. Elevated, the expanded panel's grip is not
-/// in the panel at all (T2265, Mac a81db68f9 `pinnedEdgeGrip`): it is the
-/// whole gutter between the panel and the panes - the grid's margin, which
-/// is the window's (`pinnedGripInGutter`) - so nothing in this window drags.
+/// `onEdge` in either pane style. Elevated, the grip is not in the sidebar
+/// at all (T2265, Mac a81db68f9 `pinnedEdgeGrip`; the rail's since T2299):
+/// it is the whole gutter between the card and the panes - the grid's
+/// margin, which is the window's (`pinnedGripInGutter`) - so nothing in this
+/// window drags.
 pub fn onEdgeIn(l: *const Layout, x: i32, y: i32, scale: f32, elevated: bool) bool {
     const band = edgeBand(l, scale, elevated) orelse return false;
     if (!band.contains(x, y)) return false;
-    return l.mode != .expanded or !onButton(l, x, y, scale);
+    return !onButton(l, x, y, scale);
 }
 
 /// The band in this window that drags the edge - where its accent bar shows
 /// (T2265, Mac `SidePanelResizeHandle.gutterBar`) - or null when it has none.
+/// The same in both modes (Mac `edgeGrip`): the rail's card and the panel's
+/// end at the same inset.
 pub fn edgeBand(l: *const Layout, scale: f32, elevated: bool) ?Rect {
     const g = @max(px(grab_dip, scale), 1);
-    return switch (l.mode) {
-        .hidden => null,
-        .expanded => if (pinnedGripInGutter(elevated)) null else .{ .left = l.card.right, .top = l.card.top, .right = @max(l.width, l.card.right + g), .bottom = l.card.bottom },
-        .mini => .{ .left = l.card.right - g, .top = l.card.top, .right = l.card.right, .bottom = l.card.bottom },
-    };
+    if (l.mode == .hidden or pinnedGripInGutter(elevated)) return null;
+    return .{ .left = l.card.right, .top = l.card.top, .right = @max(l.width, l.card.right + g), .bottom = l.card.bottom };
 }
 
-/// Whether the expanded panel's grip is the gutter beside it rather than a
-/// band inside it (Mac `PaneSidebarState.pinnedEdgeGrip`): elevated, the
-/// grid's margin lies between the panel and the panes and every resizer
-/// lives in a gutter; flat, the grid starts right at the panel's edge.
+/// Whether the sidebar's grip is the gutter beside it rather than a band
+/// inside its column (Mac `PaneSidebarState.edgeGrip`), in either mode:
+/// elevated, the grid's margin lies between the card and the panes and every
+/// resizer lives in a gutter; flat, the grid starts right at the column's
+/// edge and the card's own trailing margin is the gutter.
 pub fn pinnedGripInGutter(elevated: bool) bool {
     return elevated;
 }
@@ -1189,23 +1190,27 @@ pub fn edgeStartDip(m: Mode, panel_w_dip: f32) f32 {
     return if (m == .mini) rail_card_dip else clampWidth(panel_w_dip);
 }
 
-pub const EdgeDrag = union(enum) {
-    /// The rail was pulled out far enough: expand it.
-    expand,
-    /// The panel's new preferred width, already clamped.
-    width: f32,
+/// What an edge drag makes of the sidebar (Mac `edgeDrag`'s pair).
+pub const EdgeDrag = struct {
+    expanded: bool,
+    /// The panel's new preferred width, already clamped; null leaves it.
+    width: ?f32 = null,
 };
 
-/// An edge drag `dx_dip` from where it started at `start_dip`. The rail only
-/// expands (null until it is pulled past the threshold); the panel takes the
-/// clamped width and stops at the bounds.
+/// An edge drag `dx_dip` from where it started at `start_dip`, with the
+/// sidebar in mode `m` NOW (T2299, Mac 543489bca `edgeDrag`): past the
+/// panel's minimum, expanded at that width (clamped); short of
+/// `expand_threshold_dip`, the rail; between the two, what it already is -
+/// expanded at its minimum, or still the rail. So the rail comes out by its
+/// gutter once the panel would fit, and the panel tucks back into the rail
+/// when pushed well under its minimum, both within one drag and both ways,
+/// with a band between where neither flickers. Null when hidden.
 pub fn edgeDrag(m: Mode, start_dip: f32, dx_dip: f32) ?EdgeDrag {
+    if (m == .hidden) return null;
     const proposed = start_dip + dx_dip;
-    return switch (m) {
-        .hidden => null,
-        .mini => if (proposed > expand_threshold_dip) .expand else null,
-        .expanded => .{ .width = clampWidth(proposed) },
-    };
+    if (proposed >= min_width_dip) return .{ .expanded = true, .width = clampWidth(proposed) };
+    if (proposed < expand_threshold_dip) return .{ .expanded = false };
+    return if (m == .expanded) .{ .expanded = true, .width = min_width_dip } else .{ .expanded = false };
 }
 
 /// How far past the panes it has tucked into strips a gutter of a row
@@ -1542,11 +1547,10 @@ test "T1850: the elevated rail takes the panes' margin leading, top and bottom, 
         try testing.expectEqual(px(rail_card_dip, s), l.card.width());
         // Tiles stay centered in the card.
         try testing.expect(@abs((l.items[0].left - l.card.left) - (l.card.right - l.items[0].right)) <= 1);
-        // The whole edge band is inside the window, so all of it grabs.
-        const g = px(grab_dip, s);
-        try testing.expect(onEdge(&l, w - 1, l.card.centerY(), s));
-        try testing.expect(onEdge(&l, w - g, l.card.centerY(), s));
-        try testing.expect(!onEdge(&l, w - g - 1, l.card.centerY(), s));
+        // Nothing in the card grabs: the grip is the window's gutter beyond
+        // it (T2299, Mac 543489bca `edgeGrip`).
+        try testing.expect(edgeBand(&l, s, true) == null);
+        try testing.expect(!onEdgeIn(&l, w - 1, l.card.centerY(), s, true));
 
         // The panel's toggle is the rail's, in this style too (T2289).
         const e = layoutIn(.expanded, px(240, s), h, &items, null, tm, s, ins);
@@ -2002,7 +2006,7 @@ test "T2298: another window's row offers the x alone, in this window's column (M
     }
 }
 
-test "pane_sidebar: the edge band is the expanded card's trailing margin, and inside the rail card's edge" {
+test "pane_sidebar: the edge band is the card's trailing margin in both modes (T2290, T2299)" {
     const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid } };
     for (scales) |s| {
         const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
@@ -2025,17 +2029,20 @@ test "pane_sidebar: the edge band is the expanded card's trailing margin, and in
         const b = e.rowClose(0, s);
         try testing.expect(!onEdge(&e, b.right - 1, b.centerY(), s));
 
-        const r = layout(.mini, px(railColumnDip(), s), h, &items, tm, s);
+        // The rail: its gutter, never its tiles (T2299, Mac 543489bca
+        // `edgeGrip`) - the card's last pixel is a tile's.
+        const rw = px(railColumnDip(), s);
+        const r = layout(.mini, rw, h, &items, tm, s);
         const y = r.card.centerY();
-        try testing.expect(onEdge(&r, r.card.right - 1, y, s));
-        try testing.expect(onEdge(&r, r.card.right - g, y, s));
-        try testing.expect(!onEdge(&r, r.card.right - g - 1, y, s));
-        // Never past the card, where a pane may be (T2125).
-        try testing.expect(!onEdge(&r, r.card.right, y, s));
-        try testing.expect(!onEdge(&r, r.card.right + 1, y, s));
+        try testing.expect(onEdge(&r, r.card.right, y, s));
+        try testing.expect(onEdge(&r, rw - 1, y, s));
+        try testing.expect(!onEdge(&r, r.card.right - 1, y, s));
         try testing.expect(!onEdge(&r, r.card.centerX(), y, s));
+        try testing.expect(rw - r.card.right >= g);
+        const t = r.items[0];
+        try testing.expect(!onEdge(&r, t.right - 1, t.centerY(), s));
         // Only along the card: the margin above it is the grid's.
-        try testing.expect(!onEdge(&r, r.card.right - 1, r.card.top - 1, s));
+        try testing.expect(!onEdge(&r, rw - 1, r.card.top - 1, s));
 
         const hidden: Layout = .{ .mode = .hidden, .width = w, .height = h };
         try testing.expect(!onEdge(&hidden, w - 1, 10, s));
@@ -2056,10 +2063,13 @@ test "pane_sidebar: the pinned grip is the gutter when elevated, the card's own 
     try testing.expect(edgeBand(&e, s, true) == null);
     try testing.expect(!onEdgeIn(&e, w - 1, px(300, s), s, true));
     try testing.expect(pinnedGripInGutter(true) and !pinnedGripInGutter(false));
-    // The rail keeps its band inside the card in both styles.
-    const r = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
-    try testing.expectEqual(edgeBand(&r, s, false).?, edgeBand(&r, s, true).?);
-    try testing.expect(onEdgeIn(&r, r.card.right - 1, r.card.centerY(), s, true));
+    // The rail the same way (T2299, Mac 543489bca `edgeGrip`): flat, its
+    // card's trailing margin; elevated, the window's gutter.
+    const rw = columnPx(.mini, 240, s);
+    const r = layout(.mini, rw, px(600, s), &items, tm, s);
+    try testing.expectEqual(Rect{ .left = r.card.right, .top = r.card.top, .right = rw, .bottom = r.card.bottom }, edgeBand(&r, s, false).?);
+    try testing.expect(edgeBand(&r, s, true) == null);
+    try testing.expect(!onEdgeIn(&r, r.card.right - 1, r.card.centerY(), s, true));
 }
 
 test "pane_sidebar: T2277 a divider tucks the panel after the give it has above its minimum, between a nudge and a push" {
@@ -2072,29 +2082,39 @@ test "pane_sidebar: T2277 a divider tucks the panel after the give it has above 
     try testing.expect(divider_tuck_hysteresis_dip > 0);
 }
 
-test "pane_sidebar: dragging the rail out past 120 expands it; a panel only resizes, clamped, and never collapses" {
+test "pane_sidebar: T2299 an edge drag pulls the rail out once the panel fits and tucks the panel in well under its minimum" {
     // The rail measures from its card (Mac `railCardWidth`).
     try testing.expectEqual(rail_card_dip, edgeStartDip(.mini, 300));
     try testing.expectEqual(@as(f32, 300), edgeStartDip(.expanded, 300));
     try testing.expectEqual(max_width_dip, edgeStartDip(.expanded, 900));
 
-    // Rail: nothing until it passes the threshold, then expand.
-    try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.mini, rail_card_dip, 40));
-    try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.mini, rail_card_dip, expand_threshold_dip - rail_card_dip));
-    try testing.expectEqual(@as(?EdgeDrag, .expand), edgeDrag(.mini, rail_card_dip, expand_threshold_dip - rail_card_dip + 1));
-    // Pushing the rail in does nothing either.
-    try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.mini, rail_card_dip, -30));
+    const rail: EdgeDrag = .{ .expanded = false };
+    // Rail (Mac 543489bca's own cases): short of the panel, still the rail -
+    // past the threshold too, until the panel would fit...
+    try testing.expectEqual(@as(?EdgeDrag, rail), edgeDrag(.mini, 0, 100));
+    try testing.expectEqual(@as(?EdgeDrag, rail), edgeDrag(.mini, 0, 150));
+    try testing.expectEqual(@as(?EdgeDrag, rail), edgeDrag(.mini, rail_card_dip, min_width_dip - rail_card_dip - 1));
+    // ...then out, at the width the pointer asks for.
+    try testing.expectEqual(@as(?EdgeDrag, EdgeDrag{ .expanded = true, .width = min_width_dip }), edgeDrag(.mini, rail_card_dip, min_width_dip - rail_card_dip));
+    try testing.expectEqual(@as(?EdgeDrag, EdgeDrag{ .expanded = true, .width = 200 }), edgeDrag(.mini, 0, 200));
+    try testing.expectEqual(@as(?EdgeDrag, rail), edgeDrag(.mini, rail_card_dip, -30));
 
-    // Expanded panel: follows the pointer between the bounds and stops there.
-    try testing.expectEqual(@as(?EdgeDrag, .{ .width = 300 }), edgeDrag(.expanded, 240, 60));
-    try testing.expectEqual(@as(?EdgeDrag, .{ .width = max_width_dip }), edgeDrag(.expanded, 240, 500));
-    // Far below the old 140 collapse threshold: still expanded, at the minimum.
-    try testing.expectEqual(@as(?EdgeDrag, .{ .width = min_width_dip }), edgeDrag(.expanded, 240, -200));
-    // A rail expanded mid-drag keeps measuring from the rail's card, so the
-    // panel's edge then follows the pointer from the minimum up.
-    try testing.expectEqual(@as(?EdgeDrag, .{ .width = min_width_dip }), edgeDrag(.expanded, rail_card_dip, 100));
-    try testing.expectEqual(@as(?EdgeDrag, .{ .width = 268 }), edgeDrag(.expanded, rail_card_dip, 216));
+    // Expanded panel: follows the pointer between the bounds...
+    try testing.expectEqual(@as(?EdgeDrag, EdgeDrag{ .expanded = true, .width = 300 }), edgeDrag(.expanded, 240, 60));
+    try testing.expectEqual(@as(?EdgeDrag, EdgeDrag{ .expanded = true, .width = max_width_dip }), edgeDrag(.expanded, 0, 9000));
+    // ...stops at its minimum in the band above the threshold...
+    try testing.expectEqual(@as(?EdgeDrag, EdgeDrag{ .expanded = true, .width = min_width_dip }), edgeDrag(.expanded, 0, 150));
+    try testing.expectEqual(@as(?EdgeDrag, EdgeDrag{ .expanded = true, .width = min_width_dip }), edgeDrag(.expanded, 240, expand_threshold_dip - 240));
+    // ...and tucks back into the rail short of it.
+    try testing.expectEqual(@as(?EdgeDrag, rail), edgeDrag(.expanded, 0, 100));
+    try testing.expectEqual(@as(?EdgeDrag, rail), edgeDrag(.expanded, 240, -200));
+    // Both ways in one drag: a rail pulled out keeps measuring from the
+    // rail's card, so pushing back in tucks it, and out again expands it.
+    try testing.expectEqual(@as(?EdgeDrag, EdgeDrag{ .expanded = true, .width = rail_card_dip + 216 }), edgeDrag(.expanded, rail_card_dip, 216));
+    try testing.expectEqual(@as(?EdgeDrag, rail), edgeDrag(.expanded, rail_card_dip, 40));
 
+    // The thresholds sit between the rail and the narrowest panel.
+    try testing.expect(rail_card_dip < expand_threshold_dip and expand_threshold_dip < min_width_dip);
     try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.hidden, 240, 40));
 }
 

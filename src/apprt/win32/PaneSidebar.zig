@@ -2647,13 +2647,14 @@ fn edgeMove(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) void {
     setSizeCursor();
     const dx = @as(f32, @floatFromInt(screenX(hwnd, x, y) - d.start_x)) / self.scale;
     // The mode as it is NOW: a rail expanded earlier in this drag is the
-    // panel from here on, and its edge follows the pointer.
-    switch (pane_sidebar.edgeDrag(self.mode, d.start_dip, dx) orelse return) {
-        .expand => if (!self.window.pane_sidebar_expanded) {
-            log.info("pane sidebar edge drag expanded dx={d:.0}", .{dx});
-            self.window.setPaneSidebarExpanded(true, "edge drag");
-        },
-        .width => |w| if (w != self.window.pane_sidebar_width_dip) self.window.setPaneSidebarWidth(w),
+    // panel from here on, and a panel tucked earlier is the rail (T2299).
+    const drag = pane_sidebar.edgeDrag(self.mode, d.start_dip, dx) orelse return;
+    if (drag.expanded and !self.window.paneSidebarCanExpand()) return;
+    // The width first, so expanding glides the grid to it (Mac 543489bca).
+    if (drag.width) |w| if (w != self.window.pane_sidebar_width_dip) self.window.setPaneSidebarWidth(w);
+    if (drag.expanded != self.window.pane_sidebar_expanded) {
+        log.info("pane sidebar edge drag expanded={} dx={d:.0}", .{ drag.expanded, dx });
+        self.window.setPaneSidebarExpanded(drag.expanded, "edge drag");
     }
 }
 

@@ -1,8 +1,8 @@
 {
     "guard":  "guard-due",
     "script":  "test/win32/guard-due.ps1",
-    "generated":  "2026-10-26T15:18:55-07:00",
-    "commit":  "feb688806",
+    "generated":  "2026-10-26T15:29:35-07:00",
+    "commit":  "d4c72d22b",
     "uncommitted":  [
 
                     ],

@@ -9727,14 +9727,15 @@ fn recheckGutterHover(self: *Window) void {
     self.setGripHover(if (div == null) if (self.hitTestStackGrip(pt.x, pt.y)) |g| g.index else null else null);
 }
 
-/// The gutter beside the pinned pane sidebar that resizes it, in client
-/// pixels (T2265; Mac a81db68f9 `PaneSidebarState.pinnedEdgeGrip`): elevated,
-/// all of the grid's margin between the panel and the panes, as every
-/// resizer lives in a gutter. Null when the panel is not pinned, or in the
-/// flat style, whose grip lies inside the panel (`pane_sidebar.edgeBand`).
+/// The gutter beside the pane sidebar that resizes it, in client pixels
+/// (T2265; Mac a81db68f9 `PaneSidebarState.pinnedEdgeGrip`, and the rail's
+/// since T2299, Mac 543489bca `edgeGrip`): elevated, all of the grid's margin
+/// between the sidebar's card and the panes, as every resizer lives in a
+/// gutter. Null when the sidebar is hidden, or in the flat style, whose grip
+/// is the card's own margin inside the column (`pane_sidebar.edgeBand`).
 pub fn sidebarEdgeGutter(self: *const Window) ?w32.RECT {
     if (self.sidebar == null) return null;
-    if (self.paneSidebarMode() != .expanded) return null;
+    if (self.paneSidebarMode() == .hidden) return null;
     if (!pane_sidebar.pinnedGripInGutter(self.paneStyle() == .elevated)) return null;
     const surface = self.surfaceRect();
     const grid = self.gridRect();
