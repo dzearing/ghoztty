@@ -508,8 +508,10 @@ struct PaneSidebarWindowTests {
         #expect(banner.count == bare.count && !banner.isEmpty)
         // More of the desk: the card's pixels are nearer the desk's color.
         #expect(throughCard + 3 < throughPane, "the banner is no more see-through than the pane: \(report)")
-        // ...and no grey lift: the card is not lighter than the desk itself.
-        #expect(mean(banner).reduce(0, +) <= mean(desk).reduce(0, +) + 6, "the banner lifts the gradient toward grey: \(report)")
+        // ...and no grey lift: the card is not lighter than the bare pane it
+        // sits on. (Not the desk strip beside the pane: the pane's own glass
+        // already reads lighter than that gutter, banner or not.)
+        #expect(mean(banner).reduce(0, +) <= mean(bare).reduce(0, +) + 6, "the banner lifts the gradient toward grey: \(report)")
     }
 
     /// Glass panes (the default): nothing paints over the window's gradient —
