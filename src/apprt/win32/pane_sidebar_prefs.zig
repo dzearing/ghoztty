@@ -6,9 +6,10 @@
 //! `PaneSidebarState`): the most recently chosen expanded and hidden flags,
 //! the way a Finder window's sidebar remembers, and one width preference. This is the win32 translation - the `window_memory.zig` /
 //! `viewer_prefs.zig` pattern, one tiny text file under
-//! `%LOCALAPPDATA%\ghoztty`. A RESTORED window's own flags come from the
-//! session-layout manifest instead (`session_layout.Window.pane_sidebar_*`);
-//! this file only seeds windows that have no recorded state.
+//! `%LOCALAPPDATA%\ghoztty`. Since T2336 (Mac b07b7fa0b) these flags are
+//! every window's, restored windows included: each window still records its
+//! copy in the session-layout manifest (`session_layout.Window.pane_sidebar_*`)
+//! for an older build, but a restore never applies it.
 //!
 //! Format: `<expanded 0|1> <hidden 0|1> <width dip>\n`. The first flag was
 //! the pin until T2289 (Mac e77422577); pinned WAS the expanded panel, so a

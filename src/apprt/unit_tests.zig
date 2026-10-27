@@ -87,6 +87,7 @@ test {
     // hidden flags and the shared width, parsed and formatted. Imports only
     // pane_sidebar.zig. Every lane.
     _ = @import("win32/pane_sidebar_prefs.zig");
+    _ = @import("win32/pane_sidebar_shared.zig");
 
     // Pure win32 pane sidebar motion (T1843): Mac's busy shimmer and
     // question-ring timing, and when the column needs a clock at all.

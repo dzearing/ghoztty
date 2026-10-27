@@ -5480,6 +5480,21 @@ $GuardTable = @(
             'test\win32\pane-sidebar-all-windows.ps1'
         )
     },
+    # One sidebar for every window (T2336): the shared/per-window split, the
+    # absolute folds and the catch-up rule are unit-tested in every lane; that
+    # a background window stays as it was and takes a collapse, a width, the
+    # scope, a fold, a search and a hide when it is ACTIVATED is only answered
+    # on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-shared'
+        Script = 'test\win32\pane-sidebar-shared.ps1'
+        Stamp  = 'test\win32\pane-sidebar-shared.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar_shared.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-shared.ps1'
+        )
+    },
     # Closing from the sidebar (T2298): another window's row x, a window's
     # and a project's header x, and a window's own header x - none asks,
     # none raises a window, each ends what it closes. The geometry and the

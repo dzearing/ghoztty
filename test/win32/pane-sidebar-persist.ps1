@@ -15,10 +15,12 @@
 #        5. A pinned window records `"pane_sidebar_pinned":true` in the
 #           manifest.
 #        6. With the defaults file rewritten to "unpinned", the restored window
-#           still comes back PINNED: the manifest outranks the defaults, and
-#           (Mac parity) the restored choice becomes the next default.
+#           comes back on the RAIL: the flags are every window's (T2336, Mac
+#           b07b7fa0b), so a restore applies only the per-window part and the
+#           recorded copy - kept for an older build - is never applied, or
+#           windows restored one after another would fight over them.
 #        7. A manifest with the fields stripped (a pre-T1847 one) restores the
-#           window on the defaults instead: the rail.
+#           window on the defaults too: the rail.
 #   C. The sidebar's own list ORDER (T2302), persistence ON:
 #        8. No order is written until a reorder; a manifest carrying one
 #           (a closed pane's id, then the live pane's) is restored and
@@ -226,12 +228,13 @@ try {
     Assert "and pane_sidebar_hidden:false" ((Read-Manifest) -match '"pane_sidebar_hidden"\s*:\s*false')
     Stop-App
 
-    "== 6: the manifest outranks the defaults on restore"
+    "== 6: the defaults, not the manifest's copy, decide the restored flags (T2336)"
     Write-NoBom $prefFile "0 0 240`n"
+    Assert "setup: the manifest carries the window's pinned copy" ((Read-Manifest) -match '"pane_sidebar_pinned"\s*:\s*true')
     $top = Launch $true
     Assert "restored" ($top -ne [IntPtr]::Zero)
-    Assert "the restored window is PINNED although the default says rail ($(Describe $top))" (Width-Is $top 240)
-    Assert "and the restored choice became the next default, as on Mac ($(Read-Pref))" (Wait-Pref '1 0 240')
+    Assert "the restored window is on the RAIL, the shared default ($(Describe $top))" (Width-Is $top 76)
+    Assert "and the default is left as it was ($(Read-Pref))" (Wait-Pref '0 0 240')
     Stop-App
 
     "== 7: a manifest without the fields restores on the defaults"

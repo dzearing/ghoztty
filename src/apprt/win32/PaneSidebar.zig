@@ -42,6 +42,7 @@ const outline = @import("pane_sidebar_outline.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const tips = @import("pane_sidebar_tips.zig");
 const sidebar_prefs = @import("pane_sidebar_prefs.zig");
+const shared_mod = @import("pane_sidebar_shared.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
 const add_rules = @import("pane_sidebar_add.zig");
 const search_field = @import("pane_sidebar_search.zig");
@@ -139,6 +140,13 @@ pub fn loadRemembered(alloc: std.mem.Allocator) void {
 pub fn saveRemembered(alloc: std.mem.Allocator) void {
     sidebar_prefs.save(alloc, remembered);
 }
+
+/// The rest of the sidebar every window shares (T2336, Mac
+/// `PaneSidebarSharedState`): the all-windows scope, its search, the folds
+/// and the all-windows list's scroll. Each sidebar draws its own copy of it
+/// (`takeShared`) - the window in use takes a change as it makes it, every other
+/// window when it is next activated (`catchUp`).
+pub var shared: shared_mod.Shared = .{};
 
 /// A window group of the outline: one tab of one top-level window (a Mac
 /// window is a tab here - see `pane_sidebar_outline.zig`).
@@ -260,23 +268,32 @@ entries: std.ArrayListUnmanaged(Entry) = .{},
 signature: u64 = 0,
 
 // The all-windows scope (T1829). Not persisted, as Mac's is not: the switch,
-// and what is folded, belong to one look at every window.
+// and what is folded, belong to one look at every window. This and the
+// search and folds below are this sidebar's drawn copy of `shared` (T2336),
+// as of shared change `seen_gen`.
 all_windows: bool = false,
+seen_gen: u64 = 0,
 /// One per window group, in outline order.
 groups: std.ArrayListUnmanaged(Group) = .{},
 /// The panel's lines (`pane_sidebar_outline.buildLines`).
 lines: std.ArrayListUnmanaged(pane_sidebar.Line) = .{},
-/// Window groups (by tab identity) whose fold the user flipped away from its
-/// default (`pane_sidebar_outline.windowFolded`, T1924; Mac
-/// `toggledWindows`). Forgotten when the scope is left, like the search.
-toggled: std.AutoHashMapUnmanaged(u64, void) = .{},
+/// Window groups (by tab identity) showing their panes in the all-windows
+/// list (T2336, Mac `unfoldedWindows`): absolute, so every window's list
+/// folds alike. The scope opens holding only the group it was turned on
+/// from; a tab switch later never unfolds anything, or the list would jump
+/// under the pointer (Mac 321e61d7c). Forgotten when the scope is left.
+unfolded: shared_mod.KeySet = .{},
+/// Window groups folded to their header in their own "this window" list,
+/// which starts open (Mac `foldedThisWindowLists`).
+folded_this: shared_mod.KeySet = .{},
 /// Folded projects (by name). These outlive the scope, as Mac's
 /// `foldedProjects` do.
-folded_projects: std.AutoHashMapUnmanaged(u64, void) = .{},
-/// THIS window's group as of when the scope opened: the one window that
-/// starts unfolded. Decided only then - a tab switch later never unfolds
-/// anything, or the list would jump under the pointer (Mac 321e61d7c).
-open_key: u64 = 0,
+folded_projects: shared_mod.KeySet = .{},
+/// Another window's pane row just clicked in this all-windows list (Mac
+/// `clickedPane`): drawn selected here while that window comes forward, until
+/// this window is activated again and shows its own selection. Compared,
+/// never dereferenced.
+clicked: ?*const PaneView = null,
 /// How many windows the scope lists (every tab of every window, whatever
 /// the search) - the ALL WINDOWS caption's count.
 window_count: usize = 0,
@@ -489,7 +506,74 @@ pub fn create(alloc: Allocator, window: *Window, parent: w32.HWND) ?*PaneSidebar
     };
     self.* = .{ .hwnd = hwnd, .window = window, .alloc = alloc };
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+    // A new window's sidebar is the one every window shows (T2336).
+    self.takeShared();
     return self;
+}
+
+// -------------------------------------------------------------------------
+// The state every window shares (T2336)
+// -------------------------------------------------------------------------
+
+/// Draw the shared state from now on: copy it into this sidebar.
+fn takeShared(self: *PaneSidebar) void {
+    self.all_windows = shared.all_windows;
+    self.search = shared.search;
+    shared_mod.copySet(self.alloc, &self.unfolded, &shared.unfolded);
+    shared_mod.copySet(self.alloc, &self.folded_this, &shared.folded_this);
+    shared_mod.copySet(self.alloc, &self.folded_projects, &shared.folded_projects);
+    self.seen_gen = shared.gen;
+}
+
+/// This sidebar's window was just activated (Mac `catchUp`, from
+/// `windowDidBecomeKey`): take whatever another window changed meanwhile,
+/// show this window's own selection again, and take up the all-windows
+/// list's scroll where the last list scrolled left it. Cheap when nothing
+/// changed.
+pub fn catchUp(self: *PaneSidebar) void {
+    const behind = shared_mod.needsCatchUp(self.seen_gen, &shared);
+    const clicked = self.clicked != null;
+    self.clicked = null;
+    if (behind) {
+        const scope_was = self.all_windows;
+        self.takeShared();
+        if (self.search_focus and !self.searchShown()) self.releaseSearchFocus();
+        if (scope_was != self.all_windows) {
+            self.hover = .none;
+            self.syncHoverTint();
+        }
+        log.info("pane sidebar catch up window={d} all_windows={} search={d} unfolded={d} folded_this={d} projects={d} gen={d}", .{
+            if (self.window.hwnd) |h| @intFromPtr(h) else 0,
+            self.all_windows,
+            self.search.len,
+            self.unfolded.count(),
+            self.folded_this.count(),
+            self.folded_projects.count(),
+            self.seen_gen,
+        });
+    }
+    if (behind or clicked) {
+        self.signature = 0;
+        self.refresh();
+    }
+    self.takeScroll();
+}
+
+/// A change made here is the shared one: take it back as this sidebar's own
+/// copy so this window does not count itself behind.
+fn published(self: *PaneSidebar) void {
+    self.takeShared();
+}
+
+/// The all-windows list appears or its window is activated: scroll to where
+/// the last list scrolled in this layout (Mac `PaneSidebarScrollSync`). Never
+/// called mid-scroll, so nothing moves under the pointer.
+fn takeScroll(self: *PaneSidebar) void {
+    if (!self.all_windows or self.mode == .hidden) return;
+    const want = shared.scrollFor(shared_mod.Surface.of(self.mode == .expanded)) orelse return;
+    if (want == self.scroll) return;
+    self.scrollTo(want);
+    log.info("pane sidebar scroll synced window={d} offset={d}", .{ if (self.window.hwnd) |h| @intFromPtr(h) else 0, self.scroll });
 }
 
 pub fn destroy(self: *PaneSidebar) void {
@@ -506,7 +590,8 @@ pub fn destroy(self: *PaneSidebar) void {
     self.clearGroups();
     self.groups.deinit(self.alloc);
     self.lines.deinit(self.alloc);
-    self.toggled.deinit(self.alloc);
+    self.unfolded.deinit(self.alloc);
+    self.folded_this.deinit(self.alloc);
     self.folded_projects.deinit(self.alloc);
     if (self.xfade) |*v| v.deinit();
     self.xfade = null;
@@ -581,6 +666,9 @@ pub fn place(self: *PaneSidebar, target: w32.RECT, mode: pane_sidebar.Mode, scal
     // A new shape (the rail expanded into the panel, or back) shows the
     // selected row in it (T1878).
     if (changed) if (self.selectedIndex()) |i| self.revealItem(i);
+    // ...unless the all-windows list was scrolled somewhere in this layout:
+    // a list that appears takes that up (T2336).
+    if (changed) self.takeScroll();
     // Reaching up beside the tab strip, or no longer (T1900), moves every
     // row by the strip's height inside a column that may not have resized.
     const reach = self.window.paneSidebarReachPx();
@@ -635,9 +723,8 @@ pub fn refresh(self: *PaneSidebar) void {
 
     // This window's header holds the list (T2324, Mac e94a9737e): its name
     // and its fold are part of what the roster shows. The fold defaults open
-    // (`outline.windowFolded`), keyed on the tab shown now.
+    // (`shared_mod.folded`), keyed on the tab shown now.
     const key = tabKey(win, win.active_tab);
-    self.open_key = key;
     var name_buf: [name_cap]u8 = undefined;
     const name = groupName(win, win.active_tab, &name_buf);
     const folded = self.groupFolded(key, false);
@@ -944,16 +1031,16 @@ fn refreshAll(self: *PaneSidebar) void {
         const q: u8 = @intFromBool(r.window.tab_count > 1);
         h.update(std.mem.asBytes(&q));
         h.update(std.mem.asBytes(&got));
-        for (views[nv .. nv + got]) |v| hashView(&h, v, own and v == active);
+        for (views[nv .. nv + got]) |v| hashView(&h, v, self.rowSelected(own, v, active));
         nv += got;
     }
-    inline for (.{ &self.toggled, &self.folded_projects }) |set| {
+    inline for (.{ &self.unfolded, &self.folded_projects }) |set| {
         var fold_acc: u64 = 0;
         var fit = set.keyIterator();
         while (fit.next()) |k| fold_acc ^= k.*;
         h.update(std.mem.asBytes(&fold_acc));
+        h.update(std.mem.asBytes(&set.count()));
     }
-    h.update(std.mem.asBytes(&self.open_key));
     self.window_count = n_all;
     const sig = h.final();
     if (sig == self.signature) return;
@@ -1007,9 +1094,16 @@ fn refreshAll(self: *PaneSidebar) void {
     self.rosterChanged();
 }
 
-/// Whether window group `key` is folded now (`outline.windowFolded`).
+/// Whether window group `key` is folded now (`shared_mod.folded`).
 fn groupFolded(self: *const PaneSidebar, key: u64, searching: bool) bool {
-    return outline.windowFolded(key == self.open_key, self.toggled.contains(key), searching);
+    return shared_mod.folded(self.all_windows, &self.unfolded, &self.folded_this, key, searching);
+}
+
+/// Whether `v`'s row is drawn selected: this window's focused pane - or, in
+/// the all-windows list, another window's row just clicked here (T2336).
+fn rowSelected(self: *const PaneSidebar, own: bool, v: *const PaneView, active: *const PaneView) bool {
+    if (self.all_windows) if (self.clicked) |c| return v == c;
+    return own and v == active;
 }
 
 fn countTerms(q: []const u8) usize {
@@ -1173,8 +1267,9 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
             .busy = isWorking(v, now_ms),
             .bell = if (v.surface()) |s| s.bell else false,
             // Only THIS window has a selection (Mac 55352e377): another
-            // window's focus is not focus here.
-            .selected = own and v == active,
+            // window's focus is not focus here - unless its row was just
+            // clicked here (T2336).
+            .selected = self.rowSelected(own, v, active),
         }) catch {
             self.alloc.free(title);
             self.alloc.free(subtitle);
@@ -1295,6 +1390,9 @@ fn scrollTo(self: *PaneSidebar, want: i32) void {
     self.scroll = want;
     const l = self.currentLayout();
     if (l.scroll == before) return;
+    // The all-windows list scrolls as one (T2336): the last list scrolled
+    // is where every other takes up when it is next activated.
+    if (self.all_windows) shared.recordScroll(shared_mod.Surface.of(self.mode == .expanded), l.scroll);
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.syncTips();
     log.info("pane sidebar scroll surface=rail offset={d}/{d}", .{ l.scroll, l.max_scroll });
@@ -3632,22 +3730,21 @@ fn toggleScope(self: *PaneSidebar) void {
     // Started before the switch, so the paint the refresh below brings is
     // already the transition's first frame rather than the new list.
     self.startTransition(self.snapshot(.{ .scope = !self.all_windows }));
-    self.all_windows = !self.all_windows;
+    // One switch for every window (T2336). On opens this window's group and
+    // folds every other; off, the search belongs to the scope (Mac clears
+    // the filter with it): the field is gone, so its query and its caret go
+    // too - and so do the window folds the user flipped.
+    _ = shared.setAllWindows(self.alloc, !self.all_windows, tabKey(self.window, self.window.active_tab));
+    self.published();
     self.hover = .none;
     self.syncHoverTint();
     self.signature = 0;
-    if (self.all_windows) {
-        self.open_key = tabKey(self.window, self.window.active_tab);
-    } else {
-        // The search belongs to the scope (Mac clears the filter with it):
-        // off, the field is gone, so its query and its caret go too - and
-        // so do the window folds the user flipped.
+    if (!self.all_windows) {
         if (self.search_focus) self.releaseSearchFocus();
-        _ = self.search.clear();
-        self.toggled.clearRetainingCapacity();
     }
     log.info("pane sidebar scope all_windows={}", .{self.all_windows});
     self.refresh();
+    self.takeScroll();
 }
 
 
@@ -3691,6 +3788,11 @@ fn releaseSearchFocus(self: *PaneSidebar) void {
 /// The query or the caret changed: re-filter when the text did, repaint
 /// either way.
 fn searchEdited(self: *PaneSidebar, text_changed: bool) void {
+    // The query is every window's (T2336); the others take it when they
+    // are next activated.
+    shared.search = self.search;
+    shared.searchEdited();
+    self.seen_gen = shared.gen;
     if (text_changed and self.all_windows) self.refresh();
     self.repaint();
 }
@@ -3840,8 +3942,8 @@ fn activateHead(self: *PaneSidebar, k: usize, fold: bool) void {
         .bottom = scroll_mod.contentBottom(&l, l.viewport.top),
         .scroll = l.scroll,
     } }));
-    if (hd.kind == .project) return self.toggleFold(&self.folded_projects, g.project_key);
-    if (fold or g.own) return self.toggleFold(&self.toggled, g.key);
+    if (hd.kind == .project) return self.toggleFold(.project, g.project_key);
+    if (fold or g.own) return self.toggleFold(.window, g.key);
     self.raiseGroup(g);
 }
 
@@ -3930,11 +4032,18 @@ fn headProject(self: *const PaneSidebar, hd: pane_sidebar.Head, buf: *[name_cap]
     return split.project;
 }
 
-/// Flip `key` in `set` - a project's fold, or a window's flip away from its
-/// default fold (`groupFolded`).
-fn toggleFold(self: *PaneSidebar, set: *std.AutoHashMapUnmanaged(u64, void), key: u64) void {
-    if (!set.remove(key)) set.put(self.alloc, key, {}) catch return;
-    const folded = if (set == &self.toggled) self.groupFolded(key, self.filterActive()) else set.contains(key);
+/// Flip a project's fold, or a window group's (`groupFolded`) - in every
+/// window's list (T2336).
+fn toggleFold(self: *PaneSidebar, kind: enum { project, window }, key: u64) void {
+    switch (kind) {
+        .project => shared.toggleProject(self.alloc, key),
+        .window => shared.toggleGroup(self.alloc, self.all_windows, key),
+    }
+    self.published();
+    const folded = switch (kind) {
+        .project => self.folded_projects.contains(key),
+        .window => self.groupFolded(key, self.filterActive()),
+    };
     log.info("pane sidebar {s}", .{if (folded) "fold" else "unfold"});
     self.refresh();
 }
@@ -3960,7 +4069,12 @@ fn focusForeign(self: *PaneSidebar, e: Entry) void {
     if (!self.window.app.hasWindow(e.window)) return;
     if (e.window.tabIndexOfPane(e.pane) == null) return;
     log.info("pane sidebar focus other window section={s}", .{@tagName(e.section)});
+    // Drawn selected here at once (T2336, Mac `clickedPane`), while its
+    // window comes forward.
+    self.clicked = e.pane;
+    self.signature = 0;
     IpcHandlers.focusTarget(.{ .pane = e.pane });
+    self.refresh();
 }
 
 /// Alt, from the queue's key state as of the message being handled - mouse

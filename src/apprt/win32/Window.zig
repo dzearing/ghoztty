@@ -35,6 +35,7 @@ const pane_stash = @import("pane_stash.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
 const pane_sidebar_add = @import("pane_sidebar_add.zig");
 const sidebar_order = @import("pane_sidebar_order.zig");
+const sidebar_shared = @import("pane_sidebar_shared.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const PaneGrabHandle = @import("PaneGrabHandle.zig");
 const pane_grab_handle = @import("pane_grab_handle.zig");
@@ -2769,36 +2770,47 @@ pub fn paneSidebarCanExpand(self: *const Window) bool {
 }
 
 /// The panel's edge was dragged (T1846): set the panel width. It is ONE
-/// preference for every window (Mac `PaneSidebarState.width`), so every
-/// window takes it - an expanded panel relays its grid out - and new windows
-/// start from it.
+/// preference for every window (Mac `PaneSidebarSharedState.width`): this
+/// window takes it as it moves, new windows start from it, and every other
+/// window takes it when it is next activated (`paneSidebarCatchUp`, T2336) -
+/// a drag never relays out every window per mouse move.
 pub fn setPaneSidebarWidth(self: *Window, dip: f32) void {
     const w = pane_sidebar.clampWidth(dip);
     PaneSidebar.remembered.width_dip = w;
-    for (self.app.windows.items) |win| {
-        if (win.closing or win.pane_sidebar_width_dip == w) continue;
-        win.pane_sidebar_width_dip = w;
-        if (win.paneSidebarMode() == .expanded) {
-            win.layoutSplits();
-            win.syncPaneSidebar();
-        }
+    if (self.closing or self.pane_sidebar_width_dip == w) return;
+    self.pane_sidebar_width_dip = w;
+    if (self.paneSidebarMode() == .expanded) {
+        self.layoutSplits();
+        self.syncPaneSidebar();
     }
 }
 
-/// A restored window takes back the expanded and hidden flags its session
-/// layout recorded (T1847; Mac `SessionLayoutRestore` sets
-/// `isExpanded`/`isHidden`). The manifest keeps the pre-rename name,
-/// `pane_sidebar_pinned`, as Mac's does: pinned WAS the expanded panel.
-/// Absent in a manifest written before the fields existed, and then the
-/// new-window defaults the window opened with stand. Like Mac's setters, a
-/// restored choice also becomes the default for the next new window.
-pub fn restorePaneSidebar(self: *Window, expanded: ?bool, hidden: ?bool) void {
-    const p = expanded orelse self.pane_sidebar_expanded;
-    const h = hidden orelse self.pane_sidebar_hidden;
-    if (p == self.pane_sidebar_expanded and h == self.pane_sidebar_hidden) return;
-    self.pane_sidebar_expanded = p;
-    self.pane_sidebar_hidden = h;
-    self.paneSidebarLayoutChanged();
+/// This window was just activated (T2336, Mac `PaneSidebarState.catchUp`
+/// from `windowDidBecomeKey`): the sidebar is one sidebar for every window,
+/// so take whatever another window changed meanwhile - a collapse or expand,
+/// a hide or show, the panel's width (relaying the grid out once, gliding
+/// as the change would have here), and the list's scope, search, folds and
+/// scroll. The narrow-window rail stays this window's own: `paneSidebarMode`
+/// still takes its width.
+pub fn paneSidebarCatchUp(self: *Window) void {
+    if (self.closing or self.is_quick_terminal) return;
+    const want = PaneSidebar.remembered;
+    const behind = sidebar_shared.flagsBehind(
+        .{ .expanded = self.pane_sidebar_expanded, .hidden = self.pane_sidebar_hidden },
+        .{ .expanded = want.expanded, .hidden = want.hidden },
+    ) or self.pane_sidebar_width_dip != want.width_dip;
+    if (behind) {
+        const before = self.paneSidebarColumnPx();
+        self.pane_sidebar_expanded = want.expanded;
+        self.pane_sidebar_hidden = want.hidden;
+        self.pane_sidebar_width_dip = want.width_dip;
+        log.info("pane sidebar catch up window={d} expanded={} hidden={} width={d:.0}", .{ if (self.hwnd) |h| @intFromPtr(h) else 0, want.expanded, want.hidden, want.width_dip });
+        self.noteColumnShift(before);
+        self.layoutSplits();
+        self.syncPaneSidebar();
+        self.app.markLayoutDirty();
+    }
+    if (self.sidebar) |sb| sb.catchUp();
 }
 
 /// The sidebar's own order (T2302) as slices into `out`, borrowed from this
@@ -16166,6 +16178,9 @@ pub fn windowWndProc(
         },
         w32.WM_ACTIVATE => {
             const activated = @as(u16, @truncate(wparam & 0xFFFF));
+            // The sidebar every window shares: take what changed while
+            // another window was in use (T2336).
+            if (activated != w32.WA_INACTIVE) window.paneSidebarCatchUp();
             // Either direction: this is the event at which a stray topmost
             // overlay becomes visible as "the background window's banner is
             // over the foreground", so it is the event that must heal it

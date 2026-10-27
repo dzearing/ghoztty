@@ -5483,7 +5483,10 @@ fn restoreWindow(
 
     // Window-level presentation: title pin, active tab, outer placement.
     if (win.title_override) |t| window.setTitleOverride(t);
-    window.restorePaneSidebar(win.pane_sidebar_pinned, win.pane_sidebar_hidden);
+    // Only the sidebar's per-window part is restored (T2336, Mac
+    // b07b7fa0b): its expanded and hidden flags are every window's, from
+    // the defaults - the copy each window records is for an older build, or
+    // windows restored one after another would fight over the shared flags.
     if (win.pane_sidebar_order) |order| window.setPaneSidebarOrder(order);
     if (window.tab_count > 0) {
         const active: usize = @min(@as(usize, win.active_tab), window.tab_count - 1);

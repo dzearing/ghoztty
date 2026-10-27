@@ -24,7 +24,8 @@
 #      stashed, and the panel is still expanded.
 #   5. One preference for every window: a second window opened now starts at
 #      the last width, and dragging the first window's edge resizes the
-#      second's panel too.
+#      second's panel too - once the second is activated (T2336: only the
+#      window in use redraws as the width moves, Mac 9a1f14230).
 #   6. (T2289) Collapsing with the toggle and expanding again comes back at
 #      the dragged width - the width is the panel's, not lost with the rail.
 #   2b. T2265 (Mac a81db68f9 + 5e4f30144): the flat grip shows the split
@@ -261,7 +262,15 @@ try {
     $sb = Get-Sidebar $top
     $sb2 = Get-Sidebar $top2
     Assert "window A's panel moved to 220 ($($sb.Width))" (Near $sb.Width (FlatColumn 220))
-    Assert "and window B's followed it ($($sb2.Width) vs $(Px 220))" ($null -ne $sb2 -and (Near $sb2.Width (FlatColumn 220)))
+    # T2336 (Mac 9a1f14230): only the window in use redraws as the width
+    # moves; B, in the background, takes it when it is next activated.
+    Assert "window B's is untouched while in the background ($($sb2.Width) vs $(Px 300))" ($null -ne $sb2 -and (Near $sb2.Width (FlatColumn 300)))
+    Assert "setup: window B activated" (Set-TestActiveWindow -Window $top2)
+    Start-Sleep -Milliseconds 700
+    $sb2 = Get-Sidebar $top2
+    Assert "and once activated, window B's followed it ($($sb2.Width) vs $(Px 220))" ($null -ne $sb2 -and (Near $sb2.Width (FlatColumn 220)))
+    Assert "setup: window A active again" (Set-TestActiveWindow -Window $top)
+    Start-Sleep -Milliseconds 400
 
     "== 6: collapsing and expanding keeps the dragged width (T2289)"
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X (Get-ToggleCenter $sb).X -Y (Get-ToggleCenter $sb).Y -Action click)
