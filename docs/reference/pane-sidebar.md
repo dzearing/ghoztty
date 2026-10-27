@@ -319,6 +319,8 @@ shows the same view of it (see *Shared across windows*). Read before touching
     (`PaneSidebarText.label(userTitle:)`). Viewers have no pencil.
 - A window's own Panes list names it as the all-windows list does: `<name>`
   for a `<project>: <name>` window.
+- **A window row has an icon** (`macwindow`), in a pane row's icon column
+  and spacing: its panes, indented one chevron, sit right under it.
 - **The drop draws the new order where the item was let go, then glides.**
   `landed` lives on `PaneSidebarItemDragMotion`, which the items observe, so
   the pass that reorders them also redraws their lift and slide; without it

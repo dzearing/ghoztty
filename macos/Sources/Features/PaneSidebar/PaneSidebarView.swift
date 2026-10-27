@@ -959,6 +959,17 @@ struct PaneSidebarWindowHeader: View {
             .buttonStyle(.plain)
             .help(isFolded ? "Show this window’s panes" : "Hide this window’s panes")
 
+            // A window's icon, in a pane row's icon column and spacing: its
+            // panes, indented one chevron, put theirs right under it.
+            HStack(spacing: 7) {
+            Image(systemName: "macwindow")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(onAccent
+                    ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
+                    : AnyShapeStyle(.secondary))
+                .frame(width: PaneSidebarRow.iconWidth, height: 15)
+                .accessibilityHidden(true)
+
             // The PARENT row: the window's own name, at the weight a sidebar
             // gives a group, with its panes indented beneath it.
             HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -980,6 +991,7 @@ struct PaneSidebarWindowHeader: View {
                         .lineLimit(1)
                         .fixedSize()
                 }
+            }
             }
             Spacer(minLength: 4)
 
