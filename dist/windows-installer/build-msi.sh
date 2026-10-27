@@ -17,12 +17,18 @@
 # Defaults:
 #   version    $(date +%Y%m%d)-$(git rev-parse --short HEAD) build stamp,
 #              shown in Apps & Features via ARPCOMMENTS. The numeric MSI
-#              ProductVersion is derived as yy.m.dNN (e.g. 26.7.501 =
-#              2026-07-05 build 01) so newer builds always compare greater
+#              ProductVersion is derived as yy.m.dNNN (e.g. 26.7.5001 =
+#              2026-07-05 build 001) so newer builds always compare greater
 #              and MSI major upgrades fire.
-#   build-num  1 — same-day rebuild counter (bump when publishing twice in
-#              a day: same ProductVersion refuses to install over itself).
-#   out        zig-out/Ghoztty-<yy.m.dNN>-x64.msi (Ghoztty-<semver>-x64.msi
+#   build-num  1 — the within-day sequence number, 1..999 (a same
+#              ProductVersion refuses to install over itself, and a LOWER one
+#              is refused as a downgrade). `clock` derives it from the time
+#              of day: the 2-minute slot since midnight + 1 (1..720), which
+#              rises strictly through the day — what a release build passes
+#              (T2320). Every date-derived field reads ONE clock,
+#              $GHOZTTY_BUILD_EPOCH (default: now), so a caller that runs
+#              this twice pins it and both runs agree across midnight.
+#   out        zig-out/Ghoztty-<yy.m.dNNN>-x64.msi (Ghoztty-<semver>-x64.msi
 #              when --semver is given: the release-asset name, T24).
 #   --semver <X.Y.Z>  release-channel build (T24): the zig build is stamped
 #              with -Dversion-string=X.Y.Z+<short-hash> (so the exe's
@@ -38,6 +44,8 @@
 #              run would use and exit, so a caller that builds the exe
 #              itself (build-release-artifacts.sh, T38) passes the SAME
 #              -Dwindows-file-version instead of restating the formula.
+#   --print-product-version  print the MSI ProductVersion (yy.m.dNNN) this
+#              run would use and exit (T2320's ordering test asks it).
 #   --test-identity <Name>  build a THROWAWAY MSI under a distinct product
 #              identity (Name, install dir, UpgradeCode, registry key, and
 #              component-GUID namespace all derived from <Name>) so on-box
@@ -87,19 +95,51 @@ while [[ $# -gt 0 ]]; do
     --test-identity)   TEST_IDENTITY="${2:?--test-identity needs a value}"; shift 2 ;;
     --test-identity=*) TEST_IDENTITY="${1#*=}"; shift ;;
     --print-file-version) PRINT_FILE_VERSION=1; shift ;;
-    -h|--help)     sed -n '2,50p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --print-product-version) PRINT_PRODUCT_VERSION=1; shift ;;
+    -h|--help)     sed -n '2,58p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)             echo "error: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# One clock for every date-derived field (T2320). Each `date` call used to
+# read the time afresh, so a build straddling midnight could take its day
+# from one side and its sequence number from the other.
+BUILD_EPOCH="${GHOZTTY_BUILD_EPOCH:-$(date +%s)}"
+[[ "$BUILD_EPOCH" =~ ^[0-9]+$ ]] || {
+  echo "error: GHOZTTY_BUILD_EPOCH must be a unix time (got '$BUILD_EPOCH')" >&2; exit 2; }
+build_date() { date -d "@$BUILD_EPOCH" "$@" 2>/dev/null || date -r "$BUILD_EPOCH" "$@"; }
+
+# The within-day sequence number (T2320). Release builds pass `clock`: the
+# 2-minute slot of the day, so a later publish on the same date always draws
+# a higher number. It used to be the workflow's run_number mod 99, which is
+# not per-day at all -- on 2026-10-25 win-v1.45.0 drew 99 and 1.45.1-1.45.3
+# drew 01-03, and Windows Installer refused all three as downgrades.
+if [[ "$BUILD_NUM" == "clock" ]]; then
+  BUILD_NUM=$(( (10#$(build_date +%H) * 60 + 10#$(build_date +%M)) / 2 + 1 ))
+fi
+[[ "$BUILD_NUM" =~ ^[0-9]+$ ]] && (( 10#$BUILD_NUM >= 1 && 10#$BUILD_NUM <= 999 )) || {
+  echo "error: --build-num must be 1..999 or 'clock' (got '$BUILD_NUM')" >&2; exit 2; }
+BUILD_NUM=$(( 10#$BUILD_NUM ))
 
 # Per-build FILEVERSION: yy.m.d.NN, strictly increasing across builds so MSI
 # file versioning always prefers the newer package exe (see header). This is
 # the ONE definition of the rule -- a caller that builds the exe itself asks
 # for it with --print-file-version rather than restating the formula (four
 # private copies of a chrome datum is how T257's DPI bug survived).
-FILE_VERSION="$(date +%-y).$(date +%-m).$(date +%-d).$BUILD_NUM"
+FILE_VERSION="$(build_date +%-y).$(build_date +%-m).$(build_date +%-d).$BUILD_NUM"
 if [[ "${PRINT_FILE_VERSION:-0}" -eq 1 ]]; then
   echo "$FILE_VERSION"
+  exit 0
+fi
+
+# Numeric MSI ProductVersion: yy.m.dNNN. The sequence number is THREE digits,
+# zero-padded, so a day's numbers all sit between d000 and d999: the last
+# build of day d still sorts below the first of day d+1. (The two-digit form
+# it replaces, yy.m.dNN, is below every three-digit one from day 10 on, so
+# upgrades from an installed yy.m.dNN release keep firing.)
+PRODUCT_VERSION="$(build_date +%y).$(build_date +%-m).$(build_date +%-d)$(printf '%03d' "$BUILD_NUM")"
+if [[ "${PRINT_PRODUCT_VERSION:-0}" -eq 1 ]]; then
+  echo "$PRODUCT_VERSION"
   exit 0
 fi
 
@@ -175,13 +215,10 @@ if [[ "$EXE_FILE_VERSION" == "0.1.0.0" ]]; then
   echo "warning: exe carries the 0.1.0.0 dev FILEVERSION — MSI upgrades over an equal/higher version will not replace it (rebuild without --skip-build, or with -Dwindows-file-version)" >&2
 fi
 
-# Build stamp + numeric MSI ProductVersion (yy.m.dNN).
+# Build stamp (the numeric ProductVersion is derived above).
 if [[ -z "$VERSION" ]]; then
-  VERSION="$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
+  VERSION="$(build_date +%Y%m%d)-$(git rev-parse --short HEAD)"
 fi
-YY="$(date +%y)"; M="$(date +%-m)"; D="$(date +%-d)"
-NN="$(printf '%02d' "$BUILD_NUM")"
-PRODUCT_VERSION="$YY.$M.$D$NN"
 if [[ -z "$OUT" ]]; then
   if [[ -n "$SEMVER" ]]; then
     OUT="$REPO_ROOT/zig-out/Ghoztty-$SEMVER-x64.msi"
@@ -191,7 +228,7 @@ if [[ -z "$OUT" ]]; then
 fi
 
 # What a PERSON reads in Apps & Features (T1205). ProductVersion above is the
-# date-derived yy.m.dNN number that guarantees MSI upgrade sequencing; it is
+# date-derived yy.m.dNNN number that guarantees MSI upgrade sequencing; it is
 # load-bearing and it is also not a version anybody publishes. On 2026-08-31
 # the user installed Ghoztty-1.35.0-x64.msi, looked at Apps & Features, and
 # read "26.8.3108" - a number that matches neither the file they downloaded,
@@ -1326,7 +1363,7 @@ if props.get("MSIDISABLERMRESTART", "0") not in ("0", ""):
     )
 
 # T1205: what a person reads in Apps & Features. The package must carry the
-# marketing version, not the yy.m.dNN sequencing number - four surfaces
+# marketing version, not the yy.m.dNNN sequencing number - four surfaces
 # disagreed about "which Ghoztty is this?" and this was the one nobody could
 # even map back to a download.
 want_display = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -1351,7 +1388,7 @@ if want_display:
 if props.get("ARPSYSTEMCOMPONENT", "") != "1":
     errs.append(
         "ARPSYSTEMCOMPONENT is not 1 - Windows' own Apps & Features entry, which "
-        "always shows the yy.m.dNN ProductVersion, would be listed"
+        "always shows the yy.m.dNNN ProductVersion, would be listed"
     )
 arp_key = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\[ProductCode]"
 arp = {}

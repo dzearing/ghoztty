@@ -1,13 +1,13 @@
 {
     "guard":  "update-real-msi",
     "script":  "test/win32/update-real-msi.ps1",
-    "generated":  "2026-10-24T06:17:37-07:00",
-    "commit":  "828d493a6",
+    "generated":  "2026-10-26T22:30:59-07:00",
+    "commit":  "3834f812f",
     "uncommitted":  [
-                        "test/win32/update-real-msi.ps1"
+                        "dist/windows-installer/build-msi.sh"
                     ],
     "files":  {
-                  "dist/windows-installer/build-msi.sh":  "dc4ae4925631abf2594decdd6d3462b55d2f7c0416b40c2a3ec6c5f1e1d51011",
+                  "dist/windows-installer/build-msi.sh":  "abc8e70fb54ed0ed6e023b878e8963bf87ae7991e60425553dfc8f12b429b156",
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
                   "src/apprt/win32/update_apply.zig":  "19f1258534432a483421c0f1cdca1d68cb151387e08e02061e34cce043ad908f",
                   "src/apprt/win32/update_install.zig":  "21edac189d6c107b6c6b65af8dc4f6b3ca56a80a8c487c4baa0a2332c5df3edd",

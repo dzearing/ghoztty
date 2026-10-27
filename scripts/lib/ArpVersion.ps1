@@ -3,7 +3,7 @@
 #
 # T1205 gave the package two version numbers on purpose:
 #
-#   - ProductVersion (yy.m.dNN, e.g. 26.10.2290) - the SEQUENCING number Windows
+#   - ProductVersion (yy.m.dNNN since T2320, e.g. 26.10.26360; yy.m.dNN before) - the SEQUENCING number Windows
 #     Installer decides upgrades with. Load-bearing; never the one people read.
 #   - ARPDISPLAYVERSION (the release semver, e.g. 1.43.3) - the number the
 #     package asks Apps & Features to show.

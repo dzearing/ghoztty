@@ -358,6 +358,58 @@ if ($null -eq $printed) {
     AssertEq "B1 FILEVERSION single source" $expect ([string]$printed).Trim()
 }
 
+# -- B1b: same-day releases sequence UPWARD (T2320). The workflow used to pass
+# run_number mod 99 as the within-day number, so 2026-10-25's win-v1.45.0
+# drew 99 and 1.45.1-1.45.3 drew 01-03: three releases Windows Installer
+# refused as downgrades, and the user's Install Update did nothing for a day.
+# So: ask build-msi.sh for the ProductVersion of three same-day publishes -
+# at clock instants, the way release-windows.yml now asks - and require them
+# strictly increasing, the last slot of a day below the first of the next,
+# and today's numbers above an installed two-digit-era release. The negative
+# control runs the SAME ordering check over the old formula at run numbers
+# 98..100 and requires it to fail, so the check is shown to be able to.
+function Compare-MsiVersion([string]$a, [string]$b) {
+    $pa = $a.Split('.') | ForEach-Object { [int]$_ }
+    $pb = $b.Split('.') | ForEach-Object { [int]$_ }
+    for ($i = 0; $i -lt 3; $i++) { if ($pa[$i] -ne $pb[$i]) { return [Math]::Sign($pa[$i] - $pb[$i]) } }
+    return 0
+}
+function Test-StrictlyRising([string[]]$versions) {
+    for ($i = 1; $i -lt $versions.Count; $i++) {
+        if ((Compare-MsiVersion $versions[$i] $versions[$i - 1]) -le 0) { return $false }
+    }
+    return $true
+}
+$wfText = Get-Content -Raw -LiteralPath (Join-Path $Repo '.github\workflows\release-windows.yml')
+Assert "B1b release-windows.yml derives the within-day number from the clock" `
+    ($wfText -match 'build-release-artifacts\.sh[^\n]*\\\s*\n\s*--semver "\$VERSION" --build-num clock')
+Assert "B1b release-windows.yml no longer derives it from run_number" (-not ($wfText -match 'BUILD_NUM=.*run_number'))
+if (-not $bash) {
+    Skip "B1b same-day ProductVersions rise" 'no Git Bash'
+} else {
+    # 2026-10-25 local in the release's own UTC: 00:01, 13:37, 13:39, 23:59.
+    $base = [DateTimeOffset]::new(2026, 10, 25, 0, 0, 0, [TimeSpan]::Zero).ToUnixTimeSeconds()
+    $pv = @{}
+    foreach ($off in @(60, 49020, 49140, 86399, 86400)) {
+        $e = $base + $off
+        $pv[$off] = ([string](& $bash -c "export TZ=UTC GHOZTTY_BUILD_EPOCH=$e; cd '$repoUnix' && bash dist/windows-installer/build-msi.sh --build-num clock --print-product-version" 2>&1 |
+            Select-Object -Last 1)).Trim()
+    }
+    "  (clock ProductVersions: $($pv[60]) $($pv[49020]) $($pv[49140]) $($pv[86399]) | next day $($pv[86400]))"
+    Assert "B1b three same-day publishes rise strictly" (Test-StrictlyRising @($pv[60], $pv[49020], $pv[49140]))
+    Assert "B1b a day's last slot sorts below the next day's first" (Test-StrictlyRising @($pv[86399], $pv[86400]))
+    AssertEq "B1b the ProductVersion encodes the day and the 2-minute slot" '26.10.25409' $pv[49020]
+    Assert "B1b a same-day build sorts above the installed two-digit-era 26.10.2599" `
+        ((Compare-MsiVersion $pv[60] '26.10.2599') -gt 0)
+    $badNum = ([string](& $bash -c "cd '$repoUnix' && bash dist/windows-installer/build-msi.sh --build-num 1000 --print-product-version; echo rc=`$?" 2>&1 |
+        Select-Object -Last 1)).Trim()
+    AssertEq "B1b a build number that would spill into the day is refused" 'rc=2' $badNum
+    # Negative control: the old run_number formula, same day, same check.
+    $old = @(98, 99, 100) | ForEach-Object { '26.10.25{0:D2}' -f ((($_ - 1) % 99) + 1) }
+    Assert "B1b negative control: the old run_number mod 99 formula FAILS the check ($($old -join ' '))" `
+        (-not (Test-StrictlyRising $old))
+}
+
 $zipRel = "zig-out/test-portable-$PID.zip"
 $zipPath = Join-Path $Repo ("zig-out\test-portable-$PID.zip")
 $work = Join-Path ([IO.Path]::GetTempPath()) "release-artifacts-$PID"

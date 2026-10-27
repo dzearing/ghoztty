@@ -167,16 +167,16 @@ jobs:
           WINDOWS_SIGN_PKCS11_CERT: ${{ secrets.WINDOWS_SIGN_PKCS11_CERT }}
           WINDOWS_SIGN_CERT_CHAIN_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_CHAIN_BASE64 }}
         run: |
-          # The same-day rebuild counter: republishing a version on the same
-          # date needs a strictly greater MSI ProductVersion or the package
-          # refuses to install over itself. It is kept to TWO digits on
-          # purpose -- ProductVersion is yy.m.d<NN>, so a three-digit NN
-          # makes day 1 run 999 (26.8.1999) outrank day 2 run 1 (26.8.201)
-          # and the upgrade ordering inverts. github.run_number is
-          # monotonic, so mod 99 only repeats after 99 releases in one day.
-          BUILD_NUM=$(( (${{ github.run_number }} - 1) % 99 + 1 ))
+          # The within-day sequence number: every release later on the same
+          # date needs a strictly greater MSI ProductVersion, or Windows
+          # Installer refuses it as a downgrade (or as nothing to add).
+          # `clock` is the 2-minute slot of the day, so it rises with the
+          # publish itself (T2320). It was run_number mod 99, which is a
+          # global counter wrapped, not a per-day one: 2026-10-25's
+          # win-v1.45.0 drew 99 and 1.45.1-1.45.3 drew 01-03, and the in-app
+          # updater's msiexec refused all three with 1603.
           dist/windows-installer/build-release-artifacts.sh \
-            --semver "$VERSION" --build-num "$BUILD_NUM"
+            --semver "$VERSION" --build-num clock
 
       - name: Verify artifacts
         run: |

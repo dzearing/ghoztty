@@ -395,7 +395,7 @@ it is:
 | `ghoztty +version` "Running Instance", and the About box | the build THIS window is running | `provenance.collect` over the running process |
 | `ghoztty --version` (no instance) | the build of the exe you just invoked | `build_config.version_string` |
 | Apps & Features | the release the user downloaded (`1.35.0`) | the MSI's `ARPDISPLAYVERSION` |
-| MSI `ProductVersion` (`26.8.3108`) | upgrade sequencing only, never shown | `build-msi.sh`'s `yy.m.dNN` |
+| MSI `ProductVersion` (`26.8.3108`) | upgrade sequencing only, never shown | `build-msi.sh`'s `yy.m.dNNN` (NNN = the release's 2-minute slot of the day, T2320) |
 
 Rules that keep them from drifting back together into one lie:
 

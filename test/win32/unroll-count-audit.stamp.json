@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-26T18:04:43-07:00",
-    "commit":  "dc1b85195",
+    "generated":  "2026-10-26T22:26:33-07:00",
+    "commit":  "3834f812f",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/lib/ArpVersion.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -45,7 +45,7 @@
                   "scripts/ledger-dupes.ps1":  "925bdaab83d54c0917554c09d98a48f3fb90e26c6e1c89be2d2570d6dbb224e2",
                   "scripts/lib/AcceptanceFresh.ps1":  "6cca87511a61fdad80d2a407552895a85edd2134a0e0426cd6fa0f37ad055f8b",
                   "scripts/lib/AcceptanceParallel.ps1":  "9f730473709deed41b83534e0a12395658024bcd6872fb54c75869c148991528",
-                  "scripts/lib/ArpVersion.ps1":  "5b9278d673eb6a8fe4f75170c45c6a927c5e57763867d2696c2852b387c45f43",
+                  "scripts/lib/ArpVersion.ps1":  "dbeb04f3e14abfdef93e62eb5863b58f6f57bbba814b80607cd2e0194922e9e6",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
                   "scripts/lib/CacheHeal.ps1":  "6cfed7ef0813d88fdbe457354757834a6e557c2172437f4d5022de79656f22f3",
                   "scripts/lib/CommitHeadroom.ps1":  "d0b9c51ed47e8c8fb890aaf75789ef824d5f6f4b4f906b942a6e9d0ad1873223",

@@ -22,7 +22,7 @@
 #
 # Usage:
 #   dist/windows-installer/build-release-artifacts.sh --semver <X.Y.Z>
-#       [--build-num <N>] [--stamp <s>] [--out-dir <dir>]
+#       [--build-num <N|clock>] [--stamp <s>] [--out-dir <dir>]
 #       [--skip-build | --build-only]
 #
 #   --skip-build  reuse zig-out/bin/ghoztty.exe + zig-out/share. The exe
@@ -80,7 +80,11 @@ fi
 
 cd "$REPO_ROOT"
 HASH="$(git rev-parse --short HEAD)"
-[[ -n "$STAMP" ]] || STAMP="$(date +%Y%m%d)-$HASH"
+# build-msi.sh is asked twice below (FILEVERSION, then the package), and each
+# run reads the date-derived fields off the clock: pin it once so both runs
+# describe the same moment, even one that straddles midnight (T2320).
+export GHOZTTY_BUILD_EPOCH="${GHOZTTY_BUILD_EPOCH:-$(date +%s)}"
+[[ -n "$STAMP" ]] || STAMP="$(date -d "@$GHOZTTY_BUILD_EPOCH" +%Y%m%d 2>/dev/null || date -r "$GHOZTTY_BUILD_EPOCH" +%Y%m%d)-$HASH"
 [[ -n "$OUT_DIR" ]] || OUT_DIR="$REPO_ROOT/zig-out"
 mkdir -p "$OUT_DIR"
 
