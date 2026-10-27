@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-27T08:43:47-07:00",
-    "commit":  "7756905b5",
+    "generated":  "2026-10-27T09:29:04-07:00",
+    "commit":  "7c2d86ab4",
     "uncommitted":  [
-                        "test/win32/pane-banner.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -324,7 +324,7 @@
                   "test/win32/pane-banner.ps1":  "cc7fa9d1d6904030d20d114028528e8f5c9b7b9206553cc157bcaa28056463ce",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
-                  "test/win32/pane-elevation.ps1":  "2e1a473cc9b161a4b9fb6c768c1cd052f227af9725e310fb4a63b1eaec93d670",
+                  "test/win32/pane-elevation.ps1":  "d762a26f3f1696d8ba5c9fb53c2707b0565e011388a26b4eaa5a8778a44bc8e8",
                   "test/win32/pane-grab-handle.ps1":  "d0abccbdc04d0e399b5fda02f14e3d701d8f6e99ed1d54f217023af089745c6c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
@@ -348,7 +348,7 @@
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",
                   "test/win32/pane-stack-slide.ps1":  "251ff8a8ee694adac8fc0e4e0cdf10abc966b66bd37d2b535f1c661a227205c8",
-                  "test/win32/pane-stack-strip.ps1":  "d0375a2b5b93c8b544791f5599798c78c843d4ca29b6f696f21895553b0b018d",
+                  "test/win32/pane-stack-strip.ps1":  "24b9391d9a3ea08877a22d237cffce63eebac1a4624e6c8ce8b9bbdf13dbe120",
                   "test/win32/pane-stack-unfold.ps1":  "cde0c940cadbed2917dd542d5c947af721e17528e5e33723b0eff11463d4bbff",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
