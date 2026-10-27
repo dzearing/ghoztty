@@ -204,16 +204,26 @@ struct PaneSidebarView: View {
         }
     }
 
-    /// This window: its panes, then — right after the last of them, under a
-    /// divider — the tray of stashed panes, in one scrolling list. Two lists,
-    /// and a drag moves a pane within either or across: into the tray
-    /// stashes it, out restores. (The tray was first anchored at the bottom
-    /// of the bar, which left it far from the panes it is for.)
+    /// This window: its header (the window holding the panes, with its +
+    /// and ×, as in all windows), then its panes, then — right after the last
+    /// of them, under a divider — the tray of stashed panes, in one scrolling
+    /// list. Two lists, and a drag moves a pane within either or across: into
+    /// the tray stashes it, out restores. (The tray was first anchored at the
+    /// bottom of the bar, which left it far from the panes it is for.) In the
+    /// rail, the header is its + alone.
     @ViewBuilder
     private var thisWindowList: some View {
         let content = VStack(alignment: .leading, spacing: 0) {
-            paneRows(controller, isThisWindow: true, indent: 0)
-            tray(controller, isThisWindow: true, indent: 0)
+            if isRail {
+                // The header with its text taken away, as a tile is its row:
+                // the window's +, at the header's height, so no icon moves.
+                PaneSidebarRailAddSlot { controller.addPaneFromSidebar() }
+                paneRows(controller, isThisWindow: true, indent: 0)
+                tray(controller, isThisWindow: true, indent: 0)
+            } else {
+                windowGroup(controller, isThisWindow: true,
+                            label: PaneSidebarText.windowTitle(of: controller))
+            }
         }
         .padding(.vertical, SidePanelRow.fillInset)
         if isInteractive {
@@ -348,6 +358,8 @@ struct PaneSidebarView: View {
                     owner: owner,
                     title: label,
                     isThisWindow: isThisWindow,
+                    // Only among other windows does it need saying.
+                    showsThisWindowTag: isThisWindow && state.showsAllWindows,
                     indent: indent,
                     isFolded: folded,
                     isDropTarget: isJoinTarget(owner),
@@ -730,13 +742,14 @@ struct PaneSidebarHeaderButton: View {
     }
 }
 
-// MARK: - Window group header (all-windows scope)
+// MARK: - Window header (this window's list, and each window in all windows)
 
-private struct PaneSidebarWindowHeader: View {
+struct PaneSidebarWindowHeader: View {
     @ObservedObject var owner: BaseTerminalController
     /// The window's name, or — inside a project group — its worktree.
     let title: String
     let isThisWindow: Bool
+    var showsThisWindowTag = false
     /// Inside a project group: one outline level in.
     var indent: CGFloat = 0
     let isFolded: Bool
@@ -745,6 +758,11 @@ private struct PaneSidebarWindowHeader: View {
 
     @State private var isHovered = false
     @Environment(\.paneSidebarInteractive) private var isInteractive
+
+    static let contentHeight: CGFloat = 16
+    static let verticalPadding: CGFloat = 6
+    /// Its whole height in the list, the gap to its neighbours included.
+    static var height: CGFloat { contentHeight + verticalPadding * 2 + PaneSidebarRow.gap }
 
     var body: some View {
         HStack(spacing: PaneSidebarOutline.chevronSpacing) {
@@ -767,7 +785,7 @@ private struct PaneSidebarWindowHeader: View {
                     .foregroundStyle(Color(nsColor: .labelColor))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if isThisWindow {
+                if showsThisWindowTag {
                     Text("This Window")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.tertiary)
@@ -797,7 +815,10 @@ private struct PaneSidebarWindowHeader: View {
             }
             .frame(height: 14)
         }
-        .padding(.vertical, 6)
+        // One height, whatever the font's line: the rail's + slot matches it
+        // (`PaneSidebarRailAddSlot`), so collapsing moves no icon.
+        .frame(height: Self.contentHeight)
+        .padding(.vertical, Self.verticalPadding)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
         .padding(.trailing, SidePanelRow.textInset)
         .background(
@@ -819,6 +840,18 @@ private struct PaneSidebarWindowHeader: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         .help(isThisWindow ? "This window" : "Raise this window")
+    }
+}
+
+/// The rail's stand-in for this window's header: the window's + alone, in a
+/// slot exactly the header's height (`PaneSidebarWindowHeader.height`).
+struct PaneSidebarRailAddSlot: View {
+    let action: () -> Void
+
+    var body: some View {
+        PaneSidebarItemButton(symbol: "plus", help: "New pane", action: action)
+            .frame(maxWidth: .infinity)
+            .frame(height: PaneSidebarWindowHeader.height)
     }
 }
 

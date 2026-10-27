@@ -76,6 +76,13 @@ A per-window list of **every pane in the window**, into which a pane can be
   or tile tints its pane in that hue** — a wash and a rim on the pane's card
   (`PaneSidebarHover`, `PaneSidebarHoverTint`: 10% wash, 45% rim), in over
   0.12s, out over 0.2s — so the sidebar says which pane an icon is.
+- **A window always holds its panes**: this window's list starts with its
+  header — the window's name (no "This Window" tag, which only all windows
+  needs), its fold chevron, and on hover + and × — with its panes indented
+  under it, as in all windows. In the rail the header is its + alone, in a
+  slot exactly the header's height (`PaneSidebarRailAddSlot`,
+  `PaneSidebarWindowHeader.height`), so collapsing or expanding still moves
+  no icon.
 - Rows: grid panes (focused one selected), then — **right after the last of
   them**, under a divider, in the same scrolling list — the **tray** of
   stashed panes. An empty tray is still a visible target: a faint dashed well
