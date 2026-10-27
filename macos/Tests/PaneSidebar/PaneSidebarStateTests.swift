@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Testing
 @testable import Ghostty
 
@@ -32,11 +33,11 @@ struct PaneSidebarStateTests {
     /// panel) reads as expanded, and the new key wins once there is one.
     @Test func aStoredPinReadsAsExpanded() throws {
         let defaults = try #require(UserDefaults(suiteName: "PaneSidebarStateTests-\(UUID().uuidString)"))
-        #expect(!State.storedExpanded(defaults), "collapsed by default")
+        #expect(!PaneSidebarSharedState.storedExpanded(defaults), "collapsed by default")
         defaults.set(true, forKey: "PaneSidebarPinned")
-        #expect(State.storedExpanded(defaults))
+        #expect(PaneSidebarSharedState.storedExpanded(defaults))
         defaults.set(false, forKey: "PaneSidebarExpanded")
-        #expect(!State.storedExpanded(defaults))
+        #expect(!PaneSidebarSharedState.storedExpanded(defaults))
     }
 
     // MARK: Column
@@ -105,41 +106,104 @@ struct PaneSidebarStateTests {
         #expect(State.expandThreshold < State.minimumWidth)
     }
 
-    // MARK: Transient state is never persisted
-
-    @MainActor
-    @Test func transientStateStartsOff() {
-        let state = PaneSidebarState(isExpanded: true, isHidden: false)
-        #expect(!state.showsAllWindows, "the all-windows scope is off by default")
-    }
-
     // MARK: All-windows folds
 
-    @Test func otherWindowsStartFoldedAndThisOneOpen() {
-        #expect(State.isWindowFolded(isThisWindow: false, isToggled: false, isSearching: false))
-        #expect(!State.isWindowFolded(isThisWindow: true, isToggled: false, isSearching: false))
-    }
-
-    @Test func aToggleFlipsTheDefault() {
-        #expect(!State.isWindowFolded(isThisWindow: false, isToggled: true, isSearching: false))
-        #expect(State.isWindowFolded(isThisWindow: true, isToggled: true, isSearching: false))
+    @Test func everyWindowIsFoldedUntilUnfolded() {
+        #expect(State.isWindowFolded(isUnfolded: false, isSearching: false))
+        #expect(!State.isWindowFolded(isUnfolded: true, isSearching: false))
     }
 
     @Test func aSearchUnfoldsEverything() {
-        for isThisWindow in [false, true] {
-            for isToggled in [false, true] {
-                #expect(!State.isWindowFolded(isThisWindow: isThisWindow, isToggled: isToggled, isSearching: true))
-            }
+        for isUnfolded in [false, true] {
+            #expect(!State.isWindowFolded(isUnfolded: isUnfolded, isSearching: true))
         }
     }
+}
 
-    @MainActor
-    @Test func leavingAllWindowsForgetsTheFolds() {
-        let state = PaneSidebarState(isExpanded: true, isHidden: false)
-        state.showsAllWindows = true
-        state.toggledWindows = [ObjectIdentifier(state)]
-        state.showsAllWindows = false
-        #expect(state.toggledWindows.isEmpty, "the next look starts from the default")
+/// The sidebar state every window shares (`PaneSidebarSharedState`), and each
+/// window's view of it (`PaneSidebarState`).
+@MainActor
+struct PaneSidebarSharedStateTests {
+    /// A fresh defaults domain, so nothing reads or writes the app's own.
+    private func defaults() -> UserDefaults {
+        let name = "PaneSidebarSharedStateTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    @Test func aChangeInOneWindowIsAChangeInEvery() {
+        let shared = PaneSidebarSharedState(defaults: defaults())
+        let a = PaneSidebarState(shared: shared), b = PaneSidebarState(shared: shared)
+        var bChanged = 0
+        let watch = b.objectWillChange.sink { bChanged += 1 }
+        defer { watch.cancel() }
+
+        a.isExpanded = true
+        a.isHidden = true
+        a.width = 300
+        a.showsAllWindows = true
+        a.filter = "relay"
+        a.foldedProjects = ["ghoztty"]
+        #expect(b.isExpanded && b.isHidden && b.width == 300)
+        #expect(b.showsAllWindows && b.filter == "relay" && b.foldedProjects == ["ghoztty"])
+        #expect(bChanged >= 6, "b's sidebar re-renders for each: \(bChanged)")
+    }
+
+    @Test func thePaneOrderIsEachWindowsOwn() {
+        let shared = PaneSidebarSharedState(defaults: defaults())
+        let a = PaneSidebarState(shared: shared), b = PaneSidebarState(shared: shared)
+        a.order = [UUID()]
+        #expect(b.order.isEmpty)
+        #expect(a.windowID != b.windowID)
+    }
+
+    @Test func theLayoutAndTheOrderPersistTheScopeDoesNot() async throws {
+        let store = defaults()
+        let shared = PaneSidebarSharedState(defaults: store)
+        shared.isExpanded = true
+        shared.isHidden = true
+        shared.width = 300
+        shared.windowOrder = ["project:relay", "project:ghoztty"]
+        shared.setShowsAllWindows(true, from: UUID())
+        // The width is written once a drag pauses.
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let relaunched = PaneSidebarSharedState(defaults: store)
+        #expect(relaunched.isExpanded && relaunched.isHidden && relaunched.width == 300)
+        #expect(relaunched.windowOrder == ["project:relay", "project:ghoztty"])
+        #expect(!relaunched.showsAllWindows, "the all-windows scope starts off")
+    }
+
+    @Test func theLegacyPinReadsAsExpanded() {
+        let store = defaults()
+        store.set(true, forKey: PaneSidebarSharedState.legacyPinnedKey)
+        #expect(PaneSidebarSharedState(defaults: store).isExpanded)
+    }
+
+    @Test func turningOnAllWindowsOpensTheWindowItWasTurnedOnFrom() {
+        let shared = PaneSidebarSharedState(defaults: defaults())
+        let a = PaneSidebarState(shared: shared), b = PaneSidebarState(shared: shared)
+        a.showsAllWindows = true
+        // The same in both windows' lists: a open, b folded.
+        for viewer in [a, b] {
+            #expect(!viewer.isWindowFolded(a.windowID, isSearching: false))
+            #expect(viewer.isWindowFolded(b.windowID, isSearching: false))
+        }
+        b.toggleWindowFold(b.windowID)
+        #expect(!a.isWindowFolded(b.windowID, isSearching: false), "a fold in b shows in a")
+    }
+
+    @Test func leavingAllWindowsForgetsTheFoldsAndTheSearch() {
+        let shared = PaneSidebarSharedState(defaults: defaults())
+        let a = PaneSidebarState(shared: shared), b = PaneSidebarState(shared: shared)
+        a.showsAllWindows = true
+        a.toggleWindowFold(b.windowID)
+        a.filter = "x"
+        b.showsAllWindows = false
+        #expect(shared.unfoldedWindows.isEmpty, "the next look starts from the default")
+        #expect(a.filter.isEmpty)
+        b.showsAllWindows = true
+        #expect(shared.unfoldedWindows == [b.windowID], "now b is the one turned on from")
     }
 }
 
@@ -250,6 +314,13 @@ struct PaneSidebarTextTests {
     @Test func theBannerTitleNamesThePane() {
         #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal", banner: Self.hookBanner)
                 == "Strip label from banner title")
+    }
+
+    @Test func aNameTheUserGaveItBeatsTheBannerTitle() {
+        #expect(Text.label(title: "build", pwd: "/tmp", kind: "Terminal", banner: Self.hookBanner,
+                           userTitle: "build") == "build")
+        #expect(Text.label(title: "build", pwd: "/tmp", kind: "Terminal", banner: Self.hookBanner,
+                           userTitle: nil) == "Strip label from banner title")
     }
 
     @Test func withoutABannerTitleThePaneTitleNamesIt() {
@@ -486,5 +557,207 @@ struct PaneSidebarOrderTests {
     @Test func aRowComingInOpensAGapAndOneLeavingClosesIt() {
         #expect((0...2).map { Order.shift(index: $0, source: nil, target: 1) } == [0, 1, 1])
         #expect((0...2).map { Order.shift(index: $0, source: 0, target: nil) } == [0, -1, -1])
+    }
+}
+
+/// The all-windows list's own order of windows and project groups
+/// (`PaneSidebarWindowGrouping.sections(_:order:)`), reconciled against the
+/// windows open now.
+struct PaneSidebarWindowOrderTests {
+    typealias G = PaneSidebarWindowGrouping
+    typealias Order = PaneSidebarOrder
+
+    /// Windows 1… titled in that order.
+    private func windows(_ titles: [String]) -> [(id: Int, title: String)] {
+        titles.enumerated().map { (id: $0.offset + 1, title: $0.element) }
+    }
+
+    /// What the list shows: a group as `[project]`, its windows indented.
+    private func shown(_ sections: [G.Section<Int>]) -> [String] {
+        sections.flatMap { section -> [String] in
+            guard let project = section.project else { return section.windows.map(\.label) }
+            return ["[\(project)]"] + section.windows.map { "  " + $0.label }
+        }
+    }
+
+    private let titles = ["relay: main", "ghoztty: wt-2", "Build logs", "ghoztty: wt-10", "ghoztty: alpha"]
+
+    @Test func noOrderIsByName() {
+        #expect(shown(G.sections(windows(titles), order: [])) == [
+            "Build logs", "[ghoztty]", "  alpha", "  wt-2", "  wt-10", "[relay]", "  main"])
+    }
+
+    /// Windows arrive frontmost first; the window you are in must not come
+    /// out on top of others with the same name.
+    @Test func sameNamedWindowsListTheSameWhicheverIsFrontmost() {
+        let titles = ["~", "~", "ghoztty: main", "ghoztty: main", "~"]
+        let open = windows(titles)
+        let expected = shown(G.sections(open, order: []))
+        let ids = G.sections(open, order: []).flatMap { $0.windows.map(\.id) }
+        for front in open.indices {
+            var frontFirst = open
+            frontFirst.insert(frontFirst.remove(at: front), at: 0)
+            #expect(shown(G.sections(frontFirst, order: [])) == expected)
+            #expect(G.sections(frontFirst, order: []).flatMap { $0.windows.map(\.id) } == ids,
+                    "window \(front + 1) frontmost")
+        }
+    }
+
+    @Test func theOrderWinsAtBothLevels() {
+        let order = ["project:relay", G.key(window: 3), "project:ghoztty",
+                     G.key(window: 4), G.key(window: 2), G.key(window: 5)]
+        #expect(shown(G.sections(windows(titles), order: order)) == [
+            "[relay]", "  main", "Build logs", "[ghoztty]", "  wt-10", "  wt-2", "  alpha"])
+    }
+
+    @Test func aNewWindowGoesAfterItsNameNeighbour() {
+        // relay was dragged to the top; ghoztty's wt-10 above alpha and wt-2.
+        let order = ["project:relay", "project:ghoztty", G.key(window: 3),
+                     G.key(window: 4), G.key(window: 5), G.key(window: 2)]
+        // wt-3 (id 6) opens: by name it follows wt-2, wherever that went.
+        let opened = windows(titles + ["ghoztty: wt-3"])
+        #expect(shown(G.sections(opened, order: order)) == [
+            "[relay]", "  main", "[ghoztty]", "  wt-10", "  alpha", "  wt-2", "  wt-3", "Build logs"])
+        // Nothing before it known: before the name neighbour after it.
+        let first = windows(titles + ["ghoztty: aardvark"])
+        #expect(shown(G.sections(first, order: order)).prefix(4) == ["[relay]", "  main", "[ghoztty]", "  wt-10"])
+        #expect(G.sections(first, order: order)[1].windows.map(\.label) == ["wt-10", "aardvark", "alpha", "wt-2"],
+                "it has no name neighbour before it the order knows, so it goes before alpha")
+    }
+
+    @Test func aNewGroupGoesAfterItsNameNeighbour() {
+        let order = ["project:relay", "project:ghoztty", G.key(window: 3)]
+        // "infra" sorts after "ghoztty", before "relay": it follows ghoztty.
+        let opened = windows(titles + ["infra: prod"])
+        #expect(shown(G.sections(opened, order: order)).prefix(4) == ["[relay]", "  main", "[ghoztty]", "  alpha"])
+        let tops = G.sections(opened, order: order).map(\.id)
+        #expect(tops == ["project:relay", "project:ghoztty", "project:infra", G.key(window: 3)])
+    }
+
+    @Test func closedWindowsDropOutAndArePrunedOnTheNextMove() {
+        let order = ["project:relay", G.key(window: 3), "project:ghoztty", G.key(window: 9)]
+        let open = windows(titles)
+        // Window 9 is gone: not shown...
+        #expect(!G.sections(open, order: order).flatMap(\.windows).contains { $0.id == 9 })
+        // ...and dropped when the order is next written.
+        let tops = G.sections(open, order: order).map(\.id)
+        let moved = Order.moving("project:ghoztty", to: 0, visible: tops, order: order,
+                                 existing: G.keys(G.sections(open, order: order)))
+        #expect(moved == ["project:ghoztty", "project:relay", G.key(window: 3)])
+    }
+
+    @Test func movingAGroupKeepsItsWindowsOrder() {
+        // ghoztty's windows were reordered; then the group is moved.
+        let order = [G.key(window: 4), G.key(window: 5), G.key(window: 2)]
+        let open = windows(titles)
+        let tops = G.sections(open, order: order).map(\.id)
+        let moved = Order.moving("project:ghoztty", to: 2, visible: tops, order: order,
+                                 existing: G.keys(G.sections(open, order: order)))
+        #expect(shown(G.sections(open, order: moved)) == [
+            "Build logs", "[relay]", "  main", "[ghoztty]", "  wt-10", "  alpha", "  wt-2"])
+    }
+
+    @Test func aWindowMovesOnlyAmongItsSiblings() {
+        let open = windows(titles)
+        let ghoztty = G.sections(open, order: []).first { $0.project == "ghoztty" }!.windows.map(\.key)
+        let moved = Order.moving(G.key(window: 4), to: 0, visible: ghoztty, order: [],
+                                 existing: G.keys(G.sections(open, order: [])))
+        #expect(shown(G.sections(open, order: moved)) == [
+            "Build logs", "[ghoztty]", "  wt-10", "  alpha", "  wt-2", "[relay]", "  main"])
+    }
+}
+
+/// A window or group dragged in the all-windows list (`PaneSidebarItemReorder`):
+/// siblings of different heights.
+struct PaneSidebarItemReorderTests {
+    typealias R = PaneSidebarItemReorder
+
+    /// A 30pt group, a 100pt window, a 30pt group — 6pt apart.
+    private let frames = [
+        CGRect(x: 0, y: 0, width: 200, height: 30),
+        CGRect(x: 0, y: 36, width: 200, height: 100),
+        CGRect(x: 0, y: 142, width: 200, height: 30),
+    ]
+
+    @Test func theIndexIsReadOffTheMiddlesByTheLeadingEdge() {
+        #expect(R.target(top: 0, dragged: 0, frames: frames) == 0)
+        // Down: its bottom (top + 30) past the window's middle (86).
+        #expect(R.target(top: 57, dragged: 0, frames: frames) == 1)
+        #expect(R.target(top: 55, dragged: 0, frames: frames) == 0)
+        #expect(R.target(top: 150, dragged: 0, frames: frames) == 2)
+        // Up: its top past the window's middle, then the first group's.
+        #expect(R.target(top: 90, dragged: 2, frames: frames) == 2)
+        #expect(R.target(top: 60, dragged: 2, frames: frames) == 1)
+        #expect(R.target(top: 10, dragged: 2, frames: frames) == 0)
+        // The window (100pt) held at the very top goes above the 30pt group.
+        #expect(R.target(top: 0, dragged: 1, frames: frames) == 0)
+    }
+
+    @Test func othersSlideByTheDraggedItemsPitch() {
+        #expect(R.pitch(dragged: 0, frames: frames) == 36, "its height and the gap after it")
+        #expect(R.pitch(dragged: 1, frames: frames) == 106)
+        #expect(R.pitch(dragged: 2, frames: frames) == 36, "last: the gap before it")
+    }
+
+    @Test func itLandsWhereTheItemsItPassedWere() {
+        // The first group down past the window: ends where the window ended.
+        #expect(R.landingTop(dragged: 0, target: 1, frames: frames) == 106)
+        #expect(R.landingTop(dragged: 0, target: 2, frames: frames) == 142)
+        // The last group up to the top.
+        #expect(R.landingTop(dragged: 2, target: 0, frames: frames) == 0)
+        #expect(R.landingTop(dragged: 1, target: 1, frames: frames) == 36, "dropped where it was")
+    }
+
+    @Test func itStaysInItsList() {
+        #expect(R.clamp(top: -50, dragged: 0, frames: frames) == 0)
+        #expect(R.clamp(top: 500, dragged: 0, frames: frames) == 142)
+        #expect(R.clamp(top: 500, dragged: 1, frames: frames) == 72)
+        // The list folded up from under it: it may stay where it was held.
+        #expect(R.clamp(top: 300, dragged: 2, frames: frames, grabbed: 260) == 260)
+        #expect(R.clamp(top: 200, dragged: 2, frames: frames, grabbed: 260) == 200)
+    }
+}
+
+/// A window dragged into or out of a project group (`PaneSidebarCrossDrop`):
+/// where it lands, and the name it takes.
+struct PaneSidebarCrossDropTests {
+    typealias C = PaneSidebarCrossDrop
+
+    /// lone `a`, then `[p]` with `p1` and `p2`, lone `b`, then folded `[q]`:
+    /// every row 32pt, the list without the dragged window.
+    private let rows: [C.Row] = {
+        let items: [(String, String?, Bool)] = [
+            ("window:a", nil, false),
+            ("project:p", "p", true), ("window:p1", "p", false), ("window:p2", "p", false),
+            ("window:b", nil, false),
+            ("project:q", "q", true),
+        ]
+        return items.enumerated().map { index, item in
+            C.Row(key: item.0, project: item.1, isHeader: item.2,
+                  frame: CGRect(x: 0, y: CGFloat(index) * 32, width: 200, height: 32))
+        }
+    }()
+
+    @Test func underAHeaderOrBetweenItsWindowsItJoinsTheGroup() {
+        #expect(C.destination(rows: rows, slot: 0, top: 0) == .topLevel(index: 0))
+        #expect(C.destination(rows: rows, slot: 2, top: 64) == .group("p", index: 0))
+        #expect(C.destination(rows: rows, slot: 3, top: 96) == .group("p", index: 1))
+        // Between two lone items: the top level.
+        #expect(C.destination(rows: rows, slot: 1, top: 32) == .topLevel(index: 1))
+    }
+
+    @Test func pastAGroupsLastWindowTheSlotIsSplitInHalf() {
+        // After `p2` (96…128), before `b` (128): upper half joins `p`'s end,
+        // lower half lands after the group, at the top level.
+        #expect(C.destination(rows: rows, slot: 4, top: 100) == .group("p", index: 2))
+        #expect(C.destination(rows: rows, slot: 4, top: 120) == .topLevel(index: 2))
+        // Past a folded group's header, at the end of the list: the same.
+        #expect(C.destination(rows: rows, slot: 6, top: 165) == .group("q", index: 0))
+        #expect(C.destination(rows: rows, slot: 6, top: 190) == .topLevel(index: 4))
+    }
+
+    @Test func itsNameSaysWhichGroupItIsIn() {
+        #expect(C.title(label: "main", in: .group("ghoztty", index: 0)) == "ghoztty: main")
+        #expect(C.title(label: "main", in: .topLevel(index: 3)) == "main")
     }
 }

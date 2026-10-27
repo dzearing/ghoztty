@@ -1526,8 +1526,11 @@ link: RepeatableLink = .{},
 /// to new windows and does not apply to tabs, splits, etc. However, this setting
 /// will apply to all new windows, not just the first one.
 ///
+/// Ghoztty: on by default, so a new window fills the screen (not full screen).
+/// Set `maximize = false` for the default window size.
+///
 /// Available since: 1.1.0
-maximize: bool = false,
+maximize: bool = true,
 
 /// Start new windows in fullscreen. This setting applies to new windows and
 /// does not apply to tabs, splits, etc. However, this setting will apply to all

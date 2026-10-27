@@ -291,6 +291,9 @@ class BaseTerminalController: NSWindowController,
                     sessionLayoutEntryID, title: windowTitleOverride)
             }
 
+            // Every window's sidebar names this window by it.
+            PaneRoster.shared.changed()
+
             // The override affects the titlebar of every tab in the group.
             applyTitleToWindow()
             guard let window else { return }
@@ -2542,6 +2545,14 @@ class BaseTerminalController: NSWindowController,
     override func windowDidLoad() {
         super.windowDidLoad()
 
+        // The pane sidebar redraws for another window's change only while
+        // this one is in use (`PaneSidebarState.isLive`): key — or, with
+        // the app in the background, frontmost.
+        paneSidebarState.isLive = { [weak self] in
+            guard let window = self?.window else { return true }
+            return window.isKeyWindow || (!NSApp.isActive && NSApp.orderedWindows.first === window)
+        }
+
         // Setup our undo manager.
 
         // Everything beyond here is setting up the window
@@ -2762,6 +2773,12 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // The pane sidebar shows what changed in other windows meanwhile,
+        // and this window's own selection in place of a clicked row's.
+        paneSidebarState.catchUp()
+        paneSidebarState.shared.clearClicked(
+            windowID: paneSidebarState.windowID, panes: Set(surfaceTree.map(\.id)))
+
         // Closing the window's last other tab makes it key again.
         collapseForcedTabBarIfAlone()
 

@@ -11,9 +11,9 @@ struct PaneSidebarView: View {
     @ObservedObject var controller: BaseTerminalController
     @ObservedObject var state: PaneSidebarState
     @ObservedObject var geometry: PaneSidebarGeometry
-    @ObservedObject private var roster = PaneRoster.shared
     @ObservedObject private var dragSession = PaneDragSession.shared
     @ObservedObject private var rowDrag = PaneSidebarRowDrag.shared
+    @ObservedObject private var itemDrag = PaneSidebarItemDrag.shared
 
     /// Laid out as the rail (tiles) rather than full rows.
     let isRail: Bool
@@ -39,6 +39,10 @@ struct PaneSidebarView: View {
             }
             .onPreferenceChange(PaneSidebarGroupFrames.self) { geometry.groupFrames = $0 }
             .onPreferenceChange(PaneSidebarTrayFrame.self) { geometry.trayFrame = $0 }
+            .onPreferenceChange(PaneSidebarItemFrames.self) { frames in
+                geometry.itemFrames = frames
+                if itemDrag.isDragging(in: controller) { itemDrag.framesChanged(frames) }
+            }
             .font(.system(size: 12))
             .environment(\.paneSidebarEmphasized, controlActiveState == .key)
     }
@@ -84,9 +88,12 @@ struct PaneSidebarView: View {
     private var ghost: some View {
         if let pane = rowDrag.pane, let frame = rowDrag.frame,
            controller.surfaceTree.contains(where: { $0 === pane }) {
+            // Only this observes the pointer's travel, so a move redraws the
+            // dragged row, not every window's list.
+            PaneSidebarObserving(rowDrag.motion) { motion in
             GeometryReader { proxy in
                 let origin = proxy.frame(in: .named(PaneSidebarGeometry.space)).origin
-                let top = rowDrag.isSettling ? frame.minY : frame.minY + rowDrag.dy
+                let top = rowDrag.isSettling ? frame.minY : frame.minY + motion.dy
                 let y = Swift.min(Swift.max(top - origin.y, 0), Swift.max(0, proxy.size.height - frame.height))
                 PaneSidebarRow(
                     pane: pane, owner: controller,
@@ -111,6 +118,7 @@ struct PaneSidebarView: View {
                     .offset(x: frame.minX - origin.x, y: y)
                     .animation(rowDrag.isSettling ? PaneSidebarRowDrag.settleAnimation : nil, value: y)
                     .animation(PaneSidebarRowDrag.settleAnimation, value: rowDrag.isSettling)
+            }
             }
             .allowsHitTesting(false)
         }
@@ -221,8 +229,20 @@ struct PaneSidebarView: View {
                 paneRows(controller, isThisWindow: true, indent: 0)
                 tray(controller, isThisWindow: true, indent: 0)
             } else {
-                windowGroup(controller, isThisWindow: true,
-                            label: PaneSidebarText.windowTitle(of: controller))
+                // Its own name, as the all-windows list shows it: a
+                // `<project>: <name>` window is `<name>`, under its group's
+                // header — folding it folds the group here and there.
+                let title = PaneSidebarText.windowTitle(of: controller)
+                if let parts = PaneSidebarWindowGrouping.split(title) {
+                    thisWindowsGroupHeader(parts.project)
+                    PaneSidebarOutline.headerGapView
+                    if !state.foldedProjects.contains(parts.project) {
+                        windowGroup(controller, isThisWindow: true, label: parts.worktree)
+                            .transition(PaneSidebarOutline.foldTransition)
+                    }
+                } else {
+                    windowGroup(controller, isThisWindow: true, label: title)
+                }
             }
         }
         .padding(.vertical, SidePanelRow.fillInset)
@@ -242,6 +262,8 @@ struct PaneSidebarView: View {
                     listContent
                 }
                 .padding(.vertical, SidePanelRow.fillInset)
+                // Every window's all-windows list scrolls as one.
+                .background(PaneSidebarScrollSyncAnchor(isRail: isRail))
             }
         } else {
             let content = VStack(alignment: .leading, spacing: 0) { listContent }
@@ -253,24 +275,54 @@ struct PaneSidebarView: View {
 
     private var listContent: some View { allWindows }
 
+    /// This window's group header in its own Panes list: the all-windows
+    /// list's, with the whole group's count and buttons (pencil, + and ×).
+    private func thisWindowsGroupHeader(_ project: String) -> some View {
+        let windows = controller.paneSidebarSections.first { $0.project == project }?.windows ?? []
+        let byID = Dictionary(allControllers.map { ($0.paneSidebarState.windowID, $0) }, uniquingKeysWith: { a, _ in a })
+        let folded = state.foldedProjects.contains(project)
+        return PaneSidebarProjectHeader(
+            project: project,
+            windowCount: windows.count,
+            isFolded: folded,
+            onAdd: {
+                BaseTerminalController.newWindowInGroupFromSidebar(
+                    controller.ghostty, project: project, from: controller)
+            },
+            onClose: {
+                BaseTerminalController.closeWindowsFromSidebar(windows.compactMap { byID[$0.id] })
+            },
+            onFold: {
+                withAnimation(PaneSidebarOutline.foldAnimation) {
+                    if folded { state.foldedProjects.remove(project) } else { state.foldedProjects.insert(project) }
+                }
+            },
+            onRename: { name in
+                BaseTerminalController.renameGroupFromSidebar(
+                    project, to: name,
+                    windows: windows.compactMap { entry in byID[entry.id].map { ($0, entry.label) } })
+            })
+    }
+
     /// Every terminal window with a sidebar, this one included even before
     /// it is visible.
     private var allControllers: [BaseTerminalController] {
-        let controllers = roster.controllers
-        return controllers.contains { $0 === controller } ? controllers : [controller] + controllers
+        controller.paneSidebarAllControllers
     }
 
-    /// Every window, sorted by name; `<project>: <worktree>` windows grouped
-    /// under a collapsible, sticky project header (`PaneSidebarWindowGrouping`).
+    /// Every window, in the list's own order (by name until something is
+    /// dragged); `<project>: <worktree>` windows grouped under a collapsible,
+    /// sticky project header (`PaneSidebarWindowGrouping`). A window row and
+    /// a project header drag to reorder (`PaneSidebarItemDrag`).
     @ViewBuilder
     private var allWindows: some View {
         let controllers = allControllers
-        let byID = Dictionary(uniqueKeysWithValues: controllers.map { (ObjectIdentifier($0), $0) })
-        let titled = controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) }
-        let matches = searchMatches(controllers, titles: Dictionary(uniqueKeysWithValues: titled.map { ($0.id, $0.title) }))
+        let byID = Dictionary(controllers.map { ($0.paneSidebarState.windowID, $0) }, uniquingKeysWith: { a, _ in a })
+        let titled = controllers.map { (id: $0.paneSidebarState.windowID, title: PaneSidebarText.windowTitle(of: $0)) }
+        let matches = searchMatches(controllers, titles: Dictionary(titled.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a }))
         // Searching: only windows with a matching pane, and nothing folded
         // away — a hit hidden inside a folded group would read as no hit.
-        let sections = PaneSidebarWindowGrouping.sections(titled).compactMap { section in
+        let sections = PaneSidebarWindowGrouping.sections(titled, order: state.shared.windowOrder).compactMap { section in
             guard let matches else { return section }
             let windows = section.windows.filter { !(matches[$0.id]?.isEmpty ?? true) }
             return windows.isEmpty
@@ -285,31 +337,55 @@ struct PaneSidebarView: View {
                 .padding(.vertical, SidePanelRow.verticalPadding)
         }
 
+        let topLevel = sections.map(\.id)
+        let reporting = itemDrag.isDragging(in: controller)
         ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
             if let project = section.project, !isRail {
                 let folded = matches == nil && state.foldedProjects.contains(project)
+                let windows = section.windows.map(\.key)
+                let onFold = {
+                    withAnimation(PaneSidebarOutline.foldAnimation) {
+                        if folded { state.foldedProjects.remove(project) }
+                        else { state.foldedProjects.insert(project) }
+                    }
+                }
                 // A gap above the header's band, so it never touches what
                 // ends the list above it (a row's hover, the tray's well).
-                if index > 0 { PaneSidebarOutline.headerGapView }
+                // A group is one item in the list's order: its gaps, header
+                // and windows each report its frame and slide as one.
+                if index > 0 {
+                    PaneSidebarOutline.headerGapView
+                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
+                }
                 Section {
                     if !folded {
                         // ...and below it, before its first window.
                         PaneSidebarOutline.headerGapView
+                            .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                         ForEach(section.windows, id: \.id) { entry in
                             if let owner = byID[entry.id] {
+                                // Not indented: every window's chevron lines
+                                // up, grouped or not; the group's header says
+                                // which windows are its.
                                 windowGroup(owner, isThisWindow: owner === controller,
-                                            label: entry.label, indent: PaneSidebarOutline.childIndent,
-                                            matches: matches?[entry.id])
+                                            label: entry.label,
+                                            matches: matches?[entry.id], siblings: windows)
+                                    // INSIDE the slide: the fold's mask is the
+                                    // item's own frame, and outside it would
+                                    // cut away an item slid past its height.
                                     .transition(PaneSidebarOutline.foldTransition)
+                                    .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
                             }
                         }
+                        .modifier(PaneSidebarItemShift(
+                            key: section.id + PaneSidebarItemDrag.windowsSuffix, drag: itemDrag,
+                            isActive: reporting, showsBacking: false))
                     }
                 } header: {
                     PaneSidebarProjectHeader(
                         project: project,
                         windowCount: section.windows.count,
                         isFolded: folded,
-                        isFirst: index == 0,
                         onAdd: {
                             BaseTerminalController.newWindowInGroupFromSidebar(
                                 controller.ghostty, project: project,
@@ -319,37 +395,51 @@ struct PaneSidebarView: View {
                             BaseTerminalController.closeWindowsFromSidebar(
                                 section.windows.compactMap { byID[$0.id] })
                         },
-                        onFold: {
-                            withAnimation(PaneSidebarOutline.foldAnimation) {
-                                if folded { state.foldedProjects.remove(project) }
-                                else { state.foldedProjects.insert(project) }
-                            }
+                        onFold: onFold,
+                        onRename: { name in
+                            BaseTerminalController.renameGroupFromSidebar(
+                                project, to: name,
+                                windows: section.windows.compactMap { entry in byID[entry.id].map { ($0, entry.label) } })
                         })
+                        .paneSidebarItemDrag(
+                            key: section.id, siblings: topLevel, controller: controller,
+                            leading: 0, trailing: PaneSidebarProjectHeader.trailingControls,
+                            help: folded ? "Show \(project)’s windows — drag to reorder"
+                                : "Hide \(project)’s windows — drag to reorder",
+                            onClick: onFold)
+                        .modifier(PaneSidebarJoinHighlight(project: project, motion: itemDrag.motion))
+                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                 }
             } else {
                 ForEach(section.windows, id: \.id) { entry in
                     if let owner = byID[entry.id] {
-                        if !isRail, index > 0 {
-                            PaneSidebarDivider(isRail: false).padding(.bottom, 4)
-                        }
+                        // No divider between lone windows: their headers
+                        // set them apart, as grouped windows' do.
                         windowGroup(owner, isThisWindow: owner === controller, label: entry.label,
-                                    matches: matches?[entry.id])
+                                    matches: matches?[entry.id], siblings: topLevel)
+                        .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
                     }
                 }
             }
         }
     }
 
+    /// A window of the all-windows list: its row, and its panes unless
+    /// folded. `siblings`: the keys it is reordered among when its row is
+    /// dragged.
     private func windowGroup(
         _ owner: BaseTerminalController,
         isThisWindow: Bool,
         label: String,
         indent: CGFloat = 0,
-        matches: Set<ObjectIdentifier>? = nil
+        matches: Set<ObjectIdentifier>? = nil,
+        siblings: [String] = []
     ) -> some View {
-        let id = ObjectIdentifier(owner)
-        let folded = PaneSidebarState.isWindowFolded(
-            isThisWindow: isThisWindow, isToggled: state.toggledWindows.contains(id), isSearching: matches != nil)
+        let id = owner.paneSidebarState.windowID
+        let folded = state.isWindowFolded(id, isSearching: matches != nil)
+        let onFold = {
+            withAnimation(PaneSidebarOutline.foldAnimation) { state.toggleWindowFold(id) }
+        }
         return VStack(alignment: .leading, spacing: 0) {
             if isRail {
                 PaneSidebarDivider(isRail: true)
@@ -362,13 +452,21 @@ struct PaneSidebarView: View {
                     showsThisWindowTag: isThisWindow && state.showsAllWindows,
                     indent: indent,
                     isFolded: folded,
+                    isClicked: !isThisWindow && state.shared.clickedWindow == id,
                     isDropTarget: isJoinTarget(owner),
-                    onFold: {
-                        withAnimation(PaneSidebarOutline.foldAnimation) {
-                            if state.toggledWindows.contains(id) { state.toggledWindows.remove(id) }
-                            else { state.toggledWindows.insert(id) }
+                    onFold: onFold)
+                    .paneSidebarItemDrag(
+                        key: PaneSidebarWindowGrouping.key(window: id), siblings: siblings,
+                        controller: controller,
+                        leading: PaneSidebarWindowHeader.leadingControls(indent: indent),
+                        trailing: PaneSidebarWindowHeader.trailingControls,
+                        help: isThisWindow ? "This window — drag to reorder" : "Raise this window — drag to reorder") {
+                            guard !isThisWindow else { return onFold() }
+                            // Selected at once, while it comes forward.
+                            state.shared.clickedWindow = id
+                            owner.window?.makeKeyAndOrderFront(nil)
+                            NSApp.activate(ignoringOtherApps: true)
                         }
-                    })
             }
             if !folded || isRail {
                 // In the outline, a window's panes are its CHILDREN: indented
@@ -431,7 +529,8 @@ struct PaneSidebarView: View {
 
         ForEach(Array(visible.enumerated()), id: \.element.id) { index, pane in
             row(pane, owner: owner, isStashed: false,
-                isSelected: pane === focused, isThisWindow: isThisWindow, indent: indent)
+                isSelected: pane === focused || (!isThisWindow && state.shared.clickedPane == pane.id),
+                isThisWindow: isThisWindow, indent: indent)
                 .modifier(PaneSidebarShift(
                     rows: slide.map { PaneSidebarOrder.shift(index: index, source: $0.source, target: $0.target) } ?? 0,
                     height: drag?.height ?? 0,
@@ -499,7 +598,7 @@ struct PaneSidebarView: View {
             // the panel, so collapsing or expanding moves nothing. (Still
             // here, at no height, for where the tray begins.)
             if !state.showsAllWindows {
-                PaneSidebarDivider(isRail: isRail, indent: indent)
+                PaneSidebarDivider(isRail: isRail)
             }
             // Captioned only when it holds something: an empty tray is its
             // drop slot, whose own text says what it is.
@@ -511,7 +610,8 @@ struct PaneSidebarView: View {
                 }
                 .padding(.leading, SidePanelRow.labelInset + indent)
                 .padding(.trailing, SidePanelRow.labelInset)
-                .padding(.top, 10)
+                // 10pt under the line, the divider's own space included.
+                .padding(.top, 10 - PaneSidebarDivider.bottom)
                 .padding(.bottom, 5)
             }
           }
@@ -600,13 +700,13 @@ struct PaneSidebarView: View {
     /// searching (no query, or the rail, which has no room for the field).
     private func searchMatches(
         _ controllers: [BaseTerminalController],
-        titles: [ObjectIdentifier: String]
-    ) -> [ObjectIdentifier: Set<ObjectIdentifier>]? {
+        titles: [UUID: String]
+    ) -> [UUID: Set<ObjectIdentifier>]? {
         let terms = PaneSidebarFilter.terms(state.filter)
         guard !terms.isEmpty, !isRail else { return nil }
-        var result: [ObjectIdentifier: Set<ObjectIdentifier>] = [:]
+        var result: [UUID: Set<ObjectIdentifier>] = [:]
         for owner in controllers {
-            let id = ObjectIdentifier(owner)
+            let id = owner.paneSidebarState.windowID
             let tree = owner.surfaceTree
             let panes = tree.visibleLeaves + tree.stashedViews
             result[id] = Set(panes
@@ -619,11 +719,12 @@ struct PaneSidebarView: View {
     /// Return in the search field: go to the first match, as clicking it would.
     private func revealFirstMatch() {
         let controllers = allControllers
-        let titled = controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) }
+        let titled = controllers.map { (id: $0.paneSidebarState.windowID, title: PaneSidebarText.windowTitle(of: $0)) }
         guard let matches = searchMatches(
-            controllers, titles: Dictionary(uniqueKeysWithValues: titled.map { ($0.id, $0.title) })) else { return }
-        let byID = Dictionary(uniqueKeysWithValues: controllers.map { (ObjectIdentifier($0), $0) })
-        for section in PaneSidebarWindowGrouping.sections(titled) {
+            controllers, titles: Dictionary(titled.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a }))
+        else { return }
+        let byID = Dictionary(controllers.map { ($0.paneSidebarState.windowID, $0) }, uniquingKeysWith: { a, _ in a })
+        for section in PaneSidebarWindowGrouping.sections(titled, order: state.shared.windowOrder) {
             for entry in section.windows {
                 guard let owner = byID[entry.id], let hits = matches[entry.id] else { continue }
                 let tree = owner.surfaceTree
@@ -718,6 +819,21 @@ struct PaneSidebarView: View {
     }
 }
 
+/// Observes `model` for its content alone: a part of a view that must redraw
+/// on every change of a fast-changing model (a drag's pointer travel) without
+/// the view around it observing that model too.
+struct PaneSidebarObserving<Model: ObservableObject, Content: View>: View {
+    @ObservedObject private var model: Model
+    private let content: (Model) -> Content
+
+    init(_ model: Model, @ViewBuilder content: @escaping (Model) -> Content) {
+        self.model = model
+        self.content = content
+    }
+
+    var body: some View { content(model) }
+}
+
 // MARK: - Header button
 
 /// A 24pt borderless glyph button, styled exactly like the viewer nav bar's
@@ -742,6 +858,96 @@ struct PaneSidebarHeaderButton: View {
     }
 }
 
+// MARK: - Renaming in place
+
+/// The sidebar item being renamed in place, by its key: a window's or a
+/// group's (`PaneSidebarWindowGrouping.key`), or a pane's (`key(pane:)`).
+/// One at a time across every window's sidebar; while it is set, that item's
+/// drag source steps aside so its field takes the clicks.
+@MainActor
+final class PaneSidebarRename: ObservableObject {
+    static let shared = PaneSidebarRename()
+    @Published var editing: String?
+
+    static func key(pane id: UUID) -> String { "pane:\(id)" }
+}
+
+/// A sidebar item's name, edited in place (`PaneSidebarRename`): a
+/// borderless `NSTextField`, as the search field is, that takes the caret as
+/// it appears with its text selected. (A SwiftUI `TextField` asked for focus
+/// never got it here: keys went on to whatever had it, the search field or a
+/// terminal.) Return or clicking away ends it with the text; Escape with nil.
+struct PaneSidebarRenameField: NSViewRepresentable {
+    let initial: String
+    var font: NSFont = .systemFont(ofSize: 12, weight: .semibold)
+    let onEnd: (String?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onEnd: onEnd) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: initial)
+        field.font = font
+        field.isBezeled = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel("Name")
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // Once it is in the window: the caret, the whole name selected.
+        DispatchQueue.main.async { [weak field] in
+            guard let field, let window = field.window else { return }
+            window.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+            context.coordinator.isLive = true
+        }
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.onEnd = onEnd
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var onEnd: (String?) -> Void
+        /// Took the caret: only then does losing it end the edit.
+        var isLive = false
+        private var ended = false
+
+        init(onEnd: @escaping (String?) -> Void) { self.onEnd = onEnd }
+
+        private func end(_ text: String?) {
+            guard !ended else { return }
+            ended = true
+            onEnd(text)
+        }
+
+        func controlTextDidEndEditing(_ note: Notification) {
+            // Clicked away: keep what was typed, as Return does.
+            guard isLive, let field = note.object as? NSTextField else { return }
+            end(field.stringValue)
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                end((control as? NSTextField)?.stringValue)
+                control.window?.makeFirstResponder(nil)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                end(nil)
+                control.window?.makeFirstResponder(nil)
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
 // MARK: - Window header (this window's list, and each window in all windows)
 
 struct PaneSidebarWindowHeader: View {
@@ -753,11 +959,23 @@ struct PaneSidebarWindowHeader: View {
     /// Inside a project group: one outline level in.
     var indent: CGFloat = 0
     let isFolded: Bool
+    /// Just clicked (another window): selected while it comes forward.
+    var isClicked = false
     let isDropTarget: Bool
     let onFold: () -> Void
 
     @State private var isHovered = false
+    @ObservedObject private var rename = PaneSidebarRename.shared
     @Environment(\.paneSidebarInteractive) private var isInteractive
+    @Environment(\.paneSidebarEmphasized) private var windowIsKey
+
+    private var key: String { PaneSidebarWindowGrouping.key(window: owner.paneSidebarState.windowID) }
+    private var isEditing: Bool { rename.editing == key }
+
+    /// This window folded: the selected pane is inside the fold, so its
+    /// header carries the selection, as a row would.
+    private var isSelected: Bool { (isThisWindow && isFolded) || isClicked }
+    private var onAccent: Bool { isSelected && windowIsKey }
 
     static let contentHeight: CGFloat = 16
     static let verticalPadding: CGFloat = 6
@@ -770,28 +988,48 @@ struct PaneSidebarWindowHeader: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
                     .rotationEffect(.degrees(isFolded ? -90 : 0))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(onAccent
+                        ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.8))
+                        : AnyShapeStyle(.secondary))
                     .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(isFolded ? "Show this window’s panes" : "Hide this window’s panes")
 
+            // A window's icon, in a pane row's icon column and spacing: its
+            // panes, indented one chevron, put theirs right under it.
+            HStack(spacing: 7) {
+            Image(systemName: "macwindow")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(onAccent
+                    ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
+                    : AnyShapeStyle(.secondary))
+                .frame(width: PaneSidebarRow.iconWidth, height: 15)
+                .accessibilityHidden(true)
+
             // The PARENT row: the window's own name, at the weight a sidebar
             // gives a group, with its panes indented beneath it.
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color(nsColor: .labelColor))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if showsThisWindowTag {
+                if isEditing {
+                    nameField
+                } else {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(SidePanelRow.foreground(isActive: isSelected, isEmphasized: windowIsKey))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if showsThisWindowTag && !isEditing {
                     Text("This Window")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(onAccent
+                            ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.7))
+                            : AnyShapeStyle(.tertiary))
                         .lineLimit(1)
                         .fixedSize()
                 }
+            }
             }
             Spacer(minLength: 4)
 
@@ -799,14 +1037,17 @@ struct PaneSidebarWindowHeader: View {
             // split the way the last one was (focused, as Cmd-D), and close
             // the window — no questions, no focus taken.
             ZStack(alignment: .trailing) {
-                PaneSidebarCount(value: owner.surfaceTree.count)
-                    .opacity(isHovered && isInteractive ? 0 : 1)
-                if isHovered && isInteractive {
+                PaneSidebarCount(value: owner.surfaceTree.count, onAccent: onAccent)
+                    .opacity(isHovered && isInteractive && !isEditing ? 0 : 1)
+                if isHovered && isInteractive && !isEditing {
                     HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
-                        PaneSidebarItemButton(symbol: "plus", help: "New pane") {
+                        PaneSidebarItemButton(symbol: "pencil", help: "Rename window", onAccent: onAccent) {
+                            beginRename()
+                        }
+                        PaneSidebarItemButton(symbol: "plus", help: "New pane", onAccent: onAccent) {
                             owner.addPaneFromSidebar()
                         }
-                        PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
+                        PaneSidebarItemButton(symbol: "xmark", help: "Close window", onAccent: onAccent) {
                             owner.closeWindowFromSidebar()
                         }
                     }
@@ -821,9 +1062,8 @@ struct PaneSidebarWindowHeader: View {
         .padding(.vertical, Self.verticalPadding)
         .padding(.leading, PaneSidebarOutline.headerLeading + indent)
         .padding(.trailing, SidePanelRow.textInset)
-        .background(
-            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                .fill(isHovered && !isThisWindow ? Color.primary.opacity(0.06) : .clear))
+        .background(SidePanelRow.fill(
+            isActive: isSelected, isHovered: isHovered && !isThisWindow, isEmphasized: windowIsKey))
         .overlay(
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                 .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: isDropTarget ? 2 : 0))
@@ -834,12 +1074,42 @@ struct PaneSidebarWindowHeader: View {
         // Not `.onHover`: it blinks off for a frame when a fold re-lays out
         // the list (see `HoverTrackingView`).
         .background(HoverTrackingArea(isHovered: $isHovered))
-        .onTapGesture {
-            guard !isThisWindow else { onFold(); return }
-            owner.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+        // Clicked (raise it; this window's folds) and dragged (reorder) by
+        // `paneSidebarItemDrag`, between its chevron and its count.
+    }
+
+    /// The whole title in place of the name — a grouped window's
+    /// `<project>: ` too, so the group can be changed here. Return keeps it,
+    /// Escape or an unchanged name leaves the window as it was, and an
+    /// empty one goes back to following the window's own title.
+    private var nameField: some View {
+        PaneSidebarRenameField(initial: currentTitle) { name in
+            rename.editing = nil
+            guard let name = name?.trimmingCharacters(in: .whitespaces) else { return }
+            // Unchanged: don't pin a title that was following the shell.
+            guard name != currentTitle else { return }
+            owner.setWindowTitle(name.isEmpty ? nil : name)
         }
-        .help(isThisWindow ? "This window" : "Raise this window")
+        .frame(height: Self.contentHeight)
+    }
+
+    private var currentTitle: String {
+        owner.effectiveWindowTitleOverride ?? PaneSidebarText.windowTitle(of: owner)
+    }
+
+    private func beginRename() { rename.editing = key }
+
+    /// The chevron's end, from the row's leading edge: the drag source
+    /// starts there.
+    static func leadingControls(indent: CGFloat) -> CGFloat {
+        SidePanelRow.fillInset + PaneSidebarOutline.headerLeading + indent + PaneSidebarOutline.chevronWidth
+    }
+
+    /// The count's (or pencil, + and ×'s) start, from the row's trailing
+    /// edge: the drag source stops there.
+    static var trailingControls: CGFloat {
+        SidePanelRow.fillInset + SidePanelRow.textInset
+            + 3 * PaneSidebarItemButton.size + 2 * PaneSidebarRow.trailingButtonSpacing
     }
 }
 
@@ -861,21 +1131,47 @@ struct PaneSidebarRailAddSlot: View {
 /// windows scroll under it, and folds them away. On Liquid Glass so rows
 /// passing beneath stay legible (see `glassBackdrop`).
 private struct PaneSidebarProjectHeader: View {
+    /// Its band's height: a little under a row's, its caption centered in it.
+    static let height: CGFloat = 32
+
+    /// The pencil, + and ×'s start, from the header's trailing edge: the drag
+    /// source (`paneSidebarItemDrag`, which also folds on a click) stops there.
+    static var trailingControls: CGFloat {
+        SidePanelRow.fillInset + SidePanelRow.textInset
+            + 3 * PaneSidebarItemButton.size + 2 * PaneSidebarRow.trailingButtonSpacing
+    }
+
     let project: String
     let windowCount: Int
     let isFolded: Bool
-    let isFirst: Bool
     /// A new window in the group, focused (as Cmd-N).
     let onAdd: () -> Void
     /// Close every window in the group: no questions, no focus taken.
     let onClose: () -> Void
     let onFold: () -> Void
+    /// Rename the group: every window in it takes the new `<project>: `.
+    let onRename: (String) -> Void
 
     @State private var isHovered = false
+    @ObservedObject private var rename = PaneSidebarRename.shared
     @Environment(\.paneSidebarInteractive) private var isInteractive
+
+    private var isEditing: Bool { rename.editing == PaneSidebarWindowGrouping.key(project: project) }
 
     var body: some View {
         HStack(spacing: 0) {
+            if isEditing {
+                HStack(spacing: PaneSidebarOutline.chevronSpacing) {
+                    Color.clear.frame(width: PaneSidebarOutline.chevronWidth, height: 14)
+                    PaneSidebarRenameField(initial: project, font: .systemFont(ofSize: 11, weight: .semibold)) { name in
+                        rename.editing = nil
+                        guard let name = name?.trimmingCharacters(in: .whitespaces), name != project else { return }
+                        onRename(name)
+                    }
+                    .frame(height: 14)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
             Button(action: onFold) {
                 HStack(spacing: PaneSidebarOutline.chevronSpacing) {
                     Image(systemName: "chevron.down")
@@ -898,13 +1194,17 @@ private struct PaneSidebarProjectHeader: View {
             .help(isFolded ? "Show \(project)’s windows" : "Hide \(project)’s windows")
             .accessibilityLabel("\(project), \(windowCount) windows")
             .accessibilityAddTraits(.isHeader)
+            }
 
-            // As a window row: hovered, the count gives way to + and ×.
+            // As a window row: hovered, the count gives way to pencil, + and ×.
             ZStack(alignment: .trailing) {
                 PaneSidebarCount(value: windowCount)
-                    .opacity(isHovered && isInteractive ? 0 : 1)
-                if isHovered && isInteractive {
+                    .opacity(isHovered && isInteractive && !isEditing ? 0 : 1)
+                if isHovered && isInteractive && !isEditing {
                     HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
+                        PaneSidebarItemButton(symbol: "pencil", help: "Rename group") {
+                            rename.editing = PaneSidebarWindowGrouping.key(project: project)
+                        }
                         PaneSidebarItemButton(
                             symbol: "plus", help: "New window in \(project)", action: onAdd)
                         PaneSidebarItemButton(
@@ -920,8 +1220,7 @@ private struct PaneSidebarProjectHeader: View {
         .padding(.leading, PaneSidebarOutline.headerLeading)
         .padding(.trailing, SidePanelRow.textInset)
         .padding(.horizontal, SidePanelRow.fillInset)
-        .padding(.top, isFirst ? 4 : 6)
-        .padding(.bottom, 5)
+        .frame(height: Self.height)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(HoverTrackingArea(isHovered: $isHovered))
         .glassBackdrop()
@@ -967,11 +1266,15 @@ enum PaneSidebarOutline {
 /// style for it.
 struct PaneSidebarCount: View {
     let value: Int
+    /// On the accent selection pill: white, not the tertiary label color.
+    var onAccent = false
 
     var body: some View {
         Text("\(value)")
             .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(onAccent
+                ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor).opacity(0.7))
+                : AnyShapeStyle(.tertiary))
     }
 }
 
@@ -980,16 +1283,21 @@ struct PaneSidebarCount: View {
 /// vanished there).
 struct PaneSidebarDivider: View {
     let isRail: Bool
-    var indent: CGFloat = 0
+
+    /// Space under the line in the panel: with what follows it — the empty
+    /// tray's drop slot, inset 4.5pt in its own frame — as much clear space
+    /// below the line as above it (its 8pt and the last row's 3pt).
+    static let bottom: CGFloat = 6.5
 
     var body: some View {
+        // As wide as a row's fill, not its text.
         Rectangle()
             .fill(Color.primary.opacity(0.22))
             .frame(height: 1)
-            .padding(.leading, isRail ? 8 : SidePanelRow.labelInset + indent)
-            .padding(.trailing, isRail ? 8 : SidePanelRow.labelInset)
+            .padding(.horizontal, isRail ? 8 : SidePanelRow.fillInset)
             .padding(.vertical, isRail ? 7 : 0)
             .padding(.top, isRail ? 0 : 8)
+            .padding(.bottom, isRail ? 0 : Self.bottom)
     }
 }
 
@@ -998,7 +1306,7 @@ struct PaneSidebarDivider: View {
 /// itself, over the sidebar — lifted out, leaving its gap. The slide is a
 /// short bounded animation, and none at all once the drag ends: the drop
 /// re-lays the list out where the rows were already drawn, so nothing moves.
-private struct PaneSidebarShift: ViewModifier {
+struct PaneSidebarShift: ViewModifier {
     let rows: Int
     let height: CGFloat
     let isLifted: Bool
@@ -1066,6 +1374,9 @@ final class PaneSidebarGeometry: ObservableObject {
     var groupFrames: [PaneSidebarGroupFrames.Entry] = []
     /// This window's tray divider, during a drag.
     var trayFrame: CGRect?
+    /// The all-windows list's windows and groups, by key, while one is
+    /// dragged (`PaneSidebarItemDrag`).
+    var itemFrames: [String: CGRect] = [:]
 }
 
 struct PaneSidebarRowFrames: PreferenceKey {
@@ -1213,14 +1524,25 @@ struct FoldReveal: ViewModifier, Animatable {
     }
 
     func body(content: Content) -> some View {
+        // Fully revealed, the mask reaches far past every edge: a transition
+        // wraps the WHOLE inserted item, offsets included, so a mask cut at
+        // its frame would hide a window row slid past its own height in a
+        // reorder (`PaneSidebarItemShift`), or its lifted shadow.
+        let open = fraction >= 1
         content
             .mask(alignment: .top) {
                 GeometryReader { proxy in
-                    Rectangle().frame(height: max(0, proxy.size.height * fraction))
+                    let reach = open ? Self.reach : 0
+                    Rectangle()
+                        .frame(width: proxy.size.width + 2 * reach,
+                               height: max(0, proxy.size.height * fraction) + 2 * reach)
+                        .offset(x: -reach, y: -reach)
                 }
             }
             .opacity(fraction > 0 ? 1 : 0)
     }
+
+    private static let reach: CGFloat = 10_000
 }
 
 /// The all-windows search's text: a borderless `NSTextField` (see
@@ -1285,6 +1607,29 @@ struct PaneSidebarSearchField: NSViewRepresentable {
             default:
                 return false
             }
+        }
+    }
+}
+
+extension BaseTerminalController {
+    /// Rename project group `project` to `name`: each of its `windows` (with
+    /// its own name, the part after `<project>: `) is retitled
+    /// `<name>: <label>` — pinned, as Change Window Title pins it — and the
+    /// group keeps its place in the list. An empty name takes them out of
+    /// any group, each to its own name.
+    static func renameGroupFromSidebar(
+        _ project: String, to name: String, windows: [(BaseTerminalController, String)]
+    ) {
+        let old = PaneSidebarWindowGrouping.key(project: project)
+        let new = PaneSidebarWindowGrouping.key(project: name)
+        let shared = PaneSidebarSharedState.shared
+        if !name.isEmpty, let index = shared.windowOrder.firstIndex(of: old) {
+            var order = shared.windowOrder
+            if order.contains(new) { order.remove(at: index) } else { order[index] = new }
+            shared.windowOrder = order
+        }
+        for (window, label) in windows {
+            window.setWindowTitle(name.isEmpty ? label : "\(name): \(label)")
         }
     }
 }

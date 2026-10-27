@@ -83,16 +83,21 @@ final class PaneDragSession: ObservableObject {
         // tabs), so the geometry is re-read rather than snapshotted at begin.
         refreshCandidates()
 
+        // Published only when it changes: every window's pane sidebar
+        // observes this session, and a same-value set still redraws them all
+        // on every pointer move.
         if isListDrag {
-            target = listTarget(screenPoint: screenPoint, dragged: pane.id)
+            let target = listTarget(screenPoint: screenPoint, dragged: pane.id)
+            if target != self.target { self.target = target }
             return
         }
 
-        target = PaneDropResolver.resolve(
+        let target = PaneDropResolver.resolve(
             screenPoint: screenPoint,
             candidates: candidates,
             dragged: pane.id,
             blade: isBlade ? bladeGeometry(of: pane) : nil)
+        if target != self.target { self.target = target }
 
         if case .tile(let frame) = target {
             TileDropPreview.shared.show(frame)

@@ -333,12 +333,13 @@ extension AppDelegate {
         let controller = TerminalController(ghostty, withSurfaceTree: restoredTree)
         controller.windowName = windowName
 
-        // The pane sidebar's layout flags BEFORE the window first lays out, so
-        // the restored terminals are sized for the column they will actually
-        // have — one size, not a placeholder and then a corrective resize.
-        if let expanded = entry.paneSidebarPinned { controller.paneSidebarState.isExpanded = expanded }
-        if let hidden = entry.paneSidebarHidden { controller.paneSidebarState.isHidden = hidden }
+        // The pane sidebar's own layout BEFORE the window first lays out.
+        // Its column already is what it will be: the expanded/hidden flags
+        // are shared by every window (`PaneSidebarSharedState`, from the
+        // defaults), so the entry's own copy of them is not applied — each
+        // window restoring its own would fight over them.
         if let order = entry.paneSidebarOrder { controller.paneSidebarState.order = order }
+        if let id = entry.paneSidebarWindowID { controller.paneSidebarState.windowID = id }
         controller.deskVariant = entry.deskVariant
 
         // For a LOCAL resume/restore, adopt the manifest entry so the window is

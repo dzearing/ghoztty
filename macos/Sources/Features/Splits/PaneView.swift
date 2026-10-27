@@ -92,7 +92,8 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             title: title,
             pwd: pwd,
             kind: surfaceView != nil ? "Terminal" : "Viewer",
-            banner: paneBanner)
+            banner: paneBanner,
+            userTitle: surfaceView?.isTitleUserSet == true ? title : nil)
     }
 
     /// Forward geometry to the mounted content view (see class doc).
