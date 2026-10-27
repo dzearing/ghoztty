@@ -557,3 +557,12 @@ as the digest that showed them.
 - Send a pane to another window from the sidebar (new angle on moving panes between windows: drag an all-windows row onto another window's heading)
 - Glides keep their pace while output pours (fold and slide stay smooth beside a pane printing a fast build log)
 - A drag can never strand a pane (an interrupted drag - lock, Alt+Tab, pointer lost - glides the pane back to where it started)
+
+## 2026-10-27
+
+- A new window in a project starts in that project (a project group's + opens in its folder with the same shell flavour its panes use)
+- Find any pane by typing (type with the sidebar focused to narrow the list by name or folder; Enter jumps there)
+- See which panes printed while you were away (an unread-output dot on a sidebar row, cleared on focus)
+- Gather a project's panes into one window (project group "Bring together" moves its scattered panes into one window)
+- The all-windows list stays instant with fifty windows (only on-screen rows drawn; open and scroll stay smooth)
+- A + that cannot do what you asked says why (missing project folder: open in home and say where it looked)
