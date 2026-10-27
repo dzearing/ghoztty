@@ -19,8 +19,9 @@
 const std = @import("std");
 
 /// UTF-16 units the field holds. A query is a few words; this is room for a
-/// pasted path with some to spare.
-pub const cap: usize = 128;
+/// pasted path with some to spare - and for a whole window title, which the
+/// sidebar's rename field (T2339) opens on (a tab title holds 255).
+pub const cap: usize = 256;
 
 pub const Move = enum { left, right, home, end, word_left, word_right };
 
@@ -28,6 +29,24 @@ pub const Field = struct {
     buf: [cap]u16 = undefined,
     len: usize = 0,
     caret: usize = 0,
+    /// The whole text is selected (T2339: the rename field opens so): typing
+    /// replaces it, Backspace or Delete empties it, and a caret move ends it
+    /// at the start or the end, as a Windows text box does. The search field
+    /// never selects.
+    all: bool = false,
+
+    /// Select the whole text (nothing, when there is none).
+    pub fn selectAll(self: *Field) void {
+        self.all = self.len > 0;
+        if (self.all) self.caret = self.len;
+    }
+
+    /// Replace the text with `units`, selected (`selectAll`).
+    pub fn setSelected(self: *Field, units: []const u16) void {
+        _ = self.clear();
+        _ = self.insert(units);
+        self.selectAll();
+    }
 
     pub fn text(self: *const Field) []const u16 {
         return self.buf[0..self.len];
@@ -42,6 +61,7 @@ pub const Field = struct {
         const changed = self.len != 0 or self.caret != 0;
         self.len = 0;
         self.caret = 0;
+        self.all = false;
         return changed;
     }
 
@@ -50,6 +70,9 @@ pub const Field = struct {
     /// searches), every other control character is dropped, and what does not
     /// fit is cut at a character boundary. True when anything was inserted.
     pub fn insert(self: *Field, units: []const u16) bool {
+        // Typing over a selection replaces it - unless nothing would be
+        // typed (an Escape's character), which leaves it alone.
+        if (self.all and insertsAny(units)) _ = self.clear();
         var changed = false;
         var i: usize = 0;
         while (i < units.len) : (i += 1) {
@@ -75,6 +98,7 @@ pub const Field = struct {
     /// Backspace: the character before the caret, or (`word`, Ctrl) back to
     /// the start of the word. True when anything was removed.
     pub fn backspace(self: *Field, word: bool) bool {
+        if (self.all) return self.clear();
         if (self.caret == 0) return false;
         const from = if (word) self.wordLeft() else self.charLeft();
         self.remove(from, self.caret);
@@ -84,6 +108,7 @@ pub const Field = struct {
 
     /// Delete: the character after the caret, or to the end of the word.
     pub fn delete(self: *Field, word: bool) bool {
+        if (self.all) return self.clear();
         if (self.caret == self.len) return false;
         const to = if (word) self.wordRight() else self.charRight();
         self.remove(self.caret, to);
@@ -92,6 +117,14 @@ pub const Field = struct {
 
     /// Move the caret. True when it moved.
     pub fn move(self: *Field, m: Move) bool {
+        if (self.all) {
+            self.all = false;
+            self.caret = switch (m) {
+                .left, .home, .word_left => 0,
+                .right, .end, .word_right => self.len,
+            };
+            return true;
+        }
         const to = switch (m) {
             .left => self.charLeft(),
             .right => self.charRight(),
@@ -107,6 +140,7 @@ pub const Field = struct {
 
     /// Put the caret at `at` (clamped, never inside a surrogate pair).
     pub fn setCaret(self: *Field, at: usize) void {
+        self.all = false;
         var c = @min(at, self.len);
         if (c > 0 and c < self.len and isLow(self.buf[c]) and isHigh(self.buf[c - 1])) c -= 1;
         self.caret = c;
@@ -159,6 +193,15 @@ pub const Field = struct {
         return c;
     }
 };
+
+/// Whether `insert` would put anything of `units` in: a control character
+/// other than a tab or a line break is dropped.
+fn insertsAny(units: []const u16) bool {
+    for (units) |u| {
+        if (u == '\t' or u == '\r' or u == '\n' or (u >= 0x20 and u != 0x7F)) return true;
+    }
+    return false;
+}
 
 fn isHigh(u: u16) bool {
     return u >= 0xD800 and u <= 0xDBFF;
@@ -276,6 +319,47 @@ test "search field: a full field cuts at a character, never mid-pair" {
     try testing.expect(f.insert(L("y")));
     try testing.expectEqual(cap, f.len);
     try testing.expect(!f.insert(L("z")));
+}
+
+test "T2339: a selected field - typing replaces it, Backspace empties it, a move ends it" {
+    var f: Field = .{};
+    f.setSelected(L("old name"));
+    try testing.expect(f.all);
+    try testing.expectEqual(@as(usize, 8), f.caret);
+    try testing.expect(f.insert(L("n")));
+    try expectText(&f, "n");
+    try testing.expect(!f.all);
+
+    f.setSelected(L("old name"));
+    try testing.expect(!f.insert(L("\x1b"))); // Escape's character: nothing typed
+    try testing.expect(f.all);
+    try expectText(&f, "old name");
+    try testing.expect(f.backspace(false));
+    try testing.expect(f.isEmpty() and !f.all);
+
+    f.setSelected(L("old name"));
+    try testing.expect(f.delete(true));
+    try testing.expect(f.isEmpty());
+
+    f.setSelected(L("old name"));
+    try testing.expect(f.move(.left));
+    try testing.expect(!f.all);
+    try testing.expectEqual(@as(usize, 0), f.caret);
+    try expectText(&f, "old name");
+    f.selectAll();
+    try testing.expect(f.move(.word_right));
+    try testing.expectEqual(@as(usize, 8), f.caret);
+
+    // A click puts the caret down and ends the selection.
+    f.selectAll();
+    f.setCaret(3);
+    try testing.expect(!f.all);
+    try testing.expectEqual(@as(usize, 3), f.caret);
+
+    // Nothing to select in an empty field.
+    var g: Field = .{};
+    g.setSelected(L(""));
+    try testing.expect(!g.all);
 }
 
 test "search field: Escape clears a query, then gives the caret back" {

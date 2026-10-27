@@ -230,6 +230,16 @@ pub fn title(self: *const PaneView) ?[:0]const u8 {
     };
 }
 
+/// The title is one the user set (Change Pane Title, the sidebar's pencil -
+/// `Surface.setUserTitle`), which outranks a banner's (T2339). A viewer's
+/// title is its page's.
+pub fn userTitled(self: *const PaneView) bool {
+    return switch (self.kind) {
+        .terminal => |s| s.title_from_terminal != null,
+        .viewer => false,
+    };
+}
+
 /// Occlusion. Terminals park their renderer; viewers just hide.
 pub fn setVisible(self: *PaneView, visible: bool) void {
     switch (self.kind) {

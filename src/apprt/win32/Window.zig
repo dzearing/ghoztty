@@ -9016,7 +9016,7 @@ fn paneStripLabel(_: *Window, view: *PaneView, buf: []u8) []const u8 {
     const surface = view.surface();
     const pwd: ?[]const u8 = if (surface) |s| (if (s.pwd) |p| p else null) else null;
     const banner: ?[]const u8 = if (surface) |s| (if (s.banner_text) |b| b else null) else null;
-    return pane_sidebar.paneLabel(if (view.title()) |t| t else null, pwd, kind_name, banner, buf);
+    return pane_sidebar.paneLabel(if (view.title()) |t| t else null, pwd, kind_name, banner, view.userTitled(), buf);
 }
 
 /// The tucked pane whose strip is under window point (x, y), if any.

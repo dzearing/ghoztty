@@ -211,12 +211,18 @@ pub fn displayTitle(raw: ?[]const u8, pwd: ?[]const u8, kind: []const u8) []cons
 }
 
 /// What a pane is called wherever it is named in one line - a sidebar row, a
-/// rail tile, a stacked pane's strip (Mac `PaneSidebarText.label`, T2085): its
-/// banner's title when the banner has one, else `displayTitle`. The banner
-/// title wins because somebody chose it: an agent's banner hook sets it to the
-/// task, while the agent itself retitles the pane (OSC 0/2) with whatever it is
-/// doing. A banner title is written into `buf`.
-pub fn paneLabel(raw: ?[]const u8, pwd: ?[]const u8, kind: []const u8, banner: ?[]const u8, buf: []u8) []const u8 {
+/// rail tile, a stacked pane's strip (Mac `PaneSidebarText.label`, T2085): the
+/// name the user gave it (`user_titled`: Change Pane Title, or the sidebar's
+/// pencil - T2339, Mac a13bf6f43), else its banner's title when the banner has
+/// one, else `displayTitle`. The banner title beats the terminal's because
+/// somebody chose it: an agent's banner hook sets it to the task, while the
+/// agent itself retitles the pane (OSC 0/2) with whatever it is doing. A
+/// banner title is written into `buf`.
+pub fn paneLabel(raw: ?[]const u8, pwd: ?[]const u8, kind: []const u8, banner: ?[]const u8, user_titled: bool, buf: []u8) []const u8 {
+    if (user_titled) if (raw) |r| {
+        const t = std.mem.trim(u8, r, " \t");
+        if (t.len > 0) return t;
+    };
     return bannerTitle(banner, buf) orelse displayTitle(raw, pwd, kind);
 }
 
@@ -537,6 +543,9 @@ pub const Item = struct {
     /// THIS window's, whose stash alone is a drop target here.
     group: u16 = 0,
     own: bool = true,
+    /// The row offers the rename pencil (T2339): a terminal's - a viewer is
+    /// named by its page (`pane_sidebar_rename.offersPencil`).
+    renamable: bool = false,
 };
 
 pub const max_items: usize = 64;
@@ -626,6 +635,8 @@ pub const Layout = struct {
     /// hover stash button; every row has its x (T2298,
     /// `pane_sidebar_menu.rowOffersStash`).
     own: [max_items]bool = [_]bool{true} ** max_items,
+    /// Each item offers the rename pencil (`Item.renamable`, T2339).
+    renamable: [max_items]bool = [_]bool{false} ** max_items,
     heads: [max_heads]Head = undefined,
     head_count: usize = 0,
     /// The outline's hairlines (the single-window layout uses
@@ -723,11 +734,32 @@ pub const Layout = struct {
     /// This window's rows only: another window's offers the x alone.
     pub fn rowButton(self: *const Layout, i: usize, scale: f32) Rect {
         if (!self.own[i]) return .{};
-        const x = self.rowClose(i, scale);
-        const shift = x.width() + px(row_button_gap_dip, scale);
-        return .{ .left = x.left - shift, .top = x.top, .right = x.right - shift, .bottom = x.bottom };
+        return squareBefore(self.rowClose(i, scale), scale);
+    }
+
+    /// An expanded row's hover pencil (T2339, Mac a13bf6f43): first among
+    /// its buttons - the same square, `row_button_gap_dip` before the stash
+    /// button, or before the x on another window's row. A terminal's row
+    /// only (`Item.renamable`).
+    pub fn rowRename(self: *const Layout, i: usize, scale: f32) Rect {
+        if (!self.renamable[i]) return .{};
+        return squareBefore(if (self.own[i]) self.rowButton(i, scale) else self.rowClose(i, scale), scale);
+    }
+
+    /// An outline header's hover pencil (T2339, Mac 379a352ef / a13bf6f43):
+    /// first among its buttons, `row_button_gap_dip` before its +. A
+    /// window's renames that window; a project's, the group.
+    pub fn headRename(self: *const Layout, k: usize, scale: f32) Rect {
+        if (k >= self.head_count) return .{};
+        return headRenameRect(self.heads[k], scale);
     }
 };
+
+/// The row-button square one button and `row_button_gap_dip` before `b`.
+fn squareBefore(b: Rect, scale: f32) Rect {
+    const shift = b.width() + px(row_button_gap_dip, scale);
+    return .{ .left = b.left - shift, .top = b.top, .right = b.right - shift, .bottom = b.bottom };
+}
 
 /// Header `hd`'s hover x (`Layout.headClose`).
 pub fn headCloseRect(hd: Head, scale: f32) Rect {
@@ -738,9 +770,13 @@ pub fn headCloseRect(hd: Head, scale: f32) Rect {
 /// Header `hd`'s hover + (`Layout.headAdd`): its x's square, one button and
 /// `row_button_gap_dip` toward the name.
 pub fn headAddRect(hd: Head, scale: f32) Rect {
-    const x = headCloseRect(hd, scale);
-    const shift = x.width() + px(row_button_gap_dip, scale);
-    return .{ .left = x.left - shift, .top = x.top, .right = x.right - shift, .bottom = x.bottom };
+    return squareBefore(headCloseRect(hd, scale), scale);
+}
+
+/// Header `hd`'s hover pencil (`Layout.headRename`): one button and
+/// `row_button_gap_dip` before its +.
+pub fn headRenameRect(hd: Head, scale: f32) Rect {
+    return squareBefore(headAddRect(hd, scale), scale);
 }
 
 /// The expanded row's height: Mac's `SidePanelRow` padding around one or two
@@ -791,7 +827,10 @@ pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Li
     const n = @min(items.len, max_items);
     l.count = n;
     l.outline = lines != null;
-    for (items[0..n], 0..) |it, i| l.own[i] = it.own;
+    for (items[0..n], 0..) |it, i| {
+        l.own[i] = it.own;
+        l.renamable[i] = it.renamable;
+    }
     findStash(&l, items[0..n]);
     switch (m) {
         .hidden => l.count = 0,
@@ -1116,17 +1155,16 @@ pub fn showsThisWindowTag(own: bool, all_windows: bool) bool {
 }
 
 /// Move the single roster's rows and its tray's hairline and caption down by
-/// `dy`, their content in by `indent` (one outline level, under a header).
+/// `dy`, the rows' content in by `indent` (one outline level, under a
+/// header). The hairline stays as wide as a row's fill (T2339, Mac
+/// a13bf6f43 `PaneSidebarDivider`).
 fn shiftBody(l: *Layout, dy: i32, indent: i32) void {
     for (0..l.count) |i| {
         if (!l.shown(i)) continue;
         shiftDown(&l.items[i], dy);
         l.indent[i] += indent;
     }
-    if (l.section_rule) |*r| {
-        shiftDown(r, dy);
-        r.left += indent;
-    }
+    if (l.section_rule) |*r| shiftDown(r, dy);
     if (l.stashed_caption) |*r| shiftDown(r, dy);
 }
 
@@ -1150,12 +1188,13 @@ pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
         // The last row ends a half gap below its pill.
         const below = (if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom) + rowHalfGap(scale);
         const rule_y = below + sm;
-        // In by the rows' level under this window's header (T2324).
-        const indent = if (l.count > 0) l.indent[l.count - 1] else 0;
-        l.section_rule = .{ .left = area.left + fill + indent, .top = rule_y, .right = area.right - fill, .bottom = rule_y + hair };
-        // Inset like the stashed row it stands in for, `sm` under the rule
-        // (Mac's slot pads 4 above it).
-        const top = rule_y + hair + sm;
+        // As wide as a row's fill, whatever the rows' level (T2339, Mac
+        // a13bf6f43 `PaneSidebarDivider`).
+        l.section_rule = .{ .left = area.left + fill, .top = rule_y, .right = area.right - fill, .bottom = rule_y + hair };
+        // Inset like the stashed row it stands in for, with as much clear
+        // space under the rule as over it - the last row's half gap and `sm`
+        // (T2339, Mac a13bf6f43 `PaneSidebarDivider.bottom`).
+        const top = rule_y + hair + sm + rowHalfGap(scale);
         l.drop_slot = .{ .left = area.left + fill, .top = top, .right = area.right - fill, .bottom = top + rowHeight(false, tm, scale) };
         return;
     }
@@ -1228,6 +1267,8 @@ pub const Hit = union(enum) {
     item_button: usize,
     /// An expanded row's hover x (T2280).
     item_close: usize,
+    /// An expanded row's hover pencil (T2339).
+    item_rename: usize,
     /// The all-windows toggle.
     scope,
     /// The header's new-window + (T2323).
@@ -1243,6 +1284,8 @@ pub const Hit = union(enum) {
     head_close: usize,
     /// An outline header's hover + (T2323).
     head_add: usize,
+    /// An outline header's hover pencil (T2339).
+    head_rename: usize,
     /// The rail's + in this window's header slot (T2324).
     rail_add,
 };
@@ -1267,6 +1310,7 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
         if (!hit_r.contains(x, y)) continue;
         if (rows and l.headClose(k, scale).contains(x, y)) return .{ .head_close = k };
         if (rows and l.headAdd(k, scale).contains(x, y)) return .{ .head_add = k };
+        if (rows and l.headRename(k, scale).contains(x, y)) return .{ .head_rename = k };
         return if (x < hd.label_x) .{ .head_fold = k } else .{ .head = k };
     }
     for (0..l.count) |i| {
@@ -1275,6 +1319,7 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
         if (!hit_r.contains(x, y)) continue;
         if (rows and l.rowClose(i, scale).contains(x, y)) return .{ .item_close = i };
         if (rows and l.rowButton(i, scale).contains(x, y)) return .{ .item_button = i };
+        if (rows and l.rowRename(i, scale).contains(x, y)) return .{ .item_rename = i };
         return .{ .item = i };
     }
     return .none;
@@ -1335,10 +1380,12 @@ pub fn pinnedGripInGutter(elevated: bool) bool {
 fn onButton(l: *const Layout, x: i32, y: i32, scale: f32) bool {
     if (l.toggle.contains(x, y) or l.scope.contains(x, y) or l.add.contains(x, y)) return true;
     for (0..l.count) |i| {
-        if (l.shown(i) and (l.rowClose(i, scale).contains(x, y) or l.rowButton(i, scale).contains(x, y))) return true;
+        if (l.shown(i) and (l.rowClose(i, scale).contains(x, y) or l.rowButton(i, scale).contains(x, y) or
+            l.rowRename(i, scale).contains(x, y))) return true;
     }
     for (0..l.head_count) |k| {
-        if (l.headClose(k, scale).contains(x, y) or l.headAdd(k, scale).contains(x, y)) return true;
+        if (l.headClose(k, scale).contains(x, y) or l.headAdd(k, scale).contains(x, y) or
+            l.headRename(k, scale).contains(x, y)) return true;
     }
     return false;
 }
@@ -1514,14 +1561,24 @@ test "pane_sidebar: a literal backslash-n is a line break for the banner title" 
 
 test "pane_sidebar: the banner title names the pane" {
     var buf: [256]u8 = undefined;
-    try testing.expectEqualStrings("Strip label from banner title", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", hook_banner, &buf));
+    try testing.expectEqualStrings("Strip label from banner title", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", hook_banner, false, &buf));
+}
+
+test "T2339: a name the user gave the pane outranks its banner title (Mac a13bf6f43 label(userTitle:))" {
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("build box", paneLabel("build box", "C:\\tmp", "Terminal", hook_banner, true, &buf));
+    // Not user-set: the banner's title still names it.
+    try testing.expectEqualStrings("Strip label from banner title", paneLabel("build box", "C:\\tmp", "Terminal", hook_banner, false, &buf));
+    // A blank user title names nothing: the usual order takes over.
+    try testing.expectEqualStrings("Strip label from banner title", paneLabel("  ", "C:\\tmp", "Terminal", hook_banner, true, &buf));
+    try testing.expectEqualStrings("proj", paneLabel(null, "C:\\tmp\\proj", "Terminal", null, true, &buf));
 }
 
 test "pane_sidebar: without a banner title the pane title names it" {
     var buf: [256]u8 = undefined;
-    try testing.expectEqualStrings("\u{2733} Claude Code", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", null, &buf));
-    try testing.expectEqualStrings("\u{2733} Claude Code", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", "|  |  |\n|---|---|\n| **Status** | Idle |", &buf));
-    try testing.expectEqualStrings("proj", paneLabel(placeholder_title, "C:\\tmp\\proj", "Terminal", "Just prose", &buf));
+    try testing.expectEqualStrings("\u{2733} Claude Code", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", null, false, &buf));
+    try testing.expectEqualStrings("\u{2733} Claude Code", paneLabel("\u{2733} Claude Code", "C:\\tmp", "Terminal", "|  |  |\n|---|---|\n| **Status** | Idle |", false, &buf));
+    try testing.expectEqualStrings("proj", paneLabel(placeholder_title, "C:\\tmp\\proj", "Terminal", "Just prose", false, &buf));
 }
 
 test "pane_sidebar: a titled banner leaves the subtitle to the directory" {
@@ -1912,8 +1969,9 @@ test "pane_sidebar: this window's header holds the single roster, its panes one 
         // Straight under the header band, a half gap clear, one line tall.
         try testing.expectEqual(l.header.bottom + rowHalfGap(s), hd.rect.top);
         try testing.expectEqual(rowHeight(false, tm, s), hd.rect.height());
-        // Everything under it moves down by its whole extent, and in by one
-        // outline level - rows, the tray's hairline; the caption moves down.
+        // Everything under it moves down by its whole extent, and the rows
+        // in by one outline level; the tray's hairline keeps a row's fill
+        // width (T2339, Mac a13bf6f43) and the caption just moves down.
         const extent = rowHeight(false, tm, s) + rowGap(s);
         for (0..items.len) |i| {
             try testing.expectEqual(bare.items[i].top + extent, l.items[i].top);
@@ -1921,7 +1979,7 @@ test "pane_sidebar: this window's header holds the single roster, its panes one 
             try testing.expectEqual(px(outline_step_dip, s), l.indent[i]);
         }
         try testing.expectEqual(bare.section_rule.?.top + extent, l.section_rule.?.top);
-        try testing.expectEqual(bare.section_rule.?.left + px(outline_step_dip, s), l.section_rule.?.left);
+        try testing.expectEqual(bare.section_rule.?.left, l.section_rule.?.left);
         try testing.expectEqual(bare.stashed_caption.?.top + extent, l.stashed_caption.?.top);
         // The first row sits under the header as a pill under a pill.
         try testing.expectEqual(hd.rect.bottom + rowGap(s), l.items[0].top);
@@ -1978,12 +2036,15 @@ test "pane_sidebar: folding this window's header puts away its panes and its tra
     for (0..items.len) |i| try testing.expect(!l.shown(i));
     try testing.expectEqual(@as(?Rect, null), l.section_rule);
     try testing.expectEqual(@as(?Rect, null), l.drop_slot);
-    // Unfolded, the empty tray's hairline is in at the rows' level.
+    // Unfolded, the empty tray's hairline is as wide as a row's fill, not in
+    // at the rows' level (T2339, Mac a13bf6f43).
     var open = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
     addThisWindowHead(&open, false, tm, s);
     addEmptyTray(&open, tm, s);
     try testing.expect(open.drop_slot != null);
-    try testing.expectEqual(open.card.left + px(toc.fill_inset_dip, s) + px(outline_step_dip, s), open.section_rule.?.left);
+    try testing.expectEqual(open.card.left + px(toc.fill_inset_dip, s), open.section_rule.?.left);
+    try testing.expectEqual(open.items[0].left, open.section_rule.?.left);
+    try testing.expectEqual(open.items[0].right, open.section_rule.?.right);
     // The rail never folds: its tiles stay.
     var rail = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
     addThisWindowHead(&rail, true, tm, s);
@@ -2025,7 +2086,10 @@ test "pane_sidebar: with nothing stashed the empty tray sits below the grid, unc
         const rule = l.section_rule.?;
         try testing.expectEqual(@as(?Rect, null), l.stashed_caption);
         try testing.expect(rule.top >= l.items[1].bottom);
-        try testing.expectEqual(rule.bottom + px(sm_dip, s), slot.top);
+        // As much clear space under the rule as over it (T2339, Mac
+        // a13bf6f43): the last pill's half gap and `sm`, both sides.
+        try testing.expectEqual(rule.bottom + px(sm_dip, s) + rowHalfGap(s), slot.top);
+        try testing.expectEqual(rule.top - l.items[1].bottom, slot.top - rule.bottom);
         // The rule sits where a tray with rows puts it; only the caption
         // that tray has is missing.
         const one = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .two_line = true }, .{ .section = .stashed } };
@@ -2538,6 +2602,52 @@ test "T2323: a header's hover + sits one button and a gap before its x, level wi
             try testing.expect(onButton(&l, ha.centerX(), ha.centerY(), s));
         }
         try testing.expectEqual(Rect{}, l.headAdd(l.head_count, s));
+    }
+}
+
+test "T2339: the pencil leads every header's buttons and a terminal row's - pencil, +, x on a header; pencil, stash, x on this window's row; pencil, x on another's; none on a viewer (Mac a13bf6f43)" {
+    for (scales) |s| {
+        var f = outlineFixture(s);
+        // Item 0: this window's terminal. Item 3: another window's terminal.
+        // Item 1: this window's viewer (no pencil).
+        f.items[0].renamable = true;
+        f.items[3].renamable = true;
+        const l = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        const gap = px(row_button_gap_dip, s);
+        for (0..l.head_count) |k| {
+            const ha = l.headAdd(k, s);
+            const hr = l.headRename(k, s);
+            try testing.expectEqual(ha.width(), hr.width());
+            try testing.expectEqual(ha.top, hr.top);
+            try testing.expectEqual(ha.left - gap, hr.right);
+            try testing.expect(hr.left > l.heads[k].label_x);
+            try testing.expectEqual(Hit{ .head_rename = k }, hitTest(&l, hr.centerX(), hr.centerY(), s));
+            try testing.expectEqual(Hit{ .head = k }, hitTest(&l, hr.left - 2, hr.centerY(), s));
+            try testing.expect(onButton(&l, hr.centerX(), hr.centerY(), s));
+        }
+        try testing.expectEqual(Rect{}, l.headRename(l.head_count, s));
+
+        // This window's terminal: pencil, stash, x.
+        const own_r = l.rowRename(0, s);
+        try testing.expectEqual(l.rowButton(0, s).left - gap, own_r.right);
+        try testing.expectEqual(l.rowButton(0, s).top, own_r.top);
+        try testing.expectEqual(Hit{ .item_rename = 0 }, hitTest(&l, own_r.centerX(), own_r.centerY(), s));
+        try testing.expect(onButton(&l, own_r.centerX(), own_r.centerY(), s));
+        // Another window's terminal: pencil, x - no stash between.
+        const other_r = l.rowRename(3, s);
+        try testing.expectEqual(l.rowClose(3, s).left - gap, other_r.right);
+        try testing.expectEqual(Hit{ .item_rename = 3 }, hitTest(&l, other_r.centerX(), other_r.centerY(), s));
+        // The pencil sits where a header's does: one column for the eye.
+        try testing.expectEqual(l.headRename(0, s).left, own_r.left);
+        // A viewer has none: the press is the row's.
+        try testing.expectEqual(Rect{}, l.rowRename(1, s));
+        const v = l.items[1];
+        try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, own_r.centerX(), v.centerY(), s));
+
+        // The rail has no pencils: its tiles are the item.
+        const m = layoutWith(.mini, px(68, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        const t = m.items[0];
+        try testing.expectEqual(Hit{ .item = 0 }, hitTest(&m, t.centerX(), t.centerY(), s));
     }
 }
 

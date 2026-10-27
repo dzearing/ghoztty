@@ -5529,6 +5529,26 @@ $GuardTable = @(
             'test\win32\pane-sidebar-add.ps1'
         )
     },
+    # Renaming from the sidebar (T2339, Mac 379a352ef / a13bf6f43): the
+    # pencils on window headers, project headers and terminal rows. The
+    # commit rules, the field's selection and the pencils' geometry are
+    # unit-tested in every lane; that each pencil opens its field, that
+    # Return / Escape / a click away do what they say to real windows and
+    # panes, that a group rename retitles its windows and that a pane's name
+    # outranks its banner is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-rename'
+        Script = 'test\win32\pane-sidebar-rename.ps1'
+        Stamp  = 'test\win32\pane-sidebar-rename.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\pane_sidebar_rename.zig',
+            'src\apprt\win32\pane_sidebar_search.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'src\apprt\win32\PaneView.zig',
+            'test\win32\pane-sidebar-rename.ps1'
+        )
+    },
     # This window's list is held by its header (T2324, Mac e94a9737e): the
     # header's + / fold / x in the panel and the rail's + slot of the
     # header's height. The geometry is unit-tested in every lane; that the

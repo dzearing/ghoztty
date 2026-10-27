@@ -45,6 +45,7 @@ const sidebar_prefs = @import("pane_sidebar_prefs.zig");
 const shared_mod = @import("pane_sidebar_shared.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
 const add_rules = @import("pane_sidebar_add.zig");
+const rename_rules = @import("pane_sidebar_rename.zig");
 const search_field = @import("pane_sidebar_search.zig");
 const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
@@ -118,6 +119,13 @@ fn toolHeadAdd(k: usize) usize {
 const tool_add: usize = toolHeadAdd(pane_sidebar.max_heads);
 /// The rail's + in this window's header slot (T2324).
 const tool_rail_add: usize = tool_add + 1;
+/// A row's hover pencil (T2339), then a header's.
+fn toolRowRename(i: usize) usize {
+    return tool_rail_add + 1 + i;
+}
+fn toolHeadRename(k: usize) usize {
+    return toolRowRename(pane_sidebar.max_items) + k;
+}
 
 /// What new windows start from: the most recently chosen expanded and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`),
@@ -185,6 +193,7 @@ const glyph_restore: u16 = 0xE7A7; // Undo: "bring it back"
 const glyph_windows: u16 = 0xE7C4; // TaskView: "every window"
 const glyph_close: u16 = 0xE711; // Cancel: a row's x, the search's clear
 const glyph_add: u16 = 0xE710; // Add: the header's and a header's + (T2323)
+const glyph_rename: u16 = 0xE70F; // Edit: the rename pencil (T2339)
 const glyph_search: u16 = 0xE721; // Search: the field's magnifier (T1877)
 const glyph_chevron_down: u16 = 0xE70D;
 const glyph_chevron_right: u16 = 0xE76C;
@@ -260,6 +269,36 @@ const Entry = struct {
     selected: bool,
 };
 
+/// What a rename in place edits (T2339): a pane - asked about by address
+/// only, never followed until it is found in a live window again - or a
+/// window group by its tab's identity, or a project group by its name's key.
+const RenameTarget = union(enum) {
+    pane: *PaneView,
+    window: u64,
+    project: u64,
+};
+
+/// A name being edited in place (T2339, Mac `PaneSidebarRenameField`).
+const Rename = struct {
+    target: RenameTarget,
+    field: search_field.Field = .{},
+    /// What the item showed when the field opened, as UTF-8: an unchanged
+    /// commit is measured against it, and a project's windows are found by it.
+    initial: [initial_cap]u8 = undefined,
+    initial_len: usize = 0,
+    /// Where the field's text was last painted, in client pixels, and in
+    /// which font: a press inside it puts the caret down rather than
+    /// committing, and lands by the same measure the paint used.
+    box: pane_sidebar.Rect = .{},
+    font: ?*anyopaque = null,
+
+    const initial_cap = search_field.cap * 3;
+
+    fn initialText(self: *const Rename) []const u8 {
+        return self.initial[0..self.initial_len];
+    }
+};
+
 hwnd: w32.HWND,
 window: *Window,
 alloc: Allocator,
@@ -302,6 +341,9 @@ window_count: usize = 0,
 /// scope, never persisted; turning the scope off empties it.
 search: search_field.Field = .{},
 search_focus: bool = false,
+/// The name being edited in place (T2339): while set, the column's keyboard
+/// is the field's, not the search's.
+rename: ?Rename = null,
 
 // Scrolling (T1878, `pane_sidebar_scroll`): the wanted offset, clamped by
 // every layout, the wheel's carried remainder, a thumb drag in progress, and
@@ -637,6 +679,8 @@ pub fn place(self: *PaneSidebar, target: w32.RECT, mode: pane_sidebar.Mode, scal
     // T1877: a field that is no longer on screen gives the caret back, and a
     // query filters the panel but never the rail - a mode change re-asks.
     if (self.search_focus and !self.searchShown()) self.releaseSearchFocus();
+    // T2339: a rename field lives in the panel's rows; the rail has none.
+    if (self.rename != null and mode != .expanded) self.endRename(false, "collapsed");
     if (changed and !self.search.isEmpty()) self.refresh();
     if (mode == .hidden or rect.right <= rect.left or rect.bottom <= rect.top) {
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
@@ -752,7 +796,7 @@ pub fn refresh(self: *PaneSidebar) void {
         .panes = n,
         .own = true,
         .tabbed = win.tab_count > 1,
-    }, name, null);
+    }, ownLabel(name), null);
     self.appendEntries(views[0..n], win, win.active_tab, 0, true, active);
     self.rosterChanged();
 }
@@ -785,6 +829,9 @@ fn hashView(h: *std.hash.Wyhash, v: *PaneView, selected: bool) void {
 
 /// The roster changed: repaint and re-sync the tips.
 fn rosterChanged(self: *PaneSidebar) void {
+    // The item being renamed went away (its pane or window closed): there
+    // is nothing left to name.
+    if (self.rename != null and !self.renameTargetLive()) self.endRename(false, "gone");
     self.revealSelected();
     // The rows moved under the pointer: the hovered index may name another
     // pane now.
@@ -854,6 +901,7 @@ fn logOutline(self: *PaneSidebar) void {
         w.print("{d},{d};", .{ a.centerX(), a.centerY() }) catch break;
     }
     w.print(" add={d},{d}", .{ l.add.centerX(), l.add.centerY() }) catch {};
+    self.logPencils(w, &l);
     // The drag-only well (T2313): its center, or `-` at rest.
     if (l.drop_slot) |sl| {
         w.print(" tray={d},{d}", .{ sl.centerX(), sl.centerY() }) catch {};
@@ -874,6 +922,25 @@ fn logToggle(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layout
 fn logScroll(w: anytype, l: *const pane_sidebar.Layout) void {
     w.print(" scroll={d}/{d} view={d},{d} sticky=", .{ l.scroll, l.max_scroll, l.viewport.top, l.viewport.bottom }) catch return;
     if (l.sticky) |k| w.print("{d}", .{k}) catch {} else w.writeAll("-") catch {};
+}
+
+/// The rename pencils on a geometry line (T2339): each head's (`hr=`, in
+/// heads order) and each shown row's (`ir=`, in the `items=` order, `-` for a
+/// row that has none - a viewer's).
+fn logPencils(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layout) void {
+    w.writeAll(" hr=") catch return;
+    for (0..l.head_count) |k| {
+        const r = l.headRename(k, self.scale);
+        w.print("{d},{d};", .{ r.centerX(), r.centerY() }) catch return;
+    }
+    w.writeAll(" ir=") catch return;
+    for (0..@min(l.count, self.entries.items.len)) |i| {
+        if (!l.shown(i)) continue;
+        const r = l.rowRename(i, self.scale);
+        if (r.width() > 0) {
+            w.print("{d},{d};", .{ r.centerX(), r.centerY() }) catch return;
+        } else w.writeAll("-;") catch return;
+    }
 }
 
 fn logRows(self: *PaneSidebar) void {
@@ -902,6 +969,7 @@ fn logRows(self: *PaneSidebar) void {
         const a = l.headAdd(0, self.scale);
         w.print(" chev={d},{d}; hx={d},{d}; ha={d},{d};", .{ hd.chevron.centerX(), hd.chevron.centerY(), x.centerX(), x.centerY(), a.centerX(), a.centerY() }) catch {};
     }
+    self.logPencils(w, &l);
     if (l.rail_add.width() > 0) {
         w.print(" radd={d},{d}", .{ l.rail_add.centerX(), l.rail_add.centerY() }) catch {};
     } else w.writeAll(" radd=-") catch {};
@@ -1127,7 +1195,7 @@ fn paneMatches(query: []const u8, window_name: []const u8, v: *PaneView, home: ?
     const kind_name: []const u8 = if (v.isViewer()) "Viewer" else "Terminal";
     const pwd: ?[]const u8 = if (v.surface()) |s| (if (s.pwd) |p| p else null) else null;
     var title_buf: [512]u8 = undefined;
-    const label8 = pane_sidebar.paneLabel(if (v.title()) |t| t else null, pwd, kind_name, bannerOf(v), &title_buf);
+    const label8 = pane_sidebar.paneLabel(if (v.title()) |t| t else null, pwd, kind_name, bannerOf(v), v.userTitled(), &title_buf);
     // The pane's own title still finds it when a banner title hides it (T2085).
     const own8: ?[]const u8 = if (v.title()) |t| t else null;
     var line_buf: [512]u8 = undefined;
@@ -1166,6 +1234,12 @@ fn groupName(w: *Window, t: usize, buf: *[name_cap]u8) []const u8 {
     const pane = w.tab_active_pane[t];
     const pwd: ?[]const u8 = if (pane.surface()) |s| (if (s.pwd) |p| p else null) else null;
     return pane_sidebar.displayTitle(if (pane.title()) |x| x else null, pwd, "Window");
+}
+
+/// This window's own list names it as the all-windows list does (T2339, Mac
+/// a13bf6f43): `<name>` for a `<project>: <name>` window.
+fn ownLabel(name: []const u8) []const u8 {
+    return if (outline.splitWindowTitle(name)) |sp| sp.worktree else name;
 }
 
 fn tabKey(w: *const Window, t: usize) u64 {
@@ -1228,7 +1302,7 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
         // The banner's title names the row (and so the tile's tip) when it
         // has one (T2085).
         var title_buf: [512]u8 = undefined;
-        const title8 = pane_sidebar.paneLabel(if (v.title()) |t| t else null, pwd, kind_name, bannerOf(v), &title_buf);
+        const title8 = pane_sidebar.paneLabel(if (v.title()) |t| t else null, pwd, kind_name, bannerOf(v), v.userTitled(), &title_buf);
 
         var line_buf: [512]u8 = undefined;
         const subtitle8: ?[]const u8 = blk: {
@@ -1326,7 +1400,7 @@ fn rawLayout(self: *PaneSidebar) pane_sidebar.Layout {
     var items: [pane_sidebar.max_items]pane_sidebar.Item = undefined;
     const n = @min(self.entries.items.len, items.len);
     for (self.entries.items[0..n], 0..) |e, i| {
-        items[i] = .{ .section = e.section, .two_line = e.subtitle.len > 0, .group = e.group, .own = e.own };
+        items[i] = .{ .section = e.section, .two_line = e.subtitle.len > 0, .group = e.group, .own = e.own, .renamable = rename_rules.offersPencil(.pane, e.pane.isViewer()) };
     }
     self.ensureFonts();
     const lines: ?[]const pane_sidebar.Line = if (self.all_windows) self.lines.items else null;
@@ -2746,8 +2820,12 @@ fn paintRow(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, i: 
     const text_left = icon_r.right + pane_sidebar.px(8, self.scale);
     var text_right = r.right - text_inset;
     const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
-    if (hovered) {
-        // Another window's row offers the x alone (T2298).
+    // Renamed in place (T2339): the field takes the buttons' room too, and
+    // they stay away while it edits (Mac `isHovered && !isEditing`).
+    const editing = self.renamingPane(e.pane);
+    if (hovered and !editing) {
+        // Another window's row offers the x alone (T2298); a terminal's
+        // leads with the pencil (T2339).
         const x = l.rowClose(i, self.scale);
         text_right = x.left - sm;
         if (row_menu.rowOffersStash(e.own)) {
@@ -2755,8 +2833,13 @@ fn paintRow(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, i: 
             text_right = button.left - sm;
             self.paintRowButton(hdc, .{ .item_button = i }, button, if (e.section == .stashed) glyph_restore else glyph_stash, pill.under, t);
         }
+        const pencil = l.rowRename(i, self.scale);
+        if (pencil.width() > 0) {
+            text_right = pencil.left - sm;
+            self.paintRowButton(hdc, .{ .item_rename = i }, pencil, glyph_rename, pill.under, t);
+        }
         self.paintRowButton(hdc, .{ .item_close = i }, x, glyph_close, pill.under, t);
-    } else if (e.bell and e.section == .stashed) {
+    } else if (e.bell and e.section == .stashed and !editing) {
         // Mac's accessory: a stashed pane's bell dot.
         const d = @max(pane_sidebar.px(7, self.scale), 3);
         self.paintBellDot(hdc, text_right - @divTrunc(d, 2), icon_r.centerY(), t);
@@ -2769,7 +2852,10 @@ fn paintRow(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, i: 
     const text_top = r.top + @divTrunc(r.height() - block, 2);
     const title_bottom = text_top + self.metrics.title_h;
     if (self.title_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-    drawText(hdc, e.title, .{ .left = text_left, .top = text_top, .right = text_right, .bottom = title_bottom }, ink, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    const title_r: pane_sidebar.Rect = .{ .left = text_left, .top = text_top, .right = text_right, .bottom = title_bottom };
+    if (editing) {
+        self.paintRenameField(hdc, title_r, self.title_font, pill.under, t);
+    } else drawText(hdc, e.title, title_r, ink, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
     if (e.subtitle.len > 0) {
         if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
         drawText(hdc, e.subtitle, .{
@@ -2961,8 +3047,11 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
 fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, g: Group, t: Theme) void {
     const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
-    const hovered = self.hoverIs(.{ .head = k }) or self.hoverIs(.{ .head_fold = k }) or self.hoverIs(.{ .head_close = k }) or self.hoverIs(.{ .head_add = k });
+    const hovered = self.hoverIs(.{ .head = k }) or self.hoverIs(.{ .head_fold = k }) or self.hoverIs(.{ .head_close = k }) or
+        self.hoverIs(.{ .head_add = k }) or self.hoverIs(.{ .head_rename = k });
     const project = hd.kind == .project;
+    // Renamed in place (T2339): the count stays, the buttons stay away.
+    const editing = self.renamingHead(hd, g);
     var under = t.surface;
     if (hovered and (project or !g.own)) {
         const sel = list_selection.rowPaint(t.surface, t.accent, .{ .selected = false, .focused = false, .hovered = true, .focus_visible = false });
@@ -2974,12 +3063,15 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     const folded = if (project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
 
-    // The trailing count first, so the name knows its room. Hovered, + and x
-    // take the count's place (T2298, T2323; Mac 345be6b02, 44aa923f0); the
-    // name stops short of the x either way, so nothing shifts when they
-    // appear, and gives way to the + only while it is up.
+    // The trailing count first, so the name knows its room. Hovered, the
+    // pencil, + and x take the count's place (T2298, T2323, T2339; Mac
+    // 345be6b02, 44aa923f0, a13bf6f43); the name stops short of the x either
+    // way, so nothing shifts when they appear, and gives way to the pencil
+    // and the + only while they are up.
     const x = pane_sidebar.headCloseRect(hd, self.scale);
     const plus = pane_sidebar.headAddRect(hd, self.scale);
+    const pencil = pane_sidebar.headRenameRect(hd, self.scale);
+    const buttons = hovered and !editing;
     var right = hd.rect.right - text_inset;
     const text_r: pane_sidebar.Rect = .{ .left = hd.label_x, .top = hd.chevron.top - pane_sidebar.px(6, self.scale), .right = right, .bottom = hd.chevron.bottom + pane_sidebar.px(6, self.scale) };
     {
@@ -2989,13 +3081,24 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
         const cn = std.unicode.utf8ToUtf16Le(&cw, count8) catch 0;
         if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
         const w = textWidth(hdc, cw[0..cn]);
-        if (hovered) {
+        if (buttons) {
+            self.paintRowButton(hdc, .{ .head_rename = k }, pencil, glyph_rename, under, t);
             self.paintRowButton(hdc, .{ .head_add = k }, plus, glyph_add, under, t);
             self.paintRowButton(hdc, .{ .head_close = k }, x, glyph_close, under, t);
         } else drawText(hdc, cw[0..cn], .{ .left = right - w, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_RIGHT);
-        right = @min(right - w, if (hovered) plus.left else x.left) - sm;
+        right = @min(right - w, if (buttons) pencil.left else x.left) - sm;
     }
 
+    // The field holds the name in its own weight: the project as typed in
+    // the titles (the header shows it upper-cased), a window's whole title.
+    if (editing) {
+        const font = if (project) self.caption_bold_font else self.title_bold_font;
+        if (font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        const line_h = if (project) self.metrics.caption_h else self.metrics.title_h;
+        const top = hd.chevron.centerY() - @divTrunc(line_h, 2);
+        self.paintRenameField(hdc, .{ .left = hd.label_x, .top = top, .right = right, .bottom = top + line_h }, font, under, t);
+        return;
+    }
     if (project) {
         if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
         drawText(hdc, g.project, .{ .left = hd.label_x, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
@@ -3109,7 +3212,8 @@ const item_button_wash_pressed: f64 = 0.26;
 
 /// The pointer is on row `i` or one of its buttons.
 fn rowHovered(self: *const PaneSidebar, i: usize) bool {
-    return self.hoverIs(.{ .item = i }) or self.hoverIs(.{ .item_button = i }) or self.hoverIs(.{ .item_close = i });
+    return self.hoverIs(.{ .item = i }) or self.hoverIs(.{ .item_button = i }) or self.hoverIs(.{ .item_close = i }) or
+        self.hoverIs(.{ .item_rename = i });
 }
 
 fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
@@ -3489,6 +3593,9 @@ const tip_search_clear = W("Clear search");
 const tip_close = W(row_menu.close_tip);
 const tip_add = W(add_rules.new_window_tip);
 const tip_new_pane = W(add_rules.new_pane_tip);
+const tip_rename_window = W(rename_rules.tip(.window));
+const tip_rename_group = W(rename_rules.tip(.project));
+const tip_rename_pane = W(rename_rules.tip(.pane));
 const tip_restore_row = W(tips.stashed_row_tip);
 
 /// A header x's tip (Mac's `.help`): "Close window", or a project's "Close
@@ -3539,12 +3646,14 @@ fn syncTips(self: *PaneSidebar) void {
         delTool(tip, hwnd, toolItem(i));
         delTool(tip, hwnd, toolButton(i));
         delTool(tip, hwnd, toolClose(i));
+        delTool(tip, hwnd, toolRowRename(i));
     };
     const nh = if (live) l.head_count else 0;
     if (self.tip_heads > nh) for (nh..self.tip_heads) |k| {
         delTool(tip, hwnd, toolHead(k));
         delTool(tip, hwnd, toolHeadClose(k));
         delTool(tip, hwnd, toolHeadAdd(k));
+        delTool(tip, hwnd, toolHeadRename(k));
     };
     self.tip_heads = nh;
     // The search field (T1877, Mac's `.toolTip` and "Clear search"):
@@ -3592,6 +3701,10 @@ fn syncTips(self: *PaneSidebar) void {
             if (a.height() > 0) {
                 addTool(tip, hwnd, toolHeadAdd(k), a, self.headAddTip(k, hd));
             } else delTool(tip, hwnd, toolHeadAdd(k));
+            const pr = if (rows) scroll_mod.visible(&l, l.headRename(k, self.scale)) else pane_sidebar.Rect{};
+            if (pr.height() > 0) {
+                addTool(tip, hwnd, toolHeadRename(k), pr, if (hd.kind == .project) tip_rename_group else tip_rename_window);
+            } else delTool(tip, hwnd, toolHeadRename(k));
         }
         for (self.entries.items[0..n], 0..) |e, i| {
             if (!l.shown(i) or scroll_mod.visible(&l, l.items[i]).height() <= 0) {
@@ -3600,6 +3713,7 @@ fn syncTips(self: *PaneSidebar) void {
                 delTool(tip, hwnd, toolItem(i));
                 delTool(tip, hwnd, toolButton(i));
                 delTool(tip, hwnd, toolClose(i));
+                delTool(tip, hwnd, toolRowRename(i));
                 continue;
             }
             if (rows) {
@@ -3612,6 +3726,8 @@ fn syncTips(self: *PaneSidebar) void {
                 if (b.height() > 0) addTool(tip, hwnd, toolButton(i), b, btn_tip) else delTool(tip, hwnd, toolButton(i));
                 const x = scroll_mod.visible(&l, l.rowClose(i, self.scale));
                 if (x.height() > 0) addTool(tip, hwnd, toolClose(i), x, tip_close) else delTool(tip, hwnd, toolClose(i));
+                const pr = scroll_mod.visible(&l, l.rowRename(i, self.scale));
+                if (pr.height() > 0) addTool(tip, hwnd, toolRowRename(i), pr, tip_rename_pane) else delTool(tip, hwnd, toolRowRename(i));
             } else {
                 // Another window's tile names its window too (Mac: "in
                 // the mini rail ... the hover label names the window").
@@ -3718,6 +3834,9 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
         .head, .head_fold => |k| self.activateHead(k, std.meta.activeTag(hit) == .head_fold),
         .head_close => |k| self.closeHead(k),
         .head_add => |k| self.addFromHead(k),
+        // The pencils (T2339): the name turns into a field.
+        .item_rename => |i| self.beginRenamePane(i),
+        .head_rename => |k| self.beginRenameHead(k),
         // The rail's + (T2324): this window's header's own +.
         .rail_add => if (self.groups.items.len > 0) self.addPaneIn(self.groups.items[0]),
     }
@@ -3730,6 +3849,8 @@ fn toggleScope(self: *PaneSidebar) void {
     // Started before the switch, so the paint the refresh below brings is
     // already the transition's first frame rather than the new list.
     self.startTransition(self.snapshot(.{ .scope = !self.all_windows }));
+    // The list the field sat in is going: what was typed is kept (T2339).
+    if (self.rename != null) self.endRename(true, "scope");
     // One switch for every window (T2336). On opens this window's group and
     // folds every other; off, the search belongs to the scope (Mac clears
     // the filter with it): the field is gone, so its query and its caret go
@@ -3857,6 +3978,338 @@ fn pasteSearch(self: *PaneSidebar) void {
     var n: usize = 0;
     while (n < 4 * search_field.cap and units[n] != 0) n += 1;
     self.searchEdited(self.search.insert(units[0..n]));
+}
+
+// -------------------------------------------------------------------------
+// Rename in place (T2339; Mac 379a352ef, a13bf6f43)
+// -------------------------------------------------------------------------
+
+/// A terminal row's pencil: the field opens on the name the row shows.
+fn beginRenamePane(self: *PaneSidebar, i: usize) void {
+    if (i >= self.entries.items.len) return;
+    const e = self.entries.items[i];
+    if (!rename_rules.offersPencil(.pane, e.pane.isViewer())) return;
+    var b: [Rename.initial_cap]u8 = undefined;
+    const n = std.unicode.utf16LeToUtf8(&b, e.title[0..@min(e.title.len, search_field.cap)]) catch 0;
+    self.beginRename(.{ .pane = e.pane }, b[0..n]);
+}
+
+/// A header's pencil: a window's field opens on its whole title,
+/// `<project>: ` included; a project's on the project as its titles spell it.
+fn beginRenameHead(self: *PaneSidebar, k: usize) void {
+    const l = self.currentLayout();
+    if (k >= l.head_count) return;
+    const hd = l.heads[k];
+    if (hd.index >= self.groups.items.len) return;
+    const g = self.groups.items[hd.index];
+    if (!self.window.app.hasWindow(g.window) or g.tab >= g.window.tab_count) return;
+    var b: [name_cap]u8 = undefined;
+    switch (hd.kind) {
+        .window => self.beginRename(.{ .window = g.key }, groupName(g.window, g.tab, &b)),
+        .project => {
+            const project = self.headProject(hd, &b) orelse return;
+            self.beginRename(.{ .project = g.project_key }, project);
+        },
+    }
+}
+
+/// Open the field on `initial8`, selected, and give it the keyboard - through
+/// the loop's deferred focus (T48), as the search field takes it.
+fn beginRename(self: *PaneSidebar, target: RenameTarget, initial8: []const u8) void {
+    if (self.mode != .expanded) return;
+    // One field at a time: another open one keeps what it holds.
+    if (self.rename != null) self.endRename(true, "another");
+    // The caret moves from the search field to this one.
+    if (self.search_focus) self.search_focus = false;
+    self.rename = .{ .target = target };
+    const r = &self.rename.?;
+    const n = fitUtf8(initial8, r.initial.len);
+    @memcpy(r.initial[0..n], initial8[0..n]);
+    r.initial_len = n;
+    var units: [search_field.cap]u16 = undefined;
+    r.field.setSelected(toUnits(&units, initial8));
+    log.info("pane sidebar rename begin kind={s} text={s}", .{ @tagName(target), r.initialText() });
+    if (w32.GetAncestor(self.hwnd, w32.GA_ROOT)) |root| {
+        if (!w32.windowIsActive(root)) _ = w32.SetForegroundWindow(root);
+    }
+    App.deferSetFocus(self.hwnd);
+    self.repaint();
+}
+
+/// Close the field: `commit` applies what was typed (Return, clicking away),
+/// otherwise nothing changes (Escape, the item went away). Cleared FIRST:
+/// the renames below refresh every sidebar, this one included, and a focus
+/// move can arrive while they do.
+fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
+    const r = self.rename orelse return;
+    self.rename = null;
+    self.repaint();
+    var tb: [search_field.cap * 3]u8 = undefined;
+    const typed = r.field.utf8(&tb);
+    const outcome: rename_rules.Outcome = if (commit) rename_rules.decide(typed, r.initialText()) else .keep;
+    log.info("pane sidebar rename end why={s} kind={s} outcome={s} text={s}", .{ why, @tagName(r.target), @tagName(outcome), typed });
+    const name: ?[]const u8 = switch (outcome) {
+        .keep => return,
+        .clear => null,
+        .set => |v| v,
+    };
+    const app = self.window.app;
+    switch (r.target) {
+        .pane => |p| renamePane(app, p, name),
+        .window => |key| renameWindowGroup(app, key, name),
+        .project => |key| {
+            // The fold follows the group to its new name, as its windows do.
+            // One set for every window's sidebar (T2336).
+            if (name) |nm| if (shared.folded_projects.contains(key)) {
+                shared.toggleProject(self.alloc, key);
+                const to = projectKey(nm);
+                if (!shared.folded_projects.contains(to)) shared.toggleProject(self.alloc, to);
+                self.published();
+            };
+            renameProject(app, r.initialText(), name orelse "");
+        },
+    }
+    // Any window rename redraws every sidebar (Mac `PaneRoster.changed`).
+    refreshScopes(app.windows.items, null);
+}
+
+/// A pane's name, as Change Pane Title sets it: pinned against the
+/// terminal's own titles, `null` back to them. Found again among the live
+/// windows first - the field may have outlived the pane.
+fn renamePane(app: *App, p: *PaneView, name: ?[]const u8) void {
+    for (app.windows.items) |w| {
+        if (w.findTabIndex(p) == null) continue;
+        if (p.surface()) |s| s.setUserTitle(name);
+        return;
+    }
+}
+
+/// A window group's name (Mac `setWindowTitle`). A Mac window is a tab here,
+/// so it is the tab's title that is pinned - unless the window carries a
+/// window-wide pin, which is what its rows show and so what was edited.
+fn pinWindowName(w: *Window, t: usize, name: ?[]const u8) void {
+    if (w.title_override) |o| if (o.len > 0) return w.setTitleOverride(name);
+    w.setTabTitlePin(t, name);
+}
+
+fn renameWindowGroup(app: *App, key: u64, name: ?[]const u8) void {
+    for (app.windows.items) |w| for (0..w.tab_count) |t| {
+        if (tabKey(w, t) != key) continue;
+        return pinWindowName(w, t, name);
+    };
+}
+
+/// A project group renamed from `old` to `project` (Mac
+/// `renameGroupFromSidebar`): each of its windows becomes `<project>: <name>`
+/// - or, emptied, just `<name>`.
+fn renameProject(app: *App, old: []const u8, project: []const u8) void {
+    for (app.windows.items) |w| for (0..w.tab_count) |t| {
+        var nb: [name_cap]u8 = undefined;
+        const split = outline.splitWindowTitle(groupName(w, t, &nb)) orelse continue;
+        if (!std.mem.eql(u8, split.project, old)) continue;
+        var tb: [name_cap + 64]u8 = undefined;
+        // Copied before the pin replaces the title it was read from.
+        pinWindowName(w, t, rename_rules.groupTitle(&tb, project, split.worktree));
+    };
+}
+
+/// Whether what the field edits is still listed here.
+fn renameTargetLive(self: *const PaneSidebar) bool {
+    const r = if (self.rename) |*x| x else return false;
+    switch (r.target) {
+        .pane => |p| for (self.entries.items) |e| {
+            if (e.pane == p) return true;
+        },
+        .window => |key| for (self.groups.items) |g| {
+            if (g.key == key) return true;
+        },
+        .project => |key| for (self.groups.items) |g| {
+            if (g.project.len > 0 and g.project_key == key) return true;
+        },
+    }
+    return false;
+}
+
+fn renamingPane(self: *const PaneSidebar, p: *const PaneView) bool {
+    const r = if (self.rename) |*x| x else return false;
+    return switch (r.target) {
+        .pane => |q| q == p,
+        else => false,
+    };
+}
+
+fn renamingHead(self: *const PaneSidebar, hd: pane_sidebar.Head, g: Group) bool {
+    const r = if (self.rename) |*x| x else return false;
+    return switch (r.target) {
+        .window => |key| hd.kind == .window and g.key == key,
+        .project => |key| hd.kind == .project and g.project_key == key,
+        .pane => false,
+    };
+}
+
+/// Whether (`x`, `y`) is in the open field, as last painted.
+fn inRenameField(self: *const PaneSidebar, x: i32, y: i32) bool {
+    const r = if (self.rename) |*v| v else return false;
+    return r.box.width() > 0 and renameWell(r.box, self.scale).contains(x, y);
+}
+
+/// The field's well round its text box: a step out on each side, so the
+/// text sits where the name it replaces sat.
+fn renameWell(box: pane_sidebar.Rect, scale: f32) pane_sidebar.Rect {
+    const pad = pane_sidebar.px(4, scale);
+    const v = pane_sidebar.px(2, scale);
+    return .{ .left = box.left - pad, .top = box.top - v, .right = box.right, .bottom = box.bottom + v };
+}
+
+/// How far the field's text is scrolled left so its caret stays in view.
+fn renameScroll(r: *const Rename, hdc: w32.HDC) i32 {
+    const caret_x = textWidth(hdc, r.field.text()[0..r.field.caret]);
+    return search_field.scrollFor(caret_x, r.box.width() - 1);
+}
+
+/// The field (T2339): the search field's input shape - a rounded well a step
+/// off what it sits on, the accent underline while it holds the keyboard -
+/// with the text selected as it opens, then a caret.
+fn paintRenameField(self: *PaneSidebar, hdc: w32.HDC, box: pane_sidebar.Rect, font: ?*anyopaque, under: color_math.Rgb, t: Theme) void {
+    const r = if (self.rename) |*x| x else return;
+    r.box = box;
+    r.font = font;
+    const s = self.scale;
+    const well_r = renameWell(box, s);
+    const radius = pane_sidebar.px(4, s);
+    const well = shade(under, if (t.dark) -14 else 14);
+    fillRound(hdc, well_r, radius, rgb(well));
+    const focused = w32.GetFocus() == self.hwnd;
+    if (focused) {
+        const line = @max(pane_sidebar.px(2, s), 1);
+        fillRect(hdc, .{ .left = well_r.left + radius, .top = well_r.bottom - line, .right = well_r.right - radius, .bottom = well_r.bottom }, rgb(t.accent));
+    }
+    const text = r.field.text();
+    const off = renameScroll(r, hdc);
+    const saved = w32.SaveDC(hdc);
+    _ = w32.IntersectClipRect(hdc, box.left, well_r.top, box.right, well_r.bottom);
+    if (r.field.all) {
+        const sel_w = textWidth(hdc, text);
+        fillRect(hdc, .{ .left = box.left - off, .top = box.top, .right = box.left - off + sel_w, .bottom = box.bottom }, rgb(color_math.mix(well, t.accent, 0.45)));
+    }
+    drawText(hdc, text, .{ .left = box.left - off, .top = box.top, .right = box.left - off + 100000, .bottom = box.bottom }, t.text, w32.DT_VCENTER);
+    _ = w32.RestoreDC(hdc, saved);
+    if (focused and !r.field.all) {
+        const cx = box.left + textWidth(hdc, text[0..r.field.caret]) - off;
+        fillRect(hdc, .{ .left = cx, .top = box.top, .right = cx + @max(pane_sidebar.px(1, s), 1), .bottom = box.bottom }, t.text);
+    }
+}
+
+/// A press in the field at `x`: the caret goes to the nearest boundary,
+/// measured the way `paintRenameField` lays the text out.
+fn renameClick(self: *PaneSidebar, x: i32) void {
+    const r = if (self.rename) |*v| v else return;
+    const dc = w32.CreateCompatibleDC(null) orelse return;
+    defer _ = w32.DeleteDC(dc);
+    if (r.font) |f| _ = w32.SelectObject(dc, @ptrCast(f));
+    // Measured as painted: before the click ends a selection, the text has
+    // not scrolled for a caret it did not show.
+    const off = renameScroll(r, dc);
+    const text = r.field.text();
+    const target = x - r.box.left + off;
+    var at: usize = text.len;
+    var prev: i32 = 0;
+    for (1..text.len + 1) |i| {
+        const wdt = textWidth(dc, text[0..i]);
+        if (wdt >= target) {
+            at = if (target - prev < wdt - target) i - 1 else i;
+            break;
+        }
+        prev = wdt;
+    }
+    r.field.setCaret(at);
+    // Clicked back into it after the keyboard went elsewhere: take it again.
+    if (w32.GetFocus() != self.hwnd) App.deferSetFocus(self.hwnd);
+    self.repaint();
+}
+
+/// A key while a name is being edited. True when the field used it.
+fn renameKey(self: *PaneSidebar, vk: u16, wparam: usize, lparam: isize) bool {
+    _ = wparam;
+    _ = lparam;
+    const r = if (self.rename) |*v| v else return false;
+    const ctrl = w32.GetKeyState(@as(i32, w32.VK_CONTROL)) < 0;
+    switch (vk) {
+        w32.VK_RETURN, w32.VK_ESCAPE => {
+            self.endRename(vk == w32.VK_RETURN, if (vk == w32.VK_RETURN) "return" else "escape");
+            // Done with the keyboard: back to this window's focused pane, as
+            // the search field gives it back.
+            if (w32.GetFocus() == self.hwnd) {
+                if (self.window.getActivePane()) |p| self.window.paneSidebarActivate(p);
+            }
+            return true;
+        },
+        w32.VK_BACK => if (r.field.backspace(ctrl)) self.repaint(),
+        w32.VK_DELETE => if (r.field.delete(ctrl)) self.repaint(),
+        w32.VK_LEFT, w32.VK_RIGHT, w32.VK_HOME, w32.VK_END => {
+            const m: search_field.Move = switch (vk) {
+                w32.VK_LEFT => if (ctrl) .word_left else .left,
+                w32.VK_RIGHT => if (ctrl) .word_right else .right,
+                w32.VK_HOME => .home,
+                else => .end,
+            };
+            if (r.field.move(m)) self.repaint();
+        },
+        'A' => {
+            if (!ctrl) return false;
+            r.field.selectAll();
+            self.repaint();
+        },
+        'V' => {
+            if (!ctrl) return false;
+            var units: [search_field.cap]u16 = undefined;
+            if (r.field.insert(self.clipboardText(&units))) self.repaint();
+        },
+        else => return false,
+    }
+    return true;
+}
+
+/// The clipboard's text, up to `out.len` units (empty when there is none).
+fn clipboardText(self: *PaneSidebar, out: []u16) []const u16 {
+    if (w32.OpenClipboard(self.hwnd) == 0) return out[0..0];
+    defer _ = w32.CloseClipboard();
+    const mem = w32.GetClipboardData(w32.CF_UNICODETEXT) orelse return out[0..0];
+    const p = w32.GlobalLock(mem) orelse return out[0..0];
+    defer _ = w32.GlobalUnlock(mem);
+    const units: [*]const u16 = @ptrCast(@alignCast(p));
+    var n: usize = 0;
+    while (n < out.len and units[n] != 0) : (n += 1) out[n] = units[n];
+    return out[0..n];
+}
+
+/// `s` (valid UTF-8: every caller converted it) as UTF-16 into `out`, as
+/// much as fits whole.
+fn toUnits(out: []u16, s: []const u8) []const u16 {
+    var n: usize = 0;
+    var it = std.unicode.Utf8View.initUnchecked(s).iterator();
+    while (it.nextCodepoint()) |cp| {
+        if (cp >= 0x10000) {
+            if (n + 2 > out.len) break;
+            const v = cp - 0x10000;
+            out[n] = @intCast(0xD800 + (v >> 10));
+            out[n + 1] = @intCast(0xDC00 + (v & 0x3FF));
+            n += 2;
+        } else {
+            if (n + 1 > out.len) break;
+            out[n] = @intCast(cp);
+            n += 1;
+        }
+    }
+    return out[0..n];
+}
+
+/// How many leading bytes of `s` fit in `room` without cutting a character.
+fn fitUtf8(s: []const u8, room: usize) usize {
+    if (s.len <= room) return s.len;
+    var n = room;
+    while (n > 0 and (s[n] & 0xC0) == 0x80) n -= 1;
+    return n;
 }
 
 /// The window an entry's pane lives in, if it is still open: this sidebar's
@@ -4147,8 +4600,9 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                     setSizeCursor();
                     return 1;
                 }
-                // The search field's text takes the text cursor (T1877).
-                if (self.hitAt(pt.x, pt.y) == .search) {
+                // The search field's text takes the text cursor (T1877), and
+                // so does a rename field's (T2339).
+                if (self.hitAt(pt.x, pt.y) == .search or self.inRenameField(pt.x, pt.y)) {
                     _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_IBEAM));
                     return 1;
                 }
@@ -4219,6 +4673,15 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 log.info("pane sidebar thumb drag start surface=rail", .{});
                 return 0;
             }
+            // A rename field (T2339): a press in it puts the caret down; a
+            // press anywhere else keeps the name - then does what it does.
+            if (self.rename != null) {
+                if (self.inRenameField(self.press_x, self.press_y)) {
+                    self.renameClick(self.press_x);
+                    return 0;
+                }
+                self.endRename(true, "click");
+            }
             if (self.onEdgeAt(self.press_x, self.press_y)) {
                 self.edgeBegin(hwnd, self.press_x, self.press_y);
                 return 0;
@@ -4266,7 +4729,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         },
         // The search field's keyboard (T1877).
         w32.WM_SETFOCUS => {
-            if (self.searchShown()) {
+            if (self.rename != null) {
+                log.info("pane sidebar rename focus=true", .{});
+                self.repaint();
+            } else if (self.searchShown()) {
                 self.search_focus = true;
                 log.info("pane sidebar search focus=true", .{});
                 self.repaint();
@@ -4274,6 +4740,8 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_KILLFOCUS => {
+            // Clicking away keeps the name (Mac: the field resigning).
+            if (self.rename != null) self.endRename(true, "focus");
             if (self.search_focus) {
                 self.search_focus = false;
                 log.info("pane sidebar search focus=false", .{});
@@ -4282,15 +4750,23 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_KEYDOWN => {
+            if (self.rename != null) {
+                if (self.renameKey(@intCast(wparam & 0xFFFF), wparam, lparam)) return 0;
+                return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            }
             if (self.searchShown() and self.searchKey(@intCast(wparam & 0xFFFF), wparam, lparam)) return 0;
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_CHAR => {
-            if (!self.searchShown()) return 0;
             const unit: u16 = @truncate(wparam);
             // Return / Escape / Backspace arrive here too, translated from
             // their key: the key handler already acted on them.
             if (unit < 0x20 or unit == 0x7F) return 0;
+            if (self.rename) |*r| {
+                if (r.field.insert(&.{unit})) self.repaint();
+                return 0;
+            }
+            if (!self.searchShown()) return 0;
             self.searchEdited(self.search.insert(&.{unit}));
             return 0;
         },
