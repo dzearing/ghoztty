@@ -1,15 +1,16 @@
 {
     "guard":  "update-auto-apply",
     "script":  "test/win32/update-auto-apply.ps1",
-    "generated":  "2026-10-23T14:52:15-07:00",
-    "commit":  "0ac70b89d",
+    "generated":  "2026-10-27T00:04:30-07:00",
+    "commit":  "bfb0611a3",
     "uncommitted":  [
-                        "src/apprt/win32/update_install.zig"
+                        "src/apprt/win32/update_install.zig",
+                        "test/win32/update-auto-apply.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/update_auto_apply.zig":  "8f591a386f1d0b3cc6c0aa3378877a0e9a1a906980add59353ca598610da11ff",
-                  "src/apprt/win32/update_install.zig":  "21edac189d6c107b6c6b65af8dc4f6b3ca56a80a8c487c4baa0a2332c5df3edd",
+                  "src/apprt/win32/update_install.zig":  "8eda749d269a65e40c2016e4fd2b8118677fc591dae08de300db9e514a022623",
                   "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
-                  "test/win32/update-auto-apply.ps1":  "d8ce62a5b4deb188abfd7c9ee7b27901797885e8e140909aaa4d1973e3520903"
+                  "test/win32/update-auto-apply.ps1":  "3598298b429f4aae4c1903bdba29e95d8efc5e17ca65f83175bf070da653b3a8"
               }
 }

@@ -1,10 +1,12 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-10-26T22:26:19-07:00",
-    "commit":  "3834f812f",
+    "generated":  "2026-10-26T23:20:27-07:00",
+    "commit":  "bfb0611a3",
     "uncommitted":  [
-
+                        "src/apprt/win32/ConfirmDialog.zig",
+                        "src/apprt/win32/update_apply.zig",
+                        "src/apprt/win32/update_install.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -79,7 +81,7 @@
                   "src/apprt/win32/color_math.zig":  "3fc2bcda92f62ec504f381dc75c3dd570888e4da5c2945cdfe5d613cb8f48353",
                   "src/apprt/win32/com.zig":  "5bdb6803e4056d79ba1a1390ff939e62c4fca87688ff1516cffb19cf9ecc3f54",
                   "src/apprt/win32/commands.zig":  "d49be90b58fc915c7fba17497b70bed1f8d4282bd115e204dd30d835f06e19e2",
-                  "src/apprt/win32/ConfirmDialog.zig":  "be38073cf51268c2e5c719d698e3223d35a3a6db57ba4adedd3d633b5c29b983",
+                  "src/apprt/win32/ConfirmDialog.zig":  "95510760083ebc76bae01822600f55b72819aedf6afe389adae090dc343fbbf8",
                   "src/apprt/win32/context_menu.zig":  "56fafd8841c7057f318ad26187fe8b4f944912702e29773596d24a217289c619",
                   "src/apprt/win32/CopilotHookSpec.zig":  "225c5b646d5972676c0965826b60f956dda69a265500b5b6e7268d6959de08d1",
                   "src/apprt/win32/DarkMode.zig":  "10598fdfee82caad14311d5f087eb83064e3bb593e0ea6504486d0ee09cef207",
@@ -267,11 +269,11 @@
                   "src/apprt/win32/tray_notify.zig":  "74c7ddecf7646b2b866af6e5effc88d95652f858439f50958367b29fee887cbf",
                   "src/apprt/win32/trend_gauge.zig":  "8e40bbb1bb211dddaa315851043ecabdc88fb365a735ce5dbd2f062ba90e3483",
                   "src/apprt/win32/type_ramp.zig":  "c7c36e8fa6e894ad362e6d91a78518a5c0d24a7ff6a47cd5c6d79a42d376b7b9",
-                  "src/apprt/win32/update_apply.zig":  "19f1258534432a483421c0f1cdca1d68cb151387e08e02061e34cce043ad908f",
+                  "src/apprt/win32/update_apply.zig":  "c0554acb70e6722f32fa2f4a117aa9085dbe05bd511a0430dc419b12347d0b9f",
                   "src/apprt/win32/update_auto_apply.zig":  "8f591a386f1d0b3cc6c0aa3378877a0e9a1a906980add59353ca598610da11ff",
                   "src/apprt/win32/update_badge.zig":  "5fa8b3c03c190593277514488061f991e5306e5d3cbd72d79f78b2ffea399a63",
                   "src/apprt/win32/update_check.zig":  "e8c76a63e80081788c5f082f1f2b9282ac78e19ff132a590c87767a658500489",
-                  "src/apprt/win32/update_install.zig":  "21edac189d6c107b6c6b65af8dc4f6b3ca56a80a8c487c4baa0a2332c5df3edd",
+                  "src/apprt/win32/update_install.zig":  "8eda749d269a65e40c2016e4fd2b8118677fc591dae08de300db9e514a022623",
                   "src/apprt/win32/update_progress.zig":  "22e63ca2dc45f03d1215fc2e9bf1ff87ceee1ed8f5eba1e71c4c01fb65117c24",
                   "src/apprt/win32/update_reopen.zig":  "801a74ef48c2eccc48ccfd38209a7d8d4f97b7cfc9f4cf4b126a858372c892a9",
                   "src/apprt/win32/UpdateProgress.zig":  "b646991312c3b65d77d742812109f953421337bb6abd2426c07423bf5bd95c7b",

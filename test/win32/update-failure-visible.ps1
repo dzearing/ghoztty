@@ -20,6 +20,8 @@
 #      Debug-only seam arm B needs
 #   E  the repo build survived the run (T1271; -NegativeControl proves the
 #      alarm can score red)
+#   F  an unanswered dialog times out and the applier exits (T2321) - runs
+#      before E, which must stay last
 #
 # Every arm hands the applier a THROWAWAY install directory holding a copy of
 # the build (lib\ApplierSandbox.ps1), never zig-out\bin. The applier's job when
@@ -325,6 +327,50 @@ try {
         ($applySrc -match 'pub const failure_title = "Ghoztty could not finish updating";')
 
     # ========================================================================
+    "== F: an unanswered dialog does not keep the applier alive (T2321)"
+    # ========================================================================
+    # 2026-10-26: the applier raised this dialog, nobody ever saw it, and the
+    # process sat on it for 26 hours - holding its own image locked, so every
+    # later Install Update failed with AccessDenied. The dialog now dismisses
+    # itself after update_apply.report_timeout_ms; the Debug seam shortens that
+    # so the exit is observable here. A9/A10 above are the control: without the
+    # seam the same dialog is still up, and the applier still alive, 3 s in.
+    $tmpF = Join-Path $root 'f'
+    New-Item -ItemType Directory -Force $tmpF | Out-Null
+    $env:LOCALAPPDATA = $tmpF
+
+    $msiF = Join-Path $root 'unseen.msi'
+    New-FakePackage $msiF
+    $REPORT_TIMEOUT_MS = 4000
+    $env:GHOZTTY_UPDATE_MSI_CODE = '1603'
+    $env:GHOZTTY_UPDATE_REPORT_TIMEOUT_MS = "$REPORT_TIMEOUT_MS"
+    try {
+        $appF = Start-Applier 'f' "$(New-DeadPid)|$msiF|$($sandbox.Exe)"
+    } finally {
+        Remove-Item env:GHOZTTY_UPDATE_MSI_CODE -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_UPDATE_REPORT_TIMEOUT_MS -ErrorAction SilentlyContinue
+    }
+
+    $dlgF = Wait-Dialog $appF.Pid $FEEDBACK_BUDGET_MS
+    Assert "F1 the failure was still reported on screen" ($dlgF -ne [IntPtr]::Zero)
+    # Nothing touches the dialog from here on: that is the user's 26 hours.
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ((Test-Alive $appF.Pid) -and $sw.ElapsedMilliseconds -lt ($REPORT_TIMEOUT_MS + 15000)) {
+        Start-Sleep -Milliseconds 200
+    }
+    Assert "F2 the applier exited on its own with the dialog unanswered ($($sw.ElapsedMilliseconds) ms)" `
+        (-not (Test-Alive $appF.Pid))
+    $logF = Get-ApplierLog $appF.Err
+    Assert "F3 and its log says the dialog timed out rather than was read" `
+        ($logF -match 'failure dialog unanswered after \d+ms; dismissed it and exiting')
+    Assert "F4 the terminal was still given back first" ($logF -match 'relaunched .*ghoztty\.exe as pid \d+')
+    $instSrcF = [IO.File]::ReadAllText((Join-Path $repo 'src\apprt\win32\update_install.zig'))
+    Assert "F5 a shipped build bounds the dialog too (the seam only shortens it)" `
+        ($instSrcF -match 'orelse update_apply\.report_timeout_ms;')
+    [void](Stop-ApplierSandbox -Sandbox $sandbox)
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 600)
+
+    # ========================================================================
     "== E: the harness left the repo build alone"
     # ========================================================================
     # Arms A-C each drive a process whose JOB is to move ghoztty.exe out of the
@@ -353,6 +399,7 @@ try {
     Complete-TestBody
 } finally {
     Remove-Item env:GHOZTTY_UPDATE_MSI_CODE -ErrorAction SilentlyContinue
+    Remove-Item env:GHOZTTY_UPDATE_REPORT_TIMEOUT_MS -ErrorAction SilentlyContinue
     Remove-Item env:GHOZTTY_UPDATE_APPLY -ErrorAction SilentlyContinue
     if ($savedCode) { $env:GHOZTTY_UPDATE_MSI_CODE = $savedCode }
     if ($savedApply) { $env:GHOZTTY_UPDATE_APPLY = $savedApply }
@@ -376,4 +423,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'update-failure-visible' -MinPass 26
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'update-failure-visible' -MinPass 31

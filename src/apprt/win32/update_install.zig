@@ -34,7 +34,9 @@
 //!   path still relaunches the exe it was given, so the worst outcome is the
 //!   version the user already had. Since T1206 it is also reported: the
 //!   relaunch happens first, then a modal names the cause, the remedy, the log
-//!   and the Windows Installer code, and stays up until it is dismissed. The
+//!   and the Windows Installer code, and stays up until it is dismissed (or,
+//!   since T2321, until `update_apply.report_timeout_ms` passes, so an unseen
+//!   dialog cannot keep the applier alive and its image locked). The
 //!   defect that bought that rule was an installer window which said
 //!   "configuring" and then vanished, leaving nobody able to tell an update
 //!   that failed from one that never started.
@@ -377,15 +379,8 @@ fn armImpl(alloc: Allocator, msi_path: []const u8) !bool {
     // self-spawn a test binary).
     const exe = try internal_os.self_exe.productExePathAlloc(arena);
     const dir = try stagingDir(arena);
-    const applier = try std.fmt.allocPrint(arena, "{s}\\ghoztty-updater.exe", .{dir});
-
-    // A fresh copy every time: an applier left over from a previous update is
-    // the OLD build, and the one thing it must be able to do correctly is the
-    // choreography this build just wrote.
-    std.fs.cwd().deleteFile(applier) catch {};
-    try std.fs.copyFileAbsolute(exe, applier, .{});
-
     const pid = w32.GetCurrentProcessId();
+    const applier = try stageApplier(arena, exe, dir, pid);
     var spec_buf: [2 * std.fs.max_path_bytes + 32]u8 = undefined;
     const spec = try update_apply.formatSpec(&spec_buf, .{
         .pid = pid,
@@ -425,6 +420,35 @@ fn armImpl(alloc: Allocator, msi_path: []const u8) !bool {
         .{ applier_pid, pid, msi_path, spawned.tier.name() },
     );
     return true;
+}
+
+/// Copy `exe` to the applier path and return it. A fresh copy every time: an
+/// applier left over from a previous update is the OLD build, and the one
+/// thing it must be able to do correctly is the choreography this build just
+/// wrote.
+///
+/// When the usual name cannot be replaced — a leftover applier is still
+/// RUNNING out of it, and Windows will not overwrite a running image — the
+/// copy goes to a per-pid name instead (T2321). Before this, one applier that
+/// failed to exit turned every later Install Update into `NOT armed
+/// err=error.AccessDenied` until a reboot. The leftover is not killed: it may
+/// be mid-install, and the launch sweep removes it once it is gone.
+fn stageApplier(arena: Allocator, exe: []const u8, dir: []const u8, pid: u32) ![]const u8 {
+    var name_buf: [64]u8 = undefined;
+    const usual = try std.fmt.allocPrint(arena, "{s}\\{s}", .{ dir, try update_apply.applierName(&name_buf, null) });
+    std.fs.cwd().deleteFile(usual) catch {};
+    if (std.fs.copyFileAbsolute(exe, usual, .{})) |_| {
+        return usual;
+    } else |err| {
+        const fallback = try std.fmt.allocPrint(arena, "{s}\\{s}", .{ dir, try update_apply.applierName(&name_buf, pid) });
+        log.warn(
+            "update apply: {s} could not be replaced ({}) - a leftover applier is probably still running it; arming {s} instead",
+            .{ usual, err, fallback },
+        );
+        std.fs.cwd().deleteFile(fallback) catch {};
+        try std.fs.copyFileAbsolute(exe, fallback, .{});
+        return fallback;
+    }
 }
 
 // =============================================================================
@@ -511,7 +535,7 @@ fn run(alloc: Allocator, spec: update_apply.Spec) u8 {
 
     // Then SAY what happened, when it was not what the user asked for (T1206).
     // After the relaunch on purpose: the modal blocks this process until it is
-    // dismissed, and a message that arrives while the terminal is still
+    // dismissed or times out, and a message that arrives while the terminal is still
     // missing reads as "your terminal is gone" rather than "the update did not
     // take".
     if (code != 0) {
@@ -597,6 +621,12 @@ fn installLogPath(arena: Allocator, msi_path: []const u8) []const u8 {
 /// state `showStandalone` exists for (`startup_error.zig` next door is in the
 /// same position for the same reason). Modal on purpose: the defect being
 /// fixed is a window that closed before anyone could read it.
+///
+/// But BOUNDED (T2321): the modal is the last thing between this process and
+/// its exit, and on 2026-10-26 nobody ever saw it - so the applier stayed
+/// resident for 26 hours, holding its own image locked against every later
+/// update. After `update_apply.report_timeout_ms` the dialog dismisses itself
+/// and the applier exits.
 fn report(text: []const u8) void {
     if (comptime builtin.os.tag != .windows) return;
     log.err("update apply: {s}", .{text});
@@ -604,12 +634,29 @@ fn report(text: []const u8) void {
     var wbuf: [update_apply.max_failure_message * 2]u16 = undefined;
     const n = std.unicode.utf8ToUtf16Le(wbuf[0 .. wbuf.len - 1], text) catch return;
     wbuf[n] = 0;
-    _ = ConfirmDialog.showStandalone(null, 1.0, .{
+    var seam_buf: [64]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&seam_buf);
+    const timeout = forcedReportTimeout(fba.allocator()) orelse update_apply.report_timeout_ms;
+    const result = ConfirmDialog.showStandalone(null, 1.0, .{
         .title = std.unicode.utf8ToUtf16LeStringLiteral(update_apply.failure_title),
         .text = wbuf[0..n :0],
         .style = .ok_only,
         .icon = .warning,
+        .timeout_ms = timeout,
     });
+    // On an OK-only box `.cancel` is produced by the timeout alone.
+    if (result == .cancel) log.warn("update apply: failure dialog unanswered after {d}ms; dismissed it and exiting", .{timeout});
+}
+
+/// DEBUG-ONLY seam: the failure dialog's timeout in ms, so an acceptance run
+/// can watch the applier exit on its own without waiting ten minutes. Same
+/// shape as `GHOZTTY_UPDATE_MSI_CODE` below; compiled out of every release.
+const report_timeout_seam_var = "GHOZTTY_UPDATE_REPORT_TIMEOUT_MS";
+
+fn forcedReportTimeout(arena: Allocator) ?u32 {
+    if (comptime builtin.mode != .Debug) return null;
+    const raw = std.process.getEnvVarOwned(arena, report_timeout_seam_var) catch return null;
+    return std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch null;
 }
 
 /// Run msiexec and return its exit code (or a non-zero stand-in when it could

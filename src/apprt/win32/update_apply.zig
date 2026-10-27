@@ -200,6 +200,25 @@ pub fn isSidelined(name: []const u8) bool {
     return true;
 }
 
+/// The applier copy's file name in the staging directory. `pid` null is the
+/// usual name; a pid names the FALLBACK copy `arm` writes when the usual one
+/// cannot be replaced (T2321): an applier left over from an earlier failed
+/// update is still running out of it, Windows refuses to overwrite a running
+/// image, and before this every later Install Update failed with AccessDenied
+/// until the box rebooted. A unique name sidesteps the leftover instead of
+/// killing it (it may be mid-install), and the launch sweep clears both
+/// shapes once nothing runs them.
+pub fn applierName(buf: []u8, pid: ?u32) ![]const u8 {
+    const p = pid orelse return std.fmt.bufPrint(buf, "ghoztty-updater.exe", .{});
+    return std.fmt.bufPrint(buf, "ghoztty-updater-{d}.exe", .{p});
+}
+
+/// How long the applier's failure dialog stays up before it dismisses itself
+/// and the applier exits (T2321). Long enough to be read by someone at the
+/// machine; short enough that an unseen dialog cannot pin the applier for a
+/// day, which is what it did on 2026-10-26.
+pub const report_timeout_ms: u32 = 10 * 60 * 1000;
+
 /// How the applier process is told what to do: `<pid>|<msi>|<exe>`.
 /// Same shape and same reasoning as `relaunch_guard.Spec` — neither a Windows
 /// path nor a decimal pid can contain `|`, so nothing needs escaping.
@@ -484,6 +503,26 @@ test "msiexecCommandLine quotes both paths and stays non-interactive" {
     // waiting for a user whose terminal is closed.
     try testing.expect(std.mem.indexOf(u8, cmd, "/norestart") != null);
     try testing.expect(std.mem.indexOf(u8, cmd, "/qb-!") != null);
+}
+
+test "applierName: the usual copy, and a distinct fallback per arming process" {
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("ghoztty-updater.exe", try applierName(&buf, null));
+    var a: [64]u8 = undefined;
+    var b: [64]u8 = undefined;
+    const fa = try applierName(&a, 35516);
+    const fb = try applierName(&b, 48324);
+    try testing.expectEqualStrings("ghoztty-updater-35516.exe", fa);
+    // The fallback must never be the name a live leftover is holding.
+    try testing.expect(!std.mem.eql(u8, fa, "ghoztty-updater.exe"));
+    try testing.expect(!std.mem.eql(u8, fa, fb));
+    // Neither shape is a package, so the post-download prune leaves it alone.
+    try testing.expect(!isPrunableStaged(fa, "Ghoztty-1.45.3-x64.msi"));
+}
+
+test "the failure report times out well inside an hour" {
+    try testing.expect(report_timeout_ms >= 60 * 1000);
+    try testing.expect(report_timeout_ms <= 30 * 60 * 1000);
 }
 
 test "sidelineName renames in place and is recognised by the sweep" {

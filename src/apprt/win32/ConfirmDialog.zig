@@ -111,6 +111,15 @@ pub const Options = struct {
     /// the secondary text color, so it reads as fine print rather than a
     /// second message paragraph.
     note: ?[:0]const u16 = null,
+    /// When non-null, the dialog dismisses ITSELF after this many ms and
+    /// returns `.cancel` — the dismissive answer, never an approval, and on
+    /// an `.ok_only` box the one result no user action produces, so the
+    /// caller can tell a timeout from a read (T2321). For the app-less
+    /// reporters whose process must not outlive its message: the update
+    /// applier sat on an unseen modal for 26 hours and held its own image
+    /// locked against every later update. Not honoured by `fallback`, which
+    /// is reached only when the class could not even register.
+    timeout_ms: ?u32 = null,
 };
 
 pub const Notes = struct {
@@ -148,6 +157,9 @@ const ID_LINK_BASE: u16 = 300;
 /// Control id for the optional third button (T1390). A private value: the
 /// checkbox rows own 100.., and IDOK/IDCANCEL are already spoken for.
 const ID_ALT: u16 = 200;
+
+/// Timer id for `Options.timeout_ms`.
+const TIMEOUT_TIMER_ID: usize = 1;
 
 /// The dialog's palette (T563), derived from the surface `window-theme` puts
 /// the app on and the accent the user picked — the derivation the panels got
@@ -1054,6 +1066,7 @@ fn run(
     if (owner) |o| _ = w32.EnableWindow(o, 0);
     _ = w32.ShowWindow(hwnd, w32.SW_SHOW);
     _ = w32.SetForegroundWindow(hwnd);
+    if (opts.timeout_ms) |ms| _ = w32.SetTimer(hwnd, TIMEOUT_TIMER_ID, ms, null);
     if (self.edit) |e| {
         // The field takes focus with its seed text selected, so typing
         // replaces the old name (RenameDialog's behavior).
@@ -1460,6 +1473,12 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
                 },
                 else => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
             }
+        },
+        w32.WM_TIMER => {
+            if (wparam != TIMEOUT_TIMER_ID) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            _ = w32.KillTimer(hwnd, TIMEOUT_TIMER_ID);
+            self.finish(.cancel);
+            return 0;
         },
         w32.WM_CLOSE => {
             // ✕ dismisses: cancel for confirms, ok for OK-only boxes.

@@ -30,6 +30,7 @@
 #   F  a launch with a package already staged installs before any window opens
 #   G  a version already attempted today is not attempted again (no loop)
 #   H  a new download prunes superseded packages; a launch keeps the pending one
+#   I  a leftover applier still running its image does not block the arm (T2321)
 # persistence: on for A, C, D (the shape the user runs); off for E and F, which
 # are about exactly that.
 param([string]$ExePath)
@@ -229,6 +230,53 @@ $msis = @(Get-ChildItem $staging -Filter *.msi -ErrorAction SilentlyContinue | F
 Assert ($h.Log -match 'restored pending update offer win-v1\.39\.6 .*staged=true') 'prune: the older pending package survived the launch sweep'
 Assert ($h.Log -match 'pruned superseded package Ghoztty-1\.39\.6-x64\.msi') 'prune: the newer download said what it pruned'
 Assert (($msis.Count -eq 1) -and ($msis[0] -eq 'Ghoztty-9.9.9-x64.msi')) "prune: only the newest package is left ($($msis -join ', '))"
+
+# -- I. a leftover applier still running does not block the next install ---
+# T2321, the user's 2026-10-26 day: an applier from a failed install never
+# exited, so ghoztty-updater.exe stayed a RUNNING image, and every later arm
+# (four automatic, two clicks) logged `NOT armed err=error.AccessDenied` while
+# the click did nothing. Reproduce the leftover for real: a copy of the build
+# running from that exact path, as an applier parked on a live pid. The arm
+# must take the per-pid fallback name rather than give up - and the
+# 'could not be replaced' line is this run's proof that the usual path really
+# was blocked, i.e. that the old code would have refused here.
+Reset-UpdateState
+New-Item -ItemType Directory -Force $staging | Out-Null
+$leftoverExe = Join-Path $staging 'ghoztty-updater.exe'
+Copy-Item $exe $leftoverExe -Force
+$parkOn = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '600', '127.0.0.1' -WindowStyle Hidden -PassThru
+$leftoverMsi = Join-Path $work 'leftover.msi'
+New-FakePackage $leftoverMsi
+$savedApply = $env:GHOZTTY_UPDATE_APPLY
+$savedCode = $env:GHOZTTY_UPDATE_MSI_CODE
+# The spec's target is the sandbox copy ($appExe), never the repo build; and
+# the success seam means the leftover never runs msiexec even if it got there.
+$env:GHOZTTY_UPDATE_APPLY = "$($parkOn.Id)|$leftoverMsi|$($sandbox.Exe)"
+$env:GHOZTTY_UPDATE_MSI_CODE = '0'
+try {
+    $leftover = Start-OnTestDesktop -Exe $leftoverExe -StdErr (Join-Path $work 'leftover-applier.err.txt')
+} finally {
+    Remove-Item env:GHOZTTY_UPDATE_APPLY -ErrorAction SilentlyContinue
+    if ($savedApply) { $env:GHOZTTY_UPDATE_APPLY = $savedApply }
+    [Environment]::SetEnvironmentVariable('GHOZTTY_UPDATE_MSI_CODE', $savedCode, 'Process')
+}
+Start-Sleep -Milliseconds 1500
+$leftoverAlive = $false
+try { $leftoverAlive = -not ([System.Diagnostics.Process]::GetProcessById($leftover.Pid).HasExited) } catch {}
+Assert $leftoverAlive 'leftover: a leftover applier is running out of ghoztty-updater.exe'
+$i = $null
+try {
+    $i = Invoke-Case -Label 'leftover' -AppArgs @('--session-persistence=true') -WatchSecs 40
+} finally {
+    # Its own pid, never by name: the user's installed release may have a real one.
+    try { Stop-Process -Id $leftover.Pid -Force -ErrorAction Stop } catch {}
+    try { Stop-Process -Id $parkOn.Id -Force -ErrorAction Stop } catch {}
+}
+Assert ($i.Log -notmatch 'NOT armed') 'leftover: the arm was not refused (before T2321: NOT armed err=error.AccessDenied)'
+Assert ($i.Log -match 'ghoztty-updater\.exe could not be replaced .*arming .*ghoztty-updater-\d+\.exe instead') 'leftover: the usual applier path really was blocked, and the arm took the per-pid copy'
+Assert ($i.Log -match 'update apply: ARMED') 'leftover: the applier was armed anyway'
+Assert $i.Exited 'leftover: the app closed for the install'
+Assert ($i.Left -ge 1) "leftover: and the applier reopened it ($($i.Left) sandbox process(es) found)"
 
 Reset-UpdateState
 [void](Stop-ApplierSandbox -Sandbox $sandbox)

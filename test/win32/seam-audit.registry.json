@@ -439,6 +439,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = msiexec's real exit code."
         },
+        "GHOZTTY_UPDATE_REPORT_TIMEOUT_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = update_apply.report_timeout_ms (10 min) before the applier's failure dialog dismisses itself. T2321."
+        },
         "GHOZTTY_STALE_BUILD_CHECK_MS": {
             "class": "tuning",
             "unset": "shipped-elsewhere",
