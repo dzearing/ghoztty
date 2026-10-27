@@ -1,0 +1,14 @@
+{
+    "guard":  "pane-sidebar-hover-resync",
+    "script":  "test/win32/pane-sidebar-hover-resync.ps1",
+    "generated":  "2026-10-27T14:56:18-07:00",
+    "commit":  "a1dd03295",
+    "uncommitted":  [
+                        "src/apprt/win32/PaneSidebar.zig",
+                        "test/win32/pane-sidebar-hover-resync.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/PaneSidebar.zig":  "732f30a5dc807c319d21b1acc936e4cbc69f5a52cfdf81ffc84d9cea7d372811",
+                  "test/win32/pane-sidebar-hover-resync.ps1":  "a05c2b4894385ba80ac8343db8817baf84fb27cabef9dd769164ebc54e27e551"
+              }
+}

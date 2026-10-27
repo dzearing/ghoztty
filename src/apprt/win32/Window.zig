@@ -16181,6 +16181,9 @@ pub fn windowWndProc(
             // The sidebar every window shares: take what changed while
             // another window was in use (T2336).
             if (activated != w32.WA_INACTIVE) window.paneSidebarCatchUp();
+            // Either direction: a window brought forward over this one sends
+            // the column no leave, so its hover is asked again (T2341).
+            if (window.sidebar) |sb| sb.queueHoverResync(activated != w32.WA_INACTIVE);
             // Either direction: this is the event at which a stray topmost
             // overlay becomes visible as "the background window's banner is
             // over the foreground", so it is the event that must heal it
