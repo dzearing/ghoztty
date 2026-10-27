@@ -229,8 +229,11 @@ struct PaneSidebarView: View {
                 paneRows(controller, isThisWindow: true, indent: 0)
                 tray(controller, isThisWindow: true, indent: 0)
             } else {
+                // Its own name, as the all-windows list shows it: a
+                // `<project>: <name>` window is `<name>`.
+                let title = PaneSidebarText.windowTitle(of: controller)
                 windowGroup(controller, isThisWindow: true,
-                            label: PaneSidebarText.windowTitle(of: controller))
+                            label: PaneSidebarWindowGrouping.split(title)?.worktree ?? title)
             }
         }
         .padding(.vertical, SidePanelRow.fillInset)
@@ -354,7 +357,12 @@ struct PaneSidebarView: View {
                             BaseTerminalController.closeWindowsFromSidebar(
                                 section.windows.compactMap { byID[$0.id] })
                         },
-                        onFold: onFold)
+                        onFold: onFold,
+                        onRename: { name in
+                            BaseTerminalController.renameGroupFromSidebar(
+                                project, to: name,
+                                windows: section.windows.compactMap { entry in byID[entry.id].map { ($0, entry.label) } })
+                        })
                         .paneSidebarItemDrag(
                             key: section.id, siblings: topLevel, controller: controller,
                             leading: 0, trailing: PaneSidebarProjectHeader.trailingControls,
@@ -552,7 +560,7 @@ struct PaneSidebarView: View {
             // the panel, so collapsing or expanding moves nothing. (Still
             // here, at no height, for where the tray begins.)
             if !state.showsAllWindows {
-                PaneSidebarDivider(isRail: isRail, indent: indent)
+                PaneSidebarDivider(isRail: isRail)
             }
             // Captioned only when it holds something: an empty tray is its
             // drop slot, whose own text says what it is.
@@ -564,7 +572,8 @@ struct PaneSidebarView: View {
                 }
                 .padding(.leading, SidePanelRow.labelInset + indent)
                 .padding(.trailing, SidePanelRow.labelInset)
-                .padding(.top, 10)
+                // 10pt under the line, the divider's own space included.
+                .padding(.top, 10 - PaneSidebarDivider.bottom)
                 .padding(.bottom, 5)
             }
           }
@@ -813,14 +822,92 @@ struct PaneSidebarHeaderButton: View {
 
 // MARK: - Renaming in place
 
-/// The sidebar item being renamed in place, by its key: a window's
-/// (`PaneSidebarWindowGrouping.key(window:)`). One at a time across every
-/// window's sidebar; while it is set, that item's drag source steps aside so
-/// its field takes the clicks.
+/// The sidebar item being renamed in place, by its key: a window's or a
+/// group's (`PaneSidebarWindowGrouping.key`), or a pane's (`key(pane:)`).
+/// One at a time across every window's sidebar; while it is set, that item's
+/// drag source steps aside so its field takes the clicks.
 @MainActor
 final class PaneSidebarRename: ObservableObject {
     static let shared = PaneSidebarRename()
     @Published var editing: String?
+
+    static func key(pane id: UUID) -> String { "pane:\(id)" }
+}
+
+/// A sidebar item's name, edited in place (`PaneSidebarRename`): a
+/// borderless `NSTextField`, as the search field is, that takes the caret as
+/// it appears with its text selected. (A SwiftUI `TextField` asked for focus
+/// never got it here: keys went on to whatever had it, the search field or a
+/// terminal.) Return or clicking away ends it with the text; Escape with nil.
+struct PaneSidebarRenameField: NSViewRepresentable {
+    let initial: String
+    var font: NSFont = .systemFont(ofSize: 12, weight: .semibold)
+    let onEnd: (String?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onEnd: onEnd) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: initial)
+        field.font = font
+        field.isBezeled = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel("Name")
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // Once it is in the window: the caret, the whole name selected.
+        DispatchQueue.main.async { [weak field] in
+            guard let field, let window = field.window else { return }
+            window.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+            context.coordinator.isLive = true
+        }
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.onEnd = onEnd
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var onEnd: (String?) -> Void
+        /// Took the caret: only then does losing it end the edit.
+        var isLive = false
+        private var ended = false
+
+        init(onEnd: @escaping (String?) -> Void) { self.onEnd = onEnd }
+
+        private func end(_ text: String?) {
+            guard !ended else { return }
+            ended = true
+            onEnd(text)
+        }
+
+        func controlTextDidEndEditing(_ note: Notification) {
+            // Clicked away: keep what was typed, as Return does.
+            guard isLive, let field = note.object as? NSTextField else { return }
+            end(field.stringValue)
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                end((control as? NSTextField)?.stringValue)
+                control.window?.makeFirstResponder(nil)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                end(nil)
+                control.window?.makeFirstResponder(nil)
+                return true
+            default:
+                return false
+            }
+        }
+    }
 }
 
 // MARK: - Window header (this window's list, and each window in all windows)
@@ -841,8 +928,6 @@ struct PaneSidebarWindowHeader: View {
 
     @State private var isHovered = false
     @ObservedObject private var rename = PaneSidebarRename.shared
-    @State private var draft = ""
-    @FocusState private var fieldFocused: Bool
     @Environment(\.paneSidebarInteractive) private var isInteractive
     @Environment(\.paneSidebarEmphasized) private var windowIsKey
 
@@ -948,34 +1033,21 @@ struct PaneSidebarWindowHeader: View {
     /// Escape or an unchanged name leaves the window as it was, and an
     /// empty one goes back to following the window's own title.
     private var nameField: some View {
-        TextField("Window name", text: $draft)
-            .textFieldStyle(.plain)
-            .font(.system(size: 12, weight: .semibold))
-            .lineLimit(1)
-            .focused($fieldFocused)
-            .onSubmit(commitRename)
-            .onExitCommand { rename.editing = nil }
-            .onChange(of: fieldFocused) { focused in
-                // Clicked away: keep what was typed, as Return does.
-                if !focused { commitRename() }
-            }
-            .onAppear { fieldFocused = true }
+        PaneSidebarRenameField(initial: currentTitle) { name in
+            rename.editing = nil
+            guard let name = name?.trimmingCharacters(in: .whitespaces) else { return }
+            // Unchanged: don't pin a title that was following the shell.
+            guard name != currentTitle else { return }
+            owner.setWindowTitle(name.isEmpty ? nil : name)
+        }
+        .frame(height: Self.contentHeight)
     }
 
-    private func beginRename() {
-        draft = owner.effectiveWindowTitleOverride ?? PaneSidebarText.windowTitle(of: owner)
-        rename.editing = key
+    private var currentTitle: String {
+        owner.effectiveWindowTitleOverride ?? PaneSidebarText.windowTitle(of: owner)
     }
 
-    private func commitRename() {
-        guard isEditing else { return }
-        rename.editing = nil
-        let name = draft.trimmingCharacters(in: .whitespaces)
-        let pinned = owner.effectiveWindowTitleOverride
-        // Unchanged: don't pin a title that was following the shell.
-        guard name != (pinned ?? PaneSidebarText.windowTitle(of: owner)) else { return }
-        owner.setWindowTitle(name.isEmpty ? nil : name)
-    }
+    private func beginRename() { rename.editing = key }
 
     /// The chevron's end, from the row's leading edge: the drag source
     /// starts there.
@@ -1012,11 +1084,11 @@ private struct PaneSidebarProjectHeader: View {
     /// Its band's height: a little under a row's, its caption centered in it.
     static let height: CGFloat = 32
 
-    /// The + and ×'s start, from the header's trailing edge: the drag source
-    /// (`paneSidebarItemDrag`, which also folds on a click) stops there.
+    /// The pencil, + and ×'s start, from the header's trailing edge: the drag
+    /// source (`paneSidebarItemDrag`, which also folds on a click) stops there.
     static var trailingControls: CGFloat {
         SidePanelRow.fillInset + SidePanelRow.textInset
-            + 2 * PaneSidebarItemButton.size + PaneSidebarRow.trailingButtonSpacing
+            + 3 * PaneSidebarItemButton.size + 2 * PaneSidebarRow.trailingButtonSpacing
     }
 
     let project: String
@@ -1027,12 +1099,29 @@ private struct PaneSidebarProjectHeader: View {
     /// Close every window in the group: no questions, no focus taken.
     let onClose: () -> Void
     let onFold: () -> Void
+    /// Rename the group: every window in it takes the new `<project>: `.
+    let onRename: (String) -> Void
 
     @State private var isHovered = false
+    @ObservedObject private var rename = PaneSidebarRename.shared
     @Environment(\.paneSidebarInteractive) private var isInteractive
+
+    private var isEditing: Bool { rename.editing == PaneSidebarWindowGrouping.key(project: project) }
 
     var body: some View {
         HStack(spacing: 0) {
+            if isEditing {
+                HStack(spacing: PaneSidebarOutline.chevronSpacing) {
+                    Color.clear.frame(width: PaneSidebarOutline.chevronWidth, height: 14)
+                    PaneSidebarRenameField(initial: project, font: .systemFont(ofSize: 11, weight: .semibold)) { name in
+                        rename.editing = nil
+                        guard let name = name?.trimmingCharacters(in: .whitespaces), name != project else { return }
+                        onRename(name)
+                    }
+                    .frame(height: 14)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
             Button(action: onFold) {
                 HStack(spacing: PaneSidebarOutline.chevronSpacing) {
                     Image(systemName: "chevron.down")
@@ -1055,13 +1144,17 @@ private struct PaneSidebarProjectHeader: View {
             .help(isFolded ? "Show \(project)’s windows" : "Hide \(project)’s windows")
             .accessibilityLabel("\(project), \(windowCount) windows")
             .accessibilityAddTraits(.isHeader)
+            }
 
-            // As a window row: hovered, the count gives way to + and ×.
+            // As a window row: hovered, the count gives way to pencil, + and ×.
             ZStack(alignment: .trailing) {
                 PaneSidebarCount(value: windowCount)
-                    .opacity(isHovered && isInteractive ? 0 : 1)
-                if isHovered && isInteractive {
+                    .opacity(isHovered && isInteractive && !isEditing ? 0 : 1)
+                if isHovered && isInteractive && !isEditing {
                     HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
+                        PaneSidebarItemButton(symbol: "pencil", help: "Rename group") {
+                            rename.editing = PaneSidebarWindowGrouping.key(project: project)
+                        }
                         PaneSidebarItemButton(
                             symbol: "plus", help: "New window in \(project)", action: onAdd)
                         PaneSidebarItemButton(
@@ -1140,16 +1233,21 @@ struct PaneSidebarCount: View {
 /// vanished there).
 struct PaneSidebarDivider: View {
     let isRail: Bool
-    var indent: CGFloat = 0
+
+    /// Space under the line in the panel: with what follows it — the empty
+    /// tray's drop slot, inset 4.5pt in its own frame — as much clear space
+    /// below the line as above it (its 8pt and the last row's 3pt).
+    static let bottom: CGFloat = 6.5
 
     var body: some View {
+        // As wide as a row's fill, not its text.
         Rectangle()
             .fill(Color.primary.opacity(0.22))
             .frame(height: 1)
-            .padding(.leading, isRail ? 8 : SidePanelRow.labelInset + indent)
-            .padding(.trailing, isRail ? 8 : SidePanelRow.labelInset)
+            .padding(.horizontal, isRail ? 8 : SidePanelRow.fillInset)
             .padding(.vertical, isRail ? 7 : 0)
             .padding(.top, isRail ? 0 : 8)
+            .padding(.bottom, isRail ? 0 : Self.bottom)
     }
 }
 
@@ -1459,6 +1557,29 @@ struct PaneSidebarSearchField: NSViewRepresentable {
             default:
                 return false
             }
+        }
+    }
+}
+
+extension BaseTerminalController {
+    /// Rename project group `project` to `name`: each of its `windows` (with
+    /// its own name, the part after `<project>: `) is retitled
+    /// `<name>: <label>` — pinned, as Change Window Title pins it — and the
+    /// group keeps its place in the list. An empty name takes them out of
+    /// any group, each to its own name.
+    static func renameGroupFromSidebar(
+        _ project: String, to name: String, windows: [(BaseTerminalController, String)]
+    ) {
+        let old = PaneSidebarWindowGrouping.key(project: project)
+        let new = PaneSidebarWindowGrouping.key(project: name)
+        let shared = PaneSidebarSharedState.shared
+        if !name.isEmpty, let index = shared.windowOrder.firstIndex(of: old) {
+            var order = shared.windowOrder
+            if order.contains(new) { order.remove(at: index) } else { order[index] = new }
+            shared.windowOrder = order
+        }
+        for (window, label) in windows {
+            window.setWindowTitle(name.isEmpty ? label : "\(name): \(label)")
         }
     }
 }

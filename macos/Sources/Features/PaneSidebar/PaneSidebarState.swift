@@ -457,12 +457,15 @@ enum PaneSidebarText {
     static let placeholderTitle = "👻"
 
     /// What a pane is called wherever it is named in one line — a sidebar
-    /// row, a rail tile, a stacked pane's strip: its banner's title when the
-    /// banner has one, else `title`. The banner title wins because it is the
-    /// one somebody chose: an agent's banner hook sets it to the task, while
-    /// the agent itself retitles the pane (OSC 0/2) with whatever it is doing.
-    static func label(title raw: String, pwd: String?, kind: String, banner: String?) -> String {
-        bannerTitle(banner) ?? title(raw, pwd: pwd, kind: kind)
+    /// row, a rail tile, a stacked pane's strip: the name the user gave it
+    /// (`userTitle`: Change Pane Title, the sidebar's pencil), else its
+    /// banner's title when the banner has one, else `title`. The banner title
+    /// beats the terminal's because it is the one somebody chose: an agent's
+    /// banner hook sets it to the task, while the agent itself retitles the
+    /// pane (OSC 0/2) with whatever it is doing.
+    static func label(title raw: String, pwd: String?, kind: String, banner: String?, userTitle: String? = nil) -> String {
+        if let userTitle, !userTitle.isEmpty { return userTitle }
+        return bannerTitle(banner) ?? title(raw, pwd: pwd, kind: kind)
     }
 
     /// The title a pane banner gives itself, as plain text, or nil when it

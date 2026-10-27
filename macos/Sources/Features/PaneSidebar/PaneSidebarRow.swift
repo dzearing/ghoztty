@@ -26,9 +26,15 @@ struct PaneSidebarRow: View {
     var indent: CGFloat = 0
 
     @State private var isHovered = false
+    @ObservedObject private var rename = PaneSidebarRename.shared
     @Environment(\.paneSidebarEmphasized) private var windowIsKey
     @Environment(\.paneSidebarInteractive) private var isInteractive
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// A terminal can be renamed here (`setUserTitle`); a viewer is named by
+    /// its page.
+    private var canRename: Bool { pane.surfaceView != nil }
+    private var isEditing: Bool { rename.editing == PaneSidebarRename.key(pane: pane.id) }
 
     /// The accent pill only while this window is key, and never for another
     /// window's focus — that one isn't focused HERE.
@@ -76,13 +82,24 @@ struct PaneSidebarRow: View {
                 PaneSidebarIcon(pane: pane, color: iconColor)
                     .frame(width: Self.iconWidth, height: 15)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(displayTitle)
-                        .font(.system(size: 12))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .foregroundStyle(onAccent
-                            ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
-                            : AnyShapeStyle(Color(nsColor: .labelColor)))
+                    if isEditing {
+                        PaneSidebarRenameField(initial: displayTitle, font: .systemFont(ofSize: 12)) { name in
+                            rename.editing = nil
+                            guard let name = name?.trimmingCharacters(in: .whitespaces),
+                                  name != displayTitle else { return }
+                            // Empty: back to the terminal's own title.
+                            pane.surfaceView?.setUserTitle(name)
+                        }
+                        .frame(height: 15)
+                    } else {
+                        Text(displayTitle)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .foregroundStyle(onAccent
+                                ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
+                                : AnyShapeStyle(Color(nsColor: .labelColor)))
+                    }
                     PaneSidebarSubtitle(pane: pane, title: displayTitle, onAccent: onAccent)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -142,22 +159,29 @@ struct PaneSidebarRow: View {
     /// Where a row's trailing buttons sit inside its fill.
     static let trailingButtonInset: CGFloat = SidePanelRow.textInset - 4
 
-    /// On hover: −/↩, then × (another window's rows: × only).
+    /// On hover: the pencil (a terminal), −/↩, then × (another window's
+    /// rows: no −/↩).
     private var trailingButtonWidth: CGFloat {
-        guard isHovered else { return 0 }
-        let size = PaneSidebarItemButton.size
-        return isForeign ? size : size * 2 + Self.trailingButtonSpacing
+        guard isHovered, !isEditing else { return 0 }
+        let count = (canRename ? 1 : 0) + (isForeign ? 0 : 1) + 1
+        return CGFloat(count) * PaneSidebarItemButton.size + CGFloat(count - 1) * Self.trailingButtonSpacing
     }
 
     static let trailingButtonSpacing: CGFloat = 4
 
-    /// −/↩ (stash/restore), then × — which closes the pane outright, in this
+    /// The pencil (renames a terminal in place), −/↩ (stash/restore), then ×
+    /// — which closes the pane outright, in this
     /// window or another (`closePaneFromSidebar`: no confirmation, no focus
     /// taken, its session ended). Another window's rows offer only the ×.
     @ViewBuilder
     private var trailingButton: some View {
-        if isHovered {
+        if isHovered && !isEditing {
             HStack(spacing: Self.trailingButtonSpacing) {
+                if canRename {
+                    PaneSidebarItemButton(symbol: "pencil", help: "Rename pane", onAccent: onAccent) {
+                        rename.editing = PaneSidebarRename.key(pane: pane.id)
+                    }
+                }
                 if !isForeign {
                     PaneSidebarItemButton(
                         symbol: isStashed ? "arrow.uturn.backward" : "minus",
@@ -261,7 +285,8 @@ struct PaneSidebarRow: View {
 
     @ViewBuilder
     private var interaction: some View {
-        if isInteractive { interactionView }
+        // Renamed in place: the field takes the clicks.
+        if isInteractive && !isEditing { interactionView }
     }
 
     @ViewBuilder

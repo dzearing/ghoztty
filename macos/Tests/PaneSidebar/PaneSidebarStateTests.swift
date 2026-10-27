@@ -316,6 +316,13 @@ struct PaneSidebarTextTests {
                 == "Strip label from banner title")
     }
 
+    @Test func aNameTheUserGaveItBeatsTheBannerTitle() {
+        #expect(Text.label(title: "build", pwd: "/tmp", kind: "Terminal", banner: Self.hookBanner,
+                           userTitle: "build") == "build")
+        #expect(Text.label(title: "build", pwd: "/tmp", kind: "Terminal", banner: Self.hookBanner,
+                           userTitle: nil) == "Strip label from banner title")
+    }
+
     @Test func withoutABannerTitleThePaneTitleNamesIt() {
         #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal", banner: nil) == "✳ Claude Code")
         #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal",

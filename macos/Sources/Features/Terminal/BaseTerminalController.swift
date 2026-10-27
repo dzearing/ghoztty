@@ -291,6 +291,9 @@ class BaseTerminalController: NSWindowController,
                     sessionLayoutEntryID, title: windowTitleOverride)
             }
 
+            // Every window's sidebar names this window by it.
+            PaneRoster.shared.changed()
+
             // The override affects the titlebar of every tab in the group.
             applyTitleToWindow()
             guard let window else { return }

@@ -300,12 +300,25 @@ shows the same view of it (see *Shared across windows*). Read before touching
   (the grab point is kept within the folded row).
   Tests: `PaneSidebarCrossDropTests`,
   `PaneSidebarSyncWindowTests.dragMovesAWindowIntoAndOutOfAGroup`.
-- **Rename a window in place**: hovered, a window row's buttons are pencil,
-  +, ×. The pencil turns its name into a field holding the whole title
-  (`<project>: ` included, so the group can be changed there): Return or
-  clicking away keeps it, Escape cancels, an unchanged name pins nothing, an
-  empty one goes back to following the window's own title
-  (`PaneSidebarRename`; the row's drag source steps aside while it edits).
+- **Rename in place — windows, groups, panes**: hovered, each shows a
+  pencil first among its buttons. It turns the name into a field
+  (`PaneSidebarRenameField`: a borderless `NSTextField` that takes the caret
+  as it appears, text selected — a SwiftUI `TextField` asked for focus never
+  got it here, keys went to the search field). Return or clicking away
+  keeps it, Escape cancels, an unchanged name pins nothing; the item's drag
+  source steps aside while it edits (`PaneSidebarRename`).
+  - A window's field holds its whole title, `<project>: ` included, so
+    typing `a: foo` moves it to group `a` as `foo`; empty goes back to
+    following the window's own title. Any window rename redraws every
+    sidebar (`windowTitleOverride` → `PaneRoster.changed`).
+  - A group's field holds its name: each of its windows is retitled
+    `<new>: <name>` and the group keeps its place; empty ungroups them
+    (`renameGroupFromSidebar`).
+  - A terminal pane's field sets its title as Change Pane Title does
+    (`SurfaceView.setUserTitle`); that name outranks a banner title
+    (`PaneSidebarText.label(userTitle:)`). Viewers have no pencil.
+- A window's own Panes list names it as the all-windows list does: `<name>`
+  for a `<project>: <name>` window.
 - **The drop draws the new order where the item was let go, then glides.**
   `landed` lives on `PaneSidebarItemDragMotion`, which the items observe, so
   the pass that reorders them also redraws their lift and slide; without it

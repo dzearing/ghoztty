@@ -775,20 +775,7 @@ extension Ghostty {
                 // Check if the user clicked "OK"
                 guard response == .alertFirstButtonReturn  else { return }
 
-                // Get the input text
-                let newTitle = textField.stringValue
-                if newTitle.isEmpty {
-                    // Empty means that user wants the title to be set automatically
-                    // We also need to reload the config for the "title" property to be
-                    // used again by this tab.
-                    let prevTitle = titleFromTerminal ?? "👻"
-                    titleFromTerminal = nil
-                    setTitle(prevTitle)
-                } else {
-                    // Set the title and prevent it from being changed automatically
-                    titleFromTerminal = title
-                    title = newTitle
-                }
+                self.setUserTitle(textField.stringValue)
             }
 
             // We prefer to run our alert in a sheet modal if we have a window.
@@ -836,6 +823,28 @@ extension Ghostty {
                 alert.beginSheetModal(for: window, completionHandler: completionHandler)
             } else {
                 completionHandler(alert.runModal())
+            }
+        }
+
+        /// Whether the title was set by the user (`setUserTitle`), which the
+        /// terminal's own title changes no longer replace.
+        var isTitleUserSet: Bool { titleFromTerminal != nil }
+
+        /// Set the title by hand, pinning it against the terminal's own; empty
+        /// goes back to the terminal's title.
+        func setUserTitle(_ newTitle: String) {
+            if newTitle.isEmpty {
+                // Empty means that user wants the title to be set automatically
+                // We also need to reload the config for the "title" property to be
+                // used again by this tab.
+                guard let prevTitle = titleFromTerminal else { return }
+                titleFromTerminal = nil
+                setTitle(prevTitle)
+            } else {
+                // Set the title and prevent it from being changed automatically.
+                // Already pinned, the terminal's title stays the one it had.
+                if titleFromTerminal == nil { titleFromTerminal = title }
+                title = newTitle
             }
         }
 
