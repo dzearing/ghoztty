@@ -353,11 +353,13 @@ pub const BannerOverlay = struct {
     /// slice of the gradient, so it is a rebuild like a resize.
     card_glass: ?GlassDesk = null,
     card_glass_at: [2]i32 = .{ 0, 0 },
+    /// Scratch for the sheet thinned under a glass card (T2255).
+    card_thin: []u32 = &.{},
 
     /// The window's desk while its panes are glass (T1884), null otherwise.
     /// Mac draws no base fill under a glass pane's banner, so the band round
-    /// the card is the pane's glass sheet and the card is a wash over it;
-    /// this window is a popup of its own over the pane's card, so it lays
+    /// the card is the pane's glass sheet, and the card is that sheet thinned
+    /// with a rim and a shadow (T2255); this window is a popup of its own over the pane's card, so it lays
     /// that sheet down itself from the same gradient.
     glass: ?GlassDesk = null,
     /// The card's colour at its middle when it was last built over glass -
@@ -463,6 +465,7 @@ pub const BannerOverlay = struct {
         self.freeze.deinit();
         self.clearFonts();
         self.releaseCardSurface();
+        self.alloc.free(self.card_thin);
         if (self.bg_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
         self.links.deinit(self.alloc);
         self.arena.deinit();
@@ -2009,17 +2012,24 @@ pub const BannerOverlay = struct {
         self.card_glass = null;
         self.glass_strip = null;
         if (glass_at) |at| {
-            // Glass (T1884): the pane's sheet over this slice of the desk,
-            // and the card as a wash over that.
+            // Glass (T1884): the pane's sheet over this slice of the desk.
+            // The card is a pane of glass of its own (T2255, Mac a81db68f9):
+            // the sheet thinned under it, plus its rim and shadow.
             const g = self.glass.?;
             pane_elevation.glassSheetRegion(pixels[0..count], @intCast(w), @intCast(h), at[0], at[1], g.full_w, g.full_h, g.palette, self.pane_bg_rgb, g.sheet);
+            // Without the scratch the card shows the pane's own sheet: the
+            // right look, one shade thicker.
+            const thin: []const u32 = if (self.thinSheet(count)) |t| blk: {
+                pane_elevation.glassSheetRegion(t, @intCast(w), @intCast(h), at[0], at[1], g.full_w, g.full_h, g.palette, self.pane_bg_rgb, g.sheet.underBanner());
+                break :blk t;
+            } else pixels[0..count];
+            card.renderGlassOn(pixels[0..count], thin, metrics, self.pane_bg_rgb);
             const mid = pixels[@as(usize, @intCast(@divTrunc(h, 2) * w + @divTrunc(w, 2)))];
-            card.renderGlassOn(pixels[0..count], metrics, self.pane_bg_rgb);
-            self.glass_strip = card.glassFillColor(.{
+            self.glass_strip = .{
                 .r = @intCast((mid >> 16) & 0xFF),
                 .g = @intCast((mid >> 8) & 0xFF),
                 .b = @intCast(mid & 0xFF),
-            }, self.pane_bg_rgb);
+            };
             self.card_glass = g;
             self.card_glass_at = at;
         } else {
@@ -2069,6 +2079,17 @@ pub const BannerOverlay = struct {
         self.card_cap_h = cap_h;
         self.card_allocs +%= 1;
         return true;
+    }
+
+    /// `count` pixels of scratch for the sheet thinned under a glass card
+    /// (T2255), kept across frames like the card's own section so a toggle's
+    /// re-renders do not allocate. Null when it cannot be had.
+    fn thinSheet(self: *BannerOverlay, count: usize) ?[]u32 {
+        if (self.card_thin.len < count) {
+            const grown = self.alloc.realloc(self.card_thin, count) catch return null;
+            self.card_thin = grown;
+        }
+        return self.card_thin[0..count];
     }
 
     fn releaseCardSurface(self: *BannerOverlay) void {

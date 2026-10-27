@@ -670,7 +670,7 @@ function Get-BandProbes([string]$label, [string[]]$extra) {
         if ($p1.Top -gt $p0.Top) { break }
     }
     Assert ($p1.Top -gt $p0.Top) "$label`: rearrange mode grew a header band above the pane ($($p0.Top) -> $($p1.Top))"
-    $r = [pscustomobject]@{ Head = $null; HeadDesk = $null; Margin = $null; MarginDesk = $null; Card = $null }
+    $r = [pscustomobject]@{ Head = $null; HeadDesk = $null; Margin = $null; MarginDesk = $null; Card = $null; CardTop = $null }
     $shot = Get-TestWindowPixels -Window $top -Sync
     try {
         if ((Get-TestDistinctColors -Shot $shot) -ge 4) {
@@ -700,11 +700,14 @@ function Get-BandProbes([string]$label, [string[]]$extra) {
             $r.Margin = Get-TestPixel -Shot $os -X ([int]$ov.Right - 3) -Y $my
             # Low in the card, past the sheen, short of the bottom shade.
             $r.Card = Get-TestPixel -Shot $os -X ([int]($ov.Left + ($ov.Right - $ov.Left) * 0.5)) -Y ([int]($ov.Top + ($ov.Bottom - $ov.Top) * 0.62))
+            # The band's top margin straight above it (T2255): the pane's own
+            # sheet over nearly the same desk, out of the shadow's reach.
+            $r.CardTop = Get-TestPixel -Shot $os -X ([int]($ov.Left + ($ov.Right - $ov.Left) * 0.5)) -Y ([int]$ov.Top + 3)
         } finally { Close-TestWindowPixels $os }
         $ts = Get-TestWindowPixels -Window $top -Sync
         try { $r.MarginDesk = Get-TestPixel -Shot $ts -X ([int]$ov.Right + $i + 2) -Y $my } finally { Close-TestWindowPixels $ts }
     }
-    foreach ($k in 'Head', 'HeadDesk', 'Margin', 'MarginDesk', 'Card') {
+    foreach ($k in 'Head', 'HeadDesk', 'Margin', 'MarginDesk', 'Card', 'CardTop') {
         $c = $r.$k
         if ($null -ne $c) { Write-Host "      $label $k = $($c.R),$($c.G),$($c.B)" }
     }
@@ -735,7 +738,28 @@ if ($null -eq $glassBands.Margin -or $null -eq $glassBands.MarginDesk -or -not (
     }
     Assert ($d -le 12) 'glass bands: the banner margin is the same sheet the pane is - no seam against the desk beside it'
     if ($null -ne $glassBands.Card -and $null -ne $solidBands.Card) {
-        Assert (($glassBands.Card.B -ge $glassBands.Card.R + 4) -and ((Get-ColorDistance $glassBands.Card $solidBands.Card) -ge 6)) 'glass bands: the banner card is a wash over the glass, so the desk tints it'
+        Assert (($glassBands.Card.B -ge $glassBands.Card.R + 4) -and ((Get-ColorDistance $glassBands.Card $solidBands.Card) -ge 6)) 'glass bands: the banner card is glass, so the desk tints it'
+    }
+    # T2255 (Mac a81db68f9): the card is a pane of glass of its own - the
+    # sheet thinned to 25% under it, no white wash, no sheen. On a black
+    # terminal the pane's sheet keeps 60% of the desk in linear light and the
+    # card's 75%, so the card is the margin above it times 1.25 per channel.
+    # The old wash greyed it: about +10 on the dark red channel.
+    if ($null -ne $glassBands.Card -and $null -ne $glassBands.CardTop -and (Test-GlassPixel $glassBands.CardTop)) {
+        $cardTop = @($glassBands.CardTop.R, $glassBands.CardTop.G, $glassBands.CardTop.B)
+        $wantCard = @(); foreach ($v in $cardTop) { $wantCard += ConvertTo-Srgb ((ConvertTo-Lin $v) * 0.75 / 0.6) }
+        $dc = Get-ExpectDistance $glassBands.Card $wantCard
+        $dr = [math]::Abs($glassBands.Card.R - $wantCard[0])
+        Write-Host "      glass banner card vs the sheet thinned to 25% ($($wantCard -join ',')): off by $dc (red $dr)"
+        if ($NegativeControl) {
+            Write-Host 'NEGATIVE CONTROL: asserting the card is the margin plus a white wash - this run MUST fail'
+            $washed = @(); foreach ($v in $cardTop) { $washed += [int][math]::Round($v + (255 - $v) * 0.06) }
+            Assert ((Get-ExpectDistance $glassBands.Card $washed) -le 4) 'glass bands: the banner card is a white wash over the sheet (negative control)'
+        } else {
+            Assert (($dc -le 12) -and ($dr -le 4)) 'glass bands: the banner card is the sheet thinned to 25% - the gradient through it, no white wash'
+        }
+    } else {
+        $script:skipped++; Write-Host 'SKIP  glass banner card probe: no capture or no glass above the card'
     }
 }
 if ($null -eq $glassBands.Head -or $null -eq $solidBands.Head -or $null -eq $glassBands.HeadDesk -or -not (Test-DeskPixel $glassBands.HeadDesk)) {

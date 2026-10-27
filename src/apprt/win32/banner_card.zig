@@ -382,7 +382,7 @@ const BLACK = Frgb{ .r = 0, .g = 0, .b = 0 };
 /// `0x00RRGGBB`; `bg` is the pane's own background (what the band would
 /// otherwise show).
 pub fn render(pixels: []u32, m: Metrics, bg: Rgb) void {
-    renderImpl(pixels, m, bg, .flat);
+    renderImpl(pixels, m, bg, .flat, null);
 }
 
 /// `render` over whatever `pixels` already holds instead of a flat `bg`:
@@ -392,27 +392,20 @@ pub fn render(pixels: []u32, m: Metrics, bg: Rgb) void {
 /// same on the elevated style's gradient desk as on the terminal background
 /// (T1850).
 pub fn renderOn(pixels: []u32, m: Metrics, bg: Rgb) void {
-    renderImpl(pixels, m, bg, .solid_on);
+    renderImpl(pixels, m, bg, .solid_on, null);
 }
 
 /// `renderOn` for a glass pane (T1884), where the band under the banner is
-/// the pane's glass sheet: the card is Mac's translucent wash OVER whatever
-/// `pixels` hold rather than an opaque `fillColor(bg)`, so the desk reads
-/// through the card as well as around it. The wash leans by `bg`'s
-/// lightness, the way `fillColor`'s does, so text chosen against the pane
-/// background keeps reading.
-pub fn renderGlassOn(pixels: []u32, m: Metrics, bg: Rgb) void {
-    renderImpl(pixels, m, bg, .glass_on);
-}
-
-/// The card's colour over a glass sheet pixel `under` (T1884): what
-/// `renderGlassOn` puts at the card's flat middle, for the marks the banner
-/// shades against the card.
-pub fn glassFillColor(under: Rgb, bg: Rgb) Rgb {
-    const light = color_math.isLight(bg);
-    const c = Frgb.from(under).over(if (light) BLACK else WHITE, if (light) FILL_DARKEN else FILL_LIGHTEN);
-    const p = c.pack();
-    return .{ .r = @intCast((p >> 16) & 0xFF), .g = @intCast((p >> 8) & 0xFF), .b = @intCast(p & 0xFF) };
+/// the pane's glass sheet. Since T2255 (Mac a81db68f9,
+/// `SurfacePaneBanner.isGlass`) the card is a pane of glass of its own:
+/// `thin` - the same band with the pane's sheet thinned under the card
+/// (`pane_elevation.Sheet.underBanner`) - shows through the card's shape, and
+/// the card adds only its rim and its drop shadow. No wash and no sheen: both
+/// are white, and over a glass sheet a white lift greys the desk's gradient
+/// into a flat slab (Mac measured +17 levels). `thin` is `w * h` like `pixels`.
+pub fn renderGlassOn(pixels: []u32, thin: []const u32, m: Metrics, bg: Rgb) void {
+    if (thin.len < pixels.len) return;
+    renderImpl(pixels, m, bg, .glass_on, thin);
 }
 
 const Mode = enum { flat, solid_on, glass_on };
@@ -434,13 +427,12 @@ const Paint = struct {
     bg_f: Frgb,
     bg_packed: u32,
     fill_f: Frgb,
-    wash_to: Frgb,
-    wash_a: f32,
 
     /// The card over `p` given its cover: the same sequence of composites
     /// the per-pixel walk has always done, so a mirrored or row-constant
     /// pixel (see `renderImpl`) is the same bits as one computed in place.
-    inline fn composite(self: Paint, p: *u32, cv: Cover, dark: f32) void {
+    /// `thin` is the thinned sheet at `p` on glass, unused otherwise.
+    inline fn composite(self: Paint, p: *u32, cv: Cover, dark: f32, thin: u32) void {
         const on_existing = self.mode != .flat;
         if (on_existing and cv.card == 0.0 and cv.shadow == 0.0) return;
         var c = if (on_existing) Frgb.unpack(p.*) else self.bg_f;
@@ -451,9 +443,14 @@ const Paint = struct {
             c = c.over(BLACK, SHADOW_ALPHA * cv.shadow * (1.0 - cv.card));
         }
         if (cv.card > 0.0) {
-            c = if (self.mode == .glass_on) c.over(self.wash_to, self.wash_a * cv.card) else c.over(self.fill_f, cv.card);
-            if (cv.sheen > 0.0) c = c.over(WHITE, cv.sheen * cv.card);
-            if (dark > 0.0) c = c.over(BLACK, dark * cv.card);
+            if (self.mode == .glass_on) {
+                // The thinned sheet through the card's shape, then the rim.
+                c = c.over(Frgb.unpack(thin), cv.card);
+            } else {
+                c = c.over(self.fill_f, cv.card);
+                if (cv.sheen > 0.0) c = c.over(WHITE, cv.sheen * cv.card);
+                if (dark > 0.0) c = c.over(BLACK, dark * cv.card);
+            }
             if (cv.rim > 0.0) c = c.over(WHITE, cv.rim_a * cv.rim);
         }
         p.* = if (cv.card == 0.0 and cv.shadow == 0.0) self.bg_packed else c.pack();
@@ -492,21 +489,18 @@ fn mirrorable(m: Metrics) bool {
 ///   ellipse (with a margin, so no pixel can land on the boundary stop) the
 ///   interior is one colour in the two opaque modes, composited once per
 ///   row. Glass reads the sheet underneath, so it does not get this one.
-fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
+fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode, thin: ?[]const u32) void {
     if (m.w <= 0 or m.h <= 0) return;
     const w: usize = @intCast(m.w);
     const h: usize = @intCast(m.h);
     if (pixels.len < w * h) return;
 
-    const light = color_math.isLight(bg);
     const bg_f = Frgb.from(bg);
     const paint = Paint{
         .mode = mode,
         .bg_f = bg_f,
         .bg_packed = bg_f.pack(),
         .fill_f = Frgb.from(fillColor(bg)),
-        .wash_to = if (light) BLACK else WHITE,
-        .wash_a = if (light) FILL_DARKEN else FILL_LIGHTEN,
     };
     const card = m.card();
 
@@ -539,13 +533,15 @@ fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
         const rim_row = rim_e.rowTerm(y);
         const sheen_dark = bottomShadeAlpha(y, card);
         const line = pixels[row * w ..][0..w];
+        // The thinned sheet's row on glass; never read in the opaque modes.
+        const thin_line: []const u32 = if (thin) |t| t[row * w ..][0..w] else line;
 
         // Every `t` on this row is at least sqrt(sheen_row), and past the
         // last stop (1.0) the sheen is exactly zero. The margin keeps out a
         // `t` that rounds onto the stop itself, which still lights a hair.
         const row_const: ?u32 = if (y_inside and mode != .glass_on and sheen_row > 1.001) blk: {
             var px: u32 = 0;
-            paint.composite(&px, .{ .card = 1.0 }, sheen_dark);
+            paint.composite(&px, .{ .card = 1.0 }, sheen_dark, 0);
             break :blk px;
         } else null;
 
@@ -596,7 +592,7 @@ fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
                 if (cv.rim > 0.0) cv.rim_a = gradient(&RIM_STOPS, rim_e.atRow(x, rim_row));
             }
 
-            paint.composite(&line[col], cv, sheen_dark);
+            paint.composite(&line[col], cv, sheen_dark, thin_line[col]);
             if (!pair) continue;
             // Where the result cannot depend on the pixel underneath — the
             // flat mode everywhere, and an opaque fill the card covers
@@ -604,7 +600,7 @@ fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
             // onto a backdrop, or glass, has to be done again.
             if (mode == .flat or (mode == .solid_on and cv.card == 1.0)) {
                 line[twin] = line[col];
-            } else paint.composite(&line[twin], cv, sheen_dark);
+            } else paint.composite(&line[twin], cv, sheen_dark, thin_line[twin]);
         }
     }
 }
@@ -829,31 +825,31 @@ test "T1850: renderOn keeps the backdrop where the card does not reach, and draw
     try testing.expect(lum(at(&on, m, 100, 70)) < lum(before[70 * 200 + 100]));
 }
 
-test "T1884: renderGlassOn's card is a wash over the sheet, so the desk reads through the card too" {
+test "T2255: renderGlassOn's card is the thinned sheet - rim and shadow only, no wash, no sheen" {
     const m = Metrics.init(200, 80, 1.0);
-    // Two backdrops that differ only in blue.
-    var a = [_]u32{0x203060} ** (200 * 80);
-    var b = [_]u32{0x2030A0} ** (200 * 80);
-    renderGlassOn(&a, m, DARK);
-    renderGlassOn(&b, m, DARK);
-    const pa = at(&a, m, 100, 40);
-    const pb = at(&b, m, 100, 40);
-    // Deep inside the card, the difference under it survives the card...
-    try testing.expect((pb & 0xFF) > (pa & 0xFF) + 40);
-    // ...and the card is lighter than the sheet it lies on (a dark pane's
-    // wash is white), by about the wash plus the sheen.
-    try testing.expect(lum(pa) > lum(0x203060));
-    // Over the pane background itself it is the solid card, give or take
-    // rounding.
-    var on_bg = [_]u32{Frgb.from(DARK).pack()} ** (200 * 80);
+    for ([_]Rgb{ DARK, .{ .r = 250, .g = 250, .b = 248 } }) |bg| {
+        // The pane's sheet round the card, and the thinner one under it.
+        var band = [_]u32{0x203060} ** (200 * 80);
+        const thin = [_]u32{0x2838A0} ** (200 * 80);
+        renderGlassOn(&band, &thin, m, bg);
+        // Deep inside the card, top and bottom alike (where the sheen and the
+        // bottom shade used to lie): exactly the thinned sheet - no white
+        // lift, no black wash, whichever way the pane leans.
+        try testing.expectEqual(@as(u32, 0x2838A0), at(&band, m, 100, 20));
+        try testing.expectEqual(@as(u32, 0x2838A0), at(&band, m, 100, 40));
+        try testing.expectEqual(@as(u32, 0x2838A0), at(&band, m, 100, 60));
+        // Out of the card's and the shadow's reach: the pane's sheet, untouched.
+        try testing.expectEqual(@as(u32, 0x203060), at(&band, m, 0, 0));
+        // The shadow under the card still darkens the sheet it falls on...
+        try testing.expect(lum(at(&band, m, 100, 75)) < lum(0x203060));
+        // ...and the rim still lights the card's top edge.
+        const card_top: i32 = @intFromFloat(m.card().top);
+        try testing.expect(lum(at(&band, m, 100, card_top)) > lum(0x2838A0));
+    }
+    // The opaque modes keep the wash (the control).
     var flat: [200 * 80]u32 = undefined;
-    renderGlassOn(&on_bg, m, DARK);
     render(&flat, m, DARK);
-    const d = @abs(@as(i32, @intCast(lum(at(&on_bg, m, 100, 40)))) - @as(i32, @intCast(lum(at(&flat, m, 100, 40)))));
-    try testing.expect(d <= 2);
-    // And the colour it reports for the card's middle is that wash.
-    const f = glassFillColor(.{ .r = 0x20, .g = 0x30, .b = 0x60 }, DARK);
-    try testing.expect(f.r > 0x20 and f.b > 0x60);
+    try testing.expect(lum(at(&flat, m, 100, 40)) > lum(Frgb.from(DARK).pack()));
 }
 
 test "sdRoundRect: inside negative, outside positive, corner clipped" {
@@ -1085,7 +1081,7 @@ test "nestedRadius: concentric with the pane's corner, floored at 4" {
 
 /// The per-pixel walk `renderImpl` replaced (T1349), kept verbatim as the
 /// oracle the fast one is compared against bit for bit.
-fn renderReference(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
+fn renderReference(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode, thin: ?[]const u32) void {
     if (m.w <= 0 or m.h <= 0) return;
     const w: usize = @intCast(m.w);
     const h: usize = @intCast(m.h);
@@ -1095,9 +1091,6 @@ fn renderReference(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
     const bg_f = Frgb.from(bg);
     const bg_packed = bg_f.pack();
     const fill_f = Frgb.from(fillColor(bg));
-    const light = color_math.isLight(bg);
-    const wash_to = if (light) BLACK else WHITE;
-    const wash_a: f32 = if (light) FILL_DARKEN else FILL_LIGHTEN;
     const card = m.card();
 
     // Shadow shape: the card, pushed down. Blurred by a smoothstep of its
@@ -1156,10 +1149,15 @@ fn renderReference(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
                 c = c.over(BLACK, SHADOW_ALPHA * cov_shadow * (1.0 - cov_card));
             }
             if (cov_card > 0.0) {
-                c = if (mode == .glass_on) c.over(wash_to, wash_a * cov_card) else c.over(fill_f, cov_card);
-                const sheen_a = gradient(&SHEEN_STOPS, sheen_e.atRow(x, sheen_row));
-                if (sheen_a > 0.0) c = c.over(WHITE, sheen_a * cov_card);
-                if (sheen_dark > 0.0) c = c.over(BLACK, sheen_dark * cov_card);
+                if (mode == .glass_on) {
+                    // T2255: the thinned sheet through the card, no wash or sheen.
+                    c = c.over(Frgb.unpack(thin.?[row * w + col]), cov_card);
+                } else {
+                    c = c.over(fill_f, cov_card);
+                    const sheen_a = gradient(&SHEEN_STOPS, sheen_e.atRow(x, sheen_row));
+                    if (sheen_a > 0.0) c = c.over(WHITE, sheen_a * cov_card);
+                    if (sheen_dark > 0.0) c = c.over(BLACK, sheen_dark * cov_card);
+                }
                 if (cov_rim > 0.0) {
                     const rim_a = gradient(&RIM_STOPS, rim_e.atRow(x, rim_row));
                     c = c.over(WHITE, rim_a * cov_rim);
@@ -1194,6 +1192,10 @@ test "T1349: renderImpl is renderReference to the bit, every mode, size and scal
     defer alloc.free(got);
     const want = try alloc.alloc(u32, 640 * 137);
     defer alloc.free(want);
+    // Glass's thinned sheet: its own asymmetric backdrop, so a twin that
+    // read the wrong column of it would show.
+    const thin = try alloc.alloc(u32, 640 * 137);
+    defer alloc.free(thin);
 
     var compared: usize = 0;
     var mirrored: usize = 0;
@@ -1210,8 +1212,10 @@ test "T1349: renderImpl is renderReference to the bit, every mode, size and scal
             const n: usize = @intCast(w * h);
             fillBackdrop(got[0..n], @as(u32, @intCast(w * 31 + h * 7)) + @as(u32, @intCast(bi)));
             @memcpy(want[0..n], got[0..n]);
-            renderImpl(got[0..n], m, bg, mode);
-            renderReference(want[0..n], m, bg, mode);
+            fillBackdrop(thin[0..n], @as(u32, @intCast(w * 17 + h * 3)) + @as(u32, @intCast(bi)) + 5);
+            const t: ?[]const u32 = if (mode == .glass_on) thin[0..n] else null;
+            renderImpl(got[0..n], m, bg, mode, t);
+            renderReference(want[0..n], m, bg, mode, t);
             if (!std.mem.eql(u32, got[0..n], want[0..n])) {
                 for (got[0..n], want[0..n], 0..) |g, wv, i| if (g != wv) {
                     std.debug.print("mismatch w={} h={} scale={d} mode={s} variant={} at ({},{}): got {x} want {x}\n", .{ w, h, scale, @tagName(mode), variant, i % @as(usize, @intCast(w)), i / @as(usize, @intCast(w)), g, wv });

@@ -247,7 +247,20 @@ pub const Sheet = struct {
     pub fn cover(self: Sheet) f32 {
         return self.t * (1 - self.fade);
     }
+
+    /// This sheet under the pane banner's card (T2255, Mac a81db68f9): thinned
+    /// to `BANNER_TINT`, so the card reads as a pane of glass of its own -
+    /// and never thicker than the sheet itself, since a sheet already thinner
+    /// (Mac's unfocused 15%) is one terminal text is read through.
+    pub fn underBanner(self: Sheet) Sheet {
+        return .{ .t = @min(self.t, BANNER_TINT), .fade = self.fade };
+    }
 };
+
+/// Mac `PaneGlass.bannerTint` (a81db68f9): the sheet under the pane banner's
+/// card - a bit thinner than the focused pane's `GLASS_TINT`, so the desk
+/// reads through the banner more than through the pane.
+pub const BANNER_TINT: f32 = 0.25;
 
 /// How much of the header band's colour a glass pane's rearrange header
 /// keeps over the sheet (T1884) - the stand-in for Mac's `.regularMaterial`,
@@ -1138,6 +1151,26 @@ test "T1884: glassSheetRegion is the sheet over the desk at those pixels" {
     var far: [1]u32 = undefined;
     glassSheetRegion(&far, 1, 1, 700, 500, 800, 600, pal, tint, .{});
     try testing.expect(far[0] != out[0]);
+}
+
+test "T2255: the sheet under the pane banner thins to 25%, never thicker than the sheet" {
+    // The pane's 40% sheet thins to Mac's `PaneGlass.bannerTint`...
+    try testing.expectEqual(BANNER_TINT, (Sheet{}).underBanner().t);
+    try testing.expectEqual(@as(f32, 0.25), BANNER_TINT);
+    // ...a sheet already thinner (Mac's unfocused 15%) stays as it is...
+    try testing.expectEqual(@as(f32, 0.15), (Sheet{ .t = 0.15 }).underBanner().t);
+    // ...and the fade rides along untouched.
+    try testing.expectEqual(@as(f32, 0.3), (Sheet{ .fade = 0.3 }).underBanner().fade);
+    // On a dark tint over a light desk, the thinner sheet lets more desk through.
+    const pal = desk_palette.Palette.ocean(false);
+    const tint: color_math.Rgb = .{ .r = 20, .g = 20, .b = 20 };
+    var pane: [1]u32 = undefined;
+    var under: [1]u32 = undefined;
+    glassSheetRegion(&pane, 1, 1, 400, 300, 800, 600, pal, tint, .{});
+    glassSheetRegion(&under, 1, 1, 400, 300, 800, 600, pal, tint, (Sheet{}).underBanner());
+    const desk = pal.at(400.5, 300.5, 800, 600).pack();
+    try testing.expectEqual(glassMix(desk, tint, BANNER_TINT), under[0]);
+    try testing.expect(under[0] != pane[0]);
 }
 
 test "T1916: glassHeadRegion is the head material over the sheet at those pixels" {

@@ -1426,7 +1426,10 @@ under the card (`PaneGlass.bannerTint`, 25% against the pane's 40%; the card pub
 wash and no sheen (`SurfacePaneBanner.isGlass`): a white lift over glass greyed
 the gradient into a flat slab ~17 levels lighter than the pane, and a second
 Liquid Glass sheet over the pane's greys it further
-(`bannerOnGlassLetsTheGradientThrough`; `flat` and elevated-without-glass keep the wash), viewer template pages
+(`bannerOnGlassLetsTheGradientThrough`; `flat` and elevated-without-glass keep the wash;
+**Windows:** T2255 - `BannerOverlay` lays the band's sheet and, under the card,
+the same sheet at `pane_elevation.Sheet.underBanner`, and `banner_card.renderGlassOn`
+adds only the rim and the shadow), viewer template pages
 (markdown/code/diff/image) go see-through (`ViewerView.isOnGlass`, a
 `pane-glass` class in `viewer.css`) while websites and HTML files keep their
 own background, and the gradient runs up under the titlebar: the transparent
