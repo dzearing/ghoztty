@@ -11,6 +11,8 @@ enum PaneSidebarSymbol: Equatable {
     /// The collapse/expand button: a window with its sidebar, filled while
     /// the sidebar is expanded.
     case sidebar(expanded: Bool)
+    /// The header's new-window button.
+    case plus
     case terminal
     case document
     case globe
@@ -21,7 +23,7 @@ enum PaneSidebarSymbol: Equatable {
         switch self {
         case .terminal, .document, .globe: 1.3
         case .diff: 1.4
-        case .windows, .sidebar: 1.25
+        case .windows, .sidebar, .plus: 1.25
         }
     }
 
@@ -45,6 +47,9 @@ enum PaneSidebarSymbol: Equatable {
             p.addRoundedRect(in: CGRect(x: 1.8, y: 2.6, width: 12.4, height: 10.8),
                              cornerSize: CGSize(width: 2, height: 2))
             p.move(to: CGPoint(x: 6.2, y: 2.6)); p.addLine(to: CGPoint(x: 6.2, y: 13.4))
+        case .plus:
+            p.move(to: CGPoint(x: 8, y: 2.8)); p.addLine(to: CGPoint(x: 8, y: 13.2))
+            p.move(to: CGPoint(x: 2.8, y: 8)); p.addLine(to: CGPoint(x: 13.2, y: 8))
         case .terminal:
             p.addRoundedRect(in: CGRect(x: 1.5, y: 2.5, width: 13, height: 11),
                              cornerSize: CGSize(width: 2.2, height: 2.2))
