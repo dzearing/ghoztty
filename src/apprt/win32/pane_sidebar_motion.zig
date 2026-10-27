@@ -16,6 +16,7 @@
 //! was the other motion went with the badge (T2280, Mac 2924ea5cc).
 
 const std = @import("std");
+const Rect = @import("pane_sidebar.zig").Rect;
 
 /// One sheen cycle: a sweep, then a rest before the next - an occasional
 /// glint, not a strobe (Mac `period` 2s).
@@ -311,6 +312,69 @@ pub const Marks = struct {
         return motion and (self.busy > 0 or self.fading > 0);
     }
 };
+
+/// The pills a motion frame has to repaint (T1925): each busy or fading
+/// pill where the last paint drew it. Mac 321e61d7c found its sheen re-ran
+/// the whole sidebar every frame (86-99% of a core with a dozen busy panes)
+/// and moved it onto Core Animation; here a frame invalidates only these, so
+/// one busy pane among forty repaints its pill, not the column. More pills
+/// than it holds is `full`: the whole column, as before.
+pub const Dirty = struct {
+    pub const cap = 16;
+    rects: [cap]Rect = undefined,
+    count: usize = 0,
+    full: bool = false,
+
+    pub fn add(self: *Dirty, r: Rect) void {
+        if (r.width() <= 0 or r.height() <= 0) return;
+        if (self.count == cap) {
+            self.full = true;
+            return;
+        }
+        self.rects[self.count] = r;
+        self.count += 1;
+    }
+
+    pub fn items(self: *const Dirty) []const Rect {
+        return self.rects[0..self.count];
+    }
+
+    /// Whether a frame can repaint `items` alone: something was noted, and
+    /// nothing overflowed.
+    pub fn partial(self: Dirty) bool {
+        return !self.full and self.count > 0;
+    }
+};
+
+/// Whether `a` and `b` share a pixel - a row outside a paint's clip box is
+/// tallied but not drawn (T1925).
+pub fn overlaps(a: Rect, b: Rect) bool {
+    return a.left < b.right and b.left < a.right and a.top < b.bottom and b.top < a.bottom;
+}
+
+test "T1925: a motion frame repaints the moving pills, or everything once they overflow" {
+    var d: Dirty = .{};
+    try std.testing.expect(!d.partial()); // nothing noted: the whole column
+    d.add(.{ .left = 0, .top = 0, .right = 0, .bottom = 10 }); // empty: ignored
+    try std.testing.expect(!d.partial());
+    d.add(.{ .left = 4, .top = 40, .right = 200, .bottom = 68 });
+    try std.testing.expect(d.partial());
+    try std.testing.expectEqual(@as(usize, 1), d.items().len);
+    try std.testing.expectEqual(@as(i32, 40), d.items()[0].top);
+    for (1..Dirty.cap) |k| d.add(.{ .left = 4, .top = @intCast(k * 32), .right = 200, .bottom = @intCast(k * 32 + 28) });
+    try std.testing.expect(d.partial()); // exactly full is still partial
+    d.add(.{ .left = 4, .top = 900, .right = 200, .bottom = 928 });
+    try std.testing.expect(d.full);
+    try std.testing.expect(!d.partial());
+}
+
+test "T1925: overlaps is strict at the edges" {
+    const a: Rect = .{ .left = 0, .top = 0, .right = 10, .bottom = 10 };
+    try std.testing.expect(overlaps(a, .{ .left = 9, .top = 9, .right = 20, .bottom = 20 }));
+    try std.testing.expect(!overlaps(a, .{ .left = 10, .top = 0, .right = 20, .bottom = 10 }));
+    try std.testing.expect(!overlaps(a, .{ .left = 0, .top = 10, .right = 10, .bottom = 20 }));
+    try std.testing.expect(overlaps(a, .{ .left = -5, .top = -5, .right = 30, .bottom = 30 }));
+}
 
 test "T2279/T2309: a sweep starts off the pill and leaves it entirely, top corner included" {
     // Mac's PaneSidebarSheenTests sizes: a tile, and two panel widths.

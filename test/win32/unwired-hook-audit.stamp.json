@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-27T04:34:09-07:00",
-    "commit":  "7b53d0251",
+    "generated":  "2026-10-27T05:50:40-07:00",
+    "commit":  "a81ff3cad",
     "uncommitted":  [
 
                     ],
@@ -252,7 +252,7 @@
                   "src/apprt/win32/pane_sidebar.zig":  "8147c495a37dec0d402d605f58c40a1285235381a09db78d1058a6b8af752895",
                   "src/apprt/win32/pane_sidebar_add.zig":  "57b19221144989b2dbab579da909ce8854ab37e31e8dea483fc719f105994fef",
                   "src/apprt/win32/pane_sidebar_menu.zig":  "83d3f0de8028dcee0dc83d43c8bdedeab5c2745efe5cb1e3e2cf9806d73fb0b4",
-                  "src/apprt/win32/pane_sidebar_motion.zig":  "c9e2a85c1029183d5de79b8ef3822b7e80e1a5d5aad7f8b979548869c23d6e50",
+                  "src/apprt/win32/pane_sidebar_motion.zig":  "8fced9af39c1a70da927fd9bbb1bd1f79044841b7afa81931b125dd79a00a4e9",
                   "src/apprt/win32/pane_sidebar_order.zig":  "6afbbebacc04913a15aad696d4502a5535d73cf13ad0018a77eea6b72fd4efe6",
                   "src/apprt/win32/pane_sidebar_outline.zig":  "01a07e3d3c7457616257edd36a7a7b2708eef909e9ebb8a8a3612bf175f9c3c4",
                   "src/apprt/win32/pane_sidebar_prefs.zig":  "1cd8b37aadc4622520a951c65f10729424cea93184ea68cbb130302a87972ee5",
@@ -272,7 +272,7 @@
                   "src/apprt/win32/PaneDesk.zig":  "c1954071277e18d3d6579a3a0e364a59f0b24a9ec228277ca57c05ea1946ec86",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
-                  "src/apprt/win32/PaneSidebar.zig":  "005f41d69564a24bc27e0f837cc0e9a25b2a2aab1d14d9bebcf60a7f8866f9d7",
+                  "src/apprt/win32/PaneSidebar.zig":  "26da9bdc2dc869798456d659a282187a4aa420aef50b8040e7723285f913880a",
                   "src/apprt/win32/PaneView.zig":  "c64b80a1a3c65f4266f63843e0b6114fbcf8c3b773b0536797e50fa7e4e80226",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/persistence_notice.zig":  "65baba4beff952a6d9d9f9753a3bf254bc8f050a6d7430978339ebf9ec848840",
@@ -1239,6 +1239,7 @@
                   "test/win32/pane-sidebar-elevated.ps1":  "ec463668cffb3f072578e8437e10fa8e4c0f04eee8e80a8fbd020e9f2e618a63",
                   "test/win32/pane-sidebar-glide.ps1":  "7e2b71fe04fd82554f721632d6c67e88c37b238b25a8ba659edae0ea31509d54",
                   "test/win32/pane-sidebar-hue.ps1":  "a411654206674d11f76a1e10e64bef76822443ed84738f09b7b7e68832f47f16",
+                  "test/win32/pane-sidebar-motion-cost.ps1":  "3876019f1c5b333d7f95409c195a02164269315a1f52074e3aca1cc0b28cb02b",
                   "test/win32/pane-sidebar-persist.ps1":  "f7b9d5de2cb9decf411f73f62e57b0858ca7016fa0e413491fbf40a708cfaa80",
                   "test/win32/pane-sidebar-resize.ps1":  "7e93a1e160382f47a940e22fc047a8313bea6588177cd391d38e2168859ea686",
                   "test/win32/pane-sidebar-scroll.ps1":  "7d154456b6ec5a0e25db1d2a010d9ca2891581066395d9144649053eceaa9329",

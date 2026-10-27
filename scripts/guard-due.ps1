@@ -5357,6 +5357,20 @@ $GuardTable = @(
             'test\win32\pane-sidebar-activity.ps1'
         )
     },
+    # What the busy sheen costs (T1925, Mac 321e61d7c): a motion frame
+    # repaints the moving pills alone, never the whole column. The dirty
+    # tally is unit-tested in pane_sidebar_motion.zig; this proves a real
+    # run's frames paint a fraction of the sidebar.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-motion-cost'
+        Script = 'test\win32\pane-sidebar-motion-cost.ps1'
+        Stamp  = 'test\win32\pane-sidebar-motion-cost.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar_motion.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-motion-cost.ps1'
+        )
+    },
     # Each pane's own hue in the sidebar (T2278): the icons are drawn in it,
     # and hovering a row tints that pane - a popup glued to the pane, cut to
     # its card, faded back out on leave. The colours, pixels and curves are

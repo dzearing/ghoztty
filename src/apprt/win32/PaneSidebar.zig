@@ -369,6 +369,16 @@ paint_ms: u64 = 0,
 paint_motion: bool = true,
 marks: motion.Marks = .{},
 anim_armed: bool = false,
+/// Where the moving pills were drawn (T1925): the paint fills `paint_dirty`
+/// and leaves it in `dirty`, and a motion frame invalidates those alone.
+paint_dirty: motion.Dirty = .{},
+dirty: motion.Dirty = .{},
+/// What a motion run cost (T1925), logged when its clock stops: frames
+/// painted, and the pixels they painted against the column's - the measure
+/// of whether a frame repaints a pill or the whole sidebar.
+motion_frames: u64 = 0,
+motion_px: u64 = 0,
+motion_client_px: u64 = 0,
 /// Each pane's sheen fading in or out (T2279, Mac `busyFade`), by pane: kept
 /// across roster refreshes, which rebuild the entries. A slot whose sheen has
 /// finished fading out is free.
@@ -1621,6 +1631,7 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     var l = self.currentLayout();
     _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
     self.paint_marks = .{};
+    self.paint_dirty = .{};
     self.paint_ms = w32.GetTickCount64();
     self.paint_motion = App.clientAreaAnimationsEnabled();
     // A drag over the column: the rows as they slide, the dragged one lifted
@@ -1636,6 +1647,7 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     }
     if (l.mode != .hidden) self.paintHeld(hdc, &laid, height, t);
     self.marks = self.paint_marks;
+    self.dirty = self.paint_dirty;
     if (self.paint_marks.moving(self.paint_motion)) self.armMotion();
 }
 
@@ -1935,6 +1947,9 @@ fn armMotion(self: *PaneSidebar) void {
     if (self.anim_armed) return;
     if (w32.SetTimer(self.hwnd, TIMER_ANIM, motion.frame_ms, null) == 0) return;
     self.anim_armed = true;
+    self.motion_frames = 0;
+    self.motion_px = 0;
+    self.motion_client_px = 0;
     const m = self.marks;
     log.info("pane sidebar motion on surface=rail busy={d}", .{m.busy});
 }
@@ -1959,12 +1974,30 @@ fn onMotionTick(self: *PaneSidebar) void {
             self.busy_poll_ms = now;
             self.refresh();
         }
-        _ = w32.InvalidateRect(hwnd, null, 0);
+        self.invalidateMoving();
         return;
     }
     _ = w32.KillTimer(hwnd, TIMER_ANIM);
     self.anim_armed = false;
-    log.info("pane sidebar motion off surface=rail", .{});
+    // The run's cost (T1925): `area` is the share of the column the frames
+    // painted, in percent - near 100 is the whole sidebar every frame.
+    const area = if (self.motion_client_px > 0) self.motion_px * 100 / self.motion_client_px else 0;
+    log.info("pane sidebar motion off surface=rail frames={d} area={d}", .{ self.motion_frames, area });
+}
+
+/// A motion frame's repaint (T1925): the pills that move, where the last
+/// paint drew them - or the whole column while anything else moves it too
+/// (a glide, a list transition, a drag), or when the pills were not all
+/// noted.
+fn invalidateMoving(self: *PaneSidebar) void {
+    if (!self.dirty.partial() or self.column != null or self.xfade != null or self.drag != null) {
+        _ = w32.InvalidateRect(self.hwnd, null, 0);
+        return;
+    }
+    for (self.dirty.items()) |r| {
+        const rc: w32.RECT = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+        _ = w32.InvalidateRect(self.hwnd, &rc, 0);
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -2199,6 +2232,33 @@ fn unrgb(c: u32) color_math.Rgb {
     return .{ .r = @truncate(c), .g = @truncate(c >> 8), .b = @truncate(c >> 16) };
 }
 
+/// `sheenLevel` for the pill drawn at `r`, noting `r` for the next motion
+/// frame while its sheen moves (T1925).
+fn sheenAt(self: *PaneSidebar, e: Entry, r: pane_sidebar.Rect) f64 {
+    const before = self.paint_marks;
+    const level = self.sheenLevel(e);
+    const after = self.paint_marks;
+    if (self.paint_motion and (after.busy != before.busy or after.fading != before.fading)) self.paint_dirty.add(r);
+    return level;
+}
+
+/// A row or tile the paint's clip leaves out (T1925): drawn by nobody this
+/// time, but tallied as if it were, so the motion clock, the next frame's
+/// pills and the marks log see the whole column whatever was repainted.
+/// `bell` is whether the drawing would have shown its bell dot.
+fn tallyUnpainted(self: *PaneSidebar, e: Entry, r: pane_sidebar.Rect, bell: bool) void {
+    _ = self.sheenAt(e, r);
+    if (bell) self.paint_marks.bells += 1;
+}
+
+/// The paint's clip box in `hdc`, or null when it cannot be read (then
+/// everything is drawn).
+fn clipOf(hdc: w32.HDC) ?pane_sidebar.Rect {
+    var cb: w32.RECT = undefined;
+    if (w32.GetClipBox(hdc, &cb) == 0) return null;
+    return .{ .left = cb.left, .top = cb.top, .right = cb.right, .bottom = cb.bottom };
+}
+
 /// How strongly pane `e`'s sheen shows right now, 0 to 1 (T2279, Mac
 /// `busyFade`): it fades in as work starts and out as it stops, from
 /// wherever it had got to. Tallies a sheen still fading, so the clock runs
@@ -2301,7 +2361,7 @@ fn paintPill(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, e: Entry, i
             .bottom = r.top + bar.top + bar.height,
         }, bar.radius, rgb(c));
     }
-    self.paintOverlay(hdc, r, radius, self.sheenLevel(e), if (tile) motion.tileRim(t.dark, hovered) else null, t);
+    self.paintOverlay(hdc, r, radius, self.sheenAt(e, r), if (tile) motion.tileRim(t.dark, hovered) else null, t);
     const under = sel.fill orelse t.surface;
     const icon_w = pane_sidebar.px(pane_sidebar.icon_dip, self.scale);
     const left = r.left + pane_sidebar.px(toc.text_inset_dip, self.scale) + indent;
@@ -2502,9 +2562,16 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     if (l.outline) self.paintOutline(hdc, l, t);
 
     const emphasized = self.isEmphasized();
+    const clip = clipOf(hdc);
     for (0..l.count) |i| {
         if (!l.shown(i) or self.paint_lifted == i) continue;
-        self.paintRow(hdc, l, i, l.items[i], self.rowHovered(i), emphasized, t);
+        const hovered = self.rowHovered(i);
+        if (clip) |c| if (!motion.overlaps(c, l.items[i])) {
+            const e = self.entries.items[i];
+            self.tallyUnpainted(e, l.items[i], !hovered and e.bell and e.section == .stashed);
+            continue;
+        };
+        self.paintRow(hdc, l, i, l.items[i], hovered, emphasized, t);
     }
     self.paintDropSlot(hdc, l, t);
     self.paintSticky(hdc, l, t);
@@ -2907,8 +2974,14 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, ruleColor(t));
 
     const emphasized = self.isEmphasized();
+    const clip = clipOf(hdc);
     for (0..l.count) |i| {
         if (self.paint_lifted == i) continue;
+        if (clip) |c| if (!motion.overlaps(c, l.items[i])) {
+            const e = self.entries.items[i];
+            self.tallyUnpainted(e, l.items[i], e.bell and e.section == .stashed);
+            continue;
+        };
         self.paintTile(hdc, i, l.items[i], self.rowHovered(i), emphasized, t);
     }
     self.paintDropSlot(hdc, l, t);
@@ -3030,16 +3103,34 @@ fn copyDesk(out: []u32, w: i32, h: i32, d: PaneDesk.Backdrop, bg: color_math.Rgb
 
 /// Double-buffered: the whole column is drawn into a memory DC and blitted
 /// once, so a refresh never shows a half-painted list.
-fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
+/// The frame into `hdc`, buffered - only the part `update` asks for (T1925):
+/// a motion frame invalidates its moving pills alone, so the buffer is their
+/// box and the column's other rows are tallied rather than drawn. The frame
+/// is laid out and painted in the column's own coordinates either way, so
+/// what lands is the same pixels a whole repaint would put there.
+fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32, update: w32.RECT) void {
     if (width <= 0 or height <= 0) return;
+    const left = std.math.clamp(update.left, 0, width);
+    const top = std.math.clamp(update.top, 0, height);
+    const right = std.math.clamp(update.right, left, width);
+    const bottom = std.math.clamp(update.bottom, top, height);
+    const bw = right - left;
+    const bh = bottom - top;
+    if (bw <= 0 or bh <= 0) return;
+    if (self.anim_armed) {
+        self.motion_frames += 1;
+        self.motion_px += @intCast(bw * bh);
+        self.motion_client_px += @intCast(width * height);
+    }
     const mem = w32.CreateCompatibleDC(hdc) orelse return self.paint(hdc, width, height);
     defer _ = w32.DeleteDC(mem);
-    const bmp = w32.CreateCompatibleBitmap(hdc, width, height) orelse return self.paint(hdc, width, height);
+    const bmp = w32.CreateCompatibleBitmap(hdc, bw, bh) orelse return self.paint(hdc, width, height);
     defer _ = w32.DeleteObject(bmp);
     const old = w32.SelectObject(mem, bmp);
     defer _ = w32.SelectObject(mem, old);
+    _ = w32.SetViewportOrgEx(mem, -left, -top, null);
     self.paint(mem, width, height);
-    _ = w32.BitBlt(hdc, 0, 0, width, height, mem, 0, 0, w32.SRCCOPY);
+    _ = w32.BitBlt(hdc, left, top, bw, bh, mem, left, top, w32.SRCCOPY);
 }
 
 // -------------------------------------------------------------------------
@@ -3836,7 +3927,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;
             defer _ = w32.EndPaint(hwnd, &ps);
             var r: w32.RECT = undefined;
-            if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top);
+            if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top, ps.rcPaint);
             return 0;
         },
         w32.WM_NCHITTEST => {
