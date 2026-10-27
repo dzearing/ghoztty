@@ -52,6 +52,7 @@ const motion = @import("pane_sidebar_motion.zig");
 const reorder = @import("pane_sidebar_reorder.zig");
 const pane_sidebar_order = @import("pane_sidebar_order.zig");
 const window_order = @import("pane_sidebar_window_order.zig");
+const cross_drop = @import("pane_sidebar_cross_drop.zig");
 const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
 const Dib32 = @import("dib32.zig");
@@ -270,7 +271,56 @@ const ItemDrag = struct {
     unfolded_before: ?shared_mod.KeySet = null,
     /// Let go: gliding from where it was drawn to its laid-out place.
     settle: ?Held.Settle = null,
+
+    /// A window drag (T2338, Mac `PaneSidebarCrossDrop`): `siblings` holds
+    /// the whole list as rows - each group's header, its windows, the lone
+    /// windows - every row slides on its own, and the window may land in any
+    /// group or none. A group drag still moves among its siblings only.
+    cross: bool = false,
+    /// Per row: its group's key (empty for a lone window), and whether it is
+    /// that group's header.
+    row_pkey: [pane_sidebar.max_heads]window_order.Key = undefined,
+    row_header: std.StaticBitSet(pane_sidebar.max_heads) = .initEmpty(),
+    /// How far the others slide: the window's row and the gap after it.
+    pitch: i32 = 0,
+    /// Where a window drag would land.
+    dest: ?CrossDest = null,
+    /// The group header outlined while the drop would join a group the
+    /// window is not in (Mac `PaneSidebarJoinHighlight`), fading in, and the
+    /// one fading out - by row.
+    join_in: ?JoinFade = null,
+    join_out: ?JoinFade = null,
+
+    const CrossDest = union(enum) {
+        /// Into the group row `row` names, at `index` among its windows.
+        group: struct { row: usize, index: usize },
+        top_level: usize,
+    };
+    const JoinFade = struct { row: usize, start_ms: u64 };
+
+    /// Row `j`'s group name, or null for a lone window.
+    fn rowProject(self: *const ItemDrag, j: usize) ?[]const u8 {
+        const k = self.row_pkey[j].slice();
+        if (k.len == 0) return null;
+        return k[window_order.project_prefix.len..];
+    }
+
+    /// The dragged window's group name now, or null.
+    fn ownProject(self: *const ItemDrag) ?[]const u8 {
+        return self.rowProject(self.source);
+    }
+
+    /// The group a destination lands in, or null at the top level.
+    fn destProject(self: *const ItemDrag, dest: CrossDest) ?[]const u8 {
+        return switch (dest) {
+            .group => |g| self.rowProject(g.row),
+            .top_level => null,
+        };
+    }
 };
+
+/// The join outline's fade (Mac `PaneSidebarJoinHighlight`: 0.12s ease-out).
+const join_fade_ms: u64 = 120;
 
 /// Working, as anything that shows it is concerned (T2279, Mac
 /// `PaneView.isWorking`, 919fba868): its activity state says busy (the agent
@@ -441,6 +491,8 @@ reorder_armed: bool = false,
 /// (T2337), and what a paint leaves out of the list for it: the dragged
 /// item's header and rows, drawn lifted instead.
 item_drag: ?ItemDrag = null,
+/// The join outline has been logged once for this drag (T2338's oracle).
+join_logged: bool = false,
 lifted_heads: std.StaticBitSet(pane_sidebar.max_heads) = .initEmpty(),
 lifted_items: std.StaticBitSet(pane_sidebar.max_items) = .initEmpty(),
 
@@ -1847,6 +1899,19 @@ fn fillRect(hdc: w32.HDC, r: pane_sidebar.Rect, color: u32) void {
     _ = w32.FillRect(hdc, &rr, brush);
 }
 
+/// `r`'s rounded outline, `width` thick, drawn inside it.
+fn strokeRound(hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, color: u32, width: i32) void {
+    const pen = w32.CreatePen(PS_INSIDEFRAME, width, color) orelse return;
+    defer _ = w32.DeleteObject(pen);
+    const old_brush = w32.SelectObject(hdc, w32.GetStockObject(w32.NULL_BRUSH));
+    defer _ = w32.SelectObject(hdc, old_brush);
+    const old_pen = w32.SelectObject(hdc, pen);
+    defer _ = w32.SelectObject(hdc, old_pen);
+    _ = w32.RoundRect(hdc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
+}
+
+const PS_INSIDEFRAME: i32 = 6;
+
 fn fillRound(hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, color: u32) void {
     const rgn = w32.CreateRoundRectRgn(r.left, r.top, r.right + 1, r.bottom + 1, 2 * radius, 2 * radius) orelse return;
     defer _ = w32.DeleteObject(rgn);
@@ -2230,6 +2295,8 @@ fn stopReorderClock(self: *PaneSidebar) void {
 fn reorderMoving(self: *PaneSidebar, now: u64) bool {
     if (self.item_drag) |*d| {
         if (d.settle) |st| if (now -| st.start_ms < reorder.settle_ms) return true;
+        if (d.join_in) |f| if (now -| f.start_ms < join_fade_ms) return true;
+        if (d.join_out) |f| if (now -| f.start_ms < join_fade_ms) return true;
         for (d.shifts[0..d.count]) |tw| if (!tw.done(now)) return true;
         if (d.settle != null) return false;
     }
@@ -2266,8 +2333,18 @@ fn belongs(g: *const Group, key: []const u8, head: ?pane_sidebar.HeadKind) bool 
     return std.mem.eql(u8, g.wkey.slice(), key);
 }
 
-/// Which of the drag's siblings a line of group `g` belongs to.
+/// Which of the drag's siblings a line of group `g` belongs to. In a window
+/// drag (T2338) every row is its own: a project's header is its row, and a
+/// window's header and panes are the window's.
 fn itemSibling(d: *const ItemDrag, g: *const Group, head: ?pane_sidebar.HeadKind) ?usize {
+    if (d.cross) {
+        const header = head != null and head.? == .project;
+        const key = if (header) g.pkey.slice() else g.wkey.slice();
+        for (d.siblings[0..d.count], 0..) |*k, j| {
+            if (d.row_header.isSet(j) == header and std.mem.eql(u8, k.slice(), key)) return j;
+        }
+        return null;
+    }
     for (d.siblings[0..d.count], 0..) |*k, j| {
         if (belongs(g, k.slice(), head)) return j;
     }
@@ -2294,6 +2371,15 @@ fn itemRect(self: *const PaneSidebar, l: *const pane_sidebar.Layout, key: []cons
     return r;
 }
 
+/// Project `key`'s header as laid out in `l`, alone.
+fn headRect(self: *const PaneSidebar, l: *const pane_sidebar.Layout, key: []const u8) ?pane_sidebar.Rect {
+    for (l.heads[0..l.head_count]) |hd| {
+        if (hd.kind != .project or hd.index >= self.groups.items.len) continue;
+        if (std.mem.eql(u8, self.groups.items[hd.index].pkey.slice(), key)) return hd.rect;
+    }
+    return null;
+}
+
 fn unionRect(a: ?pane_sidebar.Rect, b: pane_sidebar.Rect) pane_sidebar.Rect {
     const x = a orelse return b;
     return .{ .left = @min(x.left, b.left), .top = @min(x.top, b.top), .right = @max(x.right, b.right), .bottom = @max(x.bottom, b.bottom) };
@@ -2305,7 +2391,9 @@ fn unionRect(a: ?pane_sidebar.Rect, b: pane_sidebar.Rect) pane_sidebar.Rect {
 fn siblingSpans(self: *const PaneSidebar, l: *const pane_sidebar.Layout, d: *const ItemDrag, out: []window_order.Span) bool {
     var prev_bottom: ?i32 = null;
     for (d.siblings[0..d.count], 0..) |*k, j| {
-        if (self.itemRect(l, k.slice())) |r| {
+        // A window drag's group row is its header alone (T2338).
+        const rect = if (d.cross and d.row_header.isSet(j)) self.headRect(l, k.slice()) else self.itemRect(l, k.slice());
+        if (rect) |r| {
             out[j] = .{ .top = r.top, .bottom = r.bottom };
             prev_bottom = r.bottom;
         } else {
@@ -2344,16 +2432,24 @@ fn maybeStartItemDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
         .grabbed_top = hd.rect.top,
         .top = hd.rect.top,
     };
-    // Its siblings, in the list's order: a grouped window's group's windows,
-    // else the top level - each group once, by its first window, and every
-    // lone window.
-    const in_project = hd.kind == .window and g.pkey.len > 0;
-    for (self.groups.items, 0..) |*o, gi| {
+    if (hd.kind == .window) {
+        // A window drag reads the whole list as rows (T2338, Mac
+        // `listRows`): each group's header, its windows, the lone windows -
+        // what the list shows, a search included.
+        d.cross = true;
+        for (l.heads[0..l.head_count]) |o| {
+            if (o.index >= self.groups.items.len or d.count == d.siblings.len) continue;
+            const og = &self.groups.items[o.index];
+            d.siblings[d.count] = if (o.kind == .project) og.pkey else og.wkey;
+            d.row_pkey[d.count] = og.pkey;
+            d.row_header.setValue(d.count, o.kind == .project);
+            d.count += 1;
+        }
+    } else for (self.groups.items, 0..) |*o, gi| {
+        // A group's siblings, in the list's order: the top level - each
+        // group once, by its first window, and every lone window.
         if (d.count == d.siblings.len) break;
-        if (in_project) {
-            if (!std.mem.eql(u8, o.pkey.slice(), g.pkey.slice())) continue;
-            d.siblings[d.count] = o.wkey;
-        } else if (o.pkey.len == 0) {
+        if (o.pkey.len == 0) {
             d.siblings[d.count] = o.wkey;
         } else if (gi == 0 or !std.mem.eql(u8, self.groups.items[gi - 1].pkey.slice(), o.pkey.slice())) {
             d.siblings[d.count] = o.pkey;
@@ -2382,8 +2478,9 @@ fn maybeStartItemDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     } else d.unfolded_before = shared.foldWindows(self.alloc);
     self.stopReorderClock();
     self.item_drag = d;
+    self.join_logged = false;
     self.published();
-    log.info("pane sidebar item drag start kind={s} key={s} siblings={d} source={d}", .{ @tagName(hd.kind), d.key.slice(), d.count, d.source });
+    log.info("pane sidebar item drag start kind={s} key={s} {s}={d} source={d}", .{ @tagName(hd.kind), d.key.slice(), if (d.cross) "rows" else "siblings", d.count, d.source });
     self.refresh();
     self.itemRelayout();
     return true;
@@ -2398,6 +2495,7 @@ fn itemRelayout(self: *PaneSidebar) void {
     var frames: [pane_sidebar.max_heads]window_order.Span = undefined;
     if (!self.siblingSpans(&l, d, &frames)) return self.endItemDrag(false);
     const f = frames[0..d.count];
+    if (d.cross) return self.crossRelayout(d, f);
     const top = window_order.clamp(d.pointer - d.grab, d.source, f, d.grabbed_top);
     const to = window_order.target(top, d.source, f);
     const pitch: f64 = @floatFromInt(window_order.pitch(d.source, f));
@@ -2416,6 +2514,92 @@ fn itemRelayout(self: *PaneSidebar) void {
     self.armReorderClock();
 }
 
+/// A window drag's relayout (T2338, Mac `relayoutRows`): it follows the
+/// pointer anywhere in the list, every row slides on its own, and the slot
+/// and destination follow it - the header of a group it would join, not its
+/// own, outlined.
+fn crossRelayout(self: *PaneSidebar, d: *ItemDrag, f: []const window_order.Span) void {
+    // Grabbed below its row's middle, it is held by that middle: folded to
+    // its row, it would otherwise hang above the pointer.
+    const grab = @min(d.grab, @divTrunc(f[d.source].height(), 2));
+    const top = window_order.clamp(d.pointer - grab, d.source, f, d.grabbed_top);
+    d.pitch = window_order.pitch(d.source, f);
+    var rows: [pane_sidebar.max_heads]cross_drop.Row = undefined;
+    for (f, 0..) |span, j| rows[j] = .{ .project = d.rowProject(j), .header = d.row_header.isSet(j), .span = span };
+    const r = cross_drop.resolve(rows[0..d.count], d.source, d.pitch, top);
+    const now = w32.GetTickCount64();
+    const animate = App.clientAreaAnimationsEnabled();
+    const pitch: f64 = @floatFromInt(d.pitch);
+    for (0..d.count) |j| {
+        if (j == d.source) continue;
+        const n = pane_sidebar_order.shift(j, d.source, r.slot);
+        d.shifts[j].retarget(@as(f64, @floatFromInt(n)) * pitch, now, animate);
+    }
+    if (r.slot != d.target) log.info("pane sidebar item drag target={d}", .{r.slot});
+    d.target = r.slot;
+    if (top != d.top) log.debug("pane sidebar item held top={d}", .{top});
+    d.top = top;
+    // The project's row: its header, else (a search hides it) any row of it.
+    const dest: ItemDrag.CrossDest = switch (r.dest) {
+        .top_level => |i| .{ .top_level = i },
+        .group => |g| .{ .group = .{ .row = projectRow(d, g.project) orelse d.source, .index = g.index } },
+    };
+    if (d.dest == null or !std.meta.eql(d.dest.?, dest)) {
+        switch (r.dest) {
+            .group => |g| log.info("pane sidebar item drag dest=group:{s}@{d}", .{ g.project, g.index }),
+            .top_level => |i| log.info("pane sidebar item drag dest=top@{d}", .{i}),
+        }
+    }
+    d.dest = dest;
+    // Joining a group it is not in already: that group's header says so.
+    const joining: ?usize = switch (dest) {
+        .group => |g| if (sameName(d.destProject(dest), d.ownProject())) null else g.row,
+        .top_level => null,
+    };
+    const was: ?usize = if (d.join_in) |j| j.row else null;
+    if (!std.meta.eql(joining, was)) {
+        if (d.join_in) |j| d.join_out = .{ .row = j.row, .start_ms = now };
+        d.join_in = if (joining) |row| .{ .row = row, .start_ms = now } else null;
+        if (!animate) {
+            if (d.join_in) |*j| j.start_ms = now -| join_fade_ms;
+            d.join_out = null;
+        }
+        log.info("pane sidebar item drag join={s}", .{if (joining) |row| d.rowProject(row) orelse "?" else "none"});
+    }
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.armReorderClock();
+}
+
+/// The first row of the drag naming group `project`: its header row first.
+fn projectRow(d: *const ItemDrag, project: []const u8) ?usize {
+    var any: ?usize = null;
+    for (0..d.count) |j| {
+        const p = d.rowProject(j) orelse continue;
+        if (!std.mem.eql(u8, p, project)) continue;
+        if (d.row_header.isSet(j)) return j;
+        if (any == null) any = j;
+    }
+    return any;
+}
+
+fn sameName(a: ?[]const u8, b: ?[]const u8) bool {
+    const x = a orelse return b == null;
+    const y = b orelse return false;
+    return std.mem.eql(u8, x, y);
+}
+
+/// The join outline's strength on project header row `row` at `now`: 0 when
+/// it is not outlined.
+fn joinAlpha(d: *const ItemDrag, row: usize, now: u64) f64 {
+    if (d.settle != null) return 0;
+    if (d.join_in) |j| if (j.row == row) return transition.progress(now -| j.start_ms, join_fade_ms);
+    if (d.join_out) |j| if (j.row == row) {
+        const p = transition.progress(now -| j.start_ms, join_fade_ms);
+        return if (p >= 1) 0 else 1 - p;
+    };
+    return 0;
+}
+
 /// Let go - or, `commit` false, cancelled (Escape, the capture taken): the
 /// order changes in every window's list, and the item glides from where it
 /// was drawn to its place. Moved, nothing else slides: the new order is laid
@@ -2423,7 +2607,8 @@ fn itemRelayout(self: *PaneSidebar) void {
 fn endItemDrag(self: *PaneSidebar, commit: bool) void {
     const d = if (self.item_drag) |*x| x else return;
     if (d.settle != null) return;
-    const moved = commit and d.target != d.source;
+    const regroups = d.cross and commit and d.dest != null and !sameName(d.destProject(d.dest.?), d.ownProject());
+    const moved = commit and (d.target != d.source or regroups);
     log.info("pane sidebar item drag end commit={} from={d} to={d}", .{ commit, d.source, if (moved) d.target else d.source });
     const now = w32.GetTickCount64();
     const animate = App.clientAreaAnimationsEnabled();
@@ -2431,7 +2616,9 @@ fn endItemDrag(self: *PaneSidebar, commit: bool) void {
         if (moved) tw.* = .{} else tw.retarget(0, now, animate);
     }
     d.settle = .{ .from = d.top, .start_ms = now };
-    if (moved) self.placeItem(d);
+    if (moved) {
+        if (d.cross) self.placeWindow(d) else self.placeItem(d);
+    }
     if (!animate) return self.finishItemDrag();
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.armReorderClock();
@@ -2463,6 +2650,72 @@ fn placeItem(self: *PaneSidebar, d: *const ItemDrag) void {
         log.info("pane sidebar window order saved keys={d}", .{n});
     }
     self.published();
+    self.refresh();
+}
+
+/// A window let go (T2338, Mac `endWindow`): moved among its own group's
+/// windows (or the top level) it only reorders; into another group, or out
+/// of its own, it is renamed to say so - `<project>: <name>`, or its name
+/// alone, pinned as Change Window Title pins it - and lands where it was let
+/// go, in every window's list.
+fn placeWindow(self: *PaneSidebar, d: *const ItemDrag) void {
+    const dest = d.dest orelse return;
+    const app = self.window.app;
+    const project = d.destProject(dest);
+    // Its new siblings, in the list's order, without it: the group's
+    // windows, or the top level - each group once, and every lone window.
+    var among: [pane_sidebar.max_heads][]const u8 = undefined;
+    var na: usize = 0;
+    const gkey: window_order.Key = if (project) |p| window_order.projectKey(p) else .{};
+    for (self.groups.items, 0..) |*o, gi| {
+        if (na == among.len) break;
+        const dragged = std.mem.eql(u8, o.wkey.slice(), d.key.slice());
+        if (project != null) {
+            if (dragged or !std.mem.eql(u8, o.pkey.slice(), gkey.slice())) continue;
+            among[na] = o.wkey.slice();
+        } else if (o.pkey.len == 0) {
+            if (dragged) continue;
+            among[na] = o.wkey.slice();
+        } else if (gi == 0 or !std.mem.eql(u8, self.groups.items[gi - 1].pkey.slice(), o.pkey.slice())) {
+            among[na] = o.pkey.slice();
+        } else continue;
+        na += 1;
+    }
+    const index = switch (dest) {
+        .group => |g| g.index,
+        .top_level => |i| i,
+    };
+    if (!sameName(project, d.ownProject())) {
+        // Its own name - a grouped window's part after `<project>: ` - under
+        // its new group's, or alone.
+        for (self.groups.items) |*o| {
+            if (!std.mem.eql(u8, o.wkey.slice(), d.key.slice())) continue;
+            if (!app.hasWindow(o.window) or o.tab >= o.window.tab_count) break;
+            var nb: [name_cap]u8 = undefined;
+            const name = groupName(o.window, o.tab, &nb);
+            var tb: [name_cap + 64]u8 = undefined;
+            // Copied before the pin replaces the title it was read from.
+            const title = rename_rules.groupTitle(&tb, project orelse "", ownLabel(name));
+            log.info("pane sidebar window regrouped from={s} to={s} title={s}", .{ d.ownProject() orelse "", project orelse "", title });
+            pinWindowName(o.window, o.tab, title);
+            break;
+        }
+    }
+    var key_bufs: [pane_sidebar.max_heads * 2]window_order.Key = undefined;
+    var existing: [pane_sidebar.max_heads * 2][]const u8 = undefined;
+    const ne = self.allOrderKeys(&key_bufs, &existing);
+    var cur_buf: [window_order.max_keys][]const u8 = undefined;
+    const cur = shared.windowOrder(&cur_buf);
+    var out: [window_order.max_keys][]const u8 = undefined;
+    const n = window_order.moving(d.key.slice(), index, among[0..na], cur, existing[0..ne], &out);
+    if (shared.setWindowOrder(self.alloc, out[0..n])) {
+        var saved: [window_order.max_keys][]const u8 = undefined;
+        window_order.save(self.alloc, shared.windowOrder(&saved));
+        log.info("pane sidebar window order saved keys={d}", .{n});
+    }
+    self.published();
+    // Any window rename redraws every sidebar (Mac `PaneRoster.changed`).
+    refreshScopes(app.windows.items, null);
     self.refresh();
 }
 
@@ -3484,6 +3737,26 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
         // held one over everything, by `paintHeldItem` (T2337).
         if (l.sticky == k or self.lifted_heads.isSet(k)) continue;
         self.paintHead(hdc, hd, k, self.groups.items[hd.index], t);
+        self.paintJoinOutline(hdc, hd, t);
+    }
+}
+
+/// A project header while a window is dragged into its group (T2338, Mac
+/// `PaneSidebarJoinHighlight`): outlined in the accent color, so a drop just
+/// past its last window reads as joining it rather than landing after it.
+fn paintJoinOutline(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, t: Theme) void {
+    if (hd.kind != .project) return;
+    const d = if (self.item_drag) |*x| x else return;
+    if (!d.cross) return;
+    const row = itemSibling(d, &self.groups.items[hd.index], .project) orelse return;
+    const a = joinAlpha(d, row, self.paint_ms);
+    if (a <= 0) return;
+    const width = @max(1, pane_sidebar.px(2, self.scale));
+    const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+    strokeRound(hdc, hd.rect, radius, rgb(color_math.mix(t.surface, t.accent, a)), width);
+    if (!self.join_logged) {
+        self.join_logged = true;
+        log.info("pane sidebar join outline drawn project={s}", .{d.rowProject(row) orelse ""});
     }
 }
 
@@ -4533,11 +4806,29 @@ fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
                 if (!shared.folded_projects.contains(to)) shared.toggleProject(self.alloc, to);
                 self.published();
             };
+            if (name) |nm| self.keepProjectPlace(r.initialText(), nm);
             renameProject(app, r.initialText(), name orelse "");
         },
     }
     // Any window rename redraws every sidebar (Mac `PaneRoster.changed`).
     refreshScopes(app.windows.items, null);
+}
+
+/// A renamed group keeps its place in the all-windows list's order (T2339's
+/// rule, carried by T2338; Mac `renameGroupFromSidebar`): its new name takes
+/// the old one's key where it stood.
+fn keepProjectPlace(self: *PaneSidebar, old: []const u8, new: []const u8) void {
+    var cur_buf: [window_order.max_keys][]const u8 = undefined;
+    const cur = shared.windowOrder(&cur_buf);
+    if (cur.len == 0) return;
+    const old_key = window_order.projectKey(old);
+    const new_key = window_order.projectKey(new);
+    var out: [window_order.max_keys][]const u8 = undefined;
+    const n = cross_drop.renamedProject(cur, old_key.slice(), new_key.slice(), new.len == 0, &out);
+    if (!shared.setWindowOrder(self.alloc, out[0..n])) return;
+    var saved: [window_order.max_keys][]const u8 = undefined;
+    window_order.save(self.alloc, shared.windowOrder(&saved));
+    log.info("pane sidebar window order kept a renamed group's place from={s} to={s}", .{ old, new });
 }
 
 /// A pane's name, as Change Pane Title sets it: pinned against the

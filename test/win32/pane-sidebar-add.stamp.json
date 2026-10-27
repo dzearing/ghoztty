@@ -1,15 +1,15 @@
 {
     "guard":  "pane-sidebar-add",
     "script":  "test/win32/pane-sidebar-add.ps1",
-    "generated":  "2026-10-27T14:09:53-07:00",
-    "commit":  "4f3ade89e",
+    "generated":  "2026-10-27T15:39:43-07:00",
+    "commit":  "64c1a1595",
     "uncommitted":  [
-
+                        "src/apprt/win32/PaneSidebar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar.zig":  "8c7b7c03d58c993d9407394d86006d2df3ba7eb3e09524627440838ee2e9bac7",
                   "src/apprt/win32/pane_sidebar_add.zig":  "57b19221144989b2dbab579da909ce8854ab37e31e8dea483fc719f105994fef",
-                  "src/apprt/win32/PaneSidebar.zig":  "3860bf1f1e2f40e88957e30ba594d9a221f6df9312520e32c4cdedcff53ea8ae",
+                  "src/apprt/win32/PaneSidebar.zig":  "863e3bf4fc3f70d573eef49a7feb0ad48e4f26fff5e9fdb790586ab64d20ba21",
                   "test/win32/pane-sidebar-add.ps1":  "14d6aabba62031814e25bcd69350541245f65ebf17adb3a7697bdfd720ae2751"
               }
 }

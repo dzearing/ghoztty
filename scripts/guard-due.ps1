@@ -5498,13 +5498,16 @@ $GuardTable = @(
     # The all-windows list reorders by drag (T2337): the order's rules, the
     # reorder index and the file are unit-tested in every lane; that a header
     # drag folds, slides, lands, saves, cancels on Escape, reaches another
-    # window and survives a relaunch is only answered on the box.
+    # window and survives a relaunch is only answered on the box. So is a
+    # window dragged into a group and out of one (T2338): the outline while
+    # it would join, the retitle and where it lands.
     [pscustomobject]@{
         Name   = 'pane-sidebar-window-order'
         Script = 'test\win32\pane-sidebar-window-order.ps1'
         Stamp  = 'test\win32\pane-sidebar-window-order.stamp.json'
         Covers = @(
             'src\apprt\win32\pane_sidebar_window_order.zig',
+            'src\apprt\win32\pane_sidebar_cross_drop.zig',
             'src\apprt\win32\pane_sidebar_order.zig',
             'src\apprt\win32\PaneSidebar.zig',
             'test\win32\pane-sidebar-window-order.ps1'
