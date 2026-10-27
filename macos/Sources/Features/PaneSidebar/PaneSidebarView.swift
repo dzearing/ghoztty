@@ -157,6 +157,11 @@ struct PaneSidebarView: View {
 
     @ViewBuilder
     private var headerButtons: some View {
+        // Cmd-N, from here. Not in the rail, whose header is the expand
+        // button alone.
+        PaneSidebarHeaderButton(symbol: .plus, help: "New window") {
+            BaseTerminalController.newWindowFromSidebar(controller.ghostty, from: controller)
+        }
         PaneSidebarHeaderButton(
             symbol: .windows(filled: state.showsAllWindows),
             help: state.showsAllWindows ? "Show only this window’s panes" : "Show panes from all windows"
@@ -295,6 +300,11 @@ struct PaneSidebarView: View {
                         windowCount: section.windows.count,
                         isFolded: folded,
                         isFirst: index == 0,
+                        onAdd: {
+                            BaseTerminalController.newWindowInGroupFromSidebar(
+                                controller.ghostty, project: project,
+                                from: section.windows.first.flatMap { byID[$0.id] })
+                        },
                         onClose: {
                             BaseTerminalController.closeWindowsFromSidebar(
                                 section.windows.compactMap { byID[$0.id] })
@@ -767,14 +777,20 @@ private struct PaneSidebarWindowHeader: View {
             }
             Spacer(minLength: 4)
 
-            // Hovered, the count gives way to × in its place (so nothing
-            // shifts): close the window, no questions, no focus taken.
+            // Hovered, the count gives way to + and × in its place: a pane
+            // split the way the last one was (focused, as Cmd-D), and close
+            // the window — no questions, no focus taken.
             ZStack(alignment: .trailing) {
                 PaneSidebarCount(value: owner.surfaceTree.count)
                     .opacity(isHovered && isInteractive ? 0 : 1)
                 if isHovered && isInteractive {
-                    PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
-                        owner.closeWindowFromSidebar()
+                    HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
+                        PaneSidebarItemButton(symbol: "plus", help: "New pane") {
+                            owner.addPaneFromSidebar()
+                        }
+                        PaneSidebarItemButton(symbol: "xmark", help: "Close window") {
+                            owner.closeWindowFromSidebar()
+                        }
                     }
                     .offset(x: PaneSidebarItemButton.headerOffset)
                 }
@@ -816,6 +832,8 @@ private struct PaneSidebarProjectHeader: View {
     let windowCount: Int
     let isFolded: Bool
     let isFirst: Bool
+    /// A new window in the group, focused (as Cmd-N).
+    let onAdd: () -> Void
     /// Close every window in the group: no questions, no focus taken.
     let onClose: () -> Void
     let onFold: () -> Void
@@ -848,15 +866,19 @@ private struct PaneSidebarProjectHeader: View {
             .accessibilityLabel("\(project), \(windowCount) windows")
             .accessibilityAddTraits(.isHeader)
 
-            // As a window row: hovered, the count gives way to ×.
+            // As a window row: hovered, the count gives way to + and ×.
             ZStack(alignment: .trailing) {
                 PaneSidebarCount(value: windowCount)
                     .opacity(isHovered && isInteractive ? 0 : 1)
                 if isHovered && isInteractive {
-                    PaneSidebarItemButton(
-                        symbol: "xmark",
-                        help: windowCount == 1 ? "Close its window" : "Close its \(windowCount) windows",
-                        action: onClose)
+                    HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
+                        PaneSidebarItemButton(
+                            symbol: "plus", help: "New window in \(project)", action: onAdd)
+                        PaneSidebarItemButton(
+                            symbol: "xmark",
+                            help: windowCount == 1 ? "Close its window" : "Close its \(windowCount) windows",
+                            action: onClose)
+                    }
                     .offset(x: PaneSidebarItemButton.headerOffset)
                 }
             }

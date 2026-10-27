@@ -91,7 +91,7 @@ A per-window list of **every pane in the window**, into which a pane can be
   (stash/restore) and **×**; another window's rows offer the × alone. See
   *Closing from the sidebar* below.
 - **Every item button** — a row's −/↩/×, a window row's and a project
-  header's × — is one `PaneSidebarItemButton`: an 18pt circle whose wash
+  header's + and × — is one `PaneSidebarItemButton`: an 18pt circle whose wash
   deepens (8% → 18%; on the accent pill, white 20% → 35%) and whose glyph
   brightens to primary under the pointer, so it reads as clickable.
 
@@ -172,10 +172,41 @@ A per-window list of **every pane in the window**, into which a pane can be
   (`PaneSidebarFilter`); Return goes to the first hit, Escape clears.
 - Switching scopes slides the lists past each other (this window on the left,
   all windows on the right).
-- Hovering a **window** row or a **project** header puts a × where its count
-  was (nothing shifts). A window's closes that window (that tab, in a tab
+- Hovering a **window** row or a **project** header puts + and × where its
+  count was (+ adds — see *Adding from the sidebar*). A window's × closes that window (that tab, in a tab
   group); a project's closes every window under it — while searching, the
   matching windows it shows and counts.
+
+## Adding from the sidebar
+
+Three + buttons, each a MANUAL surface: they focus as Cmd-N / Cmd-D do (the
+CLI's background-by-default `IPCFocusPolicy` does not apply). The row and
+header ones are `PaneSidebarItemButton`s beside the × (+ then ×, where the
+count was, on hover); a click on one never starts a row drag or raises the
+row's window through its tap.
+
+- **Header +** (expanded panel only, left of the All-windows toggle; the
+  rail's header is its expand button alone): a new window, exactly Cmd-N
+  from this window's focused pane — its inherited config (working directory
+  per `window-inherit-working-directory`), a random gradient
+  (`PaneDeskVariant.forNewWindow`), a remote parent's machine
+  (`newWindowInheritingRemote`). `newWindowFromSidebar`.
+- **Project header +**: the same, opened from the group's **first window as
+  listed** (so it starts in that window's focused pane's directory, on its
+  machine), with a pinned title (`setWindowTitle`, as `+new-window --title`)
+  of `<project>: new` — or the first free `new-2`, `new-3`, … checked against
+  every window's title at click time (`PaneSidebarNewWindowName`) — so it
+  lands in the group. `newWindowInGroupFromSidebar`.
+- **Window row +**: raises that window and splits its focused pane in the
+  **last direction split by hand**, app-wide (`PaneSplitMemory`, default
+  right; not persisted). A split by hand is any that comes back from the core
+  as `ghosttyNewSplit` — keybinds, the Split menu, the palette, a pane's
+  context menu — or a viewer pane's Split item; programmatic splits
+  (`ghoztty +split`, AppleScript, App Intents) call `newSplit` directly and
+  never touch it, so an agent's layout doesn't skew it.
+  `addPaneFromSidebar` → `splitFocusedPane` (what the Split menu items call).
+- Tests: `PaneSidebarNewWindowNameTests`, `PaneSidebarAddWindowTests` (each
+  + in real windows; manual split remembered, `+split` not).
 
 ## Closing from the sidebar
 

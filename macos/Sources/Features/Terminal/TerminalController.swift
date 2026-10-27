@@ -298,12 +298,14 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// UI never blocks/beachballs) and the window is created in the completion. A
     /// LOCAL parent (or none) creates a normal local window immediately. This is
     /// the entry point used by the keyboard/menu "New Window" action; callers that
-    /// need the controller synchronously use `newWindow(...)` directly.
+    /// need the controller synchronously use `newWindow(...)` directly;
+    /// `onCreate` gets it once it exists (later, for a remote parent).
     static func newWindowInheritingRemote(
         _ ghostty: Ghostty.App,
         withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil,
         from parent: NSWindow? = nil,
-        activate: Bool = true
+        activate: Bool = true,
+        onCreate: ((TerminalController) -> Void)? = nil
     ) {
         // Only inherit when the parent is a remote window and the incoming config
         // isn't already remote-bound.
@@ -312,7 +314,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
               (baseConfig?.remoteConnection == nil),
               let parentSurface = parentController.focusedSurface else {
             // Local (or no) parent: normal local window, created synchronously.
-            _ = newWindow(ghostty, withBaseConfig: baseConfig, withParent: parent, activate: activate)
+            let controller = newWindow(ghostty, withBaseConfig: baseConfig, withParent: parent, activate: activate)
+            onCreate?(controller)
             return
         }
 
@@ -359,6 +362,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             // inheriting the same machine + connection.
             controller.remoteConnection = parentRemote
             controller.remoteMachine = parentRemote.machine
+            onCreate?(controller)
         }
     }
 

@@ -1711,6 +1711,9 @@ class BaseTerminalController: NSWindowController,
         default: return
         }
 
+        // Only a split asked for by hand comes this way (keybind, menu,
+        // palette): the sidebar's + repeats its direction.
+        PaneSplitMemory.noteManualSplit(splitDirection)
         newSplit(at: oldView, direction: splitDirection, baseConfig: config)
     }
 
@@ -3641,7 +3644,7 @@ class BaseTerminalController: NSWindowController,
 
     /// Config for a terminal split created FROM a viewer pane: inherit the
     /// viewed file's directory as the working directory.
-    private func splitConfigFromViewer(_ pane: PaneView) -> Ghostty.SurfaceConfiguration {
+    func splitConfigFromViewer(_ pane: PaneView) -> Ghostty.SurfaceConfiguration {
         var config = Ghostty.SurfaceConfiguration()
         if let dir = pane.viewerView?.fileURL?.deletingLastPathComponent().path {
             config.workingDirectory = dir
@@ -3693,39 +3696,19 @@ class BaseTerminalController: NSWindowController,
     }
 
     @IBAction func splitRight(_ sender: Any) {
-        if let pane = focusedViewerPane {
-            newTerminalSplit(atPane: pane, direction: .right, baseConfig: splitConfigFromViewer(pane))
-            return
-        }
-        guard let surface = focusedSurface?.surface else { return }
-        ghostty.split(surface: surface, direction: GHOSTTY_SPLIT_DIRECTION_RIGHT)
+        splitFocusedPane(.right)
     }
 
     @IBAction func splitLeft(_ sender: Any) {
-        if let pane = focusedViewerPane {
-            newTerminalSplit(atPane: pane, direction: .left, baseConfig: splitConfigFromViewer(pane))
-            return
-        }
-        guard let surface = focusedSurface?.surface else { return }
-        ghostty.split(surface: surface, direction: GHOSTTY_SPLIT_DIRECTION_LEFT)
+        splitFocusedPane(.left)
     }
 
     @IBAction func splitDown(_ sender: Any) {
-        if let pane = focusedViewerPane {
-            newTerminalSplit(atPane: pane, direction: .down, baseConfig: splitConfigFromViewer(pane))
-            return
-        }
-        guard let surface = focusedSurface?.surface else { return }
-        ghostty.split(surface: surface, direction: GHOSTTY_SPLIT_DIRECTION_DOWN)
+        splitFocusedPane(.down)
     }
 
     @IBAction func splitUp(_ sender: Any) {
-        if let pane = focusedViewerPane {
-            newTerminalSplit(atPane: pane, direction: .up, baseConfig: splitConfigFromViewer(pane))
-            return
-        }
-        guard let surface = focusedSurface?.surface else { return }
-        ghostty.split(surface: surface, direction: GHOSTTY_SPLIT_DIRECTION_UP)
+        splitFocusedPane(.up)
     }
 
     @IBAction func splitZoom(_ sender: Any) {
