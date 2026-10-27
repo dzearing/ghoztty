@@ -1,47 +1,204 @@
 import AppKit
+import Combine
 import SwiftUI
 
-/// Per-window state for the pane sidebar (`docs/design/pane-sidebar.md`).
+/// The pane sidebar's view state that every window shares
+/// (`docs/reference/pane-sidebar.md` → Shared across windows): one app-wide
+/// model every window's sidebar observes, so changing any of it in one
+/// window changes it in all of them, live, and clicking through windows
+/// shows the same sidebar.
 ///
-/// Two kinds of state live here, and the difference matters:
-///
-/// - **Layout** — `isExpanded` and `isHidden`. They size the sidebar's
-///   column, which is part of the window's layout, so they persist (per
-///   window, in the session-layout manifest) and are what new windows start
-///   from. So does `order`, the sidebar's own order of the panes.
-/// - **Transient** — `showsAllWindows` and the all-windows folds. Never
-///   persisted.
-///
-/// The stash itself is NOT here — it is part of the tree (`SplitTree.stashed`),
-/// which is what keeps a stashed pane in the window for everything else.
+/// - **Layout** — `isExpanded`, `isHidden`, `width`. They size each window's
+///   sidebar column, so they persist (UserDefaults). Each window still applies
+///   its own presentation rule on top: a window under 720pt shows the rail
+///   whatever `isExpanded` says (`PaneSidebarState.mode`).
+/// - **The all-windows list** — the scope, the search, the folds, the custom
+///   order of windows and project groups (`windowOrder`, persisted), and the
+///   scroll position (`PaneSidebarScrollSync`).
 @MainActor
-final class PaneSidebarState: ObservableObject {
-    /// The full list (true) or the icon-only rail (false). One button at the
-    /// top of the bar switches it; nothing else does — there is no hover-open,
-    /// since the rail is where its icons are dragged.
+final class PaneSidebarSharedState: ObservableObject {
+    static let shared = PaneSidebarSharedState(defaults: .standard)
+
+    private let defaults: UserDefaults
+
+    /// The full list (true) or the icon-only rail (false). Moves every
+    /// window's column, so every window redraws for it at once
+    /// (`isChangingColumn`).
     @Published var isExpanded: Bool {
-        didSet { if isExpanded != oldValue { Self.rememberForNewWindows(self) } }
+        willSet { isChangingColumn = true }
+        didSet {
+            isChangingColumn = false
+            if isExpanded != oldValue { defaults.set(isExpanded, forKey: Self.expandedKey) }
+        }
     }
 
-    /// Hidden outright (Ctrl+Cmd+S). Not a drop target while hidden.
+    /// Hidden outright (Ctrl+Cmd+S). Moves every window's column, as
+    /// `isExpanded`.
     @Published var isHidden: Bool {
-        didSet { if isHidden != oldValue { Self.rememberForNewWindows(self) } }
+        willSet { isChangingColumn = true }
+        didSet {
+            isChangingColumn = false
+            if isHidden != oldValue { defaults.set(isHidden, forKey: Self.hiddenKey) }
+        }
     }
 
-    /// List panes from every window, grouped by window. Off by default.
+    /// The change being announced moves every window's sidebar column — and
+    /// so its grid — so no window may put off redrawing for it.
+    private(set) var isChangingColumn = false
+
+    /// The expanded panel's width.
+    @Published var width: CGFloat {
+        didSet { if width != oldValue { defaults.set(Double(width), forKey: Self.widthKey) } }
+    }
+
+    /// List panes from every window, grouped by window. Off at launch.
     @Published var showsAllWindows: Bool = false {
         didSet {
             // A filter belongs to one look at every window, not to the next
-            // one — and so do the folds: each look starts from the default.
-            if !showsAllWindows {
+            // one — and so do the window folds: each look starts from the
+            // default.
+            if !showsAllWindows && oldValue {
                 filter = ""
-                toggledWindows = []
+                unfoldedWindows = []
             }
         }
     }
 
     /// The all-windows search (`PaneSidebarFilter`). Empty = no filter.
     @Published var filter: String = ""
+
+    /// Windows whose panes are showing in the all-windows list, by
+    /// `PaneSidebarState.windowID`; every other window is folded to its row
+    /// (`isWindowFolded`). Absolute, not relative to the viewing window, so
+    /// every window's list folds alike.
+    @Published var unfoldedWindows: Set<UUID> = []
+
+    /// Folded project groups in the all-windows list, by project name.
+    @Published var foldedProjects: Set<String> = []
+
+    /// The all-windows list's own order of windows and project groups, by
+    /// `PaneSidebarWindowGrouping` key, as a drag left it. Empty = by name.
+    /// Read through `PaneSidebarWindowGrouping.sections(_:order:)`, which
+    /// places windows and groups it has never seen beside their name
+    /// neighbour; pruned of closed windows on the next move.
+    @Published var windowOrder: [String] {
+        didSet { if windowOrder != oldValue { defaults.set(windowOrder, forKey: Self.windowOrderKey) } }
+    }
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+        isExpanded = Self.storedExpanded(defaults)
+        isHidden = defaults.object(forKey: Self.hiddenKey) as? Bool ?? false
+        let stored = defaults.double(forKey: Self.widthKey)
+        width = stored > 0 ? PaneSidebarState.clampWidth(CGFloat(stored)) : PaneSidebarState.defaultWidth
+        windowOrder = defaults.stringArray(forKey: Self.windowOrderKey) ?? []
+    }
+
+    /// The all-windows toggle. Turning it on opens the window it was turned
+    /// on from — the one holding the pane you are in — and leaves every
+    /// other window folded to its row, the overview that scope is for.
+    func setShowsAllWindows(_ on: Bool, from windowID: UUID) {
+        guard on != showsAllWindows else { return }
+        if on { unfoldedWindows = [windowID] }
+        showsAllWindows = on
+    }
+
+    // MARK: Persistence
+
+    static let expandedKey = "PaneSidebarExpanded"
+    /// Before collapse/expand there was a pin: pinned was the flat full panel,
+    /// which is what expanded is, so a stored pin is read as that.
+    static let legacyPinnedKey = "PaneSidebarPinned"
+    static let hiddenKey = "PaneSidebarHidden"
+    static let widthKey = "PaneSidebarWidth"
+    static let windowOrderKey = "PaneSidebarWindowOrder"
+
+    nonisolated static func storedExpanded(_ defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: expandedKey) as? Bool
+            ?? defaults.object(forKey: legacyPinnedKey) as? Bool
+            ?? false
+    }
+}
+
+/// One window's pane sidebar: the window's own state, and a view of the
+/// state every window shares (`PaneSidebarSharedState`), so a window reads
+/// `state.isExpanded` the same as before the two were split.
+///
+/// Only the window in use redraws for a shared change as it happens
+/// (`isLive`, or the change was made through this window's state); every
+/// other window catches up when it becomes key (`catchUp`), so a width drag
+/// or a search typed in one window never re-renders every other window's
+/// sidebar per keystroke or frame. The exception is the column —
+/// collapse/expand, hide/show — which moves each window's grid, so every
+/// window redraws for it at once (`PaneSidebarSharedState.isChangingColumn`).
+///
+/// Per window: the sidebar's order of THIS window's panes (`order`), its
+/// identity in the all-windows list (`windowID`), and drawing details
+/// (`tabRowHeight`). Everything else is shared.
+///
+/// The stash itself is NOT here — it is part of the tree (`SplitTree.stashed`),
+/// which is what keeps a stashed pane in the window for everything else.
+@MainActor
+final class PaneSidebarState: ObservableObject {
+    let shared: PaneSidebarSharedState
+    private var sharedChanges: AnyCancellable?
+
+    /// Whether this sidebar redraws for a shared change right away: its
+    /// window is key (or has none yet). Set by the window's controller.
+    var isLive: () -> Bool = { true }
+    /// A shared change came in while not live: redraw on `catchUp`.
+    private(set) var isStale = false
+    /// A change made through THIS window's state: it redraws, live or not.
+    private var isChanging = false
+
+    private func change(_ body: () -> Void) {
+        isChanging = true
+        body()
+        isChanging = false
+    }
+
+    /// The full list (true) or the icon-only rail (false). One button at the
+    /// top of the bar switches it; nothing else does — there is no hover-open,
+    /// since the rail is where its icons are dragged. Shared.
+    var isExpanded: Bool {
+        get { shared.isExpanded }
+        set { change { shared.isExpanded = newValue } }
+    }
+
+    /// Hidden outright (Ctrl+Cmd+S). Not a drop target while hidden. Shared.
+    var isHidden: Bool {
+        get { shared.isHidden }
+        set { change { shared.isHidden = newValue } }
+    }
+
+    /// The flat panel's width. Shared.
+    var width: CGFloat {
+        get { shared.width }
+        set { change { shared.width = newValue } }
+    }
+
+    /// List panes from every window, grouped by window. Shared.
+    var showsAllWindows: Bool {
+        get { shared.showsAllWindows }
+        set { change { shared.setShowsAllWindows(newValue, from: windowID) } }
+    }
+
+    /// The all-windows search. Shared.
+    var filter: String {
+        get { shared.filter }
+        set { change { shared.filter = newValue } }
+    }
+
+    /// Folded project groups in the all-windows scope. Shared.
+    var foldedProjects: Set<String> {
+        get { shared.foldedProjects }
+        set { change { shared.foldedProjects = newValue } }
+    }
+
+    /// This window in the all-windows list: what its fold and its place in
+    /// the list's order are kept under. Persisted with the window, so a
+    /// restored window keeps its place.
+    var windowID = UUID()
 
     /// The sidebar's own order of this window's panes, by pane id — what a
     /// drag within the list changes. It orders the LIST only: the grid is
@@ -51,14 +208,6 @@ final class PaneSidebarState: ObservableObject {
     /// comes back to the same spot.
     @Published var order: [UUID] = []
 
-    /// Window groups whose fold the user flipped away from its default in the
-    /// all-windows list (`isWindowFolded`). Holding the flips rather than the
-    /// folds is what lets a window opened while the list is showing arrive
-    /// at the default — folded — with nothing to add.
-    @Published var toggledWindows: Set<ObjectIdentifier> = []
-    /// Folded project groups in the all-windows scope, by project name.
-    @Published var foldedProjects: Set<String> = []
-
     /// How far the sidebar's drawn chrome reaches up past the grid, beside
     /// the window's tab bar (`TransparentTitlebarTerminalWindow` sets it to the
     /// tab row's height while the tab bar is moved right of the sidebar; 0
@@ -66,18 +215,41 @@ final class PaneSidebarState: ObservableObject {
     /// so the rows themselves stay below it. Never persisted.
     @Published var tabRowHeight: CGFloat = 0
 
-    /// The flat panel's width. One preference shared by every window, like
-    /// the viewer side panel's.
-    @Published var width: CGFloat {
-        didSet { UserDefaults.standard.set(Double(width), forKey: Self.widthKey) }
+    init(shared: PaneSidebarSharedState = .shared) {
+        self.shared = shared
+        // A shared change is a change to every window's sidebar: now, in
+        // the window in use; when it is next key, in the others.
+        sharedChanges = shared.objectWillChange.sink { [weak self] _ in
+            guard let self else { return }
+            if self.isChanging || self.isLive() || shared.isChangingColumn {
+                self.isStale = false
+                self.objectWillChange.send()
+            } else {
+                self.isStale = true
+            }
+        }
     }
 
-    init(isExpanded: Bool? = nil, isHidden: Bool? = nil) {
-        let defaults = UserDefaults.standard
-        self.isExpanded = isExpanded ?? Self.storedExpanded(defaults)
-        self.isHidden = isHidden ?? (defaults.object(forKey: Self.hiddenKey) as? Bool ?? false)
-        let stored = defaults.double(forKey: Self.widthKey)
-        self.width = stored > 0 ? Self.clampWidth(CGFloat(stored)) : Self.defaultWidth
+    /// The window became key: show whatever changed while it was not.
+    func catchUp() {
+        guard isStale else { return }
+        isStale = false
+        objectWillChange.send()
+    }
+
+    /// Whether `windowID`'s panes are folded away in the all-windows list.
+    func isWindowFolded(_ windowID: UUID, isSearching: Bool) -> Bool {
+        Self.isWindowFolded(isUnfolded: shared.unfoldedWindows.contains(windowID), isSearching: isSearching)
+    }
+
+    func toggleWindowFold(_ windowID: UUID) {
+        change {
+            if shared.unfoldedWindows.contains(windowID) {
+                shared.unfoldedWindows.remove(windowID)
+            } else {
+                shared.unfoldedWindows.insert(windowID)
+            }
+        }
     }
 
     // MARK: Layout rules (pure; see PaneSidebarStateTests)
@@ -201,16 +373,16 @@ final class PaneSidebarState: ObservableObject {
 
     /// Whether a window's panes are folded away in the all-windows list.
     ///
-    /// Every window starts folded — one row per window, the overview that
-    /// scope is for — except THIS window, which starts open: it holds the
-    /// selection, the pane you are in, and is the one window whose panes the
-    /// list is otherwise showing you anyway. Only at the start: focus moving
+    /// Every window is folded — one row per window, the overview that scope
+    /// is for — unless it was unfolded: by hand, or as the window the list
+    /// was turned on from (`PaneSidebarSharedState.setShowsAllWindows`). The
+    /// same in every window's list, since the folds are shared; focus moving
     /// later never unfolds anything, or the list would jump under the
     /// pointer. A search unfolds everything, since a hit hidden inside a fold
     /// reads as no hit.
-    nonisolated static func isWindowFolded(isThisWindow: Bool, isToggled: Bool, isSearching: Bool) -> Bool {
+    nonisolated static func isWindowFolded(isUnfolded: Bool, isSearching: Bool) -> Bool {
         if isSearching { return false }
-        return isThisWindow == isToggled
+        return !isUnfolded
     }
 
     func mode(windowWidth: CGFloat) -> Mode {
@@ -228,28 +400,6 @@ final class PaneSidebarState: ObservableObject {
 
     nonisolated static func clampWidth(_ width: CGFloat) -> CGFloat {
         Swift.min(maximumWidth, Swift.max(minimumWidth, width))
-    }
-
-    // MARK: Defaults for new windows
-
-    private static let expandedKey = "PaneSidebarExpanded"
-    /// Before collapse/expand there was a pin: pinned was the flat full panel,
-    /// which is what expanded is, so a stored pin is read as that.
-    private static let legacyPinnedKey = "PaneSidebarPinned"
-    private static let hiddenKey = "PaneSidebarHidden"
-    private static let widthKey = "PaneSidebarWidth"
-
-    nonisolated static func storedExpanded(_ defaults: UserDefaults) -> Bool {
-        defaults.object(forKey: expandedKey) as? Bool
-            ?? defaults.object(forKey: legacyPinnedKey) as? Bool
-            ?? false
-    }
-
-    /// New windows start from the most recently chosen layout, the way a
-    /// Finder window's sidebar does.
-    private static func rememberForNewWindows(_ state: PaneSidebarState) {
-        UserDefaults.standard.set(state.isExpanded, forKey: expandedKey)
-        UserDefaults.standard.set(state.isHidden, forKey: hiddenKey)
     }
 }
 
@@ -399,11 +549,15 @@ enum PaneSidebarText {
 
 /// The all-windows scope's order and grouping — pure, so pinned in tests.
 ///
-/// Windows are sorted by name (stable as focus moves, unlike frontmost-first,
-/// which reshuffled the list on every window switch). A window named
-/// `<project>: <worktree>` — the convention for worktree windows — is grouped
-/// under its project, which gets a collapsible sticky header; the window
-/// itself is then labeled by its worktree alone.
+/// A window named `<project>: <worktree>` — the convention for worktree
+/// windows — is grouped under its project, which gets a collapsible sticky
+/// header; the window itself is then labeled by its worktree alone.
+///
+/// The order is the user's (`sections(_:order:)`): windows and groups go
+/// where a drag left them, kept as one list of keys (`key(project:)`,
+/// `key(window:)`). Until something is dragged — and for any window or group
+/// the order has never seen — it is by name (stable as focus moves, unlike
+/// frontmost-first, which reshuffled the list on every window switch).
 enum PaneSidebarWindowGrouping {
     /// A window title split as `<project>: <worktree>`, or nil when it isn't
     /// one: both halves must be non-empty, and the project short and a single
@@ -425,6 +579,8 @@ enum PaneSidebarWindowGrouping {
         /// What the window's own header shows: the worktree inside a group,
         /// else the whole title.
         let label: String
+
+        var key: String { PaneSidebarWindowGrouping.key(window: id) }
     }
 
     /// A top-level item: a project and its windows, or a lone window.
@@ -433,8 +589,14 @@ enum PaneSidebarWindowGrouping {
         let project: String?
         let windows: [Entry<ID>]
 
-        var id: String { project.map { "project:" + $0 } ?? "window:\(windows[0].id)" }
+        /// Its key in the list's order.
+        var id: String { project.map(PaneSidebarWindowGrouping.key(project:)) ?? windows[0].key }
     }
+
+    /// A project group's key in the all-windows order.
+    static func key(project: String) -> String { "project:" + project }
+    /// A window's key in the all-windows order.
+    static func key<ID>(window id: ID) -> String { "window:\(id)" }
 
     /// Sections in name order: projects by name (their windows by worktree),
     /// interleaved with ungrouped windows by title.
@@ -454,6 +616,36 @@ enum PaneSidebarWindowGrouping {
             sections.append(.init(project: project, windows: entries.sorted { before($0.label, $1.label) }))
         }
         return sections.sorted { before($0.project ?? $0.windows[0].title, $1.project ?? $1.windows[0].title) }
+    }
+
+    /// `sections(windows)` in the user's order: the top level (groups and
+    /// lone windows) and each group's windows each follow `order`
+    /// (`PaneSidebarOrder.arranged`, over the name order). Whatever `order`
+    /// has never seen — a new window, a new group, a window that moved into
+    /// a group by being renamed — goes after its name-order neighbour that
+    /// it has seen (else before the next one, else at the end), so a new
+    /// `ghoztty: wt-3` lands right after `ghoztty: wt-2` wherever that was
+    /// dragged. Closed windows are simply not there.
+    static func sections<ID: Hashable>(_ windows: [(id: ID, title: String)], order: [String]) -> [Section<ID>] {
+        let byName = sections(windows)
+        guard !order.isEmpty else { return byName }
+        let byKey = Dictionary(byName.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return PaneSidebarOrder.arranged(byName.map(\.id), by: order).compactMap { key in
+            guard let section = byKey[key] else { return nil }
+            guard section.project != nil else { return section }
+            let entries = Dictionary(section.windows.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+            let windows = PaneSidebarOrder.arranged(section.windows.map(\.key), by: order).compactMap { entries[$0] }
+            return Section(project: section.project, windows: windows)
+        }
+    }
+
+    /// Every key the all-windows list has now — each group and each window —
+    /// for `PaneSidebarOrder.moving`'s `existing`: a key outside it (a
+    /// closed window) is pruned from the order.
+    static func keys<ID: Hashable>(_ sections: [Section<ID>]) -> Set<String> {
+        Set(sections.flatMap { section in
+            (section.project.map { [key(project: $0)] } ?? []) + section.windows.map(\.key)
+        })
     }
 
     /// Finder's order: case-insensitive, numbers by value ("wt-2" before
@@ -501,7 +693,7 @@ enum PaneSidebarFilter {
 ///   move.
 enum PaneSidebarOrder {
     /// `visible` — the grid's panes, in tree order — in the sidebar's order.
-    static func arranged(_ visible: [UUID], by order: [UUID]) -> [UUID] {
+    static func arranged<ID: Hashable>(_ visible: [ID], by order: [ID]) -> [ID] {
         guard !order.isEmpty else { return visible }
         let shown = Set(visible)
         var result = order.filter { shown.contains($0) }
@@ -525,19 +717,19 @@ enum PaneSidebarOrder {
     /// `id` must be in (`visible`). Ids the order knows that are not on show
     /// (stashed panes) keep their place after whatever preceded them; ids in
     /// neither `visible` nor `existing` are dropped.
-    static func moving(
-        _ id: UUID,
+    static func moving<ID: Hashable>(
+        _ id: ID,
         to index: Int,
-        visible: [UUID],
-        order: [UUID],
-        existing: Set<UUID>
-    ) -> [UUID] {
+        visible: [ID],
+        order: [ID],
+        existing: Set<ID>
+    ) -> [ID] {
         var list = arranged(visible, by: order).filter { $0 != id }
         list.insert(id, at: Swift.min(Swift.max(index, 0), list.count))
         // Put back the panes not on show, each after the id it followed.
         let onShow = Set(list)
-        var previous: UUID?
-        var followers: [UUID?: [UUID]] = [:]
+        var previous: ID?
+        var followers: [ID?: [ID]] = [:]
         for entry in order {
             // Not after the moved pane: the others stay where they were.
             if onShow.contains(entry) {

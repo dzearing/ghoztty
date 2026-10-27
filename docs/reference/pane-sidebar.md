@@ -1,11 +1,52 @@
 # Pane sidebar
 
 A per-window list of **every pane in the window**, into which a pane can be
-**stashed**: out of the split grid, still running. Read before touching
+**stashed**: out of the split grid, still running. Every window's sidebar
+shows the same view of it (see *Shared across windows*). Read before touching
 `PaneSidebar*`, sidebar drag-and-drop, `SplitTree.stashed`, or
 `StashedPaneSlots`. Design, alternatives and the interactive mock's choices:
 `docs/design/pane-sidebar.md`. CLI: `+stash` / `+restore` in
 [cli-commands.md](cli-commands.md).
+
+## Shared across windows
+
+- **One sidebar state for every window** (`PaneSidebarSharedState.shared`):
+  expanded/collapsed, hidden/shown, the panel's width, the all-windows
+  toggle, its search, the window and group folds, the list's order of
+  windows and groups, and its scroll position. Change any of it in one
+  window and every window's sidebar has it, so clicking through windows
+  shows the same sidebar. Per window (`PaneSidebarState`): only the order of
+  that window's own panes (`order`), its identity in the all-windows list
+  (`windowID`, persisted with the window) and drawing details
+  (`tabRowHeight`).
+- **Only the window in use redraws as it happens.** Another window's
+  sidebar redraws for a shared change when it next becomes key
+  (`PaneSidebarState.isLive` / `catchUp`, from `windowDidBecomeKey`), so a
+  width drag or a search typed in one window never re-renders every window
+  per frame or keystroke. A change made through a window's own state always
+  redraws that window. The exception is the **column**: collapse/expand and
+  hide/show move every window's grid, so every window redraws for them at
+  once (`PaneSidebarSharedState.isChangingColumn`), each grid gliding by its
+  own column's change (`changingPaneSidebarColumn`).
+- **The narrow-window rail stays per window**: a window under 720pt shows the
+  rail whatever the shared flag says, and a wide one is never forced into
+  it (`PaneSidebarState.mode` takes the window's width).
+- **Scroll position** (all-windows list only; `PaneSidebarScrollSync`):
+  scrolling a list records where it is (the last list scrolled wins); a list
+  takes it up when its window becomes key or when it appears (scope switch,
+  expand, a new window) — never while it is being scrolled, so nothing moves
+  under the pointer. The rail and the panel each keep their own (different
+  layouts); "this window" lists are each window's own content and are not
+  synced.
+- **Restoration** applies only the per-window part (`paneSidebarOrder`,
+  `paneSidebarWindowID`). The flags come from the defaults (`PaneSidebarExpanded`
+  — falling back to `PaneSidebarPinned` — `PaneSidebarHidden`,
+  `PaneSidebarWidth`); each window still writes its copy of them
+  (`paneSidebarPinned`/`paneSidebarHidden`) for an older build, but a
+  restore never applies it, or windows restored one after another would
+  fight over the shared flags.
+- Tests: `PaneSidebarSharedStateTests`, `PaneSidebarSyncWindowTests`
+  (`aChangeInOneWindowShowsInTheOther`, `theAllWindowsListScrollsAsOne`).
 
 ## Modes: collapsed ⇄ expanded
 
@@ -158,9 +199,14 @@ A per-window list of **every pane in the window**, into which a pane can be
 ## All windows
 
 - Header toggle (off by default) groups every window's panes. Its caption
-  counts the windows. Every window starts **folded** except this one (search
-  unfolds all; `PaneSidebarState.isWindowFolded`).
-- Windows are **sorted by name** (Finder order; stable as focus moves), and a
+  counts the windows. Every window is **folded** except the one the list was
+  turned on from (search unfolds all; `PaneSidebarState.isWindowFolded`). The
+  folds are absolute (`PaneSidebarSharedState.unfoldedWindows`, by
+  `windowID`), so every window's list folds alike; turning the list off
+  forgets them and the search.
+- Windows are in **the list's own order** — by name (Finder order; stable as
+  focus moves) until a window or group is dragged (*Reordering windows and
+  groups* below) — and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
   **sticky** project header (a clear 6pt gap above and below its band —
   `PaneSidebarOutline.headerGap` — so it never touches a row's hover or the
@@ -176,6 +222,44 @@ A per-window list of **every pane in the window**, into which a pane can be
   was (nothing shifts). A window's closes that window (that tab, in a tab
   group); a project's closes every window under it — while searching, the
   matching windows it shows and counts.
+
+## Reordering windows and groups
+
+- In the expanded all-windows list, a **window row** drags up and down among
+  its siblings (its group's windows, or the top level for a lone window), and
+  a **project header** among the top level (groups and lone windows). It
+  reorders the LIST only: no window and no pane moves on screen. Clicking
+  still raises the window (this window's row: folds it) or folds the group;
+  the chevron and the × are outside the drag source
+  (`paneSidebarItemDrag`, `PaneSidebarItemDragView`).
+- The same reorder the pane rows have, on the same pieces
+  (`PaneSidebarItemDrag`): siblings' frames read as laid out, outside their
+  slide, and only while a drag is on (`PaneSidebarItemFrames`); the others
+  slide by the dragged item's pitch on `PaneSidebarOrder.shift`'s rule (a
+  bounded 0.2s animation, none at the drop); the item itself follows the
+  pointer up and down, lifted over a solid backing, kept in its list, and
+  glides into place on release. Items are not one height, so the index is
+  read by the leading edge against the siblings' middles
+  (`PaneSidebarItemReorder`). Its own mouse tracking, no `NSDraggingSession`:
+  an item never leaves its list. Escape cancels.
+- **Dragging a group folds every group** first (the fold's own animation), so
+  each is one header high, and the held header stays under the pointer as
+  the list folds up beneath it (`PaneSidebarItemReorder.clamp(grabbed:)`).
+  After the drop lands — or a cancel — the folds come back as they were.
+- **The order is shared and persisted** (`PaneSidebarSharedState.windowOrder`,
+  UserDefaults `PaneSidebarWindowOrder`): one list of keys, `project:<name>`
+  and `window:<windowID>`, read by `PaneSidebarWindowGrouping.sections(_:order:)`
+  over the name order (`PaneSidebarOrder.arranged`). **A new window or
+  group goes after its name-order neighbour** the order knows (else before
+  the next one, else at the end) — a new `ghoztty: wt-3` lands right after
+  `wt-2`, wherever that was dragged. A closed window drops out of the list
+  at once and out of the stored order on the next move (`PaneSidebarOrder.moving`
+  prunes keys not in `PaneSidebarWindowGrouping.keys`), never on close — at
+  quit every window closes. A window's `windowID` is restored with it (manifest
+  and AppKit state), so a relaunch keeps its place.
+- Tests: `PaneSidebarWindowOrderTests`, `PaneSidebarItemReorderTests`,
+  `PaneSidebarSyncWindowTests.dragReordersAWindowAndAGroup` (two windows'
+  lists, the fold on a group drag and its restore, no window moved).
 
 ## Closing from the sidebar
 
@@ -216,11 +300,13 @@ A per-window list of **every pane in the window**, into which a pane can be
 ## Persistence and keybinds
 
 - Persisted: the stash (manifest per-leaf `stashIndex`; `SplitTree` coding for
-  AppKit restoration), the expanded/hidden flags and the list's order
-  (`paneSidebarOrder`, by pane id). The expanded flag is stored under its
-  pre-rename name `paneSidebarPinned` (UserDefaults: `PaneSidebarExpanded`,
-  falling back to `PaneSidebarPinned`) — pinned WAS the full panel, so old
-  state decodes unchanged. The all-windows scope is never persisted.
+  AppKit restoration), the window's pane order (`paneSidebarOrder`, by pane
+  id) and its `paneSidebarWindowID`; app-wide in UserDefaults, the shared
+  flags, width and window/group order (see *Shared across windows*). The
+  expanded flag keeps its pre-rename name in window state
+  (`paneSidebarPinned`) and its fallback key in the defaults
+  (`PaneSidebarPinned`) — pinned WAS the full panel, so old state decodes
+  unchanged. The all-windows scope, search and folds are never persisted.
 - Keybinds (macOS defaults): `toggle_pane_sidebar` Ctrl+Cmd+S, `stash_pane`
   Shift+Cmd+M, `restore_stashed_pane` (unbound); Window menu items for all three.
 

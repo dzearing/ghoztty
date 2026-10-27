@@ -31,6 +31,10 @@ extension TerminalRestorableState {
         // The sidebar's own order of the panes (`PaneSidebarState.order`), as
         // pane ids. Optional/additive like the flags.
         let paneSidebarOrder: [UUID]?
+        // The window's identity in the all-windows list
+        // (`PaneSidebarState.windowID`), so a restored window keeps its fold
+        // and its place in the list's order. Optional/additive.
+        let paneSidebarWindowID: UUID?
 
         // The window's own gradient seed (`--color=random`, elevated style).
         let deskVariant: PaneDeskVariant?
@@ -45,6 +49,7 @@ extension TerminalRestorableState {
             paneSidebarPinned: Bool? = nil,
             paneSidebarHidden: Bool? = nil,
             paneSidebarOrder: [UUID]? = nil,
+            paneSidebarWindowID: UUID? = nil,
             deskVariant: PaneDeskVariant? = nil,
         ) {
             self.focusedSurface = focusedSurface
@@ -56,6 +61,7 @@ extension TerminalRestorableState {
             self.paneSidebarPinned = paneSidebarPinned
             self.paneSidebarHidden = paneSidebarHidden
             self.paneSidebarOrder = paneSidebarOrder
+            self.paneSidebarWindowID = paneSidebarWindowID
             self.deskVariant = deskVariant
         }
     }
@@ -66,7 +72,8 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
         // Window state is only ever encoded on the main thread.
         let sidebar = MainActor.assumeIsolated {
             (controller.paneSidebarState.isExpanded, controller.paneSidebarState.isHidden,
-             controller.deskVariant, controller.paneSidebarPersistedOrder)
+             controller.deskVariant, controller.paneSidebarPersistedOrder,
+             controller.paneSidebarState.windowID)
         }
         self.init(
             focusedSurface: controller.focusedSurface?.id.uuidString,
@@ -78,6 +85,7 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
             paneSidebarPinned: sidebar.0,
             paneSidebarHidden: sidebar.1,
             paneSidebarOrder: sidebar.3,
+            paneSidebarWindowID: sidebar.4,
             deskVariant: sidebar.2,
         )
     }

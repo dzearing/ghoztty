@@ -14,6 +14,7 @@ struct PaneSidebarView: View {
     @ObservedObject private var roster = PaneRoster.shared
     @ObservedObject private var dragSession = PaneDragSession.shared
     @ObservedObject private var rowDrag = PaneSidebarRowDrag.shared
+    @ObservedObject private var itemDrag = PaneSidebarItemDrag.shared
 
     /// Laid out as the rail (tiles) rather than full rows.
     let isRail: Bool
@@ -39,6 +40,10 @@ struct PaneSidebarView: View {
             }
             .onPreferenceChange(PaneSidebarGroupFrames.self) { geometry.groupFrames = $0 }
             .onPreferenceChange(PaneSidebarTrayFrame.self) { geometry.trayFrame = $0 }
+            .onPreferenceChange(PaneSidebarItemFrames.self) { frames in
+                geometry.itemFrames = frames
+                if itemDrag.isDragging(in: controller) { itemDrag.framesChanged(frames) }
+            }
             .font(.system(size: 12))
             .environment(\.paneSidebarEmphasized, controlActiveState == .key)
     }
@@ -227,6 +232,8 @@ struct PaneSidebarView: View {
                     listContent
                 }
                 .padding(.vertical, SidePanelRow.fillInset)
+                // Every window's all-windows list scrolls as one.
+                .background(PaneSidebarScrollSyncAnchor(isRail: isRail))
             }
         } else {
             let content = VStack(alignment: .leading, spacing: 0) { listContent }
@@ -241,21 +248,23 @@ struct PaneSidebarView: View {
     /// Every terminal window with a sidebar, this one included even before
     /// it is visible.
     private var allControllers: [BaseTerminalController] {
-        let controllers = roster.controllers
-        return controllers.contains { $0 === controller } ? controllers : [controller] + controllers
+        _ = roster.controllers
+        return controller.paneSidebarAllControllers
     }
 
-    /// Every window, sorted by name; `<project>: <worktree>` windows grouped
-    /// under a collapsible, sticky project header (`PaneSidebarWindowGrouping`).
+    /// Every window, in the list's own order (by name until something is
+    /// dragged); `<project>: <worktree>` windows grouped under a collapsible,
+    /// sticky project header (`PaneSidebarWindowGrouping`). A window row and
+    /// a project header drag to reorder (`PaneSidebarItemDrag`).
     @ViewBuilder
     private var allWindows: some View {
         let controllers = allControllers
-        let byID = Dictionary(uniqueKeysWithValues: controllers.map { (ObjectIdentifier($0), $0) })
-        let titled = controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) }
-        let matches = searchMatches(controllers, titles: Dictionary(uniqueKeysWithValues: titled.map { ($0.id, $0.title) }))
+        let byID = Dictionary(controllers.map { ($0.paneSidebarState.windowID, $0) }, uniquingKeysWith: { a, _ in a })
+        let titled = controllers.map { (id: $0.paneSidebarState.windowID, title: PaneSidebarText.windowTitle(of: $0)) }
+        let matches = searchMatches(controllers, titles: Dictionary(titled.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a }))
         // Searching: only windows with a matching pane, and nothing folded
         // away — a hit hidden inside a folded group would read as no hit.
-        let sections = PaneSidebarWindowGrouping.sections(titled).compactMap { section in
+        let sections = PaneSidebarWindowGrouping.sections(titled, order: state.shared.windowOrder).compactMap { section in
             guard let matches else { return section }
             let windows = section.windows.filter { !(matches[$0.id]?.isEmpty ?? true) }
             return windows.isEmpty
@@ -270,24 +279,46 @@ struct PaneSidebarView: View {
                 .padding(.vertical, SidePanelRow.verticalPadding)
         }
 
+        let topLevel = sections.map(\.id)
+        let reporting = itemDrag.isDragging(in: controller)
         ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
             if let project = section.project, !isRail {
                 let folded = matches == nil && state.foldedProjects.contains(project)
+                let windows = section.windows.map(\.key)
+                let onFold = {
+                    withAnimation(PaneSidebarOutline.foldAnimation) {
+                        if folded { state.foldedProjects.remove(project) }
+                        else { state.foldedProjects.insert(project) }
+                    }
+                }
                 // A gap above the header's band, so it never touches what
                 // ends the list above it (a row's hover, the tray's well).
-                if index > 0 { PaneSidebarOutline.headerGapView }
+                // A group is one item in the list's order: its gaps, header
+                // and windows each report its frame and slide as one.
+                if index > 0 {
+                    PaneSidebarOutline.headerGapView
+                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting))
+                        .paneSidebarItemFrame(section.id, isOn: reporting)
+                }
                 Section {
                     if !folded {
                         // ...and below it, before its first window.
                         PaneSidebarOutline.headerGapView
+                            .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting))
+                            .paneSidebarItemFrame(section.id, isOn: reporting)
                         ForEach(section.windows, id: \.id) { entry in
                             if let owner = byID[entry.id] {
                                 windowGroup(owner, isThisWindow: owner === controller,
                                             label: entry.label, indent: PaneSidebarOutline.childIndent,
-                                            matches: matches?[entry.id])
+                                            matches: matches?[entry.id], siblings: windows)
+                                    // Read outside each slide, as the rows are.
+                                    .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
+                                    .paneSidebarItemFrame(entry.key, isOn: reporting)
                                     .transition(PaneSidebarOutline.foldTransition)
                             }
                         }
+                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting))
+                        .paneSidebarItemFrame(section.id, isOn: reporting)
                     }
                 } header: {
                     PaneSidebarProjectHeader(
@@ -299,37 +330,51 @@ struct PaneSidebarView: View {
                             BaseTerminalController.closeWindowsFromSidebar(
                                 section.windows.compactMap { byID[$0.id] })
                         },
-                        onFold: {
-                            withAnimation(PaneSidebarOutline.foldAnimation) {
-                                if folded { state.foldedProjects.remove(project) }
-                                else { state.foldedProjects.insert(project) }
-                            }
-                        })
+                        onFold: onFold)
+                        .paneSidebarItemDrag(
+                            key: section.id, siblings: topLevel, controller: controller,
+                            leading: 0, trailing: PaneSidebarProjectHeader.trailingControls,
+                            help: folded ? "Show \(project)’s windows — drag to reorder"
+                                : "Hide \(project)’s windows — drag to reorder",
+                            onClick: onFold)
+                        .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting))
+                        .paneSidebarItemFrame(section.id, isOn: reporting)
                 }
             } else {
                 ForEach(section.windows, id: \.id) { entry in
                     if let owner = byID[entry.id] {
-                        if !isRail, index > 0 {
-                            PaneSidebarDivider(isRail: false).padding(.bottom, 4)
+                        // One item, divider and all, so it moves as one.
+                        VStack(alignment: .leading, spacing: 0) {
+                            if !isRail, index > 0 {
+                                PaneSidebarDivider(isRail: false).padding(.bottom, 4)
+                            }
+                            windowGroup(owner, isThisWindow: owner === controller, label: entry.label,
+                                        matches: matches?[entry.id], siblings: topLevel)
                         }
-                        windowGroup(owner, isThisWindow: owner === controller, label: entry.label,
-                                    matches: matches?[entry.id])
+                        .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
+                        .paneSidebarItemFrame(entry.key, isOn: reporting)
                     }
                 }
             }
         }
     }
 
+    /// A window of the all-windows list: its row, and its panes unless
+    /// folded. `siblings`: the keys it is reordered among when its row is
+    /// dragged.
     private func windowGroup(
         _ owner: BaseTerminalController,
         isThisWindow: Bool,
         label: String,
         indent: CGFloat = 0,
-        matches: Set<ObjectIdentifier>? = nil
+        matches: Set<ObjectIdentifier>? = nil,
+        siblings: [String] = []
     ) -> some View {
-        let id = ObjectIdentifier(owner)
-        let folded = PaneSidebarState.isWindowFolded(
-            isThisWindow: isThisWindow, isToggled: state.toggledWindows.contains(id), isSearching: matches != nil)
+        let id = owner.paneSidebarState.windowID
+        let folded = state.isWindowFolded(id, isSearching: matches != nil)
+        let onFold = {
+            withAnimation(PaneSidebarOutline.foldAnimation) { state.toggleWindowFold(id) }
+        }
         return VStack(alignment: .leading, spacing: 0) {
             if isRail {
                 PaneSidebarDivider(isRail: true)
@@ -341,12 +386,17 @@ struct PaneSidebarView: View {
                     indent: indent,
                     isFolded: folded,
                     isDropTarget: isJoinTarget(owner),
-                    onFold: {
-                        withAnimation(PaneSidebarOutline.foldAnimation) {
-                            if state.toggledWindows.contains(id) { state.toggledWindows.remove(id) }
-                            else { state.toggledWindows.insert(id) }
+                    onFold: onFold)
+                    .paneSidebarItemDrag(
+                        key: PaneSidebarWindowGrouping.key(window: id), siblings: siblings,
+                        controller: controller,
+                        leading: PaneSidebarWindowHeader.leadingControls(indent: indent),
+                        trailing: PaneSidebarWindowHeader.trailingControls,
+                        help: isThisWindow ? "This window — drag to reorder" : "Raise this window — drag to reorder") {
+                            guard !isThisWindow else { return onFold() }
+                            owner.window?.makeKeyAndOrderFront(nil)
+                            NSApp.activate(ignoringOtherApps: true)
                         }
-                    })
             }
             if !folded || isRail {
                 // In the outline, a window's panes are its CHILDREN: indented
@@ -578,13 +628,13 @@ struct PaneSidebarView: View {
     /// searching (no query, or the rail, which has no room for the field).
     private func searchMatches(
         _ controllers: [BaseTerminalController],
-        titles: [ObjectIdentifier: String]
-    ) -> [ObjectIdentifier: Set<ObjectIdentifier>]? {
+        titles: [UUID: String]
+    ) -> [UUID: Set<ObjectIdentifier>]? {
         let terms = PaneSidebarFilter.terms(state.filter)
         guard !terms.isEmpty, !isRail else { return nil }
-        var result: [ObjectIdentifier: Set<ObjectIdentifier>] = [:]
+        var result: [UUID: Set<ObjectIdentifier>] = [:]
         for owner in controllers {
-            let id = ObjectIdentifier(owner)
+            let id = owner.paneSidebarState.windowID
             let tree = owner.surfaceTree
             let panes = tree.visibleLeaves + tree.stashedViews
             result[id] = Set(panes
@@ -597,11 +647,12 @@ struct PaneSidebarView: View {
     /// Return in the search field: go to the first match, as clicking it would.
     private func revealFirstMatch() {
         let controllers = allControllers
-        let titled = controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) }
+        let titled = controllers.map { (id: $0.paneSidebarState.windowID, title: PaneSidebarText.windowTitle(of: $0)) }
         guard let matches = searchMatches(
-            controllers, titles: Dictionary(uniqueKeysWithValues: titled.map { ($0.id, $0.title) })) else { return }
-        let byID = Dictionary(uniqueKeysWithValues: controllers.map { (ObjectIdentifier($0), $0) })
-        for section in PaneSidebarWindowGrouping.sections(titled) {
+            controllers, titles: Dictionary(titled.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a }))
+        else { return }
+        let byID = Dictionary(controllers.map { ($0.paneSidebarState.windowID, $0) }, uniquingKeysWith: { a, _ in a })
+        for section in PaneSidebarWindowGrouping.sections(titled, order: state.shared.windowOrder) {
             for entry in section.windows {
                 guard let owner = byID[entry.id], let hits = matches[entry.id] else { continue }
                 let tree = owner.surfaceTree
@@ -797,12 +848,20 @@ private struct PaneSidebarWindowHeader: View {
         // Not `.onHover`: it blinks off for a frame when a fold re-lays out
         // the list (see `HoverTrackingView`).
         .background(HoverTrackingArea(isHovered: $isHovered))
-        .onTapGesture {
-            guard !isThisWindow else { onFold(); return }
-            owner.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        .help(isThisWindow ? "This window" : "Raise this window")
+        // Clicked (raise it; this window's folds) and dragged (reorder) by
+        // `paneSidebarItemDrag`, between its chevron and its count.
+    }
+
+    /// The chevron's end, from the row's leading edge: the drag source
+    /// starts there.
+    static func leadingControls(indent: CGFloat) -> CGFloat {
+        SidePanelRow.fillInset + PaneSidebarOutline.headerLeading + indent + PaneSidebarOutline.chevronWidth
+    }
+
+    /// The count's (or ×'s) start, from the row's trailing edge: the drag
+    /// source stops there.
+    static var trailingControls: CGFloat {
+        SidePanelRow.fillInset + SidePanelRow.textInset + PaneSidebarItemButton.size
     }
 }
 
@@ -812,6 +871,12 @@ private struct PaneSidebarWindowHeader: View {
 /// windows scroll under it, and folds them away. On Liquid Glass so rows
 /// passing beneath stay legible (see `glassBackdrop`).
 private struct PaneSidebarProjectHeader: View {
+    /// The ×'s start, from the header's trailing edge: the drag source
+    /// (`paneSidebarItemDrag`, which also folds on a click) stops there.
+    static var trailingControls: CGFloat {
+        SidePanelRow.fillInset + SidePanelRow.textInset + PaneSidebarItemButton.size
+    }
+
     let project: String
     let windowCount: Int
     let isFolded: Bool
@@ -943,7 +1008,7 @@ struct PaneSidebarDivider: View {
 /// itself, over the sidebar — lifted out, leaving its gap. The slide is a
 /// short bounded animation, and none at all once the drag ends: the drop
 /// re-lays the list out where the rows were already drawn, so nothing moves.
-private struct PaneSidebarShift: ViewModifier {
+struct PaneSidebarShift: ViewModifier {
     let rows: Int
     let height: CGFloat
     let isLifted: Bool
@@ -1011,6 +1076,9 @@ final class PaneSidebarGeometry: ObservableObject {
     var groupFrames: [PaneSidebarGroupFrames.Entry] = []
     /// This window's tray divider, during a drag.
     var trayFrame: CGRect?
+    /// The all-windows list's windows and groups, by key, while one is
+    /// dragged (`PaneSidebarItemDrag`).
+    var itemFrames: [String: CGRect] = [:]
 }
 
 struct PaneSidebarRowFrames: PreferenceKey {

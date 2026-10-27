@@ -2539,6 +2539,14 @@ class BaseTerminalController: NSWindowController,
     override func windowDidLoad() {
         super.windowDidLoad()
 
+        // The pane sidebar redraws for another window's change only while
+        // this one is in use (`PaneSidebarState.isLive`): key — or, with
+        // the app in the background, frontmost.
+        paneSidebarState.isLive = { [weak self] in
+            guard let window = self?.window else { return true }
+            return window.isKeyWindow || (!NSApp.isActive && NSApp.orderedWindows.first === window)
+        }
+
         // Setup our undo manager.
 
         // Everything beyond here is setting up the window
@@ -2759,6 +2767,9 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // The pane sidebar shows what changed in other windows meanwhile.
+        paneSidebarState.catchUp()
+
         // Closing the window's last other tab makes it key again.
         collapseForcedTabBarIfAlone()
 
