@@ -106,6 +106,7 @@ test {
     // beside their hover x (T2280).
     // Imports only pane_sidebar.zig. Every lane.
     _ = @import("win32/pane_sidebar_menu.zig");
+    _ = @import("win32/pane_sidebar_add.zig");
 
     // Pure win32 pane sidebar search field (T1877): the one-line editing
     // model, Escape's two verbs, and which surfaces filter. Imports only std.

@@ -43,6 +43,7 @@ const IpcHandlers = @import("IpcHandlers.zig");
 const tips = @import("pane_sidebar_tips.zig");
 const sidebar_prefs = @import("pane_sidebar_prefs.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
+const add_rules = @import("pane_sidebar_add.zig");
 const search_field = @import("pane_sidebar_search.zig");
 const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
@@ -109,6 +110,11 @@ fn toolClose(i: usize) usize {
 fn toolHeadClose(k: usize) usize {
     return toolClose(pane_sidebar.max_items) + k;
 }
+/// A header's hover + (T2323), after the x's; then the header's +.
+fn toolHeadAdd(k: usize) usize {
+    return toolHeadClose(pane_sidebar.max_heads) + k;
+}
+const tool_add: usize = toolHeadAdd(pane_sidebar.max_heads);
 
 /// What new windows start from: the most recently chosen expanded and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`),
@@ -168,6 +174,7 @@ const glyph_stash: u16 = 0xE921; // ChromeMinimize: "put this away"
 const glyph_restore: u16 = 0xE7A7; // Undo: "bring it back"
 const glyph_windows: u16 = 0xE7C4; // TaskView: "every window"
 const glyph_close: u16 = 0xE711; // Cancel: a row's x, the search's clear
+const glyph_add: u16 = 0xE710; // Add: the header's and a header's + (T2323)
 const glyph_search: u16 = 0xE721; // Search: the field's magnifier (T1877)
 const glyph_chevron_down: u16 = 0xE70D;
 const glyph_chevron_right: u16 = 0xE76C;
@@ -338,6 +345,8 @@ tip_heads: usize = 0,
 /// Each header x's tip, kept alive for the tooltip (a project's names its
 /// window count).
 head_tip_text: [pane_sidebar.max_heads][40:0]u16 = undefined,
+/// A header +'s tip ("New window in <project>", T2323), per head.
+head_add_tip_text: [pane_sidebar.max_heads][80:0]u16 = undefined,
 tip_log: [256]u8 = undefined,
 tip_log_len: usize = 0,
 
@@ -714,6 +723,13 @@ fn logOutline(self: *PaneSidebar) void {
         const x = l.headClose(k, self.scale);
         w.print("{d},{d};", .{ x.centerX(), x.centerY() }) catch break;
     }
+    // Each head's hover + (T2323), in heads order, and the header's +.
+    w.writeAll(" ha=") catch {};
+    for (0..l.head_count) |k| {
+        const a = l.headAdd(k, self.scale);
+        w.print("{d},{d};", .{ a.centerX(), a.centerY() }) catch break;
+    }
+    w.print(" add={d},{d}", .{ l.add.centerX(), l.add.centerY() }) catch {};
     // The drag-only well (T2313): its center, or `-` at rest.
     if (l.drop_slot) |sl| {
         w.print(" tray={d},{d}", .{ sl.centerX(), sl.centerY() }) catch {};
@@ -748,7 +764,7 @@ fn logRows(self: *PaneSidebar) void {
         w.print("g0{c}@{d},{d}#{s};", .{ sec, l.items[i].centerX(), l.items[i].centerY(), e.pane.paneId() }) catch break;
     }
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
-    w.print(" rules={d} scope={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY() }) catch {};
+    w.print(" rules={d} scope={d},{d} add={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY(), l.add.centerX(), l.add.centerY() }) catch {};
     self.logToggle(w, &l);
     logScroll(w, &l);
     // The empty tray (T2276): its well's center, or `-` while something is
@@ -2410,7 +2426,7 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         std.unicode.utf8ToUtf16LeStringLiteral("ALL WINDOWS")
     else
         std.unicode.utf8ToUtf16LeStringLiteral("PANES");
-    const caption_right = l.scope.left - pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
+    const caption_right = (if (l.add.width() > 0) l.add.left else l.scope.left) - pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     drawText(hdc, caption, .{
         .left = l.caption_x,
         .top = l.header.top,
@@ -2432,6 +2448,7 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     }
     self.paintToggle(hdc, l, t);
     self.paintScope(hdc, l, t);
+    self.paintAdd(hdc, l, t);
     self.paintSearch(hdc, l, t);
     // Below the controls, everything scrolls (T1878): clipped to the
     // viewport, so a row passing under the header is cut there.
@@ -2663,6 +2680,21 @@ fn paintScope(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t
     glyph(hdc, self.scale, l.scope, glyph_windows, 12, t.text);
 }
 
+/// The header's new-window + (T2323, Mac's `.plus` header button): a plain
+/// icon button beside the all-windows toggle, never checked.
+fn paintAdd(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    if (l.add.width() <= 0) return;
+    const state: icon_button.State = if (self.hoverIs(.add))
+        (if (std.meta.eql(self.pressed, pane_sidebar.Hit.add)) .pressed else .hover)
+    else
+        .normal;
+    const inset = pane_sidebar.px(2, self.scale); // design system: fill inset xs
+    const f: pane_sidebar.Rect = .{ .left = l.add.left + inset, .top = l.add.top + inset, .right = l.add.right - inset, .bottom = l.add.bottom - inset };
+    if (icon_button.paintsFill(state)) {
+        fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark))));
+    }
+    glyph(hdc, self.scale, l.add, glyph_add, 12, t.text);
+}
 
 /// The outline's own furniture (T1829): the hairlines between windows and
 /// the project and window headers - no divider or caption before a window's
@@ -2687,7 +2719,7 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
 fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, g: Group, t: Theme) void {
     const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
-    const hovered = self.hoverIs(.{ .head = k }) or self.hoverIs(.{ .head_fold = k }) or self.hoverIs(.{ .head_close = k });
+    const hovered = self.hoverIs(.{ .head = k }) or self.hoverIs(.{ .head_fold = k }) or self.hoverIs(.{ .head_close = k }) or self.hoverIs(.{ .head_add = k });
     const project = hd.kind == .project;
     var under = t.surface;
     if (hovered and (project or !g.own)) {
@@ -2700,10 +2732,12 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     const folded = if (project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
 
-    // The trailing count first, so the name knows its room. Hovered, the x
-    // takes the count's place (T2298, Mac 345be6b02); the name stops short
-    // of the x either way, so nothing shifts when it appears.
+    // The trailing count first, so the name knows its room. Hovered, + and x
+    // take the count's place (T2298, T2323; Mac 345be6b02, 44aa923f0); the
+    // name stops short of the x either way, so nothing shifts when they
+    // appear, and gives way to the + only while it is up.
     const x = pane_sidebar.headCloseRect(hd, self.scale);
+    const plus = pane_sidebar.headAddRect(hd, self.scale);
     var right = hd.rect.right - text_inset;
     const text_r: pane_sidebar.Rect = .{ .left = hd.label_x, .top = hd.chevron.top - pane_sidebar.px(6, self.scale), .right = right, .bottom = hd.chevron.bottom + pane_sidebar.px(6, self.scale) };
     {
@@ -2714,9 +2748,10 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
         if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
         const w = textWidth(hdc, cw[0..cn]);
         if (hovered) {
+            self.paintRowButton(hdc, .{ .head_add = k }, plus, glyph_add, under, t);
             self.paintRowButton(hdc, .{ .head_close = k }, x, glyph_close, under, t);
         } else drawText(hdc, cw[0..cn], .{ .left = right - w, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_RIGHT);
-        right = @min(right - w, x.left) - sm;
+        right = @min(right - w, if (hovered) plus.left else x.left) - sm;
     }
 
     if (project) {
@@ -3180,10 +3215,26 @@ const tip_head_project = W("Hide or show this project\u{2019}s windows");
 const tip_search = W("Search windows and panes \u{2014} every word must match");
 const tip_search_clear = W("Clear search");
 const tip_close = W(row_menu.close_tip);
+const tip_add = W(add_rules.new_window_tip);
 const tip_restore_row = W(tips.stashed_row_tip);
 
 /// A header x's tip (Mac's `.help`): "Close window", or a project's "Close
 /// its N windows".
+/// A header +'s tip: a window's "New pane", a project's "New window in
+/// <project>".
+fn headAddTip(self: *PaneSidebar, k: usize, hd: pane_sidebar.Head) [*:0]const u16 {
+    const buf = &self.head_add_tip_text[k];
+    var pb: [name_cap]u8 = undefined;
+    var nb: [name_cap + 16]u8 = undefined;
+    const text8 = if (hd.kind == .window) add_rules.new_pane_tip else if (self.headProject(hd, &pb)) |project|
+        add_rules.projectAddTip(project, &nb)
+    else
+        add_rules.new_window_tip;
+    const n = std.unicode.utf8ToUtf16Le(buf[0 .. buf.len - 1], text8[0..@min(text8.len, buf.len - 1)]) catch 0;
+    buf[n] = 0;
+    return buf[0..n :0];
+}
+
 fn headCloseTip(self: *PaneSidebar, k: usize, hd: pane_sidebar.Head) [*:0]const u16 {
     const buf = &self.head_tip_text[k];
     var nb: [40]u8 = undefined;
@@ -3220,6 +3271,7 @@ fn syncTips(self: *PaneSidebar) void {
     if (self.tip_heads > nh) for (nh..self.tip_heads) |k| {
         delTool(tip, hwnd, toolHead(k));
         delTool(tip, hwnd, toolHeadClose(k));
+        delTool(tip, hwnd, toolHeadAdd(k));
     };
     self.tip_heads = nh;
     // The search field (T1877, Mac's `.toolTip` and "Clear search"):
@@ -3239,13 +3291,16 @@ fn syncTips(self: *PaneSidebar) void {
     if (!live) {
         delTool(tip, hwnd, tool_toggle);
         delTool(tip, hwnd, tool_scope);
+        delTool(tip, hwnd, tool_add);
     } else {
         addTool(tip, hwnd, tool_toggle, l.toggle, self.toggleTipText());
         const rows = l.mode == .expanded;
         if (rows) {
             addTool(tip, hwnd, tool_scope, l.scope, if (self.all_windows) tip_scope_off else tip_scope_on);
+            addTool(tip, hwnd, tool_add, l.add, tip_add);
         } else {
             delTool(tip, hwnd, tool_scope);
+            delTool(tip, hwnd, tool_add);
         }
         for (l.heads[0..nh], 0..) |hd, k| {
             const own = hd.index < self.groups.items.len and self.groups.items[hd.index].own;
@@ -3257,6 +3312,10 @@ fn syncTips(self: *PaneSidebar) void {
             if (x.height() > 0) {
                 addTool(tip, hwnd, toolHeadClose(k), x, self.headCloseTip(k, hd));
             } else delTool(tip, hwnd, toolHeadClose(k));
+            const a = if (rows) scroll_mod.visible(&l, l.headAdd(k, self.scale)) else pane_sidebar.Rect{};
+            if (a.height() > 0) {
+                addTool(tip, hwnd, toolHeadAdd(k), a, self.headAddTip(k, hd));
+            } else delTool(tip, hwnd, toolHeadAdd(k));
         }
         for (self.entries.items[0..n], 0..) |e, i| {
             if (!l.shown(i) or scroll_mod.visible(&l, l.items[i]).height() <= 0) {
@@ -3349,6 +3408,8 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
         // the click and does nothing, as Mac's `.disabled` button does.
         .toggle => if (self.toggleEnabled()) self.window.setPaneSidebarExpanded(self.mode != .expanded, if (self.mode == .expanded) "header button" else "rail button"),
         .scope => self.toggleScope(),
+        // The header's + (T2323): Ctrl+Shift+N from this window.
+        .add => self.window.app.newWindowFromSidebar(self.window, null),
         .search => self.focusSearch(),
         .search_clear => {
             log.info("pane sidebar search cleared by button", .{});
@@ -3380,6 +3441,7 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
         },
         .head, .head_fold => |k| self.activateHead(k, std.meta.activeTag(hit) == .head_fold),
         .head_close => |k| self.closeHead(k),
+        .head_add => |k| self.addFromHead(k),
     }
 }
 
@@ -3629,6 +3691,59 @@ fn closeHead(self: *PaneSidebar, k: usize) void {
     }
     log.info("pane sidebar close {s} windows={d}", .{ @tagName(hd.kind), n });
     self.window.app.closeTabsQuietly(targets[0..n]);
+}
+
+/// A header's + (T2323, Mac 44aa923f0). A project's opens a new window from
+/// the group's first window as listed, titled into the group under a free
+/// placeholder name - checked against every window at click time, so two
+/// quick clicks never share one. A window's raises that window and splits
+/// its focused pane the way the user last split one by hand. Both take focus,
+/// as Ctrl+Shift+N / a split keybind would.
+fn addFromHead(self: *PaneSidebar, k: usize) void {
+    const l = self.currentLayout();
+    if (k >= l.head_count) return;
+    const hd = l.heads[k];
+    if (hd.index >= self.groups.items.len) return;
+    const g = self.groups.items[hd.index];
+    if (!self.window.app.hasWindow(g.window)) return;
+    if (hd.kind == .window) {
+        const dir = add_rules.split_memory.last;
+        log.info("pane sidebar add pane dir={s}", .{@tagName(dir)});
+        self.raiseGroup(g);
+        _ = g.window.newSplit(add_rules.as(Window.SplitDirection, dir)) catch |err| {
+            log.err("pane sidebar add pane failed err={}", .{err});
+        };
+        return;
+    }
+    var pb: [name_cap]u8 = undefined;
+    const project = self.headProject(hd, &pb) orelse return;
+    var names: [pane_sidebar.max_heads][name_cap]u8 = undefined;
+    var taken: [pane_sidebar.max_heads][]const u8 = undefined;
+    var n: usize = 0;
+    for (self.window.app.windows.items) |w| for (0..w.tab_count) |t| {
+        if (n == taken.len) break;
+        // `groupName` may hand back the window's own string: copy it.
+        const name = groupName(w, t, &names[n]);
+        const c = @min(name.len, name_cap);
+        if (name.ptr != &names[n]) std.mem.copyForwards(u8, names[n][0..c], name[0..c]);
+        taken[n] = names[n][0..c];
+        n += 1;
+    };
+    var tb: [name_cap + 16]u8 = undefined;
+    const title = add_rules.newWindowTitle(&tb, project, taken[0..n]);
+    if (title.len == 0) return;
+    self.window.app.newWindowFromSidebar(g.window, title);
+}
+
+/// A project head's project as the window title spells it (the header shows
+/// it upper-cased): read again from its first window's name.
+fn headProject(self: *const PaneSidebar, hd: pane_sidebar.Head, buf: *[name_cap]u8) ?[]const u8 {
+    if (hd.kind != .project or hd.index >= self.groups.items.len) return null;
+    const g = self.groups.items[hd.index];
+    if (!self.window.app.hasWindow(g.window) or g.tab >= g.window.tab_count) return null;
+    const name = groupName(g.window, g.tab, buf);
+    const split = outline.splitWindowTitle(name) orelse return null;
+    return split.project;
 }
 
 /// Flip `key` in `set` - a project's fold, or a window's flip away from its

@@ -5470,6 +5470,23 @@ $GuardTable = @(
             'test\win32\pane-sidebar-close.ps1'
         )
     },
+    # Adding from the sidebar (T2323, Mac 44aa923f0): the header's +, a
+    # project header's + and a window header's +. The geometry, the
+    # placeholder names and the split memory are unit-tested in every lane;
+    # that each + opens the right window or pane, titled into its group,
+    # focused, and that a `+split` never moves the remembered direction, is
+    # only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-add'
+        Script = 'test\win32\pane-sidebar-add.ps1'
+        Stamp  = 'test\win32\pane-sidebar-add.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\pane_sidebar_add.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-add.ps1'
+        )
+    },
     # The sidebar scrolls (T1878): the wheel, the overlay thumb, revealing
     # the focused row, the sticky project header, and clicks and tips that
     # follow the offset. The pure half is unit-tested in every lane; that a

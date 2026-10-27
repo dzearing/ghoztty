@@ -53,6 +53,7 @@ const Window = @import("Window.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const desk_palette = @import("desk_palette.zig");
 const pane_sidebar_order = @import("pane_sidebar_order.zig");
+const pane_sidebar_add = @import("pane_sidebar_add.zig");
 const dial_failure = @import("dial_failure.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const relay_signout = @import("relay_signout.zig");
@@ -7114,6 +7115,45 @@ pub fn newWindowDeskVariant(self: *const App) ?desk_palette.Variant {
     };
 }
 
+/// The pane sidebar's header + and a project header's (T2323; Mac
+/// `newWindowFromSidebar`): exactly Ctrl+Shift+N from `parent`'s focused pane
+/// - its working directory (per `window-inherit-working-directory`), a random
+/// gradient, a remote parent's machine, its opacity toggle - whichever window
+/// holds the keyboard. `title` pins the new window's title, as `+new-window
+/// --title` does. Raised and focused: a manual surface, never the CLI's
+/// background default.
+pub fn newWindowFromSidebar(self: *App, parent: *Window, title: ?[]const u8) void {
+    const variant = self.newWindowDeskVariant();
+    const window: *Window = if (parent.remote_machine != null)
+        self.openRemoteWindowFrom(parent, .{ .desk_variant = variant }) catch |err| {
+            log.warn("sidebar new window on remote parent failed err={}", .{err});
+            return self.showRemoteOpenFailed(parent, err);
+        }
+    else local: {
+        // The core inherits from the FOCUSED pane, which for a project's +
+        // is not the group's first window: name the directory instead.
+        const alloc = self.core_app.alloc;
+        var cwd: ?[]u8 = null;
+        defer if (cwd) |c| alloc.free(c);
+        if (apprt.surface.shouldInheritWorkingDirectory(.window, &self.config) and parent.tab_count > 0) {
+            if (parent.tab_active_pane[parent.active_tab].surface()) |s| {
+                cwd = s.livePwd(alloc) orelse if (s.pwd) |p| alloc.dupe(u8, p) catch null else null;
+            }
+        }
+        const overrides: Surface.Overrides = .{ .working_directory = cwd };
+        break :local self.createWindow(.{
+            .force_opaque = parent.isForcedOpaque(),
+            .desk_variant = variant,
+            .surface_overrides = if (cwd != null) &overrides else null,
+        }) catch |err| {
+            log.err("sidebar new window failed err={}", .{err});
+            return;
+        };
+    };
+    if (title) |t| window.setTitleOverride(t);
+    log.info("pane sidebar new window remote={} titled={}", .{ parent.remote_machine != null, title != null });
+}
+
 /// Create, track, and populate a new Window (with its first tab). Shared by
 /// the .new_window action and the IPC server.
 pub fn createWindow(self: *App, opts: Window.InitOptions) !*Window {
@@ -9488,6 +9528,10 @@ pub fn performAction(
                         .up => .up,
                         .down => .down,
                     };
+                    // Only a split asked for by hand comes this way (keybind,
+                    // palette, a pane's context menu): the sidebar's + repeats
+                    // its direction (T2323). `+split` calls `newSplit` itself.
+                    pane_sidebar_add.noteManualSplit(dir);
                     _ = core_surface.rt_surface.parent_window.newSplit(dir) catch |err| blk: {
                         log.err("failed to create split: {}", .{err});
                         break :blk null;

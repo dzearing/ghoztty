@@ -33,6 +33,7 @@ const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const pane_stash = @import("pane_stash.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
+const pane_sidebar_add = @import("pane_sidebar_add.zig");
 const sidebar_order = @import("pane_sidebar_order.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const PaneGrabHandle = @import("PaneGrabHandle.zig");
@@ -10461,6 +10462,9 @@ fn endDividerDrag(self: *Window) void {
     self.app.markLayoutDirty();
 }
 
+/// A split's direction, as `newSplit` takes it.
+pub const SplitDirection = SplitTree(PaneView).Split.Direction;
+
 /// Create a new split in the active tab.
 pub fn newSplit(self: *Window, direction: SplitTree(PaneView).Split.Direction) !?*Surface {
     if (self.tab_count == 0) return null;
@@ -11308,6 +11312,8 @@ pub fn performViewerBindingAction(
                     break :auto if (r.bottom - r.top > r.right - r.left) .down else .right;
                 },
             };
+            // A split by hand: the sidebar's + repeats it (T2323).
+            pane_sidebar_add.noteManualSplit(dir);
             _ = self.newSplitAt(pane, dir, 0.5) catch |err| {
                 log.err("viewer chord: split failed err={}", .{err});
             };

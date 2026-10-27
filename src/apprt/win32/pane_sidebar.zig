@@ -600,6 +600,9 @@ pub const Layout = struct {
     /// Mac drops its header buttons from the rail). The trash-mode button
     /// that sat after it went with trash mode (T2280, Mac dc2bbab6b).
     scope: Rect = .{},
+    /// The new-window + (T2323, Mac 44aa923f0): left of the all-windows
+    /// toggle, the panel's header only - the rail's header is its toggle alone.
+    add: Rect = .{},
     /// The all-windows search field under the header (T1877; outline in the
     /// panel only - empty otherwise), and its clear button at the trailing
     /// edge.
@@ -693,6 +696,14 @@ pub const Layout = struct {
         return headCloseRect(self.heads[k], scale);
     }
 
+    /// An outline header's hover + (T2323, Mac 44aa923f0): the same square,
+    /// `row_button_gap_dip` before its x. A window's splits that window's
+    /// focused pane; a project's opens a new window in the group.
+    pub fn headAdd(self: *const Layout, k: usize, scale: f32) Rect {
+        if (k >= self.head_count) return .{};
+        return headAddRect(self.heads[k], scale);
+    }
+
     /// The row-button square at `fill`'s trailing edge, `sm` inside it.
     fn trailingSquare(fill: Rect, top: i32, scale: f32) Rect {
         const b = px(row_button_dip, scale);
@@ -715,6 +726,14 @@ pub const Layout = struct {
 pub fn headCloseRect(hd: Head, scale: f32) Rect {
     const b = px(row_button_dip, scale);
     return Layout.trailingSquare(hd.rect, hd.chevron.top + @divTrunc(hd.chevron.height() - b, 2), scale);
+}
+
+/// Header `hd`'s hover + (`Layout.headAdd`): its x's square, one button and
+/// `row_button_gap_dip` toward the name.
+pub fn headAddRect(hd: Head, scale: f32) Rect {
+    const x = headCloseRect(hd, scale);
+    const shift = x.width() + px(row_button_gap_dip, scale);
+    return .{ .left = x.left - shift, .top = x.top, .right = x.right - shift, .bottom = x.bottom };
 }
 
 /// The expanded row's height: Mac's `SidePanelRow` padding around one or two
@@ -840,8 +859,8 @@ fn headerBand(l: *Layout, area: Rect, tm: TextMetrics, scale: f32) void {
 }
 
 /// The header band: the toggle first (`toggleRect`), the caption after it,
-/// then the all-windows button at the trailing edge, all on the toggle's
-/// row (`headerBand`).
+/// then the new-window + and the all-windows button at the trailing edge,
+/// all on the toggle's row (`headerBand`).
 fn layoutHeader(l: *Layout, area: Rect, tm: TextMetrics, scale: f32, insets: RailInsets) void {
     const sm = px(sm_dip, scale);
     const btn = px(button_dip, scale);
@@ -853,6 +872,7 @@ fn layoutHeader(l: *Layout, area: Rect, tm: TextMetrics, scale: f32, insets: Rai
     l.caption_x = l.toggle.right + gap + sm;
     const bt = l.toggle.top + @divTrunc(l.toggle.height() - btn, 2);
     l.scope = .{ .left = area.right - sm - btn, .top = bt, .right = area.right - sm, .bottom = bt + btn };
+    l.add = .{ .left = l.scope.left - gap - btn, .top = bt, .right = l.scope.left - gap, .bottom = bt + btn };
 }
 
 /// The all-windows search field, under the header (T1877; Mac's capsule
@@ -1127,6 +1147,8 @@ pub const Hit = union(enum) {
     item_close: usize,
     /// The all-windows toggle.
     scope,
+    /// The header's new-window + (T2323).
+    add,
     /// The all-windows search field, and its clear button (T1877).
     search,
     search_clear,
@@ -1136,6 +1158,8 @@ pub const Hit = union(enum) {
     head_fold: usize,
     /// An outline header's hover x (T2298).
     head_close: usize,
+    /// An outline header's hover + (T2323).
+    head_add: usize,
 };
 
 pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
@@ -1143,6 +1167,7 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     if (l.toggle.contains(x, y)) return .toggle;
     const rows = l.mode == .expanded;
     if (rows and l.scope.contains(x, y)) return .scope;
+    if (rows and l.add.contains(x, y)) return .add;
 
     if (rows and l.search.contains(x, y)) {
         return if (l.search_text and l.search_clear.contains(x, y)) .search_clear else .search;
@@ -1155,6 +1180,7 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
         const hit_r = rowHitRect(l, hd.rect);
         if (!hit_r.contains(x, y)) continue;
         if (rows and l.headClose(k, scale).contains(x, y)) return .{ .head_close = k };
+        if (rows and l.headAdd(k, scale).contains(x, y)) return .{ .head_add = k };
         return if (x < hd.label_x) .{ .head_fold = k } else .{ .head = k };
     }
     for (0..l.count) |i| {
@@ -1221,12 +1247,12 @@ pub fn pinnedGripInGutter(elevated: bool) bool {
 /// The header's and the rows' buttons sit `sm` from the panel's edge, inside
 /// the band: a press on one of them is that button's, never a resize.
 fn onButton(l: *const Layout, x: i32, y: i32, scale: f32) bool {
-    if (l.toggle.contains(x, y) or l.scope.contains(x, y)) return true;
+    if (l.toggle.contains(x, y) or l.scope.contains(x, y) or l.add.contains(x, y)) return true;
     for (0..l.count) |i| {
         if (l.shown(i) and (l.rowClose(i, scale).contains(x, y) or l.rowButton(i, scale).contains(x, y))) return true;
     }
     for (0..l.head_count) |k| {
-        if (l.headClose(k, scale).contains(x, y)) return true;
+        if (l.headClose(k, scale).contains(x, y) or l.headAdd(k, scale).contains(x, y)) return true;
     }
     return false;
 }
@@ -2284,6 +2310,53 @@ test "T2298: a window's and a project's header x sit in the rows' x column, leve
             try testing.expect(onButton(&l, hx.centerX(), hx.centerY(), s));
         }
         try testing.expectEqual(Rect{}, l.headClose(l.head_count, s));
+    }
+}
+
+test "T2323: a header's hover + sits one button and a gap before its x, level with it, and is its own hit - never the header's or an edge drag (Mac 44aa923f0)" {
+    const lines = [_]Line{
+        .{ .kind = .project, .index = 0 },
+        .{ .kind = .window, .index = 0, .depth = 1 },
+        .{ .kind = .pane, .index = 0, .depth = 2 },
+        .{ .kind = .window, .index = 1, .depth = 1 },
+        .{ .kind = .pane, .index = 3, .depth = 2 },
+    };
+    for (scales) |s| {
+        const f = outlineFixture(s);
+        const l = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &lines, f.tm, s);
+        try testing.expectEqual(@as(usize, 3), l.head_count);
+        for (0..l.head_count) |k| {
+            const hx = l.headClose(k, s);
+            const ha = l.headAdd(k, s);
+            try testing.expectEqual(hx.width(), ha.width());
+            try testing.expectEqual(hx.top, ha.top);
+            try testing.expectEqual(hx.left - px(row_button_gap_dip, s), ha.right);
+            // In the same column as a this-window row's stash button.
+            try testing.expectEqual(l.rowButton(0, s).left, ha.left);
+            try testing.expectEqual(Hit{ .head_add = k }, hitTest(&l, ha.centerX(), ha.centerY(), s));
+            try testing.expectEqual(Hit{ .head_close = k }, hitTest(&l, hx.centerX(), hx.centerY(), s));
+            try testing.expectEqual(Hit{ .head = k }, hitTest(&l, ha.left - 2, ha.centerY(), s));
+            try testing.expect(onButton(&l, ha.centerX(), ha.centerY(), s));
+        }
+        try testing.expectEqual(Rect{}, l.headAdd(l.head_count, s));
+    }
+}
+
+test "T2323: the panel header reads toggle, caption, +, all-windows - the + 2 DIP left of the toggle-sized all-windows button, its own hit; the rail has none (Mac 44aa923f0)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+        const l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        try testing.expectEqual(l.scope.width(), l.add.width());
+        try testing.expectEqual(l.scope.top, l.add.top);
+        try testing.expectEqual(l.scope.left - px(2, s), l.add.right);
+        try testing.expect(l.add.left > l.caption_x);
+        try testing.expectEqual(@as(Hit, .add), hitTest(&l, l.add.centerX(), l.add.centerY(), s));
+        try testing.expectEqual(@as(Hit, .scope), hitTest(&l, l.scope.centerX(), l.scope.centerY(), s));
+        try testing.expect(onButton(&l, l.add.centerX(), l.add.centerY(), s));
+        const m = layout(.mini, px(68, s), px(600, s), &items, tm, s);
+        try testing.expectEqual(@as(i32, 0), m.add.width());
+        try testing.expect(hitTest(&m, m.add.centerX(), m.add.centerY(), s) != .add);
     }
 }
 
