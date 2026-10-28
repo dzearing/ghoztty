@@ -4192,6 +4192,21 @@ $GuardTable = @(
             'test\win32\frame-capture.ps1'
         )
     },
+    # The T2373 frame lab's live driver (T2392): the two live probes every lab
+    # verdict rests on - the pointer lands where the path says, and a capture
+    # that misses frames says so. Pure section anywhere; live sections only on
+    # an idle box (SKIP ALL while the user is present, so it stamps only from
+    # a real live run).
+    [pscustomobject]@{
+        Name   = 'frame-lab'
+        Script = 'test\win32\frame-lab.ps1'
+        Stamp  = 'test\win32\frame-lab.stamp.json'
+        Covers = @(
+            'test\win32\frame-lab.ps1',
+            'test\win32\lib\FrameCapture.ps1',
+            'test\win32\lib\FrameLabInput.ps1'
+        )
+    },
     # The T2373 frame lab's input driver (T2384). Input-to-photon lag and the
     # reversal check are measured against its stamps, and it moves the user's
     # real pointer: a timer that drifts, a gate that lets it inject under the

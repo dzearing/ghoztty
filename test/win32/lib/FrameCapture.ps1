@@ -125,6 +125,12 @@ public sealed class GfcOptions {
     public bool Duplication = false;
     public bool DuplicationOnly;        // count presents without capturing
     public GfcScorer Scorer;
+    // The WGC-drop positive control (T2392): hold the frame handler, frame
+    // still in hand, for StallMs on frame StallAtFrame. With Buffers = 1 the
+    // pool has nothing to compose into meanwhile, so WGC must drop presents
+    // and the accounting run must name them. -1 = never.
+    public long StallAtFrame = -1;
+    public int StallMs = 0;
 }
 
 public sealed class GfcStats {
@@ -135,6 +141,7 @@ public sealed class GfcStats {
     public int RefreshHz, Buffers, QueueCap;
     public long StartQpc, StopQpc, QpcFrequency;
     public long SlotGaps, SameSlot;     // refreshes with no frame; frames sharing a refresh
+    public long StallQpc0, StallQpc1;   // the planted handler stall, when one ran (T2392)
     public string BorderNote = "", DdaNote = "";
     public List<string> Errors = new List<string>();
 }
@@ -608,6 +615,11 @@ public sealed class GfcSession : IDisposable {
                     } finally { Marshal.Release(tex); }
                     Enqueue(fr);
                 }
+                if (opt.StallAtFrame >= 0 && fr.Index == opt.StallAtFrame && opt.StallMs > 0) {
+                    Stats.StallQpc0 = GfcClock.Now();
+                    Thread.Sleep(opt.StallMs);
+                    Stats.StallQpc1 = GfcClock.Now();
+                }
                 if (cw != contentW || ch != contentH) {
                     contentW = cw; contentH = ch; Stats.PoolRecreated++;
                     sender.Recreate(rtDevice, DirectXPixelFormat.B8G8R8A8UIntNormalized, Stats.Buffers, f.ContentSize);
@@ -830,12 +842,13 @@ function Start-FrameCapture {
         [Parameter(Mandatory = $true)][int]$W, [Parameter(Mandatory = $true)][int]$H,
         [string]$PngDir, [int]$SampleEvery = 100, [int]$KeepFrames = 0,
         [long]$QueueBytes = 512MB, [int]$Buffers = 0, [switch]$Duplication,
-        $Scorer
+        $Scorer, [long]$StallAtFrame = -1, [int]$StallMs = 0
     )
     Import-FrameCapture
     $o = New-FrameCaptureOptions -PngDir $PngDir -SampleEvery $SampleEvery -KeepFrames $KeepFrames -QueueBytes $QueueBytes -Scorer $Scorer
     $o.X = $X; $o.Y = $Y; $o.W = $W; $o.H = $H
     $o.Buffers = $Buffers; $o.Duplication = [bool]$Duplication
+    $o.StallAtFrame = $StallAtFrame; $o.StallMs = $StallMs
     $s = New-Object GfcSession $o
     $s.Start()
     return $s
