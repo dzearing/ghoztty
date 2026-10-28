@@ -4177,6 +4177,21 @@ $GuardTable = @(
             'test\win32\frame-lab-card.ps1'
         )
     },
+    # The T2373 frame lab's capture engine (T2382). The scorer above is only
+    # as true as the frames it is handed: an engine that silently drops frames,
+    # stamps them off the refresh grid, or miscounts what duplication saw makes
+    # a smoothness number that describes the capture, not the app. Its pure
+    # sections run anywhere; the live ones read the screen and skip while the
+    # user is present.
+    [pscustomobject]@{
+        Name   = 'frame-capture'
+        Script = 'test\win32\frame-capture.ps1'
+        Stamp  = 'test\win32\frame-capture.stamp.json'
+        Covers = @(
+            'test\win32\lib\FrameCapture.ps1',
+            'test\win32\frame-capture.ps1'
+        )
+    },
     # The drawn-port helpers and the sweep that keeps them (T694). A script that
     # goes back to guessing a TCP port does not fail here - it fails on some
     # OTHER Tuesday, in some other script, as a fake relay that "never came up",

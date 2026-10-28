@@ -1,0 +1,14 @@
+{
+    "guard":  "frame-capture",
+    "script":  "test/win32/frame-capture.ps1",
+    "generated":  "2026-10-27T23:47:20-07:00",
+    "commit":  "117b3fc0d",
+    "uncommitted":  [
+                        "test/win32/frame-capture.ps1",
+                        "test/win32/lib/FrameCapture.ps1"
+                    ],
+    "files":  {
+                  "test/win32/frame-capture.ps1":  "aa0fb1e741810094182f23694c57b55cff8a0b6e39be1e2bb61771fd3e94e65d",
+                  "test/win32/lib/FrameCapture.ps1":  "1d3b9bf681f75a8d77af4a0d1f8a5da7faeaba83facb472793570dbf003ef035"
+              }
+}
