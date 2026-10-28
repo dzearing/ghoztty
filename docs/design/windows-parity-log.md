@@ -37530,3 +37530,10 @@ moved to T1814.
   - New unit tests in frame_clock.zig and pane_sidebar_transition.zig. Floor lanes lib/none/win32/agent PASS. Harness floor ALL PASS 33.
   - Due sweep: the frame-clock guard is red because the test desktop now runs at 120 Hz and the focus glow's 15 ms tick no longer fits a frame. That is T2370's defect, acked there. The other reds are acked to their open tasks: overlay-zorder T2300, arp-version T2362, hook-json T2318, frame-lab T2395, pane-stack-strip T2334, viewer-narrow-pane T2380.
   - NOT RUN: the on-desktop WGC capture (the user is at the box; T2392's live matrix carries blade-glide).
+
+- 2026-10-28 11:40: T2400 progress (stays open, back to todo). The banner no longer shows a one-frame black strip while its pane grows during a divider drag. It now hands each resize to the compositor with its painted pixels in one UpdateLayeredWindow call (b6ffb7759). Before, a resize was a SetWindowPos followed by a paint, and DWM sometimes composed between the two.
+  Validation:
+  - WGC capture of a posted drag (2 panes + banner): 5 dark frames per drag -> 0 on 3 runs, with and without a viewer pane. The T2400_NEUTERED control gives 1 and 68.
+  - pane-banner ALL PASS 181. Its opacity oracle now reads the app's present line in ULW mode.
+  - Floor lanes lib/none/win32/agent PASS. The audits the change made due are green.
+  - Left on T2400: the viewer address bar runs ~20 px ahead of its WebView2 page on 252 of 949 frames, and the WGC probe still has to become a committed harness.
