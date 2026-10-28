@@ -566,3 +566,11 @@ as the digest that showed them.
 - Gather a project's panes into one window (project group "Bring together" moves its scattered panes into one window)
 - The all-windows list stays instant with fifty windows (only on-screen rows drawn; open and scroll stay smooth)
 - A + that cannot do what you asked says why (missing project folder: open in home and say where it looked)
+
+## 2026-10-28
+
+- A failed command marks its row (red mark on a pane's sidebar row when its last command fails, cleared on focus)
+- Lay out a project's windows in one click (project group "Side by side" tiles its maximized windows across the screen)
+- New windows open on the screen you are using (maximize on the monitor holding the window you came from)
+- An update that will not start puts the old version back (automatic rollback when the new version fails to open, with a note in the window)
+- A maximized window appears at full size (first frame already full-screen, no start-small-then-jump)
