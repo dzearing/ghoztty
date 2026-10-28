@@ -79,6 +79,9 @@ final class TerminalRestorableState: TerminalRestorable {
     var windowTitleOverride: String? {
         internalState.windowTitleOverride
     }
+    var windowTitleSetByUser: Bool? {
+        internalState.windowTitleSetByUser
+    }
     var paneSidebarPinned: Bool? {
         internalState.paneSidebarPinned
     }
@@ -201,6 +204,7 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
 
         // Restore the window-level title override (pins the titlebar)
         if let windowTitleOverride = state.windowTitleOverride {
+            c.windowTitleIsUsers = state.windowTitleSetByUser == true
             c.windowTitleOverride = windowTitleOverride
         }
 

@@ -193,6 +193,11 @@ final class PaneStackState: ObservableObject {
         columnShift = (dx, CACurrentMediaTime())
     }
 
+    /// A column shift is noted and not yet taken.
+    var hasColumnShift: Bool {
+        columnShift.map { CACurrentMediaTime() - $0.at < Self.columnShiftLifetime } ?? false
+    }
+
     /// The pending column shift, taken.
     func takeColumnShift() -> CGFloat? {
         guard let shift = columnShift else { return nil }

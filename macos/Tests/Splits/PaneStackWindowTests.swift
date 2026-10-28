@@ -2324,6 +2324,405 @@ struct PaneStackWindowTests {
         await settle(0.6)
         #expect(panes[0].isFocusedPane, "the click brought the pane forward")
     }
+
+    /// The sidebar expanding (an edge drag, or its button) moves the grid
+    /// over by gliding every card — strips too — from its rect to its new
+    /// one: both edges of each on the same easing, never a jump to the new
+    /// width first and a slide after. Frames by eye:
+    /// `/tmp/pane-stack-snapshots/expand-*.png`.
+    @Test func expandingTheSidebarGlidesEveryCardRectToRect() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let panes = (0..<5).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        var tree = SplitTree<PaneView>(view: panes[0])
+        for i in 1..<4 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: .down) }
+        tree = try tree.inserting(view: panes[4], at: panes[3], direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = false
+        controller.setPaneSidebarExpanded(false)
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        // Room for two panes down: the others are strips.
+        window.setContentSize(NSSize(width: 1300, height: 2 * Self.m.height + 260))
+        await settle(1.2)
+        let content = try #require(window.contentView)
+        func cards() -> [PaneCardView] { all(PaneCardView.self, in: content).filter { $0.window != nil } }
+        let start = Dictionary(uniqueKeysWithValues: cards().map { (ObjectIdentifier($0), $0.drawnPaneInWindow) })
+        let hasStrips = cards().contains { $0.isStripShadowed }
+        #expect(hasStrips, "the column has strips")
+
+        let recorder = WindowFrameRecorder()
+        try await recorder.start(window)
+        await settle(0.2)
+        controller.setPaneSidebarExpanded(true, cause: "test")
+        var samples: [[ObjectIdentifier: CGRect]] = []
+        let began = CACurrentMediaTime()
+        while CACurrentMediaTime() - began < 0.8 {
+            samples.append(Dictionary(uniqueKeysWithValues: cards().map { (ObjectIdentifier($0), $0.drawnPaneInWindow) }))
+            await settle(0.004)
+        }
+        let frames = await recorder.stop()
+        let end = Dictionary(uniqueKeysWithValues: cards().map { (ObjectIdentifier($0), $0.drawnPaneInWindow) })
+        for (index, frame) in frames.enumerated() where index < 40 {
+            let dir = "/tmp/pane-stack-snapshots"
+            try? NSBitmapImageRep(cgImage: frame.1).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: "\(dir)/expand-\(index).png"))
+        }
+
+        // Each card's edges, at each sample, as far along as each other.
+        for (id, from) in start {
+            guard let to = end[id] else { continue }
+            #expect(to.minX > from.minX + 50, "the grid moved over: \(from) → \(to)")
+            for (n, sample) in samples.enumerated() {
+                guard let at = sample[id] else { continue }
+                func along(_ a: CGFloat, _ b: CGFloat, _ x: CGFloat) -> CGFloat? {
+                    abs(b - a) < 2 ? nil : (x - a) / (b - a)
+                }
+                let edges: [(CGFloat, CGFloat, CGFloat)] = [
+                    (from.minX, to.minX, at.minX), (from.maxX, to.maxX, at.maxX),
+                    (from.minY, to.minY, at.minY), (from.maxY, to.maxY, at.maxY)]
+                for (a, b, x) in edges where abs(b - a) < 2 {
+                    #expect(abs(x - a) < 3, "sample \(n): an edge that stays put moved: \(at) from \(from) to \(to)")
+                }
+                let ts = edges.compactMap { along($0.0, $0.1, $0.2) }
+                if let lo = ts.min(), let hi = ts.max() {
+                    #expect(hi - lo < 0.15, "sample \(n): not one rect tween — \(at) from \(from) to \(to) (\(ts))")
+                }
+            }
+        }
+    }
+
+    /// The user's path: the rail's edge dragged out, a step per frame. Frames
+    /// by eye: `/tmp/pane-stack-snapshots/edge-*.png`.
+    @Test func draggingTheRailOutCaptures() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let panes = (0..<5).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        var tree = SplitTree<PaneView>(view: panes[0])
+        for i in 1..<4 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: .down) }
+        tree = try tree.inserting(view: panes[4], at: panes[3], direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = false
+        controller.setPaneSidebarExpanded(false)
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1300, height: 2 * Self.m.height + 260))
+        await settle(1.2)
+        let handle = try #require(all(SidePanelResizeHandle.self, in: window.contentView!).first)
+        let recorder = WindowFrameRecorder()
+        try await recorder.start(window)
+        await settle(0.2)
+        let start = handle.widthAtDragStart?() ?? 52
+        for step in 1...40 {
+            handle.onDrag?(CGFloat(step) * 8, start)
+            await settle(0.016)
+        }
+        handle.onDragEnded?()
+        await settle(0.5)
+        let frames = await recorder.stop()
+        for (index, frame) in frames.enumerated() {
+            try? NSBitmapImageRep(cgImage: frame.1).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: "/tmp/pane-stack-snapshots/edge-\(index).png"))
+        }
+        #expect(controller.paneSidebarState.isExpanded)
+    }
+
+    /// Each card's drawn rect, by card.
+    private func drawnCards(_ content: NSView) -> [ObjectIdentifier: CGRect] {
+        Dictionary(uniqueKeysWithValues: all(PaneCardView.self, in: content).filter { $0.window != nil }
+            .map { (ObjectIdentifier($0), $0.drawnPaneInWindow) })
+    }
+
+    /// Every card glided from `start` to `end` as one rect: at each sample
+    /// its edges are as far along as each other, and an edge that does not
+    /// move never moves — a card that ends where it began holds still.
+    private func expectRectTweens(
+        _ start: [ObjectIdentifier: CGRect], _ end: [ObjectIdentifier: CGRect],
+        _ samples: [[ObjectIdentifier: CGRect]], _ what: String
+    ) {
+        for (id, from) in start {
+            guard let to = end[id] else { continue }
+            for (n, sample) in samples.enumerated() {
+                guard let at = sample[id] else { continue }
+                let edges: [(CGFloat, CGFloat, CGFloat)] = [
+                    (from.minX, to.minX, at.minX), (from.maxX, to.maxX, at.maxX),
+                    (from.minY, to.minY, at.minY), (from.maxY, to.maxY, at.maxY)]
+                for (a, b, x) in edges where abs(b - a) < 2 {
+                    #expect(abs(x - a) < 2, "\(what) sample \(n): an edge that stays put moved: \(at) from \(from) to \(to)")
+                }
+                let ts = edges.compactMap { a, b, x in abs(b - a) < 2 ? nil : (x - a) / (b - a) }
+                if let lo = ts.min(), let hi = ts.max() {
+                    #expect(hi - lo < 0.15, "\(what) sample \(n): not one rect tween — \(at) from \(from) to \(to)")
+                }
+            }
+        }
+    }
+
+    /// The expanded panel's edge dragged in until it tucks into the rail,
+    /// then the panel brought back out — with blades on the right, which
+    /// neither touches and so never move. The sidebar's host never moves or
+    /// resizes (it swung off to the left and back), and the grip ends in
+    /// the gutter. Frames by eye: `/tmp/pane-stack-snapshots/tuck-*.png`.
+    @Test func draggingThePanelIntoTheRail() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let panes = (0..<8).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        // A column on the left (strips over two panes), and a row of four on
+        // the right that has room for one: three blades at the far right.
+        var tree = SplitTree<PaneView>(view: panes[4])
+        for i in 5..<8 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: .right) }
+        tree = try tree.inserting(view: panes[0], at: panes[4], direction: .left)
+        for i in 1..<4 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: .down) }
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = false
+        controller.setPaneSidebarExpanded(true)
+        controller.paneSidebarState.width = 260
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1300, height: 2 * Self.m.height + 260))
+        await settle(1.5)
+        let content = try #require(window.contentView)
+        let handle = try #require(all(SidePanelResizeHandle.self, in: content).first)
+        let sidebar = try #require(controller.paneSidebarHost)
+
+        let recorder = WindowFrameRecorder()
+        try await recorder.start(window)
+        await settle(0.2)
+        // In, by the edge: down to the panel's minimum, then tucked.
+        let width = handle.widthAtDragStart?() ?? 260
+        for step in 1...11 {
+            handle.onDrag?(-CGFloat(step) * 8, width)
+            await settle(0.016)
+        }
+        let beforeTuck = drawnCards(content)
+        // At its minimum now: from here the host neither moves nor resizes.
+        let hostFrame = sidebar.convert(sidebar.bounds, to: nil)
+        var samples: [[ObjectIdentifier: CGRect]] = []
+        var hosts: [CGRect] = []
+        for step in 12...30 {
+            handle.onDrag?(-CGFloat(step) * 8, width)
+            await settle(0.016)
+            samples.append(drawnCards(content))
+            hosts.append(sidebar.convert(sidebar.bounds, to: nil))
+        }
+        handle.onDragEnded?()
+        for _ in 0..<40 {
+            await settle(0.01)
+            samples.append(drawnCards(content))
+        }
+        await settle(0.4)
+        #expect(!controller.paneSidebarState.isExpanded, "tucked into the rail")
+        expectRectTweens(beforeTuck, drawnCards(content), samples, "tuck")
+        for (n, frame) in hosts.enumerated() {
+            #expect(abs(frame.minX - hostFrame.minX) < 0.5 && abs(frame.width - hostFrame.width) < 0.5,
+                    "sample \(n): the sidebar's host moved: \(frame) from \(hostFrame)")
+        }
+        // At rest: the grip lies in the gutter between the rail card and the grid.
+        let grip = handle.convert(handle.bounds, to: nil)
+        let card = sidebar.convert(sidebar.cardRect, to: nil)
+        let grid = try #require(drawnCards(content).values.map(\.minX).min())
+        #expect(grip.minX >= card.maxX - 0.5 && grip.maxX <= grid + 0.5,
+                "the grip is in the gutter: card ends \(card.maxX), grip \(grip.minX)…\(grip.maxX), grid \(grid)")
+
+        // Out again, by the button: the blades still hold still.
+        let beforeExpand = drawnCards(content)
+        controller.setPaneSidebarExpanded(true, cause: "test")
+        samples = []
+        for _ in 0..<60 {
+            await settle(0.01)
+            samples.append(drawnCards(content))
+        }
+        await settle(0.3)
+        expectRectTweens(beforeExpand, drawnCards(content), samples, "expand")
+        let frames = await recorder.stop()
+        for (index, frame) in frames.enumerated() {
+            try? NSBitmapImageRep(cgImage: frame.1).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: "/tmp/pane-stack-snapshots/tuck-\(index).png"))
+        }
+    }
+
+    /// Double-clicking a grip between two cards on show evens out the run,
+    /// as double-clicking a divider evens out its splits.
+    @Test func doubleClickingAGripBetweenCardsEvensTheRun() async throws {
+        // Four side by side with room for fewer: strips, and cards on show.
+        let (controller, window, _) = try await stackedWindow(count: 4, width: 2 * Self.m.width + 420)
+        defer { controller.close() }
+        func shown() -> [CGFloat] {
+            all(PaneCardView.self, in: window.contentView!).filter { $0.window != nil && !$0.isStripShadowed && $0.collapse == 0 }
+                .map(\.drawnPaneInWindow).sorted { $0.minX < $1.minX }.map(\.width)
+        }
+        let grip = try #require(gripsBetweenCards(window).first, "a grip between the cards")
+        drag(grip, by: 70)
+        await settle(0.8)
+        let uneven = shown()
+        try #require(uneven.count >= 2, "cards on show: \(uneven)")
+        #expect((uneven.max() ?? 0) - (uneven.min() ?? 0) > 40, "dragged uneven: \(uneven)")
+
+        let handle = try #require(gripsBetweenCards(window).first)
+        let point = handle.convert(NSPoint(x: handle.bounds.midX, y: handle.bounds.midY), to: nil)
+        let click = try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
+        handle.mouseDown(with: click)
+        await settle(0.8)
+        let even = shown()
+        #expect(even.count == uneven.count && (even.max() ?? 0) - (even.min() ?? 0) < 2,
+                "evened out: \(even), was \(uneven)")
+    }
+
+    /// The user's own gesture, as real mouse events through the window: the
+    /// expanded panel's edge dragged in until it tucks into the rail, then
+    /// out again. Sampled as it goes: the sidebar card's drawn edge, the
+    /// grid's first card, and the drag's bar — which must lie in the gutter
+    /// between them, at every sample. Frames by eye:
+    /// `/tmp/pane-stack-snapshots/mouse-*.png`.
+    @Test func theSidebarsEdgeDraggedByTheMouse() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let panes = (0..<8).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        var tree = SplitTree<PaneView>(view: panes[4])
+        for i in 5..<8 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: .right) }
+        tree = try tree.inserting(view: panes[0], at: panes[4], direction: .left)
+        for i in 1..<4 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: .down) }
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = false
+        controller.setPaneSidebarExpanded(true)
+        controller.paneSidebarState.width = 260
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1300, height: 2 * Self.m.height + 260))
+        await settle(1.5)
+        let content = try #require(window.contentView)
+        let sidebar = try #require(controller.paneSidebarHost)
+        func handle() throws -> SidePanelResizeHandle { try #require(all(SidePanelResizeHandle.self, in: content).first) }
+        func gridLeft() -> CGFloat? { drawnCards(content).values.map(\.minX).min() }
+        func cardRight() -> CGFloat { sidebar.convert(NSPoint(x: sidebar.cardRect.minX + sidebar.drawnCardWidth, y: 0), to: nil).x }
+        var log: [String] = []
+        var misplaced: [String] = []
+        var overlaps: [String] = []
+        func sample(_ what: String) throws {
+            let grid = gridLeft() ?? .nan
+            let edge = cardRight()
+            let bar = try handle().barInWindow
+            log.append("\(what) card \(Int(edge)) grid \(Int(grid)) bar \(bar.map { "\(Int($0.midX))" } ?? "-")")
+            if grid < edge - 1 { overlaps.append(log.last!) }
+            if let bar, bar.midX < edge - 1 || bar.midX > grid + 1 { misplaced.append(log.last!) }
+        }
+        func send(_ type: NSEvent.EventType, x: CGFloat, y: CGFloat) throws {
+            let event = try #require(NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: x, y: y), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+            GutterBar.pointerOverride = NSPoint(x: x, y: y)
+            // To the handle that took the press, as AppKit routes a drag (a
+            // background test host's window can't take the first click).
+            let h = try handle()
+            switch type {
+            case .leftMouseDown: h.mouseDown(with: event)
+            case .leftMouseDragged: h.mouseDragged(with: event)
+            default: h.mouseUp(with: event)
+            }
+        }
+        let recorder = WindowFrameRecorder()
+        try await recorder.start(window)
+        await settle(0.2)
+        defer { GutterBar.pointerOverride = nil }
+        var cardSamples: [String: [[ObjectIdentifier: CGRect]]] = [:]
+        var cardStart: [String: [ObjectIdentifier: CGRect]] = [:]
+        for (name, from, steps, by) in [("in", 0, 30, CGFloat(-8)), ("out", 0, 34, CGFloat(8))] {
+            _ = from
+            cardStart[name] = drawnCards(content)
+            let h = try handle()
+            let r = h.convert(h.bounds, to: nil)
+            let x = r.midX, y = r.midY
+            try send(.leftMouseDown, x: x, y: y)
+            for step in 1...steps {
+                try send(.leftMouseDragged, x: x + CGFloat(step) * by, y: y)
+                for _ in 0..<2 {
+                    await settle(0.008); try sample("\(name) \(step)")
+                    cardSamples[name, default: []].append(drawnCards(content))
+                }
+            }
+            try send(.leftMouseUp, x: x + CGFloat(steps) * by, y: y)
+            for n in 0..<40 {
+                await settle(0.008); try sample("\(name) settle \(n)")
+                cardSamples[name, default: []].append(drawnCards(content))
+            }
+            #expect(controller.paneSidebarState.isExpanded == (name == "out"), "\(name): \(controller.paneSidebarState.isExpanded)")
+        }
+        // The blades on the right: a card whose rect ends where it began
+        // never moves, and every card goes rect to rect — dragged in, and out.
+        // (Width steps of the drag move the run, so only the far-right
+        // cards — those whose right edge stays put — are held to it.)
+        for name in ["in", "out"] {
+            let start = cardStart[name] ?? [:], end = drawnCards(content)
+            let far = start.filter { id, r in end[id].map { abs($0.maxX - r.maxX) < 2 && r.maxX > 1100 } ?? false }
+            expectRectTweens(far, end, cardSamples[name] ?? [], "drag \(name)")
+        }
+        // And by the button, in and out, with no drag at all.
+        for expanded in [false, true] {
+            let start = drawnCards(content)
+            controller.setPaneSidebarExpanded(expanded, cause: "test")
+            var samples: [[ObjectIdentifier: CGRect]] = []
+            for _ in 0..<60 { await settle(0.006); samples.append(drawnCards(content)) }
+            await settle(0.2)
+            expectRectTweens(start, drawnCards(content), samples, expanded ? "button out" : "button in")
+        }
+        let frames = await recorder.stop()
+        for (index, frame) in frames.enumerated() {
+            try? NSBitmapImageRep(cgImage: frame.1).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: "/tmp/pane-stack-snapshots/mouse-\(index).png"))
+        }
+        print("MOUSELOG\n" + log.joined(separator: "\n"))
+        #expect(overlaps.isEmpty, "the grid passed under the sidebar card: \(overlaps.prefix(6))")
+        #expect(misplaced.isEmpty, "the bar left the gutter: \(misplaced.prefix(6))")
+    }
+
+    /// Strips stacked above a pane in a short column: each strip's shadow
+    /// fades out at the strip's ends — never a hard cut there — and stays
+    /// light. Captured by eye: `/tmp/pane-stack-snapshots/strip-shadows.png`.
+    @Test func stripShadowsFadeAtTheirEnds() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let panes = (0..<4).map { _ in PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config)) }
+        var tree = SplitTree<PaneView>(view: panes[0])
+        for i in 1..<4 { tree = try tree.inserting(view: panes[i], at: panes[i - 1], direction: .down) }
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = true
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        // Room for one pane: the other three are strips.
+        window.setContentSize(NSSize(width: 900, height: Self.m.height + 240))
+        await settle(1.2)
+        try await capture(window, "strip-shadows")
+        let strips = all(PaneCardView.self, in: window.contentView!).filter(\.isStripShadowed)
+        #expect(strips.count == 3, "three strips")
+        for card in strips {
+            let layer = try #require(card.stripShadowLayer)
+            #expect(layer.shadowOpacity <= 0.4, "a strip's shadow stays light: \(layer.shadowOpacity)")
+            // Nothing masks the shadow off at the strip's ends: the mask
+            // removes only the card's own shape.
+            let mask = try #require(layer.mask as? CAShapeLayer)
+            let box = try #require(mask.path?.boundingBoxOfPath)
+            #expect(box.width >= layer.bounds.width - 0.5 && box.height >= layer.bounds.height - 0.5,
+                    "the shadow's mask cuts it off at the strip's ends: \(box) in \(layer.bounds)")
+        }
+    }
 }
 
 /// Records a window at its display's frame rate (ScreenCaptureKit, own window:

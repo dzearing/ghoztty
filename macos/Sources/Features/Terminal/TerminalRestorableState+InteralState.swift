@@ -19,6 +19,9 @@ extension TerminalRestorableState {
         // Window-level title override (pins the titlebar over any tab/pane
         // title). Optional so version-7 archives decode fine (missing ⇒ nil).
         let windowTitleOverride: String?
+        // The user typed it (`windowTitleIsUsers`). Optional/additive: older
+        // archives decode nil, a script's title.
+        let windowTitleSetByUser: Bool?
 
         // The pane sidebar's layout flags. The STASH itself rides in
         // `surfaceTree` (SplitTree encodes it). Optional: older archives
@@ -46,6 +49,7 @@ extension TerminalRestorableState {
             tabColor: TerminalTabColor?,
             titleOverride: String?,
             windowTitleOverride: String? = nil,
+            windowTitleSetByUser: Bool? = nil,
             paneSidebarPinned: Bool? = nil,
             paneSidebarHidden: Bool? = nil,
             paneSidebarOrder: [UUID]? = nil,
@@ -58,6 +62,7 @@ extension TerminalRestorableState {
             self.tabColor = tabColor
             self.titleOverride = titleOverride
             self.windowTitleOverride = windowTitleOverride
+            self.windowTitleSetByUser = windowTitleSetByUser
             self.paneSidebarPinned = paneSidebarPinned
             self.paneSidebarHidden = paneSidebarHidden
             self.paneSidebarOrder = paneSidebarOrder
@@ -82,6 +87,7 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
             tabColor: (controller.window as? TerminalWindow)?.tabColor,
             titleOverride: controller.titleOverride,
             windowTitleOverride: controller.windowTitleOverride,
+            windowTitleSetByUser: controller.windowTitleIsUsers ? true : nil,
             paneSidebarPinned: sidebar.0,
             paneSidebarHidden: sidebar.1,
             paneSidebarOrder: sidebar.3,

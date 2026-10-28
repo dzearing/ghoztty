@@ -1615,6 +1615,7 @@ class AppDelegate: NSObject,
         sessionID: String?,
         windowTitle: String? = nil,
         windowTitleOverride: String? = nil,
+        windowTitleSetByUser: Bool = false,
         ipcName: String? = nil,
         workingDirectory: String? = nil,
         shell: String? = nil,
@@ -1710,6 +1711,7 @@ class AppDelegate: NSObject,
         // tab/pane title). Set AFTER `remoteManifestEntryID` above so the
         // didSet re-persists it into the fresh (replacing) manifest entry.
         if let windowTitleOverride, !windowTitleOverride.isEmpty {
+            controller.windowTitleIsUsers = windowTitleSetByUser
             controller.windowTitleOverride = windowTitleOverride
         }
 
@@ -1913,6 +1915,7 @@ class AppDelegate: NSObject,
                         sessionID: sessionID,
                         windowTitle: entry.windowTitle,
                         windowTitleOverride: entry.windowTitleOverride,
+                        windowTitleSetByUser: entry.windowTitleSetByUser == true,
                         ipcName: entry.ipcName,
                         replacingManifestEntry: entry.id)
                 }

@@ -218,14 +218,18 @@ struct PaneSidebarView: View {
     /// list. Two lists, and a drag moves a pane within either or across: into
     /// the tray stashes it, out restores. (The tray was first anchored at the
     /// bottom of the bar, which left it far from the panes it is for.) In the
-    /// rail, the header is its + alone.
+    /// rail, the header is a + alone (a new window).
     @ViewBuilder
     private var thisWindowList: some View {
         let content = VStack(alignment: .leading, spacing: 0) {
             if isRail {
                 // The header with its text taken away, as a tile is its row:
-                // the window's +, at the header's height, so no icon moves.
-                PaneSidebarRailAddSlot { controller.addPaneFromSidebar() }
+                // a +, at the header's height, so no icon moves. It is the
+                // panel header's + — a new window, as Cmd-N — the + a person
+                // reaches for in the rail; a pane is Cmd-D away.
+                PaneSidebarRailAddSlot {
+                    BaseTerminalController.newWindowFromSidebar(controller.ghostty, from: controller)
+                }
                 paneRows(controller, isThisWindow: true, indent: 0)
                 tray(controller, isThisWindow: true, indent: 0)
             } else {
@@ -1088,7 +1092,7 @@ struct PaneSidebarWindowHeader: View {
             guard let name = name?.trimmingCharacters(in: .whitespaces) else { return }
             // Unchanged: don't pin a title that was following the shell.
             guard name != currentTitle else { return }
-            owner.setWindowTitle(name.isEmpty ? nil : name)
+            owner.renameWindowKeepingPlace(name.isEmpty ? nil : name)
         }
         .frame(height: Self.contentHeight)
     }
@@ -1113,13 +1117,14 @@ struct PaneSidebarWindowHeader: View {
     }
 }
 
-/// The rail's stand-in for this window's header: the window's + alone, in a
-/// slot exactly the header's height (`PaneSidebarWindowHeader.height`).
+/// The rail's stand-in for this window's header: a + alone — a new window,
+/// as the panel header's + — in a slot exactly the header's height
+/// (`PaneSidebarWindowHeader.height`).
 struct PaneSidebarRailAddSlot: View {
     let action: () -> Void
 
     var body: some View {
-        PaneSidebarItemButton(symbol: "plus", help: "New pane", action: action)
+        PaneSidebarItemButton(symbol: "plus", help: "New window", action: action)
             .frame(maxWidth: .infinity)
             .frame(height: PaneSidebarWindowHeader.height)
     }
@@ -1622,22 +1627,35 @@ struct PaneSidebarSearchField: NSViewRepresentable {
 extension BaseTerminalController {
     /// Rename project group `project` to `name`: each of its `windows` (with
     /// its own name, the part after `<project>: `) is retitled
-    /// `<name>: <label>` — pinned, as Change Window Title pins it — and the
-    /// group keeps its place in the list. An empty name takes them out of
-    /// any group, each to its own name.
+    /// `<name>: <label>` — pinned, as Change Window Title pins it — and
+    /// nothing moves in the list (`PaneSidebarWindowGrouping.renaming`). An
+    /// empty name takes them out of any group, each to its own name, where
+    /// the group was.
     static func renameGroupFromSidebar(
         _ project: String, to name: String, windows: [(BaseTerminalController, String)]
     ) {
-        let old = PaneSidebarWindowGrouping.key(project: project)
-        let new = PaneSidebarWindowGrouping.key(project: name)
+        guard let sections = windows.first?.0.paneSidebarSections else { return }
         let shared = PaneSidebarSharedState.shared
-        if !name.isEmpty, let index = shared.windowOrder.firstIndex(of: old) {
-            var order = shared.windowOrder
-            if order.contains(new) { order.remove(at: index) } else { order[index] = new }
-            shared.windowOrder = order
-        }
+        let order = PaneSidebarWindowGrouping.renaming(project: project, to: name, in: sections)
+        if order != shared.windowOrder { shared.windowOrder = order }
         for (window, label) in windows {
-            window.setWindowTitle(name.isEmpty ? label : "\(name): \(label)")
+            window.setWindowTitle(name.isEmpty ? label : "\(name): \(label)", byUser: true)
         }
+    }
+
+    /// Retitle this window as the user (`windowTitleIsUsers`: no script
+    /// renames over it), as Change Window Title does (nil follows its panes
+    /// again), without moving it in the all-windows list: the list is
+    /// pinned as it was shown (`PaneSidebarWindowGrouping.renaming`), in
+    /// every window's sidebar. A rename by the user — the sidebar's field,
+    /// the Change Window Title prompt; a programmatic title (`+rename`,
+    /// `+new-window --title`) still places a window by name.
+    func renameWindowKeepingPlace(_ title: String?) {
+        let sections = paneSidebarSections
+        setWindowTitle(title, byUser: true)
+        let shared = PaneSidebarSharedState.shared
+        let order = PaneSidebarWindowGrouping.renaming(
+            window: paneSidebarState.windowID, to: PaneSidebarText.windowTitle(of: self), in: sections)
+        if order != shared.windowOrder { shared.windowOrder = order }
     }
 }

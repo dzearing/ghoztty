@@ -71,6 +71,9 @@ enum IPCData: Encodable {
         let target: String?
         let focused: Bool
         let tabs: [TabData]
+        /// The window's title was typed by the user, so `+rename` leaves it
+        /// alone. Additive: an older app never sends it.
+        let title_set_by_user: Bool
     }
 
     struct TabData: Encodable {

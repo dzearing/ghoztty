@@ -115,10 +115,15 @@ each).
 a strip that has another between it and the run reaches 12pt under that one
 (`Metrics.bladeTuck`), its rounded edge out of sight — overlaid bars, not pills
 touching at their corners. Each still shows 36pt, its title centered on what
-shows (`PaneCardView.titleRect`). Each casts a tight shadow that leans AWAY
-from the run onto the blade behind it and stops at its own sides; the shadow
-follows `collapse`, so it comes on as a card narrows into its strip rather than
-snapping in when the glide lands.
+shows (`PaneCardView.titleRect`). Each casts a tight, light shadow (30% on
+dark, 14% on light) that leans AWAY from the run onto the blade behind it.
+Along the strip it is cast from a shape pulled in by the corner radius from
+each end, so it fades out inside the strip's rounded corners — never masked
+off flat at the ends (it was: a hard cut by each corner), nor haloing past
+them; the mask removes only the card's own shape. The shadow follows
+`collapse`, so it comes on as a card narrows into its strip rather than
+snapping in when the glide lands. Test: `stripShadowsFadeAtTheirEnds` (and
+its capture, `/tmp/pane-stack-snapshots/strip-shadows.png`).
 
 **A strip that stays a strip never moves** when another pane collapses between
 it and the run: in a glide it moves by its outer edge (the one that shows), and
@@ -126,6 +131,14 @@ takes its new reach under the newcomer (`bladeTuck`) only when the glide is
 over, once the newcomer has landed over it — reaching out sooner put its edge
 in the gutter ahead of the newcomer and jiggled a trailing strip's outer edge
 (`PaneStageView.stepGlide`, `aStripStaysPutWhenAnotherCollapsesOntoIt`).
+
+**Double-clicking a grip between two cards evens out the run on show**, as
+double-clicking a split divider evens out its splits
+(`TerminalSplitOperation.evenRun`): the row's ratios when all of it is on
+show, else the run's shares (`PaneStackState.show`). It had no double-click,
+so the second click began a drag instead
+(`doubleClickingAGripBetweenCardsEvensTheRun`). A grip where the run meets
+its strips has none.
 
 Every resizer takes the mouse **in its gutter and nowhere else** (`Divider.gutter`, `StackHandle.gutter`): split
 dividers, grips between cards, the grip where the run meets its strips, and the

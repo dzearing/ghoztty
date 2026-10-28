@@ -41,14 +41,19 @@ struct PaneSidebarContainer<Content: View>: View {
             if mode != .hidden {
                 // The frame reaches past the column over the gutter its
                 // resize grip lies in (`edgeGrip`): AppKit never hit-tests
-                // the part of a view outside its parent's bounds. `hitTest`
-                // limits the extra strip to the grip. Its width animates as
-                // the sidebar collapses or expands, while the grid glides.
+                // the part of a view outside its parent's bounds. It is as
+                // wide as the expanded panel needs in EITHER mode, and never
+                // animated: the card glides inside it (`PaneSidebarCardGlide`).
+                // Sized to the mode, SwiftUI animated its frame — origin and
+                // all — on a collapse, and the card, its contents and the
+                // grip swung off to the left and back. `hitTest` limits what
+                // takes clicks to the card and its grip; the rest of it is
+                // see-through and passes them to the grid.
                 PaneSidebarHostRepresentable(
                     controller: controller, state: state, mode: mode,
                     canExpand: PaneSidebarState.canExpand(windowWidth: windowWidth))
-                    .frame(width: column + PaneSidebarState.edgeReach(for: mode, elevated: elevated))
-                    .animation(PaneSidebarState.columnAnimation, value: mode)
+                    .frame(width: PaneSidebarState.hostWidth(panelWidth: state.width, elevated: elevated))
+                    .transaction { $0.animation = nil }
                     .frame(maxHeight: .infinity)
                     // Up beside the tab bar, which then starts at the
                     // sidebar's edge: the sidebar runs the window's height.
@@ -110,6 +115,32 @@ final class PaneSidebarHostView: NSView {
     private var hosting: NSHostingView<AnyView>?
     private var cancellables: Set<AnyCancellable> = []
 
+    /// The card's width as drawn while it collapses or expands; it follows
+    /// the window's grid (`PaneSidebarCardGlide.stage`).
+    let cardGlide = PaneSidebarCardGlide()
+
+    /// The card's width as drawn now: mid-glide, between the two.
+    var drawnCardWidth: CGFloat {
+        cardGlide.width ?? PaneSidebarState.cardWidth(for: mode, panelWidth: state.width)
+    }
+
+    /// The edge grip as the card is drawn now, in window coordinates: where
+    /// the drag's bar goes (`SidePanelResizeHandle.gutterInWindow`).
+    var gripInWindow: CGRect {
+        let card = cardRect
+        let grip = PaneSidebarState.edgeGrip(for: mode, elevated: elevated)
+        return convert(NSRect(x: card.minX + drawnCardWidth + grip.offset, y: card.minY,
+                              width: grip.width, height: card.height), to: nil)
+    }
+
+    /// The sidebar is about to collapse or expand (`changingPaneSidebarColumn`):
+    /// its card starts gliding in the same turn as the grid, not when SwiftUI
+    /// next redraws the sidebar — a frame later, the grid had already moved
+    /// under the card.
+    func noteModeChange(to mode: PaneSidebarState.Mode) {
+        cardGlide.update(mode: mode, width: PaneSidebarState.cardWidth(for: mode, panelWidth: state.width))
+    }
+
     init(controller: BaseTerminalController, state: PaneSidebarState, mode: PaneSidebarState.Mode,
          canExpand: Bool = true) {
         self.controller = controller
@@ -126,6 +157,15 @@ final class PaneSidebarHostView: NSView {
 
         render()
         controller.paneSidebarHost = self
+        cardGlide.stage = { [weak self] in
+            guard let content = self?.window?.contentView else { return nil }
+            func find(_ v: NSView) -> PaneStageView? {
+                if let stage = v as? PaneStageView { return stage }
+                for sub in v.subviews { if let stage = find(sub) { return stage } }
+                return nil
+            }
+            return find(content)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -140,7 +180,8 @@ final class PaneSidebarHostView: NSView {
     private func render() {
         guard let controller else { return }
         let root = AnyView(PaneSidebarChrome(
-            controller: controller, state: state, geometry: geometry, mode: mode, canExpand: canExpand))
+            controller: controller, state: state, geometry: geometry, mode: mode, canExpand: canExpand,
+            glide: cardGlide))
         if let hosting {
             hosting.rootView = root
         } else {
@@ -225,7 +266,7 @@ final class PaneSidebarHostView: NSView {
 }
 
 /// The card or panel around `PaneSidebarView`, by mode — the two crossfading
-/// as the host's width animates between them — and the edge grip, in the
+/// as the card's width glides between them — and the edge grip, in the
 /// gutter beside whichever is drawn.
 private struct PaneSidebarChrome: View {
     @ObservedObject var controller: BaseTerminalController
@@ -233,6 +274,12 @@ private struct PaneSidebarChrome: View {
     let geometry: PaneSidebarGeometry
     let mode: PaneSidebarState.Mode
     let canExpand: Bool
+
+    /// The card's width as drawn: on a collapse or expand it glides there on
+    /// the grid's clock (`PaneSidebarCardGlide`), so the gutter between the
+    /// card and the panes holds while both move. The host's, so it outlives
+    /// a re-render.
+    @ObservedObject var glide: PaneSidebarCardGlide
 
     /// One raised glass card in both modes — the rail's width collapsed, the
     /// panel's expanded — with the same margins, top and height, so a pane's
@@ -243,26 +290,45 @@ private struct PaneSidebarChrome: View {
     var body: some View {
         let background = controller.ghostty.config.backgroundColor
         let insets = railInsets
+        let target = PaneSidebarState.cardWidth(for: mode, panelWidth: state.width)
+        let width = glide.width ?? target
+        // Mid-glide both are drawn, each at its own width and place — the
+        // panel's rows never re-lay out to the card's width, the rail's tiles
+        // never move — and crossfade by how far the card is between the two
+        // widths. At rest, only the mode's. (A SwiftUI opacity transition
+        // here never ran: the rail replaced the panel in one frame.)
+        let gliding = glide.width != nil
+        let rail = PaneSidebarState.railCardWidth
+        let open = gliding
+            ? Swift.min(1, Swift.max(0, (width - rail) / Swift.max(1, state.width - rail)))
+            : (mode == .expanded ? 1 : 0)
         ZStack(alignment: .topLeading) {
-            if mode == .expanded {
+            if mode == .expanded || (gliding && mode != .hidden) {
                 PaneSidebarView(
                     controller: controller, state: state, geometry: geometry,
                     isRail: false, isFlat: false)
                     .frame(width: state.width)
                     .frame(maxHeight: .infinity, alignment: .top)
-                    .transition(.opacity)
-            } else if mode == .collapsed {
+                    .opacity(open)
+                    .allowsHitTesting(mode == .expanded)
+            }
+            if mode == .collapsed || (gliding && mode != .hidden) {
                 PaneSidebarView(
                     controller: controller, state: state, geometry: geometry,
                     isRail: true, isFlat: false, canExpand: canExpand)
-                    .frame(width: PaneSidebarState.railCardWidth)
+                    .frame(width: rail)
                     .frame(maxHeight: .infinity, alignment: .top)
-                    .transition(.opacity)
+                    .opacity(1 - open)
+                    .allowsHitTesting(mode == .collapsed)
             }
         }
         .padding(.top, state.tabRowHeight)
+        // The panel or rail, laid out at its own width, cut by the card as
+        // it is drawn: nothing of it shows past the card while it glides.
+        .frame(width: width, alignment: .topLeading)
+        .clipped()
         .modifier(PaneSidebarCard(
-            width: PaneSidebarState.cardWidth(for: mode, panelWidth: state.width),
+            width: width,
             margins: EdgeInsets(
                 top: insets.vertical, leading: insets.leading,
                 bottom: insets.vertical, trailing: insets.trailing),
@@ -271,10 +337,16 @@ private struct PaneSidebarChrome: View {
             background: background))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay(alignment: .topLeading) {
-            if mode != .hidden { resizeHandle }
+            if mode != .hidden { resizeHandle(cardWidth: width) }
         }
-        .animation(PaneSidebarState.columnAnimation, value: mode)
+        // No SwiftUI animation: the card's width and the crossfade follow
+        // the grid's glide (`PaneSidebarCardGlide`), frame by frame.
+        .transaction { $0.animation = nil }
         .coordinateSpace(name: PaneSidebarGeometry.space)
+        .onAppear { glide.update(mode: mode, width: target) }
+        .onChange(of: PaneSidebarCardGlide.Key(mode: mode, width: target)) {
+            glide.update(mode: $0.mode, width: $0.width)
+        }
     }
 
     private var elevated: Bool { controller.ghostty.config.macosPaneStyle == .elevated }
@@ -284,9 +356,9 @@ private struct PaneSidebarChrome: View {
     /// minimum it pulls the rail out, and well under it tucks the panel back
     /// into the rail (`PaneSidebarState.edgeDrag`), within one drag, both
     /// ways.
-    private var resizeHandle: some View {
+    private func resizeHandle(cardWidth: CGFloat) -> some View {
         let grip = PaneSidebarState.edgeGrip(for: mode, elevated: elevated)
-        let cardMaxX = railInsets.leading + PaneSidebarState.cardWidth(for: mode, panelWidth: state.width)
+        let cardMaxX = railInsets.leading + cardWidth
         return PaneSidebarResizeHandle(
             currentWidth: {
                 mode == .collapsed ? PaneSidebarState.railCardWidth : state.width
@@ -310,6 +382,114 @@ private struct PaneSidebarChrome: View {
     }
 }
 
+/// The sidebar card's drawn width while it collapses or expands. It FOLLOWS
+/// the grid: the grid glides over by the column's change at the same moment
+/// (`PaneStackState.noteColumnShift`), and after each of its steps the card's
+/// edge is put where the grid's leading edge is, less the gutter between them
+/// (`PaneStageView.leadingLag`) — so the gutter holds and neither passes
+/// under the other, whatever either clock does. Two easings run side by side
+/// drifted apart by a frame or two: the card grew over the grid, or the grid
+/// slid under the card. With no grid glide to follow (none came, or it is
+/// over), it eases on its own, on the grid's curve (`PaneStageView.glideTime`).
+/// Nil: not gliding, the card is its width.
+@MainActor
+final class PaneSidebarCardGlide: ObservableObject {
+    struct Key: Equatable {
+        let mode: PaneSidebarState.Mode
+        let width: CGFloat
+    }
+
+    @Published private(set) var width: CGFloat?
+    /// The grid's glide to follow, found when a glide begins.
+    var stage: () -> PaneStageView? = { nil }
+    /// The mode and width last seen: a mode change glides from that width.
+    private var mode: PaneSidebarState.Mode?
+    private var known: CGFloat?
+    private var from: CGFloat = 0
+    private var target: CGFloat = 0
+    private var began: CFTimeInterval = 0
+    private var last: CFTimeInterval = 0
+    private var followed = false
+    private var timer: Timer?
+    private var observer: NSObjectProtocol?
+
+    /// How long it waits for the grid's glide to begin before going on alone.
+    static let followWait: CFTimeInterval = 0.15
+
+    /// The card's mode and width now. A new mode glides from the width it
+    /// is drawn at; a new width while gliding is eased toward.
+    func update(mode: PaneSidebarState.Mode, width to: CGFloat) {
+        defer { self.mode = mode; known = to }
+        if let drawn = width ?? known, self.mode != nil, mode != self.mode, abs(to - drawn) >= 0.5 {
+            width = drawn
+            from = drawn
+            target = to
+            began = CACurrentMediaTime()
+            last = began
+            followed = false
+            start(following: stage())
+        } else if width != nil {
+            target = to
+        }
+    }
+
+    private func start(following stage: PaneStageView?) {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = stage.map {
+            NotificationCenter.default.addObserver(forName: PaneStageView.didStep, object: $0, queue: nil) { [weak self] note in
+                MainActor.assumeIsolated { self?.follow(note.object as? PaneStageView) }
+            }
+        }
+        guard timer == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.step() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    /// After a grid step: the card's edge where the grid's leading edge is.
+    private func follow(_ stage: PaneStageView?) {
+        guard width != nil else { return }
+        guard let lag = stage?.leadingLag else {
+            // The grid's glide is over: so is this one.
+            if followed { finish() }
+            return
+        }
+        followed = true
+        set(target + lag)
+    }
+
+    /// The timer: hold for the grid's glide to begin; with none to follow,
+    /// ease alone.
+    private func step() {
+        guard let current = width else { return finish() }
+        let now = CACurrentMediaTime()
+        defer { last = now }
+        if followed { return }
+        if stage() != nil, now - began < Self.followWait { return }
+        let k = 1 - exp(-(now - last) / PaneStageView.glideTime)
+        let next = current + (target - current) * k
+        if abs(target - next) < 0.5 { finish() } else { set(next) }
+    }
+
+    /// Between where it began and where it is going, never past either.
+    private func set(_ next: CGFloat) {
+        width = Swift.min(Swift.max(next, Swift.min(from, target)), Swift.max(from, target))
+        // The drag's bar, if any, stays on the edge as it is drawn.
+        GutterBar.refreshActive()
+    }
+
+    private func finish() {
+        timer?.invalidate()
+        timer = nil
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        width = nil
+        GutterBar.refreshActive()
+    }
+}
+
 /// `SidePanelResizeHandle`, the viewer panel's edge-drag view, for SwiftUI.
 private struct PaneSidebarResizeHandle: NSViewRepresentable {
     let currentWidth: () -> CGFloat
@@ -328,6 +508,19 @@ private struct PaneSidebarResizeHandle: NSViewRepresentable {
     private func configure(_ view: SidePanelResizeHandle) {
         view.widthAtDragStart = currentWidth
         view.onDrag = onDrag
+        view.gutterInWindow = { [weak view] in view?.enclosingSidebarHost?.gripInWindow }
+    }
+}
+
+private extension NSView {
+    /// The pane sidebar host this view is in.
+    var enclosingSidebarHost: PaneSidebarHostView? {
+        var view = superview
+        while let v = view {
+            if let host = v as? PaneSidebarHostView { return host }
+            view = v.superview
+        }
+        return nil
     }
 }
 

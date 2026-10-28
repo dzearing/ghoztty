@@ -488,11 +488,11 @@ final class PaneSidebarItemDrag: ObservableObject {
         }
     }
 
-    /// Pin window `id`'s title (as Change Window Title does).
+    /// Pin window `id`'s title as the user's (as Change Window Title does).
     private func rename(_ id: UUID, to title: String, in controller: BaseTerminalController) {
         controller.paneSidebarAllControllers
             .first { $0.paneSidebarState.windowID == id }?
-            .setWindowTitle(title)
+            .setWindowTitle(title, byUser: true)
     }
 
     /// Settling, once its new place is laid out: glide the item from where
