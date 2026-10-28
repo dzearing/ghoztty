@@ -28,6 +28,10 @@ test {
     // Pure win32 unfocused-split dim logic (T74), same no-OS-imports deal.
     _ = @import("win32/dim_math.zig");
 
+    // Planted one-frame defects for the T2373 lab's positive controls
+    // (T2383): the spec parser and the fire rule, same no-OS-imports deal.
+    _ = @import("win32/lab_plant.zig");
+
     // Pure win32 pane-popup clipping (T2227), same no-OS-imports deal.
     _ = @import("win32/pane_clip_math.zig");
 

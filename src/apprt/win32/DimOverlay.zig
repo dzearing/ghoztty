@@ -18,6 +18,8 @@ const w32 = @import("win32.zig");
 const dim_math = @import("dim_math.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const pane_clip = @import("pane_clip.zig");
+const FrameClock = @import("FrameClock.zig");
+const lab_plant = @import("lab_plant.zig");
 
 const log = std.log.scoped(.win32_dim_overlay);
 
@@ -52,6 +54,19 @@ pub const DimOverlay = struct {
     /// The shape the window region was last cut for; `applyRegion` runs when
     /// it changes.
     shape: Shape = .{},
+
+    /// The frame lab's planted overlay lag (T2383, `lab_plant.zig`): how many
+    /// times this wash has moved, the frame-clock ticks left before a held
+    /// wash catches up (0 = not held), and the colour and alpha the latest
+    /// `show` asked for, which the catch-up re-applies.
+    lab_moves: u32 = 0,
+    lab_hold: u8 = 0,
+    lab_color: u32 = 0,
+    lab_alpha: u8 = 0,
+
+    /// The frame-clock subscription that releases a held wash. Its own
+    /// window's id space, so it cannot collide with `msg_timer`'s.
+    const LAB_HOLD_TIMER_ID: usize = 1;
 
     /// A pane's banner strip sits in a band the layout reserves ABOVE the
     /// terminal's window (T101). Mac's unfocused-split dim is the last layer
@@ -146,6 +161,12 @@ pub const DimOverlay = struct {
     /// handle is nulled and this — and every later popup in the pass — drops
     /// to a direct `SetWindowPos`. Same contract as `Window.placePane`.
     pub fn show(self: *DimOverlay, color: u32, alpha: u8, batch: ?*?w32.HDWP) bool {
+        // A wash the lab is holding back stays exactly where it is until its
+        // release tick, which re-shows it with the latest request (T2383).
+        self.lab_color = color;
+        self.lab_alpha = alpha;
+        if (self.lab_hold != 0) return false;
+
         const color_changed = self.brush == null or color != self.color;
         if (color_changed) {
             if (self.brush) |b| _ = w32.DeleteObject(@ptrCast(b));
@@ -227,6 +248,22 @@ pub const DimOverlay = struct {
             .alpha_changed = alpha_changed,
             .color_changed = color_changed,
         })) return false;
+
+        // The lab's planted overlay lag (T2383): on the armed move, leave the
+        // wash where it was while its pane goes on, for at least one whole
+        // display refresh. Only a real MOVE of a wash already on screen
+        // counts; showing, recolouring and re-alpha'ing are not lag.
+        if (self.shown and !dim_math.Placement.eql(self.placement, placement)) {
+            if (lab_plant.plan().overlay != 0) {
+                self.lab_moves +|= 1;
+                if (lab_plant.plan().fires(.overlay, self.lab_moves)) {
+                    lab_plant.noteFired(.overlay, self.lab_moves);
+                    self.lab_hold = lab_plant.overlay_hold_ticks;
+                    _ = FrameClock.arm(self.hwnd, LAB_HOLD_TIMER_ID, 16);
+                    return false;
+                }
+            }
+        }
 
         // And when a re-blend IS unavoidable, start it from clean pixels
         // rather than from the last blend's output: drop the overlay, make
@@ -373,8 +410,25 @@ pub const DimOverlay = struct {
     }
 
     pub fn hide(self: *DimOverlay) void {
+        if (self.lab_hold != 0) {
+            self.lab_hold = 0;
+            FrameClock.disarm(self.hwnd, LAB_HOLD_TIMER_ID);
+        }
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         self.shown = false;
+    }
+
+    /// One frame-clock tick of a held wash (T2383): on the last one, catch up
+    /// to wherever the pane is now.
+    fn onLabHoldTick(self: *DimOverlay) void {
+        if (self.lab_hold == 0) {
+            FrameClock.disarm(self.hwnd, LAB_HOLD_TIMER_ID);
+            return;
+        }
+        self.lab_hold -= 1;
+        if (self.lab_hold != 0) return;
+        FrameClock.disarm(self.hwnd, LAB_HOLD_TIMER_ID);
+        _ = self.show(self.lab_color, self.lab_alpha, null);
     }
 
     /// The dim wash, into whichever DC this overlay is handed — the paint
@@ -408,6 +462,69 @@ pub const T2308_NEUTERED = false;
 
 test "DimOverlay: the T2308 negative control ships clear" {
     try std.testing.expect(!T2308_NEUTERED);
+}
+
+test "DimOverlay: the lab's planted lag holds the armed move through two ticks, then catches up (T2383)" {
+    const testing = std.testing;
+    const hinstance = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
+    const class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyDimLabTest");
+    const wc = w32.WNDCLASSEXW{
+        .cbSize = @sizeOf(w32.WNDCLASSEXW),
+        .style = 0,
+        .lpfnWndProc = &w32.DefWindowProcW,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = hinstance,
+        .hIcon = null,
+        .hCursor = null,
+        .hbrBackground = null,
+        .lpszMenuName = null,
+        .lpszClassName = class,
+        .hIconSm = null,
+    };
+    _ = w32.RegisterClassExW(&wc);
+    defer _ = w32.UnregisterClassW(class, hinstance);
+    const title = std.unicode.utf8ToUtf16LeStringLiteral("dim lab test");
+    const top = w32.CreateWindowExW(0, class, title, w32.WS_POPUP, 0, 0, 600, 400, null, null, hinstance, null) orelse return error.Win32Error;
+    defer _ = w32.DestroyWindow(top);
+    const owner = w32.CreateWindowExW(0, class, title, w32.WS_CHILD | w32.WS_VISIBLE_STYLE, 20, 100, 300, 200, top, null, hinstance, null) orelse return error.Win32Error;
+
+    lab_plant.setPlanForTest(.{ .overlay = 2 });
+    defer lab_plant.setPlanForTest(.{});
+
+    const d = try DimOverlay.create(testing.allocator, owner, hinstance);
+    defer d.destroy();
+    const color = w32.RGB(16, 16, 20);
+
+    // Showing is not a move; the first move is event 1 and is not armed.
+    try testing.expect(d.show(color, 77, null));
+    _ = w32.SetWindowPos(owner, null, 30, 100, 300, 200, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+    try testing.expect(d.show(color, 77, null));
+    const before = d.placement;
+
+    // Move 2 is armed: the wash stays put, and so does every show until the
+    // release, however many moves the pane makes meanwhile.
+    _ = w32.SetWindowPos(owner, null, 40, 100, 280, 200, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+    try testing.expect(!d.show(color, 77, null));
+    try testing.expect(dim_math.Placement.eql(before, d.placement));
+    _ = w32.SetWindowPos(owner, null, 50, 100, 260, 200, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+    try testing.expect(!d.show(color, 77, null));
+    try testing.expect(dim_math.Placement.eql(before, d.placement));
+
+    // The first tick may share the refresh the hold began in: still held.
+    d.onLabHoldTick();
+    try testing.expect(dim_math.Placement.eql(before, d.placement));
+    // The second catches up to where the pane is NOW.
+    d.onLabHoldTick();
+    var orect: w32.RECT = undefined;
+    try testing.expect(w32.GetWindowRect(owner, &orect) != 0);
+    try testing.expectEqual(orect.left, d.placement.left);
+    try testing.expectEqual(orect.right - orect.left, d.placement.width);
+    try testing.expectEqual(@as(u8, 0), d.lab_hold);
+
+    // Fired once: the next move goes straight through.
+    _ = w32.SetWindowPos(owner, null, 60, 100, 240, 200, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+    try testing.expect(d.show(color, 77, null));
 }
 
 test "DimOverlay: the wash covers the banner band and stacks over the strip (T2308)" {
@@ -524,6 +641,11 @@ fn dimWndProc(
 
     switch (msg) {
         w32.WM_MOUSEACTIVATE => return w32.MA_NOACTIVATE,
+
+        w32.WM_TIMER => {
+            if (wparam == DimOverlay.LAB_HOLD_TIMER_ID) self.onLabHoldTick();
+            return 0;
+        },
 
         w32.WM_ERASEBKGND => {
             if (wparam == 0) return 0;

@@ -1791,6 +1791,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.size.screen.width != surface_size.width or
                 self.size.screen.height != surface_size.height;
 
+            // T2383: the frame lab's planted defects, its positive controls.
+            // `stale` presents this one frame at the size the pane HAD, and
+            // `erase` presents it as solid magenta, so the lab's scorer can be
+            // shown a known-bad frame. Off (`.none`) unless
+            // `GHOZTTY_LAB_PLANT` armed it; see `apprt/win32/lab_plant.zig`.
+            const LabFire = enum { none, erase, stale };
+            const lab_fire: LabFire = if (comptime apprt.runtime == apprt.win32)
+                switch (self.rt_surface.labPlantOnFrame(size_changed)) {
+                    .none => .none,
+                    .erase => .erase,
+                    .stale => .stale,
+                }
+            else
+                .none;
+
             // Conditions under which we need to draw the frame, otherwise we
             // don't need to since the previous frame should be identical.
             const needs_redraw =
@@ -1841,8 +1856,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             // If our stored size doesn't match the
-            // surface size we need to update it.
-            if (size_changed) {
+            // surface size we need to update it - unless this is the lab's
+            // planted stale-size frame (T2383), which keeps the old size, and
+            // with it the old target, for exactly one present. The next frame
+            // still sees the size change and takes it.
+            if (size_changed and lab_fire != .stale) {
                 self.size.screen = .{
                     .width = surface_size.width,
                     .height = surface_size.height,
@@ -1902,6 +1920,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 defer self.font_grid.lock.unlockShared();
                 frame.color_modified = self.font_grid.atlas_color.modified.load(.monotonic);
                 try self.syncAtlasTexture(&self.font_grid.atlas_color, &frame.color);
+            }
+
+            // The lab's planted magenta frame (T2383): the frame is drawn as
+            // usual and the present clears the window instead of showing it.
+            if (comptime @hasField(GraphicsAPI, "lab_erase_next")) {
+                if (lab_fire == .erase) self.api.lab_erase_next = true;
             }
 
             // Get a frame context from the graphics API.

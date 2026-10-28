@@ -34,6 +34,7 @@ const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
 const w32 = @import("win32.zig");
 const drag_perf = @import("drag_perf.zig");
+const lab_plant = @import("lab_plant.zig");
 const resize_paint = @import("resize_paint.zig");
 const clipboard_open = @import("clipboard_open.zig");
 const utf16_text = @import("utf16_text.zig");
@@ -238,6 +239,11 @@ frame_event: ?w32.HANDLE = null,
 /// thread reads it without a race (unlike `parent_window`, which an adopt
 /// can move).
 present_lag_ms: u8 = 0,
+
+/// Renderer frames that found this pane at a new size, counted for the frame
+/// lab's planted `erase`/`stale` defects (T2383, `lab_plant.zig`). Renderer
+/// thread only - each pane has exactly one - so it needs no atomic.
+lab_resize_frames: u32 = 0,
 
 /// Themed scrollbar (custom layered-popup overlay).
 /// Created lazily after the surface HWND exists.
@@ -5667,6 +5673,24 @@ fn waitForAwaitedFrame(self: *Surface) drag_perf.WaitOutcome {
         );
         if (rc == w32.WAIT_TIMEOUT) timed_out = true else answered = true;
     }
+}
+
+/// Renderer thread, once per drawn frame: should this frame carry one of the
+/// frame lab's planted defects (T2383)? Only frames that found the pane at a
+/// new size count, so `erase@12` means "this pane's twelfth resize frame" -
+/// mid-drag, whatever the drag's speed. With no plan armed it is one load of
+/// an all-zero struct.
+pub fn labPlantOnFrame(self: *Surface, size_changed: bool) lab_plant.FrameFire {
+    const plan = lab_plant.plan();
+    if (!size_changed or (plan.erase == 0 and plan.stale == 0)) return .none;
+    self.lab_resize_frames +|= 1;
+    const fire = plan.frameFire(self.lab_resize_frames);
+    switch (fire) {
+        .none => {},
+        .erase => lab_plant.noteFired(.erase, self.lab_resize_frames),
+        .stale => lab_plant.noteFired(.stale, self.lab_resize_frames),
+    }
+    return fire;
 }
 
 /// Called by the renderer thread after SwapBuffers to signal that a

@@ -4159,6 +4159,24 @@ $GuardTable = @(
             'test\win32\frame-score.ps1'
         )
     },
+    # The lab's deterministic scene and its planted positive controls (T2383).
+    # A card that draws one cell wrong makes every lab frame a false B2/B6, and
+    # a plant that stops firing makes the lab's 100%-caught control vacuous - so
+    # the card, its in-pane runner and the plant parser all make this due. The
+    # hooks themselves sit in big shared files (generic.zig, DimOverlay.zig)
+    # whose other edits must not make it due; DimOverlay's hold has its own unit
+    # test, and section D proves every hook fires on the real app.
+    [pscustomobject]@{
+        Name   = 'frame-lab-card'
+        Script = 'test\win32\frame-lab-card.ps1'
+        Stamp  = 'test\win32\frame-lab-card.stamp.json'
+        Covers = @(
+            'test\win32\lib\FrameLabCard.ps1',
+            'test\win32\lib\lab-card.ps1',
+            'src\apprt\win32\lab_plant.zig',
+            'test\win32\frame-lab-card.ps1'
+        )
+    },
     # The drawn-port helpers and the sweep that keeps them (T694). A script that
     # goes back to guessing a TCP port does not fail here - it fails on some
     # OTHER Tuesday, in some other script, as a fake relay that "never came up",

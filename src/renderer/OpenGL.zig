@@ -77,6 +77,12 @@ rt_surface: *apprt.Surface,
 /// The most recently presented target, in case we need to present it again.
 last_target: ?Target = null,
 
+/// The frame lab's planted magenta frame (T2383, `apprt/win32/lab_plant.zig`):
+/// set by the renderer for one frame, consumed by the next `present`, which
+/// clears the window to magenta instead of blitting the target. Renderer
+/// thread only, like the rest of this struct.
+lab_erase_next: bool = false,
+
 /// Lazily-created FBO + renderbuffer used to downscale the last target
 /// for hero-mode thumbnails (T59a, win32 only). Sized snap_w x snap_h.
 /// Owned by the GL context (freed with it; renderer-thread only).
@@ -840,6 +846,18 @@ pub fn present(self: *OpenGL, target: Target) !void {
     // there's no framework (like GTK's GLArea) that automatically
     // updates glViewport when the window resizes.
     gl.glad.context.Viewport.?(0, 0, @intCast(target.width), @intCast(target.height));
+
+    // The lab's planted one-frame background flash (T2383). The whole window,
+    // not just the target's extent: `glClear` ignores the viewport. The target
+    // is still recorded below, so a `presentLastTarget` shows the real frame.
+    if (self.lab_erase_next) {
+        self.lab_erase_next = false;
+        const m = @import("../apprt/win32/lab_plant.zig").magenta;
+        gl.clearColor(m[0], m[1], m[2], 1.0);
+        gl.clear(gl.c.GL_COLOR_BUFFER_BIT);
+        self.last_target = target;
+        return;
+    }
 
     // Bind the target for reading.
     const fbobind = try target.framebuffer.bind(.read);

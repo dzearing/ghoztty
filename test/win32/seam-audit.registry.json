@@ -354,6 +354,11 @@
             "unset": "shipped-elsewhere",
             "note": "T1035. resize-flicker.ps1 holds each present back 8ms so the resize wait really blocks on the hidden desktop; unset (no lag) is what every other acceptance run and the product use."
         },
+        "GHOZTTY_LAB_PLANT": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2383. frame-lab-card.ps1 arms the frame lab's planted one-frame defects (magenta erase, stale-size present, dim wash held a refresh) to prove they fire once; unset (nothing planted) is what the product and every other acceptance run use, and the same script's sections D4/D5 photograph the unplanted cards first."
+        },
         "GHOZTTY_STACK_SLIDE_MS": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

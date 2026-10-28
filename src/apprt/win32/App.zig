@@ -42,6 +42,7 @@ const RenameDialog = @import("RenameDialog.zig");
 const BannerDialog = @import("BannerDialog.zig");
 const QuickTerminal = @import("QuickTerminal.zig");
 const FrameClock = @import("FrameClock.zig");
+const lab_plant = @import("lab_plant.zig");
 const PaneView = @import("PaneView.zig");
 const CloseUndo = @import("CloseUndo.zig");
 const Surface = @import("Surface.zig");
@@ -829,6 +830,10 @@ pub fn init(
     // still open. Failure here is silent on purpose: a diagnostic must never
     // be the reason a terminal does not start.
     exit_reason.install(core_app.alloc);
+
+    // The frame lab's planted defects (T2383), read before any pane - and
+    // so any renderer thread - exists. Arms nothing unless the env var is set.
+    lab_plant.load();
 
     // Load the configuration for this application.
     const alloc = core_app.alloc;
