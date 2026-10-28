@@ -35,20 +35,36 @@
        against the points sent. Move-only: nothing is launched, so a press
        would click whatever the user left on screen. The cursor is put back;
     C. live: the WGC-drop positive control.
+    D. live: the matrix driver (lib\FrameLabDriver.ps1, T2395). The debug
+       zig-out build is launched per cell with lib\lab-card.ps1 in every pane,
+       each cell runs Invoke-FrameLabCell's protocol, and the run writes
+       results.json and report.html under temp\frame-lab\<stamp>\. By default
+       one cell per pointer interaction at the monitor's own DPI, plus one at
+       a DPI it is not at (Blocked: the display scaling is never touched);
+       -Matrix runs the matrix instead, narrowed by -Interaction / -Panes /
+       -Theme / -Sidebar. The harness asserts the LAB worked - every cell got
+       a verdict, the results file is sound - never that the app passed: a
+       fail verdict is a finding for T2373, not a red harness.
 
-  B and C need nobody at the box: Assert-UserAbsent ends the run as SKIP ALL
-  otherwise, after A. -PureOnly stops after A.
-
-  NOT YET HERE (filed from T2392): launching the card scene per matrix cell,
-  the per-frame live scorer, and Invoke-FrameLabCell end to end with the
-  results JSON and HTML report.
+  B, C and D need nobody at the box: Assert-UserAbsent ends the run as SKIP
+  ALL otherwise, after A. -PureOnly stops after A; -NoMatrix after C.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
 
-  powershell -NoProfile -File test\win32\frame-lab.ps1 [-PureOnly]
+  powershell -NoProfile -File test\win32\frame-lab.ps1 [-PureOnly] [-NoMatrix]
+      [-Matrix [-Interaction ...] [-Panes ...] [-Theme ...] [-Sidebar ...]] [-Busy]
 #>
 [CmdletBinding()]
-param([switch]$PureOnly)
+param(
+    [switch]$PureOnly,
+    [switch]$NoMatrix,
+    [switch]$Matrix,
+    [string[]]$Interaction,
+    [int[]]$Panes,
+    [string[]]$Theme,
+    [string[]]$Sidebar,
+    [switch]$Busy
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -221,6 +237,9 @@ public static class GflCalibrate {
 }
 Import-FrameLabInput
 Import-FrameCapture
+. (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+. (Join-Path $PSScriptRoot 'lib\FrameLabDriver.ps1')
+Import-FrameLabDriver
 
 <#
 The WGC-drop control's decision, pure. From the stalled accounting run: the
@@ -326,6 +345,74 @@ try {
     Assert "A8 every SendInput INPUT the lab builds is sizeof(INPUT) = $want bytes, the only cbSize SendInput accepts" (
         [GliSendInputSink]::InputBytes -eq $want -and [GflCalibrate]::InputBytes -eq $want -and [GltKeys]::InputBytes -eq $want) $sizes
 
+    # ---- the matrix driver's pure parts (T2395) ------------------------------
+    $tc = @{ flat = (Get-FrameLabThemeConfig flat) -join ' | '; elevated = (Get-FrameLabThemeConfig elevated) -join ' | '; glass = (Get-FrameLabThemeConfig glass) -join ' | ' }
+    Assert 'A9 each theme is its config: flat, elevated solid cards, elevated glass' (
+        $tc.flat -eq 'macos-pane-style = flat' -and $tc.elevated -match 'elevated' -and $tc.elevated -match 'glass = false' -and
+        $tc.glass -match 'elevated' -and $tc.glass -match 'glass = true') ($tc.Values -join ' / ')
+    Assert 'A10 each sidebar is the new-window default the debug build reads (<expanded> <hidden> <width>)' (
+        (Get-FrameLabSidebarPref expanded) -eq '1 0 240' -and (Get-FrameLabSidebarPref rail) -eq '0 0 240' -and (Get-FrameLabSidebarPref hidden) -eq '0 1 240')
+
+    $gp = Get-FrameLabGridPlan 9
+    $made = @('p1'); $splitOk = $true
+    foreach ($s in $gp.Splits) { if ($s.From -notin $made -or $s.Name -ne "p$($s.Index)") { $splitOk = $false }; $made += $s.Name }
+    $lay = $gp.Layout | ConvertFrom-Json
+    # The leaves left to right, top to bottom, and every node's share.
+    $leaves = New-Object System.Collections.ArrayList; $shares = New-Object System.Collections.ArrayList
+    $walk = $null
+    $walk = { param($n, [double]$size) if ($n.pane) { [void]$leaves.Add($n.pane); [void]$shares.Add([math]::Round($size, 3)); return }
+        & $walk $n.left ($size * $n.ratio / 100); & $walk $n.right ($size * (100 - $n.ratio) / 100) }
+    & $walk $lay 1.0
+    Assert 'A11 a 3x3 plan splits only panes that exist, names pane n p<n>, and its layout gives all nine an equal share, column by column' (
+        $splitOk -and $gp.K -eq 3 -and $gp.Splits.Count -eq 8 -and ($leaves -join ',') -eq 'p1,p4,p7,p2,p5,p8,p3,p6,p9' -and
+        @($shares | Where-Object { [math]::Abs($_ - 1 / 9) -gt 0.002 }).Count -eq 0 -and $lay.direction -eq 'horizontal' -and $lay.left.direction -eq 'vertical') (
+        "splits=$(($gp.Splits | ForEach-Object { "$($_.From)>$($_.Name)" }) -join ' ') leaves=$($leaves -join ',') shares=$($shares -join ',')")
+    $g1 = Get-FrameLabGridPlan 1
+    Assert 'A11b one pane: no split and no layout' ($g1.Splits.Count -eq 0 -and $null -eq $g1.Layout)
+
+    $po = Get-FrameLabPaneOrder -Rects @(@{ X = 510; Y = 14; W = 400; H = 300 }, @{ X = 10; Y = 330; W = 400; H = 300 }, @{ X = 10; Y = 12; W = 400; H = 300 }, @{ X = 510; Y = 331; W = 400; H = 300 })
+    Assert 'A12 panes are numbered row by row, left to right, with a row''s tops a few px apart' (
+        ($po | ForEach-Object { "$($_.Name)@$($_.X),$($_.Y)" }) -join ' ' -eq 'p1@10,12 p2@510,14 p3@10,330 p4@510,331') (($po | ForEach-Object { "$($_.Name)@$($_.X),$($_.Y)" }) -join ' ')
+
+    $sbRect = @{ X = 0; Y = 40; W = 300; H = 650 }
+    $pz = Get-FrameLabPaneOrder -Rects @(@{ X = 312; Y = 40; W = 300; H = 300 }, @{ X = 616; Y = 40; W = 300; H = 300 }, @{ X = 312; Y = 344; W = 300; H = 300 }, @{ X = 616; Y = 344; W = 300; H = 300 })
+    $geo = New-FrameLabLiveGeometry -Window @{ X = 0; Y = 0; W = 930; H = 700 } -Monitor @{ X = 0; Y = 0; W = 3840; H = 2100 } -Panes $pz -Sidebar $sbRect -Scale 1.25 -Mode expanded
+    $flat = New-FrameLabLiveGeometry -Window @{ X = 0; Y = 0; W = 930; H = 700 } -Monitor @{ X = 0; Y = 0; W = 3840; H = 2100 } -Panes (Get-FrameLabPaneOrder -Rects @(@{ X = 301; Y = 40; W = 600; H = 600 })) -Sidebar $sbRect -Scale 1.25 -Mode rail
+    $hid = New-FrameLabLiveGeometry -Window @{ X = 0; Y = 0; W = 930; H = 700 } -Monitor @{ X = 0; Y = 0; W = 3840; H = 2100 } -Panes $pz -Sidebar $sbRect -Mode hidden
+    Assert 'A13 geometry: the divider sits in the gap right of pane 1, the sidebar edge in its gutter (or just inside it on the rail), none when hidden' (
+        $geo.Divider.X -eq 614 -and $geo.Divider.Y0 -eq 40 -and $geo.Divider.Y1 -eq 340 -and $geo.Sidebar.EdgeX -eq 306 -and
+        $flat.Sidebar.EdgeX -eq (300 - 8) -and $null -eq $flat.Divider -and $null -eq $hid.Sidebar -and $geo.CaptionX -lt 930 - 3 * 46) (
+        "divider=$($geo.Divider.X) sb=$($geo.Sidebar.EdgeX) rail=$($flat.Sidebar.EdgeX) captionX=$($geo.CaptionX)")
+    $spec = New-FrameLabCellSceneSpec -Interaction divider -Geometry $geo -CaptureRect @{ X = 0; Y = 0; W = 1200; H = 760 }
+    Assert 'A13b the live geometry is a scene the lab can build: a divider cell grabs the divider, the sidebar edge rides the first column' (
+        @($spec.Unsupported).Count -eq 0 -and @($spec.Edges | Where-Object { $_.Name -eq 'divider' }).Count -eq 1 -and @($spec.Edges | Where-Object { $_.Name -eq 'sidebar-edge' }).Count -eq 1) (
+        "unsupported=$($spec.Unsupported -join '; ') edges=$(($spec.Edges | ForEach-Object { $_.Name }) -join ',')")
+
+    $lm = @(Get-FrameLabLiveMatrix -MonitorDpi 125 -Interaction frame-right -Panes 1 -Theme flat -Sidebar expanded -StallMs 0)
+    $at = @($lm | Where-Object { $_.Dpi -eq 125 }); $off = @($lm | Where-Object { $_.Dpi -ne 125 })
+    Assert 'A14 the monitor''s own DPI is a matrix value and runs; every other DPI is Blocked naming the scaling it never changes' (
+        $at.Count -eq 1 -and -not $at[0].Blocked -and $off.Count -eq 3 -and @($off | Where-Object { $_.Blocked -notmatch 'never changes the display scaling' }).Count -eq 0) (
+        ($lm | ForEach-Object { "$($_.Dpi):$($_.Blocked)" }) -join ' | ')
+    $lm2 = @(Get-FrameLabLiveMatrix -MonitorDpi 150 -Interaction frame-right -Panes 1 -Theme flat -Sidebar expanded -StallMs 0)
+    Assert 'A14b at a DPI already on the axis nothing is added' ($lm2.Count -eq 3 -and @($lm2 | Where-Object { -not $_.Blocked }).Count -eq 1)
+
+    $smoke = @(Get-FrameLabSmokeCells 125)
+    $ptr = @(Get-FrameLabInteractions | Where-Object { $_.Kind -eq 'pointer' } | ForEach-Object { $_.Name })
+    $run = @($smoke | Where-Object { -not $_.Blocked })
+    Assert 'A15 the smoke set is one runnable cell per pointer interaction plus one Blocked off-DPI cell' (
+        ($run.Interaction | Sort-Object) -join ',' -eq ($ptr | Sort-Object) -join ',' -and @($smoke | Where-Object { $_.Blocked -match 'display scaling' }).Count -eq 1 -and
+        @($run | Where-Object { $_.Interaction -eq 'divider' -and $_.Panes -lt 2 }).Count -eq 0 -and @($run | Where-Object { $_.StallMs -ne 0 }).Count -eq 0) (
+        ($smoke | ForEach-Object { $_.Id }) -join ' ')
+
+    Assert 'A16 input no later than the lab''s own last send is the lab''s, across the tick wrap' (
+        (Resolve-FrameLabOwnInput 1000 990) -and (Resolve-FrameLabOwnInput 980 990) -and (Resolve-FrameLabOwnInput 5 4294967290) -and
+        (Resolve-FrameLabOwnInput 4294967290 5))
+    Assert 'A16b negative control: input after the lab''s last send is a person (across the wrap too), and a lab that sent nothing owns nothing' (
+        -not (Resolve-FrameLabOwnInput 2000 990) -and -not (Resolve-FrameLabOwnInput 1000 4294967290) -and -not (Resolve-FrameLabOwnInput 1000 0))
+    $ov = Get-UserPresence -IdleSecondsOverride 100000
+    Assert 'A17 Get-UserPresence -IdleSecondsOverride replaces only the input reading' (
+        $ov.Reason -notmatch 'keyboard/mouse input' -and ($ov.Reason -match '100,000s' -or $ov.Present)) "$($ov.Reason)"
+
     if ($PureOnly) {
         ''
         '  SKIP B/C (live) by -PureOnly'
@@ -333,6 +420,9 @@ try {
     } else {
         # Everything below moves the user's pointer or reads their screen.
         Assert-UserAbsent
+        # From here the lab's own SendInput is in GetLastInputInfo too; the
+        # clock is how D's per-cell presence tells it from a person (T2395).
+        Start-FrameLabPresenceClock
 
         # ---- B. the pointer goes where the path says ------------------------
         ''
@@ -347,6 +437,7 @@ try {
         $chk = New-Object GflCursorCheckSink (New-Object GliSendInputSink)
         $lpath = New-FrameLabMoveOnlyPath ($c.X - 150) $c.Y 300
         $r = Invoke-FrameLabInput -Path $lpath -Sink $chk
+        if (-not $r.Aborted) { Set-FrameLabOwnInput }
         "    play: $r"
         "    reads: $chk"
         Assert 'B2 the 1 kHz shuttle ran to the end without the user taking the pointer' (-not $r.Aborted -and $r.Sent -eq $lpath.Length) "$r"
@@ -373,6 +464,62 @@ try {
                 "$($d.Reasons -join '; ') | in_stall=$($d.InStall) verdict=$($d.Verdict.Verdict): $($d.Verdict.Reasons -join '; ')")
             "    verdict: $($d.Verdict.Verdict) - $($d.Verdict.Reasons -join '; ') (named inside the stall: $($d.InStall))"
             if ($s -is [IDisposable]) { $s.Dispose() }
+        }
+
+        # ---- D. the matrix driver: one live verdict per cell ----------------
+        ''
+        if ($NoMatrix) {
+            '  SKIP D (live matrix) by -NoMatrix'
+            $script:skipped++
+        } else {
+            'D. the matrix driver: the debug build per cell, lab-card in every pane, scored live'
+            $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+            $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
+            [void](Set-GhozttyTestIsolation -Tag 'framelab' -Quiet)
+            Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
+            $dpi0 = [GflWin]::PrimaryDpi()
+            $mon = [int][math]::Round($dpi0 * 100 / 96)
+            if ($Matrix) {
+                $ma = @{ MonitorDpi = $mon }
+                foreach ($k in 'Interaction', 'Panes', 'Theme', 'Sidebar') { if ($PSBoundParameters.ContainsKey($k)) { $ma[$k] = Get-Variable -Name $k -ValueOnly } }
+                $cells = @(Get-FrameLabLiveMatrix @ma)
+            } else {
+                $cells = @(Get-FrameLabSmokeCells $mon)
+            }
+            $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+            $runDir = Join-Path $repo "temp\frame-lab\$stamp"
+            $commit = (& git -C $repo rev-parse --short HEAD 2>$null)
+            "    monitor at $mon% ($dpi0 dpi); $($cells.Count) cell(s), $(@($cells | Where-Object { $_.Blocked }).Count) blocked; results in $runDir"
+            $live = Invoke-FrameLabLiveRun -Cells $cells -Exe $exe -RunDir $runDir -Commit $commit -Busy:$Busy `
+                -Note $(if ($Matrix) { 'matrix' } else { 'one cell per pointer interaction' })
+            $byId = @{}; foreach ($x in $live.Raw) { $byId[$x.Id] = $x }
+
+            $runnable = @($cells | Where-Object { -not $_.Blocked })
+            $noVerdict = @($runnable | Where-Object { $byId[$_.Id].Verdict.Verdict -notin 'pass', 'fail', 'incomplete' })
+            Assert "D1 every runnable cell ($($runnable.Count)) reached a verdict - pass, fail or incomplete - none skipped, aborted or lost" (
+                $runnable.Count -gt 0 -and $noVerdict.Count -eq 0) (($noVerdict | ForEach-Object { "$($_.Id): $($byId[$_.Id].Verdict.Verdict) $($byId[$_.Id].Verdict.Reasons -join '; ')" }) -join ' | ')
+            if (-not $Matrix) {
+                $measured = @('frame-right', 'frame-bottom', 'frame-corner', 'divider', 'sidebar-edge')
+                $unmeasured = @($runnable | Where-Object { $_.Interaction -in $measured -and -not ($byId[$_.Id].Score -and $byId[$_.Id].Score.Motion) })
+                Assert "D2 every edge-moving pointer interaction ($($measured -join ', ')) was measured: its motion has numbers" (
+                    $unmeasured.Count -eq 0) (($unmeasured | ForEach-Object { "$($_.Id): $($byId[$_.Id].Verdict.Verdict) $($byId[$_.Id].Verdict.Reasons -join '; ')" }) -join ' | ')
+                $fr = @($runnable | Where-Object { $_.Interaction -eq 'frame-right' } | ForEach-Object { $byId[$_.Id] })[0]
+                $unloc = $(if ($fr.Score -and $fr.Score.Motion) { $fr.Score.Motion.Unlocated } else { -1 })
+                Assert 'D3 a live frame-right drag over the backdrop locates window-right on every scored frame' (
+                    $unloc -eq 0 -and $fr.Score.Scored -gt 0) "unlocated=$unloc scored=$($fr.Score.Scored) verdict=$($fr.Verdict.Verdict) $($fr.Verdict.Reasons -join '; ')"
+            }
+            $blocked = @($cells | Where-Object { $_.Blocked -match 'display scaling' })
+            $dpi1 = [GflWin]::PrimaryDpi()
+            Assert 'D4 a cell at a DPI the monitor is not at reads blocked, and the display scaling was never touched' (
+                $blocked.Count -gt 0 -and @($blocked | Where-Object { $byId[$_.Id].Verdict.Verdict -ne 'blocked' }).Count -eq 0 -and $dpi1 -eq $dpi0) "blocked=$($blocked.Count) dpi $dpi0 -> $dpi1"
+            Assert 'D5 the results JSON passes Test-FrameLabResults' $live.Test.Ok (($live.Test.Problems) -join '; ')
+            $html = $(if (Test-Path $live.Html) { [IO.File]::ReadAllText($live.Html) } else { '' })
+            $worst = @(Get-FrameLabWorstFrames -Results ([IO.File]::ReadAllText($live.Path) | ConvertFrom-Json))
+            Assert 'D6 the HTML report renders, with the worst frames outlined when any frame bled' (
+                $html -match 'Frame lab report' -and ($worst.Count -eq 0 -or $html -match 'class="find"')) "worst=$($worst.Count) bytes=$($html.Length)"
+            "    run verdict: $($live.Results.Verdict) $(($live.Results.Counts.GetEnumerator() | Where-Object { $_.Value } | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')"
+            "    results: $($live.Path)"
+            "    report:  $($live.Html)"
         }
     }
 

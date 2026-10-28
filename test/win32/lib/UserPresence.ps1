@@ -167,9 +167,13 @@ $script:GhozttyPresenceRepo = Split-Path (Split-Path (Split-Path $PSScriptRoot -
 
 <#
 Probe the box and decide. Honours GHOZTTY_TEST_FORCE_USER_PRESENCE.
+-IdleSecondsOverride replaces the GetLastInputInfo reading (every other signal
+is still probed): for a caller that knows the most recent input was its own
+injected input (lib\FrameLabDriver.ps1, T2395), which GetLastInputInfo counts.
 Returns { Present, Reason, Forced }.
 #>
 function Get-UserPresence {
+    param([double]$IdleSecondsOverride = -1)
     $forced = $env:GHOZTTY_TEST_FORCE_USER_PRESENCE
     if ($forced -eq 'present') {
         return [pscustomobject]@{ Present = $true; Reason = 'forced present by GHOZTTY_TEST_FORCE_USER_PRESENCE'; Forced = $true }
@@ -180,6 +184,7 @@ function Get-UserPresence {
 
     $idleMs = [GhozttyUserPresence]::IdleMs()
     $idle = if ($idleMs -ge 0) { $idleMs / 1000.0 } else { -1 }
+    if ($IdleSecondsOverride -ge 0) { $idle = $IdleSecondsOverride }
     $quns = [GhozttyUserPresence]::NotificationState()
 
     $fg = [GhozttyUserPresence]::Foreground()

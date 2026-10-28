@@ -4244,7 +4244,9 @@ $GuardTable = @(
         Covers = @(
             'test\win32\frame-lab.ps1',
             'test\win32\lib\FrameCapture.ps1',
-            'test\win32\lib\FrameLabInput.ps1'
+            'test\win32\lib\FrameLabInput.ps1',
+            # T2395: the matrix driver its section D runs live (A9-A17 pure).
+            'test\win32\lib\FrameLabDriver.ps1'
         )
     },
     # The T2373 frame lab's input driver (T2384). Input-to-photon lag and the
