@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-motion-cost",
     "script":  "test/win32/pane-sidebar-motion-cost.ps1",
-    "generated":  "2026-10-28T14:31:01-07:00",
-    "commit":  "31d5d650a",
+    "generated":  "2026-10-28T14:55:22-07:00",
+    "commit":  "9b0f1b606",
     "uncommitted":  [
 
                     ],

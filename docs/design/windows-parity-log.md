@@ -37590,3 +37590,10 @@ moved to T1814.
   - pane-sidebar-glide.ps1 section 5 floods 500 Hz posted moves during an edge drag and requires every step to be painted. Pre-fix control red (0 of 3); fixed green (2/2, 230/230). Glide 38/38, resize 67/67, floor lanes PASS.
   - The due sweep was re-run after the controller's frame-lab fix (88e29081e, no -Live): 51 green. The 6 reds each belong to an open task: T2300, T2334, T2380, T2362, T2318, T2370.
   - Mid-turn the controller redirected T2401 to an exact port of 7e2d0a9da (T2406, now P0). That port is left for a fresh context.
+- 2026-10-28 15:00 (lane a): T2417 done. Folded blades now glide with the panes when the sidebar opens or closes, instead of jumping the whole shift in one frame. This ports Mac 7e2d0a9da ("strips tween rect to rect").
+  - Cause: a strip that stays a strip had no entry in the glide (`plan` -> `holdReach`, `continue`), so its band was painted at its new rect at once while the cards beside it glided.
+  - Fix: `pane_stack_slide.StripGlide`, a strip-only entry eased on all four edges, so across the stack too, as Mac's now are. It has no `Card`, so the tucked pane stays hidden, and only the parent-painted strip reads it (`shownStrip`: flat band, label, gutter exclusion, elevated desk). A T2312 held length is applied to the eased rect by its outer edge. A card still folding in when the layout changes carries on from where it is drawn (`carryStripCard`). `Slide.active()` lets a strips-only glide run.
+  - Mac's laid-out gate is not ported because it cannot fire here. The Windows sidebar column is an overlay that animates its own width, and the grid is laid out once, synchronously, at the final column. The reasoning is recorded in the task file.
+  Validation:
+  - 5 new unit tests. Floor lanes lib/none/win32/agent ALL PASS.
+  - pane-sidebar-glide.ps1 new section 6: a leading blade is drawn at 59 places across an expand, and P is on show in 0 samples. ALL PASS (43). Its negative control fails the row (0 places).

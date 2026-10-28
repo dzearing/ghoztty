@@ -8467,8 +8467,8 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
             pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing())
         else
             pane_stack_slide.Slide{};
-        if (next.len > 0) {
-            log.info("pane grid glides for the sidebar column: cards={d}", .{next.len});
+        if (next.active()) {
+            log.info("pane grid glides for the sidebar column: cards={d} strips={d}", .{ next.len, next.strips_len });
             self.stack_slide = next;
             self.orderStackCards(tree, grid);
             self.runStackSlide();
@@ -8481,7 +8481,7 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
             // A drag's fold or unfold resizes on the way, as the drag does
             // on every move (T2186).
             const next = pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing());
-            if (next.len > 0) {
+            if (next.active()) {
                 self.stack_slide = next;
                 self.orderStackCards(tree, grid);
                 self.runStackSlide();
@@ -8621,7 +8621,13 @@ fn stackSlideTick(self: *Window) void {
         dt = frame_clock.firstFrame(dt, period_ms);
     }
     self.stack_slide_last = now;
-    if (s.step(dt)) {
+    const done = s.step(dt);
+    // The acceptance oracle (pane-sidebar-glide.ps1, T2417): a strip that
+    // stays a strip moves through the glide rather than jumping.
+    for (s.stripItems()) |sg| if (s.movingStrip(sg.id)) |m| {
+        log.debug("stack strip glide left={d} top={d} right={d} bottom={d}", .{ m.left, m.top, m.right, m.bottom });
+    };
+    if (done) {
         if (self.stackGesturing()) self.restStackSlide() else self.endStackSlide();
     }
     // Watched (T2359): the tick that lands a sidebar glide resizes each card

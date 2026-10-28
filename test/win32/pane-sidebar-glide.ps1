@@ -22,6 +22,10 @@
 #      moves flooding in for longer than the glide (the user's drag): each
 #      step its glide takes is painted (frames= vs steps=). The user's own
 #      log read frames=0 for every collapse - the repaint never came.
+#   6. T2417 (Mac 7e2d0a9da): with five panes, P is a blade at the grid's
+#      leading edge; expanding moves that edge, and the blade is drawn at 2+
+#      places on the way (`stack strip glide` oracle) while P's pane stays
+#      hidden. It used to jump the whole shift in one frame.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -272,6 +276,47 @@ try {
     $done = @(Get-GlideFrames $new)
     Assert "the push tucked it into the rail (log)" (@($new | Where-Object { $_ -match 'pane sidebar expanded=false cause=edge drag' }).Count -ge 1)
     Assert "...and every step its glide took was painted while the moves kept coming ($(Format-GlideFrames $done))" (Test-GlidePainted $done)
+
+    "== 6: a blade that stays a blade glides with the grid (T2417, Mac 7e2d0a9da)"
+    # Five panes do not fit beside the rail, so P (the far end from the
+    # focused newest pane) is tucked into a blade at the grid's leading edge.
+    # Expanding moves that edge: the blade must pass through places between,
+    # not jump, and P's pane must stay hidden behind it the whole way.
+    $prev = 's1'
+    foreach ($n in 's2', 's3', 's4') {
+        [void](Invoke-Cli "+split --pane=$prev --direction=right --name=$n")
+        Start-Sleep -Milliseconds 900
+        $prev = $n
+    }
+    Start-Sleep -Milliseconds 600
+    # Focus the far end, so the run sits there and the blade at the other.
+    $last = @(Get-Panes $top | Sort-Object Left | Select-Object -Last 1)
+    if ($last) { [void](Focus-TestWindow -Window $top -Child ([IntPtr]$last[0].Hwnd)) }
+    Start-Sleep -Milliseconds 900
+    "  panes: " + ((@(Get-Panes $top) | Sort-Object Left | ForEach-Object { "$(if ($_.Hwnd -eq $hP) {'P'} else {'s'})@$($_.Left)+$($_.Width)$(if (-not $_.Visible) {'(hidden)'})" }) -join ' ')
+    $pRest = Get-Pane $top $hP
+    $setupOk = ($null -ne $pRest -and -not $pRest.Visible)
+    Assert "setup: with five panes beside the rail, P is tucked into a blade" $setupOk
+    if ($setupOk) {
+        $sb = Get-Sidebar $top
+        $mark = Get-LogCount
+        Assert "toggle click delivered" (Click $top $sb.Hwnd (Get-ToggleCenter $sb))
+        $pSeen = 0
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        while ($sw.ElapsedMilliseconds -lt $glideMs + 800) {
+            $p = Get-Pane $top $hP
+            if ($p -and $p.Visible) { $pSeen++ }
+            Start-Sleep -Milliseconds 40
+        }
+        $new = New-LogLines $mark
+        $gl = @($new | Where-Object { $_ -match 'pane grid glides for the sidebar column: cards=\d+ strips=(\d+)' } | Select-Object -First 1)
+        "  log: $gl"
+        $lefts = @($new | ForEach-Object { if ($_ -match 'stack strip glide left=(-?\d+) ') { [int]$Matches[1] } } | Sort-Object -Unique)
+        "  blade drawn at left: $($lefts -join ', ')"
+        Assert "the grid's glide carries a moving blade (log strips>=1)" ($gl.Count -eq 1 -and $gl[0] -match 'strips=[1-9]')
+        Assert "the blade is drawn at $($lefts.Count) places on its way (need 2+): it glides, not jumps" ($lefts.Count -ge 2)
+        Assert "P's pane stays hidden behind its blade throughout ($pSeen samples on show)" ($pSeen -eq 0)
+    }
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

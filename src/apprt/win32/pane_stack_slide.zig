@@ -230,6 +230,16 @@ pub const HeldStrip = struct {
     length: i32,
 };
 
+/// A strip that stays a strip and moves (T2417; Mac 7e2d0a9da, "strips tween
+/// rect to rect"): only its strip is drawn on the way - the pane behind it
+/// stays hidden - eased edge by edge from where it was drawn to where the
+/// layout puts it now, across the stack as well as along it.
+pub const StripGlide = struct {
+    id: Id,
+    to: PxRect,
+    drawn: Edges,
+};
+
 /// How long `rect` is along a stack running along `axis`.
 pub fn along(rect: PxRect, axis: Direction) i32 {
     return if (axis == .vertical) rect.height() else rect.width();
@@ -267,9 +277,34 @@ pub const Slide = struct {
     /// each is shown no longer than it was until the glide is over.
     held: [max_cards]HeldStrip = undefined,
     held_len: usize = 0,
+    /// Strips that stay strips and move (T2417): see `StripGlide`.
+    strips: [max_cards]StripGlide = undefined,
+    strips_len: usize = 0,
 
     pub fn items(self: *const Slide) []const Card {
         return self.cards[0..self.len];
+    }
+
+    pub fn stripItems(self: *const Slide) []const StripGlide {
+        return self.strips[0..self.strips_len];
+    }
+
+    /// Whether this glide carries anything: a card, or a strip on the move.
+    pub fn active(self: *const Slide) bool {
+        return self.len > 0 or self.strips_len > 0;
+    }
+
+    fn findStrip(self: *const Slide, id: Id) ?StripGlide {
+        for (self.stripItems()) |s| if (s.id == id) return s;
+        return null;
+    }
+
+    /// Where strip `id` is drawn on its way to its new rect (T2417), or null
+    /// when it is not moving or has caught up.
+    pub fn movingStrip(self: *const Slide, id: Id) ?PxRect {
+        const s = self.findStrip(id) orelse return null;
+        if (s.drawn.eql(s.to)) return null;
+        return s.drawn.round();
     }
 
     /// How long strip `id` is held at along its stack, or null when it is
@@ -286,9 +321,17 @@ pub const Slide = struct {
     /// OUTER edge, the one that shows. Reaching out sooner put its edge in
     /// the gutter ahead of the newcomer. `strip_leads`: it lies before the
     /// run. Losing the reach is immediate: `tab` is never lengthened.
+    ///
+    /// A strip on the move (T2417) shows where the glide has it, and a held
+    /// length is applied to that eased rect by its outer edge (Mac
+    /// `stepGlide`). A tab the glide is not heading for is shown as it is.
     pub fn shownStrip(self: *const Slide, id: Id, tab: PxRect, axis: Direction, strip_leads: bool) PxRect {
-        const length = self.heldLength(id) orelse return tab;
-        return heldStrip(tab, axis, strip_leads, length);
+        const at = if (self.findStrip(id)) |s|
+            (if (std.meta.eql(s.to, tab)) self.movingStrip(id) orelse tab else tab)
+        else
+            tab;
+        const length = self.heldLength(id) orelse return at;
+        return heldStrip(at, axis, strip_leads, length);
     }
 
     fn find(self: *const Slide, id: Id) ?Card {
@@ -350,6 +393,15 @@ pub const Slide = struct {
                 .bottom = follow(c.drawn.bottom, to.bottom, k),
             };
         }
+        for (self.strips[0..self.strips_len]) |*s| {
+            const to = Edges.of(s.to);
+            s.drawn = .{
+                .left = follow(s.drawn.left, to.left, k),
+                .top = follow(s.drawn.top, to.top, k),
+                .right = follow(s.drawn.right, to.right, k),
+                .bottom = follow(s.drawn.bottom, to.bottom, k),
+            };
+        }
         return self.settled();
     }
 
@@ -358,6 +410,7 @@ pub const Slide = struct {
     /// the drag is over does catching up end it (Mac `isGesturing`).
     pub fn settled(self: *const Slide) bool {
         for (self.items()) |c| if (!c.drawn.eql(c.to)) return false;
+        for (self.stripItems()) |s| if (!s.drawn.eql(s.to)) return false;
         return true;
     }
 
@@ -373,6 +426,14 @@ pub const Slide = struct {
                 const to = p.target();
                 if (!std.meta.eql(c.to, to)) moved = true;
                 c.to = to;
+                break;
+            };
+        }
+        for (self.strips[0..self.strips_len]) |*s| {
+            for (now) |p| if (p.id == s.id) {
+                const to = p.strip orelse break;
+                if (!std.meta.eql(s.to, to)) moved = true;
+                s.to = to;
                 break;
             };
         }
@@ -504,7 +565,8 @@ pub fn runsChanged(before: []const Placed, after: []const Placed) bool {
 /// from behind the run starts at its tucked card's rect, which lies under the
 /// run at its stack's edge. A card that goes behind the run (on show before,
 /// tucked after) slides to its tucked rect and is hidden when the slide ends
-/// (T2186); a card that stays tucked does not slide. `resize`: a drag's slide
+/// (T2186); a card that stays tucked does not slide, but its strip moves
+/// strip-only when its rect changed (T2417, `StripGlide`). `resize`: a drag's slide
 /// (see `rectOf`). `tau_ms`: the glide's time constant (`glide_ms`).
 pub fn plan(
     before: []const Placed,
@@ -518,10 +580,13 @@ pub fn plan(
         const last: ?Placed = for (before) |b| {
             if (b.id == a.id) break b;
         } else null;
-        // Tucked now: it slides only if it was on show (it is going away). A
-        // strip that stays a strip and gains its reach is held (T2312).
+        // Tucked now and before: a strip that stays a strip. It gains its
+        // reach held (T2312), and it moves strip-only, rect to rect (T2417) -
+        // unless the glide under way still has it narrowing into its strip,
+        // which carries on from where it is drawn.
         if (a.tucked) if (last) |b| if (b.tucked) {
             holdReach(&out, a, b, current);
+            if (!carryStripCard(&out, a, current)) moveStrip(&out, a, b, current);
             continue;
         };
         const from = blk: {
@@ -559,6 +624,38 @@ fn holdReach(out: *Slide, a: Placed, b: Placed, current: ?*const Slide) void {
     if (out.held_len == max_cards) return;
     out.held[out.held_len] = .{ .id = a.id, .length = length };
     out.held_len += 1;
+}
+
+/// Carry on a card the glide under way still has gliding into its strip, from
+/// where it is drawn, toward its strip as laid out now: a layout that comes
+/// mid-fold (a sidebar column shift) never snaps it onto its strip. Whether
+/// it was such a card.
+fn carryStripCard(out: *Slide, a: Placed, current: ?*const Slide) bool {
+    const cur = current orelse return false;
+    const c = cur.find(a.id) orelse return false;
+    const s = c.strip orelse return false;
+    const from = shownAt(c, cur.resize);
+    const to = a.target();
+    if (std.meta.eql(from, to)) return true;
+    if (out.len == max_cards) return true;
+    out.cards[out.len] = .{ .id = a.id, .from = from, .to = to, .drawn = Edges.of(from), .strip = s };
+    out.len += 1;
+    return true;
+}
+
+/// Move strip `a` (a strip before, `b`, and after) from where it is drawn -
+/// the glide under way's place for it, else its last strip - to its strip
+/// now, when the two differ (T2417).
+fn moveStrip(out: *Slide, a: Placed, b: Placed, current: ?*const Slide) void {
+    const to = a.strip orelse return;
+    const from: Edges = blk: {
+        if (current) |cur| if (cur.findStrip(a.id)) |s| break :blk s.drawn;
+        break :blk Edges.of(b.strip orelse return);
+    };
+    if (from.eql(to)) return;
+    if (out.strips_len == max_cards) return;
+    out.strips[out.strips_len] = .{ .id = a.id, .to = to, .drawn = from };
+    out.strips_len += 1;
 }
 
 /// Where card `c` of a glide under way is on screen, for the next glide to
@@ -1205,4 +1302,96 @@ test "plan: a strip that stays a strip keeps its length by its outer edge until 
     // A strip that does not grow is not held.
     const same = plan(&after, &after, null, glide_ms, false);
     try testing.expectEqual(@as(?i32, null), same.heldLength(3));
+}
+
+test "plan: a sidebar column shift moves a stays-tucked strip rect to rect, its pane hidden (T2417, Mac 7e2d0a9da)" {
+    // A leading stack: strip 3 at the grid's left edge, card 1 on show. The
+    // sidebar expands and the grid's left edge moves 200 px right.
+    const before = [_]Placed{
+        .{ .id = 3, .rect = r(0, 0, 400, 600), .tucked = true, .strip = r(0, 0, 36, 600) },
+        .{ .id = 1, .rect = r(48, 0, 752, 600), .tucked = false },
+    };
+    const after = [_]Placed{
+        .{ .id = 3, .rect = r(200, 0, 400, 600), .tucked = true, .strip = r(200, 0, 36, 600) },
+        .{ .id = 1, .rect = r(248, 0, 552, 600), .tucked = false },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    try testing.expect(s.active());
+    try testing.expectEqual(@as(usize, 1), s.strips_len);
+    // Strip-only: the tucked pane is never placed by the glide, so it stays
+    // hidden behind its strip.
+    try testing.expectEqual(@as(?PxRect, null), s.rect(3));
+    try testing.expectEqual(@as(?PxRect, null), s.cardRect(3));
+    const to = r(200, 0, 36, 600);
+    // Before the first frame it is where it was drawn.
+    try testing.expectEqual(r(0, 0, 36, 600), s.shownStrip(3, to, .horizontal, true));
+    // It passes through places between, never jumping, at its own size.
+    var seen: usize = 0;
+    var last_left: i32 = 0;
+    var frames: usize = 0;
+    while (!s.step(16)) : (frames += 1) {
+        if (frames > 1000) break;
+        const at = s.shownStrip(3, to, .horizontal, true);
+        try testing.expect(at.left >= last_left and at.left <= 200);
+        try testing.expectEqual(@as(i32, 36), at.width());
+        if (at.left > 0 and at.left < 200) seen += 1;
+        last_left = at.left;
+    }
+    try testing.expect(seen >= 2);
+    try testing.expect(s.settled());
+    try testing.expectEqual(to, s.shownStrip(3, to, .horizontal, true));
+}
+
+test "plan: a strip eases across its stack too, not only along it (T2417, Mac 7e2d0a9da)" {
+    // A column's strip across the top; the sidebar expanding narrows the column.
+    const before = [_]Placed{.{ .id = 3, .rect = r(0, 0, 600, 300), .tucked = true, .strip = r(0, 0, 600, 30), .axis = .vertical }};
+    const after = [_]Placed{.{ .id = 3, .rect = r(200, 0, 400, 300), .tucked = true, .strip = r(200, 0, 400, 30), .axis = .vertical }};
+    var s = plan(&before, &after, null, glide_ms, false);
+    _ = s.step(16);
+    const at = s.shownStrip(3, r(200, 0, 400, 30), .vertical, true);
+    try testing.expect(at.width() > 400 and at.width() < 600);
+    try testing.expectEqual(@as(i32, 30), at.height());
+}
+
+test "plan: a pure reach gain still shows its old strip until the glide is over (T2312 under T2417)" {
+    const before = [_]Placed{
+        .{ .id = 2, .rect = r(400, 0, 370, 600), .tucked = false },
+        .{ .id = 3, .rect = r(776, 0, 400, 600), .tucked = true, .strip = r(776, 0, 24, 600) },
+    };
+    const after = [_]Placed{
+        .{ .id = 2, .rect = r(752, 0, 370, 600), .tucked = true, .strip = r(752, 0, 36, 600) },
+        .{ .id = 3, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    var frames: usize = 0;
+    while (!s.step(16)) : (frames += 1) {
+        if (frames > 1000) break;
+        try testing.expectEqual(r(776, 0, 24, 600), s.shownStrip(3, r(764, 0, 36, 600), .horizontal, false));
+    }
+    try testing.expect(frames >= 2);
+}
+
+test "plan: a card still folding into its strip carries on through a column shift (T2417)" {
+    const shown = [_]Placed{.{ .id = 3, .rect = r(400, 0, 400, 600), .tucked = false }};
+    const tucked = [_]Placed{.{ .id = 3, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    var going = plan(&shown, &tucked, null, glide_ms, false);
+    _ = going.step(20);
+    const drawn = going.cardRect(3).?;
+    // The column shifts mid-fold: the strip's place moves.
+    const shifted = [_]Placed{.{ .id = 3, .rect = r(784, 0, 400, 600), .tucked = true, .strip = r(784, 0, 36, 600) }};
+    const next = plan(&tucked, &shifted, &going, glide_ms, false);
+    try testing.expectEqual(@as(usize, 1), next.len);
+    try testing.expectEqual(@as(usize, 0), next.strips_len);
+    try testing.expectEqual(drawn, next.cards[0].from);
+    try testing.expectEqual(r(784, 0, 36, 600), next.cards[0].to);
+    try testing.expect(next.cards[0].strip != null);
+}
+
+test "retarget: a moving strip follows its strip as laid out now (T2417)" {
+    const before = [_]Placed{.{ .id = 3, .rect = r(0, 0, 400, 600), .tucked = true, .strip = r(0, 0, 36, 600) }};
+    const after = [_]Placed{.{ .id = 3, .rect = r(200, 0, 400, 600), .tucked = true, .strip = r(200, 0, 36, 600) }};
+    var s = plan(&before, &after, null, glide_ms, true);
+    const moved = [_]Placed{.{ .id = 3, .rect = r(210, 0, 400, 600), .tucked = true, .strip = r(210, 0, 36, 600) }};
+    try testing.expect(s.retarget(&moved));
+    try testing.expectEqual(r(210, 0, 36, 600), s.strips[0].to);
 }
