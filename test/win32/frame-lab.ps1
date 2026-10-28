@@ -400,7 +400,7 @@ try {
     $ptr = @(Get-FrameLabInteractions | Where-Object { $_.Kind -eq 'pointer' } | ForEach-Object { $_.Name })
     $run = @($smoke | Where-Object { -not $_.Blocked })
     Assert 'A15 the smoke set is one runnable cell per pointer interaction plus one Blocked off-DPI cell' (
-        ($run.Interaction | Sort-Object) -join ',' -eq ($ptr | Sort-Object) -join ',' -and @($smoke | Where-Object { $_.Blocked -match 'display scaling' }).Count -eq 1 -and
+        $smoke.Count -eq $ptr.Count + 1 -and ($run.Interaction | Sort-Object) -join ',' -eq ($ptr | Sort-Object) -join ',' -and @($smoke | Where-Object { $_.Blocked -match 'display scaling' }).Count -eq 1 -and
         @($run | Where-Object { $_.Interaction -eq 'divider' -and $_.Panes -lt 2 }).Count -eq 0 -and @($run | Where-Object { $_.StallMs -ne 0 }).Count -eq 0) (
         ($smoke | ForEach-Object { $_.Id }) -join ' ')
 
@@ -478,7 +478,7 @@ try {
             [void](Set-GhozttyTestIsolation -Tag 'framelab' -Quiet)
             Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
             $dpi0 = [GflWin]::PrimaryDpi()
-            $mon = [int][math]::Round($dpi0 * 100 / 96)
+            $mon = Get-TestChromeDip 100 ($dpi0 / 96)
             if ($Matrix) {
                 $ma = @{ MonitorDpi = $mon }
                 foreach ($k in 'Interaction', 'Panes', 'Theme', 'Sidebar') { if ($PSBoundParameters.ContainsKey($k)) { $ma[$k] = Get-Variable -Name $k -ValueOnly } }
@@ -514,7 +514,7 @@ try {
                 $blocked.Count -gt 0 -and @($blocked | Where-Object { $byId[$_.Id].Verdict.Verdict -ne 'blocked' }).Count -eq 0 -and $dpi1 -eq $dpi0) "blocked=$($blocked.Count) dpi $dpi0 -> $dpi1"
             Assert 'D5 the results JSON passes Test-FrameLabResults' $live.Test.Ok (($live.Test.Problems) -join '; ')
             $html = $(if (Test-Path $live.Html) { [IO.File]::ReadAllText($live.Html) } else { '' })
-            $worst = @(Get-FrameLabWorstFrames -Results ([IO.File]::ReadAllText($live.Path) | ConvertFrom-Json))
+            $worst = Get-FrameLabWorstFrames -Results ([IO.File]::ReadAllText($live.Path) | ConvertFrom-Json)
             Assert 'D6 the HTML report renders, with the worst frames outlined when any frame bled' (
                 $html -match 'Frame lab report' -and ($worst.Count -eq 0 -or $html -match 'class="find"')) "worst=$($worst.Count) bytes=$($html.Length)"
             "    run verdict: $($live.Results.Verdict) $(($live.Results.Counts.GetEnumerator() | Where-Object { $_.Value } | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')"

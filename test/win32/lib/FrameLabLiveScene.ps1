@@ -340,7 +340,7 @@ function New-FrameLabCellSceneSpec {
         $right = @($panes | Where-Object { $_ -ne $a -and $_.X - $a.R -ge 0 -and $_.X - $a.R -le $Gap -and $_.Y -lt $a.B -and $_.B -gt $a.Y })
         if ($right.Count) {
             $n = "v:$($a.Name)"
-            [void]$edges.Add([pscustomobject]@{ Name = $n; Kind = 'divider'; Vertical = $true; Lines = (Get-FrameLabSpanLines $a.Y $a.B); From = $a.X + 1; To = $cw - 1; Backdrop = $false; Expect = $a.R; Probe = @{ X = $a.R; Y = [int](($a.Y + $a.B) / 2) } })
+            [void]$edges.Add([pscustomobject]@{ Name = $n; Kind = 'divider'; Vertical = $true; Lines = (Get-FrameLabSpanLines $a.Y $a.B); From = $a.X + 1; To = $cw - 1; Backdrop = $false; Expect = $a.R; ProbeTo = [int](($right | Measure-Object -Property X -Minimum).Minimum); Probe = @{ X = $a.R; Y = [int](($a.Y + $a.B) / 2) } })
             $anchor[$a.Name][2] = $n
             foreach ($b in $right) { if (-not $anchor[$b.Name][0]) { $anchor[$b.Name][0] = $n } }
             if ($null -ne $grab -and [math]::Abs($a.R - $grab) -lt $best) { $best = [math]::Abs($a.R - $grab); $grabName = $n }
@@ -348,7 +348,7 @@ function New-FrameLabCellSceneSpec {
         $below = @($panes | Where-Object { $_ -ne $a -and $_.Y - $a.B -ge 0 -and $_.Y - $a.B -le $Gap -and $_.X -lt $a.R -and $_.R -gt $a.X })
         if ($below.Count) {
             $n = "h:$($a.Name)"
-            [void]$edges.Add([pscustomobject]@{ Name = $n; Kind = 'divider'; Vertical = $false; Lines = (Get-FrameLabSpanLines $a.X $a.R); From = $a.Y + 1; To = $ch - 1; Backdrop = $false; Expect = $a.B; Probe = @{ X = [int](($a.X + $a.R) / 2); Y = $a.B } })
+            [void]$edges.Add([pscustomobject]@{ Name = $n; Kind = 'divider'; Vertical = $false; Lines = (Get-FrameLabSpanLines $a.X $a.R); From = $a.Y + 1; To = $ch - 1; Backdrop = $false; Expect = $a.B; ProbeTo = [int](($below | Measure-Object -Property Y -Minimum).Minimum); Probe = @{ X = [int](($a.X + $a.R) / 2); Y = $a.B } })
             $anchor[$a.Name][3] = $n
             foreach ($b in $below) { if (-not $anchor[$b.Name][1]) { $anchor[$b.Name][1] = $n } }
         }
@@ -369,7 +369,7 @@ function New-FrameLabCellSceneSpec {
             $y0 = ($first | Measure-Object -Property Y -Minimum).Minimum; $y1 = ($first | Measure-Object -Property B -Maximum).Maximum
             $from = ($first | ForEach-Object { $_.R } | Measure-Object -Minimum).Minimum - 2
             $p0 = $first[0]
-            [void]$edges.Add([pscustomobject]@{ Name = 'sidebar-edge'; Kind = 'sidebar-edge'; Vertical = $true; Lines = (Get-FrameLabSpanLines $y0 $y1); From = $from; To = [math]::Max(0, [int]$w.X - $cx); Backdrop = $false; Expect = $p0.X; Probe = @{ X = $p0.X - 1; Y = [int](($p0.Y + $p0.B) / 2) } })
+            [void]$edges.Add([pscustomobject]@{ Name = 'sidebar-edge'; Kind = 'sidebar-edge'; Vertical = $true; Lines = (Get-FrameLabSpanLines $y0 $y1); From = $from; To = [math]::Max(0, [int]$w.X - $cx); Backdrop = $false; SkipPadding = $true; Expect = $p0.X; Probe = @{ X = $p0.X - 1; Y = [int](($p0.Y + $p0.B) / 2) } })
             foreach ($p in $first) { $anchor[$p.Name][0] = 'sidebar-edge' }
         } elseif ($Interaction -in 'sidebar-edge', 'blade-glide') {
             $unsupported += 'a sidebar cell whose geometry puts no pane against the sidebar edge'
@@ -415,6 +415,28 @@ function New-FrameLabCellScene {
         else {
             $col = & $px $e.Probe.X $e.Probe.Y
             if ($col -lt 0) { $why += "edge $($e.Name): its colour probe $($e.Probe.X),$($e.Probe.Y) is outside the still frame"; continue }
+            # The real app (T2395's first live run): a pane's content rect ends
+            # in a strip of background where the grid does not fill it, and the
+            # divider line sits inside the gap past it. So a divider's colour is
+            # the first pixel across the gap that is NOT the colour at the
+            # pane's edge, and that is where it must read; a gap of one colour
+            # throughout is the divider itself (the synthetic scenes).
+            $v0 = $(if ($e.Vertical) { $e.Probe.X } else { $e.Probe.Y })
+            $inside = $(if ($e.Vertical) { & $px ($v0 - 1) $e.Probe.Y } else { & $px $e.Probe.X ($v0 - 1) })
+            if ($null -ne $e.ProbeTo -and $e.ProbeTo -gt $v0 -and $inside -ge 0 -and (Get-FrameLabColorDistance $inside $col) -le $Tol) {
+                for ($v = $v0 + 1; $v -lt $e.ProbeTo; $v++) {
+                    $c2 = $(if ($e.Vertical) { & $px $v $e.Probe.Y } else { & $px $e.Probe.X $v })
+                    if ($c2 -ge 0 -and (Get-FrameLabColorDistance $c2 $col) -gt $Tol) { $col = $c2; $e.Expect = $v; break }
+                }
+            }
+            # The sidebar edge's colour is the window background, which is
+            # also the padding strip at the first pane's right: start the
+            # leftward scan inside the card, past that strip and a cell's slack.
+            if ($e.SkipPadding) {
+                $y = [int]$e.Lines[0]; $f = [int]$e.From
+                while ($f -gt [int]$e.Expect -and (Get-FrameLabColorDistance (& $px $f $y) $col) -le $Tol) { $f-- }
+                $e.From = [math]::Max([int]$e.Expect + 1, $f - 24)
+            }
             $clash = @($cardColors | Where-Object { (Get-FrameLabColorDistance $col $_) -le $Tol })
             if ($clash.Count) { $why += ('edge {0}: its colour 0x{1:X6} is a card colour, so a scan cannot tell it from the card' -f $e.Name, $col); continue }
         }

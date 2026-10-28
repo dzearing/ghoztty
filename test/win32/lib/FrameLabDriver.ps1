@@ -45,7 +45,7 @@
 
 Set-StrictMode -Off
 
-foreach ($lib in 'UserPresence', 'FrameLabCatalogue', 'FrameLabLiveScene', 'FrameLabReport', 'FrameCapture') {
+foreach ($lib in 'ChromeGeometry', 'UserPresence', 'FrameLabCatalogue', 'FrameLabLiveScene', 'FrameLabReport', 'FrameCapture') {
     . (Join-Path $PSScriptRoot "$lib.ps1")
 }
 
@@ -270,7 +270,8 @@ function Get-FrameLabSmokeCells([int]$MonitorDpi) {
     $other = @(@(100, 150, 200) | Where-Object { $_ -ne $MonitorDpi })[0]
     $cells += @(Get-FrameLabLiveMatrix -MonitorDpi $MonitorDpi -Interaction 'frame-right' -Panes 1 -Theme flat -Sidebar expanded -StallMs 0 -Dpi $other |
             Where-Object { $_.Dpi -eq $other })[0]
-    return , $cells
+    # Unrolled: callers wrap the call in @(), which would nest a `, $cells`.
+    return $cells
 }
 
 <#
@@ -321,8 +322,8 @@ function New-FrameLabLiveGeometry {
     $geo = [ordered]@{
         Window   = $w
         Monitor  = [pscustomobject]@{ X = [int]$Monitor.X; Y = [int]$Monitor.Y; W = [int]$Monitor.W; H = [int]$Monitor.H }
-        Caption  = $w.Y + [int][math]::Round(10 * $Scale)
-        CaptionX = $w.X + $w.W - [int][math]::Round((3 * 46 + 60) * $Scale)
+        Caption  = $w.Y + (Get-TestChromeDip 10 $Scale)
+        CaptionX = $w.X + $w.W - (Get-TestChromeDip (3 * 46 + 60) $Scale)
         Panes    = @($Panes)
         Divider  = $null
         Sidebar  = $null
@@ -338,7 +339,7 @@ function New-FrameLabLiveGeometry {
         $sr = [int]$Sidebar.X + [int]$Sidebar.W
         $firstX = ($Panes | Measure-Object -Property X -Minimum).Minimum
         $gap = $firstX - $sr
-        $edge = $(if ($gap -ge 4) { $sr + [int]($gap / 2) } elseif ($Mode -eq 'rail') { $sr - [int][math]::Round(6 * $Scale) } else { $sr - 2 })
+        $edge = $(if ($gap -ge 4) { $sr + [int]($gap / 2) } elseif ($Mode -eq 'rail') { $sr - (Get-TestChromeDip 6 $Scale) } else { $sr - 2 })
         $geo.Sidebar = [pscustomobject]@{ EdgeX = $edge; Y0 = [int]$Sidebar.Y; Y1 = [int]$Sidebar.Y + [int]$Sidebar.H }
     }
     return [pscustomobject]$geo
@@ -466,7 +467,7 @@ function New-FrameLabLiveDriver {
         $null = New-Item -ItemType Directory -Force -Path (Join-Path $prof 'ghoztty')
         [IO.File]::WriteAllText((Join-Path $prof 'ghoztty\pane_sidebar-debug'), (Get-FrameLabSidebarPref $Cell.Sidebar))
         $conf = Join-Path $dir 'config'
-        $lines = @(Get-FrameLabThemeConfig $Cell.Theme) + @('confirm-close-surface = false', 'undo-timeout = 0')
+        $lines = (Get-FrameLabThemeConfig $Cell.Theme) + @('confirm-close-surface = false', 'undo-timeout = 0')
         [IO.File]::WriteAllText($conf, (($lines -join "`n") + "`n"))
         $outs = @(1..$Cell.Panes | ForEach-Object { Join-Path $dir "card$_.txt" })
 
@@ -503,9 +504,9 @@ function New-FrameLabLiveDriver {
         $work = [GflWin]::WorkArea($top)
         $dip = $script:FrameLabWindowDip[[int]$Cell.Panes]
         $reach = 240 + 48 + 16
-        $w = [math]::Min([int]($dip[0] * $scale), $work[2] - $reach - [int](80 * $scale))
-        $h = [math]::Min([int]($dip[1] * $scale), $work[3] - $reach - [int](60 * $scale))
-        [void][GflWin]::Place($top, $work[0] + [int](80 * $scale), $work[1] + [int](60 * $scale), $w, $h)
+        $w = [math]::Min((Get-TestChromeDip $dip[0] $scale), $work[2] - $reach - (Get-TestChromeDip 80 $scale))
+        $h = [math]::Min((Get-TestChromeDip $dip[1] $scale), $work[3] - $reach - (Get-TestChromeDip 60 $scale))
+        [void][GflWin]::Place($top, $work[0] + (Get-TestChromeDip 80 $scale), $work[1] + (Get-TestChromeDip 60 $scale), $w, $h)
         Start-Sleep -Milliseconds 500
 
         if ($Cell.Panes -gt 1) {
@@ -544,6 +545,8 @@ function New-FrameLabLiveDriver {
             -Monitor @{ X = $wa[0]; Y = $wa[1]; W = $wa[2]; H = $wa[3] } -Panes (Get-FrameLabPaneOrder -Rects $rects) `
             -Sidebar $sb -Scale $scale -Mode $Cell.Sidebar
         $launched.Scale = $scale
+        # Beside still.png: enough to rebuild the cell's scene offline.
+        [IO.File]::WriteAllText((Join-Path $dir 'geometry.json'), ($launched.Geometry | ConvertTo-Json -Depth 6))
         return $launched
     }
 
