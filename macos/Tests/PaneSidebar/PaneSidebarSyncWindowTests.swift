@@ -95,6 +95,45 @@ struct PaneSidebarSyncWindowTests {
 
     // MARK: Shared state
 
+    /// A window opened while the shared scope is all windows comes up with
+    /// the search field in its sidebar: as AppKit orders it in, it hands the
+    /// caret to the window's first key view, which must not be the search —
+    /// the window's terminal gets it as it becomes key. A click (a
+    /// `makeFirstResponder`) still focuses the field, and typing filters.
+    @Test func aNewWindowDoesNotPutTheCaretInTheSearch() async throws {
+        let saved = save()
+        let shared = PaneSidebarSharedState.shared
+        shared.isHidden = false
+        shared.isExpanded = true
+        shared.width = 260
+        shared.showsAllWindows = true
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let c = TerminalController.newWindow(ghostty, tree: SplitTree(view: terminalPane(app)))
+        c.windowTitleOverride = "focus: new window"
+        _ = await poll(timeout: 10) { c.window?.isVisible == true }
+        c.window?.setContentSize(NSSize(width: 1000, height: 600))
+        await settle(0.8)
+        let window = try #require(c.window)
+        let content = try #require(window.contentView)
+        let field = try #require(all(NSTextField.self, in: content).first { $0.placeholderString == "Search" },
+                                 "the all-windows list shows its search field")
+
+        let responder = window.firstResponder
+        let caretInSearch = responder === field || (responder as? NSText)?.delegate === field
+        #expect(!caretInSearch, "the new window's first responder is the search field (\(String(describing: responder)))")
+
+        #expect(window.makeFirstResponder(field), "a click still focuses the search field")
+        let editor = try #require(field.currentEditor())
+        editor.insertText("focus")
+        await settle(0.2)
+        #expect(c.paneSidebarState.filter == "focus", "typing filters: \(c.paneSidebarState.filter)")
+        window.makeFirstResponder(nil)
+
+        c.close()
+        await close([], restoring: saved)
+    }
+
     /// Collapse, hide, width, the all-windows scope, a fold: each changed in
     /// one window shows in the other — while a narrow window keeps its rail.
     @Test func aChangeInOneWindowShowsInTheOther() async throws {

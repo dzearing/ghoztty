@@ -242,6 +242,13 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - A **search field**: whitespace-separated terms, all of which must appear in a
   pane's window title, title, banner, or directory/location
   (`PaneSidebarFilter`); Return goes to the first hit, Escape clears.
+  **It takes the caret only when clicked**: it is out of the key-view loop
+  (`PaneSidebarSearchField.ClickToFocusField`, `canBecomeKeyView` false).
+  Otherwise a window ordered in while the shared scope is all windows (Cmd-N,
+  the + buttons, a restore) had AppKit hand it the caret as the window's first
+  key view (`-[NSWindow _selectFirstKeyView]`), and `windowDidBecomeKey`,
+  which focuses the terminal only when the window itself is first responder,
+  left it there (`aNewWindowDoesNotPutTheCaretInTheSearch`).
 - Switching scopes slides the lists past each other (this window on the left,
   all windows on the right).
 - Hovering a **window** row or a **project** header puts + and × where its
