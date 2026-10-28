@@ -1059,5 +1059,41 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.48.1/Ghoztty-1.48.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="cacUBGvlltcQw9jxD5H0QF3kjynr/mRf7w+b6eB3/RS/jPW3Tb0FLBvNAVfYvQ2IkIk+x+tjR7y8K5EG66OBBA==" length="26902313" />
         </item>
+        <item>
+            <title>Version 1.49.0</title>
+            <sparkle:version>1.49.0</sparkle:version>
+            <sparkle:shortVersionString>1.49.0</sparkle:shortVersionString>
+            <pubDate>Wed, 28 Oct 2026 17:22:22 +0000</pubDate>
+            <description>{
+  "version": "1.49.0",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "Renaming keeps its place", "text": "Renaming a window or group in the sidebar (or with Change Window Title) no longer moves it in the all-windows list. Typing a new project: prefix still moves a window into that group." },
+        { "title": "Smooth collapse and expand", "text": "Collapsing or expanding the sidebar, by button or by dragging its edge, glides in step with the panes, with no jumps or jiggling." },
+        { "title": "+ on the collapsed rail", "text": "The collapsed rail's + opens a new window, just like the panel header's." },
+        { "title": "Starts tidy", "text": "The all-windows list opens with every window folded." }
+      ]
+    },
+    {
+      "title": "Windows",
+      "items": [
+        { "title": "Your titles stick", "text": "A window title you typed outranks any script's. ghoztty +rename leaves it alone, and +list --json reports title_set_by_user. The title survives restarts." },
+        { "title": "New windows fill the screen", "text": "New windows open maximized every time, never cascaded or moved to the last window's spot." }
+      ]
+    },
+    {
+      "title": "Panes",
+      "items": [
+        { "title": "Even out with a double-click", "text": "Double-click a grip between two cards to even out the cards beside it." },
+        { "title": "Lighter strip shadows", "text": "Strip shadows are lighter and fade at their ends instead of being cut off." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.49.0/Ghoztty-1.49.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="dketTHV5xWwofEeg6xw/jYO0tv+KjDC+Y/fBvUv6supKCHBKdoZKUlc0KaFYx2rRgFeUBdN+MUoqG1CwR7TMDw==" length="26913160" />
+        </item>
     </channel>
 </rss>
