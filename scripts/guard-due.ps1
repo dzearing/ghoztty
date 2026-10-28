@@ -4146,6 +4146,19 @@ $GuardTable = @(
             'test\win32\pixel-scan.ps1'
         )
     },
+    # The T2373 frame lab's scorer (T2381). Every later lab run is only as true
+    # as this: a scorer that stops catching a planted bleed class, or starts
+    # reading a lagging edge as a jank, turns the truth gate for resize and
+    # animation into a green lie. App-free, a few seconds.
+    [pscustomobject]@{
+        Name   = 'frame-score'
+        Script = 'test\win32\frame-score.ps1'
+        Stamp  = 'test\win32\frame-score.stamp.json'
+        Covers = @(
+            'test\win32\lib\FrameScore.ps1',
+            'test\win32\frame-score.ps1'
+        )
+    },
     # The drawn-port helpers and the sweep that keeps them (T694). A script that
     # goes back to guessing a TCP port does not fail here - it fails on some
     # OTHER Tuesday, in some other script, as a fake relay that "never came up",

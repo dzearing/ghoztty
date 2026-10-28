@@ -1,0 +1,14 @@
+{
+    "guard":  "frame-score",
+    "script":  "test/win32/frame-score.ps1",
+    "generated":  "2026-10-27T22:13:19-07:00",
+    "commit":  "b7b796aec",
+    "uncommitted":  [
+                        "test/win32/frame-score.ps1",
+                        "test/win32/lib/FrameScore.ps1"
+                    ],
+    "files":  {
+                  "test/win32/frame-score.ps1":  "52da37c6fdbfe72d9d34d02ab00d41203cbd3002c7ef2f68018dd95877f3d21c",
+                  "test/win32/lib/FrameScore.ps1":  "d155e4a2e2abc33091a0c7e4836db69e554e09a915379701522a73bcc9f510d0"
+              }
+}
