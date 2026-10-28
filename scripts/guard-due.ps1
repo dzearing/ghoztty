@@ -4159,6 +4159,24 @@ $GuardTable = @(
             'test\win32\frame-score.ps1'
         )
     },
+    # The lab's LIVE scorer (T2394): each frame's scene inferred from where the
+    # window edges and divider are in that frame, never from the cards. A
+    # tracker that follows the content, or a region rule that drifts from
+    # FrameLabCard's, reads a stale-size frame as clean - so the card's layout
+    # rules, the scorer it builds on and the capture worker it runs on all make
+    # this due. App-free, a few seconds.
+    [pscustomobject]@{
+        Name   = 'frame-lab-scene'
+        Script = 'test\win32\frame-lab-scene.ps1'
+        Stamp  = 'test\win32\frame-lab-scene.stamp.json'
+        Covers = @(
+            'test\win32\lib\FrameLabScene.ps1',
+            'test\win32\lib\FrameScore.ps1',
+            'test\win32\lib\FrameLabCard.ps1',
+            'test\win32\lib\FrameCapture.ps1',
+            'test\win32\frame-lab-scene.ps1'
+        )
+    },
     # The lab's deterministic scene and its planted positive controls (T2383).
     # A card that draws one cell wrong makes every lab frame a false B2/B6, and
     # a plant that stops firing makes the lab's 100%-caught control vacuous - so

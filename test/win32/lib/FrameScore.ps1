@@ -78,8 +78,7 @@
 
 Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
 
-if (-not ('GhozttyFrameScore' -as [type])) {
-Add-Type -ReferencedAssemblies System.Drawing @'
+$script:FrameScoreSource = @'
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -252,21 +251,30 @@ public static class GhozttyFrameScore {
         Dictionary<int, int> kind = new Dictionary<int, int>();  // 0 ok, 1 flash, 2 garbage
         int nFlash = 0, nJunk = 0; FsBox bFlash = new FsBox(), bJunk = new FsBox(); bool aF = false, aJ = false;
         bool anyGlyph = false; FsBox bGlyph = new FsBox();
+        // A card is long runs of one colour, so the previous pixel's verdict is
+        // the common answer; it keeps a full frame inside one 120 Hz refresh
+        // on the live scorer's worker (T2394).
+        int lastPx = -1, lastK = 0; bool lastG = false;
         for (int y = c.Y0; y < c.Y1; y++) {
             for (int x = c.X0; x < c.X1; x++) {
                 if (InCornerMask(r, x, y)) continue;
                 int px = f.At(x, y);
-                int k;
-                if (!kind.TryGetValue(px, out k)) {
-                    if (NearAny(px, pal, s.Tol)) k = 0;
-                    else if (NearAny(px, flash, s.Tol)) k = 1;
-                    else if (OnAnyBlend(px, pal, s.Tol)) k = 0;
-                    else k = 2;
-                    kind[px] = k;
+                int k; bool g;
+                if (px == lastPx) { k = lastK; g = lastG; }
+                else {
+                    if (!kind.TryGetValue(px, out k)) {
+                        if (NearAny(px, pal, s.Tol)) k = 0;
+                        else if (NearAny(px, flash, s.Tol)) k = 1;
+                        else if (OnAnyBlend(px, pal, s.Tol)) k = 0;
+                        else k = 2;
+                        kind[px] = k;
+                    }
+                    g = r.Glyph >= 0 && Near(px, r.Glyph, s.Tol);
+                    lastPx = px; lastK = k; lastG = g;
                 }
                 if (k == 1) { nFlash++; Grow(ref bFlash, ref aF, x, y); }
                 else if (k == 2) { nJunk++; Grow(ref bJunk, ref aJ, x, y); }
-                if (r.Glyph >= 0 && Near(px, r.Glyph, s.Tol)) Grow(ref bGlyph, ref anyGlyph, x, y);
+                if (g) Grow(ref bGlyph, ref anyGlyph, x, y);
             }
         }
         if (nFlash > 0) Add(res, "B1", r.Name, "background colour inside the card", nFlash, bFlash);
@@ -500,7 +508,40 @@ public static class GhozttyMotionScore {
     }
 }
 '@
+
+# Compiled to a dll in %TEMP% keyed by the source hash, not in memory (T2394):
+# the live scene scorer (FrameLabScene.ps1) is C# that builds FsScenes on
+# FrameCapture's worker, and an in-memory assembly cannot be referenced by a
+# later compile. Path to the dll (once loaded) is $script:FrameScoreDll.
+function Import-FrameScore {
+    if ('GhozttyFrameScore' -as [type]) {
+        $script:FrameScoreDll = [GhozttyFrameScore].Assembly.Location
+        return
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $hash = -join ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($script:FrameScoreSource))[0..7] | ForEach-Object { $_.ToString('x2') })
+    $dir = Join-Path $env:TEMP 'ghoztty-framescore'
+    $dll = Join-Path $dir "fs-$hash.dll"
+    if (-not (Test-Path $dll)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $src = Join-Path $dir "fs-$hash.cs"
+        [System.IO.File]::WriteAllText($src, $script:FrameScoreSource, (New-Object System.Text.UTF8Encoding $false))
+        $fw = [System.Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
+        $tmp = "$dll.$PID.tmp"
+        $out = & (Join-Path $fw 'csc.exe') /nologo /target:library /optimize+ "/out:$tmp" `
+            "/r:$(Join-Path $fw 'System.Drawing.dll')" $src 2>&1
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $tmp)) {
+            throw "FrameScore: csc failed ($LASTEXITCODE): $($out -join ' | ')"
+        }
+        # A second process can win the race and already have the dll loaded
+        # (so locked); its copy is the same source, so keep it.
+        try { Move-Item -Force $tmp $dll -ErrorAction Stop }
+        catch { if (-not (Test-Path $dll)) { throw }; Remove-Item $tmp -ErrorAction SilentlyContinue }
+    }
+    [System.Reflection.Assembly]::LoadFrom($dll) | Out-Null
+    $script:FrameScoreDll = $dll
 }
+Import-FrameScore
 
 # A capture (System.Drawing.Bitmap) as a scoring frame; -Box crops it to the
 # window rect in bitmap coordinates (x, y, w, h).
