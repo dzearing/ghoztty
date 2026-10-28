@@ -13,7 +13,8 @@
 #
 # Layout: P | s1 | s2 across a 1500 DIP window (each ~490 DIP). The root
 # divider (P's right edge) is dragged right:
-#   A) to ~1000 DIP - past 1500 - 600, s2 folds: two panes on show,
+#   A) to 100 DIP past the fold point (the row less two 225 DIP minimums
+#      and a gutter, T2295), s2 folds: two panes on show,
 #      and the caret, which was in s2, moves to s1 (the pane still on show)
 #   B) on to ~1420 DIP - s1 folds too: one pane on show
 #   C) back to ~1000 DIP - s1 unfolds: two on show again
@@ -186,9 +187,15 @@ try {
     $pRight0 = $c3[0].Right
     $x0 = [int](($c3[0].Right + $c3[1].Left) / 2)
     $y = [int](($c3[0].Top + $c3[0].Bottom) / 2)
-    # Positions as fractions of the grid, so DPI and chrome do not matter:
-    # 1000/1500 is past the fold point (~900/1500); 1420/1500 folds s1 too.
-    $xFold1 = [int]($gridLeft + $gridW * 1000 / 1500)
+    # Fold 1 is derived from the pane minimum (T2295; 225 DIP since T2284),
+    # the way stack-fold-slide.ps1 does it: s2 folds where s1 and s2 stop
+    # fitting at their minimums, the row less two minimums and a gutter. The
+    # old 1000/1500 of the row left both above 225 DIP. 1420/1500 is under
+    # one minimum from the row's end, so s1 folds too.
+    $minDip = 225
+    $gutter = $c3[1].Left - $c3[0].Right
+    $foldAt = $c3[2].Right - 2 * (Get-TestChromeDip -Dip $minDip -Scale $scale) - $gutter
+    $xFold1 = [int]($foldAt + (Get-TestChromeDip -Dip 100 -Scale $scale))
     $xFold2 = [int]($gridLeft + $gridW * 1420 / 1500)
 
     # ---- A-D: one drag out and back ------------------------------------------

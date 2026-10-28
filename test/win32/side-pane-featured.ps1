@@ -176,8 +176,11 @@ try {
         Write-TestAssertedNothing -Reason "the first pane does not hold the caret ($(Format-Leaves $before))"
     }
     # Three cards fit, four do not: shrink until the row is exactly full.
+    # T2295: widths re-derived for the 225 DIP pane minimum (T2284) - four
+    # cards are 900 DIP plus gutters and the sidebar, so at the old 1100-980
+    # the side pane fit beside three and nothing was minimized.
     $full = $false
-    foreach ($w in @(1100, 1050, 1000, 980)) {
+    foreach ($w in @(900, 870, 840, 820)) {
         [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Px $w) -Height (Px 700))
         Start-Sleep -Milliseconds 900
         if (@(Get-VisibleTerminals $top).Count -eq 3) { $full = $true; Say "      window $w DIP: three on show"; break }
