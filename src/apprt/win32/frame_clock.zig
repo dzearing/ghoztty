@@ -76,6 +76,19 @@ pub fn isDoubled(interval_ns: u64, period_ns: u64) bool {
     return interval_ns * doubled_factor_den > period_ns * doubled_factor_num;
 }
 
+/// How much time a glide's FIRST frame may take up (T2401): at most one
+/// display period, however late it lands. The layout pass that starts a
+/// glide - moving every card, a web view among them - can hold the UI thread
+/// for tens of milliseconds before the first frame is painted, and a glide
+/// clocked from the click spends that time on nothing the eye saw: Mac's
+/// ease-out puts 80% of the motion in its first third, so 50 ms late is most
+/// of a 240 ms glide gone in one frame - a snap. Core Animation starts its
+/// clock at the transaction's commit, which is the same rule. `elapsed` and
+/// `period` share one unit.
+pub fn firstFrame(elapsed: anytype, period: @TypeOf(elapsed)) @TypeOf(elapsed) {
+    return @min(elapsed, period);
+}
+
 pub const Sub = struct {
     hwnd: usize,
     id: usize,
@@ -248,4 +261,14 @@ test "one frame in flight: post only while live and not already pending" {
     try testing.expect(shouldPost(1, false));
     try testing.expect(!shouldPost(1, true));
     try testing.expect(!shouldPost(0, false));
+}
+
+test "T2401: a glide's first frame takes up at most one period, however late" {
+    // On time: the time that actually passed.
+    try std.testing.expectEqual(@as(u64, 5), firstFrame(@as(u64, 5), 8));
+    // 50 ms of layout before it: one 8 ms period, not 50.
+    try std.testing.expectEqual(@as(u64, 8), firstFrame(@as(u64, 50), 8));
+    try std.testing.expectEqual(@as(u64, 0), firstFrame(@as(u64, 0), 8));
+    // The grid's glide steps in float milliseconds.
+    try std.testing.expectEqual(@as(f64, 8.3), firstFrame(@as(f64, 41.5), 8.3));
 }

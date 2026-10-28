@@ -143,6 +143,7 @@ pub const ClientSize = struct { width: u32, height: u32 };
 
 const w32 = @import("win32.zig");
 const FrameClock = @import("FrameClock.zig");
+const frame_clock = @import("frame_clock.zig");
 const DarkMode = @import("DarkMode.zig");
 const HeroCarousel = @import("HeroCarousel.zig");
 const hero_math = @import("hero_math.zig");
@@ -837,6 +838,10 @@ stack_slide: ?pane_stack_slide.Slide = null,
 /// When the glide last stepped, while its clock runs (T2268): each frame eases
 /// by the time since. Null while it rests (caught up under a drag) or is over.
 stack_slide_last: ?std.time.Instant = null,
+/// Whether the next step is the glide's first since its clock started
+/// (T2401): that one counts at most one display period, so the layout that
+/// started it is not spent as motion nobody saw.
+stack_slide_fresh: bool = false,
 /// Where the last layout put each card of the active tab, the tab and the
 /// grid rect it laid out in: what the next layout compares against to tell a
 /// run change (a slide) from a resize or a tab switch (none).
@@ -8534,6 +8539,7 @@ fn runStackSlide(self: *Window) void {
         self.endStackSlide();
         return;
     };
+    self.stack_slide_fresh = true;
     if (self.hwnd) |h| _ = FrameClock.arm(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS);
 }
 
@@ -8572,10 +8578,15 @@ fn stackSlideTick(self: *Window) void {
         self.layoutSplits();
         return;
     };
-    const dt: f64 = if (self.stack_slide_last) |last|
+    var dt: f64 = if (self.stack_slide_last) |last|
         @as(f64, @floatFromInt(now.since(last))) / std.time.ns_per_ms
     else
         0;
+    if (self.stack_slide_fresh) {
+        self.stack_slide_fresh = false;
+        const period_ms = @as(f64, @floatFromInt(FrameClock.periodNs())) / std.time.ns_per_ms;
+        dt = frame_clock.firstFrame(dt, period_ms);
+    }
     self.stack_slide_last = now;
     if (s.step(dt)) {
         if (self.stackGesturing()) self.restStackSlide() else self.endStackSlide();

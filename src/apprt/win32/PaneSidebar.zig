@@ -38,6 +38,7 @@ const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
 const FrameClock = @import("FrameClock.zig");
+const frame_clock = @import("frame_clock.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
 const outline = @import("pane_sidebar_outline.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
@@ -781,7 +782,7 @@ pub fn place(self: *PaneSidebar, target: w32.RECT, mode: pane_sidebar.Mode, scal
         c.to_w = rect.right - rect.left;
         if (c.h != rect.bottom - rect.top) {
             self.dropColumn();
-        } else rect.right = rect.left + c.widthAt(w32.GetTickCount64());
+        } else rect.right = rect.left + c.widthAt(transition.nowMs());
     }
     // T1877: a field that is no longer on screen gives the caret back, and a
     // query filters the panel but never the rail - a mode change re-asks.
@@ -3123,7 +3124,7 @@ fn startColumn(self: *PaneSidebar, c: xf.Column, to_w: i32) void {
     self.dropColumn();
     self.dropTransition();
     if (!FrameClock.arm(self.hwnd, TIMER_COLUMN, transition.frame_ms)) return next.deinit();
-    next.start_ms = w32.GetTickCount64();
+    next.start_ms = transition.nowMs();
     next.to_w = to_w;
     if (std.process.parseEnvVarInt("GHOZTTY_SIDEBAR_COLUMN_MS", u32, 10)) |ms| {
         next.ms = ms;
@@ -3149,10 +3150,21 @@ fn onColumnTick(self: *PaneSidebar) void {
         FrameClock.disarm(self.hwnd, TIMER_COLUMN);
         return;
     };
-    const now = w32.GetTickCount64();
+    const now = transition.nowMs();
+    if (!c.anchored) {
+        // The first frame (T2401): the layout that started the glide does not
+        // count against it.
+        const period_ms = @max(1, FrameClock.periodNs() / std.time.ns_per_ms);
+        const at = now - frame_clock.firstFrame(now -| c.start_ms, period_ms);
+        if (at != c.start_ms) log.info("pane sidebar column glide first frame {d} ms after its start, counted as {d}", .{ now -| c.start_ms, now - at });
+        self.column.?.start_ms = at;
+        self.column.?.anchored = true;
+        return self.onColumnTick();
+    }
     if (c.done(now)) {
         self.dropColumn();
-        log.info("pane sidebar column glide done width={d}", .{c.to_w});
+        const f = c.frames;
+        log.info("pane sidebar column glide done width={d} frames={d} gap_max_us={d} paint_max_us={d}", .{ c.to_w, f.count, f.gap_max_us, f.cost_max_us });
         self.window.syncPaneSidebar();
         _ = w32.InvalidateRect(self.hwnd, null, 0);
         return;
@@ -3175,7 +3187,9 @@ fn paintColumn(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
     const c = &(self.column.?);
     const old = c.old orelse return false;
     if (c.h != h or w <= 0 or h <= 0 or c.to_w <= 0) return false;
-    const p = c.progress(w32.GetTickCount64());
+    const t0 = transition.nowUs();
+    defer c.frames.note(t0, transition.nowUs() -| t0);
+    const p = c.progress(t0 / std.time.us_per_ms);
     const new = Dib32.create(hdc, c.to_w, h) orelse return false;
     defer new.destroy();
     const under = Dib32.create(hdc, w, h) orelse return false;

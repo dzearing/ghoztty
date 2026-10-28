@@ -189,6 +189,45 @@ pub fn columnWidthAt(from_w: i32, to_w: i32, p: f64) i32 {
     return @intFromFloat(@round(a + (b - a) * std.math.clamp(p, 0, 1)));
 }
 
+/// What a glide put on screen (T2401): the frames it painted, the longest
+/// wait between two of them, and the costliest paint - for the line that
+/// logs it landing, since a glide whose frames come too far apart reads as
+/// a snap however right its curve is.
+pub const Frames = struct {
+    count: u32 = 0,
+    last_us: ?u64 = null,
+    gap_max_us: u64 = 0,
+    cost_max_us: u64 = 0,
+
+    /// A frame painted at `at_us`, which took `cost_us` to paint.
+    pub fn note(self: *Frames, at_us: u64, cost_us: u64) void {
+        self.count += 1;
+        if (self.last_us) |last| self.gap_max_us = @max(self.gap_max_us, at_us -| last);
+        self.last_us = at_us;
+        self.cost_max_us = @max(self.cost_max_us, cost_us);
+    }
+};
+
+var clock_base: ?std.time.Instant = null;
+
+/// Microseconds on a precise monotonic clock (T2401). `GetTickCount64`
+/// moves in 15.6 ms steps, so a glide timed by it holds one width across
+/// several vblanks and then jumps; the grid's own glide has always read
+/// `std.time.Instant`. UI thread only.
+pub fn nowUs() u64 {
+    const now = std.time.Instant.now() catch return 0;
+    const base = clock_base orelse blk: {
+        clock_base = now;
+        break :blk now;
+    };
+    return now.since(base) / std.time.ns_per_us;
+}
+
+/// `nowUs` in milliseconds, the unit the column glide is timed in.
+pub fn nowMs() u64 {
+    return nowUs() / std.time.us_per_ms;
+}
+
 /// One frame of a collapse or expand into `out` (`w` x `h`, the column as
 /// wide as it is drawn now; T2291, Mac `PaneSidebarChrome`): the frame it
 /// left (`old`, `old_w` wide) fading out and the frame it goes to (`new`,
@@ -442,4 +481,20 @@ test "rows that would come from outside the viewport are bare material" {
     composeFold(&out, &bg, &open, &closed, &open, w, h, .{ .left = 0, .top = 1, .right = w, .bottom = 3 }, 1, 2, true, 0.5);
     try std.testing.expectEqual(bgc, out[2]);
     try std.testing.expectEqual(bgc, out[3]);
+}
+
+test "T2401: frames note the count, the longest gap and the costliest paint" {
+    var f: Frames = .{};
+    f.note(1_000, 300);
+    f.note(17_000, 2_000);
+    f.note(60_000, 500);
+    try std.testing.expectEqual(@as(u32, 3), f.count);
+    try std.testing.expectEqual(@as(u64, 43_000), f.gap_max_us);
+    try std.testing.expectEqual(@as(u64, 2_000), f.cost_max_us);
+}
+
+test "T2401: the precise clock never goes backwards" {
+    const a = nowUs();
+    const b = nowUs();
+    try std.testing.expect(b >= a);
 }

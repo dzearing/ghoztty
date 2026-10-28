@@ -173,6 +173,13 @@ pub fn disarm(hwnd: ?w32.HWND, id: usize) void {
     if (current) |c| c.unsubscribe(@intFromPtr(h), id);
 }
 
+/// The display period the clock has measured, in nanoseconds, or 60 Hz's
+/// when no clock runs.
+pub fn periodNs() u64 {
+    const c = current orelse return frame_clock.default_period_ns;
+    return c.period_ns.load(.acquire);
+}
+
 /// Whether `(hwnd, id)` is stepping on the frame clock right now.
 pub fn isArmed(hwnd: w32.HWND, id: usize) bool {
     const c = current orelse return false;

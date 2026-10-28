@@ -38,6 +38,10 @@ pub const Column = struct {
     /// How long it runs: `tr.column_ms`, or the stretched one an acceptance
     /// script asks for (`GHOZTTY_SIDEBAR_COLUMN_MS`) to catch it mid-glide.
     ms: u64 = tr.column_ms,
+    /// What it has put on screen so far (T2401), logged as it lands.
+    frames: tr.Frames = .{},
+    /// Whether its clock has been anchored at its first frame (T2401).
+    anchored: bool = false,
 
     pub fn progress(self: *const Column, now_ms: u64) f64 {
         return tr.progress(now_ms -| self.start_ms, self.ms);
