@@ -1040,5 +1040,24 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.48.0/Ghoztty-1.48.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="Em9J5K7zOOkl7FGE6OgpsE1tg2P7O1K6RsBr/twZqQ76Tm6qz/HYPw0bXFRPzikKgvr1MyP6r+TyY7LBKULqCA==" length="26902399" />
         </item>
+        <item>
+            <title>Version 1.48.1</title>
+            <sparkle:version>1.48.1</sparkle:version>
+            <sparkle:shortVersionString>1.48.1</sparkle:shortVersionString>
+            <pubDate>Wed, 28 Oct 2026 04:40:03 +0000</pubDate>
+            <description>{
+  "version": "1.48.1",
+  "sections": [
+    {
+      "title": "Windows",
+      "items": [
+        { "title": "New windows get the caret", "text": "Opening a new window puts the cursor in its terminal, ready to type, not in the sidebar's search box." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.48.1/Ghoztty-1.48.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="cacUBGvlltcQw9jxD5H0QF3kjynr/mRf7w+b6eB3/RS/jPW3Tb0FLBvNAVfYvQ2IkIk+x+tjR7y8K5EG66OBBA==" length="26902313" />
+        </item>
     </channel>
 </rss>
