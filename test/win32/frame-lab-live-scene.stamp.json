@@ -1,0 +1,18 @@
+{
+    "guard":  "frame-lab-live-scene",
+    "script":  "test/win32/frame-lab-live-scene.ps1",
+    "generated":  "2026-10-28T06:33:32-07:00",
+    "commit":  "a691d5f4d",
+    "uncommitted":  [
+                        "test/win32/frame-lab-live-scene.ps1",
+                        "test/win32/lib/FrameLabCatalogue.ps1",
+                        "test/win32/lib/FrameLabLiveScene.ps1"
+                    ],
+    "files":  {
+                  "test/win32/frame-lab-live-scene.ps1":  "aa95b7c4c084d11b6e5ac2038e28c77101638de042e2ab31459bc188d7e6f4db",
+                  "test/win32/lib/FrameLabCard.ps1":  "bd2619ed598f86310869e1ba21fc732287a97c41d801df176e7a41307cbc1882",
+                  "test/win32/lib/FrameLabCatalogue.ps1":  "0188e232aeb602ddbe39438246f8f58c35e477e472f87f151720d1c832decea2",
+                  "test/win32/lib/FrameLabLiveScene.ps1":  "721777d1e63ef40b18971df7914f6dfa62dc9cf784f615aad715c5e01b9d449e",
+                  "test/win32/lib/FrameLabScene.ps1":  "2d8b2b01a6659019b8d6bd9da042b78896d80b496878a3428891df75a3c71bbf"
+              }
+}

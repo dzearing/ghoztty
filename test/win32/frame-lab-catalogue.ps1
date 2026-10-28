@@ -139,8 +139,8 @@ try {
         "start=$($right.MotionStartMs) end=$($right.MotionEndMs)"
     Assert 'B6 axis/track/grab offset: x, window-right, pointer 4 px inside the edge' `
         ($right.Axis -eq 'x' -and $right.Track -eq 'window-right' -and $right.GrabOffset -eq -4) "grab=$($right.GrabOffset)"
-    Assert 'B7 capture rect covers the window grown by the amplitude' `
-        ($right.CaptureRect.X -eq 400 -and $right.CaptureRect.W -eq 1400 -and $right.CaptureRect.H -eq 800)
+    Assert 'B7 capture rect covers the window grown by the amplitude, plus the 48 px reach margin the backdrop scan needs (T2397)' `
+        ($right.CaptureRect.X -eq 400 -and $right.CaptureRect.W -eq 1448 -and $right.CaptureRect.H -eq 800)
 
     $bot = Get-FrameLabGesture -Name frame-bottom -Geometry $geo -Amplitude 1000
     Assert 'B8 a reach past the work area is clipped to the monitor' ($bot.CaptureRect.Y + $bot.CaptureRect.H -eq 1400) "rect=$($bot.CaptureRect)"

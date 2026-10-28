@@ -4177,6 +4177,28 @@ $GuardTable = @(
             'test\win32\frame-lab-scene.ps1'
         )
     },
+    # The lab's per-cell live scene (T2397): the backdrop window behind the
+    # app, the edges and card anchors derived from a cell's geometry, the
+    # still-frame calibration whose refusal is the cell's `incomplete`, and the
+    # bridge from the scorer's records to the cell's bleed and motion numbers.
+    # A spec that anchors a side to the wrong edge, or a sign slip in the grab
+    # offset, scores a real drag wrong in a way no live run can tell apart from
+    # the app - so the scene scorer, the gesture's capture rect (the reach
+    # margin the backdrop scan needs) and the protocol's Scene hook make this
+    # due. Synthetic frames plus a hidden-from-the-user backdrop on the test
+    # desktop; a few seconds.
+    [pscustomobject]@{
+        Name   = 'frame-lab-live-scene'
+        Script = 'test\win32\frame-lab-live-scene.ps1'
+        Stamp  = 'test\win32\frame-lab-live-scene.stamp.json'
+        Covers = @(
+            'test\win32\lib\FrameLabLiveScene.ps1',
+            'test\win32\lib\FrameLabScene.ps1',
+            'test\win32\lib\FrameLabCatalogue.ps1',
+            'test\win32\lib\FrameLabCard.ps1',
+            'test\win32\frame-lab-live-scene.ps1'
+        )
+    },
     # The lab's deterministic scene and its planted positive controls (T2383).
     # A card that draws one cell wrong makes every lab frame a false B2/B6, and
     # a plant that stops firing makes the lab's 100%-caught control vacuous - so

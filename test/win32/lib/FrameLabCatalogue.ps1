@@ -181,7 +181,12 @@ function Get-FrameLabGesture {
         [int]$Legs = 4,
         [double]$LegMs = 600,
         [double]$SettleMs = 150,
-        [double]$RateHz = 1000
+        [double]$RateHz = 1000,
+        # Beyond the farthest an edge reaches: the live scene finds window-right
+        # and window-bottom by scanning in from the backdrop (T2397), and at the
+        # shuttle's extreme a capture that ends AT the edge has none left to
+        # scan from. 48 px also clears the window's DWM shadow.
+        [int]$ReachMargin = 48
     )
     if ($Legs -lt 2 -or $Legs % 2) { throw "Get-FrameLabGesture: -Legs must be even and >= 2 (it must end where it started), got $Legs" }
     $w = $Geometry.Window; $m = $Geometry.Monitor
@@ -200,21 +205,21 @@ function Get-FrameLabGesture {
             $axis = 'x'; $track = 'window-right'; $grab = $gx - ($w.X + $w.W)
             [void]$b.MoveTo($gx, $gy).Hold($SettleMs).Press().Hold($SettleMs)
             $shuttleAt = $b.Count; [void]$b.Shuttle($gx + $Amplitude, $gy, $Legs, $LegMs); $shuttleEnd = $b.Count - 1
-            $reach.R += $Amplitude
+            $reach.R += $Amplitude + $ReachMargin
         }
         'frame-bottom' {
             $gx = $w.X + [int]($w.W / 2); $gy = $w.Y + $w.H - 1 - $inset
             $axis = 'y'; $track = 'window-bottom'; $grab = $gy - ($w.Y + $w.H)
             [void]$b.MoveTo($gx, $gy).Hold($SettleMs).Press().Hold($SettleMs)
             $shuttleAt = $b.Count; [void]$b.Shuttle($gx, $gy + $Amplitude, $Legs, $LegMs); $shuttleEnd = $b.Count - 1
-            $reach.B += $Amplitude
+            $reach.B += $Amplitude + $ReachMargin
         }
         'frame-corner' {
             $gx = $w.X + $w.W - 1 - $inset; $gy = $w.Y + $w.H - 1 - $inset
             $axis = 'xy'; $track = 'window-right'; $grab = $gx - ($w.X + $w.W)
             [void]$b.MoveTo($gx, $gy).Hold($SettleMs).Press().Hold($SettleMs)
             $shuttleAt = $b.Count; [void]$b.Shuttle($gx + $Amplitude, $gy + $Amplitude, $Legs, $LegMs); $shuttleEnd = $b.Count - 1
-            $reach.R += $Amplitude; $reach.B += $Amplitude
+            $reach.R += $Amplitude + $ReachMargin; $reach.B += $Amplitude + $ReachMargin
         }
         'divider' {
             $d = $Geometry.Divider
@@ -340,8 +345,17 @@ hashtable of scriptblocks - the live pieces:
   StopCapture   { param($Session) }   -> @{ Stats; Account; Timeline }
   Play          { param($Path) }      -> a GliResult (Skipped/Aborted)   pointer cells
   Fire          { param($Plan) }      -> an Invoke-FrameLabTrigger result trigger cells
-  Score         { param($Capture, $Frames, $Gesture, $Played) }
+  Score         { param($Capture, $Frames, $Gesture, $Played, $Scene) }
                 -> @{ BleedFrames; Motion; MotionMisses }
+
+and, optionally (T2397):
+
+  Scene         { param($Cell, $Launched, $Gesture) } -> @{ Ok; Scorer; Reasons }
+                the cell's live scene, calibrated on its still frame. A scene
+                that is not Ok is the cell's verdict - incomplete, with its
+                reasons - and nothing is played. Its Scorer goes to the
+                measurement run's StartCapture as a third argument, and the
+                whole answer to Score as $Scene.
 
 Returns the cell, its gesture summary, both runs' numbers and the verdict.
 #>
@@ -379,8 +393,19 @@ function Invoke-FrameLabCell {
             $run = { & $Driver.Play $g.Path }
         }
 
+        $sceneRes = $null
+        if ($Driver.ContainsKey('Scene')) {
+            $sceneRes = & $Driver.Scene $Cell $scene $g
+            if ($null -eq $sceneRes -or -not $sceneRes.Ok) {
+                $why = @($(if ($sceneRes) { $sceneRes.Reasons | Where-Object { $_ } }))
+                if (-not $why.Count) { $why = @('no reason given') }
+                $out.Verdict = [pscustomobject]@{ Verdict = 'incomplete'; Reasons = @($why | ForEach-Object { "scene: $_" }); SlotGaps = 0 }
+                return [pscustomobject]$out
+            }
+        }
+
         # Measurement: capture only.
-        $s = & $Driver.StartCapture $g.CaptureRect $false
+        $s = $(if ($sceneRes) { & $Driver.StartCapture $g.CaptureRect $false $sceneRes.Scorer } else { & $Driver.StartCapture $g.CaptureRect $false })
         $in1 = & $run
         $m = & $Driver.StopCapture $s
         $frames = Select-FrameLabScoredFrames $m.Timeline
@@ -393,7 +418,7 @@ function Invoke-FrameLabCell {
             $out.Verdict = Resolve-FrameLabCellVerdict -Input1 $in1 -SlotGaps $m.Stats.SlotGaps
             return [pscustomobject]$out
         }
-        $sc = & $Driver.Score $m $frames $g $in1
+        $sc = & $Driver.Score $m $frames $g $in1 $sceneRes
         $out.Score = $sc
 
         # Accounting: the same path again, with Desktop Duplication counting.
