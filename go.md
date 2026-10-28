@@ -1113,6 +1113,15 @@ success leaves the loop dead — that already cost six days (2026-07-21 →
 2026-07-27) and killed it again on 2026-07-28. Finishing a task is not a
 reason to stop; finishing IS the trigger to reset and take the next one.
 
+**Waiting on a box condition is the same failure** (user, 2026-10-28). When the
+next step needs something only the box can grant — an idle, unlocked desktop,
+no input for N minutes, a fullscreen app gone — do NOT hold the turn open
+watching for it with a background poll. The user is often at the machine for
+hours, and a turn idling at "waiting for the box to read idle" blocks every P0
+behind it: on 2026-10-28 lane A sat 1h10m that way on T2395 while two P0 user
+reports (T2400, T2401) waited. Commit what is done, park the live part as
+`blocked(needs …)` with `blocked-on: event` (as T2396 is), and go to step 7.
+
 Since T139 there IS a supervisor, but do not lean on it: the watchdog
 (`scripts\go-loop-watchdog.ps1`) re-enters only after tens of minutes of dead
 time. It is the safety net for a crash, not a substitute for step 7.
