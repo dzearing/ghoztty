@@ -192,9 +192,12 @@ pub fn columnWidthAt(from_w: i32, to_w: i32, p: f64) i32 {
 /// What a glide put on screen (T2401): the frames it painted, the longest
 /// wait between two of them, and the costliest paint - for the line that
 /// logs it landing, since a glide whose frames come too far apart reads as
-/// a snap however right its curve is.
+/// a snap however right its curve is. `steps` is how many times it moved,
+/// so a step nobody painted (a repaint starved under a drag) shows as
+/// `count` falling short of it.
 pub const Frames = struct {
     count: u32 = 0,
+    steps: u32 = 0,
     last_us: ?u64 = null,
     gap_max_us: u64 = 0,
     cost_max_us: u64 = 0,
@@ -205,6 +208,11 @@ pub const Frames = struct {
         if (self.last_us) |last| self.gap_max_us = @max(self.gap_max_us, at_us -| last);
         self.last_us = at_us;
         self.cost_max_us = @max(self.cost_max_us, cost_us);
+    }
+
+    /// The glide moved one step, painted or not.
+    pub fn step(self: *Frames) void {
+        self.steps += 1;
     }
 };
 
@@ -491,6 +499,15 @@ test "T2401: frames note the count, the longest gap and the costliest paint" {
     try std.testing.expectEqual(@as(u32, 3), f.count);
     try std.testing.expectEqual(@as(u64, 43_000), f.gap_max_us);
     try std.testing.expectEqual(@as(u64, 2_000), f.cost_max_us);
+}
+
+test "T2401: a step nobody painted shows as count short of steps" {
+    var f: Frames = .{};
+    f.step();
+    f.note(1_000, 300);
+    f.step();
+    try std.testing.expectEqual(@as(u32, 2), f.steps);
+    try std.testing.expectEqual(@as(u32, 1), f.count);
 }
 
 test "T2401: the precise clock never goes backwards" {

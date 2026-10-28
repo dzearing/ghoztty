@@ -18,6 +18,10 @@
 #      panel and rail, s1 on its way back at the width it had.
 #   4. ctrl+shift+s hides the sidebar: the grid still glides over (log), and
 #      the column itself just goes - Mac's hidden mode has no column to animate.
+#   5. T2401: the rail's edge pulled out, then pushed back in, with pointer
+#      moves flooding in for longer than the glide (the user's drag): each
+#      step its glide takes is painted (frames= vs steps=). The user's own
+#      log read frames=0 for every collapse - the repaint never came.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -68,8 +72,64 @@ function Get-ToggleCenter($sb) {
     $inset = [int][math]::Truncate(($card - $tile) / 2)
     return @{ X = $sb.Left + $margin + $inset + [int]($tile / 2); Y = $sb.Top + $margin + $inset + [int]($tile / 2) }
 }
+# The expanded panel's edge band is the last grab width inside the column.
+function Get-PanelEdgeX($sb) { $sb.Right - 2 }
 function Click($top, $target, $pt) {
     return Send-TestMouse -Window $top -Target ([IntPtr]$target) -X $pt.X -Y $pt.Y -Action click
+}
+# Pointer moves posted back to back with the button held, alternating
+# between two client x's, for `ms`, at 500 Hz - a gaming mouse's rate, and
+# faster than the app drains them under the drag's layout, which is what
+# kept the user's repaint from ever coming. Returns how many the queue
+# accepted.
+Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+public static class T2401Flood {
+    [DllImport("user32.dll")] static extern bool PostMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+    public static int Run(IntPtr h, int x1, int x2, int y, int ms) {
+        var sw = Stopwatch.StartNew();
+        int n = 0;
+        long next = 0;
+        while (sw.ElapsedMilliseconds < ms) {
+            long t = sw.ElapsedTicks * 1000000L / Stopwatch.Frequency;
+            if (t < next) continue;
+            next = t + 2000;
+            int x = (n % 2 == 0) ? x1 : x2;
+            if (PostMessageW(h, 0x0200, (IntPtr)1, (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF)))) n++;
+        }
+        return n;
+    }
+}
+'@
+# The log since `$From` once a column glide there has landed and the drag has
+# let go (or `$Ms` ran out): the posted moves drain after the flood, so a
+# fixed sleep reads too early.
+function Wait-GlideDone([int]$From, [int]$Ms) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $l = New-LogLines $From
+        $landed = @($l | Where-Object { $_ -match 'column glide done' }).Count -ge 1
+        $let = @($l | Where-Object { $_ -match 'edge drag end' }).Count -ge 1
+        if ($landed -and $let) { Start-Sleep -Milliseconds 300; return New-LogLines $From }
+        Start-Sleep -Milliseconds 200
+    } while ($sw.ElapsedMilliseconds -lt $Ms)
+    return New-LogLines $From
+}
+# Each `column glide done` line's painted frames and steps (T2401).
+function Get-GlideFrames([string[]]$Lines) {
+    foreach ($l in $Lines) {
+        if ($l -match 'column glide done .*frames=(\d+) steps=(\d+)') { [pscustomobject]@{ Frames = [int]$Matches[1]; Steps = [int]$Matches[2] } }
+    }
+}
+function Format-GlideFrames($Done) { ($Done | ForEach-Object { "$($_.Frames) of $($_.Steps) steps" }) -join ', ' }
+# One glide landed, it moved more than once, and every step but the last
+# (which lands it, and paints as the plain column) was put on screen.
+function Test-GlidePainted($Done) {
+    if (@($Done).Count -ne 1) { return $false }
+    $d = @($Done)[0]
+    return ($d.Steps -ge 2 -and $d.Frames -ge $d.Steps - 1)
 }
 function New-LogLines([int]$From) { @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $From) }
 function Get-LogCount { @(Get-Content $errlog -ErrorAction SilentlyContinue).Count }
@@ -179,6 +239,39 @@ try {
     Assert "shown again, the rail" ($null -ne $sb -and $sb.Visible -and [math]::Abs($sb.Width - $railW) -le 1)
     $s1End = Get-Pane $top $h1
     Assert "...and s1 back in its slot (left $($s1End.Left) vs $($s1Rail.Left))" ($s1End.Left -eq $s1Rail.Left -and $s1End.Width -eq $s1Rail.Width)
+
+    "== 5: an edge drag's glide is painted while the pointer keeps moving (T2401)"
+    # The user's gesture: pull the rail's gutter out, keep moving, push it back
+    # in. Their log had every collapse end with frames=0 - the moves kept the
+    # queue busy, so the low-priority repaint never came. The moves are
+    # flooded here for longer than the glide; each glide must report frames.
+    $sb = Get-Sidebar $top
+    $ey = $sb.Top + (Px 300)
+    $ex = $sb.Right - (Px 6)
+    $mark = Get-LogCount
+    Assert "the rail's gutter took the press" (Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $ex -Y $ey -Action down)
+    $cx = $ex - $sb.Left; $cy = $ey - $sb.Top
+    $posted = [T2401Flood]::Run($sb.Hwnd, $cx + (Px 150), $cx + (Px 170), $cy, $glideMs + 600)
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($ex + (Px 170)) -Y $ey -Action up)
+    $new = Wait-GlideDone $mark 15000
+    "  pulled out under $posted posted moves"
+    $new | Where-Object { $_ -match 'column glide|expanded=' } | ForEach-Object { "    log: $_" }
+    $done = @(Get-GlideFrames $new)
+    Assert "the pull expanded it (log)" (@($new | Where-Object { $_ -match 'pane sidebar expanded=true cause=edge drag' }).Count -ge 1)
+    Assert "...and every step its glide took was painted while the moves kept coming ($(Format-GlideFrames $done))" (Test-GlidePainted $done)
+    $sb = Get-Sidebar $top
+    $px = Get-PanelEdgeX $sb
+    $mark = Get-LogCount
+    Assert "the panel's edge took the press" (Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $px -Y $ey -Action down)
+    $cx = $px - $sb.Left
+    $posted = [T2401Flood]::Run($sb.Hwnd, $cx - (Px 130), $cx - (Px 140), $cy, $glideMs + 600)
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($px - (Px 140)) -Y $ey -Action up)
+    $new = Wait-GlideDone $mark 15000
+    "  pushed in under $posted posted moves"
+    $new | Where-Object { $_ -match 'column glide|expanded=' } | ForEach-Object { "    log: $_" }
+    $done = @(Get-GlideFrames $new)
+    Assert "the push tucked it into the rail (log)" (@($new | Where-Object { $_ -match 'pane sidebar expanded=false cause=edge drag' }).Count -ge 1)
+    Assert "...and every step its glide took was painted while the moves kept coming ($(Format-GlideFrames $done))" (Test-GlidePainted $done)
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

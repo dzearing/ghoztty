@@ -3219,18 +3219,25 @@ fn onColumnTick(self: *PaneSidebar) void {
     if (c.done(now)) {
         self.dropColumn();
         const f = c.frames;
-        log.info("pane sidebar column glide done width={d} frames={d} gap_max_us={d} paint_max_us={d}", .{ c.to_w, f.count, f.gap_max_us, f.cost_max_us });
+        log.info("pane sidebar column glide done width={d} frames={d} steps={d} gap_max_us={d} paint_max_us={d}", .{ c.to_w, f.count, f.steps, f.gap_max_us, f.cost_max_us });
         self.window.syncPaneSidebar();
         _ = w32.InvalidateRect(self.hwnd, null, 0);
+        _ = w32.UpdateWindow(self.hwnd);
         return;
     }
     var cur: w32.RECT = undefined;
     if (w32.GetClientRect(self.hwnd, &cur) == 0) return;
     const w = c.widthAt(now);
+    self.column.?.frames.step();
     if (w != cur.right - cur.left) {
         _ = w32.SetWindowPos(self.hwnd, null, 0, 0, w, cur.bottom - cur.top, w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
     }
+    // Painted in THIS frame (T2401, the chrome_reposition rule): WM_PAINT is
+    // only made when the queue is empty, and under the edge drag that flips
+    // the column the mouse moves and the frame clock's posts never let it
+    // be - the user's log had collapses ending with frames=0.
     _ = w32.InvalidateRect(self.hwnd, null, 0);
+    _ = w32.UpdateWindow(self.hwnd);
 }
 
 /// One frame of the glide into `hdc` (`w` x `h`, the column as wide as it is
