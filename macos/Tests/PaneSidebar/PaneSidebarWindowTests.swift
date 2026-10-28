@@ -885,8 +885,14 @@ struct PaneSidebarWindowTests {
         #expect(abs(gridLeft - (column + gridMargin(h))) < 1, "the grid sits beside the rail column")
         #expect(host.cardRect.width == PaneSidebarState.railCardWidth)
         #expect(host.cardRect.minX == insets.leading, "the raised card keeps its margin")
-        #expect(abs(host.frame.width - (column + PaneSidebarState.edgeReach(for: .collapsed, elevated: elevated))) < 1,
-                "the column, plus the gutter its grip lies in — no room for a card opening over the grid")
+        // The host is as wide in either mode (the card glides inside it,
+        // `PaneSidebarCardGlide`); only the card and its grip take clicks.
+        #expect(abs(host.frame.width - PaneSidebarState.hostWidth(
+            panelWidth: h.controller.paneSidebarState.width, elevated: elevated)) < 1,
+                "the host keeps the expanded panel's width, collapsed too")
+        let grid = NSPoint(x: host.convert(host.cardRect, to: nil).maxX + 40, y: host.frame.midY)
+        #expect(host.hitTest(host.superview!.convert(grid, from: nil)) == nil,
+                "the host's room past the rail's grip passes clicks to the grid")
         // Equal gutters: window edge → rail, and rail → panes.
         let railFrame = host.convert(host.cardRect, to: nil)
         #expect(abs(railFrame.minX - (gridLeft - railFrame.maxX)) < 1,

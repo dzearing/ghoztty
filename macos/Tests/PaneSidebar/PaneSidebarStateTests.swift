@@ -165,7 +165,7 @@ struct PaneSidebarSharedStateTests {
         shared.isHidden = true
         shared.width = 300
         shared.windowOrder = ["project:relay", "project:ghoztty"]
-        shared.setShowsAllWindows(true, from: UUID())
+        shared.setShowsAllWindows(true)
         // The width is written once a drag pauses.
         try await Task.sleep(nanoseconds: 500_000_000)
         let relaunched = PaneSidebarSharedState(defaults: store)
@@ -655,6 +655,111 @@ struct PaneSidebarWindowOrderTests {
                                  existing: G.keys(G.sections(open, order: order)))
         #expect(shown(G.sections(open, order: moved)) == [
             "Build logs", "[relay]", "  main", "[ghoztty]", "  wt-10", "  alpha", "  wt-2"])
+    }
+
+    /// `open` with window `id` retitled `title`.
+    private func retitled(_ open: [(id: Int, title: String)], _ id: Int, _ title: String) -> [(id: Int, title: String)] {
+        open.map { $0.id == id ? (id: id, title: title) : $0 }
+    }
+
+    /// The user's report: a window third in a never-dragged list, renamed,
+    /// jumped to the top. A rename pins the list as shown, so nothing moves.
+    @Test func renamingAWindowKeepsItsPlace() {
+        let open = windows(["alpha", "beta", "gamma", "delta"])
+        let before = G.sections(open, order: [])
+        #expect(shown(before) == ["alpha", "beta", "delta", "gamma"])
+        // gamma (id 3) → "aaa", which by name would go first.
+        let order = G.renaming(window: 3, to: "aaa", in: before)
+        #expect(shown(G.sections(retitled(open, 3, "aaa"), order: order)) == ["alpha", "beta", "delta", "aaa"])
+        // Already dragged: still where it was.
+        let dragged = [G.key(window: 4), G.key(window: 3), G.key(window: 1), G.key(window: 2)]
+        let shownDragged = G.sections(open, order: dragged)
+        #expect(shown(G.sections(retitled(open, 3, "zzz"), order: G.renaming(window: 3, to: "zzz", in: shownDragged)))
+                == ["delta", "zzz", "alpha", "beta"])
+    }
+
+    /// A window the order has never seen (opened after the last drag) is
+    /// placed by name; renamed, it must still not move.
+    @Test func renamingAWindowTheOrderHasNotSeenKeepsItsPlace() {
+        let order = [G.key(window: 2), G.key(window: 4), G.key(window: 1)]
+        let open = windows(["alpha", "beta", "gamma", "delta"])
+        let before = G.sections(open, order: order)
+        // gamma (id 3), unseen, follows delta, its name neighbour.
+        #expect(shown(before) == ["beta", "delta", "gamma", "alpha"])
+        // As "bb" its name neighbour would be alpha, at the end.
+        #expect(shown(G.sections(retitled(open, 3, "bb"), order: order)) == ["beta", "delta", "alpha", "bb"],
+                "by name alone it moves")
+        #expect(shown(G.sections(retitled(open, 3, "bb"), order: G.renaming(window: 3, to: "bb", in: before)))
+                == ["beta", "delta", "bb", "alpha"])
+    }
+
+    @Test func renamingAGroupedWindowKeepsItsPlaceInTheGroup() {
+        let open = windows(titles)
+        let before = G.sections(open, order: [])
+        // wt-10 (id 4) → "ghoztty: a", which by name would lead the group.
+        let order = G.renaming(window: 4, to: "ghoztty: a", in: before)
+        #expect(shown(G.sections(retitled(open, 4, "ghoztty: a"), order: order)) == [
+            "Build logs", "[ghoztty]", "  alpha", "  wt-2", "  a", "[relay]", "  main"])
+    }
+
+    /// Typing a new `<project>: ` still moves a window into that group —
+    /// that is what it asks for — and a group it creates takes the window's
+    /// place.
+    @Test func renamingAWindowIntoANewGroupPutsTheGroupWhereTheWindowWas() {
+        let open = windows(["zeta", "beta", "gamma"])
+        let before = G.sections(open, order: [])
+        #expect(shown(before) == ["beta", "gamma", "zeta"])
+        let order = G.renaming(window: 3, to: "aa: gamma", in: before)
+        #expect(shown(G.sections(retitled(open, 3, "aa: gamma"), order: order)) == [
+            "beta", "[aa]", "  gamma", "zeta"])
+    }
+
+    @Test func renamingAWindowOutOfAGroupLeavesItBesideTheGroup() {
+        let open = windows(titles)
+        let before = G.sections(open, order: [])
+        // alpha (id 5) leaves ghoztty: it stays at the top level beside it.
+        let order = G.renaming(window: 5, to: "alpha", in: before)
+        #expect(shown(G.sections(retitled(open, 5, "alpha"), order: order)) == [
+            "Build logs", "[ghoztty]", "  wt-2", "  wt-10", "alpha", "[relay]", "  main"])
+    }
+
+    @Test func renamingAGroupKeepsItsPlace() {
+        let open = windows(titles)
+        let before = G.sections(open, order: [])
+        // ghoztty → "zz": by name it would go last, under relay.
+        let order = G.renaming(project: "ghoztty", to: "zz", in: before)
+        let renamed = open.map { window in
+            G.split(window.title).map { $0.project == "ghoztty" ? (id: window.id, title: "zz: \($0.worktree)") : window } ?? window
+        }
+        #expect(shown(G.sections(renamed, order: order)) == [
+            "Build logs", "[zz]", "  alpha", "  wt-2", "  wt-10", "[relay]", "  main"])
+        // Emptied: its windows stand where the group was, in its order.
+        let ungrouped = open.map { window in
+            G.split(window.title).map { $0.project == "ghoztty" ? (id: window.id, title: $0.worktree) : window } ?? window
+        }
+        #expect(shown(G.sections(ungrouped, order: G.renaming(project: "ghoztty", to: "", in: before))) == [
+            "Build logs", "alpha", "wt-2", "wt-10", "[relay]", "  main"])
+    }
+
+    @Test func renamingAGroupIntoAnotherMergesThem() {
+        let open = windows(titles)
+        let before = G.sections(open, order: [])
+        let order = G.renaming(project: "ghoztty", to: "relay", in: before)
+        let merged = open.map { window in
+            G.split(window.title).map { $0.project == "ghoztty" ? (id: window.id, title: "relay: \($0.worktree)") : window } ?? window
+        }
+        #expect(shown(G.sections(merged, order: order)) == [
+            "Build logs", "[relay]", "  alpha", "  wt-2", "  wt-10", "  main"])
+    }
+
+    /// A window opened after a rename pinned the list still lands beside
+    /// its name neighbour.
+    @Test func aWindowOpenedAfterARenameGoesAfterItsNameNeighbour() {
+        let open = windows(titles)
+        let order = G.renaming(window: 3, to: "Build logs 2", in: G.sections(open, order: []))
+        let opened = windows(titles + ["ghoztty: wt-3"])
+        #expect(G.sections(retitled(opened, 3, "Build logs 2"), order: order)
+            .first { $0.project == "ghoztty" }!.windows.map(\.label) == ["alpha", "wt-2", "wt-3", "wt-10"])
     }
 
     @Test func aWindowMovesOnlyAmongItsSiblings() {

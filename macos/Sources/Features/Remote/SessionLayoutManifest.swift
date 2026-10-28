@@ -163,6 +163,10 @@ final class SessionLayoutManifest {
         /// a tab group. Optional so manifests persisted before this field
         /// decode fine (missing key ⇒ nil).
         var windowTitleOverride: String? = nil
+        /// `windowTitleOverride` was typed by the user, so no script renames
+        /// over it (`BaseTerminalController.windowTitleIsUsers`). True or
+        /// absent: older manifests, and a script's title, decode as nil.
+        var windowTitleSetByUser: Bool? = nil
         /// The IPC target-registry name (`+new-window --target=...`).
         var ipcName: String?
         /// Shared by every entry in one native tab group; nil for a
@@ -289,6 +293,7 @@ final class SessionLayoutManifest {
         frame: Frame?,
         titleOverride: String?,
         windowTitleOverride: String? = nil,
+        windowTitleSetByUser: Bool? = nil,
         ipcName: String?,
         tabGroupID: UUID?,
         tabIndex: Int,
@@ -311,6 +316,7 @@ final class SessionLayoutManifest {
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
         entry.windowTitleOverride = windowTitleOverride
+        entry.windowTitleSetByUser = windowTitleOverride == nil ? nil : windowTitleSetByUser
         if let ipcName { entry.ipcName = ipcName }
         entry.tabGroupID = tabGroupID
         entry.tabIndex = tabIndex
@@ -337,12 +343,15 @@ final class SessionLayoutManifest {
     /// Record the user-set WINDOW-level title (nil ⇒ cleared). Called from
     /// the `windowTitleOverride` didSet choke point, same contract as
     /// `updateWindowTitle`. Unknown ids are a no-op.
-    func updateWindowTitleOverride(_ id: UUID, title: String?) {
+    func updateWindowTitleOverride(_ id: UUID, title: String?, byUser: Bool = false) {
         lock.lock()
         defer { lock.unlock() }
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
-        guard entries[idx].windowTitleOverride != title else { return }
+        let setByUser: Bool? = title != nil && byUser ? true : nil
+        guard entries[idx].windowTitleOverride != title
+            || entries[idx].windowTitleSetByUser != setByUser else { return }
         entries[idx].windowTitleOverride = title
+        entries[idx].windowTitleSetByUser = setByUser
         saveLocked()
         notifyChanged(entries[idx])
     }
@@ -671,6 +680,7 @@ final class SessionLayoutManifest {
             frame: frame,
             titleOverride: controller.titleOverride,
             windowTitleOverride: controller.windowTitleOverride,
+            windowTitleSetByUser: controller.windowTitleIsUsers ? true : nil,
             ipcName: ipcName,
             tabGroupID: tabGroupID,
             tabIndex: tabIndex,

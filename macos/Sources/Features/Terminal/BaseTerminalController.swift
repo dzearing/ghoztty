@@ -284,11 +284,11 @@ class BaseTerminalController: NSWindowController,
             // choke point every window-rename path funnels through.
             if let remoteManifestEntryID {
                 RemoteSessionManifest.shared.updateWindowTitleOverride(
-                    remoteManifestEntryID, title: windowTitleOverride)
+                    remoteManifestEntryID, title: windowTitleOverride, byUser: windowTitleIsUsers)
             }
             if let sessionLayoutEntryID {
                 SessionLayoutManifest.shared.updateWindowTitleOverride(
-                    sessionLayoutEntryID, title: windowTitleOverride)
+                    sessionLayoutEntryID, title: windowTitleOverride, byUser: windowTitleIsUsers)
             }
 
             // Every window's sidebar names this window by it.
@@ -301,6 +301,27 @@ class BaseTerminalController: NSWindowController,
                 (w.windowController as? BaseTerminalController)?.applyTitleToWindow()
             }
         }
+    }
+
+    /// `windowTitleOverride` was typed by the user — the sidebar's field,
+    /// Change Window Title, a sidebar drag into or out of a group — not set
+    /// by a script (`+rename`, `+new-window --title`). A user's title
+    /// outranks every script's: `+rename` leaves it alone until the user
+    /// clears it. Set with the title (`setWindowTitle(_:byUser:)`, or before
+    /// assigning `windowTitleOverride` on a restore), so it persists with it.
+    var windowTitleIsUsers = false
+
+    /// Whether the title pinning this window's titlebar (this controller's
+    /// or its tab group's holder's) was typed by the user.
+    var windowTitleSetByUser: Bool {
+        if windowTitleOverride != nil { return windowTitleIsUsers }
+        guard let window else { return false }
+        for w in window.tabGroup?.windows ?? [] where w !== window {
+            if let c = w.windowController as? BaseTerminalController, c.windowTitleOverride != nil {
+                return c.windowTitleIsUsers
+            }
+        }
+        return false
     }
 
     /// The window title pinning this controller's titlebar, if any: this
@@ -319,15 +340,18 @@ class BaseTerminalController: NSWindowController,
 
     /// Set (or clear, with nil) the window title for this window and its tab
     /// group, keeping exactly one controller in the group as the holder.
-    func setWindowTitle(_ newTitle: String?) {
+    /// `byUser`: the user typed it (`windowTitleIsUsers`).
+    func setWindowTitle(_ newTitle: String?, byUser: Bool = false) {
         if let window {
             for w in window.tabGroup?.windows ?? [] where w !== window {
                 if let c = w.windowController as? BaseTerminalController,
                    c.windowTitleOverride != nil {
+                    c.windowTitleIsUsers = false
                     c.windowTitleOverride = nil
                 }
             }
         }
+        windowTitleIsUsers = byUser && newTitle != nil
         windowTitleOverride = newTitle
     }
 
@@ -1454,7 +1478,7 @@ class BaseTerminalController: NSWindowController,
             guard response == .alertFirstButtonReturn else { return }
 
             let newTitle = textField.stringValue
-            self.setWindowTitle(newTitle.isEmpty ? nil : newTitle)
+            self.renameWindowKeepingPlace(newTitle.isEmpty ? nil : newTitle)
         }
     }
 
@@ -2186,6 +2210,16 @@ class BaseTerminalController: NSWindowController,
             // On screen only, as `equalize_splits`; stashed panes' slots
             // keep their ratios.
             surfaceTree = surfaceTree.applyingToVisible { $0.equalized(only: direction) }
+        case .evenRun(let row, let direction):
+            let even = [CGFloat](repeating: 1, count: row.run.count)
+            if row.run.count == row.items.count {
+                // All on show: the tree's ratios size the row.
+                surfaceTree = surfaceTree.applyingToVisible {
+                    $0.settingRow(row.items, along: direction, shares: even.map { $0 / CGFloat(even.count) })
+                }
+            } else {
+                paneStackState.show(row, run: row.run, sizes: even)
+            }
         }
     }
 

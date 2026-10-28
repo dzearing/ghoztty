@@ -1128,11 +1128,25 @@ class IPCServer {
             return IPCResponse(success: false, error: "target '\(target)' is no longer alive")
         }
 
-        DispatchQueue.main.async {
-            // A CLI rename is a WINDOW title: it pins the titlebar and
-            // survives pane focus/title changes. An empty title clears the
-            // pin so the titlebar falls back to the tab/pane title.
-            controller.setWindowTitle(newTitle.isEmpty ? nil : newTitle)
+        // A title the user typed outranks any script's: leave it, and say
+        // so (the skills that tag a title — `(prep)`, `(ready)` — ignore a
+        // failed rename). Checked and set in one main-thread turn, so a
+        // user rename can't land between them.
+        let kept: String? = Self.onMain {
+            guard controller.windowTitleSetByUser else {
+                // A CLI rename is a WINDOW title: it pins the titlebar and
+                // survives pane focus/title changes. An empty title clears
+                // the pin so the titlebar falls back to the tab/pane title.
+                controller.setWindowTitle(newTitle.isEmpty ? nil : newTitle)
+                return nil
+            }
+            return controller.effectiveWindowTitleOverride ?? ""
+        }
+        if let kept {
+            return IPCResponse(success: false, error: """
+                window '\(target)' was renamed by the user ('\(kept)'); \
+                +rename leaves a user's title alone until they clear it
+                """)
         }
 
         Self.logger.info("IPC: renamed display title for '\(target)' to '\(newTitle)'")
@@ -1978,7 +1992,8 @@ class IPCServer {
                         title: scriptWindow.title,
                         target: windowName,
                         focused: isFocused,
-                        tabs: tabsData
+                        tabs: tabsData,
+                        title_set_by_user: scriptWindow.preferredController?.windowTitleSetByUser ?? false
                     ))
                 }
             }

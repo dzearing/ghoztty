@@ -24,6 +24,10 @@ enum TerminalSplitOperation {
     /// its way, and only those (`SplitTree.equalized(only:)`).
     case equalize(SplitTree<PaneView>.Direction)
 
+    /// A grip between two cards of a stacked row double-clicked: even out
+    /// the cards on show, as a divider's double-click evens its splits.
+    case evenRun(PaneLayout.Row<UUID>, PaneLayout.Direction)
+
     struct Resize {
         /// The split node whose divider the gesture is on.
         let node: SplitTree<PaneView>.Node
@@ -424,7 +428,9 @@ private struct StackGrip: View {
                 onDragBegan: { send(.began) },
                 onDragDelta: { delta, _ in send(.moved(position: delta, dimension: 0)) },
                 onDragEnded: { send(.ended) },
-                onDoubleClick: nil,
+                // Between two cards, as a divider: even them out. (It had
+                // none, so a double-click there began a drag instead.)
+                onDoubleClick: isBetweenCards ? { action(.evenRun(handle.row, handle.direction)) } : nil,
                 currentSplit: { 0.5 },
                 // A grip goes away as the row collapses or widens; the drag
                 // carries on, and can undo it.

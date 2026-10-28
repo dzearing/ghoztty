@@ -111,12 +111,11 @@ final class PaneSidebarSharedState: ObservableObject {
         windowOrder = defaults.stringArray(forKey: Self.windowOrderKey) ?? []
     }
 
-    /// The all-windows toggle. Turning it on opens the window it was turned
-    /// on from — the one holding the pane you are in — and leaves every
-    /// other window folded to its row, the overview that scope is for.
-    func setShowsAllWindows(_ on: Bool, from windowID: UUID) {
+    /// The all-windows toggle. Turning it on folds every window to its row —
+    /// the one it was turned on from too — the overview that scope is for.
+    func setShowsAllWindows(_ on: Bool) {
         guard on != showsAllWindows else { return }
-        if on { unfoldedWindows = [windowID] }
+        if on { unfoldedWindows = [] }
         showsAllWindows = on
     }
 
@@ -198,7 +197,7 @@ final class PaneSidebarState: ObservableObject {
     /// List panes from every window, grouped by window. Shared.
     var showsAllWindows: Bool {
         get { shared.showsAllWindows }
-        set { change { shared.setShowsAllWindows(newValue, from: windowID) } }
+        set { change { shared.setShowsAllWindows(newValue) } }
     }
 
     /// The all-windows search. Shared.
@@ -405,8 +404,9 @@ final class PaneSidebarState: ObservableObject {
     /// Whether a window's panes are folded away in the all-windows list.
     ///
     /// Every window is folded — one row per window, the overview that scope
-    /// is for — unless it was unfolded: by hand, or as the window the list
-    /// was turned on from (`PaneSidebarSharedState.setShowsAllWindows`). The
+    /// is for, the window the list was turned on from included
+    /// (`PaneSidebarSharedState.setShowsAllWindows`) — unless it was unfolded
+    /// by hand. The
     /// same in every window's list, since the folds are shared; focus moving
     /// later never unfolds anything, or the list would jump under the
     /// pointer. A search unfolds everything, since a hit hidden inside a fold
@@ -427,6 +427,15 @@ final class PaneSidebarState: ObservableObject {
         guard mode != .hidden else { return 0 }
         let insets = railInsets(elevated: elevated)
         return insets.leading + cardWidth(for: mode, panelWidth: panelWidth) + insets.trailing
+    }
+
+    /// The sidebar host's width, whichever mode it is in: the expanded
+    /// column and the gutter its grip lies in, or the rail's, the wider —
+    /// so collapsing or expanding never resizes the host under its card.
+    static func hostWidth(panelWidth: CGFloat, elevated: Bool) -> CGFloat {
+        [Mode.expanded, .collapsed].map {
+            columnWidth(for: $0, panelWidth: panelWidth, elevated: elevated) + edgeReach(for: $0, elevated: elevated)
+        }.max() ?? 0
     }
 
     nonisolated static func clampWidth(_ width: CGFloat) -> CGFloat {
@@ -687,6 +696,46 @@ enum PaneSidebarWindowGrouping {
         Set(sections.flatMap { section in
             (section.project.map { [key(project: $0)] } ?? []) + section.windows.map(\.key)
         })
+    }
+
+    /// `sections` as an order: every group's key, then its windows', and
+    /// each lone window's, as listed. Read back over the same windows, it
+    /// lists them exactly so, whatever their names.
+    static func pinned<ID: Hashable>(_ sections: [Section<ID>]) -> [String] {
+        sections.flatMap { section in
+            (section.project.map { [key(project: $0)] } ?? []) + section.windows.map(\.key)
+        }
+    }
+
+    /// The order to keep while window `id` is retitled `title`: the list as
+    /// `sections` shows it (`pinned`), so a rename moves nothing — by name,
+    /// a new title would re-sort it. A `<project>: ` that names another
+    /// group still moves it there, at the edge nearest where it was; one
+    /// that names a group not in the list makes that group where the window
+    /// was. Dropping its `<project>: ` leaves it beside the group it left.
+    static func renaming<ID: Hashable>(window id: ID, to title: String, in sections: [Section<ID>]) -> [String] {
+        var order = pinned(sections)
+        if let project = split(title)?.project, !order.contains(key(project: project)),
+           let index = order.firstIndex(of: key(window: id)) {
+            order.insert(key(project: project), at: index)
+        }
+        return order
+    }
+
+    /// The order to keep while group `project` is renamed `name` (each of
+    /// its windows retitled `<name>: <label>`): the list as shown, the
+    /// group's key renamed in place. Named as another group, it merges
+    /// into that one where that one is; emptied, its windows stand where
+    /// it was, in its order.
+    static func renaming<ID: Hashable>(project: String, to name: String, in sections: [Section<ID>]) -> [String] {
+        var order = pinned(sections)
+        guard let index = order.firstIndex(of: key(project: project)) else { return order }
+        if name.isEmpty || order.contains(key(project: name)) {
+            order.remove(at: index)
+        } else {
+            order[index] = key(project: name)
+        }
+        return order
     }
 
     /// Finder's order: case-insensitive, numbers by value ("wt-2" before

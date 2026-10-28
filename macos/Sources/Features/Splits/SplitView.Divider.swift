@@ -341,6 +341,12 @@ final class GutterBar {
     private var lastBar: CGFloat?
     /// The drag's window's pane stage, found once per drag.
     private weak var stage: PaneStageView?
+    /// The gutter is one of the grid's, so mid-glide its bar goes where the
+    /// cards beside it are drawn (`PaneStageView.shownGutter`). Not the pane
+    /// sidebar's edge, whose grip is already where the card is drawn: mapped
+    /// through the stage too, the bar was thrown into the grid by however
+    /// far its first card still had to glide.
+    var followsStage = true
 
     init(in view: NSView) {
         self.view = view
@@ -506,9 +512,10 @@ final class GutterBar {
         guard dragWindow != nil, let host = dragWindow?.contentView?.superview else { return }
         if tracked?.window !== dragWindow { tracked = replacement(in: host) }
         guard let tracked else { return }
-        let laidOut = tracked.convert(tracked.bounds, to: nil)
+        let laidOut = (tracked as? SidePanelResizeHandle)?.gutterInWindow?()
+            ?? tracked.convert(tracked.bounds, to: nil)
         if stage?.window !== dragWindow { stage = Self.stage(in: host) }
-        let edge = stage?.shownGutter(laidOut, horizontal: axis == .horizontal) ?? laidOut
+        let edge = (followsStage ? stage?.shownGutter(laidOut, horizontal: axis == .horizontal) : nil) ?? laidOut
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if dragging.superlayer == nil {

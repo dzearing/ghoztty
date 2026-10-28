@@ -120,6 +120,7 @@ Window: "~/docs"
         "title": "Editor",
         "target": "editor",
         "focused": true,
+        "title_set_by_user": false,
         "tabs": [
           {
             "id": "tab-8f5985200",
@@ -151,6 +152,7 @@ Window: "~/docs"
 - **`target`** (on windows): User-provided name from `+new-window --target=X`, or auto-generated (`window-1`, `window-2`, etc.)
 - **`name`** (on terminals): User-provided from `+split --name=X`, else the pane id
 - **`splits`**: Recursive tree — `"type":"leaf"` contains a `terminal` object, `"type":"split"` contains `direction` (`horizontal`/`vertical`), `ratio`, `left`, `right`
+- **`title_set_by_user`** (on windows): `true` when the user typed the window's title (the sidebar, Change Window Title). `+rename` will not change it.
 - **`focused`**: On windows = frontmost window. On terminals = focused pane in its tab.
 - **`exit_code`**: `null` if the process is still running, or the exit code (e.g. `0`, `1`) if it has exited. Human-readable output shows `running` or `exited(N)`.
 
@@ -172,6 +174,8 @@ ghoztty +rename --target=<name> --title=<new-title>
 | `--title=<new-title>` | The new display title for the window/tab title bar. Required. |
 
 Returns an error if the target doesn't exist in the registry.
+
+**A title the user typed always wins.** If the user renamed the window (in the sidebar or with Change Window Title), `+rename` leaves it as it is and fails with an error naming the user's title — it neither replaces nor clears it. Treat that as expected, not something to retry: check `title_set_by_user` in `+list --json` first if you want to skip the call, and run `+rename` with `|| true` when tagging a title (`(prep)`, `(ready)`). Once the user clears their title, `+rename` works again.
 
 ## `ghoztty +rearrange`
 

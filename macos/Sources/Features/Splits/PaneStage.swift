@@ -85,6 +85,89 @@ final class PaneStageView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// Where the stage was, in the window, when its cards were last placed.
+    /// The grid moving over for the sidebar (`noteColumnShift`) moves the
+    /// stage — through an ANCESTOR's frame: its own origin stays at zero —
+    /// and that move need not land in the same pass as the layout that
+    /// starts the glide. So the glide is seeded by how far the stage has
+    /// REALLY moved (`seedOffset`), and a move while it glides shifts the
+    /// cards back by as much, at once (every ancestor's frame-change
+    /// notification, and its own `frame`), so no card is ever drawn a shift
+    /// away from where it was: missed, every card jumped the shift for a
+    /// frame — under the sidebar, or a blade pulled off its edge and back.
+    private var placedOrigin: CGPoint?
+    private var originInWindow: CGPoint { convert(CGPoint.zero, to: nil) }
+    private var ancestorObservers: [NSObjectProtocol] = []
+
+    override var frame: NSRect {
+        didSet { holdCardsOnScreen() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observeAncestors()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        observeAncestors()
+    }
+
+    /// Hear every ancestor move, as it moves.
+    private func observeAncestors() {
+        for observer in ancestorObservers { NotificationCenter.default.removeObserver(observer) }
+        ancestorObservers = []
+        var view = superview
+        while let ancestor = view {
+            ancestor.postsFrameChangedNotifications = true
+            ancestorObservers.append(NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: ancestor, queue: nil
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.holdCardsOnScreen() }
+            })
+            view = ancestor.superview
+        }
+    }
+
+    deinit {
+        for observer in ancestorObservers { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    /// The stage moved. Not gliding, its cards move with it — they are where
+    /// it puts them — unless the grid is about to glide over for the
+    /// sidebar (`hasColumnShift`): then where they were drawn is kept for the
+    /// glide's seed. While they glide, keep them where they are drawn.
+    private func holdCardsOnScreen() {
+        guard glide != nil || observed?.hasColumnShift == true else {
+            placedOrigin = originInWindow
+            return
+        }
+        guard glide != nil, absorbStageMove() else { return }
+        stepGlide()
+    }
+
+    /// While gliding: shift the cards back by however far the stage moved
+    /// since they were placed. Whether it had moved.
+    @discardableResult
+    private func absorbStageMove() -> Bool {
+        guard var glide, let placed = placedOrigin else { return false }
+        let now = originInWindow
+        let dx = placed.x - now.x, dy = placed.y - now.y
+        guard abs(dx) >= 0.5 || abs(dy) >= 0.5 else { return false }
+        for (id, rect) in glide.drawn { glide.drawn[id] = rect.offsetBy(dx: dx, dy: dy) }
+        // A move the glide was waiting for (its sign: the shift's). Made in
+        // full — or past it, the edge still dragged on in the same pass — it
+        // has arrived; waiting on an exact match held every card still until
+        // `moveWait` ran out, and the sidebar card grew over the grid.
+        if glide.awaitingMove != 0 {
+            let left = glide.awaitingMove + dx
+            glide.awaitingMove = abs(left) < 0.5 || left * glide.awaitingMove < 0 ? 0 : left
+        }
+        self.glide = glide
+        placedOrigin = now
+        return true
+    }
+
     func apply(
         cards: [PaneStage.Card], environment: EnvironmentValues, size: CGSize, runs: [ClosedRange<Int>],
         isGesturing: Bool, style: PaneStage.Style
@@ -102,11 +185,41 @@ final class PaneStageView: NSView {
         lastRuns = runs
         lastSize = size
         if changed || shift != nil || glide != nil {
+            // How far the stage has moved since its cards were placed: the
+            // whole shift once it has moved, nothing yet if it has not (its
+            // move then holds the cards, `holdCardsOnScreen`).
+            let moved = placedOrigin.map { $0.x - originInWindow.x } ?? shift.map { -$0 } ?? 0
             startGlide(cards, environment: environment, style: style, isGesturing: isGesturing,
-                       seedOffset: shift.map { -$0 } ?? 0)
+                       seedOffset: shift == nil ? 0 : moved, awaitingMove: shift.map { $0 + moved } ?? 0,
+                       resized: resized)
             return
         }
 
+        // A new size the stage's own frame does not have yet: SwiftUI hands
+        // it over before it resizes and moves the stage in this pass. Placed
+        // now, the cards stood a resize step off for a frame — during a
+        // sidebar edge drag the blades on the right jittered by every step.
+        // Place them once the frame is set (`layout`).
+        pending = (cards, environment, style)
+        if resized && abs(frame.width - size.width) + abs(frame.height - size.height) >= 0.5 {
+            needsLayout = true
+            return
+        }
+        placePending()
+    }
+
+    /// The cards from the last `apply` not yet placed (`placePending`).
+    private var pending: (cards: [PaneStage.Card], environment: EnvironmentValues, style: PaneStage.Style)?
+
+    override func layout() {
+        super.layout()
+        placePending()
+    }
+
+    /// Every card where the layout puts it, its content at its size.
+    private func placePending() {
+        guard let (cards, environment, style) = pending, glide == nil else { pending = nil; return }
+        pending = nil
         var order: [NSView] = []
         var live = Set<UUID>()
         for card in cards {
@@ -125,6 +238,7 @@ final class PaneStageView: NSView {
             self.cards[id] = nil
         }
         if subviews != order { subviews = order }
+        placedOrigin = originInWindow
     }
 
     // MARK: Glide
@@ -175,6 +289,13 @@ final class PaneStageView: NSView {
         /// over, and then they all take their sizes together — one resize
         /// per terminal, after the motion. A drag's follows the hand.
         var holdsSizes = false
+        /// How much of the grid's move for the sidebar (`noteColumnShift`)
+        /// the stage has yet to make: the targets are already where it will
+        /// be, so until it gets there every card holds where it is drawn —
+        /// a step toward them sooner eased each card toward a place the
+        /// shift away, and a blade's fixed edge pulled in and eased back.
+        var awaitingMove: CGFloat = 0
+        var awaitingSince: CFTimeInterval = 0
     }
 
     private var glide: Glide?
@@ -183,6 +304,10 @@ final class PaneStageView: NSView {
     /// How quickly a glide closes on its target: about 90% in 0.1s.
     static let glideTime: CFTimeInterval = 0.045
 
+    /// How long a glide holds for the stage's move for the sidebar before it
+    /// goes on without it.
+    static let moveWait: CFTimeInterval = 0.15
+
     /// Where the layout puts an item: its strip, or its card.
     private static func target(_ leaf: PaneLayout.Leaf) -> CGRect {
         leaf.isTucked ? (leaf.tab ?? leaf.frame) : leaf.frame
@@ -190,10 +315,14 @@ final class PaneStageView: NSView {
 
     private func startGlide(
         _ cards: [PaneStage.Card], environment: EnvironmentValues, style: PaneStage.Style, isGesturing: Bool,
-        seedOffset: CGFloat = 0
+        seedOffset: CGFloat = 0, awaitingMove: CGFloat = 0, resized: Bool = false
     ) {
         var glide = self.glide ?? Glide(
             environment: environment, style: style, last: CACurrentMediaTime(), holdsSizes: !isGesturing)
+        if abs(awaitingMove) >= 0.5 {
+            glide.awaitingMove = awaitingMove
+            glide.awaitingSince = CACurrentMediaTime()
+        }
         if seedOffset != 0 {
             // The stage moved under its cards: where they are drawn, in its
             // new coordinates, is that far back.
@@ -278,7 +407,13 @@ final class PaneStageView: NSView {
             RunLoop.main.add(timer, forMode: .common)
             glideTimer = timer
         }
-        stepGlide()
+        // The stage resized: its move, if one comes with it (the sidebar's
+        // edge dragged), lands later in this pass, and these targets are
+        // already where it will be. Place the cards where they are drawn,
+        // and ease from the next step: eased now, every card stepped toward
+        // a place the move away and came back once it landed — a blade's
+        // edge jittered on every step of the drag.
+        stepGlide(ease: !resized)
     }
 
     /// How long `rect` is along a stack running along `axis`.
@@ -291,10 +426,20 @@ final class PaneStageView: NSView {
         axis == .vertical ? strip.midY < card.midY : strip.midX < card.midX
     }
 
-    private func stepGlide() {
+    private func stepGlide(ease: Bool = true) {
+        absorbStageMove()
         guard var glide else { return }
         let now = CACurrentMediaTime()
-        let k = 1 - exp(-(now - glide.last) / Self.glideTime)
+        // The stage has yet to move for the sidebar: hold (but not forever).
+        let waiting = glide.awaitingMove != 0 && now - glide.awaitingSince < Self.moveWait
+        if !waiting { glide.awaitingMove = 0 }
+        // The targets are for the size the last layout gave (`lastSize`);
+        // until the stage's frame has it, it has not been resized — and
+        // moved — for them, and a step toward them is a step toward the
+        // wrong place (SwiftUI can hand over a size a pass before it lays
+        // the stage out at it).
+        let laidOut = lastSize.map { abs(frame.width - $0.width) < 0.5 && abs(frame.height - $0.height) < 0.5 } ?? true
+        let k = waiting || !ease || !laidOut ? 0 : 1 - exp(-(now - glide.last) / Self.glideTime)
         glide.last = now
         var settled = true
         CATransaction.begin()
@@ -358,8 +503,10 @@ final class PaneStageView: NSView {
                 case (.vertical, true): tab.size.height = length
                 case (.vertical, false): tab = CGRect(x: next.minX, y: next.maxY - length, width: next.width, height: length)
                 }
-                // Across the stack the strip is the target's size.
-                if axis == .horizontal { tab.size.height = to.height } else { tab.size.width = to.width }
+                // Across the stack the strip eases with the glide, as every
+                // edge does: set to the target's at once, a strip whose
+                // stack narrowed (the sidebar expanding) took its new width
+                // in the first frame and only slid after.
                 let dx = leads || axis == .vertical ? next.minX - to.minX : next.maxX - to.maxX
                 let dy = leads || axis == .horizontal ? next.minY - to.minY : next.maxY - to.maxY
                 leaf.frame = leaf.frame.offsetBy(dx: dx, dy: dy)
@@ -372,6 +519,7 @@ final class PaneStageView: NSView {
         }
         CATransaction.commit()
         self.glide = glide
+        placedOrigin = originInWindow
         // Caught up: rest until the layout moves again (the next step
         // restarts the clock) — or, the drag over, end.
         if settled {
@@ -381,6 +529,25 @@ final class PaneStageView: NSView {
         }
         // The bar of the drag stays over the gutter as it is drawn.
         GutterBar.refreshActive()
+        // The pane sidebar's card follows the grid's leading edge.
+        NotificationCenter.default.post(name: Self.didStep, object: self)
+    }
+
+    /// Posted after every glide step, and when a glide ends.
+    static let didStep = Notification.Name("PaneStageViewDidStep")
+
+    /// How far the grid's leading edge is drawn from where the layout puts
+    /// it, ON SCREEN — the stage's own move still to come counted in
+    /// (`awaitingMove`) — while it glides; nil when it does not. Negative:
+    /// short of it. The pane sidebar's card follows it on a collapse or
+    /// expand (`PaneSidebarCardGlide`), so the gutter between them holds
+    /// whatever either clock does.
+    var leadingLag: CGFloat? {
+        guard let glide else { return nil }
+        let leading = glide.targets.compactMap { id, card -> (CGRect, CGRect)? in
+            glide.drawn[id].map { ($0, Self.target(card.leaf)) }
+        }.min { $0.1.minX < $1.1.minX }
+        return leading.map { $0.0.minX - $0.1.minX - glide.awaitingMove }
     }
 
     /// Every card where the layout puts it, its content at its size.
@@ -400,6 +567,8 @@ final class PaneStageView: NSView {
             view.glideFreeze = nil
         }
         CATransaction.commit()
+        placedOrigin = originInWindow
+        NotificationCenter.default.post(name: Self.didStep, object: self)
     }
 
     /// Where a gutter laid out at `rect` (window coordinates) is drawn while
@@ -535,6 +704,11 @@ final class PaneCardView: NSView {
     /// How far into its strip the card is drawn: 0 on show (its content
     /// shows), 1 a strip (its title does).
     private(set) var collapse: CGFloat = 0
+
+    /// The layer casting the card's shadow, and whether it is a strip's
+    /// (a stacked card all the way into its strip). For tests.
+    var stripShadowLayer: CALayer? { shadowView.layer }
+    var isStripShadowed: Bool { collapse >= 1 && (shadowView.layer?.shadowOpacity ?? 0) > 0 }
 
     /// The part of the pane that is drawn, in window coordinates: the pane
     /// as cut by its clip. For tests.
@@ -673,32 +847,34 @@ final class PaneCardView: NSView {
 
         // Shadow: only where cards overlap. A strip is a blade tucked behind
         // the panes on show, lying against the next blade out: its shadow is
-        // tighter and stronger than a card's, leans AWAY from the run (onto
-        // the blade behind it), and stops at the strip's own sides rather
-        // than haloing past them. All of it follows `collapse` — how far the
-        // card is into its strip — so it comes on as the card narrows into
-        // the strip, not in one step when the glide lands.
+        // tighter than a card's, light, and leans AWAY from the run (onto
+        // the blade behind it). Along the strip it is cast from a shape
+        // pulled in from the strip's ends, so it fades out inside its
+        // rounded corners — not cut off flat there, nor haloing past them.
+        // All of it follows `collapse` — how far the card is into its strip
+        // — so it comes on as the card narrows into the strip, not in one
+        // step when the glide lands.
         let shape = Self.rounded(paneRect, style.cornerRadius)
         let blade = card.isStacked ? collapse : 0
         func mix(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * blade }
         let axis = shown.tabAxis ?? self.axis
         let outward: CGFloat = (shown.stripLeads ?? card.leaf.stripLeads).map { $0 ? -1 : 1 } ?? 0
         let lean = mix(0, 3) * outward
-        shadowView.layer?.shadowPath = shape
+        let ends = mix(0, style.cornerRadius)
+        let caster = axis == .vertical
+            ? paneRect.insetBy(dx: Swift.min(ends, paneRect.width / 4), dy: 0)
+            : paneRect.insetBy(dx: 0, dy: Swift.min(ends, paneRect.height / 4))
+        shadowView.layer?.shadowPath = Self.rounded(caster, style.cornerRadius)
         shadowView.layer?.shadowRadius = mix(10, 5)
         shadowView.layer?.shadowOffset = axis == .vertical
             ? CGSize(width: 0, height: lean)
             : CGSize(width: lean, height: 0)
         shadowView.layer?.shadowOpacity = card.isStacked
-            ? Float(mix(style.isLight ? 0.16 : 0.4, style.isLight ? 0.26 : 0.6)) : 0
+            ? Float(mix(style.isLight ? 0.16 : 0.4, style.isLight ? 0.14 : 0.3)) : 0
+        // Cast only outside the card: the whole layer, less its shape.
         let outside = CAShapeLayer()
         let mask = CGMutablePath()
-        // Across the stack, the shadow narrows to the strip's own extent as
-        // it becomes one.
-        let across = mix(0, o)
-        mask.addRect(axis == .vertical
-            ? CGRect(x: across, y: 0, width: size.width - 2 * across, height: size.height)
-            : CGRect(x: 0, y: across, width: size.width, height: size.height - 2 * across))
+        mask.addRect(CGRect(origin: .zero, size: size))
         mask.addPath(shape)
         outside.path = mask
         outside.fillRule = .evenOdd

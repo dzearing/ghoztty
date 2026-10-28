@@ -114,6 +114,42 @@ struct PaneSidebarAddWindowTests {
         return await Task.detached { server.dispatch(request) }.value
     }
 
+    /// The rail's + (where this window's header is when expanded) is the
+    /// panel header's: a new window, as Cmd-N — not a pane in this one.
+    @Test func theRailsPlusOpensAWindow() async throws {
+        let (main, _) = try await window(title: "Rail Plus")
+        main.paneSidebarState.isHidden = false
+        main.setPaneSidebarExpanded(false)
+        main.paneSidebarState.showsAllWindows = false
+        await settle(0.8)
+        let window = try #require(main.window)
+        let content = try #require(window.contentView)
+        func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+            ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { all(type, in: $0) }
+        }
+        // The rail's only item button: the topmost 18pt circle in the bar.
+        let plus = try #require(all(HoverTrackingArea.View.self, in: content)
+            .filter { $0.window != nil && abs($0.bounds.width - PaneSidebarItemButton.size) < 1 }
+            .max { $0.convert($0.bounds, to: nil).maxY < $1.convert($1.bounds, to: nil).maxY },
+            "no + in the rail")
+        let frame = plus.convert(plus.bounds, to: nil)
+        let before = terminalWindows()
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: frame.midX, y: frame.midY), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+            window.sendEvent(event)
+            await settle(0.05)
+        }
+        let created = try #require(await newWindow(since: before), "the rail's + opened no window")
+        #expect(main.surfaceTree.count == 1, "no pane was added to this window")
+        #expect(created.surfaceTree.count == 1)
+        created.close()
+        main.close()
+        await settle(0.3)
+    }
+
     @Test func theHeadersPlusOpensAFocusedWindowAsCmdNDoes() async throws {
         let ghostty = try self.ghostty
         let (main, _) = try await window(title: "Plus Main")
