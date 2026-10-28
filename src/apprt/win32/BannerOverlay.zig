@@ -170,6 +170,13 @@ const T2252_NEUTERED = false;
 /// `banner paint` line reports `buffered=0`) and nothing else.
 const T1344_NEUTERED = false;
 
+/// Negative control for T2400's divider-drag capture. Flipping it puts the
+/// banner back in SLWA mode, where a resize is a `SetWindowPos` followed by
+/// a synchronous paint, and DWM can compose the grown strip between the two:
+/// the capture must count single black strip frames again. (The T1344
+/// control implies it - a direct paint needs the window's own DC.)
+const T2400_NEUTERED = false;
+
 /// Negative control for `pane-banner.ps1`'s T758 assertions. Flipping it
 /// restores the pre-T758 world — a banner's dot-relative links keep the
 /// directory they were PARSED in, so a `cd` in the pane leaves them pointing
@@ -317,7 +324,15 @@ pub const BannerOverlay = struct {
     link_fg: u32 = 0xFF9C4F, // COLORREF is 0x00BBGGRR
     divider: u32 = 0,
     bg_brush: ?w32.HBRUSH = null,
+    /// The window is in `SetLayeredWindowAttributes` mode: every frame goes
+    /// through WM_PAINT into its redirection surface. False (the default)
+    /// means frames are PRESENTED with `UpdateLayeredWindow` (T2400), which
+    /// a window that ever took an SLWA call refuses - so a test that claims
+    /// the alpha slot, or a ULW Windows will not take, lands here.
     alpha_set: bool = false,
+    /// While `present` renders a frame for a size the window has not taken
+    /// yet, the client rect every paint stage measures against (T2400).
+    present_size: ?w32.RECT = null,
     /// The elevated card's corner diameter for the strip's top corners, 0
     /// for square ones (T1851), and the region last applied for it.
     card_corner: i32 = 0,
@@ -564,10 +579,6 @@ pub const BannerOverlay = struct {
             self.hide();
             return;
         }
-        if (!self.alpha_set) {
-            _ = w32.SetLayeredWindowAttributes(self.hwnd, 0, STRIP_ALPHA, w32.LWA_ALPHA);
-            self.alpha_set = true;
-        }
         var rect: w32.RECT = undefined;
         if (w32.GetWindowRect(self.owner, &rect) == 0) return;
         // The owner spans the pane slot's full width (the layout only ever
@@ -608,20 +619,37 @@ pub const BannerOverlay = struct {
         // the strip gains (T2400). `applyCardCorner` below is then a no-op.
         self.applyCardCornerSized(new_w, new_h, false);
 
-        // Is this a RESIZE or just a move? (T456) A resize restyles every
-        // pixel of the card; a move restyles none of them — so a resize drops
-        // the stale blit (SWP_NOCOPYBITS) and repaints NOW rather than on the
-        // next pumped WM_PAINT, and a move keeps both. That decision, and the
-        // reason for it, now lives in `chrome_reposition` so the viewer's
-        // chrome shares it instead of relearning it one bar at a time (T1392).
-        _ = chrome_reposition.place(
-            self.hwnd,
-            rect.left,
-            top,
-            new_w,
-            new_h,
-            w32.SWP_SHOWWINDOW,
-        );
+        // A RESIZE is presented: the frame is rendered offscreen at the new
+        // size and handed to the compositor together WITH that size, in one
+        // `UpdateLayeredWindow` (T2400). Resizing first and painting second -
+        // even synchronously, as `place` does - leaves a window between the
+        // two in which DWM can compose the grown surface with its new pixels
+        // still unwritten: one black strip-wide frame on ~1 drag tick in 12.
+        const resized = chrome_reposition.decide(
+            chrome_reposition.currentSize(self.hwnd),
+            .{ .w = new_w, .h = new_h },
+        ).resized;
+        if (resized and self.present(.{ .x = rect.left, .y = top }, .{ .cx = new_w, .cy = new_h }, null)) {
+            _ = w32.SetWindowPos(self.hwnd, null, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE |
+                w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW);
+        } else {
+            // Is this a RESIZE or just a move? (T456) A resize restyles every
+            // pixel of the card; a move restyles none of them — so a resize
+            // drops the stale blit (SWP_NOCOPYBITS) and repaints NOW rather
+            // than on the next pumped WM_PAINT, and a move keeps both. That
+            // decision, and the reason for it, now lives in
+            // `chrome_reposition` so the viewer's chrome shares it instead of
+            // relearning it one bar at a time (T1392). A presented window
+            // keeps its last frame across a move, so it takes this path too.
+            _ = chrome_reposition.place(
+                self.hwnd,
+                rect.left,
+                top,
+                new_w,
+                new_h,
+                w32.SWP_SHOWWINDOW,
+            );
+        }
         // Every reposition re-checks the z-order instead of leaving it to
         // whatever last touched it (T142) — except inside a live layout pass,
         // where an already-shown popup cannot have moved in the z-order and
@@ -1762,7 +1790,7 @@ pub const BannerOverlay = struct {
             return;
         }
         var rect: w32.RECT = undefined;
-        if (w32.GetClientRect(self.hwnd, &rect) == 0) return;
+        if (!self.clientRect(&rect)) return;
         const w = @max(rect.right - rect.left, 1);
         const h = @max(rect.bottom - rect.top, 1);
 
@@ -1779,13 +1807,84 @@ pub const BannerOverlay = struct {
         _ = w32.BitBlt(hdc, 0, 0, w, h, mem_dc, 0, 0, w32.SRCCOPY);
     }
 
+    /// The client rect every paint stage lays out against: the size a
+    /// `present` is rendering for, else the window's own.
+    fn clientRect(self: *const BannerOverlay, out: *w32.RECT) bool {
+        if (self.present_size) |r| {
+            out.* = r;
+            return true;
+        }
+        return w32.GetClientRect(self.hwnd, out) != 0;
+    }
+
+    /// Render one frame offscreen and hand it to the compositor with
+    /// `UpdateLayeredWindow` - at `pos`/`size` when given, which moves and
+    /// resizes the window in the SAME call (T2400). That is the property a
+    /// resize needs: DWM never holds the new size without the pixels for it.
+    /// The popup has no title bar or border, so its client size is its
+    /// window size.
+    ///
+    /// False when the window is in SLWA mode or Windows refused the call;
+    /// the caller then paints the old way. A refusal flips the window to
+    /// SLWA mode for good, since a layered window that has had neither call
+    /// is invisible.
+    fn present(self: *BannerOverlay, pos: ?w32.POINT, size: ?w32.SIZE, also: ?w32.HDC) bool {
+        if (self.alpha_set) return false;
+        if (T2400_NEUTERED or T1344_NEUTERED) return self.presentRefused();
+        const sz: w32.SIZE = size orelse blk: {
+            var wr: w32.RECT = undefined;
+            if (w32.GetWindowRect(self.hwnd, &wr) == 0) return self.presentRefused();
+            break :blk .{ .cx = wr.right - wr.left, .cy = wr.bottom - wr.top };
+        };
+        const w = @max(sz.cx, 1);
+        const h = @max(sz.cy, 1);
+        const screen = w32.GetDC(null) orelse return self.presentRefused();
+        defer _ = w32.ReleaseDC(null, screen);
+        const mem_dc = w32.CreateCompatibleDC(screen) orelse return self.presentRefused();
+        defer _ = w32.DeleteDC(mem_dc);
+        const bmp = w32.CreateCompatibleBitmap(screen, w, h) orelse return self.presentRefused();
+        defer _ = w32.DeleteObject(bmp);
+        const old_bmp = w32.SelectObject(mem_dc, bmp);
+        defer _ = w32.SelectObject(mem_dc, old_bmp);
+
+        self.present_size = .{ .left = 0, .top = 0, .right = w, .bottom = h };
+        self.paintFrame(mem_dc);
+        self.present_size = null;
+
+        const src: w32.POINT = .{ .x = 0, .y = 0 };
+        const real: w32.SIZE = .{ .cx = w, .cy = h };
+        // Constant alpha, no per-pixel alpha: the frame is opaque (T131),
+        // exactly what LWA_ALPHA at STRIP_ALPHA showed.
+        const blend: w32.BLENDFUNCTION = .{ .SourceConstantAlpha = STRIP_ALPHA, .AlphaFormat = 0 };
+        if (w32.UpdateLayeredWindow(self.hwnd, screen, if (pos) |*p| p else null, &real, mem_dc, &src, 0, &blend, w32.ULW_ALPHA) == 0)
+            return self.presentRefused();
+        // Debug-build oracle for pane-banner.ps1's opacity assertion: a
+        // presented window has no SLWA attributes to read cross-process, so
+        // the blend it was handed is reported from here.
+        log.debug("banner present w={} h={} alpha={} per_pixel={} moved={}", .{
+            w, h, blend.SourceConstantAlpha, blend.AlphaFormat, @intFromBool(pos != null),
+        });
+        // The screen ignores this copy; a `PrintWindow` capture, which
+        // repaints through WM_PAINT into its own DC, reads it.
+        if (also) |dc| _ = w32.BitBlt(dc, 0, 0, w, h, mem_dc, 0, 0, w32.SRCCOPY);
+        return true;
+    }
+
+    fn presentRefused(self: *BannerOverlay) bool {
+        log.debug("banner present refused; painting through SLWA", .{});
+        _ = w32.SetLayeredWindowAttributes(self.hwnd, 0, STRIP_ALPHA, w32.LWA_ALPHA);
+        self.alpha_set = true;
+        _ = w32.InvalidateRect(self.hwnd, null, 0);
+        return false;
+    }
+
     /// Draw the band into `hdc`: the glass card backdrop (pane background +
     /// shadow + card), then the blocks inside the card, then collapse fade +
     /// chevron. Rebuilds the link hit rects as a side effect. Every caller
     /// but the neutered control hands this a memory DC — see `paint`.
     fn paintFrame(self: *BannerOverlay, hdc: w32.HDC) void {
         var client: w32.RECT = undefined;
-        if (w32.GetClientRect(self.hwnd, &client) == 0) return;
+        if (!self.clientRect(&client)) return;
 
         // Debug-build oracle for pane-banner.ps1's T833 assertions, and the
         // record of what the pixels now show. `banner collapse h=` says which
@@ -2064,7 +2163,7 @@ pub const BannerOverlay = struct {
         self.releaseCardSurface();
 
         var client: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
-        _ = w32.GetClientRect(self.hwnd, &client);
+        _ = self.clientRect(&client);
         const cap_h = @max(h, client.bottom - client.top);
 
         var bmi = std.mem.zeroes(w32.BITMAPINFO);
@@ -2762,7 +2861,10 @@ fn bannerWndProc(
             var ps: w32.PAINTSTRUCT = undefined;
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;
             defer _ = w32.EndPaint(hwnd, &ps);
-            self.paint(hdc);
+            // The screen takes the presented frame (T2400); the copy in this
+            // DC is for a `PrintWindow` capture, and the BeginPaint/EndPaint
+            // pair is still what validates the window.
+            if (!self.present(null, null, hdc)) self.paint(hdc);
             return 0;
         },
 

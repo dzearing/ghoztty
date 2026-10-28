@@ -458,9 +458,19 @@ try {
                 # Opacity, without a screen composite to compare against: the
                 # popup is layered, and what made composited == own-DC in the
                 # first place is alpha 255 with nothing keyed out.
+                # Since T2400 the card is PRESENTED (UpdateLayeredWindow), and
+                # a presented window has no SLWA attributes to read: the blend
+                # it was handed is reported by the app instead, and must be
+                # constant alpha 255 with no per-pixel alpha. Either mode
+                # passes; neither passing is the failure.
                 $la = Get-TestLayeredAttrs -Window ([IntPtr]$ov.Hwnd)
-                Assert ($la.Ok -and $la.Alpha -eq 255 -and ($la.Flags -band 2) -ne 0 -and ($la.Flags -band 1) -eq 0) `
-                    "card is fully opaque: layered alpha 255, LWA_ALPHA, no colour key (ok=$($la.Ok) alpha=$($la.Alpha) flags=$($la.Flags))"
+                $slwaOpaque = $la.Ok -and $la.Alpha -eq 255 -and ($la.Flags -band 2) -ne 0 -and ($la.Flags -band 1) -eq 0
+                $presentLine = @(Select-String -Path $errlog -Pattern 'banner present w=\d+ h=\d+ alpha=(\d+) per_pixel=(\d+)' -ErrorAction SilentlyContinue | Select-Object -Last 1)
+                $presentOpaque = (-not $la.Ok) -and $presentLine.Count -eq 1 -and
+                    $presentLine[0].Matches[0].Groups[1].Value -eq '255' -and $presentLine[0].Matches[0].Groups[2].Value -eq '0'
+                $presentSeen = if ($presentLine.Count) { $presentLine[0].Line.Trim() } else { 'none' }
+                Assert ($slwaOpaque -or $presentOpaque) `
+                    "card is fully opaque: layered alpha 255 with no colour key, or presented at constant alpha 255 with no per-pixel alpha (slwa ok=$($la.Ok) alpha=$($la.Alpha) flags=$($la.Flags); last present: $presentSeen)"
 
                 # Elevation shadow: somewhere in the bottom margin the band is
                 # DARKER than the bare pane background (the margin is DPI-scaled,
