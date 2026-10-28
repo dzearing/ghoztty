@@ -46,12 +46,15 @@
        a verdict, the results file is sound - never that the app passed: a
        fail verdict is a finding for T2373, not a red harness.
 
-  B, C and D need nobody at the box: Assert-UserAbsent ends the run as SKIP
-  ALL otherwise, after A. -PureOnly stops after A; -NoMatrix after C.
+  B, C and D move the real pointer, so they run ONLY with -Live (user,
+  2026-10-28: sweeps re-ran them under a user who was reading, not typing).
+  Without -Live the run stops after A, which is what a sweep gets. With
+  -Live they still need nobody at the box: Assert-UserAbsent ends the run as
+  SKIP ALL otherwise, after A. -PureOnly stops after A; -NoMatrix after C.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
 
-  powershell -NoProfile -File test\win32\frame-lab.ps1 [-PureOnly] [-NoMatrix]
+  powershell -NoProfile -File test\win32\frame-lab.ps1 [-Live] [-PureOnly] [-NoMatrix]
       [-Matrix [-Interaction ...] [-Panes ...] [-Theme ...] [-Sidebar ...]] [-Busy]
 #>
 [CmdletBinding()]
@@ -63,7 +66,8 @@ param(
     [int[]]$Panes,
     [string[]]$Theme,
     [string[]]$Sidebar,
-    [switch]$Busy
+    [switch]$Busy,
+    [switch]$Live
 )
 
 $ErrorActionPreference = 'Stop'
@@ -413,9 +417,14 @@ try {
     Assert 'A17 Get-UserPresence -IdleSecondsOverride replaces only the input reading' (
         $ov.Reason -notmatch 'keyboard/mouse input' -and ($ov.Reason -match '100,000s' -or $ov.Present)) "$($ov.Reason)"
 
-    if ($PureOnly) {
+    if ($PureOnly -or -not $Live) {
+        # B/C/D move the REAL pointer across the user's screen, and five idle
+        # minutes is not absence: on 2026-10-28 sweeps re-ran this whenever its
+        # files changed and swept the cursor six times under a user who was
+        # reading, not typing. So the live sections are opt-in (-Live), run
+        # only by a person or task that asked for them, never by a sweep.
         ''
-        '  SKIP B/C (live) by -PureOnly'
+        "  SKIP B/C/D (live) - $(if ($PureOnly) { 'by -PureOnly' } else { 'pass -Live to run them; a sweep never does' })"
         $script:skipped += 2
     } else {
         # Everything below moves the user's pointer or reads their screen.

@@ -1,15 +1,15 @@
 {
     "guard":  "frame-lab",
     "script":  "test/win32/frame-lab.ps1",
-    "generated":  "2026-10-28T07:32:05-07:00",
-    "commit":  "5e2791faf",
+    "generated":  "2026-10-28T13:54:53-07:00",
+    "commit":  "cd3ec3fc4",
     "uncommitted":  [
-                        "test/win32/frame-lab.ps1",
-                        "test/win32/lib/FrameLabInput.ps1"
+                        "test/win32/frame-lab.ps1"
                     ],
     "files":  {
-                  "test/win32/frame-lab.ps1":  "fe447deb2d3c689b6a08ff9595c26f045f1ff9861bd4c5b4b803087c28f5b096",
+                  "test/win32/frame-lab.ps1":  "0f7fd958c6a7c705377f856deeffbe253e2ad3a9c091312529d0b33894481f89",
                   "test/win32/lib/FrameCapture.ps1":  "aa2c93fabf2ab32a181df3600b58141d39ebc7d6970280c92b4d7c7d57db1e4b",
+                  "test/win32/lib/FrameLabDriver.ps1":  "701f02bb34652fe0f9e638e6c87a9419be10512180c669f2ffc7512e362f9dcf",
                   "test/win32/lib/FrameLabInput.ps1":  "c10386b0534bbf823329a2801b8f86c8a5b0ef66fae405aa69663b7e9c2ab0f4"
               }
 }
