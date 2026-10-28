@@ -11,7 +11,7 @@
 # not change until something else re-laid it out. `Window.showFocusedPane`
 # now runs the layout when the focused pane is tucked.
 #
-# Layout: P | (s1 | (s2 | s3)) at 900 DIP wide, the T2108 shape: two on show,
+# Layout: P | (s1 | (s2 | s3)) at 760 DIP wide, the T2108 shape: two on show,
 # two tucked.
 #
 # Claims:
@@ -194,8 +194,12 @@ try {
         Say 'NEGATIVE CONTROL: F1 is inverted to "the linked pane is still tucked" - this run MUST fail'
     }
 
-    # ---- setup: P | (s1 | (s2 | s3)) at 900 DIP -------------------------------
-    Say '== setup: P | (s1 | (s2 | s3)), 900 DIP wide'
+    # ---- setup: P | (s1 | (s2 | s3)) at $rowDip DIP ---------------------------
+    # T2295: re-derived from the 225 DIP pane minimum (T2284, Mac afc64dc53) -
+    # two cards and two strips fit, three cards (675 DIP) do not. At the old
+    # 900 three fit and nothing tucked (pane-stack-strip.ps1 made the same move).
+    $rowDip = 760
+    Say "== setup: P | (s1 | (s2 | s3)), $rowDip DIP wide"
     $app = Start-OnTestDesktop -Exe $exe -StdErr $script:errlog -Arguments $appArgs
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     if ($top -eq [IntPtr]::Zero) { Write-TestAssertedNothing -Reason 'the app never opened a GhozttyWindow' }
@@ -226,12 +230,12 @@ try {
     for ($i = 0; $i -lt $leaves.Count; $i++) { $ids[$script:names[$i]] = $leaves[$i].Id }
     Say ("      tree order: {0}" -f ($script:names -join ', '))
     if ($script:names.Count -ne 4) { Write-TestAssertedNothing -Reason "+list did not name four panes ($($script:names.Count))" }
-    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Px 900) -Height (Px 700))
+    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Px $rowDip) -Height (Px 700))
     Start-Sleep -Milliseconds 800
     $shown = @(Wait-Shown $top 2)
     Start-Sleep -Milliseconds 600
     Say ("      dpi {0}; panes: {1}" -f $dpi, (Format-Cols (Get-Panes $top)))
-    if ($shown.Count -ne 2) { Write-TestAssertedNothing -Reason "the 900 DIP row never settled on two on show (got $($shown.Count))" }
+    if ($shown.Count -ne 2) { Write-TestAssertedNothing -Reason "the $rowDip DIP row never settled on two on show (got $($shown.Count))" }
 
     # ---- F1: a ghoztty://focus link ---------------------------------------------
     Say '== F1: ghoztty://focus link at a tucked pane'
