@@ -1549,6 +1549,14 @@ struct FoldReveal: ViewModifier, Animatable {
 /// `searchField`). Return reports a submit; Escape clears the query, and on
 /// an empty field gives the caret back.
 struct PaneSidebarSearchField: NSViewRepresentable {
+    /// Takes the caret only when clicked: out of the key-view loop, so a
+    /// window ordered in (`-[NSWindow _selectFirstKeyView]`, with no
+    /// `initialFirstResponder`) does not hand it the caret ahead of the
+    /// window's terminal. A click still focuses it (`acceptsFirstResponder`).
+    final class ClickToFocusField: NSTextField {
+        override var canBecomeKeyView: Bool { false }
+    }
+
     @Binding var text: String
     let onSubmit: () -> Void
     let onFocusChange: (Bool) -> Void
@@ -1556,7 +1564,7 @@ struct PaneSidebarSearchField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField()
+        let field = ClickToFocusField()
         field.placeholderString = "Search"
         field.font = .systemFont(ofSize: 14)
         field.isBezeled = false
