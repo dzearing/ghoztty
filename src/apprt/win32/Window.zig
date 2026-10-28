@@ -5090,6 +5090,8 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     d.dest = null;
     d.highlight = null;
     var over_other_window = false;
+    // The empty tray the drop would land in, which lights itself (T2358).
+    var tray_lit = false;
 
     if (target) |t| resolved: {
         if (t == .tile) {
@@ -5136,6 +5138,7 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
                 const g = sb.dropGeometry(&slot_rows, &slot_list) orelse break :blk null;
                 break :blk g.slot;
             } else null;
+            tray_lit = slot != null;
             d.highlight = drop_highlight.forTarget(t, .{
                 .window = cands[i].window,
                 .content_rect = cands[i].content_rect,
@@ -5181,8 +5184,9 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     }
     // A drop into a sidebar's list or tray shows where it lands by the rows
     // opening a gap there (T2304, Mac `PaneSidebarShift`), not a caret; the
-    // empty tray's well still lights.
-    if (d.highlight) |hl| if (hl.kind == .sidebar_order or hl.kind == .stash) {
+    // empty tray's well lights ITSELF (T2358, Mac `PaneSidebarEmptyStashSlot`
+    // `isHot`: an accent outline and a 10% wash), so no preview covers it.
+    if (d.highlight) |hl| if (hl.kind == .sidebar_order or hl.kind == .stash or (hl.kind == .stash_slot and tray_lit)) {
         d.highlight = null;
     };
     self.noteSidebarsDrag(d, point.y);

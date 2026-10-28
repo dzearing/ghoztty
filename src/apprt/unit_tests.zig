@@ -395,6 +395,8 @@ test {
     // Pure win32 pane-sidebar symbols, Mac's drawn icon set (T2357), same
     // no-OS-imports deal.
     _ = @import("win32/sidebar_symbol.zig");
+    // T2358: the empty stash tray's dashed, antialiased well.
+    _ = @import("win32/dashed_well.zig");
 
     // Pure win32 caption-bar geometry (T254), same no-OS-imports deal.
     _ = @import("win32/caption_layout.zig");

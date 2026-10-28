@@ -79,6 +79,7 @@ const gutter_bar = @import("gutter_bar.zig");
 const gutter_bar_dc = @import("gutter_bar_dc.zig");
 const sidebar_symbol = @import("sidebar_symbol.zig");
 const sidebar_symbol_dc = @import("sidebar_symbol_dc.zig");
+const dashed_well_dc = @import("dashed_well_dc.zig");
 const busy_light = @import("busy_light.zig");
 
 const log = std.log.scoped(.pane_sidebar);
@@ -325,6 +326,10 @@ const ItemDrag = struct {
 /// The join outline's fade (Mac `PaneSidebarJoinHighlight`: 0.12s ease-out).
 const join_fade_ms: u64 = 120;
 
+/// The empty tray lighting up (Mac `PaneSidebarEmptyStashSlot`: 0.15s
+/// ease-out on `isHot`).
+const tray_fade_ms: u64 = 150;
+
 /// Working, as anything that shows it is concerned (T2279, Mac
 /// `PaneView.isWorking`, 919fba868): its activity state says busy (the agent
 /// hooks), or a progress report (OSC 9;4) is in force - what lights the
@@ -484,6 +489,12 @@ edge_bar_logged: ?gutter_bar.Strength = null,
 /// A pane drag is live somewhere (T1844): the empty tray's well brightens
 /// and says "Drop to stash" (T2276; it is there at rest too).
 drag_active: bool = false,
+/// The drag would land in the empty tray (T2358, Mac `PaneSidebarEmptyStashSlot`
+/// `isHot`): its outline and mark turn the accent, the outline thickens to
+/// 1.5, and an accent wash fills it - eased in and out over `tray_fade_ms`
+/// from `tray_hot_ms`.
+tray_hot: bool = false,
+tray_hot_ms: u64 = 0,
 /// What the rows do for a pane dragged over this sidebar (T2304): slide to
 /// make room, and - a row dragged from here - follow the pointer.
 drag: ?DragMotion = null,
@@ -1128,7 +1139,7 @@ fn logRows(self: *PaneSidebar) void {
     // stashed, and whether a STASHED caption is laid out over it (never,
     // since T2313 - the script asserts the 0).
     if (l.drop_slot) |sl| {
-        w.print(" tray={d},{d} cap={d}", .{ sl.centerX(), sl.centerY(), @intFromBool(l.stashed_caption != null) }) catch {};
+        w.print(" tray={d},{d} cap={d} wr={d},{d},{d},{d}", .{ sl.centerX(), sl.centerY(), @intFromBool(l.stashed_caption != null), sl.left, sl.top, sl.right, sl.bottom }) catch {};
     } else w.writeAll(" tray=-") catch {};
     log.debug("pane sidebar rows {s}", .{fbs.getWritten()});
 }
@@ -1798,7 +1809,10 @@ fn toScreen(r: pane_sidebar.Rect, origin: w32.POINT) pane_drop.Rect {
 pub fn setDragActive(self: *PaneSidebar, on: bool) void {
     if (self.drag_active == on) return;
     self.drag_active = on;
-    if (!on) self.endDragMotion();
+    if (!on) {
+        self.endDragMotion();
+        self.setTrayHot(false, false);
+    }
     // The empty "Drop to stash" slot sits under the last row: a long list
     // scrolls it into view, so the target is there to aim at (T1878).
     if (on) {
@@ -2121,6 +2135,9 @@ pub fn noteDrag(self: *PaneSidebar, at: DragAt) void {
 
     // The sequence: this window's list rows, the tray's header, its tray.
     const l = self.currentLayout();
+    // A stash drop here with nothing stashed lands in the empty tray, which
+    // lights up for it (T2358) - the window's drop preview leaves it alone.
+    self.setTrayHot(at.stash != null and l.drop_slot != null, App.clientAreaAnimationsEnabled());
     var seq: [pane_sidebar.max_items]usize = undefined;
     const q = self.dragSequence(&l, &seq);
     var in_list: ?usize = null;
@@ -2362,6 +2379,7 @@ fn reorderMoving(self: *PaneSidebar, now: u64) bool {
         for (d.shifts[0..d.count]) |tw| if (!tw.done(now)) return true;
         if (d.settle != null) return false;
     }
+    if (now -| self.tray_hot_ms < tray_fade_ms) return true;
     const d = self.drag orelse return false;
     if (d.held) |h| if (h.settle) |s| return now -| s.start_ms < reorder.settle_ms;
     if (!d.header.done(now)) return true;
@@ -2660,6 +2678,30 @@ fn joinAlpha(d: *const ItemDrag, row: usize, now: u64) f64 {
         return if (p >= 1) 0 else 1 - p;
     };
     return 0;
+}
+
+/// Light or dim the empty tray (T2358). A change restarts the fade - from
+/// where the last one had got to, so a pointer flicking across the tray's
+/// edge never jumps - and is logged for the acceptance script.
+fn setTrayHot(self: *PaneSidebar, hot: bool, animate: bool) void {
+    if (self.tray_hot == hot) return;
+    const now = w32.GetTickCount64();
+    // Re-enter the curve at the strength already showing.
+    const shown = self.trayHotAmount(now);
+    self.tray_hot = hot;
+    self.tray_hot_ms = if (!animate) now -| tray_fade_ms else blk: {
+        const from = if (hot) shown else 1 - shown;
+        break :blk now -| @as(u64, @intFromFloat(@round(from * @as(f64, @floatFromInt(tray_fade_ms)))));
+    };
+    log.info("pane sidebar tray hot={d}", .{@intFromBool(hot)});
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.armReorderClock();
+}
+
+/// How lit the empty tray is at `now`, 0..1.
+fn trayHotAmount(self: *const PaneSidebar, now: u64) f64 {
+    const p = transition.progress(now -| self.tray_hot_ms, tray_fade_ms);
+    return if (self.tray_hot) p else 1 - p;
 }
 
 /// Let go - or, `commit` false, cancelled (Escape, the capture taken): the
@@ -3948,51 +3990,66 @@ fn textWidth(hdc: w32.HDC, text: []const u16) i32 {
     return r.right - r.left;
 }
 
-/// The empty tray's well (T1844, T2276; Mac 543489bca
-/// `PaneSidebarEmptyStashSlot`): a dashed outline with the stash glyph - and,
-/// as a row, what it is for. Faint at rest ("Drag a pane here to stash it"),
-/// brighter during a drag ("Drop to stash - it keeps running"). Lit when a
-/// drag would land in it by the drop highlight, which washes the slot
-/// (`drop_highlight` `.stash_slot`). Mac's tertiary ink is the secondary here:
-/// the design system's contrast floor has no fainter text, so the outline
-/// carries the rest/drag difference.
+/// The empty tray's well (T1844, T2276, T2358; Mac 543489bca
+/// `PaneSidebarEmptyStashSlot`): a dashed outline with Mac's tray mark - and,
+/// as a row, what it is for, centred together as Mac's `HStack` is. Faint at
+/// rest ("Drag a pane here to stash it"), brighter during a drag ("Drop to
+/// stash - it keeps running"), and lit in the accent when the drag would land
+/// in it: the outline and the mark turn the accent, the outline thickens from
+/// 1 to 1.5 DIP, and an accent wash at 10% fills the well, eased over 0.15 s.
+/// Mac's tertiary ink is the secondary here: the design system's contrast
+/// floor has no fainter text, so the outline carries the rest/drag difference.
 fn paintDropSlot(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     const r = l.drop_slot orelse return;
-    const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
-    strokeDashed(hdc, r, radius, self.scale, rgb(color_math.mix(t.surface, t.ink, if (self.drag_active) 0.30 else 0.14)));
+    const hot: f32 = @floatCast(self.trayHotAmount(self.paint_ms));
+    const rest = color_math.mix(t.surface, t.ink, if (self.drag_active) 0.30 else 0.14);
+    const outline_color = color_math.mix(rest, t.accent, hot);
+    dashed_well_dc.paint(self.alloc, hdc, .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom }, .{
+        .w = 0,
+        .h = 0,
+        .radius = @floatFromInt(pane_sidebar.px(toc.row_corner_dip, self.scale)),
+        .line = (1 + 0.5 * hot) * self.scale,
+        .on = 4 * self.scale,
+        .off = 3 * self.scale,
+    }, rgb(outline_color), rgb(t.accent), 0.10 * hot);
+    const ink = rgb(color_math.mix(fromRef(t.secondary), t.accent, hot));
     if (l.mode != .expanded) {
-        glyph(hdc, self.scale, r, glyph_stash, 12, t.secondary);
+        symbol(hdc, self.scale, r, .tray, tray_symbol_dip_rail, ink);
         return;
     }
-    const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
-    const icon_box = pane_sidebar.px(16, self.scale);
-    const icon_r: pane_sidebar.Rect = .{ .left = r.left + text_inset, .top = r.top, .right = r.left + text_inset + icon_box, .bottom = r.bottom };
-    glyph(hdc, self.scale, icon_r, glyph_stash, 12, t.secondary);
+    const icon_w = pane_sidebar.px(tray_symbol_dip, self.scale);
+    const gap = pane_sidebar.px(6, self.scale);
     if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
     const label = if (self.drag_active)
         std.unicode.utf8ToUtf16LeStringLiteral("Drop to stash \u{2014} it keeps running")
     else
         std.unicode.utf8ToUtf16LeStringLiteral("Drag a pane here to stash it");
+    // Mark and label centred as one, the label giving way (ellipsis) when the
+    // well is too narrow for both.
+    const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
+    const room = @max(r.width() - 2 * text_inset - icon_w - gap, 0);
+    const text_w = @min(textWidth(hdc, label), room);
+    const left = r.left + @divTrunc(r.width() - (icon_w + gap + text_w), 2);
+    const icon_r: pane_sidebar.Rect = .{ .left = left, .top = r.top, .right = left + icon_w, .bottom = r.bottom };
+    symbol(hdc, self.scale, icon_r, .tray, tray_symbol_dip, ink);
     drawText(hdc, label, .{
-        .left = icon_r.right + pane_sidebar.px(8, self.scale),
+        .left = icon_r.right + gap,
         .top = r.top,
-        .right = r.right - text_inset,
+        .right = icon_r.right + gap + text_w,
         .bottom = r.bottom,
-    }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    }, ink, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
 }
 
-/// A 1 px dashed rounded outline on `r`: Mac's 4-on, 3-off dash, scaled to
-/// the DPI, with nothing filled.
-fn strokeDashed(hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, scale: f32, color: u32) void {
-    const dash = [2]u32{ @intCast(@max(pane_sidebar.px(4, scale), 1)), @intCast(@max(pane_sidebar.px(3, scale), 1)) };
-    const brush: w32.LOGBRUSH = .{ .lbStyle = w32.BS_SOLID, .lbColor = color, .lbHatch = 0 };
-    const pen = w32.ExtCreatePen(w32.PS_COSMETIC | w32.PS_USERSTYLE, 1, &brush, dash.len, &dash) orelse return;
-    defer _ = w32.DeleteObject(pen);
-    const old_pen = w32.SelectObject(hdc, pen);
-    defer _ = w32.SelectObject(hdc, old_pen);
-    const old_brush = w32.SelectObject(hdc, w32.GetStockObject(w32.NULL_BRUSH));
-    defer _ = w32.SelectObject(hdc, old_brush);
-    _ = w32.RoundRect(hdc, r.left, r.top, r.right, r.bottom, 2 * radius, 2 * radius);
+/// The tray mark's box: Mac draws `tray.and.arrow.down` at 12 pt on the rail
+/// and 11 pt beside its label; an SF Symbol overhangs its point size, and
+/// the drawn tray spans 12.4 of its 16 units, so these boxes put it at the
+/// size Mac's reads at.
+const tray_symbol_dip_rail: f32 = 17;
+const tray_symbol_dip: f32 = 16;
+
+/// A COLORREF back as a color, for a blend.
+fn fromRef(c: u32) color_math.Rgb {
+    return .{ .r = @truncate(c), .g = @truncate(c >> 8), .b = @truncate(c >> 16) };
 }
 
 /// One of a hovered row's compact buttons (stash / restore, or the x, T2280):

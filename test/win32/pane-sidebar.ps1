@@ -21,6 +21,12 @@
 #      82b9c5501 - the well's own text says what it is; the `tray=` field of
 #      the rows line, `cap=0`). Step 4 checks it gives way to
 #      the stashed row once P is stashed.
+#      (T2358, Mac `PaneSidebarEmptyStashSlot`) The well is drawn the way
+#      Mac's is, scored off the captured pixels in both modes: its top and
+#      left edges alternate dashes and gaps of 4 and 3 DIP (Mac's
+#      `dash: [4, 3]`; the cosmetic GDI pen it replaced drew 10/6-pixel runs
+#      at 125%), and the tray mark is there - ink at least 8 DIP tall where
+#      the icon sits (the ChromeMinimize dash it replaced is 1-2 px tall).
 #   4. The first row's hover button stashes P (a grid pane); a click on the
 #      stashed tile in the rail brings it back.
 #   5. ctrl+shift+s hides the sidebar: no column, the grid starts at the
@@ -183,11 +189,85 @@ function Get-TrayState($rows) {
     if (-not $m.Success) { return @{ Present = $false; Raw = 'no tray field'; Cap = -1 } }
     if ($m.Groups[1].Value -eq '-') { return @{ Present = $false; Raw = 'tray=-'; Cap = -1 } }
     $last = if ($rows.Items.Count -gt 0) { $rows.Items[$rows.Items.Count - 1].Y } else { -1 }
+    # The well's own rect (T2358): ` wr=<l>,<t>,<r>,<b>`, client coordinates.
+    $wr = [regex]::Match($rows.Line, ' wr=(-?\d+),(-?\d+),(-?\d+),(-?\d+)')
     return @{
         Present = $true; Raw = $m.Value.Trim()
         X = [int]$m.Groups[2].Value; Y = [int]$m.Groups[3].Value; Cap = [int]$m.Groups[4].Value
         LastRowY = $last
+        Rect = if ($wr.Success) { @{ Left = [int]$wr.Groups[1].Value; Top = [int]$wr.Groups[2].Value; Right = [int]$wr.Groups[3].Value; Bottom = [int]$wr.Groups[4].Value } } else { $null }
     }
+}
+# Is pixel $a visibly different from $b (any channel by 10 or more)?
+function Test-Inked($a, $b) {
+    return ([math]::Abs([int]$a.R - [int]$b.R) -ge 10) -or ([math]::Abs([int]$a.G - [int]$b.G) -ge 10) -or ([math]::Abs([int]$a.B - [int]$b.B) -ge 10)
+}
+# The on/off runs of the well's outline along one edge, between its
+# corners (T2358). $Edge is 'top' (row $Rect.Top, the surface 3 DIP below as
+# the reference) or 'left' (column $Rect.Left, 3 DIP right of it).
+function Get-EdgeRuns($bmp, $Rect, [string]$Edge) {
+    $corner = (Px 6) + 2
+    $inset = [math]::Max((Px 3), 3)
+    $on = New-Object System.Collections.ArrayList
+    $off = New-Object System.Collections.ArrayList
+    $runOn = 0; $runOff = 0
+    $from = if ($Edge -eq 'top') { $Rect.Left + $corner } else { $Rect.Top + $corner }
+    $to = if ($Edge -eq 'top') { $Rect.Right - $corner } else { $Rect.Bottom - $corner }
+    for ($i = $from; $i -lt $to; $i++) {
+        if ($Edge -eq 'top') { $px = $bmp.GetPixel($i, $Rect.Top); $ref = $bmp.GetPixel($i, $Rect.Top + $inset) }
+        else { $px = $bmp.GetPixel($Rect.Left, $i); $ref = $bmp.GetPixel($Rect.Left + $inset, $i) }
+        if (Test-Inked $px $ref) {
+            if ($runOff -gt 0) { [void]$off.Add($runOff) }
+            $runOff = 0; $runOn++
+        } else {
+            if ($runOn -gt 0) { [void]$on.Add($runOn) }
+            $runOn = 0; $runOff++
+        }
+    }
+    return @{ On = @($on); Off = @($off) }
+}
+# Do the runs read as Mac's 4/3 DIP dash? At least three of each, and every
+# run but the two the corners cut within 1.5 px of its DIP length.
+function Test-DashRuns($runs) {
+    if ($runs.On.Count -lt 3 -or $runs.Off.Count -lt 3) { return $false }
+    foreach ($n in $runs.On[1..($runs.On.Count - 2)]) { if ([math]::Abs($n - 4 * $script:scale) -gt 1.5) { return $false } }
+    foreach ($n in $runs.Off[1..($runs.Off.Count - 2)]) { if ([math]::Abs($n - 3 * $script:scale) -gt 1.5) { return $false } }
+    return $true
+}
+# How many pixel rows the tray mark inks (T2358): inside the well (clear of
+# its outline), from the first inked column, over the mark's 13 DIP width.
+function Get-IconRows($bmp, $Rect) {
+    $inset = [math]::Max((Px 3), 3)
+    $ref = $bmp.GetPixel($Rect.Left + $inset, $Rect.Top + $inset)
+    $x0 = -1
+    for ($x = $Rect.Left + $inset; $x -lt $Rect.Right - $inset -and $x0 -lt 0; $x++) {
+        for ($y = $Rect.Top + $inset; $y -lt $Rect.Bottom - $inset; $y++) {
+            if (Test-Inked $bmp.GetPixel($x, $y) $ref) { $x0 = $x; break }
+        }
+    }
+    if ($x0 -lt 0) { return 0 }
+    $rows = 0
+    for ($y = $Rect.Top + $inset; $y -lt $Rect.Bottom - $inset; $y++) {
+        for ($x = $x0; $x -lt [math]::Min($x0 + (Px 13), $Rect.Right - $inset); $x++) {
+            if (Test-Inked $bmp.GetPixel($x, $y) $ref) { $rows++; break }
+        }
+    }
+    return $rows
+}
+# Score the well in mode $Label off a fresh capture of $sb (T2358).
+function Assert-TrayWell($sb, $tray, [string]$Label) {
+    if ($null -eq $tray -or $null -eq $tray.Rect) { Assert "${Label}: the rows line names the well's rect (wr=)" $false; return }
+    try {
+        $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
+        $shot.Bitmap.Save((Join-Path $env:TEMP "t2358-$Label.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+        $top = Get-EdgeRuns $shot.Bitmap $tray.Rect 'top'
+        $left = Get-EdgeRuns $shot.Bitmap $tray.Rect 'left'
+        $rows = Get-IconRows $shot.Bitmap $tray.Rect
+        Close-TestWindowPixels -Shot $shot
+    } catch { Assert "${Label}: the well could be captured ($($_.Exception.Message))" $false; return }
+    Assert "${Label}: the well's top edge is Mac's 4/3 DIP dash (on $($top.On -join ','); off $($top.Off -join ','))" (Test-DashRuns $top)
+    Assert "${Label}: its left edge too (on $($left.On -join ','); off $($left.Off -join ','))" ($left.On.Count -ge 2 -and $left.Off.Count -ge 1 -and @($left.On | Where-Object { [math]::Abs($_ - 4 * $script:scale) -le 1.5 }).Count -ge 1)
+    Assert "${Label}: the tray mark is drawn ($rows rows inked, want >= $(Px 8))" ($rows -ge (Px 8))
 }
 # Distinct colors along the sidebar's client row $Y (a flat fill is 1).
 function Get-RowInk($sb, [int]$Y) {
@@ -284,6 +364,7 @@ try {
     "== 3: the toggle expands the panel and the grid moves over"
     $railW = $sb.Width
     $railRows = Get-RowsLine 'mini'
+    Assert-TrayWell $sb (Get-TrayState $railRows) 'rail'
     $r = Click $top $sb.Hwnd (Get-ToggleCenter $sb)
     Assert "toggle click delivered" $r
     Start-Sleep -Milliseconds 600
@@ -305,6 +386,7 @@ try {
         Assert "it sits below the last pane row ($($panelTray.Y) vs $($panelTray.LastRowY))" ($panelTray.Y -gt $panelTray.LastRowY)
         $ink = Get-RowInk $sb $panelTray.Y
         Assert "the well paints something (distinct colors across it: $ink)" ($ink -ge 3)
+        Assert-TrayWell $sb $panelTray 'panel'
     }
     $railTray = Get-TrayState $railRows
     Assert "the rail lays out the empty tray too, with no caption ($($railTray.Raw))" ($null -ne $railTray -and $railTray.Present -and $railTray.Cap -eq 0)

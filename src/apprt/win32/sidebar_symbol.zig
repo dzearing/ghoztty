@@ -34,12 +34,19 @@ pub const Symbol = union(enum) {
     document,
     globe,
     diff,
+    /// The empty stash tray's mark (T2358): Mac's SF Symbol
+    /// `tray.and.arrow.down`, which no Fluent glyph on the box matches (every
+    /// codepoint E700-F3FF of Segoe Fluent Icons was looked at), so it is
+    /// drawn here as the font-first rule's fallback - an open tray with an
+    /// arrow dropping into it, at SF's medium weight.
+    tray,
 
     /// The stroke, in 16-unit space (Mac `lineWidth`).
     pub fn lineWidth(self: Symbol) f32 {
         return switch (self) {
             .terminal, .document, .globe => 1.3,
             .diff => 1.4,
+            .tray => 1.5,
             .windows, .sidebar, .plus => 1.25,
         };
     }
@@ -65,7 +72,7 @@ const Prim = union(enum) {
 
 const RRect = struct { x: f32, y: f32, w: f32, h: f32, r: f32 };
 
-const max_prims = 8;
+const max_prims = 16;
 
 const Shape = struct {
     prims: [max_prims]Prim = undefined,
@@ -141,6 +148,24 @@ fn shape(sym: Symbol) Shape {
             s.seg(2.5, 5, 7.5, 5);
             s.seg(2.5, 12.5, 7.5, 12.5);
             s.seg(10, 3, 13.5, 13);
+        },
+        .tray => {
+            // The tray: its walls and rounded floor...
+            s.seg(1.8, 8.6, 1.8, 12.2);
+            s.add(.{ .arc = .{ .c = v(3.6, 12.2), .r = 1.8, .a0 = half_pi, .sweep = half_pi } });
+            s.seg(3.6, 14, 12.4, 14);
+            s.add(.{ .arc = .{ .c = v(12.4, 12.2), .r = 1.8, .a0 = 0, .sweep = half_pi } });
+            s.seg(14.2, 12.2, 14.2, 8.6);
+            // ...its lip, dipping where things drop in...
+            s.seg(1.8, 10.2, 5, 10.2);
+            s.seg(5, 10.2, 5.7, 11.6);
+            s.seg(5.7, 11.6, 10.3, 11.6);
+            s.seg(10.3, 11.6, 11, 10.2);
+            s.seg(11, 10.2, 14.2, 10.2);
+            // ...and the arrow coming down into it.
+            s.seg(8, 1.8, 8, 8.4);
+            s.seg(5.4, 5.8, 8, 8.4);
+            s.seg(10.6, 5.8, 8, 8.4);
         },
     }
     return s;
@@ -287,7 +312,7 @@ const all = [_]Symbol{
     .{ .sidebar = false }, .{ .sidebar = true },
     .plus,                 .terminal,
     .document,             .globe,
-    .diff,
+    .diff,                 .tray,
 };
 
 /// The sizes the sidebar draws at - rows 14, header buttons 15 (Mac's own
@@ -402,6 +427,20 @@ test "the document carries its text lines and the globe its meridian" {
     // The inner ellipse's flank (x 5.3) at the equator, between the bands.
     try testing.expect(at(&buf, 30, 5.3, 8) > 150);
     try testing.expectEqual(@as(u8, 0), at(&buf, 30, 3.5, 8));
+}
+
+test "the tray has its arrow, its lip and an open top" {
+    var buf: [30 * 30]u8 = undefined;
+    render(.tray, 30, &buf);
+    // The arrow's shaft, and its tip above the lip.
+    try testing.expect(at(&buf, 30, 8, 4) > 150);
+    try testing.expect(at(&buf, 30, 8, 8) > 150);
+    // The lip's dip and the floor.
+    try testing.expect(at(&buf, 30, 8, 11.6) > 150);
+    try testing.expect(at(&buf, 30, 8, 14) > 150);
+    // Open at the top: nothing beside the arrow above the walls.
+    try testing.expectEqual(@as(u8, 0), at(&buf, 30, 2, 4));
+    try testing.expectEqual(@as(u8, 0), at(&buf, 30, 14, 4));
 }
 
 test "pixelSize rounds and never reaches zero" {

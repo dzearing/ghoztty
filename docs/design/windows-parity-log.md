@@ -37548,3 +37548,14 @@ moved to T1814.
   - pane-sidebar ALL PASS 72. Its PrintWindow captures show the Mac shapes. The previous build's 09:47 captures show OpenPane/TaskView/CommandPrompt (positive control).
   - The other 19 due sidebar harnesses and audits pass, and ipc-p1..p3 pass.
   - Two reds are acked to open tasks: overlay-zorder (T2300) and frame-lab (T2395, which also SKIPs alone because the user is at the box).
+
+- 2026-10-28 13:05 (lane b): T2358 done. The empty stash tray now looks like the Mac's (user report: "this dotted line around the stash target is not a dotted line. and it's missing an icon we used").
+  - Icon: Mac uses SF `tray.and.arrow.down`. No glyph in Segoe Fluent Icons E700-F3FF is a tray (the font was rendered on the box and checked), so it is drawn as a path: new `.tray` in `sidebar_symbol.zig`. Design system §4 now says to draw the mark when the nearest Fluent glyph is a different picture.
+  - Outline: new `dashed_well.zig` draws an antialiased 1 DIP stroke inset by half its width, as `strokeBorder` does. Its 4/3 DIP dash follows arc length, so it carries round the corners. `dashed_well_dc.zig` tints the DC's own pixels by the stroke's coverage. This replaces the cosmetic `PS_USERSTYLE` pen, which drew 15/12 px runs at 125%.
+  - Hot state: when a drag would land in the tray, the sidebar paints it itself: accent outline at 1.5 DIP, a 10% accent wash, and the mark and label in the accent, eased over 0.15 s. Window.zig no longer lays the 43% drop-preview wash over the empty tray. In the expanded panel the mark and label are centred together, as in Mac's `HStack`.
+  Validation:
+  - `pane-sidebar` ALL PASS 78, with new pixel checks on the rail and the panel: dash runs of 5-6 px on and 3-4 px off at 125%, and the tray mark inks 18-19 rows. Positive control: the same checks fail on the previous build's capture (15/12 px runs, 2-row icon).
+  - `pane-sidebar-drag` ALL PASS 74. Section A now asserts `tray hot=1`, no preview window, then `hot=0`. Section C asserts a refused stash does not light the tray.
+  - `dashed_well` unit tests (6) and the new tray test in `sidebar_symbol` pass. Floor lanes lib/none/win32/agent PASS.
+  - Due sweep: 50 pass. The 7 reds are the guards already acked to open tasks: overlay-zorder T2300, arp-version T2362, frame-clock T2370, frame-lab T2395, pane-stack-strip T2334, viewer-narrow-pane T2380, hook-json T2318.
+  - NOT RUN: 150% DPI on the box, because the test desktop is fixed at 125%. The unit tests cover 1x, 1.5x and 2x.

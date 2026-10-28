@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-glide",
     "script":  "test/win32/pane-sidebar-glide.ps1",
-    "generated":  "2026-10-28T11:48:14-07:00",
-    "commit":  "5e9f6a5b7",
+    "generated":  "2026-10-28T12:53:07-07:00",
+    "commit":  "7ff4c8be4",
     "uncommitted":  [
                         "src/apprt/win32/PaneSidebar.zig"
                     ],
@@ -10,7 +10,7 @@
                   "src/apprt/win32/pane_sidebar_transition.zig":  "b88b073b9fce9022cb8fa95dc87ac1da5d88d368477c06eeee4f482dabf91b5b",
                   "src/apprt/win32/pane_sidebar_xfade.zig":  "8e9bc0715975a34e14d2678d610a9ef8e309ca43f9275f179cbc575605531b2d",
                   "src/apprt/win32/pane_stack_slide.zig":  "d73367cbbb5c10aaa2aa2bd6da74f1542c525d518e2cad3e95ee882605663837",
-                  "src/apprt/win32/PaneSidebar.zig":  "e086ba25ffebad9373de73ae49f7870957e506d9845b1e1dbbb18bb71ba5711b",
+                  "src/apprt/win32/PaneSidebar.zig":  "24dc55e7f5579612d326ee77fd20c97799ff6554b16a9ab730b156f14a8a9836",
                   "test/win32/pane-sidebar-glide.ps1":  "7e2b71fe04fd82554f721632d6c67e88c37b238b25a8ba659edae0ea31509d54"
               }
 }

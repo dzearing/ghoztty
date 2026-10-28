@@ -19,13 +19,15 @@
 # so every later move and the release go to the window in its client space.
 #
 # Layout: P, then `+split right` s1 and s2 - three panes, the mini rail up.
-#   A) dragging s2's rail tile onto the rail STASHES it: the drag shows the
-#      preview over the sidebar (the empty "Drop to stash" slot, since nothing
-#      was stashed), and the release stashes s2 with the grid down to two
+#   A) dragging s2's rail tile onto the rail STASHES it: the empty "Drop to
+#      stash" slot (nothing was stashed) LIGHTS ITSELF - T2358, Mac
+#      `PaneSidebarEmptyStashSlot` `isHot`: accent outline and wash, logged as
+#      `pane sidebar tray hot=1` - with no preview window over it, and the
+#      release stashes s2 with the grid down to two
 #   B) with s1 stashed too, dragging s1's tile below s2's REORDERS the stash:
 #      s1 lands at index 1, both still stashed
 #   C) dragging the last pane on screen onto the sidebar is REFUSED: no
-#      preview, and nothing is stashed
+#      preview, the tray does not light, and nothing is stashed
 #   D) Escape mid-drag CANCELS a drag that started from the sidebar (no
 #      rearrange mode): the preview goes and the pane stays stashed
 #
@@ -290,8 +292,9 @@ try {
     Start-Sleep -Milliseconds 400
     $pv = Get-PreviewRect $app.Pid
     if ($pv) { "  (preview $($pv.Left),$($pv.Top)-$($pv.Right),$($pv.Bottom); rail $($sb.Left)..$($sb.Left + $sb.Width))" }
-    Assert "A: the drop is previewed ON the sidebar (the empty drop slot)" ($null -ne $pv -and $pv.Left -ge $sb.Left -and $pv.Right -le ($sb.Left + $sb.Width) -and $pv.Top -ge $sb.Top)
-    # Evidence, not an oracle: the rail mid-drag, showing the empty slot.
+    Assert "A: the empty drop slot lights itself (log: tray hot=1)" (@(Get-LogLines $logA 'pane sidebar tray hot=1').Count -ge 1)
+    Assert "A: and no preview window covers it (T2358)" ($null -eq $pv)
+    # Evidence, not an oracle: the rail mid-drag, showing the lit slot.
     try {
         $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
         $png = Join-Path $env:TEMP 't1844-drop-slot.png'
@@ -302,6 +305,7 @@ try {
     Assert "A: release delivered" (Move-Drag $top $dropX $dropY 'up')
     Start-Sleep -Milliseconds 700
     Assert "A: the preview is gone after the release" ($null -eq (Get-PreviewRect $app.Pid))
+    Assert "A: the slot goes dark with the drag (log: tray hot=0)" (@(Get-LogLines $logA 'pane sidebar tray hot=0').Count -ge 1)
     $stashedA = Wait-Stashed 's2' $true
     if ($NegativeControl) {
         Assert "NEGATIVE: s2 is NOT stashed by the drop (pre-T1844 behavior)" (-not $stashedA)
@@ -343,6 +347,7 @@ try {
     Assert "C: move onto the rail delivered" (Move-Drag $top $dropX $dropY 'move')
     Start-Sleep -Milliseconds 300
     Assert "C: nothing is previewed for a refused stash" ($null -eq (Get-PreviewRect $app.Pid))
+    Assert "C: and the tray does not light for it (log)" (@(Get-LogLines $logC 'pane sidebar tray hot=1').Count -eq 0)
     Assert "C: release delivered" (Move-Drag $top $dropX $dropY 'up')
     Start-Sleep -Milliseconds 500
     Assert "C: P is still on screen" (Test-VisibleChild $top $hP)

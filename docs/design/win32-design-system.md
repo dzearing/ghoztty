@@ -527,7 +527,12 @@ icons"). Those come from `sidebar_symbol.zig`: the Mac's coordinates, its
 stroke widths, round caps and joins, antialiased by a distance field and laid
 over the DC by `sidebar_symbol_dc.zig`. Before reaching for a codepoint for a
 new Mac icon, check whether the Mac view is an `Image(systemName:)` (→ the
-nearest Fluent glyph) or a drawn path (→ port the path).
+nearest Fluent glyph) or a drawn path (→ port the path). And when
+the nearest Fluent glyph is not the same picture - the empty stash tray's
+`tray.and.arrow.down` has no tray anywhere in Segoe Fluent Icons E700-F3FF
+(T2358, checked by rendering the font on the box, not from a table) - draw it
+in `sidebar_symbol.zig` as well: a stand-in that reads as a different object
+(it was the ChromeMinimize dash) is worse than a faithful drawn mark.
 
 The rules below govern the DRAWN FALLBACK (and any future glyph the icon font
 lacks). They still matter: the fallback is what a stripped-down VM shows, and
