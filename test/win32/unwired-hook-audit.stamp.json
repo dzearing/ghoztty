@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-28T04:00:44-07:00",
-    "commit":  "1dabaff2d",
+    "generated":  "2026-10-28T04:24:11-07:00",
+    "commit":  "0048da9af",
     "uncommitted":  [
 
                     ],
@@ -1143,6 +1143,7 @@
                   "test/win32/frame-lab-card.ps1":  "8a648e3b942b2fa23f15c39f5de6898da655256d6866ad3a22f9321ef4f8719c",
                   "test/win32/frame-lab-catalogue.ps1":  "81d233310edee3ddb3d49fcaf8a3ee4b4e94b9de032edf9fd86be1e529839aad",
                   "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
+                  "test/win32/frame-lab-report.ps1":  "00354861a681dc69eea52acb01372631d4fd307ed85841421fa56c31e6815d73",
                   "test/win32/frame-score.ps1":  "52da37c6fdbfe72d9d34d02ab00d41203cbd3002c7ef2f68018dd95877f3d21c",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/gate-negatives.ps1":  "ed8cfa5ab5f844c029632d1eef9f09af09c9cb567f6ab32c8868d23cca854e47",
@@ -1247,7 +1248,7 @@
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
                   "test/win32/pane-sidebar-activity.ps1":  "6703d4bcce8e551c08795e5cf2a81091d22a49460d78a5f75abebf0ed6818a95",
                   "test/win32/pane-sidebar-add.ps1":  "14d6aabba62031814e25bcd69350541245f65ebf17adb3a7697bdfd720ae2751",
-                  "test/win32/pane-sidebar-all-windows.ps1":  "32e0c4f9e25fa6253dc0a3f6f4657f214c94eb108f7859e17b6131e219702674",
+                  "test/win32/pane-sidebar-all-windows.ps1":  "2da5252492d600cb8e0a1c6967208595f484c7bf54122013f4c3a1b77fabbe28",
                   "test/win32/pane-sidebar-close.ps1":  "10c16a9c6a2275091868b0f3818189e5a6c38f009b86211a4bfd667a2ab6bc64",
                   "test/win32/pane-sidebar-drag.ps1":  "98b024a0129db1d9effaf3bd63456ca095b4301aaa8cb5043da91e5b642bd51d",
                   "test/win32/pane-sidebar-elevated.ps1":  "ec463668cffb3f072578e8437e10fa8e4c0f04eee8e80a8fbd020e9f2e618a63",

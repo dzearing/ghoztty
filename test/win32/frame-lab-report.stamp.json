@@ -1,0 +1,15 @@
+{
+    "guard":  "frame-lab-report",
+    "script":  "test/win32/frame-lab-report.ps1",
+    "generated":  "2026-10-28T04:18:15-07:00",
+    "commit":  "0048da9af",
+    "uncommitted":  [
+                        "test/win32/frame-lab-report.ps1",
+                        "test/win32/lib/FrameLabReport.ps1"
+                    ],
+    "files":  {
+                  "test/win32/frame-lab-report.ps1":  "00354861a681dc69eea52acb01372631d4fd307ed85841421fa56c31e6815d73",
+                  "test/win32/lib/FrameLabCatalogue.ps1":  "e55f8ac5606cfb318e5cd2f2a951b79a258d1bfb743db76d6beb0d6859a0e11d",
+                  "test/win32/lib/FrameLabReport.ps1":  "ef71f0b8dfc91278328690dbdac7c9f507fe467a1906bc681dfd9d57bfe4f8ed"
+              }
+}

@@ -4219,6 +4219,19 @@ $GuardTable = @(
             'test\win32\frame-lab-catalogue.ps1'
         )
     },
+    # The frame lab's results JSON and HTML report (T2390): the run verdict is
+    # derived from the cells, the audit reader refuses a file that disagrees,
+    # and the filmstrip outlines each finding where it was. Fakes only.
+    [pscustomobject]@{
+        Name   = 'frame-lab-report'
+        Script = 'test\win32\frame-lab-report.ps1'
+        Stamp  = 'test\win32\frame-lab-report.stamp.json'
+        Covers = @(
+            'test\win32\lib\FrameLabReport.ps1',
+            'test\win32\lib\FrameLabCatalogue.ps1',
+            'test\win32\frame-lab-report.ps1'
+        )
+    },
     # The drawn-port helpers and the sweep that keeps them (T694). A script that
     # goes back to guessing a TCP port does not fail here - it fails on some
     # OTHER Tuesday, in some other script, as a fake relay that "never came up",
