@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-28T01:15:57-07:00",
-    "commit":  "b9a1a2d1f",
+    "generated":  "2026-10-28T02:54:32-07:00",
+    "commit":  "b12a19f12",
     "uncommitted":  [
 
                     ],
@@ -1141,6 +1141,7 @@
                   "test/win32/frame-capture.ps1":  "aa0fb1e741810094182f23694c57b55cff8a0b6e39be1e2bb61771fd3e94e65d",
                   "test/win32/frame-clock.ps1":  "59307834c3ab370225134eea48895e46e53f4898bf4d4a2c0662b40dcc859373",
                   "test/win32/frame-lab-card.ps1":  "8a648e3b942b2fa23f15c39f5de6898da655256d6866ad3a22f9321ef4f8719c",
+                  "test/win32/frame-lab-catalogue.ps1":  "81d233310edee3ddb3d49fcaf8a3ee4b4e94b9de032edf9fd86be1e529839aad",
                   "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
                   "test/win32/frame-score.ps1":  "52da37c6fdbfe72d9d34d02ab00d41203cbd3002c7ef2f68018dd95877f3d21c",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",

@@ -4206,6 +4206,19 @@ $GuardTable = @(
             'test\win32\frame-lab-input.ps1'
         )
     },
+    # The T2373 lab's catalogue, matrix and per-cell protocol (T2389): which
+    # gestures, over which layouts, capture-only then accounting, superseded
+    # frames dropped. Fakes only, so it runs anywhere.
+    [pscustomobject]@{
+        Name   = 'frame-lab-catalogue'
+        Script = 'test\win32\frame-lab-catalogue.ps1'
+        Stamp  = 'test\win32\frame-lab-catalogue.stamp.json'
+        Covers = @(
+            'test\win32\lib\FrameLabCatalogue.ps1',
+            'test\win32\lib\FrameLabInput.ps1',
+            'test\win32\frame-lab-catalogue.ps1'
+        )
+    },
     # The drawn-port helpers and the sweep that keeps them (T694). A script that
     # goes back to guessing a TCP port does not fail here - it fails on some
     # OTHER Tuesday, in some other script, as a fake relay that "never came up",
