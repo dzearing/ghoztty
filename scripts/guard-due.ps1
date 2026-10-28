@@ -4192,6 +4192,20 @@ $GuardTable = @(
             'test\win32\frame-capture.ps1'
         )
     },
+    # The T2373 frame lab's input driver (T2384). Input-to-photon lag and the
+    # reversal check are measured against its stamps, and it moves the user's
+    # real pointer: a timer that drifts, a gate that lets it inject under the
+    # user, or an abort that leaves the button held is a defect nothing else
+    # sees. The harness sends no input, so it runs anywhere.
+    [pscustomobject]@{
+        Name   = 'frame-lab-input'
+        Script = 'test\win32\frame-lab-input.ps1'
+        Stamp  = 'test\win32\frame-lab-input.stamp.json'
+        Covers = @(
+            'test\win32\lib\FrameLabInput.ps1',
+            'test\win32\frame-lab-input.ps1'
+        )
+    },
     # The drawn-port helpers and the sweep that keeps them (T694). A script that
     # goes back to guessing a TCP port does not fail here - it fails on some
     # OTHER Tuesday, in some other script, as a fake relay that "never came up",

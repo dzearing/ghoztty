@@ -1,0 +1,14 @@
+{
+    "guard":  "frame-lab-input",
+    "script":  "test/win32/frame-lab-input.ps1",
+    "generated":  "2026-10-28T02:10:23-07:00",
+    "commit":  "b9a1a2d1f",
+    "uncommitted":  [
+                        "test/win32/frame-lab-input.ps1",
+                        "test/win32/lib/FrameLabInput.ps1"
+                    ],
+    "files":  {
+                  "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
+                  "test/win32/lib/FrameLabInput.ps1":  "c1c2ba58be0239eb329cb188574e45a2a934b348fc2e409a8414aaf0c6a89501"
+              }
+}
