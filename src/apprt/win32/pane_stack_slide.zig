@@ -468,6 +468,30 @@ pub const Slide = struct {
         }
         return null;
     }
+
+    /// How far the grid's leading (left) edge is drawn from where the layout
+    /// puts it, in pixels (T2406; Mac 7e2d0a9da `PaneStageView.leadingLag`):
+    /// the drawn left of the card - or blade (T2417) - laid out leftmost,
+    /// less its target's. The pane sidebar's card follows it, so the gutter
+    /// between them is the same at every frame. Null with nothing in the
+    /// glide.
+    pub fn leadingLag(self: *const Slide) ?i32 {
+        var to_left: ?i32 = null;
+        var lag: i32 = 0;
+        for (self.items()) |c| {
+            if (to_left == null or c.to.left < to_left.?) {
+                to_left = c.to.left;
+                lag = cardOf(c, self.resize).left - c.to.left;
+            }
+        }
+        for (self.stripItems()) |g| {
+            if (to_left == null or g.to.left < to_left.?) {
+                to_left = g.to.left;
+                lag = g.drawn.round().left - g.to.left;
+            }
+        }
+        return if (to_left != null) lag else null;
+    }
 };
 
 /// Where `c`'s pane is drawn. A click's glide moves its origin and holds the
@@ -1394,4 +1418,28 @@ test "retarget: a moving strip follows its strip as laid out now (T2417)" {
     const moved = [_]Placed{.{ .id = 3, .rect = r(210, 0, 400, 600), .tucked = true, .strip = r(210, 0, 36, 600) }};
     try testing.expect(s.retarget(&moved));
     try testing.expectEqual(r(210, 0, 36, 600), s.strips[0].to);
+}
+
+test "leadingLag: the grid's leading edge as drawn, against where the layout puts it (T2406, Mac 7e2d0a9da)" {
+    // The sidebar expanded: every card shifts 160 px right.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(80, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(490, 0, 400, 600), .tucked = false },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(240, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(650, 0, 400, 600), .tucked = false },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    // At the start the grid is drawn where it was: a whole shift behind.
+    try testing.expectEqual(@as(?i32, -160), s.leadingLag());
+    _ = s.step(20);
+    const mid = s.leadingLag().?;
+    try testing.expect(mid > -160 and mid < 0);
+    // It is the LEFTMOST card's, whatever order the glide holds them in.
+    try testing.expectEqual(s.placed(1).?.left - 240, mid);
+    while (!s.step(16)) {}
+    try testing.expectEqual(@as(?i32, 0), s.leadingLag());
+    const none: Slide = .{};
+    try testing.expectEqual(@as(?i32, null), none.leadingLag());
 }

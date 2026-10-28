@@ -789,7 +789,7 @@ pub fn place(self: *PaneSidebar, target: w32.RECT, mode: pane_sidebar.Mode, scal
         c.to_w = rect.right - rect.left;
         if (c.h != rect.bottom - rect.top) {
             self.dropColumn();
-        } else rect.right = rect.left + c.widthAt(transition.nowMs());
+        } else rect.right = rect.left + self.columnWidth(c);
     }
     // T1877: a field that is no longer on screen gives the caret back, and a
     // query filters the panel but never the rail - a mode change re-asks.
@@ -3178,16 +3178,64 @@ fn startColumn(self: *PaneSidebar, c: xf.Column, to_w: i32) void {
     var next = c;
     self.dropColumn();
     self.dropTransition();
-    if (!FrameClock.arm(self.hwnd, TIMER_COLUMN, transition.frame_ms)) return next.deinit();
     next.start_ms = transition.nowMs();
     next.to_w = to_w;
+    // The grid glides for this change too (T2406, Mac 7e2d0a9da): the card
+    // follows it step by step rather than easing beside it on a clock of
+    // its own. The grid's layout has already run, so its glide is planned.
+    next.following = self.window.paneSidebarFollowLag() != null;
+    if (!next.following and !FrameClock.arm(self.hwnd, TIMER_COLUMN, transition.frame_ms)) return next.deinit();
     if (std.process.parseEnvVarInt("GHOZTTY_SIDEBAR_COLUMN_MS", u32, 10)) |ms| {
         next.ms = ms;
     } else |_| {}
     self.column = next;
     // HWND_TOP is null: without SWP_NOZORDER, the top of the children.
     _ = w32.SetWindowPos(self.hwnd, null, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE);
-    log.info("pane sidebar column glide {s} from={d} to={d} ms={d}", .{ @tagName(self.mode), next.from_w, to_w, next.ms });
+    log.info("pane sidebar column glide {s} from={d} to={d} ms={d} follows_grid={}", .{ @tagName(self.mode), next.from_w, to_w, next.ms, next.following });
+}
+
+/// The column's width now: where the grid's leading edge is drawn less the
+/// gutter while it follows the grid (T2406), else its own clock's.
+fn columnWidth(self: *PaneSidebar, c: *const xf.Column) i32 {
+    if (c.following) {
+        if (self.window.paneSidebarFollowLag()) |lag| return transition.followWidth(c.from_w, c.to_w, lag);
+        return c.to_w;
+    }
+    return c.widthAt(transition.nowMs());
+}
+
+/// The grid's glide stepped, or ended (T2406; Mac `PaneStageView.didStep`
+/// -> `PaneSidebarCardGlide`): a column following it takes the width the
+/// grid's leading edge now gives it, painted in this frame, and lands when
+/// the grid's glide is over. A no-op for a column on its own clock.
+pub fn gridStepped(self: *PaneSidebar) void {
+    const c = if (self.column) |*v| v else return;
+    if (!c.following) return;
+    if (self.window.paneSidebarFollowLag() == null) return self.landColumn();
+    var cur: w32.RECT = undefined;
+    if (w32.GetClientRect(self.hwnd, &cur) == 0) return;
+    const w = self.columnWidth(c);
+    c.frames.step();
+    if (w != cur.right - cur.left) {
+        _ = w32.SetWindowPos(self.hwnd, null, 0, 0, w, cur.bottom - cur.top, w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+    }
+    // Painted in THIS frame, as the clock's steps are (T2401).
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    _ = w32.UpdateWindow(self.hwnd);
+}
+
+/// The glide is over: the column at the width it went to, repainted plain.
+fn landColumn(self: *PaneSidebar) void {
+    const c = self.column orelse return;
+    self.dropColumn();
+    const f = c.frames;
+    log.info("pane sidebar column glide done width={d} frames={d} steps={d} gap_max_us={d} paint_max_us={d} followed={}", .{ c.to_w, f.count, f.steps, f.gap_max_us, f.cost_max_us, c.following });
+    var cur: w32.RECT = undefined;
+    if (w32.GetClientRect(self.hwnd, &cur) != 0 and cur.right - cur.left != c.to_w) {
+        _ = w32.SetWindowPos(self.hwnd, null, 0, 0, c.to_w, cur.bottom - cur.top, w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+    }
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    _ = w32.UpdateWindow(self.hwnd);
 }
 
 /// Stop the glide, if one runs, without placing or repainting.
@@ -3251,7 +3299,8 @@ fn paintColumn(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
     if (c.h != h or w <= 0 or h <= 0 or c.to_w <= 0) return false;
     const t0 = transition.nowUs();
     defer c.frames.note(t0, transition.nowUs() -| t0);
-    const p = c.progress(t0 / std.time.us_per_ms);
+    // Followed, by how far the card is between its two widths (T2406).
+    const p = if (c.following) transition.followProgress(c.from_w, c.to_w, w) else c.progress(t0 / std.time.us_per_ms);
     const new = Dib32.create(hdc, c.to_w, h) orelse return false;
     defer new.destroy();
     const under = Dib32.create(hdc, w, h) orelse return false;
@@ -3259,7 +3308,6 @@ fn paintColumn(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
     const out = Dib32.create(hdc, w, h) orelse return false;
     defer out.destroy();
     self.paintFrame(new.dc, c.to_w, h);
-    self.paintEdgeBar(new.dc, c.to_w, h);
     _ = w32.GdiFlush();
     // What the window draws where neither card reaches: the desk in the
     // elevated style, else the terminal background.
@@ -3268,6 +3316,13 @@ fn paintColumn(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
         @memset(under.pixels, (@as(u32, t.bg.r) << 16) | (@as(u32, t.bg.g) << 8) | t.bg.b);
     }
     transition.composeColumn(out.pixels, w, h, old.pixels, c.from_w, new.pixels, c.to_w, under.pixels, p);
+    // The edge's bar on the card's DRAWN edge (T2406, Mac 7e2d0a9da
+    // `gripInWindow`): laid out at the width the column goes to, shifted to
+    // the one it is drawn at. Painted into the new frame it was cut off
+    // expanding and stood inside the card collapsing.
+    _ = w32.SetViewportOrgEx(out.dc, w - c.to_w, 0, null);
+    self.paintEdgeBar(out.dc, c.to_w, h);
+    _ = w32.SetViewportOrgEx(out.dc, 0, 0, null);
     _ = w32.BitBlt(hdc, 0, 0, w, h, out.dc, 0, 0, w32.SRCCOPY);
     return true;
 }

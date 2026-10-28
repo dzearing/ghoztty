@@ -842,6 +842,12 @@ stack_slide_last: ?std.time.Instant = null,
 /// (T2401): that one counts at most one display period, so the layout that
 /// started it is not spent as motion nobody saw.
 stack_slide_fresh: bool = false,
+/// Whether the glide under way is the grid's for the pane sidebar collapsing
+/// or expanding (T2406): the sidebar's card follows it step by step.
+stack_slide_column: bool = false,
+/// The reach of the sidebar edge's gutter bar as last refreshed (T2406): a
+/// glide moves the gutter, so the next refresh repaints where it was too.
+sidebar_edge_shown: ?w32.RECT = null,
 /// Where the last layout put each card of the active tab, the tab and the
 /// grid rect it laid out in: what the next layout compares against to tell a
 /// run change (a slide) from a resize or a tab switch (none).
@@ -8470,11 +8476,20 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
         if (next.active()) {
             log.info("pane grid glides for the sidebar column: cards={d} strips={d}", .{ next.len, next.strips_len });
             self.stack_slide = next;
+            self.stack_slide_column = true;
             self.orderStackCards(tree, grid);
             self.runStackSlide();
         } else self.endStackSlide();
     } else if (!same_view) {
-        self.endStackSlide();
+        // The panel's edge dragged on while the grid glides for its expand
+        // (T2406; Mac `startGlide(resized:)`): the cards go on toward where
+        // the hand has the layout now, from where they are drawn, and the
+        // sidebar's card with them. Ending the glide here snapped the grid -
+        // and the card following it - to full width on the drag's next move.
+        if (same_tab and self.stack_slide_column and self.stack_slide != null) {
+            _ = self.stack_slide.?.retarget(now[0..n]);
+            self.runStackSlide();
+        } else self.endStackSlide();
     } else if (pane_stack_slide.runsChanged(before, now[0..n])) {
         if (App.clientAreaAnimationsEnabled()) {
             const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
@@ -8587,6 +8602,21 @@ fn restStackSlide(self: *Window) void {
 fn endStackSlide(self: *Window) void {
     self.restStackSlide();
     self.stack_slide = null;
+    // A sidebar card following this glide lands with it (T2406).
+    if (self.stack_slide_column) {
+        self.stack_slide_column = false;
+        if (self.sidebar) |sb| sb.gridStepped();
+    }
+}
+
+/// How far the grid's leading edge is drawn from its place while it glides
+/// for the pane sidebar's collapse or expand (T2406, Mac 7e2d0a9da
+/// `PaneStageView.leadingLag`), for the sidebar's card to follow; null when
+/// no such glide is under way, and the card eases on its own clock.
+pub fn paneSidebarFollowLag(self: *const Window) ?i32 {
+    if (!self.stack_slide_column) return null;
+    const s = if (self.stack_slide) |*v| v else return null;
+    return s.leadingLag();
 }
 
 /// A drag let go (T2268; Mac `onGestureEnd`): a glide resting under it is
@@ -8635,6 +8665,12 @@ fn stackSlideTick(self: *Window) void {
     // waits for its frame at the new size. A tick that only moves cards
     // resizes nothing and waits for nothing.
     self.layoutSplitsLive();
+    // The sidebar's card follows the grid's edge in the same frame (T2406;
+    // Mac `PaneStageView.didStep`), and its edge's gutter with it.
+    if (self.stack_slide_column) {
+        if (self.sidebar) |sb| sb.gridStepped();
+        self.refreshSidebarEdge();
+    }
 }
 
 /// Size every STASHED pane to the slot the full layout would give it, and
@@ -10058,7 +10094,12 @@ pub fn sidebarEdgeGutter(self: *const Window) ?w32.RECT {
     const surface = self.surfaceRect();
     const grid = self.gridRect();
     if (grid.left <= surface.left or surface.bottom <= surface.top) return null;
-    return .{ .left = surface.left, .top = surface.top, .right = grid.left, .bottom = surface.bottom };
+    // Mid-glide it is the gutter as DRAWN (T2406, Mac 7e2d0a9da
+    // `SidePanelResizeHandle.gutterInWindow`): the card and the grid's edge
+    // both lag their places by the same amount, so the gutter between them
+    // does too.
+    const lag = self.paneSidebarFollowLag() orelse 0;
+    return .{ .left = surface.left + lag, .top = surface.top, .right = grid.left + lag, .bottom = surface.bottom };
 }
 
 fn onSidebarEdge(self: *const Window, x: i32, y: i32) bool {
@@ -10083,7 +10124,16 @@ fn setSidebarEdgeHover(self: *Window, on: bool) void {
 /// Repaint the gutter beside the pinned sidebar and its bar's glow (T2265).
 fn refreshSidebarEdge(self: *Window) void {
     const hwnd = self.hwnd orelse return;
-    var r = gutterBarReach(self.sidebarEdgeGutter() orelse return, self.scale);
+    // Where the bar was last drawn too: mid-glide the gutter moves (T2406).
+    if (self.sidebar_edge_shown) |old| {
+        var o = old;
+        _ = w32.InvalidateRect(hwnd, &o, 0);
+    }
+    var r = gutterBarReach(self.sidebarEdgeGutter() orelse {
+        self.sidebar_edge_shown = null;
+        return;
+    }, self.scale);
+    self.sidebar_edge_shown = r;
     _ = w32.InvalidateRect(hwnd, &r, 0);
     _ = w32.UpdateWindow(hwnd);
 }

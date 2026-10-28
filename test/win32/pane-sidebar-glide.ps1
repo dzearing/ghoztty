@@ -18,6 +18,9 @@
 #      panel and rail, s1 on its way back at the width it had.
 #   4. ctrl+shift+s hides the sidebar: the grid still glides over (log), and
 #      the column itself just goes - Mac's hidden mode has no column to animate.
+#   2/3 also: the gutter between the column's edge and the grid's first pane
+#      is the same mid-glide as at rest (T2406, Mac 7e2d0a9da: the column
+#      follows the grid's glide, one motion).
 #   5. T2401: the rail's edge pulled out, then pushed back in, with pointer
 #      moves flooding in for longer than the glide (the user's drag): each
 #      step its glide takes is painted (frames= vs steps=). The user's own
@@ -121,6 +124,23 @@ function Wait-GlideDone([int]$From, [int]$Ms) {
     } while ($sw.ElapsedMilliseconds -lt $Ms)
     return New-LogLines $From
 }
+# T2406 (Mac 7e2d0a9da): the gutter between the column's drawn edge and the
+# grid's leading pane, sampled six times mid-glide, against `$Rest` (at rest).
+# One motion holds it at every frame; two easings side by side (the column on
+# its own curve) drift tens of pixels apart. A sample can fall between the
+# grid's step and the column's in one tick, so five of six must hold (2 px).
+function Get-GutterSamples($top, $lead, [int]$Rest) {
+    $gaps = @()
+    for ($i = 0; $i -lt 6; $i++) {
+        $c = Get-Sidebar $top
+        $p = Get-Pane $top $lead
+        if ($null -ne $c -and $null -ne $p) { $gaps += ($p.Left - $c.Right) }
+        Start-Sleep -Milliseconds 40
+    }
+    $held = @($gaps | Where-Object { [math]::Abs($_ - $Rest) -le 2 }).Count
+    [pscustomobject]@{ Held = ($held -ge 5); Text = "gaps $($gaps -join ',') vs $Rest at rest, $held of 6 held" }
+}
+
 # Each `column glide done` line's painted frames and steps (T2401).
 function Get-GlideFrames([string[]]$Lines) {
     foreach ($l in $Lines) {
@@ -185,6 +205,8 @@ try {
     Assert "it is the 76 DIP rail ($railW)" ([math]::Abs($railW - (Px 76)) -le 1)
     $s1Rail = Get-Pane $top $h1
     "  s1 at rest: left=$($s1Rail.Left) width=$($s1Rail.Width)"
+    $gutter = (Get-Pane $top $hP).Left - $sb.Right
+    "  the gutter between the column and P at rest: $gutter"
 
     "== 2: expanding glides"
     $mark = Get-LogCount
@@ -194,6 +216,8 @@ try {
     $midS1 = Get-Pane $top $h1
     "  mid-glide: column=$($midSb.Width) s1 left=$($midS1.Left) width=$($midS1.Width)"
     Assert "part-way, the column is wider than the rail and narrower than the panel ($railW < $($midSb.Width) < $panelW)" ($midSb.Width -gt $railW + 1 -and $midSb.Width -lt $panelW - 1)
+    $g = Get-GutterSamples $top $hP $gutter
+    Assert "the column's edge follows the grid's, the gutter held mid-glide (T2406; $($g.Text))" ($g.Held)
     Start-Sleep -Milliseconds 2600
     $new = New-LogLines $mark
     $sb = Get-Sidebar $top
@@ -215,6 +239,8 @@ try {
     $midS1 = Get-Pane $top $h1
     "  mid-glide: column=$($midSb.Width) s1 left=$($midS1.Left) width=$($midS1.Width)"
     Assert "part-way, the column is narrower than the panel and wider than the rail ($railW < $($midSb.Width) < $panelW)" ($midSb.Width -gt $railW + 1 -and $midSb.Width -lt $panelW - 1)
+    $g = Get-GutterSamples $top $hP $gutter
+    Assert "the column's edge follows the grid's back, the gutter held mid-glide (T2406; $($g.Text))" ($g.Held)
     Start-Sleep -Milliseconds 2600
     $new = New-LogLines $mark
     $sb = Get-Sidebar $top

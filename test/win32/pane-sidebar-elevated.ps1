@@ -147,11 +147,19 @@ function Get-ToggleCenter($sb) {
 function Click($top, $target, $pt) {
     return Send-TestMouse -Window $top -Target ([IntPtr]$target) -X $pt.X -Y $pt.Y -Action click
 }
+# The column once it has LANDED near `$Want`: within a pixel and the same
+# width on two reads in a row (T2406). The column follows the grid's glide,
+# whose follower spends frames a pixel short of its place, so the first read
+# within a pixel can be mid-glide - and every edge measured from it stale.
 function Wait-SidebarWidth($top, [int]$Want, [int]$Ms = 4000) {
     $deadline = (Get-Date).AddMilliseconds($Ms)
+    $last = $null
     do {
         $sb = Get-Sidebar $top
-        if ($null -ne $sb -and [math]::Abs($sb.Width - $Want) -le 1) { return $sb }
+        if ($null -ne $sb -and [math]::Abs($sb.Width - $Want) -le 1) {
+            if ($null -ne $last -and $last.Width -eq $sb.Width -and $last.Right -eq $sb.Right) { return $sb }
+            $last = $sb
+        } else { $last = $null }
         Start-Sleep -Milliseconds 200
     } while ((Get-Date) -lt $deadline)
     return (Get-Sidebar $top)

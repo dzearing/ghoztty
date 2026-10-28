@@ -42,6 +42,11 @@ pub const Column = struct {
     frames: tr.Frames = .{},
     /// Whether its clock has been anchored at its first frame (T2401).
     anchored: bool = false,
+    /// Whether it follows the grid's glide (T2406) rather than its own
+    /// clock: its width is the grid's leading edge less the gutter at every
+    /// grid step, and it lands when the grid's glide does. Off when there is
+    /// no grid glide to follow; then it eases alone, on its own clock.
+    following: bool = false,
 
     pub fn progress(self: *const Column, now_ms: u64) f64 {
         return tr.progress(now_ms -| self.start_ms, self.ms);

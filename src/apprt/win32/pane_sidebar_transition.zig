@@ -189,6 +189,27 @@ pub fn columnWidthAt(from_w: i32, to_w: i32, p: f64) i32 {
     return @intFromFloat(@round(a + (b - a) * std.math.clamp(p, 0, 1)));
 }
 
+/// The column's width while it follows the grid's glide (T2406; Mac
+/// 7e2d0a9da `PaneSidebarCardGlide`): its card's edge goes where the grid's
+/// leading edge is drawn, less the gutter, so it is the width it goes to
+/// plus how far the grid still lags (`pane_stack_slide.Slide.leadingLag`).
+/// Two easings side by side drifted a frame or two apart - the card grew
+/// over the grid, or the grid slid under it. Never outside the two widths.
+pub fn followWidth(from_w: i32, to_w: i32, lag: i32) i32 {
+    return std.math.clamp(to_w + lag, @min(from_w, to_w), @max(from_w, to_w));
+}
+
+/// How far a followed column of width `w` is between its two widths, 0 to
+/// 1: the crossfade's progress (Mac: "opacities by how far the card is
+/// between the two widths"). A glide that does not change the width is
+/// already there.
+pub fn followProgress(from_w: i32, to_w: i32, w: i32) f64 {
+    if (from_w == to_w) return 1;
+    const a: f64 = @floatFromInt(w - from_w);
+    const b: f64 = @floatFromInt(to_w - from_w);
+    return std.math.clamp(a / b, 0, 1);
+}
+
 /// What a glide put on screen (T2401): the frames it painted, the longest
 /// wait between two of them, and the costliest paint - for the line that
 /// logs it landing, since a glide whose frames come too far apart reads as
@@ -514,4 +535,27 @@ test "T2401: the precise clock never goes backwards" {
     const a = nowUs();
     const b = nowUs();
     try std.testing.expect(b >= a);
+}
+
+test "a followed column holds the gutter: its width is the target's plus the grid's lag (T2406)" {
+    // Expanding 78 -> 238: the grid starts a whole shift (-160) behind.
+    try std.testing.expectEqual(@as(i32, 78), followWidth(78, 238, -160));
+    try std.testing.expectEqual(@as(i32, 158), followWidth(78, 238, -80));
+    try std.testing.expectEqual(@as(i32, 238), followWidth(78, 238, 0));
+    // Collapsing 238 -> 78: the grid starts +160 ahead of its new place.
+    try std.testing.expectEqual(@as(i32, 238), followWidth(238, 78, 160));
+    try std.testing.expectEqual(@as(i32, 118), followWidth(238, 78, 40));
+    // A lag past either end never draws the card outside its two widths.
+    try std.testing.expectEqual(@as(i32, 78), followWidth(78, 238, -400));
+    try std.testing.expectEqual(@as(i32, 238), followWidth(78, 238, 50));
+    try std.testing.expectEqual(@as(i32, 78), followWidth(238, 78, -5));
+}
+
+test "a followed column crossfades by how far it is between its two widths (T2406)" {
+    try std.testing.expectEqual(@as(f64, 0), followProgress(78, 238, 78));
+    try std.testing.expectEqual(@as(f64, 0.5), followProgress(78, 238, 158));
+    try std.testing.expectEqual(@as(f64, 1), followProgress(78, 238, 238));
+    try std.testing.expectEqual(@as(f64, 0.25), followProgress(238, 78, 198));
+    try std.testing.expectEqual(@as(f64, 1), followProgress(100, 100, 100));
+    try std.testing.expectEqual(@as(f64, 1), followProgress(78, 238, 300));
 }
