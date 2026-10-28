@@ -456,6 +456,63 @@ try {
     [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)
     Assert "Escape clears it again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*search=0 ' $mark))
 
+    "== 6c: a new window's terminal gets the caret, not its search field (T2366)"
+    # Mac 470526d63: a window ordered in while the shared list shows every
+    # window handed the caret to its search field. Here the frame's
+    # WM_SETFOCUS forwards to the pane, and the field takes the keyboard only
+    # from a click. Start with the caret IN A's field, so a new window that
+    # inherited it would show.
+    Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
+    $mark = Get-LogCount
+    if ($sp) { [void](ClickAt $top $sb $sp) }
+    Assert "setup: A's search field holds the keyboard" ($null -ne (Wait-Log 'pane sidebar search focus=true' $mark 3000))
+    $tops = @(Get-TestWindows -ProcessId $app.Pid | ForEach-Object { $_.Hwnd })
+    $mark = Get-LogCount
+    Assert "+new-window wF ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wF --name=f1 --title=`"fresh`"") -eq 0)
+    $topF = [IntPtr]::Zero
+    for ($i = 0; $i -lt 40 -and $topF -eq [IntPtr]::Zero; $i++) {
+        $n = @(Get-TestWindows -ProcessId $app.Pid | Where-Object { $tops -notcontains $_.Hwnd }) | Select-Object -First 1
+        if ($n) { $topF = [IntPtr]$n.Hwnd } else { Start-Sleep -Milliseconds 150 }
+    }
+    Assert "the new window is on screen" ($topF -ne [IntPtr]::Zero)
+    Assert "...and its sidebar shows the search field (log)" ($null -ne (Wait-Log 'pane sidebar outline mode=expanded.* search=-?\d+,-?\d+ ' $mark 4000))
+    if ($topF -ne [IntPtr]::Zero) {
+        $sbF = Get-Sidebar $topF
+        Assert "the new window has an expanded sidebar ($($sbF.Width))" ($null -ne $sbF -and [math]::Abs($sbF.Width - $panelW) -le 1)
+        # Activation is the moment a field could steal it: activate it the
+        # way a click or Alt+Tab would, then away and back.
+        foreach ($round in 'opened', 'reactivated') {
+            if ($round -eq 'reactivated') {
+                [void](Set-TestActiveWindow -Window $top)
+                Start-Sleep -Milliseconds 400
+            }
+            [void](Set-TestActiveWindow -Window $topF)
+            $cls = ''
+            for ($i = 0; $i -lt 30 -and $cls -ne 'GhozttyTerminal'; $i++) {
+                Start-Sleep -Milliseconds 100
+                $fh = Get-TestFocusedWindow -Window $topF
+                $cls = if ($fh -ne [IntPtr]::Zero) { Get-TestWindowClass -Window $fh } else { '' }
+                $inF = $fh -ne [IntPtr]::Zero -and $null -ne (Get-TestChildWindows -Window $topF | Where-Object { $_.Hwnd -eq [int64]$fh })
+                if (-not $inF) { $cls = '' }
+            }
+            Assert "${round}: the keyboard is in the new window's terminal (class '$cls')" ($cls -eq 'GhozttyTerminal')
+            Assert "${round}: ...and not in its search field" ($null -ne $sbF -and $fh -ne [IntPtr]$sbF.Hwnd)
+        }
+        Assert "the new window's field never took the keyboard (log)" ($null -eq (Wait-Log 'pane sidebar search focus=true' $mark 300))
+        # A click still focuses it, and Escape gives it back.
+        $lineF = Wait-Log 'pane sidebar outline mode=expanded.* search=' $mark 1000
+        $spF = $null
+        if ($lineF -match ' search=(-?\d+),(-?\d+) ') { $spF = @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
+        $mark = Get-LogCount
+        if ($spF -and $sbF) { [void](ClickAt $topF $sbF $spF) }
+        Assert "a click in the new window's field still takes the keyboard (log)" ($null -ne (Wait-Log 'pane sidebar search focus=true' $mark 3000))
+        if ($sbF) { [void](Send-TestControlKey -Control ([IntPtr]$sbF.Hwnd) -Key Escape) }
+    }
+    $mark = Get-LogCount
+    Assert "+close wF ($(Get-CliErr))" ((Invoke-Cli "+close --target=wF") -eq 0)
+    Assert "...and it leaves the list" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*windows=3 ' $mark 6000))
+    Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
+
     "== 7: collapsed, the rail shows every pane with a hairline between windows"
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ToggleCenter $sb))
