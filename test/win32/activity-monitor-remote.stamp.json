@@ -1,16 +1,16 @@
 {
     "guard":  "activity-monitor-remote",
     "script":  "test/win32/activity-monitor-remote.ps1",
-    "generated":  "2026-10-27T18:55:31-07:00",
-    "commit":  "b21f0e3da",
+    "generated":  "2026-10-27T19:40:52-07:00",
+    "commit":  "1ca79e14e",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/activity_borrow.zig":  "8be5e4ba3e61feeaf28f2d7027fbadb5607c7e5541562795e984c9dc4a2e43a7",
                   "src/apprt/win32/activity_machines.zig":  "373b9038954b8276fd9681ab6b956a01867329216fa5d6c5474c7926de5bfc9e",
                   "src/apprt/win32/activity_probe_conn.zig":  "0601f89845c05e99bddb4a375d5eb2469bcf6098b56629c98469dd0d630f9e5c",
-                  "src/apprt/win32/Window.zig":  "e32fd20f947d8b9ebd88eba848be8b0caeba74d4e55b6c3d8c6ae43d5ac5f720",
+                  "src/apprt/win32/Window.zig":  "4e5b10e8579a05001def6af8174271ea373362926b2ba8423fb6cd2d6a5a4bdf",
                   "test/win32/activity-monitor-remote.ps1":  "011a75488fceba22d318ca3a97b2bf727439d22da6b1d8000b52fee091216c30"
               }
 }
