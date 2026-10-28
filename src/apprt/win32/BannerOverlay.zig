@@ -175,7 +175,7 @@ const T1344_NEUTERED = false;
 /// a synchronous paint, and DWM can compose the grown strip between the two:
 /// the capture must count single black strip frames again. (The T1344
 /// control implies it - a direct paint needs the window's own DC.)
-const T2400_NEUTERED = false;
+const T2400_NEUTERED = false; // neuter-audit: measured by the WGC divider-drag probe, which needs the interactive desktop and is not committed yet; T2400's harness goal commits it and claims this flag
 
 /// Negative control for `pane-banner.ps1`'s T758 assertions. Flipping it
 /// restores the pre-T758 world — a banner's dot-relative links keep the
@@ -3015,6 +3015,7 @@ test "T283: the banner's negative controls are clear and non-empty" {
     try std.testing.expect(!T833_NEUTERED);
     try std.testing.expect(!T1344_NEUTERED);
     try std.testing.expect(!T2252_NEUTERED);
+    try std.testing.expect(!T2400_NEUTERED);
     try std.testing.expect(!BannerFreeze.T2261_NEUTERED);
 
     const CellWrap = BannerOverlay.CellWrap;
