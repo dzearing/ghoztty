@@ -404,10 +404,265 @@ pub fn describeArmFailure(buf: []u8, err_name: []const u8) []const u8 {
 }
 
 // =============================================================================
+// Handing a failure to the reopened app (T2344)
+// =============================================================================
+//
+// The applier is a detached, windowless process with no right to the
+// foreground, and by the time msiexec has answered it has already relaunched
+// the app. A modal it raises opens BEHIND the terminal it just reopened - on
+// 2026-10-26 nobody saw one at all. So the applier says nothing itself unless
+// the relaunch failed: it leaves a one-line marker, and the reopened app, which
+// owns a window, reports it there (a dialog for a click, a balloon for an
+// automatic install). Same marker shape as `update_reopen.zig`.
+
+/// Who asked for the install, which decides how a failure is told: a person
+/// who clicked "Install and Restart" is owed a dialog in the window they are
+/// looking at; nobody asked for an automatic one, so it gets a balloon.
+pub const Origin = enum {
+    manual,
+    auto,
+
+    fn parse(s: []const u8) ?Origin {
+        inline for (@typeInfo(Origin).@"enum".fields) |f| {
+            if (std.mem.eql(u8, s, f.name)) return @enumFromInt(f.value);
+        }
+        return null;
+    }
+};
+
+/// Set by `arm` beside the spec: `<origin>|<from-version>`. Separate from the
+/// spec because the spec's three fields are what makes an install happen, and
+/// this only says how to talk about one that did not.
+pub const report_env_var = "GHOZTTY_UPDATE_REPORT";
+
+pub const ReportSpec = struct {
+    origin: Origin = .manual,
+    /// The version the app was running when it armed the applier. Empty when
+    /// it was not passed.
+    from_version: []const u8 = "",
+};
+
+pub fn formatReportSpec(buf: []u8, r: ReportSpec) []const u8 {
+    return std.fmt.bufPrint(buf, "{s}|{s}", .{ @tagName(r.origin), r.from_version }) catch buf[0..0];
+}
+
+/// Never fails: an applier armed without the variable (driven by hand, or by
+/// an older app) reports as a click would, which is the louder of the two.
+pub fn parseReportSpec(raw: []const u8) ReportSpec {
+    const text = std.mem.trim(u8, raw, " \t\r\n");
+    const bar = std.mem.indexOfScalar(u8, text, '|') orelse
+        return .{ .origin = Origin.parse(text) orelse .manual };
+    const version = text[bar + 1 ..];
+    return .{
+        .origin = Origin.parse(text[0..bar]) orelse .manual,
+        .from_version = if (std.mem.indexOfAny(u8, version, " \t|") == null) version else "",
+    };
+}
+
+pub const FailureMarker = struct {
+    origin: Origin,
+    /// The Windows Installer exit code.
+    code: u32,
+    /// Wall-clock milliseconds when the applier wrote the marker.
+    at_ms: i64,
+    /// The version the install was meant to replace; empty when unknown.
+    from_version: []const u8,
+    /// msiexec's verbose log, which the dialog points at. Last on the line
+    /// because it is the one field that may contain spaces.
+    log_path: []const u8,
+};
+
+const failure_marker_tag = "v1";
+
+/// A marker older than this is not about this launch: the applier writes it
+/// a moment before it relaunches, so the reopened app reads it within seconds.
+/// The same quarter hour as `update_reopen.max_age_ms`, for the same reasons.
+pub const failure_marker_max_age_ms: i64 = 15 * std.time.ms_per_min;
+
+/// The marker's filename beside `update-reopen`, `-debug` suffixed so a dev
+/// build never reports (or swallows) the installed release's failure.
+pub fn failureMarkerName(is_debug: bool) []const u8 {
+    return if (is_debug) "update-failed-debug" else "update-failed";
+}
+
+/// One line, or an empty slice when the fields would not survive a round
+/// trip (the caller then writes nothing and reports the failure itself).
+pub fn formatFailureMarker(buf: []u8, m: FailureMarker) []const u8 {
+    if (std.mem.indexOfAny(u8, m.from_version, " \t\r\n") != null) return buf[0..0];
+    if (m.log_path.len == 0 or std.mem.indexOfAny(u8, m.log_path, "\r\n") != null) return buf[0..0];
+    return std.fmt.bufPrint(buf, failure_marker_tag ++ " {s} {d} {d} {s} {s}\n", .{
+        @tagName(m.origin),
+        m.code,
+        m.at_ms,
+        if (m.from_version.len > 0) m.from_version else "-",
+        m.log_path,
+    }) catch buf[0..0];
+}
+
+/// Null for anything that is not exactly one v1 line.
+pub fn parseFailureMarker(bytes: []const u8) ?FailureMarker {
+    var text = bytes;
+    if (std.mem.startsWith(u8, text, "\xEF\xBB\xBF")) text = text[3..];
+    text = std.mem.trim(u8, text, " \t\r\n");
+    if (std.mem.indexOfAny(u8, text, "\r\n") != null) return null;
+
+    var it = std.mem.tokenizeScalar(u8, text, ' ');
+    const tag = it.next() orelse return null;
+    if (!std.mem.eql(u8, tag, failure_marker_tag)) return null;
+    const origin = Origin.parse(it.next() orelse return null) orelse return null;
+    const code = std.fmt.parseInt(u32, it.next() orelse return null, 10) catch return null;
+    const at_ms = std.fmt.parseInt(i64, it.next() orelse return null, 10) catch return null;
+    const from = it.next() orelse return null;
+    const log_path = std.mem.trim(u8, it.rest(), " ");
+    if (log_path.len == 0) return null;
+    return .{
+        .origin = origin,
+        .code = code,
+        .at_ms = at_ms,
+        .from_version = if (std.mem.eql(u8, from, "-")) "" else from,
+        .log_path = log_path,
+    };
+}
+
+pub const FailureNotice = enum { dialog, balloon };
+
+/// What the reopened app says about the marker it found.
+///
+/// - No marker, or a stale / future-dated one: nothing - it is not about this
+///   launch, and a report of a failure nobody can place is noise.
+/// - The running version is not the one the install was meant to replace:
+///   something DID install since (a later attempt, an installer run by hand),
+///   so "you are still on the version you had" would be false. Nothing.
+/// - Otherwise a dialog for a click, a balloon for an automatic install.
+pub fn decideFailureNotice(marker: ?FailureMarker, current_version: []const u8, now_ms: i64) ?FailureNotice {
+    const m = marker orelse return null;
+    const age = now_ms - m.at_ms;
+    if (age > failure_marker_max_age_ms or age < -std.time.ms_per_min) return null;
+    if (m.from_version.len > 0 and !std.mem.eql(u8, m.from_version, current_version)) return null;
+    return switch (m.origin) {
+        .manual => .dialog,
+        .auto => .balloon,
+    };
+}
+
+/// The balloon for an automatic install that did not take. Its title and body
+/// fit NOTIFYICONDATAW's 64/256-unit fields; the dialog's full cause, remedy
+/// and log are one click away for whoever wants them, on the menu row that
+/// now says the last try failed.
+pub const auto_failure_title = "Update Not Installed";
+
+pub fn describeAutoFailure(buf: []u8, code: u32) []const u8 {
+    return std.fmt.bufPrint(
+        buf,
+        "An automatic update did not install, so Ghoztty is still on the version " ++
+            "you had (Windows Installer code {d}).\nTry it again from Ghoztty's menu.",
+        .{code},
+    ) catch buf[0..0];
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
 const testing = std.testing;
+
+test "report spec: round-trips, and a missing or mangled one reads as a click (T2344)" {
+    var buf: [64]u8 = undefined;
+    const r = parseReportSpec(formatReportSpec(&buf, .{ .origin = .auto, .from_version = "1.43.9" }));
+    try testing.expectEqual(Origin.auto, r.origin);
+    try testing.expectEqualStrings("1.43.9", r.from_version);
+
+    try testing.expectEqual(Origin.manual, parseReportSpec("").origin);
+    try testing.expectEqual(Origin.manual, parseReportSpec("nonsense|1.0").origin);
+    try testing.expectEqual(Origin.auto, parseReportSpec("auto").origin);
+    try testing.expectEqualStrings("", parseReportSpec("auto|1.0 x").from_version);
+}
+
+test "failure marker: round-trips a log path with spaces (T2344)" {
+    var buf: [512]u8 = undefined;
+    const line = formatFailureMarker(&buf, .{
+        .origin = .manual,
+        .code = 1603,
+        .at_ms = 1_700_000_000_123,
+        .from_version = "1.43.9",
+        .log_path = "C:\\Users\\A Person\\AppData\\Local\\ghoztty\\updates\\install.log",
+    });
+    try testing.expectEqualStrings(
+        "v1 manual 1603 1700000000123 1.43.9 C:\\Users\\A Person\\AppData\\Local\\ghoztty\\updates\\install.log\n",
+        line,
+    );
+    const m = parseFailureMarker(line).?;
+    try testing.expectEqual(Origin.manual, m.origin);
+    try testing.expectEqual(@as(u32, 1603), m.code);
+    try testing.expectEqual(@as(i64, 1_700_000_000_123), m.at_ms);
+    try testing.expectEqualStrings("1.43.9", m.from_version);
+    try testing.expectEqualStrings("C:\\Users\\A Person\\AppData\\Local\\ghoztty\\updates\\install.log", m.log_path);
+
+    // An unknown version travels as "-" and comes back empty.
+    const u = parseFailureMarker(formatFailureMarker(&buf, .{
+        .origin = .auto, .code = 1618, .at_ms = 5, .from_version = "", .log_path = "C:\\l.log",
+    })).?;
+    try testing.expectEqual(Origin.auto, u.origin);
+    try testing.expectEqualStrings("", u.from_version);
+}
+
+test "failure marker: refuses what would not round-trip, parses nothing else (T2344)" {
+    var buf: [256]u8 = undefined;
+    const base: FailureMarker = .{ .origin = .manual, .code = 1, .at_ms = 1, .from_version = "1.0", .log_path = "C:\\l.log" };
+    var m = base;
+    m.from_version = "1.0 x";
+    try testing.expectEqual(@as(usize, 0), formatFailureMarker(&buf, m).len);
+    m = base;
+    m.log_path = "";
+    try testing.expectEqual(@as(usize, 0), formatFailureMarker(&buf, m).len);
+    m = base;
+    m.log_path = "C:\\a\nb";
+    try testing.expectEqual(@as(usize, 0), formatFailureMarker(&buf, m).len);
+
+    try testing.expect(parseFailureMarker("") == null);
+    try testing.expect(parseFailureMarker("v2 manual 1 1 1.0 C:\\l.log") == null);
+    try testing.expect(parseFailureMarker("v1 later 1 1 1.0 C:\\l.log") == null);
+    try testing.expect(parseFailureMarker("v1 manual x 1 1.0 C:\\l.log") == null);
+    try testing.expect(parseFailureMarker("v1 manual 1 1 1.0") == null);
+    try testing.expect(parseFailureMarker("v1 manual 1 1 1.0 C:\\l.log\nv1 auto 1 1 1.0 C:\\l.log") == null);
+    try testing.expect(parseFailureMarker("\xEF\xBB\xBFv1 auto 1 1 - C:\\l.log\r\n") != null);
+}
+
+test "failure marker: the debug build has its own (T2344)" {
+    try testing.expectEqualStrings("update-failed", failureMarkerName(false));
+    try testing.expectEqualStrings("update-failed-debug", failureMarkerName(true));
+}
+
+test "decideFailureNotice: a click gets a dialog, an automatic install a balloon (T2344)" {
+    const m: FailureMarker = .{ .origin = .manual, .code = 1603, .at_ms = 1000, .from_version = "1.43.9", .log_path = "C:\\l.log" };
+    try testing.expectEqual(FailureNotice.dialog, decideFailureNotice(m, "1.43.9", 3000).?);
+    var a = m;
+    a.origin = .auto;
+    try testing.expectEqual(FailureNotice.balloon, decideFailureNotice(a, "1.43.9", 3000).?);
+    // An unknown from-version cannot contradict anything.
+    var unknown = m;
+    unknown.from_version = "";
+    try testing.expectEqual(FailureNotice.dialog, decideFailureNotice(unknown, "2.0.0", 3000).?);
+}
+
+test "decideFailureNotice: nothing for no marker, a stale one, or a build that moved since (T2344)" {
+    const m: FailureMarker = .{ .origin = .manual, .code = 1603, .at_ms = 0, .from_version = "1.43.9", .log_path = "C:\\l.log" };
+    try testing.expect(decideFailureNotice(null, "1.43.9", 0) == null);
+    try testing.expect(decideFailureNotice(m, "1.43.9", failure_marker_max_age_ms) != null);
+    try testing.expect(decideFailureNotice(m, "1.43.9", failure_marker_max_age_ms + 1) == null);
+    try testing.expect(decideFailureNotice(m, "1.43.9", -std.time.ms_per_min - 1) == null);
+    // "You are still on the version you had" would be a lie on a newer build.
+    try testing.expect(decideFailureNotice(m, "1.44.0", 1000) == null);
+}
+
+test "describeAutoFailure fits the tray balloon and carries the code (T2344)" {
+    var buf: [256]u8 = undefined;
+    const t = describeAutoFailure(&buf, 4_294_967_295);
+    try testing.expect(t.len > 0 and t.len < 256);
+    try testing.expect(std.mem.indexOf(u8, t, "4294967295") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "still on the version") != null);
+    try testing.expect(auto_failure_title.len < 64);
+}
 
 test "describeArmFailure: says the terminal is untouched, the cause, the way forward and the error (T2322)" {
     var buf: [max_failure_message]u8 = undefined;

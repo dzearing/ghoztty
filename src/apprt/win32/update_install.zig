@@ -36,7 +36,10 @@
 //!   relaunch happens first, then a modal names the cause, the remedy, the log
 //!   and the Windows Installer code, and stays up until it is dismissed (or,
 //!   since T2321, until `update_apply.report_timeout_ms` passes, so an unseen
-//!   dialog cannot keep the applier alive and its image locked). The
+//!   dialog cannot keep the applier alive and its image locked). Since T2344
+//!   that modal is the reopened APP's, in its own window: the applier leaves a
+//!   failure marker before it relaunches and raises its own dialog only when
+//!   there is no reopened app to say it. The
 //!   defect that bought that rule was an installer window which said
 //!   "configuring" and then vanished, leaving nobody able to tell an update
 //!   that failed from one that never started.
@@ -362,9 +365,12 @@ pub fn sweep(alloc: Allocator, keep: ?[]const u8) void {
 /// The error comes back to the caller (T2322) because the user is owed the
 /// reason: a click on "Install and Restart" that only reached the log looked
 /// like a click that did nothing at all.
-pub fn arm(alloc: Allocator, msi_path: []const u8) anyerror!void {
+///
+/// `report` says who asked and from which version (T2344), so that an install
+/// msiexec refuses is told by the reopened app the way that person is owed it.
+pub fn arm(alloc: Allocator, msi_path: []const u8, report_spec: update_apply.ReportSpec) anyerror!void {
     if (comptime builtin.os.tag != .windows) return error.Unsupported;
-    armImpl(alloc, msi_path) catch |err| {
+    armImpl(alloc, msi_path, report_spec) catch |err| {
         log.err("update apply: NOT armed err={} (nothing installed, app stays up)", .{err});
         return err;
     };
@@ -382,7 +388,7 @@ fn forcedArmFailure(arena: Allocator) bool {
     return std.mem.eql(u8, std.mem.trim(u8, raw, " \t\r\n"), "1");
 }
 
-fn armImpl(alloc: Allocator, msi_path: []const u8) !void {
+fn armImpl(alloc: Allocator, msi_path: []const u8, report_spec: update_apply.ReportSpec) !void {
     const windows = std.os.windows;
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);
@@ -416,6 +422,12 @@ fn armImpl(alloc: Allocator, msi_path: []const u8) !void {
     const spec_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, spec);
     if (w32.SetEnvironmentVariableW(name_w.ptr, spec_w.ptr) == 0) return error.SetEnvFailed;
     defer _ = w32.SetEnvironmentVariableW(name_w.ptr, null);
+
+    var report_buf: [96]u8 = undefined;
+    const report_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, update_apply.formatReportSpec(&report_buf, report_spec));
+    const report_name_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, update_apply.report_env_var);
+    if (w32.SetEnvironmentVariableW(report_name_w.ptr, report_w.ptr) == 0) return error.SetEnvFailed;
+    defer _ = w32.SetEnvironmentVariableW(report_name_w.ptr, null);
 
     const cmd = try std.fmt.allocPrint(arena, "\"{s}\"", .{applier});
     const cmd_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, cmd);
@@ -549,20 +561,69 @@ fn run(alloc: Allocator, spec: update_apply.Spec) u8 {
         log.err("update apply: msiexec exited {d}; relaunching the build that was already here", .{code});
     }
 
+    // A failure is handed to the app BEFORE it is relaunched (T2344), so the
+    // reopened app finds it at startup and tells it in its own window.
+    const handed_to = if (code != 0) leaveFailureMarker(arena, code, log_path) else null;
+
     // Relaunch on every path. A failed install must still give the user their
     // terminal back — the worst outcome is the version they already had.
     const relaunched = relaunch(arena, spec.exe);
 
     // Then SAY what happened, when it was not what the user asked for (T1206).
-    // After the relaunch on purpose: the modal blocks this process until it is
-    // dismissed or times out, and a message that arrives while the terminal is still
-    // missing reads as "your terminal is gone" rather than "the update did not
-    // take".
+    // The reopened app says it when it can: this process is windowless and
+    // may not take the foreground, so a modal from here opens behind the
+    // terminal it just reopened - on 2026-10-26 nobody saw one. Only when
+    // there is no reopened app to say it does this process raise its own,
+    // after taking the marker back so a later launch does not repeat it.
     if (code != 0) {
-        var buf: [update_apply.max_failure_message]u8 = undefined;
-        report(update_apply.describeFailure(&buf, code, log_path));
+        if (relaunched and handed_to != null) {
+            log.warn("update apply: failure handed to the reopened app ({s}); exiting", .{handed_to.?});
+        } else {
+            if (handed_to) |path| std.fs.cwd().deleteFile(path) catch {};
+            var buf: [update_apply.max_failure_message]u8 = undefined;
+            report(update_apply.describeFailure(&buf, code, log_path));
+        }
     }
     return if (code == 0 and relaunched) 0 else 1;
+}
+
+/// `%LOCALAPPDATA%\ghoztty\update-failed[-debug]`: where the applier leaves a
+/// failure for the reopened app (T2344), beside the `update-reopen` marker.
+pub fn failureMarkerPath(alloc: Allocator) ?[]u8 {
+    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
+    defer alloc.free(dir);
+    return std.fs.path.join(alloc, &.{
+        dir,
+        "ghoztty",
+        update_apply.failureMarkerName(build_config.is_debug),
+    }) catch null;
+}
+
+/// Write the failure marker and return its path, or null when it could not
+/// be written - the caller then reports the failure itself, so a marker that
+/// is lost never makes the failure silent.
+fn leaveFailureMarker(arena: Allocator, code: u32, log_path: []const u8) ?[]const u8 {
+    const raw = std.process.getEnvVarOwned(arena, update_apply.report_env_var) catch "";
+    const report_spec = update_apply.parseReportSpec(raw);
+    const path = failureMarkerPath(arena) orelse return null;
+    var buf: [std.fs.max_path_bytes + 128]u8 = undefined;
+    const line = update_apply.formatFailureMarker(&buf, .{
+        .origin = report_spec.origin,
+        .code = code,
+        .at_ms = std.time.milliTimestamp(),
+        .from_version = report_spec.from_version,
+        .log_path = log_path,
+    });
+    if (line.len == 0) return null;
+    if (std.fs.path.dirname(path)) |dir| std.fs.cwd().makePath(dir) catch {};
+    const f = std.fs.createFileAbsolute(path, .{ .truncate = true }) catch |err| {
+        log.err("update apply: could not write the failure marker {s} err={}; reporting here instead", .{ path, err });
+        return null;
+    };
+    defer f.close();
+    f.writeAll(line) catch return null;
+    log.warn("update apply: failure marker written origin={t} code={d} -> {s}", .{ report_spec.origin, code, path });
+    return path;
 }
 
 /// Rename any image msiexec cannot overwrite out of the way. See the module
@@ -719,9 +780,13 @@ fn runMsiexec(arena: Allocator, msi_path: []const u8, log_path: []const u8) u32 
 fn relaunch(arena: Allocator, exe: []const u8) bool {
     const windows = std.os.windows;
 
-    // The relaunched app must NOT be an applier in turn.
+    // The relaunched app must NOT be an applier in turn, and its shells have
+    // no use for how this install was to be reported.
     const name_w = std.unicode.utf8ToUtf16LeAllocZ(arena, env_var) catch return false;
     _ = w32.SetEnvironmentVariableW(name_w.ptr, null);
+    if (std.unicode.utf8ToUtf16LeAllocZ(arena, update_apply.report_env_var)) |report_name_w| {
+        _ = w32.SetEnvironmentVariableW(report_name_w.ptr, null);
+    } else |_| {}
 
     const cmd = std.fmt.allocPrint(arena, "\"{s}\"", .{exe}) catch return false;
     const cmd_w = std.unicode.utf8ToUtf16LeAllocZ(arena, cmd) catch return false;

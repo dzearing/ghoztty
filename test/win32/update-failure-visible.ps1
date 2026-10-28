@@ -12,16 +12,22 @@
 # raises Ghoztty's own dialog naming the cause, the remedy, the log and the
 # code — and that dialog stays until it is dismissed.
 #
+# Since T2344 the dialog is the REOPENED APP's, owned by its window: the
+# applier, windowless and without the foreground, leaves a failure marker
+# before it relaunches and exits, because its own modal opened behind the
+# terminal it had just reopened and on 2026-10-26 nobody saw it.
+#
 # Arms:
-#   A  a real msiexec rejection -> dialog, with the terminal already back
+#   A  a real msiexec rejection -> the reopened app's dialog, owned by its window
 #   B  the collision itself (1618) -> the dialog names it in words
+#   G  an automatic install that fails -> no dialog, the marker consumed
 #   C  negative control: an update that succeeds raises NO dialog
 #   D  wiring the compiler does not check: the other silent path, and the
 #      Debug-only seam arm B needs
 #   E  the repo build survived the run (T1271; -NegativeControl proves the
 #      alarm can score red)
-#   F  an unanswered dialog times out and the applier exits (T2321) - runs
-#      before E, which must stay last
+#   F  with no reopened app the applier's own dialog times out and it exits
+#      (T2321) - runs before E, which must stay last
 #
 # Every arm hands the applier a THROWAWAY install directory holding a copy of
 # the build (lib\ApplierSandbox.ps1), never zig-out\bin. The applier's job when
@@ -143,6 +149,26 @@ function Wait-Dialog($procId, $timeoutMs) {
     return [IntPtr]::Zero
 }
 
+function Wait-Exit($procId, $timeoutMs) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ((Test-Alive $procId) -and $sw.ElapsedMilliseconds -lt $timeoutMs) {
+        Start-Sleep -Milliseconds 150
+    }
+    return -not (Test-Alive $procId)
+}
+
+# The pid the applier relaunched the terminal as, from its own log line.
+function Get-RelaunchedPid($log) {
+    if ($log -match 'relaunched .*ghoztty\.exe as pid (\d+)') { return [int]$Matches[1] }
+    return 0
+}
+
+# Where the applier leaves a failure for the reopened app (T2344), under the
+# per-arm LOCALAPPDATA: update_apply.failureMarkerName on a Debug build.
+function Get-FailureMarkerPath($localAppData) {
+    return (Join-Path $localAppData 'ghoztty\update-failed-debug')
+}
+
 function Test-Alive($procId) {
     try { return -not ([System.Diagnostics.Process]::GetProcessById($procId).HasExited) }
     catch { return $false }
@@ -151,13 +177,17 @@ function Test-Alive($procId) {
 # Start the applier on the test desktop with a spec, and return its pid plus
 # the stderr file it is writing (Debug builds use the console subsystem, so
 # std.log lands there).
-function Start-Applier($tag, $spec) {
+function Start-Applier($tag, $spec, [string]$Report = '') {
     $err = Join-Path $root "$tag.err.txt"
     $env:GHOZTTY_UPDATE_APPLY = $spec
+    # How the app would have asked for the install (T2344): `manual` for a
+    # click, `auto` for an automatic one. Unset means an applier driven by hand.
+    if ($Report) { $env:GHOZTTY_UPDATE_REPORT = $Report }
     try {
         $p = Start-OnTestDesktop -Exe $applier -StdErr $err
     } finally {
         Remove-Item env:GHOZTTY_UPDATE_APPLY -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_UPDATE_REPORT -ErrorAction SilentlyContinue
     }
     return [pscustomobject]@{ Pid = $p.Pid; Err = $err }
 }
@@ -179,50 +209,63 @@ function Get-ApplierLog($file) {
 
 try {
     # ========================================================================
-    "== A: an update msiexec refuses is reported, with the terminal already back"
+    "== A: an update msiexec refuses is reported BY THE REOPENED APP, in its window"
     # ========================================================================
+    # Since T2344 the applier says nothing itself when it could relaunch the
+    # app: its modal opened behind the terminal it had just reopened, and on
+    # 2026-10-26 nobody saw it. It leaves a failure marker, and the reopened
+    # app raises the dialog, owned by its own window.
     $tmpA = Join-Path $root 'a'
     New-Item -ItemType Directory -Force $tmpA | Out-Null
     $env:LOCALAPPDATA = $tmpA
+    $markerA = Get-FailureMarkerPath $tmpA
 
     $msiA = Join-Path $root 'apply-me.msi'
     New-FakePackage $msiA
-    $appA = Start-Applier 'a' "$(New-DeadPid)|$msiA|$($sandbox.Exe)"
+    $appA = Start-Applier 'a' "$(New-DeadPid)|$msiA|$($sandbox.Exe)" -Report 'manual'
 
-    $dlgA = Wait-Dialog $appA.Pid $FEEDBACK_BUDGET_MS
-    Assert "A1 the failed update raised Ghoztty's own dialog" ($dlgA -ne [IntPtr]::Zero)
+    $goneA = Wait-Exit $appA.Pid $FEEDBACK_BUDGET_MS
+    $logA = Get-ApplierLog $appA.Err
+    Assert "A0 the applier handed the failure over and exited on its own" `
+        ($goneA -and ($logA -match 'failure handed to the reopened app'))
+    $reopenedA = Get-RelaunchedPid $logA
+    Assert "A1 the terminal was relaunched (pid $reopenedA)" ($reopenedA -gt 0)
+
+    $dlgA = if ($reopenedA -gt 0) { Wait-Dialog $reopenedA $FEEDBACK_BUDGET_MS } else { [IntPtr]::Zero }
+    Assert "A2 the REOPENED app raised Ghoztty's own dialog" ($dlgA -ne [IntPtr]::Zero)
 
     $titleA = if ($dlgA -ne [IntPtr]::Zero) { Get-TestWindowText -Window $dlgA } else { '' }
-    Assert "A2 titled for what happened, not for msiexec (got '$titleA')" ($titleA -eq $DIALOG_TITLE)
+    Assert "A3 titled for what happened, not for msiexec (got '$titleA')" ($titleA -eq $DIALOG_TITLE)
 
     $bodyA = if ($dlgA -ne [IntPtr]::Zero) { Get-DialogBody $dlgA } else { '' }
     # What a person needs: that their terminal survived, what went wrong, what
     # to do, and the two identifiers a bug report is matched on.
-    Assert "A3 it says the old version is still there" ($bodyA -match 'still running the version')
-    Assert "A4 it names a cause in words" ($bodyA -match 'Windows Installer stopped|package could not be opened|damaged')
-    Assert "A5 it says what to do next" ($bodyA -match 'Check for updates again')
-    Assert "A6 it points at the log" ($bodyA -match 'install\.log')
-    Assert "A7 it carries the numeric code for a bug report" ($bodyA -match 'Windows Installer code \d+')
+    Assert "A4 it says the old version is still there" ($bodyA -match 'still running the version')
+    Assert "A5 it names a cause in words" ($bodyA -match 'Windows Installer stopped|package could not be opened|damaged')
+    Assert "A6 it says what to do next" ($bodyA -match 'Check for updates again')
+    Assert "A7 it points at the log" ($bodyA -match 'install\.log')
+    Assert "A8 it carries the numeric code for a bug report" ($bodyA -match 'Windows Installer code \d+')
 
-    # The order that matters: the terminal comes BACK first, and only then is
-    # the modal raised. A message that arrives while the terminal is still
-    # missing reads as "your terminal is gone".
-    $logA = Get-ApplierLog $appA.Err
-    Assert "A8 the terminal was relaunched before the dialog went up" `
-        ($logA -match 'relaunched .*ghoztty\.exe as pid \d+')
+    # Owned by the terminal window, so it sits ON the window it is about
+    # instead of somewhere behind it.
+    $ownerA = if ($dlgA -ne [IntPtr]::Zero) { [IntPtr](Get-TestWindowOwner -Window $dlgA) } else { [IntPtr]::Zero }
+    $termA = if ($reopenedA -gt 0) { Get-TestWindow -ProcessId $reopenedA } else { [IntPtr]::Zero }
+    Assert "A9 the dialog is owned by the reopened terminal's window" `
+        (($ownerA -ne [IntPtr]::Zero) -and ($ownerA -eq $termA))
 
     # The whole defect: a window nobody could read.
     Start-Sleep -Milliseconds $PERSIST_MS
-    Assert "A9 the dialog is still on screen $PERSIST_MS ms later - it does not flash and close" `
+    Assert "A10 the dialog is still on screen $PERSIST_MS ms later - it does not flash and close" `
         (($dlgA -ne [IntPtr]::Zero) -and (Test-TestWindowExists -Window $dlgA))
-    Assert "A10 and the applier is still alive holding it" (Test-Alive $appA.Pid)
+    Assert "A11 the marker was consumed, so the failure is told once" (-not (Test-Path $markerA))
 
     if ($dlgA -ne [IntPtr]::Zero) {
         [void](Invoke-TestMessage -Window $dlgA -Message ([uint32]$WM_CLOSE))
     }
     Start-Sleep -Milliseconds 1500
-    Assert "A11 dismissing it lets the applier finish" (-not (Test-Alive $appA.Pid))
-    Assert "A12 a package msiexec rejected is kept, not deleted" (Test-Path $msiA)
+    Assert "A12 dismissing it leaves the terminal running" `
+        (($reopenedA -gt 0) -and (Test-Alive $reopenedA) -and (-not (Test-TestWindowExists -Window $dlgA)))
+    Assert "A13 a package msiexec rejected is kept, not deleted" (Test-Path $msiA)
     [void](Stop-ApplierSandbox -Sandbox $sandbox)
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 600)
 
@@ -234,8 +277,9 @@ try {
     # box 2026-09-01: msiexec ran straight past it), and the only other way to
     # hold that mutex is a real installation, which this script may not start.
     # So the code is forced through the Debug-only seam and everything
-    # downstream of it - the message, the reporter, the dialog - is the
-    # shipping path.
+    # downstream of it - the message, the marker, the dialog - is the shipping
+    # path. No GHOZTTY_UPDATE_REPORT on purpose: an applier armed without it
+    # reports as a click would, the louder of the two.
     $tmpB = Join-Path $root 'b'
     New-Item -ItemType Directory -Force $tmpB | Out-Null
     $env:LOCALAPPDATA = $tmpB
@@ -249,8 +293,11 @@ try {
         Remove-Item env:GHOZTTY_UPDATE_MSI_CODE -ErrorAction SilentlyContinue
     }
 
-    $dlgB = Wait-Dialog $appB.Pid $FEEDBACK_BUDGET_MS
-    Assert "B1 the collided transaction raised a dialog" ($dlgB -ne [IntPtr]::Zero)
+    [void](Wait-Exit $appB.Pid $FEEDBACK_BUDGET_MS)
+    $logB = Get-ApplierLog $appB.Err
+    $reopenedB = Get-RelaunchedPid $logB
+    $dlgB = if ($reopenedB -gt 0) { Wait-Dialog $reopenedB $FEEDBACK_BUDGET_MS } else { [IntPtr]::Zero }
+    Assert "B1 the collided transaction raised a dialog in the reopened app" ($dlgB -ne [IntPtr]::Zero)
     $bodyB = if ($dlgB -ne [IntPtr]::Zero) { Get-DialogBody $dlgB } else { '' }
     Assert "B2 it says another installation is already running" `
         ($bodyB -match 'Another installation is already running')
@@ -258,16 +305,61 @@ try {
         ($bodyB -match 'Wait for the other installation')
     Assert "B4 the code is there for a bug report, but not the whole message" `
         (($bodyB -match '1618') -and ($bodyB.Length -gt 200))
-    $logB = Get-ApplierLog $appB.Err
     Assert "B5 the seam skipped msiexec rather than running one" ($logB -notmatch 'msiexec\.exe /i')
-    Assert "B6 the terminal came back from the collision too" `
-        ($logB -match 'relaunched .*ghoztty\.exe as pid \d+')
+    Assert "B6 with no report spec the applier still handed over a click's dialog" `
+        ($logB -match 'failure marker written origin=manual code=1618')
 
     if ($dlgB -ne [IntPtr]::Zero) {
         [void](Invoke-TestMessage -Window $dlgB -Message ([uint32]$WM_CLOSE))
     }
     Start-Sleep -Milliseconds 1500
-    Assert "B7 dismissing it lets the applier finish" (-not (Test-Alive $appB.Pid))
+    Assert "B7 dismissing it leaves the terminal running" (($reopenedB -gt 0) -and (Test-Alive $reopenedB))
+    [void](Stop-ApplierSandbox -Sandbox $sandbox)
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 600)
+
+    # ========================================================================
+    "== G: an AUTOMATIC install that fails says so without a dialog (T2344)"
+    # ========================================================================
+    # Nobody clicked anything, so nobody is owed a modal: the reopened app
+    # consumes the marker, flags the menu row and posts a balloon. The balloon
+    # itself is not observable on a background desktop (no notification area),
+    # so this arm proves the app consumed the marker and raised NO dialog; D7
+    # holds the balloon and the menu flag to the source.
+    $tmpG = Join-Path $root 'g'
+    New-Item -ItemType Directory -Force $tmpG | Out-Null
+    $env:LOCALAPPDATA = $tmpG
+    $markerG = Get-FailureMarkerPath $tmpG
+
+    $msiG = Join-Path $root 'auto.msi'
+    New-FakePackage $msiG
+    $env:GHOZTTY_UPDATE_MSI_CODE = '1603'
+    try {
+        $appG = Start-Applier 'g' "$(New-DeadPid)|$msiG|$($sandbox.Exe)" -Report 'auto'
+    } finally {
+        Remove-Item env:GHOZTTY_UPDATE_MSI_CODE -ErrorAction SilentlyContinue
+    }
+    $goneG = Wait-Exit $appG.Pid $FEEDBACK_BUDGET_MS
+    $logG = Get-ApplierLog $appG.Err
+    Assert "G1 the applier wrote an automatic install's marker and exited" `
+        ($goneG -and ($logG -match 'failure marker written origin=auto code=1603'))
+    $reopenedG = Get-RelaunchedPid $logG
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ((Test-Path $markerG) -and $sw.ElapsedMilliseconds -lt $FEEDBACK_BUDGET_MS) {
+        Start-Sleep -Milliseconds 200
+    }
+    Assert "G2 the reopened app consumed the marker ($($sw.ElapsedMilliseconds) ms)" `
+        (($reopenedG -gt 0) -and (-not (Test-Path $markerG)))
+    Start-Sleep -Milliseconds $PERSIST_MS
+    $aliveG = ($reopenedG -gt 0) -and (Test-Alive $reopenedG)
+    # By title: the sandbox has no agent beside its copy of the build, so the
+    # reopened app also raises "Session persistence unavailable" - true, and
+    # not this arm's subject.
+    $foundG = if ($reopenedG -gt 0) { @(Get-TestWindows -ProcessId $reopenedG -Class $DIALOG_CLASS -AllowHidden) } else { @() }
+    $titlesG = @($foundG | ForEach-Object { Get-TestWindowText -Window ([IntPtr]$_.Hwnd) })
+    $oursG = @($titlesG | Where-Object { $_ -eq $DIALOG_TITLE })
+    Assert "G3 the terminal is still running (alive=$aliveG)" $aliveG
+    Assert "G4 and raised no update dialog for an install nobody asked for (dialogs up: '$($titlesG -join "', '")')" `
+        (($reopenedG -gt 0) -and ($oursG.Count -eq 0))
     [void](Stop-ApplierSandbox -Sandbox $sandbox)
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 600)
 
@@ -325,34 +417,50 @@ try {
         ($instSrc -match 'if \(comptime builtin\.mode != \.Debug\) return null;')
     Assert "D5 the dialog title is the one constant both sides read" `
         ($applySrc -match 'pub const failure_title = "Ghoztty could not finish updating";')
+    # T2344: the hand-over. The marker is written BEFORE the relaunch, so the
+    # reopened app can never start ahead of it, and the app consumes it at
+    # startup and tells an automatic failure with a balloon and the menu flag.
+    Assert "D6 the failure marker is left before the terminal is relaunched" `
+        ($instSrc -match '(?s)leaveFailureMarker\(arena, code, log_path\).*?const relaunched = relaunch\(arena, spec\.exe\);')
+    $appSrc = [IO.File]::ReadAllText((Join-Path $repo 'src\apprt\win32\App.zig'))
+    Assert "D7 the reopened app consumes it at startup, and an automatic failure gets the balloon and the menu flag" `
+        (($appSrc -match 'self\.announceUpdateFailure\(\);') -and
+         ($appSrc -match '(?s)fn announceUpdateFailure.*?self\.markInstallFailed\(\);.*?\.balloon => \{.*?update_apply\.auto_failure_title'))
+    Assert "D8 both install paths tell the applier who asked" `
+        (($appSrc -match '(?s)update_install\.arm\(self\.core_app\.alloc, msi, \.\{\s*\.origin = \.manual') -and
+         ($appSrc -match '(?s)update_install\.arm\(alloc, msi\.\?, \.\{\s*\.origin = \.auto'))
 
     # ========================================================================
-    "== F: an unanswered dialog does not keep the applier alive (T2321)"
+    "== F: with no reopened app, the applier's own dialog is bounded (T2321)"
     # ========================================================================
     # 2026-10-26: the applier raised this dialog, nobody ever saw it, and the
     # process sat on it for 26 hours - holding its own image locked, so every
-    # later Install Update failed with AccessDenied. The dialog now dismisses
-    # itself after update_apply.report_timeout_ms; the Debug seam shortens that
-    # so the exit is observable here. A9/A10 above are the control: without the
-    # seam the same dialog is still up, and the applier still alive, 3 s in.
+    # later Install Update failed with AccessDenied. Since T2344 the applier
+    # raises it only when the relaunch FAILED (A0 is the other half: with a
+    # reopened app it exits at once). That dialog dismisses itself after
+    # update_apply.report_timeout_ms; the Debug seam shortens it so the exit is
+    # observable here. The relaunch is made to fail by naming an exe that is
+    # not there.
     $tmpF = Join-Path $root 'f'
     New-Item -ItemType Directory -Force $tmpF | Out-Null
     $env:LOCALAPPDATA = $tmpF
+    $markerF = Get-FailureMarkerPath $tmpF
 
     $msiF = Join-Path $root 'unseen.msi'
     New-FakePackage $msiF
+    $missingExe = Join-Path (Split-Path $sandbox.Exe -Parent) 'not-here.exe'
     $REPORT_TIMEOUT_MS = 4000
     $env:GHOZTTY_UPDATE_MSI_CODE = '1603'
     $env:GHOZTTY_UPDATE_REPORT_TIMEOUT_MS = "$REPORT_TIMEOUT_MS"
     try {
-        $appF = Start-Applier 'f' "$(New-DeadPid)|$msiF|$($sandbox.Exe)"
+        $appF = Start-Applier 'f' "$(New-DeadPid)|$msiF|$missingExe" -Report 'manual'
     } finally {
         Remove-Item env:GHOZTTY_UPDATE_MSI_CODE -ErrorAction SilentlyContinue
         Remove-Item env:GHOZTTY_UPDATE_REPORT_TIMEOUT_MS -ErrorAction SilentlyContinue
     }
 
     $dlgF = Wait-Dialog $appF.Pid $FEEDBACK_BUDGET_MS
-    Assert "F1 the failure was still reported on screen" ($dlgF -ne [IntPtr]::Zero)
+    Assert "F1 with no terminal to reopen, the applier reported on screen itself" ($dlgF -ne [IntPtr]::Zero)
     # Nothing touches the dialog from here on: that is the user's 26 hours.
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ((Test-Alive $appF.Pid) -and $sw.ElapsedMilliseconds -lt ($REPORT_TIMEOUT_MS + 15000)) {
@@ -363,9 +471,10 @@ try {
     $logF = Get-ApplierLog $appF.Err
     Assert "F3 and its log says the dialog timed out rather than was read" `
         ($logF -match 'failure dialog unanswered after \d+ms; dismissed it and exiting')
-    Assert "F4 the terminal was still given back first" ($logF -match 'relaunched .*ghoztty\.exe as pid \d+')
+    Assert "F4 it reported because the relaunch failed" ($logF -match 'relaunch of .*not-here\.exe FAILED')
+    Assert "F5 and took its marker back, so a later launch does not report it twice" (-not (Test-Path $markerF))
     $instSrcF = [IO.File]::ReadAllText((Join-Path $repo 'src\apprt\win32\update_install.zig'))
-    Assert "F5 a shipped build bounds the dialog too (the seam only shortens it)" `
+    Assert "F6 a shipped build bounds the dialog too (the seam only shortens it)" `
         ($instSrcF -match 'orelse update_apply\.report_timeout_ms;')
     [void](Stop-ApplierSandbox -Sandbox $sandbox)
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 600)
@@ -401,6 +510,7 @@ try {
     Remove-Item env:GHOZTTY_UPDATE_MSI_CODE -ErrorAction SilentlyContinue
     Remove-Item env:GHOZTTY_UPDATE_REPORT_TIMEOUT_MS -ErrorAction SilentlyContinue
     Remove-Item env:GHOZTTY_UPDATE_APPLY -ErrorAction SilentlyContinue
+    Remove-Item env:GHOZTTY_UPDATE_REPORT -ErrorAction SilentlyContinue
     if ($savedCode) { $env:GHOZTTY_UPDATE_MSI_CODE = $savedCode }
     if ($savedApply) { $env:GHOZTTY_UPDATE_APPLY = $savedApply }
     $env:LOCALAPPDATA = $savedLocalAppData
@@ -423,4 +533,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'update-failure-visible' -MinPass 31
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'update-failure-visible' -MinPass 45

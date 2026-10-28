@@ -2184,6 +2184,11 @@ pub fn run(self: *App) !void {
     // it is about rather than before anything is on screen.
     self.announceUpdateReopen();
 
+    // T2344: an update msiexec refused is told HERE, by the app the applier
+    // reopened, rather than by the windowless applier whose modal opened
+    // behind this terminal where nobody saw it.
+    self.announceUpdateFailure();
+
     // Surface config load diagnostics once at startup (T69). After the
     // first window exists so the dialog has an owner to center on; the
     // dialog pumps its own modal loop, so startup messages (paints, IPC)
@@ -11005,7 +11010,10 @@ pub fn offerUpdate(self: *App) bool {
 /// the app does not quit, so the user keeps the terminal they have.
 fn applyStagedUpdate(self: *App) void {
     const msi = self.update_staged_msi orelse return;
-    update_install.arm(self.core_app.alloc, msi) catch |err| {
+    update_install.arm(self.core_app.alloc, msi, .{
+        .origin = .manual,
+        .from_version = WhatsNewWindow.currentVersion(),
+    }) catch |err| {
         self.reportInstallNotStarted(err);
         return;
     };
@@ -11124,7 +11132,10 @@ fn maybeAutoApplyUpdate(self: *App, moment: update_auto_apply.Moment) bool {
     log.warn("update: installing win-v{s} automatically ({t}; moment={t} idle={d}ms persistence={})", .{
         version.?, verdict.reason, moment, idle, self.config.@"session-persistence",
     });
-    update_install.arm(alloc, msi.?) catch |err| {
+    update_install.arm(alloc, msi.?, .{
+        .origin = .auto,
+        .from_version = WhatsNewWindow.currentVersion(),
+    }) catch |err| {
         // No dialog: nobody asked for this install, and the attempt record
         // above already holds the next one off. The menu row is where it shows.
         log.err("update: automatic install of win-v{s} could not be started ({t}); the offer stays up", .{ version.?, err });
@@ -11508,6 +11519,78 @@ fn announceUpdateReopen(self: *App) void {
         WhatsNewWindow.currentVersion(),
         notice.title,
     });
+}
+
+/// Consume the applier's failure marker, if any (T2344), and tell the user in
+/// the way the install was asked for: a click on "Install and Restart" gets
+/// the full dialog, owned by this app's first window so it sits on the
+/// terminal it is about; an automatic install gets a balloon. Either way the
+/// menu row says the last try failed. The marker is deleted whatever it says,
+/// so one failure is reported once.
+fn announceUpdateFailure(self: *App) void {
+    const alloc = self.core_app.alloc;
+    const path = update_install.failureMarkerPath(alloc) orelse return;
+    defer alloc.free(path);
+
+    var raw: [std.fs.max_path_bytes + 128]u8 = undefined;
+    const n = blk: {
+        const f = std.fs.openFileAbsolute(path, .{}) catch return;
+        defer f.close();
+        break :blk f.readAll(&raw) catch 0;
+    };
+    std.fs.deleteFileAbsolute(path) catch |err| {
+        log.warn("update-failure: could not delete the marker err={}", .{err});
+    };
+
+    const marker = update_apply.parseFailureMarker(raw[0..n]);
+    const notice = update_apply.decideFailureNotice(
+        marker,
+        WhatsNewWindow.currentVersion(),
+        std.time.milliTimestamp(),
+    ) orelse {
+        log.info("update-failure: marker consumed, nothing to say (parsed={} current={s})", .{
+            marker != null,
+            WhatsNewWindow.currentVersion(),
+        });
+        return;
+    };
+    const m = marker.?;
+    self.markInstallFailed();
+
+    switch (notice) {
+        .balloon => {
+            var body_buf: [256]u8 = undefined;
+            const shown = self.showTrayBalloon(
+                NOTIF_UPDATE_UID,
+                NOTIF_UPDATE_TIMER_ID,
+                update_apply.auto_failure_title,
+                update_apply.describeAutoFailure(&body_buf, m.code),
+            );
+            log.warn("update-failure: notice kind=balloon shown={} origin={t} code={d}", .{ shown, m.origin, m.code });
+        },
+        .dialog => {
+            var text_buf: [update_apply.max_failure_message]u8 = undefined;
+            const text = update_apply.describeFailure(&text_buf, m.code, m.log_path);
+            const text_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, text) catch return;
+            defer alloc.free(text_w);
+            const owner: ?*Window = if (self.windows.items.len > 0) self.windows.items[0] else null;
+            log.warn("update-failure: notice kind=dialog origin={t} code={d} owner={}", .{ m.origin, m.code, owner != null });
+            const result = ConfirmDialog.show(
+                self,
+                if (owner) |win| win.hwnd else null,
+                if (owner) |win| win.scale else 1.0,
+                if (owner) |win| (if (win.getActiveSurface()) |sf| sf.hwnd else null) else null,
+                .{
+                    .title = std.unicode.utf8ToUtf16LeStringLiteral(update_apply.failure_title),
+                    .text = text_w,
+                    .icon = .warning,
+                    .ok_label = std.unicode.utf8ToUtf16LeStringLiteral("Open Releases Page"),
+                    .cancel_label = std.unicode.utf8ToUtf16LeStringLiteral("Close"),
+                },
+            );
+            if (result == .ok) self.openUpdateReleasePage();
+        },
+    }
 }
 
 /// Show a balloon on the update tray icon. A click is delivered as
