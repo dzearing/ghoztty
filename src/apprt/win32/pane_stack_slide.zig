@@ -46,6 +46,8 @@ const std = @import("std");
 const testing = std.testing;
 const grid = @import("pane_stack_grid.zig");
 const PxRect = grid.PxRect;
+/// A window region's rect, for a caller that keeps one (`PaneView.card_region_cut`).
+pub const Rect = PxRect;
 const Id = grid.Id;
 const Direction = @import("pane_stack_layout.zig").Direction;
 
@@ -468,6 +470,18 @@ pub fn clip(window: PxRect, card: PxRect) ?PxRect {
         .right = @max(@min(window.right, card.right) - window.left, left + 1),
         .bottom = @max(@min(window.bottom, card.bottom) - window.top, top + 1),
     };
+}
+
+/// Whether re-cutting a sliding pane from `prev` to `next` (both window
+/// regions, in the window's own coordinates, as `clip` makes them) needs the
+/// pane redrawn (T2415). A cut that only shrinks - a card folding into its
+/// strip - shows nothing of the pane that was not on show already, and the
+/// window's own paint after the layout covers what the pane gave back, so
+/// forcing a redraw only buys a GL repaint on every frame of the glide. A
+/// cut that grows, or a pane with no cut before, has pixels nobody drew.
+pub fn cutNeedsRedraw(prev: ?PxRect, next: PxRect) bool {
+    const p = prev orelse return true;
+    return next.left < p.left or next.top < p.top or next.right > p.right or next.bottom > p.bottom;
 }
 
 /// Whether going from `before` to `after` changed which cards are on show -
@@ -1138,6 +1152,20 @@ test "clip: a window inside its card is not cut" {
     try testing.expectEqual(@as(?PxRect, null), clip(r(10, 10, 100, 100), r(0, 0, 200, 200)));
     // Bigger than its card: cut to it, from the window's own origin.
     try testing.expectEqual(PxRect{ .left = 0, .top = 0, .right = 450, .bottom = 600 }, clip(r(0, 0, 900, 600), r(0, 0, 450, 600)).?);
+}
+
+test "cutNeedsRedraw: a fold's shrinking cut is never redrawn, a growing one is (T2415)" {
+    // First cut of the glide: nothing was cut before, so draw it.
+    try testing.expect(cutNeedsRedraw(null, r(100, 0, 300, 600)));
+    // Folding into a leading strip: the pane rides the card's far edge, so
+    // what shows of it narrows from the left, frame on frame.
+    const a = clip(r(0, 0, 400, 600), r(100, 0, 300, 600)).?;
+    const b = clip(r(-60, 0, 400, 600), r(100, 0, 240, 600)).?;
+    try testing.expect(!cutNeedsRedraw(a, b));
+    try testing.expect(!cutNeedsRedraw(a, a));
+    // Unfolding is the same frames backwards: the cut grows, and the pixels
+    // it gives the pane were never drawn.
+    try testing.expect(cutNeedsRedraw(b, a));
 }
 
 test "plan: a strip that stays a strip keeps its length by its outer edge until the glide is over (T2312, Mac 760272563)" {

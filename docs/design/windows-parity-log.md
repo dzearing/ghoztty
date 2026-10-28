@@ -37574,3 +37574,12 @@ moved to T1814.
   - WGC bite probe (posted drag, banners on both panes, accent run on banner rows vs a terminal row): fixed build 0 bitten frames on 3 runs; pre-fix control 52 of 864. The box was idle (Get-UserPresence Present=False).
   - pane-banner ALL PASS 181; floor lanes lib/none/win32/agent PASS. overlay-zorder red is T2300's known setup failure.
   - T2028 stays open: the popups are top-level windows, so they cannot join the panes' defer batch.
+- 2026-10-28 14:30 (lane a): T2415 done (rescoped). Collapsing panes into blades no longer repaints the folding pane on every frame, and the flat style no longer leaves stale pixels where a gliding card is heading (user report: "janky as hell").
+  - Root cause 1: on each glide tick the flat style re-cut the folding pane with `SetWindowRgn(redraw=TRUE)`. That forced a full GL repaint every frame (the T1906 cost), 56 in one test fold. A cut that only shrinks shows nothing new, so it is now set without a redraw (`pane_stack_slide.cutNeedsRedraw`). A growing cut (unfold) still redraws.
+  - Root cause 2: the flat gutter fill excluded each card's final slot, so the gap a folding pane was leaving, and the backdrop beside a pane held at its old size, were never painted mid-glide. A card that is still gliding no longer excludes its slot.
+  - Split: T2416 (WGC frame capture of fold/unfold at 2/3/4 panes; needs an idle box), T2417 (port Mac 7e2d0a9da: stays-tucked strips tween rect to rect instead of jumping during the sidebar column shift; laid-out gate).
+  Validation:
+  - stack-fold-slide.ps1 new F14 (flat): folding 56 cuts, 1 redrawn; unfolding 57 of 57 redrawn. ALL PASS (33). Negative control fails F14 (0 cuts).
+  - New unit test for `cutNeedsRedraw`. Floor lanes lib/none/win32/agent PASS. pane-stack-slide, stack-collapse-drag and stack-collapse-carry ALL PASS.
+  - Due sweep (44): 37 pass. The reds are guards acked to open tasks: overlay-zorder T2300, arp-version T2362, frame-clock T2370, pane-stack-strip T2334, viewer-narrow-pane T2380, hook-json T2318. Harness floor: its 3 stale-build rows were re-run green and stamped; asserted-nothing stays PENDING under T1568.
+  - NOT RUN: any pixel capture of the glide (input desktop, user present). That is T2416.

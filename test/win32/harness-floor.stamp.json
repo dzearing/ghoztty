@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-28T13:19:09-07:00",
-    "commit":  "7ff4c8be4",
+    "generated":  "2026-10-28T14:31:07-07:00",
+    "commit":  "43f051e87",
     "uncommitted":  [
-                        "test/win32/menu-bar.ps1"
+                        "test/win32/stack-fold-slide.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -160,7 +160,7 @@
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/frame-capture.ps1":  "aa0fb1e741810094182f23694c57b55cff8a0b6e39be1e2bb61771fd3e94e65d",
                   "test/win32/frame-clock.ps1":  "59307834c3ab370225134eea48895e46e53f4898bf4d4a2c0662b40dcc859373",
-                  "test/win32/frame-lab.ps1":  "3f6041638fc4a86c099e645052d8acc8ad9d889f9f8ecf98c071b1b7a117945e",
+                  "test/win32/frame-lab.ps1":  "0f7fd958c6a7c705377f856deeffbe253e2ad3a9c091312529d0b33894481f89",
                   "test/win32/frame-lab-card.ps1":  "8a648e3b942b2fa23f15c39f5de6898da655256d6866ad3a22f9321ef4f8719c",
                   "test/win32/frame-lab-catalogue.ps1":  "d05be14346c2b972cb11adb4b0b4f41dbf72e3413a676699d0ef771fbd0edbb1",
                   "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
@@ -352,13 +352,13 @@
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
                   "test/win32/pane-ingest-ab.ps1":  "8a1c931c42ef7e346459a13bbd3c4a8e31a581ca00247520423b3d2bca6e984b",
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
-                  "test/win32/pane-sidebar.ps1":  "50ff35e419dad9c58af728a39af47d263898e7f13f26c930eee54ceae94fa9c7",
+                  "test/win32/pane-sidebar.ps1":  "d51d45d8aa99fc02ea74ba8779a566431bd47424ed0cf09c3401a58b78822df5",
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
                   "test/win32/pane-sidebar-activity.ps1":  "6703d4bcce8e551c08795e5cf2a81091d22a49460d78a5f75abebf0ed6818a95",
                   "test/win32/pane-sidebar-add.ps1":  "14d6aabba62031814e25bcd69350541245f65ebf17adb3a7697bdfd720ae2751",
                   "test/win32/pane-sidebar-all-windows.ps1":  "32e0c4f9e25fa6253dc0a3f6f4657f214c94eb108f7859e17b6131e219702674",
                   "test/win32/pane-sidebar-close.ps1":  "10c16a9c6a2275091868b0f3818189e5a6c38f009b86211a4bfd667a2ab6bc64",
-                  "test/win32/pane-sidebar-drag.ps1":  "98b024a0129db1d9effaf3bd63456ca095b4301aaa8cb5043da91e5b642bd51d",
+                  "test/win32/pane-sidebar-drag.ps1":  "10cac8a118ea71fbc87e12bd2c1fad5128c1ad8d68e142742b427420d43a6027",
                   "test/win32/pane-sidebar-elevated.ps1":  "ec463668cffb3f072578e8437e10fa8e4c0f04eee8e80a8fbd020e9f2e618a63",
                   "test/win32/pane-sidebar-glide.ps1":  "7e2b71fe04fd82554f721632d6c67e88c37b238b25a8ba659edae0ea31509d54",
                   "test/win32/pane-sidebar-hover-resync.ps1":  "a05c2b4894385ba80ac8343db8817baf84fb27cabef9dd769164ebc54e27e551",
@@ -471,7 +471,7 @@
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",
                   "test/win32/stack-collapse-carry.ps1":  "2fb0e9c3403e77a583f2eee95338ea9b0cbd9005eff39ca7dd278e5e202b713c",
                   "test/win32/stack-collapse-drag.ps1":  "9f6a3af57145234c03d79e14f0bac93af80491894488ca126108313887a906d7",
-                  "test/win32/stack-fold-slide.ps1":  "b283a5dcdfd8925d85b60c6fd904b9ec09a49d629f6e46739f27d3cb4bf96b61",
+                  "test/win32/stack-fold-slide.ps1":  "4a4a8c196a4825b38e7459329cef39ef1d83dd08d750647ad03365a4f8940d9f",
                   "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79",

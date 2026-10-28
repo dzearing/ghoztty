@@ -72,6 +72,12 @@ stash_seq: u64 = 0,
 /// did not change, so a divider drag does not re-cut every pane every frame.
 card_region_key: u64 = 0,
 
+/// The flat style's mid-slide cut this pane's child was last given, in its own
+/// coordinates, or null when it has none (T2415). `Window.applyCardRegions`
+/// owns it: a fold only ever shrinks the cut, and a shrinking cut is set
+/// without a redraw (`pane_stack_slide.cutNeedsRedraw`).
+card_region_cut: ?pane_stack_slide.Rect = null,
+
 /// The desk slice this pane's terminal was last handed as its glass
 /// backdrop (T1833): a hash of where the pane sits on which desk, or 0 for
 /// none. `Window.syncGlassBackdrops` owns it, so a paint that moved nothing

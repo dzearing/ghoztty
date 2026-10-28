@@ -60,9 +60,14 @@
 #   F13) the face IS the strip's band (flat style): photographed mid-glide
 #       through WM_PRINTCLIENT, its commonest pixel is the band the oracle
 #       logged and covers most of it - not the pane's colour, not a hole
+#   F14) folding re-cuts s2 to its narrowing card on 2+ frames and redraws it
+#       on at most one, its first (T2415): a cut that only shrinks shows no
+#       pixel of the pane that was not on show already, and a redraw per frame
+#       was a GL repaint per frame of the glide. Unfolding, the cut grows and
+#       IS redrawn. Read from the debug build's `stack cut redraw=` line.
 #
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
-# before any slide) and keeps F1/F2/F7/F8/F10 as written: they MUST fail.
+# before any slide) and keeps F1/F2/F7/F8/F10/F14 as written: they MUST fail.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -218,6 +223,18 @@ function Get-FaceAlphas([int]$from, [int]$to) {
     for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
         if ($lines[$i] -match 'strip face alpha=(\d+) band=([0-9a-f]{6})') {
             $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Band = $Matches[2] }
+        }
+    }
+    return $out
+}
+# The `stack cut redraw=N width=W` oracle lines (T2415) from line $from to
+# line $to of the app's stderr: each mid-slide cut, and whether it redrew.
+function Get-CutRedraws([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'stack cut redraw=(\d) width=(\d+)') {
+            $out += [pscustomobject]@{ Redraw = [int]$Matches[1]; Width = [int]$Matches[2] }
         }
     }
     return $out
@@ -443,6 +460,14 @@ try {
     if ($fadeIn.Count -ge 2) {
         Assert ($fadeIn[-1].Alpha -gt $fadeIn[0].Alpha) "F10: folding, the face's alpha rises ($($fadeIn[0].Alpha) -> $($fadeIn[-1].Alpha))"
     }
+    # F14: the shrinking cut is set without a redraw after the first (T2415).
+    if ($PaneStyle -eq 'flat') {
+        $cutsIn = @(Get-CutRedraws $logFold $logBack)
+        $redrawsIn = @($cutsIn | Where-Object { $_.Redraw -eq 1 }).Count
+        Say ("      cuts folding: {0} ({1} redrawn)" -f (($cutsIn | ForEach-Object { '{0}{1}' -f $_.Width, $(if ($_.Redraw) { '*' } else { '' }) }) -join ' > '), $redrawsIn)
+        Assert ($cutsIn.Count -ge 2) "F14: folding, s2 is re-cut on $($cutsIn.Count) frames (need 2+)"
+        Assert ($redrawsIn -le 1) "F14: folding, s2's shrinking cut is redrawn on $redrawsIn frames (at most 1, the first): a cut that only shrinks has nothing to repaint"
+    }
     $facesFolded = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
     Assert ($facesFolded -eq 0) "F12: folded and at rest, no face is on show ($facesFolded): the window's strip has taken over"
 
@@ -487,6 +512,13 @@ try {
         }
     }
     Assert ($facesAtRest -eq 0) "F12: unfolded and at rest, no face is on show ($facesAtRest)"
+    # F14: a growing cut is redrawn - the pixels it gives back were never drawn.
+    if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
+        $cutsOut = @(Get-CutRedraws $logBack $logEnd)
+        $redrawsOut = @($cutsOut | Where-Object { $_.Redraw -eq 1 }).Count
+        Say ("      cuts unfolding: {0} of {1} redrawn" -f $redrawsOut, $cutsOut.Count)
+        Assert ($redrawsOut -ge 2) "F14: unfolding, s2's growing cut is redrawn on $redrawsOut frames (need 2+)"
+    }
 
     # F13: the face's pixels are the strip's band (flat: one solid band).
     if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {

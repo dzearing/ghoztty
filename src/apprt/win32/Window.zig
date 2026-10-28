@@ -8099,13 +8099,23 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
             }
             if (entry.view.card_region_key == key) continue;
             entry.view.card_region_key = key;
+            const prev_cut = entry.view.card_region_cut;
+            entry.view.card_region_cut = cut;
             if (key == 0) {
                 _ = w32.SetWindowRgn(h, null, @intFromBool(redraw == .redraw));
                 continue;
             }
             if (cut) |c| {
                 const rect_rgn = w32.CreateRectRgn(c.left, c.top, c.right, c.bottom) orelse continue;
-                if (w32.SetWindowRgn(h, rect_rgn, @intFromBool(redraw == .redraw)) == 0) _ = w32.DeleteObject(rect_rgn);
+                // A fold re-cuts the pane going into its strip on every frame
+                // of the glide (T2415). Redrawn, each cut was a GL repaint of
+                // a pane whose content had not changed - the T1906 cost, per
+                // frame - and the layout pass's own paint already covers what
+                // the cut gave back. Only a cut that grows has pixels to draw.
+                const repaint = redraw == .redraw and pane_stack_slide.cutNeedsRedraw(prev_cut, c);
+                // The acceptance oracle (stack-fold-slide.ps1 F14).
+                log.debug("stack cut redraw={d} width={d}", .{ @intFromBool(repaint), c.width() });
+                if (w32.SetWindowRgn(h, rect_rgn, @intFromBool(repaint)) == 0) _ = w32.DeleteObject(rect_rgn);
                 continue;
             }
             // Square top: the rounded rect starts a whole corner ABOVE what
@@ -8753,9 +8763,14 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
     while (leaves.next()) |e| {
         // A strip held short of its reach (T2312) is painted that short, so
         // the rest of its tab is background here.
+        // A card still gliding to its slot (T2415) is not there yet: the slot
+        // holds whatever the glide left in it - the gap a folding pane is
+        // leaving, the backdrop beside a pane held at its old size - and
+        // nothing else paints it, so it is filled like any gutter. The
+        // panes themselves are clipped off by `WS_CLIPCHILDREN`.
         const shown = if (e.value_ptr.tab != null)
             (if (grid.placement(e.key_ptr.*)) |p| self.shownStripTab(e.key_ptr.*, p) orelse continue else continue)
-        else if (!e.value_ptr.is_tucked) grid.px(e.value_ptr.frame) else continue;
+        else if (!e.value_ptr.is_tucked and self.stackSlideRect(e.key_ptr.*) == null) grid.px(e.value_ptr.frame) else continue;
         _ = w32.ExcludeClipRect(hdc, shown.left, shown.top, shown.right, shown.bottom);
     }
     if (w32.CreateSolidBrush(w32.RGB(cfg_bg.r, cfg_bg.g, cfg_bg.b))) |bg_brush| {
