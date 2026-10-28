@@ -5777,6 +5777,19 @@ $GuardTable = @(
             'test\win32\drag-perf.ps1'
         )
     },
+    # T2365: the app's one frame clock. Every animation steps on it, so an edit
+    # to the clock or its dispatch is an edit to what frame-clock.ps1 measures:
+    # whether ticks land a display frame apart, against the old 16 ms WM_TIMER.
+    [pscustomobject]@{
+        Name   = 'frame-clock'
+        Script = 'test\win32\frame-clock.ps1'
+        Stamp  = 'test\win32\frame-clock.stamp.json'
+        Covers = @(
+            'src\apprt\win32\FrameClock.zig',
+            'src\apprt\win32\frame_clock.zig',
+            'test\win32\frame-clock.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'resize-flicker'
         Script = 'test\win32\resize-flicker.ps1'

@@ -12,6 +12,7 @@ const App = @import("App.zig");
 const Window = @import("Window.zig");
 const Surface = @import("Surface.zig");
 const w32 = @import("win32.zig");
+const FrameClock = @import("FrameClock.zig");
 const msg_timer = @import("msg_timer.zig");
 
 const log = std.log.scoped(.win32_quick_terminal);
@@ -69,7 +70,7 @@ pub fn deinit(self: *QuickTerminal) void {
 
     // Kill animation timer if running.
     if (self.animating) {
-        _ = w32.KillTimer(app.msg_hwnd, ANIM_TIMER_ID);
+        FrameClock.disarm(app.msg_hwnd, ANIM_TIMER_ID);
         self.animating = false;
     }
 
@@ -147,7 +148,7 @@ fn animateIn(self: *QuickTerminal) void {
     self.animation_direction = .in;
     self.animation_start_time = self.now();
     self.animating = true;
-    _ = w32.SetTimer(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS, null);
+    _ = FrameClock.arm(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS);
 }
 
 fn animateOut(self: *QuickTerminal) void {
@@ -163,7 +164,7 @@ fn animateOut(self: *QuickTerminal) void {
     self.animation_direction = .out;
     self.animation_start_time = self.now();
     self.animating = true;
-    _ = w32.SetTimer(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS, null);
+    _ = FrameClock.arm(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS);
 }
 
 /// Called from App's WM_TIMER handler on each animation tick.
@@ -189,7 +190,7 @@ pub fn onAnimationTick(self: *QuickTerminal) void {
 
     if (progress >= 1.0) {
         // Animation complete.
-        _ = w32.KillTimer(self.app.msg_hwnd, ANIM_TIMER_ID);
+        FrameClock.disarm(self.app.msg_hwnd, ANIM_TIMER_ID);
         self.animating = false;
 
         if (self.animation_direction == .in) {
@@ -220,7 +221,7 @@ pub fn onWindowDestroyed(self: *QuickTerminal) void {
     // Kill the animation timer unconditionally — `self.animating` may
     // be false but a stray WM_TIMER could already be queued. Once `self`
     // is freed below, dispatching that timer would touch freed memory.
-    _ = w32.KillTimer(app.msg_hwnd, ANIM_TIMER_ID);
+    FrameClock.disarm(app.msg_hwnd, ANIM_TIMER_ID);
 
     alloc.destroy(self.window);
     app.quick_terminal = null;

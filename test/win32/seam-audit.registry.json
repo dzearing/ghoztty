@@ -233,6 +233,16 @@
             "unset": "shipped-elsewhere",
             "note": "unset = enrollment opens a browser, which is what a real enrollment does; suppressed here only so a test does not launch one."
         },
+        "GHOZTTY_FRAME_CLOCK": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2365. frame-clock.ps1 sets `settimer` to drive the frame dispatch from the old 16 ms WM_TIMER as its A/B control; unset is the vblank clock, which every other launch (and frame-clock.ps1's own vsync half) runs on."
+        },
+        "GHOZTTY_FRAME_CLOCK_PROBE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2365. frame-clock.ps1 arms a do-nothing subscriber that measures the clock apart from any animation's cost; unset = no probe, the state every other launch is in."
+        },
         "GHOZTTY_GL_FALLBACK_DLL": {
             "class": "fault",
             "unset": "shipped-elsewhere",

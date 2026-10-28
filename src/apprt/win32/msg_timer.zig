@@ -101,6 +101,17 @@ pub const handoff_quit: usize = 23;
 /// `startup_window.zig`). Armed only when `initial-window = false`.
 pub const startup_fallback: usize = 24;
 
+/// The frame clock's legacy cadence, `GHOZTTY_FRAME_CLOCK=settimer` (T2365):
+/// the old 16 ms WM_TIMER, kept so a harness can measure the clock it
+/// replaced through the same dispatch.
+pub const frame_clock_settimer: usize = 25;
+
+/// The frame clock's measurement probe, `GHOZTTY_FRAME_CLOCK_PROBE` (T2365):
+/// a one-shot start delay, then a subscriber whose tick does nothing, so a
+/// harness can read the clock's own cadence apart from any animation's cost.
+pub const frame_clock_probe_start: usize = 26;
+pub const frame_clock_probe: usize = 27;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

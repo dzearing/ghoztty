@@ -1085,6 +1085,28 @@ pub extern "kernel32" fn GetLastError() callconv(.winapi) u32;
 
 pub const WAIT_FAILED: u32 = 0xFFFFFFFF;
 
+/// A waitable timer that honours sub-tick due times (Windows 10 1803+), the
+/// frame clock's fallback when the compositor clock is unavailable (T2365).
+pub const CREATE_WAITABLE_TIMER_HIGH_RESOLUTION: u32 = 0x00000002;
+pub const TIMER_ALL_ACCESS: u32 = 0x001F0003;
+
+pub extern "kernel32" fn CreateWaitableTimerExW(
+    lpTimerAttributes: ?*anyopaque,
+    lpTimerName: ?[*:0]const u16,
+    dwFlags: u32,
+    dwDesiredAccess: u32,
+) callconv(.winapi) ?HANDLE;
+
+/// `lpDueTime` is in 100 ns units; negative is relative to now.
+pub extern "kernel32" fn SetWaitableTimer(
+    hTimer: HANDLE,
+    lpDueTime: *const i64,
+    lPeriod: i32,
+    pfnCompletionRoutine: ?*const anyopaque,
+    lpArgToCompletionRoutine: ?*anyopaque,
+    fResume: i32,
+) callconv(.winapi) i32;
+
 pub extern "kernel32" fn WaitForMultipleObjects(
     nCount: u32,
     lpHandles: [*]const HANDLE,

@@ -142,6 +142,7 @@ pub const RemoteMachine = union(enum) {
 pub const ClientSize = struct { width: u32, height: u32 };
 
 const w32 = @import("win32.zig");
+const FrameClock = @import("FrameClock.zig");
 const DarkMode = @import("DarkMode.zig");
 const HeroCarousel = @import("HeroCarousel.zig");
 const hero_math = @import("hero_math.zig");
@@ -6560,7 +6561,7 @@ fn heroStartAnims(self: *Window, old_index: usize, new_index: usize, old_top0: ?
         if (delta != 0) self.hero_recenter = .{ .from_offset = delta, .start = start };
     }
 
-    _ = w32.SetTimer(hwnd, HERO_ANIM_TIMER_ID, HERO_ANIM_TICK_MS, null);
+    _ = FrameClock.arm(hwnd, HERO_ANIM_TIMER_ID, HERO_ANIM_TICK_MS);
     self.heroInvalidateAnimRegions(true, self.hero_recenter != null);
     return true;
 }
@@ -6589,7 +6590,7 @@ fn heroAnimTick(self: *Window) void {
         } else any = true;
     }
     self.heroInvalidateAnimRegions(had_slide, had_recenter);
-    if (!any) _ = w32.KillTimer(hwnd, HERO_ANIM_TIMER_ID);
+    if (!any) FrameClock.disarm(hwnd, HERO_ANIM_TIMER_ID);
 }
 
 /// Show (and optionally focus) the selected hero pane. Used at the end
@@ -6613,7 +6614,7 @@ fn heroCancelAnims(self: *Window) void {
     const had_slide = self.hero_slide != null;
     self.hero_slide = null;
     self.hero_recenter = null;
-    if (self.hwnd) |h| _ = w32.KillTimer(h, HERO_ANIM_TIMER_ID);
+    if (self.hwnd) |h| FrameClock.disarm(h, HERO_ANIM_TIMER_ID);
     if (had_slide) self.heroShowSelected(false);
 }
 
@@ -7572,13 +7573,13 @@ fn syncFocusGlow(self: *Window) void {
     self.glow_from = self.glow_to;
     self.glow_to = target;
     self.glow_t0_ms = std.time.milliTimestamp();
-    _ = w32.SetTimer(hwnd, FOCUS_GLOW_TIMER_ID, FOCUS_GLOW_TICK_MS, null);
+    _ = FrameClock.arm(hwnd, FOCUS_GLOW_TIMER_ID, FOCUS_GLOW_TICK_MS);
 }
 
 fn focusGlowTick(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     if (std.time.milliTimestamp() - self.glow_t0_ms >= pane_elevation.GLOW_FADE_MS) {
-        _ = w32.KillTimer(hwnd, FOCUS_GLOW_TIMER_ID);
+        FrameClock.disarm(hwnd, FOCUS_GLOW_TIMER_ID);
         self.glow_from = null;
     }
     self.repaintPaneDesk();
@@ -8533,7 +8534,7 @@ fn runStackSlide(self: *Window) void {
         self.endStackSlide();
         return;
     };
-    if (self.hwnd) |h| _ = w32.SetTimer(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS, null);
+    if (self.hwnd) |h| _ = FrameClock.arm(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS);
 }
 
 /// Stop the clock of a glide that has caught up under a drag (Mac: "caught up:
@@ -8541,7 +8542,7 @@ fn runStackSlide(self: *Window) void {
 /// their slots - and the next layout the hand makes wakes it.
 fn restStackSlide(self: *Window) void {
     self.stack_slide_last = null;
-    if (self.hwnd) |h| _ = w32.KillTimer(h, STACK_SLIDE_TIMER_ID);
+    if (self.hwnd) |h| FrameClock.disarm(h, STACK_SLIDE_TIMER_ID);
 }
 
 fn endStackSlide(self: *Window) void {

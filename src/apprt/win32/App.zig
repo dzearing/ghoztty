@@ -41,6 +41,7 @@ const system_colors = @import("system_colors.zig");
 const RenameDialog = @import("RenameDialog.zig");
 const BannerDialog = @import("BannerDialog.zig");
 const QuickTerminal = @import("QuickTerminal.zig");
+const FrameClock = @import("FrameClock.zig");
 const PaneView = @import("PaneView.zig");
 const CloseUndo = @import("CloseUndo.zig");
 const Surface = @import("Surface.zig");
@@ -1019,6 +1020,9 @@ pub fn init(
     // and poll who can see each window (no message says "covered").
     remote_session.register(self.msg_hwnd.?);
     _ = w32.SetTimer(self.msg_hwnd.?, VISIBILITY_TIMER_ID, VISIBILITY_POLL_MS, null);
+
+    // T2365: every animation steps on one vsync-aligned clock delivered here.
+    FrameClock.start(alloc, self.msg_hwnd.?);
 
     // T992: every clipboard open in this process claims this window. It is the
     // one HWND with the right lifetime — a surface can be freed while a copy is
@@ -2601,6 +2605,7 @@ pub fn terminate(self: *App) void {
         // is destroyed — a stale handle there would fail every later open.
         clipboard_open.setDefaultOwner(null);
         remote_session.unregister(hwnd);
+        FrameClock.stop(); // T2365: its worker posts to this window
         // Clear GWLP_USERDATA before destroying so msgWndProc sees
         // userdata=0 and falls through to DefWindowProc for any
         // messages during destruction (e.g. WM_DESTROY).
@@ -12972,6 +12977,21 @@ fn msgWndProc(
 
     if (msg == w32.WM_TIMER and wparam == VISIBILITY_TIMER_ID) {
         app.pollVisibility();
+        return 0;
+    }
+
+    if (msg == FrameClock.WM_APP_FRAME or
+        (msg == w32.WM_TIMER and wparam == msg_timer.frame_clock_settimer))
+    {
+        FrameClock.onFrame();
+        return 0;
+    }
+    if (msg == w32.WM_TIMER and wparam == msg_timer.frame_clock_probe_start) {
+        FrameClock.onProbeStart();
+        return 0;
+    }
+    if (msg == w32.WM_TIMER and wparam == msg_timer.frame_clock_probe) {
+        FrameClock.onProbeTick();
         return 0;
     }
 

@@ -6,6 +6,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const w32 = @import("win32.zig");
+const FrameClock = @import("FrameClock.zig");
 const pane_clip = @import("pane_clip.zig");
 const terminal = @import("../../terminal/main.zig");
 const Surface = @import("Surface.zig");
@@ -715,14 +716,14 @@ pub const Scrollbar = struct {
 
     fn startFadeIn(self: *Scrollbar) void {
         self.visibility = .fading_in;
-        _ = w32.SetTimer(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS, null);
+        _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS);
         self.clearTransparent();
         self.repaint();
     }
 
     fn startFadeOut(self: *Scrollbar) void {
         self.visibility = .fading_out;
-        _ = w32.SetTimer(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS, null);
+        _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS);
         self.repaint();
     }
 
@@ -737,7 +738,7 @@ pub const Scrollbar = struct {
                 self.fade = @intCast(new_fade);
                 if (self.fade == 255) {
                     self.visibility = .shown;
-                    _ = w32.KillTimer(self.hwnd, FADE_TIMER_ID);
+                    FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
                 }
                 self.repaint();
             },
@@ -746,12 +747,12 @@ pub const Scrollbar = struct {
                 self.fade = new_fade;
                 if (self.fade == 0) {
                     self.visibility = .hidden;
-                    _ = w32.KillTimer(self.hwnd, FADE_TIMER_ID);
+                    FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
                     self.setTransparent();
                 }
                 self.repaint();
             },
-            else => _ = w32.KillTimer(self.hwnd, FADE_TIMER_ID),
+            else => FrameClock.disarm(self.hwnd, FADE_TIMER_ID),
         }
     }
 

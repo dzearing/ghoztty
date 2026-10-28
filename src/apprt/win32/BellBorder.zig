@@ -17,6 +17,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const FrameClock = @import("FrameClock.zig");
 const pane_clip = @import("pane_clip.zig");
 const bell_math = @import("bell_math.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
@@ -88,7 +89,7 @@ pub const BellBorder = struct {
     }
 
     pub fn destroy(self: *BellBorder) void {
-        _ = w32.KillTimer(self.hwnd, FADE_TIMER_ID);
+        FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
         _ = w32.DestroyWindow(self.hwnd);
         if (self.px.len > 0) self.alloc.free(self.px);
         self.alloc.destroy(self);
@@ -177,7 +178,7 @@ pub const BellBorder = struct {
 
     /// Off screen now, with no fade.
     pub fn hideNow(self: *BellBorder) void {
-        _ = w32.KillTimer(self.hwnd, FADE_TIMER_ID);
+        FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
         self.alpha = 0;
         self.fade_from = 0;
         self.fade_to = 0;
@@ -192,7 +193,7 @@ pub const BellBorder = struct {
         self.fade_from = self.alpha;
         self.fade_to = to;
         self.fade_t0_ms = std.time.milliTimestamp();
-        _ = w32.SetTimer(self.hwnd, FADE_TIMER_ID, FADE_TICK_MS, null);
+        _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_TICK_MS);
     }
 
     fn fadeTick(self: *BellBorder) void {
@@ -200,7 +201,7 @@ pub const BellBorder = struct {
         const a = bell_math.fadeAlpha(self.fade_from, self.fade_to, elapsed);
         self.setAlpha(a);
         if (a != self.fade_to) return;
-        _ = w32.KillTimer(self.hwnd, FADE_TIMER_ID);
+        FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
         log.info("bell border fade done alpha={d} ms={d}", .{ a, elapsed });
         if (a == 0) self.hideNow();
     }

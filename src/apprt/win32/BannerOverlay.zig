@@ -26,6 +26,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const FrameClock = @import("FrameClock.zig");
 const pane_clip = @import("pane_clip.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const chrome_reposition = @import("chrome_reposition.zig");
@@ -2334,7 +2335,7 @@ pub const BannerOverlay = struct {
         // T2261 oracle: an unfocused pane's dim is stacked over the copy, as
         // Mac stacks it over its frozen terminal.
         log.debug("banner glide dim={s}", .{@tagName(self.freeze.dimOver(self.owner, dim))});
-        _ = w32.SetTimer(self.hwnd, GLIDE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS, null);
+        _ = FrameClock.arm(self.hwnd, GLIDE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS);
     }
 
     /// The pane's unfocused dim, when it is on screen: the frozen copy goes
@@ -2349,7 +2350,7 @@ pub const BannerOverlay = struct {
     fn endGlide(self: *BannerOverlay, reason: []const u8) void {
         const g = self.glide orelse return;
         self.glide = null;
-        _ = w32.KillTimer(self.hwnd, GLIDE_TIMER_ID);
+        FrameClock.disarm(self.hwnd, GLIDE_TIMER_ID);
         self.freeze.hide();
         const ms = if (std.time.Instant.now()) |now| now.since(g.start) / std.time.ns_per_ms else |_| 0;
         log.debug("banner glide end reason={s} ms={} frames={}", .{ reason, ms, g.frames });
@@ -2360,7 +2361,7 @@ pub const BannerOverlay = struct {
     /// gone quiet (or the cap has passed), take the copy down.
     fn onGlideTick(self: *BannerOverlay) void {
         if (self.glide == null) {
-            _ = w32.KillTimer(self.hwnd, GLIDE_TIMER_ID);
+            FrameClock.disarm(self.hwnd, GLIDE_TIMER_ID);
             return;
         }
         const g = &self.glide.?;
@@ -2402,18 +2403,13 @@ pub const BannerOverlay = struct {
         if (!App.clientAreaAnimationsEnabled()) return;
         const start = std.time.Instant.now() catch return;
         self.collapse_anim = .{ .from_h = from_h, .start = start };
-        _ = w32.SetTimer(
-            self.hwnd,
-            COLLAPSE_TIMER_ID,
-            banner_layout.COLLAPSE_TICK_MS,
-            null,
-        );
+        _ = FrameClock.arm(self.hwnd, COLLAPSE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS);
     }
 
     fn stopCollapseAnim(self: *BannerOverlay) void {
         if (self.collapse_anim == null) return;
         self.collapse_anim = null;
-        _ = w32.KillTimer(self.hwnd, COLLAPSE_TIMER_ID);
+        FrameClock.disarm(self.hwnd, COLLAPSE_TIMER_ID);
     }
 
     /// ~60Hz heartbeat while the card resizes (T149): re-glue the popup to

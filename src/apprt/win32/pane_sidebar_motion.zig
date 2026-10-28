@@ -44,8 +44,10 @@ pub const slant: f64 = 1;
 /// on or off (Mac `busyFade`, easeInOut 0.6s).
 pub const fade_ms: u64 = 600;
 
-/// The repaint cadence while anything moves: 30 frames a second is smooth
-/// for a faint band crossing a row, at half the cost of 60.
+/// The repaint cadence while anything moves, when the frame clock cannot
+/// take it. Since T2365 the sheen steps on the display's vblank like every
+/// other animation (`FrameClock.arm`); a 30 fps band read as a stutter beside
+/// glides that now run at the display rate.
 pub const frame_ms: u32 = 33;
 
 pub const Travel = struct { from: f64, to: f64 };

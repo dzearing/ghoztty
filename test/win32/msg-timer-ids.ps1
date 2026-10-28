@@ -60,7 +60,7 @@ $registryPath = Join-Path $srcDir 'msg_timer.zig'
 
 # The files that arm timers on `App.msg_hwnd`. Adding a fourth is fine - section
 # C is what notices it and tells you to put its ids in the registry.
-$owners = @('App.zig', 'QuickTerminal.zig', 'RemoteReconnect.zig')
+$owners = @('App.zig', 'FrameClock.zig', 'QuickTerminal.zig', 'RemoteReconnect.zig')
 
 # A timer-id constant, in either house style: `const FOO_TIMER_ID: usize = X;`
 # and `const foo_timer_id: usize = X;`.

@@ -95,6 +95,9 @@ test {
     // question-ring timing, and when the column needs a clock at all.
     // Imports only std. Every lane.
     _ = @import("win32/pane_sidebar_motion.zig");
+
+    // Pure win32 frame-clock subscriptions and interval stats (T2365).
+    _ = @import("win32/frame_clock.zig");
     _ = @import("win32/pane_sidebar_order.zig");
     _ = @import("win32/pane_sidebar_reorder.zig");
     _ = @import("win32/pane_sidebar_transition.zig");

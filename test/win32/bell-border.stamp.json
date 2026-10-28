@@ -1,14 +1,14 @@
 {
     "guard":  "bell-border",
     "script":  "test/win32/bell-border.ps1",
-    "generated":  "2026-10-24T06:17:10-07:00",
-    "commit":  "f6f13f0cb",
+    "generated":  "2026-10-27T20:30:10-07:00",
+    "commit":  "8fc584ad9",
     "uncommitted":  [
                         "src/apprt/win32/BellBorder.zig"
                     ],
     "files":  {
                   "src/apprt/win32/bell_math.zig":  "5df36ed1e5391ddcb531e6defbca5307066e028546336ae371fe619ecdffce6d",
-                  "src/apprt/win32/BellBorder.zig":  "02728701ba4203573f73a20b05647d92c34d273570030b81c990b778e7b44f54",
+                  "src/apprt/win32/BellBorder.zig":  "b5666a347c71c9b0a23ce765a414075abb6db738a9116709b4f7d1c3ac4c351e",
                   "test/win32/bell-border.ps1":  "46652c74e867a0424e930baf04a336e6a44e79bb9ac4888800e0047e4616cb04"
               }
 }

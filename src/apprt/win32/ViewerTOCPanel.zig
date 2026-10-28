@@ -32,6 +32,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
+const FrameClock = @import("FrameClock.zig");
 // Test-only (T467): the class-level resize/redraw probe. Imported at file
 // scope so its own positive and negative controls are queued into the win32
 // test lane along with the class test below.
@@ -1093,7 +1094,7 @@ fn moveToSlide(self: *ViewerTOCPanel) void {
 fn startSlide(self: *ViewerTOCPanel) void {
     self.slide_last_ms = std.time.milliTimestamp();
     if (self.slide_timer) return;
-    if (w32.SetTimer(self.hwnd, SLIDE_TIMER_ID, SLIDE_TICK_MS, null) != 0) {
+    if (FrameClock.arm(self.hwnd, SLIDE_TIMER_ID, SLIDE_TICK_MS)) {
         self.slide_timer = true;
         return;
     }
@@ -1106,7 +1107,7 @@ fn startSlide(self: *ViewerTOCPanel) void {
 
 fn stopSlide(self: *ViewerTOCPanel) void {
     if (!self.slide_timer) return;
-    _ = w32.KillTimer(self.hwnd, SLIDE_TIMER_ID);
+    FrameClock.disarm(self.hwnd, SLIDE_TIMER_ID);
     self.slide_timer = false;
 }
 
