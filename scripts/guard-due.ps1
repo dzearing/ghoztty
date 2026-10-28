@@ -822,6 +822,18 @@ $GuardTable = @(
             'src\apprt\win32\window_memory.zig'
         )
     },
+    # New windows open maximized by default (T2342, main a0aaed0f2): the rule
+    # (`window_placement.startMaximized`) and the one launch in the suite that
+    # is NOT pinned to `--maximize=false` by Start-OnTestDesktop.
+    [pscustomobject]@{
+        Name   = 'new-window-maximized'
+        Script = 'test\win32\new-window-maximized.ps1'
+        Stamp  = 'test\win32\new-window-maximized.stamp.json'
+        Covers = @(
+            'test\win32\new-window-maximized.ps1',
+            'src\apprt\win32\window_placement.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

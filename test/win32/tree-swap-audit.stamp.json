@@ -1,11 +1,11 @@
 {
     "guard":  "tree-swap",
     "script":  "test/win32/tree-swap-audit.ps1",
-    "generated":  "2026-10-27T17:49:02-07:00",
-    "commit":  "5683e2d0d",
+    "generated":  "2026-10-27T18:16:26-07:00",
+    "commit":  "aa6fbfdc0",
     "uncommitted":  [
-                        "src/apprt/win32/pane_sidebar.zig",
-                        "src/apprt/win32/PaneSidebar.zig"
+                        "src/apprt/win32/Window.zig",
+                        "src/apprt/win32/window_placement.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -176,7 +176,7 @@
                   "src/apprt/win32/pane_id.zig":  "52eb9e09bad8aff68127e9026db67d8cd4277a3c53ec6923958f46a1d1a55165",
                   "src/apprt/win32/pane_refcount.zig":  "ea4cb30787d3ff3582bf7a6615bc1c75688c51c25d0c2319ffb34cef6c28c1ea",
                   "src/apprt/win32/pane_relocate.zig":  "142dafc0a932792f9f994d3f6bb2563040fefba8c9e0fac3dddfb9d291f00045",
-                  "src/apprt/win32/pane_sidebar.zig":  "5d224fe42c2450340c1825e7dc9766a0b4bb1f6f5b96549888de2126e5bd3714",
+                  "src/apprt/win32/pane_sidebar.zig":  "c4821338da3634eae3c8a3c568f30fe531c84d684263e6f1cbc44d7f87d76961",
                   "src/apprt/win32/pane_sidebar_add.zig":  "57b19221144989b2dbab579da909ce8854ab37e31e8dea483fc719f105994fef",
                   "src/apprt/win32/pane_sidebar_cross_drop.zig":  "9289ab945cb0ee99c19eb1f100f722522c087062a53ee9d31f44c8d999591099",
                   "src/apprt/win32/pane_sidebar_menu.zig":  "83d3f0de8028dcee0dc83d43c8bdedeab5c2745efe5cb1e3e2cf9806d73fb0b4",
@@ -203,7 +203,7 @@
                   "src/apprt/win32/PaneDesk.zig":  "c1954071277e18d3d6579a3a0e364a59f0b24a9ec228277ca57c05ea1946ec86",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
-                  "src/apprt/win32/PaneSidebar.zig":  "262649ca7530b8f53b0d537cc22f91f16ee6dcd1d52aa79feea31ccddb1c86a9",
+                  "src/apprt/win32/PaneSidebar.zig":  "cd62b4205e0c69a575ad1130f58689ecb7b56646760b24231decaa4c6a38cb2a",
                   "src/apprt/win32/PaneView.zig":  "2af884e92547f1413e77a22a652c51d3d21d224196b7fe863b0afb35a0d22f3d",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/persistence_notice.zig":  "65baba4beff952a6d9d9f9753a3bf254bc8f050a6d7430978339ebf9ec848840",
@@ -325,12 +325,12 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "4a3034b11169a7ba78e5835edd313c465a59298bbabfd4ec4eda63e6ca06a1e7",
-                  "src/apprt/win32/Window.zig":  "281c4a41ed4d8bb5991db1667682aa6cad164823c59170f683b9acebf3e921dc",
+                  "src/apprt/win32/Window.zig":  "da194782c3012d628c5fc2d018099869fbc07e851875651315f180741a677760",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
                   "src/apprt/win32/window_memory.zig":  "5525d3e747fd7a5e272f8de1c82754c9139652ccefa7a51f71efbe30a9452d3a",
-                  "src/apprt/win32/window_placement.zig":  "f0b952edacb2c92627aae5ac2fedfc8cd651372c8b0b8a93b93a0613ef9ce7ab",
+                  "src/apprt/win32/window_placement.zig":  "bacb6516f8f2367c869bd63f85d2722fc0145907560f5dab4deac07554a2cb6e",
                   "test/win32/lib/TreeSwapAudit.ps1":  "d0189d964f705a3c1447497e0119773fb925b85dc6e561110d127c067f4a9d6e",
                   "test/win32/tree-swap-audit.ps1":  "c03ecc3fc2003732cc2ff532cd53d211f53c9d9545bd760c33092ab833f6a3ab"
               }

@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-27T17:36:58-07:00",
-    "commit":  "5683e2d0d",
+    "generated":  "2026-10-27T18:56:53-07:00",
+    "commit":  "aa6fbfdc0",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-this-window.ps1"
+                        "test/win32/lib/TestDesktop.ps1",
+                        "test/win32/new-window-maximized.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -281,7 +282,7 @@
                   "test/win32/lib/SkipAudit.ps1":  "ad7596801d9becbd3869a0ad315d01302cf6e80a339644d911d74b31b3f577ba",
                   "test/win32/lib/StderrCaptureAudit.ps1":  "69d0a25615d35acc06bf6c1471016186163ae1881ae70a12461425546ac4b7d8",
                   "test/win32/lib/TestClient.ps1":  "2540c6af1c32c497f17c0e4fe04fc49480072ef7b54d464b12d0bd252897a3c5",
-                  "test/win32/lib/TestDesktop.ps1":  "b4c2a2692e563b8afc661bdc14198d4b4e0cc70d389edfbfae0acee2570ac388",
+                  "test/win32/lib/TestDesktop.ps1":  "5c48faf652457d4e3d05dab2793f3540f90afbf42826d88edd38f4343a1a7a0f",
                   "test/win32/lib/TestReachAudit.ps1":  "2516d0f3f03abca197bcbb3c227add06b5853d1ba601ff338ab13054eb2f9f3e",
                   "test/win32/lib/TestScore.ps1":  "9908f515eafa142e80bbf28781aff8c07a274ab863ebcabe6c5cee49177f8a4b",
                   "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",
@@ -311,6 +312,7 @@
                   "test/win32/msi-upgrade.ps1":  "26087b57e939d39c1b52f7295ea6339341bd83d53b05d9ffe42f83a41a893513",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
                   "test/win32/new-window-cwd.ps1":  "340b6850b96d7a3cf04465db1f042cec4ec30c3b6211236e20acea80eb98bd30",
+                  "test/win32/new-window-maximized.ps1":  "659eb0fdfd571d6122bbfb8b4fcd8690e0b4a0752f7ffd8622e5ba3a8d38ea43",
                   "test/win32/notification-click-focus.ps1":  "43777bc3c6728b1874037f9e0917084ab8f8e51aff04bde05d86c991f0612edf",
                   "test/win32/notification-click-real.ps1":  "f656c41eba944964fef9920dd64f078380023105e3d05a066571f97f9c9526ba",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
@@ -347,7 +349,7 @@
                   "test/win32/pane-sidebar-resize.ps1":  "16b5c693db78372831cdd88b1ad39b02b97dee1fffc8079a03c05f0ec04b4344",
                   "test/win32/pane-sidebar-scroll.ps1":  "7d154456b6ec5a0e25db1d2a010d9ca2891581066395d9144649053eceaa9329",
                   "test/win32/pane-sidebar-shared.ps1":  "c47f3a133689e53b0c8c87eee3c4acf783bcc644dac6ae6534f56897e8c4abd9",
-                  "test/win32/pane-sidebar-this-window.ps1":  "b02abf87ab126db1d3f7f915684ba3bf00c35aeb15331cc067b1f6142336551e",
+                  "test/win32/pane-sidebar-this-window.ps1":  "1a2425db50bdf143da8e9b4cacd20f3e4a4a98921862a98a2081909dd8446237",
                   "test/win32/pane-sidebar-window-order.ps1":  "7548466cfc2c4325306cf5f426d97c40e79bbad11eb72de8c8eae5d5cf8a744e",
                   "test/win32/pane-stack-focus.ps1":  "5e1ca7f4d400d1a9293e8d73ea887c7e624f08c10ec5b2165aa4991e8bcf7e08",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",

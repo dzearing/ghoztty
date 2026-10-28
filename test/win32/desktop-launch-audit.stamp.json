@@ -1,8 +1,8 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-10-24T15:34:31-07:00",
-    "commit":  "3151bf3b4",
+    "generated":  "2026-10-27T18:00:08-07:00",
+    "commit":  "aa6fbfdc0",
     "uncommitted":  [
                         "test/win32/lib/TestDesktop.ps1"
                     ],
@@ -10,6 +10,6 @@
                   "src/cli/ghostty.zig":  "85048b74f8795c4f500ca8dd98fa52a24e92a94808ef1b16df34070b4cf6094d",
                   "test/win32/desktop-launch-audit.ps1":  "2ae75191d544e69fb28287f0d9b8532a85aa80a1f520927bc4e8a60f999d45b5",
                   "test/win32/lib/DesktopLaunchAudit.ps1":  "740352e78262c3accdd6c08ae737860b14bfdbf713a9bee1159c004bb591671d",
-                  "test/win32/lib/TestDesktop.ps1":  "b4c2a2692e563b8afc661bdc14198d4b4e0cc70d389edfbfae0acee2570ac388"
+                  "test/win32/lib/TestDesktop.ps1":  "5c48faf652457d4e3d05dab2793f3540f90afbf42826d88edd38f4343a1a7a0f"
               }
 }

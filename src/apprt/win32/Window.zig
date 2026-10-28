@@ -1708,6 +1708,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     const open_dpi = creationDpi(app);
     var width: i32 = window_placement.scaleDim(window_placement.DEFAULT_DIP_W, window_placement.BASE_DPI, open_dpi);
     var height: i32 = window_placement.scaleDim(window_placement.DEFAULT_DIP_H, window_placement.BASE_DPI, open_dpi);
+    var remembered_maximized: ?bool = null;
     if (!options.is_quick_terminal) {
         const config_sized = app.config.@"window-width" > 0 and
             app.config.@"window-height" > 0;
@@ -1731,13 +1732,9 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
                 ) else remembered;
                 width = clamped.width;
                 height = clamped.height;
-                self.start_maximized = remembered.maximized;
+                remembered_maximized = remembered.maximized;
             }
         }
-        // `maximize` config: open maximized regardless of the memory
-        // (Mac/GTK honor it; the remembered/config size stays the restored
-        // size underneath).
-        if (app.config.maximize) self.start_maximized = true;
     }
     // An adopted popup asked for a specific PAGE size (T163), which outranks
     // everything above — including `maximize`, because a maximized sign-in
@@ -1754,8 +1751,15 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
             width = want.w;
             height = want.h;
         }
-        self.start_maximized = false;
     }
+    // `maximize` config (on by default since T2342) outranks the memory; the
+    // remembered/config size stays the restored size underneath.
+    self.start_maximized = window_placement.startMaximized(.{
+        .config_maximize = app.config.maximize,
+        .remembered_maximized = remembered_maximized,
+        .is_quick_terminal = options.is_quick_terminal,
+        .has_initial_size = options.initial_size != null,
+    });
     // Honor an explicit configured window position; it takes precedence over
     // the cascade below. Only when BOTH coordinates are set — passing
     // CW_USEDEFAULT for one axis is not a valid literal coordinate (Win32

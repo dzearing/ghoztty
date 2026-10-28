@@ -86,6 +86,28 @@ pub fn show(maximized: bool) Show {
     return if (maximized) .maximized else .show_noactivate;
 }
 
+/// What a brand-new window (no session manifest behind it) opens as (T2342).
+/// The `maximize` config wins over the placement memory - and defaults to true
+/// since main's a0aaed0f2, so a new window fills the screen as Mac's does -
+/// while the memory's size stays the restore-down size underneath. Two windows
+/// never maximize: the quick terminal, which has its own geometry, and an
+/// adopted popup that asked for a page size (T163), where a maximized sign-in
+/// popup is exactly the "looks broken" case the request exists to avoid. A
+/// restored window is not decided here: its manifest overrides this afterwards
+/// (`applyRestoreFrame`).
+pub const NewWindow = struct {
+    config_maximize: bool,
+    /// The placement memory's recorded state, null when nothing was loaded.
+    remembered_maximized: ?bool = null,
+    is_quick_terminal: bool = false,
+    has_initial_size: bool = false,
+};
+
+pub fn startMaximized(w: NewWindow) bool {
+    if (w.is_quick_terminal or w.has_initial_size) return false;
+    return w.config_maximize or (w.remembered_maximized orelse false);
+}
+
 /// The outer rect Windows gives a maximized window on a monitor whose work area
 /// is `work`: the sizing frame (`frame_x` / `frame_y`, per side) hangs off every
 /// edge, so the client edge - not the border - meets the work area.
@@ -233,6 +255,26 @@ test "show: the recorded state decides, and only maximizing costs activation" {
     // state being asked for either way.
     try testing.expectEqual(Show.maximized, show(true));
     try testing.expectEqual(Show.show_noactivate, show(false));
+}
+
+test "startMaximized: the default config opens a new window maximized (T2342)" {
+    const Config = @import("../../config/Config.zig");
+    const d: Config = .{};
+    try testing.expect(d.maximize);
+    try testing.expect(startMaximized(.{ .config_maximize = d.maximize }));
+    // The memory's restored size does not undo the config.
+    try testing.expect(startMaximized(.{ .config_maximize = true, .remembered_maximized = false }));
+}
+
+test "startMaximized: maximize = false falls back to the placement memory" {
+    try testing.expect(!startMaximized(.{ .config_maximize = false }));
+    try testing.expect(!startMaximized(.{ .config_maximize = false, .remembered_maximized = false }));
+    try testing.expect(startMaximized(.{ .config_maximize = false, .remembered_maximized = true }));
+}
+
+test "startMaximized: the quick terminal and a sized popup never maximize" {
+    try testing.expect(!startMaximized(.{ .config_maximize = true, .is_quick_terminal = true }));
+    try testing.expect(!startMaximized(.{ .config_maximize = true, .remembered_maximized = true, .has_initial_size = true }));
 }
 
 test "maximizedFrame: the frame hangs off every edge of the work area" {

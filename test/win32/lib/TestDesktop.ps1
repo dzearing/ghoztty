@@ -2774,6 +2774,16 @@ gate rides the launch rather than 80 copies of one line. -AllowReleaseBuild is
 the same explicit opt-in Reset-GhozttyTestState takes, for a script whose
 SUBJECT is a release build. It runs before the desktop is resolved so the
 refusal costs nothing and speaks first.
+
+A ghoztty.exe GUI launch is also pinned to `--maximize=false` (T2342). Main's
+a0aaed0f2 flipped the shared `maximize` default to true, so every window these
+scripts open would otherwise fill the work area - the same "setup is a function
+of something the script never chose" shape as T267, this time keyed on a
+product default instead of run order. The flag goes FIRST, so a script that
+passes its own `--maximize=...` still wins (the last value parsed is the one
+kept), and it is never added to a `+verb` CLI launch, whose verb must lead.
+-DefaultMaximize opts out, for the script whose SUBJECT is the default
+(new-window-maximized.ps1).
 #>
 function Start-OnTestDesktop {
     param(
@@ -2783,8 +2793,13 @@ function Start-OnTestDesktop {
         [string]$StdErr,
         [switch]$KeepWindowPlacement,
         [switch]$AllowReleaseBuild,
+        [switch]$DefaultMaximize,
         $Desktop
     )
+    if (-not $DefaultMaximize -and (Split-Path -Leaf $Exe) -ieq 'ghoztty.exe' -and
+        -not ($Arguments.Count -gt 0 -and "$($Arguments[0])".StartsWith('+'))) {
+        $Arguments = @('--maximize=false') + @($Arguments)
+    }
     if ((Split-Path -Leaf $Exe) -ieq 'ghoztty.exe') {
         Assert-GhozttyIsolatedBuild -Exe $Exe -Allow:$AllowReleaseBuild | Out-Null
     } elseif ((Split-Path -Leaf $Exe) -ieq 'ghoztty-agent.exe') {

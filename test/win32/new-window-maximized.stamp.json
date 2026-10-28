@@ -1,0 +1,14 @@
+{
+    "guard":  "new-window-maximized",
+    "script":  "test/win32/new-window-maximized.ps1",
+    "generated":  "2026-10-27T17:59:21-07:00",
+    "commit":  "aa6fbfdc0",
+    "uncommitted":  [
+                        "src/apprt/win32/window_placement.zig",
+                        "test/win32/new-window-maximized.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/window_placement.zig":  "bacb6516f8f2367c869bd63f85d2722fc0145907560f5dab4deac07554a2cb6e",
+                  "test/win32/new-window-maximized.ps1":  "659eb0fdfd571d6122bbfb8b4fcd8690e0b4a0752f7ffd8622e5ba3a8d38ea43"
+              }
+}
