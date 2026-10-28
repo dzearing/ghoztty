@@ -1,19 +1,17 @@
 {
     "guard":  "update-arm-failure",
     "script":  "test/win32/update-arm-failure.ps1",
-    "generated":  "2026-10-27T08:34:56-07:00",
-    "commit":  "da3798a68",
+    "generated":  "2026-10-28T06:07:50-07:00",
+    "commit":  "4488917fa",
     "uncommitted":  [
                         "src/apprt/win32/update_apply.zig",
-                        "src/apprt/win32/update_badge.zig",
-                        "src/apprt/win32/update_install.zig",
-                        "test/win32/update-arm-failure.ps1"
+                        "src/apprt/win32/update_install.zig"
                     ],
     "files":  {
                   "src/apprt/win32/ConfirmDialog.zig":  "95510760083ebc76bae01822600f55b72819aedf6afe389adae090dc343fbbf8",
-                  "src/apprt/win32/update_apply.zig":  "26df5e43e7a71cd96bec9b3d1e244b9764720f3c0f7f7e3f2af0dc063e65a2cb",
+                  "src/apprt/win32/update_apply.zig":  "a06d6d0ee7cef3d85e6ba00c4a96c6614ed52a095ecf303946dc27f017f56d92",
                   "src/apprt/win32/update_badge.zig":  "ae2e792492c96ae7b19ac3e7a08fa87e1f34d56e5a47c0ed1469fd54a859a546",
-                  "src/apprt/win32/update_install.zig":  "3a61c05d4b5b810963fc16ea75213620a0fdcb323e8c5a85dc98e24d29d7fcef",
+                  "src/apprt/win32/update_install.zig":  "2b061c42813b0d7e497db8232862a26989395b42afbb922db10731f2a971173a",
                   "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
                   "test/win32/update-arm-failure.ps1":  "8515f763fee00ff1075617caadfb9f44e5cb8ec211e9d351ad23bbaa2c68d123"
               }

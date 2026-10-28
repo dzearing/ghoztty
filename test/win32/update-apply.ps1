@@ -80,10 +80,10 @@ function Kill-RepoInstances {
 # does not - the repo build is put back on the way out.
 trap { Restore-RepoBuild -ExePath $exe; break }
 
-# T1206: a non-zero msiexec now raises Ghoztty's own modal and HOLDS it until it
-# is read, so the applier no longer exits on its own after a rejection. That
-# message is `update-failure-visible.ps1`'s subject; here it is just something
-# to dismiss so the choreography this script tests can finish.
+# T1206: a non-zero msiexec raises Ghoztty's own modal, and since T2344 it is the
+# reopened terminal's, not the applier's. That message is
+# `update-failure-visible.ps1`'s subject; here it is just something to dismiss
+# so the choreography this script tests can finish.
 
 # T1241: the dialog is on the TEST desktop now, where the private EnumWindows
 # P/Invoke this used to call cannot see it - enumeration is per-desktop and runs
@@ -318,16 +318,17 @@ $env:GHOZTTY_UPDATE_APPLY = "$deadPid|$applyMsi|$installExe"
 try {
     $pa = Start-OnTestDesktop -Exe $applier -StdErr $errFile
     $p = $pa.Process
-    # The rejection raises the T1206 dialog and the applier waits on it; dismiss
-    # it, then let the process finish the way it does once a user has read the
-    # message.
-    $dismissed = Close-ApplierDialog $pa.Pid
+    # T2344: the applier hands the failure to the terminal it relaunched and
+    # exits; the T1206 dialog is the REOPENED app's. Let the applier finish,
+    # then find and dismiss the dialog on the pid it relaunched.
     $exited = $p.WaitForExit(120000)
 } finally {
     Remove-Item Env:GHOZTTY_UPDATE_APPLY -ErrorAction SilentlyContinue
 }
 if (-not $exited) { try { $p.Kill() } catch {} }
 $log8 = if (Test-Path $errFile) { [IO.File]::ReadAllText($errFile) } else { '' }
+$reopened8 = if ($log8 -match 'relaunched .*ghoztty\.exe as pid (\d+)') { [int]$Matches[1] } else { 0 }
+$dismissed = ($reopened8 -gt 0) -and (Close-ApplierDialog $reopened8)
 Assert $dismissed 'applier(run): said the install failed instead of vanishing (T1206)'
 Assert $exited 'applier(run): finished instead of hanging'
 Assert ($log8 -match 'waiting for app pid') 'applier(run): waited for the app to exit'

@@ -459,6 +459,12 @@
             "unset": "shipped-elsewhere",
             "note": "unset = msiexec's real exit code."
         },
+        "GHOZTTY_UPDATE_REPORT": {
+            "class": "non-default",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\update-failure-visible.ps1::B6 with no report spec the applier still handed over a click's dialog",
+            "note": "T2344: arm sets it to say who asked for the install (manual/auto); unset = an applier driven by hand, which reports as a click. Arm B runs without it; A (manual) and G (auto) are its controls."
+        },
         "GHOZTTY_UPDATE_REPORT_TIMEOUT_MS": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

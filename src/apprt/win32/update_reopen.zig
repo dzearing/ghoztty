@@ -137,9 +137,9 @@ pub const title_restarted = "Ghoztty Restarted";
 /// - The version moved: the update landed. Say it closed and reopened, name
 ///   both versions, and offer What's New.
 /// - The in-app updater's marker and NO version change: the install failed
-///   and relaunched the old build. The applier already says that in a modal
-///   with the cause and the log (T1206), so a second, cheerier message here
-///   would contradict it: nothing.
+///   and relaunched the old build. The failure marker says that, with the
+///   cause and the log (T1206; told by this app since T2344), so a second,
+///   cheerier message here would contradict it: nothing.
 /// - An installer closed us and the version did not move (a repair, a
 ///   reinstall of the same build): still true that the terminal was closed and
 ///   reopened, which is the part the user saw, so say that.
@@ -258,7 +258,7 @@ test "decide: an update that landed names both versions and offers What's New" {
     }
 }
 
-test "decide: a failed in-app update stays quiet (the applier's modal owns that)" {
+test "decide: a failed in-app update stays quiet (the failure notice owns that)" {
     var buf: [256]u8 = undefined;
     try testing.expect(decide(&buf, .{ .reason = .updater, .at_ms = 1000, .from_version = "1.37.2" }, "1.37.2", 2000) == null);
 }
