@@ -166,11 +166,16 @@ try {
     $c3 = @(Get-VisiblePanes $top)
     Say ("      dpi {0}; columns: {1}" -f $dpi, (Format-Cols $c3))
     $s2 = $c3[2]
-    $gridLeft = $c3[0].Left
-    $gridW = $c3[2].Right - $c3[0].Left
     $x0 = [int](($c3[0].Right + $c3[1].Left) / 2)
     $y = [int](($c3[0].Top + $c3[0].Bottom) / 2)
-    $xFold = [int]($gridLeft + $gridW * 1000 / 1500)
+    # T2295: the fold point is where s1 and s2 stop fitting at their minimums
+    # (225 DIP since T2284) - the row less two minimums and a gutter. The old
+    # 1000/1500 of the row left both above 225 DIP, so nothing folded. Derived
+    # from the minimum, as stack-fold-slide.ps1 does, not as a row fraction.
+    $minDip = 225
+    $gutter = $c3[1].Left - $c3[0].Right
+    $foldAt = $c3[2].Right - 2 * (Get-TestChromeDip -Dip $minDip -Scale $scale) - $gutter
+    $xFold = [int]($foldAt + (Get-TestChromeDip -Dip 100 -Scale $scale))
 
     Say '== fold s2: drag the root divider past the fold point and release'
     [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action down -HoldMs 0)

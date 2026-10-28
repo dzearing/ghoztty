@@ -10,7 +10,7 @@
 # never resized, and a card whose size changes holds its old size until the
 # slide ends and then resizes once.
 #
-# Layout: P | (s1 | (s2 | s3)) at 900 DIP, the T2108 shape: two on show, two
+# Layout: P | (s1 | (s2 | s3)) at 760 DIP, the T2108 shape: two on show, two
 # tucked. The slide is stretched to 2 s (`GHOZTTY_STACK_SLIDE_MS`) so the
 # sampler sees it in motion.
 #
@@ -161,8 +161,12 @@ try {
         Say 'NEGATIVE CONTROL: the slide is 0 ms (an instant re-layout) - S1 MUST fail'
     }
 
-    # ---- setup: P | (s1 | (s2 | s3)) at 900 DIP -------------------------------
-    Say "== setup: P | (s1 | (s2 | s3)), 900 DIP wide, slide $slideMs ms"
+    # ---- setup: P | (s1 | (s2 | s3)) at $rowDip DIP ---------------------------
+    # T2295: re-derived from the 225 DIP pane minimum (T2284, Mac afc64dc53) -
+    # two cards and two strips fit, three cards (675 DIP) do not. At the old
+    # 900 three fit and nothing tucked (pane-stack-strip.ps1 made the same move).
+    $rowDip = 760
+    Say "== setup: P | (s1 | (s2 | s3)), $rowDip DIP wide, slide $slideMs ms"
     $app = Start-App
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     # Two DPI readings in a row must agree (pane-stack-grid.ps1's reason).
@@ -202,14 +206,14 @@ try {
     Start-Sleep -Milliseconds 600
     $fourUp = @{}
     foreach ($q in @(Get-Panes $top)) { $fourUp[[string]$q.Hwnd] = "$($q.Right - $q.Left)x$($q.Bottom - $q.Top)" }
-    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 900 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
+    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip $rowDip -Scale $script:scale) -Height (Get-TestChromeDip -Dip 700 -Scale $script:scale))
     Start-Sleep -Milliseconds 800
     # The window resize itself must not slide; let anything it started end.
     $shown = @(Wait-Shown $top 2)
     Start-Sleep -Milliseconds ([math]::Max(600, $slideMs + 300))
     $all = @(Get-Panes $top)
     Say ("      dpi {0}; panes: {1}" -f $dpi, (Format-Cols $all))
-    if ($shown.Count -ne 2 -or $all.Count -ne 4) { Write-TestAssertedNothing -Reason "the 900 DIP row never settled on two on show of four (got $($shown.Count) of $($all.Count))" }
+    if ($shown.Count -ne 2 -or $all.Count -ne 4) { Write-TestAssertedNothing -Reason "the $rowDip DIP row never settled on two on show of four (got $($shown.Count) of $($all.Count))" }
     $tucked = @()
     for ($i = 0; $i -lt $all.Count; $i++) {
         if (-not $all[$i].Visible -and $names[$i]) { $tucked += [pscustomobject]@{ Pane = $all[$i]; Name = $names[$i] } }
@@ -297,10 +301,10 @@ try {
     Assert ($focused -eq $t.Name) "S3: the clicked pane has focus (+list says '$focused')"
 
     # ---- S5: a window resize never resizes a tucked pane (T2105) ------------
-    Say '== resize the window to 820 DIP with two tucked'
+    Say '== resize the window to 700 DIP with two tucked'
     $pre = @{}
     foreach ($q in $after) { $pre[[string]$q.Hwnd] = "$($q.Right - $q.Left)x$($q.Bottom - $q.Top)" }
-    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 820 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 640 -Scale $script:scale))
+    [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (Get-TestChromeDip -Dip 700 -Scale $script:scale) -Height (Get-TestChromeDip -Dip 640 -Scale $script:scale))
     Start-Sleep -Milliseconds ([math]::Max(800, $slideMs + 300))
     $resized = @(Get-Panes $top)
     $tuckedNow = @($resized | Where-Object { -not $_.Visible })
