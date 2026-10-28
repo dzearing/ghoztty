@@ -14,10 +14,11 @@
 #   pointer  a gesture: Get-FrameLabGesture builds its GliSample path from the
 #            scene's geometry (physical pixels), names the edge whose motion is
 #            measured and the window of the path in which motion is due
-#   trigger  driven by IPC or a key, not the pointer (blade glide, banner, hero,
-#            tab switch, split/close, the maximize button). Listed with the task
-#            that builds its driver, so a matrix that cannot run it SAYS so
-#            instead of shrinking quietly
+#   trigger  fired by a click, a key chord or an IPC verb, not a pointer path
+#            (blade glide, banner, hero, tab switch, split/close, the maximize
+#            button). Get-FrameLabTrigger (lib\FrameLabTrigger.ps1, T2391)
+#            builds its plan from the scene's geometry, and every fire is
+#            stamped on the capture's QPC clock
 #
 # Every pointer gesture that moves an edge is a SHUTTLE with an even number of
 # legs: out and back, the user's "janks back and forth", which is also what the
@@ -45,6 +46,9 @@
 #      quietly smaller pass
 #   5. SlotGaps (refreshes nobody got a frame on) reported beside AdvanceRate
 #
+# A trigger cell runs the same protocol with Fire in place of Play: the plan
+# is fired once for the measurement and once more for the accounting.
+#
 # The live pieces (launching the scene, the C# scorer bridge, SendInput) come
 # in through -Driver, so the whole protocol is proved here with fakes and the
 # live driver is the input-desktop exception's business (T2392).
@@ -56,6 +60,9 @@ Set-StrictMode -Off
 
 if (-not (Get-Command New-FrameLabPath -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'FrameLabInput.ps1')
+}
+if (-not (Get-Command Get-FrameLabTrigger -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'FrameLabTrigger.ps1')
 }
 
 $script:FrameLabMatrixAxes = [ordered]@{
@@ -73,7 +80,7 @@ $script:FrameLabStallKnob = $null
 <#
 The catalogue. Name, Kind (pointer|trigger), Track (the edge measured: an axis
 plus what it is), Needs (layout conditions) and, for a trigger, Driver - the
-task that builds the thing that drives it.
+task that built the thing that fires it (lib\FrameLabTrigger.ps1).
 #>
 function Get-FrameLabInteractions {
     @(
@@ -129,7 +136,6 @@ function Get-FrameLabMatrix {
                     foreach ($d in $Dpi) {
                         foreach ($s in $StallMs) {
                             $blocked = @()
-                            if ($i.Kind -eq 'trigger') { $blocked += "no driver yet ($($i.Driver))" }
                             if ($s -gt 0 -and -not $script:FrameLabStallKnob) { $blocked += 'UI-stall knob not built (T2360)' }
                             [pscustomobject]@{
                                 Id          = '{0}/p{1}/{2}/dpi{3}/sb-{4}/stall{5}' -f $i.Name, $p, $t, $d, $sb, $s
@@ -251,7 +257,7 @@ function Get-FrameLabGesture {
         }
         default {
             $known = Get-FrameLabInteractions | Where-Object { $_.Name -eq $Name }
-            if ($known -and $known.Kind -eq 'trigger') { throw "Get-FrameLabGesture: $Name is a trigger, not a pointer gesture (driver: $($known.Driver))" }
+            if ($known -and $known.Kind -eq 'trigger') { throw "Get-FrameLabGesture: $Name is a trigger, not a pointer gesture (Get-FrameLabTrigger plans it; driver: $($known.Driver))" }
             throw "Get-FrameLabGesture: unknown interaction '$Name'"
         }
     }
@@ -332,7 +338,8 @@ hashtable of scriptblocks - the live pieces:
   Launch        { param($Cell) }      -> @{ Geometry; Close = { } }
   StartCapture  { param($Rect, [bool]$Duplication) } -> a session
   StopCapture   { param($Session) }   -> @{ Stats; Account; Timeline }
-  Play          { param($Path) }      -> a GliResult (Skipped/Aborted)
+  Play          { param($Path) }      -> a GliResult (Skipped/Aborted)   pointer cells
+  Fire          { param($Plan) }      -> an Invoke-FrameLabTrigger result trigger cells
   Score         { param($Capture, $Frames, $Gesture, $Played) }
                 -> @{ BleedFrames; Motion; MotionMisses }
 
@@ -344,7 +351,9 @@ function Invoke-FrameLabCell {
         [Parameter(Mandatory = $true)][hashtable]$Driver,
         [hashtable]$GestureArgs = @{}
     )
-    foreach ($k in 'Presence', 'Launch', 'StartCapture', 'StopCapture', 'Play', 'Score') {
+    $trigger = $Cell.Kind -eq 'trigger'
+    $act = $(if ($trigger) { 'Fire' } else { 'Play' })
+    foreach ($k in 'Presence', 'Launch', 'StartCapture', 'StopCapture', $act, 'Score') {
         if (-not $Driver.ContainsKey($k)) { throw "Invoke-FrameLabCell: driver has no $k" }
     }
     $out = [ordered]@{ Id = $Cell.Id; Cell = $Cell; Gesture = $null; Measure = $null; Accounting = $null; Score = $null; Verdict = $null }
@@ -360,12 +369,19 @@ function Invoke-FrameLabCell {
     }
     $scene = & $Driver.Launch $Cell
     try {
-        $g = Get-FrameLabGesture -Name $Cell.Interaction -Geometry $scene.Geometry @GestureArgs
-        $out.Gesture = [pscustomobject]@{ Points = $g.Path.Length; Axis = $g.Axis; Track = $g.Track; CaptureRect = $g.CaptureRect }
+        if ($trigger) {
+            $g = Get-FrameLabTrigger -Name $Cell.Interaction -Geometry $scene.Geometry @GestureArgs
+            $out.Gesture = [pscustomobject]@{ Steps = @($g.Steps).Count; Axis = $g.Axis; Track = $g.Track; CaptureRect = $g.CaptureRect }
+            $run = { & $Driver.Fire $g }
+        } else {
+            $g = Get-FrameLabGesture -Name $Cell.Interaction -Geometry $scene.Geometry @GestureArgs
+            $out.Gesture = [pscustomobject]@{ Points = $g.Path.Length; Axis = $g.Axis; Track = $g.Track; CaptureRect = $g.CaptureRect }
+            $run = { & $Driver.Play $g.Path }
+        }
 
         # Measurement: capture only.
         $s = & $Driver.StartCapture $g.CaptureRect $false
-        $in1 = & $Driver.Play $g.Path
+        $in1 = & $run
         $m = & $Driver.StopCapture $s
         $frames = Select-FrameLabScoredFrames $m.Timeline
         $out.Measure = [pscustomobject]@{
@@ -382,7 +398,7 @@ function Invoke-FrameLabCell {
 
         # Accounting: the same path again, with Desktop Duplication counting.
         $s2 = & $Driver.StartCapture $g.CaptureRect $true
-        $in2 = & $Driver.Play $g.Path
+        $in2 = & $run
         $a = & $Driver.StopCapture $s2
         $acct = $(if ($in2.Skipped -or $in2.Aborted) { $null } else { $a.Account })
         $out.Accounting = [pscustomobject]@{ Input = $in2; Account = $acct }

@@ -4223,7 +4223,9 @@ $GuardTable = @(
     },
     # The T2373 lab's catalogue, matrix and per-cell protocol (T2389): which
     # gestures, over which layouts, capture-only then accounting, superseded
-    # frames dropped. Fakes only, so it runs anywhere.
+    # frames dropped. Fakes only, so it runs anywhere. Since T2391 it also
+    # proves the trigger plans and player, and reads the sidebar glide's curve
+    # back from the zig source - so a change to that curve re-runs it.
     [pscustomobject]@{
         Name   = 'frame-lab-catalogue'
         Script = 'test\win32\frame-lab-catalogue.ps1'
@@ -4231,6 +4233,9 @@ $GuardTable = @(
         Covers = @(
             'test\win32\lib\FrameLabCatalogue.ps1',
             'test\win32\lib\FrameLabInput.ps1',
+            'test\win32\lib\FrameLabTrigger.ps1',
+            'test\win32\lib\FrameScore.ps1',
+            'src\apprt\win32\pane_sidebar_transition.zig',
             'test\win32\frame-lab-catalogue.ps1'
         )
     },
