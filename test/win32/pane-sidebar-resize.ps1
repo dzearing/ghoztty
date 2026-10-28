@@ -31,6 +31,10 @@
 #   2b. T2265 (Mac a81db68f9 + 5e4f30144): the flat grip shows the split
 #      dividers' accent gutter bar - hovered, then at full strength while
 #      dragged - and letting go leaves none lit.
+#   2c. T2359: every tick of the edge drag relays the grid out on the live
+#      path - each resized pane waits for a frame at its new size, as a
+#      divider drag's do (`window resize cause=sidebar ... sync=`) - and the
+#      drag reports its cost (`sidebar drag ticks=`) when it lets go.
 #   7. T2265, elevated: the expanded panel resizes from the GUTTER beside it
 #      (the grid's margin, the window's own pixels), not from a band inside
 #      the panel; the gutter lights its bar on hover and while dragged, and
@@ -60,6 +64,9 @@ function Assert($name, $cond) {
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't1846')
+# Section 2c reads the drag's cost line, which the app prints only under this.
+# It adds timers, not behavior.
+$env:GHOZTTY_PERF = '1'
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
 $Cli = [System.IO.Path]::ChangeExtension($Exe, '.com')
@@ -211,6 +218,27 @@ try {
     Assert "letting go leaves no bar lit (last painted: $(if ($bars.Count) { $bars[-1] }))" ($bars.Count -gt 0 -and $bars[-1] -eq 'none')
     $sb = Get-Sidebar $top
     Assert "a there-and-back drag kept the width ($($sb.Width) vs $(Px 280))" (Near $sb.Width (FlatColumn 280))
+
+    "== 2c: each tick of the drag relays the grid out on the live path (T2359)"
+    $steps = if ($NegativeControl) { @(0, 0, 0) } else { @(-20, -40, -60, -40, -20, 0) }
+    $from = Get-LogCount
+    [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey $steps)
+    $lines = Get-LogSince $from
+    $passes = @($lines | ForEach-Object {
+        if ($_ -match 'window resize cause=sidebar panes=(\d+) sync=(\d+) fresh=(\d+)') {
+            [pscustomobject]@{ Panes = [int]$Matches[1]; Sync = [int]$Matches[2]; Fresh = [int]$Matches[3] }
+        } })
+    $resized = @($passes | Where-Object { $_.Panes -gt 0 })
+    $unguarded = @($resized | Where-Object { $_.Sync + $_.Fresh -lt $_.Panes })
+    Assert "the drag ran a layout pass per width change ($($passes.Count) passes)" ($passes.Count -ge 4)
+    Assert "and they resized panes ($($resized.Count) of $($passes.Count))" ($resized.Count -ge 4)
+    Assert "every resized pane waited for its frame (unguarded: $(($unguarded | ForEach-Object { "panes=$($_.Panes) sync=$($_.Sync)" }) -join '; '))" ($resized.Count -gt 0 -and $unguarded.Count -eq 0)
+    $cost = @($lines | Where-Object { $_ -match 'sidebar drag ticks=(\d+) mean_us=(\d+) max_us=(\d+)' } | Select-Object -Last 1)
+    $ticks = if ($cost.Count -eq 1 -and $cost[0] -match 'sidebar drag ticks=(\d+) mean_us=(\d+) max_us=(\d+)') { [int]$Matches[1] } else { 0 }
+    if ($cost.Count -eq 1) { "  (cost: $(($cost[0] -replace '^.*(sidebar drag ticks=\S+ mean_us=\S+ max_us=\S+ mean_wait_us=\S+).*$', '$1')))" }
+    Assert "the drag reported its cost on release ($ticks ticks)" ($ticks -ge 4)
+    $sb = Get-Sidebar $top
+    Assert "and came back to 280 ($($sb.Width) vs $(Px 280))" (Near $sb.Width (FlatColumn 280))
 
     "== 3: it stops at 380 and at 180, and tucks into the rail well under that (T2299)"
     [void](Invoke-EdgeDrag $top $sb.Hwnd (Get-PanelEdgeX $sb) $ey @(200, 500))

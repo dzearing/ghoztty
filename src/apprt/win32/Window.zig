@@ -2784,9 +2784,23 @@ pub fn setPaneSidebarWidth(self: *Window, dip: f32) void {
     if (self.closing or self.pane_sidebar_width_dip == w) return;
     self.pane_sidebar_width_dip = w;
     if (self.paneSidebarMode() == .expanded) {
-        self.layoutSplits();
+        // T2359: every call is a tick of a drag the user is watching, so each
+        // pane waits for a frame at its new size the way a divider drag's do
+        // (T1031/T1393). The plain pass resized every terminal and walked
+        // away, and the grid read as lagging behind the pointer and snapping.
+        var timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+        self.layoutSplitsLive();
+        if (timer) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
+        self.reportResizePass("sidebar");
         self.syncPaneSidebar();
+        if (timer) |*t| self.recordDragTick(t.read() / std.time.ns_per_us);
     }
+}
+
+/// The panel's edge drag let go (T2359): what it cost, in the same line a
+/// divider drag reports.
+pub fn paneSidebarDragEnded(self: *Window) void {
+    self.reportDragCost("sidebar");
 }
 
 /// This window was just activated (T2336, Mac `PaneSidebarState.catchUp`
@@ -2866,7 +2880,9 @@ fn paneSidebarLayoutChanged(self: *Window) void {
     PaneSidebar.remembered.expanded = self.pane_sidebar_expanded;
     PaneSidebar.remembered.hidden = self.pane_sidebar_hidden;
     PaneSidebar.saveRemembered(self.app.core_app.alloc);
-    self.layoutSplits();
+    // Watched: a toggle, a hide or show, or an edge drag crossing the rail's
+    // threshold (T2359).
+    self.layoutSplitsLive();
     self.syncPaneSidebar();
     self.app.markLayoutDirty();
 }
@@ -7077,11 +7093,11 @@ pub fn layoutSplitsLive(self: *Window) void {
 /// What the drag that just ended cost, in one line a harness can parse and a
 /// human can read (T1343). Emitted at `info` when the average tick missed the
 /// frame budget, because that is the state the user called "janky".
-fn reportDragCost(self: *Window) void {
+fn reportDragCost(self: *Window, comptime what: []const u8) void {
     const st = self.drag_stats;
     defer self.drag_stats.reset();
     if (!self.drag_perf_on or st.ticks == 0) return;
-    const fmt = "divider drag ticks={d} mean_us={d} max_us={d} mean_wait_us={d} " ++
+    const fmt = what ++ " drag ticks={d} mean_us={d} max_us={d} mean_wait_us={d} " ++
         "fps={d} panes={d} resizes_max={d} waits_max={d} waits_total={d} timeouts={d} " ++
         "stale={d} woken={d} " ++
         "mean_layout_us={d} mean_place_us={d} mean_paint_us={d} " ++
@@ -8563,7 +8579,11 @@ fn stackSlideTick(self: *Window) void {
     if (s.step(dt)) {
         if (self.stackGesturing()) self.restStackSlide() else self.endStackSlide();
     }
-    self.layoutSplits();
+    // Watched (T2359): the tick that lands a sidebar glide resizes each card
+    // to its slot, and a glide under a drag resizes on every tick - each pane
+    // waits for its frame at the new size. A tick that only moves cards
+    // resizes nothing and waits for nothing.
+    self.layoutSplitsLive();
 }
 
 /// Size every STASHED pane to the slot the full layout would give it, and
@@ -10368,38 +10388,42 @@ fn dragSnapshotMatches(self: *Window) bool {
     };
 }
 
+/// One tick of a drag the user is watching (T1343; the sidebar edge's too
+/// since T2359), costed from the layout pass it just ran.
+fn recordDragTick(self: *Window, tick_us: u64) void {
+    const panes = if (self.tab_count == 0) 0 else self.leafCount(self.active_tab);
+    self.drag_stats.record(.{
+        .tick_us = tick_us,
+        .wait_us = self.frame_wait_last_us,
+        .panes = panes,
+        .waits = self.frame_wait_count,
+        .timeouts = self.frame_wait_timeouts,
+        .woken = self.frame_wait_woken,
+        .stale = self.frame_wait_stale,
+        .resizes = self.frame_wait_resizes,
+        .overlay_us = self.frame_overlay_us,
+        .resize_us = self.frame_resize_us,
+        .layout_us = self.frame_layout_us,
+        .place_us = self.frame_place_us,
+        .paint_us = self.frame_paint_us,
+        .cards_us = self.frame_cards_us,
+        .chrome_moves = chrome_fanout.state.counts.moves,
+        .chrome_sb_moves = chrome_fanout.state.counts.moveCount(.scrollbar),
+        .chrome_dim_moves = chrome_fanout.state.counts.moveCount(.dim),
+        .chrome_blits = chrome_fanout.state.counts.blits,
+        .chrome_heals = chrome_fanout.state.counts.heals,
+        .chrome_skipped = chrome_fanout.state.counts.blits_skipped +|
+            chrome_fanout.state.counts.heals_skipped,
+        .chrome_move_us = chrome_fanout.state.counts.move_ns / std.time.ns_per_us,
+    });
+}
+
 fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     if (!self.dragging_split) return;
     // T1343: this whole call is one frame of the drag the user is watching,
     // so time it end to end rather than timing the parts we suspect.
     var timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
-    defer if (timer) |*t| {
-        const panes = if (self.tab_count == 0) 0 else self.leafCount(self.active_tab);
-        self.drag_stats.record(.{
-            .tick_us = t.read() / std.time.ns_per_us,
-            .wait_us = self.frame_wait_last_us,
-            .panes = panes,
-            .waits = self.frame_wait_count,
-            .timeouts = self.frame_wait_timeouts,
-            .woken = self.frame_wait_woken,
-            .stale = self.frame_wait_stale,
-            .resizes = self.frame_wait_resizes,
-            .overlay_us = self.frame_overlay_us,
-            .resize_us = self.frame_resize_us,
-            .layout_us = self.frame_layout_us,
-            .place_us = self.frame_place_us,
-            .paint_us = self.frame_paint_us,
-            .cards_us = self.frame_cards_us,
-            .chrome_moves = chrome_fanout.state.counts.moves,
-            .chrome_sb_moves = chrome_fanout.state.counts.moveCount(.scrollbar),
-            .chrome_dim_moves = chrome_fanout.state.counts.moveCount(.dim),
-            .chrome_blits = chrome_fanout.state.counts.blits,
-            .chrome_heals = chrome_fanout.state.counts.heals,
-            .chrome_skipped = chrome_fanout.state.counts.blits_skipped +|
-                chrome_fanout.state.counts.heals_skipped,
-            .chrome_move_us = chrome_fanout.state.counts.move_ns / std.time.ns_per_us,
-        });
-    };
+    defer if (timer) |*t| self.recordDragTick(t.read() / std.time.ns_per_us);
     const rect = self.drag_start_rect;
     const handle = self.drag_split_handle;
 
@@ -10476,7 +10500,7 @@ fn endDividerDrag(self: *Window) void {
     self.drag_node_len = 0;
     self.endRowDrag();
     self.stackDragEnded();
-    self.reportDragCost();
+    self.reportDragCost("divider");
     _ = w32.ReleaseCapture();
     // Re-derive hover from where the pointer actually ended up: the ratio is
     // clamped to [0.1, 0.9], so a drag pushed to the limit leaves the band

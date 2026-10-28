@@ -4278,6 +4278,7 @@ fn edgeEnd(self: *PaneSidebar) void {
     // when it settles (T1847).
     saveRemembered(self.window.app.core_app.alloc);
     log.info("pane sidebar edge drag end expanded={} width={d:.0}", .{ self.window.pane_sidebar_expanded, self.window.pane_sidebar_width_dip });
+    self.window.paneSidebarDragEnded();
 }
 
 /// Ask again whether the pointer is on the edge, from where it is. No
