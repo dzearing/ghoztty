@@ -37583,3 +37583,10 @@ moved to T1814.
   - New unit test for `cutNeedsRedraw`. Floor lanes lib/none/win32/agent PASS. pane-stack-slide, stack-collapse-drag and stack-collapse-carry ALL PASS.
   - Due sweep (44): 37 pass. The reds are guards acked to open tasks: overlay-zorder T2300, arp-version T2362, frame-clock T2370, pane-stack-strip T2334, viewer-narrow-pane T2380, hook-json T2318. Harness floor: its 3 stale-build rows were re-run green and stamped; asserted-nothing stays PENDING under T1568.
   - NOT RUN: any pixel capture of the glide (input desktop, user present). That is T2416.
+
+- 2026-10-28 14:40 (lane b): T2401 checkpoint 31d5d650a (task stays open; the T2406 port of Mac 7e2d0a9da is the rest of it). The sidebar's glide is now painted on every frame while its edge is being dragged.
+  - Cause, from the user's installed-build log: a live edge drag sends pointer moves so fast the message queue never empties, and Windows only repaints when it is empty. The glide ran but nobody drew it: every collapse ended with frames=0, and the expands painted 0-13 of ~29 frames.
+  - Fix: each column step paints synchronously (UpdateWindow, the chrome_reposition rule). The landing line now logs steps= beside frames=.
+  - pane-sidebar-glide.ps1 section 5 floods 500 Hz posted moves during an edge drag and requires every step to be painted. Pre-fix control red (0 of 3); fixed green (2/2, 230/230). Glide 38/38, resize 67/67, floor lanes PASS.
+  - The due sweep was re-run after the controller's frame-lab fix (88e29081e, no -Live): 51 green. The 6 reds each belong to an open task: T2300, T2334, T2380, T2362, T2318, T2370.
+  - Mid-turn the controller redirected T2401 to an exact port of 7e2d0a9da (T2406, now P0). That port is left for a fresh context.

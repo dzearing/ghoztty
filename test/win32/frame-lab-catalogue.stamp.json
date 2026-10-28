@@ -1,13 +1,13 @@
 {
     "guard":  "frame-lab-catalogue",
     "script":  "test/win32/frame-lab-catalogue.ps1",
-    "generated":  "2026-10-28T09:52:11-07:00",
-    "commit":  "6c522a9b6",
+    "generated":  "2026-10-28T14:40:45-07:00",
+    "commit":  "31d5d650a",
     "uncommitted":  [
-                        "src/apprt/win32/pane_sidebar_transition.zig"
+
                     ],
     "files":  {
-                  "src/apprt/win32/pane_sidebar_transition.zig":  "b88b073b9fce9022cb8fa95dc87ac1da5d88d368477c06eeee4f482dabf91b5b",
+                  "src/apprt/win32/pane_sidebar_transition.zig":  "88089abb03c2bdfb4b97d53784cdc216883af014151e94876151e7d8e53dfac5",
                   "test/win32/frame-lab-catalogue.ps1":  "d05be14346c2b972cb11adb4b0b4f41dbf72e3413a676699d0ef771fbd0edbb1",
                   "test/win32/lib/FrameLabCatalogue.ps1":  "0188e232aeb602ddbe39438246f8f58c35e477e472f87f151720d1c832decea2",
                   "test/win32/lib/FrameLabInput.ps1":  "c10386b0534bbf823329a2801b8f86c8a5b0ef66fae405aa69663b7e9c2ab0f4",
