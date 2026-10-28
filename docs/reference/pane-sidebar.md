@@ -72,11 +72,67 @@ shows the same view of it (see *Shared across windows*). Read before touching
   headers, the tray's well — are at least 4pt apart in both modes.
 - **No pin, no hover-open**: hovering the rail opens nothing, because the rail
   is where its tiles are dragged.
-- **Collapse/expand glides**: the grid's cards glide to their new places
-  (`PaneStackState.noteColumnShift` → `PaneStageView.apply` seeds the glide
-  from where they were on screen), each terminal held at its size and resized
-  once after the motion, while the sidebar's width animates on the same curve
-  and rail and panel crossfade (`PaneSidebarState.columnAnimation`).
+- **Collapse/expand glides — one motion**: the grid's cards glide to their
+  new places (`PaneStackState.noteColumnShift` → `PaneStageView.apply` seeds
+  the glide from where they were on screen), each terminal held at its size
+  and resized once after the motion. **The sidebar card follows the grid**
+  (`PaneSidebarCardGlide`): after every grid step (`PaneStageView.didStep`)
+  its edge goes where the grid's leading edge is drawn, less the gutter
+  (`PaneStageView.leadingLag`, on screen, the stage's own move still to come
+  counted in), so the gutter is the same at every frame and neither passes
+  under the other. Two easings side by side drifted a frame or two apart —
+  the card grew over the grid, or the grid slid under it. With no grid glide
+  to follow it eases alone on the grid's curve. The glide starts in the
+  controller's turn (`noteModeChange`), with the grid's.
+  - **The content crossfades at its own size**: mid-glide the panel (at its
+    width) and the rail (at its 52pt) are both drawn, left-aligned, cut by
+    the card as drawn, their opacities by how far the card is between the
+    two widths; at rest only the mode's (a SwiftUI opacity transition never
+    ran — the rail replaced the panel in one frame). Nothing in them re-lays
+    out to the card's width, so nothing wraps.
+  - **The drag's bar sits on the card's drawn edge**
+    (`PaneSidebarHostView.gripInWindow` via `SidePanelResizeHandle.gutterInWindow`),
+    re-placed on every glide step, and is never mapped through the grid's
+    glide (`GutterBar.followsStage` false): mapped, it was thrown into the
+    grid by however far the grid's first card still had to go; placed from
+    the grip's frame, which SwiftUI moves a pass later, it ran a step
+    behind.
+  - **The sidebar's host never resizes or moves** on a collapse or expand
+    (`PaneSidebarState.hostWidth`: the expanded panel's width in either
+    mode, see-through, clicks only on the card and grip). Sized to the mode,
+    SwiftUI animated its frame, origin and all, and the card, its contents
+    and the grip swung off to the left and back on a collapse
+    (`draggingThePanelIntoTheRail`).
+  - **The grid holds until it has moved**: its targets are already where
+    the shifted stage will be, so until the stage makes that move every card
+    holds where it is drawn (`Glide.awaitingMove`, at most `moveWait`);
+    stepping sooner eased cards toward a place a shift away, and a blade's
+    fixed edge pulled in and eased back. The stage hears its ancestors' moves
+    as they happen (their frame-change notifications), since its own origin
+    never changes.
+  - **The grid never steps toward a layout it has not been laid out at**:
+    SwiftUI hands the stage a new size (its cards' targets) before — at times
+    a pass before — it resizes and moves the stage to it. So a glide holds
+    every card where it is drawn until the stage's frame has that size
+    (`stepGlide`, `lastSize`), a glide that continues across a resize places
+    without easing (`startGlide(resized:)`), and with no glide the cards are
+    placed once the frame is set (`PaneStageView.layout`, `pending`). Any of
+    those missed, a blade on the right jittered or bounced by a step of the
+    sidebar's edge drag (`theSidebarsEdgeDraggedByTheMouse`: far-right cards
+    held still dragged in and out, and by the button).
+  - **Every card tweens rect to rect**, strips too: across the stack a strip
+    eases with the glide (it took its new width in the first frame, then only
+    slid).
+  - **The stage holds its cards on screen when it moves**: the grid's move
+    for the sidebar need not land in the pass that starts the glide, so the
+    glide is seeded by how far the stage has really moved, and a move while
+    it glides shifts the cards back by as much (`PaneStageView.placedOrigin`)
+    — once, every card was drawn a column-shift left for a frame.
+  - Tests: `theSidebarsEdgeDraggedByTheMouse` (the gesture as mouse events,
+    in and out: card edge, grid and bar sampled every 8ms — gutter held, bar
+    in it; frames `/tmp/pane-stack-snapshots/mouse-*.png`),
+    `expandingTheSidebarGlidesEveryCardRectToRect`, `draggingThePanelIntoTheRail`,
+    `draggingTheRailOutCaptures`.
 - **The edge grip is the gutter beside the sidebar in both modes**
   (`PaneSidebarState.edgeGrip`: the grid's margin, elevated; the rail card's
   own margin, flat) — never over the rail's tiles. Expanded, it is ALL of the
@@ -129,10 +185,13 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - **A window always holds its panes**: this window's list starts with its
   header — the window's name (no "This Window" tag, which only all windows
   needs), its fold chevron, and on hover + and × — with its panes indented
-  under it, as in all windows. In the rail the header is its + alone, in a
+  under it, as in all windows. In the rail the header is a + alone, in a
   slot exactly the header's height (`PaneSidebarRailAddSlot`,
   `PaneSidebarWindowHeader.height`), so collapsing or expanding still moves
-  no icon.
+  no icon. That + is the panel header's — a **new window** — not the window
+  row's: it is the topmost + in the rail, where the panel's new-window + is
+  when expanded, and clicking it added a pane to this window instead
+  (`theRailsPlusOpensAWindow`). A pane is Cmd-D away.
 - Rows: grid panes (focused one selected), then — **right after the last of
   them**, under a divider, in the same scrolling list — the **tray** of
   stashed panes. An empty tray is still a visible target: a faint dashed well
@@ -215,14 +274,15 @@ shows the same view of it (see *Shared across windows*). Read before touching
 ## All windows
 
 - Header toggle (off by default) groups every window's panes. Its caption
-  counts the windows. Every window is **folded** except the one the list was
-  turned on from (search unfolds all; `PaneSidebarState.isWindowFolded`). The
+  counts the windows. Every window starts **folded**, the one the list was
+  turned on from included — one row per window, the overview the scope is for
+  (search unfolds all; `PaneSidebarState.isWindowFolded`). The
   folds are absolute (`PaneSidebarSharedState.unfoldedWindows`, by
   `windowID`), so every window's list folds alike; turning the list off
   forgets them and the search.
 - Windows are in **the list's own order** — by name (Finder order; stable as
-  focus moves) until a window or group is dragged (*Reordering windows and
-  groups* below) — and a
+  focus moves) until a window or group is dragged or renamed (*Reordering
+  windows and groups* below) — and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
   **32pt**
   **sticky** project header (a clear 6pt gap above and below its band —
@@ -242,6 +302,13 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - A **search field**: whitespace-separated terms, all of which must appear in a
   pane's window title, title, banner, or directory/location
   (`PaneSidebarFilter`); Return goes to the first hit, Escape clears.
+  **It takes the caret only when clicked**: it is out of the key-view loop
+  (`PaneSidebarSearchField.ClickToFocusField`, `canBecomeKeyView` false).
+  Otherwise a window ordered in while the shared scope is all windows (Cmd-N,
+  the + buttons, a restore) had AppKit hand it the caret as the window's first
+  key view (`-[NSWindow _selectFirstKeyView]`), and `windowDidBecomeKey`,
+  which focuses the terminal only when the window itself is first responder,
+  left it there (`aNewWindowDoesNotPutTheCaretInTheSearch`).
 - Switching scopes slides the lists past each other (this window on the left,
   all windows on the right).
 - Hovering a **window** row or a **project** header puts + and × where its
@@ -307,13 +374,31 @@ shows the same view of it (see *Shared across windows*). Read before touching
   got it here, keys went to the search field). Return or clicking away
   keeps it, Escape cancels, an unchanged name pins nothing; the item's drag
   source steps aside while it edits (`PaneSidebarRename`).
+  - **A rename never moves anything.** Committing one writes the list as it
+    is shown into the shared order (`PaneSidebarWindowGrouping.renaming`,
+    over `pinned`), so neither the name order (never dragged) nor a
+    name-neighbour placement (a window opened since the last drag) re-sorts
+    the renamed item — in every window's list. The only moves are what the
+    new name asks for: a window given another group's `<project>: ` goes
+    into it at the edge nearest where it was; one given a new group's makes
+    that group where it was; one losing its `<project>: ` stays beside the
+    group it left. A group renamed keeps its place (its key renamed in the
+    order); named as another group it merges into that one where that one
+    is; emptied, its windows stand where it was, in its order. Windows
+    opened afterwards still land beside their name neighbour. The Change
+    Window Title prompt renames the same way (`renameWindowKeepingPlace`);
+    a programmatic title (`+rename`, `+new-window --title`) still places a
+    window by name, so a new window an agent titles lands in its group's
+    name order. A pane's order is by id (`PaneSidebarOrder`), so renaming
+    one never moved it. Tests: `PaneSidebarWindowOrderTests.renaming*`,
+    `PaneSidebarSyncWindowTests.renamingInTheSidebarKeepsTheOrder` (the real
+    fields, two windows' lists).
   - A window's field holds its whole title, `<project>: ` included, so
     typing `a: foo` moves it to group `a` as `foo`; empty goes back to
     following the window's own title. Any window rename redraws every
     sidebar (`windowTitleOverride` → `PaneRoster.changed`).
   - A group's field holds its name: each of its windows is retitled
-    `<new>: <name>` and the group keeps its place; empty ungroups them
-    (`renameGroupFromSidebar`).
+    `<new>: <name>`; empty ungroups them (`renameGroupFromSidebar`).
   - A terminal pane's field sets its title as Change Pane Title does
     (`SurfaceView.setUserTitle`); that name outranks a banner title
     (`PaneSidebarText.label(userTitle:)`). Viewers have no pencil.
@@ -363,8 +448,9 @@ header ones are `PaneSidebarItemButton`s beside the × (+ then ×, where the
 count was, on hover); a click on one never starts a row drag or raises the
 row's window through its tap.
 
-- **Header +** (expanded panel only, left of the All-windows toggle; the
-  rail's header is its expand button alone): a new window, exactly Cmd-N
+- **Header +** (left of the All-windows toggle when expanded; in the rail,
+  the + under the expand button — `PaneSidebarRailAddSlot`): a new window,
+  exactly Cmd-N
   from this window's focused pane — its inherited config (working directory
   per `window-inherit-working-directory`), a random gradient
   (`PaneDeskVariant.forNewWindow`), a remote parent's machine

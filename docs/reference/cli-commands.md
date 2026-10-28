@@ -34,6 +34,20 @@ ghoztty +new-window --target=<name> --working-directory=<path> --command=<cmd> -
   "Change Tab Title" and "Change Pane Title" commands in the menu and command
   palette. `ghoztty +rename --target=<name> --title=<title>` changes it later
   (`--title=""` clears the pin).
+- **A title the user typed outranks every script's.** Each window title
+  records who set it (`BaseTerminalController.windowTitleIsUsers`): the user —
+  the sidebar's rename field, Change Window Title, a sidebar drag into or out
+  of a group (`setWindowTitle(_:byUser: true)`) — or a script (`+rename`,
+  `+new-window --title`, the sidebar's group + naming its new window). While
+  the user's title is up, `+rename` changes nothing, not even to clear it,
+  and fails with an error naming the user's title (the `(prep)`/`(ready)`
+  skills already ignore a failed rename). Once the user clears it, scripts
+  may rename the window again. `+list --json` reports it per window
+  (`title_set_by_user`). It persists with the title — AppKit state
+  (`windowTitleSetByUser`), the session-layout and remote manifests (true or
+  absent); older state decodes as a script's title. Pane titles need no
+  flag: only the user sets one (Change Pane Title, the sidebar), and it
+  outranks the terminal's and the banner's. Tests: `UserWindowTitleTests`.
 
 ## `ghoztty +split`
 

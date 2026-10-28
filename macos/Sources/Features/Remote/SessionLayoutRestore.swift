@@ -398,6 +398,7 @@ extension AppDelegate {
         // tab/pane title). Per-controller storage, so restore order within
         // a tab group doesn't matter — the group scan finds the holder.
         if let title = entry.windowTitleOverride, !title.isEmpty {
+            controller.windowTitleIsUsers = entry.windowTitleSetByUser == true
             controller.windowTitleOverride = title
         }
 

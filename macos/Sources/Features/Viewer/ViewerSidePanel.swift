@@ -239,6 +239,11 @@ final class SidePanelResizeHandle: NSView, GutterBarOwner {
     var widthAtDragStart: (() -> CGFloat)?
     /// Called on mouse-up, when the chosen width is worth persisting.
     var onDragEnded: (() -> Void)?
+    /// Where the edge is drawn, in window coordinates, when its owner knows
+    /// better than this view's frame: the pane sidebar's card glides, and
+    /// SwiftUI moves this view a pass after the drag event that moved the
+    /// card — the bar, placed from the frame, ran a step behind the edge.
+    var gutterInWindow: (() -> CGRect?)?
 
     private var mouseDownX: CGFloat = 0
     private var startWidth: CGFloat = 0
@@ -255,7 +260,8 @@ final class SidePanelResizeHandle: NSView, GutterBarOwner {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        _ = bar
+        // A panel's edge, not one of the grid's gutters.
+        bar.followsStage = false
     }
 
     required init?(coder: NSCoder) { fatalError() }

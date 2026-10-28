@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-28T15:05:02-07:00",
-    "commit":  "9b0f1b606",
+    "generated":  "2026-10-28T16:16:27-07:00",
+    "commit":  "f6db6f1cb",
     "uncommitted":  [
 
                     ],
@@ -68,7 +68,7 @@
                   "src/apprt/gtk/winproto/x11.zig":  "31a8499677b2d9200a202ee1a6781fc022e8f66afaa4fec827526f3a68903811",
                   "src/apprt/ipc.zig":  "b178ba16390967fa9302ad0f6038eda5a07fd6c9cfd5d142d6329d62331bd779",
                   "src/apprt/ipc/args.zig":  "84da3fcd115cf2d9d72e130a8712ccb3eb7ed5c3c8afdab7350b2027385c28a9",
-                  "src/apprt/ipc/list.zig":  "b638c37230eada6c56c6f78f3f9195db23c4167b24d72ad2111480841321d5ac",
+                  "src/apprt/ipc/list.zig":  "3bae1fc4d305135b585a0f956d8ab178f6c9b2ca9d758b07cf4abc4408c7436b",
                   "src/apprt/ipc/read_tail.zig":  "43e8b7a2c10d1a73990cec6b09a6ddd1b857065f39cd855d9c83bf289fbb2ee4",
                   "src/apprt/ipc/segments.zig":  "4804011167bdc7a1eb954c4c9a44d96f730ee1a5c1cfa1b26e66383df28c775c",
                   "src/apprt/ipc/split_name_collision.zig":  "130e8526b53d4ca7f9f9bd14ad6ae2cb39d718e5262469af8bedf000981c6787",

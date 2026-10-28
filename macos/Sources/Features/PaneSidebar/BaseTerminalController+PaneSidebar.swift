@@ -180,6 +180,9 @@ extension BaseTerminalController {
         let before = paneSidebarColumn
         change()
         paneStackState.noteColumnShift(paneSidebarColumn - before)
+        // The card glides from this turn too, with the grid.
+        let windowWidth = window?.contentView?.bounds.width ?? .greatestFiniteMagnitude
+        paneSidebarHost?.noteModeChange(to: paneSidebarState.mode(windowWidth: windowWidth))
     }
 
     /// The sidebar's order of its panes and its identity in the all-windows

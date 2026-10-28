@@ -1,0 +1,11 @@
+{
+  "version": "1.48.1",
+  "sections": [
+    {
+      "title": "Windows",
+      "items": [
+        { "title": "New windows get the caret", "text": "Opening a new window puts the cursor in its terminal, ready to type, not in the sidebar's search box." }
+      ]
+    }
+  ]
+}

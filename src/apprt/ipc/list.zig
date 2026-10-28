@@ -190,6 +190,12 @@ pub const List = struct {
         target: ?[]const u8,
         focused: bool,
         tabs: []const Tab,
+        /// The window's title was typed by the user, so `+rename` leaves it
+        /// alone (Mac 7e2d0a9da). Always written, in the Mac encoder's
+        /// position. Windows does not record who set a title yet (T2404), and
+        /// until it does `+rename` overwrites any title, so `false` is the
+        /// true answer here.
+        title_set_by_user: bool = false,
         /// T231. Windows-only for now (the Mac half is filed); null omits the
         /// field entirely, so the golden Mac shape below is unchanged.
         chrome: ?Chrome = null,
@@ -272,6 +278,8 @@ pub const List = struct {
         try jws.beginArray();
         for (w.tabs) |t| try writeTab(jws, t);
         try jws.endArray();
+        try jws.objectField("title_set_by_user");
+        try jws.write(w.title_set_by_user);
         if (w.chrome) |c| try writeChrome(jws, c);
         if (w.connection) |c| try writeConnection(jws, c);
         try jws.endObject();
@@ -471,7 +479,7 @@ test "List: banner is additive (T35)" {
             "{\"type\":\"leaf\",\"terminal\":{\"id\":\"11\",\"title\":\"pwsh\"," ++
             "\"working_directory\":\"\",\"pid\":0,\"tty\":\"\",\"name\":\"11\"," ++
             "\"focused\":true,\"exit_code\":null,\"type\":\"terminal\",\"url\":null," ++
-            "\"banner\":\"**PR #1**\\nline2\"}}}]}]}}",
+            "\"banner\":\"**PR #1**\\nline2\"}}}],\"title_set_by_user\":false}]}}",
         json,
     );
 }
@@ -524,7 +532,7 @@ test "List: readonly is additive (T574)" {
         "{\"type\":\"leaf\",\"terminal\":{\"id\":\"11\",\"title\":\"pwsh\"," ++
         "\"working_directory\":\"\",\"pid\":0,\"tty\":\"\",\"name\":\"11\"," ++
         "\"focused\":true,\"exit_code\":null,\"type\":\"terminal\",\"url\":null";
-    const suffix = "}}}]}]}}";
+    const suffix = "}}}],\"title_set_by_user\":false}]}}";
 
     for ([_]struct { ro: ?bool, want: []const u8 }{
         .{ .ro = true, .want = prefix ++ ",\"readonly\":true" ++ suffix },
@@ -622,7 +630,7 @@ test "List: session_id is additive (T332)" {
             "{\"type\":\"leaf\",\"terminal\":{\"id\":\"3F2A\",\"title\":\"pwsh\"," ++
             "\"working_directory\":\"\",\"pid\":0,\"tty\":\"\",\"name\":\"3F2A\"," ++
             "\"focused\":true,\"exit_code\":null,\"type\":\"terminal\",\"url\":null," ++
-            "\"session_id\":\"sess-0a1b2c3d\"}}}]}]}}",
+            "\"session_id\":\"sess-0a1b2c3d\"}}}],\"title_set_by_user\":false}]}}",
         json,
     );
 }
@@ -676,7 +684,7 @@ test "List: background_tint is additive (T67)" {
             "{\"type\":\"leaf\",\"terminal\":{\"id\":\"11\",\"title\":\"pwsh\"," ++
             "\"working_directory\":\"\",\"pid\":0,\"tty\":\"\",\"name\":\"11\"," ++
             "\"focused\":true,\"exit_code\":null,\"type\":\"terminal\",\"url\":null," ++
-            "\"background_tint\":\"#334455\"}}}]}]}}",
+            "\"background_tint\":\"#334455\"}}}],\"title_set_by_user\":false}]}}",
         json,
     );
 }
@@ -724,7 +732,7 @@ test "List: viewer leaf reports type/url (T90b)" {
             "{\"type\":\"leaf\",\"terminal\":{\"id\":\"11\",\"title\":\"README.md\"," ++
             "\"working_directory\":\"\",\"pid\":0,\"tty\":\"\",\"name\":\"doc\"," ++
             "\"focused\":true,\"exit_code\":null,\"type\":\"viewer\"," ++
-            "\"url\":\"D:\\\\git\\\\ghoztty\\\\README.md\"}}}]}]}}",
+            "\"url\":\"D:\\\\git\\\\ghoztty\\\\README.md\"}}}],\"title_set_by_user\":false}]}}",
         json,
     );
 }
@@ -783,6 +791,7 @@ test "List: chrome regions are additive (T231)" {
             "{\"type\":\"leaf\",\"terminal\":{\"id\":\"11\",\"title\":\"pwsh\"," ++
             "\"working_directory\":\"\",\"pid\":0,\"tty\":\"\",\"name\":\"11\"," ++
             "\"focused\":true,\"exit_code\":null,\"type\":\"terminal\",\"url\":null}}}]," ++
+            "\"title_set_by_user\":false," ++
             "\"chrome\":{\"dpi\":120,\"tab_strip\":{" ++
             "\"band\":{\"left\":4,\"top\":4,\"right\":1396,\"bottom\":40}," ++
             "\"tabs\":[{\"left\":4,\"top\":4,\"right\":200,\"bottom\":40},null]," ++
@@ -811,7 +820,7 @@ test "List: a window with no tab strip reports chrome with a null tab_strip (T23
     try testing.expectEqualStrings(
         "{\"success\":true,\"data\":{\"windows\":[" ++
             "{\"id\":\"1\",\"title\":\"pwsh\",\"target\":null,\"focused\":true," ++
-            "\"tabs\":[],\"chrome\":{\"dpi\":96,\"tab_strip\":null}}]}}",
+            "\"tabs\":[],\"title_set_by_user\":false,\"chrome\":{\"dpi\":96,\"tab_strip\":null}}]}}",
         json,
     );
 }
@@ -873,7 +882,7 @@ test "List: golden shape — window with split tab" {
             "\"focused\":true,\"exit_code\":null,\"type\":\"terminal\",\"url\":null}}," ++
             "\"right\":{\"type\":\"leaf\",\"terminal\":{\"id\":\"12\",\"title\":\"pwsh\"," ++
             "\"working_directory\":\"\",\"pid\":0,\"tty\":\"\",\"name\":\"12\"," ++
-            "\"focused\":false,\"exit_code\":null,\"type\":\"terminal\",\"url\":null}}}}]}]}}",
+            "\"focused\":false,\"exit_code\":null,\"type\":\"terminal\",\"url\":null}}}}],\"title_set_by_user\":false}]}}",
         json,
     );
 }

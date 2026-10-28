@@ -95,6 +95,45 @@ struct PaneSidebarSyncWindowTests {
 
     // MARK: Shared state
 
+    /// A window opened while the shared scope is all windows comes up with
+    /// the search field in its sidebar: as AppKit orders it in, it hands the
+    /// caret to the window's first key view, which must not be the search —
+    /// the window's terminal gets it as it becomes key. A click (a
+    /// `makeFirstResponder`) still focuses the field, and typing filters.
+    @Test func aNewWindowDoesNotPutTheCaretInTheSearch() async throws {
+        let saved = save()
+        let shared = PaneSidebarSharedState.shared
+        shared.isHidden = false
+        shared.isExpanded = true
+        shared.width = 260
+        shared.showsAllWindows = true
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let c = TerminalController.newWindow(ghostty, tree: SplitTree(view: terminalPane(app)))
+        c.windowTitleOverride = "focus: new window"
+        _ = await poll(timeout: 10) { c.window?.isVisible == true }
+        c.window?.setContentSize(NSSize(width: 1000, height: 600))
+        await settle(0.8)
+        let window = try #require(c.window)
+        let content = try #require(window.contentView)
+        let field = try #require(all(NSTextField.self, in: content).first { $0.placeholderString == "Search" },
+                                 "the all-windows list shows its search field")
+
+        let responder = window.firstResponder
+        let caretInSearch = responder === field || (responder as? NSText)?.delegate === field
+        #expect(!caretInSearch, "the new window's first responder is the search field (\(String(describing: responder)))")
+
+        #expect(window.makeFirstResponder(field), "a click still focuses the search field")
+        let editor = try #require(field.currentEditor())
+        editor.insertText("focus")
+        await settle(0.2)
+        #expect(c.paneSidebarState.filter == "focus", "typing filters: \(c.paneSidebarState.filter)")
+        window.makeFirstResponder(nil)
+
+        c.close()
+        await close([], restoring: saved)
+    }
+
     /// Collapse, hide, width, the all-windows scope, a fold: each changed in
     /// one window shows in the other — while a narrow window keeps its rail.
     @Test func aChangeInOneWindowShowsInTheOther() async throws {
@@ -142,13 +181,19 @@ struct PaneSidebarSyncWindowTests {
         await settle(0.5)
         #expect(a.paneSidebarHost?.mode == .expanded)
 
-        // All windows, turned on in a: in b too, with the same folds.
+        // All windows, turned on in a: in b too, every window folded — a's
+        // own too — and then the same folds in both.
         a.paneSidebarState.showsAllWindows = true
         await settle(0.5)
         #expect(b.paneSidebarState.showsAllWindows)
         for viewer in [a, b] {
-            #expect(!viewer.paneSidebarState.isWindowFolded(a.paneSidebarState.windowID, isSearching: false))
+            #expect(viewer.paneSidebarState.isWindowFolded(a.paneSidebarState.windowID, isSearching: false),
+                    "the window it was turned on from starts folded")
             #expect(viewer.paneSidebarState.isWindowFolded(b.paneSidebarState.windowID, isSearching: false))
+        }
+        a.paneSidebarState.toggleWindowFold(a.paneSidebarState.windowID)
+        for viewer in [a, b] {
+            #expect(!viewer.paneSidebarState.isWindowFolded(a.paneSidebarState.windowID, isSearching: false))
         }
         b.paneSidebarState.foldedProjects = ["sync"]
         #expect(a.paneSidebarState.foldedProjects == ["sync"])
@@ -329,6 +374,75 @@ struct PaneSidebarSyncWindowTests {
         // Persisted: the shared order is what a relaunch reads.
         let stored = PaneSidebarSharedState.shared.defaults.stringArray(forKey: PaneSidebarSharedState.windowOrderKey) ?? []
         #expect(stored.filter { $0.hasPrefix("project:") } == ["project:gamma", "project:alpha", "project:beta"])
+        await close(windows, restoring: saved)
+    }
+
+    /// Type `name` into the sidebar's rename field for `key`
+    /// (`PaneSidebarRename`) in `c`'s sidebar and press Return — the user's
+    /// own path, through the field's delegate.
+    private func renameInSidebar(_ key: String, to name: String, in c: TerminalController) async throws {
+        PaneSidebarRename.shared.editing = key
+        await settle(0.4)
+        let host = try #require(c.paneSidebarHost)
+        let field = try #require(all(NSTextField.self, in: host).first { $0.accessibilityLabel() == "Name" },
+                                 "no rename field for \(key)")
+        field.stringValue = name
+        _ = field.delegate?.control?(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+        await settle(0.5)
+        #expect(PaneSidebarRename.shared.editing == nil, "the field ended")
+    }
+
+    /// What `c`'s all-windows list shows, a group as `[project]`.
+    private func shown(_ c: TerminalController) -> [String] {
+        c.paneSidebarSections.flatMap { section -> [String] in
+            guard let project = section.project else { return section.windows.map(\.label) }
+            return ["[\(project)]"] + section.windows.map { "  " + $0.label }
+        }
+    }
+
+    /// Renaming from the sidebar moves nothing: a window third in a list
+    /// never dragged (the report: it jumped to the top), a group, a pane —
+    /// and every window's list agrees.
+    @Test func renamingInTheSidebarKeepsTheOrder() async throws {
+        let saved = save()
+        let windows = try await open(["alpha", "beta", "gamma", "delta", "proj: one", "proj: two"])
+        let a = windows[0], other = windows[4]
+        a.paneSidebarState.showsAllWindows = true
+        await settle(0.8)
+        #expect(shown(a) == ["alpha", "beta", "delta", "gamma", "[proj]", "  one", "  two"], "by name to start")
+
+        // gamma, never dragged, → "aaa", which by name would go first.
+        let gamma = windows[2]
+        try await renameInSidebar(PaneSidebarWindowGrouping.key(window: gamma.paneSidebarState.windowID), to: "aaa", in: a)
+        #expect(gamma.windowTitleOverride == "aaa")
+        for viewer in [a, other] {
+            #expect(shown(viewer) == ["alpha", "beta", "delta", "aaa", "[proj]", "  one", "  two"])
+        }
+
+        // A grouped window renamed within its group.
+        let two = windows[5]
+        try await renameInSidebar(PaneSidebarWindowGrouping.key(window: two.paneSidebarState.windowID), to: "proj: a", in: a)
+        #expect(shown(a) == ["alpha", "beta", "delta", "aaa", "[proj]", "  one", "  a"])
+
+        // The group → "aa", which by name would go first.
+        try await renameInSidebar(PaneSidebarWindowGrouping.key(project: "proj"), to: "aa", in: a)
+        #expect(windows[4].windowTitleOverride == "aa: one")
+        for viewer in [a, other] {
+            #expect(shown(viewer) == ["alpha", "beta", "delta", "aaa", "[aa]", "  one", "  a"])
+        }
+
+        // A pane, in its own window's list.
+        a.paneSidebarState.showsAllWindows = false
+        let root = try #require(a.surfaceTree.visibleLeaves.first?.surfaceView)
+        let surface = try #require(a.newSplit(at: root, direction: .right, focus: false))
+        _ = try #require(a.newSplit(at: surface, direction: .right, focus: false))
+        await settle(0.8)
+        let second = try #require(a.surfaceTree.visibleLeaves.first { $0.surfaceView === surface })
+        let panes = a.paneSidebarPanes.map(\.id)
+        #expect(panes.count == 3)
+        try await renameInSidebar(PaneSidebarRename.key(pane: second.id), to: "aaa", in: a)
+        #expect(surface.title == "aaa")
+        #expect(a.paneSidebarPanes.map(\.id) == panes, "a pane's rename moves nothing")
         await close(windows, restoring: saved)
     }
 

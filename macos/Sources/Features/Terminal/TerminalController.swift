@@ -267,6 +267,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     private static func applyCascade(to window: NSWindow, hasFixedPos: Bool) {
         if hasFixedPos { return }
+        // A maximized window fills its screen: cascading it would push it
+        // down off the top (and AppKit shrinks it to fit).
+        if (window.windowController as? TerminalController)?.opensMaximized == true { return }
 
         if all.count > 1 {
             lastCascadePoint = window.cascadeTopLeft(from: lastCascadePoint)
@@ -1407,6 +1410,15 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     private func applyInitialFrame() {
         guard let terminalWindow = window as? TerminalWindow else { return }
 
+        // Maximized: the screen's visible frame, set again here — the frame
+        // `windowDidLoad` gave it is shrunk by the titlebar when
+        // `syncAppearance` changes the style mask after it — and never the
+        // last window's position, which would move it down.
+        if case .frame(let frame) = defaultSize {
+            terminalWindow.setFrame(frame, display: true)
+            return
+        }
+
         // Set the initial window position. This must happen after the window
         // is fully set up (content view, toolbar, default size) so that
         // decorations added by subclass awakeFromNib (e.g. toolbar for tabs
@@ -1988,6 +2000,12 @@ extension TerminalController {
                 window.constrainToScreen()
             }
         }
+    }
+
+    /// `maximize`: a new window fills its screen's visible frame.
+    var opensMaximized: Bool {
+        if case .frame = defaultSize { return true }
+        return false
     }
 
     private var defaultSize: DefaultSize? {
