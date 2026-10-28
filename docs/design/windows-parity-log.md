@@ -37537,3 +37537,14 @@ moved to T1814.
   - pane-banner ALL PASS 181. Its opacity oracle now reads the app's present line in ULW mode.
   - Floor lanes lib/none/win32/agent PASS. The audits the change made due are green.
   - Left on T2400: the viewer address bar runs ~20 px ahead of its WebView2 page on 252 of 949 frames, and the WGC probe still has to become a committed harness.
+
+- 2026-10-28 12:05 (lane b): T2357 done (4b118e243). The Windows pane sidebar now draws the Mac's own icons instead of Fluent font glyphs (user report: "they don't match the mac icons").
+  - Mac draws its sidebar icons itself (`PaneSidebarSymbol`, 16-unit paths, round caps, 1.25-1.4 strokes) and rejects SF Symbols for them, so no Fluent glyph could match. New `sidebar_symbol.zig` ports those paths and rasterises them with a distance field. New `sidebar_symbol_dc.zig` tints the DC's own pixels by the symbol's coverage, so antialiasing blends with the hover and selection fills.
+  - Rows, rail tiles, the collapse/expand toggle, the all-windows toggle and the header's + all use it, at Mac's sizes (rows 14, header 15). The kind mapping is now Mac's case for case: code and html map to document, diff to diff, and image keeps the Fluent Photo (Mac uses SF `photo`). The all-windows toggle no longer stays filled while it is on, because Mac reads on/off from the filled glyph alone. The search clear is now Fluent StatusErrorFull (Mac `xmark.circle.fill`).
+  - Design system §4 now has an exception: Mac-drawn icons port as paths, and SF Symbols still map to the nearest Fluent glyph.
+  - Filed T2413: the rail's + tile has no Mac counterpart.
+  Validation:
+  - sidebar_symbol unit tests (9; sizes 14/15/21/23/28/30) pass. Floor lanes lib/none/win32/agent PASS.
+  - pane-sidebar ALL PASS 72. Its PrintWindow captures show the Mac shapes. The previous build's 09:47 captures show OpenPane/TaskView/CommandPrompt (positive control).
+  - The other 19 due sidebar harnesses and audits pass, and ipc-p1..p3 pass.
+  - Two reds are acked to open tasks: overlay-zorder (T2300) and frame-lab (T2395, which also SKIPs alone because the user is at the box).
