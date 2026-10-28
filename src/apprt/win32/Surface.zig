@@ -3440,7 +3440,13 @@ pub fn handlePaletteKey(self: *Surface, vk: u16) bool {
 /// keybind would. The rest are apprt-local because there is no binding to
 /// perform.
 pub fn performCommand(self: *Surface, id: commands.Id) void {
-    if (!self.core_surface_ready) return;
+    if (!self.core_surface_ready) {
+        // Never silently (T2356): a command the user picked must answer or
+        // say why it did not. `Window.performMenuCommand` routes around a
+        // terminal that is not up yet, so this should not happen.
+        log.warn("command dropped id={s}: terminal not ready", .{@tagName(id)});
+        return;
+    }
     const cmd = commands.get(id);
     switch (cmd.kind) {
         // Opened locally via the machine chooser, not through a binding

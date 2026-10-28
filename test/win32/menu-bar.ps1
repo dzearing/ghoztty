@@ -32,6 +32,9 @@
 #      menu, so the strip keeps its "=" button there and it opens the same
 #      menu. The positive control for A's "the strip has no button": without
 #      it, a build that deleted the button outright would pass just as well.
+#   J: T2356 - Help>Check for Updates reaches the update check and answers in
+#      a dialog with a VIEWER pane focused, not only from a terminal (the
+#      menu used to drop every command when the focused pane was a viewer).
 #
 # Menu contents are read from the LIVE popup via MN_GETHMENU + cross-process
 # GetMenuItemInfo-family calls (never GetWindowTextW, which reads a cache the
@@ -155,7 +158,7 @@ function Kill-RepoInstances {
     [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500)
 }
 
-function Start-Gui([string]$label, [string[]]$extraArgs) {
+function Start-Gui([string]$label, [string[]]$extraArgs, [string]$errFile) {
     Kill-RepoInstances
     # A stale debug layout manifest would restore a previous run's windows
     # over the one under test (the T131 lesson).
@@ -175,7 +178,13 @@ function Start-Gui([string]$label, [string[]]$extraArgs) {
         '--background=#000000',
         '--window-show-tab-bar=always'
     ) + $extraArgs
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $argList
+    # -StdErr only where a section reads the app's log (J); a Debug build is
+    # console-subsystem, so std.log lands there.
+    $app = if ($errFile) {
+        Start-OnTestDesktop -Exe $exe -Arguments $argList -StdErr $errFile
+    } else {
+        Start-OnTestDesktop -Exe $exe -Arguments $argList
+    }
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host "SETUP FAIL ($label): GUI died at launch"; exit 1 }
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -1223,6 +1232,94 @@ if ($g.Proc -and $g.Proc.HasExited) {
 }
 
 Stop-Process -Id $g.Pid -Force -ErrorAction SilentlyContinue
+
+# ===========================================================================
+# Run 4: section J (T2356) - Help>Check for Updates answers with a VIEWER
+# focused. The user's report: "i click check for updates. nothing happens."
+# The menu dispatch looked for the focused TERMINAL and returned without a
+# word when focus sat in a viewer pane, so the click never reached the update
+# check. Oracle by outcome: the app logs `update check (manual)` and puts its
+# answer on screen as a dialog. The feed is a local file naming an older
+# release, so the answer is "up to date" and nothing touches the network.
+# Positive control: the same click from the terminal, which always worked.
+# ===========================================================================
+$feedDirJ = Join-Path $env:TEMP "ghoztty-menubar-feed-$PID"
+New-Item -ItemType Directory -Force -Path $feedDirJ | Out-Null
+$feedJ = Join-Path $feedDirJ 'older.json'
+[IO.File]::WriteAllText($feedJ, '[{"tag_name":"v1.17.0"},{"tag_name":"win-v0.0.1"}]')
+$errJ = Join-Path $env:TEMP "ghoztty-menubar-j-$PID.err.txt"
+Remove-Item $errJ -ErrorAction SilentlyContinue
+$env:GHOZTTY_UPDATE_URL = 'file:///' + ($feedJ -replace '\\', '/')
+
+# The app still holds its stderr open for writing, so read it shared.
+function Read-ErrJ {
+    if (-not (Test-Path $errJ)) { return '' }
+    try {
+        $fs = [IO.File]::Open($errJ, 'Open', 'Read', 'ReadWrite')
+        try { return (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    } catch { return '' }
+}
+function Count-Manual { ([regex]::Matches((Read-ErrJ), 'update check \(manual\)')).Count }
+
+# Help > Check for Updates..., then wait for the manual check to log and for
+# its answer dialog. Returns whether both happened; the dialog is dismissed.
+function Invoke-CheckForUpdates($gg, [string]$label) {
+    $before = Count-Manual
+    [void](Click-MenuHost $gg.Top)
+    $mm = Wait-Menu $gg.Pid 3000
+    Assert ($mm -ne [IntPtr]::Zero) "J($label): the menu opens"
+    Send-MenuKey $gg.Top 'H'  # Help
+    Start-Sleep -Milliseconds 300
+    Send-MenuKey $gg.Top 'U'  # Check for &Updates...
+    Assert (Test-MenuGone $gg.Pid 2500) "J($label): choosing Check for Updates closes the menu"
+    $logged = $false
+    for ($t = 0; $t -lt 60 -and -not $logged; $t++) {
+        Start-Sleep -Milliseconds 250
+        $logged = (Count-Manual) -gt $before
+    }
+    $dlg = Wait-TestWindow -ProcessId $gg.Pid -Class 'GhozttyConfirmDialog' -TimeoutMs 8000
+    if ($dlg -ne [IntPtr]::Zero) {
+        [void](Send-TestRawMessage -Window $dlg -Message 0x0111 -WParam ([IntPtr]1)) # IDOK
+        Start-Sleep -Milliseconds 600
+    }
+    [pscustomobject]@{ Logged = $logged; Dialog = ($dlg -ne [IntPtr]::Zero) }
+}
+
+try {
+    $g = Start-Gui 'updates' @('--session-persistence=false') $errJ
+
+    # Positive control: from the focused terminal.
+    $rT = Invoke-CheckForUpdates $g 'terminal'
+    Assert $rT.Logged 'J(terminal): the click reached the update check (positive control)'
+    Assert $rT.Dialog 'J(terminal): the answer is a dialog'
+
+    # A viewer beside it, and focus in the viewer.
+    $mdJ = Join-Path $feedDirJ 'note.md'
+    [IO.File]::WriteAllText($mdJ, "# T2356`n`nviewer pane")
+    # --focus: no command takes focus unless asked (docs/claude/cli.md), and
+    # this section is about the focus being IN the viewer.
+    $null = & $exe +split --direction=right --name=t2356view --focus "--view=$mdJ" 2>$null
+    $viewerUp = $false
+    for ($t = 0; $t -lt 40 -and -not $viewerUp; $t++) {
+        Start-Sleep -Milliseconds 250
+        $viewerUp = @(Get-TestChildWindows -Window $g.Top -Class 'GhozttyViewer').Count -ge 1
+    }
+    Assert $viewerUp 'J(viewer): the viewer pane opened'
+    Start-Sleep -Milliseconds 1000
+    $focusedJ = Focused-Pane-Name
+    Assert ($focusedJ -eq 't2356view') "J(viewer): the viewer has focus (focused='$focusedJ')"
+
+    $rV = Invoke-CheckForUpdates $g 'viewer'
+    Assert $rV.Logged 'J(viewer): with a viewer focused, the click reached the update check'
+    Assert $rV.Dialog 'J(viewer): ...and the answer is on screen as a dialog'
+    $logJ = Read-ErrJ
+    Assert ($logJ -notmatch 'menu command dropped id=check_for_updates') 'J(viewer): the menu did not drop the command'
+    Assert (-not ($g.Proc -and $g.Proc.HasExited)) 'run 4: no crash'
+    Stop-Process -Id $g.Pid -Force -ErrorAction SilentlyContinue
+} finally {
+    Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
+    Remove-Item $feedDirJ -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 } catch {
     # T1511: the foreground-leak checks below are part of this run too, so this

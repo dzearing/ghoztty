@@ -14143,9 +14143,67 @@ pub fn openMenuBarAt(self: *Window, anchor: MenuAnchor) void {
         log.warn("menu returned an unknown command id={}", .{cmd});
         return;
     };
-    const surface = self.getActiveSurface() orelse return;
     log.debug("menu command id={s}", .{@tagName(id)});
-    surface.performCommand(id);
+    self.performMenuCommand(id);
+}
+
+/// Perform a command picked from the menu, whatever has focus (T2356).
+///
+/// A ready focused terminal performs it exactly as the palette does. Without
+/// one — a viewer focused, a terminal still starting, or no pane — this used
+/// to return without a word, which is how "Check for Updates…" did nothing
+/// at all from a window whose focus sat in a viewer. Now a binding command
+/// takes the keyboard's route from a viewer (`viewer_accel.menuRoute`), the
+/// app-local kinds run through any terminal in the window, and anything
+/// still left over is logged by name rather than dropped silently.
+///
+/// Callers beware: a closing command frees this window before returning.
+fn performMenuCommand(self: *Window, id: commands.Id) void {
+    if (self.getActiveSurface()) |s| if (s.core_surface_ready) {
+        s.performCommand(id);
+        return;
+    };
+
+    const cmd = commands.get(id);
+    const host = self.anyTerminalSurface();
+    if (cmd.kind != .binding) {
+        if (host) |s| {
+            s.performCommand(id);
+            return;
+        }
+        // A window of nothing but viewers: the kinds that need only the app.
+        switch (cmd.kind) {
+            .install_update => {
+                if (!self.app.offerUpdate()) self.app.startUpdateCheck(.manual);
+                return;
+            },
+            .dismiss_update => {
+                self.app.dismissUpdate();
+                return;
+            },
+            .help => {
+                self.app.openUrl(commands.help_url);
+                return;
+            },
+            else => {},
+        }
+    } else {
+        const pane = self.getActivePane();
+        const viewer_pane: ?*PaneView = if (pane) |p| (if (p.viewer() != null) p else null) else null;
+        const focus: viewer_accel.MenuFocus = if (viewer_pane != null) .viewer else .none;
+        switch (viewer_accel.menuRoute(cmd.action, focus, host != null)) {
+            .native => if (viewer_pane) |p| {
+                if (self.performViewerBindingAction(p, cmd.action)) return;
+            },
+            .core => if (self.app.core_app.performActionForNonTerminal(
+                self.app,
+                if (host) |s| &s.core_surface else null,
+                cmd.action,
+            )) return,
+            .pass => {},
+        }
+    }
+    log.warn("menu command dropped id={s}: nothing focused in this window can perform it", .{@tagName(id)});
 }
 
 /// Fill `menu_bar.State` from the focused surface and this window. Read at

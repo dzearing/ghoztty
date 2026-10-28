@@ -270,6 +270,35 @@ pub fn pageOwns(vk: u16, mods: input.Mods) bool {
     };
 }
 
+/// What has focus when a MENU binding command arrives with no ready
+/// terminal to perform it (T2356).
+pub const MenuFocus = enum {
+    /// A viewer pane: the T1803 native handlers act on it.
+    viewer,
+    /// A terminal whose core is not up yet, or no pane at all.
+    none,
+};
+
+/// Where a binding command picked from the menu goes when the focused pane
+/// is not a ready terminal (T2356). Before this the menu dispatch looked for
+/// the focused TERMINAL and returned without a word when there was none, so
+/// "Check for Updates…" did nothing at all while a viewer had focus. The
+/// rule is the keyboard's (`route`): the same command must answer from the
+/// menu exactly as its chord does, and an app action never needs a terminal.
+pub fn menuRoute(action: input.Binding.Action, focus: MenuFocus, has_host_surface: bool) Route {
+    const leaf: input.Binding.Set.GenericLeaf = .{ .flags = .{}, .actions = .{ .single = .{action} } };
+    const r = route(&leaf, has_host_surface);
+    if (r != .native or focus == .viewer) return r;
+    // A native handler acts on the focused VIEWER; with none focused, only
+    // what the core can do without one is left (never a pane action, which
+    // would land on the host terminal's pane instead).
+    return switch (action.requires()) {
+        .app => .core,
+        .window => if (has_host_surface) .core else .pass,
+        .pane, .terminal => .pass,
+    };
+}
+
 /// Whether a chord pressed in one of a viewer's own text fields — the address
 /// bar or the find card's query — may be offered to the app's keybind table
 /// (T2116). On Mac a menu key equivalent (Cmd+D, Cmd+W) fires from a focused
@@ -934,6 +963,26 @@ test "T1803: chains route by their most demanding action" {
     // Global and all-surface bindings are not about the focused pane.
     const all = single(.{ .text = "x" }, .{ .all = true });
     try testing.expectEqual(Route.core, route(&all, false));
+}
+
+test "T2356: an app command from the menu never needs a focused terminal" {
+    // The user's report: Check for Updates with a viewer focused, in a
+    // window with or without a terminal, and with no ready pane at all.
+    for ([_]MenuFocus{ .viewer, .none }) |focus| {
+        for ([_]bool{ true, false }) |host| {
+            try testing.expectEqual(Route.core, menuRoute(.check_for_updates, focus, host));
+            try testing.expect(menuRoute(.quit, focus, host) != .pass);
+        }
+    }
+    // A native pane action acts on a focused viewer, and is refused rather
+    // than sent through some other terminal when no viewer is focused.
+    try testing.expectEqual(Route.native, menuRoute(.close_surface, .viewer, true));
+    try testing.expectEqual(Route.pass, menuRoute(.close_surface, .none, true));
+    // A window action goes through the host when there is one.
+    try testing.expectEqual(Route.core, menuRoute(.toggle_window_float_on_top, .none, true));
+    try testing.expectEqual(Route.pass, menuRoute(.toggle_window_float_on_top, .none, false));
+    // Terminal content never leaves a terminal.
+    try testing.expectEqual(Route.pass, menuRoute(.{ .copy_to_clipboard = .plain }, .viewer, true));
 }
 
 test "T1803: the page keeps its editing and text-navigation chords" {
