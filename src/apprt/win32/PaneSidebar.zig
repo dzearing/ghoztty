@@ -77,6 +77,8 @@ const Window = @import("Window.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const gutter_bar = @import("gutter_bar.zig");
 const gutter_bar_dc = @import("gutter_bar_dc.zig");
+const sidebar_symbol = @import("sidebar_symbol.zig");
+const sidebar_symbol_dc = @import("sidebar_symbol_dc.zig");
 const busy_light = @import("busy_light.zig");
 
 const log = std.log.scoped(.pane_sidebar);
@@ -197,21 +199,15 @@ const Group = struct {
     tabbed: bool,
 };
 
-/// Fluent / MDL2 codepoints (the same faces `icon_button_paint` probes).
-const glyph_terminal: u16 = 0xE756; // CommandPrompt
-const glyph_document: u16 = 0xE8A5; // Document
-const glyph_globe: u16 = 0xE774; // Globe
-const glyph_photo: u16 = 0xE91B; // Photo
-const glyph_code: u16 = 0xE943; // Code
-// The collapse/expand toggle (Mac's `.sidebar` symbol, a window with its
-// sidebar): the open pane offered by the rail, the close pane by the panel -
-// the Fluent pair Windows' own navigation panes use.
-const glyph_open_pane: u16 = 0xE8A0; // OpenPane: "expand the sidebar"
-const glyph_close_pane: u16 = 0xE89F; // ClosePane: "collapse it to icons"
+/// Fluent / MDL2 codepoints (the same faces `icon_button_paint` probes), for
+/// the icons Mac takes from SF Symbols. The ones Mac draws itself - a pane
+/// kind's, the collapse/expand toggle, the all-windows toggle and the
+/// header's + - are its own paths here too (`sidebar_symbol`, T2357).
+const glyph_photo: u16 = 0xE91B; // Photo: an image pane (Mac `photo`)
+const glyph_close_circle: u16 = 0xEB90; // StatusErrorFull: the search's clear (Mac `xmark.circle.fill`)
 const glyph_stash: u16 = 0xE921; // ChromeMinimize: "put this away"
 const glyph_restore: u16 = 0xE7A7; // Undo: "bring it back"
-const glyph_windows: u16 = 0xE7C4; // TaskView: "every window"
-const glyph_close: u16 = 0xE711; // Cancel: a row's x, the search's clear
+const glyph_close: u16 = 0xE711; // Cancel: a row's x
 const glyph_add: u16 = 0xE710; // Add: the header's and a header's + (T2323)
 const glyph_rename: u16 = 0xE70F; // Edit: the rename pencil (T2339)
 const glyph_search: u16 = 0xE721; // Search: the field's magnifier (T1877)
@@ -356,7 +352,7 @@ const Entry = struct {
     section: pane_sidebar.Section,
     title: []u16,
     subtitle: []u16,
-    icon: u16,
+    icon: Icon,
     /// Its place in its tab's tree, stashed panes included: what its hue is
     /// spaced by (T2278, `pane_hue`), so a reorder of the list recolors
     /// nothing.
@@ -1545,13 +1541,21 @@ pub fn refreshScopes(windows: []const *Window, except: ?*Window) void {
     }
 }
 
-fn iconFor(v: *const PaneView) u16 {
-    const vp = v.viewer() orelse return glyph_terminal;
+/// A row's icon: one of Mac's drawn symbols, or an icon-font glyph where Mac
+/// uses an SF Symbol (an image pane).
+const Icon = union(enum) {
+    symbol: sidebar_symbol.Symbol,
+    glyph: u16,
+};
+
+/// Mac `PaneSidebarIcon.symbol(for:)`, case for case.
+fn iconFor(v: *const PaneView) Icon {
+    const vp = v.viewer() orelse return .{ .symbol = .terminal };
     return switch (vp.mode) {
-        .markdown => glyph_document,
-        .web => glyph_globe,
-        .image => glyph_photo,
-        else => glyph_code,
+        .markdown, .code, .html => .{ .symbol = .document },
+        .diff => .{ .symbol = .diff },
+        .image => .{ .glyph = glyph_photo },
+        .web => .{ .symbol = .globe },
     };
 }
 
@@ -1998,6 +2002,15 @@ fn glyph(hdc: w32.HDC, scale: f32, r: pane_sidebar.Rect, cp: u16, dip: f32, colo
         color,
     );
 }
+
+/// One of Mac's drawn sidebar symbols at `dip`, centred in `r` (T2357).
+fn symbol(hdc: w32.HDC, scale: f32, r: pane_sidebar.Rect, sym: sidebar_symbol.Symbol, dip: f32, color: u32) void {
+    sidebar_symbol_dc.paint(hdc, .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom }, sym, dip, scale, color);
+}
+
+/// Mac's sizes: a row's or tile's kind icon is 14 pt, a header button's 15.
+const row_symbol_dip: f32 = 14;
+const header_symbol_dip: f32 = 15;
 
 fn paint(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     if (!self.paint_bare and self.column != null) {
@@ -3351,7 +3364,12 @@ fn paintPill(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, e: Entry, i
     const icon_r: pane_sidebar.Rect = .{ .left = left, .top = top, .right = left + icon_w, .bottom = top + self.metrics.title_h };
     // The pane's own hue (T2278, Mac iconColor): full on the focused row and
     // a hovered one, a touch quieter elsewhere.
-    glyph(hdc, self.scale, icon_r, e.icon, 12, self.hueInk(e, under, hovered, emphasized, t));
+    const ink = self.hueInk(e, under, hovered, emphasized, t);
+    switch (e.icon) {
+        .symbol => |sym| symbol(hdc, self.scale, icon_r, sym, row_symbol_dip, ink),
+        // Mac's `photo` is drawn 1.5 pt under the row's symbol size.
+        .glyph => |cp| glyph(hdc, self.scale, icon_r, cp, row_symbol_dip - 1.5, ink),
+    }
     return .{ .icon = icon_r, .under = under };
 }
 
@@ -3430,7 +3448,7 @@ fn paintToggle(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, 
         fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark))));
     }
     const ink = if (enabled) t.text else rgb(color_math.mix(t.surface, unrgb(t.text), 1.0 - disabled_toward_bg));
-    glyph(hdc, self.scale, l.toggle, if (self.mode == .expanded) glyph_close_pane else glyph_open_pane, 12, ink);
+    symbol(hdc, self.scale, l.toggle, .{ .sidebar = self.mode == .expanded }, header_symbol_dip, ink);
 }
 
 /// The expanded list (T2290, Mac 0a547522d): the rail's own raised card at
@@ -3724,7 +3742,7 @@ fn paintSearch(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, 
         if (icon_button.paintsFill(state)) {
             fillRound(hdc, b, radius, rgb(shade(well, icon_button.fillDelta(state, t.dark))));
         }
-        glyph(hdc, s, b, glyph_close, 10, t.secondary);
+        glyph(hdc, s, b, glyph_close_circle, 13, t.secondary);
     }
 }
 
@@ -3749,10 +3767,10 @@ fn searchCaretAt(self: *PaneSidebar, x: i32) usize {
     return text.len;
 }
 
-/// The all-windows toggle (Mac's `macwindow.on.rectangle` header button).
-/// Mac reads on/off from a filled glyph; the icon font has no filled twin,
-/// so on is the Windows toggle-button vocabulary instead: the button stays
-/// filled, as a checked toolbar toggle does.
+/// The all-windows toggle (Mac's `.windows(filled:)` header button): two
+/// stacked windows, the front one filled while every window is shown. On/off
+/// is read from the glyph, never from a fill (Mac `PaneSidebarHeaderButton`),
+/// so the button fills only under the pointer, like its neighbours.
 fn paintScope(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     if (l.scope.width() <= 0) return;
     const state: icon_button.State = if (self.hoverIs(.scope))
@@ -3761,13 +3779,10 @@ fn paintScope(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t
         .normal;
     const inset = pane_sidebar.px(2, self.scale); // design system: fill inset xs
     const f: pane_sidebar.Rect = .{ .left = l.scope.left + inset, .top = l.scope.top + inset, .right = l.scope.right - inset, .bottom = l.scope.bottom - inset };
-    if (self.all_windows) {
-        const checked: icon_button.State = if (state == .normal) .hover else .pressed;
-        fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(checked, t.dark) * 2)));
-    } else if (icon_button.paintsFill(state)) {
+    if (icon_button.paintsFill(state)) {
         fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark))));
     }
-    glyph(hdc, self.scale, l.scope, glyph_windows, 12, t.text);
+    symbol(hdc, self.scale, l.scope, .{ .windows = self.all_windows }, header_symbol_dip, t.text);
 }
 
 /// The header's new-window + (T2323, Mac's `.plus` header button): a plain
@@ -3783,7 +3798,7 @@ fn paintAdd(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: 
     if (icon_button.paintsFill(state)) {
         fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark))));
     }
-    glyph(hdc, self.scale, l.add, glyph_add, 12, t.text);
+    symbol(hdc, self.scale, l.add, .plus, header_symbol_dip, t.text);
 }
 
 /// The outline's own furniture (T1829): the hairlines between windows and

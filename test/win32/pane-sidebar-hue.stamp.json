@@ -1,15 +1,15 @@
 {
     "guard":  "pane-sidebar-hue",
     "script":  "test/win32/pane-sidebar-hue.ps1",
-    "generated":  "2026-10-28T09:51:12-07:00",
-    "commit":  "6c522a9b6",
+    "generated":  "2026-10-28T11:45:10-07:00",
+    "commit":  "5e9f6a5b7",
     "uncommitted":  [
                         "src/apprt/win32/PaneSidebar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/HoverTint.zig":  "bb5ad3372e473089f0bf06ff3a27f0b7abfdcf999ea26878d033693846617a76",
                   "src/apprt/win32/pane_hue.zig":  "a9728a736592c2792ef3ccb3e6016b3101113454f68fc527f80568ed0a849e64",
-                  "src/apprt/win32/PaneSidebar.zig":  "111cc76dbc037f03762c66b1f962013a3bc4979e512bd8dce19e206dae5943e6",
+                  "src/apprt/win32/PaneSidebar.zig":  "e086ba25ffebad9373de73ae49f7870957e506d9845b1e1dbbb18bb71ba5711b",
                   "src/apprt/win32/PaneView.zig":  "2af884e92547f1413e77a22a652c51d3d21d224196b7fe863b0afb35a0d22f3d",
                   "test/win32/pane-sidebar-hue.ps1":  "576ac6eb12dee5b04364fdba582614f28dcf7b6a3967909c2f9518d49eccb88b"
               }

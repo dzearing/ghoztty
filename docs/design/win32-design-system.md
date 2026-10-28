@@ -516,6 +516,19 @@ grayscale AA, colored by the same state machine as before. Presence is
 **proven** (create/select/`GetTextFace`), never assumed — "ships with" is not
 "is present", and tofu in a chrome button is worse than a heavier chevron.
 
+**Exception: where the Mac draws its OWN icon, Windows draws the same path**
+(T2357). The font-first rule translates SF Symbols; it does not translate an
+icon set the Mac designed itself. The pane sidebar's `PaneSidebarSymbol`
+(a pane kind's icon, the collapse/expand toggle, the all-windows toggle, the
+header's +) is drawn on Mac from the design mock's 16-unit paths precisely
+because SF Symbols read as "a different family" — so a Fluent glyph standing
+in for one is the mismatch the user reported ("they don't match the mac
+icons"). Those come from `sidebar_symbol.zig`: the Mac's coordinates, its
+stroke widths, round caps and joins, antialiased by a distance field and laid
+over the DC by `sidebar_symbol_dc.zig`. Before reaching for a codepoint for a
+new Mac icon, check whether the Mac view is an `Image(systemName:)` (→ the
+nearest Fluent glyph) or a drawn path (→ port the path).
+
 The rules below govern the DRAWN FALLBACK (and any future glyph the icon font
 lacks). They still matter: the fallback is what a stripped-down VM shows, and
 its geometry discipline is why nobody notices the swap. The freedom of drawing

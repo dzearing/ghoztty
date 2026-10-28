@@ -1,10 +1,13 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-28T11:19:11-07:00",
-    "commit":  "3a75c7746",
+    "generated":  "2026-10-28T11:47:53-07:00",
+    "commit":  "5e9f6a5b7",
     "uncommitted":  [
-
+                        "src/apprt/unit_tests.zig",
+                        "src/apprt/win32/PaneSidebar.zig",
+                        "src/apprt/win32/sidebar_symbol.zig",
+                        "src/apprt/win32/sidebar_symbol_dc.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -78,7 +81,7 @@
                   "src/apprt/runtime.zig":  "0814accb262d8fdd4ed3e675dbcd9076177a9ac848e6a637c1505e8e22c30480",
                   "src/apprt/structs.zig":  "5690ddd03492459eb0416624b5a11ccba92e1f840a6b6c338e6983f08b4f5d61",
                   "src/apprt/surface.zig":  "bd93ba8529aafd9d372c5afbfba1662c33c0340ad441e64c3248cea7491eed7f",
-                  "src/apprt/unit_tests.zig":  "64e9eecde873648ba573c9eab00312aa6da9f2b7ba347b09870ee59ffcec2478",
+                  "src/apprt/unit_tests.zig":  "356c1f93597099e94dae5c35fb05ef3d55f994625f6853125842535abad538c7",
                   "src/apprt/win32.zig":  "e99c2651092bf4ecd3df44e9f2761764038840d0f781fa583ad8b1a85fb858ac",
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
                   "src/apprt/win32/activity_actions.zig":  "5f80de2b9778b8617c118db67fe75795b2296ca01d3b879845c73ca5b8d14981",
@@ -115,7 +118,7 @@
                   "src/apprt/win32/banner_markdown.zig":  "cc606914608fa4bca12b7c2efbc493c60bd37805d3cc3593d4b548139e28015d",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
                   "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
-                  "src/apprt/win32/BannerOverlay.zig":  "13d4a9e92415468ee5aa3f938b7023ca17cc770c077c570d98ed033b1bfdf862",
+                  "src/apprt/win32/BannerOverlay.zig":  "0aba91032beb030246d62ede6c7ee10613f2ae4352616ec7c933b8dceaa20e5a",
                   "src/apprt/win32/BannerScriptInstaller.zig":  "e349d9a86275fb68b44211120d5859a92e14dc2ce797f9060a8b5cd701cb923d",
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
                   "src/apprt/win32/bell_math.zig":  "5df36ed1e5391ddcb531e6defbca5307066e028546336ae371fe619ecdffce6d",
@@ -278,7 +281,7 @@
                   "src/apprt/win32/PaneDesk.zig":  "c1954071277e18d3d6579a3a0e364a59f0b24a9ec228277ca57c05ea1946ec86",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
-                  "src/apprt/win32/PaneSidebar.zig":  "111cc76dbc037f03762c66b1f962013a3bc4979e512bd8dce19e206dae5943e6",
+                  "src/apprt/win32/PaneSidebar.zig":  "e086ba25ffebad9373de73ae49f7870957e506d9845b1e1dbbb18bb71ba5711b",
                   "src/apprt/win32/PaneView.zig":  "2af884e92547f1413e77a22a652c51d3d21d224196b7fe863b0afb35a0d22f3d",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/persistence_notice.zig":  "65baba4beff952a6d9d9f9753a3bf254bc8f050a6d7430978339ebf9ec848840",
@@ -321,6 +324,8 @@
                   "src/apprt/win32/SessionRoster.zig":  "0940697e1144a42a514209de8de46529985a30f8168d40dc572e0c25138d75a4",
                   "src/apprt/win32/SessionRosterProbe.zig":  "97d287a7ceaf0131a0583b4a1e3ec77cd5234f010fae99c194c28dc5e8fb10c4",
                   "src/apprt/win32/ShareMachineRow.zig":  "563fd3175b8ee816706207a3a2151a32d76d3cf76661b49f9ed0365d34e5bebe",
+                  "src/apprt/win32/sidebar_symbol.zig":  "409104ecabd6ad2239e1e2a2b4abea68dfd04f5f34a05f9c22d9e8d07c09455e",
+                  "src/apprt/win32/sidebar_symbol_dc.zig":  "447c24a1d03d14aa36f129d54be56fa3766d97a50935ba022f67f1910671a89a",
                   "src/apprt/win32/skill_rewrite.zig":  "84a8fa995074cde7b625b6e72cda397d6d479e883a983f4f44f97360586368ab",
                   "src/apprt/win32/SkillComponent.zig":  "b345c4ec0c2cbf100fbf1833cae895426d557c50552010b131aca69276e31dfb",
                   "src/apprt/win32/source_checkout.zig":  "f7a91595696674da68899cbdf06a056d2f9f365b13a3d7d4cab69797ec49b4da",
