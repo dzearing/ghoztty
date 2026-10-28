@@ -7330,13 +7330,15 @@ fn endFrameWaitBatch(self: *Window) void {
 
 pub fn layoutSplits(self: *Window) void {
     if (self.tab_count == 0) return;
-    // Runs after every layout path below (including the hero/zoom early
-    // returns) so the dim overlays track pane rects and layout state.
-    defer {
-        var ov = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
-        self.updateDimOverlays();
-        if (ov) |*t| self.frame_overlay_us +|= t.read() / std.time.ns_per_us;
-    }
+    // Every layout path below re-glues the per-pane popups (dims, banners,
+    // badges) BEFORE it paints the divider bands (T2414). The popups sit
+    // above the window, so one still at its pre-pass rect covers the band
+    // just painted where the pane used to reach: a banner-high rectangle
+    // bitten out of the accent bar on every drag tick. Placed first, a popup
+    // only ever covers the band's OLD pixels, which the paint replaces. The
+    // trailing call is the fallback for a path that returns before painting.
+    var overlays_placed = false;
+    defer if (!overlays_placed) self.placePaneOverlays();
     // One wait for the whole pass instead of one per pane (T1343). Opened
     // unconditionally: a pass with no pane on the synchronous-present path
     // collects nothing and the close is a no-op.
@@ -7352,6 +7354,8 @@ pub fn layoutSplits(self: *Window) void {
                 self.applied_pane_style = self.paneStyle();
                 self.applyCardRegions(false, .redraw);
                 self.layoutHero(self.heroRect());
+                self.placePaneOverlays();
+                overlays_placed = true;
                 if (self.applied_pane_style == .elevated) if (self.hwnd) |hwnd| if (w32.GetDC(hwnd)) |dc| {
                     self.paintAlphaCorrect(dc, paintMovedBands);
                     _ = w32.ReleaseDC(hwnd, dc);
@@ -7363,6 +7367,8 @@ pub fn layoutSplits(self: *Window) void {
             self.applied_pane_style = .elevated;
             self.layoutHero(self.heroRect());
             self.cutCardRegions();
+            self.placePaneOverlays();
+            overlays_placed = true;
             if (self.hwnd) |hwnd| if (w32.GetDC(hwnd)) |dc| {
                 self.paintAlphaCorrect(dc, paintMovedBands);
                 _ = w32.ReleaseDC(hwnd, dc);
@@ -7402,6 +7408,8 @@ pub fn layoutSplits(self: *Window) void {
         }
         endPaneBatch(hdwp);
         self.cutCardRegions();
+        self.placePaneOverlays();
+        overlays_placed = true;
         // The zoomed pane is a card on the desk too (T1831), and its corners
         // moved with it - the same moved-pixels argument as the grid's pass.
         if (self.applied_pane_style == .elevated) if (self.hwnd) |hwnd| {
@@ -7428,6 +7436,9 @@ pub fn layoutSplits(self: *Window) void {
     endPaneBatch(hdwp);
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
     self.cutCardRegions();
+    // Before the bands are painted, never after (T2414, above).
+    self.placePaneOverlays();
+    overlays_placed = true;
 
     // Paint divider lines directly using GetDC (not BeginPaint, which
     // clips to the invalid region and misses the content area gaps).
@@ -7449,6 +7460,14 @@ pub fn layoutSplits(self: *Window) void {
         }
         if (paint_timer) |*t| self.frame_paint_us +|= t.read() / std.time.ns_per_us;
     }
+}
+
+/// `updateDimOverlays` for a layout pass, clocked as the pass's overlay cost
+/// (T1343).
+fn placePaneOverlays(self: *Window) void {
+    var ov = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+    self.updateDimOverlays();
+    if (ov) |*t| self.frame_overlay_us +|= t.read() / std.time.ns_per_us;
 }
 
 /// Show/hide/reposition the unfocused-split dim overlays (T74): every

@@ -37567,3 +37567,10 @@ moved to T1814.
   - menu-bar.ps1 has a new section J: Check for Updates from a focused terminal and from a focused viewer (focus asserted through `+list`). Each one logs `update check (manual)` and shows the answer dialog. ALL PASS (108). Positive control: the old dispatch fails exactly the J(viewer) rows.
   - New unit test "T2356: an app command from the menu never needs a focused terminal". Floor lanes lib/none/win32/agent PASS. Harness floor stamped green: the 4 stale-build rows were re-run on a fresh build, and asserted-nothing stays PENDING under T1568.
   - The due sweep's remaining reds match open tasks: overlay-zorder (T2300), pane-stack-strip D6 (T2334), viewer-narrow-pane A/E (T2380), frame-clock (T2370), arp-version (T2362), hook-json (T2318). frame-lab SKIPs while the user is at the box (T2396). test-reach was red only because its mirror predated T2357's unit_tests wiring, and it is green on re-run.
+
+- 2026-10-28 13:50 (lane b): T2414 done. Dragging a divider next to a pane banner no longer flickers a block of the pink bar (user report on win-v1.49.1).
+  - Cause: `layoutSplits` painted the divider bands, and only then did its trailing `defer` move the banner popups. On each tick a banner still at its old rect covered the band just painted where its pane used to reach.
+  - Fix: every layout path (grid, zoom, both hero shapes) calls `placePaneOverlays` after the pane batch and before the band paint. The `defer` is kept as a fallback.
+  - WGC bite probe (posted drag, banners on both panes, accent run on banner rows vs a terminal row): fixed build 0 bitten frames on 3 runs; pre-fix control 52 of 864. The box was idle (Get-UserPresence Present=False).
+  - pane-banner ALL PASS 181; floor lanes lib/none/win32/agent PASS. overlay-zorder red is T2300's known setup failure.
+  - T2028 stays open: the popups are top-level windows, so they cannot join the panes' defer batch.
