@@ -76,6 +76,27 @@ pub fn clampInset(strip_h: i32, slot_h: i32) i32 {
 /// under the card instead of hard against it — Mac parity, where the card's
 /// bottom margin is part of the measured banner height that pads the
 /// terminal down.
+/// The identity of the strip's rounded-corner window region (T1851): its
+/// size and corner diameter, or 0 for no region (a square corner). Equal keys
+/// mean the region in place is already the right one. Set ahead of a resize
+/// and again after it (T2400), the second call must find the first's key.
+pub fn cornerRegionKey(w: i32, h: i32, d: i32) u64 {
+    if (d <= 0) return 0;
+    return (@as(u64, @intCast(@max(w, 0))) << 40) |
+        (@as(u64, @intCast(@max(h, 0))) << 16) | @as(u64, @intCast(@min(d, 0xFFFF)));
+}
+
+test "corner region key: size and diameter identify it, a square corner is none" {
+    try std.testing.expectEqual(@as(u64, 0), cornerRegionKey(400, 40, 0));
+    const a = cornerRegionKey(400, 40, 12);
+    try std.testing.expect(a != 0);
+    try std.testing.expectEqual(a, cornerRegionKey(400, 40, 12));
+    // A widening strip (a divider drag) is a new region every tick.
+    try std.testing.expect(cornerRegionKey(406, 40, 12) != a);
+    try std.testing.expect(cornerRegionKey(400, 41, 12) != a);
+    try std.testing.expect(cornerRegionKey(400, 40, 13) != a);
+}
+
 pub fn bandHeight(card_h: i32, margin: i32) i32 {
     if (card_h <= 0) return 0;
     return card_h + @max(margin, 0) * 2;

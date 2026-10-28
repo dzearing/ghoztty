@@ -1,14 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-28T07:00:45-07:00",
-    "commit":  "4488917fa",
+    "generated":  "2026-10-28T09:03:49-07:00",
+    "commit":  "f22036623",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/update_apply.zig",
-                        "src/apprt/win32/update_install.zig",
-                        "src/apprt/win32/update_reopen.zig",
-                        "test/win32/seam-audit.registry.json"
+                        "src/apprt/win32/banner_layout.zig",
+                        "src/apprt/win32/BannerOverlay.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -41,12 +38,12 @@
                   "src/apprt/win32/background_zorder.zig":  "f365d4f6606a4f32c237ae49721ba46b6a7239e253fb205598df7a668e75d823",
                   "src/apprt/win32/banner_card.zig":  "9697c5e10f7cbd77852c8d9318f8f1e65bffb6e934d6c8a673ccefc4ae5cb53f",
                   "src/apprt/win32/banner_glide.zig":  "3975542db037c63aff42938225a925ca60996608cef458571279dd1b28126497",
-                  "src/apprt/win32/banner_layout.zig":  "9a4fef1af1553e28f590f3bd5efab4791d03bddea0122b0b53b2cf92cd80f195",
+                  "src/apprt/win32/banner_layout.zig":  "e0712800980cfe1e5ee1d679a5fd6aa0e12371891daa77e0f936b872faa87b52",
                   "src/apprt/win32/banner_link.zig":  "0ca33afdba886a50a930f6cdb93f79e2a066ad776ea1a68b1215239d4bf020a7",
                   "src/apprt/win32/banner_markdown.zig":  "cc606914608fa4bca12b7c2efbc493c60bd37805d3cc3593d4b548139e28015d",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
                   "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
-                  "src/apprt/win32/BannerOverlay.zig":  "f74e6b2f4b4eba2ba5ffdd7b3497ca340da914027fb863917dcff587f113627f",
+                  "src/apprt/win32/BannerOverlay.zig":  "b839854317a455379762330ee5e3fbd4cc753cfa83dea77000623ed69676ed75",
                   "src/apprt/win32/BannerScriptInstaller.zig":  "e349d9a86275fb68b44211120d5859a92e14dc2ce797f9060a8b5cd701cb923d",
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
                   "src/apprt/win32/bell_math.zig":  "5df36ed1e5391ddcb531e6defbca5307066e028546336ae371fe619ecdffce6d",

@@ -603,6 +603,11 @@ pub const BannerOverlay = struct {
         const was_shown = w32.IsWindowVisible_(self.hwnd) != 0;
         chrome_fanout.noteMove(.banner);
 
+        // The new size's corner region goes in FIRST, without a redraw, so
+        // the synchronous paint `place` does on a resize covers every pixel
+        // the strip gains (T2400). `applyCardCorner` below is then a no-op.
+        self.applyCardCornerSized(new_w, new_h, false);
+
         // Is this a RESIZE or just a move? (T456) A resize restyles every
         // pixel of the card; a move restyles none of them — so a resize drops
         // the stale blit (SWP_NOCOPYBITS) and repaints NOW rather than on the
@@ -718,22 +723,31 @@ pub const BannerOverlay = struct {
     fn applyCardCorner(self: *BannerOverlay) void {
         var wr: w32.RECT = undefined;
         if (w32.GetWindowRect(self.hwnd, &wr) == 0) return;
-        const w = wr.right - wr.left;
-        const h = wr.bottom - wr.top;
+        self.applyCardCornerSized(wr.right - wr.left, wr.bottom - wr.top, true);
+    }
+
+    /// Cut the corner region for a window of `w` x `h` (T1851). `redraw`
+    /// false is for a region set AHEAD of the resize it belongs to (T2400):
+    /// the resize's own synchronous paint then lands inside the new region.
+    /// Set after that paint instead, the paint was clipped to the OLD region,
+    /// so every pixel a widening strip gained stayed unpainted - black on
+    /// screen - until a pumped WM_PAINT, several frames of a divider drag
+    /// later: the black band beside the banner the user reported.
+    fn applyCardCornerSized(self: *BannerOverlay, w: i32, h: i32, redraw: bool) void {
         const d = self.card_corner;
-        const key: u64 = if (d <= 0) 0 else (@as(u64, @intCast(@max(w, 0))) << 40) |
-            (@as(u64, @intCast(@max(h, 0))) << 16) | @as(u64, @intCast(@min(d, 0xFFFF)));
+        const key = banner_layout.cornerRegionKey(w, h, d);
         if (key == self.card_region_key) return;
         self.card_region_key = key;
+        const r: w32.BOOL = if (redraw) 1 else 0;
         if (key == 0) {
-            _ = w32.SetWindowRgn(self.hwnd, null, 1);
+            _ = w32.SetWindowRgn(self.hwnd, null, r);
             return;
         }
         // The rounded rect runs a whole corner past the strip's bottom, so
         // only its top corners fall inside the window.
         const rgn = w32.CreateRoundRectRgn(0, 0, w + 1, h + d + 1, d, d) orelse return;
         // The system owns the region from here; it is never deleted.
-        if (w32.SetWindowRgn(self.hwnd, rgn, 1) == 0) _ = w32.DeleteObject(rgn);
+        if (w32.SetWindowRgn(self.hwnd, rgn, r) == 0) _ = w32.DeleteObject(rgn);
     }
 
     /// Total band height: the floating card (padding + content) plus the
