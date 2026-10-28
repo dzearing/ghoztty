@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-27T21:45:46-07:00",
-    "commit":  "8fc584ad9",
+    "generated":  "2026-10-27T23:15:10-07:00",
+    "commit":  "d3451ed7a",
     "uncommitted":  [
-                        "test/win32/frame-clock.ps1",
-                        "test/win32/msg-timer-ids.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -160,6 +159,7 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/frame-clock.ps1":  "59307834c3ab370225134eea48895e46e53f4898bf4d4a2c0662b40dcc859373",
+                  "test/win32/frame-score.ps1":  "52da37c6fdbfe72d9d34d02ab00d41203cbd3002c7ef2f68018dd95877f3d21c",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/gate-negatives.ps1":  "ed8cfa5ab5f844c029632d1eef9f09af09c9cb567f6ab32c8868d23cca854e47",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
@@ -253,6 +253,7 @@
                   "test/win32/lib/FixedPortAudit.ps1":  "5b8eae57bc3afba34e185140098cce1509f5a3ebca7d5e67d59f1c6d2ad21212",
                   "test/win32/lib/FloorFixture.ps1":  "e7e745f2744783f3ee1c00895cf9e9ae650d66d3e52ae0e0f5e956dad3bdb02b",
                   "test/win32/lib/ForegroundAudit.ps1":  "b47d5a5915dcac0a495c1ac13f441cd017f11c5b7d98efcd51c2e1bba72f5876",
+                  "test/win32/lib/FrameScore.ps1":  "d155e4a2e2abc33091a0c7e4836db69e554e09a915379701522a73bcc9f510d0",
                   "test/win32/lib/FreePort.ps1":  "1f6d3230171a1f76c1f1327e8ad01ddd9c65aba78cbe70f7b7716b9a1a2109c7",
                   "test/win32/lib/GuiPostmortem.ps1":  "a00924779898b364a5752d79eb725dc9f8c85ddc4cd3f3b71df27fefd886d3ca",
                   "test/win32/lib/HarnessLeak.ps1":  "7d78131136a0986cc41b13d24f273112f0d61098c4d9bd030b81b41db55c4b48",
@@ -347,7 +348,7 @@
                   "test/win32/pane-sidebar-motion-cost.ps1":  "3876019f1c5b333d7f95409c195a02164269315a1f52074e3aca1cc0b28cb02b",
                   "test/win32/pane-sidebar-persist.ps1":  "e110c253189883d03ea1436dff7487d2fcbce2ef9cf915d8f6550585c0802479",
                   "test/win32/pane-sidebar-rename.ps1":  "8bea43c40564a49034d1b8f5d627a1c3c24b353331c73b9c9b70e2f8e4f193a8",
-                  "test/win32/pane-sidebar-resize.ps1":  "16b5c693db78372831cdd88b1ad39b02b97dee1fffc8079a03c05f0ec04b4344",
+                  "test/win32/pane-sidebar-resize.ps1":  "c112507851727964f150b57943ff4c11d1b9b0d9b8a4d53a19be68217f3f6764",
                   "test/win32/pane-sidebar-scroll.ps1":  "7d154456b6ec5a0e25db1d2a010d9ca2891581066395d9144649053eceaa9329",
                   "test/win32/pane-sidebar-shared.ps1":  "c47f3a133689e53b0c8c87eee3c4acf783bcc644dac6ae6534f56897e8c4abd9",
                   "test/win32/pane-sidebar-this-window.ps1":  "b02abf87ab126db1d3f7f915684ba3bf00c35aeb15331cc067b1f6142336551e",

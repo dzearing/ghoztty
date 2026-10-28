@@ -1,13 +1,13 @@
 {
     "guard":  "pane-sidebar-hover-resync",
     "script":  "test/win32/pane-sidebar-hover-resync.ps1",
-    "generated":  "2026-10-27T20:20:35-07:00",
-    "commit":  "8fc584ad9",
+    "generated":  "2026-10-27T22:19:14-07:00",
+    "commit":  "d3451ed7a",
     "uncommitted":  [
-                        "src/apprt/win32/PaneSidebar.zig"
+
                     ],
     "files":  {
-                  "src/apprt/win32/PaneSidebar.zig":  "0d75804397e26e4dcd9b8a4d98c3202976f3ac250ee868abaa8b390d722af8a5",
+                  "src/apprt/win32/PaneSidebar.zig":  "4c1171bf63a7006a5077c25484cd92b974841bc9bff8ad08fdd6f6660f720cd6",
                   "test/win32/pane-sidebar-hover-resync.ps1":  "a05c2b4894385ba80ac8343db8817baf84fb27cabef9dd769164ebc54e27e551"
               }
 }

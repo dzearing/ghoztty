@@ -1,13 +1,13 @@
 {
     "guard":  "background-window-frame",
     "script":  "test/win32/background-window-frame.ps1",
-    "generated":  "2026-10-27T20:31:10-07:00",
-    "commit":  "8fc584ad9",
+    "generated":  "2026-10-27T22:21:13-07:00",
+    "commit":  "d3451ed7a",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
-                  "src/apprt/win32/Window.zig":  "fdb33107cc8dd1468764c2aafb8fd5ca36b031483913fdc2b8bf9a082ac3916a",
+                  "src/apprt/win32/Window.zig":  "62af5df1096a043cef03682e14fcd23fd9302c5513f039d5bde8a6061630a0df",
                   "src/apprt/win32/window_memory.zig":  "5525d3e747fd7a5e272f8de1c82754c9139652ccefa7a51f71efbe30a9452d3a",
                   "src/apprt/win32/window_placement.zig":  "bacb6516f8f2367c869bd63f85d2722fc0145907560f5dab4deac07554a2cb6e",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791"

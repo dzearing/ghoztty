@@ -1,15 +1,15 @@
 {
     "guard":  "sidebar-divider-tuck",
     "script":  "test/win32/sidebar-divider-tuck.ps1",
-    "generated":  "2026-10-27T20:30:42-07:00",
-    "commit":  "8fc584ad9",
+    "generated":  "2026-10-27T22:20:22-07:00",
+    "commit":  "d3451ed7a",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar.zig":  "5d224fe42c2450340c1825e7dc9766a0b4bb1f6f5b96549888de2126e5bd3714",
                   "src/apprt/win32/stack_drag.zig":  "e9c12988e8b1d380d6326fb2a0e77e2f8dc33c07728ac5c45011f1b8855669a1",
-                  "src/apprt/win32/Window.zig":  "fdb33107cc8dd1468764c2aafb8fd5ca36b031483913fdc2b8bf9a082ac3916a",
+                  "src/apprt/win32/Window.zig":  "62af5df1096a043cef03682e14fcd23fd9302c5513f039d5bde8a6061630a0df",
                   "test/win32/sidebar-divider-tuck.ps1":  "7ad507d8bd0a5c5690dd22984c819003693fc9ee04c09ccabce11aab01df3d0a"
               }
 }
