@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-28T07:45:34-07:00",
-    "commit":  "2156410e5",
+    "generated":  "2026-10-28T08:54:15-07:00",
+    "commit":  "442a3a627",
     "uncommitted":  [
 
                     ],
@@ -1140,7 +1140,7 @@
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/frame-capture.ps1":  "aa0fb1e741810094182f23694c57b55cff8a0b6e39be1e2bb61771fd3e94e65d",
                   "test/win32/frame-clock.ps1":  "59307834c3ab370225134eea48895e46e53f4898bf4d4a2c0662b40dcc859373",
-                  "test/win32/frame-lab.ps1":  "fe447deb2d3c689b6a08ff9595c26f045f1ff9861bd4c5b4b803087c28f5b096",
+                  "test/win32/frame-lab.ps1":  "3f6041638fc4a86c099e645052d8acc8ad9d889f9f8ecf98c071b1b7a117945e",
                   "test/win32/frame-lab-card.ps1":  "8a648e3b942b2fa23f15c39f5de6898da655256d6866ad3a22f9321ef4f8719c",
                   "test/win32/frame-lab-catalogue.ps1":  "d05be14346c2b972cb11adb4b0b4f41dbf72e3413a676699d0ef771fbd0edbb1",
                   "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
