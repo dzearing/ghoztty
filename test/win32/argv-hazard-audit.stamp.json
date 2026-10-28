@@ -1,8 +1,8 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-27T16:45:46-07:00",
-    "commit":  "a1afc6a6f",
+    "generated":  "2026-10-27T17:23:32-07:00",
+    "commit":  "5683e2d0d",
     "uncommitted":  [
 
                     ],

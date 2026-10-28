@@ -11,8 +11,12 @@
 #   3. The header's hover + splits the same way - one more pane.
 #   4. The header's chevron folds the panes away (no rows logged) and a
 #      second click brings them back.
-#   5. The header's hover x closes this window (a second window keeps the
-#      app alive to say so).
+#   4b. T2350 (Mac 32bc9a6b5): titled `proj: wt1`, beside a `proj: wt2`, the
+#      list puts the group's header (`P0@`, `pcount=2`) above the window's
+#      own; its chevron folds the group to that header alone and back, and
+#      its hover + opens a window in the group (`pcount=3`).
+#   5. The header's hover x closes this window - and only it, inside its
+#      group (a second window keeps the app alive to say so).
 #
 # Geometry comes from the `pane sidebar rows` log line, in the column's
 # client coordinates. Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and
@@ -251,9 +255,42 @@ try {
     Assert "unfolded: the three rows are back" ($null -ne $open -and @(Get-GridYs $open).Count -eq 3)
     Assert "unfolded: the rows hold the selection again, not the header (hsel=$($open.HSel))" ($null -ne $open -and $open.HSel -eq '0')
 
-    "== 5: the header's hover x closes this window"
+    "== 4b: a '<project>: <name>' window's list sits under its group's header (T2350, Mac 32bc9a6b5)"
     Assert "setup: wB opened to keep the app up ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wB --name=b1") -eq 0)
+    Assert "setup: wC opened ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wC --name=c1") -eq 0)
     Start-Sleep -Milliseconds 1200
+    Assert "setup: wC titled proj: wt2 ($(Get-CliErr))" ((Invoke-Cli "+rename --target=wC --title=`"proj: wt2`"") -eq 0)
+    Assert "setup: A is the active window" (Set-AActive $top)
+    $mark = Get-LogCount
+    Assert "setup: A titled proj: wt1 ($(Get-CliErr))" ((Invoke-Cli "+rename --target=window-1 --title=`"proj: wt1`"") -eq 0)
+    $gl = Wait-Log 'pane sidebar rows mode=expanded heads=P0@.* pcount=2' $mark 6000
+    $grouped = Read-Rows $gl
+    Assert "the group's header heads A's list, above A's own (heads: $(if ($gl -match ' heads=(\S*)') { $Matches[1] }))" ($null -ne $gl -and $gl -match ' heads=P0@-?\d+,(-?\d+);W0@-?\d+,(-?\d+);' -and [int]$Matches[1] -lt [int]$Matches[2])
+    Assert "...counting the whole group: two windows (pcount=2)" ($null -ne $gl)
+    $pchev = @(Read-Points $gl 'pchev') | Select-Object -First 1
+    $pha = @(Read-Points $gl 'pha') | Select-Object -First 1
+    Assert "...with its own chevron, + and x (pchev/pha/phx logged)" ($null -ne $pchev -and $null -ne $pha -and @(Read-Points $gl 'phx').Count -eq 1)
+    Assert "A's own header and its three rows stay under it" ($null -ne $grouped -and $grouped.Heads.Count -eq 1 -and @(Get-GridYs $grouped).Count -eq 3)
+    if ($null -eq $pchev -or $null -eq $grouped) { return }
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb $pchev)
+    Assert "the group's chevron folded it (log)" ($null -ne (Wait-Log 'pane sidebar fold$' $mark))
+    $pf = Wait-Log 'pane sidebar rows mode=expanded ' $mark
+    Assert "folded: the group's header alone - no window header, no rows ($pf)" ($null -ne $pf -and $pf -match ' heads=P0@-?\d+,-?\d+; items= ' -and $pf -match ' tray=-')
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb $pchev)
+    Assert "a second click unfolded it (log)" ($null -ne (Wait-Log 'pane sidebar unfold$' $mark))
+    $back = Read-Rows (Wait-Log 'pane sidebar rows mode=expanded heads=P0@' $mark)
+    Assert "unfolded: A's header and three rows are back" ($null -ne $back -and $back.Heads.Count -eq 1 -and @(Get-GridYs $back).Count -eq 3)
+    $windows = Get-AppWindowCount $app
+    Assert "setup: A is the active window" (Set-AActive $top)
+    $mark = Get-LogCount
+    [void](HoverClickAt $top $sb $pha)
+    Assert "the group's + opened a window in the group ($windows -> ?)" (Wait-Until { (Get-AppWindowCount $app) -eq $windows + 1 } 6000)
+    Assert "...and A's group header now counts three (pcount=3)" ($null -ne (Wait-Log 'pane sidebar rows mode=expanded heads=P0@.* pcount=3' $mark 6000))
+
+    "== 5: the header's hover x closes this window"
+    Start-Sleep -Milliseconds 600
     $windows = Get-AppWindowCount $app
     Assert "setup: A is the active window" (Set-AActive $top)
     $panel = Get-Rows 'expanded' 0

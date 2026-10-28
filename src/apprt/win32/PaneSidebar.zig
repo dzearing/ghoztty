@@ -878,6 +878,13 @@ pub fn refresh(self: *PaneSidebar) void {
     var name_buf: [name_cap]u8 = undefined;
     const name = groupName(win, win.active_tab, &name_buf);
     const folded = self.groupFolded(key, false);
+    // ...and a `<project>: <name>` window's list is under its group's header
+    // (T2350, Mac 32bc9a6b5): the group's window count and its fold - one
+    // fold for every list - are part of it too.
+    const split = outline.splitWindowTitle(name);
+    const project_key: u64 = if (split) |sp| projectKey(sp.project) else 0;
+    const project_size: usize = if (split) |sp| projectWindowCount(win.app, sp.project) else 0;
+    const project_folded = split != null and self.folded_projects.contains(project_key);
 
     var h = std.hash.Wyhash.init(0);
     h.update("one");
@@ -887,6 +894,9 @@ pub fn refresh(self: *PaneSidebar) void {
     h.update(std.mem.asBytes(&key));
     const fo: u8 = @intFromBool(folded);
     h.update(std.mem.asBytes(&fo));
+    h.update(std.mem.asBytes(&project_size));
+    const pf: u8 = @intFromBool(project_folded);
+    h.update(std.mem.asBytes(&pf));
     const sig = h.final();
     if (sig == self.signature) return;
     self.signature = sig;
@@ -896,14 +906,15 @@ pub fn refresh(self: *PaneSidebar) void {
         .tab = win.active_tab,
         .key = key,
         .wkey = window_order.windowKey(&win.tab_uuid[win.active_tab]),
+        .pkey = if (split) |sp| window_order.projectKey(sp.project) else .{},
         .label = &.{},
         .project = &.{},
-        .project_key = 0,
-        .project_size = 0,
+        .project_key = project_key,
+        .project_size = project_size,
         .panes = n,
         .own = true,
         .tabbed = win.tab_count > 1,
-    }, ownLabel(name), null);
+    }, ownLabel(name), if (split) |sp| sp.project else null);
     self.appendEntries(views[0..n], win, win.active_tab, 0, true, active);
     self.rosterChanged();
 }
@@ -1081,8 +1092,10 @@ fn logRows(self: *PaneSidebar) void {
     const w = fbs.writer();
     // This window's header (T2324): the outline line's `W` shape.
     w.print("mode={s} heads=", .{@tagName(l.mode)}) catch {};
+    // A grouped window's group header (T2350) logs as the outline's `P`.
     for (l.heads[0..l.head_count]) |hd| {
-        w.print("W{d}@{d},{d};", .{ hd.index, hd.rect.centerX(), hd.rect.centerY() }) catch break;
+        const k: u8 = if (hd.kind == .project) 'P' else 'W';
+        w.print("{c}{d}@{d},{d};", .{ k, hd.index, hd.rect.centerX(), hd.rect.centerY() }) catch break;
     }
     w.writeAll(" items=") catch {};
     for (self.entries.items[0..@min(l.count, self.entries.items.len)], 0..) |e, i| {
@@ -1094,11 +1107,17 @@ fn logRows(self: *PaneSidebar) void {
     w.print(" rules={d} scope={d},{d} add={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY(), l.add.centerX(), l.add.centerY() }) catch {};
     // The header's chevron, hover x and hover + (panel), and the rail's +
     // in its slot (`-` where there is none).
-    if (l.head_count > 0) {
-        const hd = l.heads[0];
-        const x = l.headClose(0, self.scale);
-        const a = l.headAdd(0, self.scale);
-        w.print(" chev={d},{d}; hx={d},{d}; ha={d},{d};", .{ hd.chevron.centerX(), hd.chevron.centerY(), x.centerX(), x.centerY(), a.centerX(), a.centerY() }) catch {};
+    // The window's header's, and its group header's as `p...` (T2350).
+    for (l.heads[0..l.head_count], 0..) |hd, k| {
+        const x = l.headClose(k, self.scale);
+        const a = l.headAdd(k, self.scale);
+        const r = l.headRename(k, self.scale);
+        if (hd.kind == .window) {
+            w.print(" chev={d},{d}; hx={d},{d}; ha={d},{d};", .{ hd.chevron.centerX(), hd.chevron.centerY(), x.centerX(), x.centerY(), a.centerX(), a.centerY() }) catch {};
+        } else {
+            const count = if (hd.index < self.groups.items.len) self.groups.items[hd.index].project_size else 0;
+            w.print(" pchev={d},{d}; phx={d},{d}; pha={d},{d}; phr={d},{d}; pcount={d}", .{ hd.chevron.centerX(), hd.chevron.centerY(), x.centerX(), x.centerY(), a.centerX(), a.centerY(), r.centerX(), r.centerY(), count }) catch {};
+        }
     }
     self.logPencils(w, &l);
     self.logHeadLook(w, &l);
@@ -1386,6 +1405,26 @@ fn ownLabel(name: []const u8) []const u8 {
     return if (outline.splitWindowTitle(name)) |sp| sp.worktree else name;
 }
 
+/// Whether window group `w`/`t` is listed under project `project` - the
+/// windows the all-windows list gathers (`refreshAll`), grouped by the same
+/// split of the same name.
+fn inProject(w: *Window, t: usize, project: []const u8) bool {
+    if (w.closing or w.is_quick_terminal) return false;
+    var nb: [name_cap]u8 = undefined;
+    const sp = outline.splitWindowTitle(groupName(w, t, &nb)) orelse return false;
+    return std.mem.eql(u8, sp.project, project);
+}
+
+/// How many windows project `project` holds: its header's count, in this
+/// window's own list as in all windows (T2350).
+fn projectWindowCount(app: *App, project: []const u8) usize {
+    var n: usize = 0;
+    for (app.windows.items) |w| for (0..w.tab_count) |t| {
+        if (inProject(w, t, project)) n += 1;
+    };
+    return n;
+}
+
 fn tabKey(w: *const Window, t: usize) u64 {
     return std.hash.Wyhash.hash(0x746162, &w.tab_uuid[t]);
 }
@@ -1551,7 +1590,10 @@ fn rawLayout(self: *PaneSidebar) pane_sidebar.Layout {
     // This window's header over its panes, or the rail's + in its slot
     // (T2324) - before the tray, which follows the rows it moves.
     if (lines == null and self.groups.items.len > 0) {
-        pane_sidebar.addThisWindowHead(&l, self.groupFolded(self.groups.items[0].key, false), self.metrics, self.scale);
+        // Under its group's header when it is in one (T2350).
+        const g = self.groups.items[0];
+        const group: ?bool = if (g.project.len > 0) self.folded_projects.contains(g.project_key) else null;
+        pane_sidebar.addThisWindowHeads(&l, self.groupFolded(g.key, false), group, self.metrics, self.scale);
     }
     // The empty tray is always there (T2276, Mac 543489bca): a drop target
     // says so before a drag starts, not only once one is under way.
@@ -5211,6 +5253,22 @@ fn closeHead(self: *PaneSidebar, k: usize) void {
     const head = self.groups.items[hd.index];
     var targets: [pane_sidebar.max_heads]App.QuietClose = undefined;
     var n: usize = 0;
+    // This window's own list holds one group; its project's header closes
+    // every window the header counts (T2350).
+    var pb: [name_cap]u8 = undefined;
+    if (!self.all_windows and hd.kind == .project) if (self.headProject(hd, &pb)) |project| {
+        // Copied: the name may be read from the first window's own title.
+        var copy: [name_cap]u8 = undefined;
+        const p = copy[0..@min(project.len, name_cap)];
+        @memcpy(p, project[0..p.len]);
+        for (self.window.app.windows.items) |w| for (0..w.tab_count) |t| {
+            if (n == targets.len or !inProject(w, t, p)) continue;
+            targets[n] = .{ .window = w, .tab = w.tab_uuid[t] };
+            n += 1;
+        };
+        log.info("pane sidebar close {s} windows={d}", .{ @tagName(hd.kind), n });
+        return self.window.app.closeTabsQuietly(targets[0..n]);
+    };
     for (self.groups.items) |g| {
         const mine = if (hd.kind == .project) g.project_key == head.project_key else g.key == head.key;
         if (!mine or n == targets.len) continue;

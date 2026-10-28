@@ -1,8 +1,8 @@
 {
     "guard":  "body-complete",
     "script":  "test/win32/body-complete-audit.ps1",
-    "generated":  "2026-10-27T16:42:24-07:00",
-    "commit":  "a1afc6a6f",
+    "generated":  "2026-10-27T17:20:52-07:00",
+    "commit":  "5683e2d0d",
     "uncommitted":  [
 
                     ],

@@ -1129,18 +1129,50 @@ fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, inse
 /// rail the header is its + alone (`rail_add`), in a slot the header's exact
 /// height, so collapsing or expanding still moves no icon. `folded`: the
 /// chevron folded the panes away - the panel only; the rail always shows its
-/// tiles, as Mac's does. Called on a fresh layout, before `addEmptyTray`; a
-/// no-op for the all-windows outline, whose heads are its own.
+/// tiles, as Mac's does. A no-op for the all-windows outline, whose heads
+/// are its own. A lone window's `addThisWindowHeads`.
 pub fn addThisWindowHead(l: *Layout, folded: bool, tm: TextMetrics, scale: f32) void {
+    addThisWindowHeads(l, folded, null, tm, scale);
+}
+
+/// `addThisWindowHead` for a window that may be in a project group (T2350,
+/// Mac 32bc9a6b5): `group` is null for a lone window, else whether its group
+/// is folded. A `<project>: <name>` window's own list puts the group's header
+/// above its own - laid out as the all-windows outline lays a project head
+/// over its first window, `header_gap_dip` between them - and a folded group
+/// shows that header alone: the window's header and its panes go with the
+/// fold, as they do in all windows. The panel only; the rail is unchanged,
+/// as Mac's is. Called on a fresh layout, before `addEmptyTray`.
+pub fn addThisWindowHeads(l: *Layout, folded: bool, group: ?bool, tm: TextMetrics, scale: f32) void {
     if (l.mode == .hidden or l.outline) return;
     const half = rowHalfGap(scale);
     // A pane pill's height, so every item is one (T2340, Mac c4dbe30be).
     const head_h = pillHeight(tm, scale);
     // The header's whole extent in the list, its gaps included (Mac
     // `PaneSidebarWindowHeader.height`): what everything under it moves by.
-    const extent = head_h + 2 * half;
-    const top = l.header.bottom;
+    var extent = head_h + 2 * half;
+    var top = l.header.bottom;
     const c = l.card;
+    l.head_count = 0;
+    if (l.mode == .expanded) if (group) |group_folded| {
+        const fill = px(toc.fill_inset_dip, scale);
+        const ph = projectHeadHeight(tm, scale);
+        const text_top = top + @divTrunc(ph - tm.caption_h, 2);
+        const cx = c.left + px(toc.label_inset_dip, scale);
+        l.heads[0] = placeHead(.project, 0, 0, .{ .left = c.left + fill, .top = top, .right = c.right - fill, .bottom = top + ph }, cx, text_top, tm.caption_h, scale);
+        l.head_count = 1;
+        if (group_folded) {
+            // Nothing of the window is left to show.
+            for (0..l.count) |i| l.items[i] = .{};
+            l.section_rule = null;
+            l.stashed_caption = null;
+            l.own_folded = true;
+            return;
+        }
+        const below = ph + px(header_gap_dip, scale);
+        top += below;
+        extent += below;
+    };
     if (l.mode == .mini) {
         const b = px(row_button_dip, scale);
         const x = c.left + @divTrunc(c.width() - b, 2);
@@ -1154,8 +1186,8 @@ pub fn addThisWindowHead(l: *Layout, folded: bool, tm: TextMetrics, scale: f32) 
     const y = top + half;
     const text_top = y + @divTrunc(head_h - tm.title_h, 2);
     const cx = c.left + px(toc.label_inset_dip, scale);
-    l.heads[0] = placeHead(.window, 0, 0, .{ .left = c.left + fill, .top = y, .right = c.right - fill, .bottom = y + head_h }, cx, text_top, tm.title_h, scale);
-    l.head_count = 1;
+    l.heads[l.head_count] = placeHead(.window, 0, @intFromBool(group != null), .{ .left = c.left + fill, .top = y, .right = c.right - fill, .bottom = y + head_h }, cx, text_top, tm.title_h, scale);
+    l.head_count += 1;
     if (folded) {
         // Its panes and its tray go with the fold.
         for (0..l.count) |i| l.items[i] = .{};
@@ -2099,6 +2131,96 @@ test "pane_sidebar: folding this window's header puts away its panes and its tra
     var rail = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
     addThisWindowHead(&rail, true, tm, s);
     for (0..items.len) |i| try testing.expect(rail.shown(i));
+}
+
+test "T2350: a grouped window's own list puts its group's header above its own, as all windows does (Mac 32bc9a6b5)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid } };
+    const lines = [_]Line{
+        .{ .kind = .project, .index = 0 },
+        .{ .kind = .window, .index = 0, .depth = 1 },
+        .{ .kind = .pane, .index = 0, .depth = 2 },
+        .{ .kind = .pane, .index = 1, .depth = 2 },
+    };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        var lone = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        addThisWindowHead(&lone, false, tm, s);
+        var l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        addThisWindowHeads(&l, false, false, tm, s);
+        try testing.expectEqual(@as(usize, 2), l.head_count);
+        const ph = l.heads[0];
+        const wh = l.heads[1];
+        try testing.expectEqual(HeadKind.project, ph.kind);
+        try testing.expectEqual(HeadKind.window, wh.kind);
+        // Both head group 0, this window: the project's buttons act on the
+        // group it is in.
+        try testing.expectEqual(@as(usize, 0), ph.index);
+        try testing.expectEqual(@as(usize, 0), wh.index);
+        // The group's header straight under the header band, a project
+        // band's height; the window's header under it as in all windows.
+        try testing.expectEqual(l.header.bottom, ph.rect.top);
+        try testing.expectEqual(projectHeadHeight(tm, s), ph.rect.height());
+        const outl = layoutWith(.expanded, px(240, s), px(900, s), &items, &lines, tm, s);
+        try testing.expectEqual(outl.heads[1].rect.top - outl.heads[0].rect.top, wh.rect.top - ph.rect.top);
+        try testing.expectEqual(outl.items[0].top - outl.heads[1].rect.top, l.items[0].top - wh.rect.top);
+        try testing.expectEqual(outl.indent[0], l.indent[0]);
+        // Every chevron in one column, and the window's header and rows
+        // exactly a lone window's, moved down by the group's band and gap.
+        try testing.expectEqual(wh.chevron.left, ph.chevron.left);
+        const below = projectHeadHeight(tm, s) + px(header_gap_dip, s);
+        try testing.expectEqual(lone.heads[0].rect.top + below, wh.rect.top);
+        try testing.expectEqual(lone.heads[0].label_x, wh.label_x);
+        for (0..items.len) |i| try testing.expectEqual(lone.items[i].top + below, l.items[i].top);
+        // The group's chevron folds it, its buttons are its own, and the
+        // window's header keeps its.
+        try testing.expectEqual(Hit{ .head_fold = 0 }, hitTest(&l, ph.chevron.centerX(), ph.chevron.centerY(), s));
+        const pa = l.headAdd(0, s);
+        try testing.expectEqual(Hit{ .head_add = 0 }, hitTest(&l, pa.centerX(), pa.centerY(), s));
+        const px_ = l.headClose(0, s);
+        try testing.expectEqual(Hit{ .head_close = 0 }, hitTest(&l, px_.centerX(), px_.centerY(), s));
+        const pr = l.headRename(0, s);
+        try testing.expectEqual(Hit{ .head_rename = 0 }, hitTest(&l, pr.centerX(), pr.centerY(), s));
+        try testing.expectEqual(Hit{ .head_fold = 1 }, hitTest(&l, wh.chevron.centerX(), wh.chevron.centerY(), s));
+        const wa = l.headAdd(1, s);
+        try testing.expectEqual(Hit{ .head_add = 1 }, hitTest(&l, wa.centerX(), wa.centerY(), s));
+    }
+}
+
+test "T2350: a folded group shows its header alone in the window's own list; a lone window and the rail are unchanged (Mac 32bc9a6b5)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        var l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        addThisWindowHeads(&l, false, true, tm, s);
+        addEmptyTray(&l, tm, s);
+        try testing.expectEqual(@as(usize, 1), l.head_count);
+        try testing.expectEqual(HeadKind.project, l.heads[0].kind);
+        for (0..items.len) |i| try testing.expect(!l.shown(i));
+        try testing.expectEqual(@as(?Rect, null), l.section_rule);
+        try testing.expectEqual(@as(?Rect, null), l.stashed_caption);
+        try testing.expectEqual(@as(?Rect, null), l.drop_slot);
+        // Folding the window inside an open group still keeps both headers.
+        var wf = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        addThisWindowHeads(&wf, true, false, tm, s);
+        try testing.expectEqual(@as(usize, 2), wf.head_count);
+        for (0..items.len) |i| try testing.expect(!wf.shown(i));
+        // No group: exactly `addThisWindowHead`.
+        var a = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        addThisWindowHead(&a, false, tm, s);
+        var b = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        addThisWindowHeads(&b, false, null, tm, s);
+        try testing.expectEqual(a.head_count, b.head_count);
+        try testing.expectEqual(a.heads[0], b.heads[0]);
+        for (0..items.len) |i| try testing.expectEqual(a.items[i], b.items[i]);
+        // The rail has no group header, folded or not: its + and tiles stay.
+        var ra = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
+        addThisWindowHead(&ra, false, tm, s);
+        var rb = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
+        addThisWindowHeads(&rb, false, true, tm, s);
+        try testing.expectEqual(@as(usize, 0), rb.head_count);
+        try testing.expectEqual(ra.rail_add, rb.rail_add);
+        for (0..items.len) |i| try testing.expectEqual(ra.items[i], rb.items[i]);
+    }
 }
 
 test "pane_sidebar: \"This Window\" is said only among other windows (T2324)" {
