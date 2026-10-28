@@ -180,8 +180,12 @@ public sealed class GliResult {
 public sealed class GliSendInputSink : IGliSink {
     [StructLayout(LayoutKind.Sequential)]
     struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
+    // No padding after the union member: sizeof(INPUT) is 40 on x64 (28 on
+    // x86) and SendInput refuses any other cbSize with ERROR_INVALID_PARAMETER.
+    // Two trailing ints here made it 48 and no point was ever sent (T2395).
     [StructLayout(LayoutKind.Sequential)]
-    struct INPUT { public uint type; public MOUSEINPUT mi; public int pad0, pad1; }
+    struct INPUT { public uint type; public MOUSEINPUT mi; }
+    public static int InputBytes { get { return Marshal.SizeOf(typeof(INPUT)); } }
     [StructLayout(LayoutKind.Sequential)]
     struct POINT { public int X, Y; }
     [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);

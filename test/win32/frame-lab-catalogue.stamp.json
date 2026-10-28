@@ -1,18 +1,18 @@
 {
     "guard":  "frame-lab-catalogue",
     "script":  "test/win32/frame-lab-catalogue.ps1",
-    "generated":  "2026-10-28T06:33:38-07:00",
-    "commit":  "a691d5f4d",
+    "generated":  "2026-10-28T07:32:33-07:00",
+    "commit":  "5e2791faf",
     "uncommitted":  [
-                        "test/win32/frame-lab-catalogue.ps1",
-                        "test/win32/lib/FrameLabCatalogue.ps1"
+                        "test/win32/lib/FrameLabInput.ps1",
+                        "test/win32/lib/FrameLabTrigger.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar_transition.zig":  "5c354024607b88c37aecca3191c8b4c68330a5057733fc79fa960315db153b0b",
                   "test/win32/frame-lab-catalogue.ps1":  "d05be14346c2b972cb11adb4b0b4f41dbf72e3413a676699d0ef771fbd0edbb1",
                   "test/win32/lib/FrameLabCatalogue.ps1":  "0188e232aeb602ddbe39438246f8f58c35e477e472f87f151720d1c832decea2",
-                  "test/win32/lib/FrameLabInput.ps1":  "c1c2ba58be0239eb329cb188574e45a2a934b348fc2e409a8414aaf0c6a89501",
-                  "test/win32/lib/FrameLabTrigger.ps1":  "4d80a100ab6c952d8aed014df598357fe427f4b7ea8af6487d44c050f8ecc567",
+                  "test/win32/lib/FrameLabInput.ps1":  "c10386b0534bbf823329a2801b8f86c8a5b0ef66fae405aa69663b7e9c2ab0f4",
+                  "test/win32/lib/FrameLabTrigger.ps1":  "e34b9a8562bf5e4266c62f7fa51d2b41b25976908a39f5310d250eedb78d2078",
                   "test/win32/lib/FrameScore.ps1":  "3d258467d7af8f82078399ad8753067b43fc051f25e9ea1581d29b411304e67c"
               }
 }

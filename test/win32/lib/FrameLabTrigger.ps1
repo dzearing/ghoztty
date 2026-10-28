@@ -77,7 +77,11 @@ public static class GltKeys {
     [StructLayout(LayoutKind.Sequential)]
     struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public IntPtr extra; }
     [StructLayout(LayoutKind.Sequential)]
-    struct INPUT { public uint type; public KEYBDINPUT ki; public int pad0, pad1, pad2; }
+    // KEYBDINPUT is 8 bytes short of MOUSEINPUT, the union's largest member:
+    // two ints make sizeof(INPUT) 40 on x64 (28 on x86). Three made it 48 and
+    // SendInput refused every chord with ERROR_INVALID_PARAMETER (T2395).
+    struct INPUT { public uint type; public KEYBDINPUT ki; public int pad0, pad1; }
+    public static int InputBytes { get { return Marshal.SizeOf(typeof(INPUT)); } }
     [StructLayout(LayoutKind.Sequential)]
     struct LASTINPUTINFO { public uint cbSize, dwTime; }
     [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);

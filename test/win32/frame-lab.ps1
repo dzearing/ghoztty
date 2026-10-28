@@ -132,8 +132,12 @@ public sealed class GflCalPoint {
 public static class GflCalibrate {
     [StructLayout(LayoutKind.Sequential)]
     struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
+    // No padding after the union member: sizeof(INPUT) is 40 on x64 (28 on
+    // x86) and SendInput refuses any other cbSize with ERROR_INVALID_PARAMETER.
+    // Two trailing ints here made it 48 and no point was ever sent (T2395).
     [StructLayout(LayoutKind.Sequential)]
-    struct INPUT { public uint type; public MOUSEINPUT mi; public int pad0, pad1; }
+    struct INPUT { public uint type; public MOUSEINPUT mi; }
+    public static int InputBytes { get { return Marshal.SizeOf(typeof(INPUT)); } }
     [StructLayout(LayoutKind.Sequential)]
     struct POINT { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)]
@@ -312,6 +316,15 @@ try {
 
     $d = Resolve-FrameLabDropControl -Stats (New-DropStats 0 0) -Account (New-DropAccount 10 $inside)
     Assert 'A7 a stall that never ran fails the control' (-not $d.Ok -and ($d.Reasons -join ' ') -match 'never ran') "$($d.Reasons -join '; ')"
+
+    # The first live run (T2395) sent nothing: every INPUT carried trailing pad
+    # ints, cbSize came out 48, and SendInput answered ERROR_INVALID_PARAMETER.
+    # Hold every SendInput struct in the lab to the size Windows checks.
+    Import-FrameLabTrigger
+    $want = $(if ([IntPtr]::Size -eq 8) { 40 } else { 28 })
+    $sizes = "pointer=$([GliSendInputSink]::InputBytes) calibrate=$([GflCalibrate]::InputBytes) keys=$([GltKeys]::InputBytes)"
+    Assert "A8 every SendInput INPUT the lab builds is sizeof(INPUT) = $want bytes, the only cbSize SendInput accepts" (
+        [GliSendInputSink]::InputBytes -eq $want -and [GflCalibrate]::InputBytes -eq $want -and [GltKeys]::InputBytes -eq $want) $sizes
 
     if ($PureOnly) {
         ''
