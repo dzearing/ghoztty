@@ -5435,8 +5435,36 @@ fn deinitHeroSnap(self: *ViewerPane) void {
 /// reads `GetClientRect` rather than taking the layout rect: the two agree
 /// only when the host window has already been moved, and the layout pass moves
 /// it first.
+/// What the viewer bound syncs in the current layout pass cost (T2448): the
+/// window resets it when a pass opens and reads it into the drag and glide
+/// perf lines. Split into the parts a sync is made of, because a viewer in a
+/// dragged row is resized on every pass and nothing had ever timed one.
+pub const SyncCost = struct {
+    count: u32 = 0,
+    total_ns: u64 = 0,
+    nav_ns: u64 = 0,
+    bounds_ns: u64 = 0,
+    toc_ns: u64 = 0,
+
+    pub fn reset(self: *SyncCost) void {
+        self.* = .{};
+    }
+};
+pub var sync_cost: SyncCost = .{};
+
+fn sinceNs(from: ?std.time.Instant) u64 {
+    const s = from orelse return 0;
+    const now = std.time.Instant.now() catch return 0;
+    return now.since(s);
+}
+
 pub fn syncBounds(self: *ViewerPane) void {
     const h = self.hwnd orelse return;
+    const t0 = std.time.Instant.now() catch null;
+    defer {
+        sync_cost.count +|= 1;
+        sync_cost.total_ns +|= sinceNs(t0);
+    }
     self.readScale();
     var r: w32.RECT = undefined;
     if (w32.GetClientRect(h, &r) == 0) return;
@@ -5447,11 +5475,13 @@ pub fn syncBounds(self: *ViewerPane) void {
     // covered), and follows the pane's width live.
     var top: i32 = 0;
     if (self.nav) |nav| {
+        const tn = std.time.Instant.now() catch null;
         nav.place(width, self.scale);
         top = @min(
             nav_layout.Layout.init(self.scale, width, nav.shown()).bar_h,
             height,
         );
+        sync_cost.nav_ns +|= sinceNs(tn);
     }
 
     // The composer takes the next band down, and reserves it the same way the
@@ -5467,12 +5497,14 @@ pub fn syncBounds(self: *ViewerPane) void {
     }
 
     if (self.controller) |c| {
+        const tb = std.time.Instant.now() catch null;
         _ = c.setBounds(.{
             .left = 0,
             .top = top,
             .right = width,
             .bottom = height,
         });
+        sync_cost.bounds_ns +|= sinceNs(tb);
     }
 
     // The find card follows the pane's width live too, and it is placed against
@@ -5488,7 +5520,11 @@ pub fn syncBounds(self: *ViewerPane) void {
 
     // The TOC card follows the pane's width LIVE — dragging a split divider
     // across 720 DIP flips it between its gutter and overlay layouts here.
-    if (self.pending) |p| self.updateTOC(p.alloc);
+    if (self.pending) |p| {
+        const tt = std.time.Instant.now() catch null;
+        self.updateTOC(p.alloc);
+        sync_cost.toc_ns +|= sinceNs(tt);
+    }
 }
 
 // -------------------------------------------------------------------------

@@ -136,6 +136,14 @@ pub const Sample = struct {
     /// Wall clock spent inside those moves (T1350) - the ceiling on what
     /// putting the chrome into fewer windows could save this tick.
     chrome_move_us: u64 = 0,
+    /// Viewer panes this tick resized (T2448), and what their bound syncs
+    /// cost: the nav bar's placement, the WebView2 controller's bounds and the
+    /// TOC card's relayout.
+    viewer_syncs: u32 = 0,
+    viewer_us: u64 = 0,
+    viewer_nav_us: u64 = 0,
+    viewer_bounds_us: u64 = 0,
+    viewer_toc_us: u64 = 0,
 
     /// Work the UI thread actually did, as opposed to waited for.
     pub fn workUs(self: Sample) u64 {
@@ -181,6 +189,11 @@ pub const Stats = struct {
     chrome_heals_max: u32 = 0,
     chrome_skipped_max: u32 = 0,
     chrome_move_us: u64 = 0,
+    viewer_syncs_max: u32 = 0,
+    viewer_us: u64 = 0,
+    viewer_nav_us: u64 = 0,
+    viewer_bounds_us: u64 = 0,
+    viewer_toc_us: u64 = 0,
 
     pub fn reset(self: *Stats) void {
         self.* = .{};
@@ -211,6 +224,11 @@ pub const Stats = struct {
         if (s.chrome_heals > self.chrome_heals_max) self.chrome_heals_max = s.chrome_heals;
         if (s.chrome_skipped > self.chrome_skipped_max) self.chrome_skipped_max = s.chrome_skipped;
         self.chrome_move_us += s.chrome_move_us;
+        if (s.viewer_syncs > self.viewer_syncs_max) self.viewer_syncs_max = s.viewer_syncs;
+        self.viewer_us += s.viewer_us;
+        self.viewer_nav_us += s.viewer_nav_us;
+        self.viewer_bounds_us += s.viewer_bounds_us;
+        self.viewer_toc_us += s.viewer_toc_us;
         if (s.overBudget()) self.over_budget += 1;
     }
 
@@ -252,6 +270,26 @@ pub const Stats = struct {
     pub fn meanOverlayUs(self: Stats) u64 {
         if (self.ticks == 0) return 0;
         return self.overlay_us / self.ticks;
+    }
+
+    pub fn meanViewerUs(self: Stats) u64 {
+        if (self.ticks == 0) return 0;
+        return self.viewer_us / self.ticks;
+    }
+
+    pub fn meanViewerNavUs(self: Stats) u64 {
+        if (self.ticks == 0) return 0;
+        return self.viewer_nav_us / self.ticks;
+    }
+
+    pub fn meanViewerBoundsUs(self: Stats) u64 {
+        if (self.ticks == 0) return 0;
+        return self.viewer_bounds_us / self.ticks;
+    }
+
+    pub fn meanViewerTocUs(self: Stats) u64 {
+        if (self.ticks == 0) return 0;
+        return self.viewer_toc_us / self.ticks;
     }
 
     pub fn meanResizeUs(self: Stats) u64 {
@@ -431,4 +469,103 @@ test "the chrome fan-out is carried as a per-tick maximum, not an average" {
     st.reset();
     try testing.expectEqual(@as(u32, 0), st.chrome_moves_max);
     try testing.expectEqual(@as(u32, 0), st.chrome_skipped_max);
+}
+
+/// The fold glide's own frames under a drag (T2448). A divider drag runs two
+/// clocks on the UI thread at once: the mouse's motion ticks (`Stats` above)
+/// and the glide's frame-clock ticks (`Window.stackSlideTick`), and the user
+/// sees the second. A motion tick that costs 60 ms delays the glide tick
+/// queued behind it, so the glide steps at the pass rate however cheap its own
+/// tick is - which is why this carries the GAP between ticks beside their cost.
+pub const GlideStats = struct {
+    ticks: u64 = 0,
+    total_us: u64 = 0,
+    max_us: u64 = 0,
+    /// Start-to-start gaps between consecutive ticks; `gaps` is one fewer than
+    /// `ticks`, since the first tick has no predecessor.
+    gaps: u64 = 0,
+    gap_total_us: u64 = 0,
+    max_gap_us: u64 = 0,
+    /// Gaps longer than two display periods: a frame the glide did not draw.
+    late: u64 = 0,
+    /// Ticks whose own pass resized a viewer pane, and what those resizes
+    /// cost summed over the glide.
+    viewer_ticks: u64 = 0,
+    viewer_us: u64 = 0,
+
+    pub fn reset(self: *GlideStats) void {
+        self.* = .{};
+    }
+
+    /// One glide tick that cost `cost_us`, `gap_us` after the tick before it
+    /// (null for the first tick of a glide), against a display period of
+    /// `period_us`.
+    pub fn record(self: *GlideStats, cost_us: u64, gap_us: ?u64, period_us: u64, viewer_us: ?u64) void {
+        self.ticks += 1;
+        self.total_us += cost_us;
+        if (cost_us > self.max_us) self.max_us = cost_us;
+        if (viewer_us) |v| {
+            self.viewer_ticks += 1;
+            self.viewer_us += v;
+        }
+        const g = gap_us orelse return;
+        self.gaps += 1;
+        self.gap_total_us += g;
+        if (g > self.max_gap_us) self.max_gap_us = g;
+        if (g > 2 * period_us) self.late += 1;
+    }
+
+    pub fn meanUs(self: GlideStats) u64 {
+        if (self.ticks == 0) return 0;
+        return self.total_us / self.ticks;
+    }
+
+    pub fn meanGapUs(self: GlideStats) u64 {
+        if (self.gaps == 0) return 0;
+        return self.gap_total_us / self.gaps;
+    }
+
+    /// Glide frames per second implied by the mean gap.
+    pub fn fps(self: GlideStats) u64 {
+        const g = self.meanGapUs();
+        if (g == 0) return 0;
+        return std.time.us_per_s / g;
+    }
+
+    /// `smooth` is the task's bar: no tick more than two periods after the
+    /// last one.
+    pub fn verdict(self: GlideStats) Verdict {
+        if (self.gaps == 0) return .no_data;
+        return if (self.late == 0) .smooth else .steppy;
+    }
+};
+
+test "a glide's gaps are measured between ticks, not from the first" {
+    var g: GlideStats = .{};
+    g.record(2_000, null, 16_667, null);
+    g.record(4_000, 16_000, 16_667, 1_500);
+    g.record(3_000, 18_000, 16_667, null);
+    try testing.expectEqual(@as(u64, 3), g.ticks);
+    try testing.expectEqual(@as(u64, 2), g.gaps);
+    try testing.expectEqual(@as(u64, 17_000), g.meanGapUs());
+    try testing.expectEqual(@as(u64, 3_000), g.meanUs());
+    try testing.expectEqual(@as(u64, 4_000), g.max_us);
+    try testing.expectEqual(@as(u64, 1), g.viewer_ticks);
+    try testing.expectEqual(@as(u64, 1_500), g.viewer_us);
+    try testing.expectEqual(@as(u64, 58), g.fps());
+    try testing.expectEqual(Verdict.smooth, g.verdict());
+}
+
+test "a gap past two periods is a late frame, and one makes the glide steppy" {
+    // The user's window (T2448): glide ticks 60-100 ms apart at 60 Hz.
+    var g: GlideStats = .{};
+    g.record(1_000, null, 16_667, null);
+    g.record(1_000, 33_000, 16_667, null);
+    try testing.expectEqual(Verdict.smooth, g.verdict());
+    g.record(1_000, 80_000, 16_667, null);
+    try testing.expectEqual(@as(u64, 1), g.late);
+    try testing.expectEqual(@as(u64, 80_000), g.max_gap_us);
+    try testing.expectEqual(Verdict.steppy, g.verdict());
+    g.reset();
+    try testing.expectEqual(Verdict.no_data, g.verdict());
 }

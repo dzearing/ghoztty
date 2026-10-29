@@ -148,6 +148,106 @@ desk_gen: u32 = 0,
 comp: ?Dib = null,
 /// `comp` as a translucent window shows it (T1852); only ever created there.
 out: ?Dib = null,
+/// What `comp` was last composed from (T2448), so a paint asked for the same
+/// picture blits it instead of composing it again. The window composes on
+/// every layout pass AND on the `WM_PAINT` that pass's invalidation queues,
+/// so under a glide every frame used to compose the same desk twice - each
+/// a full-window software pass, 28 ms of a 62 ms glide frame in a debug
+/// build.
+memo: Memo = .{},
+/// Paints served from the memo / composed, since the window last read them.
+memo_hits: u32 = 0,
+memo_misses: u32 = 0,
+
+/// Everything a compose reads besides the desk bitmap itself, held by value
+/// and compared field by field: a byte compare of these structs would read
+/// their padding, which is not the same twice.
+const Memo = struct {
+    const MAX_CARDS = 64;
+    const MAX_STRIPS = 64;
+    valid: bool = false,
+    w: i32 = 0,
+    h: i32 = 0,
+    desk_gen: u32 = 0,
+    cards: [MAX_CARDS]pane_elevation.Card = undefined,
+    cards_len: usize = 0,
+    strips: [MAX_STRIPS]pane_stack_strip.Band = undefined,
+    strips_len: usize = 0,
+    fill: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
+    is_light: bool = false,
+    scale: f32 = 0,
+    glass: bool = false,
+    glows: [2]pane_elevation.Glow = undefined,
+    glows_len: usize = 0,
+    bar: ?Bar = null,
+    lights: [MAX_LIGHTS]LightGeometry = undefined,
+    lights_len: usize = 0,
+
+    /// What a light's ring is built from; its colour and head are applied
+    /// over the composed pixels every paint, so they are not part of it.
+    const LightGeometry = struct { key: usize, card: pane_elevation.Card, shape: busy_light.Shape };
+
+    fn matches(
+        m: *const Memo,
+        w: i32,
+        h: i32,
+        desk_gen: u32,
+        cards: []const pane_elevation.Card,
+        strips: []const pane_stack_strip.Band,
+        style: pane_elevation.CardStyle,
+        bar: ?Bar,
+        lights: []const Light,
+    ) bool {
+        if (!m.valid or m.w != w or m.h != h or m.desk_gen != desk_gen) return false;
+        if (m.cards_len != cards.len or m.strips_len != strips.len) return false;
+        if (m.glows_len != style.glows.len or m.lights_len != @min(lights.len, MAX_LIGHTS)) return false;
+        if (!std.meta.eql(m.fill, style.fill) or m.is_light != style.is_light or
+            m.scale != style.scale or m.glass != style.glass) return false;
+        if (!std.meta.eql(m.bar, bar)) return false;
+        for (cards, m.cards[0..m.cards_len]) |a, b| if (!std.meta.eql(a, b)) return false;
+        for (strips, m.strips[0..m.strips_len]) |a, b| if (!std.meta.eql(a, b)) return false;
+        for (style.glows, m.glows[0..m.glows_len]) |a, b| if (!std.meta.eql(a, b)) return false;
+        for (lights[0..m.lights_len], m.lights[0..m.lights_len]) |a, b| {
+            if (a.key != b.key or !std.meta.eql(a.card, b.card) or !std.meta.eql(a.shape, b.shape)) return false;
+        }
+        return true;
+    }
+
+    /// Remember a compose's inputs; one that does not fit leaves the memo
+    /// invalid, so an oversized grid composes every time as it always did.
+    fn store(
+        m: *Memo,
+        w: i32,
+        h: i32,
+        desk_gen: u32,
+        cards: []const pane_elevation.Card,
+        strips: []const pane_stack_strip.Band,
+        style: pane_elevation.CardStyle,
+        bar: ?Bar,
+        lights: []const Light,
+    ) void {
+        m.valid = false;
+        if (cards.len > MAX_CARDS or strips.len > MAX_STRIPS or style.glows.len > m.glows.len) return;
+        m.w = w;
+        m.h = h;
+        m.desk_gen = desk_gen;
+        @memcpy(m.cards[0..cards.len], cards);
+        m.cards_len = cards.len;
+        @memcpy(m.strips[0..strips.len], strips);
+        m.strips_len = strips.len;
+        m.fill = style.fill;
+        m.is_light = style.is_light;
+        m.scale = style.scale;
+        m.glass = style.glass;
+        @memcpy(m.glows[0..style.glows.len], style.glows);
+        m.glows_len = style.glows.len;
+        m.bar = bar;
+        const nl = @min(lights.len, MAX_LIGHTS);
+        for (lights[0..nl], 0..) |l, i| m.lights[i] = .{ .key = l.key, .card = l.card, .shape = l.shape };
+        m.lights_len = nl;
+        m.valid = true;
+    }
+};
 
 /// The gradient alone, as the pane sidebar paints under itself (T1850): the
 /// desk runs under the sidebar's column, and the sidebar is a child window
@@ -218,7 +318,20 @@ pub fn paint(
 ) void {
     if (w <= 0 or h <= 0) return;
     const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
+    const fresh = self.comp == null or self.comp.?.w != w or self.comp.?.h != h;
     const comp = self.ensureComp(w, h) orelse return;
+    // The same picture as last time (T2448): the lights' rings are re-drawn
+    // over their cached bases at this paint's head, and the composed pixels
+    // under them are already right.
+    if (!fresh and self.memo.matches(w, h, self.desk_gen, cards, strips, style, bar, lights)) {
+        self.memo_hits +|= 1;
+        for (self.lights[0..self.light_n], lights[0..self.light_n]) |*c, l| {
+            c.color = l.color;
+            busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
+        }
+        return self.blit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
+    }
+    self.memo_misses +|= 1;
     @memcpy(comp.pixels(), desk.pixels());
     pane_elevation.paintCards(comp.pixels(), @intCast(w), @intCast(h), cards, style);
     const radius = pane_elevation.radiusPx(style.scale);
@@ -238,6 +351,12 @@ pub fn paint(
     if (bar) |b| gutter_bar.paint(comp.pixels(), @intCast(w), @intCast(h), b.core, b.color, style.scale, b.strength);
     self.syncLights(comp, lights, style.scale);
     for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
+    self.memo.store(w, h, self.desk_gen, cards, strips, style, bar, lights);
+    self.blit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
+}
+
+/// `comp` onto the window - through `out` on a translucent one (T1852).
+fn blit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: i32, comp: Dib, desk: Dib, opacity: ?u8) void {
     if (opacity) |o| {
         const out = self.ensureOut(w, h) orelse return;
         desk_palette.translucentSpan(out.pixels(), comp.pixels(), desk.pixels(), o);
@@ -438,4 +557,41 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
     self.desk_light = is_light;
     self.desk_variant = variant;
     return full;
+}
+
+test "T2448: the desk memo matches the same inputs and nothing else" {
+    const testing = std.testing;
+    var m: Memo = .{};
+    var cards = [_]pane_elevation.Card{
+        .{ .left = 0, .top = 0, .right = 100, .bottom = 80 },
+        .{ .left = 110, .top = 0, .right = 200, .bottom = 80, .shadow = 0.5 },
+    };
+    const glows = [_]pane_elevation.Glow{.{ .card = 0, .level = 1 }};
+    const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 1, .g = 2, .b = 3 }, .is_light = false, .scale = 1, .glows = &glows };
+    const strips = [_]pane_stack_strip.Band{};
+    const lights = [_]Light{};
+
+    try testing.expect(!m.matches(300, 100, 1, &cards, &strips, style, null, &lights));
+    m.store(300, 100, 1, &cards, &strips, style, null, &lights);
+    try testing.expect(m.matches(300, 100, 1, &cards, &strips, style, null, &lights));
+
+    // A card one pixel over, a new desk, another size, a lit bar, a glow
+    // mid-fade: each is a different picture.
+    var moved = cards;
+    moved[1].left += 1;
+    try testing.expect(!m.matches(300, 100, 1, &moved, &strips, style, null, &lights));
+    try testing.expect(!m.matches(300, 100, 2, &cards, &strips, style, null, &lights));
+    try testing.expect(!m.matches(301, 100, 1, &cards, &strips, style, null, &lights));
+    const bar: Bar = .{ .core = .{ .left = 100, .top = 0, .right = 110, .bottom = 80 }, .color = .{ .r = 9, .g = 9, .b = 9 }, .strength = .drag };
+    try testing.expect(!m.matches(300, 100, 1, &cards, &strips, style, bar, &lights));
+    var fading = style;
+    const half = [_]pane_elevation.Glow{.{ .card = 0, .level = 0.5 }};
+    fading.glows = &half;
+    try testing.expect(!m.matches(300, 100, 1, &cards, &strips, fading, null, &lights));
+
+    // A grid too big to remember is composed every time.
+    var many: [Memo.MAX_CARDS + 1]pane_elevation.Card = undefined;
+    for (&many) |*c| c.* = cards[0];
+    m.store(300, 100, 1, &many, &strips, style, null, &lights);
+    try testing.expect(!m.matches(300, 100, 1, &many, &strips, style, null, &lights));
 }

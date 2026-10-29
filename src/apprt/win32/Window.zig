@@ -730,6 +730,19 @@ grip_drag: ?GripDrag = null,
 /// motion tick and reported once at drag end. Gated on `GHOZTTY_PERF` like
 /// every other measurement on this thread, so an ordinary drag pays a bool.
 drag_stats: drag_perf.Stats = .{},
+/// The fold glide's frames over the same drag (T2448): when each tick ran and
+/// what it cost, because a drag's motion passes delay the glide queued behind
+/// them and that is the stepping the user sees.
+glide_stats: drag_perf.GlideStats = .{},
+glide_tick_prev: ?std.time.Instant = null,
+/// Motion ticks of this drag that left their layout to the running glide
+/// (`layoutDragStep`, T2448).
+drag_layout_deferred: u32 = 0,
+/// A deferred motion the glide has not laid out yet.
+drag_layout_pending: bool = false,
+/// The window's own `WM_PAINT`s during this drag, and what they cost.
+drag_wm_paints: u32 = 0,
+drag_wm_paint_us: u64 = 0,
 drag_perf_on: bool = false,
 
 /// Frame waits owed by the layout pass currently running (T1343).
@@ -7191,6 +7204,54 @@ fn reportDragCost(self: *Window, comptime what: []const u8) void {
         .steppy => log.info(fmt, args),
         else => log.debug(fmt, args),
     }
+    // T2448: the viewer panes' share of the same ticks, on a line of its own
+    // (the line above is at the formatter's argument limit).
+    if (st.viewer_syncs_max > 0) log.info(
+        what ++ " drag viewers={d} mean_viewer_us={d} mean_viewer_nav_us={d} " ++
+            "mean_viewer_bounds_us={d} mean_viewer_toc_us={d} mean_us={d}",
+        .{
+            st.viewer_syncs_max,
+            st.meanViewerUs(),
+            st.meanViewerNavUs(),
+            st.meanViewerBoundsUs(),
+            st.meanViewerTocUs(),
+            st.meanUs(),
+        },
+    );
+    self.reportGlideCost(what);
+}
+
+/// The fold glide's frames over the drag that just ended (T2448), in the same
+/// shape as the drag line above. Silent when no glide ran.
+fn reportGlideCost(self: *Window, comptime what: []const u8) void {
+    const g = self.glide_stats;
+    defer self.glide_stats.reset();
+    if (!self.drag_perf_on or g.ticks == 0) return;
+    const fmt = what ++ " glide ticks={d} mean_us={d} max_us={d} mean_gap_us={d} " ++
+        "max_gap_us={d} late={d} fps={d} viewer_ticks={d} viewer_us={d} period_us={d} " ++
+        "deferred_moves={d} wm_paints={d} wm_paint_us={d} desk_composed={d} desk_reused={d} verdict={s}";
+    const args = .{
+        g.ticks,
+        g.meanUs(),
+        g.max_us,
+        g.meanGapUs(),
+        g.max_gap_us,
+        g.late,
+        g.fps(),
+        g.viewer_ticks,
+        g.viewer_us,
+        FrameClock.periodNs() / std.time.ns_per_us,
+        self.drag_layout_deferred,
+        self.drag_wm_paints,
+        if (self.drag_wm_paints > 0) self.drag_wm_paint_us / self.drag_wm_paints else 0,
+        self.pane_desk.memo_misses,
+        self.pane_desk.memo_hits,
+        @tagName(g.verdict()),
+    };
+    switch (g.verdict()) {
+        .steppy => log.info(fmt, args),
+        else => log.debug(fmt, args),
+    }
 }
 
 /// Open a frame-wait batch for one layout pass (T1343). Nested passes join the
@@ -7215,6 +7276,8 @@ fn beginFrameWaitBatch(self: *Window) void {
         self.frame_place_us = 0;
         self.frame_paint_us = 0;
         self.frame_cards_us = 0;
+        // T2448: and the viewer panes' bound syncs the pass sets off.
+        ViewerPane.sync_cost.reset();
         // T1345: and the chrome fan-out this pass will pay for — the window
         // moves, layered blits and z-order walks the per-pane popups cost.
         chrome_fanout.state.counts.reset();
@@ -7503,9 +7566,24 @@ pub fn layoutSplits(self: *Window) void {
         if (hdc) |dc| {
             self.paintAlphaCorrect(dc, paintMovedBands);
             _ = w32.ReleaseDC(hwnd, dc);
+            // What this pass just painted is current, so the paint its own pane
+            // moves queued there (the parent pixels a moved child exposes) has
+            // nothing left to draw (T2448). Under a glide that queued paint
+            // composed the whole desk a second time on every frame.
+            if (self.movedBandsRect()) |done| _ = w32.ValidateRect(hwnd, &done);
         }
         if (paint_timer) |*t| self.frame_paint_us +|= t.read() / std.time.ns_per_us;
     }
+}
+
+/// The part of the client area `paintMovedBands` is known to repaint whole:
+/// the desk below the chrome, in the elevated style. Null in the flat style,
+/// whose divider paint skips an unsplit or zoomed tab.
+fn movedBandsRect(self: *const Window) ?w32.RECT {
+    if (self.paneStyle() != .elevated) return null;
+    var r = self.deskRect();
+    r.top = @max(r.top, self.chromeHeight());
+    return r;
 }
 
 /// `updateDimOverlays` for a layout pass, clocked as the pass's overlay cost
@@ -8639,6 +8717,7 @@ fn runStackSlide(self: *Window) void {
 /// their slots - and the next layout the hand makes wakes it.
 fn restStackSlide(self: *Window) void {
     self.stack_slide_last = null;
+    self.glide_tick_prev = null;
     if (self.hwnd) |h| FrameClock.disarm(h, STACK_SLIDE_TIMER_ID);
 }
 
@@ -8698,6 +8777,20 @@ fn stackSlideTick(self: *Window) void {
     // frame time the user's window had under a drag, on a box whose own
     // frames are quick.
     if (self.stack_slide_dt_ms) |ms| dt = ms;
+    // T2448: time this tick, and its distance from the last one, for the
+    // glide line `reportGlideCost` writes when the drag ends.
+    const gap_us: ?u64 = if (self.glide_tick_prev) |p| now.since(p) / std.time.ns_per_us else null;
+    self.glide_tick_prev = now;
+    defer if (self.drag_perf_on) {
+        const cost_us = if (std.time.Instant.now()) |e| e.since(now) / std.time.ns_per_us else |_| 0;
+        const vc = ViewerPane.sync_cost;
+        self.glide_stats.record(
+            cost_us,
+            gap_us,
+            FrameClock.periodNs() / std.time.ns_per_us,
+            if (vc.count > 0) vc.total_ns / std.time.ns_per_us else null,
+        );
+    };
     const done = s.step(dt);
     // The acceptance oracle (pane-sidebar-glide.ps1, T2417): a strip that
     // stays a strip moves through the glide rather than jumping.
@@ -8707,6 +8800,7 @@ fn stackSlideTick(self: *Window) void {
     if (done) {
         if (self.stackGesturing()) self.restStackSlide() else self.endStackSlide();
     }
+    self.drag_layout_pending = false;
     // Watched (T2359): the tick that lands a sidebar glide resizes each card
     // to its slot, and a glide under a drag resizes on every tick - each pane
     // waits for its frame at the new size. A tick that only moves cards
@@ -10506,6 +10600,13 @@ fn updateDividerHover(self: *Window, x: i32, y: i32) void {
 
 fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layout: SplitTree(PaneView).Split.Layout) void {
     self.dragging_split = true;
+    // T2448: the glide line covers this drag's glide, not a glide before it.
+    self.glide_stats.reset();
+    self.drag_layout_deferred = 0;
+    self.drag_wm_paints = 0;
+    self.drag_wm_paint_us = 0;
+    self.pane_desk.memo_hits = 0;
+    self.pane_desk.memo_misses = 0;
     self.drag_split_handle = handle;
     self.drag_split_layout = layout;
     self.adoptDisplayedRatios();
@@ -10638,6 +10739,11 @@ fn recordDragTick(self: *Window, tick_us: u64) void {
         .chrome_skipped = chrome_fanout.state.counts.blits_skipped +|
             chrome_fanout.state.counts.heals_skipped,
         .chrome_move_us = chrome_fanout.state.counts.move_ns / std.time.ns_per_us,
+        .viewer_syncs = ViewerPane.sync_cost.count,
+        .viewer_us = ViewerPane.sync_cost.total_ns / std.time.ns_per_us,
+        .viewer_nav_us = ViewerPane.sync_cost.nav_ns / std.time.ns_per_us,
+        .viewer_bounds_us = ViewerPane.sync_cost.bounds_ns / std.time.ns_per_us,
+        .viewer_toc_us = ViewerPane.sync_cost.toc_ns / std.time.ns_per_us,
     });
 }
 
@@ -10666,9 +10772,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
         self.applyRowDrag(step);
         self.rowDragStepped(step);
         if (step.restacked) log.info("divider drag run={d}..{d} of {d}", .{ rd.run.lo, rd.run.hi, rd.row.items.len });
-        var lt = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
-        self.layoutSplitsLive();
-        if (lt) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
+        self.layoutDragStep();
         return;
     }
 
@@ -10712,6 +10816,23 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
             @floatCast(a.ratio),
         );
     }
+    self.layoutDragStep();
+}
+
+/// Lay out what a drag's motion tick just changed - unless the fold glide's
+/// clock is running, which lays the window out on its next frame anyway
+/// (T2448). A mouse move and a glide frame each used to run a full layout
+/// pass, one behind the other on the UI thread, so the glide drew one frame
+/// per pair of passes: 60-100 ms apart in the user's window, where a pass
+/// cost 30-50. Left to the glide, the motion lands at most a frame later, in
+/// the same pass that moves the cards.
+fn layoutDragStep(self: *Window) void {
+    if (self.stack_slide_last != null and self.stack_slide != null) {
+        self.drag_layout_deferred +|= 1;
+        self.drag_layout_pending = true;
+        return;
+    }
+    self.drag_layout_pending = false;
     var lt = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
     self.layoutSplitsLive();
     if (lt) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
@@ -10723,6 +10844,9 @@ fn endDividerDrag(self: *Window) void {
     self.drag_node_len = 0;
     self.endRowDrag();
     self.stackDragEnded();
+    // A motion left to a glide that has now ended is laid out here (T2448).
+    if (self.drag_layout_pending and self.stack_slide_last == null) self.layoutSplitsLive();
+    self.drag_layout_pending = false;
     self.reportDragCost("divider");
     _ = w32.ReleaseCapture();
     // Re-derive hover from where the pointer actually ended up: the ratio is
@@ -12949,7 +13073,13 @@ fn paintWindow(self: *Window) void {
     const hdc_screen = w32.BeginPaint(hwnd, &ps) orelse return;
     defer _ = w32.EndPaint(hwnd, &ps);
 
+    // T2448: a paint between two glide frames is time the glide waits for.
+    var t = if (self.drag_perf_on and self.dragging_split) std.time.Timer.start() catch null else null;
     self.paintChromeInto(hdc_screen);
+    if (t) |*tt| {
+        self.drag_wm_paints +|= 1;
+        self.drag_wm_paint_us +|= tt.read() / std.time.ns_per_us;
+    }
 }
 
 /// Every owner-painted pixel of the window chrome, into whichever DC it is
