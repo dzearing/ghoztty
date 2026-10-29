@@ -574,3 +574,12 @@ as the digest that showed them.
 - New windows open on the screen you are using (maximize on the monitor holding the window you came from)
 - An update that will not start puts the old version back (automatic rollback when the new version fails to open, with a note in the window)
 - A maximized window appears at full size (first frame already full-screen, no start-small-then-jump)
+
+## 2026-10-29
+
+- Know when your report is fixed (new angle on release notes: an update that carries a fix for something you reported says so in one line in the window)
+- Show me that glitch (one key saves the last two seconds of the window as a clip with frame timings, for a report)
+- Choose how often updates are offered (as they ship / once a day / once a week)
+- An update that runs slower says so (folds and drags measured against the last version; a note offers the previous release)
+- Smooth on both monitors (glides switch to the refresh rate of the screen a window moves onto, no stutter crossing)
+- Windows you are not watching skip the animation (covered or minimized windows finish folds and slides in one step)
