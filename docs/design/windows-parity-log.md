@@ -37626,3 +37626,6 @@ moved to T1814.
 
 - 2026-10-28 19:40 lane b, T2418 part 1: old divider gutters are now filled with background under the pane that grew over them (Window.zig clearVacatedGutters), so a lagging pane no longer shows a trail of old bars. Real-pointer camera: 0 ghost frames with and without banners. Still open on T2418: mid-drag the right pane shows its old-size frame at the new rect. Due sweep: overlay-zorder/arp-version/frame-clock/pane-stack-strip/viewer-narrow-pane/hook-json red and unrelated, acked to T2354/T2362/T2430/T2431/T2380/T2433 (T2432 closed as dup of T2380).
 
+- **2026-10-28 T2407 (lane a)**: the collapsed sidebar rail's + now follows the scope, as Mac 6bd2962eb does: a pane in Panes, a new window in All Windows.
+  - Panes already matched (T2324); the all-windows rail had no + at all. `layoutMini` now lays one above every window, in a window header's slot, so its tiles start where a lone window's do; click and tooltip go through `pane_sidebar_add.railAdd`, and the outline log carries `radd=`.
+  - Validation: unit tests in pane_sidebar.zig / pane_sidebar_add.zig; section 7b of pane-sidebar-all-windows.ps1 clicks it and counts a fourth window (ALL PASS 114); pane-sidebar-this-window.ps1 ALL PASS 53.

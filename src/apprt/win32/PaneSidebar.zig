@@ -1028,6 +1028,10 @@ fn logOutline(self: *PaneSidebar) void {
         w.print("{d},{d};", .{ a.centerX(), a.centerY() }) catch break;
     }
     w.print(" add={d},{d}", .{ l.add.centerX(), l.add.centerY() }) catch {};
+    // The rail's new-window + above every window (T2407), or `-`.
+    if (l.rail_add.width() > 0) {
+        w.print(" radd={d},{d}", .{ l.rail_add.centerX(), l.rail_add.centerY() }) catch {};
+    } else w.writeAll(" radd=-") catch {};
     self.logPencils(w, &l);
     self.logHeadLook(w, &l);
     // The drag-only well (T2313): its center, or `-` at rest.
@@ -4719,9 +4723,14 @@ fn syncTips(self: *PaneSidebar) void {
         delTool(tip, hwnd, tool_search);
         delTool(tip, hwnd, tool_search_clear);
     }
-    // The rail's + (T2324, Mac's "New pane"), while its slot is in view.
+    // The rail's + (T2324, T2407), while its slot is in view: "New pane" in
+    // Panes, "New window" in all windows.
     const rail_add = if (live) scroll_mod.visible(&l, l.rail_add) else pane_sidebar.Rect{};
-    if (rail_add.height() > 0) addTool(tip, hwnd, tool_rail_add, rail_add, tip_new_pane) else delTool(tip, hwnd, tool_rail_add);
+    const rail_tip = switch (add_rules.railAdd(self.all_windows)) {
+        .new_window => tip_add,
+        .new_pane => tip_new_pane,
+    };
+    if (rail_add.height() > 0) addTool(tip, hwnd, tool_rail_add, rail_add, rail_tip) else delTool(tip, hwnd, tool_rail_add);
     if (!live) {
         delTool(tip, hwnd, tool_toggle);
         delTool(tip, hwnd, tool_scope);
@@ -4891,8 +4900,12 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
         // The pencils (T2339): the name turns into a field.
         .item_rename => |i| self.beginRenamePane(i),
         .head_rename => |k| self.beginRenameHead(k),
-        // The rail's + (T2324): this window's header's own +.
-        .rail_add => if (self.groups.items.len > 0) self.addPaneIn(self.groups.items[0]),
+        // The rail's + follows the scope (T2324, T2407): this window's
+        // header's own + in Panes, the panel header's in all windows.
+        .rail_add => switch (add_rules.railAdd(self.all_windows)) {
+            .new_window => self.window.app.newWindowFromSidebar(self.window, null),
+            .new_pane => if (self.groups.items.len > 0) self.addPaneIn(self.groups.items[0]),
+        },
     }
 }
 

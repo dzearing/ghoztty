@@ -1101,6 +1101,18 @@ fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, inse
     const gap = rowGap(scale);
     // The first tile a half gap below the header, as the first row is.
     var y = l.header.bottom + rowHalfGap(scale);
+    if (l.outline) {
+        // All windows' rail opens with a + of its own above every window
+        // (T2407, Mac 6bd2962eb `listContent`): the panel header's, a new
+        // window, since this list is windows - in a slot a window header's
+        // exact extent, as this window's rail + is (`addThisWindowHeads`).
+        const extent = tile + 2 * rowHalfGap(scale);
+        const b = px(row_button_dip, scale);
+        const x = c.left + @divTrunc(c.width() - b, 2);
+        const by = l.header.bottom + @divTrunc(extent - b, 2);
+        l.rail_add = .{ .left = x, .top = by, .right = x + b, .bottom = by + b };
+        y += extent;
+    }
     for (0..l.count) |i| {
         // A hairline between this window's grid and its stash; in the
         // outline, between one window's tiles and the next's instead (Mac:
@@ -2273,9 +2285,13 @@ test "pane_sidebar: the all-windows outline keeps its own heads (T2324)" {
     addThisWindowHead(&l, false, tm, s);
     try testing.expectEqual(before.head_count, l.head_count);
     try testing.expectEqual(before.items[0], l.items[0]);
+    // The outline rail's + is its own new-window one (T2407), and this
+    // window's head leaves it and the tiles where they were.
     var rail = layoutWith(.mini, columnPx(.mini, 240, s), 600, &items, &lines, tm, s);
+    const rail_before = rail;
     addThisWindowHead(&rail, false, tm, s);
-    try testing.expectEqual(Rect{}, rail.rail_add);
+    try testing.expectEqual(rail_before.rail_add, rail.rail_add);
+    try testing.expectEqual(rail_before.items[0], rail.items[0]);
 }
 
 test "pane_sidebar: with nothing stashed the empty tray sits below the grid, uncaptioned (T1844, T2276, T2313)" {
@@ -2506,6 +2522,30 @@ test "pane_sidebar: the outline's rail draws a hairline between windows, none be
         // No header buttons on the rail beyond the toggle.
         try testing.expectEqual(@as(i32, 0), l.scope.width());
         try testing.expectEqual(@as(usize, 0), l.head_count);
+    }
+}
+
+test "T2407: all windows' rail opens with a + above every window, in a window header's slot (Mac 6bd2962eb)" {
+    for (scales) |s| {
+        const f = outlineFixture(s);
+        const l = layoutWith(.mini, px(68, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        const b = l.rail_add;
+        try testing.expectEqual(px(row_button_dip, s), b.width());
+        try testing.expectEqual(px(row_button_dip, s), b.height());
+        try testing.expect(@abs(b.centerX() - l.card.centerX()) <= 1);
+        // Below the header, above the first window's first tile.
+        try testing.expect(b.top >= l.header.bottom);
+        try testing.expect(b.bottom <= l.items[0].top);
+        try testing.expectEqual(Hit.rail_add, hitTest(&l, b.centerX(), b.centerY(), s));
+        // The slot is exactly this window's rail + slot: the tiles start
+        // where a lone window's do under its header's +.
+        var own = layout(.mini, px(68, s), px(900, s), f.items[0..2], f.tm, s);
+        addThisWindowHead(&own, false, f.tm, s);
+        try testing.expectEqual(own.rail_add, b);
+        try testing.expectEqual(own.items[0].top, l.items[0].top);
+        // The panel's header + is the new-window one there; no rail slot.
+        const panel = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        try testing.expectEqual(Rect{}, panel.rail_add);
     }
 }
 

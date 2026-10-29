@@ -5,6 +5,9 @@
 //!   rail's header is its toggle alone): a new window, exactly Ctrl+Shift+N
 //!   from this window's focused pane - its working directory, a random
 //!   gradient, a remote window's machine.
+//! - **Rail +** (the topmost + in the rail, T2407; Mac 6bd2962eb): follows
+//!   the scope (`railAdd`) - in Panes it stands in for this window's header
+//!   (a new pane), in all windows for the panel header (a new window).
 //! - **Project header +**: the same, opened from the group's first window as
 //!   listed, with its title pinned to `<project>: new` - or the first free
 //!   `new-2`, `new-3`, ... checked against every window's name at click time
@@ -75,6 +78,14 @@ fn contains(names: []const []const u8, name: []const u8) bool {
     return false;
 }
 
+/// What the rail's + makes (Mac `PaneSidebarRailAddSlot`): the list it
+/// heads is this window's panes in Panes, windows in all windows.
+pub const RailAdd = enum { new_pane, new_window };
+
+pub fn railAdd(all_windows: bool) RailAdd {
+    return if (all_windows) .new_window else .new_pane;
+}
+
 /// The tips (Mac's `.help`).
 pub const new_window_tip = "New window";
 pub const new_pane_tip = "New pane";
@@ -113,6 +124,11 @@ test "T2323: the split memory defaults to right, follows each manual split, and 
     defer split_memory = saved;
     noteManualSplit(Other.up);
     try testing.expectEqual(Direction.up, split_memory.last);
+}
+
+test "T2407: the rail's + follows the scope - a pane in Panes, a window in all windows (Mac theRailsPlusAddsAPaneInThisWindow / theAllWindowsRailsPlusOpensAWindow)" {
+    try testing.expectEqual(RailAdd.new_pane, railAdd(false));
+    try testing.expectEqual(RailAdd.new_window, railAdd(true));
 }
 
 test "T2323: a project +'s tip names the project" {

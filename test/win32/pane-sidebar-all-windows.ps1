@@ -523,6 +523,31 @@ try {
     Assert "every pane is a tile (5) and there are no header rows" ($null -ne $o6 -and $o6.Items.Count -eq 5 -and $o6.Heads.Count -eq 0)
     Assert "two hairlines between the three windows ($($o6.Rules))" ($null -ne $o6 -and $o6.Rules -eq 2)
 
+    "== 7b: the rail's + above every window opens a new window (T2407, Mac theAllWindowsRailsPlusOpensAWindow)"
+    $railLine = Wait-Log 'pane sidebar outline mode=mini' 0 1000
+    $radd = $null
+    if ($railLine -match ' radd=(-?\d+),(-?\d+)') { $radd = @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
+    $firstY = if ($o6 -and $o6.Items.Count -gt 0) { @($o6.Items | ForEach-Object { $_.Y } | Sort-Object)[0] } else { $null }
+    Assert "the rail logs a + slot above its first tile (radd=$($radd.X),$($radd.Y), first tile y=$firstY)" ($null -ne $radd -and $null -ne $firstY -and $radd.Y -lt $firstY)
+    $tops = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | ForEach-Object { $_.Hwnd })
+    $mark = Get-LogCount
+    if ($radd) { [void](ClickAt $top $sb $radd) }
+    $topN = [IntPtr]::Zero
+    for ($i = 0; $i -lt 40 -and $topN -eq [IntPtr]::Zero; $i++) {
+        $n = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | Where-Object { $tops -notcontains $_.Hwnd }) | Select-Object -First 1
+        if ($n) { $topN = [IntPtr]$n.Hwnd } else { Start-Sleep -Milliseconds 150 }
+    }
+    Assert "the rail's + opened a new window, not a pane in this one" ($topN -ne [IntPtr]::Zero)
+    Assert "...and the shared list now counts four windows (log)" ($null -ne (Wait-Log 'pane sidebar all-windows groups=4 .*windows=4 ' $mark 6000))
+    if ($topN -ne [IntPtr]::Zero) {
+        $mark = Get-LogCount
+        [void][SidebarSessionPost]::PostMessageW($topN, [uint32]0x0010, [IntPtr]0, [IntPtr]::Zero)
+        Assert "setup: the new window closed again (log)" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*windows=3 ' $mark 6000))
+    }
+    Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
+    Start-Sleep -Milliseconds 400
+    $sb = Get-Sidebar $top
+
     "== 8: the toggle switches back to this window's panes"
     [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     Start-Sleep -Milliseconds 700
