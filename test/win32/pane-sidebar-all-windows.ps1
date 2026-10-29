@@ -20,6 +20,9 @@
 #   3. A click on another window's header raises it (log).
 #   4. A click on THIS window's header folds its panes away, and again
 #      brings them back.
+#   4c. Busy rolls up (T2447, Mac 9e2e2902a): s1 busy, zeta's header does
+#      not sheen open (s1's row does) and does folded - `hbusy=`, and the
+#      column moves with s1's row folded away; idle, it holds still.
 #   5. A click on the project header folds its windows away, and back.
 #   6. Renaming B moves it in the order; closing D drops it from the list -
 #      the list follows other windows, not only its own.
@@ -27,7 +30,8 @@
 #      banner, folder), accents fold, "No matching panes" when empty, Escape
 #      clears, Return reveals the first hit through the click's own path.
 #   7. Collapsed, the rail is one tile per WINDOW (T2445) with no divider between
-#      windows and no header rows.
+#      windows and no header rows. A stashed pane busy in wB sheens wB's
+#      tile (T2447, `wbusy=`) and the rail moves; idle, the clock stops.
 #   8. The toggle switches back to this window's panes only, and clears a
 #      query: back on, every window is listed (T1877).
 #   9. Motion (T1880): sections 1, 4, 5 and 8 also assert that the switch
@@ -167,7 +171,41 @@ function Read-Outline([string]$Line) {
     # selected, 1 the accent, 2 the unaccented pill.
     $o.HSel = ''
     if ($Line -match ' hsel=(\d*)') { $o.HSel = $Matches[1] }
+    # T2447: whether each head sheens with its window's busy, one digit a
+    # head; and how many rail tiles do.
+    $o.HBusy = ''
+    if ($Line -match ' hbusy=(\d*)') { $o.HBusy = $Matches[1] }
+    $o.WBusy = -1
+    if ($Line -match ' wbusy=(\d+)') { $o.WBusy = [int]$Matches[1] }
     return $o
+}
+# A head's `hbusy` digit (T2447), or '?' when it is not in the outline.
+function HeadBusy($o, [string]$Kind, [int]$Group) {
+    if ($null -eq $o) { return '?' }
+    for ($k = 0; $k -lt $o.Heads.Count; $k++) {
+        if ($o.Heads[$k].Kind -eq $Kind -and $o.Heads[$k].Group -eq $Group) {
+            if ($k -lt $o.HBusy.Length) { return [string]$o.HBusy[$k] }
+            return '?'
+        }
+    }
+    return '?'
+}
+# How many different pictures the sidebar shows over $Count synchronous
+# frames $GapMs apart (T2447): a sheen moves, a still column is one picture.
+function Get-DistinctFrames($sb, [int]$Count = 10, [int]$GapMs = 175) {
+    $seen = @{}
+    for ($i = 0; $i -lt $Count; $i++) {
+        try {
+            $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
+            $ms = New-Object System.IO.MemoryStream
+            $shot.Bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+            Close-TestWindowPixels -Shot $shot
+            $md5 = [System.Security.Cryptography.MD5]::Create()
+            $seen[[BitConverter]::ToString($md5.ComputeHash($ms.ToArray()))] = $true
+        } catch { "  capture failed: $($_.Exception.Message)" | Out-Host }
+        Start-Sleep -Milliseconds $GapMs
+    }
+    return $seen.Count
 }
 function Head($o, [string]$Kind, [int]$Group) { $o.Heads | Where-Object { $_.Kind -eq $Kind -and $_.Group -eq $Group } | Select-Object -First 1 }
 # A head's `hsel` digit (T2446), or '?' when it is not in the outline.
@@ -395,6 +433,38 @@ try {
     Assert "unfolded: zeta's two rows are back" ($null -ne $o3 -and @($o3.Items | Where-Object Group -eq 1).Count -eq 2)
     Assert "...revealed top-down: the unfold animated and finished in place" (($null -ne (Wait-Log 'pane sidebar transition fold surface=rail' $mark 2000)) -and ($null -ne (Wait-Log 'pane sidebar transition done surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
 
+    "== 4c: folded, a window's row sheens while any of its panes works (T2447, Mac 9e2e2902a)"
+    $mark = Get-LogCount
+    Assert "+set-state busy on s1 ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=s1 --state=busy") -eq 0)
+    $ob = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    Assert "open, zeta's header does not sheen - s1's own row shows the work (hbusy=$($ob.HBusy))" ((HeadBusy $ob 'W' 1) -eq '0')
+    Assert "...and no head sheens at all (hbusy=$($ob.HBusy))" ($null -ne $ob -and $ob.HBusy.Length -eq $ob.Heads.Count -and ($ob.HBusy -replace '0', '').Length -eq 0)
+    $mark = Get-LogCount
+    $h = Head $ob 'W' 1
+    if ($h) { [void](ClickAt $top $sb $h) }
+    $of = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    Assert "folded, zeta's rows are gone" ($null -ne $of -and @($of.Items | Where-Object Group -eq 1).Count -eq 0)
+    Assert "...and its header sheens with s1's busy rolled up (hbusy=$($of.HBusy))" ((HeadBusy $of 'W' 1) -eq '1')
+    Assert "...the only head that does (hbusy=$($of.HBusy))" ($null -ne $of -and ($of.HBusy -replace '0', '').Length -eq 1)
+    # Past the fold (0.22s) and the sheen's fade-in (0.6s): what moves now is
+    # the header alone, s1's row being folded away.
+    Start-Sleep -Milliseconds 900
+    $n = Get-DistinctFrames $sb 10 175
+    Assert "the folded header moves on screen ($n distinct of 10, want >= 3)" ($n -ge 3)
+    $mark = Get-LogCount
+    Assert "+set-state idle on s1 ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=s1 --state=idle") -eq 0)
+    $oi = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    Assert "idle, the folded header stops sheening (hbusy=$($oi.HBusy))" ((HeadBusy $oi 'W' 1) -eq '0')
+    Assert "...the motion clock stops itself once it has faded (log)" ($null -ne (Wait-Log 'pane sidebar motion off surface=rail' $mark 4000))
+    $n = Get-DistinctFrames $sb 4 200
+    Assert "...and the column holds still ($n distinct)" ($n -eq 1)
+    $mark = Get-LogCount
+    $h = Head $oi 'W' 1
+    if ($h) { [void](ClickAt $top $sb $h) }
+    $ou = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    Assert "setup: unfolded again, zeta's two rows are back" ($null -ne $ou -and @($ou.Items | Where-Object Group -eq 1).Count -eq 2)
+    Start-Sleep -Milliseconds 400
+
     "== 5: the project header folds its windows, and unfolds them"
     $mark = Get-LogCount
     $h = Head $o3 'P' 2
@@ -548,6 +618,7 @@ try {
 
     "== 7: collapsed, the rail is one tile per WINDOW, with no divider between them (T2445, Mac 9e2e2902a; T2425)"
     $mark = Get-LogCount
+    $collapseMark = $mark
     [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     $railOutline = Wait-Log 'pane sidebar outline mode=mini' $mark
     $o6 = Read-Outline $railOutline
@@ -561,8 +632,25 @@ try {
     if ($railOutline -match ' wtiles=(\d+) wsel=(\S+)') { $wtiles = [int]$Matches[1]; $wsel = $Matches[2] } else { $wtiles = -1 }
     Assert "the log counts them as window tiles (wtiles=$wtiles)" ($wtiles -eq 3)
     Assert "this window's tile is the selected one (wsel=$wsel)" ($null -ne $wsel -and $wsel -ne '-')
+    # T2447 (Mac 9e2e2902a): a window's tile sheens while any of its panes
+    # works - here wB's STASHED b2, which has no tile of its own on this rail.
+    Assert "at rest no window tile sheens (wbusy=$($o6.WBusy))" ($null -ne $o6 -and $o6.WBusy -eq 0)
+    $mark = Get-LogCount
+    Assert "+set-state busy on b2, stashed in wB ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=b2 --state=busy") -eq 0)
+    $ow = Read-Outline (Wait-Log 'pane sidebar outline mode=mini' $mark)
+    Assert "wB's tile sheens with its stashed pane's busy rolled up (wbusy=$($ow.WBusy))" ($null -ne $ow -and $ow.WBusy -eq 1)
+    Assert "...and the rail's motion clock started for that one tile (log)" ($null -ne (Wait-Log 'pane sidebar motion on surface=rail busy=1' $mark 3000))
+    Start-Sleep -Milliseconds 700
+    $n = Get-DistinctFrames $sb 10 175
+    Assert "the rail moves on screen ($n distinct of 10, want >= 3)" ($n -ge 3)
+    $mark = Get-LogCount
+    Assert "+set-state idle on b2 ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=b2 --state=idle") -eq 0)
+    $ow = Read-Outline (Wait-Log 'pane sidebar outline mode=mini' $mark)
+    Assert "idle, no window tile sheens (wbusy=$($ow.WBusy))" ($null -ne $ow -and $ow.WBusy -eq 0)
+    Assert "...and the rail's clock stops itself (log)" ($null -ne (Wait-Log 'pane sidebar motion off surface=rail' $mark 4000))
     # Its tooltip is the window's full title - one line, no pane hint under it.
-    $tipLine = Wait-Log 'pane sidebar tips .* mode=mini tile0=' $mark 2000
+    # From the collapse: the busy checks above moved $mark past the tips line.
+    $tipLine = Wait-Log 'pane sidebar tips .* mode=mini tile0=' $collapseMark 2000
     $tile0 = if ($tipLine -match ' tile0=(.*)$') { $Matches[1] } else { $null }
     "  tile0 tip: $tile0"
     Assert "a window tile's tip is its title alone ('$tile0')" ($null -ne $tile0 -and $tile0.Length -gt 0 -and $tile0 -notmatch '\|')

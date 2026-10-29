@@ -201,6 +201,10 @@ const Group = struct {
     own: bool,
     /// The top-level has other tabs: "This Tab" rather than "This Window".
     tabbed: bool,
+    /// Any of its panes is working, stashed ones and ones a search hides
+    /// included (T2447, Mac `PaneSidebarWindowActivity`): its rail tile
+    /// sheens, and its header while folded (`pane_sidebar.headShowsBusy`).
+    busy: bool = false,
 };
 
 /// Fluent / MDL2 codepoints (the same faces `icon_button_paint` probes), for
@@ -219,7 +223,20 @@ const glyph_app_window: u16 = 0xECAA; // AppIconDefault: a window head's icon (M
 const glyph_chevron_down: u16 = 0xE70D;
 const glyph_chevron_right: u16 = 0xE76C;
 
-const FadeSlot = struct { pane: *const PaneView, fade: motion.Fade };
+/// One sheen's fade, by whose it is (`paneFade` / `windowFade`).
+const FadeSlot = struct { key: u64, fade: motion.Fade };
+
+/// A pane's sheen's fade key: its address.
+fn paneFade(v: *const PaneView) u64 {
+    return @intFromPtr(v);
+}
+
+/// A window's rolled-up sheen's (T2447) - its header's and its rail tile's,
+/// one fade: its tab key with the top bit set, which no user-mode address
+/// has, so it never shares a pane's.
+fn windowFade(g: Group) u64 {
+    return g.key | (@as(u64, 1) << 63);
+}
 
 /// One row's slide, by pane: a roster refresh mid-drag rebuilds the entries.
 const RowShift = struct { pane: *const PaneView, tween: reorder.Tween };
@@ -347,6 +364,13 @@ fn isWorking(v: *PaneView, now_ms: i64) bool {
     if (s.activity_state == .busy) return true;
     const r = s.liveProgress(now_ms) orelse return false;
     return busy_light.shapeFor(r) != null;
+}
+
+/// A window's busy rolled up (T2447, Mac `PaneSidebarWindowActivity.isBusy`):
+/// any of `views` working. A question is not work (`isWorking`).
+fn anyWorking(views: []const *PaneView, now_ms: i64) bool {
+    for (views) |v| if (isWorking(v, now_ms)) return true;
+    return false;
 }
 
 const Entry = struct {
@@ -941,6 +965,8 @@ pub fn refresh(self: *PaneSidebar) void {
         .panes = n,
         .own = true,
         .tabbed = win.tab_count > 1,
+        // Every row's busy is in the signature already (`hashView`).
+        .busy = anyWorking(views[0..n], std.time.milliTimestamp()),
     }, ownLabel(name), if (split) |sp| sp.project else null);
     self.appendEntries(views[0..n], win, win.active_tab, 0, true, active);
     self.rosterChanged();
@@ -1024,15 +1050,19 @@ fn logOutline(self: *PaneSidebar) void {
     // tiles, and which of them is drawn selected.
     var wt: usize = 0;
     var wsel: ?u16 = null;
+    var wbusy: usize = 0;
     for (0..@min(l.count, self.entries.items.len)) |i| if (l.windowTile(i)) {
         wt += 1;
-        if (self.tileGroup(i)) |g| if (self.windowTileSelected(g)) {
-            wsel = self.entries.items[i].group;
-        };
+        if (self.tileGroup(i)) |g| {
+            if (self.windowTileSelected(g)) wsel = self.entries.items[i].group;
+            // T2447: tiles sheening with their window's busy rolled up.
+            if (g.busy) wbusy += 1;
+        }
     };
     if (wsel) |g| {
         w.print(" wtiles={d} wsel=g{d}", .{ wt, g }) catch {};
     } else w.print(" wtiles={d} wsel=-", .{wt}) catch {};
+    w.print(" wbusy={d}", .{wbusy}) catch {};
     self.logToggle(w, &l);
     // The search field (T1877): where to click it, and whether the "No
     // matching panes" note is up.
@@ -1126,6 +1156,17 @@ fn logHeadLook(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layo
             .unemphasized => '2',
         };
         w.writeByte(digit) catch return;
+    }
+    // Whether each head sheens with its window's busy (T2447): 1 folded and
+    // busy, 0 otherwise.
+    w.writeAll(" hbusy=") catch return;
+    for (l.heads[0..l.head_count]) |hd| {
+        const shows = if (hd.index < self.groups.items.len) blk: {
+            const g = self.groups.items[hd.index];
+            const folded = if (hd.kind == .project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
+            break :blk pane_sidebar.headShowsBusy(hd.kind, folded, g.busy);
+        } else false;
+        w.writeByte(if (shows) '1' else '0') catch return;
     }
 }
 
@@ -1349,7 +1390,8 @@ fn refreshAll(self: *PaneSidebar) void {
     const home = if (query != null) std.process.getEnvVarOwned(self.alloc, "USERPROFILE") catch null else null;
     defer if (home) |hm| self.alloc.free(hm);
 
-    const Span = struct { start: usize, grid: usize, stashed: usize };
+    const Span = struct { start: usize, grid: usize, stashed: usize, busy: bool };
+    const now_ms = std.time.milliTimestamp();
     var views: [pane_sidebar.max_items]*PaneView = undefined;
     var spans: [max_heads]Span = undefined;
     var placed: [max_heads]outline.Placed = undefined;
@@ -1369,6 +1411,9 @@ fn refreshAll(self: *PaneSidebar) void {
         var order_buf: [pane_sidebar_order.max_ids][]const u8 = undefined;
         const order = r.window.paneSidebarOrder(&order_buf);
         const listed = pane_sidebar.rosterOrdered(r.window.tab_trees[r.tab], order, views[nv..]);
+        // The window's busy is all of its panes', a search's misses too
+        // (T2447): it is the window's, not the list's.
+        const busy = anyWorking(views[nv .. nv + listed], now_ms);
         // Keep the hits, in roster order (the grid, then the stash).
         var got: usize = 0;
         var grid: usize = 0;
@@ -1384,7 +1429,9 @@ fn refreshAll(self: *PaneSidebar) void {
         const gi = np;
         placed[gi] = p;
         np += 1;
-        spans[gi] = .{ .start = nv, .grid = grid, .stashed = got - grid };
+        spans[gi] = .{ .start = nv, .grid = grid, .stashed = got - grid, .busy = busy };
+        const b: u8 = @intFromBool(busy);
+        h.update(std.mem.asBytes(&b));
         h.update(std.mem.asBytes(&r.window));
         h.update(std.mem.asBytes(&r.tab));
         h.update(names[p.index]);
@@ -1430,6 +1477,7 @@ fn refreshAll(self: *PaneSidebar) void {
             .panes = sp.grid + sp.stashed,
             .own = own,
             .tabbed = r.window.tab_count > 1,
+            .busy = sp.busy,
         }, p.label, p.project);
         self.appendEntries(views[sp.start .. sp.start + sp.grid + sp.stashed], r.window, r.tab, @intCast(gi), own, r.window.tab_active_pane[r.tab]);
         specs[gi] = .{
@@ -3527,8 +3575,13 @@ fn unrgb(c: u32) color_math.Rgb {
 /// `sheenLevel` for the pill drawn at `r`, noting `r` for the next motion
 /// frame while its sheen moves (T1925).
 fn sheenAt(self: *PaneSidebar, e: Entry, r: pane_sidebar.Rect) f64 {
+    return self.sheenFor(paneFade(e.pane), e.busy, r);
+}
+
+/// `sheenAt` for the sheen `key` names, busy or not.
+fn sheenFor(self: *PaneSidebar, key: u64, busy: bool, r: pane_sidebar.Rect) f64 {
     const before = self.paint_marks;
-    const level = self.sheenLevel(e);
+    const level = self.sheenLevel(key, busy);
     const after = self.paint_marks;
     if (self.paint_motion and (after.busy != before.busy or after.fading != before.fading)) self.paint_dirty.add(r);
     return level;
@@ -3551,32 +3604,32 @@ fn clipOf(hdc: w32.HDC) ?pane_sidebar.Rect {
     return .{ .left = cb.left, .top = cb.top, .right = cb.right, .bottom = cb.bottom };
 }
 
-/// How strongly pane `e`'s sheen shows right now, 0 to 1 (T2279, Mac
-/// `busyFade`): it fades in as work starts and out as it stops, from
-/// wherever it had got to. Tallies a sheen still fading, so the clock runs
-/// until it settles.
-fn sheenLevel(self: *PaneSidebar, e: Entry) f64 {
+/// How strongly the sheen `key` names - a pane's, or a window's rolled up
+/// (T2447) - shows right now, 0 to 1 (T2279, Mac `busyFade`): it fades in
+/// as work starts and out as it stops, from wherever it had got to. Tallies
+/// a sheen still fading, so the clock runs until it settles.
+fn sheenLevel(self: *PaneSidebar, key: u64, busy: bool) f64 {
     const now = self.paint_ms;
     // A busy pane is tallied whatever its sheen's level, so the clock (and its
     // log) starts with the fade-in rather than a frame after it.
-    if (e.busy) self.paint_marks.busy += 1;
+    if (busy) self.paint_marks.busy += 1;
     var free: ?usize = null;
     for (self.fades[0..self.fade_count], 0..) |*s, k| {
-        if (s.pane == e.pane) {
-            s.fade = s.fade.retarget(e.busy, now);
+        if (s.key == key) {
+            s.fade = s.fade.retarget(busy, now);
             if (!s.fade.settled(now)) self.paint_marks.fading += 1;
             return s.fade.level(now);
         }
         if (free == null and !s.fade.on and s.fade.settled(now)) free = k;
     }
-    if (!e.busy) return 0;
+    if (!busy) return 0;
     const k = free orelse blk: {
         // No slot to spare: shown at full strength, without the fade.
         if (self.fade_count == self.fades.len) return 1;
         self.fade_count += 1;
         break :blk self.fade_count - 1;
     };
-    self.fades[k] = .{ .pane = e.pane, .fade = .{ .on = true, .since_ms = now } };
+    self.fades[k] = .{ .key = key, .fade = .{ .on = true, .since_ms = now } };
     self.paint_marks.fading += 1;
     return 0;
 }
@@ -4168,6 +4221,14 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
             fillRound(hdc, .{ .left = r.left + bar.left, .top = r.top + bar.top, .right = r.left + bar.left + bar.width, .bottom = r.top + bar.top + bar.height }, bar.radius, rgb(c));
         }
     }
+    // Folded, a window's row sheens while any of its panes works (T2447, Mac
+    // 9e2e2902a): the same sheen as a pane's row, over the fill and under the
+    // text. Asked open too, so the sheen fades out as the window unfolds.
+    if (!project) {
+        const shows = pane_sidebar.headShowsBusy(hd.kind, folded, g.busy);
+        const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+        self.paintOverlay(hdc, hd.rect, radius, self.sheenFor(windowFade(g), shows, hd.rect), null, t);
+    }
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
     // A window's icon, in its panes' icon column (T2340, Mac 28f6cde09).
     if (hd.icon.width() > 0) glyph(hdc, self.scale, hd.icon, glyph_app_window, 12, t.secondary);
@@ -4361,7 +4422,14 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     const clip = clipOf(hdc);
     for (0..l.count) |i| {
         if (self.paint_lifted == i) continue;
+        // On the rail of windows a window's other panes have no tile; its
+        // own tile carries their busy (T2447).
+        if (l.windowTiles() and !l.windowTile(i)) continue;
         if (clip) |c| if (!motion.overlaps(c, l.items[i])) {
+            if (l.windowTile(i)) {
+                if (self.tileGroup(i)) |g| _ = self.sheenFor(windowFade(g), g.busy, l.items[i]);
+                continue;
+            }
             const e = self.entries.items[i];
             self.tallyUnpainted(e, l.items[i], e.bell and e.section == .stashed);
             continue;
@@ -4396,12 +4464,12 @@ fn paintTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.Rect, h
 /// A window's rail tile (T2445, Mac 9e2e2902a `PaneSidebarWindowTile`): the
 /// window glyph on a pane tile's own pill, rim and all; selected as the
 /// window's expanded row is - this window, or the one just clicked here.
-/// Its busy is the window's rolled up (T2447), never its first pane's.
+/// Its busy is the window's rolled up (T2447), never its first pane's:
+/// it sheens while any of the window's panes works, folded or open.
 fn paintWindowTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.Rect, hovered: bool, emphasized: bool, t: Theme) void {
     const g = self.tileGroup(i) orelse return;
     var e = self.entries.items[i];
     e.selected = self.windowTileSelected(g);
-    e.busy = false;
     const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
     const sel = list_selection.rowPaint(t.surface, t.accent, .{
         .selected = e.selected,
@@ -4419,7 +4487,7 @@ fn paintWindowTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.R
             .bottom = r.top + bar.top + bar.height,
         }, bar.radius, rgb(c));
     }
-    self.paintOverlay(hdc, r, radius, self.sheenAt(e, r), motion.tileRim(t.dark, hovered), t);
+    self.paintOverlay(hdc, r, radius, self.sheenFor(windowFade(g), g.busy, r), motion.tileRim(t.dark, hovered), t);
     const icon_w = pane_sidebar.px(pane_sidebar.icon_dip, self.scale);
     const left = r.left + pane_sidebar.px(toc.text_inset_dip, self.scale);
     const top = r.top + @divTrunc(r.height() - self.metrics.title_h, 2);

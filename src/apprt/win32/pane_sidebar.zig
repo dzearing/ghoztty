@@ -1252,6 +1252,14 @@ pub fn headSelection(kind: HeadKind, own: bool, folded: bool, clicked: bool, all
     return .none;
 }
 
+/// Whether a header sheens with its window's panes' busy rolled up (T2447,
+/// Mac 9e2e2902a `PaneSidebarWindowHeader.showsBusy`): a window's, and only
+/// while it is folded - open, each busy pane's own row under it shows it. A
+/// project's never does. A window's rail tile always shows the roll-up.
+pub fn headShowsBusy(kind: HeadKind, folded: bool, busy: bool) bool {
+    return kind == .window and folded and busy;
+}
+
 /// Move the single roster's rows and its tray's hairline and caption down by
 /// `dy`, the rows' content in by `indent` (one outline level, under a
 /// header). The hairline stays as wide as a row's fill (T2339, Mac
@@ -2329,6 +2337,14 @@ test "T2446: the selected window's header looks selected, folded or open (Mac 9e
     try testing.expectEqual(HeadSelection.accent, sel(true, true, false, false));
     // A project's never is.
     try testing.expectEqual(HeadSelection.none, headSelection(.project, true, true, true, true));
+}
+
+test "T2447: a window's header shows its panes' busy only folded (Mac 9e2e2902a aWindowRowShowsItsPanesBusyOnlyFolded)" {
+    try testing.expect(headShowsBusy(.window, true, true));
+    try testing.expect(!headShowsBusy(.window, false, true));
+    try testing.expect(!headShowsBusy(.window, true, false));
+    // A project's header carries no busy of its own.
+    try testing.expect(!headShowsBusy(.project, true, true));
 }
 
 test "pane_sidebar: the all-windows outline keeps its own heads (T2324)" {
