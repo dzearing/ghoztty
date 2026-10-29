@@ -151,6 +151,7 @@ test {
     _ = @import("win32/whats_new_notes.zig");
     _ = @import("win32/winrt_comp.zig");
     _ = @import("win32/comp_spike_stats.zig");
+    _ = @import("win32/wgc_capture.zig");
     _ = @import("win32/provenance.zig");
     _ = @import("win32/restore_retry.zig");
     _ = @import("win32/resolve_defer.zig");

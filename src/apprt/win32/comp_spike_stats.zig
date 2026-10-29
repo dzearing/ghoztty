@@ -63,7 +63,36 @@ pub fn score(ts: []const i64, t0: i64, t1: i64, period: f64, scratch: []f64) Sco
     return s;
 }
 
+/// How many refreshes each new frame was held for, between consecutive frames
+/// inside a window: n[0] counts holds of 1 refresh (a frame on every
+/// refresh), n[1] of 2, ... n[4] of 5 or more. The shape tells a capped
+/// cadence (all mass on one bucket, e.g. 3 = 40 Hz at 120 Hz) from jitter.
+pub const Holds = struct {
+    n: [5]u32 = .{ 0, 0, 0, 0, 0 },
+
+    pub fn add(self: *Holds, ts: []const i64, t0: i64, t1: i64, period: f64) void {
+        if (period <= 0) return;
+        var prev: ?i64 = null;
+        for (ts) |t| {
+            if (t < t0) continue;
+            if (t > t1) break;
+            if (prev) |p| {
+                const held = @max(1, @round(@as(f64, @floatFromInt(t - p)) / period));
+                self.n[@min(4, @as(usize, @intFromFloat(held)) - 1)] += 1;
+            }
+            prev = t;
+        }
+    }
+};
+
 const testing = std.testing;
+
+test "holds bucket each gap by whole refreshes, inside the window only" {
+    var h: Holds = .{};
+    h.add(&.{ 0, 10, 20, 50, 60, 130, 200 }, 5, 140, 10);
+    // gaps inside [5,140]: 10->20 (1), 20->50 (3), 50->60 (1), 60->130 (5+)
+    try testing.expectEqual([5]u32{ 2, 0, 1, 0, 1 }, h.n);
+}
 
 test "a frame on every refresh scores advance 1 and no skips" {
     var ts: [12]i64 = undefined;

@@ -8,7 +8,8 @@
 //!                under a desktop window target, and each glide is ONE
 //!                declaration (keyframe animations on Size/Offset) that DWM
 //!                runs on its own clock.
-//!   --mode=idle  the same schedule with nothing animating: the noise floor.
+//!   --mode=idle  the same schedule and the same blade, never moved: the
+//!                noise floor.
 //!
 //! `--stall-ms=N` blocks the UI thread for N ms halfway through every glide
 //! (the "motion never waits on the UI thread" criterion). `--thread=worker`
@@ -16,15 +17,25 @@
 //! answers the design's open question: can a desktop window target be created
 //! by a Compositor that does not live on the HWND's thread?
 //!
-//! The oracle is DWM's compose clock (DComp frame statistics), scored per glide by
-//! `apprt/win32/comp_spike_stats.zig`. The report goes to `--out=<path>` (text lines,
-//! one `GLIDE` per glide and a `SUMMARY`). The window never activates
+//! Two oracles, both scored per glide by `apprt/win32/comp_spike_stats.zig`:
+//!
+//!   - `WGLIDE`/`WSUMMARY` (T2463), the one to read: Windows.Graphics.Capture
+//!     of THIS window (`apprt/win32/wgc_capture.zig`). Every frame DWM produced
+//!     for it is read back one row deep, and it counts only when the blade's
+//!     right edge moved, stamped with the compose time of that frame.
+//!   - `GLIDE`/`SUMMARY`: DWM's system-wide compose clock (DComp frame
+//!     statistics). It also counts every other window's composes, so on a live
+//!     desktop it scores idle the same as a glide (T2360 spike report). Kept for
+//!     the refresh period and as the comparison.
+//!
+//! The report goes to `--out=<path>` (text lines). The window never activates
 //! (WS_EX_NOACTIVATE, SW_SHOWNOACTIVATE), and the harness runs it on the
 //! background test desktop unless told to run live.
 const std = @import("std");
 const w32 = @import("apprt/win32/win32.zig");
 const rt = @import("apprt/win32/winrt_comp.zig");
 const stats = @import("apprt/win32/comp_spike_stats.zig");
+const wgc = @import("apprt/win32/wgc_capture.zig");
 
 const Mode = enum { gdi, comp, idle };
 const ThreadKind = enum { ui, worker };
@@ -37,7 +48,16 @@ const Opts = struct {
     gap_ms: u32 = 450,
     stall_ms: u32 = 0,
     out: []const u8 = "comp-spike.txt",
+    /// Window position. A live run moves it off every monitor so it never
+    /// shows over the user's work.
+    x: i32 = 40,
+    y: i32 = 40,
+    /// Alpha 1/255, click-through, bottom of the z-order: on screen for DWM
+    /// and capture, invisible to the person at the desk.
+    ghost: bool = false,
 };
+
+const HWND_BOTTOM: ?w32.HWND = @ptrFromInt(1);
 
 const WS_VISIBLE: u32 = 0x10000000;
 const WS_EX_NOREDIRECTIONBITMAP: u32 = 0x00200000;
@@ -157,6 +177,90 @@ fn startSampler() void {
     s.* = .{ .get_id = get_id, .get_stats = get_stats };
     sampler = s;
     sampler_thread = std.Thread.spawn(.{}, Sampler.run, .{s}) catch null;
+}
+
+// ---- per-window frame oracle (T2463) ---------------------------------------
+
+/// The blade's colour in a BGRA readback (0x2b6cd8 as B, G, R).
+const blade_bgr: [3]u8 = .{ 0xd8, 0x6c, 0x2b };
+
+const WinSampler = struct {
+    hwnd: w32.HWND,
+    stop: std.atomic.Value(bool) = .init(false),
+    ready: std.Thread.ResetEvent = .{},
+    init_error: ?[]const u8 = null,
+    init_hr: rt.HRESULT = 0,
+    init_stage: []const u8 = "",
+    item_w: i32 = 0,
+    item_h: i32 = 0,
+    borderless: bool = false,
+    warp: bool = false,
+    /// WGC's MinUpdateInterval before it was lowered, 100 ns ticks; -1 = n/a.
+    default_min_interval: i64 = -1,
+    /// QPC times of the frames whose blade edge moved.
+    ts: [16384]i64 = undefined,
+    n: usize = 0,
+    frames: u64 = 0,
+    /// Frames whose sampled row changed at all (edge or otherwise).
+    row_changes: u64 = 0,
+    first_edge: u32 = 0,
+    last_edge: u32 = 0,
+    min_edge: u32 = std.math.maxInt(u32),
+    max_edge: u32 = 0,
+
+    fn run(self: *WinSampler) void {
+        var cap = wgc.Capture.init(std.heap.page_allocator, self.hwnd) catch |e| {
+            self.init_error = @errorName(e);
+            self.init_hr = wgc.lastHr();
+            self.init_stage = wgc.stage;
+            self.item_w = wgc.item_size.w;
+            self.item_h = wgc.item_size.h;
+            self.ready.set();
+            return;
+        };
+        defer cap.deinit();
+        self.borderless = cap.borderless;
+        self.warp = cap.warp;
+        self.default_min_interval = cap.default_min_interval orelse -1;
+        self.ready.set();
+        var have_prev = false;
+        var prev_hash: u64 = 0;
+        while (!self.stop.load(.acquire)) {
+            const f = (cap.next(0.5) catch null) orelse {
+                std.Thread.sleep(300 * std.time.ns_per_us);
+                continue;
+            };
+            self.frames += 1;
+            const edge = wgc.runLength(f.row, blade_bgr, 12);
+            const hash = std.hash.Wyhash.hash(0, f.row);
+            if (!have_prev) {
+                self.first_edge = edge;
+            } else {
+                if (hash != prev_hash) self.row_changes += 1;
+                if (edge != self.last_edge and self.n < self.ts.len) {
+                    // SystemRelativeTime is QPC expressed in 100 ns units.
+                    self.ts[self.n] = @intCast(@divTrunc(@as(i128, f.time_100ns) * qpf, 10_000_000));
+                    self.n += 1;
+                }
+            }
+            have_prev = true;
+            prev_hash = hash;
+            self.last_edge = edge;
+            self.min_edge = @min(self.min_edge, edge);
+            self.max_edge = @max(self.max_edge, edge);
+        }
+    }
+};
+
+var win_sampler: ?*WinSampler = null;
+var win_sampler_thread: ?std.Thread = null;
+
+fn startWinSampler(hwnd: w32.HWND) void {
+    const s = std.heap.page_allocator.create(WinSampler) catch return;
+    s.* = .{ .hwnd = hwnd };
+    win_sampler_thread = std.Thread.spawn(.{}, WinSampler.run, .{s}) catch return;
+    s.ready.wait();
+    win_sampler = s;
 }
 
 extern "kernel32" fn LoadLibraryW([*:0]const u16) callconv(.winapi) ?*anyopaque;
@@ -358,7 +462,81 @@ fn gdiStep(hwnd: w32.HWND) void {
     }
 }
 
+/// The refresh period in QPC ticks; 120 Hz when DComp statistics are missing.
+fn periodQpc() f64 {
+    if (sampler) |s| if (s.period > 0) return s.period;
+    return @as(f64, @floatFromInt(qpf)) / 120.0;
+}
+
+fn finishWindow() void {
+    const ws = win_sampler orelse {
+        say("WSUMMARY mode={s} oracle=UNAVAILABLE", .{@tagName(opts.mode)});
+        return;
+    };
+    ws.stop.store(true, .release);
+    if (win_sampler_thread) |t| t.join();
+    if (ws.init_error) |e| {
+        say("WSUMMARY mode={s} oracle=UNAVAILABLE stage=capture-{s} error={s} hr=0x{x} item={d}x{d}", .{ @tagName(opts.mode), ws.init_stage, e, @as(u32, @bitCast(ws.init_hr)), ws.item_w, ws.item_h });
+        return;
+    }
+    say("WCLOCK frames={d} edge_moves={d} row_changes={d} edge_first={d} edge_last={d} edge_min={d} edge_max={d} borderless={} warp={} default_min_interval_ms={d:.3}", .{
+        ws.frames,
+        ws.n,
+        ws.row_changes,
+        ws.first_edge,
+        ws.last_edge,
+        if (ws.frames == 0) 0 else ws.min_edge,
+        ws.max_edge,
+        ws.borderless,
+        ws.warp,
+        @as(f64, @floatFromInt(ws.default_min_interval)) / 10_000,
+    });
+    const period = periodQpc();
+    var holds: stats.Holds = .{};
+    for (glides[0..glide_i]) |g| holds.add(ws.ts[0..ws.n], g.t0, g.t1, period);
+    say("WHOLDS refreshes_per_new_frame 1={d} 2={d} 3={d} 4={d} 5+={d}", .{ holds.n[0], holds.n[1], holds.n[2], holds.n[3], holds.n[4] });
+    const to_ms = 1000 / @as(f64, @floatFromInt(qpf));
+    var scratch: [4096]f64 = undefined;
+    var adv_min: f64 = std.math.inf(f64);
+    var adv_sum: f64 = 0;
+    var skipped: u32 = 0;
+    var gap_max: f64 = 0;
+    var moves: u32 = 0;
+    for (glides[0..glide_i], 0..) |g, i| {
+        const sc = stats.score(ws.ts[0..ws.n], g.t0, g.t1, period, &scratch);
+        say("WGLIDE i={d} dir={s} new_frames={d} refreshes={d:.1} advance={d:.3} skipped={d} max_gap_ms={d:.2} p95_gap_ms={d:.2} ui_steps={d} stalled_ms={d}", .{
+            i,
+            if (i % 2 == 0) "collapse" else "expand",
+            sc.composes,
+            sc.refreshes,
+            sc.advance,
+            sc.skipped,
+            sc.max_gap * to_ms,
+            sc.p95_gap * to_ms,
+            g.steps,
+            g.stalled_ms,
+        });
+        adv_min = @min(adv_min, sc.advance);
+        adv_sum += sc.advance;
+        skipped += sc.skipped;
+        gap_max = @max(gap_max, sc.max_gap * to_ms);
+        moves += sc.composes;
+    }
+    say("WSUMMARY mode={s} thread={s} stall_ms={d} glides={d} new_frames={d} advance_min={d:.3} advance_mean={d:.3} skipped_total={d} max_gap_ms={d:.2}", .{
+        @tagName(opts.mode),
+        @tagName(opts.thread),
+        opts.stall_ms,
+        glide_i,
+        moves,
+        if (glide_i == 0) 0 else adv_min,
+        adv_sum / @as(f64, @floatFromInt(@max(1, glide_i))),
+        skipped,
+        gap_max,
+    });
+}
+
 fn finish() void {
+    finishWindow();
     const s = sampler orelse {
         say("SUMMARY mode={s} oracle=UNAVAILABLE (no DCompositionGetFrameId: needs Windows 11)", .{@tagName(opts.mode)});
         return;
@@ -472,6 +650,12 @@ fn parseArgs(alloc: std.mem.Allocator) !void {
             opts.gap_ms = try std.fmt.parseInt(u32, a[9..], 10);
         } else if (std.mem.startsWith(u8, a, "--stall-ms=")) {
             opts.stall_ms = try std.fmt.parseInt(u32, a[11..], 10);
+        } else if (std.mem.eql(u8, a, "--ghost")) {
+            opts.ghost = true;
+        } else if (std.mem.startsWith(u8, a, "--x=")) {
+            opts.x = try std.fmt.parseInt(i32, a[4..], 10);
+        } else if (std.mem.startsWith(u8, a, "--y=")) {
+            opts.y = try std.fmt.parseInt(i32, a[4..], 10);
         } else if (std.mem.startsWith(u8, a, "--out=")) {
             opts.out = a[6..];
         } else return error.UnknownArg;
@@ -497,7 +681,8 @@ pub fn main() !u8 {
     registerClass(card_class, &w32.DefWindowProcW, 0x004a3f3a);
 
     const ex: u32 = w32.WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW |
-        (if (opts.mode == .comp) WS_EX_NOREDIRECTIONBITMAP else 0);
+        (if (opts.mode == .comp) WS_EX_NOREDIRECTIONBITMAP else 0) |
+        (if (opts.ghost) w32.WS_EX_LAYERED | w32.WS_EX_TRANSPARENT else 0);
     // Window size for a 1000x640 client at 96 dpi; the scene is laid out in
     // client pixels, so exact chrome size does not matter to the oracle.
     const hwnd = w32.CreateWindowExW(
@@ -505,8 +690,8 @@ pub fn main() !u8 {
         main_class,
         std.unicode.utf8ToUtf16LeStringLiteral("ghoztty comp spike"),
         w32.WS_OVERLAPPEDWINDOW | w32.WS_CLIPCHILDREN,
-        40,
-        40,
+        opts.x,
+        opts.y,
         1016,
         679,
         null,
@@ -519,8 +704,11 @@ pub fn main() !u8 {
         return 2;
     };
     hwnd_main = hwnd;
+    if (opts.ghost) _ = w32.SetLayeredWindowAttributes(hwnd, 0, 1, w32.LWA_ALPHA);
 
-    if (opts.mode == .gdi) {
+    // idle builds the same child windows as gdi and never moves them, so the
+    // noise floor shows the same picture as the gdi run.
+    if (opts.mode == .gdi or opts.mode == .idle) {
         hwnd_blade = w32.CreateWindowExW(0, blade_class, std.unicode.utf8ToUtf16LeStringLiteral(""), w32.WS_CHILD | WS_VISIBLE, 0, 0, 1, 1, hwnd, null, null, null);
         hwnd_card = w32.CreateWindowExW(0, card_class, std.unicode.utf8ToUtf16LeStringLiteral(""), w32.WS_CHILD | WS_VISIBLE, 0, 0, 1, 1, hwnd, null, null, null);
         gdiLayout(blade_open);
@@ -548,6 +736,7 @@ pub fn main() !u8 {
     };
 
     _ = w32.ShowWindow(hwnd, w32.SW_SHOWNOACTIVATE);
+    if (opts.ghost) _ = w32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE);
     say("SPIKE mode={s} thread={s} init=ok target_hr=0x{x} glides={d} duration_ms={d} stall_ms={d} ui_tid={d} worker_tid={d}", .{
         @tagName(opts.mode),
         @tagName(opts.thread),
@@ -560,6 +749,7 @@ pub fn main() !u8 {
     });
 
     startSampler();
+    startWinSampler(hwnd);
     // Warm-up before the first glide: the first composes after showing a
     // window are the window appearing, not the glide.
     _ = w32.SetTimer(hwnd, TIMER_NEXT, 800, null);
@@ -577,6 +767,7 @@ pub fn main() !u8 {
 test {
     _ = stats;
     _ = rt;
+    _ = wgc;
 }
 
 test "the GDI curve matches the compositor's endpoints and is monotonic" {
