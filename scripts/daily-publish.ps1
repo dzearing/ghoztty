@@ -204,6 +204,10 @@ param(
     # Test seam: behave as if HEAD were not on the remote, so the one live SKIP
     # a publish has left (T1328) can be exercised without an unpushed commit.
     [switch]$AssumeUnpushed,
+    # Test seam: -1 (default) measures how far HEAD is behind its upstream; 0 or
+    # more stands in for that count, so a harness run from a checkout that is
+    # behind still exercises the decider (and the behind SKIP can be proven).
+    [int]$AssumeBehind = -1,
     # Empty = publish-windows-tag.ps1. There is no on-box packaging mode any
     # more (T1328): -Local and publish-windows-release.ps1 were retired so that
     # a release has exactly one definition, the CI tag build.
@@ -721,6 +725,26 @@ if (-not $req.Requested) {
         Log "REQUESTED: $($t.Reason)"
         $req = [pscustomobject]@{ Requested = $true; At = $nowDt.ToString('yyyy-MM-ddTHH:mm:ssK'); Reason = $t.Reason; Commit = $headHash }
     }
+}
+
+# A checkout behind its upstream judges "nothing has landed" against a stale
+# HEAD (2026-10-29: the controller's checkout had not pulled lane B's T2442 push,
+# read HEAD == the watermark, and CLEARED the user-waiting request). Behind means
+# this is the wrong place to decide anything: keep the request, say so, stop. No
+# upstream (a test repo) or a failed fetch reads as not behind.
+if ($AssumeBehind -ge 0) {
+    $behind = $AssumeBehind
+} else {
+    $behind = 0
+    try {
+        & git fetch -q 2>$null | Out-Null
+        $n = (& git rev-list --count 'HEAD..@{u}' 2>$null)
+        if ($LASTEXITCODE -eq 0 -and "$n".Trim() -match '^\d+$') { $behind = [int]"$n".Trim() }
+    } catch { $behind = 0 }
+}
+if ($behind -gt 0) {
+    Log "SKIP: this checkout is $behind commit(s) behind its upstream - pull first; any publish request is kept"
+    exit 0
 }
 
 $d = Test-DailyPublishDue -Now $nowDt -LastDate $mark.Date -LastAt $mark.At `

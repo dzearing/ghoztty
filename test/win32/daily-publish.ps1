@@ -435,6 +435,9 @@ function Invoke-Decider([string[]]$Extra, [int]$DockerCode, [int]$GhCode, [strin
             '-Repo', $Repo, '-WatermarkPath', $watermark, '-PublishScript', $fakePublish,
             '-RequestPath', $requestFile,
             '-Now', $At, '-HourLocal', '17') + $Extra
+        # The box's checkout may be behind origin (a lane pushed); that SKIP is
+        # section R's to prove, so every other arm runs as if up to date.
+        if ($Extra -notcontains '-AssumeBehind') { $psArgs += @('-AssumeBehind', '0') }
         & powershell @psArgs > $out
         $code = $LASTEXITCODE
     } finally { $env:PATH = $prevPath; $env:GHOZTTY_LOOP_LANE = $prevLane }
@@ -657,9 +660,15 @@ try {
         $c = (git -C $Repo rev-parse --short $rev).Trim()
         [IO.File]::WriteAllText($watermark, "{`"date`":`"2026-09-24`",`"at`":`"2026-09-24T14:43:26-07:00`",`"tag`":`"win-v1.36.37`",`"commit`":`"$c`",`"result`":`"published`",`"attempts`":1}`n")
     }
-    # Under: two commits behind, threshold 3, mid-morning. Nothing may happen.
+    # The decider counts `git log since..HEAD`, which spans every commit a merge
+    # brought in, so HEAD~3 is NOT three stranded commits after a main merge
+    # (2026-10-29: HEAD~2 was 8, and Q1 went red on history, not on code). The
+    # threshold is set from the same count the decider will see.
+    $n3 = @(git -C $Repo log --oneline 'HEAD~3..HEAD').Count
+    # Under: HEAD~2 stranded, threshold one past that, mid-morning. Nothing may happen.
     Set-PublishedAt 'HEAD~2'
-    $q1 = Invoke-Decider -Extra @('-StrandedThreshold', '3') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
+    $under = @(git -C $Repo log --oneline 'HEAD~2..HEAD').Count + 1
+    $q1 = Invoke-Decider -Extra @('-StrandedThreshold', "$under") -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
     AssertEq 'Q1 a boundary under the threshold publishes nothing' 0 $q1.Exit
     Assert 'Q1 and files no request' (-not (Test-Path -LiteralPath $requestFile))
     Assert 'Q1 and runs no publish' (-not (Test-Path -LiteralPath $ranMarker))
@@ -667,13 +676,13 @@ try {
 
     # -Check at the threshold decides out loud and writes nothing.
     Set-PublishedAt 'HEAD~3'
-    $q2 = Invoke-Decider -Extra @('-StrandedThreshold', '3', '-Check') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
+    $q2 = Invoke-Decider -Extra @('-StrandedThreshold', "$n3", '-Check') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
     AssertEq 'Q2 -Check at the threshold says it would publish' 10 $q2.Exit
-    AssertMatch 'Q2 naming the threshold' 'requested: stranded threshold: 3 commits' $q2.Text
+    AssertMatch 'Q2 naming the threshold' "requested: stranded threshold: $n3 commits" $q2.Text
     Assert 'Q2 and writes no request' (-not (Test-Path -LiteralPath $requestFile))
 
     # At the threshold, for real: the request is filed and honoured in one run.
-    $q3 = Invoke-Decider -Extra @('-StrandedThreshold', '3') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
+    $q3 = Invoke-Decider -Extra @('-StrandedThreshold', "$n3") -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
     AssertEq 'Q3 a boundary at the threshold publishes' 10 $q3.Exit
     Assert 'Q3 and the publisher ran' (Test-Path -LiteralPath $ranMarker)
     AssertMatch 'Q3 with the threshold named as what fired it' 'REQUESTED: stranded threshold' $q3.Text
@@ -687,10 +696,27 @@ try {
     # A request the threshold filed that hit a SKIP is left standing, exactly
     # like a hand-filed one, so the next push still ships it.
     Set-PublishedAt 'HEAD~3'
-    $q4 = Invoke-Decider -Extra @('-StrandedThreshold', '3', '-AssumeUnpushed') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
+    $q4 = Invoke-Decider -Extra @('-StrandedThreshold', "$n3", '-AssumeUnpushed') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
     AssertEq 'Q4 a threshold publish that cannot run is a skip' 0 $q4.Exit
     Assert 'Q4 and the request survives for the next push' (Test-Path -LiteralPath $requestFile)
     Assert 'Q4 and nothing was published' (-not (Test-Path -LiteralPath $ranMarker))
+
+    "== R. a checkout behind its upstream decides nothing (2026-10-29) =="
+    # The controller's checkout had not pulled lane B's T2442 push: HEAD equalled
+    # the watermark, so a user-waiting request read "nothing has landed" and was
+    # CLEARED. Behind must be a SKIP that keeps the request.
+    Remove-Item -LiteralPath $ranMarker, $requestFile -Force -ErrorAction SilentlyContinue
+    Set-PublishedAt 'HEAD'
+    [IO.File]::WriteAllText($requestFile, "{`"at`":`"2026-09-25T10:00:00-07:00`",`"reason`":`"user waiting`",`"commit`":`"x`"}`n")
+    $r1 = Invoke-Decider -Extra @('-AssumeBehind', '2') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
+    AssertEq 'R1 behind is a skip' 0 $r1.Exit
+    AssertMatch 'R1 naming why' 'SKIP: this checkout is 2 commit\(s\) behind' $r1.Text
+    Assert 'R1 and the request survives' (Test-Path -LiteralPath $requestFile)
+    Assert 'R1 and nothing was published' (-not (Test-Path -LiteralPath $ranMarker))
+    # The same state up to date is the "nothing has landed" clear it used to hit.
+    $r2 = Invoke-Decider -Extra @() -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
+    AssertMatch 'R2 up to date, the same request reads nothing landed' 'nothing has landed' $r2.Text
+    Remove-Item -LiteralPath $requestFile -Force -ErrorAction SilentlyContinue
     Complete-TestBody
 } finally {
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
