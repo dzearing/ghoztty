@@ -313,14 +313,14 @@ try {
     $mark = Get-LogCount
     Key-Field $sb 'Enter'
     Assert "Return pins the typed title (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=window outcome=set text=proj: three$' $mark 3000))
-    Assert "A moved into proj as three: proj/one | proj/three | proj/two" (Wait-Order 'proj/one|proj/three|proj/two' $mark)
+    Assert "A moved into proj as three, at the edge nearest where it was - nothing re-sorts by name (T2405): proj/one | proj/two | proj/three" (Wait-Order 'proj/one|proj/two|proj/three' $mark)
 
     "== W2: Return on an unchanged name pins nothing"
     Assert "the field opens on proj: three" (Open-WindowField $top $sb 'proj/three' 'proj: three')
     $mark = Get-LogCount
     Key-Field $sb 'Enter'
     Assert "unchanged: kept as it was (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=window outcome=keep ' $mark 3000))
-    Assert "the order did not move" (((Get-Order 0) -join '|') -eq 'proj/one|proj/three|proj/two')
+    Assert "the order did not move" (((Get-Order 0) -join '|') -eq 'proj/one|proj/two|proj/three')
 
     "== W3: Escape after typing changes nothing"
     Assert "the field opens on proj: one" (Open-WindowField $top $sb 'proj/one' 'proj: one')
@@ -329,7 +329,7 @@ try {
     Key-Field $sb 'Escape'
     Assert "Escape cancels (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=escape kind=window outcome=keep text=zzz$' $mark 3000))
     Start-Sleep -Milliseconds 400
-    Assert "nothing was renamed" (-not (Test-LogSince 'order=.*zzz' $mark) -and ((Get-Order 0) -join '|') -eq 'proj/one|proj/three|proj/two')
+    Assert "nothing was renamed" (-not (Test-LogSince 'order=.*zzz' $mark) -and ((Get-Order 0) -join '|') -eq 'proj/one|proj/two|proj/three')
 
     "== G1: a group's field holds the project; each of its windows takes the new name"
     $o = Get-Outline 0
@@ -342,7 +342,7 @@ try {
     $mark = Get-LogCount
     Key-Field $sb 'Enter'
     Assert "Return renames the group (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=project outcome=set text=web$' $mark 3000))
-    Assert "every window in it is retitled: web/one | web/three | web/two" (Wait-Order 'web/one|web/three|web/two' $mark)
+    Assert "every window in it is retitled, in its place: web/one | web/two | web/three" (Wait-Order 'web/one|web/two|web/three' $mark)
 
     "== G2: an emptied group's windows each go back to their own names"
     $o = Get-Outline 0
@@ -354,7 +354,7 @@ try {
     $mark = Get-LogCount
     Key-Field $sb 'Enter'
     Assert "empty clears the group (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=project outcome=clear ' $mark 3000))
-    Assert "ungrouped, each by its own name: one | three | two" (Wait-Order 'one|three|two' $mark)
+    Assert "ungrouped, each by its own name where the group was, in its order: one | two | three" (Wait-Order 'one|two|three' $mark)
     $o = Get-Outline 0
     Assert "...and no project head is left" ($null -ne $o -and (Find-ProjectHead $o) -lt 0)
 
@@ -367,7 +367,7 @@ try {
     $mark = Get-LogCount
     if ($sp) { [void](ClickAt $top $sb $sp) }
     Assert "a click elsewhere in the column keeps the name (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=click kind=window outcome=set text=alpha$' $mark 3000))
-    Assert "...so the window is alpha: alpha | three | two" (Wait-Order 'alpha|three|two' $mark)
+    Assert "...so the window is alpha, in its place: alpha | two | three" (Wait-Order 'alpha|two|three' $mark)
 
     "== W5: emptied, a window follows its own title; renamed again, it pins"
     Assert "the field opens on three (window A)" (Open-WindowField $top $sb 'three' 'three')
@@ -389,7 +389,35 @@ try {
         $mark = Get-LogCount
         Key-Field $sb 'Enter'
         Assert "Return pins solo (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=window outcome=set text=solo$' $mark 3000))
-        Assert "A is solo: alpha | solo | two" (Wait-Order 'alpha|solo|two' $mark)
+        Assert "A is solo, still last - by name it would sort between alpha and two (T2405): alpha | two | solo" (Wait-Order 'alpha|two|solo' $mark)
+    }
+
+    "== W6: Change Window Title renames the same way - nothing moves (T2405, Mac renameWindowKeepingPlace)"
+    # A window the order has never placed: listed beside its name neighbour
+    # (alpha), so only a pin keeps it there once it is renamed past two.
+    $before = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | ForEach-Object { $_.Hwnd })
+    $mark = Get-LogCount
+    Assert "setup: wD opened as m ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wD --name=d1 --title=m") -eq 0)
+    Assert "wD shows beside its name neighbour: alpha | m | two | solo" (Wait-Order 'alpha|m|two|solo' $mark 6000)
+    $dTop = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | Where-Object { $before -notcontains $_.Hwnd }) | Select-Object -First 1
+    Assert "wD's window is found" ($null -ne $dTop)
+    if ($null -eq $dTop) { return }
+    $dHwnd = [IntPtr]$dTop.Hwnd
+    $surface = Get-TestChildWindow -Window $dHwnd -Class 'GhozttyTerminal'
+    Assert "wD's terminal is found" ($surface -ne [IntPtr]::Zero)
+    $mark = Get-LogCount
+    Assert "ctrl+shift+r delivered to wD" (Send-TestKeys -Window $dHwnd -Target $surface -Modifiers ctrl, shift -Key R)
+    $dlg = [IntPtr]::Zero
+    $null = Wait-Until { $script:dlg = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyRenameDialog'; $script:dlg -ne [IntPtr]::Zero } 5000
+    $dlg = $script:dlg
+    Assert "the Change Window Title dialog opens" ($dlg -ne [IntPtr]::Zero)
+    if ($dlg -ne [IntPtr]::Zero) {
+        $edit = Find-TestWindowEx -Parent $dlg -Class 'EDIT'
+        [void](Set-TestControlText -Control $edit -Text 'zzz')
+        [void](Send-TestControlKey -Control $edit -Key Enter)
+        Assert "the dialog pinned the order as shown (log)" ($null -ne (Wait-Log 'pane sidebar window order pinned as shown by Change Window Title' $mark 4000))
+        # By name zzz would follow two: alpha | two | zzz | solo.
+        Assert "wD is zzz, in its place (T2405): alpha | zzz | two | solo" (Wait-Order 'alpha|zzz|two|solo' $mark)
     }
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))

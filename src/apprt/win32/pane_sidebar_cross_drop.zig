@@ -18,8 +18,8 @@
 //! Dropped in another group it is renamed `<project>: <name>`; dropped out of
 //! one, just `<name>` (`pane_sidebar_rename.groupTitle`).
 //!
-//! Also here, the T2339 rule the hand order needs once it exists: a renamed
-//! group keeps its place in the order (Mac `renameGroupFromSidebar`).
+//! A renamed group keeping its place is a rename rule, not a drop:
+//! `pane_sidebar_window_order.renamingProject` (T2405).
 //!
 //! Pure, so its tests run in every lane.
 
@@ -136,28 +136,6 @@ pub fn resolve(rows: []const Row, source: usize, pitch: i32, top: i32) Resolved 
     if (top <= rows[0].span.top) slot = 0;
     if (top + h >= rows[rows.len - 1].span.bottom) slot = n;
     return .{ .slot = slot, .dest = destination(others[0..n], slot, top) };
-}
-
-/// The order with group `old` renamed to `new` (Mac
-/// `renameGroupFromSidebar`): the group keeps its place - `new` takes `old`'s
-/// key where it stands, or, when `new` is already in the order, `old`'s is
-/// dropped. An empty `new` (the group taken apart) changes nothing. Keys
-/// borrow the inputs; `new_key` must outlive `out`.
-pub fn renamedProject(order: []const []const u8, old_key: []const u8, new_key: []const u8, empty: bool, out: [][]const u8) usize {
-    var has_new = false;
-    for (order) |k| {
-        if (std.mem.eql(u8, k, new_key)) has_new = true;
-    }
-    var n: usize = 0;
-    for (order) |k| {
-        if (n == out.len) break;
-        if (!empty and std.mem.eql(u8, k, old_key)) {
-            if (has_new) continue;
-            out[n] = new_key;
-        } else out[n] = k;
-        n += 1;
-    }
-    return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,20 +259,3 @@ test "T2338: a window taller than a header still reaches either end of the list"
     try expectDest(.{ .top_level = 2 }, last.dest);
 }
 
-test "T2338: a renamed group keeps its place in the order" {
-    var out: [8][]const u8 = undefined;
-    const order = [_][]const u8{ "window:s", "project:old", "window:a" };
-    const n = renamedProject(&order, "project:old", "project:new", false, &out);
-    try testing.expectEqual(@as(usize, 3), n);
-    try testing.expectEqualStrings("project:new", out[1]);
-    // Renamed onto a group the order already has: the old key goes.
-    const both = [_][]const u8{ "project:new", "window:s", "project:old" };
-    const m = renamedProject(&both, "project:old", "project:new", false, &out);
-    try testing.expectEqual(@as(usize, 2), m);
-    try testing.expectEqualStrings("project:new", out[0]);
-    try testing.expectEqualStrings("window:s", out[1]);
-    // Emptied: the order is left as it is.
-    const e = renamedProject(&order, "project:old", "project:", true, &out);
-    try testing.expectEqual(@as(usize, 3), e);
-    try testing.expectEqualStrings("project:old", out[1]);
-}

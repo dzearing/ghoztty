@@ -15,9 +15,11 @@
 //!   the row shows and so what the field edits.
 //! - **Project group**: the field holds the project. Each of its windows is
 //!   retitled `<new>: <name>`; empty takes them out of the group, each to its
-//!   own `<name>`. (Mac also keeps the group's place in its hand-arranged
-//!   window order; the Windows outline sorts groups by name and has no such
-//!   order yet, so the group lands where its new name sorts.)
+//!   own `<name>`.
+//! - **A rename never moves anything** (T2405; Mac 7e2d0a9da): committing a
+//!   window's or a group's - or Change Window Title - pins the all-windows
+//!   list as it was shown, so only what the new name asks for moves
+//!   (`pane_sidebar_window_order.renamingWindow` / `renamingProject`).
 //! - **Terminal pane**: the field sets its title as Change Pane Title does
 //!   (`Surface.setUserTitle`), and that name outranks a banner title
 //!   (`pane_sidebar.paneLabel`). A viewer is named by its page: no pencil.

@@ -204,6 +204,83 @@ pub fn moving(
 }
 
 // ---------------------------------------------------------------------------
+// A rename never moves anything (T2405; Mac 7e2d0a9da
+// `PaneSidebarWindowGrouping.pinned` / `renaming`)
+//
+// A rename the user commits - the sidebar's field, Change Window Title -
+// writes the list as it is shown into the order, so neither the name order
+// (never dragged) nor a name-neighbour placement (a window opened since the
+// last drag) re-sorts what was renamed. "As shown" is `allKeys` over the
+// arranged outline (Mac `pinned`): read back over the same windows it lists
+// them exactly so, whatever their names. A programmatic title (`+rename`,
+// `+new-window --title`) pins nothing and still places by name.
+
+/// The order to keep once window `window_key` is retitled into group
+/// `project` (null: no `<project>: `), from `pinned` - the list as it was
+/// shown before. Nothing moves; a `<project>: ` naming another group still
+/// moves the window into it, at the edge nearest where it was (its key keeps
+/// its place, and a group's windows follow the order), and one naming a group
+/// the list does not have makes that group where the window was. Losing its
+/// `<project>: ` leaves it beside the group it left. A new group's key goes
+/// into `key_buf`, which must outlive `out`.
+pub fn renamingWindow(
+    pinned: []const []const u8,
+    window_key: []const u8,
+    project: ?[]const u8,
+    key_buf: *Key,
+    out: [][]const u8,
+) usize {
+    var n: usize = 0;
+    var new_group: ?[]const u8 = null;
+    if (project) |p| {
+        key_buf.* = projectKey(p);
+        const pk = key_buf.slice();
+        const listed = for (pinned) |k| {
+            if (std.mem.eql(u8, k, pk)) break true;
+        } else false;
+        if (!listed) new_group = pk;
+    }
+    for (pinned) |k| {
+        if (new_group) |g| if (std.mem.eql(u8, k, window_key) and n < out.len) {
+            out[n] = g;
+            n += 1;
+            new_group = null;
+        };
+        if (n == out.len) break;
+        out[n] = k;
+        n += 1;
+    }
+    return n;
+}
+
+/// The order to keep once group `old_key` is renamed `new_key` (each of its
+/// windows retitled `<new>: <label>`), from `pinned`: the group's key renamed
+/// in place. Named as another group the list has, it merges into that one
+/// where that one is; `empty` (taken apart), its windows stand where it was,
+/// in its order. Keys borrow the inputs.
+pub fn renamingProject(
+    pinned: []const []const u8,
+    old_key: []const u8,
+    new_key: []const u8,
+    empty: bool,
+    out: [][]const u8,
+) usize {
+    const merges = for (pinned) |k| {
+        if (std.mem.eql(u8, k, new_key)) break true;
+    } else false;
+    var n: usize = 0;
+    for (pinned) |k| {
+        if (n == out.len) break;
+        if (std.mem.eql(u8, k, old_key)) {
+            if (empty or merges) continue;
+            out[n] = new_key;
+        } else out[n] = k;
+        n += 1;
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------------------
 // The drag's geometry (Mac `PaneSidebarItemReorder`), in pixels, y down
 
 /// An item's laid-out extent: a group's is its header and its windows.
@@ -531,4 +608,102 @@ test "T2337: the file round-trips, and skips what is not a key" {
     try testing.expectEqual(@as(usize, 2), m);
     try testing.expectEqualStrings("project:a", out[0]);
     try testing.expectEqualStrings("window:x", out[1]);
+}
+
+/// The list `titles` shows under `order`, as an order (Mac `pinned`).
+fn pinnedOf(titles: []const []const u8, order: []const []const u8, ids: *[16]Key, bufs: *[16]Key, out: *[32][]const u8) []const []const u8 {
+    var placed: [16]outline.Placed = undefined;
+    const n = outline.outlineOrder(titles, &placed);
+    var keys: [16][]const u8 = undefined;
+    for (titles, 0..) |_, i| {
+        var id: [8]u8 = undefined;
+        ids[i] = windowKey(std.fmt.bufPrint(&id, "w{d}", .{i}) catch unreachable);
+        keys[i] = ids[i].slice();
+    }
+    var arranged: [16]outline.Placed = undefined;
+    const m = arrange(placed[0..n], keys[0..titles.len], order, &arranged);
+    return out[0..allKeys(arranged[0..m], keys[0..titles.len], bufs, out)];
+}
+
+/// Window `i` of `before` retitled `title` by the user: the list after.
+fn expectRenamedWindow(want: []const []const u8, before: []const []const u8, order: []const []const u8, i: usize, title: []const u8) !void {
+    var ids: [16]Key = undefined;
+    var bufs: [16]Key = undefined;
+    var pin_buf: [32][]const u8 = undefined;
+    const pinned = pinnedOf(before, order, &ids, &bufs, &pin_buf);
+    var after: [16][]const u8 = undefined;
+    @memcpy(after[0..before.len], before);
+    after[i] = title;
+    var kb: Key = .{};
+    var out: [33][]const u8 = undefined;
+    const project = if (outline.splitWindowTitle(title)) |s| s.project else null;
+    const n = renamingWindow(pinned, ids[i].slice(), project, &kb, &out);
+    try expectArranged(want, after[0..before.len], out[0..n]);
+}
+
+/// Group `old` of `before` renamed `name` (its windows retitled): the list after.
+fn expectRenamedProject(want: []const []const u8, before: []const []const u8, order: []const []const u8, old: []const u8, name: []const u8) !void {
+    var ids: [16]Key = undefined;
+    var bufs: [16]Key = undefined;
+    var pin_buf: [32][]const u8 = undefined;
+    const pinned = pinnedOf(before, order, &ids, &bufs, &pin_buf);
+    var after: [16][]const u8 = undefined;
+    var tb: [16][64]u8 = undefined;
+    for (before, 0..) |t, k| {
+        after[k] = t;
+        const s = outline.splitWindowTitle(t) orelse continue;
+        if (!std.mem.eql(u8, s.project, old)) continue;
+        after[k] = if (name.len == 0)
+            std.fmt.bufPrint(&tb[k], "{s}", .{s.worktree}) catch unreachable
+        else
+            std.fmt.bufPrint(&tb[k], "{s}: {s}", .{ name, s.worktree }) catch unreachable;
+    }
+    const old_key = projectKey(old);
+    const new_key = projectKey(name);
+    var out: [32][]const u8 = undefined;
+    const n = renamingProject(pinned, old_key.slice(), new_key.slice(), name.len == 0, &out);
+    try expectArranged(want, after[0..before.len], out[0..n]);
+}
+
+test "T2405: a window renamed in a never-dragged list keeps its place" {
+    // By name "zzz" would go last; pinned, it stays between alpha and gamma.
+    try expectRenamedWindow(&.{ "alpha", "zzz", "gamma" }, &.{ "alpha", "beta", "gamma" }, &.{}, 1, "zzz");
+    // And the same over an order that was dragged once.
+    try expectRenamedWindow(&.{ "gamma", "alpha", "aaa" }, &.{ "alpha", "beta", "gamma" }, &.{ "window:w2", "window:w1" }, 1, "aaa");
+}
+
+test "T2405: a window opened since the last drag is pinned where it shows, not re-placed by name" {
+    // w2 was never dragged: it shows after its neighbour w0 ("a"); renamed
+    // "zz" it would follow "z" by name.
+    try expectRenamedWindow(&.{ "z", "a", "zz" }, &.{ "a", "z", "b" }, &.{ "window:w1", "window:w0" }, 2, "zz");
+}
+
+test "T2405: another group's <project>: moves the window in, at the edge nearest where it was" {
+    // From below the group: its last window.
+    try expectRenamedWindow(&.{ "a", "p/x", "p/y", "p/z" }, &.{ "a", "p: x", "p: y", "z" }, &.{}, 3, "p: z");
+    // From above: its first.
+    try expectRenamedWindow(&.{ "p/z", "p/x", "p/y", "z" }, &.{ "a", "p: x", "p: y", "z" }, &.{}, 0, "p: z");
+}
+
+test "T2405: a new group's <project>: makes the group where the window was" {
+    try expectRenamedWindow(&.{ "a", "new/b", "c" }, &.{ "a", "b", "c" }, &.{}, 1, "new: b");
+    try expectRenamedWindow(&.{ "a", "aaa/b", "c" }, &.{ "a", "b", "c" }, &.{}, 1, "aaa: b");
+}
+
+test "T2405: losing its <project>: leaves the window beside the group it left" {
+    // By name "x" would sort after "q".
+    try expectRenamedWindow(&.{ "p/y", "x", "q" }, &.{ "p: x", "p: y", "q" }, &.{}, 0, "x");
+}
+
+test "T2405: a renamed group keeps its place, never-dragged list included" {
+    try expectRenamedProject(&.{ "a", "zz/1", "z" }, &.{ "a", "m: 1", "z" }, &.{}, "m", "zz");
+}
+
+test "T2405: a group named as another merges into that one where that one is" {
+    try expectRenamedProject(&.{ "a/1", "a/2", "b" }, &.{ "a: 1", "b", "c: 2" }, &.{}, "c", "a");
+}
+
+test "T2405: a group emptied leaves its windows where it was, in its order" {
+    // By name "1" and "2" would lead.
+    try expectRenamedProject(&.{ "a", "2", "1", "z" }, &.{ "a", "m: 1", "m: 2", "z" }, &.{ "window:w2", "window:w1" }, "m", "");
 }

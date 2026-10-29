@@ -28,6 +28,7 @@ const std = @import("std");
 const App = @import("App.zig");
 const Window = @import("Window.zig");
 const Surface = @import("Surface.zig");
+const PaneSidebar = @import("PaneSidebar.zig");
 const viewer_nav = @import("viewer_nav.zig");
 const w32 = @import("win32.zig");
 const type_ramp = @import("type_ramp.zig");
@@ -558,8 +559,15 @@ pub fn finish(self: *RenameDialog) void {
     const target = self.target_surface;
     self.close();
     switch (level) {
-        // Change Window Title: the user's, so `+rename` leaves it (T2404).
-        .window => window.setTitleOverrideBy(title, .user),
+        // Change Window Title: the user's, so `+rename` leaves it (T2404),
+        // and it moves nothing in the all-windows list (T2405, Mac
+        // `renameWindowKeepingPlace`); `+rename` still places by name.
+        .window => {
+            var shown: PaneSidebar.ShownOrder = .{};
+            shown.take(window.app);
+            window.setTitleOverrideBy(title, .user);
+            PaneSidebar.keepWindowPlace(window.app, window, null, &shown, "Change Window Title");
+        },
         .tab => if (target) |s| if (s.pane_view) |pv| {
             // Address-only liveness resolve; a pane closed while the
             // dialog was open simply no-ops.

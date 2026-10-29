@@ -1185,6 +1185,106 @@ fn logText(self: *PaneSidebar) void {
 const TabRef = struct { window: *Window, tab: usize };
 const name_cap = 768; // a 256-unit tab title as UTF-8
 
+/// Every tab of every window the all-windows list gathers, with its name
+/// and its order key, indexed alike. Returns how many.
+fn gatherAll(
+    app: *App,
+    refs: *[pane_sidebar.max_heads]TabRef,
+    names_buf: *[pane_sidebar.max_heads][name_cap]u8,
+    names: *[pane_sidebar.max_heads][]const u8,
+    wkey_bufs: *[pane_sidebar.max_heads]window_order.Key,
+    wkeys: *[pane_sidebar.max_heads][]const u8,
+) usize {
+    var n: usize = 0;
+    gather: for (app.windows.items) |w| {
+        if (w.closing or w.is_quick_terminal) continue;
+        for (0..w.tab_count) |t| {
+            if (n == pane_sidebar.max_heads) break :gather;
+            refs[n] = .{ .window = w, .tab = t };
+            names[n] = groupName(w, t, &names_buf[n]);
+            wkey_bufs[n] = window_order.windowKey(&w.tab_uuid[t]);
+            wkeys[n] = wkey_bufs[n].slice();
+            n += 1;
+        }
+    }
+    return n;
+}
+
+/// Name order, then the user's (T2337): the order every window shares.
+fn arrangeAll(names: []const []const u8, wkeys: []const []const u8, out: *[pane_sidebar.max_heads]outline.Placed) usize {
+    var by_name: [pane_sidebar.max_heads]outline.Placed = undefined;
+    const n_name = outline.outlineOrder(names, &by_name);
+    var worder_buf: [window_order.max_keys][]const u8 = undefined;
+    return window_order.arrange(by_name[0..n_name], wkeys, shared.windowOrder(&worder_buf), out);
+}
+
+/// The all-windows list as it shows now, as an order (T2405; Mac
+/// `PaneSidebarWindowGrouping.pinned`): read back over the same windows it
+/// lists them exactly so, whatever their names. Taken before a rename the
+/// user commits, so the rename moves nothing. Its keys point into its own
+/// buffers: fill it in place.
+pub const ShownOrder = struct {
+    wkeys: [pane_sidebar.max_heads]window_order.Key = undefined,
+    pkeys: [pane_sidebar.max_heads]window_order.Key = undefined,
+    keys: [pane_sidebar.max_heads * 2][]const u8 = undefined,
+    len: usize = 0,
+
+    pub fn take(self: *ShownOrder, app: *App) void {
+        var refs: [pane_sidebar.max_heads]TabRef = undefined;
+        var names_buf: [pane_sidebar.max_heads][name_cap]u8 = undefined;
+        var names: [pane_sidebar.max_heads][]const u8 = undefined;
+        var wkeys: [pane_sidebar.max_heads][]const u8 = undefined;
+        const n = gatherAll(app, &refs, &names_buf, &names, &self.wkeys, &wkeys);
+        var placed: [pane_sidebar.max_heads]outline.Placed = undefined;
+        const m = arrangeAll(names[0..n], wkeys[0..n], &placed);
+        self.len = window_order.allKeys(placed[0..m], wkeys[0..n], &self.pkeys, &self.keys);
+    }
+
+    fn slice(self: *const ShownOrder) []const []const u8 {
+        return self.keys[0..self.len];
+    }
+};
+
+/// Store `keys` as the order every window's list shares, and persist it.
+fn storeWindowOrder(alloc: Allocator, keys: []const []const u8, why: []const u8) void {
+    if (!shared.setWindowOrder(alloc, keys)) return;
+    var saved: [window_order.max_keys][]const u8 = undefined;
+    window_order.save(alloc, shared.windowOrder(&saved));
+    log.info("pane sidebar window order pinned as shown by {s}", .{why});
+}
+
+/// Window `w`, just retitled by the user, keeps its place in the
+/// all-windows list (T2405; Mac `renameWindowKeepingPlace`): `before`, taken
+/// ahead of the rename, becomes the order, except for what the new name asks
+/// for (`window_order.renamingWindow`). `tab` is the one renamed; null for
+/// a window-wide title, which names every one of its tabs, so a new group
+/// goes where the first of them shows.
+pub fn keepWindowPlace(app: *App, w: *Window, tab: ?usize, before: *const ShownOrder, why: []const u8) void {
+    if (!app.hasWindow(w) or w.tab_count == 0) return;
+    const pinned = before.slice();
+    var first: usize = 0;
+    if (tab) |t| {
+        if (t >= w.tab_count) return;
+        first = t;
+    } else {
+        var first_at: usize = std.math.maxInt(usize);
+        for (0..w.tab_count) |t| {
+            const k = window_order.windowKey(&w.tab_uuid[t]);
+            for (pinned, 0..) |p, i| if (i < first_at and std.mem.eql(u8, p, k.slice())) {
+                first = t;
+                first_at = i;
+            };
+        }
+    }
+    var nb: [name_cap]u8 = undefined;
+    const project = if (outline.splitWindowTitle(groupName(w, first, &nb))) |s| s.project else null;
+    const key = window_order.windowKey(&w.tab_uuid[first]);
+    var kb: window_order.Key = .{};
+    var out: [window_order.max_keys][]const u8 = undefined;
+    const n = window_order.renamingWindow(pinned, key.slice(), project, &kb, &out);
+    storeWindowOrder(app.core_app.alloc, out[0..n], why);
+}
+
 /// The all-windows roster (T1829): every tab of every window as a group, in
 /// outline order (`pane_sidebar_outline.outlineOrder`), each listing its
 /// panes the way this window's own roster does.
@@ -1193,28 +1293,11 @@ fn refreshAll(self: *PaneSidebar) void {
     var refs: [max_heads]TabRef = undefined;
     var names_buf: [max_heads][name_cap]u8 = undefined;
     var names: [max_heads][]const u8 = undefined;
-    var nref: usize = 0;
-    gather: for (self.window.app.windows.items) |w| {
-        if (w.closing or w.is_quick_terminal) continue;
-        for (0..w.tab_count) |t| {
-            if (nref == max_heads) break :gather;
-            refs[nref] = .{ .window = w, .tab = t };
-            names[nref] = groupName(w, t, &names_buf[nref]);
-            nref += 1;
-        }
-    }
-    // Name order, then the user's (T2337): the order every window shares.
     var wkey_bufs: [max_heads]window_order.Key = undefined;
     var wkeys: [max_heads][]const u8 = undefined;
-    for (refs[0..nref], 0..) |r, i| {
-        wkey_bufs[i] = window_order.windowKey(&r.window.tab_uuid[r.tab]);
-        wkeys[i] = wkey_bufs[i].slice();
-    }
-    var by_name: [max_heads]outline.Placed = undefined;
-    const n_name = outline.outlineOrder(names[0..nref], &by_name);
-    var worder_buf: [window_order.max_keys][]const u8 = undefined;
+    const nref = gatherAll(self.window.app, &refs, &names_buf, &names, &wkey_bufs, &wkeys);
     var all_placed: [max_heads]outline.Placed = undefined;
-    const n_all = window_order.arrange(by_name[0..n_name], wkeys[0..nref], shared.windowOrder(&worder_buf), &all_placed);
+    const n_all = arrangeAll(names[0..nref], wkeys[0..nref], &all_placed);
 
     // Searching (T1877): only the panes the query matches, only the windows
     // holding one, and nothing folded - a hit inside a folded group would
@@ -5024,9 +5107,16 @@ fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
         .set => |v| v,
     };
     const app = self.window.app;
+    // The list as it shows, before the names change (T2405).
+    var shown: ShownOrder = .{};
+    if (r.target != .pane) shown.take(app);
     switch (r.target) {
         .pane => |p| renamePane(app, p, name),
-        .window => |key| renameWindowGroup(app, key, name),
+        .window => |key| if (renameWindowGroup(app, key, name)) |ref| {
+            // A window-wide pin renamed every tab of the window.
+            const whole = if (ref.window.title_override) |o| o.len > 0 else false;
+            keepWindowPlace(app, ref.window, if (whole) null else ref.tab, &shown, "a sidebar window rename");
+        },
         .project => |key| {
             // The fold follows the group to its new name, as its windows do.
             // One set for every window's sidebar (T2336).
@@ -5036,7 +5126,7 @@ fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
                 if (!shared.folded_projects.contains(to)) shared.toggleProject(self.alloc, to);
                 self.published();
             };
-            if (name) |nm| self.keepProjectPlace(r.initialText(), nm);
+            keepProjectPlace(self.alloc, &shown, r.initialText(), name orelse "");
             renameProject(app, r.initialText(), name orelse "");
         },
     }
@@ -5044,21 +5134,18 @@ fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
     refreshScopes(app.windows.items, null);
 }
 
-/// A renamed group keeps its place in the all-windows list's order (T2339's
-/// rule, carried by T2338; Mac `renameGroupFromSidebar`): its new name takes
-/// the old one's key where it stood.
-fn keepProjectPlace(self: *PaneSidebar, old: []const u8, new: []const u8) void {
-    var cur_buf: [window_order.max_keys][]const u8 = undefined;
-    const cur = shared.windowOrder(&cur_buf);
-    if (cur.len == 0) return;
+/// A renamed group keeps its place in the all-windows list (T2405, after
+/// T2339/T2338; Mac `renameGroupFromSidebar`): the list as it showed
+/// (`before`) becomes the order, its new name taking the old one's key where
+/// it stood - merged into a group it now names, or, emptied, its windows
+/// standing where it was (`window_order.renamingProject`). Never dragged or
+/// not, nothing re-sorts by the new name.
+fn keepProjectPlace(alloc: Allocator, before: *const ShownOrder, old: []const u8, new: []const u8) void {
     const old_key = window_order.projectKey(old);
     const new_key = window_order.projectKey(new);
     var out: [window_order.max_keys][]const u8 = undefined;
-    const n = cross_drop.renamedProject(cur, old_key.slice(), new_key.slice(), new.len == 0, &out);
-    if (!shared.setWindowOrder(self.alloc, out[0..n])) return;
-    var saved: [window_order.max_keys][]const u8 = undefined;
-    window_order.save(self.alloc, shared.windowOrder(&saved));
-    log.info("pane sidebar window order kept a renamed group's place from={s} to={s}", .{ old, new });
+    const n = window_order.renamingProject(before.slice(), old_key.slice(), new_key.slice(), new.len == 0, &out);
+    storeWindowOrder(alloc, out[0..n], "a sidebar group rename");
 }
 
 /// A pane's name, as Change Pane Title sets it: pinned against the
@@ -5082,11 +5169,14 @@ fn pinWindowName(w: *Window, t: usize, name: ?[]const u8) void {
     w.setTabTitlePin(t, name);
 }
 
-fn renameWindowGroup(app: *App, key: u64, name: ?[]const u8) void {
+/// The window group renamed, if it is still there.
+fn renameWindowGroup(app: *App, key: u64, name: ?[]const u8) ?TabRef {
     for (app.windows.items) |w| for (0..w.tab_count) |t| {
         if (tabKey(w, t) != key) continue;
-        return pinWindowName(w, t, name);
+        pinWindowName(w, t, name);
+        return .{ .window = w, .tab = t };
     };
+    return null;
 }
 
 /// A project group renamed from `old` to `project` (Mac
