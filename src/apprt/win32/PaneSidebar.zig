@@ -443,9 +443,10 @@ folded_projects: shared_mod.KeySet = .{},
 /// this window is activated again and shows its own selection. Compared,
 /// never dereferenced.
 clicked: ?*const PaneView = null,
-/// Another window's rail tile just clicked here (T2445, Mac `clickedWindow`):
-/// its group key, drawn selected while that window comes forward, until this
-/// window is activated again.
+/// Another window's rail tile or header just clicked here (T2445, T2446;
+/// Mac `clickedWindow`): its group key, drawn selected - a header in the
+/// accent - while that window comes forward, until this window is activated
+/// again.
 clicked_window: ?u64 = null,
 /// How many windows the scope lists (every tab of every window, whatever
 /// the search) - the ALL WINDOWS caption's count.
@@ -1107,7 +1108,8 @@ fn logPencils(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layou
 
 /// Each head's look on a geometry line (T2340), in heads order: its window
 /// icon's center (`hicon=`, `-` on a project head) and whether it is drawn
-/// selected (`hsel=`, this window's folded header).
+/// selected (`hsel=`, one digit a head: 0 not, 1 in the accent, 2 the
+/// unaccented pill - T2446).
 fn logHeadLook(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layout) void {
     w.writeAll(" hicon=") catch return;
     for (l.heads[0..l.head_count]) |hd| {
@@ -1117,15 +1119,21 @@ fn logHeadLook(self: *const PaneSidebar, w: anytype, l: *const pane_sidebar.Layo
     }
     w.writeAll(" hsel=") catch return;
     for (l.heads[0..l.head_count]) |hd| {
-        const sel = hd.index < self.groups.items.len and self.headDrawnSelected(hd, self.groups.items[hd.index]);
-        w.print("{d}", .{@intFromBool(sel)}) catch return;
+        const sel: pane_sidebar.HeadSelection = if (hd.index < self.groups.items.len) self.headDrawnSelection(hd, self.groups.items[hd.index]) else .none;
+        const digit: u8 = switch (sel) {
+            .none => '0',
+            .accent => '1',
+            .unemphasized => '2',
+        };
+        w.writeByte(digit) catch return;
     }
 }
 
-/// Whether `paintHead` draws header `hd` selected (`pane_sidebar.headSelected`).
-fn headDrawnSelected(self: *const PaneSidebar, hd: pane_sidebar.Head, g: Group) bool {
+/// How `paintHead` draws header `hd` selected (`pane_sidebar.headSelection`).
+fn headDrawnSelection(self: *const PaneSidebar, hd: pane_sidebar.Head, g: Group) pane_sidebar.HeadSelection {
     const folded = if (hd.kind == .project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
-    return pane_sidebar.headSelected(hd.kind, g.own, folded);
+    const clicked = self.all_windows and !g.own and self.clicked_window != null and self.clicked_window.? == g.key;
+    return pane_sidebar.headSelection(hd.kind, g.own, folded, clicked, self.all_windows);
 }
 
 fn logRows(self: *PaneSidebar) void {
@@ -4131,9 +4139,10 @@ fn paintJoinOutline(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, t: 
 /// (`PaneSidebarProjectHeader`): chevron, name, and at the trailing edge the
 /// window's pane count or the project's window count (a window's question
 /// badge went with T2280, Mac 2924ea5cc). Another window's header lights on
-/// hover, since a click raises it. This window's, folded, carries the
-/// selection a row would (T2340, Mac c4dbe30be): its selected pane is inside
-/// the fold.
+/// hover, since a click raises it, and is accent while it comes forward.
+/// This window's, folded, carries the selection a row would (T2340, Mac
+/// c4dbe30be): its selected pane is inside the fold; open among other
+/// windows, the unaccented pill (T2446, Mac 9e2e2902a).
 fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, g: Group, t: Theme) void {
     const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
@@ -4144,8 +4153,9 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     const editing = self.renamingHead(hd, g);
     var under = t.surface;
     const folded = if (project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
-    const selected = self.headDrawnSelected(hd, g);
-    const emphasized = selected and self.isEmphasized();
+    const selection = self.headDrawnSelection(hd, g);
+    const selected = selection != .none;
+    const emphasized = selection == .accent and self.isEmphasized();
     if (selected or (hovered and (project or !g.own))) {
         const sel = list_selection.rowPaint(t.surface, t.accent, .{ .selected = selected, .focused = emphasized, .hovered = hovered and !selected, .focus_visible = false });
         if (sel.fill) |f| {
@@ -5667,7 +5677,12 @@ fn activateHead(self: *PaneSidebar, k: usize, fold: bool) void {
     } }));
     if (hd.kind == .project) return self.toggleFold(.project, g.project_key);
     if (fold or g.own) return self.toggleFold(.window, g.key);
+    // Drawn accent here at once (T2446, Mac `clickedWindow`), while its
+    // window comes forward.
+    self.clicked_window = g.key;
+    self.signature = 0;
     self.raiseGroup(g);
+    self.refresh();
 }
 
 /// A header's x (T2298, Mac 345be6b02): a window's closes that window - the

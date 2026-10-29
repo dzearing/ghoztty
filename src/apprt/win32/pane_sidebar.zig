@@ -1233,12 +1233,23 @@ pub fn showsThisWindowTag(own: bool, all_windows: bool) bool {
     return own and all_windows;
 }
 
-/// Whether a header is drawn selected (T2340, Mac c4dbe30be
-/// `PaneSidebarWindowHeader.isSelected`): this window's, folded - its
-/// selected pane is inside the fold, so the header carries the selection in
-/// its place. A project's never is.
-pub fn headSelected(kind: HeadKind, own: bool, folded: bool) bool {
-    return kind == .window and own and folded;
+/// How a header is drawn selected (T2446, Mac 9e2e2902a
+/// `PaneSidebarWindowHeader.Selection`).
+pub const HeadSelection = enum { none, unemphasized, accent };
+
+/// How a header is drawn selected (T2340, T2446; Mac c4dbe30be, 9e2e2902a
+/// `PaneSidebarWindowHeader.selection`). The window in use is selected in
+/// all windows, folded or not: folded, in the accent - its selected pane is
+/// inside the fold, so the header carries the selection in its place; open,
+/// unaccented, since its focused pane's row under it has the accent. Another
+/// window's header is accent while a click brings it forward. In this
+/// window's own list the header is the list's title: selected only folded.
+/// A project's never is.
+pub fn headSelection(kind: HeadKind, own: bool, folded: bool, clicked: bool, all_windows: bool) HeadSelection {
+    if (kind != .window) return .none;
+    if (clicked or (own and folded)) return .accent;
+    if (own and all_windows) return .unemphasized;
+    return .none;
 }
 
 /// Move the single roster's rows and its tray's hairline and caption down by
@@ -2297,11 +2308,27 @@ test "T2340: a grouped window is not indented - its chevron, icon and panes line
     }
 }
 
-test "T2340: this window's header takes the selection only while folded; another's and a project's never (Mac c4dbe30be)" {
-    try testing.expect(headSelected(.window, true, true));
-    try testing.expect(!headSelected(.window, true, false));
-    try testing.expect(!headSelected(.window, false, true));
-    try testing.expect(!headSelected(.project, true, true));
+test "T2446: the selected window's header looks selected, folded or open (Mac 9e2e2902a theSelectedWindowsRowLooksSelected)" {
+    const sel = struct {
+        fn f(own: bool, folded: bool, clicked: bool, all: bool) HeadSelection {
+            return headSelection(.window, own, folded, clicked, all);
+        }
+    }.f;
+    // All windows: this window's, folded, takes the accent; open, the
+    // unaccented pill, its focused pane's row having the accent.
+    try testing.expectEqual(HeadSelection.accent, sel(true, true, false, true));
+    try testing.expectEqual(HeadSelection.unemphasized, sel(true, false, false, true));
+    try testing.expectEqual(HeadSelection.none, sel(false, true, false, true));
+    try testing.expectEqual(HeadSelection.none, sel(false, false, false, true));
+    // Another window's, clicked: accent while it comes forward.
+    try testing.expectEqual(HeadSelection.accent, sel(false, false, true, true));
+    try testing.expectEqual(HeadSelection.accent, sel(false, true, true, true));
+    // This window's own list: the header is its title, selected only folded
+    // (T2340, Mac c4dbe30be).
+    try testing.expectEqual(HeadSelection.none, sel(true, false, false, false));
+    try testing.expectEqual(HeadSelection.accent, sel(true, true, false, false));
+    // A project's never is.
+    try testing.expectEqual(HeadSelection.none, headSelection(.project, true, true, true, true));
 }
 
 test "pane_sidebar: the all-windows outline keeps its own heads (T2324)" {

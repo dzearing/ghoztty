@@ -163,9 +163,24 @@ function Read-Outline([string]$Line) {
             if ($c -eq '-') { $o.HIcon += , $null } else { $xy = $c -split ','; $o.HIcon += , @{ X = [int]$xy[0]; Y = [int]$xy[1] } }
         }
     }
+    # T2446: each head's selection, one digit a head in heads order: 0 not
+    # selected, 1 the accent, 2 the unaccented pill.
+    $o.HSel = ''
+    if ($Line -match ' hsel=(\d*)') { $o.HSel = $Matches[1] }
     return $o
 }
 function Head($o, [string]$Kind, [int]$Group) { $o.Heads | Where-Object { $_.Kind -eq $Kind -and $_.Group -eq $Group } | Select-Object -First 1 }
+# A head's `hsel` digit (T2446), or '?' when it is not in the outline.
+function HeadSel($o, [string]$Kind, [int]$Group) {
+    if ($null -eq $o) { return '?' }
+    for ($k = 0; $k -lt $o.Heads.Count; $k++) {
+        if ($o.Heads[$k].Kind -eq $Kind -and $o.Heads[$k].Group -eq $Group) {
+            if ($k -lt $o.HSel.Length) { return [string]$o.HSel[$k] }
+            return '?'
+        }
+    }
+    return '?'
+}
 function ClickAt($top, $sb, $pt) {
     return Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + $pt.X) -Y ($sb.Top + $pt.Y) -Action click
 }
@@ -319,6 +334,11 @@ try {
     $zeta = Head $o 'W' 1
     $zetaRows = @($o.Items | Where-Object Group -eq 1)
     Assert "this window's panes sit under its header" ($null -ne $zeta -and $zetaRows.Count -eq 2 -and ($zetaRows | ForEach-Object { $_.Y -gt $zeta.Y }) -notcontains $false)
+    # T2446 (Mac 9e2e2902a): open, this window's header is selected in the
+    # unaccented pill - its focused pane's row has the accent - and no other
+    # head is selected.
+    Assert "open, zeta's header is the unaccented pill (hsel=$($o.HSel), T2446)" ((HeadSel $o 'W' 1) -eq '2')
+    Assert "...and no other head is selected (hsel=$($o.HSel))" (($o.HSel.Length -eq $o.Heads.Count) -and (($o.HSel -replace '0', '').Length -eq 1))
     try {
         $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
         $path = Join-Path $env:TEMP 't1829-all-windows.png'
@@ -343,6 +363,18 @@ try {
     $h = Head $o 'W' 0
     if ($h) { [void](ClickAt $top $sb $h) }
     Assert "clicking Build logs' header raised it (log)" ($null -ne (Wait-Log 'pane sidebar raise window' $mark 2000))
+    # T2446 (Mac 9e2e2902a `clickedWindow`): the clicked header is accent in
+    # A's list at once, while its window comes forward; zeta stays selected.
+    # Every window's sidebar logs to the one stderr, and Build logs' own lists
+    # the same heads: A's line is the one whose zeta head (second) is selected.
+    $aOutline = 'pane sidebar outline mode=expanded .* hsel=\d[12]'
+    $oc = Read-Outline (Wait-Log $aOutline $mark)
+    Assert "the clicked header is drawn in the accent while its window comes forward (hsel=$($oc.HSel), T2446)" ((HeadSel $oc 'W' 0) -eq '1')
+    Assert "...and zeta's header keeps the unaccented pill (hsel=$($oc.HSel))" ((HeadSel $oc 'W' 1) -eq '2')
+    $mark = Get-LogCount
+    Assert "setup: A is the active window again" (Set-TestActiveWindow -Window $top)
+    $back = Read-Outline (Wait-Log $aOutline $mark 3000)
+    Assert "A active again: the clicked mark is gone, Build logs' header unselected (hsel=$($back.HSel))" ($null -ne $back -and (HeadSel $back 'W' 0) -eq '0')
 
     "== 4: this window's header folds its panes, and unfolds them"
     $mark = Get-LogCount
@@ -351,6 +383,7 @@ try {
     if ($h) { [void](ClickAt $top $sb $h) }
     $o2 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
     Assert "folded: zeta's rows are gone, its header stays" ($null -ne $o2 -and @($o2.Items | Where-Object Group -eq 1).Count -eq 0 -and $null -ne (Head $o2 'W' 1))
+    Assert "folded: zeta's header takes the accent, its pane being inside the fold (hsel=$($o2.HSel), T2446)" ((HeadSel $o2 'W' 1) -eq '1')
     # T1880: the fold covers the rows top-down (Mac 0.22 s) - measured against
     # the list after it, not dropped because the head moved.
     Assert "the fold animated (log)" ($null -ne (Wait-Log 'pane sidebar transition fold surface=rail ms=220' $mark 2000))
