@@ -1095,5 +1095,29 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.49.0/Ghoztty-1.49.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="dketTHV5xWwofEeg6xw/jYO0tv+KjDC+Y/fBvUv6supKCHBKdoZKUlc0KaFYx2rRgFeUBdN+MUoqG1CwR7TMDw==" length="26913160" />
         </item>
+        <item>
+            <title>Version 1.50.0</title>
+            <sparkle:version>1.50.0</sparkle:version>
+            <sparkle:shortVersionString>1.50.0</sparkle:shortVersionString>
+            <pubDate>Thu, 29 Oct 2026 05:31:28 +0000</pubDate>
+            <description>{
+  "version": "1.50.0",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "A rail of windows", "text": "Collapsed in all-windows mode, the rail shows one tile per window, in the list's order, with no dividers. Click a tile to bring that window forward." },
+        { "title": "See which windows are busy", "text": "A folded window's row, and every window's rail tile, shimmers while any of its panes is busy." },
+        { "title": "Your window stands out", "text": "The window you're in is highlighted in the all-windows list whether it's folded or open, and on the rail." },
+        { "title": "Groups fold cleanly", "text": "Windows without a project: prefix list above every group, so folding a group hides all of it. Every tab in a tab group joins its group." },
+        { "title": "The right + on the rail", "text": "The collapsed rail's + adds a pane in Panes mode and opens a window in all-windows mode." },
+        { "title": "Snappier drags", "text": "Dragging a window or group starts without lag, nothing lights up under the pointer mid-drag, and the dragged item lifts on clear glass and glides from where you let it go." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.50.0/Ghoztty-1.50.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="9B2x6w4mNBEM1c3WtnMkcNpaKzqzQhImRxJsE8dhlEu5iAFfLiuYa+pkF2xoryKkYiAJxCPgL+oe/r2jlbBTDQ==" length="26936336" />
+        </item>
     </channel>
 </rss>
