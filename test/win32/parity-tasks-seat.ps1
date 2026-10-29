@@ -793,6 +793,9 @@ try {
     $t1 = Get-Content -Raw (Join-Path $fixture 'T1.md')
     Assert 'P0d next -Claim claims it' ($t1 -match '(?m)^status: "in-progress"$')
     Assert 'P0e with a note saying the box was idle' ($t1 -match 'box idle at claim time')
+} catch {
+    "  FAIL P0 the idle-box section threw: $_"
+    $script:failures++
 } finally { $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $prevPresence }
 
 "P. set-status gates the way OUT of blocked(...)"

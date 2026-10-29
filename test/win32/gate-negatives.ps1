@@ -332,6 +332,9 @@ $Registry = @(
     [pscustomobject]@{ Label = 'HELD BY OTHER LANE'; Kind = 'status' }
     [pscustomobject]@{ Label = 'FINISHED IN OTHER LANE'; Kind = 'status' }
     [pscustomobject]@{ Label = 'LEDGER OFF'; Kind = 'status' }
+    # 4f366d19d: `next` re-queues tasks parked for an idle box when the box
+    # reads idle. A report, never a gate: it hands work out, it refuses none.
+    [pscustomobject]@{ Label = 'BOX IDLE'; Kind = 'status' }
     [pscustomobject]@{ Label = 'TODO'; Kind = 'status' }
 )
 

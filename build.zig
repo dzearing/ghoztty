@@ -104,6 +104,7 @@ pub fn build(b: *std.Build) !void {
     const agent_step = b.step("agent", "Build the ghoztty-agent (remote-machines daemon)");
     const test_agent_step = b.step("test-agent", "Run the ghoztty-agent tests (incl. real-pty)");
     const conpty_smoke_step = b.step("conpty-smoke", "Build the ConPTY runtime smoke exe (Windows, cross-compile)");
+    const comp_spike_step = b.step("comp-spike", "Build the T2360 Windows.UI.Composition frame-cadence spike exe (Windows)");
     const remote_test_client_step = b.step("remote-test-client", "Build the remote-test-client (drives a TCP ghoztty-agent)");
     const wp4_e2e_step = b.step("wp4-e2e", "Build the WP4 headless e2e harness (Connection.openChannel over TCP vs the real agent)");
     const remote_backend_e2e_step = b.step("remote-backend-e2e", "Build the WP4 headless RENDER harness (real Termio/.remote backend grid render vs the real agent)");
@@ -243,6 +244,14 @@ pub fn build(b: *std.Build) !void {
         const smoke = try buildpkg.GhosttyConptySmoke.init(b, &config, &deps);
         install_unlock.guardArtifact(smoke.install_step);
         conpty_smoke_step.dependOn(&smoke.install_step.step);
+    }
+
+    // T2360 composition spike: blade-glide frame cadence, hand-stepped HWNDs vs
+    // Windows.UI.Composition. Built on demand via `zig build comp-spike`.
+    if (config.target.result.os.tag == .windows) {
+        const spike = try buildpkg.GhosttyCompSpike.init(b, &config);
+        install_unlock.guardArtifact(spike.install_step);
+        comp_spike_step.dependOn(&spike.install_step.step);
     }
 
     // Ghostty docs

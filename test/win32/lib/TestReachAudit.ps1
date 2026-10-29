@@ -95,6 +95,7 @@ $script:TestReachExemptions = @(
     [pscustomobject]@{ Prefix = 'lib_vt'; Why = 'libghostty-vt; runs in `zig build test-lib-vt`, which no floor lane on this box builds (T2193)' }
     [pscustomobject]@{ Prefix = 'terminal.c'; Why = 'libghostty-vt C API; runs in `zig build test-lib-vt`, which no floor lane on this box builds (T2193)' }
     [pscustomobject]@{ Prefix = 'remote_test_client_main'; Why = 'the root of its own test-client exe, not of any test lane' }
+    [pscustomobject]@{ Prefix = 'comp_spike_main'; Why = 'the root of the T2360 comp-spike exe, not of any test lane; its scoring module runs in the win32 lane (apprt\win32\comp_spike_stats.zig)' }
 )
 
 Set-StrictMode -Version Latest
