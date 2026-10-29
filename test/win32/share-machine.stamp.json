@@ -1,14 +1,14 @@
 {
     "guard":  "share-machine",
     "script":  "test/win32/share-machine.ps1",
-    "generated":  "2026-10-21T08:18:43-07:00",
-    "commit":  "3dc80e920",
+    "generated":  "2026-10-29T04:23:10-07:00",
+    "commit":  "38d9fb6fc",
     "uncommitted":  [
                         "src/apprt/win32/ShareMachineRow.zig",
                         "test/win32/share-machine.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/ShareMachineRow.zig":  "563fd3175b8ee816706207a3a2151a32d76d3cf76661b49f9ed0365d34e5bebe",
-                  "test/win32/share-machine.ps1":  "eba316515b7f90d758ce528b6832cdb1573b2ccc86f456a4b1ffce5655f0091d"
+                  "src/apprt/win32/ShareMachineRow.zig":  "7756349baca7ce384bb3c5e63d8c134127db9839a68c77842409879db80d1466",
+                  "test/win32/share-machine.ps1":  "3e106cee1e6a234570ae04d0480063304756afdeff62e2b5304fe2c24cb29045"
               }
 }

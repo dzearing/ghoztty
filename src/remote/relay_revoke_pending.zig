@@ -78,7 +78,24 @@ pub const Record = struct {
     /// Unix seconds the record was armed, for logging and for the chooser's
     /// future "still trying since …" (T1426).
     armed_at: i64 = 0,
+    /// What armed it: `origin_sign_out` (absent on records from before T2296)
+    /// or `origin_untick`. Only an untick's record may be cancelled by ticking
+    /// the box again; a sign-out's revocation is a decision the tick must not
+    /// undo.
+    origin: []const u8 = origin_sign_out,
 };
+
+pub const origin_sign_out = "sign-out";
+pub const origin_untick = "untick";
+
+/// Whether ticking "Share this machine" again should cancel the armed record
+/// (T2296): only when an untick armed it, for the credential still in relay.env
+/// — the user changed their mind before the relay could be reached.
+pub fn tickCancels(rec: Record, current_token: []const u8) bool {
+    return std.mem.eql(u8, rec.origin, origin_untick) and
+        current_token.len > 0 and
+        std.mem.eql(u8, rec.device_token, current_token);
+}
 
 /// A loaded record and the memory it points into.
 pub const Loaded = struct {
@@ -451,6 +468,20 @@ test "a record written by an older build without the optional fields still loads
     defer parsed.deinit();
     try testing.expect(usable(parsed.value));
     try testing.expectEqualStrings("", parsed.value.account_email);
+    // A pre-T2296 record was always a sign-out's, and a tick must not cancel it.
+    try testing.expectEqualStrings(origin_sign_out, parsed.value.origin);
+    try testing.expect(!tickCancels(parsed.value, "t"));
+}
+
+test "tickCancels: only an untick's record, only for the credential still on disk (T2296)" {
+    const untick: Record = .{ .relay_base = "https://r", .device_token = "tok", .origin = origin_untick };
+    try testing.expect(tickCancels(untick, "tok"));
+    // A different credential is a different enrollment: its revocation stands.
+    try testing.expect(!tickCancels(untick, "other"));
+    try testing.expect(!tickCancels(untick, ""));
+    // A sign-out's revocation is never undone by the share box.
+    const signed_out: Record = .{ .relay_base = "https://r", .device_token = "tok" };
+    try testing.expect(!tickCancels(signed_out, "tok"));
 }
 
 test "the armed record survives on disk and is cleared only by an answer" {

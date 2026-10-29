@@ -1,10 +1,10 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-10-25T23:55:06-07:00",
-    "commit":  "ae6a60959",
+    "generated":  "2026-10-29T04:42:22-07:00",
+    "commit":  "38d9fb6fc",
     "uncommitted":  [
-                        "src/datastruct/split_tree.zig"
+                        "src/remote/relay_revoke_pending.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -72,7 +72,7 @@
                   "src/remote/relay_directory.zig":  "69b406e2f41856cf317780028cca84c214d7e8a8a30193f45de94e35c8c514a0",
                   "src/remote/relay_hosting.zig":  "cb42d120d06403922238a929ac98c785c685e30462679457aa6382c6a43aadf1",
                   "src/remote/relay_revoke.zig":  "e9764bbd76227c72232a403cf0bcda01f44ad5cedd2c1a4de421dbe89e16cb77",
-                  "src/remote/relay_revoke_pending.zig":  "c8fc9f9cd94f770e5e6362cef9dbbf83680bab592c4abd5fcb616dba484f6a06",
+                  "src/remote/relay_revoke_pending.zig":  "88a1775a2e15839362fce40b0f952c762f9df1db18c2680b0af58e9eafa31d61",
                   "src/remote/relay_session.zig":  "649829165a7914805d21fb58008b42a41c16e3a2a9c3e797c986215717f77eb0",
                   "src/remote/relay_signin.zig":  "144d0cfc2f894dc8670e73bf1e00b3efa1c0c26e0148e62a637cbc51ab36b8f2",
                   "src/remote/relay_suspend.zig":  "c744f10a9bf9b77af917eb8d2b0ecea5bba183fc9fa53846d21b9a8103069a16",

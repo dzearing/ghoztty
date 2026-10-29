@@ -294,7 +294,7 @@ pending_revoke_len: usize = 0,
 sharing_path: ?[]const u8 = null,
 /// The persisted sharing state, re-read after every flip and every
 /// enrollment outcome. The checkbox renders `boxChecked(share_enabled,
-/// ShareMachineRow.isRunning())`, so a pending browser flow reads as ON.
+/// ShareMachineRow.isEnrolling())`, so a pending browser flow reads as ON.
 share_enabled: bool = false,
 
 /// The fetched device list. Owned by `parsed` (its own JSON arena); empty when
@@ -1439,6 +1439,8 @@ fn refreshAccountRow(self: *MachineChooser) void {
     // flag, checked from persisted-or-pending truth, disabled while its own
     // browser enrollment runs. The same focus hand-off rule as above applies
     // before it is disabled.
+    // A flow in either direction disables the box; only a tick's enrollment
+    // shows it checked ahead of the file (an untick already wrote "off").
     const share_pending = ShareMachineRow.isRunning();
     if (self.sharing_path != null) {
         if (focus == @as(?w32.HWND, self.share_btn) and share_pending) {
@@ -1447,7 +1449,7 @@ fn refreshAccountRow(self: *MachineChooser) void {
         _ = w32.SendMessageW(
             self.share_btn,
             w32.BM_SETCHECK,
-            if (ShareMachineRow.boxChecked(self.share_enabled, share_pending))
+            if (ShareMachineRow.boxChecked(self.share_enabled, ShareMachineRow.isEnrolling()))
                 w32.BST_CHECKED
             else
                 w32.BST_UNCHECKED,
@@ -1673,11 +1675,19 @@ fn onShareToggled(self: *MachineChooser) void {
     if (ShareMachineRow.isRunning()) return;
 
     if (self.share_enabled) {
-        if (ShareMachineRow.disable(alloc, path)) {
-            self.share_enabled = false;
-            self.setHint(ShareMachineRow.disabled_hint);
-        } else {
-            self.setHint(ShareMachineRow.save_failed_hint);
+        // Unticking takes this machine off the account (D100, T2296); the
+        // removal itself finishes off-thread and reports through
+        // `onShareResult`.
+        switch (ShareMachineRow.disable(self.window.app, self.relay_base, path)) {
+            .off => {
+                self.share_enabled = false;
+                self.setHint(ShareMachineRow.disabled_hint);
+            },
+            .leaving => {
+                self.share_enabled = false;
+                self.setHint(ShareMachineRow.leaving_hint);
+            },
+            .failed => self.setHint(ShareMachineRow.save_failed_hint),
         }
         self.refreshAccountRow();
         return;
@@ -1703,9 +1713,10 @@ fn onShareToggled(self: *MachineChooser) void {
     self.refreshAccountRow();
 }
 
-/// GUI thread: the async share-enable (browser enrollment + flag write)
-/// finished. Re-read the persisted state — the worker wrote it, disk is the
-/// truth — and say what happened in the footer.
+/// GUI thread: an async share flip finished — a tick's browser enrollment and
+/// flag write, or an untick's removal from the account (T2296). Re-read the
+/// persisted state — the worker wrote it, disk is the truth — and say what
+/// happened in the footer.
 pub fn onShareResult(self: *MachineChooser, res: *const ShareMachineRow.Result) void {
     if (self.sharing_path) |p| {
         const arena = self.arena.allocator();
@@ -1715,7 +1726,9 @@ pub fn onShareResult(self: *MachineChooser, res: *const ShareMachineRow.Result) 
     // A SUCCESS is re-worded here rather than taken from the worker: whether the
     // running agent will act on the flag is a GUI-thread question (it reads the
     // shared connection), and the worker answered minutes ago on another thread.
-    if (res.ok) {
+    if (res.kind == .leaving) {
+        self.setHint(res.message);
+    } else if (res.ok) {
         self.setHint(ShareMachineRow.enabledHint(self.shareReconciler()));
     } else if (res.message.len > 0) {
         self.setHint(res.message);

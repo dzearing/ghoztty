@@ -11,8 +11,12 @@
 #   B. with a credential already in relay.env, one click writes
 #      {"enabled":true} to sharing.json with NO enrollment traffic, and the
 #      box checks. The credential file is untouched.
-#   C. a second click writes {"enabled":false} and unchecks; the credential
-#      is KEPT (toggling off is not a sign-out).
+#   C. a second click unticks AND takes the machine off the account (D100,
+#      T2296): the relay receives POST /v1/agent/deenroll with the device's
+#      credential, relay.env's credential is gone, sharing.json is cleared back
+#      to "follows enrollment", and the footer says the other devices no longer
+#      list it. (Before T2296 the credential was kept and the machine stayed
+#      listed as offline.)
 #   D. with relay.env DELETED, a click runs the real enrollment flow against
 #      the fake relay (/v1/enroll/start web flow, /v1/enroll/poll -> complete),
 #      persists relay.env with the granted token, THEN enables sharing.
@@ -33,11 +37,18 @@
 #   I. an ENROLLED machine nobody configured is shared (T1965; D22 resolved
 #      default-on, and an enrolled Mac hosts since main 6dfb31232): with a
 #      credential and no sharing.json the chooser opens CHECKED without writing
-#      anything, and one click is an explicit off.
+#      anything, and one click takes it off the account (T2296).
 #   J. a credential the app found belongs to ANOTHER account (the T2049 veto)
 #      refuses the tick (T2099): no sharing.json, the box stays unticked, and the
 #      footer names the owning account; negative control: a veto naming a
 #      different credential enables as usual.
+#   K. an untick while the relay CANNOT be reached (T2296): sharing is off at
+#      once (enabled:false, so the agent parks), the credential is kept as the
+#      retry's own record, a pending revocation is armed marked as an untick's,
+#      and the footer says the removal happens once the relay is reachable.
+#      Ticking again before then CANCELS that revocation and shares at once
+#      with no enrollment - the user changed their mind; and the same tick does
+#      NOT cancel a SIGN-OUT's armed revocation (negative control).
 #
 # Hermetic: GHOSTTY_SHARING_CONFIG and GHOSTTY_RELAY_ENV point both files at a
 # scratch dir (the same overrides the agent's own path resolution honors, so
@@ -142,6 +153,9 @@ function Start-FakeRelay($port, $hitsFile, $nonce) {
                     $out = Resp200 "{`"enroll_url`":`"http://127.0.0.1:$port/enroll/e2e`",`"device_code_handle`":`"h-t547`",`"interval`":1,`"expires_in`":60}"
                 } elseif ($line -match '^POST /v1/enroll/poll') {
                     $out = Resp200 "{`"status`":`"complete`",`"device_id`":`"dev-t547`",`"device_token`":`"tok-enrolled-t547`",`"relay_base`":`"http://127.0.0.1:$port`"}"
+                } elseif ($line -match '^POST /v1/agent/deenroll') {
+                    # T2296: the device deletes itself; 204 is the relay's yes.
+                    $out = [Text.Encoding]::UTF8.GetBytes("HTTP/1.1 204 No Content`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
                 } elseif ($line -match '^GET /v1/client/devices') {
                     $out = Resp200 '{"devices":[]}'
                 } else {
@@ -220,6 +234,32 @@ function Wait-SharingEnabled([bool]$want, [int]$timeoutSec = 8) {
     return $false
 }
 
+# Wait until a file is gone (the untick's worker deletes relay.env and
+# sharing.json off the GUI thread).
+function Wait-Gone([string]$path, [int]$timeoutSec = 10) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Test-Path $path)) { return $true }
+        Start-Sleep -Milliseconds 250
+    }
+    return (-not (Test-Path $path))
+}
+
+function Get-HintText([IntPtr]$chooser) {
+    return (@(Get-TestControls -Window $chooser -Class 'Static' |
+        ForEach-Object { $_.Text } | Where-Object { $_ -and $_.Trim().Length -gt 0 }) -join ' | ')
+}
+
+function Wait-HintMatch([IntPtr]$chooser, [string]$pattern, [int]$timeoutSec = 10) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $h = Get-HintText $chooser
+        if ($h -match $pattern) { return $h }
+        Start-Sleep -Milliseconds 300
+    }
+    return (Get-HintText $chooser)
+}
+
 # `$persistence` brings a real local agent up (G/H need one to judge);
 # `$suppress` is a capability string that agent will NOT advertise, which is how
 # a single tree produces an agent OLDER than itself (T469 seam).
@@ -293,14 +333,22 @@ try {
     $hits = if (Test-Path $hitsFile) { Get-Content $hitsFile -Raw } else { '' }
     Assert 'no enrollment traffic when a credential exists' ($hits -notmatch '/v1/enroll/')
 
-    "== C: toggle off keeps the credential"
+    "== C: toggle off takes this machine off the account (D100, T2296)"
     [void](Send-TestControlClick -Control $cb.Hwnd)
-    Assert 'sharing.json says enabled:false' (Wait-SharingEnabled $false)
+    Assert 'C credential removed from relay.env' (Wait-Gone $relayEnv)
+    Assert 'C sharing.json cleared back to follows-enrollment' (Wait-Gone $sharingCfg)
+    $hits = if (Test-Path $hitsFile) { Get-Content $hitsFile -Raw } else { '' }
+    Assert 'C relay received the de-enroll (the account stops listing it)' ($hits -match 'POST /v1/agent/deenroll')
     Start-Sleep -Milliseconds 400
-    Assert 'checkbox is unchecked' ((Get-ShareChecked $chooser) -eq $false)
-    Assert 'credential KEPT on toggle-off (not a sign-out)' ((Get-Content $relayEnv -Raw -ErrorAction SilentlyContinue) -match 'tok-seeded-t547')
+    Assert 'C checkbox is unchecked' ((Get-ShareChecked $chooser) -eq $false)
+    $cbC = Get-ShareCheckbox $chooser
+    Assert 'C checkbox enabled again once the removal finished' ($cbC -and $cbC.Enabled)
+    $hc = Wait-HintMatch $chooser 'removed from your account'
+    Assert "C footer says the machine left the account (got: '$hc')" ($hc -match 'removed from your account')
+    Assert 'C no pending revocation left behind' (-not (Test-Path (Join-Path $tmp 'pending-revoke.json')))
 
-    "== D: toggle on with NO credential runs enrollment first"
+    "== D: re-ticking after leaving runs enrollment first"
+    Assert 'D starts with no credential (C removed it, nothing else did)' (-not (Test-Path $relayEnv))
     Remove-Item $relayEnv -Force -ErrorAction SilentlyContinue
     [void](Send-TestControlClick -Control $cb.Hwnd)
     # Enrollment: start + first poll at 1s interval, then the two file writes.
@@ -416,10 +464,10 @@ try {
             Assert 'I CHECKED: enrolled with no sharing.json means shared' ((Get-ShareChecked $chi) -eq $true)
             Assert 'I opening the chooser wrote no sharing.json' (-not (Test-Path $sharingCfg))
             [void](Send-TestControlClick -Control $cbi.Hwnd)
-            Assert 'I one click is an explicit off (enabled:false)' (Wait-SharingEnabled $false)
+            Assert 'I one click takes the machine off the account (credential gone)' (Wait-Gone $relayEnv)
             Start-Sleep -Milliseconds 400
             Assert 'I checkbox unchecked after the click' ((Get-ShareChecked $chi) -eq $false)
-            Assert 'I credential kept by the off' ((Get-Content $relayEnv -Raw -ErrorAction SilentlyContinue) -match 'tok-seeded-t1965')
+            Assert 'I no sharing.json left behind' (Wait-Gone $sharingCfg)
         }
     }
 
@@ -471,6 +519,59 @@ try {
         }
     }
     Remove-Item $vetoPath -Force -ErrorAction SilentlyContinue
+
+    "== K: unticking while the relay is unreachable arms the removal; a re-tick cancels it (T2296)"
+    Stop-DebugGhoztty
+    Remove-Item $sharingCfg -Force -ErrorAction SilentlyContinue
+    $pendingPath = Join-Path $tmp 'pending-revoke.json'
+    Remove-Item $pendingPath -Force -ErrorAction SilentlyContinue
+    $deadK = Get-FreePort   # nothing listens there
+    $tokK = 'tok-seeded-t2296'
+    Set-Content -Path $relayEnv -Value "RELAY_BASE=http://127.0.0.1:$deadK`nDEVICE_TOKEN=$tokK`n" -Encoding ascii
+    $gk = Launch-Gui "http://127.0.0.1:$deadK"
+    Assert 'K GUI came up' ($null -ne $gk)
+    if ($null -ne $gk) {
+        $chk = Open-Chooser $gk
+        Assert 'K chooser opened' ($chk -ne [IntPtr]::Zero)
+        $cbk = if ($chk -ne [IntPtr]::Zero) { Get-ShareCheckbox $chk } else { $null }
+        Assert 'K share checkbox present' ($null -ne $cbk)
+        if ($null -ne $cbk) {
+            Assert 'K opens CHECKED (enrolled, nobody configured it)' ((Get-ShareChecked $chk) -eq $true)
+            [void](Send-TestControlClick -Control $cbk.Hwnd)
+            Assert 'K sharing is off at once (enabled:false, the agent parks)' (Wait-SharingEnabled $false)
+            $hk = Wait-HintMatch $chk 'as soon as'
+            Assert "K footer says the removal is owed, not done (got: '$hk')" ($hk -match 'as soon as')
+            Assert 'K checkbox unchecked' ((Get-ShareChecked $chk) -eq $false)
+            $deadline = (Get-Date).AddSeconds(8)
+            while ((Get-Date) -lt $deadline -and -not (Test-Path $pendingPath)) { Start-Sleep -Milliseconds 250 }
+            $rec = if (Test-Path $pendingPath) { Get-Content $pendingPath -Raw } else { '' }
+            Assert 'K pending revocation armed' ($rec -match [regex]::Escape($tokK))
+            Assert 'K the armed record is marked as an untick''s' ($rec -match '"origin"\s*:\s*"untick"')
+            Assert 'K credential KEPT as the retry''s own record' ((Get-Content $relayEnv -Raw -ErrorAction SilentlyContinue) -match $tokK)
+
+            # Changed their mind before the relay answered: tick again.
+            [void](Send-TestControlClick -Control $cbk.Hwnd)
+            Assert 'K re-tick shares at once (enabled:true, no browser)' (Wait-SharingEnabled $true)
+            Assert 'K re-tick cancelled the untick''s pending removal' (Wait-Gone $pendingPath 5)
+            Start-Sleep -Milliseconds 400
+            Assert 'K checkbox checked after the re-tick' ((Get-ShareChecked $chk) -eq $true)
+
+            # Negative control: a SIGN-OUT's armed revocation survives the same
+            # tick - the share box never undoes a sign-out.
+            [void](Send-TestControlClick -Control $cbk.Hwnd)
+            [void](Wait-SharingEnabled $false)
+            $deadline = (Get-Date).AddSeconds(8)
+            while ((Get-Date) -lt $deadline -and -not (Test-Path $pendingPath)) { Start-Sleep -Milliseconds 250 }
+            $signOutRec = '{"relay_base":"http://127.0.0.1:' + $deadK + '","device_token":"' + $tokK + '","account_email":"","armed_at":1,"origin":"sign-out"}'
+            [System.IO.File]::WriteAllText($pendingPath, $signOutRec)
+            [void](Send-TestControlClick -Control $cbk.Hwnd)
+            [void](Wait-SharingEnabled $true)
+            Start-Sleep -Milliseconds 800
+            $after = if (Test-Path $pendingPath) { Get-Content $pendingPath -Raw } else { '' }
+            Assert 'K negative control: a sign-out''s pending revocation is NOT cancelled by a tick' ($after -match '"origin"\s*:\s*"sign-out"')
+        }
+    }
+    Remove-Item $pendingPath -Force -ErrorAction SilentlyContinue
 
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {

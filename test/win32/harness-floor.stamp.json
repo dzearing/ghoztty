@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-29T02:44:31-07:00",
-    "commit":  "ec2ed4ece",
+    "generated":  "2026-10-29T04:59:24-07:00",
+    "commit":  "38d9fb6fc",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-all-windows.ps1"
+                        "test/win32/share-machine.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -453,7 +453,7 @@
                   "test/win32/session-snapshot-reattach.ps1":  "b86fb9af73414ff62034973f8d002e375b68cabeaed1d7de7319f76b2f2afcb8",
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "e0019c099845add5401f0faf816a19db34eb148ba1dc8a4b7d8b390ad86ab0a5",
-                  "test/win32/share-machine.ps1":  "eba316515b7f90d758ce528b6832cdb1573b2ccc86f456a4b1ffce5655f0091d",
+                  "test/win32/share-machine.ps1":  "3e106cee1e6a234570ae04d0480063304756afdeff62e2b5304fe2c24cb29045",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
                   "test/win32/sidebar-divider-tuck.ps1":  "7ad507d8bd0a5c5690dd22984c819003693fc9ee04c09ccabce11aab01df3d0a",
                   "test/win32/side-pane-featured.ps1":  "5184c74dd94e1001b5f3e6b3636ca64f72f374ee1c932ceb981352ba3e9ffcfa",

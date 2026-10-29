@@ -228,15 +228,19 @@ is the agent's `SharingUplink` raising/parking its link. The rule is
 `sharing.decide` (`src/remote/agent/sharing.zig`), run by both the agent's 5s
 reconcile and the chooser's "Share this machine" checkbox, so they cannot
 disagree: with **no `sharing.json`** an enrolled machine serves (D22 resolved
-default-on) and a client-only one stays quietly down; an explicit untick
-(`{"enabled":false}`) keeps it down while staying enrolled; the credential is
+default-on) and a client-only one stays quietly down; an untick **takes the
+machine off the account** (D100, T2296 - Mac has no enrolled-but-dark state):
+the chooser writes `{"enabled":false}` at once so the uplink parks, then
+de-enrolls exactly as sign-out does and deletes `sharing.json`; an unreachable
+relay arms the T1424 pending revocation with `origin: "untick"`, which a
+re-tick for the same credential cancels (a sign-out's never); the credential is
 re-read every tick, so a sign-out that deletes `relay.env` parks the uplink and
 a re-enroll resumes it with no restart; a pending revocation vetoes it (T1427).
 It survives an agent kill and an app relaunch because the agent re-reads the
 same files at startup. `--exit-on-revoke` is never passed here — exiting would
 take the user's local panes with it — and the per-role guard is proven by
 `test/win32/agent-role-guard.ps1` (T1967). Tests: `agent-sharing-uplink.ps1`
-(sections 1, 2, 5b) and `share-machine.ps1` (section I).
+(sections 1, 2, 5b) and `share-machine.ps1` (sections C, I, K).
 
 #### Signing out revokes THIS machine (T1421)
 
