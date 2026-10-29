@@ -177,21 +177,65 @@ pub fn paint(pixels: []u32, w: usize, h: usize, core: Rect, color: Rgb, scale: f
     const x1: usize = @intCast(std.math.clamp(reach.right, 0, @as(i32, @intCast(w))));
     const y0: usize = @intCast(std.math.clamp(reach.top, 0, @as(i32, @intCast(h))));
     const y1: usize = @intCast(std.math.clamp(reach.bottom, 0, @as(i32, @intCast(h))));
+    if (x1 <= x0 or y1 <= y0) return;
+    // `alphaAt` is a column's terms times a row's (T2454): each column's
+    // coverage and blur once, then every row's once as it comes, combined in
+    // `alphaAt`'s own order - the same alpha to the bit, without its four
+    // `erf`s a pixel. A bar the full height of a 4K window cost 1.4 ms a
+    // paint that way, every frame of a divider drag.
+    const alloc = std.heap.page_allocator;
+    const cols = alloc.alloc(f32, 2 * (x1 - x0)) catch return paintEach(pixels, w, x0, x1, y0, y1, core, color, scale, strength);
+    defer alloc.free(cols);
+    const s = sigma(if (scale > 0) scale else 1);
+    const l: f32 = @floatFromInt(core.left);
+    const r: f32 = @floatFromInt(core.right);
+    const t: f32 = @floatFromInt(core.top);
+    const b: f32 = @floatFromInt(core.bottom);
+    const cov_x = cols[0 .. x1 - x0];
+    const blur_x = cols[x1 - x0 ..];
+    for (cov_x, blur_x, x0..) |*c, *g, x| {
+        const fx: f32 = @floatFromInt(x);
+        c.* = covered(fx, l, r);
+        g.* = glow_opacity * blurred(fx + 0.5, l, r, s);
+    }
+    const op = strength.opacity();
+    var y = y0;
+    while (y < y1) : (y += 1) {
+        const fy: f32 = @floatFromInt(y);
+        const cov_y = covered(fy, t, b);
+        const blur_y = blurred(fy + 0.5, t, b, s);
+        for (cov_x, blur_x, x0..) |cx, gx, x| {
+            const body = cx * cov_y;
+            const glow = gx * blur_y;
+            const a = op * (body + (1 - body) * glow);
+            if (a <= 0.002) continue;
+            blendAt(&pixels[y * w + x], color, a);
+        }
+    }
+}
+
+/// `paint` a pixel at a time, as it was: what it falls back to without the
+/// memory for its column terms.
+fn paintEach(pixels: []u32, w: usize, x0: usize, x1: usize, y0: usize, y1: usize, core: Rect, color: Rgb, scale: f32, strength: Strength) void {
     var y = y0;
     while (y < y1) : (y += 1) {
         var x = x0;
         while (x < x1) : (x += 1) {
             const a = alphaAt(core, @intCast(x), @intCast(y), scale, strength);
             if (a <= 0.002) continue;
-            const p = &pixels[y * w + x];
-            const cov = p.* >> 24;
-            const out_cov: u32 = @min(255, lerp8(cov, 255, a));
-            const rr = lerp8((p.* >> 16) & 0xFF, color.r, a);
-            const gg = lerp8((p.* >> 8) & 0xFF, color.g, a);
-            const bb = lerp8(p.* & 0xFF, color.b, a);
-            p.* = (out_cov << 24) | (rr << 16) | (gg << 8) | bb;
+            blendAt(&pixels[y * w + x], color, a);
         }
     }
+}
+
+/// The accent over one pixel at `a`; its coverage only grows.
+fn blendAt(p: *u32, color: Rgb, a: f32) void {
+    const cov = p.* >> 24;
+    const out_cov: u32 = @min(255, lerp8(cov, 255, a));
+    const rr = lerp8((p.* >> 16) & 0xFF, color.r, a);
+    const gg = lerp8((p.* >> 8) & 0xFF, color.g, a);
+    const bb = lerp8(p.* & 0xFF, color.b, a);
+    p.* = (out_cov << 24) | (rr << 16) | (gg << 8) | bb;
 }
 
 test "lit: one bar at a time, the drag's outranks the hover" {
@@ -279,4 +323,39 @@ test "paint: a bar off the buffer's edge is clipped, not a crash" {
     paint(&px, 8, 8, .{ .left = -20, .top = -20, .right = -10, .bottom = 40 }, .{ .r = 255, .g = 0, .b = 0 }, 1, .drag);
     paint(&px, 8, 8, .{ .left = 6, .top = 0, .right = 10, .bottom = 8 }, .{ .r = 255, .g = 0, .b = 0 }, 1, .drag);
     try std.testing.expect(px[7] >> 24 == 0xFF);
+}
+
+test "T2454: paint's column and row terms lay exactly what alphaAt a pixel does" {
+    const w = 120;
+    const h = 90;
+    var got: [w * h]u32 = undefined;
+    var want: [w * h]u32 = undefined;
+    const accent: Rgb = .{ .r = 0, .g = 120, .b = 215 };
+    const cores = [_]Rect{
+        .{ .left = 50, .top = 0, .right = 55, .bottom = h },
+        .{ .left = 0, .top = 40, .right = w, .bottom = 46 },
+        .{ .left = -3, .top = 10, .right = 2, .bottom = 60 },
+        .{ .left = 100, .top = 70, .right = 130, .bottom = 100 },
+    };
+    for (cores) |core| for ([_]f32{ 1, 1.25, 2 }) |scale| for ([_]Strength{ .hover, .drag }) |st| {
+        for (&got, &want, 0..) |*g, *v, i| {
+            g.* = @intCast((i * 2654435761) & 0xFFFF_FFFF);
+            v.* = g.*;
+        }
+        paint(&got, w, h, core, accent, scale, st);
+        const reach = core.inflate(glowReach(scale));
+        paintEach(
+            &want,
+            w,
+            @intCast(std.math.clamp(reach.left, 0, w)),
+            @intCast(std.math.clamp(reach.right, 0, w)),
+            @intCast(std.math.clamp(reach.top, 0, h)),
+            @intCast(std.math.clamp(reach.bottom, 0, h)),
+            core,
+            accent,
+            scale,
+            st,
+        );
+        try std.testing.expectEqualSlices(u32, &want, &got);
+    };
 }

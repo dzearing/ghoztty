@@ -287,6 +287,15 @@ pub fn glassShadow(is_light: bool, scale: f32) Shadow {
     };
 }
 
+/// How far inside a card's edge anything `paintCards` lays still depends on
+/// where that edge is (T2454): the shadow's corner patch reaches furthest in,
+/// past the corner radius by the deepest layer's drop. Further in, a card's
+/// pixels are the same wherever that edge sits.
+pub fn edgeInnerPx(scale: f32) i32 {
+    const dy: i32 = @intFromFloat(@ceil(shadows(false, scale)[1].dy));
+    return radiusPx(scale) + dy + 3;
+}
+
 /// How far past the card a shadow layer can still be seen.
 pub fn shadowReachPx(scale: f32) i32 {
     const s = shadows(false, scale)[1];
@@ -908,11 +917,15 @@ fn paintShadows(
     ri: i32,
     reach: i32,
     scratch: ?[]f32,
+    prepared: ?*const Prepared,
 ) void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const patch: ?ShadowPatch = ShadowPatch.init(arena, radius, ri, reach, layers, glass) catch null;
+    const patch: ?ShadowPatch = if (prepared) |p|
+        p.patch
+    else
+        ShadowPatch.init(arena, radius, ri, reach, layers, glass) catch null;
     const nc: usize = @intCast(reach);
     // A straight side's values at one card's shadow share, each way round.
     const side_r: ?[]u32 = arena.alloc(u32, nc) catch null;
@@ -1063,6 +1076,49 @@ fn focusOf(style: CardStyle, card: usize) f32 {
 /// within two levels of them - the "matches the direct rasteriser" test holds
 /// it to that.
 pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: CardStyle) void {
+    paintCardsWith(buf, w, h, cards, style, null);
+}
+
+/// What `paintCards` works out for a style before it lays any card: the
+/// shadow's corner patch, a few thousand `erfc` calls (T2454). A caller that
+/// paints one style many times - a partial desk compose paints once per
+/// rectangle - builds it once with `prepare` and hands it to
+/// `paintCardsWith`, which paints exactly what `paintCards` does.
+pub const Prepared = struct {
+    arena: std.heap.ArenaAllocator,
+    scale: f32,
+    is_light: bool,
+    glass: bool,
+    patch: ?ShadowPatch,
+
+    /// Whether this was prepared for `style`.
+    pub fn fits(self: *const Prepared, style: CardStyle) bool {
+        return self.scale == style.scale and self.is_light == style.is_light and self.glass == style.glass;
+    }
+
+    pub fn deinit(self: *Prepared) void {
+        self.arena.deinit();
+    }
+};
+
+pub fn prepare(style: CardStyle) Prepared {
+    var p: Prepared = .{
+        .arena = std.heap.ArenaAllocator.init(std.heap.page_allocator),
+        .scale = style.scale,
+        .is_light = style.is_light,
+        .glass = style.glass,
+        .patch = null,
+    };
+    const solid_layers = shadows(style.is_light, style.scale);
+    const glass_layer = [1]Shadow{glassShadow(style.is_light, style.scale)};
+    const layers: []const Shadow = if (style.glass) &glass_layer else &solid_layers;
+    p.patch = ShadowPatch.init(p.arena.allocator(), @floatFromInt(radiusPx(style.scale)), radiusPx(style.scale), shadowReachPx(style.scale), layers, style.glass) catch null;
+    return p;
+}
+
+/// `paintCards` with what `prepare` built for `style`, or without it (null,
+/// or prepared for another style) building it here as `paintCards` does.
+pub fn paintCardsWith(buf: []u32, w: usize, h: usize, cards: []const Card, style: CardStyle, prepared: ?*const Prepared) void {
     std.debug.assert(buf.len >= w * h);
     const radius: f32 = @floatFromInt(radiusPx(style.scale));
     const solid_layers = shadows(style.is_light, style.scale);
@@ -1078,7 +1134,8 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
     defer if (scratch) |s| alloc.free(s);
 
     paintGlows(buf, wi, hi, cards, style, scratch);
-    paintShadows(buf, wi, hi, cards, style.glass, layers, radius, ri, reach, scratch);
+    const pre: ?*const Prepared = if (prepared) |p| (if (p.fits(style)) p else null) else null;
+    paintShadows(buf, wi, hi, cards, style.glass, layers, radius, ri, reach, scratch, pre);
 
     const rim_w = RIM_DIP * style.scale;
     // The inner edge of the band an antialiased rim pixel can sit in.

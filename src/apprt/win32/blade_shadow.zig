@@ -68,6 +68,13 @@ pub fn params(collapse: f32, is_light: bool, scale: f32) Params {
     };
 }
 
+/// The furthest past its rect a shadow `paint` lays can reach at any
+/// collapse, in pixels: what a repaint of a moved strip has to cover (T2454).
+pub fn reachPx(scale: f32) i32 {
+    const sigma = @max(card_radius_dip, blade_radius_dip) / 2 * scale;
+    return @as(i32, @intFromFloat(@ceil(3 * sigma + lean_dip * scale))) + 1;
+}
+
 /// Darken `buf` (a `w` x `h` desk composite, 0x00RRGGBB with coverage in the
 /// alpha byte) with the shadow of the strip or card at `rect`, whose corners
 /// are `radius` pixels, in a stack along `axis` whose run lies after it
@@ -108,17 +115,66 @@ pub fn paint(
     const wi: i32 = @intCast(w);
     const hi: i32 = @intCast(h);
     const black: desk_palette.Rgbf = .{ .r = 0, .g = 0, .b = 0 };
-    var y = @max(y0, 0);
+    const px_of: Pixel = .{ .card = card, .caster = caster, .rad = rad, .dx = dx, .dy = dy, .s = s };
+    // A row clear of the rounded ends crosses the shape's interior, where the
+    // mask leaves nothing to lay: jump it (T2454). A gliding card casts this
+    // from its own rect, so the interior is most of a big pane.
+    const in_l = rect.left + 1;
+    const in_r = rect.right - 1;
+    const in_t = rect.top + 1;
+    const in_b = rect.bottom - 1;
+    // Clear of the shape's and the caster's rounded ends by the lean as well,
+    // a row's alpha off the interior is a function of x alone, and a column's
+    // above and below it of y alone (T2454): each side's is one table, worked
+    // out on the first such row or column, to the bit what each pixel would
+    // compute. What is left per pixel is the blend.
+    const lean_px: i32 = @as(i32, @intFromFloat(@ceil(@abs(dx)))) + @as(i32, @intFromFloat(@ceil(@abs(dy))));
+    const m = radius + lean_px + 1;
+    const row_lo = @max(rect.top + radius, caster.top + m);
+    const row_hi = @min(rect.bottom - radius, caster.bottom - m);
+    const col_lo = @max(rect.left + radius, caster.left + m);
+    const col_hi = @min(rect.right - radius, caster.right - m);
+    const side: usize = @intCast(reach + 1);
+    const tables = side <= MAX_SIDE and rect.width() >= 2 * radius + 2 and rect.height() >= 2 * radius + 2;
+    var left_t: [MAX_SIDE]f32 = undefined;
+    var right_t: [MAX_SIDE]f32 = undefined;
+    var top_t: [MAX_SIDE]f32 = undefined;
+    var bot_t: [MAX_SIDE]f32 = undefined;
+    const rows = tables and row_lo < row_hi;
+    const cols = tables and col_lo < col_hi;
+    if (rows) {
+        const py = @as(f32, @floatFromInt(row_lo)) + 0.5;
+        for (0..side) |k| {
+            const ki: i32 = @intCast(k);
+            left_t[k] = px_of.alpha(@as(f32, @floatFromInt(x0 + ki)) + 0.5, py);
+            right_t[k] = px_of.alpha(@as(f32, @floatFromInt(in_r + ki)) + 0.5, py);
+        }
+    }
+    if (cols) {
+        const px = @as(f32, @floatFromInt(col_lo)) + 0.5;
+        for (0..side) |k| {
+            const ki: i32 = @intCast(k);
+            top_t[k] = px_of.alpha(px, @as(f32, @floatFromInt(y0 + ki)) + 0.5);
+            bot_t[k] = px_of.alpha(px, @as(f32, @floatFromInt(in_b + ki)) + 0.5);
+        }
+    }
+    var y: i32 = @max(y0, 0);
     while (y < @min(y1, hi)) : (y += 1) {
         const py = @as(f32, @floatFromInt(y)) + 0.5;
-        var x = @max(x0, 0);
+        const straight = y >= rect.top + radius and y < rect.bottom - radius;
+        const row_table = rows and y >= row_lo and y < row_hi;
+        var x: i32 = @max(x0, 0);
         while (x < @min(x1, wi)) : (x += 1) {
-            const px = @as(f32, @floatFromInt(x)) + 0.5;
-            // Outside the shape only (Mac's even-odd mask), antialiased.
-            const d0 = pane_elevation.roundRectDistance(px, py, card, rad);
-            const outside = std.math.clamp(0.5 + d0, 0, 1);
-            if (outside <= 0) continue;
-            const a = pane_elevation.shadowAlpha(pane_elevation.roundRectDistance(px - dx, py - dy, caster, rad), s) * outside;
+            if (straight and x >= in_l and x < in_r) {
+                x = in_r - 1;
+                continue;
+            }
+            const a = if (row_table)
+                (if (x < in_l) left_t[@intCast(x - x0)] else right_t[@intCast(x - in_r)])
+            else if (cols and x >= col_lo and x < col_hi)
+                (if (y < in_t) top_t[@intCast(y - y0)] else if (y >= in_b) bot_t[@intCast(y - in_b)] else 0)
+            else
+                px_of.alpha(@as(f32, @floatFromInt(x)) + 0.5, py);
             if (a < 1.0 / 512.0) continue;
             const i: usize = @intCast(y * wi + x);
             const dst = buf[i];
@@ -129,6 +185,28 @@ pub fn paint(
         }
     }
 }
+
+/// The widest side table `paint` keeps on the stack: a reach past this (a
+/// blade shadow at a scale no display has) is worked out per pixel.
+const MAX_SIDE = 256;
+
+/// One pixel's share of the shadow: outside the shape only (Mac's even-odd
+/// mask), antialiased, cast from the caster moved by the lean.
+const Pixel = struct {
+    card: pane_elevation.Card,
+    caster: pane_elevation.Card,
+    rad: f32,
+    dx: f32,
+    dy: f32,
+    s: pane_elevation.Shadow,
+
+    fn alpha(self: Pixel, px: f32, py: f32) f32 {
+        const d0 = pane_elevation.roundRectDistance(px, py, self.card, self.rad);
+        const outside = std.math.clamp(0.5 + d0, 0, 1);
+        if (outside <= 0) return 0;
+        return pane_elevation.shadowAlpha(pane_elevation.roundRectDistance(px - self.dx, py - self.dy, self.caster, self.rad), self.s) * outside;
+    }
+};
 
 /// The shape the shadow is cast from: `rect` pulled in from each end of the
 /// strip (across the stack) by `ends` of the corner radius, at most a quarter
@@ -271,4 +349,68 @@ test "paint: clipped to the buffer" {
     var buf = [_]u32{0} ** (w * h);
     paint(&buf, w, h, .{ .left = -10, .top = -5, .right = 5, .bottom = 30 }, .horizontal, false, 1, false, 1, 4);
     paint(&buf, w, h, .{ .left = 15, .top = 0, .right = 40, .bottom = 20 }, .vertical, true, 1, true, 1.5, 6);
+}
+
+/// `paint` as it was before its tables (T2454): every pixel worked out.
+fn paintReference(buf: []u32, w: usize, h: usize, rect: Rect, axis: Direction, leads: bool, collapse: f32, is_light: bool, scale: f32, radius: i32) void {
+    if (collapse <= 0 or rect.width() <= 0 or rect.height() <= 0) return;
+    const p = params(collapse, is_light, scale);
+    if (p.opacity <= 0) return;
+    const s: pane_elevation.Shadow = .{ .sigma = p.sigma, .dy = 0, .opacity = p.opacity };
+    const card: pane_elevation.Card = .{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = rect.bottom };
+    const caster = casterOf(rect, axis, p.ends, radius);
+    const rad: f32 = @floatFromInt(radius);
+    const out: f32 = if (leads) -1 else 1;
+    const dx: f32, const dy: f32 = switch (axis) {
+        .horizontal => .{ p.lean * out, 0 },
+        .vertical => .{ 0, p.lean * out },
+    };
+    const reach: i32 = @intFromFloat(@ceil(3 * p.sigma + p.lean) + 1);
+    const wi: i32 = @intCast(w);
+    const hi: i32 = @intCast(h);
+    const black: desk_palette.Rgbf = .{ .r = 0, .g = 0, .b = 0 };
+    var y: i32 = @max(rect.top - reach, 0);
+    while (y < @min(rect.bottom + reach, hi)) : (y += 1) {
+        const py = @as(f32, @floatFromInt(y)) + 0.5;
+        var x: i32 = @max(rect.left - reach, 0);
+        while (x < @min(rect.right + reach, wi)) : (x += 1) {
+            const px = @as(f32, @floatFromInt(x)) + 0.5;
+            const d0 = pane_elevation.roundRectDistance(px, py, card, rad);
+            const outside = std.math.clamp(0.5 + d0, 0, 1);
+            if (outside <= 0) continue;
+            const a = pane_elevation.shadowAlpha(pane_elevation.roundRectDistance(px - dx, py - dy, caster, rad), s) * outside;
+            if (a < 1.0 / 512.0) continue;
+            const i: usize = @intCast(y * wi + x);
+            const dst = buf[i];
+            buf[i] = desk_palette.withCoverage(
+                desk_palette.Rgbf.lerp(desk_palette.Rgbf.unpack(dst), black, a).pack(),
+                desk_palette.coverOver(desk_palette.coverage(dst), a),
+            );
+        }
+    }
+}
+
+test "T2454: paint's interior skip and side tables lay exactly what every pixel worked out does" {
+    const w = 400;
+    const h = 300;
+    var got: [w * h]u32 = undefined;
+    var want: [w * h]u32 = undefined;
+    const rects = [_]Rect{
+        .{ .left = 60, .top = 20, .right = 340, .bottom = 280 }, // a big gliding card
+        .{ .left = 150, .top = 10, .right = 175, .bottom = 290 }, // a tall strip
+        .{ .left = 10, .top = 120, .right = 390, .bottom = 140 }, // a wide one
+        .{ .left = -30, .top = -20, .right = 120, .bottom = 200 }, // off two edges
+        .{ .left = 200, .top = 100, .right = 230, .bottom = 120 }, // too small for tables
+    };
+    for (rects) |r| for ([_]Direction{ .horizontal, .vertical }) |axis| for ([_]bool{ false, true }) |leads|
+        for ([_]f32{ 0.3, 0.75, 1 }) |collapse| for ([_]f32{ 1, 1.25, 2 }) |scale| for ([_]bool{ false, true }) |light| {
+            for (&got, &want, 0..) |*g, *v, i| {
+                g.* = @intCast((i * 2654435761) & 0x00FF_FFFF);
+                v.* = g.*;
+            }
+            const radius: i32 = @intFromFloat(@round(11 * scale));
+            paint(&got, w, h, r, axis, leads, collapse, light, scale, radius);
+            paintReference(&want, w, h, r, axis, leads, collapse, light, scale, radius);
+            try testing.expectEqualSlices(u32, &want, &got);
+        };
 }

@@ -7221,6 +7221,12 @@ fn reportDragCost(self: *Window, comptime what: []const u8) void {
     self.reportGlideCost(what);
 }
 
+/// A desk paint's mean cost over `n` of them, in microseconds (T2454).
+fn deskMeanUs(total_ns: u64, n: u32) u64 {
+    if (n == 0) return 0;
+    return total_ns / n / std.time.ns_per_us;
+}
+
 /// The fold glide's frames over the drag that just ended (T2448), in the same
 /// shape as the drag line above. Silent when no glide ran.
 fn reportGlideCost(self: *Window, comptime what: []const u8) void {
@@ -7229,7 +7235,8 @@ fn reportGlideCost(self: *Window, comptime what: []const u8) void {
     if (!self.drag_perf_on or g.ticks == 0) return;
     const fmt = what ++ " glide ticks={d} mean_us={d} max_us={d} mean_gap_us={d} " ++
         "max_gap_us={d} late={d} fps={d} viewer_ticks={d} viewer_us={d} period_us={d} " ++
-        "deferred_moves={d} wm_paints={d} wm_paint_us={d} desk_composed={d} desk_reused={d} verdict={s}";
+        "deferred_moves={d} wm_paints={d} wm_paint_us={d} desk_composed={d} desk_reused={d} desk_partial={d} " ++
+        "desk_compose_us={d} desk_blit_us={d} desk_partial_permille={d} verdict={s}";
     const args = .{
         g.ticks,
         g.meanUs(),
@@ -7246,6 +7253,10 @@ fn reportGlideCost(self: *Window, comptime what: []const u8) void {
         if (self.drag_wm_paints > 0) self.drag_wm_paint_us / self.drag_wm_paints else 0,
         self.pane_desk.memo_misses,
         self.pane_desk.memo_hits,
+        self.pane_desk.memo_partial,
+        deskMeanUs(self.pane_desk.compose_ns, self.pane_desk.memo_misses),
+        deskMeanUs(self.pane_desk.blit_ns, self.pane_desk.memo_misses +| self.pane_desk.memo_hits),
+        if (self.pane_desk.memo_partial > 0) self.pane_desk.partial_permille / self.pane_desk.memo_partial else 0,
         @tagName(g.verdict()),
     };
     switch (g.verdict()) {
@@ -7564,7 +7575,12 @@ pub fn layoutSplits(self: *Window) void {
         self.clearVacatedGutters(hwnd);
         const hdc = w32.GetDC(hwnd);
         if (hdc) |dc| {
+            // The desk blits only what it composed again, and whatever the
+            // window holds invalid by now (T2454), so the validation below
+            // still covers nothing it did not paint.
+            self.pane_desk.blit_changed_only = true;
             self.paintAlphaCorrect(dc, paintMovedBands);
+            self.pane_desk.blit_changed_only = false;
             _ = w32.ReleaseDC(hwnd, dc);
             // What this pass just painted is current, so the paint its own pane
             // moves queued there (the parent pixels a moved child exposes) has
@@ -7839,7 +7855,11 @@ fn repaintPaneDesk(self: *Window) void {
     if (self.paneStyle() != .elevated) return;
     const hwnd = self.hwnd orelse return;
     if (w32.GetDC(hwnd)) |dc| {
+        // Nothing is validated after it, so the desk may blit only what
+        // changed (T2454): a glow's fade, a light coming on.
+        self.pane_desk.blit_changed_only = true;
         self.paintAlphaCorrect(dc, paintMovedBands);
+        self.pane_desk.blit_changed_only = false;
         _ = w32.ReleaseDC(hwnd, dc);
     }
 }
@@ -9568,6 +9588,24 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             .strength = lit.strength,
         };
     };
+    // A paint that blits only what changed (T2454) also blits whatever the
+    // window holds invalid right now - a region cut or a child's move this
+    // pass made - which its caller is about to validate. A hero tab's split
+    // is clipped out of the desk, so it blits the whole desk as before.
+    self.pane_desk.also_blit = null;
+    if (self.pane_desk.blit_changed_only) {
+        if (hero_split != null) {
+            self.pane_desk.blit_changed_only = false;
+        } else if (self.hwnd) |hw| {
+            var ur: w32.RECT = undefined;
+            if (w32.GetUpdateRect(hw, &ur, 0) != 0) self.pane_desk.also_blit = .{
+                .left = ur.left - area.left,
+                .top = ur.top - area.top,
+                .right = ur.right - area.left,
+                .bottom = ur.bottom - area.top,
+            };
+        }
+    }
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
@@ -10607,6 +10645,10 @@ fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layo
     self.drag_wm_paint_us = 0;
     self.pane_desk.memo_hits = 0;
     self.pane_desk.memo_misses = 0;
+    self.pane_desk.memo_partial = 0;
+    self.pane_desk.compose_ns = 0;
+    self.pane_desk.blit_ns = 0;
+    self.pane_desk.partial_permille = 0;
     self.drag_split_handle = handle;
     self.drag_split_layout = layout;
     self.adoptDisplayedRatios();

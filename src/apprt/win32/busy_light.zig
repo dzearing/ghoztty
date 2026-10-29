@@ -329,6 +329,12 @@ pub fn rebase(buf: []const u32, px: []RingPx) void {
     for (px) |*p| p.base = buf[p.idx];
 }
 
+/// Put the light-free pixels back under the ring (T2454): the buffer as it
+/// was composed, so part of it can be composed again without the light.
+pub fn restore(buf: []u32, px: []const RingPx) void {
+    for (px) |p| buf[p.idx] = p.base;
+}
+
 fn blend(dst: Rgbf, src: Rgbf, a: f32) Rgbf {
     if (a <= 0) return dst;
     return Rgbf.lerp(dst, src, @min(a, 1));
