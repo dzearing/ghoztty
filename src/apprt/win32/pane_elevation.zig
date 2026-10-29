@@ -675,6 +675,368 @@ fn columnTable(scratch: ?[]f32, x0: i32, x1: i32, f: Frame) ?AxisTable {
     return t;
 }
 
+// ---------------------------------------------------------------------------
+// Shadows (T2450). The pass that used to run two float blends and, round the
+// corners, two `erfc`s on every pixel of every card's shadow ring - about 90%
+// of a desk paint, 20 ms of it at 4K, on every frame of a divider glide.
+//
+// Two facts make it cheap. A shadow ring is the same picture for every card
+// of one style, wherever the card is and whatever its size: its straight
+// sides are one column profile repeated down the rows, the middle of its top
+// and bottom bands is one value a row, and what is left - the corners - is a
+// fixed patch measured from the card's edges. So the patch is computed once a
+// paint, and a card's ring is table reads. And laying black at `a1` and then
+// at `a2` over a pixel leaves `(1 - a1)(1 - a2)` of it, colour and uncovered
+// desk alike, so the two layers are one integer multiply a channel.
+//
+// The price is rounding: one rounding a card where there were two, so a
+// shadow pixel can land a level off the two-blend arithmetic, two where two
+// cards' shadows overlap (the direct rasteriser test allows exactly that). The glows and the cards are untouched and still
+// bit-exact.
+
+/// How much of a pixel a shadow leaves, in 1/65536ths.
+const KEEP_ONE: u32 = 1 << 16;
+
+fn keepOf(alphas: [MAX_TABLE_LAYERS]f32, share: f32) u32 {
+    var k: f32 = 1;
+    for (alphas) |a| k *= 1 - a * share;
+    return @intFromFloat(@round(std.math.clamp(k, 0, 1) * @as(f32, KEEP_ONE)));
+}
+
+/// `p` under a shadow that keeps `k` of it: each channel and the desk's
+/// uncovered share scaled by `k` (the coverage byte, T1852).
+fn darken(p: u32, k: u32) u32 {
+    const r = (((p >> 16) & 0xFF) * k + 0x8000) >> 16;
+    const g = (((p >> 8) & 0xFF) * k + 0x8000) >> 16;
+    const b = ((p & 0xFF) * k + 0x8000) >> 16;
+    const open = ((255 - (p >> 24)) * k + 0x8000) >> 16;
+    return ((255 - open) << 24) | (r << 16) | (g << 8) | b;
+}
+
+const LANES = 8;
+const Lanes = @Vector(LANES, u32);
+const Shift = @Vector(LANES, u5);
+
+fn shr(v: Lanes, comptime n: u5) Lanes {
+    return v >> @as(Shift, @splat(n));
+}
+
+fn shl(v: Lanes, comptime n: u5) Lanes {
+    return v << @as(Shift, @splat(n));
+}
+
+/// `darken`, eight pixels at a time.
+fn darkenLanes(p: Lanes, k: Lanes) Lanes {
+    const ff: Lanes = @splat(0xFF);
+    const half: Lanes = @splat(0x8000);
+    const r = shr((shr(p, 16) & ff) * k + half, 16);
+    const g = shr((shr(p, 8) & ff) * k + half, 16);
+    const b = shr((p & ff) * k + half, 16);
+    const open = shr((ff - shr(p, 24)) * k + half, 16);
+    return shl(ff - open, 24) | shl(r, 16) | shl(g, 8) | b;
+}
+
+/// A run of pixels under one shadow value.
+fn darkenSpan(span: []u32, k: u32) void {
+    if (k >= KEEP_ONE) return;
+    var i: usize = 0;
+    const kv: Lanes = @splat(k);
+    while (i + LANES <= span.len) : (i += LANES) {
+        span[i..][0..LANES].* = darkenLanes(span[i..][0..LANES].*, kv);
+    }
+    while (i < span.len) : (i += 1) span[i] = darken(span[i], k);
+}
+
+/// A run of pixels under a shadow value each.
+fn darkenEach(span: []u32, ks: []const u32) void {
+    std.debug.assert(ks.len >= span.len);
+    var i: usize = 0;
+    while (i + LANES <= span.len) : (i += LANES) {
+        span[i..][0..LANES].* = darkenLanes(span[i..][0..LANES].*, ks[i..][0..LANES].*);
+    }
+    while (i < span.len) : (i += 1) span[i] = darken(span[i], ks[i]);
+}
+
+/// Each layer's alpha at a pixel whose axis terms are `qx`, `qy0` (the card's
+/// own) and `qyl` (each layer's, offset by its `dy`) - before the card's
+/// `shadow` share - or null where no shadow is painted: deep under the card,
+/// or under a glass sheet. The per-pixel arithmetic of the pass before T2450,
+/// in one place, so the patch and the fallback compute the same thing.
+fn shadowAlphas(f: Frame, layers: []const Shadow, glass: bool, qx: f32, qy0: f32, qyl: [MAX_TABLE_LAYERS]f32) ?[MAX_TABLE_LAYERS]f32 {
+    const d0 = if (qx > 0 and qy0 > 0) f.dist(qx, qy0) else if (qx >= qy0) f.edge(qx) else f.edge(qy0);
+    if (d0 <= -1) return null;
+    // A glass sheet shows the desk, so its shadow is kept to the desk around
+    // it: under the sheet it would read as a smudge through the glass.
+    const outside: f32 = if (glass) std.math.clamp(0.5 + d0, 0, 1) else 1;
+    if (outside <= 0) return null;
+    var a: [MAX_TABLE_LAYERS]f32 = @splat(0);
+    for (layers, 0..) |s, l| {
+        const d = if (qx > 0 and qyl[l] > 0)
+            f.dist(qx, qyl[l])
+        else if (qx >= qyl[l])
+            f.edge(qx)
+        else
+            f.edge(qyl[l]);
+        a[l] = shadowAlpha(d, s) * outside;
+    }
+    return a;
+}
+
+/// One style's shadow ring, measured from a card's edges (T2450). Columns
+/// are `u`, the distance out from the card's right edge (`x - right`; the
+/// left side is its mirror, `left - 1 - x`); rows are `w = y - top` in the
+/// top band and `v = y - bottom` in the bottom one. A row between the bands
+/// is the side profile on each side and nothing over the card.
+const ShadowPatch = struct {
+    /// The patch's columns, `u` in `[u_lo, reach)`: from far enough inside
+    /// the card that every pixel nearer its middle takes its row's one value,
+    /// out to the end of the shadow.
+    u_lo: i32,
+    reach: i32,
+    /// The top band, `w` in `[-reach, top_hi)`, and the bottom one, `v` in
+    /// `[bot_lo, reach)`.
+    top_hi: i32,
+    bot_lo: i32,
+    /// The rows (top band first) times the columns: each layer's alpha, and
+    /// what the pixel keeps under a full shadow.
+    alphas: [][MAX_TABLE_LAYERS]f32,
+    keep: []u32,
+    /// A straight side's profile, `u` in `[0, reach)`.
+    side_alphas: [][MAX_TABLE_LAYERS]f32,
+    side_keep: []u32,
+    /// The smallest half-width and half-height a card can have and still be
+    /// painted from the patch: its two sides' columns, and its two bands,
+    /// must not meet or cross its centre.
+    min_hw: f32,
+    min_hh: f32,
+
+    fn init(alloc: std.mem.Allocator, rad: f32, ri: i32, reach: i32, layers: []const Shadow, glass: bool) !ShadowPatch {
+        var max_dy: f32 = 0;
+        for (layers) |s| max_dy = @max(max_dy, s.dy);
+        const dyc: i32 = @intFromFloat(@ceil(max_dy));
+        const u_lo = -(ri + dyc + 2);
+        const top_hi = ri + dyc + 1;
+        const bot_lo = -(ri + 1);
+        const nu: usize = @intCast(reach - u_lo);
+        const rows: usize = @intCast((top_hi + reach) + (reach - bot_lo));
+        const alphas = try alloc.alloc([MAX_TABLE_LAYERS]f32, rows * nu);
+        const keep = try alloc.alloc(u32, rows * nu);
+        const nc: usize = @intCast(reach);
+        const side_alphas = try alloc.alloc([MAX_TABLE_LAYERS]f32, nc);
+        const side_keep = try alloc.alloc(u32, nc);
+        const f: Frame = .{ .cx = 0, .cy = 0, .ex = 0, .ey = 0, .rad = rad };
+
+        var r: usize = 0;
+        var w: i32 = -reach;
+        while (w < top_hi) : (w += 1) {
+            // Above the centre: the terms grow upward from the top edge.
+            const qy0 = rad - 0.5 - @as(f32, @floatFromInt(w));
+            var qyl: [MAX_TABLE_LAYERS]f32 = @splat(qy0);
+            for (layers, 0..) |s, l| qyl[l] = qy0 + s.dy;
+            fillRow(alphas[r * nu ..][0..nu], keep[r * nu ..][0..nu], f, layers, glass, u_lo, qy0, qyl);
+            r += 1;
+        }
+        var v: i32 = bot_lo;
+        while (v < reach) : (v += 1) {
+            // Below the centre: they grow downward from the bottom edge.
+            const qy0 = @as(f32, @floatFromInt(v)) + 0.5 + rad;
+            var qyl: [MAX_TABLE_LAYERS]f32 = @splat(qy0);
+            for (layers, 0..) |s, l| qyl[l] = qy0 - s.dy;
+            fillRow(alphas[r * nu ..][0..nu], keep[r * nu ..][0..nu], f, layers, glass, u_lo, qy0, qyl);
+            r += 1;
+        }
+        // A straight side: every vertical term as far inside as it goes.
+        const deep = -std.math.inf(f32);
+        fillRow(side_alphas, side_keep, f, layers, glass, 0, deep, @splat(deep));
+
+        return .{
+            .u_lo = u_lo,
+            .reach = reach,
+            .top_hi = top_hi,
+            .bot_lo = bot_lo,
+            .alphas = alphas,
+            .keep = keep,
+            .side_alphas = side_alphas,
+            .side_keep = side_keep,
+            .min_hw = @floatFromInt(-u_lo + 1),
+            .min_hh = @max(@as(f32, @floatFromInt(top_hi + 1)), @as(f32, @floatFromInt(ri + 2)) + max_dy),
+        };
+    }
+
+    fn fillRow(
+        alphas: [][MAX_TABLE_LAYERS]f32,
+        keep: []u32,
+        f: Frame,
+        layers: []const Shadow,
+        glass: bool,
+        u_lo: i32,
+        qy0: f32,
+        qyl: [MAX_TABLE_LAYERS]f32,
+    ) void {
+        for (alphas, keep, 0..) |*a, *k, i| {
+            const u = u_lo + @as(i32, @intCast(i));
+            const qx = @as(f32, @floatFromInt(u)) + f.rad + 0.5;
+            a.* = shadowAlphas(f, layers, glass, qx, qy0, qyl) orelse @splat(0);
+            k.* = keepOf(a.*, 1);
+        }
+    }
+
+    fn fits(p: ShadowPatch, f: Frame, radius: f32) bool {
+        return f.rad == radius and f.ex + f.rad >= p.min_hw and f.ey + f.rad >= p.min_hh;
+    }
+
+    /// The patch row for `y` on card `c`, or null for a row between the bands.
+    fn rowOf(p: ShadowPatch, c: Card, y: i32) ?usize {
+        const w = y - c.top;
+        if (w < p.top_hi) return @intCast(w + p.reach);
+        const v = y - c.bottom;
+        if (v >= p.bot_lo) return @intCast((p.top_hi + p.reach) + (v - p.bot_lo));
+        return null;
+    }
+};
+
+/// Every card's shadow, over the desk and glows already in `buf`, before any
+/// card is filled - so no card's shadow lands on its neighbour.
+fn paintShadows(
+    buf: []u32,
+    wi: i32,
+    hi: i32,
+    cards: []const Card,
+    glass: bool,
+    layers: []const Shadow,
+    radius: f32,
+    ri: i32,
+    reach: i32,
+    scratch: ?[]f32,
+) void {
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const patch: ?ShadowPatch = ShadowPatch.init(arena, radius, ri, reach, layers, glass) catch null;
+    const nc: usize = @intCast(reach);
+    // A straight side's values at one card's shadow share, each way round.
+    const side_r: ?[]u32 = arena.alloc(u32, nc) catch null;
+    const side_l: ?[]u32 = arena.alloc(u32, nc) catch null;
+    const w: usize = @intCast(wi);
+
+    for (cards) |c| {
+        if (c.shadow <= 0) continue;
+        const f = Frame.of(c, radius);
+        const y0: i32 = @max(c.top - reach, 0);
+        const y1: i32 = @min(c.bottom + reach, hi);
+        const x0: i32 = @max(c.left - reach, 0);
+        const x1: i32 = @min(c.right + reach, wi);
+        if (x1 <= x0 or y1 <= y0) continue;
+        const p: ?ShadowPatch = if (patch) |pp|
+            (if (pp.fits(f, radius) and side_r != null and side_l != null) pp else null)
+        else
+            null;
+        if (p) |pp| for (0..nc) |u| {
+            const k = if (c.shadow >= 1) pp.side_keep[u] else keepOf(pp.side_alphas[u], c.shadow);
+            side_r.?[u] = k;
+            side_l.?[nc - 1 - u] = k;
+        };
+        const t = if (p == null) columnTable(scratch, x0, x1, f) else null;
+        var y = y0;
+        while (y < y1) : (y += 1) {
+            const row = buf[@as(usize, @intCast(y)) * w ..][0..w];
+            const fy = @as(f32, @floatFromInt(y)) + 0.5;
+            const qy0 = f.qy(fy);
+            var qyl: [MAX_TABLE_LAYERS]f32 = @splat(qy0);
+            var pure = qy0 <= 0;
+            for (layers, 0..) |s, l| {
+                qyl[l] = f.qy(fy - s.dy);
+                pure = pure and qyl[l] <= 0;
+            }
+            // A row through the card's straight sides skips its interior.
+            const sides = y >= c.top + ri and y < c.bottom - ri;
+            if (p) |pp| {
+                if (pure and sides) {
+                    // Between the bands: the side profile on each side.
+                    paintSide(row, c.right, x0, x1, side_r.?);
+                    paintSide(row, c.left - reach, x0, x1, side_l.?);
+                    continue;
+                }
+                if (pp.rowOf(c, y)) |r| {
+                    paintBandRow(row, pp, r, c, f, layers, glass, sides, qy0, qyl, x0, x1);
+                    continue;
+                }
+            }
+            // A card too small for the patch: every pixel worked out.
+            var x = x0;
+            while (x < x1) : (x += 1) {
+                if (sides and x >= c.left and x < c.right) {
+                    x = c.right - 1;
+                    continue;
+                }
+                const qx = if (t) |tab| tab.q[@intCast(x - x0)] else f.qx(@as(f32, @floatFromInt(x)) + 0.5);
+                const a = shadowAlphas(f, layers, glass, qx, qy0, qyl) orelse continue;
+                const i: usize = @intCast(x);
+                row[i] = darken(row[i], keepOf(a, c.shadow));
+            }
+        }
+    }
+}
+
+/// `ks` laid along `row` from `x_start`, clipped to `[x0, x1)`.
+fn paintSide(row: []u32, x_start: i32, x0: i32, x1: i32, ks: []const u32) void {
+    const n: i32 = @intCast(ks.len);
+    const a = @max(x_start, x0);
+    const b = @min(x_start + n, x1);
+    if (b <= a) return;
+    darkenEach(row[@intCast(a)..@intCast(b)], ks[@intCast(a - x_start)..]);
+}
+
+/// One row of a card's top or bottom band: its one value across the middle,
+/// and the patch on each side.
+fn paintBandRow(
+    row: []u32,
+    p: ShadowPatch,
+    r: usize,
+    c: Card,
+    f: Frame,
+    layers: []const Shadow,
+    glass: bool,
+    sides: bool,
+    qy0: f32,
+    qyl: [MAX_TABLE_LAYERS]f32,
+    x0: i32,
+    x1: i32,
+) void {
+    const nu: usize = @intCast(p.reach - p.u_lo);
+    const keep = p.keep[r * nu ..][0..nu];
+    const alphas = p.alphas[r * nu ..][0..nu];
+    // A row through the straight sides (the top of them, still under a
+    // lower layer's corner) leaves the card's own span alone; any other row
+    // takes its one value there.
+    const u_start: i32 = if (sides) 0 else p.u_lo;
+    if (!sides) {
+        const a = @max(c.left - p.u_lo, x0);
+        const b = @min(c.right + p.u_lo, x1);
+        if (b > a) {
+            if (shadowAlphas(f, layers, glass, -std.math.inf(f32), qy0, qyl)) |al|
+                darkenSpan(row[@intCast(a)..@intCast(b)], keepOf(al, c.shadow));
+        }
+    }
+    // Right: x = right + u. Left: x = left - 1 - u.
+    var u = @max(u_start, x0 - c.right);
+    const rb = @min(p.reach, x1 - c.right);
+    while (u < rb) : (u += 1) {
+        const i: usize = @intCast(u - p.u_lo);
+        const k = if (c.shadow >= 1) keep[i] else keepOf(alphas[i], c.shadow);
+        const x: usize = @intCast(c.right + u);
+        row[x] = darken(row[x], k);
+    }
+    u = @max(u_start, c.left - x1);
+    const lb = @min(p.reach, c.left - x0);
+    while (u < lb) : (u += 1) {
+        const i: usize = @intCast(u - p.u_lo);
+        const k = if (c.shadow >= 1) keep[i] else keepOf(alphas[i], c.shadow);
+        const x: usize = @intCast(c.left - 1 - u);
+        row[x] = darken(row[x], k);
+    }
+}
+
 fn focusOf(style: CardStyle, card: usize) f32 {
     var f: f32 = 0;
     for (style.glows) |g| {
@@ -690,14 +1052,16 @@ fn focusOf(style: CardStyle, card: usize) f32 {
 /// Only pixels a card can affect are visited: each card's shadow reach,
 /// minus the interior a card fill covers anyway.
 ///
-/// This runs on every mouse move of a divider drag (T1856), so the per-pixel
-/// work is kept to table reads: a shadow's or glow's `erfc` is paid once per
-/// column and once per row (`Frame`), except in the corner squares where the
-/// distance really is two-dimensional; a solid card's interior is a row
-/// `memset`; and a glass card's interior is four byte lookups a pixel
-/// (`GlassLut`). The pixels are the ones the direct per-pixel arithmetic
-/// produces, to the bit - the "matches the direct rasteriser" test holds it
-/// to that.
+/// This runs on every frame of a divider drag (T1856), so the per-pixel
+/// work is kept to table reads: a glow's `erfc` is paid once per column and
+/// once per row (`Frame`), except in the corner squares where the distance
+/// really is two-dimensional; the shadows are a patch computed once a paint
+/// and one integer multiply a channel (`paintShadows`, T2450); a solid
+/// card's interior is a row `memset`; and a glass card's interior is four
+/// byte lookups a pixel (`GlassLut`). The glows and cards are the pixels the
+/// direct per-pixel arithmetic produces, to the bit, and the shadows are
+/// within two levels of them - the "matches the direct rasteriser" test holds
+/// it to that.
 pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: CardStyle) void {
     std.debug.assert(buf.len >= w * h);
     const radius: f32 = @floatFromInt(radiusPx(style.scale));
@@ -714,64 +1078,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
     defer if (scratch) |s| alloc.free(s);
 
     paintGlows(buf, wi, hi, cards, style, scratch);
-
-    for (cards) |c| {
-        if (c.shadow <= 0) continue;
-        const f = Frame.of(c, radius);
-        const y0: i32 = @max(c.top - reach, 0);
-        const y1: i32 = @min(c.bottom + reach, hi);
-        const x0: i32 = @max(c.left - reach, 0);
-        const x1: i32 = @min(c.right + reach, wi);
-        if (x1 <= x0) continue;
-        const t = columnTable(scratch, x0, x1, f);
-        if (t) |tab| for (layers, 0..) |s, l| {
-            for (tab.q, 0..) |q, k| tab.a[l][k] = shadowAlpha(f.edge(q), s);
-        };
-        var y = y0;
-        while (y < y1) : (y += 1) {
-            const fy = @as(f32, @floatFromInt(y)) + 0.5;
-            const qy0 = f.qy(fy);
-            const row_d0 = f.edge(qy0);
-            // Each layer's vertical term (its offset is vertical only, so
-            // the horizontal term is shared) and its alpha off the corners.
-            var qyl: [MAX_TABLE_LAYERS]f32 = undefined;
-            var row_a: [MAX_TABLE_LAYERS]f32 = undefined;
-            for (layers, 0..) |s, l| {
-                qyl[l] = f.qy(fy - s.dy);
-                row_a[l] = shadowAlpha(f.edge(qyl[l]), s);
-            }
-            // A row through the card's straight sides skips its interior.
-            const sides = y >= c.top + ri and y < c.bottom - ri;
-            var x = x0;
-            while (x < x1) : (x += 1) {
-                if (sides and x >= c.left and x < c.right) {
-                    x = c.right - 1;
-                    continue;
-                }
-                const k: usize = @intCast(x - x0);
-                const qx = if (t) |tab| tab.q[k] else f.qx(@as(f32, @floatFromInt(x)) + 0.5);
-                const d0 = if (qx > 0 and qy0 > 0) f.dist(qx, qy0) else if (qx >= qy0) f.edge(qx) else row_d0;
-                if (d0 <= -1) continue;
-                // A glass sheet shows the desk, so its shadow is kept to
-                // the desk around it: under the sheet it would read as a
-                // smudge through the glass.
-                const outside: f32 = if (style.glass) std.math.clamp(0.5 + d0, 0, 1) else 1;
-                if (outside <= 0) continue;
-                const i: usize = @intCast(y * wi + x);
-                var p = buf[i];
-                for (layers, 0..) |s, l| {
-                    const a = if (qx > 0 and qyl[l] > 0)
-                        shadowAlpha(f.dist(qx, qyl[l]), s)
-                    else if (qx >= qyl[l])
-                        (if (t) |tab| tab.a[l][k] else shadowAlpha(f.edge(qx), s))
-                    else
-                        row_a[l];
-                    p = blend(p, black, a * outside * c.shadow);
-                }
-                buf[i] = p;
-            }
-        }
-    }
+    paintShadows(buf, wi, hi, cards, style.glass, layers, radius, ri, reach, scratch);
 
     const rim_w = RIM_DIP * style.scale;
     // The inner edge of the band an antialiased rim pixel can sit in.
@@ -1002,7 +1309,7 @@ test "T2307: a card's shadow strength scales its shadow, and 0 casts none" {
     var ref: [w * h]u32 = undefined;
     @memset(&ref, desk);
     refPaintCards(&ref, w, h, &.{.{ .left = 20, .top = 20, .right = 100, .bottom = 70, .shadow = 0.5 }}, style);
-    try testing.expectEqualSlices(u32, &ref, &half);
+    try expectWithinRounding(&ref, &half);
 }
 
 test "T1851: a head band takes the card's curve in its own colour, and the rest keeps the fill" {
@@ -1603,7 +1910,70 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
     }
 }
 
-test "T1856: the table-driven paint matches the direct rasteriser bit for bit" {
+/// Whether two composite pixels agree to within `ROUNDING_LEVELS` in every
+/// byte - colour and coverage. The shadow pass rounds once a card where the
+/// direct rasteriser rounds once a layer (T2450): one level apart under one
+/// card's shadow, at most two where two cards' shadows overlap.
+const ROUNDING_LEVELS = 2;
+fn withinRounding(a: u32, b: u32) bool {
+    var k: u5 = 0;
+    while (k < 32) : (k += 8) {
+        const x: i32 = @intCast((a >> k) & 0xFF);
+        const y: i32 = @intCast((b >> k) & 0xFF);
+        if (@abs(x - y) > ROUNDING_LEVELS) return false;
+        if (k == 24) break;
+    }
+    return true;
+}
+
+fn expectWithinRounding(want: []const u32, got: []const u32) !void {
+    try testing.expectEqual(want.len, got.len);
+    for (want, got, 0..) |a, b, i| {
+        if (!withinRounding(a, b)) {
+            std.debug.print("pixel {d}: {x} != {x}\n", .{ i, a, b });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "T2450: two levels is the tolerance, and three is not" {
+    try testing.expect(withinRounding(0xB528_3C37, 0xB728_3C37));
+    try testing.expect(withinRounding(0x0002_0203, 0x0100_0101));
+    try testing.expect(!withinRounding(0xB528_3C37, 0xB828_3C37));
+    try testing.expect(!withinRounding(0x0000_0000, 0x0000_0003));
+}
+
+test "T2450: a full shadow over a uniform desk is darken() of it, wherever the card sits" {
+    // The same card at two places and two sizes: its ring is one picture
+    // measured from its edges, so the pixel the same distance below each
+    // card's bottom-right corner is the same value.
+    const w = 400;
+    const h = 300;
+    var buf: [w * h]u32 = undefined;
+    const desk = packRgb(40, 60, 90);
+    @memset(&buf, desk);
+    const style: CardStyle = .{ .fill = .{ .r = 30, .g = 30, .b = 30 }, .is_light = false, .scale = 1.0 };
+    const a: Card = .{ .left = 20, .top = 20, .right = 150, .bottom = 120 };
+    const b: Card = .{ .left = 200, .top = 150, .right = 380, .bottom = 260 };
+    paintCards(&buf, w, h, &.{ a, b }, style);
+    for ([_][2]i32{ .{ 3, 5 }, .{ -4, 9 }, .{ 10, 2 }, .{ -40, 6 } }) |o| {
+        const pa = buf[@intCast((a.bottom + o[1]) * w + a.right + o[0])];
+        const pb = buf[@intCast((b.bottom + o[1]) * w + b.right + o[0])];
+        try testing.expectEqual(pa, pb);
+        try testing.expect(pa != desk);
+    }
+    // darken() at full keep is the identity, colour and coverage alike.
+    try testing.expectEqual(@as(u32, 0x7F12_3456), darken(0x7F12_3456, KEEP_ONE));
+    // And darkenSpan's lanes agree with darken() pixel for pixel.
+    var span: [19]u32 = undefined;
+    for (&span, 0..) |*q, i| q.* = @as(u32, @intCast(i)) *% 0x0913_5A27;
+    var want: [19]u32 = undefined;
+    for (span, &want) |q, *o| o.* = darken(q, 41_000);
+    darkenSpan(&span, 41_000);
+    try testing.expectEqualSlices(u32, &want, &span);
+}
+
+test "T1856: the table-driven paint matches the direct rasteriser (to two levels in a shadow, T2450)" {
     const w = 260;
     const h = 190;
     var desk: [w * h]u32 = undefined;
@@ -1657,13 +2027,55 @@ test "T1856: the table-driven paint matches the direct rasteriser bit for bit" {
                     paintCards(&fast, w, h, cards, style);
                     refPaintCards(&slow, w, h, cards, style);
                     for (fast, slow, 0..) |a, b, i| {
-                        if (a != b) {
+                        if (!withinRounding(a, b)) {
                             std.debug.print("scale={d} glass={} light={} pixel ({d},{d}): {x} != {x}\n", .{ scale, glass, is_light, i % w, i / w, a, b });
                             return error.TestUnexpectedResult;
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+// T2450: the shadow pass's cost, at the window sizes the task measured.
+// Skipped unless GHOZTTY_BENCH is set; run it under ReleaseFast:
+//   GHOZTTY_BENCH=1 zig test src/apprt/win32/pane_elevation.zig -OReleaseFast --test-filter T2450
+test "T2450: bench - paintCards over six cards" {
+    if (!(std.process.hasEnvVar(testing.allocator, "GHOZTTY_BENCH") catch false)) return error.SkipZigTest;
+    const sizes = [_]struct { w: usize, h: usize, scale: f32 }{
+        .{ .w = 1582, .h = 891, .scale = 1 },
+        .{ .w = 3800, .h = 2050, .scale = 2 },
+    };
+    for (sizes) |sz| {
+        const buf = try testing.allocator.alloc(u32, sz.w * sz.h);
+        defer testing.allocator.free(buf);
+        const m = marginPx(.elevated, sz.scale);
+        const g = gapPx(.elevated, sz.scale).?;
+        const wi: i32 = @intCast(sz.w);
+        const hi: i32 = @intCast(sz.h);
+        const cw = @divFloor(wi - 2 * m - 2 * g, 3);
+        const ch = @divFloor(hi - 2 * m - g, 2);
+        var cards: [6]Card = undefined;
+        for (0..6) |i| {
+            const col: i32 = @intCast(i % 3);
+            const row: i32 = @intCast(i / 3);
+            const l = m + col * (cw + g);
+            const t = m + row * (ch + g);
+            cards[i] = .{ .left = l, .top = t, .right = l + cw, .bottom = t + ch };
+        }
+        for ([_]bool{ false, true }) |shadows_on| {
+            for (&cards) |*c| c.shadow = if (shadows_on) 1 else 0;
+            const style: CardStyle = .{ .fill = .{ .r = 29, .g = 31, .b = 33 }, .is_light = false, .scale = sz.scale };
+            const runs = 20;
+            var best: u64 = std.math.maxInt(u64);
+            for (0..runs) |_| {
+                @memset(buf, packRgb(40, 60, 90));
+                var timer = try std.time.Timer.start();
+                paintCards(buf, sz.w, sz.h, &cards, style);
+                best = @min(best, timer.read());
+            }
+            std.debug.print("{d}x{d} @{d}x shadows={}: {d:.2} ms\n", .{ sz.w, sz.h, sz.scale, shadows_on, @as(f64, @floatFromInt(best)) / 1e6 });
         }
     }
 }
