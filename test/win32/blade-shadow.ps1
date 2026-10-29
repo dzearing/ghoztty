@@ -2,9 +2,10 @@
 # strip out - leaning away from the run - so a stack of strips reads as blades
 # laid over one another rather than one flat bar.
 #
-# THE CLAIM. Mac (5a9a2e2a4, afc64dc53) gives every strip a tight, strong
-# shadow (radius 5, 60% black on a dark theme) offset 3 pt AWAY from the run,
-# cut to the strip's own sides. Until T2307 the Windows desk laid the bands
+# THE CLAIM. Mac (5a9a2e2a4, afc64dc53) gives every strip a tight shadow
+# (radius 5) offset 3 pt AWAY from the run - since 7e2d0a9da (T2410) a light
+# one, 30% black on a dark theme, fading out inside the strip's rounded ends
+# rather than cut flat there. Until T2307 the Windows desk laid the bands
 # with no shadow at all, so two strips side by side were one undivided colour.
 # `PaneDesk.paint` now casts `blade_shadow.paint` before each band, bottom
 # first, so it lands on the band already down beside it.

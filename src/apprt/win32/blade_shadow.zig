@@ -1,8 +1,11 @@
 //! The shadow a stacked pane's strip casts (T2307; Mac 5a9a2e2a4, afc64dc53
 //! `PaneCardView`): strips are blades tucked behind the panes on show, each
-//! lying against the next blade out, so each casts a tight, strong shadow on
-//! that one. It leans AWAY from the run, onto the blade behind it, and stops
-//! at the strip's own sides rather than haloing past them.
+//! lying against the next blade out, so each casts a tight, light shadow on
+//! that one (30% on dark, 14% on light). It leans AWAY from the run, onto the
+//! blade behind it. Along the strip it is cast from a shape pulled in by the
+//! corner radius from each end, so it fades out inside the strip's rounded
+//! corners - never cut off flat there, nor haloing past them; only the
+//! strip's own shape is masked out (T2410; Mac 7e2d0a9da).
 //!
 //! A card gliding into or out of its strip casts it too, at its collapse
 //! (`strip_face.collapseOf`): Mac mixes every parameter from the stacked
@@ -29,16 +32,13 @@ pub const card_radius_dip: f32 = 10;
 pub const blade_radius_dip: f32 = 5;
 /// How far a blade's shadow leans away from the run, in DIP.
 pub const lean_dip: f32 = 3;
-/// Mac `PaneCardView.outset`: the room round a card its shadow may use. The
-/// mask across the stack narrows from that to the strip's own sides.
-pub const outset_dip: f32 = 32;
 
 /// Mac's `shadowOpacity`, stacked card and blade, dark and light.
 pub fn cardOpacity(is_light: bool) f32 {
     return if (is_light) 0.16 else 0.4;
 }
 pub fn bladeOpacity(is_light: bool) f32 {
-    return if (is_light) 0.26 else 0.6;
+    return if (is_light) 0.14 else 0.3;
 }
 
 /// The shadow at `collapse` (0..1), in pixels.
@@ -48,8 +48,9 @@ pub const Params = struct {
     opacity: f32,
     /// Along the stack, away from the run (unsigned).
     lean: f32,
-    /// How far past the strip's sides it may reach across the stack.
-    spill: f32,
+    /// How far the caster is pulled in from each end of the strip, as a
+    /// fraction of the corner radius (Mac `ends`).
+    ends: f32,
 };
 
 pub fn params(collapse: f32, is_light: bool, scale: f32) Params {
@@ -63,7 +64,7 @@ pub fn params(collapse: f32, is_light: bool, scale: f32) Params {
         .sigma = mix(card_radius_dip, blade_radius_dip, t) / 2 * scale,
         .opacity = mix(cardOpacity(is_light), bladeOpacity(is_light), t) * t,
         .lean = lean_dip * t * scale,
-        .spill = outset_dip * (1 - t) * scale,
+        .ends = t,
     };
 }
 
@@ -71,7 +72,9 @@ pub fn params(collapse: f32, is_light: bool, scale: f32) Params {
 /// alpha byte) with the shadow of the strip or card at `rect`, whose corners
 /// are `radius` pixels, in a stack along `axis` whose run lies after it
 /// (`leads`) or before it. Only outside the shape: the band or the pane is
-/// laid over the inside.
+/// laid over the inside. The caster is `rect` pulled in along the strip by
+/// the corner radius (at most a quarter of the strip's length), so the
+/// shadow fades out inside the rounded ends.
 pub fn paint(
     buf: []u32,
     w: usize,
@@ -90,6 +93,7 @@ pub fn paint(
     if (p.opacity <= 0) return;
     const s: pane_elevation.Shadow = .{ .sigma = p.sigma, .dy = 0, .opacity = p.opacity };
     const card: pane_elevation.Card = .{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = rect.bottom };
+    const caster = casterOf(rect, axis, p.ends, radius);
     const rad: f32 = @floatFromInt(radius);
     const out: f32 = if (leads) -1 else 1;
     const dx: f32, const dy: f32 = switch (axis) {
@@ -97,12 +101,10 @@ pub fn paint(
         .vertical => .{ 0, p.lean * out },
     };
     const reach: i32 = @intFromFloat(@ceil(3 * p.sigma + p.lean) + 1);
-    const spill: i32 = @min(reach, @as(i32, @intFromFloat(@floor(p.spill))));
-    const along_pad = reach;
-    const x0: i32, const x1: i32, const y0: i32, const y1: i32 = switch (axis) {
-        .horizontal => .{ rect.left - along_pad, rect.right + along_pad, rect.top - spill, rect.bottom + spill },
-        .vertical => .{ rect.left - spill, rect.right + spill, rect.top - along_pad, rect.bottom + along_pad },
-    };
+    const x0 = rect.left - reach;
+    const x1 = rect.right + reach;
+    const y0 = rect.top - reach;
+    const y1 = rect.bottom + reach;
     const wi: i32 = @intCast(w);
     const hi: i32 = @intCast(h);
     const black: desk_palette.Rgbf = .{ .r = 0, .g = 0, .b = 0 };
@@ -116,7 +118,7 @@ pub fn paint(
             const d0 = pane_elevation.roundRectDistance(px, py, card, rad);
             const outside = std.math.clamp(0.5 + d0, 0, 1);
             if (outside <= 0) continue;
-            const a = pane_elevation.shadowAlpha(pane_elevation.roundRectDistance(px - dx, py - dy, card, rad), s) * outside;
+            const a = pane_elevation.shadowAlpha(pane_elevation.roundRectDistance(px - dx, py - dy, caster, rad), s) * outside;
             if (a < 1.0 / 512.0) continue;
             const i: usize = @intCast(y * wi + x);
             const dst = buf[i];
@@ -128,24 +130,41 @@ pub fn paint(
     }
 }
 
+/// The shape the shadow is cast from: `rect` pulled in from each end of the
+/// strip (across the stack) by `ends` of the corner radius, at most a quarter
+/// of the strip's length (Mac `caster`).
+pub fn casterOf(rect: Rect, axis: Direction, ends: f32, radius: i32) pane_elevation.Card {
+    const along: i32 = switch (axis) {
+        .horizontal => rect.height(),
+        .vertical => rect.width(),
+    };
+    const want: i32 = @intFromFloat(@round(std.math.clamp(ends, 0, 1) * @as(f32, @floatFromInt(radius))));
+    const in = @max(0, @min(want, @divTrunc(along, 4)));
+    return switch (axis) {
+        .horizontal => .{ .left = rect.left, .top = rect.top + in, .right = rect.right, .bottom = rect.bottom - in },
+        .vertical => .{ .left = rect.left + in, .top = rect.top, .right = rect.right - in, .bottom = rect.bottom },
+    };
+}
+
 test "params: a card's shadow at 0, a blade's at 1, faded in between (T2307)" {
     const card = params(0, false, 1);
     try testing.expectEqual(@as(f32, 0), card.opacity);
     try testing.expectEqual(@as(f32, 5), card.sigma);
     try testing.expectEqual(@as(f32, 0), card.lean);
-    try testing.expectEqual(@as(f32, 32), card.spill);
+    try testing.expectEqual(@as(f32, 0), card.ends);
+    // A blade's is light (T2410; Mac 7e2d0a9da): 30% dark, 14% light.
     const blade = params(1, false, 1);
-    try testing.expectApproxEqAbs(@as(f32, 0.6), blade.opacity, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), blade.opacity, 1e-6);
     try testing.expectEqual(@as(f32, 2.5), blade.sigma);
     try testing.expectEqual(@as(f32, 3), blade.lean);
-    try testing.expectEqual(@as(f32, 0), blade.spill);
-    try testing.expectApproxEqAbs(@as(f32, 0.26), params(1, true, 1).opacity, 1e-6);
+    try testing.expectEqual(@as(f32, 1), blade.ends);
+    try testing.expectApproxEqAbs(@as(f32, 0.14), params(1, true, 1).opacity, 1e-6);
     // Half way: half of the half-mixed opacity, and in DIP.
     const half = params(0.5, false, 2);
-    try testing.expectApproxEqAbs(@as(f32, 0.25), half.opacity, 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.175), half.opacity, 1e-6);
     try testing.expectEqual(@as(f32, 7.5), half.sigma);
     try testing.expectEqual(@as(f32, 3), half.lean);
-    try testing.expectEqual(@as(f32, 32), half.spill);
+    try testing.expectEqual(@as(f32, 0.5), half.ends);
     // Clamped.
     try testing.expectEqual(params(1, false, 1), params(3, false, 1));
 }
@@ -154,7 +173,22 @@ fn grey(buf: []const u32, w: usize, x: usize, y: usize) u32 {
     return buf[y * w + x] & 0xFF;
 }
 
-test "paint: a blade darkens the side away from the run, not its own inside, and stops at its sides" {
+test "casterOf: pulled in along the strip by the radius, at most a quarter of its length (T2410)" {
+    const tall: Rect = .{ .left = 50, .top = 10, .right = 70, .bottom = 50 };
+    // A horizontal stack's strip runs down y: its ends are top and bottom.
+    try testing.expectEqual(pane_elevation.Card{ .left = 50, .top = 14, .right = 70, .bottom = 46 }, casterOf(tall, .horizontal, 1, 4));
+    // A vertical stack's runs along x.
+    const wide: Rect = .{ .left = 10, .top = 50, .right = 50, .bottom = 70 };
+    try testing.expectEqual(pane_elevation.Card{ .left = 14, .top = 50, .right = 46, .bottom = 70 }, casterOf(wide, .vertical, 1, 4));
+    // None for a card (ends 0), half way through a glide half of it.
+    try testing.expectEqual(pane_elevation.Card{ .left = 50, .top = 10, .right = 70, .bottom = 50 }, casterOf(tall, .horizontal, 0, 4));
+    try testing.expectEqual(pane_elevation.Card{ .left = 50, .top = 12, .right = 70, .bottom = 48 }, casterOf(tall, .horizontal, 0.5, 4));
+    // A short strip: a quarter of its length, not the whole radius.
+    const short: Rect = .{ .left = 0, .top = 0, .right = 20, .bottom = 12 };
+    try testing.expectEqual(pane_elevation.Card{ .left = 0, .top = 3, .right = 20, .bottom = 9 }, casterOf(short, .horizontal, 1, 8));
+}
+
+test "paint: a blade darkens the side away from the run, not its own inside, and fades out at its ends" {
     const w = 120;
     const h = 60;
     const base: u32 = desk_palette.packRgb(200, 200, 200);
@@ -173,9 +207,20 @@ test "paint: a blade darkens the side away from the run, not its own inside, and
     // Darkest beside the strip, fading off.
     try testing.expect(grey(&buf, w, 48, 30) < grey(&buf, w, 44, 30));
     try testing.expectEqual(@as(u32, 200), grey(&buf, w, 30, 30));
-    // Across the stack it stops at the strip's own sides.
-    try testing.expectEqual(base, buf[8 * w + 48]);
-    try testing.expectEqual(base, buf[52 * w + 48]);
+    // Past the strip's ends it does not halo (T2410)...
+    try testing.expect(grey(&buf, w, 48, 7) >= 199);
+    try testing.expect(grey(&buf, w, 48, 53) >= 199);
+    // ...and it is not cut off flat there either: it fades out inside the
+    // rounded ends, lighter just inside an end than along the middle, and
+    // darker still a little further in. Before T2410 the row just inside the
+    // end was as dark as the middle and the row past it untouched.
+    const mid = grey(&buf, w, 48, 30);
+    const end = grey(&buf, w, 48, 11);
+    try testing.expect(end > mid + 3);
+    try testing.expect(grey(&buf, w, 48, 13) < end);
+    try testing.expect(grey(&buf, w, 48, 10) < 200);
+    // Light: 30% at most, and well under it with the blur.
+    try testing.expect(mid >= 140);
     // Coverage rose with the darkening, for a translucent window.
     try testing.expect(desk_palette.coverage(buf[30 * w + 48]) > 0);
 
@@ -194,7 +239,9 @@ test "paint: a vertical stack leans along y" {
     // Trailing: the run is above, the shadow leans down.
     paint(&buf, w, h, strip, .vertical, false, 1, false, 1, 4);
     try testing.expect(grey(&buf, w, 30, 71) < grey(&buf, w, 30, 48));
-    try testing.expectEqual(base, buf[71 * w + 8]);
+    // Its ends are along x: no halo past them, and fading in from them.
+    try testing.expect(grey(&buf, w, 7, 71) >= 199);
+    try testing.expect(grey(&buf, w, 11, 71) > grey(&buf, w, 30, 71) + 3);
 }
 
 test "paint: none at collapse 0, and a mid-glide shadow between none and a blade's" {
@@ -213,10 +260,9 @@ test "paint: none at collapse 0, and a mid-glide shadow between none and a blade
     const g_full = grey(&full, w, 48, 30);
     try testing.expect(g_half < 200);
     try testing.expect(g_full < g_half);
-    // Mid-glide the mask has not narrowed all the way: a little spills past
-    // the strip's side, which the blade's never does.
-    try testing.expect(grey(&half, w, 48, 8) < 200);
-    try testing.expectEqual(@as(u32, 200), grey(&full, w, 48, 8));
+    // Mid-glide the caster is only half pulled in and the blur is wider: a
+    // little reaches past the strip's end, which the blade's barely does.
+    try testing.expect(grey(&half, w, 48, 8) < grey(&full, w, 48, 8));
 }
 
 test "paint: clipped to the buffer" {

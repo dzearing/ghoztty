@@ -224,7 +224,8 @@ pub fn paint(
     const radius = pane_elevation.radiusPx(style.scale);
     for (strips) |s| {
         // Each blade's shadow lands on the blade behind it, which is already
-        // down (T2307): leaning away from the run, stopping at its sides.
+        // down (T2307): leaning away from the run, fading out inside its
+        // rounded ends (T2410).
         blade_shadow.paint(comp.pixels(), @intCast(w), @intCast(h), s.tab, s.axis, s.leads, s.collapse, style.is_light, style.scale, radius);
         if (!s.band) continue;
         // On glass the band sits over the tucked card's sheet, so the desk
