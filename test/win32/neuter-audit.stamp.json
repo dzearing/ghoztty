@@ -1,8 +1,8 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-10-29T14:53:04-07:00",
-    "commit":  "7ca14119a",
+    "generated":  "2026-10-29T15:22:28-07:00",
+    "commit":  "a7647cf60",
     "uncommitted":  [
 
                     ],
@@ -93,6 +93,7 @@
                   "src/apprt/win32/dim_math.zig":  "4221a2bee762d1d3f3866299fbb5fe3925adcc6a00a1a15b26485db28434e955",
                   "src/apprt/win32/DimOverlay.zig":  "b4f75766c8054a9b668664b2007cb2335fb015083d35940316c3a509512c00d0",
                   "src/apprt/win32/DirectoryProbe.zig":  "436f0848d47eb50920460ad13d2856c6137ed0985a5676cd81be62b9532ee6de",
+                  "src/apprt/win32/drag_hold.zig":  "b8bc69207ab9adff80f3b2756c4834444326a1af5575e33f6d8be201d4302991",
                   "src/apprt/win32/drag_perf.zig":  "4520eafb7112312ef631ca7097bb123abf716a91e74286222d4da45a6129e7b5",
                   "src/apprt/win32/drop_highlight.zig":  "9d129f0c43c6f0f079e47ec672ec737a9e74047d223315fb8b08ae81eabd71cd",
                   "src/apprt/win32/DropHighlight.zig":  "d4bcd61be1bba093e2f751d345f672a5b02ea663e052af95cba1fa5e4a139cd2",
@@ -264,7 +265,7 @@
                   "src/apprt/win32/startup_window.zig":  "3d45bcc8f084829e2cc5d69222f4aee9d8b2d479ee89731859c50d82e0dbdc8e",
                   "src/apprt/win32/strip_face.zig":  "fcc92d61f41e60db07d8d21d8d57a89d2096b7e557dec287f5afe972d4cb2f1b",
                   "src/apprt/win32/StripFace.zig":  "2edd89ca60244e9832ad57630ed9cc9149bfeaba36ba25dd11f08b2fbe36485f",
-                  "src/apprt/win32/Surface.zig":  "d951b1366f61eb81787bc9e43ffe72b194e1519c40c8f96e5486d171cd36921d",
+                  "src/apprt/win32/Surface.zig":  "472b16c876c30eeb7e1ae7a607f6816f8c9e1435053e5641a3b6450e19805f0a",
                   "src/apprt/win32/surface_reap.zig":  "ba55e7ecb6cec9383f704064427889dc276ac8dff7e46844f8a4a790e6b586e9",
                   "src/apprt/win32/surface_window_role.zig":  "5af08d4834c92f03c30c4a642d598f21e7961c8bf976b63c55d91f90bf652528",
                   "src/apprt/win32/system_colors.zig":  "0634f5778186d7f3a7359689523fc96b9b9c273bbc211b824951f19a69ebbe47",
@@ -333,7 +334,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "057ff107fb651a473362023eb0d0a70237863f964614412c155cbd4872660020",
-                  "src/apprt/win32/Window.zig":  "56d7f5a16555504c8a8c4ae8f9a2bc39d134b7c2640351bfe573c4f59ffafdaa",
+                  "src/apprt/win32/Window.zig":  "495b43190f7dd598266ff1647ecc6cb6a057969a988fdf0f062651c5688f5ada",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
