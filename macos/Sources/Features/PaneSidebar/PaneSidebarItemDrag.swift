@@ -57,6 +57,16 @@ enum PaneSidebarItemReorder {
         return frame.minY
     }
 
+    /// `target` kept on the dragged item's side of the top level: ungrouped
+    /// windows lead it and groups follow (`PaneSidebarWindowGrouping.lonesFirst`),
+    /// so a lone window stays among the lone windows and a group among the
+    /// groups. `isGroup`: each sibling, the dragged one included.
+    static func banded(_ target: Int, dragged: Int, isGroup: [Bool]) -> Int {
+        guard isGroup.indices.contains(dragged) else { return target }
+        let lones = isGroup.enumerated().filter { $0.offset != dragged && !$0.element }.count
+        return isGroup[dragged] ? Swift.max(target, lones) : Swift.min(target, lones)
+    }
+
     /// Keeps the dragged item's top inside its siblings' span: dragged past
     /// the first or last, it stops there rather than leaving the list. It
     /// may also stay as low as `grabbed`, where it was picked up: a group
@@ -113,6 +123,16 @@ enum PaneSidebarCrossDrop {
         // The slot runs from that last row's top to its bottom (and the
         // list's end clamps it there): split at its middle.
         return top < prev.frame.midY ? join : topLevel
+    }
+
+    /// `destination` at `slot`, kept out of the groups' band: a window let
+    /// go at the top level below a group lands at the end of the ungrouped
+    /// windows, which lead the list (`PaneSidebarWindowGrouping.lonesFirst`)
+    /// — the slot there too, so the others open the gap where it will land.
+    static func banded(_ destination: Destination, slot: Int, rows: [Row]) -> (Destination, slot: Int) {
+        guard case .topLevel(let index) = destination else { return (destination, slot) }
+        let lones = rows.filter { $0.project == nil }.count
+        return index > lones ? (.topLevel(index: lones), lones) : (destination, slot)
     }
 
     /// The window's whole title once it lands in `destination`: its own
@@ -377,7 +397,9 @@ final class PaneSidebarItemDrag: ObservableObject {
         let top = PaneSidebarItemReorder.clamp(
             top: pointer - grab, dragged: known.firstIndex(of: frame) ?? 0, frames: known, grabbed: grabbedTop)
         if top != self.top { self.top = top }
-        let target = PaneSidebarItemReorder.target(top: top, dragged: dragged, frames: frames)
+        let target = PaneSidebarItemReorder.banded(
+            PaneSidebarItemReorder.target(top: top, dragged: dragged, frames: frames),
+            dragged: dragged, isGroup: siblings.map { !isWindow($0) })
         if target != self.target { self.target = target }
     }
 
@@ -394,9 +416,12 @@ final class PaneSidebarItemDrag: ObservableObject {
         let frames = rows.map(\.frame)
         rowPitch = PaneSidebarItemReorder.pitch(dragged: source, frames: frames)
         // Grabbed open, it folds to its row under the pointer: held by a
-        // point below that row, it would hang above the pointer.
-        let grab = Swift.min(grab, frame.height / 2)
-        let top = PaneSidebarItemReorder.clamp(top: pointer - grab, dragged: source, frames: frames, grabbed: grabbedTop)
+        // point below that row, it would hang above the pointer. As low as
+        // that folded row under where it was grabbed, too — last in the
+        // list, the list's end would otherwise pull it up from the pointer.
+        let held = Swift.min(grab, frame.height / 2)
+        let top = PaneSidebarItemReorder.clamp(
+            top: pointer - held, dragged: source, frames: frames, grabbed: grabbedTop + grab - held)
         if top != self.top { self.top = top }
         // The others, closed up where it left.
         var others = rows
@@ -407,9 +432,10 @@ final class PaneSidebarItemDrag: ObservableObject {
                          frame: row.frame.offsetBy(dx: 0, dy: -rowPitch))
         }
         let middle = top + frame.height / 2
-        let slot = others.filter { $0.frame.midY < middle }.count
+        let pointed = others.filter { $0.frame.midY < middle }.count
+        let (destination, slot) = PaneSidebarCrossDrop.banded(
+            PaneSidebarCrossDrop.destination(rows: others, slot: pointed, top: top), slot: pointed, rows: others)
         if slot != target { target = slot }
-        let destination = PaneSidebarCrossDrop.destination(rows: others, slot: slot, top: top)
         if destination != self.destination { self.destination = destination }
         // Joining a group it is not in already: its header says so.
         var joining: String?
@@ -766,7 +792,7 @@ struct PaneSidebarItemShift: ViewModifier {
     let drag: PaneSidebarItemDrag
     @ObservedObject private var motion: PaneSidebarItemDragMotion
     let isActive: Bool
-    /// Lifted, it is drawn over a solid backing and a shadow: a window, so
+    /// Lifted, it is drawn over glass and a shadow (`PaneSidebarLiftBacking`): a window, so
     /// it reads as on top of the rows it passes. Not a group's parts — its
     /// header is already its own glass band, and its gaps are empty space.
     var showsBacking: Bool
@@ -786,15 +812,7 @@ struct PaneSidebarItemShift: ViewModifier {
         content
             .background {
                 if isLifted {
-                    // Solid under the glass while it is held, so it reads as
-                    // on top of what it passes rather than mixed with it.
-                    RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                        .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                                .fill(Color.primary.opacity(0.06)))
-                        .padding(.horizontal, SidePanelRow.fillInset)
-                        .shadow(color: .black.opacity(0.3), radius: 6, y: 3)
+                    PaneSidebarLiftBacking()
                         .transition(.opacity)
                 }
             }
@@ -802,6 +820,26 @@ struct PaneSidebarItemShift: ViewModifier {
             .animation(isActive && lift == nil && !drag.isSettling ? PaneSidebarShift.animation : nil, value: slide)
             .paneSidebarItemFrame(key, isOn: isActive)
             .zIndex(lift != nil ? 1 : 0)
+    }
+}
+
+/// Under a held item — a window, or a pane's row — so it reads as lifted
+/// over the rows it passes: clear Liquid Glass, untinted — they show
+/// through it (a tint read as a solid band) — and a shadow drawn by its
+/// shape alone, not by the item's text.
+struct PaneSidebarLiftBacking: View {
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+        Group {
+            if #available(macOS 26.0, *) {
+                Color.clear.glassEffect(.clear, in: shape)
+            } else {
+                shape.fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
+                    .overlay(shape.fill(Color.primary.opacity(0.06)))
+            }
+        }
+        .padding(.horizontal, SidePanelRow.fillInset)
+        .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
     }
 }
 

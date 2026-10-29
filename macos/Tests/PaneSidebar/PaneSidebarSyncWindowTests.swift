@@ -490,23 +490,24 @@ struct PaneSidebarSyncWindowTests {
             #expect(!viewer.paneSidebarSections.contains { $0.project == "beta" }, "beta is gone")
         }
 
-        // `one` out, past `solo` at the end of the list.
+        // `one` out, past the end of the list: ungrouped windows lead it,
+        // so it lands after `solo`, above alpha.
         drag.begin(one, siblings: [one], in: a, screenY: 0)
         await settle(0.4)
         let oneY = try screenY(of: one, in: a)
-        let end = try screenY(of: key(other), in: a, fraction: 1)
+        let end = try screenY(of: key(windows[1]), in: a, fraction: 1.4)
         drag.end(commit: false)
         await settle(0.5)
         drag.begin(one, siblings: [one], in: a, screenY: oneY)
         await settle(0.4)
         drag.move(screenY: end)
         await settle(0.4)
-        #expect(drag.destination == .topLevel(index: 2), "\(String(describing: drag.destination))")
+        #expect(drag.destination == .topLevel(index: 1), "\(String(describing: drag.destination))")
         drag.end(commit: true)
         await settle(0.8)
         #expect(windows[0].windowTitleOverride == "one")
-        #expect(a.paneSidebarSections.map(\.id) == ["project:alpha", key(other), one])
-        #expect(other.paneSidebarSections.map(\.id) == ["project:alpha", key(other), one])
+        #expect(a.paneSidebarSections.map(\.id) == [key(other), one, "project:alpha"])
+        #expect(other.paneSidebarSections.map(\.id) == [key(other), one, "project:alpha"])
         await close(windows, restoring: saved)
     }
 
@@ -525,6 +526,38 @@ struct PaneSidebarSyncWindowTests {
             contentFilter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg)
         try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
             .write(to: URL(fileURLWithPath: "\(dir)/reorder-\(name).png"))
+    }
+
+    /// A native tab group titled `<project>: <name>` (one tab holds the
+    /// window title, as `setWindowTitle` leaves it) is in that group with
+    /// every tab, not only the holder: the others named by their panes
+    /// stood beside the group, looking like its windows, and stayed when
+    /// it folded.
+    @Test func foldingAGroupHidesEveryTabOfItsWindow() async throws {
+        let saved = save()
+        let windows = try await open(["projects: manager", "Notes", "Build", "Logs", "ghoztty: one"],
+                                     size: NSSize(width: 900, height: 700))
+        let a = windows[0]
+        let window = try #require(a.window)
+        for c in windows[1...3] {
+            c.windowTitleOverride = nil
+            window.addTabbedWindow(try #require(c.window), ordered: .above)
+        }
+        a.setWindowTitle("projects: manager", byUser: true)
+        a.paneSidebarState.showsAllWindows = true
+        await settle(0.8)
+        let projects = try #require(a.paneSidebarSections.first { $0.project == "projects" })
+        #expect(projects.windows.count == 4, "every tab of the window is in its group")
+        #expect(Set(projects.windows.map(\.label)) == ["manager"])
+
+        let host = try #require(a.paneSidebarHost)
+        let rows = { self.all(PaneSidebarItemDragView.self, in: host).filter { !$0.isHiddenOrHasHiddenAncestor }.count }
+        let open = rows()
+        withAnimation(PaneSidebarOutline.foldAnimation) { a.paneSidebarState.foldedProjects.insert("projects") }
+        await settle(0.8)
+        try await capture(window, "fold-tabs-folded")
+        #expect(rows() == open - 4, "folding the group hides all four")
+        await close(windows, restoring: saved)
     }
 
     @Test func reorderCaptures() async throws {

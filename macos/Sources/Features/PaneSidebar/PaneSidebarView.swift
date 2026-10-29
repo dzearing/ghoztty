@@ -13,7 +13,10 @@ struct PaneSidebarView: View {
     @ObservedObject var geometry: PaneSidebarGeometry
     @ObservedObject private var dragSession = PaneDragSession.shared
     @ObservedObject private var rowDrag = PaneSidebarRowDrag.shared
-    @ObservedObject private var itemDrag = PaneSidebarItemDrag.shared
+    /// Not observed here: its once-per-drag changes come through `state`,
+    /// live windows only (`PaneSidebarState`), so starting a drag redraws
+    /// the list it is in — not every window's.
+    private var itemDrag: PaneSidebarItemDrag { .shared }
 
     /// Laid out as the rail (tiles) rather than full rows.
     let isRail: Bool
@@ -93,30 +96,22 @@ struct PaneSidebarView: View {
             PaneSidebarObserving(rowDrag.motion) { motion in
             GeometryReader { proxy in
                 let origin = proxy.frame(in: .named(PaneSidebarGeometry.space)).origin
-                let top = rowDrag.isSettling ? frame.minY : frame.minY + motion.dy
+                let top = rowDrag.heldTop ?? (rowDrag.isSettling ? frame.minY : frame.minY + motion.dy)
                 let y = Swift.min(Swift.max(top - origin.y, 0), Swift.max(0, proxy.size.height - frame.height))
                 PaneSidebarRow(
                     pane: pane, owner: controller,
                     isStashed: controller.surfaceTree.isStashed(pane),
                     isSelected: pane === controller.publishedFocusedPane,
-                    isForeign: false, isRail: isRail, isBeingDragged: false)
+                    isForeign: false, isRail: isRail, isBeingDragged: false,
+                    indent: geometry.rowFrames.first { $0.id == pane.id }?.indent ?? 0)
                     .environment(\.paneSidebarInteractive, false)
                     .frame(width: frame.width, height: frame.height)
-                    // Solid under the glass while it is held, so it reads as
-                    // on top of the rows it passes rather than mixed with them.
-                    .background {
-                        RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                            .fill(Color(nsColor: .windowBackgroundColor).opacity(rowDrag.isSettling ? 0 : 0.92))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                                    .fill(Color.primary.opacity(rowDrag.isSettling ? 0 : 0.06)))
-                            .padding(.horizontal, SidePanelRow.fillInset)
-                            .padding(.vertical, 0.5)
-                    }
+                    // Glass under it while it is held, so it reads as on top
+                    // of the rows it passes; gone as it settles.
+                    .background { PaneSidebarLiftBacking().opacity(rowDrag.isSettling ? 0 : 1) }
                     .scaleEffect(rowDrag.isSettling ? 1 : 1.04)
-                    .shadow(color: .black.opacity(rowDrag.isSettling ? 0 : 0.3), radius: 6, y: 3)
                     .offset(x: frame.minX - origin.x, y: y)
-                    .animation(rowDrag.isSettling ? PaneSidebarRowDrag.settleAnimation : nil, value: y)
+                    .animation(rowDrag.isSettling && rowDrag.heldTop == nil ? PaneSidebarRowDrag.settleAnimation : nil, value: y)
                     .animation(PaneSidebarRowDrag.settleAnimation, value: rowDrag.isSettling)
             }
             }
@@ -218,18 +213,15 @@ struct PaneSidebarView: View {
     /// list. Two lists, and a drag moves a pane within either or across: into
     /// the tray stashes it, out restores. (The tray was first anchored at the
     /// bottom of the bar, which left it far from the panes it is for.) In the
-    /// rail, the header is a + alone (a new window).
+    /// rail, the header is a + alone (a new pane, as the header's +).
     @ViewBuilder
     private var thisWindowList: some View {
         let content = VStack(alignment: .leading, spacing: 0) {
             if isRail {
                 // The header with its text taken away, as a tile is its row:
-                // a +, at the header's height, so no icon moves. It is the
-                // panel header's + — a new window, as Cmd-N — the + a person
-                // reaches for in the rail; a pane is Cmd-D away.
-                PaneSidebarRailAddSlot {
-                    BaseTerminalController.newWindowFromSidebar(controller.ghostty, from: controller)
-                }
+                // a +, at the header's height, so no icon moves. This list is
+                // the window's panes, so its + adds one, as the header's does.
+                PaneSidebarRailAddSlot(help: "New pane") { controller.addPaneFromSidebar() }
                 paneRows(controller, isThisWindow: true, indent: 0)
                 tray(controller, isThisWindow: true, indent: 0)
             } else {
@@ -277,7 +269,17 @@ struct PaneSidebarView: View {
         }
     }
 
-    private var listContent: some View { allWindows }
+    @ViewBuilder
+    private var listContent: some View {
+        // The rail's + above every window: the panel header's — a new
+        // window, as Cmd-N — since this list is windows.
+        if isRail {
+            PaneSidebarRailAddSlot(help: "New window") {
+                BaseTerminalController.newWindowFromSidebar(controller.ghostty, from: controller)
+            }
+        }
+        allWindows
+    }
 
     /// This window's group header in its own Panes list: the all-windows
     /// list's, with the whole group's count and buttons (pencil, + and ×).
@@ -445,9 +447,9 @@ struct PaneSidebarView: View {
             withAnimation(PaneSidebarOutline.foldAnimation) { state.toggleWindowFold(id) }
         }
         return VStack(alignment: .leading, spacing: 0) {
-            if isRail {
-                PaneSidebarDivider(isRail: true)
-            } else {
+            // In the rail a window is its tiles alone: no divider between
+            // windows.
+            if !isRail {
                 PaneSidebarWindowHeader(
                     owner: owner,
                     title: label,
@@ -540,7 +542,7 @@ struct PaneSidebarView: View {
                     height: drag?.height ?? 0,
                     isLifted: rowDrag.pane === pane || (slide != nil && index == slide?.source),
                     isDragging: drag != nil))
-                .background { rowFrameReader(pane, isStashed: false, isThisWindow: isThisWindow) }
+                .background { rowFrameReader(pane, isStashed: false, isThisWindow: isThisWindow, indent: indent) }
         }
     }
 
@@ -645,7 +647,7 @@ struct PaneSidebarView: View {
                     height: drag?.height ?? 0,
                     isLifted: rowDrag.pane === pane || (slide != nil && index == source),
                     isDragging: drag != nil))
-                .background { rowFrameReader(pane, isStashed: true, isThisWindow: isThisWindow) }
+                .background { rowFrameReader(pane, isStashed: true, isThisWindow: isThisWindow, indent: indent) }
         }
 
         // An empty tray is still somewhere to drop: a slot that says so,
@@ -687,13 +689,13 @@ struct PaneSidebarView: View {
     /// moves under the pointer as they slide (read inside, a row sliding into
     /// the gap reported the gap's place, and the index chased it).
     @ViewBuilder
-    private func rowFrameReader(_ pane: PaneView, isStashed: Bool, isThisWindow: Bool) -> some View {
+    private func rowFrameReader(_ pane: PaneView, isStashed: Bool, isThisWindow: Bool, indent: CGFloat) -> some View {
         if (dragSession.isDragging || rowDrag.pane != nil) && isThisWindow {
             GeometryReader { proxy in
                 Color.clear.preference(
                     key: PaneSidebarRowFrames.self,
                     value: [.init(id: pane.id, frame: proxy.frame(in: .named(PaneSidebarGeometry.space)),
-                                  isStashed: isStashed)])
+                                  isStashed: isStashed, indent: indent)])
             }
         }
     }
@@ -1117,14 +1119,15 @@ struct PaneSidebarWindowHeader: View {
     }
 }
 
-/// The rail's stand-in for this window's header: a + alone — a new window,
-/// as the panel header's + — in a slot exactly the header's height
-/// (`PaneSidebarWindowHeader.height`).
+/// The rail's + at the top of its list: in this window, its header's
+/// stand-in (a new pane); in all windows, the panel header's (a new window).
+/// In a slot exactly the header's height (`PaneSidebarWindowHeader.height`).
 struct PaneSidebarRailAddSlot: View {
+    let help: String
     let action: () -> Void
 
     var body: some View {
-        PaneSidebarItemButton(symbol: "plus", help: "New window", action: action)
+        PaneSidebarItemButton(symbol: "plus", help: help, action: action)
             .frame(maxWidth: .infinity)
             .frame(height: PaneSidebarWindowHeader.height)
     }
@@ -1390,6 +1393,9 @@ struct PaneSidebarRowFrames: PreferenceKey {
         let frame: CGRect
         /// A tray row (vs a row of the pane list).
         let isStashed: Bool
+        /// Its content's indent, so the dragged row drawn over the list
+        /// keeps it.
+        let indent: CGFloat
     }
 
     static let defaultValue: [Entry] = []
@@ -1510,7 +1516,9 @@ extension PaneSidebarText {
 
     @MainActor
     static func windowTitle(of owner: BaseTerminalController) -> String {
-        if let override = owner.windowTitleOverride ?? owner.titleOverride, !override.isEmpty {
+        // The tab group's window title, whichever tab holds it — as the
+        // titlebar and `+list` show it — so every tab groups as one window.
+        if let override = owner.effectiveWindowTitleOverride ?? owner.titleOverride, !override.isEmpty {
             return override
         }
         let pane = owner.publishedFocusedPane ?? owner.surfaceTree.visibleLeaves.first

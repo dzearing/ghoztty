@@ -180,13 +180,34 @@ struct PaneSidebarSharedStateTests {
         #expect(PaneSidebarSharedState(defaults: store).isExpanded)
     }
 
-    @Test func turningOnAllWindowsOpensTheWindowItWasTurnedOnFrom() {
+    /// A window row's drag starting or landing redraws the list it is in —
+    /// the window in use — and the others only when next key: observed by
+    /// every window's view, it re-rendered every window's whole list as a
+    /// drag began (a 0.3–0.7s stall with 20 windows).
+    @Test func anItemDragRedrawsOnlyTheWindowInUse() {
+        let shared = PaneSidebarSharedState(defaults: defaults())
+        let drag = PaneSidebarItemDrag()
+        let live = PaneSidebarState(shared: shared, roster: nil, itemDrag: drag)
+        let background = PaneSidebarState(shared: shared, roster: nil, itemDrag: drag)
+        background.isLive = { false }
+        var redraws = (live: 0, background: 0)
+        let a = live.objectWillChange.sink { redraws.live += 1 }
+        let b = background.objectWillChange.sink { redraws.background += 1 }
+        drag.objectWillChange.send()
+        #expect(redraws.live == 1)
+        #expect(redraws.background == 0, "a background window does not redraw")
+        background.catchUp()
+        #expect(redraws.background == 1, "it catches up when it is next key")
+        _ = (a, b)
+    }
+
+    @Test func turningOnAllWindowsFoldsEveryWindowItWasTurnedOnFromToo() {
         let shared = PaneSidebarSharedState(defaults: defaults())
         let a = PaneSidebarState(shared: shared), b = PaneSidebarState(shared: shared)
         a.showsAllWindows = true
-        // The same in both windows' lists: a open, b folded.
+        // The same in both windows' lists: every window folded, a included.
         for viewer in [a, b] {
-            #expect(!viewer.isWindowFolded(a.windowID, isSearching: false))
+            #expect(viewer.isWindowFolded(a.windowID, isSearching: false))
             #expect(viewer.isWindowFolded(b.windowID, isSearching: false))
         }
         b.toggleWindowFold(b.windowID)
@@ -203,7 +224,7 @@ struct PaneSidebarSharedStateTests {
         #expect(shared.unfoldedWindows.isEmpty, "the next look starts from the default")
         #expect(a.filter.isEmpty)
         b.showsAllWindows = true
-        #expect(shared.unfoldedWindows == [b.windowID], "now b is the one turned on from")
+        #expect(shared.unfoldedWindows.isEmpty, "turned on again, every window starts folded")
     }
 }
 
@@ -454,8 +475,9 @@ struct PaneSidebarWindowGroupingTests {
             (id: 5, title: "Build logs"),
             (id: 6, title: "ghoztty: main"),
         ])
-        #expect(sections.map { $0.project ?? $0.windows[0].title } == ["Build logs", "ghoztty", "relay", "zsh"])
-        let ghoztty = sections[1]
+        #expect(sections.map { $0.project ?? $0.windows[0].title } == ["Build logs", "zsh", "ghoztty", "relay"],
+                "ungrouped windows first, then the groups")
+        let ghoztty = sections[2]
         #expect(ghoztty.windows.map(\.label) == ["main", "pane-sidebar", "windows-amd64"])
         #expect(ghoztty.windows.map(\.id) == [6, 4, 2])
         #expect(sections[0].windows[0].label == "Build logs", "an ungrouped window keeps its whole name")
@@ -607,7 +629,21 @@ struct PaneSidebarWindowOrderTests {
         let order = ["project:relay", G.key(window: 3), "project:ghoztty",
                      G.key(window: 4), G.key(window: 2), G.key(window: 5)]
         #expect(shown(G.sections(windows(titles), order: order)) == [
-            "[relay]", "  main", "Build logs", "[ghoztty]", "  wt-10", "  wt-2", "  alpha"])
+            "Build logs", "[relay]", "  main", "[ghoztty]", "  wt-10", "  wt-2", "  alpha"])
+    }
+
+    /// The user's report: four windows under `projects`, three of them
+    /// ungrouped (Claude-titled) windows the order kept right after the
+    /// group — drawn as its windows, they stayed when it folded. However the
+    /// order has them, ungrouped windows lead the list, groups after.
+    @Test func ungroupedWindowsComeBeforeEveryGroup() {
+        let open = windows(["projects: manager", "Prompt.md instructions", "Release status", "zecho: main"])
+        #expect(shown(G.sections(open, order: [])) == [
+            "Prompt.md instructions", "Release status", "[projects]", "  manager", "[zecho]", "  main"])
+        let order = ["project:projects", G.key(window: 1), G.key(window: 3), G.key(window: 2), "project:zecho"]
+        #expect(shown(G.sections(open, order: order)) == [
+            "Release status", "Prompt.md instructions", "[projects]", "  manager", "[zecho]", "  main"],
+                "dragged after the group: still above it, in their dragged order")
     }
 
     @Test func aNewWindowGoesAfterItsNameNeighbour() {
@@ -617,11 +653,11 @@ struct PaneSidebarWindowOrderTests {
         // wt-3 (id 6) opens: by name it follows wt-2, wherever that went.
         let opened = windows(titles + ["ghoztty: wt-3"])
         #expect(shown(G.sections(opened, order: order)) == [
-            "[relay]", "  main", "[ghoztty]", "  wt-10", "  alpha", "  wt-2", "  wt-3", "Build logs"])
+            "Build logs", "[relay]", "  main", "[ghoztty]", "  wt-10", "  alpha", "  wt-2", "  wt-3"])
         // Nothing before it known: before the name neighbour after it.
         let first = windows(titles + ["ghoztty: aardvark"])
-        #expect(shown(G.sections(first, order: order)).prefix(4) == ["[relay]", "  main", "[ghoztty]", "  wt-10"])
-        #expect(G.sections(first, order: order)[1].windows.map(\.label) == ["wt-10", "aardvark", "alpha", "wt-2"],
+        #expect(shown(G.sections(first, order: order)).prefix(5) == ["Build logs", "[relay]", "  main", "[ghoztty]", "  wt-10"])
+        #expect(G.sections(first, order: order)[2].windows.map(\.label) == ["wt-10", "aardvark", "alpha", "wt-2"],
                 "it has no name neighbour before it the order knows, so it goes before alpha")
     }
 
@@ -629,9 +665,9 @@ struct PaneSidebarWindowOrderTests {
         let order = ["project:relay", "project:ghoztty", G.key(window: 3)]
         // "infra" sorts after "ghoztty", before "relay": it follows ghoztty.
         let opened = windows(titles + ["infra: prod"])
-        #expect(shown(G.sections(opened, order: order)).prefix(4) == ["[relay]", "  main", "[ghoztty]", "  alpha"])
+        #expect(shown(G.sections(opened, order: order)).prefix(5) == ["Build logs", "[relay]", "  main", "[ghoztty]", "  alpha"])
         let tops = G.sections(opened, order: order).map(\.id)
-        #expect(tops == ["project:relay", "project:ghoztty", "project:infra", G.key(window: 3)])
+        #expect(tops == [G.key(window: 3), "project:relay", "project:ghoztty", "project:infra"])
     }
 
     @Test func closedWindowsDropOutAndArePrunedOnTheNextMove() {
@@ -703,24 +739,25 @@ struct PaneSidebarWindowOrderTests {
     }
 
     /// Typing a new `<project>: ` still moves a window into that group —
-    /// that is what it asks for — and a group it creates takes the window's
-    /// place.
+    /// that is what it asks for — and a group it creates goes where the
+    /// window was among the groups (after the ungrouped windows).
     @Test func renamingAWindowIntoANewGroupPutsTheGroupWhereTheWindowWas() {
         let open = windows(["zeta", "beta", "gamma"])
         let before = G.sections(open, order: [])
         #expect(shown(before) == ["beta", "gamma", "zeta"])
         let order = G.renaming(window: 3, to: "aa: gamma", in: before)
         #expect(shown(G.sections(retitled(open, 3, "aa: gamma"), order: order)) == [
-            "beta", "[aa]", "  gamma", "zeta"])
+            "beta", "zeta", "[aa]", "  gamma"])
     }
 
-    @Test func renamingAWindowOutOfAGroupLeavesItBesideTheGroup() {
+    @Test func renamingAWindowOutOfAGroupPutsItWithTheUngroupedWindows() {
         let open = windows(titles)
         let before = G.sections(open, order: [])
-        // alpha (id 5) leaves ghoztty: it stays at the top level beside it.
+        // alpha (id 5) leaves ghoztty: it joins the ungrouped windows on
+        // top, after those above it — never left under the group.
         let order = G.renaming(window: 5, to: "alpha", in: before)
         #expect(shown(G.sections(retitled(open, 5, "alpha"), order: order)) == [
-            "Build logs", "[ghoztty]", "  wt-2", "  wt-10", "alpha", "[relay]", "  main"])
+            "Build logs", "alpha", "[ghoztty]", "  wt-2", "  wt-10", "[relay]", "  main"])
     }
 
     @Test func renamingAGroupKeepsItsPlace() {
@@ -776,6 +813,15 @@ struct PaneSidebarWindowOrderTests {
 /// siblings of different heights.
 struct PaneSidebarItemReorderTests {
     typealias R = PaneSidebarItemReorder
+
+    /// Lone windows `a`, `b`, then groups `p`, `q`: each stays on its side.
+    @Test func aDragStaysOnItsSideOfTheTopLevel() {
+        let isGroup = [false, false, true, true]
+        #expect(R.banded(3, dragged: 0, isGroup: isGroup) == 1, "a lone window stops at the last lone slot")
+        #expect(R.banded(0, dragged: 1, isGroup: isGroup) == 0)
+        #expect(R.banded(0, dragged: 3, isGroup: isGroup) == 2, "a group stops below the lone windows")
+        #expect(R.banded(3, dragged: 2, isGroup: isGroup) == 3)
+    }
 
     /// A 30pt group, a 100pt window, a 30pt group — 6pt apart.
     private let frames = [
@@ -859,6 +905,20 @@ struct PaneSidebarCrossDropTests {
         // Past a folded group's header, at the end of the list: the same.
         #expect(C.destination(rows: rows, slot: 6, top: 165) == .group("q", index: 0))
         #expect(C.destination(rows: rows, slot: 6, top: 190) == .topLevel(index: 4))
+    }
+
+    /// Ungrouped windows lead the list: let go at the top level below a
+    /// group, a window lands at the end of them, and the gap opens there.
+    @Test func belowAGroupItLandsAtTheEndOfTheUngroupedWindows() {
+        let rows = [
+            C.Row(key: "window:a", project: nil, isHeader: false, frame: CGRect(x: 0, y: 0, width: 200, height: 32)),
+            C.Row(key: "window:b", project: nil, isHeader: false, frame: CGRect(x: 0, y: 32, width: 200, height: 32)),
+            C.Row(key: "project:p", project: "p", isHeader: true, frame: CGRect(x: 0, y: 64, width: 200, height: 32)),
+            C.Row(key: "window:p1", project: "p", isHeader: false, frame: CGRect(x: 0, y: 96, width: 200, height: 32)),
+        ]
+        #expect(C.banded(.topLevel(index: 3), slot: 4, rows: rows) == (.topLevel(index: 2), 2))
+        #expect(C.banded(.topLevel(index: 1), slot: 1, rows: rows) == (.topLevel(index: 1), 1), "among them: as is")
+        #expect(C.banded(.group("p", index: 1), slot: 4, rows: rows) == (.group("p", index: 1), 4), "joining: as is")
     }
 
     @Test func itsNameSaysWhichGroupItIsIn() {

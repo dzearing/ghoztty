@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import Ghostty
 
@@ -53,5 +54,16 @@ struct HoverTrackingViewTests {
         HoverTrackingView.isHeld = false
         passed.syncHover()
         #expect(reports == [true])
+    }
+
+    @Test func aDragClearsAndBlocksThePaneTint() {
+        let hover = PaneSidebarHover.shared
+        let (grabbed, passed) = (UUID(), UUID())
+        defer { HoverTrackingView.isHeld = false; hover.clear() }
+        hover.hover(grabbed, color: .red)
+        HoverTrackingView.isHeld = true
+        #expect(hover.pane == nil, "the grabbed tile's pane loses its tint")
+        hover.hover(passed, color: .blue)
+        #expect(hover.pane == nil, "a tile it passes tints nothing")
     }
 }
