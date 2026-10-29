@@ -175,6 +175,9 @@ pub fn saveRemembered(alloc: std.mem.Allocator) void {
 /// window when it is next activated (`catchUp`).
 pub var shared: shared_mod.Shared = .{};
 
+/// Every sidebar's `refresh` count together (T2423). UI thread only.
+var refreshes_all: u64 = 0;
+
 /// A window group of the outline: one tab of one top-level window (a Mac
 /// window is a tab here - see `pane_sidebar_outline.zig`).
 const Group = struct {
@@ -405,6 +408,10 @@ alloc: Allocator,
 
 entries: std.ArrayListUnmanaged(Entry) = .{},
 signature: u64 = 0,
+/// How many times this sidebar re-read its roster (`refresh`), and every
+/// sidebar's together (`refreshes_all`): a drag start counts what it redrew
+/// in other windows by them (T2423).
+refreshes: u64 = 0,
 
 // The all-windows scope (T1829). Not persisted, as Mac's is not: the switch,
 // and what is folded, belong to one look at every window. This and the
@@ -864,6 +871,8 @@ pub fn deskPainted(self: *PaneSidebar, gen: u32) void {
 /// scope - every tab of every window. Cheap when nothing it shows has
 /// changed; repaints only when something did.
 pub fn refresh(self: *PaneSidebar) void {
+    self.refreshes +%= 1;
+    refreshes_all +%= 1;
     if (self.all_windows) return self.refreshAll();
     const win = self.window;
     if (win.tab_count == 0) {
@@ -2586,6 +2595,12 @@ fn maybeStartItemDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     };
     if (!drop_highlight.exceedsThreshold(x - self.press_x, y - self.press_y, drop_highlight.thresholdPx(self.scale))) return false;
     if (!self.all_windows or self.mode != .expanded) return false;
+    // Timed, and what it redrew elsewhere counted (T2423, Mac 6bd2962eb):
+    // the lift redraws this window's list alone, every other window's when
+    // it is next activated (`catchUp`).
+    const t0 = transition.nowUs();
+    const all0 = refreshes_all;
+    const own0 = self.refreshes;
     const l = self.currentLayout();
     if (!l.outline or k >= l.head_count) return false;
     const hd = l.heads[k];
@@ -2650,7 +2665,26 @@ fn maybeStartItemDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     log.info("pane sidebar item drag start kind={s} key={s} {s}={d} source={d}", .{ @tagName(hd.kind), d.key.slice(), if (d.cross) "rows" else "siblings", d.count, d.source });
     self.refresh();
     self.itemRelayout();
+    self.logLift(t0, all0, own0);
     return true;
+}
+
+/// The drag start's cost (T2423): how long the lift took, and how many other
+/// windows' sidebars it redrew (none) or left behind to catch up.
+fn logLift(self: *const PaneSidebar, t0: u64, all0: u64, own0: u64) void {
+    const own = self.refreshes -% own0;
+    var windows: usize = 0;
+    var behind: usize = 0;
+    for (self.window.app.windows.items) |w| {
+        if (w.closing) continue;
+        const sb = w.sidebar orelse continue;
+        if (sb == self) continue;
+        windows += 1;
+        if (shared_mod.needsCatchUp(sb.seen_gen, &shared)) behind += 1;
+    }
+    log.info("pane sidebar item drag lifted us={d} redrawn={d} others_redrawn={d} others={d} others_behind={d}", .{
+        transition.nowUs() -| t0, own, (refreshes_all -% all0) -% own, windows, behind,
+    });
 }
 
 /// The pointer or the layout moved: the item follows the pointer, kept in

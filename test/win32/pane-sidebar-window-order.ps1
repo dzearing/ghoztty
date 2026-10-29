@@ -39,10 +39,15 @@
 #   9. wt-1, proj's last window, dragged out past the end: retitled "wt-1"
 #      (+list) and, below a group, it lands at the end of the lone windows -
 #      the top of the list (T2421): wt-1 | zz/one | proj/wt-2 | proj/solo.
+#  10. With twelve windows (T2423, Mac 6bd2962eb), a drag start redraws the
+#      window in use alone: the `item drag lifted` line counts no other
+#      sidebar redrawn and all eleven left to catch up, inside 80 ms. Another
+#      window, activated, catches up then.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground. -NegativeControl deletes the order file before the
-# relaunch, so section 7 MUST fail.
+# relaunch, so section 7 MUST fail, and activates no other window in section
+# 10, so its catch-up check MUST fail too.
 #
 #   powershell -NoProfile -File test\win32\pane-sidebar-window-order.ps1
 param(
@@ -408,6 +413,69 @@ try {
             "  (+list titles: $($titles -join ' | '))"
             Assert "+list names it wt-1" ($titles -contains 'wt-1')
             Assert "+list no longer has proj: wt-1" (-not ($titles -contains 'proj: wt-1'))
+        }
+    }
+
+    "== 10: with twelve windows, a drag start redraws only the window in use (T2423)"
+    if ($top -ne [IntPtr]::Zero -and $null -ne $sb2) {
+        # Four windows already (A-D): eight more make twelve.
+        $extra = 12 - @(Get-TestWindows -ProcessId $script:app.Pid -Class 'GhozttyWindow').Count
+        for ($i = 1; $i -le $extra; $i++) {
+            [void](Invoke-Cli "+new-window --name=x$i --title=`"extra $i`"")
+        }
+        Start-Sleep -Milliseconds 2500
+        $tops = @(Get-TestWindows -ProcessId $script:app.Pid -Class 'GhozttyWindow')
+        Assert "setup: twelve windows ($($tops.Count))" ($tops.Count -eq 12)
+        $mark = Get-LogCount
+        [void](Set-TestActiveWindow -Window $top)
+        Start-Sleep -Milliseconds 600
+        # Its list lays out again - the scope off and back on - so the newest
+        # outline line is its own.
+        $sb2 = Get-Sidebar $top
+        $off = Get-LogCount
+        [void](ClickAt $top $sb2 (Get-ScopeCenter $sb2))
+        [void](Wait-Log 'pane sidebar scope all_windows=false' $off)
+        Start-Sleep -Milliseconds 600
+        $mark = Get-LogCount
+        [void](ClickAt $top $sb2 (Get-ScopeCenter $sb2))
+        [void](Wait-Log 'pane sidebar scope all_windows=true' $mark)
+        Start-Sleep -Milliseconds 800
+        $sb2 = Get-Sidebar $top
+        $all = Get-Heads $mark
+        $heads = @($all | Where-Object { $_.Kind -eq 'W' })
+        if ($heads.Count -ge 1 -and $null -ne $sb2) {
+            $mark = Get-LogCount
+            [void](Invoke-HeadDrag $top $sb2 $heads[0] ($heads[0].Y + (Px 40)) -Cancel)
+            $lift = Wait-Log 'pane sidebar item drag lifted ' $mark
+            "  ($lift)"
+            $ok = $lift -match 'lifted us=(\d+) redrawn=(\d+) others_redrawn=(\d+) others=(\d+) others_behind=(\d+)'
+            Assert "the lift was logged" $ok
+            if ($ok) {
+                $us = [int64]$Matches[1]; $redrawn = [int]$Matches[2]; $othersRedrawn = [int]$Matches[3]
+                $others = [int]$Matches[4]; $behind = [int]$Matches[5]
+                Assert "eleven other windows have a sidebar ($others)" ($others -eq 11)
+                Assert "the lift redrew this window's list once ($redrawn)" ($redrawn -eq 1)
+                Assert "and no other window's ($othersRedrawn)" ($othersRedrawn -eq 0)
+                Assert "every other window is left to catch up when next activated ($behind)" ($behind -eq 11)
+                # Mac's stall was 0.4-1.3 s with 20 windows; a debug build
+                # lifts well inside a fifth of that.
+                Assert "the lift took under 80 ms ($([math]::Round($us / 1000.0, 1)) ms)" ($us -lt 80000)
+            }
+            Assert "Escape let it go" ($null -ne (Wait-Log 'pane sidebar item drag end commit=false' $mark))
+            $other = @($tops | Where-Object { [IntPtr]$_.Hwnd -ne $top }) | Select-Object -Last 1
+            $mark = Get-LogCount
+            if ($NegativeControl) {
+                "  NEGATIVE CONTROL: no other window is activated - the catch-up check MUST fail"
+            } else {
+                [void](Set-TestActiveWindow -Window ([IntPtr]$other.Hwnd))
+            }
+            Start-Sleep -Milliseconds 800
+            Assert "another window, activated, caught up then" ($null -ne (Wait-Log "pane sidebar catch up window=$([int64]$other.Hwnd) all_windows=true" $mark 2500))
+        } else {
+            $last = @(Get-LogLines $mark '.') | Select-Object -Last 12
+            foreach ($ln in $last) { "  (log: $($ln.Substring(0, [math]::Min(240, $ln.Length))))" }
+            "  (log lines since mark: $((Get-LogCount) - $mark); app alive: $($null -ne (Get-Process -Id $script:app.Pid -ErrorAction SilentlyContinue)))"
+            Assert "setup: the twelve-window list has window rows ($($heads.Count))" $false
         }
     }
 
