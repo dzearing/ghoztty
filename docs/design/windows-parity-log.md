@@ -37619,3 +37619,7 @@ moved to T1814.
   - Class 1, every pointer move: the moved pane shows at its new rect while the strip it left still holds its old text, and the accent bar and card edge are missing for 1-2 presents (157 of 756 frames lack exactly one bar). T2418's class (lane B), on release with 3 panes where lane B's 2-pane debug probe saw none. `placePane` batches without `SWP_NOCOPYBITS`, and the band paint after `EndDeferWindowPos` lands a present late.
   - Class 2, the fold glide: alternate frames show the folding pane's and s1's previous text beside the new text. Filed T2427 (P0).
   - T2419 back to todo with deps T2418, T2427; it closes on a zero-bad-frame release re-capture. Also: main intake (Mac 6bd2962eb -> T2421-T2426, rail + per scope folded into T2407).
+
+- **2026-10-28 T2418 (lane b)**: the divider-drag ghost trail is REPRODUCED with real pointer input, on release 1.49.4 and on HEAD; still in progress.
+  - Probe `D:\git\ghoztty-b\temp\t2418\ghost-probe.ps1 -RealInput` (SendInput at 1 kHz through `lib\FrameLabInput.ps1`, presence-gated): mid-drag the accent bar is missing beside the terminal rows and the right pane shows its first column twice; posted drags stay clean. Same class as lane A's T2419 class 1.
+  - `SWP_NOCOPYBITS` on the pane moves was tried and does not fix it (reverted): the right pane shows a frame rendered for its old size at its new place. Next steps are in the task's progress log.
