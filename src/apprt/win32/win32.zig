@@ -624,6 +624,7 @@ pub extern "user32" fn GetDCEx(
     flags: u32,
 ) callconv(.winapi) ?HDC;
 pub const DCX_CACHE: u32 = 0x00000002;
+pub const DCX_CLIPCHILDREN: u32 = 0x00000008;
 pub const DCX_CLIPSIBLINGS: u32 = 0x00000010;
 
 /// The window a DC belongs to, or null for a memory DC. This is how a paint

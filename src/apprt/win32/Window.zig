@@ -694,10 +694,14 @@ in_live_layout: bool = false,
 /// fills them with the background before the next band paint.
 painted_gutters: [MAX_DRAG_NODES * 2]w32.RECT = undefined,
 painted_gutters_len: usize = 0,
-/// `GHOZTTY_KEEP_VACATED_GUTTERS`: skip that fill, so the old lines stay in the
+/// `GHOZTTY_KEEP_VACATED_GUTTERS`: skip that fill (and `clearVacatedPaneStrips`'s
+/// fill of what a moved pane left), so the old lines stay in the
 /// window's surface the way they did before T2418. The positive control
 /// `split-divider.ps1` T734 counts them with; nothing in the product sets it.
 keep_vacated_gutters: bool = false,
+/// The pane rects `clearVacatedPaneStrips` is filling, for the paint callback
+/// it hands `paintAlphaCorrect` (T2418). Empty outside that call.
+vacated_pane_strips: []const w32.RECT = &.{},
 /// `GHOZTTY_CLEAR_WHOLE_GUTTERS`: clear every old gutter whole, the pre-T2400
 /// shape, including the parts the new bands are about to repaint and the
 /// pixels of a viewer pane standing over one. The negative control for the
@@ -7562,6 +7566,10 @@ pub fn layoutSplits(self: *Window) void {
         return;
     }
     var place_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+    // Where the panes are before the batch moves them (T2418): what they
+    // leave behind is filled straight after it, below.
+    var old_panes: [MAX_FRAME_WAITS]w32.RECT = undefined;
+    const old_len = self.snapshotPaneRects(&old_panes);
     var hdwp = beginPaneBatch(self.leafCount(self.active_tab));
     if (self.stackGrid()) |laid| {
         var grid = laid;
@@ -7575,6 +7583,7 @@ pub fn layoutSplits(self: *Window) void {
     // Every pane of this pass lands in ONE frame here, before the divider
     // bands are painted below (T1031).
     endPaneBatch(hdwp);
+    if (self.hwnd) |hwnd| self.clearVacatedPaneStrips(hwnd, old_panes[0..old_len]);
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
     self.cutCardRegions();
     // Before the bands are painted, never after (T2414, above).
@@ -9211,6 +9220,57 @@ fn paintVacatedGutters(self: *Window, hdc: w32.HDC) void {
     const brush = w32.CreateSolidBrush(w32.RGB(bg.r, bg.g, bg.b)) orelse return;
     defer _ = w32.DeleteObject(brush);
     for (self.painted_gutters[0..self.painted_gutters_len]) |*r| _ = w32.FillRect(hdc, r, brush);
+}
+
+/// Every shown pane of the active tab's window rect, in client pixels, into
+/// `out` (T2418). Read before a layout batch, for `clearVacatedPaneStrips`.
+fn snapshotPaneRects(self: *Window, out: []w32.RECT) usize {
+    const parent = self.hwnd orelse return 0;
+    var n: usize = 0;
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| {
+        if (n >= out.len) break;
+        const h = entry.view.hwnd() orelse continue;
+        if (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) continue;
+        const r = childClientRect(parent, h) orelse continue;
+        out[n] = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+        n += 1;
+    }
+    return n;
+}
+
+/// Fill what the panes just left with the terminal background, the moment
+/// the batch has moved them (T2418). A pane that moves leaves a strip of its
+/// old frame in the window's own surface, and the band paint that covers it
+/// comes after the per-pane popups have been placed - about 40 ms later on a
+/// divider drag, two or three composited frames. Meanwhile the pane, already
+/// presenting at its new place, sat beside that strip: the left edge of every
+/// row's first glyph twice over, the user's doubled first column. The DC
+/// clips to the children where they are NOW, so only uncovered pixels are
+/// touched, and the band paint replaces the fill wherever a gutter, rim or
+/// desk now lies.
+fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) void {
+    if (old.len == 0 or self.keep_vacated_gutters) return;
+    var box: w32.RECT = old[0];
+    for (old[1..]) |r| {
+        box.left = @min(box.left, r.left);
+        box.top = @min(box.top, r.top);
+        box.right = @max(box.right, r.right);
+        box.bottom = @max(box.bottom, r.bottom);
+    }
+    const dc = w32.GetDCEx(hwnd, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS | w32.DCX_CLIPCHILDREN) orelse return;
+    defer _ = w32.ReleaseDC(hwnd, dc);
+    _ = w32.IntersectClipRect(dc, box.left, box.top, box.right, box.bottom);
+    self.vacated_pane_strips = old;
+    defer self.vacated_pane_strips = &.{};
+    self.paintAlphaCorrect(dc, paintVacatedPaneStrips);
+}
+
+fn paintVacatedPaneStrips(self: *Window, hdc: w32.HDC) void {
+    const bg = self.app.config.background;
+    const brush = w32.CreateSolidBrush(w32.RGB(bg.r, bg.g, bg.b)) orelse return;
+    defer _ = w32.DeleteObject(brush);
+    for (self.vacated_pane_strips) |*r| _ = w32.FillRect(hdc, r, brush);
 }
 
 /// The flat style's gutter bar (T2253): composed over what the gutter shows
