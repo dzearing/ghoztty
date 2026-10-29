@@ -1426,6 +1426,74 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 
+    /// Collapsed, the all-windows list is its WINDOWS: one tile per window,
+    /// in the list's order, with no pane tiles and no dividers between them
+    /// — it used to be every window's panes, a divider between windows.
+    @Test func theAllWindowsRailIsOneTilePerWindow() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        var controllers: [TerminalController] = [
+            TerminalController.newWindow(ghostty, tree: try SplitTree<PaneView>(view: a)
+                .inserting(view: b, at: a, direction: .right)),
+        ]
+        for _ in 0..<3 {
+            controllers.append(TerminalController.newWindow(ghostty, tree: SplitTree(view: terminalPane(app))))
+        }
+        for (c, title) in zip(controllers, ["railproj: two", "railproj: one", "Rail loose", "Rail other"]) {
+            c.windowTitleOverride = title
+        }
+        let main = controllers[0]
+        main.paneSidebarState.isHidden = false
+        main.paneSidebarState.showsAllWindows = true
+        main.setPaneSidebarExpanded(false)
+        _ = await poll(timeout: 10) { controllers.allSatisfy { $0.window?.isVisible == true } }
+        let window = try #require(main.window)
+        window.setContentSize(NSSize(width: 900, height: 560))
+        main.window?.makeKeyAndOrderFront(nil)
+        await settle(1.2)
+        try? await captureComposited(window, "all-windows-rail")
+
+        let host = try #require(main.paneSidebarHost)
+        func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+            ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { all(type, in: $0) }
+        }
+        #expect(all(PaneDragSourceView.self, in: host).isEmpty, "the rail drew pane tiles")
+        // Top to bottom (window coordinates: y grows upward).
+        let tiles = all(PaneSidebarItemDragView.self, in: host)
+            .filter { $0.window != nil }
+            .sorted { $0.convert($0.bounds, to: nil).maxY > $1.convert($1.bounds, to: nil).maxY }
+        let expected = PaneSidebarWindowGrouping.sections(
+            main.paneSidebarAllControllers.map {
+                (id: $0.paneSidebarState.windowID, title: PaneSidebarText.windowTitle(of: $0))
+            },
+            order: main.paneSidebarState.shared.windowOrder
+        ).flatMap(\.windows)
+        #expect(tiles.count == expected.count, "\(tiles.count) tiles for \(expected.count) windows")
+        let byID = Dictionary(main.paneSidebarAllControllers.map { ($0.paneSidebarState.windowID, $0) },
+                              uniquingKeysWith: { a, _ in a })
+        let titles = expected.compactMap { byID[$0.id].map { PaneSidebarText.windowTitle(of: $0) } }
+        #expect(tiles.map { $0.toolTip ?? "" } == titles.map { PaneSidebarWindowTile.help(title: $0) },
+                "the tiles are in the all-windows list's order")
+        // One tile per row: every tile is a row's height below the last.
+        let tops = tiles.map { $0.convert($0.bounds, to: nil).maxY }
+        for (upper, lower) in zip(tops, tops.dropFirst()) {
+            #expect(abs(upper - lower - PaneSidebarRow.height) < 1, "a gap between tiles: \(upper) → \(lower)")
+        }
+
+        // Busy rolls up onto the window's tile.
+        #expect(!main.paneSidebarActivity.isBusy)
+        b.surfaceView?.activityState = .busy
+        #expect(await poll(timeout: 2) { main.paneSidebarActivity.isBusy }, "a busy pane makes its window busy")
+        b.surfaceView?.activityState = .idle
+        #expect(await poll(timeout: 2) { !main.paneSidebarActivity.isBusy })
+
+        main.setPaneSidebarExpanded(true)
+        main.paneSidebarState.showsAllWindows = false
+        for c in controllers { c.close() }
+        await settle(0.3)
+    }
+
     @Test func allWindowsRenders() async throws {
         let h = try await open(expanded: true)
         h.controller.stashPane(h.panes[2])

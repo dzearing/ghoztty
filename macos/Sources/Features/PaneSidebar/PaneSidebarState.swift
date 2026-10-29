@@ -891,6 +891,36 @@ enum PaneSidebarOrder {
     }
 }
 
+// MARK: - Window activity
+
+/// A window's panes' activity rolled up for its sidebar row and rail tile:
+/// busy while ANY of its panes is working (`PaneView.isWorking` — the hook
+/// state or a progress report), stashed ones included. Its own object, not
+/// a `@Published` on the controller, so a pane starting or stopping work
+/// redraws that window's row alone, never every view observing the window.
+@MainActor
+final class PaneSidebarWindowActivity: ObservableObject {
+    @Published private(set) var isBusy = false
+
+    private var cancellable: AnyCancellable?
+
+    /// Busy if any pane is: its activity says so, or it shows progress.
+    nonisolated static func isBusy(activity: some Sequence<Ghostty.ActivityState>, progress: some Sequence<Bool>) -> Bool {
+        activity.contains(.busy) || progress.contains(true)
+    }
+
+    func observe(
+        activity: AnyPublisher<[PaneView.ID: Ghostty.ActivityState], Never>,
+        progress: AnyPublisher<[PaneView.ID: Bool], Never>
+    ) {
+        cancellable = activity.combineLatest(progress)
+            .map { Self.isBusy(activity: $0.values, progress: $1.values) }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] busy in self?.isBusy = busy }
+    }
+}
+
 // MARK: - Pane hues
 
 /// Each pane's own hue in the sidebar: its tile is tinted with it, and

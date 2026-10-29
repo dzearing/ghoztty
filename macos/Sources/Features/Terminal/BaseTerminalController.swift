@@ -147,6 +147,10 @@ class BaseTerminalController: NSWindowController,
     /// The pane sidebar's per-window state. See docs/design/pane-sidebar.md.
     let paneSidebarState = PaneSidebarState()
 
+    /// This window's panes' activity, rolled up for its sidebar row and rail
+    /// tile (`PaneSidebarWindowActivity`).
+    let paneSidebarActivity = PaneSidebarWindowActivity()
+
     /// This window's own gradient, when it was opened with `--color=random`
     /// in the elevated pane style; nil is the default ocean desk. Persisted
     /// (the seed) with the window's layout.
@@ -560,6 +564,11 @@ class BaseTerminalController: NSWindowController,
 
         // Keep the session-layout manifest current with pane banner changes
         setupPaneBannerSyncPublisher()
+
+        // Roll up the panes' busy state for the sidebar's window row/tile
+        paneSidebarActivity.observe(
+            activity: surfaceValuesPublisher(valueKeyPath: \.activityState, publisherKeyPath: \.$activityState),
+            progress: surfaceValuesPublisher(valueKeyPath: \.isShowingProgress, publisherKeyPath: \.$isShowingProgress))
 
         // Setup our notifications for behaviors
         let center = NotificationCenter.default
