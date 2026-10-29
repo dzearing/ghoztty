@@ -2846,9 +2846,10 @@ $GuardTable = @(
             'src\cli\json.zig',
             'src\apprt\win32\GhosttyAssets.zig',
             'src\apprt\win32\assets\ghoztty\hooks\*.sh',
-            'src\apprt\win32\assets\ghoztty\skills\*\SKILL.md',
+            'src\apprt\win32\assets\ghoztty\skills\*\*.md',
             'src\apprt\win32\assets\ghoztty\upstream\hooks\*.sh',
-            'src\apprt\win32\assets\ghoztty\upstream\skills\*\SKILL.md',
+            'src\apprt\win32\assets\ghoztty\upstream\skills\*\*.md',
+            'macos\Resources\Ghoztty\skills\*\*.md',
             'test\win32\hook-json.ps1'
         )
         # And the OTHER side of the drift compare (T1325). Section A asserts the
@@ -2861,7 +2862,10 @@ $GuardTable = @(
         Upstream = @(
             'macos/Resources/Ghoztty/hooks/ghoztty-banner.sh',
             'macos/Resources/Ghoztty/hooks/ghoztty-activity-state.sh',
-            'macos/Resources/Ghoztty/skills/ghoztty/SKILL.md',
+            # The whole directory as one tree id (T2318): since main 71da9a680
+            # the skill is SKILL.md plus reference files, and a file main adds
+            # there moves the tree id although no list here names it.
+            'macos/Resources/Ghoztty/skills/ghoztty',
             'macos/Resources/Ghoztty/skills/process-feedback/SKILL.md'
         )
     },

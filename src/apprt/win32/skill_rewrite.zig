@@ -1,8 +1,8 @@
 //! The Windows wording of the bundled `ghoztty` skill (T1327).
 //!
-//! `assets/ghoztty/skills/ghoztty/SKILL.md` is byte-identical to the Mac
-//! bundle resource (`test/win32/hook-json.ps1` section A), and it is written
-//! from the Mac seat: trackpad gestures, Cmd chords, `/bin/zsh`. Shipped as-is,
+//! `assets/ghoztty/skills/ghoztty/` (`SKILL.md` and its reference files) is
+//! byte-identical to the Mac bundle resource (`test/win32/hook-json.ps1`
+//! section A), and it is written from the Mac seat: trackpad gestures, Cmd chords, `/bin/zsh`. Shipped as-is,
 //! an agent on a Windows PC repeats those instructions to the person in front
 //! of it. So the Windows app rewrites the handful of Mac-only phrases as it
 //! INSTALLS the skill, and the asset itself stays a copy rather than a fork —
@@ -128,14 +128,23 @@ pub fn applyWindows(alloc: Allocator, text: []const u8) Allocator.Error![]u8 {
 }
 
 const testing = std.testing;
-const shared_skill = @embedFile("assets/ghoztty/skills/ghoztty/SKILL.md");
+/// Every file of the shared skill (since main 71da9a680 a core plus reference
+/// files); each is rewritten on its own as it installs.
+const shared_files = @import("GhosttyAssets.zig").skillFiles("ghoztty") catch unreachable;
+
+fn inSharedSkill(phrase: []const u8) bool {
+    for (shared_files) |file| {
+        if (std.mem.indexOf(u8, file.contents, phrase) != null) return true;
+    }
+    return false;
+}
 
 test "every Windows rewrite still matches the shared skill" {
     // Red here means a re-vendor reworded a paragraph this table rewrites:
     // update the row's `mac` phrase (and check its `win` sentence is still
     // the true one), or the Windows install ships main's Mac wording again.
     for (windows_rewrites) |row| {
-        if (std.mem.indexOf(u8, shared_skill, row.mac) == null) {
+        if (!inSharedSkill(row.mac)) {
             std.debug.print("stale rewrite row, phrase not found: {s}\n", .{row.mac});
             return error.StaleRewrite;
         }
@@ -143,33 +152,43 @@ test "every Windows rewrite still matches the shared skill" {
 }
 
 test "no Mac wording survives into the Windows skill" {
-    const win = try applyWindows(testing.allocator, shared_skill);
-    defer testing.allocator.free(win);
-    for (mac_only_phrases) |phrase| {
-        if (std.mem.indexOf(u8, win, phrase)) |at| {
-            const lo = at -| 60;
-            const hi = @min(win.len, at + phrase.len + 60);
-            std.debug.print("Mac wording '{s}' survives: ...{s}...\n", .{ phrase, win[lo..hi] });
-            return error.MacWording;
+    for (shared_files) |file| {
+        const win = try applyWindows(testing.allocator, file.contents);
+        defer testing.allocator.free(win);
+        for (mac_only_phrases) |phrase| {
+            if (std.mem.indexOf(u8, win, phrase)) |at| {
+                const lo = at -| 60;
+                const hi = @min(win.len, at + phrase.len + 60);
+                std.debug.print("Mac wording '{s}' survives in {s}: ...{s}...\n", .{ phrase, file.path, win[lo..hi] });
+                return error.MacWording;
+            }
         }
     }
     // The control: the shared document DOES carry them, so the loop above is
     // not passing over an empty or already-Windows text.
     for (mac_only_phrases) |phrase| {
-        try testing.expect(std.mem.indexOf(u8, shared_skill, phrase) != null);
+        try testing.expect(inSharedSkill(phrase));
     }
 }
 
 test "the Windows wording names the Windows inputs" {
-    const win = try applyWindows(testing.allocator, shared_skill);
-    defer testing.allocator.free(win);
-    for ([_][]const u8{ "Ctrl+wheel", "Ctrl+R re-runs it", "Ctrl+Shift+B", "Ctrl+Shift+N", "Ctrl / Ctrl+Shift", "`cmd.exe`", "--command=pwsh" }) |needle| {
-        try testing.expect(std.mem.indexOf(u8, win, needle) != null);
+    var all: std.ArrayListUnmanaged(u8) = .empty;
+    defer all.deinit(testing.allocator);
+    for (shared_files) |file| {
+        const win = try applyWindows(testing.allocator, file.contents);
+        defer testing.allocator.free(win);
+        // Everything else is untouched: the rewrite is phrase-level, so each
+        // file's length stays the same order.
+        try testing.expect(win.len + 2000 > file.contents.len and win.len < file.contents.len + 2000);
+        try all.appendSlice(testing.allocator, win);
     }
-    // Everything else is untouched: the rewrite is phrase-level, so the
-    // document keeps its frontmatter and its length stays the same order.
-    try testing.expect(std.mem.startsWith(u8, win, "---\n"));
-    try testing.expect(win.len > shared_skill.len - 2000 and win.len < shared_skill.len + 2000);
+    for ([_][]const u8{ "Ctrl+wheel", "Ctrl+R re-runs it", "Ctrl+Shift+B", "Ctrl+Shift+N", "Ctrl / Ctrl+Shift", "`cmd.exe`", "--command=pwsh" }) |needle| {
+        try testing.expect(std.mem.indexOf(u8, all.items, needle) != null);
+    }
+    // The core keeps its frontmatter.
+    const core = try applyWindows(testing.allocator, shared_files[0].contents);
+    defer testing.allocator.free(core);
+    try testing.expect(std.mem.startsWith(u8, core, "---\n"));
 }
 
 test "a phrase that no longer occurs is a no-op, not a failure" {

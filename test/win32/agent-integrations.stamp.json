@@ -1,8 +1,8 @@
 {
     "guard":  "agent-integrations",
     "script":  "test/win32/agent-integrations.ps1",
-    "generated":  "2026-10-24T14:10:45-07:00",
-    "commit":  "e3e2a4597",
+    "generated":  "2026-10-29T06:57:09-07:00",
+    "commit":  "d34d8c771",
     "uncommitted":  [
                         "src/apprt/win32/SkillComponent.zig"
                     ],
@@ -20,7 +20,7 @@
                   "src/apprt/win32/runtime_agent.zig":  "e46e400be21297cd8c35bcdfde32e7f132d8b914ad1fe8be193b2d1424ceec25",
                   "src/apprt/win32/runtime_probe.zig":  "e9a8927087558063833d30e15d1cbd1b0f3648ead5f24a8616415e3b3efb6254",
                   "src/apprt/win32/RuntimeIntegration.zig":  "4ea491239e8e400dadd99f2d4c8341812b323a0fabee280dd377f8376b3546f3",
-                  "src/apprt/win32/SkillComponent.zig":  "b345c4ec0c2cbf100fbf1833cae895426d557c50552010b131aca69276e31dfb",
+                  "src/apprt/win32/SkillComponent.zig":  "657179d3f21d03b23e2c3f5c2663550ea753d0d8b612e460e5c4067a73c45983",
                   "test/win32/agent-integrations.ps1":  "201c7424c1271d20322417b8f0881665be453f2dd6e9611f3fcf10f105310169"
               }
 }

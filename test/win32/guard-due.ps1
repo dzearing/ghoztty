@@ -941,8 +941,10 @@ $rows
     # M11: the live table. `hook-json` is the row this section exists for, and
     # the claim worth holding is that it still declares the watch.
     $realTableText = $realDue.Substring($tabStart, $tabEnd - $tabStart)
+    # The ghoztty skill is watched as its whole directory (T2318: a tree id, so
+    # a reference file main adds moves it too).
     Check 'M11 the shipped hook-json row watches main''s copies of the vendored assets' `
-        ($realTableText -match 'macos/Resources/Ghoztty/skills/ghoztty/SKILL\.md' -and
+        ($realTableText -match "'macos/Resources/Ghoztty/skills/ghoztty'" -and
          $realTableText -match 'macos/Resources/Ghoztty/skills/process-feedback/SKILL\.md' -and
          $realTableText -match 'macos/Resources/Ghoztty/hooks/ghoztty-banner\.sh') $realTableText
 

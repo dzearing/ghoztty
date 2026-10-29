@@ -25,6 +25,10 @@
 //!                   through a PowerShell command line), `--busy-marker=`, the
 //!                   motion-based `--when-idle` that replaced main's baked-in
 //!                   `esc to interrupt` marker, and the `readonly` list field.
+//!                   Since main 71da9a680 (T2318) a skill is a DIRECTORY:
+//!                   `ghoztty/` is a ~5KB `SKILL.md` core plus the reference
+//!                   files it sends the agent to on demand, and every one of
+//!                   them is embedded and installed (`skillFiles`).
 //!                   Both hook
 //!                   scripts are deliberate forks — `ghoztty-banner.sh` replaces its `jq`
 //!                   plumbing with `ghoztty +json` (native, dependency-free),
@@ -46,27 +50,55 @@ pub const Error = error{UnknownAsset};
 /// The skill names the app installs, mirroring the Mac flow's set.
 pub const skill_names = [_][]const u8{ "ghoztty", "process-feedback" };
 
-const skill_ghoztty = @embedFile("assets/ghoztty/skills/ghoztty/SKILL.md");
-const skill_process_feedback = @embedFile("assets/ghoztty/skills/process-feedback/SKILL.md");
+/// One file of a bundled skill: its path inside the skill's directory and
+/// the bytes the bundle ships for it.
+pub const SkillFile = struct {
+    path: []const u8,
+    contents: []const u8,
+};
+
+/// The `ghoztty` skill: the core `SKILL.md` first, then the reference files
+/// it tells the agent to read on demand (Mac's `GhosttyAssets.skillFiles`).
+const ghoztty_files = [_]SkillFile{
+    .{ .path = "SKILL.md", .contents = @embedFile("assets/ghoztty/skills/ghoztty/SKILL.md") },
+    .{ .path = "banners-and-links.md", .contents = @embedFile("assets/ghoztty/skills/ghoztty/banners-and-links.md") },
+    .{ .path = "layout.md", .contents = @embedFile("assets/ghoztty/skills/ghoztty/layout.md") },
+    .{ .path = "sessions-and-remote.md", .contents = @embedFile("assets/ghoztty/skills/ghoztty/sessions-and-remote.md") },
+    .{ .path = "terminal-io.md", .contents = @embedFile("assets/ghoztty/skills/ghoztty/terminal-io.md") },
+    .{ .path = "viewers.md", .contents = @embedFile("assets/ghoztty/skills/ghoztty/viewers.md") },
+};
+const process_feedback_files = [_]SkillFile{
+    .{ .path = "SKILL.md", .contents = @embedFile("assets/ghoztty/skills/process-feedback/SKILL.md") },
+};
 const banner_script = @embedFile("assets/ghoztty/hooks/ghoztty-banner.sh");
 const activity_state_script = @embedFile("assets/ghoztty/hooks/ghoztty-activity-state.sh");
 
-/// The bundled SKILL.md text for a skill name, `error.UnknownAsset` for a
-/// name not in `skill_names` (the Mac flow's `GhosttyAssetsError.missing`).
-pub fn skillMarkdown(name: []const u8) Error![]const u8 {
-    if (std.mem.eql(u8, name, "ghoztty")) return skill_ghoztty;
-    if (std.mem.eql(u8, name, "process-feedback")) return skill_process_feedback;
+/// Every file the bundle ships for a skill, `SKILL.md` first;
+/// `error.UnknownAsset` for a name not in `skill_names` (the Mac flow's
+/// `GhosttyAssetsError.missing`).
+pub fn skillFiles(name: []const u8) Error![]const SkillFile {
+    if (std.mem.eql(u8, name, "ghoztty")) return &ghoztty_files;
+    if (std.mem.eql(u8, name, "process-feedback")) return &process_feedback_files;
     return Error.UnknownAsset;
 }
 
-/// The SKILL.md text the Windows app INSTALLS for a skill name: the bundled
+/// The bundled SKILL.md text for a skill name.
+pub fn skillMarkdown(name: []const u8) Error![]const u8 {
+    return (try skillFiles(name))[0].contents;
+}
+
+/// The text the Windows app INSTALLS for one file of a skill: the bundled
 /// text, with the `ghoztty` skill's Mac-only phrases rewritten to the Windows
 /// build's inputs and shells (T1327, `skill_rewrite.zig`). The asset itself
 /// stays byte-identical to the Mac bundle resource. Caller owns the result.
+pub fn installedSkillFile(alloc: std.mem.Allocator, name: []const u8, file: SkillFile) std.mem.Allocator.Error![]u8 {
+    if (std.mem.eql(u8, name, "ghoztty")) return skill_rewrite.applyWindows(alloc, file.contents);
+    return alloc.dupe(u8, file.contents);
+}
+
+/// `installedSkillFile` for a skill's `SKILL.md`. Caller owns the result.
 pub fn installedSkillMarkdown(alloc: std.mem.Allocator, name: []const u8) (std.mem.Allocator.Error || Error)![]u8 {
-    const text = try skillMarkdown(name);
-    if (std.mem.eql(u8, name, "ghoztty")) return skill_rewrite.applyWindows(alloc, text);
-    return alloc.dupe(u8, text);
+    return installedSkillFile(alloc, name, (try skillFiles(name))[0]);
 }
 
 /// The banner updater hook script (the jq-free Windows fork; see header).
@@ -106,6 +138,25 @@ test "the process-feedback skill wires a user report through to a release" {
 test "unknown skill is a typed error" {
     try std.testing.expectError(Error.UnknownAsset, skillMarkdown("nope"));
     try std.testing.expectError(Error.UnknownAsset, skillMarkdown(""));
+    try std.testing.expectError(Error.UnknownAsset, skillFiles("nope"));
+}
+
+test "the ghoztty skill ships every reference file its core names" {
+    // Main 71da9a680 cut SKILL.md to a core that sends the agent to a
+    // reference file per area. A reference the bundle does not ship is a
+    // dead link the agent follows to nothing, so each one the core names
+    // must be a file here, and each file here must be named by the core.
+    const files = try skillFiles("ghoztty");
+    try std.testing.expect(files.len > 1);
+    try std.testing.expectEqualStrings("SKILL.md", files[0].path);
+    const core = files[0].contents;
+    for (files[1..]) |file| {
+        try std.testing.expect(file.contents.len > 0);
+        if (std.mem.indexOf(u8, core, file.path) == null) {
+            std.debug.print("SKILL.md never names {s}\n", .{file.path});
+            return error.UnreferencedSkillFile;
+        }
+    }
 }
 
 test "hook scripts carry the shell ownership marker" {

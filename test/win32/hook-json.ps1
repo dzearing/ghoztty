@@ -5,9 +5,10 @@
 #
 #   A. VENDOR DRIFT - the pristine mirror under
 #      src\apprt\win32\assets\ghoztty\upstream\ must be byte-identical to
-#      tip-of-main's macos/Resources/Ghoztty/ (git blob compare), the two
-#      unforked live copy (skills/ghoztty/SKILL.md) byte-identical to the
-#      mirror, and the three deliberate forks each carrying their divergence:
+#      tip-of-main's macos/Resources/Ghoztty/ (git blob compare, over main's
+#      own file list), the skill forks (skills/ghoztty/ - a directory since
+#      T2318 - and skills/process-feedback/) byte-identical to this branch's
+#      Mac bundle, and the deliberate forks each carrying their divergence:
 #      hooks\ghoztty-banner.sh jq-free and +json-native (T866), and
 #      hooks\ghoztty-activity-state.sh carrying the OSTYPE-guarded Windows
 #      owner/liveness probes (T605).
@@ -103,12 +104,25 @@ if ($LASTEXITCODE -ne 0) { $mainOk = $false }
 if (-not $mainOk) {
     Note-Skip 'origin/main not present in this clone; mirror-vs-main blob compare not possible'
 } else {
-    foreach ($rel in $assetRel) {
+    # T2318: the file set is read from main's tree, not from a list kept here.
+    # Main 71da9a680 turned skills/ghoztty/ into a directory of reference files
+    # and a hand list naming only SKILL.md would have passed over all five; a
+    # file main adds next is compared by default, and a mirror file main dropped
+    # is a stale copy the Windows build would go on shipping.
+    $mainRel = @(& git -C $repo ls-tree -r --name-only origin/main 'macos/Resources/Ghoztty/' 2>$null |
+        ForEach-Object { $_ -replace '^macos/Resources/Ghoztty/', '' })
+    Assert ($mainRel.Count -ge $assetRel.Count) "origin/main ships the Ghoztty resources ($($mainRel.Count) files)"
+    foreach ($rel in $mainRel) {
         $mirror = Join-Path $assetRoot ("upstream\" + ($rel -replace '/', '\'))
         $local = (& git -C $repo hash-object $mirror 2>$null | Out-String).Trim()
         $upstream = (& git -C $repo rev-parse "origin/main:macos/Resources/Ghoztty/$rel" 2>$null | Out-String).Trim()
         Assert ($local -and $upstream -and ($local -eq $upstream)) "upstream mirror of $rel is byte-identical to origin/main ($local)"
     }
+    $mirrorRoot = Join-Path $assetRoot 'upstream'
+    $mirrorRel = @(Get-ChildItem -LiteralPath $mirrorRoot -Recurse -File |
+        ForEach-Object { $_.FullName.Substring($mirrorRoot.Length + 1) -replace '\\', '/' })
+    $extra = @($mirrorRel | Where-Object { $mainRel -notcontains $_ })
+    Assert ($extra.Count -eq 0) "upstream mirror holds nothing main no longer ships ($($extra -join ', '))"
 }
 
 # The live copies: four forks, no unforked one left.
@@ -127,8 +141,17 @@ if (-not $mainOk) {
 # same rule as the process-feedback fork applies: the mirror stays pristine for
 # section A's drift compare, and the live copy tracks the Mac bundle resource so
 # the two platforms never hand an agent different instructions.
-$fork4 = Join-Path $assetRoot 'skills\ghoztty\SKILL.md'
-$fork4Text = [System.IO.File]::ReadAllText($fork4)
+#
+# Since main 71da9a680 (T2318) the skill is a directory - a core SKILL.md plus
+# reference files read on demand - so the carried text is looked for across the
+# whole directory (`--keys-file=` lives in terminal-io.md now), and EVERY file
+# is held byte-identical to its Mac bundle counterpart, in both directions.
+$fork4Dir = Join-Path $assetRoot 'skills\ghoztty'
+$fork4MacDir = Join-Path $repo 'macos\Resources\Ghoztty\skills\ghoztty'
+$fork4Files = @(Get-ChildItem -LiteralPath $fork4Dir -File | Sort-Object Name)
+$fork4Text = ($fork4Files | ForEach-Object { [System.IO.File]::ReadAllText($_.FullName) }) -join "`n"
+Assert ($fork4Files.Count -gt 1 -and ($fork4Files.Name -contains 'SKILL.md')) `
+    "ghoztty skill fork is a directory: SKILL.md plus reference files ($($fork4Files.Count) files)"
 foreach ($needle in @('--keys-file=', '--busy-marker=', 'unchanged across ~1s', '**`readonly`**')) {
     Assert ($fork4Text.IndexOf($needle, [StringComparison]::Ordinal) -ge 0) `
         "ghoztty skill fork carries '$needle'"
@@ -155,10 +178,22 @@ foreach ($needle in @(
     Assert ($fork4Text.IndexOf($needle, [StringComparison]::Ordinal) -ge 0) `
         "ghoztty skill fork teaches focus links: '$needle'"
 }
-$fork4Mac = (& git -C $repo hash-object (Join-Path $repo 'macos\Resources\Ghoztty\skills\ghoztty\SKILL.md') 2>$null | Out-String).Trim()
-$fork4Win = (& git -C $repo hash-object $fork4 2>$null | Out-String).Trim()
-Assert ($fork4Win -and ($fork4Win -eq $fork4Mac)) `
-    'ghoztty skill fork is byte-identical to the mac bundle resource'
+$fork4MacNames = @(Get-ChildItem -LiteralPath $fork4MacDir -File | ForEach-Object { $_.Name })
+Assert ((@($fork4Files.Name) -join ',') -eq (@($fork4MacNames | Sort-Object) -join ',')) `
+    'ghoztty skill fork ships the same files as the mac bundle resource'
+foreach ($f in $fork4Files) {
+    $fork4Mac = (& git -C $repo hash-object (Join-Path $fork4MacDir $f.Name) 2>$null | Out-String).Trim()
+    $fork4Win = (& git -C $repo hash-object $f.FullName 2>$null | Out-String).Trim()
+    Assert ($fork4Win -and ($fork4Win -eq $fork4Mac)) `
+        "ghoztty skill fork $($f.Name) is byte-identical to the mac bundle resource"
+}
+# The installer embeds a fixed file list (GhosttyAssets.zig); a reference file
+# added to the directory and not to that list would never reach an agent.
+$assetsZig = [System.IO.File]::ReadAllText((Join-Path $repo 'src\apprt\win32\GhosttyAssets.zig'))
+foreach ($f in $fork4Files) {
+    Assert ($assetsZig.Contains("assets/ghoztty/skills/ghoztty/$($f.Name)")) `
+        "the Windows installer embeds skills/ghoztty/$($f.Name)"
+}
 
 # The process-feedback fork (T1321). A report drained from the viewer feedback
 # queue IS a user report, and until this text existed the skill ended at "commit
