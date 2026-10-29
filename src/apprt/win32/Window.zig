@@ -686,6 +686,14 @@ dragging_split: bool = false,
 /// `Surface.handleResize` reads this alongside its own `in_live_resize`, which
 /// is what gives the three of them one path instead of three.
 in_live_layout: bool = false,
+/// The flat-style gutters the last divider paint drew (T2418), in client
+/// pixels. A layout that moves a divider hands its old gutter to a pane, and
+/// `WS_CLIPCHILDREN` keeps every later paint off it, so the old line and bar
+/// stayed in the window's surface under the pane - shown each time the pane's
+/// renderer lagged its new size, one copy per drag tick. `clearVacatedGutters`
+/// fills them with the background before the next band paint.
+painted_gutters: [MAX_DRAG_NODES * 2]w32.RECT = undefined,
+painted_gutters_len: usize = 0,
 drag_split_handle: SplitTree(PaneView).Node.Handle = .root,
 drag_split_layout: SplitTree(PaneView).Split.Layout = .horizontal,
 drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
@@ -7424,6 +7432,9 @@ pub fn layoutSplits(self: *Window) void {
         self.cutCardRegions();
         self.placePaneOverlays();
         overlays_placed = true;
+        // The zoomed pane now covers every gutter the grid had (T2418).
+        if (self.hwnd) |hwnd| self.clearVacatedGutters(hwnd);
+        self.painted_gutters_len = 0;
         // The zoomed pane is a card on the desk too (T1831), and its corners
         // moved with it - the same moved-pixels argument as the grid's pass.
         if (self.applied_pane_style == .elevated) if (self.hwnd) |hwnd| {
@@ -7467,6 +7478,8 @@ pub fn layoutSplits(self: *Window) void {
     // it is invisible at the call site, which is why it is written down here.
     if (self.hwnd) |hwnd| {
         var paint_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+        // The old gutters first, so the new ones paint over whatever they share (T2418).
+        self.clearVacatedGutters(hwnd);
         const hdc = w32.GetDC(hwnd);
         if (hdc) |dc| {
             self.paintAlphaCorrect(dc, paintMovedBands);
@@ -8739,6 +8752,8 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
 
 /// Paint divider lines between split panes in the active tab.
 fn paintDividers(self: *Window, hdc: w32.HDC) void {
+    // Re-recorded below by a flat paint; any other shape draws no gutter.
+    self.painted_gutters_len = 0;
     if (self.tab_count == 0) return;
     // An elevated hero tab sits on the desk (T2104 glass, as a card; T2149
     // solid, without one); the carousel paints its own band, and a flat
@@ -8749,7 +8764,15 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
     }
     // The elevated style has no divider line: the gap IS the divider, and
     // everything the window owns around the panes is the desk (T1831).
-    if (self.paneStyle() == .elevated) return self.paintPaneDesk(hdc);
+    if (self.paneStyle() == .elevated) {
+        // The desk's gutters are left under a growing card the same way (T2418).
+        if (self.stackGrid()) |g| {
+            var desk_grid = g;
+            defer desk_grid.deinit();
+            self.recordPaintedGutters(&desk_grid);
+        }
+        return self.paintPaneDesk(hdc);
+    }
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return;
     if (tree.zoomed != null) return;
@@ -8809,6 +8832,7 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
         nl += 1;
     }
     for (lines[0..nl]) |l| _ = w32.ExcludeClipRect(hdc, l.rect.left, l.rect.top, l.rect.right, l.rect.bottom);
+    self.recordPaintedGutters(&grid);
     var leaves = grid.result.leaves.iterator();
     while (leaves.next()) |e| {
         // A strip held short of its reach (T2312) is painted that short, so
@@ -8840,6 +8864,65 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
         }
         self.paintFlatGutterBar(hdc, lit, .{ .r = cfg_bg.r, .g = cfg_bg.g, .b = cfg_bg.b }, rest, hot_rgb, line_rects[0..nl], line_hot[0..nl]);
     }
+}
+
+/// Remember every gutter this paint draws into (T2418): the dividers' and the
+/// between-card grips'. Whole gutters, not just the lines, because the bar
+/// covers the gutter and the gutter is what a moved divider leaves behind.
+fn recordPaintedGutters(self: *Window, grid: *const pane_stack_grid.Grid) void {
+    var n: usize = 0;
+    for (0..grid.result.dividers.items.len) |i| {
+        if (n >= self.painted_gutters.len) break;
+        self.painted_gutters[n] = winRect(grid.dividerGutter(i));
+        n += 1;
+    }
+    for (grid.result.stack_handles.items, 0..) |sh, i| {
+        if (n >= self.painted_gutters.len) break;
+        if (std.meta.activeTag(sh.kind) != .between) continue;
+        self.painted_gutters[n] = winRect(grid.stackHandleGutter(i));
+        n += 1;
+    }
+    self.painted_gutters_len = n;
+}
+
+/// Fill the gutters the previous divider paint drew with the terminal
+/// background, under the panes as well as around them (T2418). Runs after a
+/// layout pass has placed the panes and before it paints the new bands, so a
+/// gutter that is still a gutter is painted over again at once, and one that a
+/// pane grew over holds plain background instead of an old copy of the line
+/// and bar. A pane's renderer presents its new size a frame or two after the
+/// pane moves; until it does, the window's own pixels are what show in the
+/// strip it grew into, and those were the trail of bars the user reported.
+fn clearVacatedGutters(self: *Window, hwnd: w32.HWND) void {
+    const n = self.painted_gutters_len;
+    if (n == 0) return;
+    const grid_rect = self.gridRect();
+    var box: w32.RECT = .{ .left = std.math.maxInt(i32), .top = std.math.maxInt(i32), .right = std.math.minInt(i32), .bottom = std.math.minInt(i32) };
+    for (self.painted_gutters[0..n]) |r| {
+        box.left = @min(box.left, r.left);
+        box.top = @min(box.top, r.top);
+        box.right = @max(box.right, r.right);
+        box.bottom = @max(box.bottom, r.bottom);
+    }
+    box.left = @max(box.left, grid_rect.left);
+    box.top = @max(box.top, grid_rect.top);
+    box.right = @min(box.right, grid_rect.right);
+    box.bottom = @min(box.bottom, grid_rect.bottom);
+    if (box.right <= box.left or box.bottom <= box.top) return;
+    // No `DCX_CLIPCHILDREN`: these pixels are under a pane now (T1885 is the
+    // same reach for the viewer's glass sheet). Clipped to the gutters' box so
+    // the translucent path's buffer is a strip, not the window.
+    const dc = w32.GetDCEx(hwnd, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS) orelse return;
+    defer _ = w32.ReleaseDC(hwnd, dc);
+    _ = w32.IntersectClipRect(dc, box.left, box.top, box.right, box.bottom);
+    self.paintAlphaCorrect(dc, paintVacatedGutters);
+}
+
+fn paintVacatedGutters(self: *Window, hdc: w32.HDC) void {
+    const bg = self.app.config.background;
+    const brush = w32.CreateSolidBrush(w32.RGB(bg.r, bg.g, bg.b)) orelse return;
+    defer _ = w32.DeleteObject(brush);
+    for (self.painted_gutters[0..self.painted_gutters_len]) |*r| _ = w32.FillRect(hdc, r, brush);
 }
 
 /// The flat style's gutter bar (T2253): composed over what the gutter shows

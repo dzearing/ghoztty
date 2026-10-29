@@ -37623,3 +37623,6 @@ moved to T1814.
 - **2026-10-28 T2418 (lane b)**: the divider-drag ghost trail is REPRODUCED with real pointer input, on release 1.49.4 and on HEAD; still in progress.
   - Probe `D:\git\ghoztty-b\temp\t2418\ghost-probe.ps1 -RealInput` (SendInput at 1 kHz through `lib\FrameLabInput.ps1`, presence-gated): mid-drag the accent bar is missing beside the terminal rows and the right pane shows its first column twice; posted drags stay clean. Same class as lane A's T2419 class 1.
   - `SWP_NOCOPYBITS` on the pane moves was tried and does not fix it (reverted): the right pane shows a frame rendered for its old size at its new place. Next steps are in the task's progress log.
+
+- 2026-10-28 19:40 lane b, T2418 part 1: old divider gutters are now filled with background under the pane that grew over them (Window.zig clearVacatedGutters), so a lagging pane no longer shows a trail of old bars. Real-pointer camera: 0 ghost frames with and without banners. Still open on T2418: mid-drag the right pane shows its old-size frame at the new rect. Due sweep: overlay-zorder/arp-version/frame-clock/pane-stack-strip/viewer-narrow-pane/hook-json red and unrelated, acked to T2354/T2362/T2430/T2431/T2380/T2433 (T2432 closed as dup of T2380).
+
