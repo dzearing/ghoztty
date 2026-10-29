@@ -114,26 +114,23 @@ struct PaneSidebarAddWindowTests {
         return await Task.detached { server.dispatch(request) }.value
     }
 
-    /// The rail's + (where this window's header is when expanded) is the
-    /// panel header's: a new window, as Cmd-N — not a pane in this one.
-    @Test func theRailsPlusOpensAWindow() async throws {
-        let (main, _) = try await window(title: "Rail Plus")
+    /// Click the rail's topmost + (its only item button: an 18pt circle)
+    /// in `main`'s collapsed sidebar, in the given scope.
+    private func clickRailsPlus(_ main: BaseTerminalController, allWindows: Bool) async throws {
         main.paneSidebarState.isHidden = false
         main.setPaneSidebarExpanded(false)
-        main.paneSidebarState.showsAllWindows = false
+        main.paneSidebarState.showsAllWindows = allWindows
         await settle(0.8)
         let window = try #require(main.window)
         let content = try #require(window.contentView)
         func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
             ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { all(type, in: $0) }
         }
-        // The rail's only item button: the topmost 18pt circle in the bar.
         let plus = try #require(all(HoverTrackingArea.View.self, in: content)
             .filter { $0.window != nil && abs($0.bounds.width - PaneSidebarItemButton.size) < 1 }
             .max { $0.convert($0.bounds, to: nil).maxY < $1.convert($1.bounds, to: nil).maxY },
             "no + in the rail")
         let frame = plus.convert(plus.bounds, to: nil)
-        let before = terminalWindows()
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             let event = try #require(NSEvent.mouseEvent(
                 with: type, location: NSPoint(x: frame.midX, y: frame.midY), modifierFlags: [],
@@ -142,9 +139,31 @@ struct PaneSidebarAddWindowTests {
             window.sendEvent(event)
             await settle(0.05)
         }
+    }
+
+    /// This window's rail: its + is the window header's (where it is when
+    /// expanded) — a pane in this window, not a new window.
+    @Test func theRailsPlusAddsAPaneInThisWindow() async throws {
+        let (main, _) = try await window(title: "Rail Plus Pane")
+        let before = terminalWindows()
+        try await clickRailsPlus(main, allWindows: false)
+        #expect(await poll(timeout: 5) { main.surfaceTree.count == 2 }, "the rail's + added no pane")
+        await settle(0.5)
+        #expect(terminalWindows() == before, "no window was opened")
+        main.close()
+        await settle(0.3)
+    }
+
+    /// All windows' rail: its + is the panel header's — a new window, as
+    /// Cmd-N — not a pane in this one.
+    @Test func theAllWindowsRailsPlusOpensAWindow() async throws {
+        let (main, _) = try await window(title: "Rail Plus Window")
+        let before = terminalWindows()
+        try await clickRailsPlus(main, allWindows: true)
         let created = try #require(await newWindow(since: before), "the rail's + opened no window")
         #expect(main.surfaceTree.count == 1, "no pane was added to this window")
         #expect(created.surfaceTree.count == 1)
+        main.paneSidebarState.showsAllWindows = false
         created.close()
         main.close()
         await settle(0.3)

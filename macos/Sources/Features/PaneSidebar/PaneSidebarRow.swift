@@ -586,7 +586,19 @@ final class PaneSidebarRowDrag: ObservableObject {
     @Published private(set) var isSettling = false
     /// The dragged row as laid out (before any slide), in the sidebar's
     /// coordinate space — where it was, and after the drop where it landed.
-    @Published var frame: CGRect?
+    @Published var frame: CGRect? {
+        didSet {
+            // Its new place is laid out: glide there, from the next turn.
+            guard heldTop != nil, frame != oldValue else { return }
+            let generation = generation
+            DispatchQueue.main.async { [weak self] in self?.release(generation) }
+        }
+    }
+    /// Let go, the row stays where it was drawn until its new place is laid
+    /// out: the drop reorders the list at once, but `frame` is still the
+    /// row's old place until the list reports the new one — gliding from
+    /// there, it jumped back toward where it started first.
+    @Published private(set) var heldTop: CGFloat?
 
     private var startY: CGFloat = 0
     private var generation = 0
@@ -599,6 +611,7 @@ final class PaneSidebarRowDrag: ObservableObject {
         self.pane = pane
         startY = screenY
         dy = 0
+        heldTop = nil
         isSettling = false
     }
 
@@ -610,8 +623,16 @@ final class PaneSidebarRowDrag: ObservableObject {
 
     func finish(_ pane: PaneView) {
         guard self.pane === pane else { return }
+        heldTop = (frame?.minY ?? 0) + dy
         isSettling = true
+        // Dropped where it was, no new frame comes: glide anyway.
         let generation = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.release(generation) }
+    }
+
+    private func release(_ generation: Int) {
+        guard self.generation == generation, heldTop != nil else { return }
+        heldTop = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleDuration) { [weak self] in
             guard let self, self.generation == generation else { return }
             self.pane = nil

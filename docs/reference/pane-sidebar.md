@@ -27,7 +27,14 @@ shows the same view of it (see *Shared across windows*). Read before touching
   re-lays out every window per frame or keystroke. That includes the
   column: a background window takes a collapse/expand or hide/show, and
   resizes its grid for it, when it is next key. A change made through a
-  window's own state always redraws that window.
+  window's own state always redraws that window. **A catch-up is not
+  animated**: the list is drawn as it now is at once (a transaction with
+  animations off), not with every row that moved meanwhile gliding into
+  place as the window comes forward. A window row's or group header's drag
+  starting or landing (`PaneSidebarItemDrag`) goes through the same gate —
+  observed by every window's view, it re-rendered every window's list as a
+  drag began, a 0.3–0.7s stall with 20 windows
+  (`anItemDragRedrawsOnlyTheWindowInUse`).
 - **Drags redraw only what moves**: a drag's per-move state is published
   apart (`PaneSidebarItemDrag.motion`, `PaneSidebarRowDrag.motion`) and
   observed only by the items that slide or lift, and `PaneDragSession`
@@ -152,6 +159,8 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - **It must never change mode on its own**: every mode change is logged at
   `.notice` with its cause (category `PaneSidebar`). Only collapse/expand and
   hide/show change the column, so nothing else resizes a terminal.
+- **No dividers in the rail**: in all windows a window is its tiles alone,
+  one window's run straight after the last's.
 - A window narrower than 720pt shows the rail even when expanded (its expand
   button is off). **Ctrl+Cmd+S** hides/shows the sidebar entirely.
 
@@ -164,6 +173,11 @@ shows the same view of it (see *Shared across windows*). Read before touching
   first line only when the banner has no title. The all-windows search still
   matches the pane's own title. All-windows **window** names group by window
   title (`<project>: <worktree>`), which a pane banner has no say in.
+  A native tab group's tabs each take the group's window title, whichever
+  tab holds it (`effectiveWindowTitleOverride`, as the titlebar and `+list`
+  show it): named by their own panes, the other tabs fell outside the
+  group, drawn right under it, and stayed when it folded
+  (`foldingAGroupHidesEveryTabOfItsWindow`).
 - **A rail tile is its row with the text taken away**: the same pill (hover
   wash, accent selection), the same kind glyph at the same place — the rail
   card is exactly that pill (`railCardWidth` = 52) — so collapsing or
@@ -188,10 +202,10 @@ shows the same view of it (see *Shared across windows*). Read before touching
   under it, as in all windows. In the rail the header is a + alone, in a
   slot exactly the header's height (`PaneSidebarRailAddSlot`,
   `PaneSidebarWindowHeader.height`), so collapsing or expanding still moves
-  no icon. That + is the panel header's — a **new window** — not the window
-  row's: it is the topmost + in the rail, where the panel's new-window + is
-  when expanded, and clicking it added a pane to this window instead
-  (`theRailsPlusOpensAWindow`). A pane is Cmd-D away.
+  no icon. That + is the window header's — a **new pane** in this window
+  (`theRailsPlusAddsAPaneInThisWindow`): this list is the window's panes.
+  The all-windows rail has a + of its own above every window, the panel
+  header's — a **new window**, as Cmd-N (`theAllWindowsRailsPlusOpensAWindow`).
 - Rows: grid panes (focused one selected), then — **right after the last of
   them**, under a divider, in the same scrolling list — the **tray** of
   stashed panes. An empty tray is still a visible target: a faint dashed well
@@ -288,9 +302,16 @@ shows the same view of it (see *Shared across windows*). Read before touching
   **sticky** project header (a clear 6pt gap above and below its band —
   `PaneSidebarOutline.headerGap` — so it never touches a row's hover or the
   tray's well) and labeled by its worktree alone
-  (`PaneSidebarWindowGrouping`, `PaneSidebarWindowGroupingTests`). Other
-  windows sort among the projects at the top level, with no divider between
-  them. A grouped window is NOT indented: every window's chevron lines up.
+  (`PaneSidebarWindowGrouping`, `PaneSidebarWindowGroupingTests`). **Other
+  (ungrouped) windows come first, above every group** (`lonesFirst`), each
+  side in its own order — by name or as dragged. A grouped window is NOT
+  indented (every window's chevron lines up), so a lone window among the
+  groups read as one of the windows of the group above it, and stayed when
+  that group folded (`ungroupedWindowsComeBeforeEveryGroup`). A drag keeps
+  each on its side: a group stops below the lone windows, a lone window
+  above the groups, and a window let go at the top level below a group
+  lands at the end of the lone windows (`PaneSidebarItemReorder.banded`,
+  `PaneSidebarCrossDrop.banded`).
 - **Every row is one height**: a pane row (and a rail tile) is a window row's
   height (`PaneSidebarRow.height` = `PaneSidebarWindowHeader.height`, 32pt
   with its gap).
@@ -381,8 +402,8 @@ shows the same view of it (see *Shared across windows*). Read before touching
     the renamed item — in every window's list. The only moves are what the
     new name asks for: a window given another group's `<project>: ` goes
     into it at the edge nearest where it was; one given a new group's makes
-    that group where it was; one losing its `<project>: ` stays beside the
-    group it left. A group renamed keeps its place (its key renamed in the
+    that group where it was (among the groups); one losing its
+    `<project>: ` joins the ungrouped windows above the groups. A group renamed keeps its place (its key renamed in the
     order); named as another group it merges into that one where that one
     is; emptied, its windows stand where it was, in its order. Windows
     opened afterwards still land beside their name neighbour. The Change
@@ -416,10 +437,21 @@ shows the same view of it (see *Shared across windows*). Read before touching
   only once the new order has been laid out (`framesChanged`, then the next
   turn): started earlier, the reorder pass ran inside its animation and every
   item eased out of its old offset.
-- **No hover while an item is dragged** (`HoverTrackingView.isHeld`, set by
-  the drag): rows it passes don't light up and the dragged one keeps its
-  controls; once it lands every row re-syncs from the pointer
-  (`HoverTrackingViewTests`).
+- **No hover while anything is dragged** (`HoverTrackingView.isHeld`, set by
+  a window or group drag and by every pane drag, `PaneDragSession`): rows and
+  tiles it passes don't light up, no pane takes a tile's tint
+  (`PaneSidebarHover` is cleared and ignores hovers while held), and the
+  dragged one keeps its controls; once it lands every row re-syncs from the
+  pointer (`HoverTrackingViewTests`, `theDraggedRowFollowsThePointerVertically`).
+- **A held item is lifted on glass** (`PaneSidebarLiftBacking`): clear
+  Liquid Glass, untinted, so the rows it passes show through (tinted with
+  the window background it read as a solid band), and a shadow cast by its
+  shape alone; a solid backing before macOS 26. A dragged pane row keeps its
+  indent (`PaneSidebarRowFrames.Entry.indent`): drawn without it, it jumped
+  left of its siblings. Let go, it holds where it was drawn
+  (`PaneSidebarRowDrag.heldTop`) until its new place is laid out, then
+  glides there: gliding at once, it went from its OLD place (the reorder had
+  run, the new frame not yet come) and jumped back toward it first.
 - **A row covered by another window is not hovered.** Clicking a row brings
   its window forward over this one with no exit event, so hover counts only
   when this window is the app's frontmost under the pointer
