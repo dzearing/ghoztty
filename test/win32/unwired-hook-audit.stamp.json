@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-29T04:42:34-07:00",
-    "commit":  "38d9fb6fc",
+    "generated":  "2026-10-29T05:27:44-07:00",
+    "commit":  "e87469290",
     "uncommitted":  [
 
                     ],
@@ -248,7 +248,7 @@
                   "src/apprt/win32/pane_clip.zig":  "3ecfb24d06627fd4829de84ff030bb0b085cdd615757ea492624bdddcc92148f",
                   "src/apprt/win32/pane_clip_math.zig":  "5edf5126af539d7593f26ba7946774538268c4a9df21b4305db5c5e5dee26453",
                   "src/apprt/win32/pane_drop.zig":  "29b084990ff647a4e9786e03f7e5fda5d1d50b14c28fdce205bdbfac9598a631",
-                  "src/apprt/win32/pane_elevation.zig":  "dd2472c3dd58a84723aee9b2bd809e0b7fb96524ea965e67d83396a88701eba4",
+                  "src/apprt/win32/pane_elevation.zig":  "2dba400ee3728aeba334825ef6138bf8aa91186bce914b21a051d910c09cb7cc",
                   "src/apprt/win32/pane_grab_handle.zig":  "c88d26a4c72cb14f51081890cb915598da1115058c14df06bd0707c8989e1f95",
                   "src/apprt/win32/pane_hue.zig":  "a9728a736592c2792ef3ccb3e6016b3101113454f68fc527f80568ed0a849e64",
                   "src/apprt/win32/pane_id.zig":  "52eb9e09bad8aff68127e9026db67d8cd4277a3c53ec6923958f46a1d1a55165",
@@ -1038,7 +1038,7 @@
                   "test/win32/bell-border.ps1":  "46652c74e867a0424e930baf04a336e6a44e79bb9ac4888800e0047e4616cb04",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/blade-shadow.ps1":  "a324592e11e92841a183b026f3b38c397bc340c9205fbc3f583040f913de7b7c",
-                  "test/win32/body-complete-audit.ps1":  "ad5462f3989f2efbd5f3447b4fa9dd0cf5d56d69a89d7730816c7ad2baf4fc4f",
+                  "test/win32/body-complete-audit.ps1":  "7bcfb72758ab09e738c3d99e36a7b923ce098764b4e0ace8b170ac8c5e002131",
                   "test/win32/build-cache.ps1":  "c72878df10c33c065ebc87b66eaaf8fb3ecf9da1d1a43171dcc6ccf989dc1782",
                   "test/win32/build-fresh-guard.ps1":  "0e567d9a72a4e5ff377b5c7d98281ddbfd5da0543d93e277cb99aeac351b09c2",
                   "test/win32/build-locked-artifact.ps1":  "e42a71b9730f428c28d7cc844a54d73d5730f696a9a3e315dc5cffaafe0869f5",
@@ -1121,7 +1121,7 @@
                   "test/win32/echo-marker-audit.ps1":  "d896ea0055d1564eeba5ce6fc2bceda25aa0d32d3ccacd848d85c75d130d98f1",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
-                  "test/win32/fail-transcript.ps1":  "f7d7a25707b4a7f754e7f8f62d0a86763480a6598867a59e332358410bebb778",
+                  "test/win32/fail-transcript.ps1":  "157fc0591c860c14fa34aea3ca3447fbb86528ff5690929a0a2bfd03a5177ffe",
                   "test/win32/false-positive-report.ps1":  "3e4c34e6b40b6b99969d38afbd1c055899802cfa119529c06f84c6ad24a4e981",
                   "test/win32/feedback-user-report.ps1":  "cfda91deffac1fe7971ef8c37c1cb1d4d275ee34ea7c83c87460d740508917fd",
                   "test/win32/fixed-ports.ps1":  "fcc484417429118fdba46e3e3c66023ddde55c80dee258c689fc0a1213a8d03e",

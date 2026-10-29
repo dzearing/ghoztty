@@ -200,6 +200,19 @@ AssertEq 'A16 the marker publishes the run state for child processes to read' 'e
 $r = Invoke-Fixture '"env=$env:GHOZTTY_TEST_BODY"' 'a-env-armed'
 AssertEq 'A17 and the dot-source alone arms it - there is nothing else to remember' 'env=pending' $r.Last
 
+# T2306: the marker publishes the run's pass count too, read from the
+# harness's own counter, so the stamp gate can refuse a run that scored nothing.
+$r = Invoke-Fixture '$script:passes = 0; Complete-TestBody; "passes=$env:GHOZTTY_TEST_PASSES"' 'a-passes-zero'
+AssertEq 'A18 a finished body that scored nothing publishes passes=0' 'passes=0' $r.Last
+$r = Invoke-Fixture '$script:pass = 5; Complete-TestBody; "passes=$env:GHOZTTY_TEST_PASSES"' 'a-pass-five'
+AssertEq 'A19 the $script:pass spelling is read too' 'passes=5' $r.Last
+$r = Invoke-Fixture '$passes = @(1, 2); $pass = 4; Complete-TestBody; "passes=$env:GHOZTTY_TEST_PASSES"' 'a-pass-array'
+AssertEq 'A20 a non-integer $passes is skipped for the integer counter' 'passes=4' $r.Last
+$r = Invoke-Fixture '$ok = 3; Complete-TestBody; "passes=[$env:GHOZTTY_TEST_PASSES]"' 'a-pass-none'
+AssertEq 'A21 a script with neither counter publishes nothing' 'passes=[]' $r.Last
+$r = Invoke-Fixture '$env:GHOZTTY_TEST_PASSES = ''9''; Reset-TestBody; "passes=[$env:GHOZTTY_TEST_PASSES]"' 'a-pass-inherit'
+AssertEq 'A22 arming clears an inherited count, so a parent run''s is never read as this one''s' 'passes=[]' $r.Last
+
 # ===========================================================================
 Write-Host ''
 Write-Host '== B: the stamp gate, against a throwaway repo'
@@ -216,15 +229,21 @@ Copy-Item (Join-Path $PSScriptRoot 'lib\BodyCompleteAudit.ps1') (Join-Path $fake
 $stampFile = Join-Path $fakeRepo 'test\win32\body-complete-audit.stamp.json'
 $guardScript = Join-Path $Repo 'scripts\guard-due.ps1'
 
-function Invoke-Stamp([string]$BodyState) {
-    $f = Join-Path $tmp "stamp-$BodyState.ps1"
+function Invoke-Stamp([string]$BodyState, [string]$Passes = '') {
+    $f = Join-Path $tmp "stamp-$BodyState-$Passes.ps1"
     $set = if ($BodyState -eq 'unset') {
         "Remove-Item env:GHOZTTY_TEST_BODY -ErrorAction SilentlyContinue"
     } else {
         "`$env:GHOZTTY_TEST_BODY = '$BodyState'"
     }
+    $setPasses = if ($Passes -eq '') {
+        "Remove-Item env:GHOZTTY_TEST_PASSES -ErrorAction SilentlyContinue"
+    } else {
+        "`$env:GHOZTTY_TEST_PASSES = '$Passes'"
+    }
     Set-Content -LiteralPath $f -Encoding utf8 -Value (@(
         $set
+        $setPasses
         "& powershell -NoProfile -ExecutionPolicy Bypass -File '$guardScript' update -Guard body-complete -Repo '$fakeRepo' 2>&1 | ForEach-Object { `"`$_`" }"
         "exit `$LASTEXITCODE"
     ) -join "`r`n")
@@ -250,6 +269,26 @@ Remove-Item -LiteralPath $stampFile -Force -ErrorAction SilentlyContinue
 $s = Invoke-Stamp 'unset'
 Assert 'B8 a caller with no run state stamps exactly as before' ($s.Text -match 'STAMPED body-complete')
 AssertEq 'B9 and exits 0' 0 $s.Code
+
+# T2306: a body that FINISHED having asserted nothing - measured 2026-10-26,
+# three parallel workers whose Tee-Object died stamped green over red code and
+# deleted the guard's ack. The stamp and the ack must both survive the refusal.
+$ackDir = Join-Path $fakeRepo 'docs\design\windows-parity-guard-acks'
+New-Item -ItemType Directory -Force $ackDir | Out-Null
+$ackFile = Join-Path $ackDir 'body-complete.json'
+Set-Content -LiteralPath $ackFile -Encoding ascii -Value '{"guard":"body-complete","task":"T1"}'
+$stampBefore = [System.IO.File]::ReadAllText($stampFile)
+Add-Content -LiteralPath (Join-Path $fakeRepo 'test\win32\lib\TestScore.ps1') -Value '# changed'
+$s = Invoke-Stamp 'complete' '0'
+Assert 'B10 a finished run that asserted nothing is REFUSED the stamp' ($s.Text -match 'STAMP REFUSED: the calling run asserted nothing')
+AssertEq 'B11 and exits 3, the refusal code' 3 $s.Code
+AssertEq 'B12 and the previous stamp is untouched (the changed file is still due)' $stampBefore ([System.IO.File]::ReadAllText($stampFile))
+Assert 'B13 and the ack it would have cleared is still there' (Test-Path $ackFile)
+
+$s = Invoke-Stamp 'complete' '3'
+Assert 'B14 a finished run that scored assertions still stamps' ($s.Text -match 'STAMPED body-complete')
+Assert 'B15 and clears the ack as before' (-not (Test-Path $ackFile))
+AssertEq 'B16 and exits 0' 0 $s.Code
 
 # ===========================================================================
 Write-Host ''

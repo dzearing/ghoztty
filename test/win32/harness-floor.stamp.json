@@ -1,10 +1,13 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-29T04:59:24-07:00",
-    "commit":  "38d9fb6fc",
+    "generated":  "2026-10-29T06:10:39-07:00",
+    "commit":  "e87469290",
     "uncommitted":  [
-                        "test/win32/share-machine.ps1"
+                        "test/win32/body-complete-audit.ps1",
+                        "test/win32/fail-transcript.ps1",
+                        "test/win32/lib/TestScore.ps1",
+                        "test/win32/lib/Transcript.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -53,7 +56,7 @@
                   "test/win32/bell-border.ps1":  "46652c74e867a0424e930baf04a336e6a44e79bb9ac4888800e0047e4616cb04",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/blade-shadow.ps1":  "a324592e11e92841a183b026f3b38c397bc340c9205fbc3f583040f913de7b7c",
-                  "test/win32/body-complete-audit.ps1":  "ad5462f3989f2efbd5f3447b4fa9dd0cf5d56d69a89d7730816c7ad2baf4fc4f",
+                  "test/win32/body-complete-audit.ps1":  "7bcfb72758ab09e738c3d99e36a7b923ce098764b4e0ace8b170ac8c5e002131",
                   "test/win32/build-cache.ps1":  "c72878df10c33c065ebc87b66eaaf8fb3ecf9da1d1a43171dcc6ccf989dc1782",
                   "test/win32/build-fresh-guard.ps1":  "0e567d9a72a4e5ff377b5c7d98281ddbfd5da0543d93e277cb99aeac351b09c2",
                   "test/win32/build-locked-artifact.ps1":  "e42a71b9730f428c28d7cc844a54d73d5730f696a9a3e315dc5cffaafe0869f5",
@@ -136,7 +139,7 @@
                   "test/win32/echo-marker-audit.ps1":  "d896ea0055d1564eeba5ce6fc2bceda25aa0d32d3ccacd848d85c75d130d98f1",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
-                  "test/win32/fail-transcript.ps1":  "f7d7a25707b4a7f754e7f8f62d0a86763480a6598867a59e332358410bebb778",
+                  "test/win32/fail-transcript.ps1":  "157fc0591c860c14fa34aea3ca3447fbb86528ff5690929a0a2bfd03a5177ffe",
                   "test/win32/false-positive-report.ps1":  "3e4c34e6b40b6b99969d38afbd1c055899802cfa119529c06f84c6ad24a4e981",
                   "test/win32/feedback-user-report.ps1":  "cfda91deffac1fe7971ef8c37c1cb1d4d275ee34ea7c83c87460d740508917fd",
                   "test/win32/fixed-ports.ps1":  "fcc484417429118fdba46e3e3c66023ddde55c80dee258c689fc0a1213a8d03e",
@@ -304,11 +307,11 @@
                   "test/win32/lib/TestClient.ps1":  "2540c6af1c32c497f17c0e4fe04fc49480072ef7b54d464b12d0bd252897a3c5",
                   "test/win32/lib/TestDesktop.ps1":  "bbf255f2c808e335c2110717aca33c8f6b5d847ccf05ab61d9edcecae9e696f0",
                   "test/win32/lib/TestReachAudit.ps1":  "2516d0f3f03abca197bcbb3c227add06b5853d1ba601ff338ab13054eb2f9f3e",
-                  "test/win32/lib/TestScore.ps1":  "9908f515eafa142e80bbf28781aff8c07a274ab863ebcabe6c5cee49177f8a4b",
+                  "test/win32/lib/TestScore.ps1":  "4a094c7b669e3891573f90ac78abdb342f1bf989cb14fce5a6a072addb4df7cd",
                   "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",
                   "test/win32/lib/ThreadJoinAudit.ps1":  "5a25a369563fc6904e8155828c1850b403062b7d955ae7a4cdc4ca340232f034",
                   "test/win32/lib/ThrowawayProduct.ps1":  "44251729c95f1c92ef33b4dff3b867356a29e4f64e2af6f849d1732cf4de2bae",
-                  "test/win32/lib/Transcript.ps1":  "8ef78f20c86cc60c290a3afe71a6bbc22e228bc0f2c58f27f616bbd74a3a29dd",
+                  "test/win32/lib/Transcript.ps1":  "dad4dd51e2de69143ba493aab22a5956c57bf635724478246cf82b70b83a2802",
                   "test/win32/lib/TreeSwapAudit.ps1":  "d0189d964f705a3c1447497e0119773fb925b85dc6e561110d127c067f4a9d6e",
                   "test/win32/lib/UnrollCountAudit.ps1":  "6f237d65de90843000c81d510845ac188396d6f22dcd4c8889756cd9edbdab77",
                   "test/win32/lib/UnwiredHookAudit.ps1":  "4a0600ed0088b093dddebaab1adfbbf2fffe4c572a49948a89cd58ec94acc28c",

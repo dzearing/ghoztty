@@ -600,6 +600,16 @@ stamp after their try. `-IgnoreRunState` is the one hatch, for
 `test\win32\guard-due.ps1`, whose subject *is* stamping; it prints that it was
 used.
 
+A body can also FINISH having scored nothing — the `& { } | Tee-Object` shape
+puts `Complete-TestBody` after the teed block, so a body that died inside it
+still reads `complete` (T2306). So the marker also publishes
+`GHOZTTY_TEST_PASSES`, read from the script's own `$script:passes` /
+`$script:pass` counter, and `update` refuses at 0 (`STAMP REFUSED: the calling
+run asserted nothing`) without touching the stamp or the guard's ack. Count
+into one of those two names. The live transcript `New-TestTranscript` hands
+out is per process (`ghoztty-<name>-last-<pid>.log`), so concurrent copies of
+one harness — parallel workers, the other lane, a hand run — never share it.
+
 The sweep is `test\win32\lib\BodyCompleteAudit.ps1` — AST-based — enforcing that
 every top-level try in a scored script either **scores its own throw in a
 `catch`** (T329's shape) or **ends in `Complete-TestBody`**, and that every

@@ -30,9 +30,9 @@
 #     exit (Complete-TestTranscript -Name 'ipc-p2' -Path $transcript `
 #         -Label 'P2 ACCEPTANCE' -Pass $script:passes -Fail $script:failures).Code
 #
-# A green run preserves nothing (the live `-last.log` is still there for the
-# curious, and is still truncated by the next run - that is the point of the
-# word "last"). A red run is copied to
+# A green run preserves nothing (the live `-last-<pid>.log` is still there for
+# the curious, and is swept by the next run - that is the point of the word
+# "last"; T2306 put the pid in it). A red run is copied to
 #
 #     %TEMP%\ghoztty-<name>-fail-<yyyyMMdd-HHmmss>-<pid>.log
 #
@@ -55,30 +55,49 @@ Set-StrictMode -Off
 # about %TEMP%.
 $script:TranscriptKeep = 10
 
+# T2306 - the LIVE file is per process. It used to be one fixed name per
+# harness in %TEMP%, shared by every copy of the script on the box: the
+# parallel runner's workers (three pane-sidebar harnesses all tee as 't1878'),
+# lane B's tree, and a hand run. The second `Tee-Object` to open it died with
+# "being used by another process", the body scored nothing, and the run read
+# as ASSERTED NOTHING - or, before T2306's stamp gate, stamped green. So the
+# name carries the pid, and starting a run sweeps every earlier live file of
+# that harness it CAN delete: a running copy's file is open, so it survives,
+# and there is still one live file per harness once the runs are done.
+
 function Get-TestTranscriptPath {
     <#
-      The LIVE transcript path for a harness: the file `Tee-Object` writes and
-      the next run truncates. One place so the naming cannot drift between the
-      script that writes it and the acceptance test that reads it.
+      The LIVE transcript path for a harness run: the file `Tee-Object` writes.
+      One place so the naming cannot drift between the script that writes it
+      and the acceptance test that reads it. `-ProcessId` defaults to this
+      process.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Name,
-        [string]$Dir = $env:TEMP
+        [string]$Dir = $env:TEMP,
+        [int]$ProcessId = $PID
     )
-    return (Join-Path $Dir "ghoztty-$Name-last.log")
+    return (Join-Path $Dir "ghoztty-$Name-last-$ProcessId.log")
 }
 
 function New-TestTranscript {
     <#
-      Start a run's transcript. Removes the previous run's live file first, so
-      a run that dies before `Tee-Object` ever opens it cannot leave the LAST
-      run's lines sitting there to be read as this one's.
+      Start a run's transcript. Removes the previous runs' live files first
+      (the pre-T2306 fixed `-last.log` included), so a run that dies before
+      `Tee-Object` ever opens its file cannot leave an older run's lines
+      sitting there to be read as this one's. A file another live run holds
+      open is skipped, never waited on.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [string]$Dir = $env:TEMP
     )
     $path = Get-TestTranscriptPath -Name $Name -Dir $Dir
+    $old = @(Get-ChildItem -LiteralPath $Dir -Filter "ghoztty-$Name-last*.log" -File -ErrorAction SilentlyContinue)
+    foreach ($f in $old) {
+        if ($f.Name -notmatch ('^ghoztty-' + [regex]::Escape($Name) + '-last(-\d+)?\.log$')) { continue }
+        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+    }
     Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
     return $path
 }

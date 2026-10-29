@@ -7069,6 +7069,20 @@ switch ($Action) {
             }
             "STAMP RUN-STATE IGNORED: -IgnoreRunState was passed over an unfinished run."
         }
+        # T2306. A body that finished having scored NOTHING proved nothing
+        # either: its stamp block's `failures -eq 0` holds trivially. The
+        # harness publishes its pass count (lib\TestScore.ps1's
+        # Complete-TestBody); unset means a caller that does not publish one,
+        # which stamps as before. The ack is untouched too - the red it excused
+        # was never re-measured.
+        if ($env:GHOZTTY_TEST_PASSES -match '^\s*-?\d+\s*$' -and [int]$env:GHOZTTY_TEST_PASSES -le 0) {
+            if (-not $IgnoreRunState) {
+                "STAMP REFUSED: the calling run asserted nothing (GHOZTTY_TEST_PASSES=0)."
+                "  Nothing was stamped and no ack was cleared, so this guard stays due - a run that proved nothing is not a green run."
+                exit 3
+            }
+            "STAMP RUN-STATE IGNORED: -IgnoreRunState was passed over a run that asserted nothing."
+        }
         $wrote = 0
         foreach ($row in $rows) {
             $r = Write-Stamp $row

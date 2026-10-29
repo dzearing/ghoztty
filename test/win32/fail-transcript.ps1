@@ -247,6 +247,42 @@ exit (Complete-TestTranscript -Name 'throwaway' -Path `$transcript ``
     Assert 'F0 no harness still builds a fixed -last.log path by hand' `
         ($strays.Count -eq 0) "strays: $($strays -join ', ')"
 
+    # --- G. concurrent runs of one harness do not collide (T2306) ------------
+    ''
+    '-- G. two live runs of the same harness each keep their own transcript'
+
+    # 2026-10-26: three parallel workers tee'd to the one fixed
+    # ghoztty-t1878-last.log; the second Tee-Object died "being used by
+    # another process" and its body scored nothing.
+    $gLive = New-TestTranscript -Name 'unit-par' -Dir $root
+    Assert 'G1 the live path carries this run''s pid' `
+        ($gLive -match "-last-$PID\.log$") "path '$gLive'"
+    $legacy = Join-Path $root 'ghoztty-unit-par-last.log'
+    $staleRun = Join-Path $root 'ghoztty-unit-par-last-1.log'
+    Set-Content -LiteralPath $legacy -Value 'old'
+    Set-Content -LiteralPath $staleRun -Value 'old'
+    # This run holds its file open the way a running Tee-Object does.
+    $held = [System.IO.File]::Open($gLive, 'Create', 'Write', 'Read')
+    try {
+        $child = Join-Path $root 'g-child.ps1'
+        Set-Content -LiteralPath $child -Encoding ascii -Value (@(
+            "`$ErrorActionPreference = 'Stop'"
+            ". '$(Join-Path $PSScriptRoot 'lib\Transcript.ps1')'"
+            "`$p = New-TestTranscript -Name 'unit-par' -Dir '$root'"
+            "'  PASS from the second run' | Tee-Object -FilePath `$p | Out-Null"
+            "'path=' + `$p"
+            "'text=' + (Get-Content -LiteralPath `$p -Raw).Trim()"
+        ) -join "`r`n")
+        $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $child 2>&1 | ForEach-Object { "$_" })
+        $cPath = ($out | Where-Object { $_ -like 'path=*' } | Select-Object -First 1) -replace '^path=', ''
+        Assert 'G2 a second run of the same harness tees while the first holds its file' `
+            (($out -join "`n") -match 'text=\s*PASS from the second run') ($out -join ' | ')
+        Assert 'G3 into a different file' ($cPath -and $cPath -ne $gLive) "child '$cPath'"
+        Assert 'G4 and the first run''s open transcript was not swept from under it' (Test-Path -LiteralPath $gLive) ''
+        Assert 'G5 while the earlier runs'' finished files were swept' `
+            (-not (Test-Path -LiteralPath $legacy) -and -not (Test-Path -LiteralPath $staleRun)) ''
+    } finally { $held.Dispose() }
+
     Complete-TestBody
 }
 finally {

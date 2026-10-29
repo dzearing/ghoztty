@@ -124,6 +124,33 @@ function Reset-TestBody {
     #>
     $global:GhozttyTestBody = [pscustomobject]@{ Armed = $true; Complete = $false }
     $env:GHOZTTY_TEST_BODY = 'pending'
+    # T2306: a parent run's count must never be read as this run's.
+    $env:GHOZTTY_TEST_PASSES = $null
+}
+
+# T2306 - and a run that finished its body having ASSERTED NOTHING must not
+# stamp either. Measured 2026-10-26: three parallel workers' bodies died on a
+# Tee-Object collision inside `& { } | Tee-Object`, `Complete-TestBody` (which
+# sits after that block) still read `complete`, the stamp block's
+# `failures -eq 0` held because nothing had been scored at all, and
+# `guard-due.ps1 update` wrote a green stamp over red code and deleted the
+# guard's ack. So the pass count is published beside the body state, and
+# `update` refuses while it reads 0 (`STAMP REFUSED: the calling run asserted
+# nothing`).
+#
+# The count is read from the caller's own counter rather than passed in, so
+# the ~340 scripts that call this need no edit: every scored script in the
+# suite counts into `$script:passes` or `$script:pass`. A function dot-sourced
+# from a library resolves `$script:` to the SCRIPT that dot-sourced it, which
+# is the harness. The first of the two that holds an integer wins (a script
+# may reuse the other name for an array); a script with neither publishes
+# nothing and stamps exactly as before.
+function Get-TestPassCount {
+    foreach ($name in 'passes', 'pass') {
+        $v = Get-Variable -Name $name -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        if ($v -is [int] -or $v -is [long]) { return [int]$v }
+    }
+    return $null
 }
 
 function Complete-TestBody {
@@ -134,6 +161,8 @@ function Complete-TestBody {
     if ($null -eq $global:GhozttyTestBody) { Reset-TestBody }
     $global:GhozttyTestBody.Complete = $true
     $env:GHOZTTY_TEST_BODY = 'complete'
+    $n = Get-TestPassCount
+    $env:GHOZTTY_TEST_PASSES = $(if ($null -ne $n) { [string]$n } else { $null })
 }
 
 function Test-TestBodyComplete {

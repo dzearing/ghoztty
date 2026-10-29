@@ -1,17 +1,18 @@
 {
     "guard":  "checkout-guard",
     "script":  "test/win32/checkout-guard.ps1",
-    "generated":  "2026-10-29T00:05:29-07:00",
-    "commit":  "12a5206b2",
+    "generated":  "2026-10-29T05:29:41-07:00",
+    "commit":  "e87469290",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/guard-due.ps1",
+                        "test/win32/lib/TestScore.ps1"
                     ],
     "files":  {
-                  "scripts/guard-due.ps1":  "97d68c5ab3e89375b76af24370379bb22d4dc4a512f31ad6ea1ec0093c276c01",
+                  "scripts/guard-due.ps1":  "0fda373b0bc1594028e38a16e8c3b872a3c91b6d9704c73b5aed0f1b442d9906",
                   "scripts/suite-run.ps1":  "37a35a2020e6a63ee95c9ecf64ebdb45e765fb5421c971281b632fd717ea9698",
                   "test/win32/checkout-guard.ps1":  "d2757d2072ad93548f99073d50cdb316e927a31ac80d2aa5b77792de9506c619",
                   "test/win32/lib/BuildMode.ps1":  "44e0d8bcd7731f8cad283d2362abb7828b6a37ae54d8b119e70c98d50a1e575f",
                   "test/win32/lib/CheckoutGuard.ps1":  "e386d340814b5deebec8f5c09dfdcc31a6b3b45aae875daad03dd82d0d857f29",
-                  "test/win32/lib/TestScore.ps1":  "9908f515eafa142e80bbf28781aff8c07a274ab863ebcabe6c5cee49177f8a4b"
+                  "test/win32/lib/TestScore.ps1":  "4a094c7b669e3891573f90ac78abdb342f1bf989cb14fce5a6a072addb4df7cd"
               }
 }
