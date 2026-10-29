@@ -131,6 +131,9 @@ final class PaneStageView: NSView {
 
     deinit {
         for observer in ancestorObservers { NotificationCenter.default.removeObserver(observer) }
+        // Freed mid-glide: stop its clock now (it would stop itself on its
+        // next tick — see `startGlideTimer`).
+        glideTimer?.invalidate()
     }
 
     /// The stage moved. Not gliding, its cards move with it — they are where
@@ -400,13 +403,7 @@ final class PaneStageView: NSView {
         if subviews != order { subviews = order }
         if glideTimer == nil { glide.last = CACurrentMediaTime() }
         self.glide = glide
-        if glideTimer == nil {
-            let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.stepGlide() }
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            glideTimer = timer
-        }
+        if glideTimer == nil { startGlideTimer() }
         // The stage resized: its move, if one comes with it (the sidebar's
         // edge dragged), lands later in this pass, and these targets are
         // already where it will be. Place the cards where they are drawn,
@@ -536,6 +533,21 @@ final class PaneStageView: NSView {
     /// Posted after every glide step, and when a glide ends.
     static let didStep = Notification.Name("PaneStageViewDidStep")
 
+    /// The glide's clock, stepping it at 120Hz until it settles. A stage
+    /// freed mid-glide (its window or tab closed while a split change was
+    /// still easing) never settles, so the timer stops itself then: the run
+    /// loop retains a repeating timer until it is invalidated, and left alone
+    /// it would fire a no-op 120 times a second for the rest of the app's
+    /// life, one more for every stage that went this way.
+    private func startGlideTimer() {
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] timer in
+            guard let self else { return timer.invalidate() }
+            MainActor.assumeIsolated { self.stepGlide() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        glideTimer = timer
+    }
+
     /// How far the grid's leading edge is drawn from where the layout puts
     /// it, ON SCREEN — the stage's own move still to come counted in
     /// (`awaitingMove`) — while it glides; nil when it does not. Negative:
@@ -618,11 +630,7 @@ final class PaneStageView: NSView {
                 self.glide = glide
                 if self.glideTimer == nil {
                     self.glide?.last = CACurrentMediaTime()
-                    let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
-                        MainActor.assumeIsolated { self?.stepGlide() }
-                    }
-                    RunLoop.main.add(timer, forMode: .common)
-                    self.glideTimer = timer
+                    self.startGlideTimer()
                 }
                 self.stepGlide()
             }

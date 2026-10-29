@@ -353,6 +353,13 @@ ghoztty +close --target=doc
 - `+read`/`+send-keys`/`+set-state`/`+set-banner` against a viewer fail with
   `... is a viewer pane, not a terminal` (exit 1). `+close` works normally
   and never prompts for viewers.
+- **A viewer is freed only once detached.** `ViewerView.init` mounts its
+  chrome, whose SwiftUI host holds the viewer back, and starts its page load,
+  file watcher and app-wide event monitor; `setDetached(true)` breaks that, and
+  a tree change reaches it for every close. A viewer that never makes it into
+  the tree (`newViewerSplit` returning nil: the anchor left, or the insert
+  threw) is detached there before the nil, or it lived on with its web content
+  process (`PaneTeardownTests.aViewerThatFailsToInsertIsFreed`).
 - **Hero mode** shows every viewer kind, and gives it back to the grid on
   exit. A viewer sits in the grid inside a `ViewerLeafHost` — SwiftUI never
   hosts the `ViewerView` directly, as a terminal's `SurfaceScrollView` wraps
