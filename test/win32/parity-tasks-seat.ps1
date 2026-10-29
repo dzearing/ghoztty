@@ -774,6 +774,27 @@ else {
 
 # --- P. un-blocking needs evidence (T892) ------------------------------------
 ""
+"P0. next re-queues a task parked for an idle box when the box IS idle (2026-10-29)"
+# The user slept 8 hours while T2418/T2395/T2396 sat blocked(needs the box
+# idle) and every turn walked past them: nothing re-checked the condition.
+Reset-Fixture
+New-FixtureTask -Id 'T1' -Status 'blocked(needs the box idle - no input for 5 min - for the live run)' -PriorityLine 'priority: "P0"'
+New-FixtureTask -Id 'T2' -Status 'todo' -PriorityLine 'priority: "P1"'
+$prevPresence = $env:GHOZTTY_TEST_FORCE_USER_PRESENCE
+try {
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'present'
+    $r = Task-Run @('next')
+    Assert 'P0a user present: the parked task is named but not offered' ($r.Out -match 'parked for an idle box: T1' -and $r.Out -match 'NEXT: T2')
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent'
+    $r = Task-Run @('next')
+    Assert 'P0b box idle: the parked P0 is offered ahead of the P1' ($r.Out -match 'BOX IDLE' -and $r.Out -match 'NEXT: T1')
+    Assert 'P0c plain next writes nothing' ((Get-Content -Raw (Join-Path $fixture 'T1.md')) -match '(?m)^status: "blocked')
+    $r = Task-Run @('next', '-Claim')
+    $t1 = Get-Content -Raw (Join-Path $fixture 'T1.md')
+    Assert 'P0d next -Claim claims it' ($t1 -match '(?m)^status: "in-progress"$')
+    Assert 'P0e with a note saying the box was idle' ($t1 -match 'box idle at claim time')
+} finally { $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $prevPresence }
+
 "P. set-status gates the way OUT of blocked(...)"
 Reset-Fixture
 $unblockText = 'powercfg PROCTHROTTLEMAX must read 99 (boost off) before this comes back.'

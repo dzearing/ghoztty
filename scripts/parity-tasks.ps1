@@ -1135,6 +1135,40 @@ switch ($Command) {
             }
         }
 
+        # A task parked as blocked(needs the box idle / unlocked / user away) is
+        # waiting on a condition nobody re-checked: on the night of 2026-10-28
+        # the user slept 8 hours while T2418/T2395/T2396 sat parked and every
+        # turn walked past them. So `next` asks the box itself. Absent now means
+        # those tasks are todo again (at their own priority), with a note saying
+        # why; the flip is written only on -Claim, so plain `next` stays a
+        # read-only question. Presence is UserPresence.ps1's (lock screen,
+        # input idle, fullscreen app); forced by GHOZTTY_TEST_FORCE_USER_PRESENCE.
+        $idleRx = '^blocked\(needs[^)]*\b(idle|unlocked|user (is )?away|absent)\b'
+        $idleParked = @($ordered | Where-Object { $_.Status -match $idleRx -and (Test-SeatMatch $_.Seat $wantSeat) -and (Test-LaneMatch $_.Lane) -and -not $heldElsewhere.ContainsKey($_.Id) })
+        if ($idleParked.Count -gt 0) {
+            $presence = $null
+            try {
+                . (Join-Path $RepoRoot 'test\win32\lib\UserPresence.ps1')
+                $presence = Get-UserPresence
+            }
+            catch { Write-Host ("      WARNING: presence not checked: {0}" -f $_.Exception.Message) }
+            if ($presence -and -not $presence.Present) {
+                Write-Host ("BOX IDLE ({0}): {1} parked for an idle box - back in the queue now" -f $presence.Reason, (($idleParked | ForEach-Object { $_.Id }) -join ', '))
+                foreach ($p in $idleParked) {
+                    $p.Status = 'todo'
+                    if ($Claim) {
+                        $pt = [System.IO.File]::ReadAllText($p.Path, [System.Text.Encoding]::UTF8)
+                        $pt = [regex]::Replace($pt, '(?m)^status:\s*.*$', 'status: "todo"', 1)
+                        [System.IO.File]::WriteAllText($p.Path, $pt, (New-Object System.Text.UTF8Encoding $false))
+                        Add-ProgressNote -Path $p.Path -SessionId $Session -NoteText ("box idle at claim time ({0}): back to todo for the parked live run. Run it NOW - the window closes when the user returns." -f $presence.Reason)
+                    }
+                }
+            }
+            elseif ($presence) {
+                Write-Host ("      parked for an idle box: {0} (user present: {1})" -f (($idleParked | ForEach-Object { $_.Id }) -join ', '), $presence.Reason)
+            }
+        }
+
         $blocked = @()
         foreach ($t in $ordered) {
             if ($t.Status -notmatch '^todo') { continue }
