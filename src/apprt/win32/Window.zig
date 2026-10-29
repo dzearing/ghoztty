@@ -8183,6 +8183,11 @@ fn placePane(
 /// stashed pane is held at exactly the size it will come back at.
 fn placeLeaf(self: *Window, hdwp: *?w32.HDWP, view: *PaneView, h: w32.HWND, slot: w32.RECT, show: bool) void {
     const r = self.leafRect(view, slot);
+    // The banner's frame for its new width is rendered here, before the
+    // batch moves anything (T2400): rendered in the overlay pass instead, it
+    // held the divider paint back while a viewer's page already showed at
+    // its new place.
+    if (show) if (view.surface()) |s| if (s.banner_overlay) |b| b.prepareResize(s.scale, r.left, r.top, r.right - r.left);
     placePane(hdwp, h, r.left, r.top, @intCast(r.right - r.left), @intCast(r.bottom - r.top), show);
 }
 

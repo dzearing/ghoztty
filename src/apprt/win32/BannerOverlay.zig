@@ -170,6 +170,36 @@ const T2252_NEUTERED = false;
 /// `banner paint` line reports `buffered=0`) and nothing else.
 const T1344_NEUTERED = false;
 
+/// An offscreen frame rendered ahead of its present (`prepareResize`, T2400).
+const Prepared = struct {
+    dc: w32.HDC,
+    bmp: *anyopaque,
+    old: ?*anyopaque,
+    w: i32,
+    h: i32,
+    /// What the frame was drawn under; `present` hands it over only when
+    /// the overlay still matches (`PrepKey`).
+    key: PrepKey,
+};
+
+/// The state a prepared frame depends on beyond its size (T2400). A layout
+/// pass can change any of it between `prepareResize` and the `present` that
+/// follows - the first pass places a banner before `applyCardRegions` gives
+/// it its glass desk and nesting - and a frame drawn under the old state
+/// would be presented and then sit there, since nothing repaints a banner
+/// at rest.
+const PrepKey = struct {
+    glass: ?BannerOverlay.GlassDesk,
+    glass_at: ?[2]i32,
+    nested: bool,
+    card_corner: i32,
+    collapsed: bool,
+    scale: f32,
+    bg: color_math.Rgb,
+    pane_bg: color_math.Rgb,
+    fg: color_math.Rgb,
+};
+
 /// Negative control for T2400's divider-drag capture. Flipping it puts the
 /// banner back in SLWA mode, where a resize is a `SetWindowPos` followed by
 /// a synchronous paint, and DWM can compose the grown strip between the two:
@@ -333,6 +363,17 @@ pub const BannerOverlay = struct {
     /// While `present` renders a frame for a size the window has not taken
     /// yet, the client rect every paint stage measures against (T2400).
     present_size: ?w32.RECT = null,
+    /// A frame `prepareResize` rendered before the layout pass moved any
+    /// window, waiting for the `present` that hands it over (T2400). Rendering
+    /// is most of a resize's cost, and done inside the pass it sat between
+    /// the pane moves and the divider paint, the gap in which a viewer's page
+    /// is composed at its new place while every GDI pixel is still at its old
+    /// one. Dropped by the first `present` that runs, used or not.
+    prepared: ?Prepared = null,
+    /// While `prepareResize` renders, where the window is about to be, in its
+    /// glass desk's parent's client pixels: the glass slice is read from
+    /// there rather than from where the window still is.
+    present_at: ?[2]i32 = null,
     /// The elevated card's corner diameter for the strip's top corners, 0
     /// for square ones (T1851), and the region last applied for it.
     card_corner: i32 = 0,
@@ -478,6 +519,7 @@ pub const BannerOverlay = struct {
     pub fn destroy(self: *BannerOverlay) void {
         _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
         _ = w32.DestroyWindow(self.hwnd);
+        self.dropPrepared();
         self.freeze.deinit();
         self.clearFonts();
         self.releaseCardSurface();
@@ -575,6 +617,9 @@ pub const BannerOverlay = struct {
     /// (T2227): the window clips the pane, never this popup. Idempotent —
     /// doubles as the reposition call.
     pub fn updatePosition(self: *BannerOverlay, scale: f32) void {
+        // A frame rendered ahead (`prepareResize`) lives for this pass only,
+        // so a later present can never hand over content it predates.
+        defer self.dropPrepared();
         if (!pane_clip.ownerWhollyInView(self.owner)) {
             self.hide();
             return;
@@ -667,6 +712,80 @@ pub const BannerOverlay = struct {
         }
     }
 
+    /// Render, now, the frame the coming `updatePosition` will present at
+    /// `pane_w` wide (T2400), for a layout pass that is about to move its
+    /// panes: it calls this while building its batch, before any window has
+    /// moved. The size is the one `updatePosition` derives - its width, and
+    /// the settled band height from the `inset` the pass just reserved - and
+    /// a frame of any other size is simply not used. `left`/`top` are the
+    /// pane's new top-left in the window's client pixels, which is where a
+    /// glass strip reads its slice of the desk. Skipped while the card
+    /// animates, where the frame depends on more than its size, and when the
+    /// size is not changing, where nothing is presented.
+    pub fn prepareResize(self: *BannerOverlay, scale: f32, left: i32, top: i32, pane_w: i32) void {
+        if (self.alpha_set or T2400_NEUTERED or T1344_NEUTERED) return;
+        if (self.collapse_anim != null) return;
+        const strip = self.insetHeight(scale, pane_w);
+        const w = @max(pane_w, 1);
+        const h = @max(if (self.inset > 0) @min(self.inset, strip) else strip, 1);
+        const now = chrome_reposition.currentSize(self.hwnd);
+        if (!chrome_reposition.decide(now, .{ .w = w, .h = h }).resized) return;
+        self.dropPrepared();
+        const screen = w32.GetDC(null) orelse return;
+        defer _ = w32.ReleaseDC(null, screen);
+        const dc = w32.CreateCompatibleDC(screen) orelse return;
+        const bmp = w32.CreateCompatibleBitmap(screen, w, h) orelse {
+            _ = w32.DeleteDC(dc);
+            return;
+        };
+        const old = w32.SelectObject(dc, bmp);
+        self.present_size = .{ .left = 0, .top = 0, .right = w, .bottom = h };
+        self.present_at = .{ left, top - @max(self.inset, 0) };
+        self.paintFrame(dc);
+        const key = self.prepKey(self.glassAt());
+        self.present_size = null;
+        self.present_at = null;
+        self.prepared = .{ .dc = dc, .bmp = bmp, .old = old, .w = w, .h = h, .key = key };
+    }
+
+    fn prepKey(self: *const BannerOverlay, glass_at: ?[2]i32) PrepKey {
+        return .{
+            .glass = self.glass,
+            .glass_at = glass_at,
+            .nested = self.nested,
+            .card_corner = self.card_corner,
+            .collapsed = self.collapsed,
+            .scale = self.scale,
+            .bg = self.bg_rgb,
+            .pane_bg = self.pane_bg_rgb,
+            .fg = self.fg_rgb,
+        };
+    }
+
+    /// The prepared frame's DC when it was drawn at `w` x `h` under the
+    /// state the overlay is in now, the window landing at screen `pos`.
+    fn preparedFor(self: *const BannerOverlay, w: i32, h: i32, pos: ?w32.POINT) ?w32.HDC {
+        const p = self.prepared orelse return null;
+        if (p.w != w or p.h != h) return null;
+        const at: ?[2]i32 = blk: {
+            const g = self.glass orelse break :blk null;
+            const screen = pos orelse break :blk self.glassAt();
+            var pt = screen;
+            if (w32.ScreenToClient(g.parent, &pt) == 0) return null;
+            break :blk .{ pt.x - g.left, pt.y - g.top };
+        };
+        if (!std.meta.eql(p.key, self.prepKey(at))) return null;
+        return p.dc;
+    }
+
+    fn dropPrepared(self: *BannerOverlay) void {
+        const p = self.prepared orelse return;
+        self.prepared = null;
+        _ = w32.SelectObject(p.dc, p.old);
+        _ = w32.DeleteObject(p.bmp);
+        _ = w32.DeleteDC(p.dc);
+    }
+
     /// The strip's natural height at `scale` in a `pane_w`-wide pane slot,
     /// for the window layout to reserve above the owner pane (T101). Syncs
     /// the overlay's scale and pane width first, so a DPI change measures
@@ -735,6 +854,7 @@ pub const BannerOverlay = struct {
     /// that cannot be measured).
     fn glassAt(self: *const BannerOverlay) ?[2]i32 {
         const g = self.glass orelse return null;
+        if (self.present_at) |at| return .{ at[0] - g.left, at[1] - g.top };
         var wr: w32.RECT = undefined;
         if (w32.GetWindowRect(self.hwnd, &wr) == 0) return null;
         var pt: w32.POINT = .{ .x = wr.left, .y = wr.top };
@@ -1831,6 +1951,8 @@ pub const BannerOverlay = struct {
     fn present(self: *BannerOverlay, pos: ?w32.POINT, size: ?w32.SIZE, also: ?w32.HDC) bool {
         if (self.alpha_set) return false;
         if (T2400_NEUTERED or T1344_NEUTERED) return self.presentRefused();
+        // A frame rendered ahead is good for this present only (T2400).
+        defer self.dropPrepared();
         const sz: w32.SIZE = size orelse blk: {
             var wr: w32.RECT = undefined;
             if (w32.GetWindowRect(self.hwnd, &wr) == 0) return self.presentRefused();
@@ -1840,16 +1962,25 @@ pub const BannerOverlay = struct {
         const h = @max(sz.cy, 1);
         const screen = w32.GetDC(null) orelse return self.presentRefused();
         defer _ = w32.ReleaseDC(null, screen);
-        const mem_dc = w32.CreateCompatibleDC(screen) orelse return self.presentRefused();
-        defer _ = w32.DeleteDC(mem_dc);
-        const bmp = w32.CreateCompatibleBitmap(screen, w, h) orelse return self.presentRefused();
-        defer _ = w32.DeleteObject(bmp);
-        const old_bmp = w32.SelectObject(mem_dc, bmp);
-        defer _ = w32.SelectObject(mem_dc, old_bmp);
+        const ready = self.preparedFor(w, h, pos);
+        const mem_dc = ready orelse w32.CreateCompatibleDC(screen) orelse return self.presentRefused();
+        defer if (ready == null) {
+            _ = w32.DeleteDC(mem_dc);
+        };
+        const bmp = if (ready != null) null else w32.CreateCompatibleBitmap(screen, w, h) orelse return self.presentRefused();
+        defer if (bmp) |b| {
+            _ = w32.DeleteObject(b);
+        };
+        const old_bmp = if (bmp) |b| w32.SelectObject(mem_dc, b) else null;
+        defer if (bmp != null) {
+            _ = w32.SelectObject(mem_dc, old_bmp);
+        };
 
-        self.present_size = .{ .left = 0, .top = 0, .right = w, .bottom = h };
-        self.paintFrame(mem_dc);
-        self.present_size = null;
+        if (ready == null) {
+            self.present_size = .{ .left = 0, .top = 0, .right = w, .bottom = h };
+            self.paintFrame(mem_dc);
+            self.present_size = null;
+        }
 
         const src: w32.POINT = .{ .x = 0, .y = 0 };
         const real: w32.SIZE = .{ .cx = w, .cy = h };
@@ -1861,8 +1992,8 @@ pub const BannerOverlay = struct {
         // Debug-build oracle for pane-banner.ps1's opacity assertion: a
         // presented window has no SLWA attributes to read cross-process, so
         // the blend it was handed is reported from here.
-        log.debug("banner present w={} h={} alpha={} per_pixel={} moved={}", .{
-            w, h, blend.SourceConstantAlpha, blend.AlphaFormat, @intFromBool(pos != null),
+        log.debug("banner present w={} h={} alpha={} per_pixel={} moved={} prepared={}", .{
+            w, h, blend.SourceConstantAlpha, blend.AlphaFormat, @intFromBool(pos != null), @intFromBool(ready != null),
         });
         // The screen ignores this copy; a `PrintWindow` capture, which
         // repaints through WM_PAINT into its own DC, reads it.
