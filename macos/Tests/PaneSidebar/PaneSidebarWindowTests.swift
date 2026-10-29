@@ -1009,6 +1009,8 @@ struct PaneSidebarWindowTests {
         rowDrag.begin(a, screenY: start.y)
         session.update(screenPoint: start)
         await settle(0.3)
+        // The rows it passes don't light up, as for a window drag.
+        #expect(HoverTrackingView.isHeld, "hover is held while a pane is dragged")
         // c's lower part, as laid out (the rows' own views slide).
         let cRow = try #require(h.controller.paneSidebarHost?.dropGeometry()?.paneRows.first { $0.id == c.id }?.rect)
         let end = CGPoint(x: cRow.midX, y: cRow.minY + cRow.height * 0.2)
@@ -1038,8 +1040,13 @@ struct PaneSidebarWindowTests {
         let rows = try #require(h.controller.paneSidebarHost?.dropGeometry()?.paneRows)
         #expect(rows.first { $0.id == c.id }?.rect == cRow, "c's laid-out row did not move with its slide")
         #expect(Set(rows.map(\.rect.minY)).count == 3, "no two rows report the same place")
+        let letGo = try #require(rowDrag.frame).minY + rowDrag.dy
         session.end(commit: true)
+        #expect(!HoverTrackingView.isHeld, "let go, hover follows the pointer again")
         rowDrag.finish(a)
+        // It glides from where it was let go, not from its old place (which
+        // `frame` still is until the reordered list reports the new one).
+        #expect(rowDrag.heldTop == letGo, "held where it was let go")
         await settle(0.5)
         #expect(rowDrag.pane == nil, "settled")
         #expect(h.controller.paneSidebarPanes.last === a)

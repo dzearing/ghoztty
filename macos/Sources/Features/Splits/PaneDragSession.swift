@@ -73,6 +73,9 @@ final class PaneDragSession: ObservableObject {
         self.isListDrag = isListDrag
         self.target = nil
         self.hoveredTab = nil
+        // As for a sidebar item drag: the rows and tiles it passes don't
+        // light up under the pointer.
+        HoverTrackingView.isHeld = true
         refreshCandidates()
     }
 
@@ -151,6 +154,7 @@ final class PaneDragSession: ObservableObject {
         target = nil
         hoveredTab = nil
         candidates = []
+        HoverTrackingView.isHeld = false
     }
 
     // MARK: Feedback queries

@@ -159,6 +159,7 @@ final class PaneSidebarState: ObservableObject {
     let shared: PaneSidebarSharedState
     private var sharedChanges: AnyCancellable?
     private var rosterChanges: AnyCancellable?
+    private var itemDragChanges: AnyCancellable?
 
     /// Whether this sidebar redraws for a shared change right away: its
     /// window is key (or has none yet). Set by the window's controller.
@@ -232,8 +233,21 @@ final class PaneSidebarState: ObservableObject {
     /// so the rows themselves stay below it. Never persisted.
     @Published var tabRowHeight: CGFloat = 0
 
-    init(shared: PaneSidebarSharedState = .shared, roster: PaneRoster? = .shared) {
+    init(
+        shared: PaneSidebarSharedState = .shared,
+        roster: PaneRoster? = .shared,
+        itemDrag: PaneSidebarItemDrag = .shared
+    ) {
         self.shared = shared
+        // A window row or group header drag began or let go: the list it is
+        // in redraws (its window is the one in use), the others when next
+        // key. Observed by every window's view, it re-rendered every
+        // window's whole list as a drag began — measured, with 20 windows,
+        // as a 0.3–0.7s stall before the row lifted.
+        itemDragChanges = itemDrag.objectWillChange.sink { [weak self] _ in
+            guard let self else { return }
+            if self.isLive() { self.objectWillChange.send() } else { self.isStale = true }
+        }
         // Another window opened, closed, came forward or changed its panes:
         // the all-windows list redraws for it now in the window in use, and
         // in the others when they are next key — a window switch must not
@@ -255,11 +269,15 @@ final class PaneSidebarState: ObservableObject {
         }
     }
 
-    /// The window became key: show whatever changed while it was not.
+    /// The window became key: show whatever changed while it was not — as
+    /// it is now, at once. Animated, every row that moved meanwhile glided
+    /// into place as the window came forward.
     func catchUp() {
         guard isStale else { return }
         isStale = false
-        objectWillChange.send()
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { objectWillChange.send() }
     }
 
     /// Whether `windowID`'s panes are folded away: in the all-windows list
@@ -601,6 +619,10 @@ enum PaneSidebarText {
 /// `key(window:)`). Until something is dragged — and for any window or group
 /// the order has never seen — it is by name (stable as focus moves, unlike
 /// frontmost-first, which reshuffled the list on every window switch).
+///
+/// Ungrouped windows always come first, above every group: among the groups
+/// a lone window read as one of the windows of the group above it (grouped
+/// windows aren't indented), and stayed when that group folded.
 enum PaneSidebarWindowGrouping {
     /// A window title split as `<project>: <worktree>`, or nil when it isn't
     /// one: both halves must be non-empty, and the project short and a single
@@ -641,8 +663,8 @@ enum PaneSidebarWindowGrouping {
     /// A window's key in the all-windows order.
     static func key<ID>(window id: ID) -> String { "window:\(id)" }
 
-    /// Sections in name order: projects by name (their windows by worktree),
-    /// interleaved with ungrouped windows by title.
+    /// Sections in name order: ungrouped windows by title, then projects by
+    /// name (their windows by worktree).
     static func sections<ID: Hashable>(_ windows: [(id: ID, title: String)]) -> [Section<ID>] {
         var projects: [String: [Entry<ID>]] = [:]
         var sections: [Section<ID>] = []
@@ -663,9 +685,15 @@ enum PaneSidebarWindowGrouping {
         for (project, entries) in projects {
             sections.append(.init(project: project, windows: entries.sorted { before($0.label, $1.label, $0.key, $1.key) }))
         }
-        return sections.sorted {
+        return lonesFirst(sections.sorted {
             before($0.project ?? $0.windows[0].title, $1.project ?? $1.windows[0].title, $0.id, $1.id)
-        }
+        })
+    }
+
+    /// `sections` with every ungrouped window ahead of every group, each
+    /// keeping its order.
+    static func lonesFirst<ID: Hashable>(_ sections: [Section<ID>]) -> [Section<ID>] {
+        sections.filter { $0.project == nil } + sections.filter { $0.project != nil }
     }
 
     /// `sections(windows)` in the user's order: the top level (groups and
@@ -680,13 +708,13 @@ enum PaneSidebarWindowGrouping {
         let byName = sections(windows)
         guard !order.isEmpty else { return byName }
         let byKey = Dictionary(byName.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        return PaneSidebarOrder.arranged(byName.map(\.id), by: order).compactMap { key in
+        return lonesFirst(PaneSidebarOrder.arranged(byName.map(\.id), by: order).compactMap { key in
             guard let section = byKey[key] else { return nil }
             guard section.project != nil else { return section }
             let entries = Dictionary(section.windows.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
             let windows = PaneSidebarOrder.arranged(section.windows.map(\.key), by: order).compactMap { entries[$0] }
             return Section(project: section.project, windows: windows)
-        }
+        })
     }
 
     /// Every key the all-windows list has now — each group and each window —
@@ -712,7 +740,8 @@ enum PaneSidebarWindowGrouping {
     /// a new title would re-sort it. A `<project>: ` that names another
     /// group still moves it there, at the edge nearest where it was; one
     /// that names a group not in the list makes that group where the window
-    /// was. Dropping its `<project>: ` leaves it beside the group it left.
+    /// was. Dropping its `<project>: ` puts it with the ungrouped windows
+    /// above the groups (`lonesFirst`).
     static func renaming<ID: Hashable>(window id: ID, to title: String, in sections: [Section<ID>]) -> [String] {
         var order = pinned(sections)
         if let project = split(title)?.project, !order.contains(key(project: project)),
@@ -941,6 +970,8 @@ final class PaneSidebarHover: ObservableObject {
     static let fadeOut: Animation = .easeOut(duration: 0.2)
 
     func hover(_ pane: UUID, color: Color) {
+        // Mid-drag nothing it passes reacts, panes included.
+        guard !HoverTrackingView.isHeld else { return }
         self.color = color
         self.pane = pane
     }
@@ -949,4 +980,7 @@ final class PaneSidebarHover: ObservableObject {
     func leave(_ pane: UUID) {
         if self.pane == pane { self.pane = nil }
     }
+
+    /// A drag began: no pane stays tinted.
+    func clear() { pane = nil }
 }
