@@ -165,7 +165,8 @@ shows the same view of it (see *Shared across windows*). Read before touching
   matches the pane's own title. All-windows **window** names group by window
   title (`<project>: <worktree>`), which a pane banner has no say in.
 - **A rail tile is its row with the text taken away**: the same pill (hover
-  wash, accent selection), the same kind glyph at the same place — the rail
+  wash, accent selection — `PaneSidebarTilePill`, shared by pane and window
+  tiles), the same kind glyph at the same place — the rail
   card is exactly that pill (`railCardWidth` = 52) — so collapsing or
   expanding moves no icon.
 - **A rail tile has a glassy rim** (`PaneSidebarRow.tileBorder`): a pane
@@ -247,7 +248,7 @@ shows the same view of it (see *Shared across windows*). Read before touching
 
 ## Activity
 
-- A **busy** pane's row — or tile — sheens, in two Core Animation layers
+- A **busy** pane's row — or tile — sheens (`PaneSidebarBusySheen`), in two Core Animation layers
   (`PaneSidebarTileSheenLayer`), both slanted 45° (an upright band turned
   clockwise, "/": `PaneSidebarSheen.slant`, a shear) and both moving right to
   left, in phase across tiles:
@@ -265,6 +266,12 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - **Busy is `PaneView.isWorking`**: the hook-set activity state OR a progress
   report on screen (OSC 9;4 — what animates the pane's border,
   `SurfaceBusyBorder`), so an icon animates whenever its pane's border does.
+- **A window's busy rolls up** (`PaneSidebarWindowActivity`, per window,
+  apart from the controller so only that row redraws): busy while ANY of its
+  panes is working (stashed ones included). Its rail tile always shows it; its
+  expanded row only while **folded** — open, the busy pane's own row under it
+  already does (`PaneSidebarWindowHeader.showsBusy`). Same sheen as a pane's.
+  Tests: `PaneSidebarWindowRollUpTests`.
 - **The sidebar shows no question state** — no badge on a row, tile or window
   header (it was unreliable and was removed).
 - Animations run on **Core Animation**, never an endless SwiftUI animation,
@@ -294,8 +301,21 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - **Every row is one height**: a pane row (and a rail tile) is a window row's
   height (`PaneSidebarRow.height` = `PaneSidebarWindowHeader.height`, 32pt
   with its gap).
-- **This window, folded, is selected**: its selected pane is inside the fold,
-  so its header takes the selection pill (accent while the window is key).
+- **This window is selected, folded or open** (`PaneSidebarWindowHeader
+  .selection`): folded, its header takes the accent pill (its selected pane
+  is inside the fold); open, the unaccented selection pill, since its
+  focused pane's row under it has the accent. A clicked window's row is
+  accent while it comes forward. In this window's own Panes list the header
+  is the list's title: selected only folded.
+- **Collapsed, all windows is one tile per WINDOW** — no pane tiles and no
+  dividers, folded or open, in the list's order, group headers left out
+  (`PaneSidebarWindowTile`: the window glyph on a pane tile's own pill,
+  `PaneSidebarTilePill`). Click raises the window; its tooltip is the
+  window's full title; selected as the expanded row is (this window, or the
+  one just clicked); busy rolled up from its panes. Reordering is the
+  expanded list's alone. A grid pane dropped on a tile still joins that
+  window. The "this window" rail still lists this window's panes
+  (`theAllWindowsRailIsOneTilePerWindow`).
 - In the "this window" list the window starts open and folds on its own
   (`PaneSidebarSharedState.foldedThisWindowLists`), apart from the
   all-windows folds.

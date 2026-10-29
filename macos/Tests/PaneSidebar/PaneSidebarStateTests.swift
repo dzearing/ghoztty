@@ -352,6 +352,43 @@ struct PaneSidebarTextTests {
     }
 }
 
+struct PaneSidebarWindowRollUpTests {
+    @Test func aWindowIsBusyWhileAnyOfItsPanesWorks() {
+        typealias A = PaneSidebarWindowActivity
+        #expect(!A.isBusy(activity: [.idle, .idle], progress: [false, false]))
+        #expect(A.isBusy(activity: [.idle, .busy], progress: [false, false]), "the hook says busy")
+        #expect(A.isBusy(activity: [.idle, .idle], progress: [false, true]), "a progress report")
+        #expect(!A.isBusy(activity: [.needsInput], progress: [false]), "a question is not work")
+        #expect(!A.isBusy(activity: [], progress: []))
+    }
+
+    /// Open, a window's panes are under its row and show their own busy:
+    /// the row rolls it up only folded. The rail's tile always does.
+    @Test func aWindowRowShowsItsPanesBusyOnlyFolded() {
+        typealias H = PaneSidebarWindowHeader
+        #expect(H.showsBusy(isFolded: true, isBusy: true))
+        #expect(!H.showsBusy(isFolded: false, isBusy: true))
+        #expect(!H.showsBusy(isFolded: true, isBusy: false))
+    }
+
+    /// The window in use is selected in all windows, folded or not; open,
+    /// its focused pane holds the accent, so its row is selected unaccented.
+    @Test func theSelectedWindowsRowLooksSelected() {
+        typealias H = PaneSidebarWindowHeader
+        func sel(_ this: Bool, folded: Bool, clicked: Bool = false, all: Bool = true) -> H.Selection {
+            H.selection(isThisWindow: this, isFolded: folded, isClicked: clicked, showsAllWindows: all)
+        }
+        #expect(sel(true, folded: true) == .accent)
+        #expect(sel(true, folded: false) == .unemphasized)
+        #expect(sel(false, folded: true) == .none)
+        #expect(sel(false, folded: false, clicked: true) == .accent, "clicked, while it comes forward")
+        // This window's own Panes list: its header is the list's title, and
+        // its pane carries the selection while it is open.
+        #expect(sel(true, folded: false, all: false) == .none)
+        #expect(sel(true, folded: true, all: false) == .accent)
+    }
+}
+
 struct PaneSidebarSheenTests {
     typealias Sheen = PaneSidebarSheen
 
