@@ -26,6 +26,11 @@
 #   B. A posted divider drag (40 moves, a few ms apart) reaches the program as
 #      at most  floor(drag_seconds / 0.35) + 2  resizes - Mac's own bound - and
 #      at least one.
+#      Since T2459 a divider drag HOLDS the grid until it is over, so this
+#      is one resize in practice.
+#   B2. A rest of the hand mid-drag (150 ms, button still down) releases the
+#      hold: the program sees a resize DURING the rest, and the drag as a
+#      whole reaches it twice - at the rest and at the release.
 #   C. The same for a window-edge resize storm (40 SetWindowPos steps).
 #   D. The final size is the TRUE final size: after B's storm the program holds
 #      the same grid it gets when the divider is put at the same spot in ONE
@@ -225,6 +230,34 @@ try {
         Assert $ok ("a {0:N0}ms divider drag reached the program as {1} resizes, not one per move (allowed {2}, moves {3}, {4:N0}ms apart)" -f `
                 ($secs * 1000), $during, $allowed, $Moves, $perMoveMs)
     }
+
+    # ---- B2. a rest mid-drag (T2459) ---------------------------------------
+    # Under a divider drag the terminal holds its grid; a rest of the hand
+    # (`drag_hold.quiet_ms`, 150 ms) lets it take the size it is at, while the
+    # button is still down, and the moves after it hold again until the
+    # release. Read DURING the rest: held to the end, the count would not move.
+    $before = (Wait-CounterSettled $file).Count
+    $pt = Get-DividerPoint $top
+    [void](Send-TestMouse -Window $top -Target $top -X $pt.X -Y $pt.Y -Action down -HoldMs 0)
+    Start-Sleep -Milliseconds 60
+    for ($k = 1; $k -le 15; $k++) {
+        [void](Send-TestMouse -Window $top -Target $top -X ($pt.X + $k * 4) -Y $pt.Y -Action move -HoldMs 0)
+    }
+    $rest = Wait-CounterSettled $file 900 4000
+    $atRest = $rest.Count - $before
+    for ($k = 16; $k -le 30; $k++) {
+        [void](Send-TestMouse -Window $top -Target $top -X ($pt.X + $k * 4) -Y $pt.Y -Action move -HoldMs 0)
+    }
+    [void](Send-TestMouse -Window $top -Target $top -X ($pt.X + 120) -Y $pt.Y -Action up -HoldMs 0)
+    $restEnd = Wait-CounterSettled $file
+    $total = $restEnd.Count - $before
+    Write-Host "  rest mid-drag: $atRest resize(s) reached the program during the rest, $total over the whole drag"
+    $ok = ($atRest -ge 1)
+    if ($NegativeControl) { $ok = -not $ok }
+    Assert $ok "a rest mid-drag lets the held terminal take its size with the button still down ($atRest during the rest)"
+    Assert ($total -ge 2 -and $total -le 3) "the drag reached the program once at the rest and once at the release ($total)"
+    Invoke-DividerJump $top (-120)   # back to the storm's end point
+    [void](Wait-CounterSettled $file)
 
     # ---- D (divider). the storm's last size is the true size --------------
     $stormSize = $b.Size

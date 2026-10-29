@@ -162,6 +162,7 @@ const pane_stack_layout = @import("pane_stack_layout.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
 const pane_stack_slide = @import("pane_stack_slide.zig");
 const strip_face = @import("strip_face.zig");
+const drag_hold = @import("drag_hold.zig");
 const StripFace = @import("StripFace.zig").StripFace;
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
@@ -324,6 +325,11 @@ const FULLSCREEN_POLL_TIMER_ID: usize = 0x4653; // 'FS'
 /// T2268) - a glide that has caught up under a drag stops it and rests.
 const STACK_SLIDE_TIMER_ID: usize = 0x534C; // 'SL'
 const STACK_SLIDE_TICK_MS: u32 = 16;
+
+/// A drag's rest (T2459): re-armed on every pointer move of a divider or grip
+/// drag, it fires once the hand has been still `drag_hold.quiet_ms`, and the
+/// terminals held under the drag take their size.
+const DRAG_QUIET_TIMER_ID: usize = 0x4451; // 'DQ'
 pub const SIDEBAR_SYNC_MS: u32 = 250;
 pub const HERO_SLIDE_MS: f32 = 350.0;
 const HERO_RECENTER_MS: f32 = 300.0;
@@ -883,6 +889,9 @@ stack_slide_dt_ms: ?f64 = null,
 /// Whether the glide under way is the grid's for the pane sidebar collapsing
 /// or expanding (T2406): the sidebar's card follows it step by step.
 stack_slide_column: bool = false,
+/// The hand has rested `drag_hold.quiet_ms` mid-drag (T2459): the terminals
+/// took the size the layout has them at, until the next move holds them again.
+drag_hold_quiet: bool = false,
 /// The reach of the sidebar edge's gutter bar as last refreshed (T2406): a
 /// glide moves the gutter, so the next refresh repaints where it was too.
 sidebar_edge_shown: ?w32.RECT = null,
@@ -7485,6 +7494,10 @@ fn endFrameWaitBatch(self: *Window) void {
 
 pub fn layoutSplits(self: *Window) void {
     if (self.tab_count == 0) return;
+    // Under a drag the terminals keep their grid while their windows follow
+    // the hand (T2459); the pass that ends the motion releases them, once.
+    self.syncDragHolds(true);
+    defer self.syncDragHolds(false);
     // Every layout path below re-glues the per-pane popups (dims, banners,
     // badges) BEFORE it paints the divider bands (T2414). The popups sit
     // above the window, so one still at its pre-pass rect covers the band
@@ -8989,6 +9002,55 @@ pub fn paneSidebarFollowLag(self: *const Window) ?i32 {
     if (!self.stack_slide_column) return null;
     const s = if (self.stack_slide) |*v| v else return null;
     return s.leadingLag();
+}
+
+/// Hold or release every terminal's grid for the drag under way (T2459,
+/// `drag_hold.zig`). `acquire_only` is the top of a layout pass, before its
+/// batch sizes anything: there a pass only takes holds, so the size it gives
+/// a pane lands while still held and the pass's end releases it - the
+/// motion's last size is applied once, not once before the pass and again
+/// after it.
+fn syncDragHolds(self: *Window, comptime acquire_only: bool) void {
+    const gesturing = self.stackGesturing();
+    const glide_resizing = if (self.stack_slide) |*s| s.resize else false;
+    if (!gesturing and !glide_resizing) self.drag_hold_quiet = false;
+    const want = drag_hold.wanted(.{ .gesturing = gesturing, .glide_resizing = glide_resizing, .quiet = self.drag_hold_quiet });
+    if (acquire_only and !want) return;
+    var held: u32 = 0;
+    var released: u32 = 0;
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            const s = entry.view.surface() orelse continue;
+            const on = drag_hold.holds(want, tab == self.active_tab, entry.view.glide_unfold);
+            if (s.resize_held == on or (acquire_only and !on)) continue;
+            s.setResizeHold(on);
+            if (on) held += 1 else released += 1;
+        }
+    }
+    // The acceptance oracle (stack-drag-hold.ps1).
+    if (held + released > 0) log.debug("drag hold held={d} released={d}", .{ held, released });
+}
+
+/// A divider or grip drag moved (T2459): the terminals hold again, and the
+/// rest clock starts over.
+fn noteDragMotion(self: *Window) void {
+    self.drag_hold_quiet = false;
+    if (self.hwnd) |h| _ = w32.SetTimer(h, DRAG_QUIET_TIMER_ID, drag_hold.quiet_ms, null);
+}
+
+/// The hand has rested (T2459): once any glide has caught up, the terminals
+/// take the size the layout has them at. After the drag the same clock is the
+/// sweep that makes sure nothing is left held: it runs until nothing is live.
+fn dragQuietTick(self: *Window) void {
+    const gesturing = self.stackGesturing();
+    const glide_resizing = if (self.stack_slide) |*s| s.resize else false;
+    const glide_moving = if (self.stack_slide) |*s| self.stack_slide_last != null and !s.settled() else false;
+    if (gesturing and !drag_hold.quietReleases(gesturing, glide_moving)) return;
+    if (!gesturing and glide_resizing) return;
+    if (self.hwnd) |h| _ = w32.KillTimer(h, DRAG_QUIET_TIMER_ID);
+    if (gesturing) self.drag_hold_quiet = true;
+    self.syncDragHolds(false);
 }
 
 /// A drag let go (T2268; Mac `onGestureEnd`): a glide resting under it is
@@ -10506,6 +10568,7 @@ fn updateGripDrag(self: *Window, x: i32, y: i32) void {
     const step = self.rowDragMoved(@floatFromInt(pos - g.start)) orelse return;
     self.applyRowDrag(step);
     self.rowDragStepped(step);
+    self.noteDragMotion();
     self.layoutSplitsLive();
 }
 
@@ -11187,6 +11250,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
 /// cost 30-50. Left to the glide, the motion lands at most a frame later, in
 /// the same pass that moves the cards.
 fn layoutDragStep(self: *Window) void {
+    self.noteDragMotion();
     if (self.stack_slide_last != null and self.stack_slide != null) {
         self.drag_layout_deferred +|= 1;
         self.drag_layout_pending = true;
@@ -11207,6 +11271,8 @@ fn endDividerDrag(self: *Window) void {
     // A motion left to a glide that has now ended is laid out here (T2448).
     if (self.drag_layout_pending and self.stack_slide_last == null) self.layoutSplitsLive();
     self.drag_layout_pending = false;
+    // Nothing left moving: the terminals take their size (T2459).
+    self.syncDragHolds(false);
     self.reportDragCost("divider");
     _ = w32.ReleaseCapture();
     // Re-derive hover from where the pointer actually ended up: the ratio is
@@ -16365,6 +16431,10 @@ pub fn windowWndProc(
             }
             if (wparam == STACK_SLIDE_TIMER_ID) {
                 window.stackSlideTick();
+                return 0;
+            }
+            if (wparam == DRAG_QUIET_TIMER_ID) {
+                window.dragQuietTick();
                 return 0;
             }
             if (wparam == FULLSCREEN_POLL_TIMER_ID) {

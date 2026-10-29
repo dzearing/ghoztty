@@ -3545,6 +3545,15 @@ pub fn flushResize(self: *Surface) void {
     self.queueIo(.{ .resize_flush = {} }, .unlocked);
 }
 
+/// Hold the terminal at its grid size while the apprt reshapes the view under
+/// the hand (T2459): resizes reported meanwhile stay pending, and the renderer
+/// draws the grid it has, cut by the view. Releasing applies the latest size
+/// at once - one reflow per hold, not one per pointer step. Idempotent.
+pub fn holdResize(self: *Surface, on: bool) void {
+    const was = self.io.resize_held.swap(on, .acq_rel);
+    if (was and !on) self.flushResize();
+}
+
 /// How far, in pixels, the first row on screen will move down from the top
 /// of the view when the surface is resized to `height` pixels: the grid's own
 /// row-resize rules (`Screen.resize`, `PageList.resize`), applied to the

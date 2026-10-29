@@ -82,6 +82,12 @@
 #       unfold carried` and `stack unfold landed` oracle lines. F5/F9/F11 read
 #       the carried card where the live window used to be sampled.
 #
+#   F18) held under the hand (T2459): while the fold the drag started glides,
+#       the panes that stay open keep their grid - every resize decided
+#       `held` - and take their size once the motion settles: at most 3
+#       `resize applied` lines over the whole fold, where every glide frame
+#       used to reflow P.
+#
 #   F15) -SlowFrames (T2442): Mac's own glide (45 ms), every tick stepped as
 #       if 80 ms had passed - the frame time the user's window had under a
 #       drag. Folding, the face is still drawn at 2+ partial alphas and no
@@ -577,6 +583,15 @@ try {
             Assert ($cutsIn.Count -ge 2) "F14: folding, s2 is re-cut on $($cutsIn.Count) frames (need 2+)"
             Assert ($redrawsIn -le 1) "F14: folding, s2's shrinking cut is redrawn on $redrawsIn frames (at most 1, the first): a cut that only shrinks has nothing to repaint"
         }
+        # F18 (T2459): the panes that stay open hold their grid while the fold
+        # the hand started glides - P widens on every frame of it (F2) - and
+        # take their size once the motion has settled, not once per frame.
+        $foldLines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logFold -First ([math]::Max(0, $logBack - $logFold)))
+        $heldIn = @($foldLines | Where-Object { $_ -match 'resize pace=held' }).Count
+        $appliedIn = @($foldLines | Where-Object { $_ -match 'resize applied cols=' }).Count
+        Say ("      terminal resizes folding: {0} held, {1} applied" -f $heldIn, $appliedIn)
+        Assert ($heldIn -ge 2) "F18: folding under the hand, the open panes' resizes are held ($heldIn held)"
+        Assert ($appliedIn -le 3) "F18: folding under the hand, the terminals take their size about once a pane, not once a frame ($appliedIn applied over $heldIn resizes, bound 3)"
         $facesFolded = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
         Assert ($facesFolded -eq 0) "F12: folded and at rest, no face is on show ($facesFolded): the window's strip has taken over"
 

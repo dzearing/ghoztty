@@ -470,6 +470,13 @@ fn syncHoldCallback(
 fn handleResize(self: *Thread, cb: *CallbackData, resize: renderer.Size) void {
     self.coalesce_data.resize = resize;
 
+    // Held under a drag (T2459): pending until the hold's release flushes it.
+    // Stated like the other paces (test/win32/prompt-reflow.ps1 reads them).
+    if (cb.io.resize_held.load(.acquire)) {
+        log.debug("resize pace=held", .{});
+        return;
+    }
+
     switch (cb.io.resizePaceReported()) {
         .debounce => {},
         .now => {
@@ -604,6 +611,10 @@ fn coalesceCallback(
     };
 
     const cb = cb_ orelse return .disarm;
+
+    // A debounce armed before a drag took hold (T2459) leaves the resize to
+    // the hold's release.
+    if (cb.io.resize_held.load(.acquire)) return .disarm;
 
     // Still waiting on the shell's redraw (released by the renderer once it
     // shows, or by the `prompt_redraw_ms` cap).

@@ -122,6 +122,15 @@ notice_guard: ?*terminalpkg.Pin = null,
 /// read by a backend's bring-up on the IO thread (`Remote.awaitRealSize`).
 size_reported: std.atomic.Value(bool) = .init(false),
 
+/// Set (GUI thread, `Surface.holdResize`) while the apprt is reshaping the
+/// view under the hand - a divider or grip drag and the glide that follows it
+/// (T2459; Mac's content freeze, `PaneStageView` `glideFreeze`). A resize that
+/// arrives meanwhile is kept pending and never applied by the debounce, so the
+/// terminal is not reflowed and its program not sent a SIGWINCH on every
+/// pointer step: the renderer goes on drawing the grid it has, cut by its
+/// view. Releasing it flushes the latest size, once.
+resize_held: std.atomic.Value(bool) = .init(false),
+
 /// The state we need to keep around only until we enter the IO
 /// thread. Then we can throw it all away.
 const ThreadEnterState = struct {

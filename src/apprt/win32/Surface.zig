@@ -517,6 +517,10 @@ snap_req_exact: bool = false,
 /// opening reads it to prove its terminal was resized only before the glide
 /// showed any of it.
 resizes: u32 = 0,
+/// The terminal is held at its grid under a drag (T2459, `drag_hold.zig`):
+/// the window still sizes with its card, the grid takes the size once the
+/// hold is released.
+resize_held: bool = false,
 /// Top-level window to notify with WM_APP_HERO_SNAP (guarded).
 snap_notify_hwnd: ?w32.HWND = null,
 /// BGRA bottom-up pixels, snap_req_w * snap_req_h * 4 (guarded).
@@ -4117,6 +4121,15 @@ pub fn scrollToOffset(self: *Surface, offset: usize) void {
 // -----------------------------------------------------------------------
 // Message handlers called from App.surfaceWndProc
 // -----------------------------------------------------------------------
+
+/// Hold the terminal's grid at its size, or release it to the size its window
+/// has now (T2459): a drag reshaping the row reflows each terminal once per
+/// settle, not once per pointer step. Idempotent.
+pub fn setResizeHold(self: *Surface, on: bool) void {
+    if (self.resize_held == on or !self.core_surface_ready) return;
+    self.resize_held = on;
+    self.core_surface.holdResize(on);
+}
 
 /// Handle WM_SIZE.
 pub fn handleResize(self: *Surface, width: u32, height: u32) void {

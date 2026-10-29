@@ -49,26 +49,30 @@
 #
 # WHAT IS ASSERTED, per section - cmd and Windows PowerShell, each with the app
 # owning the ConPTY and with the session agent owning it:
-#   1. the oracle is live and the pane is at a marked prompt: a drag over it
-#      decides `now`/`after_redraw` - never `debounce` for PowerShell, mostly
-#      not for cmd (see Score-Storm) - and a pane whose marks never arrived
-#      scores every resize `debounce` and fails here, loudly;
-#   2. LIVE: a divider drag over the prompt is applied far more often than the
-#      debounce could - more than  floor(drag_seconds / 0.35) + 2  times per
-#      pane, the bound resize-debounce.ps1 holds a running program to;
-#   3. NEVER BLANK: no held frame was released by the cap, and for PowerShell
-#      at least one was released by the redraw (so "no cap" is not vacuous);
-#   4. the same for a window-edge resize storm;
+#   1-3. HELD (T2459, user 2026-10-29): a DIVIDER drag holds every terminal's
+#      grid while the hand moves - each resize is decided `held` - and the
+#      grid takes its size once when the drag is over: at most 4 applied for
+#      the two panes, and the prompt is never shown blank (no cap release).
+#      Until T2459 the drag reflowed a prompt live on every step;
+#   4. a window-edge resize storm (no drag, so nothing held) over the prompt:
+#      the oracle is live and the pane is at a marked prompt, it decides
+#      `now`/`after_redraw` - never `debounce` for PowerShell, mostly not for
+#      cmd (see Score-Storm) - a pane whose marks never arrived scores every
+#      resize `debounce` and fails here, loudly; LIVE: it is applied far more
+#      often than the debounce could - more than  floor(seconds / 0.35) + 2
+#      times per pane, the bound resize-debounce.ps1 holds a running program
+#      to; NEVER BLANK: no held frame was released by the cap, and for
+#      PowerShell at least one was released by the redraw (so "no cap" is not
+#      vacuous);
 #   5. the prompt, and a line of output above it, are still on screen
 #      afterwards (`+read`);
-#   6. CONTROL: with a program running in the pane, the same drag decides
-#      `debounce` and is applied no more than the bound - the oracle can tell
-#      a prompt from a program, and the old pacing still holds for programs.
+#   6. CONTROL: with a program running in the pane, the same divider drag is
+#      held too and applied once per pane.
 #
 # Runs on the BACKGROUND test desktop (lib\TestDesktop.ps1): posted mouse
 # messages and SetWindowPos only, no foreground taken.
 #
-# -NegativeControl inverts 2's bound and MUST fail.
+# -NegativeControl inverts the held bound and 4's live bound, and MUST fail.
 #
 #   powershell -NoProfile -File test\win32\prompt-reflow.ps1
 param(
@@ -236,6 +240,35 @@ function Score-Storm([string]$tag, [string]$what, $lines, [double]$secs, [bool]$
     }
 }
 
+# A divider drag HOLDS every terminal's grid while the hand moves (T2459):
+# every resize it makes is decided `held`, and the grid takes its size once
+# the drag is over - one applied resize per pane, for a posted drag with no
+# rest in it, prompt or program alike. Over a prompt that one resize still
+# never shows the prompt blank.
+function Score-Held([string]$tag, [string]$what, $lines, [double]$secs, [bool]$atPrompt, [bool]$holds) {
+    $paces = @($lines | Where-Object Kind -eq 'pace')
+    $applied = @($lines | Where-Object Kind -eq 'applied')
+    $byRedraw = @($lines | Where-Object { $_.Kind -eq 'released' -and $_.Value -eq 'redraw' })
+    $byCap = @($lines | Where-Object { $_.Kind -eq 'released' -and $_.Value -eq 'cap' })
+    $held = @($paces | Where-Object Value -eq 'held')
+    # Two panes, one settle: one each, and one more each for a straggler that
+    # landed after the release (the glide's last frame).
+    $allowed = 4
+    $mix = ($paces | Group-Object Value | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '
+    Write-Host ("    {0}: {1:N0}ms, {2} resize(s) decided [{3}], {4} applied (held bound {5}), released redraw={6} cap={7}" -f `
+            $what, ($secs * 1000), $paces.Count, $mix, $applied.Count, $allowed, $byRedraw.Count, $byCap.Count)
+
+    Assert ($paces.Count -ge 1) "$tag $what the oracle is live ($($paces.Count) pacing decision(s) logged)"
+    # The release's own resize is the one decided after the drag.
+    Assert ($held.Count -ge $paces.Count - 2 -and $held.Count -ge 1) "$tag $what holds the grid under the hand ($($held.Count) of $($paces.Count) held)"
+    $once = ($applied.Count -ge 1 -and $applied.Count -le $allowed)
+    if ($NegativeControl) { $once = -not $once }
+    Assert $once "$tag $what is applied once per pane, not per step: $($applied.Count) applied over $($paces.Count) resizes, bound $allowed"
+    if ($atPrompt) {
+        Assert ($byCap.Count -eq 0) "$tag $what never shows the prompt blank: no held frame released by the 250ms cap ($($byCap.Count))"
+    }
+}
+
 function Invoke-Section([string]$tag, [bool]$persist, [string]$shell, [bool]$holds) {
     $state = Join-Path $root "state-$tag"
     New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $state) | Out-Null
@@ -278,7 +311,7 @@ function Invoke-Section([string]$tag, [bool]$persist, [string]$shell, [bool]$hol
     # ---- 1-3. divider drag over the prompt ------------------------------
     $mark = Get-LogMark $errlog
     $secs = Invoke-DividerDrag $top $Moves -8 0
-    Score-Storm $tag 'divider drag' (Get-PacingSince $errlog $mark) $secs $true $holds
+    Score-Held $tag 'divider drag' (Get-PacingSince $errlog $mark) $secs $true $holds
 
     # ---- 4. window-edge resize storm over the prompt --------------------
     $mark = Get-LogMark $errlog
@@ -308,7 +341,7 @@ function Invoke-Section([string]$tag, [bool]$persist, [string]$shell, [bool]$hol
     Start-Sleep -Milliseconds 1500
     $mark = Get-LogMark $errlog
     $secs = Invoke-DividerDrag $top $Moves 8 0
-    Score-Storm $tag 'control drag' (Get-PacingSince $errlog $mark) $secs $false $false
+    Score-Held $tag 'control drag' (Get-PacingSince $errlog $mark) $secs $false $false
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) "$tag GUI never became visible on the interactive desktop"
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
