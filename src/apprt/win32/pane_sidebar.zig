@@ -649,6 +649,8 @@ pub const Layout = struct {
     own: [max_items]bool = [_]bool{true} ** max_items,
     /// Each item offers the rename pencil (`Item.renamable`, T2339).
     renamable: [max_items]bool = [_]bool{false} ** max_items,
+    /// Each item's window group (`Item.group`).
+    group: [max_items]u16 = [_]u16{0} ** max_items,
     heads: [max_heads]Head = undefined,
     head_count: usize = 0,
     /// The outline's hairlines (the single-window layout uses
@@ -695,6 +697,22 @@ pub const Layout = struct {
 
     pub fn item(self: *const Layout, i: usize) Rect {
         return self.items[i];
+    }
+
+    /// The rail of all windows is one tile per WINDOW (T2445, Mac 9e2e2902a
+    /// `PaneSidebarWindowTile`): no pane tiles, folded or open.
+    pub fn windowTiles(self: *const Layout) bool {
+        return self.outline and self.mode == .mini;
+    }
+
+    /// Whether item `i` carries its window's tile on the all-windows rail:
+    /// the group's first item, which a window's tile stands on.
+    pub fn windowTile(self: *const Layout, i: usize) bool {
+        return self.windowTiles() and i < self.count and opensGroup(self, i);
+    }
+
+    fn opensGroup(self: *const Layout, i: usize) bool {
+        return i == 0 or self.group[i] != self.group[i - 1];
     }
 
     /// Whether item `i` has a place on screen: a pane in a folded group of
@@ -869,6 +887,7 @@ pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Li
     for (items[0..n], 0..) |it, i| {
         l.own[i] = it.own;
         l.renamable[i] = it.renamable;
+        l.group[i] = it.group;
     }
     findStash(&l, items[0..n]);
     switch (m) {
@@ -1083,7 +1102,9 @@ fn layoutCard(l: *Layout, card_w: i32, insets: RailInsets, scale: f32) void {
 /// The rail (T2279, Mac 75dc046e3): the toggle, then one tile per pane, each
 /// the row it is in the expanded list without its text - the same pill
 /// (`fill_inset` in from the card), the same height, from the same top - so
-/// toggling the sidebar moves no icon.
+/// toggling the sidebar moves no icon. All windows' rail is one tile per
+/// WINDOW instead (T2445, Mac 9e2e2902a): on its first item, in the list's
+/// order, every other item of the window without a place.
 fn layoutMini(l: *Layout, tm: TextMetrics, scale: f32, insets: RailInsets) void {
     layoutCard(l, px(rail_card_dip, scale), insets, scale);
     l.toggle = toggleRect(scale, insets);
@@ -1119,6 +1140,10 @@ fn layoutMini(l: *Layout, tm: TextMetrics, scale: f32, insets: RailInsets) void 
             const rule_y = y - gap + @divTrunc(group, 2);
             l.section_rule = .{ .left = left, .top = rule_y, .right = right, .bottom = rule_y + @max(px(1, scale), 1) };
             y += group - gap;
+        }
+        if (l.outline and !l.opensGroup(i)) {
+            l.items[i] = .{};
+            continue;
         }
         l.items[i] = .{ .left = left, .top = y, .right = right, .bottom = y + tile };
         y += tile + gap;
@@ -1281,7 +1306,8 @@ pub fn addEmptyTray(l: *Layout, tm: TextMetrics, scale: f32) void {
 /// row on the panel (none while the group is folded: there is no pane to
 /// follow), a tile on the rail. The caller asks only during a drag.
 pub fn addDragWell(l: *Layout, tm: TextMetrics, scale: f32) void {
-    if (l.mode == .hidden or !l.outline) return;
+    // A rail of windows has no tray (T2445): its tiles are windows.
+    if (l.mode == .hidden or !l.outline or l.windowTiles()) return;
     var last: ?usize = null;
     for (0..l.count) |i| {
         if (!l.own[i]) continue;
@@ -2510,21 +2536,33 @@ test "pane_sidebar: an outline with no lines says No matching panes under the fi
     }
 }
 
-test "pane_sidebar: the outline's rail draws no divider between windows, nor before a stash (T2313, T2425)" {
+test "T2445: all windows' rail is one tile per WINDOW, on its first item, no dividers (Mac 9e2e2902a, T2313, T2425)" {
     for (scales) |s| {
         const f = outlineFixture(s);
         const l = layoutWith(.mini, px(68, s), px(900, s), &f.items, &f.lines, f.tm, s);
-        // Every pane is a tile, folded or not.
-        for (0..5) |i| try testing.expect(l.shown(i));
-        // A window is its tiles alone (Mac 6bd2962eb): one window's tiles
-        // follow the last one's at the tiles' own spacing, and the stashed
-        // tile follows its grid the same way (Mac 47b39b1cb).
+        try testing.expect(l.windowTiles());
+        // A tile on each window's first item, none on the rest - folded or
+        // open, a stashed pane included.
+        for (0..5) |i| try testing.expectEqual(i == 0 or i == 3, l.shown(i));
+        for (0..5) |i| try testing.expectEqual(i == 0 or i == 3, l.windowTile(i));
+        // The second window's tile follows the first's at the tiles' own
+        // spacing: no divider, nothing between them.
+        try testing.expectEqual(l.items[0].bottom + rowGap(s), l.items[3].top);
+        try testing.expectEqual(pillHeight(f.tm, s), l.items[3].height());
         try testing.expectEqual(@as(usize, 0), l.rule_count);
         try testing.expect(l.section_rule == null);
-        for (1..5) |i| try testing.expectEqual(l.items[i - 1].bottom + rowGap(s), l.items[i].top);
-        // No header buttons on the rail beyond the toggle.
+        // A tile is hit as its window's first item; no other item is hit.
+        try testing.expectEqual(Hit{ .item = 3 }, hitTest(&l, l.items[3].centerX(), l.items[3].centerY(), s));
+        // No header buttons on the rail beyond the toggle, no group headers.
         try testing.expectEqual(@as(i32, 0), l.scope.width());
         try testing.expectEqual(@as(usize, 0), l.head_count);
+        // The panel and this window's rail are unchanged: pane rows, pane tiles.
+        const panel = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        try testing.expect(!panel.windowTiles());
+        try testing.expect(!panel.windowTile(0));
+        const own = layout(.mini, px(68, s), px(900, s), f.items[0..3], f.tm, s);
+        try testing.expect(!own.windowTiles());
+        for (0..3) |i| try testing.expect(own.shown(i));
     }
 }
 
@@ -2561,11 +2599,12 @@ test "pane_sidebar: at rest the outline has no empty well (T2313, Mac b7de64ce8)
     try testing.expect(l.drop_slot == null);
 }
 
-test "pane_sidebar: during a drag the outline's well opens under this window's last pane, both modes (T2313, Mac b7de64ce8)" {
+test "pane_sidebar: during a drag the outline's well opens under this window's last pane on the panel (T2313, Mac b7de64ce8)" {
     for (scales) |s| {
         var f = outlineFixture(s);
         f.items[2].section = .grid; // this window stashes nothing
-        for ([_]Mode{ .expanded, .mini }) |m| {
+        // The panel only: the rail of windows has no tray (T2445).
+        for ([_]Mode{.expanded}) |m| {
             const w = if (m == .expanded) px(240, s) else px(68, s);
             const before = layoutWith(m, w, px(900, s), &f.items, &f.lines, f.tm, s);
             var l = before;
@@ -2607,9 +2646,10 @@ test "pane_sidebar: no outline well while this window stashes, while its group i
     var p = layoutWith(.expanded, 240, 900, &g.items, &folded, g.tm, s);
     addDragWell(&p, g.tm, s);
     try testing.expect(p.drop_slot == null);
+    // The rail of windows has no tray at all (T2445).
     var r = layoutWith(.mini, 68, 900, &g.items, &folded, g.tm, s);
     addDragWell(&r, g.tm, s);
-    try testing.expect(r.drop_slot != null);
+    try testing.expect(r.drop_slot == null);
     // The single roster's well is `addEmptyTray`'s, drag or not.
     var one = layout(.expanded, 240, 900, &g.items, g.tm, s);
     addDragWell(&one, g.tm, s);

@@ -443,6 +443,10 @@ folded_projects: shared_mod.KeySet = .{},
 /// this window is activated again and shows its own selection. Compared,
 /// never dereferenced.
 clicked: ?*const PaneView = null,
+/// Another window's rail tile just clicked here (T2445, Mac `clickedWindow`):
+/// its group key, drawn selected while that window comes forward, until this
+/// window is activated again.
+clicked_window: ?u64 = null,
 /// How many windows the scope lists (every tab of every window, whatever
 /// the search) - the ALL WINDOWS caption's count.
 window_count: usize = 0,
@@ -697,8 +701,9 @@ fn takeShared(self: *PaneSidebar) void {
 /// changed.
 pub fn catchUp(self: *PaneSidebar) void {
     const behind = shared_mod.needsCatchUp(self.seen_gen, &shared);
-    const clicked = self.clicked != null;
+    const clicked = self.clicked != null or self.clicked_window != null;
     self.clicked = null;
+    self.clicked_window = null;
     if (behind) {
         const scope_was = self.all_windows;
         self.takeShared();
@@ -1014,6 +1019,19 @@ fn logOutline(self: *PaneSidebar) void {
     }
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
     w.print(" rules={d} scope={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY() }) catch {};
+    // The rail of windows (T2445): how many of the items above are window
+    // tiles, and which of them is drawn selected.
+    var wt: usize = 0;
+    var wsel: ?u16 = null;
+    for (0..@min(l.count, self.entries.items.len)) |i| if (l.windowTile(i)) {
+        wt += 1;
+        if (self.tileGroup(i)) |g| if (self.windowTileSelected(g)) {
+            wsel = self.entries.items[i].group;
+        };
+    };
+    if (wsel) |g| {
+        w.print(" wtiles={d} wsel=g{d}", .{ wt, g }) catch {};
+    } else w.print(" wtiles={d} wsel=-", .{wt}) catch {};
     self.logToggle(w, &l);
     // The search field (T1877): where to click it, and whether the "No
     // matching panes" note is up.
@@ -1842,6 +1860,9 @@ pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect, list_out: []
     _ = w32.ClientToScreen(self.hwnd, &origin);
     const l = self.currentLayout();
     const area: pane_drop.Rect = .{ .left = col.left, .top = col.top, .right = col.right, .bottom = col.bottom };
+    // A rail of windows has no pane rows to place among (T2445): the column
+    // is the tray, as a rail with no list is.
+    if (l.windowTiles()) return .{ .sidebar = area, .rows = rows_out[0..0], .slot = null };
     var n: usize = 0;
     var i = l.first_stashed;
     const end = if (l.outline) l.stash_end else l.count;
@@ -1943,6 +1964,9 @@ fn maybeStartRowDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     };
     if (!drop_highlight.exceedsThreshold(x - self.press_x, y - self.press_y, drop_highlight.thresholdPx(self.scale))) return false;
     if (i >= self.entries.items.len) return false;
+    // A window's rail tile only raises it: reordering is the expanded
+    // list's alone (T2445, Mac 9e2e2902a).
+    if (self.tileGroup(i) != null) return false;
     // Another window's pane is not dragged from here yet: dropping it into
     // this grid or onto another window's group is the cross-window move,
     // which is its own follow-up (T1829 split).
@@ -3662,7 +3686,8 @@ fn hueInk(self: *const PaneSidebar, e: Entry, under: color_math.Rgb, hovered: bo
 fn syncHoverTint(self: *PaneSidebar) void {
     const app = self.window.app;
     const want: ?Entry = if (pane_sidebar.tintedItem(self.hover, app.hover_held)) |i|
-        if (i < self.entries.items.len) self.entries.items[i] else null
+        // A window's tile is no pane's (T2445): it tints nothing.
+        if (i < self.entries.items.len and self.tileGroup(i) == null) self.entries.items[i] else null
     else
         null;
     const pane: ?*const PaneView = if (want) |e| e.pane else null;
@@ -4331,6 +4356,10 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             self.tallyUnpainted(e, l.items[i], e.bell and e.section == .stashed);
             continue;
         };
+        if (l.windowTile(i)) {
+            self.paintWindowTile(hdc, i, l.items[i], self.rowHovered(i), emphasized, t);
+            continue;
+        }
         self.paintTile(hdc, i, l.items[i], self.rowHovered(i), emphasized, t);
     }
     self.paintDropSlot(hdc, l, t);
@@ -4352,6 +4381,58 @@ fn paintTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.Rect, h
         const three = pane_sidebar.px(3, self.scale);
         self.paintBellDot(hdc, r.right + one - @divTrunc(d, 2), r.top + three + @divTrunc(d, 2), t);
     }
+}
+
+/// A window's rail tile (T2445, Mac 9e2e2902a `PaneSidebarWindowTile`): the
+/// window glyph on a pane tile's own pill, rim and all; selected as the
+/// window's expanded row is - this window, or the one just clicked here.
+/// Its busy is the window's rolled up (T2447), never its first pane's.
+fn paintWindowTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.Rect, hovered: bool, emphasized: bool, t: Theme) void {
+    const g = self.tileGroup(i) orelse return;
+    var e = self.entries.items[i];
+    e.selected = self.windowTileSelected(g);
+    e.busy = false;
+    const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+    const sel = list_selection.rowPaint(t.surface, t.accent, .{
+        .selected = e.selected,
+        .focused = emphasized,
+        .hovered = hovered,
+        .focus_visible = false,
+    });
+    if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
+    if (sel.indicator) |c| {
+        const bar = toc.selectionIndicator(r.height(), self.scale);
+        fillRound(hdc, .{
+            .left = r.left + bar.left,
+            .top = r.top + bar.top,
+            .right = r.left + bar.left + bar.width,
+            .bottom = r.top + bar.top + bar.height,
+        }, bar.radius, rgb(c));
+    }
+    self.paintOverlay(hdc, r, radius, self.sheenAt(e, r), motion.tileRim(t.dark, hovered), t);
+    const icon_w = pane_sidebar.px(pane_sidebar.icon_dip, self.scale);
+    const left = r.left + pane_sidebar.px(toc.text_inset_dip, self.scale);
+    const top = r.top + @divTrunc(r.height() - self.metrics.title_h, 2);
+    const icon_r: pane_sidebar.Rect = .{ .left = left, .top = top, .right = left + icon_w, .bottom = top + self.metrics.title_h };
+    // Mac: primary under the pointer or on the key window's selection,
+    // secondary otherwise.
+    const strong = hovered or (e.selected and emphasized);
+    glyph(hdc, self.scale, icon_r, glyph_app_window, 12, if (strong) t.text else t.secondary);
+}
+
+/// The window group item `i`'s rail tile stands for, when it carries one
+/// (`Layout.windowTile`, read from the roster so it needs no layout).
+fn tileGroup(self: *const PaneSidebar, i: usize) ?Group {
+    if (!self.all_windows or self.mode != .mini or i >= self.entries.items.len) return null;
+    const e = self.entries.items[i];
+    if (i > 0 and self.entries.items[i - 1].group == e.group) return null;
+    if (e.group >= self.groups.items.len) return null;
+    return self.groups.items[e.group];
+}
+
+fn windowTileSelected(self: *const PaneSidebar, g: Group) bool {
+    if (self.clicked_window) |k| return k == g.key;
+    return g.own;
 }
 
 /// What a cache holds (T2290): the side panel's card on the flat terminal
@@ -4869,8 +4950,10 @@ fn syncTips(self: *PaneSidebar) void {
                 // Another window's tile names its window too (Mac: "in
                 // the mini rail ... the hover label names the window").
                 var named: [tips.tip_cap]u16 = undefined;
-                const title = self.tileTitle(e, &named);
-                const len = tips.tileTip(&self.tip_text[i], title, e.section);
+                const len = if (self.tileGroup(i)) |g|
+                    self.windowTileTip(g, &self.tip_text[i])
+                else
+                    tips.tileTip(&self.tip_text[i], self.tileTitle(e, &named), e.section);
                 addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), self.tip_text[i][0..len :0]);
                 in_view += 1;
                 delTool(tip, hwnd, toolButton(i));
@@ -4914,6 +4997,24 @@ fn logTips(self: *PaneSidebar, counts: []const u8) void {
     log.debug("pane sidebar tips{s}", .{line});
 }
 
+/// A window tile's tip (T2445, Mac `PaneSidebarWindowTile.help`): the
+/// window's full title - `<project>: <name>` too, since the rail has no group
+/// headers to say the project.
+fn windowTileTip(self: *const PaneSidebar, g: Group, out: *[tips.tip_cap]u16) usize {
+    _ = self;
+    var nb: [name_cap]u8 = undefined;
+    const name = groupName(g.window, g.tab, &nb);
+    // Whole, then cut to fit: the last unit is the terminator.
+    var cut = @min(name.len, name_cap);
+    while (cut > 0 and cut < name.len and name[cut] & 0xC0 == 0x80) cut -= 1;
+    var wide: [name_cap]u16 = undefined;
+    const all = std.unicode.utf8ToUtf16Le(&wide, name[0..cut]) catch 0;
+    const n = @min(all, tips.tip_cap - 1);
+    @memcpy(out[0..n], wide[0..n]);
+    out[n] = 0;
+    return n;
+}
+
 /// A rail tile's tip title: the pane's, and for another window's pane also
 /// " \u{2014} <window>".
 fn tileTitle(self: *const PaneSidebar, e: Entry, buf: *[tips.tip_cap]u16) []const u16 {
@@ -4946,6 +5047,10 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
         },
         .item => |i| {
             if (i >= self.entries.items.len) return;
+            // A window's rail tile raises its window (T2445, Mac
+            // `PaneSidebarWindowTile`), selected here at once while it
+            // comes forward; this window's own does nothing more.
+            if (self.tileGroup(i)) |g| return self.raiseTile(g);
             const e = self.entries.items[i];
             switch (row_menu.clickVerb(e.section, e.own, alt)) {
                 .focus, .restore => self.window.paneSidebarActivate(e.pane),
@@ -5685,6 +5790,14 @@ fn toggleFold(self: *PaneSidebar, kind: enum { project, window }, key: u64) void
 /// Raise another window and show the tab the group is (`ghoztty://focus`'s
 /// own verb, `IpcHandlers.focusTarget`). The tab is found again by its
 /// identity: tabs reorder, and the window may have closed since the refresh.
+fn raiseTile(self: *PaneSidebar, g: Group) void {
+    log.info("pane sidebar window tile click own={}", .{g.own});
+    if (g.own) return;
+    self.clicked_window = g.key;
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.raiseGroup(g);
+}
+
 fn raiseGroup(self: *PaneSidebar, g: Group) void {
     if (!self.window.app.hasWindow(g.window)) return;
     const w = g.window;

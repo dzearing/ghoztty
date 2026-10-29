@@ -322,15 +322,21 @@ try {
     Assert "...and a second click unfolds it (log)" ($null -ne (Wait-Log 'pane sidebar unfold' $mark 2000))
 
     "== 7: collapsed, the rail's tiles scroll"
+    # This window's rail: all windows' is one tile per window (T2445), and
+    # two windows do not overflow it.
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb (Get-ScopeCenter $sb))
+    Assert "the scope is back to this window (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=false' $mark 2000))
+    Start-Sleep -Milliseconds 500
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ToggleCenter $sb))
-    $r1 = Read-Geometry (Wait-Log 'pane sidebar outline mode=mini' $mark 3000)
+    $r1 = Read-Geometry (Wait-Log 'pane sidebar rows mode=mini' $mark 3000)
     $sb = Get-Sidebar $top
     Assert "the rail logged its tiles with a scroll range ($(if ($r1) { "$($r1.Items.Count) tiles, max $($r1.Max)" }))" ($null -ne $r1 -and $r1.Items.Count -ge 14 -and $r1.Max -gt 0)
     $mark = Get-LogCount
     $railPt = @{ X = (Px 12) + (Px 22); Y = [int](($r1.Top + $r1.Bottom) / 2) }
     [void](WheelAt $top $sb $railPt -2400)
-    $r2 = Read-Geometry (Wait-Log 'pane sidebar outline mode=mini' $mark 3000)
+    $r2 = Read-Geometry (Wait-Log 'pane sidebar rows mode=mini' $mark 3000)
     Assert "the wheel scrolled the rail to its end ($(if ($r2) { "$($r2.Scroll)/$($r2.Max)" }))" ($null -ne $r2 -and $r2.Scroll -gt 0 -and $r2.Scroll -eq $r2.Max)
     $lastTile = if ($r2) { $r2.Items[$r2.Items.Count - 1] } else { $null }
     Assert "the last tile is in view" ($null -ne $lastTile -and (InView $r2 $lastTile))

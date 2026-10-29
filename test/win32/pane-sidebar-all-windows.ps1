@@ -26,7 +26,7 @@
 #   6b. The search field (T1877): every word must match (window, pane,
 #      banner, folder), accents fold, "No matching panes" when empty, Escape
 #      clears, Return reveals the first hit through the click's own path.
-#   7. Collapsed, the rail shows every pane as a tile with no divider between
+#   7. Collapsed, the rail is one tile per WINDOW (T2445) with no divider between
 #      windows and no header rows.
 #   8. The toggle switches back to this window's panes only, and clears a
 #      query: back on, every window is listed (T1877).
@@ -513,15 +513,36 @@ try {
     Assert "...and it leaves the list" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*windows=3 ' $mark 6000))
     Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
 
-    "== 7: collapsed, the rail shows every pane, with no divider between windows (T2425, Mac 6bd2962eb)"
+    "== 7: collapsed, the rail is one tile per WINDOW, with no divider between them (T2445, Mac 9e2e2902a; T2425)"
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ToggleCenter $sb))
-    $o6 = Read-Outline (Wait-Log 'pane sidebar outline mode=mini' $mark)
+    $railOutline = Wait-Log 'pane sidebar outline mode=mini' $mark
+    $o6 = Read-Outline $railOutline
     $sb = Get-Sidebar $top
     Assert "the column is the 76 DIP rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     if ($o6) { "  rail items: $(($o6.Items | ForEach-Object { "g$($_.Group)$($_.Sec)" }) -join ' ') rules=$($o6.Rules)" }
-    Assert "every pane is a tile (5) and there are no header rows" ($null -ne $o6 -and $o6.Items.Count -eq 5 -and $o6.Heads.Count -eq 0)
+    $tileGroups = if ($o6) { @($o6.Items | ForEach-Object { $_.Group } | Sort-Object -Unique) } else { @() }
+    Assert "one tile per window (3 tiles for 5 panes in 3 windows, each a different window), no header rows" ($null -ne $o6 -and $o6.Items.Count -eq 3 -and $tileGroups.Count -eq 3 -and $o6.Heads.Count -eq 0)
     Assert "no hairline between the three windows ($($o6.Rules))" ($null -ne $o6 -and $o6.Rules -eq 0)
+    $wsel = $null
+    if ($railOutline -match ' wtiles=(\d+) wsel=(\S+)') { $wtiles = [int]$Matches[1]; $wsel = $Matches[2] } else { $wtiles = -1 }
+    Assert "the log counts them as window tiles (wtiles=$wtiles)" ($wtiles -eq 3)
+    Assert "this window's tile is the selected one (wsel=$wsel)" ($null -ne $wsel -and $wsel -ne '-')
+    # Its tooltip is the window's full title - one line, no pane hint under it.
+    $tipLine = Wait-Log 'pane sidebar tips .* mode=mini tile0=' $mark 2000
+    $tile0 = if ($tipLine -match ' tile0=(.*)$') { $Matches[1] } else { $null }
+    "  tile0 tip: $tile0"
+    Assert "a window tile's tip is its title alone ('$tile0')" ($null -ne $tile0 -and $tile0.Length -gt 0 -and $tile0 -notmatch '\|')
+    # Another window's tile raises that window.
+    $other = if ($o6) { $o6.Items | Where-Object { "g$($_.Group)" -ne $wsel } | Select-Object -First 1 } else { $null }
+    $mark = Get-LogCount
+    if ($other) { [void](ClickAt $top $sb @{ X = $other.X; Y = $other.Y }) }
+    Assert "clicking another window's tile is a window tile click (log)" ($null -ne (Wait-Log 'pane sidebar window tile click own=false' $mark 2000))
+    Assert "...that raises its window (log)" ($null -ne (Wait-Log 'pane sidebar raise window' $mark 2000))
+    Assert "...and drags nothing: no row drag started (log)" ($null -eq (Wait-Log 'pane sidebar row drag start' $mark 300))
+    Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
+    Start-Sleep -Milliseconds 400
+    $sb = Get-Sidebar $top
 
     "== 7b: the rail's + above every window opens a new window (T2407, Mac theAllWindowsRailsPlusOpensAWindow)"
     $railLine = Wait-Log 'pane sidebar outline mode=mini' 0 1000
