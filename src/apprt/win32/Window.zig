@@ -698,6 +698,11 @@ painted_gutters_len: usize = 0,
 /// window's surface the way they did before T2418. The positive control
 /// `split-divider.ps1` T734 counts them with; nothing in the product sets it.
 keep_vacated_gutters: bool = false,
+/// `GHOZTTY_CLEAR_WHOLE_GUTTERS`: clear every old gutter whole, the pre-T2400
+/// shape, including the parts the new bands are about to repaint and the
+/// pixels of a viewer pane standing over one. The negative control for the
+/// divider drag's flat-colour flash.
+clear_whole_gutters: bool = false,
 drag_split_handle: SplitTree(PaneView).Node.Handle = .root,
 drag_split_layout: SplitTree(PaneView).Split.Layout = .horizontal,
 drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
@@ -1695,6 +1700,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     self.frame_wait_serial = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DRAG_SERIAL_WAIT");
     self.frame_wait_any = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_WAIT_ANY");
     self.keep_vacated_gutters = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_KEEP_VACATED_GUTTERS");
+    self.clear_whole_gutters = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_CLEAR_WHOLE_GUTTERS");
     // T2442's slow frames, for stack-fold-slide.ps1 -SlowFrames.
     if (std.process.parseEnvVarInt("GHOZTTY_STACK_SLIDE_DT_MS", u32, 10)) |ms| {
         self.stack_slide_dt_ms = @floatFromInt(ms);
@@ -9155,7 +9161,44 @@ fn clearVacatedGutters(self: *Window, hwnd: w32.HWND) void {
     const dc = w32.GetDCEx(hwnd, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS) orelse return;
     defer _ = w32.ReleaseDC(hwnd, dc);
     _ = w32.IntersectClipRect(dc, box.left, box.top, box.right, box.bottom);
+    if (!self.clear_whole_gutters) self.excludeFromGutterClear(hwnd, dc);
     self.paintAlphaCorrect(dc, paintVacatedGutters);
+}
+
+/// Keep the gutter clear off two kinds of pixel (T2400). This clear and the
+/// band paint after it are separate GDI flushes, and the compositor can show
+/// a frame between them - on a divider drag it did, two frames in every
+/// tick: the whole old gutter flat background, no bar, no card rims.
+///
+/// * A gutter that is still a gutter: the new bands are painted over it
+///   straight after, so clearing it first only ever shows the flash.
+/// * A viewer pane: it is a GDI child, so its pixels live in this window's
+///   surface, and it painted them at its new place during the batch. The
+///   clear reaches under panes on purpose - a terminal's renderer covers the
+///   strip once it presents - but nothing repaints a viewer, so a clear there
+///   is a band of background over its address bar until its next paint.
+fn excludeFromGutterClear(self: *Window, hwnd: w32.HWND, dc: w32.HDC) void {
+    if (self.stackGrid()) |laid| {
+        var grid = laid;
+        defer grid.deinit();
+        for (0..grid.result.dividers.items.len) |i| {
+            const r = winRect(grid.dividerGutter(i));
+            _ = w32.ExcludeClipRect(dc, r.left, r.top, r.right, r.bottom);
+        }
+        for (grid.result.stack_handles.items, 0..) |sh, i| {
+            if (std.meta.activeTag(sh.kind) != .between) continue;
+            const r = winRect(grid.stackHandleGutter(i));
+            _ = w32.ExcludeClipRect(dc, r.left, r.top, r.right, r.bottom);
+        }
+    }
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| {
+        if (entry.view.viewer() == null) continue;
+        const h = entry.view.hwnd() orelse continue;
+        if (w32.IsWindowVisible(h) == 0) continue;
+        const r = childClientRect(hwnd, h) orelse continue;
+        _ = w32.ExcludeClipRect(dc, r.left, r.top, r.right, r.bottom);
+    }
 }
 
 fn paintVacatedGutters(self: *Window, hdc: w32.HDC) void {
