@@ -191,10 +191,8 @@ pub const List = struct {
         focused: bool,
         tabs: []const Tab,
         /// The window's title was typed by the user, so `+rename` leaves it
-        /// alone (Mac 7e2d0a9da). Always written, in the Mac encoder's
-        /// position. Windows does not record who set a title yet (T2404), and
-        /// until it does `+rename` overwrites any title, so `false` is the
-        /// true answer here.
+        /// alone (Mac 7e2d0a9da, T2404). Always written, in the Mac encoder's
+        /// position.
         title_set_by_user: bool = false,
         /// T231. Windows-only for now (the Mac half is filed); null omits the
         /// field entirely, so the golden Mac shape below is unchanged.

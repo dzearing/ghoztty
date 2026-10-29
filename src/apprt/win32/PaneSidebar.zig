@@ -5076,7 +5076,9 @@ fn renamePane(app: *App, p: *PaneView, name: ?[]const u8) void {
 /// so it is the tab's title that is pinned - unless the window carries a
 /// window-wide pin, which is what its rows show and so what was edited.
 fn pinWindowName(w: *Window, t: usize, name: ?[]const u8) void {
-    if (w.title_override) |o| if (o.len > 0) return w.setTitleOverride(name);
+    // The user typed it (or dragged it into a group), so it outranks a
+    // script's `+rename` (T2404).
+    if (w.title_override) |o| if (o.len > 0) return w.setTitleOverrideBy(name, .user);
     w.setTabTitlePin(t, name);
 }
 

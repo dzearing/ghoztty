@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-28T17:05:35-07:00",
-    "commit":  "ef59b33fb",
+    "generated":  "2026-10-28T17:25:43-07:00",
+    "commit":  "f23cc7d8c",
     "uncommitted":  [
-
+                        "test/win32/layout-blob-cross-lineage.ps1",
+                        "test/win32/window-title.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -227,7 +228,7 @@
                   "test/win32/keybinds-t01.ps1":  "77d86dafe21d72ca1424579503a72fc62342e22097c50d16286df096d508b653",
                   "test/win32/key-state-pill.ps1":  "c5d814a9ca33fba96fa311ecdbe4e867d76a46e3c9dfe528711c2b0551319757",
                   "test/win32/launch-preflight-audit.ps1":  "48099d9b4bdad7536379153e2e9eca0138daee304cdb496c6dd33c1cc27f67f0",
-                  "test/win32/layout-blob-cross-lineage.ps1":  "96131f57b6ed02a56e2b144b327dfefe31c10c630ae9c354d89df921f8552471",
+                  "test/win32/layout-blob-cross-lineage.ps1":  "01c5b4b2fe3b2338dff23d55dabf2b19dc0e9123ecf07d81591de0e45229783e",
                   "test/win32/layout-blobs.ps1":  "c4f8e6450046624eb2cff3a62643d2091ab71fc7d045cb710e2b79fe9a619091",
                   "test/win32/layout-capture-cost.ps1":  "1fb2a39a3d332f836f465d15974d2cb26d26fc8496ee69ffbf91bfa3142f23c8",
                   "test/win32/ledger-dupes.ps1":  "f693ddaeeb788720bcec7d91a74af3342bc299cea6746c4fecfc7e3930d65635",
@@ -559,7 +560,7 @@
                   "test/win32/window-name-restore.ps1":  "6ed6b2d1c48dda4f6038f410ad260a94efc52d458d8b4d5a6ae6b3ad24579bfe",
                   "test/win32/window-placement-isolation.ps1":  "20d8b605382eb89ef87c19898b48f0c3a195236f29a7ff46d82f92a2ff87e560",
                   "test/win32/window-size-memory.ps1":  "8f450ced42c46d1762c4dd0329b1204b7d21999192cfe6bfbfdfbcd497c97647",
-                  "test/win32/window-title.ps1":  "72dbfe4576fa2206a7ffeb8cbea2358b7b1b4e31acd0af82bee0f0347941eac1",
+                  "test/win32/window-title.ps1":  "2c1bf41872184f86306547c309c00ea3c994d0be4521c848b8ba9f404a25beb5",
                   "test/win32/zig-repro-t476.ps1":  "18809a84f951773567de7a6ed8dbe628d2ad3a7872b339e292a2bebd0afb1364"
               }
 }

@@ -1,5 +1,9 @@
 # Cross-LINEAGE layout blobs (tracker T337) - a macOS-shaped blob rebuilds here.
 #
+# @parallel-unsafe - its B1 asserts nothing from zig-out is still running, a
+# box-wide question another worker's app answers "yes" to (2026-10-28, T2404's
+# due run: red beside three workers, ALL PASS alone).
+#
 # A layout blob is opaque to the agent by design, so its schema is a contract
 # between two VIEWERS - and the two lineages never shared one. macOS pushes a
 # `SessionLayoutManifest.Entry`: camelCase keys, ONE blob per TAB (siblings share

@@ -9,6 +9,7 @@ const windows = std.os.windows;
 
 const App = @import("App.zig");
 const IpcSessionAwait = @import("ipc_session_await.zig");
+const window_title_owner = @import("window_title_owner.zig");
 const LayoutUndo = @import("LayoutUndo.zig");
 const ProcessTree = @import("ProcessTree.zig");
 const provenance = @import("provenance.zig");
@@ -1839,6 +1840,13 @@ fn handleRename(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         .pane => |pane| pane.parentWindow(),
     };
 
+    // T2404: a title the user typed outranks any script's - leave it, and
+    // say so (the skills that tag a title, `(prep)`/`(ready)`, ignore a
+    // failed rename). Checked and set on this one UI-thread turn, so a user
+    // rename cannot land between them (Mac IPCServer `onMain`).
+    if (window_title_owner.keptFromScript(window.title_override, window.title_set_by_user)) |kept|
+        return try errorResponse(ctx.alloc, window_title_owner.refusal_fmt, .{ target, kept });
+
     // titleOverride semantics: the override wins over terminal-reported
     // titles until cleared (Mac BaseTerminalController.titleOverride).
     // T92: `--title=""` CLEARS the pin (Mac fixed the same in 9c7665354)
@@ -2316,6 +2324,7 @@ fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             .target = window.ipc_name,
             .focused = window_active.isActive(activation, @intFromPtr(hwnd)),
             .tabs = tabs.items,
+            .title_set_by_user = window_title_owner.keptFromScript(window.title_override, window.title_set_by_user) != null,
             .chrome = try windowChrome(arena, window),
             // T609: a cross-machine window publishes its reconnect ladder's
             // state; a local one has no link to report on, and the absent

@@ -1136,12 +1136,15 @@ fn findLeaf(self: *const SessionRoster, id: []const u8) ?LeafRecord {
 pub const WindowName = struct {
     text: []const u8,
     pinned: bool,
+    /// A pinned name the user typed (T2404): it comes back as theirs, so a
+    /// script's `+rename` still leaves it.
+    by_user: bool = false,
 };
 
 pub fn persistedWindowNameFor(self: *const SessionRoster, id: []const u8) ?WindowName {
     const rec = self.findLeaf(id) orelse return null;
     if (rec.window.title_override) |t| {
-        if (t.len > 0) return .{ .text = t, .pinned = true };
+        if (t.len > 0) return .{ .text = t, .pinned = true, .by_user = rec.window.title_set_by_user orelse false };
     }
     if (rec.leaf.title) |t| {
         if (t.len > 0) return .{ .text = t, .pinned = false };

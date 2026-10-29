@@ -12,6 +12,9 @@
 #       updates; empty commit re-derives from the focused pane.
 #   S6  Precedence stack: window pin > tab pin > pane title, peeled one
 #       level at a time.
+#   S7  A title the user typed outranks every script's (T2404, Mac
+#       7e2d0a9da): +rename and +rename --title="" are refused with Mac's
+#       error, +list --json reports title_set_by_user, a clear frees it.
 #
 # Titles are asserted via `+list --json` (window.title = real titlebar
 # text incl. the Debug marker; tabs[].title; leaf terminal.title = pane).
@@ -267,6 +270,50 @@ try {
     $s = Get-State
     Assert ($s.Tab -eq 'T92PPP') 'S6 tab re-derived from the pane'
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'S6 no crash through the whole sequence'
+
+    # --- S7: a title the user typed outranks every script's (T2404) ---------
+    # Mac 7e2d0a9da: while the user's title is up, +rename changes nothing
+    # (not even a clear) and fails naming it; +list --json says who set it;
+    # once the user clears it, scripts rename again.
+    Write-Host '== S7: user title outranks +rename'
+    function Get-ByUser { [bool](& $exe +list --json | ConvertFrom-Json).data.windows[0].title_set_by_user }
+    # The CLI reports a refusal on stderr; cmd merges it so PS5.1 never wraps
+    # it in an ErrorRecord (which -ErrorAction Stop would throw on).
+    function Invoke-Rename([string]$title) {
+        $o = cmd /c "`"$exe`" +rename --target=$($script:win) --title=$title 2>&1"
+        @{ Out = ($o -join "`n"); Code = $LASTEXITCODE }
+    }
+    & $exe +rename --target=$script:win --title=T2404SCRIPT | Out-Null
+    Assert (Wait-Cond { TitlebarIs 'T2404SCRIPT' }) 'S7 script +rename pins the titlebar'
+    Assert (-not (Get-ByUser)) 'S7 a script title reports title_set_by_user=false'
+    Assert ((Invoke-Rename 'T2404SCRIPT2').Code -eq 0) 'S7 a script may rename over a script title'
+    Assert (Wait-Cond { TitlebarIs 'T2404SCRIPT2' }) 'S7 script-over-script rename lands'
+    Send-TestKeys -Window $top -Target $surface -Modifiers ctrl, shift -Key R | Out-Null
+    $dlg = [IntPtr]::Zero
+    for ($t = 0; $t -lt 100 -and $dlg -eq [IntPtr]::Zero; $t++) { Start-Sleep -Milliseconds 50; $dlg = Find-Dialog }
+    Assert ($dlg -ne [IntPtr]::Zero) 'S7 Change Window Title opens'
+    if ($dlg -ne [IntPtr]::Zero) {
+        Assert (Commit-Dialog $dlg 'T2404MINE') 'S7 user commits a title'
+        Assert (Wait-Cond { TitlebarIs 'T2404MINE' }) 'S7 the user title pins the titlebar'
+        Assert (Get-ByUser) 'S7 +list --json reports title_set_by_user=true'
+        $r = Invoke-Rename 'T2404SCRIPT3'
+        Assert ($r.Code -ne 0) "S7 +rename over the user's title fails (exit $($r.Code))"
+        $want = "window '$($script:win)' was renamed by the user ('T2404MINE'); +rename leaves a user's title alone until they clear it"
+        Assert ($r.Out -like "*$want*") "S7 the error names the user's title in Mac's words (got: $($r.Out))"
+        Assert (TitlebarIs 'T2404MINE') 'S7 the refused rename changed nothing'
+        $r = Invoke-Rename ''
+        Assert ($r.Code -ne 0) "S7 +rename --title='' cannot clear the user's title either"
+        Assert (TitlebarIs 'T2404MINE') 'S7 the refused clear changed nothing'
+        Send-TestKeys -Window $top -Target $surface -Modifiers ctrl, shift -Key R | Out-Null
+        $dlg = [IntPtr]::Zero
+        for ($t = 0; $t -lt 100 -and $dlg -eq [IntPtr]::Zero; $t++) { Start-Sleep -Milliseconds 50; $dlg = Find-Dialog }
+        if ($dlg -ne [IntPtr]::Zero) { Commit-Dialog $dlg '' | Out-Null }
+        Assert (Wait-Cond { -not (TitlebarIs 'T2404MINE') }) 'S7 the user clears their title'
+        Assert (-not (Get-ByUser)) 'S7 a cleared title reports title_set_by_user=false'
+        Assert ((Invoke-Rename 'T2404AFTER').Code -eq 0) 'S7 once cleared, +rename succeeds again'
+        Assert (Wait-Cond { TitlebarIs 'T2404AFTER' }) 'S7 and its title lands'
+        & $exe +rename --target=$script:win --title= | Out-Null
+    }
 
     & $exe +close --target=$script:win | Out-Null
     Start-Sleep -Seconds 1

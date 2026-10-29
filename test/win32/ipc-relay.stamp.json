@@ -1,13 +1,13 @@
 {
     "guard":  "ipc-relay",
     "script":  "test/win32/ipc-relay.ps1",
-    "generated":  "2026-10-28T16:14:15-07:00",
-    "commit":  "f6db6f1cb",
+    "generated":  "2026-10-28T16:51:20-07:00",
+    "commit":  "03e65c241",
     "uncommitted":  [
                         "src/apprt/ipc/list.zig"
                     ],
     "files":  {
-                  "src/apprt/ipc/list.zig":  "3bae1fc4d305135b585a0f956d8ab178f6c9b2ca9d758b07cf4abc4408c7436b",
+                  "src/apprt/ipc/list.zig":  "2e213fafa984e8eff65b6bde243069cacdfded75c83610ff570d1f82eee6315c",
                   "src/apprt/win32/remote_reconnect.zig":  "9d6a394fad06de85157f2c3615fce271ce7841c6b9c8ea82c47c6385d03538a4",
                   "src/apprt/win32/RemoteReconnect.zig":  "e6d8c713bcf62325134f244262962ff94da85cb5cb68b54ceb7848c5a2f7f316",
                   "src/remote/relay_dial.zig":  "f7d24bc69e8063100a4dc5a1b72f417e22265410bd9fb915efb704e7d5c6f137",

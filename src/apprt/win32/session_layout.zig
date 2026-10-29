@@ -304,6 +304,10 @@ pub const Window = struct {
     frame_dpi: ?u32 = null,
     maximized: bool = false,
     title_override: ?[]const u8 = null,
+    /// `title_override` was typed by the user, so `+rename` leaves it (T2404,
+    /// Mac `windowTitleSetByUser`). True or absent: a script's title, and
+    /// every older manifest, decode as a script's.
+    title_set_by_user: ?bool = null,
     ipc_name: ?[]const u8 = null,
     active_tab: u32 = 0,
     tabs: []const Tab = &.{},
@@ -913,6 +917,7 @@ test "serialize + parse round-trip preserves windows, tabs, tree, order" {
             .frame_dpi = 192,
             .maximized = false,
             .title_override = "My Window",
+            .title_set_by_user = true,
             .ipc_name = "dev",
             .active_tab = 0,
             .tabs = &w0_tabs,
@@ -948,6 +953,10 @@ test "serialize + parse round-trip preserves windows, tabs, tree, order" {
     // window captured without one stays absent rather than reading as 0.
     try testing.expectEqual(@as(?u32, 192), w0.frame_dpi);
     try testing.expectEqual(@as(?u32, null), v.windows[1].frame_dpi);
+    // T2404: the user's pin keeps its owner; a window without one writes
+    // nothing, so it reads back absent (a script's).
+    try testing.expectEqual(@as(?bool, true), w0.title_set_by_user);
+    try testing.expectEqual(@as(?bool, null), v.windows[1].title_set_by_user);
     try testing.expect(!w0.maximized);
     try testing.expectEqualStrings("My Window", w0.title_override.?);
     try testing.expectEqualStrings("dev", w0.ipc_name.?);

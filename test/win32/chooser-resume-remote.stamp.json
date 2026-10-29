@@ -1,16 +1,15 @@
 {
     "guard":  "chooser-resume-remote",
     "script":  "test/win32/chooser-resume-remote.ps1",
-    "generated":  "2026-10-25T01:57:05-07:00",
-    "commit":  "4416f4c64",
+    "generated":  "2026-10-28T16:53:14-07:00",
+    "commit":  "03e65c241",
     "uncommitted":  [
-                        "src/apprt/win32/chooser_sessions.zig",
                         "src/apprt/win32/SessionRoster.zig"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_sessions.zig":  "bd16fe31296c83fb3927688984e20cdf083430e0fb4107b85b34f682485646e7",
                   "src/apprt/win32/host_defaults.zig":  "994b374543855d65b0203cfd687650c1d07d6ff5ff645d0455854f50e4ca59be",
-                  "src/apprt/win32/SessionRoster.zig":  "0940697e1144a42a514209de8de46529985a30f8168d40dc572e0c25138d75a4",
+                  "src/apprt/win32/SessionRoster.zig":  "b54aa4c8be55fd85f5f5ccadf2ba49384c08aa268d3de0e029a7ad74c817566a",
                   "test/win32/chooser-resume-remote.ps1":  "91087285ebb4512e99a335ec8e8bb54e217dd8c1dcc74ac030f45f837a0ef1d2",
                   "test/win32/lib/ChooserCursor.ps1":  "899edb2b38d63abcb8af6734687abf41a0f9e5906e1cd3d9508cc2b1e7cb1023",
                   "test/win32/lib/PipeBridge.ps1":  "448d2d97a731911d9a9dea55e529a64a546e425cbf38df6ba3bb083d7794000d"

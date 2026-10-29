@@ -26,6 +26,7 @@ const IpcServer = @import("IpcServer.zig");
 const IpcSessionAwait = @import("ipc_session_await.zig");
 const MachineChooser = @import("MachineChooser.zig");
 const SessionRoster = @import("SessionRoster.zig");
+const window_title_owner = @import("window_title_owner.zig");
 const SessionCpuProbe = @import("SessionCpuProbe.zig");
 const SessionRosterProbe = @import("SessionRosterProbe.zig");
 const DirectoryProbe = @import("DirectoryProbe.zig");
@@ -3731,6 +3732,7 @@ fn captureWindow(
         .frame_dpi = if (frame_max.frame != null) windowDpi(win.hwnd) else null,
         .maximized = frame_max.maximized,
         .title_override = if (win.title_override) |t| try arena.dupe(u8, t) else null,
+        .title_set_by_user = window_title_owner.persisted(win.title_override, win.title_set_by_user),
         .ipc_name = if (win.ipc_name) |n| try arena.dupe(u8, n) else null,
         .active_tab = @intCast(win.active_tab),
         .tabs = tabs,
@@ -5496,7 +5498,8 @@ fn restoreWindow(
     }
 
     // Window-level presentation: title pin, active tab, outer placement.
-    if (win.title_override) |t| window.setTitleOverride(t);
+    // T2404: a user's pin comes back as the user's; absent is a script's.
+    if (win.title_override) |t| window.setTitleOverrideBy(t, window_title_owner.restoredSetter(win.title_set_by_user));
     // Only the sidebar's per-window part is restored (T2336, Mac
     // b07b7fa0b): its expanded and hidden flags are every window's, from
     // the defaults - the copy each window records is for an older build, or
@@ -7468,7 +7471,7 @@ fn applyResumeName(window: *Window, name: ?SessionRoster.WindowName) void {
     const n = name orelse return;
     if (n.text.len == 0) return;
     if (n.pinned) {
-        window.setTitleOverride(n.text);
+        window.setTitleOverrideBy(n.text, if (n.by_user) .user else .script);
         return;
     }
     if (window.tab_count == 0) return;

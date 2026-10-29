@@ -119,6 +119,10 @@ test {
     _ = @import("win32/pane_sidebar_add.zig");
     _ = @import("win32/pane_sidebar_rename.zig");
 
+    // Pure win32 window-title ownership (T2404): a user's title outranks a
+    // script's `+rename`.
+    _ = @import("win32/window_title_owner.zig");
+
     // Pure win32 pane sidebar search field (T1877): the one-line editing
     // model, Escape's two verbs, and which surfaces filter. Imports only std.
     // Every lane.

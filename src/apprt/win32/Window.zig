@@ -37,6 +37,7 @@ const pane_sidebar_add = @import("pane_sidebar_add.zig");
 const sidebar_order = @import("pane_sidebar_order.zig");
 const sidebar_shared = @import("pane_sidebar_shared.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
+const window_title_owner = @import("window_title_owner.zig");
 const PaneGrabHandle = @import("PaneGrabHandle.zig");
 const pane_grab_handle = @import("pane_grab_handle.zig");
 const terminal = @import("../../terminal/main.zig");
@@ -987,6 +988,13 @@ pending_persistence_notice: ?[]const u8 = null,
 /// pin → active tab title → active pane title (T92). Owned. Tab labels
 /// still track their own (possibly pinned) tab titles.
 title_override: ?[:0]u8 = null,
+
+/// `title_override` was typed by the user - Change Window Title, the pane
+/// sidebar - not set by a script (`+rename`, `+new-window --title`). A user's
+/// title outranks every script's: `+rename` leaves it until the user clears
+/// it (T2404, Mac `windowTitleIsUsers`). Set only by `setTitleOverrideBy`,
+/// with the pin, so it persists with it.
+title_set_by_user: bool = false,
 
 /// This window's canonical IPC name: `+new-window --target` when given,
 /// else auto-generated `window-N` (Mac windowName semantics). Owned; also
@@ -11957,7 +11965,14 @@ pub fn updateWindowTitle(self: *Window) void {
 /// Set (or clear, with null) the window title pin. Owned copy; wins over
 /// tab/pane titles until cleared, like the Mac windowTitleOverride. An
 /// empty title clears too (T92) — "pin empty" is never meaningful.
+/// A script's pin (`+rename`, `+new-window --title`); see `setTitleOverrideBy`.
 pub fn setTitleOverride(self: *Window, title: ?[]const u8) void {
+    self.setTitleOverrideBy(title, .script);
+}
+
+/// Set (or clear) the pin as `setter` - the user's outranks a script's
+/// `+rename` until cleared (T2404, `window_title_owner`).
+pub fn setTitleOverrideBy(self: *Window, title: ?[]const u8, setter: window_title_owner.Setter) void {
     const alloc = self.app.core_app.alloc;
     const copy: ?[:0]u8 = if (title) |t|
         (if (t.len == 0) null else alloc.dupeZ(u8, t) catch return)
@@ -11965,6 +11980,7 @@ pub fn setTitleOverride(self: *Window, title: ?[]const u8) void {
         null;
     if (self.title_override) |old| alloc.free(old);
     self.title_override = copy;
+    self.title_set_by_user = window_title_owner.byUserAfterSet(title, setter);
     self.updateWindowTitle();
     // T265: the pin appearing or clearing changes what the band shows — the
     // standalone caption's title text, or the merged row's drag-band title.

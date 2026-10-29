@@ -558,7 +558,8 @@ pub fn finish(self: *RenameDialog) void {
     const target = self.target_surface;
     self.close();
     switch (level) {
-        .window => window.setTitleOverride(title),
+        // Change Window Title: the user's, so `+rename` leaves it (T2404).
+        .window => window.setTitleOverrideBy(title, .user),
         .tab => if (target) |s| if (s.pane_view) |pv| {
             // Address-only liveness resolve; a pane closed while the
             // dialog was open simply no-ops.

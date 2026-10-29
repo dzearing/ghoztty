@@ -92,6 +92,8 @@ pub const Entry = struct {
     /// `Entry.windowTitleOverride` — the window-level pin, held by exactly one
     /// entry of a tab group.
     window_title: ?[]const u8 = null,
+    /// `Entry.windowTitleSetByUser` (T2404): `window_title` is the user's.
+    window_title_set_by_user: ?bool = null,
     ipc_name: ?[]const u8 = null,
     /// `Entry.deskVariant.seed` (T1832): the window's own gradient. Null is
     /// the default desk.
@@ -150,6 +152,7 @@ pub fn parseEntry(arena: Allocator, v: std.json.Value) !Entry {
         .tab_index = int(obj.get("tabIndex")) orelse 0,
         .tab_title = str(obj.get("titleOverride")),
         .window_title = str(obj.get("windowTitleOverride")),
+        .window_title_set_by_user = boolean(obj.get("windowTitleSetByUser")),
         .ipc_name = str(obj.get("ipcName")),
         .desk_variant = deskSeed(obj.get("deskVariant")),
         .pane_sidebar_pinned = boolean(obj.get("paneSidebarPinned")),
@@ -205,6 +208,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
         const tabs = try arena.alloc(session_layout.Tab, g.items.len);
         var frame: ?session_layout.Frame = null;
         var window_title: ?[]const u8 = null;
+        var window_title_set_by_user: ?bool = null;
         var ipc_name: ?[]const u8 = null;
         var desk_variant: ?u64 = null;
         var sidebar_pinned: ?bool = null;
@@ -219,7 +223,11 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             // A tab sibling inherits the group's frame, so the first entry that
             // has one wins (Mac stores it on the group's window, not per tab).
             if (frame == null) frame = entry.frame;
-            if (window_title == null) window_title = entry.window_title;
+            // The bit belongs to the entry holding the pin.
+            if (window_title == null) {
+                window_title = entry.window_title;
+                if (window_title != null) window_title_set_by_user = entry.window_title_set_by_user;
+            }
             if (ipc_name == null) ipc_name = entry.ipc_name;
             if (desk_variant == null) desk_variant = entry.desk_variant;
             // Mac records the sidebar per controller, which every tab of a
@@ -244,6 +252,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             // pixels and opened every Mac window at half size.
             .frame_dpi = if (frame != null) mac_points_dpi else null,
             .title_override = window_title,
+            .title_set_by_user = window_title_set_by_user,
             .ipc_name = ipc_name,
             .active_tab = 0,
             .tabs = tabs,
@@ -915,7 +924,7 @@ test "T337: tab siblings become one window in tabIndex order" {
     const first = try translate(arena,
         \\{"id":"e1","tabGroupID":"GGGGGGGG-0000-4000-8000-000000000001",
         \\ "tabIndex":0,"titleOverride":"first","ipcName":"dev",
-        \\ "windowTitleOverride":"pinned",
+        \\ "windowTitleOverride":"pinned","windowTitleSetByUser":true,
         \\ "frame":{"x":10,"y":20,"width":800,"height":600},
         \\ "tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
     );
@@ -933,6 +942,9 @@ test "T337: tab siblings become one window in tabIndex order" {
     try testing.expectEqualStrings("dev", grouped.id);
     try testing.expectEqualStrings("dev", grouped.ipc_name.?);
     try testing.expectEqualStrings("pinned", grouped.title_override.?);
+    // T2404: Mac's by-user bit rides with the pin; an unpinned window has none.
+    try testing.expectEqual(@as(?bool, true), grouped.title_set_by_user);
+    try testing.expectEqual(@as(?bool, null), windows[1].title_set_by_user);
     try testing.expectEqual(@as(i32, 800), grouped.frame.?.w);
     // T1979: the points are declared as 96-dpi units so the restore scales
     // them; a window with no frame claims no scale.
