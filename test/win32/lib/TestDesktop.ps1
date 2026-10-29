@@ -269,6 +269,7 @@
 # @input-desktop-exception: translucent-window.ps1 -- (T1787) the subject IS the DWM composite of a per-pixel-alpha window over a backdrop; DWM composes only the input desktop, and a PrintWindow capture never sees what shows through.
 # @input-desktop-exception: background-blur.ps1 -- (T1788) the subject IS DWM blurring what shows through a translucent window; DWM composes only the input desktop, so a capture anywhere else sees neither the backdrop nor the blur.
 # @input-desktop-exception: frame-lab.ps1 -- (T2392) the subject IS the real pointer decoder and the real DWM composition: GetCursorPos must read back every point SendInput was given, and WGC must drop presents the accounting names; neither exists off the input desktop.
+# @input-desktop-exception: fullscreen-guard.ps1 -- (T1814) the subject IS who holds the input desktop's foreground under a fullscreen window; a background desktop has no foreground to steal.
 # @input-desktop-exception: rdp-session.ps1 -- (T1253/T1316) its subject is the desktop being shipped over the wire, and arm G reads the COMPOSITE of a viewer surface with the dim overlay blended onto it; DWM composes only the input desktop.
 #
 # `lib\` IS SWEPT TOO as of T780, and a HELPER is not declared here - it states

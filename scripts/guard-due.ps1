@@ -4270,6 +4270,23 @@ $GuardTable = @(
             'test\win32\lib\FrameLabDriver.ps1'
         )
     },
+    # The end-to-end proof that no automated run takes the foreground from a
+    # fullscreen app (T1814): the presence gate, every declared input-desktop
+    # exception under a real fullscreen window, and a full soak round. Live
+    # sections need -Live and nobody at the box, so it stamps only from a real
+    # live run; ADVISORY, because a gate the user's presence decides must not
+    # wedge `validate` while they are using their machine.
+    [pscustomobject]@{
+        Name     = 'fullscreen-guard'
+        Script   = 'test\win32\fullscreen-guard.ps1'
+        Stamp    = 'test\win32\fullscreen-guard.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'test\win32\fullscreen-guard.ps1',
+            'test\win32\lib\UserPresence.ps1',
+            'scripts\soak-daemon.ps1'
+        )
+    },
     # The T2373 frame lab's input driver (T2384). Input-to-photon lag and the
     # reversal check are measured against its stamps, and it moves the user's
     # real pointer: a timer that drifts, a gate that lets it inject under the
