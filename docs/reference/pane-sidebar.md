@@ -90,7 +90,10 @@ shows the same view of it (see *Shared across windows*). Read before touching
   under the other. Two easings side by side drifted a frame or two apart —
   the card grew over the grid, or the grid slid under it. With no grid glide
   to follow it eases alone on the grid's curve. The glide starts in the
-  controller's turn (`noteModeChange`), with the grid's.
+  controller's turn (`noteModeChange`), with the grid's. Freed mid-glide (the
+  sidebar hidden, its window closed), the card's 120Hz timer stops itself and
+  `deinit` drops its grid-step observer
+  (`PaneTeardownTests.aSidebarGlideFreedMidGlideStopsItsTimer`).
   - **The content crossfades at its own size**: mid-glide the panel (at its
     width) and the rail (at its 52pt) are both drawn, left-aligned, cut by
     the card as drawn, their opacities by how far the card is between the

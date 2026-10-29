@@ -416,6 +416,12 @@ final class PaneSidebarCardGlide: ObservableObject {
     /// How long it waits for the grid's glide to begin before going on alone.
     static let followWait: CFTimeInterval = 0.15
 
+    deinit {
+        // Freed mid-glide: `finish()` never ran to drop the grid-step
+        // observer (the timer stops itself — see `start`).
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+
     /// The card's mode and width now. A new mode glides from the width it
     /// is drawn at; a new width while gliding is eased toward.
     func update(mode: PaneSidebarState.Mode, width to: CGFloat) {
@@ -441,8 +447,12 @@ final class PaneSidebarCardGlide: ObservableObject {
             }
         }
         guard timer == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.step() }
+        // Freed mid-glide (the sidebar hidden, its window closed), this never
+        // reaches `finish()`: the timer stops itself rather than firing a no-op
+        // 120 times a second for the rest of the app's life.
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] timer in
+            guard let self else { return timer.invalidate() }
+            MainActor.assumeIsolated { self.step() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer

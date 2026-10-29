@@ -326,6 +326,18 @@ corrected at its end. (A Core Animation slide used to run against the hand.)
 - Tests: `aStripPulledOutFollowsTheHandWithNothingSliding` (every card sampled
   through a hand-paced drag: nothing on its own clock, the gutter its width,
   the pane seen on its way in, the bar over the drawn gutter).
+- **A glide's clock dies with its stage.** The 120Hz step timer
+  (`PaneStageView.startGlideTimer`) is run-loop-retained, so a stage freed
+  mid-glide (its window or tab closed while a split change eased) stops it
+  itself — weak `self` gone — and `deinit` invalidates it; left alone it fired a
+  no-op 120 times a second for the rest of the app's life.
+- **The layout closure holds its stack state weakly.** The grid hands
+  `PaneStackState.noteGrid` a closure that lays the grid out again for a drag
+  (`layoutGrid`); the state stores it, so the closure must not capture the
+  state strongly. It did (v1.44.0–v1.50.0): every closed window's state kept
+  itself and, through the captured tree, every pane — terminals, renderer
+  threads, three window-sized GPU render targets each (~85 MB a window).
+  Test: `PaneTeardownTests.closingAWindowFreesItsPanes`.
 
 ## Dragging a strip
 

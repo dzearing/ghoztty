@@ -1094,6 +1094,42 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     display_link.stop() catch {};
                 }
             }
+
+            if (!visible) self.releaseHiddenTargets();
+        }
+
+        /// The surface is fully occluded (its window is covered, minimized,
+        /// on another Space, or the app is hidden): nothing draws until it is
+        /// visible again (`Thread.drawFrame` returns early), yet every
+        /// swap-chain frame still holds a full-size render target — three
+        /// window-sized IOSurfaces per pane. Shrink them to 1x1. The picture
+        /// on screen survives, because the layer retains the surface it shows
+        /// (`presented_target_outlives_frame`); the next real draw finds each
+        /// frame's target the wrong size and re-creates it, as it does after
+        /// any resize.
+        ///
+        /// Only for APIs that keep the presented image independent of the
+        /// frame (Metal). OpenGL re-presents its last target on a no-op draw,
+        /// so freeing it there would show garbage.
+        fn releaseHiddenTargets(self: *Self) void {
+            if (comptime !@hasDecl(GraphicsAPI, "presented_target_outlives_frame")) return;
+
+            self.draw_mutex.lock();
+            defer self.draw_mutex.unlock();
+            if (self.swap_chain.defunct) return;
+
+            // Wait out frames still on the GPU so none renders into a target
+            // as it is freed (same order as drawFrame: mutex, then frames).
+            const n = SwapChain.buf_count;
+            for (0..n) |_| self.swap_chain.frame_sema.wait();
+            defer for (0..n) |_| self.swap_chain.frame_sema.post();
+
+            for (&self.swap_chain.frames) |*frame| {
+                if (frame.target.width <= 1 and frame.target.height <= 1) continue;
+                frame.resize(self.api, 1, 1) catch |err| {
+                    log.warn("could not release hidden render target err={}", .{err});
+                };
+            }
         }
 
         /// Set the new font grid.

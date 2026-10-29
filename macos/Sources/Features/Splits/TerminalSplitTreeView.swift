@@ -204,15 +204,19 @@ private struct PaneGrid: View {
             let _ = slots == nil
                 ? stackState.noteStacks(layout.stacks)
                 : layout.stacks.forEach { stackState.noteItems($0.items, fits: $0.fits) }
-            let _ = slots == nil ? stackState.noteGrid { [node, size = geo.size, paneGap, ranks, stackState] in
+            // `stackState` stores this closure (`layoutGrid`), so it is held
+            // WEAKLY here: captured strongly, the state retained itself, and
+            // through `node` every pane of the tree — a closed window's
+            // panes, terminals and render targets were never freed.
+            let _ = slots == nil ? stackState.noteGrid { [node, size = geo.size, paneGap, ranks, weak stackState] in
                 PaneLayout.compute(
                     node,
                     in: CGRect(origin: .zero, size: size),
                     metrics: .forStyle(paneGap: paneGap),
                     rank: { ranks[$0.id] },
-                    pin: { stackState.pins[$0] },
-                    shares: { stackState.shares[$0] },
-                    shown: { stackState.shownRun($0) })
+                    pin: { stackState?.pins[$0] },
+                    shares: { stackState?.shares[$0] },
+                    shown: { stackState?.shownRun($0) })
             } : ()
             ZStack(alignment: .topLeading) {
                 if let slots {
