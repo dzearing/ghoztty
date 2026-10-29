@@ -1,0 +1,16 @@
+{
+  "version": "1.50.0",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "A rail of windows", "text": "Collapsed in all-windows mode, the rail shows one tile per window, in the list's order, with no dividers. Click a tile to bring that window forward." },
+        { "title": "See which windows are busy", "text": "A folded window's row, and every window's rail tile, shimmers while any of its panes is busy." },
+        { "title": "Your window stands out", "text": "The window you're in is highlighted in the all-windows list whether it's folded or open, and on the rail." },
+        { "title": "Groups fold cleanly", "text": "Windows without a project: prefix list above every group, so folding a group hides all of it. Every tab in a tab group joins its group." },
+        { "title": "The right + on the rail", "text": "The collapsed rail's + adds a pane in Panes mode and opens a window in all-windows mode." },
+        { "title": "Snappier drags", "text": "Dragging a window or group starts without lag, nothing lights up under the pointer mid-drag, and the dragged item lifts on clear glass and glides from where you let it go." }
+      ]
+    }
+  ]
+}

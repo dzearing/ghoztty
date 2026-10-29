@@ -29,7 +29,6 @@ struct PaneSidebarRow: View {
     @ObservedObject private var rename = PaneSidebarRename.shared
     @Environment(\.paneSidebarEmphasized) private var windowIsKey
     @Environment(\.paneSidebarInteractive) private var isInteractive
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// A terminal can be renamed here (`setUserTitle`); a viewer is named by
     /// its page.
@@ -110,7 +109,7 @@ struct PaneSidebarRow: View {
             .frame(height: Self.height - Self.gap)
             .padding(.leading, SidePanelRow.textInset + indent)
             .padding(.trailing, SidePanelRow.textInset)
-            .background(busySheen)
+            .background(PaneSidebarBusySheen(isBusy: isBusy))
             .background(fill)
             // Hover is the WHOLE row, button included. The drag source below
             // stops short of the button, so hover measured there ended the
@@ -205,17 +204,13 @@ struct PaneSidebarRow: View {
 
     private var tile: some View {
         ZStack(alignment: .topTrailing) {
-            ZStack {
+            PaneSidebarTilePill(
+                isSelected: isSelected, isEmphasized: isEmphasized, isBusy: isBusy, isHovered: $isHovered
+            ) {
                 PaneSidebarIcon(pane: pane, color: iconColor)
                     .frame(width: Self.iconWidth, height: 15)
                 interaction
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: Self.height - Self.gap)
-            .background(busySheen)
-            .background(rowFill)
-            .overlay(tileBorder)
-            .background(rowHover)
 
             if pane.bell && isStashed {
                 Circle()
@@ -233,22 +228,6 @@ struct PaneSidebarRow: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    /// A tile's rim, so a bare glyph on the rail reads as a button. Rail
-    /// only: a full row has its text to say that. Glassy, as a pane card's
-    /// rim is (`PaneCard.glassCard`): the same 0.5pt hairline at the same
-    /// strength, lit from above — brighter along the top edge, fading down
-    /// it — rather than one solid line. It fades with the rail itself as the
-    /// sidebar expands or collapses (the rail and the panel crossfade on
-    /// `PaneSidebarState.columnAnimation`), never snapping at the mode switch.
-    private var tileBorder: some View {
-        RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-            .strokeBorder(Self.rim(onAccent: onAccent, emphasized: isHovered, scheme: colorScheme),
-                          lineWidth: Self.rimWidth)
-            .allowsHitTesting(false)
-    }
-
-    @Environment(\.colorScheme) private var colorScheme
-
     /// A pane card's hairline.
     static let rimWidth: CGFloat = 0.5
 
@@ -263,20 +242,6 @@ struct PaneSidebarRow: View {
             (.black.opacity(emphasized ? 0.16 : 0.1), .black.opacity(emphasized ? 0.08 : 0.04))
         }
         return LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom)
-    }
-
-    /// Busy: a slanted band of light sweeps across the row's pill from right
-    /// to left over a slow, soft drift — the same in both modes, so a tile is
-    /// its row without the text.
-    @ViewBuilder
-    private var busySheen: some View {
-        if isBusy && !reduceMotion {
-            // Faded in and out, slowly, so it never pops on or off as work
-            // starts and stops.
-            PaneSidebarTileSheenLayer(cornerRadius: SidePanelRow.cornerRadius)
-                .accessibilityLabel("Busy")
-                .transition(.opacity.animation(Self.busyFade))
-        }
     }
 
     static let busyFade: Animation = .easeInOut(duration: 0.6)
@@ -586,7 +551,19 @@ final class PaneSidebarRowDrag: ObservableObject {
     @Published private(set) var isSettling = false
     /// The dragged row as laid out (before any slide), in the sidebar's
     /// coordinate space — where it was, and after the drop where it landed.
-    @Published var frame: CGRect?
+    @Published var frame: CGRect? {
+        didSet {
+            // Its new place is laid out: glide there, from the next turn.
+            guard heldTop != nil, frame != oldValue else { return }
+            let generation = generation
+            DispatchQueue.main.async { [weak self] in self?.release(generation) }
+        }
+    }
+    /// Let go, the row stays where it was drawn until its new place is laid
+    /// out: the drop reorders the list at once, but `frame` is still the
+    /// row's old place until the list reports the new one — gliding from
+    /// there, it jumped back toward where it started first.
+    @Published private(set) var heldTop: CGFloat?
 
     private var startY: CGFloat = 0
     private var generation = 0
@@ -599,6 +576,7 @@ final class PaneSidebarRowDrag: ObservableObject {
         self.pane = pane
         startY = screenY
         dy = 0
+        heldTop = nil
         isSettling = false
     }
 
@@ -610,8 +588,16 @@ final class PaneSidebarRowDrag: ObservableObject {
 
     func finish(_ pane: PaneView) {
         guard self.pane === pane else { return }
+        heldTop = (frame?.minY ?? 0) + dy
         isSettling = true
+        // Dropped where it was, no new frame comes: glide anyway.
         let generation = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.release(generation) }
+    }
+
+    private func release(_ generation: Int) {
+        guard self.generation == generation, heldTop != nil else { return }
+        heldTop = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleDuration) { [weak self] in
             guard let self, self.generation == generation else { return }
             self.pane = nil
@@ -695,5 +681,64 @@ struct PaneSidebarItemButton: View {
         onAccent
             ? Color.white.opacity(isHovered ? 0.35 : 0.2)
             : Color.primary.opacity(isHovered ? 0.18 : 0.08)
+    }
+}
+
+/// A rail tile's pill: the row's fill (hover wash, selection), the busy
+/// sheen and the glassy rim, around a glyph — what every rail tile is, a
+/// pane's (`PaneSidebarRow`) or, in all windows, a window's
+/// (`PaneSidebarWindowTile`), so the two read as one kind of thing.
+struct PaneSidebarTilePill<Content: View>: View {
+    let isSelected: Bool
+    let isEmphasized: Bool
+    let isBusy: Bool
+    @Binding var isHovered: Bool
+    @ViewBuilder let content: Content
+
+    @Environment(\.paneSidebarInteractive) private var isInteractive
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack { content }
+            .frame(maxWidth: .infinity)
+            .frame(height: PaneSidebarRow.height - PaneSidebarRow.gap)
+            .background(PaneSidebarBusySheen(isBusy: isBusy))
+            .background(SidePanelRow.fill(isActive: isSelected, isHovered: isHovered, isEmphasized: isEmphasized))
+            .overlay(rim)
+            .background { if isInteractive { HoverTrackingArea(isHovered: $isHovered) } }
+    }
+
+    /// A tile's rim, so a bare glyph on the rail reads as a button. Rail
+    /// only: a full row has its text to say that. Glassy, as a pane card's
+    /// rim is (`PaneCard.glassCard`): the same 0.5pt hairline at the same
+    /// strength, lit from above — brighter along the top edge, fading down
+    /// it — rather than one solid line. It fades with the rail itself as the
+    /// sidebar expands or collapses (the rail and the panel crossfade on
+    /// `PaneSidebarState.columnAnimation`), never snapping at the mode switch.
+    private var rim: some View {
+        RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
+            .strokeBorder(PaneSidebarRow.rim(onAccent: isSelected && isEmphasized, emphasized: isHovered,
+                                             scheme: colorScheme),
+                          lineWidth: PaneSidebarRow.rimWidth)
+            .allowsHitTesting(false)
+    }
+}
+
+/// Busy: a slanted band of light sweeps across a pill from right to left
+/// over a slow, soft drift — the same on a row, a tile and a window's row,
+/// so a tile is its row without the text.
+struct PaneSidebarBusySheen: View {
+    let isBusy: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if isBusy && !reduceMotion {
+            // Faded in and out, slowly, so it never pops on or off as work
+            // starts and stops.
+            PaneSidebarTileSheenLayer(cornerRadius: SidePanelRow.cornerRadius)
+                .accessibilityLabel("Busy")
+                .transition(.opacity.animation(PaneSidebarRow.busyFade))
+        }
     }
 }

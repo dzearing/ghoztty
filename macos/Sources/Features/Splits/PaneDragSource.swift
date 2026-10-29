@@ -320,12 +320,17 @@ class HoverTrackingView: NSView {
 
     /// While an item is dragged up and down the sidebar, every hover stays
     /// as it is: the rows it passes do not light up under the pointer, and
-    /// the dragged one keeps its own look. Let go, each re-syncs from where
+    /// the dragged one keeps its own look — but no pane keeps the tint its
+    /// tile gave it (`PaneSidebarHover`). Let go, each re-syncs from where
     /// the pointer is.
     static var isHeld = false {
         didSet {
-            guard isHeld != oldValue, !isHeld else { return }
-            NotificationCenter.default.post(name: heldDidEnd, object: nil)
+            guard isHeld != oldValue else { return }
+            if isHeld {
+                PaneSidebarHover.shared.clear()
+            } else {
+                NotificationCenter.default.post(name: heldDidEnd, object: nil)
+            }
         }
     }
 
