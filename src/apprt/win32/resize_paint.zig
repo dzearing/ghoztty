@@ -233,3 +233,27 @@ test "a frame is never dropped on an unknown size" {
     try std.testing.expect(!frameOutlivedItsWindow(0, packSize(900, 700)));
     try std.testing.expect(!frameOutlivedItsWindow(packSize(900, 700), 0));
 }
+
+/// T2418 experiment, off unless `GHOZTTY_PRESENT_RETIRE` is set: does the
+/// divider drag's doubled first column come from a present the GPU retires
+/// AFTER the layout moved the pane? `SwapBuffers` returns before the blit is
+/// done, so a CPU-side gate around the swap (tried and refuted 2026-10-29)
+/// orders the calls but not the pixels. With the switch on, a renderer holds
+/// this gate shared from its size check through `SwapBuffers` and a
+/// `glFinish`, and the layout pass holds it exclusive from the pane batch
+/// through the band paint - so no present for the old place can land after
+/// the bar was painted at the new one. Shared, not a mutex: panes present in
+/// parallel with each other, and only the layout must wait them out.
+pub var present_gate: std.Thread.RwLock = .{};
+
+/// 0 = not read yet, 1 = off, 2 = on. Read once per process; both the UI and
+/// the renderer threads ask, so it is an atomic rather than a lazy global.
+var present_retire_state = std.atomic.Value(u8).init(0);
+
+pub fn presentRetireOn() bool {
+    const s = present_retire_state.load(.acquire);
+    if (s != 0) return s == 2;
+    const on = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_PRESENT_RETIRE");
+    present_retire_state.store(if (on) 2 else 1, .release);
+    return on;
+}

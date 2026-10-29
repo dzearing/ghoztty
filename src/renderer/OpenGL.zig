@@ -492,6 +492,11 @@ pub fn drawFrameEnd(self: *OpenGL) void {
 
     const hdc = gl_loader.active().getCurrentDC();
     var swap_ns: u64 = 0;
+    // T2418 experiment (`resize_paint.presentRetireOn`): the size check, the
+    // swap and the GPU's retirement of it, all before the layout may move us.
+    const retire = resize_paint.presentRetireOn();
+    if (retire) resize_paint.present_gate.lockShared();
+    defer if (retire) resize_paint.present_gate.unlockShared();
     // T2418: a frame the layout outran is dropped, not swapped. Its pixels are
     // for the size the pane had when the frame began, and the swap would put
     // them at the place the pane has now: the divider drag's doubled first
@@ -511,6 +516,7 @@ pub fn drawFrameEnd(self: *OpenGL) void {
         // no-op when telemetry is off, so this costs one branch per frame.
         const swap_start = perf.now();
         _ = gl_loader.active().swapBuffers(hdc);
+        if (retire) gl.finish();
         if (swap_start) |start| {
             if (perf.now()) |end| swap_ns = end.since(start);
         }

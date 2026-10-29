@@ -1199,6 +1199,10 @@ pub const debug_build = switch (builtin.mode) {
 /// Read once and cached: `chromePalette` runs per paint.
 var debug_marker_state: ?bool = null;
 
+/// The UI thread already holds `resize_paint.present_gate` for an outer
+/// layout pass (T2418 experiment), so a nested pass must not take it again.
+threadlocal var present_gate_held: bool = false;
+
 fn debugMarkerEnabled() bool {
     if (comptime !debug_build) return false;
     if (debug_marker_state) |v| return v;
@@ -7579,6 +7583,19 @@ pub fn layoutSplits(self: *Window) void {
     // leave behind is filled straight after it, below.
     var old_panes: [MAX_FRAME_WAITS]w32.RECT = undefined;
     const old_len = self.snapshotPaneRects(&old_panes);
+    // T2418 experiment: no pane present may retire between here and the end of
+    // the band paint (`resize_paint.present_gate`). Not under the serial wait,
+    // which waits for those very presents inside the batch, and not again in a
+    // nested pass, since the gate is not recursive.
+    const gate = resize_paint.presentRetireOn() and !self.frame_wait_serial and !present_gate_held;
+    if (gate) {
+        resize_paint.present_gate.lock();
+        present_gate_held = true;
+    }
+    defer if (gate) {
+        present_gate_held = false;
+        resize_paint.present_gate.unlock();
+    };
     var hdwp = beginPaneBatch(self.leafCount(self.active_tab));
     if (self.stackGrid()) |laid| {
         var grid = laid;
