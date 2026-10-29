@@ -927,8 +927,11 @@ pub fn presentLastTarget(self: *OpenGL) !void {
 /// win32 hero-mode thumbnails (T59a). Reads from the OFFSCREEN target
 /// texture — not the window back buffer — so it stays valid for panes
 /// whose HWND is hidden (no DWM redirection / pixel-ownership involved).
-pub fn captureThumb(self: *OpenGL, w: u32, h: u32, out: []u8) !void {
+pub fn captureThumb(self: *OpenGL, w: u32, h: u32, exact: bool, out: []u8) !void {
     const target = self.last_target orelse return error.NoFrameYet;
+    // An exact capture (T2458) is the frame drawn at that size, never one
+    // from before a resize scaled to it.
+    if (exact and (target.width != w or target.height != h)) return error.NotThatSize;
     if (out.len != @as(usize, w) * @as(usize, h) * 4) return error.BadBufferSize;
 
     if (self.snap_fbo == null) self.snap_fbo = try gl.Framebuffer.create();

@@ -1,14 +1,16 @@
 {
     "guard":  "pane-stack-unfold",
     "script":  "test/win32/pane-stack-unfold.ps1",
-    "generated":  "2026-10-29T12:06:58-07:00",
-    "commit":  "5d0ddf164",
+    "generated":  "2026-10-29T13:25:47-07:00",
+    "commit":  "d0d8013de",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/pane_stack_slide.zig",
+                        "src/apprt/win32/Window.zig",
+                        "test/win32/pane-stack-unfold.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/pane_stack_slide.zig":  "74fed8ea91749edded8e2ee6306f38ecd7c0df294f7dcff68dcdbd8e33945dae",
-                  "src/apprt/win32/Window.zig":  "943a631e44b2eedad90baee6beda60462d3f0c90d252fa3df873d79d2ddfbe83",
-                  "test/win32/pane-stack-unfold.ps1":  "7326249eb99ae0facbde0736d2b7909d65b279ab65a6f9051496eaf06acae7e4"
+                  "src/apprt/win32/pane_stack_slide.zig":  "31f0dfd29ee8e8b85d8e6899453d093491c0ef22dd5e1206f9fe75324dc27af1",
+                  "src/apprt/win32/Window.zig":  "ddf1b44a99fc7e046522d83b984ea52dcd1f2eab685c768ed604d7efc1c49145",
+                  "test/win32/pane-stack-unfold.ps1":  "8c71ab3902fe416103acd2c6ed655340e87efe2eac944e899daa384dfd04ccbd"
               }
 }

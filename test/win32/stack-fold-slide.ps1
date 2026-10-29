@@ -72,6 +72,16 @@
 #       `stack fold carried` oracle) only ever falls. F1/F3/F8/F10 read the
 #       carried card where the live window used to be sampled.
 #
+#   F17) opening carried (T2458): unfolding, s2's pane is placed at its new
+#       size while hidden and its card is drawn by its face alone - the live
+#       window is off show on every frame, the card shows no content until the
+#       frame drawn at the new size has landed, and that frame does land mid-
+#       glide; the content's strength only ever rises; the terminal is resized
+#       0 times from the first frame of the motion to the frame it lands on,
+#       where it is a live pane again. Read from the debug build's `stack
+#       unfold carried` and `stack unfold landed` oracle lines. F5/F9/F11 read
+#       the carried card where the live window used to be sampled.
+#
 #   F15) -SlowFrames (T2442): Mac's own glide (45 ms), every tick stepped as
 #       if 80 ms had passed - the frame time the user's window had under a
 #       drag. Folding, the face is still drawn at 2+ partial alphas and no
@@ -252,6 +262,32 @@ function Get-Carried([int]$from, [int]$to) {
     for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
         if ($lines[$i] -match 'stack fold carried content_alpha=(\d+) card=(-?\d+),(\d+) live=(\d)') {
             $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Left = [int]$Matches[2]; Width = [int]$Matches[3]; Live = [int]$Matches[4] }
+        }
+    }
+    return $out
+}
+# The `stack unfold carried content_alpha=N card=L,W live=0|1 frame=0|1
+# resizes=N` oracle lines (T2458) from line $from to line $to: each frame of
+# a card opening out of its strip, drawn by its face from the frame its pane
+# drew at its new size while hidden.
+function Get-Opening([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'stack unfold carried content_alpha=(\d+) card=(-?\d+),(\d+) live=(\d) frame=(\d) resizes=(\d+)') {
+            $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Left = [int]$Matches[2]; Width = [int]$Matches[3]; Live = [int]$Matches[4]; Frame = [int]$Matches[5]; Resizes = [int]$Matches[6] }
+        }
+    }
+    return $out
+}
+# The `stack unfold landed resizes=N live=0|1` oracle lines (T2458) from line
+# $from to line $to.
+function Get-Landed([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'stack unfold landed resizes=(\d+) live=(\d)') {
+            $out += [pscustomobject]@{ Resizes = [int]$Matches[1]; Live = [int]$Matches[2] }
         }
     }
     return $out
@@ -564,9 +600,35 @@ try {
         Say ("      s2 {0} -> {1}; on show between: {2}; at rest: {3}" -f $s2Tuck, $s2Home, ($s2Coming -join ', '), (Format-Cols $again))
         $widen = @(Get-PartialWidths $back)
         Say ("      s2 cut to its widening card at: {0} px" -f ($widen -join ', '))
+        # Carried (T2458), s2's opening card is its face, drawn where the
+        # oracle says, its pane hidden at its new size.
+        $opening = @(Get-Opening $logBack $logEnd)
+        $landed = @(Get-Landed $logBack $logEnd)
+        $s2Full = if ($s2Back) { $s2Back.Width } else { 0 }
+        $lo5 = [math]::Min($s2Tuck, $s2Home)
+        $hi5 = [math]::Max($s2Tuck, $s2Home)
+        $openAt = @($opening | Where-Object { $_.Left -gt $lo5 -and $_.Left -lt $hi5 } | ForEach-Object Left)
+        $openWide = @($opening | Where-Object { $_.Width -lt 0.8 * $s2Full } | ForEach-Object Width | Sort-Object -Unique)
+        $s2ComingAll = @(@($s2Coming) + $openAt | Sort-Object -Unique)
+        Say ("      opening carried: {0}" -f (($opening | ForEach-Object { '{0}@{1}{2}' -f $_.Alpha, $_.Width, $(if ($_.Frame) { '' } else { '-' }) }) -join ' > '))
         if (-not $NegativeControl) {
-            Assert ($s2Coming.Count -ge 2) "F5: unfolding, s2 is seen at $($s2Coming.Count) positions on its way back (need 2+)"
-            Assert ($widen.Count -ge 2) "F9: unfolding, s2 is seen cut to $($widen.Count) partial widths (need 2+): its card widens out of the strip"
+            Assert ($s2ComingAll.Count -ge 2) "F5: unfolding, s2's card is seen at $($s2ComingAll.Count) positions on its way back (need 2+; $($s2Coming.Count) live, $($openAt.Count) carried)"
+            Assert (($widen.Count + $openWide.Count) -ge 2) "F9: unfolding, s2's card is seen at $($widen.Count + $openWide.Count) partial widths (need 2+; $($widen.Count) cut live, $($openWide.Count) carried): its card widens out of the strip"
+            # F17 (T2458): presized while hidden, carried, never resized on the way.
+            $openLive = @($opening | Where-Object { $_.Live -eq 1 }).Count
+            $early = @($opening | Where-Object { $_.Frame -eq 0 -and $_.Alpha -gt 0 }).Count
+            $withFrame = @($opening | Where-Object { $_.Frame -eq 1 }).Count
+            $openFall = 0
+            for ($i = 1; $i -lt $opening.Count; $i++) { $openFall = [math]::Max($openFall, $opening[$i - 1].Alpha - $opening[$i].Alpha) }
+            $openResized = @($opening | Where-Object { $_.Resizes -ne 0 }).Count
+            Assert ($opening.Count -ge 2 -and $openLive -eq 0) "F17: unfolding, s2's live window is off show on every carried frame ($openLive of $($opening.Count))"
+            Assert ($early -eq 0) "F17: unfolding, no content is drawn before the frame at the new size has landed ($early frames)"
+            Assert ($withFrame -ge 1) "F17: unfolding, the frame drawn at the new size lands mid-glide ($withFrame of $($opening.Count) frames carry it)"
+            Assert ($opening.Count -ge 2 -and $openFall -eq 0) "F17: unfolding, the carried content's strength never falls ($($opening.Count) frames, largest fall $openFall)"
+            Assert ($openResized -eq 0) "F17: unfolding, s2's terminal is resized 0 times once the motion has started ($openResized frames saw a resize)"
+            $land = if ($landed.Count -gt 0) { $landed[-1] } else { $null }
+            $landSays = if ($land) { "resizes=$($land.Resizes) live=$($land.Live)" } else { 'no landed line' }
+            Assert ($null -ne $land -and $land.Resizes -eq 0 -and $land.Live -eq 1) "F17: unfolding, s2 lands a live pane with 0 resizes since the motion started ($landSays)"
         }
         $barBack = @(Get-GlidingBar $logBack | Where-Object { $_.Shown -gt $_.Laid })
         $barBackAt = @($barBack | ForEach-Object Shown | Sort-Object -Unique)
@@ -579,14 +641,24 @@ try {
         $outMid = @($fadeOut | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
         Say ("      face alphas unfolding: {0}" -f (($fadeOut | ForEach-Object Alpha) -join ' > '))
         if (-not $NegativeControl) {
-            Assert ($outMid.Count -ge 2) "F11: unfolding, the face is drawn at $($outMid.Count) partial alphas (need 2+): the title fades out as the content comes back"
-            if ($fadeOut.Count -ge 2) {
-                Assert ($fadeOut[-1].Alpha -lt $fadeOut[0].Alpha) "F11: unfolding, the face's alpha falls ($($fadeOut[0].Alpha) -> $($fadeOut[-1].Alpha))"
+            # Carried (T2458), the face is opaque and the fade is the content's
+            # strength coming up; live, the face's alpha falls.
+            $oMid = @($opening | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
+            if ($opening.Count -ge 2) {
+                Assert ($oMid.Count -ge 2) "F11: unfolding, the carried content is drawn at $($oMid.Count) partial strengths (need 2+): the content fades in as the title fades out"
+                Assert ($opening[-1].Alpha -gt $opening[0].Alpha) "F11: unfolding, the carried content's strength rises ($($opening[0].Alpha) -> $($opening[-1].Alpha))"
+            } else {
+                Assert ($outMid.Count -ge 2) "F11: unfolding, the face is drawn at $($outMid.Count) partial alphas (need 2+): the title fades out as the content comes back"
+                if ($fadeOut.Count -ge 2) {
+                    Assert ($fadeOut[-1].Alpha -lt $fadeOut[0].Alpha) "F11: unfolding, the face's alpha falls ($($fadeOut[0].Alpha) -> $($fadeOut[-1].Alpha))"
+                }
             }
         }
         Assert ($facesAtRest -eq 0) "F12: unfolded and at rest, no face is on show ($facesAtRest)"
         # F14: a growing cut is redrawn - the pixels it gives back were never drawn.
-        if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
+        # Carried (T2458) the opening pane is hidden: no pixel of it shows, so
+        # there is nothing a redraw could owe.
+        if ($PaneStyle -eq 'flat' -and -not $NegativeControl -and $opening.Count -lt 2) {
             $cutsOut = @(Get-CutRedraws $logBack $logEnd)
             $redrawsOut = @($cutsOut | Where-Object { $_.Redraw -eq 1 }).Count
             Say ("      cuts unfolding: {0} of {1} redrawn" -f $redrawsOut, $cutsOut.Count)

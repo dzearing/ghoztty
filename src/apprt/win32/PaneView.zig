@@ -109,6 +109,22 @@ strip_face: ?*StripFace = null,
 /// `Window.planStackSlide` sets it; the glide's end clears it.
 glide_snap: enum { none, waiting, ready } = .none,
 
+/// The card carries its picture OUT of its strip (T2458): the pane was
+/// placed at its slot's size while hidden, its renderer kept awake, and the
+/// face draws the card from the frame it drew at that size, the content
+/// fading in as the card widens. The live window is shown only once the card
+/// is out, at the size it already has - no resize after the motion starts.
+glide_unfold: bool = false,
+/// The size the frame for an opening card was last asked for (T2458), so a
+/// pane the hand re-sizes mid-glide asks again, once per new size.
+glide_snap_want: ?struct { w: i32, h: i32 } = null,
+/// `Surface.resizes` once the opening card's pane stood at its new size
+/// (T2458): the oracle's count of resizes since is what must stay 0.
+glide_resizes_at: u32 = 0,
+/// An opening card just landed (T2458): the next pass, after its live window
+/// is placed, logs how often it was resized on the way.
+glide_landed: bool = false,
+
 /// Wrap an existing Surface as a terminal pane. Takes one reference on the
 /// surface, which is released when this PaneView is freed. The surface's
 /// back-pointer is set here so `Surface` destroy paths can find the leaf.
@@ -402,6 +418,29 @@ pub fn glideSnapRequest(self: *PaneView, w: u32, h: u32) bool {
         },
         .viewer => return false,
     }
+}
+
+/// Ask a terminal's renderer for the first frame it draws at exactly `w`x`h`
+/// (T2458): a pane opening out of its strip was just resized to that while
+/// hidden, and its card carries that frame, unscaled. False for a viewer.
+pub fn glideSnapRequestExact(self: *PaneView, w: u32, h: u32) bool {
+    switch (self.kind) {
+        .terminal => |s| {
+            if (!s.core_surface_ready) return false;
+            s.exactSnapRequest(w, h);
+            return true;
+        },
+        .viewer => return false,
+    }
+}
+
+/// How many times the pane has taken a new size (T2458's oracle); 0 for a
+/// viewer.
+pub fn resizeCount(self: *const PaneView) u32 {
+    return switch (self.kind) {
+        .terminal => |s| s.resizes,
+        .viewer => 0,
+    };
 }
 
 /// The frame `glideSnapRequest` asked for, once published: bottom-up pixels,

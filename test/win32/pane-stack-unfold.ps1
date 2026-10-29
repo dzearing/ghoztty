@@ -25,6 +25,16 @@
 #       holds that point inside its region (a window with no region is all
 #       region). And there were such samples to judge.
 #   U3) it settles: three on show, s2 among them
+#   U4) carried (T2458): a terminal opens out of its strip presized - its
+#       pane is placed at its slot's size while hidden and the card is drawn
+#       by its face from the frame it drew at that size. Its live window is
+#       off show on every carried frame, the content's strength only rises,
+#       and the terminal is resized 0 times from the first frame of the motion
+#       through landing a live pane. Read from the debug build's `stack unfold
+#       carried` / `stack unfold landed` oracle lines. Carried, U1 reads the
+#       card where the oracle draws it, and U2 holds by construction: the
+#       card is the face, a popup above every pane window, so no pane can
+#       cover it - U2 then asserts the face is what shows the card.
 #
 # -NegativeControl judges U2 by the pane WINDOWS alone, ignoring their
 # regions - the pre-T2187 answer, where a held pane showed all of itself - and
@@ -54,6 +64,7 @@ if ($AgentExe) { $agent = $AgentExe }
 $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-pane-stack-unfold-$PID"
+$script:errlog = Join-Path $root 'app-stderr.log'
 $slideMs = 2000
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
@@ -72,7 +83,7 @@ function Stop-RepoInstances { [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700) }
 $appArgs = @('--config-default-files=false', '--session-persistence=false', "--macos-pane-style=$PaneStyle")
 
 function Start-App {
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs
+    $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs -StdErr $script:errlog
     if ((Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Write-TestAssertedNothing -Reason 'the app never opened a GhozttyWindow'
     }
@@ -117,6 +128,31 @@ function Test-Shows($q, [int]$x, [int]$y) {
     $hits = Get-TestWindowRegionHits -Window ([IntPtr]$q.Hwnd) -Points @(($x - $q.Left), ($y - $q.Top))
     if ($null -eq $hits) { return $true }
     return [bool]$hits[0]
+}
+
+function Get-LogLength { return @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue).Count }
+# The `stack unfold carried content_alpha=N card=L,W live=0|1 frame=0|1
+# resizes=N` oracle lines (T2458) from line $from on.
+function Get-Opening([int]$from) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match 'stack unfold carried content_alpha=(\d+) card=(-?\d+),(\d+) live=(\d) frame=(\d) resizes=(\d+)') {
+            $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Left = [int]$Matches[2]; Width = [int]$Matches[3]; Live = [int]$Matches[4]; Frame = [int]$Matches[5]; Resizes = [int]$Matches[6] }
+        }
+    }
+    return $out
+}
+# The `stack unfold landed resizes=N live=0|1` oracle lines (T2458).
+function Get-Landed([int]$from) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match 'stack unfold landed resizes=(\d+) live=(\d)') {
+            $out += [pscustomobject]@{ Resizes = [int]$Matches[1]; Live = [int]$Matches[2] }
+        }
+    }
+    return $out
 }
 
 # -----------------------------------------------------------------------------
@@ -195,6 +231,7 @@ try {
     # ---- the click on s2's strip, then sample until the motion is over ------
     Say '== click s2''s strip and watch'
     $minStrip = [int][math]::Floor(8 * $scale)
+    $logClick = Get-LogLength
     [void](Send-TestMouse -Window $top -X ($p.Left + [int]($minStrip / 2)) -Y $y)
     $samples = New-Object System.Collections.Generic.List[object]
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -207,7 +244,8 @@ try {
             $px = $mine[0].Left + (Get-TestChromeDip -Dip 4 -Scale $scale)
             $covered = @($snap | Where-Object { $_.Hwnd -ne $p.Hwnd -and $_.Visible -and (Test-Shows $_ $px $y) }).Count -gt 0
         }
-        $samples.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $snap; Covered = $covered })
+        $faces = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
+        $samples.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $snap; Covered = $covered; Faces = $faces })
         Start-Sleep -Milliseconds 15
     }
     Start-Sleep -Milliseconds 300
@@ -230,14 +268,45 @@ try {
         $judged++
         if ($s.Covered) { $coveredAt += "$($s.Ms)ms@$($q[0].Left)" }
     }
-    Say ("      positions strictly between: {0}" -f (($between.Keys | Sort-Object) -join ', '))
+    # Carried (T2458): the card is the face, drawn where the oracle says.
+    $opening = @(Get-Opening $logClick)
+    $landed = @(Get-Landed $logClick)
+    $carriedMode = $opening.Count -ge 2 -and -not $NegativeControl
+    $openAt = @($opening | Where-Object { $_.Left -gt $lo -and $_.Left -lt $hi } | ForEach-Object Left)
+    foreach ($l in $openAt) { $between[[int]$l] = $true }
+    Say ("      positions strictly between: {0} ({1} carried frames)" -f (($between.Keys | Sort-Object) -join ', '), $opening.Count)
     Assert ($hi - $lo -gt (Get-TestChromeDip -Dip 40 -Scale $scale)) "U1: s2 moves a real distance ($lo..$hi px)"
-    Assert ($between.Count -ge 2) "U1: s2 is seen at $($between.Count) positions on the way (need 2+): it slides"
+    Assert ($between.Count -ge 2) "U1: s2's card is seen at $($between.Count) positions on the way (need 2+; $($openAt.Count) carried): it slides"
 
     # ---- U2: nothing covers it on the way -----------------------------------
     if ($coveredAt.Count -gt 0) { Say ("      covered at: {0}" -f ($coveredAt -join ', ')) }
-    Assert ($judged -ge 2) "U2: precondition - $judged mid-slide samples to judge (need 2+)"
-    Assert ($judged -ge 2 -and $coveredAt.Count -eq 0) "U2: no other pane covers s2's leading edge in any of $judged mid-slide samples ($($coveredAt.Count) covered)"
+    if ($carriedMode) {
+        # The face is a popup above every pane window: nothing can cover it.
+        $faceSeen = @($samples | Where-Object { $_.Faces -gt 0 }).Count
+        Assert ($faceSeen -ge 2) "U2: carried, s2's card is drawn by its face on $faceSeen samples (need 2+), which no pane window can cover"
+        Assert ($coveredAt.Count -eq 0) "U2: no other pane covers s2's leading edge in any of $judged live mid-slide samples ($($coveredAt.Count) covered)"
+    } else {
+        Assert ($judged -ge 2) "U2: precondition - $judged mid-slide samples to judge (need 2+)"
+        Assert ($judged -ge 2 -and $coveredAt.Count -eq 0) "U2: no other pane covers s2's leading edge in any of $judged mid-slide samples ($($coveredAt.Count) covered)"
+    }
+
+    # ---- U4: presized and carried, never resized on the way (T2458) ---------
+    if (-not $NegativeControl) {
+        Say ("      opening carried: {0}" -f (($opening | ForEach-Object { '{0}@{1}{2}' -f $_.Alpha, $_.Width, $(if ($_.Frame) { '' } else { '-' }) }) -join ' > '))
+        $openLive = @($opening | Where-Object { $_.Live -eq 1 }).Count
+        $early = @($opening | Where-Object { $_.Frame -eq 0 -and $_.Alpha -gt 0 }).Count
+        $withFrame = @($opening | Where-Object { $_.Frame -eq 1 }).Count
+        $openFall = 0
+        for ($i = 1; $i -lt $opening.Count; $i++) { $openFall = [math]::Max($openFall, $opening[$i - 1].Alpha - $opening[$i].Alpha) }
+        $openResized = @($opening | Where-Object { $_.Resizes -ne 0 }).Count
+        Assert ($opening.Count -ge 2 -and $openLive -eq 0) "U4: s2's live window is off show on every carried frame ($openLive of $($opening.Count))"
+        Assert ($early -eq 0 -and $withFrame -ge 1) "U4: no content before the frame at the new size lands ($early early), and it lands ($withFrame frames carry it)"
+        Assert ($opening.Count -ge 2 -and $openFall -eq 0) "U4: the carried content's strength never falls (largest fall $openFall)"
+        Assert ($openResized -eq 0) "U4: s2's terminal is resized 0 times once the motion has started ($openResized frames saw a resize)"
+        $land = if ($landed.Count -gt 0) { $landed[-1] } else { $null }
+        $landSays = if ($land) { "resizes=$($land.Resizes) live=$($land.Live)" } else { 'no landed line' }
+        Assert ($null -ne $land -and $land.Resizes -eq 0 -and $land.Live -eq 1) "U4: s2 lands a live pane with 0 resizes since the motion started ($landSays)"
+    }
 
     # ---- U3: settled --------------------------------------------------------
     $shown = @($after | Where-Object Visible)

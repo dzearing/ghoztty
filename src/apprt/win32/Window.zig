@@ -7030,12 +7030,21 @@ fn heroOnSnapReady(self: *Window, leaf_hwnd_int: usize) void {
         while (git.next()) |entry| {
             const h = entry.view.hwnd() orelse continue;
             if (@intFromPtr(h) != leaf_hwnd_int) continue;
-            if (entry.view.glide_snap != .waiting) return;
+            if (entry.view.glide_snap == .none) return;
             _ = entry.view.heroSnapPublish();
-            if (entry.view.glideFrame() != null) {
-                entry.view.glide_snap = .ready;
-                log.info("stack fold carries its frame hwnd={x}", .{leaf_hwnd_int});
-            }
+            const fr = entry.view.glideFrame() orelse return;
+            // An opening card (T2458) takes only the frame drawn at the size
+            // it asked for - never an older capture that answered late.
+            if (entry.view.glide_unfold) if (entry.view.glide_snap_want) |want| {
+                if (fr.w != want.w or fr.h != want.h) return;
+            };
+            if (entry.view.glide_snap != .ready) log.info("stack {s} carries its frame hwnd={x} size={d}x{d}", .{
+                if (entry.view.glide_unfold) "unfold" else "fold",
+                leaf_hwnd_int,
+                fr.w,
+                fr.h,
+            });
+            entry.view.glide_snap = .ready;
             return;
         }
         return;
@@ -7953,6 +7962,17 @@ fn updateStripFaces(self: *Window) void {
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
+            // The acceptance oracle (stack-fold-slide.ps1 F17): a card that
+            // opened out of its strip, now placed as a live pane, and how
+            // often its terminal was resized since it stood at its new size.
+            if (entry.view.glide_landed) {
+                entry.view.glide_landed = false;
+                const h = entry.view.hwnd();
+                log.debug("stack unfold landed resizes={d} live={d}", .{
+                    entry.view.resizeCount() -% entry.view.glide_resizes_at,
+                    @intFromBool(if (h) |hw| w32.GetWindowLongW(hw, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0 else false),
+                });
+            }
             if (tab == self.active_tab and self.paintStripFace(entry.view)) continue;
             if (entry.view.strip_face) |f| f.hide();
         }
@@ -7969,21 +7989,28 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     const parent = self.hwnd orelse return false;
     const h = view.hwnd() orelse return false;
     const live = w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0;
-    if (!live and view.glide_snap != .ready) return false;
+    // A card opening out of its strip (T2458): its pane is hidden at its new
+    // size and the face is the whole card, from the strip's band alone until
+    // the frame the pane draws at that size lands.
+    const opening = view.glide_unfold and view.glide_snap != .none;
+    if (!live and view.glide_snap != .ready and !opening) return false;
     // What of the card is drawn (Mac `paneRect.intersection(clip)`): the pane
     // window cut to its card, inside the client area.
     const at = childClientRect(parent, h) orelse return false;
+    if (opening) askOpeningFrame(view, at);
     // A fold carrying its pane's last frame (T2457): the face is the whole
     // card, opaque, with the frame laid over the band at what is left of the
     // content's strength. The frame is the pane at the size it is held at, so
-    // it must match the window it stands in for.
+    // it must match the window it stands in for. An opening card's frame is
+    // the size it was asked at; a hand that re-sizes it mid-glide has the
+    // last one drawn pinned all the same until the next lands.
     const carried: ?strip_face.Content = carried: {
         if (view.glide_snap != .ready) break :carried null;
         const fr = view.glideFrame() orelse break :carried null;
-        if (fr.w != at.width() or fr.h != at.height()) break :carried null;
+        if (!opening and (fr.w != at.width() or fr.h != at.height())) break :carried null;
         break :carried .{ .pixels = fr.pixels, .w = fr.w, .h = fr.h, .x = 0, .y = 0 };
     };
-    if (!live and carried == null) return false;
+    if (!live and carried == null and !opening) return false;
     const inner = self.leafRect(view, winRect(face.card));
     var client: w32.RECT = undefined;
     if (w32.GetClientRect(parent, &client) == 0) return false;
@@ -8007,7 +8034,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         const c = strip_face.tweenCollapse(drawn, strip_face.strip_dip * sc, full, strip_face.fade_span_dip * sc);
         break :a 255 - strip_face.alphaOf(c);
     } else 0;
-    const alpha: u8 = if (carried != null) 255 else strip_face.alphaOf(strip_face.collapseOf(vis, self.scale));
+    const alpha: u8 = if (carried != null or opening) 255 else strip_face.alphaOf(strip_face.collapseOf(vis, self.scale));
     if (alpha == 0) return false;
 
     if (view.strip_face == null) {
@@ -8083,7 +8110,16 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     }
     // The acceptance oracle (stack-fold-slide.ps1 F1/F8/F10/F16): how strong
     // the carried content is, and where its card is drawn.
-    if (carried != null) log.debug("stack fold carried content_alpha={d} card={d},{d} live={d}", .{
+    // Opening (T2458, F17): the same, plus whether the frame has landed yet
+    // and how often the pane was resized since it stood at its new size.
+    if (opening) log.debug("stack unfold carried content_alpha={d} card={d},{d} live={d} frame={d} resizes={d}", .{
+        content_alpha,
+        face.card.left,
+        if (face.axis == .horizontal) face.card.width() else face.card.height(),
+        @intFromBool(w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0),
+        @intFromBool(carried != null),
+        view.resizeCount() -% view.glide_resizes_at,
+    }) else if (carried != null) log.debug("stack fold carried content_alpha={d} card={d},{d} live={d}", .{
         content_alpha,
         face.card.left,
         if (face.axis == .horizontal) face.card.width() else face.card.height(),
@@ -8632,13 +8668,27 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         // card going behind the run stays on show until its slide is over
         // (T2186), and is hidden at its tucked place then.
         const sliding = self.stackSlideRect(id);
+        // A card that opened out of its strip and has caught up is a live
+        // pane from here on (T2458), even while the glide rests under a drag
+        // that may move it again.
+        if (sliding == null and view.glide_unfold) {
+            if (view.glide_snap_want != null) view.glide_landed = true;
+            view.glide_unfold = false;
+            view.glide_snap = .none;
+            view.glide_snap_want = null;
+        }
         // A fold carrying its frame (T2457) is drawn by its face alone; the
         // live pane stays where the glide has it, hidden, so the face can
         // still read where it is.
         const carried = sliding != null and view.glide_snap == .ready and
             if (view.strip_face) |f| f.shown else false;
-        const shown = (!p.is_tucked or sliding != null) and !carried;
-        view.setVisible(shown);
+        // One opening out of its strip (T2458) is placed at its slot's size
+        // while hidden, its renderer awake to draw the frame its card
+        // carries; the live window is shown once the card is out, at the size
+        // it already has.
+        const opening = sliding != null and view.glide_unfold and view.glide_snap != .none;
+        const shown = (!p.is_tucked or sliding != null) and !carried and !opening;
+        view.setVisible(shown or opening);
         const rect = sliding orelse if (!p.is_tucked)
             p.rect
         else if (view.stack_held) |s| pane_stack_slide.heldRect(p.rect, s) else p.rect;
@@ -8681,6 +8731,9 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
             .tucked = p.is_tucked,
             .strip = if (p.is_tucked) p.tab else null,
             .axis = p.tab_axis orelse .horizontal,
+            // A terminal opens out of its strip presized (T2458); a viewer
+            // keeps its size and takes its slot's at the end (T2460).
+            .presize = entry.view.surface() != null,
         };
         n += 1;
     }
@@ -8808,7 +8861,26 @@ fn armGlideSnaps(self: *Window, tree: SplitTree(PaneView)) void {
     var it = tree.iterator();
     while (it.next()) |entry| {
         const view = entry.view;
-        if (!slide.folding(pane_stack_grid.viewId(view))) {
+        const id = pane_stack_grid.viewId(view);
+        // A terminal opening out of its strip (T2458) carries the frame it
+        // draws at its new size: placed there hidden by `placeGrid`, asked
+        // for that frame by `paintStripFace` once it stands at that size.
+        if (slide.unfolding(id) and view.surface() != null) {
+            if (!view.glide_unfold) {
+                view.glide_unfold = true;
+                view.glide_snap_want = null;
+                view.glide_landed = false;
+            }
+            if (view.glide_snap == .none) view.glide_snap = .waiting;
+            continue;
+        }
+        if (view.glide_unfold) {
+            // An opening turned back: its frame is the wrong size for a fold.
+            view.glide_unfold = false;
+            view.glide_snap_want = null;
+            view.glide_snap = .none;
+        }
+        if (!slide.folding(id)) {
             view.glide_snap = .none;
             continue;
         }
@@ -8819,6 +8891,20 @@ fn armGlideSnaps(self: *Window, tree: SplitTree(PaneView)) void {
         if (at.width() <= 0 or at.height() <= 0) continue;
         if (view.glideSnapRequest(@intCast(at.width()), @intCast(at.height()))) view.glide_snap = .waiting;
     }
+}
+
+/// Ask an opening card's pane (T2458) for the frame it draws at the size it
+/// now stands at, `at`, once per size: first when `placeGrid` has just put it
+/// there hidden, again only if a drag re-sizes it mid-glide. The resize count
+/// it starts from is the one the oracle holds at 0.
+fn askOpeningFrame(view: *PaneView, at: pane_stack_grid.PxRect) void {
+    const w = at.width();
+    const h = at.height();
+    if (w <= 0 or h <= 0) return;
+    if (view.glide_snap_want) |want| if (want.w == w and want.h == h) return;
+    if (!view.glideSnapRequestExact(@intCast(w), @intCast(h))) return;
+    if (view.glide_snap_want == null) view.glide_resizes_at = view.resizeCount();
+    view.glide_snap_want = .{ .w = w, .h = h };
 }
 
 /// Where the slide under way has card `id`'s pane drawn right now, or null when
@@ -8859,10 +8945,17 @@ fn restStackSlide(self: *Window) void {
 fn endStackSlide(self: *Window) void {
     self.restStackSlide();
     self.stack_slide = null;
-    // Every card is a live pane again (T2457).
+    // Every card is a live pane again (T2457), and one that opened says how
+    // often it was resized on the way once it is placed (T2458).
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
-        while (it.next()) |entry| entry.view.glide_snap = .none;
+        while (it.next()) |entry| {
+            const v = entry.view;
+            if (v.glide_unfold and v.glide_snap_want != null) v.glide_landed = true;
+            v.glide_snap = .none;
+            v.glide_unfold = false;
+            v.glide_snap_want = null;
+        }
     }
     // A sidebar card following this glide lands with it (T2406).
     if (self.stack_slide_column) {

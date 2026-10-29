@@ -508,6 +508,15 @@ snap_requested: std.atomic.Value(bool) = .init(false),
 /// pre-sizes snap_buffer to w*h*4 so the renderer never allocates.
 snap_req_w: u32 = 0,
 snap_req_h: u32 = 0,
+/// The capture must be a frame drawn at exactly snap_req_w x snap_req_h
+/// (guarded; T2458): a blade opening carries the frame its hidden pane drew
+/// at its new size, and a frame from before the resize, scaled, is not it.
+snap_req_exact: bool = false,
+
+/// How many times this pane has taken a new size (WM_SIZE; T2458): a blade
+/// opening reads it to prove its terminal was resized only before the glide
+/// showed any of it.
+resizes: u32 = 0,
 /// Top-level window to notify with WM_APP_HERO_SNAP (guarded).
 snap_notify_hwnd: ?w32.HWND = null,
 /// BGRA bottom-up pixels, snap_req_w * snap_req_h * 4 (guarded).
@@ -1709,13 +1718,25 @@ pub fn refreshBannerColors(self: *Surface) void {
 // thread; wanted/acquire/commit run on the renderer thread.
 // -----------------------------------------------------------------------
 
-pub const SnapReq = struct { w: u32, h: u32 };
+pub const SnapReq = struct { w: u32, h: u32, exact: bool = false };
 
 /// GUI thread: ask the renderer for a thumbnail capture at (w, h) px.
 /// Pre-sizes the pixel buffer so the renderer thread never allocates,
 /// then wakes the renderer so idle panes still produce a capture (the
 /// re-present of the last frame runs the capture hook).
 pub fn heroSnapRequest(self: *Surface, w: u32, h: u32) void {
+    self.snapRequest(w, h, false);
+}
+
+/// GUI thread: ask the renderer for a frame drawn at exactly (w, h) px
+/// (T2458), unscaled. Frames at any other size are skipped and the request
+/// stays pending, so what lands is the first frame drawn at that size - the
+/// one a pane just resized while hidden presents.
+pub fn exactSnapRequest(self: *Surface, w: u32, h: u32) void {
+    self.snapRequest(w, h, true);
+}
+
+fn snapRequest(self: *Surface, w: u32, h: u32, exact: bool) void {
     if (w == 0 or h == 0) return;
     if (!self.core_surface_ready) return;
     {
@@ -1732,6 +1753,7 @@ pub fn heroSnapRequest(self: *Surface, w: u32, h: u32) void {
         }
         self.snap_req_w = w;
         self.snap_req_h = h;
+        self.snap_req_exact = exact;
         self.snap_notify_hwnd = self.parent_window.hwnd;
     }
     self.snap_requested.store(true, .release);
@@ -1762,7 +1784,7 @@ pub fn heroSnapWanted(self: *Surface) ?SnapReq {
     self.snap_mutex.lock();
     defer self.snap_mutex.unlock();
     if (self.snap_req_w == 0 or self.snap_req_h == 0) return null;
-    return .{ .w = self.snap_req_w, .h = self.snap_req_h };
+    return .{ .w = self.snap_req_w, .h = self.snap_req_h, .exact = self.snap_req_exact };
 }
 
 /// Renderer thread: lock and return the destination pixel buffer for a
@@ -4104,6 +4126,7 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     // T1343: one line of the drag measurement — how many panes a layout pass
     // actually resized, so "no frame waits" can be told apart from "no work".
     self.parent_window.noteResize();
+    self.resizes +%= 1;
 
     self.height = height;
 

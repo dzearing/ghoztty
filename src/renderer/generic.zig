@@ -2072,9 +2072,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const req = self.rt_surface.heroSnapWanted() orelse return;
             const buf = self.rt_surface.heroSnapAcquire(req.w, req.h) orelse return;
             const ok = ok: {
-                self.api.captureThumb(req.w, req.h, buf) catch |err| {
-                    // NoFrameYet is expected until the first frame presents.
-                    if (err != error.NoFrameYet) log.warn(
+                self.api.captureThumb(req.w, req.h, req.exact, buf) catch |err| {
+                    // NoFrameYet is expected until the first frame presents,
+                    // and NotThatSize until an exact request's resize has
+                    // drawn its first frame (T2458).
+                    if (err != error.NoFrameYet and err != error.NotThatSize) log.warn(
                         "hero snapshot capture failed err={}",
                         .{err},
                     );

@@ -99,6 +99,11 @@ pub const Placed = struct {
     /// The axis its stack runs along: a horizontal stack's strips are bands
     /// down the cards' leading edges.
     axis: Direction = .horizontal,
+    /// Its pane comes out of its strip already at its slot's size (T2458): a
+    /// terminal is resized once, while hidden, before the glide shows any of
+    /// it, and carries the frame it drew at that size - so nothing is
+    /// resized once the motion has started, not even at the end.
+    presize: bool = false,
 
     /// Where the glide takes this card (Mac `PaneStageView.target`): its
     /// strip when it is tucked, else its card.
@@ -426,6 +431,16 @@ pub const Slide = struct {
         const c = self.find(id) orelse return false;
         if (c.strip == null or c.drawn.eql(c.to)) return false;
         return Edges.of(c.to).extent() < c.drawn.extent();
+    }
+
+    /// Whether card `id` is on its way OUT of its strip (T2458): a strip card
+    /// that has not caught up, drawn shorter than where it is headed. Such a
+    /// card can carry the frame its pane drew at its new size while hidden,
+    /// fading it in as the card widens.
+    pub fn unfolding(self: *const Slide, id: Id) bool {
+        const c = self.find(id) orelse return false;
+        if (c.strip == null or c.drawn.eql(c.to)) return false;
+        return Edges.of(c.to).extent() > c.drawn.extent();
     }
 
     /// Where card `id`'s pane is drawn, caught up or not; null when this glide
@@ -765,10 +780,16 @@ fn stripCard(b: Placed, a: Placed, from: PxRect, resize: bool) ?StripCard {
     if (!a.tucked and b.tucked) {
         // Coming out: a click's glide holds the size it was tucked at, and
         // the pane takes its slot's size once, at the end; a drag's follows
-        // the slot as the hand moves it.
+        // the slot as the hand moves it. A presized pane (T2458) is held at
+        // its slot's size from the start.
         const strip = b.strip orelse return null;
         return .{
-            .held = if (resize) null else .{ .w = b.rect.width(), .h = b.rect.height() },
+            .held = if (resize)
+                null
+            else if (a.presize)
+                .{ .w = a.rect.width(), .h = a.rect.height() }
+            else
+                .{ .w = b.rect.width(), .h = b.rect.height() },
             .anchor = Anchor.of(b.axis, leads(strip, a.rect, b.axis)),
             .axis = b.axis,
         };
@@ -1343,6 +1364,47 @@ test "folding: a card on its way into its strip, until it is there; never one co
     try testing.expect(!fold.folding(1));
     var unfold = plan(&tucked, &on_show, null, glide_ms, false);
     try testing.expect(!unfold.folding(1));
+}
+
+test "unfolding: a card on its way out of its strip, until it is out; never one going in (T2458)" {
+    const tucked = [_]Placed{.{ .id = 1, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    const on_show = [_]Placed{.{ .id = 1, .rect = r(400, 0, 400, 600), .tucked = false }};
+    var unfold = plan(&tucked, &on_show, null, glide_ms, false);
+    try testing.expect(unfold.unfolding(1));
+    try testing.expect(!unfold.folding(1));
+    try testing.expect(!unfold.unfolding(2));
+    while (!unfold.step(16)) {}
+    try testing.expect(!unfold.unfolding(1));
+    var fold = plan(&on_show, &tucked, null, glide_ms, false);
+    try testing.expect(!fold.unfolding(1));
+}
+
+test "plan: a presized card comes out of its strip at its slot's size, never resized on the way or at the end (T2458)" {
+    // Tucked at the 300 px it last had on show; its slot is now 500 px.
+    const tucked = [_]Placed{.{ .id = 1, .rect = r(764, 0, 300, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    const slot = r(300, 0, 500, 600);
+    const presized = [_]Placed{.{ .id = 1, .rect = slot, .tucked = false, .presize = true }};
+    var s = plan(&tucked, &presized, null, glide_ms, false);
+    // Every frame of the glide holds the pane at its slot's size...
+    var frames: usize = 0;
+    while (true) : (frames += 1) {
+        const at = s.placed(1).?;
+        try testing.expectEqual(slot.width(), at.width());
+        try testing.expectEqual(slot.height(), at.height());
+        if (s.step(16)) break;
+    }
+    try testing.expect(frames >= 2);
+    // ...and where it lands is that size too: nothing to resize at the end.
+    try testing.expectEqual(slot, s.placed(1).?);
+
+    // Not presized (a viewer), a click's glide still holds the size it was
+    // tucked at and takes its slot's once, at the end.
+    const plain = [_]Placed{.{ .id = 1, .rect = slot, .tucked = false }};
+    const p = plan(&tucked, &plain, null, glide_ms, false);
+    try testing.expectEqual(@as(i32, 300), p.placed(1).?.width());
+    // A drag's glide follows the slot whatever the card.
+    const d = plan(&tucked, &plain, null, glide_ms, true);
+    try testing.expectEqual(slot.width(), d.placed(1).?.width());
 }
 
 test "step: at 60 fps the fade limit never bites - Mac's follower, frame for frame (T2442)" {

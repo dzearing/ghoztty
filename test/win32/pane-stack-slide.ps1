@@ -17,7 +17,10 @@
 # Claims:
 #   S1) after a click on a tucked pane's strip, that pane's window is seen at
 #       two or more distinct positions strictly between where it started and
-#       where it settles - it slid, it did not jump
+#       where it settles - it slid, it did not jump. A terminal comes out of
+#       its strip carried (T2458): its window is hidden at its new size and
+#       its card is drawn by its face, so the card's positions are read from
+#       the debug build's `stack unfold carried` oracle line as well
 #   S2) no pane window changes size more than once over the whole slide (the
 #       pane window's client size is what its ConPTY is sized from)
 #   S3) it settles on show with focus, two on show (the T2109 result still
@@ -60,6 +63,7 @@ if ($AgentExe) { $agent = $AgentExe }
 $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-pane-stack-slide-$PID"
+$script:errlog = Join-Path $root 'app-stderr.log'
 $slideMs = if ($NegativeControl) { 0 } else { 2000 }
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
@@ -78,11 +82,23 @@ function Stop-RepoInstances { [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700) }
 $appArgs = @('--config-default-files=false', '--session-persistence=false', "--macos-pane-style=$PaneStyle")
 
 function Start-App {
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs
+    $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs -StdErr $script:errlog
     if ((Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Write-TestAssertedNothing -Reason 'the app never opened a GhozttyWindow'
     }
     return $app
+}
+
+function Get-LogLength { return @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue).Count }
+# Where the `stack unfold carried ... card=L,W` oracle (T2458) drew an opening
+# card, from line $from on.
+function Get-OpeningLefts([int]$from) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match 'stack unfold carried content_alpha=\d+ card=(-?\d+),\d+') { $out += [int]$Matches[1] }
+    }
+    return $out
 }
 
 function Get-Panes([IntPtr]$top) {
@@ -241,6 +257,7 @@ try {
     $minStrip = [int][math]::Floor(8 * $script:scale)
     $sx = $p.Left + [int]($minStrip / 2)
     $sy = $p.Top + [int](($p.Bottom - $p.Top) / 2)
+    $logClick = Get-LogLength
     [void](Send-TestMouse -Window $top -X $sx -Y $sy)
     $samples = New-Object System.Collections.Generic.List[object]
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -265,7 +282,13 @@ try {
             if ($q.Left -gt $lo -and $q.Left -lt $hi) { $between[[int]$q.Left] = $true }
         }
     }
-    Say ("      positions strictly between: {0}" -f (($between.Keys | Sort-Object) -join ', '))
+    # Carried (T2458): the opening card's face, where the oracle drew it. The
+    # negative control keeps S1 as written (live windows only): at 0 ms a
+    # strip card still crosses its fade over three frames (T2442), which the
+    # oracle logs, so carried positions cannot tell an instant re-layout.
+    $carriedAt = if ($NegativeControl) { @() } else { @(Get-OpeningLefts $logClick | Where-Object { $_ -gt $lo -and $_ -lt $hi }) }
+    foreach ($l in $carriedAt) { $between[[int]$l] = $true }
+    Say ("      positions strictly between: {0} ({1} carried)" -f (($between.Keys | Sort-Object) -join ', '), $carriedAt.Count)
     Assert ($hi - $lo -gt (Get-TestChromeDip -Dip 40 -Scale $script:scale)) "S1: $($t.Name) moves a real distance ($lo..$hi px)"
     Assert ($between.Count -ge 2) "S1: $($t.Name) is seen at $($between.Count) positions on the way (need 2+): it slides, it does not jump"
 
