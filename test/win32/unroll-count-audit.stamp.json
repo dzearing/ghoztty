@@ -1,8 +1,8 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-29T11:34:38-07:00",
-    "commit":  "3d2f00d51",
+    "generated":  "2026-10-29T14:53:08-07:00",
+    "commit":  "7ca14119a",
     "uncommitted":  [
 
                     ],
@@ -15,7 +15,7 @@
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
-                  "scripts/comp-spike.ps1":  "114566b2ef7820799c911edf583bb40be6c55f3927bb78ac929920077acb4dee",
+                  "scripts/comp-spike.ps1":  "0cb3e4fbe75df1ed7645ce6fd2a28ca71177ab94a87febee45e13a1201d10ab7",
                   "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
