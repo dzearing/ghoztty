@@ -1333,6 +1333,17 @@ pub extern "user32" fn OpenClipboard(
 
 pub extern "user32" fn CloseClipboard() callconv(.winapi) i32;
 
+/// The window that currently has the clipboard open, or null when nobody does
+/// (or the holder opened it with no window). Diagnostic only (T2231).
+pub extern "user32" fn GetOpenClipboardWindow() callconv(.winapi) ?HWND;
+
+pub extern "kernel32" fn QueryFullProcessImageNameW(
+    hProcess: HANDLE,
+    dwFlags: u32,
+    lpExeName: [*]u16,
+    lpdwSize: *u32,
+) callconv(.winapi) i32;
+
 pub extern "user32" fn EmptyClipboard() callconv(.winapi) i32;
 
 pub extern "user32" fn GetClipboardData(

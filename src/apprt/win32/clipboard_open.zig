@@ -121,6 +121,92 @@ pub fn open(owner: ?w32.HWND) bool {
     return false;
 }
 
+/// Who has the clipboard open right now: the question a failed `open` cannot
+/// answer by itself (T2231).
+///
+/// It exists for the tests whose oracle is the clipboard. On 2026-10-27 some
+/// other process on this box held the clipboard open for about 22 hours, and
+/// for the whole of that window the live viewer copy test said "the copy never
+/// landed" and the round-trip test below said the helper was broken: 70 red
+/// lanes reporting a code defect over a box condition, with nothing in the log
+/// naming the process that was actually responsible.
+pub const Holder = struct {
+    kind: Kind,
+    pid: u32 = 0,
+    image_buf: [max_image]u8 = undefined,
+    image_len: usize = 0,
+
+    pub const Kind = enum {
+        /// Nobody holds it: whatever made the open fail has since let go.
+        free,
+        /// A window of THIS process holds it, which is our own leak and a real
+        /// defect - never something to skip past.
+        this_process,
+        /// Another process holds it. Nothing this process does can free it.
+        other_process,
+        /// The open fails but no window is named. An open with no window
+        /// excludes nobody (T992), so this should not happen; it is kept apart
+        /// from `other_process` so that a caller does not excuse it.
+        unknown,
+    };
+
+    const max_image = 260;
+
+    /// The holder's executable name (no directory), or "" when it could not
+    /// be read - a process of another user, or one that has just exited.
+    pub fn image(self: *const Holder) []const u8 {
+        return self.image_buf[0..self.image_len];
+    }
+
+    /// True only when another process is known to have the clipboard: the one
+    /// case where a clipboard-oracle test is measuring the box and not the code.
+    pub fn isOtherProcess(self: *const Holder) bool {
+        return self.kind == .other_process;
+    }
+};
+
+/// Probe the clipboard and say who holds it. Opens and closes it once when no
+/// window is named as holding it, so it is a test and diagnostic helper, not a
+/// thing for a hot path.
+///
+/// The holding window is asked for FIRST: probing with an open while this very
+/// thread holds the clipboard could succeed and then close the caller's open
+/// out from under it.
+pub fn holder() Holder {
+    const hwnd = w32.GetOpenClipboardWindow() orelse {
+        if (w32.OpenClipboard(effectiveOwner(null)) != 0) {
+            _ = w32.CloseClipboard();
+            return .{ .kind = .free };
+        }
+        return .{ .kind = .unknown };
+    };
+    var pid: u32 = 0;
+    _ = w32.GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == 0) return .{ .kind = .unknown };
+    if (pid == w32.GetCurrentProcessId()) return .{ .kind = .this_process, .pid = pid };
+
+    var h: Holder = .{ .kind = .other_process, .pid = pid };
+    const proc = w32.OpenProcess(w32.PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) orelse return h;
+    defer _ = w32.CloseHandle(proc);
+    var wbuf: [std.os.windows.PATH_MAX_WIDE]u16 = undefined;
+    var wlen: u32 = wbuf.len;
+    if (w32.QueryFullProcessImageNameW(proc, 0, &wbuf, &wlen) == 0) return h;
+    h.image_len = imageName(&h.image_buf, wbuf[0..wlen]);
+    return h;
+}
+
+/// The last path component of a UTF-16 image path, as UTF-8 into `out`.
+/// Returns 0 rather than a truncated name when it does not fit.
+fn imageName(out: []u8, path: []const u16) usize {
+    var start: usize = 0;
+    for (path, 0..) |c, i| {
+        if (c == '\\' or c == '/') start = i + 1;
+    }
+    const base = path[start..];
+    if (base.len * 3 > out.len) return 0;
+    return std.unicode.utf16LeToUtf8(out, base) catch 0;
+}
+
 test "budget is bounded and non-trivial" {
     // Both halves matter: a single attempt is the bug this module exists to
     // fix, and an unbounded wait would hang a keystroke behind whatever other
@@ -181,8 +267,69 @@ test "open then close leaves the clipboard takeable again" {
     // actually owns: a second open can only succeed if the first was really
     // closed, and a first open that quietly failed would make the assert
     // below pass for the wrong reason — so both are asserted.
-    try std.testing.expect(open(null));
+    //
+    // Except when another process is sitting on the clipboard (T2231): then
+    // the first open fails for a reason this helper cannot change, and saying
+    // so by name is the useful answer. Our OWN process holding it, or a holder
+    // nobody can name, still fails.
+    if (!open(null)) {
+        const h = holder();
+        if (h.isOtherProcess()) {
+            log.warn(
+                "SKIPPED clipboard round trip: another process holds the clipboard open " ++
+                    "(pid={d} image='{s}') - a box condition, not this helper (T2231)",
+                .{ h.pid, h.image() },
+            );
+            return error.SkipZigTest;
+        }
+        log.err("clipboard round trip: first open failed, holder={s}", .{@tagName(h.kind)});
+        return error.TestUnexpectedResult;
+    }
     _ = w32.CloseClipboard();
     try std.testing.expect(open(null));
     _ = w32.CloseClipboard();
+}
+
+test "holder: a free clipboard reads as free, and a held one names this process" {
+    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
+
+    // Held by us: the case that must NEVER be excused as a box condition.
+    // Opened with a real window, because an open with none excludes nobody
+    // (T992) and the probe below would then simply succeed.
+    const class = std.unicode.utf8ToUtf16LeStringLiteral("STATIC");
+    const win = w32.CreateWindowExW(0, class, class, 0, 0, 0, 0, 0, null, null, null, null) orelse
+        return error.SkipZigTest;
+    defer _ = w32.DestroyWindow(win);
+
+    if (!open(win)) {
+        // Somebody else has it; the free/held arms cannot be told apart now.
+        const h = holder();
+        log.warn("SKIPPED holder test: clipboard busy (holder={s} pid={d} image='{s}')", .{ @tagName(h.kind), h.pid, h.image() });
+        return error.SkipZigTest;
+    }
+    {
+        defer _ = w32.CloseClipboard();
+        const held = holder();
+        try std.testing.expectEqual(Holder.Kind.this_process, held.kind);
+        try std.testing.expect(!held.isOtherProcess());
+        try std.testing.expectEqual(w32.GetCurrentProcessId(), held.pid);
+    }
+
+    // Let go, and it is free again — unless another process slipped in, which
+    // is the one answer this arm cannot assert against.
+    const after = holder();
+    if (after.kind != .other_process) try std.testing.expectEqual(Holder.Kind.free, after.kind);
+}
+
+test "imageName keeps only the file name, and refuses rather than truncates" {
+    var out: [32]u8 = undefined;
+    const path = std.unicode.utf8ToUtf16LeStringLiteral("C:\\Program Files\\Tool\\clip.exe");
+    const n = imageName(&out, path);
+    try std.testing.expectEqualStrings("clip.exe", out[0..n]);
+
+    const bare = std.unicode.utf8ToUtf16LeStringLiteral("solo.exe");
+    try std.testing.expectEqualStrings("solo.exe", out[0..imageName(&out, bare)]);
+
+    var tiny: [4]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), imageName(&tiny, path));
 }

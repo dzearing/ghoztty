@@ -37,6 +37,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
+const clipboard_open = @import("clipboard_open.zig");
 const FrameClock = @import("FrameClock.zig");
 const frame_clock = @import("frame_clock.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
@@ -5292,7 +5293,9 @@ fn searchKey(self: *PaneSidebar, vk: u16, wparam: usize, lparam: isize) bool {
 
 /// Ctrl+V: the clipboard's text, as one line (`Field.insert`).
 fn pasteSearch(self: *PaneSidebar) void {
-    if (w32.OpenClipboard(self.hwnd) == 0) return;
+    // Retried (T850): a single attempt silently pastes nothing whenever
+    // another app is holding the clipboard for a few milliseconds.
+    if (!clipboard_open.open(self.hwnd)) return;
     defer _ = w32.CloseClipboard();
     const mem = w32.GetClipboardData(w32.CF_UNICODETEXT) orelse return;
     const p = w32.GlobalLock(mem) orelse return;
@@ -5622,7 +5625,7 @@ fn renameKey(self: *PaneSidebar, vk: u16, wparam: usize, lparam: isize) bool {
 
 /// The clipboard's text, up to `out.len` units (empty when there is none).
 fn clipboardText(self: *PaneSidebar, out: []u16) []const u16 {
-    if (w32.OpenClipboard(self.hwnd) == 0) return out[0..0];
+    if (!clipboard_open.open(self.hwnd)) return out[0..0];
     defer _ = w32.CloseClipboard();
     const mem = w32.GetClipboardData(w32.CF_UNICODETEXT) orelse return out[0..0];
     const p = w32.GlobalLock(mem) orelse return out[0..0];

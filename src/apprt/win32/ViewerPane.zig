@@ -9744,6 +9744,24 @@ test "host floor: a real controller on a real window, on this box" {
                 std.Thread.sleep(50 * std.time.ns_per_ms);
             }
             log.warn("copy[{s}]: clipboard={?s}", .{ case.tag, copied });
+            if (copied == null) {
+                // A process outside this test sitting on the clipboard makes
+                // both the browser's write and our read fail, and that is a
+                // fact about the box, not about the Copy button (T2231: one
+                // did for ~22 hours on 2026-10-27, 70 red lanes). Name it and
+                // skip this oracle only - the button count above was still
+                // asserted. Any other empty result is still a failure.
+                const h = clipboard_open.holder();
+                if (h.isOtherProcess()) {
+                    log.warn(
+                        "SKIPPED copy[{s}] clipboard oracle: another process holds the " ++
+                            "clipboard open (pid={d} image='{s}') (T2231)",
+                        .{ case.tag, h.pid, h.image() },
+                    );
+                    continue;
+                }
+                log.err("copy[{s}]: nothing landed and the clipboard holder is {s}", .{ case.tag, @tagName(h.kind) });
+            }
             try testing.expect(copied != null);
             try testing.expectEqualStrings(case.needle, copied.?);
         }
