@@ -66,6 +66,14 @@
 #       was a GL repaint per frame of the glide. Unfolding, the cut grows and
 #       IS redrawn. Read from the debug build's `stack cut redraw=` line.
 #
+#   F15) -SlowFrames (T2442): Mac's own glide (45 ms), every tick stepped as
+#       if 80 ms had passed - the frame time the user's window had under a
+#       drag. Folding, the face is still drawn at 2+ partial alphas and no
+#       frame raises it more than a third of the way plus rounding (92):
+#       uncapped, one frame crossed the whole fade and the content showed at
+#       full strength until the card was in its strip. Only setup, the fold
+#       and F15 run in this mode; it stamps its own guard row.
+#
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
 # before any slide) and keeps F1/F2/F7/F8/F10/F14 as written: they MUST fail.
 #
@@ -78,6 +86,7 @@ param(
     [string]$ExePath,
     [string]$AgentExe,
     [switch]$NegativeControl,
+    [switch]$SlowFrames,
     [ValidateSet('flat', 'elevated')][string]$PaneStyle = 'flat',
     [switch]$Interactive
 )
@@ -94,7 +103,7 @@ $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-stack-fold-slide-$PID"
 $script:errlog = Join-Path $root 'app-stderr.log'
-$slideMs = if ($NegativeControl) { 0 } else { 2000 }
+$slideMs = if ($NegativeControl) { 0 } elseif ($SlowFrames) { 380 } else { 2000 }
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
@@ -284,6 +293,8 @@ $savedPipe = $env:GHOZTTY_PIPE_SUFFIX
 $savedSlide = $env:GHOZTTY_STACK_SLIDE_MS
 $env:GHOZTTY_PIPE_SUFFIX = "-foldslide$PID"
 $env:GHOZTTY_STACK_SLIDE_MS = "$slideMs"
+$savedDt = $env:GHOZTTY_STACK_SLIDE_DT_MS
+if ($SlowFrames) { $env:GHOZTTY_STACK_SLIDE_DT_MS = '80' }
 
 Stop-RepoInstances
 New-Item -ItemType Directory -Force $root | Out-Null
@@ -391,157 +402,172 @@ try {
     $s2End = Find-Pane $rest $hS2
     Say ("      {0} samples; at rest: {1}" -f $fold.Count, (Format-Cols $rest))
 
-    # F1: s2 slides away.
-    $s2Tuck = if ($s2End) { $s2End.Left } else { $s2Left0 }
-    $s2Between = @(Get-Between $fold $hS2 $s2Left0 $s2Tuck)
-    Say ("      s2 {0} -> {1}; on show between: {2}" -f $s2Left0, $s2Tuck, ($s2Between -join ', '))
-    Assert ([math]::Abs($s2Tuck - $s2Left0) -gt (Get-TestChromeDip -Dip 40 -Scale $scale)) "F1: s2 tucks a real distance away ($s2Left0 -> $s2Tuck px)"
-    Assert ($s2Between.Count -ge 2) "F1: s2 is seen on show at $($s2Between.Count) positions on its way to the edge (need 2+): it slides away, it does not vanish"
-
-    # F2: P grows through the slide.
-    $pW1 = if ($pEnd) { $pEnd.Width } else { $pW0 }
-    $widths = New-Object System.Collections.Generic.List[int]
-    $widths.Add($pW0)
-    foreach ($s in $fold) {
-        $q = Find-Pane $s.Panes $hP
-        if ($null -ne $q -and $q.Visible -and $q.Width -ne $widths[$widths.Count - 1]) { $widths.Add($q.Width) }
-    }
-    $lo = [math]::Min($pW0, $pW1)
-    $hi = [math]::Max($pW0, $pW1)
-    $mid = @($widths | Where-Object { $_ -gt $lo -and $_ -lt $hi } | Sort-Object -Unique)
-    $bigStep = 0
-    for ($i = 1; $i -lt $widths.Count; $i++) { $bigStep = [math]::Max($bigStep, [math]::Abs($widths[$i] - $widths[$i - 1])) }
-    $span = [math]::Max(1, $hi - $lo)
-    Say ("      P width {0} -> {1}; path: {2}" -f $pW0, $pW1, ($widths -join ' > '))
-    Assert ($span -gt (Get-TestChromeDip -Dip 100 -Scale $scale)) "F2: P grows a real amount ($pW0 -> $pW1 px)"
-    Assert ($mid.Count -ge 2) "F2: P is seen at $($mid.Count) widths on the way (need 2+): it grows through the slide"
-    Assert ($bigStep -le 0.6 * $span) "F2: no single step covers most of the change (largest $bigStep of $span px)"
-
-    # F3: the run over the card tucking away.
-    $both = 0
-    $s1Above = 0
-    foreach ($s in $fold) {
-        $a = Find-Pane $s.Panes $hS1
-        $b = Find-Pane $s.Panes $hS2
-        if ($null -eq $a -or $null -eq $b -or -not $a.Visible -or -not $b.Visible) { continue }
-        if ($b.Left -le $s2Left0 -or $b.Left -ge $s2Tuck) { continue }
-        $both++
-        if ($a.Z -lt $b.Z) { $s1Above++ }
-    }
-    if ($NegativeControl) {
-        Say "      (negative control: $both mid-slide samples)"
+    if ($SlowFrames) {
+        # F15: slow frames still fade (T2442).
+        $slow = @(Get-FaceAlphas $logFold $logBack)
+        $slowMid = @($slow | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
+        $jump = 0
+        $prev = 0
+        foreach ($f in $slow) { $jump = [math]::Max($jump, $f.Alpha - $prev); $prev = $f.Alpha }
+        Say ("      face alphas folding at 80 ms frames: {0}" -f (($slow | ForEach-Object Alpha) -join ' > '))
+        Assert ($slowMid.Count -ge 2) "F15: at 80 ms frames the face is drawn at $($slowMid.Count) partial alphas (need 2+): the fade is not crossed in one frame"
+        Assert ($slow.Count -ge 2 -and $jump -le 92) "F15: at 80 ms frames no frame raises the face more than a third of the fade (85) and rounding (largest rise $jump of 255)"
+        [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action up -HoldMs 0)
+        Start-Sleep -Milliseconds 400
     } else {
-        Assert ($both -ge 1 -and $s1Above -eq $both) "F3: mid-slide, s1 is above s2 in the z-order ($s1Above of $both samples)"
-    }
 
-    # F6: nothing the app shows bleeds out of the window mid-fold.
-    $strayFold = @($fold | Where-Object { $_.Stray.Count -gt 0 })
-    $firstFold = if ($strayFold.Count -gt 0) { "at $($strayFold[0].Ms) ms: $($strayFold[0].Stray -join ' | ')" } else { '' }
-    Assert ($strayFold.Count -eq 0) "F6: no popup reaches outside the window during the fold ($($strayFold.Count) of $($fold.Count) samples) $firstFold"
+        # F1: s2 slides away.
+        $s2Tuck = if ($s2End) { $s2End.Left } else { $s2Left0 }
+        $s2Between = @(Get-Between $fold $hS2 $s2Left0 $s2Tuck)
+        Say ("      s2 {0} -> {1}; on show between: {2}" -f $s2Left0, $s2Tuck, ($s2Between -join ', '))
+        Assert ([math]::Abs($s2Tuck - $s2Left0) -gt (Get-TestChromeDip -Dip 40 -Scale $scale)) "F1: s2 tucks a real distance away ($s2Left0 -> $s2Tuck px)"
+        Assert ($s2Between.Count -ge 2) "F1: s2 is seen on show at $($s2Between.Count) positions on its way to the edge (need 2+): it slides away, it does not vanish"
 
-    # F7: the bar follows P's edge as it is drawn, short of the hand.
-    $barFold = @(Get-GlidingBar $logFold | Where-Object { $_.Shown -lt $_.Laid })
-    $barFoldAt = @($barFold | ForEach-Object Shown | Sort-Object -Unique)
-    Say ("      bar drawn short of its gutter at: {0}" -f ($barFoldAt -join ', '))
-    Assert ($barFoldAt.Count -ge 2) "F7: folding, the dragged bar is drawn at $($barFoldAt.Count) places short of its laid-out gutter (need 2+): it stays with the gliding card"
-
-    # F8: the folding card narrows into its strip (T2287).
-    $narrow = @(Get-PartialWidths $fold)
-    Say ("      s2 cut to its narrowing card at: {0} px" -f ($narrow -join ', '))
-    Assert ($narrow.Count -ge 2) "F8: folding, s2 is seen cut to $($narrow.Count) partial widths (need 2+): its card narrows into the strip, it does not slide off full size"
-
-    # F10: the strip's face fades in over the narrowing card (T2288).
-    $fadeIn = @(Get-FaceAlphas $logFold $logBack)
-    $inMid = @($fadeIn | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
-    $faceSeen = @($fold | Where-Object { $_.Faces -gt 0 }).Count
-    Say ("      face alphas folding: {0}; face on show in {1} of {2} samples" -f (($fadeIn | ForEach-Object Alpha) -join ' > '), $faceSeen, $fold.Count)
-    Assert ($faceSeen -ge 1) "F10: folding, the strip's face is seen on show over s2's card ($faceSeen samples)"
-    Assert ($inMid.Count -ge 2) "F10: folding, the face is drawn at $($inMid.Count) partial alphas (need 2+): the title fades in as the content fades out"
-    if ($fadeIn.Count -ge 2) {
-        Assert ($fadeIn[-1].Alpha -gt $fadeIn[0].Alpha) "F10: folding, the face's alpha rises ($($fadeIn[0].Alpha) -> $($fadeIn[-1].Alpha))"
-    }
-    # F14: the shrinking cut is set without a redraw after the first (T2415).
-    if ($PaneStyle -eq 'flat') {
-        $cutsIn = @(Get-CutRedraws $logFold $logBack)
-        $redrawsIn = @($cutsIn | Where-Object { $_.Redraw -eq 1 }).Count
-        Say ("      cuts folding: {0} ({1} redrawn)" -f (($cutsIn | ForEach-Object { '{0}{1}' -f $_.Width, $(if ($_.Redraw) { '*' } else { '' }) }) -join ' > '), $redrawsIn)
-        Assert ($cutsIn.Count -ge 2) "F14: folding, s2 is re-cut on $($cutsIn.Count) frames (need 2+)"
-        Assert ($redrawsIn -le 1) "F14: folding, s2's shrinking cut is redrawn on $redrawsIn frames (at most 1, the first): a cut that only shrinks has nothing to repaint"
-    }
-    $facesFolded = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
-    Assert ($facesFolded -eq 0) "F12: folded and at rest, no face is on show ($facesFolded): the window's strip has taken over"
-
-    # F4: the T2124 layout at rest.
-    $shown = @($rest | Where-Object Visible)
-    Assert ($shown.Count -eq 2) "F4: at rest two panes are on show (got $($shown.Count))"
-    Assert ($null -ne $s2End -and -not $s2End.Visible) 'F4: s2 is hidden once its slide is over'
-
-    # ---- the unfold, still held, sampled ---------------------------------------
-    Say '== drag back to the start, still held'
-    # One move, as the fold: stepped, the unfold began mid-steps and most of
-    # its widening was over before the sampler started (T2287's F9).
-    [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action move -HoldMs 0)
-    $back = @(Get-Samples $top ($slideMs + 1000))
-    $logEnd = Get-LogLength
-    $facesAtRest = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
-    $again = @(Get-Panes $top)
-    $s2Back = Find-Pane $again $hS2
-    $s2Home = if ($s2Back) { $s2Back.Left } else { $s2Tuck }
-    $s2Coming = @(Get-Between $back $hS2 $s2Tuck $s2Home)
-    Say ("      s2 {0} -> {1}; on show between: {2}; at rest: {3}" -f $s2Tuck, $s2Home, ($s2Coming -join ', '), (Format-Cols $again))
-    $widen = @(Get-PartialWidths $back)
-    Say ("      s2 cut to its widening card at: {0} px" -f ($widen -join ', '))
-    if (-not $NegativeControl) {
-        Assert ($s2Coming.Count -ge 2) "F5: unfolding, s2 is seen at $($s2Coming.Count) positions on its way back (need 2+)"
-        Assert ($widen.Count -ge 2) "F9: unfolding, s2 is seen cut to $($widen.Count) partial widths (need 2+): its card widens out of the strip"
-    }
-    $barBack = @(Get-GlidingBar $logBack | Where-Object { $_.Shown -gt $_.Laid })
-    $barBackAt = @($barBack | ForEach-Object Shown | Sort-Object -Unique)
-    Say ("      bar drawn past its gutter at: {0}" -f ($barBackAt -join ', '))
-    if (-not $NegativeControl) {
-        Assert ($barBackAt.Count -ge 2) "F7: unfolding, the dragged bar is drawn at $($barBackAt.Count) places past its laid-out gutter (need 2+)"
-    }
-    # F11: the face fades back out as the card widens.
-    $fadeOut = @(Get-FaceAlphas $logBack $logEnd)
-    $outMid = @($fadeOut | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
-    Say ("      face alphas unfolding: {0}" -f (($fadeOut | ForEach-Object Alpha) -join ' > '))
-    if (-not $NegativeControl) {
-        Assert ($outMid.Count -ge 2) "F11: unfolding, the face is drawn at $($outMid.Count) partial alphas (need 2+): the title fades out as the content comes back"
-        if ($fadeOut.Count -ge 2) {
-            Assert ($fadeOut[-1].Alpha -lt $fadeOut[0].Alpha) "F11: unfolding, the face's alpha falls ($($fadeOut[0].Alpha) -> $($fadeOut[-1].Alpha))"
+        # F2: P grows through the slide.
+        $pW1 = if ($pEnd) { $pEnd.Width } else { $pW0 }
+        $widths = New-Object System.Collections.Generic.List[int]
+        $widths.Add($pW0)
+        foreach ($s in $fold) {
+            $q = Find-Pane $s.Panes $hP
+            if ($null -ne $q -and $q.Visible -and $q.Width -ne $widths[$widths.Count - 1]) { $widths.Add($q.Width) }
         }
-    }
-    Assert ($facesAtRest -eq 0) "F12: unfolded and at rest, no face is on show ($facesAtRest)"
-    # F14: a growing cut is redrawn - the pixels it gives back were never drawn.
-    if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
-        $cutsOut = @(Get-CutRedraws $logBack $logEnd)
-        $redrawsOut = @($cutsOut | Where-Object { $_.Redraw -eq 1 }).Count
-        Say ("      cuts unfolding: {0} of {1} redrawn" -f $redrawsOut, $cutsOut.Count)
-        Assert ($redrawsOut -ge 2) "F14: unfolding, s2's growing cut is redrawn on $redrawsOut frames (need 2+)"
-    }
+        $lo = [math]::Min($pW0, $pW1)
+        $hi = [math]::Max($pW0, $pW1)
+        $mid = @($widths | Where-Object { $_ -gt $lo -and $_ -lt $hi } | Sort-Object -Unique)
+        $bigStep = 0
+        for ($i = 1; $i -lt $widths.Count; $i++) { $bigStep = [math]::Max($bigStep, [math]::Abs($widths[$i] - $widths[$i - 1])) }
+        $span = [math]::Max(1, $hi - $lo)
+        Say ("      P width {0} -> {1}; path: {2}" -f $pW0, $pW1, ($widths -join ' > '))
+        Assert ($span -gt (Get-TestChromeDip -Dip 100 -Scale $scale)) "F2: P grows a real amount ($pW0 -> $pW1 px)"
+        Assert ($mid.Count -ge 2) "F2: P is seen at $($mid.Count) widths on the way (need 2+): it grows through the slide"
+        Assert ($bigStep -le 0.6 * $span) "F2: no single step covers most of the change (largest $bigStep of $span px)"
 
-    # F13: the face's pixels are the strip's band (flat: one solid band).
-    if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
-        $bands = @(@($fadeIn) + @($fadeOut) | ForEach-Object Band | Sort-Object -Unique)
-        if ($null -eq $script:faceShot) {
-            Assert $false 'F13: the face was photographed mid-glide (no capture landed)'
+        # F3: the run over the card tucking away.
+        $both = 0
+        $s1Above = 0
+        foreach ($s in $fold) {
+            $a = Find-Pane $s.Panes $hS1
+            $b = Find-Pane $s.Panes $hS2
+            if ($null -eq $a -or $null -eq $b -or -not $a.Visible -or -not $b.Visible) { continue }
+            if ($b.Left -le $s2Left0 -or $b.Left -ge $s2Tuck) { continue }
+            $both++
+            if ($a.Z -lt $b.Z) { $s1Above++ }
+        }
+        if ($NegativeControl) {
+            Say "      (negative control: $both mid-slide samples)"
         } else {
-            $tc = Get-TopColor $script:faceShot
-            Say ("      face photo {0}x{1}: top colour {2} ({3:p0}); logged bands {4}" -f $script:faceShot.Width, $script:faceShot.Height, $tc.Color, $tc.Share, ($bands -join ', '))
-            Assert ($bands -contains $tc.Color) "F13: the face's commonest pixel $($tc.Color) is the strip band the face logged ($($bands -join ', '))"
-            Assert ($tc.Share -ge 0.6) "F13: the band covers most of the face ($([math]::Round($tc.Share * 100))%)"
-            Close-TestWindowPixels -Shot $script:faceShot
+            Assert ($both -ge 1 -and $s1Above -eq $both) "F3: mid-slide, s1 is above s2 in the z-order ($s1Above of $both samples)"
         }
+
+        # F6: nothing the app shows bleeds out of the window mid-fold.
+        $strayFold = @($fold | Where-Object { $_.Stray.Count -gt 0 })
+        $firstFold = if ($strayFold.Count -gt 0) { "at $($strayFold[0].Ms) ms: $($strayFold[0].Stray -join ' | ')" } else { '' }
+        Assert ($strayFold.Count -eq 0) "F6: no popup reaches outside the window during the fold ($($strayFold.Count) of $($fold.Count) samples) $firstFold"
+
+        # F7: the bar follows P's edge as it is drawn, short of the hand.
+        $barFold = @(Get-GlidingBar $logFold | Where-Object { $_.Shown -lt $_.Laid })
+        $barFoldAt = @($barFold | ForEach-Object Shown | Sort-Object -Unique)
+        Say ("      bar drawn short of its gutter at: {0}" -f ($barFoldAt -join ', '))
+        Assert ($barFoldAt.Count -ge 2) "F7: folding, the dragged bar is drawn at $($barFoldAt.Count) places short of its laid-out gutter (need 2+): it stays with the gliding card"
+
+        # F8: the folding card narrows into its strip (T2287).
+        $narrow = @(Get-PartialWidths $fold)
+        Say ("      s2 cut to its narrowing card at: {0} px" -f ($narrow -join ', '))
+        Assert ($narrow.Count -ge 2) "F8: folding, s2 is seen cut to $($narrow.Count) partial widths (need 2+): its card narrows into the strip, it does not slide off full size"
+
+        # F10: the strip's face fades in over the narrowing card (T2288).
+        $fadeIn = @(Get-FaceAlphas $logFold $logBack)
+        $inMid = @($fadeIn | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
+        $faceSeen = @($fold | Where-Object { $_.Faces -gt 0 }).Count
+        Say ("      face alphas folding: {0}; face on show in {1} of {2} samples" -f (($fadeIn | ForEach-Object Alpha) -join ' > '), $faceSeen, $fold.Count)
+        Assert ($faceSeen -ge 1) "F10: folding, the strip's face is seen on show over s2's card ($faceSeen samples)"
+        Assert ($inMid.Count -ge 2) "F10: folding, the face is drawn at $($inMid.Count) partial alphas (need 2+): the title fades in as the content fades out"
+        if ($fadeIn.Count -ge 2) {
+            Assert ($fadeIn[-1].Alpha -gt $fadeIn[0].Alpha) "F10: folding, the face's alpha rises ($($fadeIn[0].Alpha) -> $($fadeIn[-1].Alpha))"
+        }
+        # F14: the shrinking cut is set without a redraw after the first (T2415).
+        if ($PaneStyle -eq 'flat') {
+            $cutsIn = @(Get-CutRedraws $logFold $logBack)
+            $redrawsIn = @($cutsIn | Where-Object { $_.Redraw -eq 1 }).Count
+            Say ("      cuts folding: {0} ({1} redrawn)" -f (($cutsIn | ForEach-Object { '{0}{1}' -f $_.Width, $(if ($_.Redraw) { '*' } else { '' }) }) -join ' > '), $redrawsIn)
+            Assert ($cutsIn.Count -ge 2) "F14: folding, s2 is re-cut on $($cutsIn.Count) frames (need 2+)"
+            Assert ($redrawsIn -le 1) "F14: folding, s2's shrinking cut is redrawn on $redrawsIn frames (at most 1, the first): a cut that only shrinks has nothing to repaint"
+        }
+        $facesFolded = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
+        Assert ($facesFolded -eq 0) "F12: folded and at rest, no face is on show ($facesFolded): the window's strip has taken over"
+
+        # F4: the T2124 layout at rest.
+        $shown = @($rest | Where-Object Visible)
+        Assert ($shown.Count -eq 2) "F4: at rest two panes are on show (got $($shown.Count))"
+        Assert ($null -ne $s2End -and -not $s2End.Visible) 'F4: s2 is hidden once its slide is over'
+
+        # ---- the unfold, still held, sampled ---------------------------------------
+        Say '== drag back to the start, still held'
+        # One move, as the fold: stepped, the unfold began mid-steps and most of
+        # its widening was over before the sampler started (T2287's F9).
+        [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action move -HoldMs 0)
+        $back = @(Get-Samples $top ($slideMs + 1000))
+        $logEnd = Get-LogLength
+        $facesAtRest = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
+        $again = @(Get-Panes $top)
+        $s2Back = Find-Pane $again $hS2
+        $s2Home = if ($s2Back) { $s2Back.Left } else { $s2Tuck }
+        $s2Coming = @(Get-Between $back $hS2 $s2Tuck $s2Home)
+        Say ("      s2 {0} -> {1}; on show between: {2}; at rest: {3}" -f $s2Tuck, $s2Home, ($s2Coming -join ', '), (Format-Cols $again))
+        $widen = @(Get-PartialWidths $back)
+        Say ("      s2 cut to its widening card at: {0} px" -f ($widen -join ', '))
+        if (-not $NegativeControl) {
+            Assert ($s2Coming.Count -ge 2) "F5: unfolding, s2 is seen at $($s2Coming.Count) positions on its way back (need 2+)"
+            Assert ($widen.Count -ge 2) "F9: unfolding, s2 is seen cut to $($widen.Count) partial widths (need 2+): its card widens out of the strip"
+        }
+        $barBack = @(Get-GlidingBar $logBack | Where-Object { $_.Shown -gt $_.Laid })
+        $barBackAt = @($barBack | ForEach-Object Shown | Sort-Object -Unique)
+        Say ("      bar drawn past its gutter at: {0}" -f ($barBackAt -join ', '))
+        if (-not $NegativeControl) {
+            Assert ($barBackAt.Count -ge 2) "F7: unfolding, the dragged bar is drawn at $($barBackAt.Count) places past its laid-out gutter (need 2+)"
+        }
+        # F11: the face fades back out as the card widens.
+        $fadeOut = @(Get-FaceAlphas $logBack $logEnd)
+        $outMid = @($fadeOut | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
+        Say ("      face alphas unfolding: {0}" -f (($fadeOut | ForEach-Object Alpha) -join ' > '))
+        if (-not $NegativeControl) {
+            Assert ($outMid.Count -ge 2) "F11: unfolding, the face is drawn at $($outMid.Count) partial alphas (need 2+): the title fades out as the content comes back"
+            if ($fadeOut.Count -ge 2) {
+                Assert ($fadeOut[-1].Alpha -lt $fadeOut[0].Alpha) "F11: unfolding, the face's alpha falls ($($fadeOut[0].Alpha) -> $($fadeOut[-1].Alpha))"
+            }
+        }
+        Assert ($facesAtRest -eq 0) "F12: unfolded and at rest, no face is on show ($facesAtRest)"
+        # F14: a growing cut is redrawn - the pixels it gives back were never drawn.
+        if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
+            $cutsOut = @(Get-CutRedraws $logBack $logEnd)
+            $redrawsOut = @($cutsOut | Where-Object { $_.Redraw -eq 1 }).Count
+            Say ("      cuts unfolding: {0} of {1} redrawn" -f $redrawsOut, $cutsOut.Count)
+            Assert ($redrawsOut -ge 2) "F14: unfolding, s2's growing cut is redrawn on $redrawsOut frames (need 2+)"
+        }
+
+        # F13: the face's pixels are the strip's band (flat: one solid band).
+        if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
+            $bands = @(@($fadeIn) + @($fadeOut) | ForEach-Object Band | Sort-Object -Unique)
+            if ($null -eq $script:faceShot) {
+                Assert $false 'F13: the face was photographed mid-glide (no capture landed)'
+            } else {
+                $tc = Get-TopColor $script:faceShot
+                Say ("      face photo {0}x{1}: top colour {2} ({3:p0}); logged bands {4}" -f $script:faceShot.Width, $script:faceShot.Height, $tc.Color, $tc.Share, ($bands -join ', '))
+                Assert ($bands -contains $tc.Color) "F13: the face's commonest pixel $($tc.Color) is the strip band the face logged ($($bands -join ', '))"
+                Assert ($tc.Share -ge 0.6) "F13: the band covers most of the face ($([math]::Round($tc.Share * 100))%)"
+                Close-TestWindowPixels -Shot $script:faceShot
+            }
+        }
+
+        $strayBack = @($back | Where-Object { $_.Stray.Count -gt 0 })
+        $firstBack = if ($strayBack.Count -gt 0) { "at $($strayBack[0].Ms) ms: $($strayBack[0].Stray -join ' | ')" } else { '' }
+        Assert ($strayBack.Count -eq 0) "F6: no popup reaches outside the window during the unfold ($($strayBack.Count) of $($back.Count) samples) $firstBack"
+
+        Assert (@($again | Where-Object Visible).Count -eq 3) "F5: all the way back, three on show ($(@($again | Where-Object Visible).Count))"
+        [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action up -HoldMs 0)
+        Start-Sleep -Milliseconds 400
+
     }
-
-    $strayBack = @($back | Where-Object { $_.Stray.Count -gt 0 })
-    $firstBack = if ($strayBack.Count -gt 0) { "at $($strayBack[0].Ms) ms: $($strayBack[0].Stray -join ' | ')" } else { '' }
-    Assert ($strayBack.Count -eq 0) "F6: no popup reaches outside the window during the unfold ($($strayBack.Count) of $($back.Count) samples) $firstBack"
-
-    Assert (@($again | Where-Object Visible).Count -eq 3) "F5: all the way back, three on show ($(@($again | Where-Object Visible).Count))"
-    [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action up -HoldMs 0)
-    Start-Sleep -Milliseconds 400
-
     Complete-TestBody
 } catch {
     $script:fail++
@@ -558,6 +584,8 @@ try {
     $env:GHOZTTY_PIPE_SUFFIX = $savedPipe
     if ($null -ne $savedSlide) { $env:GHOZTTY_STACK_SLIDE_MS = $savedSlide }
     else { Remove-Item env:GHOZTTY_STACK_SLIDE_MS -ErrorAction SilentlyContinue }
+    if ($null -ne $savedDt) { $env:GHOZTTY_STACK_SLIDE_DT_MS = $savedDt }
+    else { Remove-Item env:GHOZTTY_STACK_SLIDE_DT_MS -ErrorAction SilentlyContinue }
     if ($script:fail -eq 0) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
     else { Say "artifacts preserved at $root" }
 }
@@ -571,8 +599,14 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 if ($script:fail -eq 0 -and -not $NegativeControl -and $PaneStyle -eq 'flat') {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
-        update -Guard stack-fold-slide -Repo $repo 2>&1 | ForEach-Object { Say "  $_" }
+    # Each mode stamps its own row (T2442).
+    if ($SlowFrames) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+            update -Guard stack-fold-slide-slow -Repo $repo 2>&1 | ForEach-Object { Say "  $_" }
+    } else {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+            update -Guard stack-fold-slide -Repo $repo 2>&1 | ForEach-Object { Say "  $_" }
+    }
 }
 
 Say ''

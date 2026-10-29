@@ -141,6 +141,44 @@ pub fn collapse(extent: f64, strip: f64, span: f64) f64 {
     return std.math.clamp(1 - (extent - strip) / span, 0, 1);
 }
 
+/// The most a strip card's `collapse` moves in one frame (T2442): the fade
+/// always gets three frames, however long a frame takes. A 16 ms frame never
+/// reaches it - the follower closes 31% of the way, and the zone is the last
+/// 120 DIP - so at the frame rate Mac draws at this changes nothing; a 70 ms
+/// frame closes 79% and used to cross the whole zone in one, putting the card
+/// in its strip with its content still at full strength.
+pub const max_fade_step: f64 = 1.0 / 3.0;
+
+/// Where a strip card's fade runs, in pixels (T2442): `strip` and `span` as
+/// `collapse` takes them - the window's scale applied to `strip_face`'s DIP.
+pub const Fade = struct {
+    strip: f64,
+    span: f64,
+};
+
+/// A strip card's edges one frame on (T2442): `next` - where the follower put
+/// them - unless that moves the card's `collapse` more than `max_fade_step`
+/// from where `prev` had it; then only as far along the same line as moves it
+/// that much. `collapse` is linear in the card's smaller side inside the zone,
+/// so the stop is found exactly rather than searched for.
+pub fn limitFade(prev: Edges, next: Edges, fade: Fade) Edges {
+    const e0 = prev.extent();
+    const e1 = next.extent();
+    const c0 = collapse(e0, fade.strip, fade.span);
+    const c1 = collapse(e1, fade.strip, fade.span);
+    if (@abs(c1 - c0) <= max_fade_step + 1e-9) return next;
+    if (e1 == e0) return next;
+    const c = if (c1 > c0) c0 + max_fade_step else c0 - max_fade_step;
+    const e = fade.strip + fade.span * (1 - c);
+    const t = std.math.clamp((e - e0) / (e1 - e0), 0, 1);
+    return .{
+        .left = prev.left + (next.left - prev.left) * t,
+        .top = prev.top + (next.top - prev.top) * t,
+        .right = prev.right + (next.right - prev.right) * t,
+        .bottom = prev.bottom + (next.bottom - prev.bottom) * t,
+    };
+}
+
 /// A card's width and height, in pixels.
 pub const Size = struct {
     w: i32,
@@ -205,6 +243,11 @@ pub const Edges = struct {
             .right = @floatFromInt(px.right),
             .bottom = @floatFromInt(px.bottom),
         };
+    }
+
+    /// The smaller side, as `strip_face.collapseOf` measures a card.
+    pub fn extent(e: Edges) f64 {
+        return @min(e.right - e.left, e.bottom - e.top);
     }
 
     pub fn round(e: Edges) PxRect {
@@ -273,6 +316,9 @@ pub const Slide = struct {
     tau_ms: f64 = glide_ms,
     /// A drag's slide: sizes move with positions (see `rectOf`).
     resize: bool = false,
+    /// Where a strip card's fade runs (T2442), so no frame crosses more than
+    /// `max_fade_step` of it; null leaves the follower alone.
+    fade: ?Fade = null,
     /// Strips that stay strips and gain their reach under a newcomer (T2312):
     /// each is shown no longer than it was until the glide is over.
     held: [max_cards]HeldStrip = undefined,
@@ -386,12 +432,15 @@ pub const Slide = struct {
         const k = followK(dt_ms, self.tau_ms);
         for (self.cards[0..self.len]) |*c| {
             const to = Edges.of(c.to);
-            c.drawn = .{
+            const next: Edges = .{
                 .left = follow(c.drawn.left, to.left, k),
                 .top = follow(c.drawn.top, to.top, k),
                 .right = follow(c.drawn.right, to.right, k),
                 .bottom = follow(c.drawn.bottom, to.bottom, k),
             };
+            // A card going into or out of its strip crosses its fade over
+            // three frames at least (T2442).
+            c.drawn = if (c.strip != null) if (self.fade) |f| limitFade(c.drawn, next, f) else next else next;
         }
         for (self.strips[0..self.strips_len]) |*s| {
             const to = Edges.of(s.to);
@@ -1238,6 +1287,91 @@ test "stripFace: a card on its way into or out of its strip, by its stack's axis
     _ = m.step(20);
     try testing.expect(m.cardRect(2) != null);
     try testing.expectEqual(@as(@TypeOf(m.stripFace(2)), null), m.stripFace(2));
+}
+
+/// The collapse of strip card `id` as drawn, at `fade`.
+fn drawnCollapse(s: *const Slide, id: Id, fade: Fade) f64 {
+    const c = s.find(id).?;
+    return collapse(c.drawn.extent(), fade.strip, fade.span);
+}
+
+test "step: a fold crosses its fade over three frames however long a frame is (T2442)" {
+    const fade: Fade = .{ .strip = 48, .span = 120 };
+    const before = [_]Placed{.{ .id = 1, .rect = r(400, 0, 400, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    // 70 ms frames, the user's window under a drag (1.49.6 log): unlimited,
+    // one frame took the card from outside the zone to past 90% of it.
+    var bare = plan(&before, &after, null, glide_ms, false);
+    _ = bare.step(70);
+    _ = bare.step(70);
+    try testing.expect(drawnCollapse(&bare, 1, fade) > 0.9);
+    var s = plan(&before, &after, null, glide_ms, false);
+    s.fade = fade;
+    var partial: usize = 0;
+    var last: f64 = 0;
+    var frames: usize = 0;
+    while (!s.step(70)) : (frames += 1) {
+        const c = drawnCollapse(&s, 1, fade);
+        try testing.expect(c - last <= max_fade_step + 1e-6);
+        if (c > 0 and c < 1) partial += 1;
+        last = c;
+        try testing.expect(frames < 100);
+    }
+    try testing.expect(partial >= 2);
+    // And it still lands on its strip.
+    try testing.expectEqual(r(764, 0, 36, 600), s.cards[0].drawn.round());
+}
+
+test "step: at 60 fps the fade limit never bites - Mac's follower, frame for frame (T2442)" {
+    const fade: Fade = .{ .strip = 48, .span = 120 };
+    const before = [_]Placed{.{ .id = 1, .rect = r(400, 0, 400, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    var bare = plan(&before, &after, null, glide_ms, false);
+    var s = plan(&before, &after, null, glide_ms, false);
+    s.fade = fade;
+    var i: usize = 0;
+    while (i < 40) : (i += 1) {
+        const a = bare.step(16.7);
+        const b = s.step(16.7);
+        try testing.expectEqual(bare.cards[0].drawn, s.cards[0].drawn);
+        try testing.expectEqual(a, b);
+    }
+}
+
+test "step: an unfold fades its content back in over three frames too (T2442)" {
+    const fade: Fade = .{ .strip = 48, .span = 120 };
+    const tucked = [_]Placed{.{ .id = 1, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    const shown = [_]Placed{.{ .id = 1, .rect = r(400, 0, 400, 600), .tucked = false }};
+    var s = plan(&tucked, &shown, null, glide_ms, false);
+    s.fade = fade;
+    var partial: usize = 0;
+    var last: f64 = 1;
+    var frames: usize = 0;
+    while (!s.step(100)) : (frames += 1) {
+        const c = drawnCollapse(&s, 1, fade);
+        try testing.expect(last - c <= max_fade_step + 1e-6);
+        if (c > 0 and c < 1) partial += 1;
+        last = c;
+        try testing.expect(frames < 100);
+    }
+    try testing.expect(partial >= 2);
+}
+
+test "limitFade: a step inside the cap is the follower's own; past it, stops on the same line (T2442)" {
+    const fade: Fade = .{ .strip = 48, .span = 120 };
+    const e = struct {
+        fn of(left: f64, right: f64) Edges {
+            return .{ .left = left, .top = 0, .right = right, .bottom = 600 };
+        }
+    }.of;
+    // 168 -> 140 wide: collapse 0 -> 0.23, under the cap.
+    try testing.expectEqual(e(632, 772), limitFade(e(604, 772), e(632, 772), fade));
+    // 168 -> 48: capped at collapse 1/3, a card 128 wide, its edges on the line.
+    const got = limitFade(e(604, 772), e(724, 772), fade);
+    try testing.expectApproxEqAbs(@as(f64, 128), got.extent(), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 772), got.right, 1e-9);
+    // Wholly outside the zone the follower is untouched.
+    try testing.expectEqual(e(300, 772), limitFade(e(0, 772), e(300, 772), fade));
 }
 
 test "plan: a card turned back mid-glide carries on from where its card is drawn (T2287)" {

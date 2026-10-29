@@ -855,6 +855,9 @@ stack_slide_last: ?std.time.Instant = null,
 /// (T2401): that one counts at most one display period, so the layout that
 /// started it is not spent as motion nobody saw.
 stack_slide_fresh: bool = false,
+/// A test's slow frames (T2442; `GHOZTTY_STACK_SLIDE_DT_MS`, read once): every
+/// tick steps the glide as if this long had passed. Null in use.
+stack_slide_dt_ms: ?f64 = null,
 /// Whether the glide under way is the grid's for the pane sidebar collapsing
 /// or expanding (T2406): the sidebar's card follows it step by step.
 stack_slide_column: bool = false,
@@ -1679,6 +1682,10 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     self.frame_wait_serial = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DRAG_SERIAL_WAIT");
     self.frame_wait_any = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_WAIT_ANY");
     self.keep_vacated_gutters = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_KEEP_VACATED_GUTTERS");
+    // T2442's slow frames, for stack-fold-slide.ps1 -SlowFrames.
+    if (std.process.parseEnvVarInt("GHOZTTY_STACK_SLIDE_DT_MS", u32, 10)) |ms| {
+        self.stack_slide_dt_ms = @floatFromInt(ms);
+    } else |_| {}
     // T1345's control, read the same way and for the same reason: the pre-fix
     // chrome fan-out, so both shapes are measurable on one build.
     chrome_fanout.state.legacy = std.process.hasNonEmptyEnvVarConstant(
@@ -8502,10 +8509,11 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
     const shifted = same_tab and !same_view and self.takeColumnShift();
     if (shifted) {
         const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
-        const next = if (App.clientAreaAnimationsEnabled())
+        var next = if (App.clientAreaAnimationsEnabled())
             pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing())
         else
             pane_stack_slide.Slide{};
+        next.fade = strip_face.fadeOf(self.scale);
         if (next.active()) {
             log.info("pane grid glides for the sidebar column: cards={d} strips={d}", .{ next.len, next.strips_len });
             self.stack_slide = next;
@@ -8528,7 +8536,9 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
             const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
             // A drag's fold or unfold resizes on the way, as the drag does
             // on every move (T2186).
-            const next = pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing());
+            var next = pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing());
+            // The strip's fade gets three frames however slow they are (T2442).
+            next.fade = strip_face.fadeOf(self.scale);
             if (next.active()) {
                 self.stack_slide = next;
                 self.orderStackCards(tree, grid);
@@ -8684,6 +8694,10 @@ fn stackSlideTick(self: *Window) void {
         dt = frame_clock.firstFrame(dt, period_ms);
     }
     self.stack_slide_last = now;
+    // A test's slow frames (T2442, stack-fold-slide.ps1 -SlowFrames): the
+    // frame time the user's window had under a drag, on a box whose own
+    // frames are quick.
+    if (self.stack_slide_dt_ms) |ms| dt = ms;
     const done = s.step(dt);
     // The acceptance oracle (pane-sidebar-glide.ps1, T2417): a strip that
     // stays a strip moves through the glide rather than jumping.

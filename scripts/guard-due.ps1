@@ -726,6 +726,23 @@ $GuardTable = @(
             'src\apprt\win32\strip_face.zig'
         )
     },
+    # The same fold at Mac's own glide with every frame forced to 80 ms
+    # (T2442): the strip's face still fades in over 2+ partial alphas, no frame
+    # jumping more than a third of the fade - the user's window under a drag
+    # crossed the whole fade in one frame and showed the content to the end.
+    [pscustomobject]@{
+        Name    = 'stack-fold-slide-slow'
+        Script  = 'test\win32\stack-fold-slide.ps1'
+        RunArgs = '-SlowFrames'
+        Stamp   = 'test\win32\stack-fold-slide-slow.stamp.json'
+        Covers  = @(
+            'test\win32\stack-fold-slide.ps1',
+            'src\apprt\win32\pane_stack_slide.zig',
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\StripFace.zig',
+            'src\apprt\win32\strip_face.zig'
+        )
+    },
     # A collapsed row carried across a tree change (T2083/T2119): a pane on
     # show closed, undone, or split leaves the strips as strips and the caret
     # on a pane on show. `CloseUndo.zig` saves the stack state with the tree.

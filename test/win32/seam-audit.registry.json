@@ -369,6 +369,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2102. pane-stack-slide.ps1 stretches the stacked-pane carousel slide to 2 s so its sampler sees cards mid-slide (and to 0 ms for its negative control); unset is Mac's 0.38 s, which pane-stack-strip.ps1's strip click runs through."
         },
+        "GHOZTTY_STACK_SLIDE_DT_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "T2442. stack-fold-slide.ps1 -SlowFrames steps every glide tick as if 80 ms had passed, the frame time the user's window had under a drag, so F15 can prove the strip face still fades over 2+ frames; unset is the real time since the last tick, which the default stack-fold-slide.ps1 run and pane-stack-slide.ps1 drive."
+        },
         "GHOZTTY_SIDEBAR_COLUMN_MS": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-rename",
     "script":  "test/win32/pane-sidebar-rename.ps1",
-    "generated":  "2026-10-28T23:27:21-07:00",
-    "commit":  "38f4dd701",
+    "generated":  "2026-10-28T23:59:23-07:00",
+    "commit":  "12a5206b2",
     "uncommitted":  [
 
                     ],

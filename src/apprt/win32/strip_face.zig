@@ -49,6 +49,13 @@ pub fn collapseOf(visible: PxRect, scale: f32) f64 {
     return pane_stack_slide.collapse(extent, strip_dip * s, fade_span_dip * s);
 }
 
+/// Where the fade runs at `scale`, for the glide to cross it over three
+/// frames at least (T2442, `pane_stack_slide.limitFade`).
+pub fn fadeOf(scale: f32) pane_stack_slide.Fade {
+    const s: f64 = @floatCast(scale);
+    return .{ .strip = strip_dip * s, .span = fade_span_dip * s };
+}
+
 /// The face's constant alpha for `collapse` (0..1).
 pub fn alphaOf(collapse: f64) u8 {
     return @intFromFloat(@round(std.math.clamp(collapse, 0, 1) * 255));
