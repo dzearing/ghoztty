@@ -418,6 +418,16 @@ pub const Slide = struct {
         return .{ .card = cardOf(c, self.resize), .axis = s.axis, .leads = s.anchor != .top_left };
     }
 
+    /// Whether card `id` is on its way INTO its strip (T2457): a strip card
+    /// that has not caught up, drawn longer than where it is headed. Such a
+    /// card can carry its pane's last frame instead of the live pane, since
+    /// nothing in it changes size on the way.
+    pub fn folding(self: *const Slide, id: Id) bool {
+        const c = self.find(id) orelse return false;
+        if (c.strip == null or c.drawn.eql(c.to)) return false;
+        return Edges.of(c.to).extent() < c.drawn.extent();
+    }
+
     /// Where card `id`'s pane is drawn, caught up or not; null when this glide
     /// does not carry it.
     pub fn placed(self: *const Slide, id: Id) ?PxRect {
@@ -1320,6 +1330,19 @@ test "step: a fold crosses its fade over three frames however long a frame is (T
     try testing.expect(partial >= 2);
     // And it still lands on its strip.
     try testing.expectEqual(r(764, 0, 36, 600), s.cards[0].drawn.round());
+}
+
+test "folding: a card on its way into its strip, until it is there; never one coming out (T2457)" {
+    const on_show = [_]Placed{.{ .id = 1, .rect = r(400, 0, 400, 600), .tucked = false }};
+    const tucked = [_]Placed{.{ .id = 1, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    var fold = plan(&on_show, &tucked, null, glide_ms, false);
+    try testing.expect(fold.folding(1));
+    try testing.expect(!fold.folding(2));
+    while (!fold.step(16)) {}
+    // At its strip it IS the strip, and carries nothing.
+    try testing.expect(!fold.folding(1));
+    var unfold = plan(&tucked, &on_show, null, glide_ms, false);
+    try testing.expect(!unfold.folding(1));
 }
 
 test "step: at 60 fps the fade limit never bites - Mac's follower, frame for frame (T2442)" {

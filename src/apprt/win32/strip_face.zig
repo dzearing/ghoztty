@@ -56,6 +56,66 @@ pub fn fadeOf(scale: f32) pane_stack_slide.Fade {
     return .{ .strip = strip_dip * s, .span = fade_span_dip * s };
 }
 
+/// How far a card carrying its own content (T2457) is through its glide into
+/// its strip, along the stack's axis: 0 at `full` (the pane's held length, the
+/// card as it was on show), 1 at `strip`. The fade runs over the WHOLE tween,
+/// not just its last `fade_span_dip` - the user's spec: no frame shows the
+/// content at full strength on a narrow card. A pane hardly wider than a strip
+/// still gets the span Mac's fade has, so it never crosses in a frame.
+pub fn tweenCollapse(drawn: f64, strip: f64, full: f64, min_span: f64) f64 {
+    const span = @max(full - strip, min_span);
+    if (span <= 0) return if (drawn <= strip) 1 else 0;
+    return std.math.clamp((full - drawn) / span, 0, 1);
+}
+
+/// A pane's last frame as its renderer read it back (T2457; `Surface`'s
+/// snapshot: bottom-up, 0x??RRGGBB, alpha meaningless), `w` x `h`, and where
+/// its top-left sits in the face - the pane is pinned to the card's far edge,
+/// so it can start before the face's origin.
+pub const Content = struct {
+    pixels: []const u32,
+    w: i32,
+    h: i32,
+    x: i32,
+    y: i32,
+};
+
+/// Lay `content` over a `w` x `h` face at `alpha` (T2457): each pixel becomes
+/// `alpha` of the content and the rest of what the face already holds (the
+/// band and the strip's name), opaque. So one picture carries the card - the
+/// content fading out as the title fades in - and nothing is composited over
+/// a live window that moves on its own clock. A face pixel the content does
+/// not cover keeps the band.
+pub fn blendContent(buf: []u32, w: usize, h: usize, content: Content, alpha: u8) void {
+    if (content.w <= 0 or content.h <= 0 or alpha == 0) return;
+    if (content.pixels.len < @as(usize, @intCast(content.w)) * @as(usize, @intCast(content.h))) return;
+    const a: u32 = alpha;
+    const ia: u32 = 255 - a;
+    const cw: usize = @intCast(content.w);
+    for (0..h) |row| {
+        const cy = @as(i32, @intCast(row)) - content.y;
+        if (cy < 0 or cy >= content.h) continue;
+        // Bottom-up: the face's top row is the frame's last.
+        const src = content.pixels[@as(usize, @intCast(content.h - 1 - cy)) * cw ..][0..cw];
+        const x0: i32 = @max(0, content.x);
+        const x1: i32 = @min(@as(i32, @intCast(w)), content.x + content.w);
+        if (x1 <= x0) continue;
+        const dst = buf[row * w ..][@intCast(x0)..@intCast(x1)];
+        const from = src[@intCast(x0 - content.x)..][0..dst.len];
+        if (a == 255) {
+            for (dst, from) |*p, c| p.* = 0xFF00_0000 | (c & 0xFF_FFFF);
+            continue;
+        }
+        for (dst, from) |*p, c| {
+            const b = p.*;
+            const r = (((c >> 16) & 0xFF) * a + ((b >> 16) & 0xFF) * ia + 127) / 255;
+            const g = (((c >> 8) & 0xFF) * a + ((b >> 8) & 0xFF) * ia + 127) / 255;
+            const bl = ((c & 0xFF) * a + (b & 0xFF) * ia + 127) / 255;
+            p.* = 0xFF00_0000 | (r << 16) | (g << 8) | bl;
+        }
+    }
+}
+
 /// The face's constant alpha for `collapse` (0..1).
 pub fn alphaOf(collapse: f64) u8 {
     return @intFromFloat(@round(std.math.clamp(collapse, 0, 1) * 255));
@@ -131,6 +191,62 @@ test "collapseOf: none wide, all at a strip and its tuck, half way between (T228
     try testing.expectEqual(@as(f64, 1), collapseOf(r(72, 900), 1.5));
     // Nothing drawn is no face.
     try testing.expectEqual(@as(f64, 0), collapseOf(r(0, 600), 1));
+}
+
+test "tweenCollapse: the fade runs over the whole tween, monotonic in the drawn length (T2457)" {
+    // A 900 px pane folding into a 48 px strip: none of it at full length,
+    // half at the midpoint, all at the strip, clamped past either end.
+    try testing.expectEqual(@as(f64, 0), tweenCollapse(900, 48, 900, 120));
+    try testing.expectApproxEqAbs(@as(f64, 0.5), tweenCollapse(474, 48, 900, 120), 1e-9);
+    try testing.expectEqual(@as(f64, 1), tweenCollapse(48, 48, 900, 120));
+    try testing.expectEqual(@as(f64, 1), tweenCollapse(30, 48, 900, 120));
+    try testing.expectEqual(@as(f64, 0), tweenCollapse(950, 48, 900, 120));
+    // Unlike Mac's last-120 fade, a card well wider than a strip is already
+    // part way faded: 300 px of a 900 px pane is 70% of the way in.
+    try testing.expect(tweenCollapse(300, 48, 900, 120) > 0.7);
+    try testing.expectEqual(@as(f64, 0), pane_stack_slide.collapse(300, 48, 120));
+    // Narrower is never less faded.
+    var last: f64 = 0;
+    var d: f64 = 900;
+    while (d >= 48) : (d -= 7) {
+        const c = tweenCollapse(d, 48, 900, 120);
+        try testing.expect(c >= last);
+        last = c;
+    }
+    // A pane hardly wider than a strip still fades over the minimum span.
+    try testing.expectApproxEqAbs(@as(f64, 30.0 / 120.0), tweenCollapse(70, 48, 100, 120), 1e-9);
+}
+
+test "blendContent: the content over the band at alpha, pinned, bottom-up, opaque (T2457)" {
+    const band: u32 = 0xFF00_0000;
+    var buf = [_]u32{band} ** 6; // a 3x2 face
+    // A 2x2 frame, bottom-up: its first row is the face's bottom row.
+    const frame = [_]u32{ 0x00_0000FF, 0x00_00FF00, 0x00_FF0000, 0x00_FFFFFF };
+    // Pinned one pixel right of the face's origin: the face's left column
+    // keeps the band.
+    blendContent(&buf, 3, 2, .{ .pixels = &frame, .w = 2, .h = 2, .x = 1, .y = 0 }, 255);
+    try testing.expectEqual(band, buf[0]);
+    try testing.expectEqual(@as(u32, 0xFFFF0000), buf[1]);
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), buf[2]);
+    try testing.expectEqual(band, buf[3]);
+    try testing.expectEqual(@as(u32, 0xFF0000FF), buf[4]);
+    try testing.expectEqual(@as(u32, 0xFF00FF00), buf[5]);
+
+    // Half way: half the content, half the band - and the band can carry
+    // the strip's name, which shows through at the rest.
+    var half = [_]u32{0xFF20_2020};
+    const white = [_]u32{0x00FF_FFFF};
+    blendContent(&half, 1, 1, .{ .pixels = &white, .w = 1, .h = 1, .x = 0, .y = 0 }, 128);
+    // (255 * 128 + 0x20 * 127 + 127) / 255 = 144.
+    try testing.expectEqual(@as(u32, 0xFF909090), half[0]);
+
+    // Nothing at alpha 0, and a frame pinned off the face draws nothing.
+    var none = [_]u32{band} ** 2;
+    blendContent(&none, 2, 1, .{ .pixels = &white, .w = 1, .h = 1, .x = 0, .y = 0 }, 0);
+    blendContent(&none, 2, 1, .{ .pixels = &white, .w = 1, .h = 1, .x = -1, .y = 0 }, 255);
+    blendContent(&none, 2, 1, .{ .pixels = &white, .w = 1, .h = 1, .x = 0, .y = 1 }, 255);
+    try testing.expectEqual(band, none[0]);
+    try testing.expectEqual(band, none[1]);
 }
 
 test "alphaOf: the collapse as a byte, clamped" {

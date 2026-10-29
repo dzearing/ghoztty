@@ -99,6 +99,16 @@ hover_tint: ?*HoverTint = null,
 /// same reason as `hover_tint`.
 strip_face: ?*StripFace = null,
 
+/// Where this pane's card is in carrying its own picture through a fold
+/// (T2457): `waiting` once its renderer has been asked for its last frame,
+/// `ready` once that frame is in the surface's snapshot DIB. While `ready`
+/// the live pane window is hidden and the strip face draws the whole card -
+/// the frame pinned and cut by the narrowing card, faded out over the tween as
+/// the strip's name fades in - so no frame shows the live content beside a
+/// face moving on another clock, and the terminal is never resized.
+/// `Window.planStackSlide` sets it; the glide's end clears it.
+glide_snap: enum { none, waiting, ready } = .none,
+
 /// Wrap an existing Surface as a terminal pane. Takes one reference on the
 /// surface, which is released when this PaneView is freed. The surface's
 /// back-pointer is set here so `Surface` destroy paths can find the leaf.
@@ -378,6 +388,35 @@ pub fn heroSnapRequest(
         .terminal => |s| s.heroSnapTick(w, h, sched, now_ms),
         .viewer => |v| v.heroSnapRequest(w, h, sched, now_ms),
     };
+}
+
+/// Ask a terminal's renderer for its last frame at its full `w`x`h` for a
+/// fold to carry (T2457), on the hero snapshot's one readback path. False for
+/// a viewer, which keeps the live window and the face over it.
+pub fn glideSnapRequest(self: *PaneView, w: u32, h: u32) bool {
+    switch (self.kind) {
+        .terminal => |s| {
+            if (!s.core_surface_ready) return false;
+            s.heroSnapRequest(w, h);
+            return true;
+        },
+        .viewer => return false,
+    }
+}
+
+/// The frame `glideSnapRequest` asked for, once published: bottom-up pixels,
+/// `w` x `h`. Null before it lands.
+pub fn glideFrame(self: *const PaneView) ?struct { pixels: []const u32, w: i32, h: i32 } {
+    switch (self.kind) {
+        .terminal => |s| {
+            const bits = s.snap_dib_bits orelse return null;
+            if (s.snap_dib_w <= 0 or s.snap_dib_h <= 0) return null;
+            const n: usize = @as(usize, @intCast(s.snap_dib_w)) * @as(usize, @intCast(s.snap_dib_h));
+            const px: [*]const u32 = @ptrCast(@alignCast(bits));
+            return .{ .pixels = px[0..n], .w = s.snap_dib_w, .h = s.snap_dib_h };
+        },
+        .viewer => return null,
+    }
 }
 
 /// GUI thread, on `WM_APP_HERO_SNAP`: fold whatever the pane captured into its

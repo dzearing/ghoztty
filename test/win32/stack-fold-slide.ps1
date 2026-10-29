@@ -66,6 +66,12 @@
 #       was a GL repaint per frame of the glide. Unfolding, the cut grows and
 #       IS redrawn. Read from the debug build's `stack cut redraw=` line.
 #
+#   F16) carried (T2457): the folding card is drawn by its face alone, from
+#       the pane's last frame - the live window is off show on every carried
+#       frame after the first, and the content's strength (the
+#       `stack fold carried` oracle) only ever falls. F1/F3/F8/F10 read the
+#       carried card where the live window used to be sampled.
+#
 #   F15) -SlowFrames (T2442): Mac's own glide (45 ms), every tick stepped as
 #       if 80 ms had passed - the frame time the user's window had under a
 #       drag. Folding, the face is still drawn at 2+ partial alphas and no
@@ -232,6 +238,20 @@ function Get-FaceAlphas([int]$from, [int]$to) {
     for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
         if ($lines[$i] -match 'strip face alpha=(\d+) band=([0-9a-f]{6})') {
             $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Band = $Matches[2] }
+        }
+    }
+    return $out
+}
+# The `stack fold carried content_alpha=N card=L,W live=0|1` oracle lines
+# (T2457) from line $from to line $to: each frame of a fold whose card carries
+# its pane's last frame, the content's strength, where the card is drawn, and
+# whether the live pane window was still on show after the frame.
+function Get-Carried([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'stack fold carried content_alpha=(\d+) card=(-?\d+),(\d+) live=(\d)') {
+            $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Left = [int]$Matches[2]; Width = [int]$Matches[3]; Live = [int]$Matches[4] }
         }
     }
     return $out
@@ -410,8 +430,18 @@ try {
         $prev = 0
         foreach ($f in $slow) { $jump = [math]::Max($jump, $f.Alpha - $prev); $prev = $f.Alpha }
         Say ("      face alphas folding at 80 ms frames: {0}" -f (($slow | ForEach-Object Alpha) -join ' > '))
-        Assert ($slowMid.Count -ge 2) "F15: at 80 ms frames the face is drawn at $($slowMid.Count) partial alphas (need 2+): the fade is not crossed in one frame"
-        Assert ($slow.Count -ge 2 -and $jump -le 92) "F15: at 80 ms frames no frame raises the face more than a third of the fade (85) and rounding (largest rise $jump of 255)"
+        # Carried (T2457), the face is opaque and the fade is the content's
+        # strength: it must still never rise. Live, the T2442 cap holds.
+        $slowCarried = @(Get-Carried $logFold $logBack)
+        if ($slowCarried.Count -ge 2) {
+            $slowRise = 0
+            for ($i = 1; $i -lt $slowCarried.Count; $i++) { $slowRise = [math]::Max($slowRise, $slowCarried[$i].Alpha - $slowCarried[$i - 1].Alpha) }
+            Say ("      carried content folding at 80 ms frames: {0}" -f (($slowCarried | ForEach-Object Alpha) -join ' > '))
+            Assert ($slowRise -eq 0) "F15: at 80 ms frames the carried content's strength never rises ($($slowCarried.Count) frames, largest rise $slowRise)"
+        } else {
+            Assert ($slowMid.Count -ge 2) "F15: at 80 ms frames the face is drawn at $($slowMid.Count) partial alphas (need 2+): the fade is not crossed in one frame"
+            Assert ($slow.Count -ge 2 -and $jump -le 92) "F15: at 80 ms frames no frame raises the face more than a third of the fade (85) and rounding (largest rise $jump of 255)"
+        }
         [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action up -HoldMs 0)
         Start-Sleep -Milliseconds 400
     } else {
@@ -421,7 +451,13 @@ try {
         $s2Between = @(Get-Between $fold $hS2 $s2Left0 $s2Tuck)
         Say ("      s2 {0} -> {1}; on show between: {2}" -f $s2Left0, $s2Tuck, ($s2Between -join ', '))
         Assert ([math]::Abs($s2Tuck - $s2Left0) -gt (Get-TestChromeDip -Dip 40 -Scale $scale)) "F1: s2 tucks a real distance away ($s2Left0 -> $s2Tuck px)"
-        Assert ($s2Between.Count -ge 2) "F1: s2 is seen on show at $($s2Between.Count) positions on its way to the edge (need 2+): it slides away, it does not vanish"
+        # Carried (T2457), s2's card is its face, drawn where the oracle says.
+        $carried = @(Get-Carried $logFold $logBack)
+        $lo1 = [math]::Min($s2Left0, $s2Tuck)
+        $hi1 = [math]::Max($s2Left0, $s2Tuck)
+        $carriedAt = @($carried | Where-Object { $_.Left -gt $lo1 -and $_.Left -lt $hi1 } | ForEach-Object Left)
+        $s2Seen = @(@($s2Between) + $carriedAt | Sort-Object -Unique)
+        Assert ($s2Seen.Count -ge 2) "F1: s2's card is seen at $($s2Seen.Count) positions on its way to the edge (need 2+; $($s2Between.Count) live, $($carriedAt.Count) carried): it slides away, it does not vanish"
 
         # F2: P grows through the slide.
         $pW1 = if ($pEnd) { $pEnd.Width } else { $pW0 }
@@ -456,7 +492,9 @@ try {
         if ($NegativeControl) {
             Say "      (negative control: $both mid-slide samples)"
         } else {
-            Assert ($both -ge 1 -and $s1Above -eq $both) "F3: mid-slide, s1 is above s2 in the z-order ($s1Above of $both samples)"
+            # Carried (T2457), s2's live window is hidden for the fold and
+            # never sampled above s1; where both are on show, s1 is above.
+            Assert (($both -ge 1 -or $carried.Count -ge 2) -and $s1Above -eq $both) "F3: mid-slide, s1 is above s2 in the z-order ($s1Above of $both samples with both on show; s2 carried on $($carried.Count) frames)"
         }
 
         # F6: nothing the app shows bleeds out of the window mid-fold.
@@ -472,8 +510,11 @@ try {
 
         # F8: the folding card narrows into its strip (T2287).
         $narrow = @(Get-PartialWidths $fold)
-        Say ("      s2 cut to its narrowing card at: {0} px" -f ($narrow -join ', '))
-        Assert ($narrow.Count -ge 2) "F8: folding, s2 is seen cut to $($narrow.Count) partial widths (need 2+): its card narrows into the strip, it does not slide off full size"
+        $s2Near = Find-Pane $near $hS2
+        $s2Full = if ($s2Near) { $s2Near.Width } else { 0 }
+        $carriedNarrow = @($carried | Where-Object { $_.Width -lt 0.8 * $s2Full } | ForEach-Object Width | Sort-Object -Unique)
+        Say ("      s2 cut to its narrowing card at: {0} px; carried at {1} px" -f ($narrow -join ', '), ($carriedNarrow -join ', '))
+        Assert (($narrow.Count + $carriedNarrow.Count) -ge 2) "F8: folding, s2's card is seen at $($narrow.Count + $carriedNarrow.Count) partial widths (need 2+): its card narrows into the strip, it does not slide off full size"
 
         # F10: the strip's face fades in over the narrowing card (T2288).
         $fadeIn = @(Get-FaceAlphas $logFold $logBack)
@@ -481,10 +522,17 @@ try {
         $faceSeen = @($fold | Where-Object { $_.Faces -gt 0 }).Count
         Say ("      face alphas folding: {0}; face on show in {1} of {2} samples" -f (($fadeIn | ForEach-Object Alpha) -join ' > '), $faceSeen, $fold.Count)
         Assert ($faceSeen -ge 1) "F10: folding, the strip's face is seen on show over s2's card ($faceSeen samples)"
-        Assert ($inMid.Count -ge 2) "F10: folding, the face is drawn at $($inMid.Count) partial alphas (need 2+): the title fades in as the content fades out"
-        if ($fadeIn.Count -ge 2) {
-            Assert ($fadeIn[-1].Alpha -gt $fadeIn[0].Alpha) "F10: folding, the face's alpha rises ($($fadeIn[0].Alpha) -> $($fadeIn[-1].Alpha))"
-        }
+        # T2457: the card carries its content, so the fade is the CONTENT's
+        # strength, falling over the tween - never rising, which is the flash.
+        $cMid = @($carried | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
+        $rise = 0
+        for ($i = 1; $i -lt $carried.Count; $i++) { $rise = [math]::Max($rise, $carried[$i].Alpha - $carried[$i - 1].Alpha) }
+        Say ("      carried content folding: {0}" -f (($carried | ForEach-Object Alpha) -join ' > '))
+        Assert ($inMid.Count + $cMid.Count -ge 2) "F10: folding, the content is drawn at $($cMid.Count) partial strengths carried ($($inMid.Count) partial face alphas live) (need 2+): the title fades in as the content fades out"
+        Assert ($carried.Count -ge 2 -and $rise -eq 0) "F10: folding, the carried content's strength never rises ($($carried.Count) frames, largest rise $rise)"
+        # F16 (T2457): carried, the live pane is hidden - one picture per card.
+        $liveAfter = @($carried | Select-Object -Skip 1 | Where-Object { $_.Live -eq 1 }).Count
+        Assert ($carried.Count -ge 2 -and $liveAfter -eq 0) "F16: folding, s2's live window is off show on every carried frame after the first ($liveAfter of $([math]::Max(0, $carried.Count - 1)))"
         # F14: the shrinking cut is set without a redraw after the first (T2415).
         if ($PaneStyle -eq 'flat') {
             $cutsIn = @(Get-CutRedraws $logFold $logBack)

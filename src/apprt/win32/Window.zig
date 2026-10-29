@@ -7012,7 +7012,24 @@ fn heroProbeForeignInput(self: *Window, now: i64) void {
 /// tab's tree before any Surface pointer is dereferenced (the pane may
 /// have closed between post and delivery).
 fn heroOnSnapReady(self: *Window, leaf_hwnd_int: usize) void {
-    if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return;
+    if (self.tab_count == 0) return;
+    // A fold waiting for its card's picture (T2457): the next frame of the
+    // glide draws the card from it and hides the live pane.
+    if (!self.tab_hero_active[self.active_tab]) {
+        var git = self.tab_trees[self.active_tab].iterator();
+        while (git.next()) |entry| {
+            const h = entry.view.hwnd() orelse continue;
+            if (@intFromPtr(h) != leaf_hwnd_int) continue;
+            if (entry.view.glide_snap != .waiting) return;
+            _ = entry.view.heroSnapPublish();
+            if (entry.view.glideFrame() != null) {
+                entry.view.glide_snap = .ready;
+                log.info("stack fold carries its frame hwnd={x}", .{leaf_hwnd_int});
+            }
+            return;
+        }
+        return;
+    }
     var it = self.tab_trees[self.active_tab].iterator();
     var index: usize = 0;
     while (it.next()) |entry| : (index += 1) {
@@ -7936,10 +7953,22 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     const face = slide.stripFace(pane_stack_grid.viewId(view)) orelse return false;
     const parent = self.hwnd orelse return false;
     const h = view.hwnd() orelse return false;
-    if (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) return false;
+    const live = w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0;
+    if (!live and view.glide_snap != .ready) return false;
     // What of the card is drawn (Mac `paneRect.intersection(clip)`): the pane
     // window cut to its card, inside the client area.
     const at = childClientRect(parent, h) orelse return false;
+    // A fold carrying its pane's last frame (T2457): the face is the whole
+    // card, opaque, with the frame laid over the band at what is left of the
+    // content's strength. The frame is the pane at the size it is held at, so
+    // it must match the window it stands in for.
+    const carried: ?strip_face.Content = carried: {
+        if (view.glide_snap != .ready) break :carried null;
+        const fr = view.glideFrame() orelse break :carried null;
+        if (fr.w != at.width() or fr.h != at.height()) break :carried null;
+        break :carried .{ .pixels = fr.pixels, .w = fr.w, .h = fr.h, .x = 0, .y = 0 };
+    };
+    if (!live and carried == null) return false;
     const inner = self.leafRect(view, winRect(face.card));
     var client: w32.RECT = undefined;
     if (w32.GetClientRect(parent, &client) == 0) return false;
@@ -7950,7 +7979,20 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         .bottom = @min(@min(at.bottom, inner.bottom), client.bottom),
     };
     if (vis.width() <= 0 or vis.height() <= 0) return false;
-    const alpha = strip_face.alphaOf(strip_face.collapseOf(vis, self.scale));
+    // Carried, the content fades over the whole tween, measured along the
+    // stack from the pane's held length (`strip_face.tweenCollapse`), and the
+    // face itself is opaque; live, the face is blended over the pane at
+    // Mac's last-120 collapse.
+    const content_alpha: u8 = if (carried != null) a: {
+        const card = face.card;
+        const horiz = face.axis == .horizontal;
+        const drawn: f64 = @floatFromInt(if (horiz) card.width() else card.height());
+        const full: f64 = @floatFromInt(if (horiz) at.width() else at.height());
+        const sc: f64 = @floatCast(self.scale);
+        const c = strip_face.tweenCollapse(drawn, strip_face.strip_dip * sc, full, strip_face.fade_span_dip * sc);
+        break :a 255 - strip_face.alphaOf(c);
+    } else 0;
+    const alpha: u8 = if (carried != null) 255 else strip_face.alphaOf(strip_face.collapseOf(vis, self.scale));
     if (alpha == 0) return false;
 
     if (view.strip_face == null) {
@@ -7991,6 +8033,14 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     }
     _ = w32.GdiFlush();
     strip_face.makeOpaque(frame.pixels);
+    // The carried frame over the band and its name: the name shows through at
+    // what the content has lost.
+    if (carried) |c| {
+        var pinned = c;
+        pinned.x = at.left - vis.left;
+        pinned.y = at.top - vis.top;
+        strip_face.blendContent(frame.pixels, @intCast(w), @intCast(ht), pinned, content_alpha);
+    }
 
     // Cut to the pane's own region - its card's rounded shape, or its slide
     // cut - from where the face sits inside the pane window.
@@ -8009,6 +8059,21 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // the band, read at the face's corner where no name is drawn.
     log.debug("strip face alpha={d} band={x:0>6} size={d}x{d}", .{ alpha, frame.pixels[0] & 0xFF_FFFF, w, ht });
     f.commit(pt.x, pt.y, alpha, region);
+    // The face is up carrying the card, so the live pane under it goes now -
+    // after, never before, so no frame shows the desk where the card is.
+    if (carried != null and live and f.shown) {
+        _ = w32.SetWindowPos(h, null, 0, 0, 0, 0, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE |
+            w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_HIDEWINDOW);
+        view.setVisible(false);
+    }
+    // The acceptance oracle (stack-fold-slide.ps1 F1/F8/F10/F16): how strong
+    // the carried content is, and where its card is drawn.
+    if (carried != null) log.debug("stack fold carried content_alpha={d} card={d},{d} live={d}", .{
+        content_alpha,
+        face.card.left,
+        if (face.axis == .horizontal) face.card.width() else face.card.height(),
+        @intFromBool(w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0),
+    });
     return f.shown;
 }
 
@@ -8547,7 +8612,12 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         // card going behind the run stays on show until its slide is over
         // (T2186), and is hidden at its tucked place then.
         const sliding = self.stackSlideRect(id);
-        const shown = !p.is_tucked or sliding != null;
+        // A fold carrying its frame (T2457) is drawn by its face alone; the
+        // live pane stays where the glide has it, hidden, so the face can
+        // still read where it is.
+        const carried = sliding != null and view.glide_snap == .ready and
+            if (view.strip_face) |f| f.shown else false;
+        const shown = (!p.is_tucked or sliding != null) and !carried;
         view.setVisible(shown);
         const rect = sliding orelse if (!p.is_tucked)
             p.rect
@@ -8640,6 +8710,7 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
             if (next.active()) {
                 self.stack_slide = next;
                 self.orderStackCards(tree, grid);
+                self.armGlideSnaps(tree);
                 self.runStackSlide();
             } else self.endStackSlide();
         } else self.endStackSlide();
@@ -8706,6 +8777,30 @@ fn orderStackCards(self: *Window, tree: SplitTree(PaneView), grid: *const pane_s
     }
 }
 
+/// Ask each terminal folding into its strip for its last frame (T2457), so
+/// the glide can carry the card as one picture - the frame cut by the
+/// narrowing card and faded out over the tween - instead of the live pane
+/// under a face on its own clock. A card that is no longer folding (a fold
+/// turned back mid-glide) goes back to being its live pane.
+fn armGlideSnaps(self: *Window, tree: SplitTree(PaneView)) void {
+    const slide = if (self.stack_slide) |*s| s else return;
+    const parent = self.hwnd orelse return;
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        const view = entry.view;
+        if (!slide.folding(pane_stack_grid.viewId(view))) {
+            view.glide_snap = .none;
+            continue;
+        }
+        if (view.glide_snap != .none) continue;
+        const h = view.hwnd() orelse continue;
+        if (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) continue;
+        const at = childClientRect(parent, h) orelse continue;
+        if (at.width() <= 0 or at.height() <= 0) continue;
+        if (view.glideSnapRequest(@intCast(at.width()), @intCast(at.height()))) view.glide_snap = .waiting;
+    }
+}
+
 /// Where the slide under way has card `id`'s pane drawn right now, or null when
 /// it is not sliding: it sits at its slot.
 fn stackSlideRect(self: *Window, id: pane_stack_grid.Id) ?pane_stack_grid.PxRect {
@@ -8744,6 +8839,11 @@ fn restStackSlide(self: *Window) void {
 fn endStackSlide(self: *Window) void {
     self.restStackSlide();
     self.stack_slide = null;
+    // Every card is a live pane again (T2457).
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| entry.view.glide_snap = .none;
+    }
     // A sidebar card following this glide lands with it (T2406).
     if (self.stack_slide_column) {
         self.stack_slide_column = false;

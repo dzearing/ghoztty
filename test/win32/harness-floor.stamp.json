@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-29T08:20:46-07:00",
-    "commit":  "4f366d19d",
+    "generated":  "2026-10-29T08:43:05-07:00",
+    "commit":  "2087de0ab",
     "uncommitted":  [
-
+                        "test/win32/stack-fold-slide.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -379,7 +379,7 @@
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "576b87de1a7a6f1982cc28067614390510ebc9de6304a154587680ec6025b6a6",
-                  "test/win32/parity-tasks-seat.ps1":  "deb4a25b54ed4d1d178bb9d94a57227bcf9d6144245ddb44b1b11ae99304693d",
+                  "test/win32/parity-tasks-seat.ps1":  "4a9af68271fc315e78b862fe6e9f109a65db7347f2dfcf38d30e701951898f96",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "3c6615c60f662198ec6e2a7666299ae57c3eb0d7a3eeda78f71dc9f874ffaa52",
                   "test/win32/persistence-flag.ps1":  "c8d93f1a71d3d4f19304d948c1e00bedfd6a1cd6abda7382c62c81504b224920",
@@ -471,7 +471,7 @@
                   "test/win32/stack-caret-on-show.ps1":  "70db1bcbb5a17f5e0819d05b500a247ed314f385d7ef752d37f7450866d95541",
                   "test/win32/stack-collapse-carry.ps1":  "2fb0e9c3403e77a583f2eee95338ea9b0cbd9005eff39ca7dd278e5e202b713c",
                   "test/win32/stack-collapse-drag.ps1":  "9f6a3af57145234c03d79e14f0bac93af80491894488ca126108313887a906d7",
-                  "test/win32/stack-fold-slide.ps1":  "a84fdf016949a10df984d6a1fdbc873782cf470778358f73b5a258e2ec68eca0",
+                  "test/win32/stack-fold-slide.ps1":  "9f7c1534e6da644c7bef458265628891237b66ea940b5827f2d51bd37db46f9c",
                   "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79",
