@@ -12,9 +12,9 @@
 //! where the rows were already drawn.
 //!
 //! A row dragged from its own sidebar is the row itself: it follows the
-//! pointer up and down only, kept inside the bar, over a solid backing with
-//! a shadow so it reads as on top; let go, it glides to where it landed and
-//! the list draws it again.
+//! pointer up and down only, kept inside the bar, lifted on clear glass with
+//! a shadow so it reads as on top; let go, it glides from where it was let go
+//! to where it landed and the list draws it again (`Settle`).
 //!
 //! Pure: indices and pixels in, indices and pixels out.
 
@@ -32,14 +32,22 @@ pub const settle_ms: u64 = 220;
 /// wants every display frame.
 pub const frame_ms: u32 = transition.frame_ms;
 
-/// The held row's lift (Mac: `scaleEffect(1.04)`, a solid backing at 0.92
-/// of the window background with 0.06 of the ink over it, and a shadow of
-/// radius 6 pt, 3 pt down, at 0.3 black).
+/// The held row's lift (Mac `PaneSidebarLiftBacking`, 6bd2962eb:
+/// `scaleEffect(1.04)` over clear Liquid Glass, untinted so the rows it
+/// passes show through, and a shadow of radius 6 pt, 3 pt down, at 0.25
+/// black drawn by its shape alone). Glass here is hand-composited (win32
+/// design system 3.3): no fill, the glassy rim lit from above that a rail
+/// tile wears - its hovered strength - and the shadow outside the shape
+/// only, since a clear backing would show a shadow drawn under it.
 pub const lift_scale: f32 = 1.04;
-pub const backing_ink: f32 = 0.06;
 pub const shadow_radius_dip: f32 = 6;
 pub const shadow_y_dip: f32 = 3;
-pub const shadow_peak: f64 = 0.3;
+pub const shadow_peak: f64 = 0.25;
+
+/// Let go, how long the held row waits at the drop for the list to lay out
+/// its new place before it glides anyway - dropped where it was, no new
+/// place comes (Mac `PaneSidebarRowDrag.finish`, 0.05 s).
+pub const settle_hold_ms: u64 = 50;
 
 /// Where the dragged row is in a sidebar's one sequence - the list, the
 /// tray's header, then the tray - and where it would land, of the sequence
@@ -136,6 +144,35 @@ pub fn settleTop(from: i32, to: i32, elapsed_ms: u64) i32 {
     return @intFromFloat(@round(f + (t - f) * p));
 }
 
+/// The held row let go (T2425, Mac 6bd2962eb `PaneSidebarRowDrag.heldTop`):
+/// it stays where it was drawn until its new place is laid out, then glides
+/// there. The drop reorders the list at once, but the layout can still hold
+/// the row's OLD place for a moment; gliding toward that, it jumped back
+/// toward where it started first.
+pub const Settle = struct {
+    /// Where it was drawn as it was let go.
+    from: i32,
+    /// Its laid-out top then - the place it left.
+    origin: i32,
+    start_ms: u64,
+    /// When the glide began: its new place laid out, or `settle_hold_ms` on.
+    glide_ms: ?u64 = null,
+
+    /// Its top at `now`, `laid_top` its laid-out top now.
+    pub fn top(self: *Settle, laid_top: i32, now: u64) i32 {
+        if (self.glide_ms == null and (laid_top != self.origin or now -| self.start_ms >= settle_hold_ms))
+            self.glide_ms = now;
+        const g = self.glide_ms orelse return self.from;
+        return settleTop(self.from, laid_top, now -| g);
+    }
+
+    /// Whether it is still on its way at `now`.
+    pub fn moving(self: Settle, now: u64) bool {
+        const g = self.glide_ms orelse return true;
+        return now -| g < settle_ms;
+    }
+};
+
 /// How far `r` grows on each side to be `lift_scale` of its size.
 pub fn liftInset(w: i32, h: i32) struct { x: i32, y: i32 } {
     const g = lift_scale - 1;
@@ -147,8 +184,10 @@ pub fn liftInset(w: i32, h: i32) struct { x: i32, y: i32 } {
 
 /// The held row's shadow at distance `d` (pixels, 0 inside) from its rounded
 /// edge, for a blur `radius` pixels wide: `shadow_peak` at the edge, fading
-/// smoothly to nothing at `radius`.
-pub fn shadowAlpha(d: f64, radius: f64) f64 {
+/// smoothly to nothing at `radius`. Under the glass itself there is none
+/// (`inside`): the backing is clear, so a shadow there would show through.
+pub fn shadowAlpha(d: f64, radius: f64, inside: bool) f64 {
+    if (inside) return 0;
     if (d <= 0) return shadow_peak;
     if (radius <= 0 or d >= radius) return 0;
     const u = 1 - d / radius;
@@ -255,7 +294,41 @@ test "pane_sidebar_reorder: the lift and the shadow" {
     const g = liftInset(200, 38);
     try testing.expectEqual(@as(i32, 4), g.x);
     try testing.expectEqual(@as(i32, 1), g.y);
-    try testing.expectEqual(shadow_peak, shadowAlpha(0, 6));
-    try testing.expectEqual(@as(f64, 0), shadowAlpha(6, 6));
-    try testing.expect(shadowAlpha(3, 6) > 0 and shadowAlpha(3, 6) < shadow_peak);
+    try testing.expectEqual(shadow_peak, shadowAlpha(0, 6, false));
+    try testing.expectEqual(@as(f64, 0), shadowAlpha(6, 6, false));
+    try testing.expect(shadowAlpha(3, 6, false) > 0 and shadowAlpha(3, 6, false) < shadow_peak);
+    // Mac 6bd2962eb's lift shadow: 0.25 black, and none under the clear
+    // glass itself (T2425).
+    try testing.expectEqual(@as(f64, 0.25), shadow_peak);
+    try testing.expectEqual(@as(f64, 0), shadowAlpha(0, 6, true));
+}
+
+test "pane_sidebar_reorder: let go, the row holds at the drop until its new place is laid out (T2425, Mac 6bd2962eb)" {
+    // Dropped at 200, its old place 50, its new place 300. The layout still
+    // says 50 for a moment: the row waits where it was let go rather than
+    // heading back toward 50.
+    var s: Settle = .{ .from = 200, .origin = 50, .start_ms = 1000 };
+    try testing.expectEqual(@as(i32, 200), s.top(50, 1000));
+    try testing.expectEqual(@as(i32, 200), s.top(50, 1020));
+    try testing.expect(s.moving(1020));
+    // The new place is laid out: it glides from the drop, never via 50.
+    try testing.expectEqual(@as(i32, 200), s.top(300, 1030));
+    var prev: i32 = 200;
+    var now: u64 = 1030;
+    while (now <= 1030 + settle_ms) : (now += 10) {
+        const t = s.top(300, now);
+        try testing.expect(t >= prev and t <= 300);
+        prev = t;
+    }
+    try testing.expectEqual(@as(i32, 300), prev);
+    try testing.expect(!s.moving(1030 + settle_ms));
+}
+
+test "pane_sidebar_reorder: dropped where it was, the row glides anyway after the hold (T2425)" {
+    var s: Settle = .{ .from = 120, .origin = 100, .start_ms = 0 };
+    try testing.expectEqual(@as(i32, 120), s.top(100, settle_hold_ms - 1));
+    try testing.expectEqual(@as(i32, 120), s.top(100, settle_hold_ms));
+    try testing.expectEqual(@as(?u64, settle_hold_ms), s.glide_ms);
+    try testing.expectEqual(@as(i32, 100), s.top(100, settle_hold_ms + settle_ms));
+    try testing.expect(!s.moving(settle_hold_ms + settle_ms));
 }

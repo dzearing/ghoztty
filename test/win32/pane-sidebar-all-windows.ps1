@@ -26,7 +26,7 @@
 #   6b. The search field (T1877): every word must match (window, pane,
 #      banner, folder), accents fold, "No matching panes" when empty, Escape
 #      clears, Return reveals the first hit through the click's own path.
-#   7. Collapsed, the rail shows every pane as a tile with a hairline between
+#   7. Collapsed, the rail shows every pane as a tile with no divider between
 #      windows and no header rows.
 #   8. The toggle switches back to this window's panes only, and clears a
 #      query: back on, every window is listed (T1877).
@@ -513,7 +513,7 @@ try {
     Assert "...and it leaves the list" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*windows=3 ' $mark 6000))
     Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
 
-    "== 7: collapsed, the rail shows every pane with a hairline between windows"
+    "== 7: collapsed, the rail shows every pane, with no divider between windows (T2425, Mac 6bd2962eb)"
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ToggleCenter $sb))
     $o6 = Read-Outline (Wait-Log 'pane sidebar outline mode=mini' $mark)
@@ -521,7 +521,7 @@ try {
     Assert "the column is the 76 DIP rail ($($sb.Width))" ([math]::Abs($sb.Width - (Px 76)) -le 1)
     if ($o6) { "  rail items: $(($o6.Items | ForEach-Object { "g$($_.Group)$($_.Sec)" }) -join ' ') rules=$($o6.Rules)" }
     Assert "every pane is a tile (5) and there are no header rows" ($null -ne $o6 -and $o6.Items.Count -eq 5 -and $o6.Heads.Count -eq 0)
-    Assert "two hairlines between the three windows ($($o6.Rules))" ($null -ne $o6 -and $o6.Rules -eq 2)
+    Assert "no hairline between the three windows ($($o6.Rules))" ($null -ne $o6 -and $o6.Rules -eq 0)
 
     "== 7b: the rail's + above every window opens a new window (T2407, Mac theAllWindowsRailsPlusOpensAWindow)"
     $railLine = Wait-Log 'pane sidebar outline mode=mini' 0 1000

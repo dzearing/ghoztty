@@ -652,8 +652,9 @@ pub const Layout = struct {
     heads: [max_heads]Head = undefined,
     head_count: usize = 0,
     /// The outline's hairlines (the single-window layout uses
-    /// `section_rule`). A window's stash has none, and no caption either
-    /// (T2313, Mac 47b39b1cb): its stashed panes follow its others.
+    /// `section_rule`). Empty since T2425 (Mac 6bd2962eb): the rail has no
+    /// divider between windows, and a window's stash has none, nor a caption
+    /// (T2313, Mac 47b39b1cb). Kept so the log's `rules=` proves it stays 0.
     rules: [max_marks]Rect = undefined,
     rule_count: usize = 0,
     /// The header band (expanded) holding the "PANES" caption.
@@ -700,12 +701,6 @@ pub const Layout = struct {
     /// the outline has none in the panel (the rail still shows it).
     pub fn shown(self: *const Layout, i: usize) bool {
         return self.items[i].width() > 0;
-    }
-
-    fn addRule(self: *Layout, r: Rect) void {
-        if (self.rule_count == max_marks) return;
-        self.rules[self.rule_count] = r;
-        self.rule_count += 1;
     }
 
     /// An expanded row's hover x (T2280, Mac dc2bbab6b): the compact square
@@ -890,7 +885,7 @@ pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Li
                 layoutLines(&l, area, ls, tm, scale);
             } else layoutRows(&l, area, items[0..n], tm, scale);
         },
-        .mini => layoutMini(&l, items[0..n], tm, scale, insets),
+        .mini => layoutMini(&l, tm, scale, insets),
     }
     return l;
 }
@@ -1089,7 +1084,7 @@ fn layoutCard(l: *Layout, card_w: i32, insets: RailInsets, scale: f32) void {
 /// the row it is in the expanded list without its text - the same pill
 /// (`fill_inset` in from the card), the same height, from the same top - so
 /// toggling the sidebar moves no icon.
-fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, insets: RailInsets) void {
+fn layoutMini(l: *Layout, tm: TextMetrics, scale: f32, insets: RailInsets) void {
     layoutCard(l, px(rail_card_dip, scale), insets, scale);
     l.toggle = toggleRect(scale, insets);
     const c = l.card;
@@ -1114,20 +1109,15 @@ fn layoutMini(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32, inse
         y += extent;
     }
     for (0..l.count) |i| {
-        // A hairline between this window's grid and its stash; in the
-        // outline, between one window's tiles and the next's instead (Mac:
-        // "in the mini rail, windows are separated by a hairline") - a
-        // window's stash just follows its grid there (T2313, Mac 47b39b1cb).
-        const breaks = if (l.outline)
-            i != 0 and items[i].group != items[i - 1].group
-        else
-            i == l.first_stashed and i != 0;
-        if (breaks) {
+        // A hairline between this window's grid and its stash. In the
+        // outline a window is its tiles alone (T2425, Mac 6bd2962eb): no
+        // divider between one window's tiles and the next's, and a window's
+        // stash just follows its grid (T2313, Mac 47b39b1cb).
+        if (!l.outline and i == l.first_stashed and i != 0) {
             // The hairline sits in the middle of an `md` gap.
             const group = px(rail_group_gap_dip, scale);
             const rule_y = y - gap + @divTrunc(group, 2);
-            const rule: Rect = .{ .left = left, .top = rule_y, .right = right, .bottom = rule_y + @max(px(1, scale), 1) };
-            if (l.outline) l.addRule(rule) else l.section_rule = rule;
+            l.section_rule = .{ .left = left, .top = rule_y, .right = right, .bottom = rule_y + @max(px(1, scale), 1) };
             y += group - gap;
         }
         l.items[i] = .{ .left = left, .top = y, .right = right, .bottom = y + tile };
@@ -2507,18 +2497,18 @@ test "pane_sidebar: an outline with no lines says No matching panes under the fi
     }
 }
 
-test "pane_sidebar: the outline's rail draws a hairline between windows, none before a stash (T2313)" {
+test "pane_sidebar: the outline's rail draws no divider between windows, nor before a stash (T2313, T2425)" {
     for (scales) |s| {
         const f = outlineFixture(s);
         const l = layoutWith(.mini, px(68, s), px(900, s), &f.items, &f.lines, f.tm, s);
         // Every pane is a tile, folded or not.
         for (0..5) |i| try testing.expect(l.shown(i));
-        // One break, window -> window; the stashed tile follows its grid at
-        // the tiles' own spacing (Mac 47b39b1cb).
-        try testing.expectEqual(@as(usize, 1), l.rule_count);
+        // A window is its tiles alone (Mac 6bd2962eb): one window's tiles
+        // follow the last one's at the tiles' own spacing, and the stashed
+        // tile follows its grid the same way (Mac 47b39b1cb).
+        try testing.expectEqual(@as(usize, 0), l.rule_count);
         try testing.expect(l.section_rule == null);
-        try testing.expectEqual(l.items[1].bottom + rowGap(s), l.items[2].top);
-        try testing.expect(l.rules[0].top > l.items[2].bottom and l.rules[0].bottom <= l.items[3].top);
+        for (1..5) |i| try testing.expectEqual(l.items[i - 1].bottom + rowGap(s), l.items[i].top);
         // No header buttons on the rail beyond the toggle.
         try testing.expectEqual(@as(i32, 0), l.scope.width());
         try testing.expectEqual(@as(usize, 0), l.head_count);
@@ -2580,10 +2570,6 @@ test "pane_sidebar: during a drag the outline's well opens under this window's l
             const grow = h + rowGap(s);
             for (0..3) |i| try testing.expectEqual(before.items[i], l.items[i]);
             for (3..5) |i| try testing.expectEqual(before.items[i].top + grow, l.items[i].top);
-            if (m == .mini) {
-                try testing.expectEqual(before.rules[0].top + grow, l.rules[0].top);
-                try testing.expect(l.rules[0].top > slot.bottom);
-            }
             if (m == .expanded) {
                 try testing.expectEqual(before.heads[0], l.heads[0]);
                 try testing.expectEqual(before.heads[1].rect.top + grow, l.heads[1].rect.top);

@@ -246,10 +246,13 @@ const Held = struct {
     press_y: i32,
     dy: i32 = 0,
     drawn_top: ?i32 = null,
-    settle: ?Settle = null,
-
-    const Settle = struct { from: i32, start_ms: u64 };
+    /// Its laid-out top as last drawn held: the place a drop leaves.
+    laid_top: ?i32 = null,
+    settle: ?reorder.Settle = null,
 };
+
+/// A held window or group let go: where it was drawn, and when.
+const ItemSettle = struct { from: i32, start_ms: u64 };
 
 /// A window row or project header held by the pointer among its siblings in
 /// the all-windows list (T2337, Mac `PaneSidebarItemDrag`).
@@ -277,7 +280,7 @@ const ItemDrag = struct {
     folds_before: ?shared_mod.KeySet = null,
     unfolded_before: ?shared_mod.KeySet = null,
     /// Let go: gliding from where it was drawn to its laid-out place.
-    settle: ?Held.Settle = null,
+    settle: ?ItemSettle = null,
 
     /// A window drag (T2338, Mac `PaneSidebarCrossDrop`): `siblings` holds
     /// the whole list as rows - each group's header, its windows, the lone
@@ -2325,8 +2328,9 @@ fn endDragMotion(self: *PaneSidebar) void {
         d.shift_count = 0;
         d.header = .{};
         if (d.held) |*h| if (h.drawn_top) |top| if (h.settle == null) {
-            h.settle = .{ .from = top, .start_ms = w32.GetTickCount64() };
-            log.info("pane sidebar row settle from={d}", .{top});
+            const origin = h.laid_top orelse top;
+            h.settle = .{ .from = top, .origin = origin, .start_ms = w32.GetTickCount64() };
+            log.info("pane sidebar row settle from={d} origin={d}", .{ top, origin });
             _ = w32.InvalidateRect(self.hwnd, null, 0);
             self.armReorderClock();
             return;
@@ -2368,9 +2372,10 @@ fn applyDragMotion(self: *PaneSidebar, l: *pane_sidebar.Layout, now: u64) ?usize
 }
 
 /// The held row, over everything else: at its laid-out place moved by the
-/// pointer's travel, up or down only and kept inside the bar, on a solid
-/// backing with a shadow - or, let go, gliding to where it landed while the
-/// lift fades (Mac `ghost`).
+/// pointer's travel, up or down only and kept inside the bar, lifted on clear
+/// glass with a shadow - or, let go, held where it was let go until the list
+/// lays out its new place, then gliding there while the lift fades (Mac
+/// `ghost`, 6bd2962eb). Drawn with its own row's indent, as the list draws it.
 fn paintHeld(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout, height: i32, t: Theme) void {
     const d = if (self.drag) |*x| x else return;
     const h = if (d.held) |*x| x else return;
@@ -2383,11 +2388,15 @@ fn paintHeld(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout,
     const clip = laid.viewport.height() > 0;
     const lo = if (clip) laid.viewport.top else 0;
     const hi = if (clip) laid.viewport.bottom else height;
-    const top = if (h.settle) |s|
-        reorder.settleTop(s.from, r.top, self.paint_ms -| s.start_ms)
+    if (h.settle == null) h.laid_top = r.top;
+    const gliding = if (h.settle) |s| s.glide_ms != null else false;
+    const top = if (h.settle) |*s|
+        s.top(r.top, self.paint_ms)
     else
         reorder.heldTop(r.top, h.dy, r.height(), lo, hi);
-    if (h.drawn_top != top) log.debug("pane sidebar row held top={d}", .{top});
+    if (h.settle) |s| if (!gliding and s.glide_ms != null)
+        log.info("pane sidebar row glide from={d} to={d} held_ms={d}", .{ s.from, r.top, self.paint_ms -| s.start_ms });
+    if (h.drawn_top != top) log.debug("pane sidebar row held top={d} indent={d}", .{ top, laid.indent[i] });
     h.drawn_top = top;
     const lift: f64 = if (h.settle) |s| 1 - transition.progress(self.paint_ms -| s.start_ms, reorder.settle_ms) else 1;
     const at: pane_sidebar.Rect = .{ .left = r.left, .top = top, .right = r.right, .bottom = top + r.height() };
@@ -2395,17 +2404,13 @@ fn paintHeld(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout,
     defer _ = w32.RestoreDC(hdc, saved);
     if (clip) _ = w32.IntersectClipRect(hdc, laid.viewport.left, laid.viewport.top, laid.viewport.right, laid.viewport.bottom);
     if (lift > 0) {
-        const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
         const g = reorder.liftInset(at.width(), at.height());
-        const back: pane_sidebar.Rect = .{
+        self.paintLiftBacking(hdc, .{
             .left = at.left - g.x,
             .top = at.top - g.y,
             .right = at.right + g.x,
             .bottom = at.bottom + g.y,
-        };
-        self.paintHeldShadow(hdc, back, radius, lift);
-        const solid = color_math.mix(t.surface, t.ink, reorder.backing_ink);
-        fillRound(hdc, back, radius, rgb(color_math.mix(t.surface, solid, lift)));
+        }, lift, t);
     }
     if (laid.mode == .mini)
         self.paintTile(hdc, i, at, false, self.isEmphasized(), t)
@@ -2413,8 +2418,38 @@ fn paintHeld(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout,
         self.paintRow(hdc, laid, i, at, false, self.isEmphasized(), t);
 }
 
-/// The held row's shadow (Mac: radius 6 pt, 3 pt down, 0.3 black), blended
-/// over whatever lies under it at `strength` of its full weight.
+/// Under a held item - a pane's row, or a window or group - so it reads as
+/// lifted over the rows it passes (Mac `PaneSidebarLiftBacking`, 6bd2962eb):
+/// clear glass, untinted, so they show through it, its rim lit from above,
+/// and a shadow drawn by its shape alone - all at `lift` of full strength.
+fn paintLiftBacking(self: *PaneSidebar, hdc: w32.HDC, back: pane_sidebar.Rect, lift: f64, t: Theme) void {
+    const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+    self.paintHeldShadow(hdc, back, radius, lift);
+    const w = back.width();
+    const h = back.height();
+    if (w <= 0 or h <= 0) return;
+    var o = motion.Overlay.init(@floatFromInt(w), @floatFromInt(h), @floatFromInt(radius), motion.rim_dip * @as(f64, self.scale), t.dark);
+    o.tile_rim = motion.tileRim(t.dark, true);
+    const dib = Dib32.create(hdc, w, h) orelse return;
+    defer dib.destroy();
+    const uw: usize = @intCast(w);
+    for (0..@intCast(h)) |y| {
+        for (dib.pixels[y * uw ..][0..uw], 0..) |*p, x| {
+            const px = o.pixel(x, y);
+            const a: u32 = @intFromFloat(@round(std.math.clamp(px.alpha * lift, 0, 1) * 255));
+            const c: u32 = @intFromFloat(@round(std.math.clamp(px.white * lift, 0, px.alpha * lift) * 255));
+            p.* = (a << 24) | (c << 16) | (c << 8) | c;
+        }
+    }
+    _ = w32.AlphaBlend(hdc, back.left, back.top, w, h, dib.dc, 0, 0, w, h, .{
+        .SourceConstantAlpha = 255,
+        .AlphaFormat = w32.AC_SRC_ALPHA,
+    });
+}
+
+/// The held item's shadow (Mac: radius 6 pt, 3 pt down, 0.25 black), blended
+/// over whatever lies under it at `strength` of its full weight - outside its
+/// shape only, which is clear glass.
 fn paintHeldShadow(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radius: i32, strength: f64) void {
     const blur = pane_sidebar.px(reorder.shadow_radius_dip, self.scale);
     const dy = pane_sidebar.px(reorder.shadow_y_dip, self.scale);
@@ -2428,7 +2463,9 @@ fn paintHeldShadow(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radiu
     for (0..@intCast(bh)) |y| {
         for (dib.pixels[y * uw ..][0..uw], 0..) |*p, x| {
             const dist = roundRectDistance(@as(i32, @intCast(x)) - blur, @as(i32, @intCast(y)) - blur, r.width(), r.height(), radius);
-            const a = reorder.shadowAlpha(dist, @floatFromInt(blur)) * strength;
+            // The shape itself sits `dy` above its shadow.
+            const inside = roundRectDistance(@as(i32, @intCast(x)) - blur, @as(i32, @intCast(y)) - blur + dy, r.width(), r.height(), radius) <= 0;
+            const a = reorder.shadowAlpha(dist, @floatFromInt(blur), inside) * strength;
             // Black, premultiplied: only the alpha.
             p.* = @as(u32, @intFromFloat(@round(std.math.clamp(a, 0, 1) * 255))) << 24;
         }
@@ -2477,7 +2514,7 @@ fn reorderMoving(self: *PaneSidebar, now: u64) bool {
     }
     if (now -| self.tray_hot_ms < tray_fade_ms) return true;
     const d = self.drag orelse return false;
-    if (d.held) |h| if (h.settle) |s| return now -| s.start_ms < reorder.settle_ms;
+    if (d.held) |h| if (h.settle) |s| return s.moving(now) or now -| s.start_ms < reorder.settle_ms;
     if (!d.header.done(now)) return true;
     for (d.shifts[0..d.shift_count]) |s| if (!s.tween.done(now)) return true;
     return false;
@@ -3037,8 +3074,8 @@ fn applyItemMotion(self: *PaneSidebar, l: *pane_sidebar.Layout, now: u64) void {
 }
 
 /// The held item over everything else (Mac `PaneSidebarItemShift`'s lift):
-/// its header and rows moved to where the pointer has it, on a solid backing
-/// with a shadow - or, let go, gliding to its laid-out place while the lift
+/// its header and rows moved to where the pointer has it, lifted on clear
+/// glass with a shadow - or, let go, gliding to its laid-out place while the lift
 /// fades. The dragged header keeps its hover controls.
 fn paintHeldItem(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout, t: Theme) void {
     const d = if (self.item_drag) |*x| x else return;
@@ -3051,12 +3088,8 @@ fn paintHeldItem(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Lay
     const vp = laid.viewport;
     if (vp.height() > 0) _ = w32.IntersectClipRect(hdc, vp.left, vp.top, vp.right, vp.bottom);
     if (lift > 0) {
-        const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
         const g = reorder.liftInset(r.width(), r.height());
-        const back: pane_sidebar.Rect = .{ .left = r.left - g.x, .top = top - g.y, .right = r.right + g.x, .bottom = top + r.height() + g.y };
-        self.paintHeldShadow(hdc, back, radius, lift);
-        const solid = color_math.mix(t.surface, t.ink, reorder.backing_ink);
-        fillRound(hdc, back, radius, rgb(color_math.mix(t.surface, solid, lift)));
+        self.paintLiftBacking(hdc, .{ .left = r.left - g.x, .top = top - g.y, .right = r.right + g.x, .bottom = top + r.height() + g.y }, lift, t);
     }
     const hover_was = self.hover;
     defer self.hover = hover_was;

@@ -406,6 +406,28 @@ try {
     Assert "E: two panes on screen, s1 still stashed" (@(Get-VisiblePanes $top).Count -eq 2 -and (Test-StashedId 's1'))
     Assert "E: the drop placed it in the list at 0, out of the tray (log)" (@(Get-LogLines $logE 'pane drop placed in list index=0 restored=true').Count -ge 1)
     Assert "E: the tile glided to its new place and was let back into the list (log)" (@(Get-LogLines $logE 'pane sidebar row settle from=').Count -ge 1 -and @(Get-LogLines $logE 'pane sidebar row settled').Count -ge 1)
+    # T2425 (Mac 6bd2962eb): let go, the tile glides from where it was let go
+    # straight to its new place - every frame between the two, never back
+    # toward the place it left first.
+    $linesE = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logE)
+    $si = -1; $sFrom = $null; $sOrigin = $null; $gTo = $null; $tops = @()
+    for ($k = 0; $k -lt $linesE.Count; $k++) {
+        if ($linesE[$k] -match 'pane sidebar row settle from=(-?\d+) origin=(-?\d+)') { $si = $k; $sFrom = [int]$Matches[1]; $sOrigin = [int]$Matches[2]; break }
+    }
+    if ($si -ge 0) {
+        for ($k = $si + 1; $k -lt $linesE.Count; $k++) {
+            if ($linesE[$k] -match 'pane sidebar row glide from=-?\d+ to=(-?\d+)') { $gTo = [int]$Matches[1] }
+            if ($linesE[$k] -match 'pane sidebar row held top=(-?\d+)') { $tops += [int]$Matches[1] }
+            if ($linesE[$k] -match 'pane sidebar row settled') { break }
+        }
+    }
+    $stray = @()
+    if ($null -ne $sFrom -and $null -ne $gTo) {
+        $lo = [math]::Min($sFrom, $gTo); $hi = [math]::Max($sFrom, $gTo)
+        $stray = @($tops | Where-Object { $_ -lt $lo -or $_ -gt $hi })
+    }
+    "  (settle from=$sFrom origin=$sOrigin glide to=$gTo; $($tops.Count) frame(s), $($stray.Count) outside)"
+    Assert "E: let go, the tile glides from the drop to its new place and never back toward where it left (log)" ($si -ge 0 -and $null -ne $gTo -and $tops.Count -ge 1 -and $stray.Count -eq 0)
     $orderE = Get-ListOrder
     "  (list: $($orderE -join ', '))"
     Assert "E: the list reads s2, P" ($orderE.Count -eq 2 -and $orderE[0] -eq $id2 -and $orderE[1] -eq $idP)
