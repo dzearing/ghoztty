@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-29T15:21:42-07:00",
-    "commit":  "a7647cf60",
+    "generated":  "2026-10-29T15:28:19-07:00",
+    "commit":  "acb13e6c1",
     "uncommitted":  [
 
                     ],

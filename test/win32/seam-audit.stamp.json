@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-29T15:21:20-07:00",
-    "commit":  "a7647cf60",
+    "generated":  "2026-10-29T15:27:55-07:00",
+    "commit":  "acb13e6c1",
     "uncommitted":  [
 
                     ],

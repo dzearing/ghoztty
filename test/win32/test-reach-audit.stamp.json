@@ -1,8 +1,8 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-10-29T15:41:35-07:00",
-    "commit":  "a7647cf60",
+    "generated":  "2026-10-29T15:48:08-07:00",
+    "commit":  "acb13e6c1",
     "uncommitted":  [
 
                     ],

@@ -1,8 +1,8 @@
 {
     "guard":  "stack-collapse-drag",
     "script":  "test/win32/stack-collapse-drag.ps1",
-    "generated":  "2026-10-29T15:18:33-07:00",
-    "commit":  "a7647cf60",
+    "generated":  "2026-10-29T15:25:10-07:00",
+    "commit":  "acb13e6c1",
     "uncommitted":  [
 
                     ],

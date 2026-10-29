@@ -1,8 +1,8 @@
 {
     "guard":  "close-confirm",
     "script":  "test/win32/close-confirm-idle.ps1",
-    "generated":  "2026-10-29T15:19:52-07:00",
-    "commit":  "a7647cf60",
+    "generated":  "2026-10-29T15:26:26-07:00",
+    "commit":  "acb13e6c1",
     "uncommitted":  [
 
                     ],

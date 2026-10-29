@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-29T15:23:06-07:00",
-    "commit":  "a7647cf60",
+    "generated":  "2026-10-29T15:29:40-07:00",
+    "commit":  "acb13e6c1",
     "uncommitted":  [
 
                     ],

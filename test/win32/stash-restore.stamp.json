@@ -1,8 +1,8 @@
 {
     "guard":  "stash-restore",
     "script":  "test/win32/stash-restore.ps1",
-    "generated":  "2026-10-29T15:18:13-07:00",
-    "commit":  "a7647cf60",
+    "generated":  "2026-10-29T15:24:49-07:00",
+    "commit":  "acb13e6c1",
     "uncommitted":  [
 
                     ],
