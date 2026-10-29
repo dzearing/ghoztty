@@ -1,14 +1,14 @@
 {
     "guard":  "pane-sidebar-motion-cost",
     "script":  "test/win32/pane-sidebar-motion-cost.ps1",
-    "generated":  "2026-10-28T19:13:28-07:00",
-    "commit":  "3d65106c7",
+    "generated":  "2026-10-28T20:59:43-07:00",
+    "commit":  "6973f5180",
     "uncommitted":  [
                         "src/apprt/win32/PaneSidebar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar_motion.zig":  "b822ad68a914c6f85ec632502dd99f44cdd841f43d551f921aa2539eb5e72f62",
-                  "src/apprt/win32/PaneSidebar.zig":  "defde1257aa7277266b1780b69fbe9b9040c54d0d670554eb0ed6afba2495600",
+                  "src/apprt/win32/PaneSidebar.zig":  "89b8306e7ef3b5a9f11d5e7bc9ca604c080d14ac07a3b7e8ec17f560e35c1dca",
                   "test/win32/pane-sidebar-motion-cost.ps1":  "3876019f1c5b333d7f95409c195a02164269315a1f52074e3aca1cc0b28cb02b"
               }
 }

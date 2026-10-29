@@ -207,7 +207,7 @@ try {
     Assert "the all-windows scope is on (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=true' $mark))
     $g = Wait-Log 'pane sidebar all-windows groups=' $mark
     "  $g"
-    Assert "four windows in name order: lone | proj/one | proj/two | zeta" ($g -match 'groups=4 .*order=lone\|proj/one\|proj/two\|zeta$')
+    Assert "four windows in name order, the lone windows first (T2421): lone | zeta | proj/one | proj/two" ($g -match 'groups=4 .*order=lone\|zeta\|proj/one\|proj/two$')
     $o = Get-Outline $mark
     Assert "the outline logs a chevron and an x for every head" ($null -ne $o -and $o.Heads.Count -eq 5 -and $o.Chev.Count -eq 5 -and $o.Hx.Count -eq 5)
     if ($null -eq $o -or $o.Hx.Count -ne $o.Heads.Count) { return }
@@ -220,19 +220,19 @@ try {
     $xcol = $o.Hx[0].X
 
     "== 1: another window's row x closes that pane, asks nothing, raises nothing"
-    # Unfold proj: one (group 1) by its chevron, which never raises it.
-    $k = Find-Head $o 'W' 1
+    # Unfold proj: one (group 2) by its chevron, which never raises it.
+    $k = Find-Head $o 'W' 2
     $mark = Get-LogCount
     if ($k -ge 0) { [void](ClickAt $top $sb $o.Chev[$k]) }
     $o = Get-Outline $mark
-    $bRows = @($o.Items | Where-Object Group -eq 1)
+    $bRows = @($o.Items | Where-Object Group -eq 2)
     Assert "proj: one unfolded: its two rows show" ($bRows.Count -eq 2)
     [void](Invoke-Cli "+send-keys --target=b1 `"ping -n 120 127.0.0.1`" Enter")
     [void](Invoke-Cli "+send-keys --target=b2 `"ping -n 120 127.0.0.1`" Enter")
     Start-Sleep -Milliseconds 1200
     # A busy row grows a second line: read the rows again once it has.
     $o = Get-Outline 0
-    $bRows = @($o.Items | Where-Object Group -eq 1)
+    $bRows = @($o.Items | Where-Object Group -eq 2)
     [void](Set-TestActiveWindow -Window $top)
     Assert "setup: A is the active window" (Wait-Until { (Get-TestActiveWindow -Window $top) -eq $top } 3000)
     $mark = Get-LogCount
@@ -265,7 +265,7 @@ try {
     Assert "no confirmation dialog came up" (Test-NoConfirm $app)
     Assert "it was parked for undo (log)" (Test-LogSince 'parked closed window for undo' $mark)
     Assert "A is still the active window" ((Get-TestActiveWindow -Window $top) -eq $top)
-    Assert "three windows left in the list" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*order=proj/one\|proj/two\|zeta$' $mark))
+    Assert "three windows left in the list" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*order=zeta\|proj/one\|proj/two$' $mark))
 
     "== 3: the project header's x closes every window in it"
     [void](Invoke-Cli "+send-keys --target=c1 `"ping -n 120 127.0.0.1`" Enter")

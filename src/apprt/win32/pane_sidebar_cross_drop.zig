@@ -4,7 +4,8 @@
 //! A window drag does not move among its siblings only (T2337's group drag
 //! still does): it reads the whole list as one run of rows - each group's
 //! header, then its windows (every window folded to its row while one is
-//! dragged), and the lone windows between - and every row slides on its own,
+//! dragged), the lone windows ahead of them all (T2421) - and every row
+//! slides on its own,
 //! a group's header apart from its windows. Where it is let go says where it
 //! lands:
 //!
@@ -13,7 +14,8 @@
 //! - just past a group's last window (or a folded group's header): the upper
 //!   half of that slot joins the group's end, the lower half lands after the
 //!   group, at the top level;
-//! - anywhere else: the top level.
+//! - anywhere else: the top level - and let go there below a group, at the
+//!   end of the lone windows, which lead the list (`banded`).
 //!
 //! Dropped in another group it is renamed `<project>: <name>`; dropped out of
 //! one, just `<name>` (`pane_sidebar_rename.groupTitle`).
@@ -135,7 +137,25 @@ pub fn resolve(rows: []const Row, source: usize, pitch: i32, top: i32) Resolved 
     // band) could never pass the first header's middle, or the last's.
     if (top <= rows[0].span.top) slot = 0;
     if (top + h >= rows[rows.len - 1].span.bottom) slot = n;
-    return .{ .slot = slot, .dest = destination(others[0..n], slot, top) };
+    return banded(destination(others[0..n], slot, top), slot, others[0..n]);
+}
+
+/// `dest` at `slot` of `rows` (the list without it), kept out of the groups'
+/// band (T2421, Mac `PaneSidebarCrossDrop.banded`): a window let go at the
+/// top level below a group lands at the end of the lone windows, which lead
+/// the list - the slot there too, so the others open the gap where it will
+/// land. Joining a group, or among the lone windows, it is as is.
+pub fn banded(dest: Destination, slot: usize, rows: []const Row) Resolved {
+    const index = switch (dest) {
+        .top_level => |i| i,
+        .group => return .{ .slot = slot, .dest = dest },
+    };
+    var lones: usize = 0;
+    for (rows) |r| {
+        if (r.project == null) lones += 1;
+    }
+    if (index <= lones) return .{ .slot = slot, .dest = dest };
+    return .{ .slot = lones, .dest = .{ .top_level = lones } };
 }
 
 // ---------------------------------------------------------------------------
@@ -219,26 +239,52 @@ test "T2338: resolve closes the list up where the window left and reads its midd
     const front = resolve(&rows, 0, 32, 0);
     try testing.expectEqual(@as(usize, 0), front.slot);
     try expectDest(.{ .top_level = 0 }, front.dest);
-    // At the end (top 192, below [q]'s middle): after the folded group.
+    // At the end (top 192, below [q]'s middle): after the folded group by
+    // geometry, which is the groups' band - so it lands at the end of the
+    // lone windows (a and b), and the gap opens there (T2421).
     const end = resolve(&rows, 0, 32, 192);
-    try testing.expectEqual(@as(usize, 6), end.slot);
-    try expectDest(.{ .top_level = 4 }, end.dest);
+    try testing.expectEqual(@as(usize, 2), end.slot);
+    try expectDest(.{ .top_level = 2 }, end.dest);
+}
+
+test "T2421: below a group it lands at the end of the ungrouped windows" {
+    // Mac `belowAGroupItLandsAtTheEndOfTheUngroupedWindows`: lone a, b, then
+    // [p] with p1.
+    const rows = [_]Row{
+        .{ .project = null, .header = false, .span = .{ .top = 0, .bottom = 32 } },
+        .{ .project = null, .header = false, .span = .{ .top = 32, .bottom = 64 } },
+        .{ .project = "p", .header = true, .span = .{ .top = 64, .bottom = 96 } },
+        .{ .project = "p", .header = false, .span = .{ .top = 96, .bottom = 128 } },
+    };
+    const below = banded(.{ .top_level = 3 }, 4, &rows);
+    try testing.expectEqual(@as(usize, 2), below.slot);
+    try expectDest(.{ .top_level = 2 }, below.dest);
+    // Among them: as is.
+    const among = banded(.{ .top_level = 1 }, 1, &rows);
+    try testing.expectEqual(@as(usize, 1), among.slot);
+    try expectDest(.{ .top_level = 1 }, among.dest);
+    // Joining: as is.
+    const joining = banded(.{ .group = .{ .project = "p", .index = 1 } }, 4, &rows);
+    try testing.expectEqual(@as(usize, 4), joining.slot);
+    try expectDest(.{ .group = .{ .project = "p", .index = 1 } }, joining.dest);
 }
 
 test "T2338: a group's last window joins its group only in the upper half of the slot" {
-    // [p] p1 p2, then lone b. p2 (64..96) dragged; without it b closes up
-    // to 64..96. The slot after p1 holds tops 32..64 (its middle past p1's
-    // 48, short of b's 80): above 48 it stays in p, below it it lands after
-    // the group, before b. Past b's middle it lands after b.
+    // Lone b, then [p] p1 p2. p2 (96..128) dragged, the last row. The slot
+    // after p1 (64..96) splits at p1's middle: above it it stays in p, below
+    // it it lands after the group at the top level - which is the groups'
+    // band, so at the end of the lone windows, after b (T2421).
     const rows = [_]Row{
-        .{ .project = "p", .header = true, .span = .{ .top = 0, .bottom = 32 } },
-        .{ .project = "p", .header = false, .span = .{ .top = 32, .bottom = 64 } },
+        .{ .project = null, .header = false, .span = .{ .top = 0, .bottom = 32 } },
+        .{ .project = "p", .header = true, .span = .{ .top = 32, .bottom = 64 } },
         .{ .project = "p", .header = false, .span = .{ .top = 64, .bottom = 96 } },
-        .{ .project = null, .header = false, .span = .{ .top = 96, .bottom = 128 } },
+        .{ .project = "p", .header = false, .span = .{ .top = 96, .bottom = 128 } },
     };
-    try expectDest(.{ .group = .{ .project = "p", .index = 1 } }, resolve(&rows, 2, 32, 40).dest);
-    try expectDest(.{ .top_level = 1 }, resolve(&rows, 2, 32, 60).dest);
-    try expectDest(.{ .top_level = 2 }, resolve(&rows, 2, 32, 84).dest);
+    try expectDest(.{ .group = .{ .project = "p", .index = 0 } }, resolve(&rows, 3, 32, 40).dest);
+    try expectDest(.{ .group = .{ .project = "p", .index = 1 } }, resolve(&rows, 3, 32, 70).dest);
+    const out = resolve(&rows, 3, 32, 90);
+    try testing.expectEqual(@as(usize, 1), out.slot);
+    try expectDest(.{ .top_level = 1 }, out.dest);
 }
 
 test "T2338: a window taller than a header still reaches either end of the list" {

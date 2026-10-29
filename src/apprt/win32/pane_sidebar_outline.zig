@@ -112,9 +112,12 @@ pub const Placed = struct {
 };
 
 /// The windows in outline order (Mac `PaneSidebarWindowGrouping.sections`):
-/// sections sorted by name - a project by its name, a lone window by its
-/// title - and a project's windows by worktree. A project's windows are
-/// always contiguous. `out` must hold `titles.len`; returns how many.
+/// lone windows by title, then projects by name, a project's windows by
+/// worktree (T2421, Mac 6bd2962eb `lonesFirst`: among the groups a lone
+/// window read as one of the windows of the group above it - grouped windows
+/// are not indented - and stayed when that group folded). A project's
+/// windows are always contiguous. `out` must hold `titles.len`; returns how
+/// many.
 pub fn outlineOrder(titles: []const []const u8, out: []Placed) usize {
     const n = @min(titles.len, out.len);
     for (titles[0..n], 0..) |t, i| {
@@ -128,6 +131,8 @@ pub fn outlineOrder(titles: []const []const u8, out: []Placed) usize {
 }
 
 fn placedLess(_: void, a: Placed, b: Placed) bool {
+    // Every lone window ahead of every group.
+    if ((a.project == null) != (b.project == null)) return a.project == null;
     const ka = a.project orelse a.label;
     const kb = b.project orelse b.label;
     switch (naturalOrder(ka, kb)) {
@@ -142,8 +147,6 @@ fn placedLess(_: void, a: Placed, b: Placed) bool {
         .gt => return false,
         .eq => {},
     }
-    // A lone window ahead of the project it shares a name with.
-    if ((a.project == null) != (b.project == null)) return a.project == null;
     switch (naturalOrder(a.label, b.label)) {
         .lt => return true,
         .gt => return false,
@@ -371,22 +374,31 @@ fn orderOf(titles: []const []const u8, buf: []Placed) []const Placed {
     return buf[0..outlineOrder(titles, buf)];
 }
 
-test "windows are sorted by name and grouped by project" {
+test "windows are sorted by name and grouped by project, ungrouped windows first (T2421)" {
     var buf: [8]Placed = undefined;
     const p = orderOf(&.{ "zsh", "ghoztty: windows-amd64", "relay: main", "ghoztty: pane-sidebar", "Build logs", "ghoztty: main" }, &buf);
-    const want_labels = [_][]const u8{ "Build logs", "main", "pane-sidebar", "windows-amd64", "main", "zsh" };
-    const want_index = [_]usize{ 4, 5, 3, 1, 2, 0 };
+    const want_labels = [_][]const u8{ "Build logs", "zsh", "main", "pane-sidebar", "windows-amd64", "main" };
+    const want_index = [_]usize{ 4, 0, 5, 3, 1, 2 };
     for (p, 0..) |e, i| {
         try testing.expectEqualStrings(want_labels[i], e.label);
         try testing.expectEqual(want_index[i], e.index);
     }
     try testing.expect(p[0].project == null); // an ungrouped window keeps its whole name
-    try testing.expect(opensProject(p, 1));
-    try testing.expect(!opensProject(p, 2));
-    try testing.expectEqual(@as(usize, 3), projectSize(p, 1));
-    try testing.expect(opensProject(p, 4));
-    try testing.expectEqualStrings("relay", p[4].project.?);
-    try testing.expect(!opensProject(p, 5));
+    try testing.expect(p[1].project == null);
+    try testing.expect(opensProject(p, 2));
+    try testing.expect(!opensProject(p, 3));
+    try testing.expectEqual(@as(usize, 3), projectSize(p, 2));
+    try testing.expect(opensProject(p, 5));
+    try testing.expectEqualStrings("relay", p[5].project.?);
+}
+
+test "T2421: an ungrouped window sorting after a group by name still comes first" {
+    // Mac `ungroupedWindowsComeBeforeEveryGroup`, the order-free half.
+    var buf: [4]Placed = undefined;
+    const p = orderOf(&.{ "projects: manager", "Prompt.md instructions", "Release status", "zecho: main" }, &buf);
+    const want = [_][]const u8{ "Prompt.md instructions", "Release status", "manager", "main" };
+    for (p, 0..) |e, i| try testing.expectEqualStrings(want[i], e.label);
+    try testing.expect(opensProject(p, 2) and opensProject(p, 3));
 }
 
 test "numbers sort by value and case is ignored" {

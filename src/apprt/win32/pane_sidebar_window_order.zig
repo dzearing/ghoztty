@@ -116,7 +116,10 @@ fn sectionKey(placed: []const outline.Placed, window_keys: []const []const u8, s
 
 /// `placed` - the name order, `pane_sidebar_outline.outlineOrder` - in the
 /// user's `order` (Mac `sections(_:order:)`): the top level and each group's
-/// windows each arranged by it. `window_keys` is each window's key, indexed
+/// windows each arranged by it, and then every lone window ahead of every
+/// group, each side keeping its order (T2421, Mac `lonesFirst`) - however the
+/// order has them, so a window the order kept right after a group is never
+/// drawn as one of its windows. `window_keys` is each window's key, indexed
 /// like the titles `placed` was computed from (`Placed.index`). A project's
 /// windows stay contiguous. `out` must hold `placed.len`; returns how many.
 pub fn arrange(
@@ -135,11 +138,18 @@ pub fn arrange(
     var key_bufs: [max_keys]Key = undefined;
     var sec_keys: [max_keys][]const u8 = undefined;
     for (secs[0..ns], 0..) |s, i| sec_keys[i] = sectionKey(placed, window_keys, s, &key_bufs[i]);
+    var arranged: [max_keys]usize = undefined;
+    const na = keys_by.arrange(sec_keys[0..ns], order, &arranged);
     var sec_order: [max_keys]usize = undefined;
-    const na = keys_by.arrange(sec_keys[0..ns], order, &sec_order);
+    var ns_out: usize = 0;
+    for ([_]bool{ true, false }) |lone| for (arranged[0..na]) |si| {
+        if ((placed[secs[si].start].project == null) != lone) continue;
+        sec_order[ns_out] = si;
+        ns_out += 1;
+    };
 
     var w: usize = 0;
-    for (sec_order[0..na]) |si| {
+    for (sec_order[0..ns_out]) |si| {
         const s = secs[si];
         if (s.len == 1) {
             out[w] = placed[s.start];
@@ -220,9 +230,10 @@ pub fn moving(
 /// shown before. Nothing moves; a `<project>: ` naming another group still
 /// moves the window into it, at the edge nearest where it was (its key keeps
 /// its place, and a group's windows follow the order), and one naming a group
-/// the list does not have makes that group where the window was. Losing its
-/// `<project>: ` leaves it beside the group it left. A new group's key goes
-/// into `key_buf`, which must outlive `out`.
+/// the list does not have makes that group where the window was (among the
+/// groups). Losing its `<project>: ` puts it with the ungrouped windows above
+/// the groups (`arrange`, T2421). A new group's key goes into `key_buf`,
+/// which must outlive `out`.
 pub fn renamingWindow(
     pinned: []const []const u8,
     window_key: []const u8,
@@ -314,6 +325,19 @@ pub fn target(top: i32, dragged: usize, frames: []const Span) usize {
         if (f.mid2() < 2 * bottom) n += 1;
     }
     return n;
+}
+
+/// `to` kept on the dragged item's side of the top level (T2421, Mac
+/// `PaneSidebarItemReorder.banded`): lone windows lead it and groups follow
+/// (`arrange`), so a group stops below the lone windows and a lone window
+/// above the groups. `is_group`: each sibling, the dragged one included.
+pub fn banded(to: usize, dragged: usize, is_group: []const bool) usize {
+    if (dragged >= is_group.len) return to;
+    var lones: usize = 0;
+    for (is_group, 0..) |g, i| {
+        if (i != dragged and !g) lones += 1;
+    }
+    return if (is_group[dragged]) @max(to, lones) else @min(to, lones);
 }
 
 /// How far each sibling slides to make room: the dragged item's height and
@@ -443,17 +467,32 @@ fn expectArranged(want: []const []const u8, titles: []const []const u8, order: [
     }
 }
 
-test "T2337: with no order the list is the name order" {
-    try expectArranged(&.{ "alpha", "p/a", "p/b", "zeta" }, &.{ "zeta", "p: b", "alpha", "p: a" }, &.{});
+test "T2337: with no order the list is the name order, ungrouped windows first (T2421)" {
+    try expectArranged(&.{ "alpha", "zeta", "p/a", "p/b" }, &.{ "zeta", "p: b", "alpha", "p: a" }, &.{});
 }
 
-test "T2337: the order moves groups and lone windows at the top level" {
-    // Titles: 0 zeta, 1 p: b, 2 alpha, 3 p: a.
-    try expectArranged(&.{ "zeta", "p/a", "p/b", "alpha" }, &.{ "zeta", "p: b", "alpha", "p: a" }, &.{ "window:w0", "project:p", "window:w2" });
+test "T2337: the order moves lone windows among themselves and groups among themselves" {
+    // Titles: 0 zeta, 1 p: b, 2 alpha, 3 p: a. The order puts the group
+    // between the lone windows; they still lead it, in their dragged order.
+    try expectArranged(&.{ "zeta", "alpha", "p/a", "p/b" }, &.{ "zeta", "p: b", "alpha", "p: a" }, &.{ "window:w0", "project:p", "window:w2" });
+    try expectArranged(&.{ "a", "q/1", "p/1" }, &.{ "p: 1", "q: 1", "a" }, &.{ "project:q", "project:p" });
+}
+
+test "T2421: ungrouped windows come before every group, however the order has them" {
+    // Mac `ungroupedWindowsComeBeforeEveryGroup`, the user's report: three
+    // windows the order kept right after `projects` were drawn as its
+    // windows and stayed when it folded.
+    const open = [_][]const u8{ "projects: manager", "Prompt.md instructions", "Release status", "zecho: main" };
+    try expectArranged(&.{ "Prompt.md instructions", "Release status", "projects/manager", "zecho/main" }, &open, &.{});
+    try expectArranged(
+        &.{ "Release status", "Prompt.md instructions", "projects/manager", "zecho/main" },
+        &open,
+        &.{ "project:projects", "window:w0", "window:w2", "window:w1", "project:zecho" },
+    );
 }
 
 test "T2337: a group's windows follow the order, and stay together" {
-    try expectArranged(&.{ "alpha", "p/b", "p/a", "zeta" }, &.{ "zeta", "p: b", "alpha", "p: a" }, &.{ "window:w1", "window:w3" });
+    try expectArranged(&.{ "alpha", "zeta", "p/b", "p/a" }, &.{ "zeta", "p: b", "alpha", "p: a" }, &.{ "window:w1", "window:w3" });
 }
 
 test "T2337: a new window lands after its name-order neighbour" {
@@ -467,12 +506,12 @@ test "T2337: a new window lands after its name-order neighbour" {
 }
 
 test "T2337: a new group lands after its name-order neighbour too" {
-    // b was dragged ahead of a; new group "ab" sorts between a and b by name,
+    // c was dragged ahead of a; new group b sorts between a and c by name,
     // so it follows a, which the order put last.
     try expectArranged(
-        &.{ "b", "a", "ab/x" },
-        &.{ "a", "b", "ab: x" },
-        &.{ "window:w1", "window:w0" },
+        &.{ "c/1", "a/1", "b/1" },
+        &.{ "a: 1", "c: 1", "b: 1" },
+        &.{ "project:c", "project:a" },
     );
 }
 
@@ -490,10 +529,10 @@ test "T2337: every key - each group and each window" {
     var out: [8][]const u8 = undefined;
     const m = allKeys(placed[0..n], &wk, &bufs, &out);
     try testing.expectEqual(@as(usize, 4), m);
-    try testing.expectEqualStrings("project:p", out[0]);
-    try testing.expectEqualStrings("window:a", out[1]);
-    try testing.expectEqualStrings("window:b", out[2]);
-    try testing.expectEqualStrings("window:s", out[3]);
+    try testing.expectEqualStrings("window:s", out[0]);
+    try testing.expectEqualStrings("project:p", out[1]);
+    try testing.expectEqualStrings("window:a", out[2]);
+    try testing.expectEqualStrings("window:b", out[3]);
 }
 
 test "T2337: moving puts the key among its siblings and prunes closed windows" {
@@ -559,6 +598,17 @@ test "T2337: the index is read by the leading edge against the siblings' middles
     try testing.expectEqual(@as(usize, 2), target(49, 2, &f)); // at the middle: passed
     try testing.expectEqual(@as(usize, 1), target(48, 2, &f));
     try testing.expectEqual(@as(usize, 0), target(14, 2, &f));
+}
+
+test "T2421: a drag stays on its side of the top level" {
+    // Mac `aDragStaysOnItsSideOfTheTopLevel`: lone a, b, then groups p, q.
+    const is_group = [_]bool{ false, false, true, true };
+    try testing.expectEqual(@as(usize, 1), banded(3, 0, &is_group)); // a lone window stops at the last lone slot
+    try testing.expectEqual(@as(usize, 0), banded(0, 1, &is_group));
+    try testing.expectEqual(@as(usize, 2), banded(0, 3, &is_group)); // a group stops below the lone windows
+    try testing.expectEqual(@as(usize, 3), banded(3, 2, &is_group));
+    // A group's own windows have no group among them: as is.
+    try testing.expectEqual(@as(usize, 2), banded(2, 0, &.{ false, false, false }));
 }
 
 test "T2337: a tall item held at the top still goes above a short first one" {
@@ -679,31 +729,40 @@ test "T2405: a window opened since the last drag is pinned where it shows, not r
 }
 
 test "T2405: another group's <project>: moves the window in, at the edge nearest where it was" {
-    // From below the group: its last window.
-    try expectRenamedWindow(&.{ "a", "p/x", "p/y", "p/z" }, &.{ "a", "p: x", "p: y", "z" }, &.{}, 3, "p: z");
-    // From above: its first.
-    try expectRenamedWindow(&.{ "p/z", "p/x", "p/y", "z" }, &.{ "a", "p: x", "p: y", "z" }, &.{}, 0, "p: z");
+    // A lone window is always above the groups (T2421), so it comes in at
+    // the group's first window, wherever among the lone windows it was.
+    try expectRenamedWindow(&.{ "a", "p/z", "p/x", "p/y" }, &.{ "a", "p: x", "p: y", "z" }, &.{}, 3, "p: z");
+    try expectRenamedWindow(&.{ "z", "p/z", "p/x", "p/y" }, &.{ "a", "p: x", "p: y", "z" }, &.{}, 0, "p: z");
+    // From another group below: its last.
+    try expectRenamedWindow(&.{ "p/x", "p/y", "p/1" }, &.{ "p: x", "p: y", "q: 1" }, &.{}, 2, "p: 1");
 }
 
-test "T2405: a new group's <project>: makes the group where the window was" {
-    try expectRenamedWindow(&.{ "a", "new/b", "c" }, &.{ "a", "b", "c" }, &.{}, 1, "new: b");
-    try expectRenamedWindow(&.{ "a", "aaa/b", "c" }, &.{ "a", "b", "c" }, &.{}, 1, "aaa: b");
+test "T2405: a new group's <project>: makes the group where the window was, among the groups" {
+    // The ungrouped windows lead (T2421, Mac 6bd2962eb): the new group goes
+    // after them.
+    try expectRenamedWindow(&.{ "a", "c", "new/b" }, &.{ "a", "b", "c" }, &.{}, 1, "new: b");
+    try expectRenamedWindow(&.{ "a", "c", "aaa/b" }, &.{ "a", "b", "c" }, &.{}, 1, "aaa: b");
+    // Among groups it takes the place the window had: z's group was between
+    // m and p, so the new group stands there, not by name ahead of m.
+    try expectRenamedWindow(&.{ "m/1", "aa/z", "p/1" }, &.{ "m: 1", "q: z", "p: 1" }, &.{ "project:m", "project:q", "project:p" }, 1, "aa: z");
 }
 
-test "T2405: losing its <project>: leaves the window beside the group it left" {
-    // By name "x" would sort after "q".
-    try expectRenamedWindow(&.{ "p/y", "x", "q" }, &.{ "p: x", "p: y", "q" }, &.{}, 0, "x");
+test "T2405: losing its <project>: puts the window with the ungrouped windows, after those above it" {
+    // Mac `renamingAWindowOutOfAGroupPutsItWithTheUngroupedWindows`: never
+    // left under the group it left.
+    try expectRenamedWindow(&.{ "q", "x", "p/y" }, &.{ "p: x", "p: y", "q" }, &.{}, 0, "x");
 }
 
 test "T2405: a renamed group keeps its place, never-dragged list included" {
-    try expectRenamedProject(&.{ "a", "zz/1", "z" }, &.{ "a", "m: 1", "z" }, &.{}, "m", "zz");
+    try expectRenamedProject(&.{ "a", "z", "zz/1", "n/1" }, &.{ "a", "m: 1", "z", "n: 1" }, &.{}, "m", "zz");
 }
 
 test "T2405: a group named as another merges into that one where that one is" {
-    try expectRenamedProject(&.{ "a/1", "a/2", "b" }, &.{ "a: 1", "b", "c: 2" }, &.{}, "c", "a");
+    try expectRenamedProject(&.{ "b", "a/1", "a/2" }, &.{ "a: 1", "b", "c: 2" }, &.{}, "c", "a");
 }
 
 test "T2405: a group emptied leaves its windows where it was, in its order" {
-    // By name "1" and "2" would lead.
-    try expectRenamedProject(&.{ "a", "2", "1", "z" }, &.{ "a", "m: 1", "m: 2", "z" }, &.{ "window:w2", "window:w1" }, "m", "");
+    // Its windows join the ungrouped ones, in the group's order: by name "1"
+    // and "2" would lead.
+    try expectRenamedProject(&.{ "a", "z", "2", "1" }, &.{ "a", "m: 1", "m: 2", "z" }, &.{ "window:w2", "window:w1" }, "m", "");
 }

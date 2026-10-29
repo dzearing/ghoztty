@@ -255,19 +255,19 @@ try {
     $groups = Wait-Log 'pane sidebar all-windows groups=' $mark
     "  $groups"
     Assert "four groups, every pane" ($groups -match 'groups=4 panes=6 ')
-    Assert "name order, the project grouped: Build logs | ghoztty/feature-2 | ghoztty/main | zeta" ($groups -match 'order=Build logs\|ghoztty/feature-2\|ghoztty/main\|zeta$')
+    Assert "name order, the lone windows first (T2421), then the project: Build logs | zeta | ghoztty/feature-2 | ghoztty/main" ($groups -match 'order=Build logs\|zeta\|ghoztty/feature-2\|ghoztty/main$')
     # T1924 (Mac 321e61d7c): the caption counts the windows, and every window
     # but this one opens folded.
     Assert "the ALL WINDOWS caption counts four windows" ($groups -match ' windows=4 ')
     Assert "every other window opens folded, this one open (folded=3)" ($groups -match ' folded=3 ')
     $o0 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
-    Assert "folded by default: only zeta's two rows show, under four window heads" ($null -ne $o0 -and $o0.Items.Count -eq 2 -and @($o0.Items | Where-Object Group -ne 3).Count -eq 0 -and @($o0.Heads | Where-Object Kind -eq 'W').Count -eq 4)
+    Assert "folded by default: only zeta's two rows show, under four window heads" ($null -ne $o0 -and $o0.Items.Count -eq 2 -and @($o0.Items | Where-Object Group -ne 1).Count -eq 0 -and @($o0.Heads | Where-Object Kind -eq 'W').Count -eq 4)
     # A chevron unfolds another window without raising it.
     $chevLine = Wait-Log 'pane sidebar outline mode=expanded' $mark
     $chev = @()
     if ($chevLine -match ' chev=(\S*)') { $chev = @($Matches[1] -split ';' | Where-Object { $_ } | ForEach-Object { $xy = $_ -split ','; @{ X = [int]$xy[0]; Y = [int]$xy[1] } }) }
     Assert "each head logs its chevron ($($chev.Count) for $($o0.Heads.Count))" ($null -ne $o0 -and $chev.Count -eq $o0.Heads.Count)
-    foreach ($gi in 0, 1, 2) {
+    foreach ($gi in 0, 2, 3) {
         $o0 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' 0 1000)
         $chevLine = Wait-Log 'pane sidebar outline mode=expanded' 0 1000
         $chev = @()
@@ -286,8 +286,8 @@ try {
     if ($null -eq $o) { return }
     "  heads: $(($o.Heads | ForEach-Object { "$($_.Kind)$($_.Group)" }) -join ' ')  items: $(($o.Items | ForEach-Object { "g$($_.Group)$($_.Sec)" }) -join ' ')  rules=$($o.Rules)"
     Assert "one project head and four window heads" ((@($o.Heads | Where-Object Kind -eq 'P').Count -eq 1) -and (@($o.Heads | Where-Object Kind -eq 'W').Count -eq 4))
-    Assert "the project head names its first window (group 1)" ($null -ne (Head $o 'P' 1))
-    Assert "every pane is a row, B's stash included" ($o.Items.Count -eq 6 -and @($o.Items | Where-Object { $_.Group -eq 2 -and $_.Sec -eq 's' }).Count -eq 1)
+    Assert "the project head names its first window (group 2)" ($null -ne (Head $o 'P' 2))
+    Assert "every pane is a row, B's stash included" ($o.Items.Count -eq 6 -and @($o.Items | Where-Object { $_.Group -eq 3 -and $_.Sec -eq 's' }).Count -eq 1)
     # T2313 (Mac 47b39b1cb): a window's stash has no divider or caption in
     # all windows - B's stashed row follows its grid row at a grid row's own
     # pitch - and since T2340 (Mac c4dbe30be) no hairline between top-level
@@ -305,8 +305,8 @@ try {
     }
     Assert "every window head carries a window icon after its chevron, the project head none (T2340)" $iconsOk
     Assert "every window head's chevron is in one column, grouped or not ($($wChev -join ','), T2340)" ($wChev.Count -eq 4 -and @($wChev | Select-Object -Unique).Count -eq 1)
-    $bRows = @($o.Items | Where-Object { $_.Group -eq 2 })
-    $zRows = @($o.Items | Where-Object { $_.Group -eq 3 })
+    $bRows = @($o.Items | Where-Object { $_.Group -eq 3 })
+    $zRows = @($o.Items | Where-Object { $_.Group -eq 1 })
     if ($bRows.Count -eq 2 -and $zRows.Count -eq 2) {
         $bPitch = $bRows[1].Y - $bRows[0].Y
         $zPitch = $zRows[1].Y - $zRows[0].Y
@@ -316,8 +316,8 @@ try {
     $ordered = $true
     for ($k = 1; $k -lt $o.Heads.Count; $k++) { if ($o.Heads[$k].Y -le $o.Heads[$k - 1].Y) { $ordered = $false } }
     Assert "heads stack top to bottom in outline order" $ordered
-    $zeta = Head $o 'W' 3
-    $zetaRows = @($o.Items | Where-Object Group -eq 3)
+    $zeta = Head $o 'W' 1
+    $zetaRows = @($o.Items | Where-Object Group -eq 1)
     Assert "this window's panes sit under its header" ($null -ne $zeta -and $zetaRows.Count -eq 2 -and ($zetaRows | ForEach-Object { $_.Y -gt $zeta.Y }) -notcontains $false)
     try {
         $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
@@ -330,13 +330,13 @@ try {
     } catch { Assert "the outline capture worked ($($_.Exception.Message))" $false }
 
     "== 2: another window's stashed row restores the pane in its own window"
-    $row = $o.Items | Where-Object { $_.Group -eq 2 -and $_.Sec -eq 's' } | Select-Object -First 1
+    $row = $o.Items | Where-Object { $_.Group -eq 3 -and $_.Sec -eq 's' } | Select-Object -First 1
     $mark = Get-LogCount
     if ($row) { [void](ClickAt $top $sb $row) }
     Assert "b2 was restored by the click" (Wait-Stashed 'b2' $false)
     Assert "it went through the other-window path (log)" ($null -ne (Wait-Log 'pane sidebar focus other window section=stashed' $mark 2000))
     $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
-    Assert "A's list followed: B's stash is gone, both its panes are grid rows" ($null -ne $o -and @($o.Items | Where-Object { $_.Group -eq 2 -and $_.Sec -eq 'g' }).Count -eq 2)
+    Assert "A's list followed: B's stash is gone, both its panes are grid rows" ($null -ne $o -and @($o.Items | Where-Object { $_.Group -eq 3 -and $_.Sec -eq 'g' }).Count -eq 2)
 
     "== 3: another window's header raises that window"
     $mark = Get-LogCount
@@ -347,41 +347,41 @@ try {
     "== 4: this window's header folds its panes, and unfolds them"
     $mark = Get-LogCount
     $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' 0 1000)
-    $h = Head $o 'W' 3
+    $h = Head $o 'W' 1
     if ($h) { [void](ClickAt $top $sb $h) }
     $o2 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
-    Assert "folded: zeta's rows are gone, its header stays" ($null -ne $o2 -and @($o2.Items | Where-Object Group -eq 3).Count -eq 0 -and $null -ne (Head $o2 'W' 3))
+    Assert "folded: zeta's rows are gone, its header stays" ($null -ne $o2 -and @($o2.Items | Where-Object Group -eq 1).Count -eq 0 -and $null -ne (Head $o2 'W' 1))
     # T1880: the fold covers the rows top-down (Mac 0.22 s) - measured against
     # the list after it, not dropped because the head moved.
     Assert "the fold animated (log)" ($null -ne (Wait-Log 'pane sidebar transition fold surface=rail ms=220' $mark 2000))
     Assert "...and finished without landing early" (($null -ne (Wait-Log 'pane sidebar transition done surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
     $mark = Get-LogCount
-    $h = Head $o2 'W' 3
+    $h = Head $o2 'W' 1
     if ($h) { [void](ClickAt $top $sb $h) }
     $o3 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
-    Assert "unfolded: zeta's two rows are back" ($null -ne $o3 -and @($o3.Items | Where-Object Group -eq 3).Count -eq 2)
+    Assert "unfolded: zeta's two rows are back" ($null -ne $o3 -and @($o3.Items | Where-Object Group -eq 1).Count -eq 2)
     Assert "...revealed top-down: the unfold animated and finished in place" (($null -ne (Wait-Log 'pane sidebar transition fold surface=rail' $mark 2000)) -and ($null -ne (Wait-Log 'pane sidebar transition done surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
 
     "== 5: the project header folds its windows, and unfolds them"
     $mark = Get-LogCount
-    $h = Head $o3 'P' 1
+    $h = Head $o3 'P' 2
     if ($h) { [void](ClickAt $top $sb $h) }
     $o4 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
-    Assert "folded: the project's window heads and rows are gone" ($null -ne $o4 -and $null -eq (Head $o4 'W' 1) -and $null -eq (Head $o4 'W' 2) -and @($o4.Items | Where-Object { $_.Group -in 1, 2 }).Count -eq 0)
-    Assert "folded: the project head itself stays" ($null -ne $o4 -and $null -ne (Head $o4 'P' 1))
+    Assert "folded: the project's window heads and rows are gone" ($null -ne $o4 -and $null -eq (Head $o4 'W' 2) -and $null -eq (Head $o4 'W' 3) -and @($o4.Items | Where-Object { $_.Group -in 2, 3 }).Count -eq 0)
+    Assert "folded: the project head itself stays" ($null -ne $o4 -and $null -ne (Head $o4 'P' 2))
     Assert "...and the project's fold animated in place too (log)" (($null -ne (Wait-Log 'pane sidebar transition fold surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
     $mark = Get-LogCount
-    $h = Head $o4 'P' 1
+    $h = Head $o4 'P' 2
     if ($h) { [void](ClickAt $top $sb $h) }
     $o5 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
-    Assert "unfolded: both windows are back" ($null -ne $o5 -and $null -ne (Head $o5 'W' 1) -and $null -ne (Head $o5 'W' 2))
+    Assert "unfolded: both windows are back" ($null -ne $o5 -and $null -ne (Head $o5 'W' 2) -and $null -ne (Head $o5 'W' 3))
 
     "== 6: the list follows other windows: a rename re-sorts, a close drops"
     $mark = Get-LogCount
     Assert "+rename wB alpha ($(Get-CliErr))" ((Invoke-Cli "+rename --target=wB --title=alpha") -eq 0)
     $g = Wait-Log 'pane sidebar all-windows groups=4.*order=alpha\|' $mark
     "  $g"
-    Assert "renamed B sorts first, out of the project" ($g -match 'order=alpha\|Build logs\|ghoztty/feature-2\|zeta$')
+    Assert "renamed B sorts first, out of the project" ($g -match 'order=alpha\|Build logs\|zeta\|ghoztty/feature-2$')
     Assert "...and keeps the fold the user flipped (folded=0)" ($g -match ' folded=0 ')
     # A window opened while the list shows arrives folded (T1924), and the
     # caption's count follows it.
@@ -397,7 +397,7 @@ try {
     Assert "+close wD ($(Get-CliErr))" ((Invoke-Cli "+close --target=wD") -eq 0)
     $g = Wait-Log 'pane sidebar all-windows groups=3 ' $mark 6000
     "  $g"
-    Assert "closing D dropped it from A's list" ($g -match 'order=alpha\|ghoztty/feature-2\|zeta$')
+    Assert "closing D dropped it from A's list" ($g -match 'order=alpha\|zeta\|ghoztty/feature-2$')
 
     "== 6b: the search field filters by every word, Escape clears, Return reveals (T1877)"
     # Windows now: alpha (b1, b2), ghoztty: feature-2 (c1), zeta (P, s1).
@@ -591,7 +591,8 @@ try {
     [void](ClickAt $top $sb (Get-ScopeCenter $sb))
     Assert "...both ways (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=true' $mark 2000))
     $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
-    $h = if ($o) { Head $o 'W' 2 } else { $null }
+    # zeta's header (this window, a lone window: group 1 since T2421).
+    $h = if ($o) { Head $o 'W' 1 } else { $null }
     if ($h) { [void](ClickAt $top $sb $h) }
     Assert "a header still folds (log)" ($null -ne (Wait-Log 'pane sidebar (un)?fold' $mark 2000))
     Assert "...and none of it animated: no transition started" ($null -eq (Wait-Log 'pane sidebar transition' $mark 500))

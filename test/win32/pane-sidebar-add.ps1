@@ -202,7 +202,7 @@ try {
     [void](ClickAt $top $sb (Get-ScopeCenter $sb))
     Assert "the all-windows scope is on (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=true' $mark))
     $order = Get-Order $mark
-    Assert "three windows in name order: proj/one | proj/two | zeta ($($order -join '|'))" (($order -join '|') -eq 'proj/one|proj/two|zeta')
+    Assert "three windows in name order, the lone window first (T2421): zeta | proj/one | proj/two ($($order -join '|'))" (($order -join '|') -eq 'zeta|proj/one|proj/two')
     $o = Get-Outline $mark
     Assert "the outline logs a + for every head, and the header's +" ($null -ne $o -and $o.Heads.Count -eq 4 -and $o.Ha.Count -eq 4 -and $null -ne $o.Add)
     if ($null -eq $o -or $o.Ha.Count -ne $o.Heads.Count -or $null -eq $o.Add) { return }
@@ -255,14 +255,14 @@ try {
     Assert "one more window" (Wait-Until { (Get-AppWindowCount $app) -eq $windows + 1 })
     Assert "the + took focus: A is not active" (Wait-Until { (Get-TestActiveWindow -Window $top) -ne $top } 3000)
     $order = Get-Order $mark
-    Assert "it is grouped as proj/new, first in the project ($($order -join '|'))" (($order -join '|') -eq 'proj/new|proj/one|proj/two|zeta')
+    Assert "it is grouped as proj/new, first in the project ($($order -join '|'))" (($order -join '|') -eq 'zeta|proj/new|proj/one|proj/two')
     Assert "setup: A is the active window" (Set-AActive $top)
     $o = Get-Outline 0
     $k = Find-ProjectHead $o
     $mark = Get-LogCount
     if ($k -ge 0) { [void](ClickAt $top $sb $o.Ha[$k]) }
     $order = Get-Order $mark
-    Assert "a second click picks the first free name, proj/new-2 ($($order -join '|'))" (($order -join '|') -eq 'proj/new|proj/new-2|proj/one|proj/two|zeta')
+    Assert "a second click picks the first free name, proj/new-2 ($($order -join '|'))" (($order -join '|') -eq 'zeta|proj/new|proj/new-2|proj/one|proj/two')
 
     "== 3: the header's + opens a new window from A, untitled, focused"
     Assert "setup: A is the active window" (Set-AActive $top)

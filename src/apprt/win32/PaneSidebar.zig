@@ -2664,7 +2664,10 @@ fn itemRelayout(self: *PaneSidebar) void {
     const f = frames[0..d.count];
     if (d.cross) return self.crossRelayout(d, f);
     const top = window_order.clamp(d.pointer - d.grab, d.source, f, d.grabbed_top);
-    const to = window_order.target(top, d.source, f);
+    // A group stops below the lone windows, which lead the list (T2421).
+    var is_group: [pane_sidebar.max_heads]bool = undefined;
+    for (d.siblings[0..d.count], 0..) |*sk, j| is_group[j] = window_order.isProject(sk.slice());
+    const to = window_order.banded(window_order.target(top, d.source, f), d.source, is_group[0..d.count]);
     const pitch: f64 = @floatFromInt(window_order.pitch(d.source, f));
     const now = w32.GetTickCount64();
     const animate = App.clientAreaAnimationsEnabled();
