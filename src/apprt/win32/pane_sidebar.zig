@@ -1365,6 +1365,19 @@ pub fn resyncedHover(current: Hit, held: bool, under: bool, there: Hit) Hit {
     return if (under) there else .none;
 }
 
+/// The row whose pane takes the hover tint (T2278, Mac `PaneSidebarHover`):
+/// the one under the pointer - its body, its button or its x. While a pane
+/// is dragged none does (T2424, Mac 6bd2962eb): the row it was picked up
+/// from keeps its look, but no pane keeps the tint its row gave it, and the
+/// rows it passes give none.
+pub fn tintedItem(hover: Hit, held: bool) ?usize {
+    if (held) return null;
+    return switch (hover) {
+        .item, .item_button, .item_close => |i| i,
+        else => null,
+    };
+}
+
 pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     if (l.mode == .hidden) return .none;
     if (l.toggle.contains(x, y)) return .toggle;
@@ -3011,4 +3024,18 @@ test "pane_sidebar: T2341 a resync drops a hover the pointer is no longer over, 
     // An item held mid-drag keeps every hover as it is (T2337).
     try testing.expectEqual(Hit{ .head = 1 }, resyncedHover(.{ .head = 1 }, true, false, .none));
     try testing.expectEqual(Hit.none, resyncedHover(.none, true, true, .{ .item = 0 }));
+}
+
+test "pane sidebar: a pane drag tints no pane (T2424, Mac 6bd2962eb)" {
+    // A row under the pointer tints its pane, from any part of it.
+    try testing.expectEqual(@as(?usize, 2), tintedItem(.{ .item = 2 }, false));
+    try testing.expectEqual(@as(?usize, 1), tintedItem(.{ .item_button = 1 }, false));
+    try testing.expectEqual(@as(?usize, 0), tintedItem(.{ .item_close = 0 }, false));
+    // Anything else tints nothing.
+    try testing.expectEqual(@as(?usize, null), tintedItem(.none, false));
+    try testing.expectEqual(@as(?usize, null), tintedItem(.{ .head = 1 }, false));
+    // Mid-drag the row it was picked up from tints nothing, nor does any
+    // row it passes.
+    try testing.expectEqual(@as(?usize, null), tintedItem(.{ .item = 2 }, true));
+    try testing.expectEqual(@as(?usize, null), tintedItem(.{ .item_close = 0 }, true));
 }

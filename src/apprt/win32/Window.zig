@@ -4799,9 +4799,16 @@ fn noteSidebarsDrag(self: *Window, d: *const RearrangeDrag, pointer_y: i32) void
 /// Every window's sidebar shows its empty drop slot while a drag is live,
 /// so whichever window the pane is carried to shows its target (T1844).
 fn setSidebarsDragActive(self: *Window, on: bool) void {
+    // Nothing hovers while it is carried (T2424, Mac 6bd2962eb): the pane
+    // tint a row gave comes off now and none is given until it lands, when
+    // every sidebar asks the pointer again.
+    self.app.hover_held = on;
+    if (on) self.app.sidebar_hover_pane = null;
+    log.info("pane hover held={}", .{on});
     for (self.app.windows.items) |win| {
         if (win.sidebar) |sb| sb.setDragActive(on);
     }
+    for (self.app.windows.items) |win| win.updateHoverTints();
 }
 
 /// Will a stash drop into `dest` be HONOURED (T1844)? Stashing the last pane

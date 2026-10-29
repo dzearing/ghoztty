@@ -27,7 +27,11 @@
 #   B) with s1 stashed too, dragging s1's tile below s2's REORDERS the stash:
 #      s1 lands at index 1, both still stashed
 #   C) dragging the last pane on screen onto the sidebar is REFUSED: no
-#      preview, the tray does not light, and nothing is stashed
+#      preview, the tray does not light, and nothing is stashed. Before it,
+#      hovering P's tile tints P (the positive control); once P is picked up
+#      every hover is held (`pane hover held=true`) and a hover posted at P's
+#      tile mid-drag tints nothing (T2424, Mac 6bd2962eb: nothing hovers
+#      mid-drag); the release lets go (`held=false`)
 #   D) Escape mid-drag CANCELS a drag that started from the sidebar (no
 #      rearrange mode): the preview goes and the pane stays stashed
 #
@@ -343,13 +347,37 @@ try {
     "== C: the last pane on screen cannot be dragged into the stash"
     $logC = Get-LogCount
     $from = Get-TileCenter $sb 0 1
+    # T2424 (Mac 6bd2962eb): the tile under the pointer tints its pane - the
+    # positive control - and picking it up takes the tint off.
+    Assert "C: hover over P's tile delivered" (Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $from.X -Y $from.Y -Action move -Client)
+    Start-Sleep -Milliseconds 300
+    Assert "C: hovering P's tile tints P (log: hover tint shown)" (@(Get-LogLines $logC 'hover tint shown ').Count -ge 1)
     Assert "C: press and travel on P's tile delivered" (Start-TileDrag $top $sb $from)
     Assert "C: move onto the rail delivered" (Move-Drag $top $dropX $dropY 'move')
     Start-Sleep -Milliseconds 300
+    $heldAt = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logC | Select-String -Pattern 'pane hover held=true' | Select-Object -First 1)
+    Assert "C: the drag holds every hover (log: pane hover held=true)" ($heldAt.Count -eq 1)
+    if ($heldAt.Count -eq 1) {
+        $afterHeld = $logC + $heldAt[0].LineNumber
+        # A hover reaching the rail mid-drag (a re-read on activation does,
+        # T2341) is the hover the hold must refuse: posted straight at P's
+        # tile, it tinted P before T2424.
+        Assert "C: a hover over P's tile mid-drag delivered" (Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $from.X -Y $from.Y -Action move -Client)
+        Start-Sleep -Milliseconds 300
+        $tinted = @(Get-LogLines $afterHeld 'pane sidebar hover tint index=').Count
+        if ($NegativeControl) {
+            Assert "NEGATIVE: the mid-drag hover tints P (pre-T2424 behavior)" ($tinted -ge 1)
+        } else {
+            Assert "C: no pane is tinted while it is carried, even hovered (log)" ($tinted -eq 0)
+        }
+    }
+    # Evidence for a red run: the tint's and the hold's own lines.
+    Get-LogLines $logC '(hover tint|pane hover held|row drag start)' | Select-Object -First 12 | ForEach-Object { "  | $_" }
     Assert "C: nothing is previewed for a refused stash" ($null -eq (Get-PreviewRect $app.Pid))
     Assert "C: and the tray does not light for it (log)" (@(Get-LogLines $logC 'pane sidebar tray hot=1').Count -eq 0)
     Assert "C: release delivered" (Move-Drag $top $dropX $dropY 'up')
     Start-Sleep -Milliseconds 500
+    Assert "C: the release lets every hover go (log: pane hover held=false)" (@(Get-LogLines $logC 'pane hover held=false').Count -ge 1)
     Assert "C: P is still on screen" (Test-VisibleChild $top $hP)
     Assert "C: no stash happened (log)" (@(Get-LogLines $logC 'pane drop stashed').Count -eq 0)
 

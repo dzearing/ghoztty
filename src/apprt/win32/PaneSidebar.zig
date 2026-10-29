@@ -1912,6 +1912,10 @@ pub fn setDragActive(self: *PaneSidebar, on: bool) void {
         self.endDragMotion();
         self.setTrayHot(false, false);
     }
+    // The tint follows `App.hover_held` (T2424): off with the drag, and
+    // given again from where the pointer is once it lands.
+    if (!on) self.resyncHover("pane-drag-end");
+    self.syncHoverTint();
     // The empty "Drop to stash" slot sits under the last row: a long list
     // scrolls it into view, so the target is there to aim at (T1878).
     if (on) {
@@ -3657,10 +3661,10 @@ fn hueInk(self: *const PaneSidebar, e: Entry, under: color_math.Rgb, hovered: bo
 /// so another window's sidebar that just took the hover keeps it.
 fn syncHoverTint(self: *PaneSidebar) void {
     const app = self.window.app;
-    const want: ?Entry = switch (self.hover) {
-        .item, .item_button, .item_close => |i| if (i < self.entries.items.len) self.entries.items[i] else null,
-        else => null,
-    };
+    const want: ?Entry = if (pane_sidebar.tintedItem(self.hover, app.hover_held)) |i|
+        if (i < self.entries.items.len) self.entries.items[i] else null
+    else
+        null;
     const pane: ?*const PaneView = if (want) |e| e.pane else null;
     if (pane == self.tint_pane) return;
     if (pane) |p| {

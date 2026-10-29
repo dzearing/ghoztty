@@ -502,6 +502,10 @@ layout_capture_deferred: usize = 0,
 /// never dereferenced, so a pane that closes under the pointer is harmless.
 sidebar_hover_pane: ?*const PaneView = null,
 sidebar_hover_color: @import("color_math.zig").Rgb = .{ .r = 0, .g = 0, .b = 0 },
+/// A pane drag is live in some window (T2424; Mac `HoverTrackingView.isHeld`,
+/// set by `PaneDragSession`): no pane takes a sidebar row's tint until it
+/// ends (`pane_sidebar.tintedItem`).
+hover_held: bool = false,
 
 /// The window tabs a sidebar header's x is closing (T2298), waiting for
 /// `WM_APP_QUIET_CLOSE`. Windows are compared against `windows` before use.
