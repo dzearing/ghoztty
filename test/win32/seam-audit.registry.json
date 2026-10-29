@@ -223,6 +223,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the marker's default state, which every other window draws."
         },
+        "GHOZTTY_KEEP_VACATED_GUTTERS": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2418: unset = the shipped vacated-gutter fill; split-divider.ps1 T155/T734 drag the product with it unset and assert one run un-composited."
+        },
         "GHOZTTY_DRAG_SERIAL_WAIT": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

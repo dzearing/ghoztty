@@ -108,6 +108,20 @@ pub fn presentIsStale(awaited: u64, presented: u64) bool {
     return presented != awaited;
 }
 
+/// Should the renderer throw away the frame it just drew instead of swapping
+/// it (T2418)? `drawn` is the client size the frame was drawn for, measured
+/// when it started; `client` is the window's client size now, just before the
+/// swap. When they differ the layout moved the pane while the frame was being
+/// drawn, and swapping it puts a frame for the old size at the pane's new
+/// place: a column of text shown twice, and the swap's blit lands over the
+/// gutter and card margin the window has just painted. The resize already
+/// asked for a frame at the new size, so dropping this one loses nothing.
+/// Either size unknown (0) keeps the swap - never drop a frame on a guess.
+pub fn frameOutlivedItsWindow(drawn: u64, client: u64) bool {
+    if (drawn == 0 or client == 0) return false;
+    return drawn != client;
+}
+
 /// True when `handleResize` should block for a frame at the new size.
 pub fn shouldPresentSynchronously(p: Present) bool {
     // Nothing on screen to go stale: waiting here buys no pixels and costs the
@@ -201,4 +215,21 @@ test "the frame the wait came back on has to be the size that was asked for" {
     // Nothing presented at all is stale too — the wait timed out.
     try std.testing.expect(presentIsStale(want, 0));
     try std.testing.expect(!presentIsStale(want, want));
+}
+
+test "a frame drawn for a size the pane no longer has is dropped, not swapped" {
+    // The T2418 shape: a divider drag shrank the pane from 900 to 870 wide
+    // while its renderer was drawing at 900.
+    try std.testing.expect(frameOutlivedItsWindow(packSize(900, 700), packSize(870, 700)));
+    // Height counts as much as width (a banner toggle, a vertical split).
+    try std.testing.expect(frameOutlivedItsWindow(packSize(900, 700), packSize(900, 640)));
+    // The steady state: the window did not change under the frame.
+    try std.testing.expect(!frameOutlivedItsWindow(packSize(900, 700), packSize(900, 700)));
+}
+
+test "a frame is never dropped on an unknown size" {
+    // No measurement yet (the first frame), or the client rect could not be
+    // read: swapping is the old behavior and the safe one.
+    try std.testing.expect(!frameOutlivedItsWindow(0, packSize(900, 700)));
+    try std.testing.expect(!frameOutlivedItsWindow(packSize(900, 700), 0));
 }

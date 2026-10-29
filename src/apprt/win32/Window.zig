@@ -694,6 +694,10 @@ in_live_layout: bool = false,
 /// fills them with the background before the next band paint.
 painted_gutters: [MAX_DRAG_NODES * 2]w32.RECT = undefined,
 painted_gutters_len: usize = 0,
+/// `GHOZTTY_KEEP_VACATED_GUTTERS`: skip that fill, so the old lines stay in the
+/// window's surface the way they did before T2418. The positive control
+/// `split-divider.ps1` T734 counts them with; nothing in the product sets it.
+keep_vacated_gutters: bool = false,
 drag_split_handle: SplitTree(PaneView).Node.Handle = .root,
 drag_split_layout: SplitTree(PaneView).Split.Layout = .horizontal,
 drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
@@ -1674,6 +1678,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     self.drag_perf_on = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_PERF");
     self.frame_wait_serial = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DRAG_SERIAL_WAIT");
     self.frame_wait_any = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_WAIT_ANY");
+    self.keep_vacated_gutters = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_KEEP_VACATED_GUTTERS");
     // T1345's control, read the same way and for the same reason: the pre-fix
     // chrome fan-out, so both shapes are measurable on one build.
     chrome_fanout.state.legacy = std.process.hasNonEmptyEnvVarConstant(
@@ -8895,7 +8900,7 @@ fn recordPaintedGutters(self: *Window, grid: *const pane_stack_grid.Grid) void {
 /// strip it grew into, and those were the trail of bars the user reported.
 fn clearVacatedGutters(self: *Window, hwnd: w32.HWND) void {
     const n = self.painted_gutters_len;
-    if (n == 0) return;
+    if (n == 0 or self.keep_vacated_gutters) return;
     const grid_rect = self.gridRect();
     var box: w32.RECT = .{ .left = std.math.maxInt(i32), .top = std.math.maxInt(i32), .right = std.math.minInt(i32), .bottom = std.math.minInt(i32) };
     for (self.painted_gutters[0..n]) |r| {

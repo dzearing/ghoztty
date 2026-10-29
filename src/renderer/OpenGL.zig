@@ -15,6 +15,7 @@ const low_power = @import("low_power.zig");
 const gl_loader = @import("gl_loader.zig");
 const gl_robust = @import("gl_robust.zig");
 const build_config = @import("../build_config.zig");
+const resize_paint = @import("../apprt/win32/resize_paint.zig");
 const Renderer = rendererpkg.GenericRenderer(OpenGL);
 
 pub const GraphicsAPI = OpenGL;
@@ -76,6 +77,13 @@ rt_surface: *apprt.Surface,
 
 /// The most recently presented target, in case we need to present it again.
 last_target: ?Target = null,
+
+/// The client size the frame in progress is being drawn for, packed by
+/// `resize_paint.packSize` (T2418): measured by `surfaceSize` at the start of
+/// the frame and held against the window again in `drawFrameEnd`, which drops
+/// the swap when the layout resized the pane in between. Win32 only; renderer
+/// thread only.
+drawn_client: u64 = 0,
 
 /// The frame lab's planted magenta frame (T2383, `apprt/win32/lab_plant.zig`):
 /// set by the renderer for one frame, consumed by the next `present`, which
@@ -484,6 +492,16 @@ pub fn drawFrameEnd(self: *OpenGL) void {
 
     const hdc = gl_loader.active().getCurrentDC();
     var swap_ns: u64 = 0;
+    // T2418: a frame the layout outran is dropped, not swapped. Its pixels are
+    // for the size the pane had when the frame began, and the swap would put
+    // them at the place the pane has now: the divider drag's doubled first
+    // column, and a blit over the gutter the window has just painted. The
+    // resize that changed the size already asked for the next frame, and the
+    // layout's frame wait keeps waiting, since this one reports its old size.
+    if (hdc != null and self.frameOutlivedItsWindow(hdc.?)) {
+        log.debug("frame dropped: the window was resized while it was drawn", .{});
+        return;
+    }
     if (hdc != null) {
         // T1458: time the present itself, not just the gap between presents.
         // `max_gap_ms` below cannot tell "idle, nothing to draw" from "the
@@ -787,8 +805,25 @@ pub fn initShaders(
 }
 
 /// Get the current size of the runtime surface.
-pub fn surfaceSize(self: *const OpenGL) !struct { width: u32, height: u32 } {
-    _ = self;
+/// Has the window this frame was drawn for changed size since `surfaceSize`
+/// measured it (T2418)? Read just before the swap, from the renderer thread;
+/// `GetClientRect` answers for a window on another thread without a message.
+fn frameOutlivedItsWindow(self: *const OpenGL, hdc: anytype) bool {
+    if (comptime apprt.runtime != apprt.win32) return false;
+    const hwnd = wgl.WindowFromDC(hdc) orelse return false;
+    var rect: wgl.RECT = undefined;
+    if (wgl.GetClientRect(hwnd, &rect) == 0) return false;
+    const w = rect.right - rect.left;
+    const h = rect.bottom - rect.top;
+    if (w <= 0 or h <= 0) return false;
+    return resize_paint.frameOutlivedItsWindow(
+        self.drawn_client,
+        resize_paint.packSize(@intCast(w), @intCast(h)),
+    );
+}
+
+pub fn surfaceSize(self: *OpenGL) !struct { width: u32, height: u32 } {
+    if (comptime apprt.runtime == apprt.win32) self.drawn_client = 0;
 
     // On Win32, query the actual window client rect instead of
     // GL_VIEWPORT. GL_VIEWPORT is only updated when we call
@@ -807,6 +842,7 @@ pub fn surfaceSize(self: *const OpenGL) !struct { width: u32, height: u32 } {
             if (w > 0 and h > 0) {
                 // Update glViewport to match
                 gl.glad.context.Viewport.?(0, 0, @intCast(w), @intCast(h));
+                self.drawn_client = resize_paint.packSize(w, h);
                 return .{ .width = w, .height = h };
             }
         }

@@ -1089,12 +1089,18 @@ function Test-PanesTile($gap, [string]$axis) {
 # it too, and PowerShell resolves functions at call time in file order.)
 
 # One GUI per axis: a single split each, so a run count of 1 is unambiguous.
-function Start-T155Gui([string]$direction) {
+#
+# -KeepVacated launches with GHOZTTY_KEEP_VACATED_GUTTERS, the measurement knob
+# that puts the pre-T2418 paint model back: the window no longer clears the
+# gutters a drag left, so the old lines stay in its surface under the panes.
+function Start-T155Gui([string]$direction, [switch]$KeepVacated) {
     Kill-RepoInstances
     # The debug log names the drag bar's colour (T2253), which the raw
     # control in Measure-CrossPaneRuns counts beside the green lines.
     Remove-Item $errlog -ErrorAction SilentlyContinue
-    $a = Start-OnTestDesktop -Exe $exe -Arguments ($common + @('--split-divider-color=00ff00')) -StdErr $errlog
+    if ($KeepVacated) { $env:GHOZTTY_KEEP_VACATED_GUTTERS = '1' }
+    try { $a = Start-OnTestDesktop -Exe $exe -Arguments ($common + @('--split-divider-color=00ff00')) -StdErr $errlog }
+    finally { Remove-Item Env:\GHOZTTY_KEEP_VACATED_GUTTERS -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 3
     if ($a.Process -and $a.Process.HasExited) { return $null }
     $t = Wait-TestWindow -ProcessId $a.Pid -Class 'GhozttyWindow'
@@ -1126,8 +1132,8 @@ foreach ($axis in @('down', 'right')) {
     # the bar's glow repaints ~9 DIP either side of the gutter every frame -
     # the default 8-step drag (7.5 px a step) blurred each stale bar into the
     # next one's glow. Steps of 20+ px leave whole bars for T734's
-    # un-composited control to count, and change nothing the composited
-    # claims score.
+    # un-composited control (below) to count, and change nothing the
+    # composited claims score.
     foreach ($delta in 60, -40, 70) {
         $panes = Get-Panes $top
         if ($axis -eq 'down') {
@@ -1178,16 +1184,14 @@ foreach ($axis in @('down', 'right')) {
     } else {
         Assert $wide.Ok `
             "T734/$axis : ONE divider band on a scanline across BOTH panes after 3 drags ($($wide.Detail))"
-        # POSITIVE CONTROL for the counter itself: the identical scan on the
-        # UN-composited parent capture must count MORE than one, because the
-        # parent never erases and keeps every line the three drags painted
-        # (T228 measured 13; this box measures 11-12). Without it, a counter
-        # wedged at 1 - or a composite that is somehow only the divider - would
-        # score the assertion above green forever. If this ever fails, the
-        # parent's paint model changed and the composite may no longer be
-        # earning its keep; that is worth a look, not a silent pass.
-        Assert ($wide.Raw -gt 1) `
-            "T734/$axis : the same scan un-composited counts the stale lines ($($wide.Raw) runs) - the counter can say more than one"
+        # And since T2418 the parent itself keeps none: each layout pass fills
+        # the gutters the last one painted, so the identical scan on the
+        # UN-composited parent capture counts one too. A line left there is
+        # what showed through a pane whose frame lagged its new size - the
+        # user's "copies of the sizer" - so it is a claim, not a curiosity.
+        # The counter's positive control is the -KeepVacated launch below.
+        Assert ($wide.Raw -eq 1) `
+            "T734/$axis : the window's own surface keeps no stale lines under the panes either ($($wide.Raw) runs un-composited; T2418)"
     }
     Assert (Test-PanesTile $gap $axis) `
         ("T155/$axis : the panes tile the split across the other axis, so the gap is the only " +
@@ -1238,6 +1242,44 @@ foreach ($axis in @('down', 'right')) {
     }
 
     Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) "T155/$axis : no crash"
+    Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+}
+
+# POSITIVE CONTROL for the T734 counter (T2418). The scan has to be seen
+# counting MORE than one somewhere, or a counter wedged at 1 - or a composite
+# that is somehow only the divider - would score every claim above green
+# forever. Until T2418 the parent's own surface was that control: it never
+# erased, so the same three drags left 11-13 lines in it. It erases now, so
+# the knob puts the old paint model back for one launch, and the scan on its
+# un-composited capture must find the lines again - which also shows the
+# T2418 fill is what took them away.
+$g = Start-T155Gui 'right' -KeepVacated
+if ($null -eq $g) {
+    Write-Host "SKIP T734 control: GUI did not come up"; $script:skipped++
+} else {
+    $launched += $script:GhozttyTestDesktopPids
+    if (@(Get-Panes $g.Top).Count -ne 2) {
+        Assert $false "T734 control setup: 2 visible panes"
+    } else {
+        # The same three rightward drags as the loop above.
+        foreach ($delta in 60, -40, 70) {
+            $panes = Get-Panes $g.Top
+            $pa = $panes | Sort-Object Left | Select-Object -First 1
+            $pb = $panes | Sort-Object Left | Select-Object -Last 1
+            $lineX = [int](($pa.Right + $pb.Left) / 2)
+            $y = [int](($pa.Top + $pa.Bottom) / 2)
+            Invoke-DividerDrag -Top $g.Top -X0 $lineX -Y0 $y -X1 ($lineX + $delta) -Y1 $y -Steps 2
+            Start-Sleep -Milliseconds 300
+        }
+        Start-Sleep -Milliseconds 400
+        $ctl = Measure-CrossPaneRuns $g.Top 'right' (Get-BarRgb 'drag')
+        if ($null -eq $ctl) {
+            Write-Host "SKIP T734 control: no composite ($(Get-LastCompositeError))"; $script:skipped++
+        } else {
+            Assert ($ctl.Raw -gt 1) `
+                "T734 control: with GHOZTTY_KEEP_VACATED_GUTTERS the same scan un-composited counts the stale lines ($($ctl.Raw) runs) - the counter can say more than one"
+        }
+    }
     Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 }
 
