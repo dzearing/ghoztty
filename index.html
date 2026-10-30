@@ -23,9 +23,6 @@
         <span>Ghoztty</span>
       </a>
       <div class="nav-links">
-        <a href="#scriptable">Scriptable</a>
-        <a href="#windows">Windows</a>
-        <a href="#agents">Agents</a>
         <a href="https://github.com/dzearing/ghoztty" target="_blank" rel="noopener">GitHub</a>
         <a href="#download" class="nav-cta">Download</a>
       </div>
@@ -36,16 +33,8 @@
     <!-- Hero -->
     <header class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">
-          <img src="landing/icon-256.webp" alt="" width="20" height="20" />
-          A fork of Ghostty &middot; macOS &amp; Windows &middot; open source
-        </p>
         <h1>The terminal your <span class="accent-text">agents can drive.</span></h1>
-        <p class="lede">
-          Ghoztty is Ghostty with a window manager you can script. Claude Code
-          and Copilot open panes beside you, show you the plan and the diff,
-          keep a status banner current, and tell you which of them needs you.
-        </p>
+        <p class="lede">Ghostty, plus a window manager that Claude Code and Copilot can use themselves.</p>
         <div class="hero-actions">
           <a href="#download" class="btn btn-primary">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
@@ -53,330 +42,61 @@
             </svg>
             Download v1.50.0
           </a>
-          <a href="#scriptable" class="btn btn-secondary">See what it does</a>
+          <a href="https://github.com/dzearing/ghoztty" target="_blank" rel="noopener" class="btn btn-secondary">GitHub</a>
         </div>
-        <p class="hero-note">Free. Signed and notarized on macOS. Everything Ghostty does, plus the parts below.</p>
       </div>
-
-      <figure class="hero-shot">
-        <div class="stage stage-hero">
-          <img src="landing/shots/hero.webp" width="2400" height="1470" fetchpriority="high"
-               alt="A Ghoztty window: a sidebar listing every window grouped by project, a Claude Code session with a status banner, a rendered markdown plan, and the branch diff." />
-          <span class="pin" style="--x: 2%; --y: 93.5%"><b>1</b>Every window, grouped by project</span>
-          <span class="pin" style="--x: 30%; --y: 1.2%"><b>2</b>A banner the agent keeps current</span>
-          <span class="pin" style="--x: 70%; --y: 1.2%"><b>3</b>The plan, rendered beside you</span>
-          <span class="pin" style="--x: 70%; --y: 93.5%"><b>4</b>The branch diff, live</span>
-        </div>
-        <figcaption>
-          Claude Code finished a task, then opened its plan and the branch diff beside the conversation.
-        </figcaption>
-      </figure>
     </header>
 
-    <!-- Pillars -->
-    <section class="pillars" aria-label="Why Ghoztty">
-      <a class="pillar" href="#scriptable">
-        <span class="pillar-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M4 17l6-5-6-5M12 19h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </span>
-        <h2>Scriptable</h2>
-        <p>Windows, splits, viewers, banners and keystrokes are one <code>ghoztty</code> command away. Your agent learns them from the bundled skill.</p>
-      </a>
-      <a class="pillar" href="#windows">
-        <span class="pillar-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M9 4v16M13 9h5M13 13h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        </span>
-        <h2>Easy to manage</h2>
-        <p>One sidebar for every window. Stash panes you aren't using, let extra panes stack, and give each window its own glass-and-gradient look.</p>
-      </a>
-      <a class="pillar" href="#agents">
-        <span class="pillar-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3l2.2 5.3L20 9l-4.4 3.8L17 18.5 12 15.6 7 18.5l1.4-5.7L4 9l5.8-.7L12 3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
-        </span>
-        <h2>Agent friendly</h2>
-        <p>See which agent is busy and which has a question. Panes survive restarts, link back from any document, and can run on your other machines.</p>
-      </a>
-    </section>
-
-    <!-- Scriptable -->
-    <section class="section" id="scriptable">
-      <div class="section-head">
-        <p class="kicker">Scriptable with Claude Code</p>
-        <h2>One CLI for every window and pane.</h2>
-        <p>Copy any of these into a Ghoztty pane. Each picture is what it produced.</p>
+    <!-- Carousel -->
+    <section class="showcase" aria-roledescription="carousel" aria-label="What Ghoztty can do" data-carousel>
+      <div class="showcase-track" tabindex="0">
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/hero.webp" width="2400" height="1470" fetchpriority="high" alt="Claude Code with its plan and branch diff open beside it, and a sidebar of every window." /></div>
+          <figcaption><strong>Your agent lays out the workspace</strong>It opens the plan and the diff right beside the conversation.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><video src="landing/shots/sidebar-busy.mp4" poster="landing/shots/sidebar-busy-poster.webp" width="492" height="1160" muted loop playsinline preload="none" aria-label="The sidebar of every window; a busy one shimmers."></video></div>
+          <figcaption><strong>Every window in one sidebar</strong>Grouped by project. Busy agents shimmer.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/question.webp" width="1900" height="981" loading="lazy" alt="A window marked (question) where Claude Code waits for approval." /></div>
+          <figcaption><strong>See which agent needs you</strong>Windows show when an agent is busy or has a question.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/banner.webp" width="1304" height="664" loading="lazy" alt="A status banner above a Claude Code session." /></div>
+          <figcaption><strong>Status banners</strong>Each agent keeps a card above its pane up to date.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/markdown.webp" width="1328" height="922" loading="lazy" alt="A side pane rendering a markdown plan." /></div>
+          <figcaption><strong>Docs beside you</strong>Markdown, code, images and web pages render in a side pane.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/diff.webp" width="2000" height="1086" loading="lazy" alt="A branch diff with a file tree." /></div>
+          <figcaption><strong>Live diffs</strong>See what changed on the branch as it changes.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/cli-sendkeys.webp" width="1900" height="789" loading="lazy" alt="Claude Code runs the tests in the pane next to it." /></div>
+          <figcaption><strong>Agents drive other panes</strong>Claude starts your tests next door and reads the result.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/stash.webp" width="1900" height="1095" loading="lazy" alt="A pane stashed in the sidebar tray." /></div>
+          <figcaption><strong>Stash panes</strong>Drag one to the tray. It keeps running and comes back where it was.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/stacked.webp" width="1900" height="1095" loading="lazy" alt="Extra panes tucked into labeled strips." /></div>
+          <figcaption><strong>Panes stack, never squish</strong>Extra panes tuck into strips on a glass-and-gradient window.</figcaption>
+        </figure>
+        <figure class="slide">
+          <div class="slide-media"><img src="landing/shots/focus-links.webp" width="2000" height="857" loading="lazy" alt="An agent summary with links to each pane." /></div>
+          <figcaption><strong>Links back to any pane</strong>Agent reports link straight to the window that needs you.</figcaption>
+        </figure>
       </div>
-
-      <div class="explorer" data-tabs>
-        <div class="explorer-list" role="tablist" aria-label="Ghoztty commands">
-          <button role="tab" id="tab-window" aria-controls="panel-window" aria-selected="true">
-            <strong>Open a window with a split</strong>
-            <span>Dev server on top, tests below</span>
-          </button>
-          <button role="tab" id="tab-view" aria-controls="panel-view" aria-selected="false" tabindex="-1">
-            <strong>Show a document beside you</strong>
-            <span>Markdown, code, images, web pages</span>
-          </button>
-          <button role="tab" id="tab-diff" aria-controls="panel-diff" aria-selected="false" tabindex="-1">
-            <strong>Show the branch diff</strong>
-            <span>File tree, hunks, live updates</span>
-          </button>
-          <button role="tab" id="tab-banner" aria-controls="panel-banner" aria-selected="false" tabindex="-1">
-            <strong>Pin a status banner</strong>
-            <span>Markdown card above a pane</span>
-          </button>
-          <button role="tab" id="tab-list" aria-controls="panel-list" aria-selected="false" tabindex="-1">
-            <strong>List every window and pane</strong>
-            <span>Names, states, ids, or JSON</span>
-          </button>
-          <button role="tab" id="tab-keys" aria-controls="panel-keys" aria-selected="false" tabindex="-1">
-            <strong>Type into another pane</strong>
-            <span>Then read back what it printed</span>
-          </button>
-          <button role="tab" id="tab-state" aria-controls="panel-state" aria-selected="false" tabindex="-1">
-            <strong>Report activity</strong>
-            <span>idle, busy, or needs_input</span>
-          </button>
-        </div>
-
-        <div class="explorer-panels">
-          <div role="tabpanel" id="panel-window" aria-labelledby="tab-window">
-            <pre class="code"><code>ghoztty +new-window --target=orbit --working-directory=~/src/orbit \
-  --command="npm run dev" --split=down --split-command="npm test"</code></pre>
-            <div class="stage"><img src="landing/shots/cli-window.webp" width="1800" height="1178" loading="lazy" alt="A new window titled orbit: main with npm run dev in the top pane and passing tests in the bottom pane." /></div>
-            <p class="panel-note">Run it again and Ghoztty focuses the window it already opened instead of making a second one.</p>
-          </div>
-          <div role="tabpanel" id="panel-view" aria-labelledby="tab-view" hidden>
-            <pre class="code"><code>ghoztty +split --view=docs/plan.md</code></pre>
-            <div class="stage"><img src="landing/shots/markdown.webp" width="1328" height="922" loading="lazy" alt="A viewer pane rendering a markdown plan with headings, bold text and a table." /></div>
-            <p class="panel-note">The viewer reloads when the file is saved and keeps your place. It also shows code, images, HTML pages and websites.</p>
-          </div>
-          <div role="tabpanel" id="panel-diff" aria-labelledby="tab-diff" hidden>
-            <pre class="code"><code>ghoztty +split --view=git-diff:main...HEAD</code></pre>
-            <div class="stage"><img src="landing/shots/diff.webp" width="2000" height="1086" loading="lazy" alt="A diff viewer with a file tree on the left and a new source file on the right." /></div>
-            <p class="panel-note">Also <code>git-status:</code> for the working tree, or <code>git-diff:&lt;sha&gt;</code> for one commit. Unified or side by side.</p>
-          </div>
-          <div role="tabpanel" id="panel-banner" aria-labelledby="tab-banner" hidden>
-            <pre class="code"><code>ghoztty +set-banner --target="$GHOZTTY_PANE_ID" \
-  "## Fix login redirect\n**PR** [#123](https://github.com/you/app/pull/123) · tests passing"</code></pre>
-            <div class="stage"><img src="landing/shots/banner.webp" width="1304" height="664" loading="lazy" alt="A status banner above a Claude Code pane showing the task title, goal, prompt, status, a checklist of results and a PR link." /></div>
-            <p class="panel-note">Headings, tables, checklists and links all render. Every pane knows its own id, so an agent always updates its own banner.</p>
-          </div>
-          <div role="tabpanel" id="panel-list" aria-labelledby="tab-list" hidden>
-            <pre class="code"><code>ghoztty +list          # or: ghoztty +list --json</code></pre>
-            <div class="stage"><img src="landing/shots/cli-list.webp" width="2000" height="635" loading="lazy" alt="Terminal output of ghoztty +list showing each window, its panes, their titles, process ids and states such as busy and question." /></div>
-            <p class="panel-note">Every window, tab and pane, with names you can target and the activity state of each pane.</p>
-          </div>
-          <div role="tabpanel" id="panel-keys" aria-labelledby="tab-keys" hidden>
-            <pre class="code"><code>ghoztty +send-keys --target=tests "npm test\n"
-ghoztty +read --name=tests --lines=6</code></pre>
-            <div class="stage"><img src="landing/shots/cli-sendkeys.webp" width="1900" height="789" loading="lazy" alt="Claude Code on the left runs ghoztty +send-keys and +read; the tests pane on the right shows the test run it started." /></div>
-            <p class="panel-note">Type into any pane, then read back what it printed. An agent can even wait until another Claude Code session is ready before typing.</p>
-          </div>
-          <div role="tabpanel" id="panel-state" aria-labelledby="tab-state" hidden>
-            <pre class="code"><code>ghoztty +set-state --target=migrations --state=needs_input</code></pre>
-            <div class="stage"><img src="landing/shots/question.webp" width="1900" height="981" loading="lazy" alt="A window titled billing: migrations (question) where Claude Code is asking for permission to run a migration." /></div>
-            <p class="panel-note">The window title gains <em>(busy)</em> or <em>(question)</em>. For Claude Code you never call this yourself: the installed hooks do.</p>
-          </div>
-        </div>
+      <div class="showcase-controls">
+        <button type="button" class="nav-btn" data-prev aria-label="Previous">&#8592;</button>
+        <div class="dots" role="tablist" aria-label="Slides"></div>
+        <button type="button" class="nav-btn" data-next aria-label="Next">&#8594;</button>
       </div>
-
-      <div class="callout">
-        <div>
-          <h3>You don't type these. Your agent does.</h3>
-          <p>
-            Ghoztty ships a <code>ghoztty</code> skill and hooks for Claude Code
-            and GitHub Copilot CLI. Install them once from
-            <strong>Ghoztty &rarr; Set Up Agent Integrations&hellip;</strong>,
-            then just ask: &ldquo;open the plan beside me&rdquo;, &ldquo;show me
-            what changed on this branch&rdquo;, &ldquo;run the tests in my
-            other pane&rdquo;. New panes open without stealing focus, so you
-            keep typing where you were.
-          </p>
-        </div>
-        <ul class="callout-list">
-          <li><span>Ask</span>&ldquo;Open the plan and the diff beside me.&rdquo;</li>
-          <li><span>Claude runs</span><code>ghoztty +split --view=docs/plan.md</code></li>
-          <li><span>You see</span>The plan in a side pane, re-rendered on every save.</li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- Window management -->
-    <section class="section" id="windows">
-      <div class="section-head">
-        <p class="kicker">Easy window management</p>
-        <h2>Dozens of panes, still easy to find.</h2>
-        <p>When several agents each have a window, the sidebar is how you keep track of them.</p>
-      </div>
-
-      <article class="feature">
-        <div class="feature-media">
-          <div class="stage stage-tall">
-            <video src="landing/shots/sidebar-busy.mp4" poster="landing/shots/sidebar-busy-poster.webp"
-                   width="492" height="1160" autoplay muted loop playsinline preload="none"
-                   aria-label="The pane sidebar in All windows mode. The busy csv-export pane shimmers."></video>
-          </div>
-        </div>
-        <div class="feature-copy">
-          <h3>Every window in one sidebar</h3>
-          <p>Toggle it with <kbd>⌃⌘S</kbd>. Switch on <strong>All windows</strong> and windows titled <code>project: worktree</code> group under their project.</p>
-          <ul class="checks">
-            <li>Drag rows to reorder windows and panes, or drop a window into another group.</li>
-            <li>Hover and click the pencil to rename a window, group or pane in place.</li>
-            <li><strong>+</strong> buttons open a window, a window in that project, or a split.</li>
-            <li>A busy pane's row shimmers, so you can see which agents are still working.</li>
-            <li>Search by window title, pane title, banner text or directory.</li>
-          </ul>
-        </div>
-      </article>
-
-      <article class="feature feature-flip">
-        <div class="feature-media">
-          <div class="stage"><img src="landing/shots/stash.webp" width="1900" height="1095" loading="lazy" alt="The sidebar's Stashed tray holding an npm run dev pane while four panes stay on screen." /></div>
-        </div>
-        <div class="feature-copy">
-          <h3>Stash panes you aren't watching</h3>
-          <p>Drag a pane into the tray at the bottom of the sidebar, or press <kbd>⇧⌘M</kbd>. It leaves the layout but keeps running.</p>
-          <ul class="checks">
-            <li>Click it to put it back in the exact slot it came from.</li>
-            <li><kbd>⌥</kbd>-click swaps it with the pane you're in.</li>
-            <li>Scripts and agents can stash and restore panes too.</li>
-            <li>Stashed panes are still there after a relaunch.</li>
-          </ul>
-        </div>
-      </article>
-
-      <article class="feature">
-        <div class="feature-media">
-          <div class="stage"><img src="landing/shots/stacked.webp" width="1900" height="1095" loading="lazy" alt="A window with five panes: two have tucked into narrow labeled strips on the left so the other three stay readable, on a green-to-purple gradient." /></div>
-        </div>
-        <div class="feature-copy">
-          <h3>Panes stack instead of shrinking</h3>
-          <p>A pane never gets narrower than 225pt. When a row runs out of room, the extra panes tuck into labeled strips at the edge.</p>
-          <ul class="checks">
-            <li>Click a strip to bring that pane on show.</li>
-            <li>Drag a strip to the tray to stash it, or to a screen edge for its own window.</li>
-            <li>Panes are glass cards on a gradient. Each new window gets its own colors.</li>
-          </ul>
-        </div>
-      </article>
-
-      <article class="feature feature-flip feature-text-only">
-        <div class="feature-copy">
-          <h3>Hero Mode for the pane that matters</h3>
-          <p>
-            <strong>Window &rarr; Toggle Hero Mode</strong> (<kbd>⇧⌘Space</kbd>)
-            shows the focused pane full size with a scrolling carousel of the
-            window's other panes beside it. <kbd>⇧⌘↑</kbd> and <kbd>⇧⌘↓</kbd>
-            move between them. It works with viewer panes too.
-          </p>
-        </div>
-      </article>
-    </section>
-
-    <!-- Agents -->
-    <section class="section" id="agents">
-      <div class="section-head">
-        <p class="kicker">Claude Code and Copilot friendly</p>
-        <h2>Built for a day of running agents.</h2>
-        <p>Know who needs you, see what each one is doing, and never lose a session.</p>
-      </div>
-
-      <article class="feature">
-        <div class="feature-media">
-          <div class="stage"><img src="landing/shots/question.webp" width="1900" height="981" loading="lazy" alt="A Claude Code permission prompt in a window whose title ends in (question); the sidebar lists the other agents' windows." /></div>
-        </div>
-        <div class="feature-copy">
-          <h3>See which agent needs you</h3>
-          <p>Every pane is <em>idle</em>, <em>busy</em> or waiting on a <em>question</em>. A window shows the most urgent of its panes.</p>
-          <ul class="checks">
-            <li>Titles gain <em>(busy)</em> or <em>(question)</em>, and a question bounces the Dock icon.</li>
-            <li>Busy rows shimmer in the sidebar.</li>
-            <li>With Claude Code it's automatic: a pane stays busy while subagents run and only asks when there is a real prompt.</li>
-            <li>Copilot CLI gets the banner hooks and goes idle when a session stops.</li>
-          </ul>
-        </div>
-      </article>
-
-      <article class="feature feature-flip">
-        <div class="feature-media">
-          <div class="stage"><img src="landing/shots/banner.webp" width="1304" height="664" loading="lazy" alt="A status banner with title, goal, prompt, status, a results checklist and a PR link above a Claude Code transcript." /></div>
-        </div>
-        <div class="feature-copy">
-          <h3>Banners that stay current</h3>
-          <p>The installed hooks keep a card above each agent's pane: the task, the goal, what you last asked, its status, what landed and the PR.</p>
-          <ul class="checks">
-            <li>Updated as you prompt and when each turn ends.</li>
-            <li>Collapses to one line with its chevron.</li>
-            <li>The sidebar shows a pane's banner title, so rows read like a task list.</li>
-          </ul>
-        </div>
-      </article>
-
-      <article class="feature">
-        <div class="feature-media">
-          <div class="stage"><img src="landing/shots/focus-links.webp" width="2000" height="857" loading="lazy" alt="A generated markdown summary of four agents, each row with a Focus pane link." /></div>
-        </div>
-        <div class="feature-copy">
-          <h3>Links that jump back to a pane</h3>
-          <p>
-            <code>ghoztty://focus/&lt;window-or-pane&gt;</code> brings that window or
-            pane to the front, even out of the stash tray. Put them in reports,
-            dashboards or banners your agents write.
-          </p>
-          <p class="fine">Focus is the only thing a link can do. It can't run commands.</p>
-        </div>
-      </article>
-
-      <div class="cards">
-        <article class="card">
-          <span class="card-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 0 1 13.7-5.6M20 12a8 8 0 0 1-13.7 5.6M17.7 3v3.6h-3.6M6.3 21v-3.6h3.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </span>
-          <h3>Sessions survive restarts</h3>
-          <p>
-            Shells run under a background agent, so quitting Ghoztty, a crash
-            or an update doesn't end them. Relaunch and you get the same
-            processes back, with layout, split sizes, titles and scrollback.
-          </p>
-          <p class="fine">After a reboot each pane reopens as a fresh shell in its last directory, with its old scrollback. On by default. <code>ghoztty +sessions</code> lists them.</p>
-        </article>
-        <article class="card">
-          <span class="card-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="11" y="10" width="10" height="8" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M6 18h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          </span>
-          <h3>Terminals on your other machines</h3>
-          <p>
-            <strong>File &rarr; New Remote Window</strong> opens a shell on
-            another machine running the Ghoztty agent, such as a Windows box
-            with the installer below. Sign in with Google and enroll the
-            machine once.
-          </p>
-          <p class="fine">Both sides connect out to a relay, so it works through NAT and firewalls. Remote panes get the same banners, viewers and states.</p>
-        </article>
-      </div>
-    </section>
-
-    <!-- Install -->
-    <section class="section" id="install">
-      <div class="section-head">
-        <p class="kicker">Get started</p>
-        <h2>Two minutes to set up.</h2>
-      </div>
-      <ol class="steps">
-        <li>
-          <h3>Install Ghoztty</h3>
-          <p>macOS: open the DMG and drag Ghoztty to Applications. Windows: run the per-user installer. Both set up the <code>ghoztty</code> command for you.</p>
-        </li>
-        <li>
-          <h3>Set up your agents</h3>
-          <p>Choose <strong>Ghoztty &rarr; Set Up Agent Integrations&hellip;</strong> to install the skill and hooks for Claude Code and Copilot CLI. The banner hooks use <code>jq</code> (<code>brew install jq</code>).</p>
-        </li>
-        <li>
-          <h3>Ask</h3>
-          <p>&ldquo;Show me the diff for this branch.&rdquo; &ldquo;Open the README beside me.&rdquo; &ldquo;Start the dev server in a pane below.&rdquo;</p>
-        </li>
-      </ol>
+      <p class="extras">Also: sessions survive restarts &middot; terminals on your other machines &middot; everything Ghostty does</p>
     </section>
 
     <!-- Download -->
@@ -451,7 +171,6 @@ ghoztty +read --name=tests --lines=6</code></pre>
             repository&rsquo;s release workflow</a>, so you can check where your
             download came from before you do.
           </p>
-        <p class="download-fine">Screenshots show the macOS app with staged demo projects.</p>
       </div>
     </section>
   </main>

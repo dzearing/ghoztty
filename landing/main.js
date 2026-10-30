@@ -1,79 +1,55 @@
-// Command explorer: an ARIA tab list. Arrow keys move between tabs.
-document.querySelectorAll("[data-tabs]").forEach((root) => {
-  const tabs = [...root.querySelectorAll('[role="tab"]')];
-  const select = (tab, focus) => {
-    tabs.forEach((t) => {
-      const on = t === tab;
-      t.setAttribute("aria-selected", String(on));
-      t.tabIndex = on ? 0 : -1;
-      document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
-    });
-    if (focus) tab.focus();
+// Showcase carousel: a scroll-snap track with arrows, dots and a gentle autoplay
+// that stops for good once the visitor takes over.
+document.querySelectorAll("[data-carousel]").forEach((root) => {
+  const track = root.querySelector(".showcase-track");
+  const slides = [...track.children];
+  const dots = root.querySelector(".dots");
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let index = 0;
+  let timer = null;
+
+  const dotButtons = slides.map((slide, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-label", slide.querySelector("strong").textContent);
+    b.addEventListener("click", () => { stop(); go(i); });
+    dots.appendChild(b);
+    return b;
+  });
+
+  const go = (i) => {
+    index = (i + slides.length) % slides.length;
+    track.scrollTo({ left: slides[index].offsetLeft - track.offsetLeft, behavior: reduceMotion ? "auto" : "smooth" });
   };
-  tabs.forEach((tab, i) => {
-    tab.addEventListener("click", () => select(tab, false));
-    tab.addEventListener("keydown", (e) => {
-      const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
-      if (step) {
-        e.preventDefault();
-        select(tabs[(i + step + tabs.length) % tabs.length], true);
-      } else if (e.key === "Home" || e.key === "End") {
-        e.preventDefault();
-        select(tabs[e.key === "Home" ? 0 : tabs.length - 1], true);
-      }
+
+  const mark = (i) => {
+    index = i;
+    dotButtons.forEach((b, k) => b.setAttribute("aria-selected", String(k === i)));
+    slides.forEach((s, k) => {
+      const v = s.querySelector("video");
+      if (v) k === i && !reduceMotion ? v.play().catch(() => {}) : v.pause();
     });
+  };
+
+  // Which slide is on show follows the scroll position (arrows, dots, swipes).
+  const onShow = new IntersectionObserver((entries) => {
+    entries.forEach((e) => { if (e.isIntersecting) mark(slides.indexOf(e.target)); });
+  }, { root: track, threshold: 0.6 });
+  slides.forEach((s) => onShow.observe(s));
+
+  const stop = () => { clearInterval(timer); timer = null; };
+  root.querySelector("[data-prev]").addEventListener("click", () => { stop(); go(index - 1); });
+  root.querySelector("[data-next]").addEventListener("click", () => { stop(); go(index + 1); });
+  track.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") { e.preventDefault(); stop(); go(index + 1); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); stop(); go(index - 1); }
   });
+  ["pointerdown", "wheel", "touchstart"].forEach((ev) => track.addEventListener(ev, stop, { passive: true }));
+
+  mark(0);
+  if (!reduceMotion) timer = setInterval(() => go(index + 1), 5000);
 });
-
-// Copy buttons on every code block.
-document.querySelectorAll("pre.code").forEach((pre) => {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "copy-btn";
-  btn.textContent = "Copy";
-  btn.setAttribute("aria-label", "Copy command");
-  btn.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(pre.querySelector("code").innerText);
-      btn.textContent = "Copied";
-    } catch {
-      btn.textContent = "Select & copy";
-    }
-    setTimeout(() => (btn.textContent = "Copy"), 1600);
-  });
-  pre.appendChild(btn);
-});
-
-const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-// Clips play only while on screen (and never when motion is reduced).
-const clipObserver = new IntersectionObserver((entries) => {
-  entries.forEach(({ target, isIntersecting }) => {
-    if (isIntersecting && !reduceMotion) target.play().catch(() => {});
-    else target.pause();
-  });
-}, { threshold: 0.25 });
-document.querySelectorAll("video").forEach((v) => {
-  v.removeAttribute("autoplay");
-  clipObserver.observe(v);
-});
-
-// Gentle reveal on scroll.
-if (!reduceMotion && "IntersectionObserver" in window) {
-  const revealObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add("visible");
-        revealObserver.unobserve(entry.target);
-      }
-    });
-  }, { threshold: 0.12, rootMargin: "0px 0px -40px 0px" });
-  document.querySelectorAll(".pillar, .section-head, .feature, .callout, .card, .steps li, .download .section-inner")
-    .forEach((el) => {
-      el.classList.add("reveal");
-      revealObserver.observe(el);
-    });
-}
 
 // The Remote Agent section that fetched the relay's agent version.json went
 // away with T1175 (one Windows installer carries the agent), so nothing on
