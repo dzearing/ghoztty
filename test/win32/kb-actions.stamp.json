@@ -1,8 +1,8 @@
 {
     "guard":  "kb-actions",
     "script":  "test/win32/kb-actions.ps1",
-    "generated":  "2026-10-30T08:07:42-07:00",
-    "commit":  "8606fc2c1",
+    "generated":  "2026-10-30T08:19:21-07:00",
+    "commit":  "f00cbd037",
     "uncommitted":  [
 
                     ],
