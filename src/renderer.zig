@@ -62,6 +62,7 @@ test {
     _ = @import("renderer/low_power.zig");
     _ = @import("renderer/gl_loader.zig");
     _ = @import("renderer/gl_robust.zig");
+    _ = @import("renderer/gl_comp_present.zig");
     _ = cursor;
     _ = message;
     _ = shadertoy;

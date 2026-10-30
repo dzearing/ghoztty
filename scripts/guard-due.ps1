@@ -2345,6 +2345,20 @@ $GuardTable = @(
             'test\win32\gl-device-lost.ps1'
         )
     },
+    # Presenting a pane through a composition swap chain (T2466). The chain is
+    # built from four COM APIs and a WGL extension whose vtable slots only a
+    # live run can check, and its fallback and rebuild paths only fire when
+    # something fails; the harness forces both.
+    [pscustomobject]@{
+        Name   = 'comp-present'
+        Script = 'test\win32\comp-present.ps1'
+        Stamp  = 'test\win32\comp-present.stamp.json'
+        Covers = @(
+            'src\renderer\gl_comp_present.zig',
+            'src\renderer\OpenGL.zig',
+            'test\win32\comp-present.ps1'
+        )
+    },
     # The in-app update (T1178). This is the one code path that REPLACES the
     # app on disk and quits the terminal to do it, and every failure mode is
     # invisible to a compiler: an asset matcher that picks the wrong release,

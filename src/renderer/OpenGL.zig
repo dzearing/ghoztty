@@ -14,6 +14,7 @@ const gl_report = @import("gl_report.zig");
 const low_power = @import("low_power.zig");
 const gl_loader = @import("gl_loader.zig");
 const gl_robust = @import("gl_robust.zig");
+const gl_comp_present = @import("gl_comp_present.zig");
 const build_config = @import("../build_config.zig");
 const resize_paint = @import("../apprt/win32/resize_paint.zig");
 const Renderer = rendererpkg.GenericRenderer(OpenGL);
@@ -102,6 +103,17 @@ snap_h: u32 = 0,
 /// Lost-device state (T1690, win32 only). Renderer-thread only, like every
 /// other GL-touching field here.
 device: DeviceState = .{},
+
+/// The composition swap chain this pane presents through instead of
+/// `SwapBuffers` (T2466, `gl_comp_present.zig`), when `GHOZTTY_COMP_PRESENT`
+/// opted it in and the chain could be built. Null means the WGL path. Heap
+/// allocated so the `*const` `threadExit` can still tear it down.
+comp: ?*gl_comp_present.Presenter = null,
+
+/// Whether this context has decided between the two paths yet. A failure
+/// leaves it set with `comp` null: the pane stays on WGL until its context is
+/// rebuilt.
+comp_tried: bool = false,
 
 const DeviceState = struct {
     /// The context stopped answering: a driver reset or swap. Every GPU
@@ -426,8 +438,8 @@ pub fn threadEnter(self: *const OpenGL, surface: *apprt.Surface) !void {
 
 /// Callback called by renderer.Thread when it exits.
 pub fn threadExit(self: *const OpenGL) void {
-    _ = self;
-
+    // Used only by the win32 branch; see drawFrameEnd for the `&` idiom.
+    _ = &self;
     switch (apprt.runtime) {
         else => @compileError("unsupported app runtime for OpenGL"),
 
@@ -441,6 +453,12 @@ pub fn threadExit(self: *const OpenGL) void {
         },
 
         apprt.win32 => {
+            // The presenter's GL names and interop device belong to this
+            // context, so they go while it is still current.
+            if (self.comp) |p| {
+                p.deinit();
+                self.alloc.destroy(p);
+            }
             // Release the WGL context from the renderer thread.
             _ = gl_loader.active().makeCurrent(null, null);
         },
@@ -504,6 +522,8 @@ pub fn drawFrameEnd(self: *OpenGL) void {
     // resize that changed the size already asked for the next frame, and the
     // layout's frame wait keeps waiting, since this one reports its old size.
     if (hdc != null and self.frameOutlivedItsWindow(hdc.?)) {
+        // The composition path still owes the interop unlock (T2466).
+        if (self.comp) |p| p.end(false) catch |err| self.compFail(err);
         log.debug("frame dropped: the window was resized while it was drawn", .{});
         return;
     }
@@ -515,7 +535,11 @@ pub fn drawFrameEnd(self: *OpenGL) void {
         // reach a virtual display owned by another driver. `perf.now()` is a
         // no-op when telemetry is off, so this costs one branch per frame.
         const swap_start = perf.now();
-        _ = gl_loader.active().swapBuffers(hdc);
+        if (self.comp) |p| {
+            p.end(true) catch |err| self.compFail(err);
+        } else {
+            _ = gl_loader.active().swapBuffers(hdc);
+        }
         if (retire) gl.finish();
         if (swap_start) |start| {
             if (perf.now()) |end| swap_ns = end.since(start);
@@ -627,6 +651,13 @@ fn markLost(self: *OpenGL, why: []const u8) void {
     self.snap_rbo = null;
     self.snap_w = 0;
     self.snap_h = 0;
+    if (self.comp) |p| {
+        p.abandon();
+        self.alloc.destroy(p);
+        self.comp = null;
+    }
+    // The rebuilt context gets to choose its path again.
+    self.comp_tried = false;
 
     log.warn("graphics device lost ({s}); rebuilding this pane's renderer", .{why});
 }
@@ -889,6 +920,15 @@ pub fn present(self: *OpenGL, target: Target) !void {
     // updates glViewport when the window resizes.
     gl.glad.context.Viewport.?(0, 0, @intCast(target.width), @intCast(target.height));
 
+    // On the composition path (T2466) the frame goes into the swap chain's
+    // shared texture instead of the window's default framebuffer.
+    const comp_fbo: ?gl.Framebuffer = if (comptime apprt.runtime == apprt.win32)
+        self.compBegin(target.width, target.height)
+    else
+        null;
+    const comp_bind = if (comp_fbo) |f| try f.bind(.draw) else null;
+    defer if (comp_bind) |b| b.unbind();
+
     // The lab's planted one-frame background flash (T2383). The whole window,
     // not just the target's extent: `glClear` ignores the viewport. The target
     // is still recorded below, so a `presentLastTarget` shows the real frame.
@@ -905,22 +945,75 @@ pub fn present(self: *OpenGL, target: Target) !void {
     const fbobind = try target.framebuffer.bind(.read);
     defer fbobind.unbind();
 
-    // Blit
+    // Blit. A D3D texture's origin is its top-left, so the composition path
+    // writes the rows bottom-up (T2466).
+    const w: u32 = @intCast(target.width);
+    const h: u32 = @intCast(target.height);
+    const b: gl_comp_present.Blit = if (comp_fbo != null)
+        gl_comp_present.flipBlit(w, h)
+    else
+        .{ .src = .{ 0, 0, @intCast(w), @intCast(h) }, .dst = .{ 0, 0, @intCast(w), @intCast(h) } };
     gl.glad.context.BlitFramebuffer.?(
-        0,
-        0,
-        @intCast(target.width),
-        @intCast(target.height),
-        0,
-        0,
-        @intCast(target.width),
-        @intCast(target.height),
+        b.src[0],
+        b.src[1],
+        b.src[2],
+        b.src[3],
+        b.dst[0],
+        b.dst[1],
+        b.dst[2],
+        b.dst[3],
         gl.c.GL_COLOR_BUFFER_BIT,
         gl.c.GL_NEAREST,
     );
 
     // Keep track of this target in case we need to repeat it.
     self.last_target = target;
+}
+
+/// Decide this context's present path on its first frame, and on the
+/// composition path lock the shared texture for this frame (T2466). Null
+/// means: blit into the window's default framebuffer, as before.
+fn compBegin(self: *OpenGL, width: usize, height: usize) ?gl.Framebuffer {
+    if (!self.comp_tried) {
+        self.comp_tried = true;
+        if (gl_comp_present.enabled()) self.compInit(width, height);
+    }
+    const p = self.comp orelse return null;
+    return p.begin(@intCast(width), @intCast(height)) catch |err| {
+        self.compFail(err);
+        return null;
+    };
+}
+
+fn compInit(self: *OpenGL, width: usize, height: usize) void {
+    const hwnd = self.rt_surface.hwnd orelse return;
+    const p = self.alloc.create(gl_comp_present.Presenter) catch return;
+    p.* = gl_comp_present.Presenter.init(hwnd, @intCast(width), @intCast(height)) catch |err| {
+        self.alloc.destroy(p);
+        const f = gl_comp_present.Presenter.lastFailure();
+        log.warn(
+            "composition present unavailable ({}) at {s} hr=0x{x}; this pane presents with SwapBuffers",
+            .{ err, f.stage, @as(u32, @bitCast(f.hr)) },
+        );
+        return;
+    };
+    self.comp = p;
+    log.info("pane presents through a composition swap chain warp={}", .{p.warp});
+}
+
+/// A frame on the composition path failed: drop to SwapBuffers for the life
+/// of this context, and take the visual off the window so its own content
+/// shows again.
+fn compFail(self: *OpenGL, err: anyerror) void {
+    const p = self.comp orelse return;
+    const f = gl_comp_present.Presenter.lastFailure();
+    log.warn(
+        "composition present failed ({}) at {s} hr=0x{x}; falling back to SwapBuffers",
+        .{ err, f.stage, @as(u32, @bitCast(f.hr)) },
+    );
+    p.deinit();
+    self.alloc.destroy(p);
+    self.comp = null;
 }
 
 /// Present the last presented target again.
