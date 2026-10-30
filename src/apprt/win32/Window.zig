@@ -8141,10 +8141,17 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // The acceptance oracle (stack-fold-slide.ps1 F10-F12): how far in, and
     // the band, read at the face's corner where no name is drawn.
     log.debug("strip face alpha={d} band={x:0>6} size={d}x{d}", .{ alpha, frame.pixels[0] & 0xFF_FFFF, w, ht });
+    const face_was_up = f.shown;
     f.commit(pt.x, pt.y, alpha, region);
-    // The face is up carrying the card, so the live pane under it goes now -
-    // after, never before, so no frame shows the desk where the card is.
+    // The face is up carrying the card, so the live pane under it goes -
+    // after, never before, so no frame shows the desk where the card is. A
+    // face this tick first showed is on screen only after the next
+    // composition (T2485 A1): hiding the pane at once left one frame with
+    // neither, an empty card at every fold's start. So wait that composition
+    // out, once per fold. Leaving the pane up for a tick instead was worse:
+    // a squeezed held pane draws blank and unclipped over the blades.
     if (carried != null and live and f.shown) {
+        if (!face_was_up) _ = w32.DwmFlush();
         _ = w32.SetWindowPos(h, null, 0, 0, 0, 0, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE |
             w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_HIDEWINDOW);
         view.setVisible(false);

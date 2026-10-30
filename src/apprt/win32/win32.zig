@@ -2042,6 +2042,10 @@ pub extern "dwmapi" fn DwmSetWindowAttribute(
     cbAttribute: u32,
 ) callconv(.winapi) i32;
 
+/// Block until the compositor has presented a frame (T2485: a layered window
+/// just shown is only on screen after the next composition).
+pub extern "dwmapi" fn DwmFlush() callconv(.winapi) i32;
+
 pub extern "dwmapi" fn DwmGetWindowAttribute(
     hwnd: HWND,
     dwAttribute: u32,

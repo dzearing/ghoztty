@@ -1,0 +1,22 @@
+frames=519 press=656ms lastmove=2395ms release=3297ms
+DROPOUT f166 t=1383ms dt=8.3 bins=1 x=640..672
+DROPOUT f175 t=1458ms dt=8.3 bins=3 x=1760..1888
+DROPOUT f176 t=1467ms dt=8.3 bins=1 x=1824..1856
+DROPOUT f177 t=1475ms dt=8.3 bins=1 x=1856..1888
+DROPOUT f180 t=1500ms dt=8.3 bins=1 x=1856..1888
+DROPOUT f188 t=1567ms dt=8.3 bins=1 x=1920..1952
+DROPOUT f209 t=1742ms dt=8.3 bins=2 x=960..1920
+DROPOUT f216 t=1800ms dt=8.3 bins=2 x=1888..1952
+DROPOUT f221 t=1842ms dt=8.3 bins=1 x=1792..1824
+DROPOUT f222 t=1850ms dt=8.3 bins=1 x=1824..1856
+DROPOUT f224 t=1867ms dt=8.3 bins=1 x=1792..1824
+DROPOUT f225 t=1875ms dt=8.3 bins=1 x=1824..1856
+DROPOUT f228 t=1900ms dt=8.3 bins=1 x=1056..1088
+DROPOUT f229 t=1908ms dt=8.3 bins=1 x=1856..1888
+DROPOUT f245 t=2042ms dt=8.3 bins=2 x=1824..1888
+DROPOUT f256 t=2133ms dt=8.3 bins=5 x=1760..1952
+DROPOUT f260 t=2167ms dt=8.3 bins=1 x=1760..1792
+DROPOUT f261 t=2175ms dt=8.3 bins=1 x=1792..1824
+DROPOUT f278 t=2317ms dt=8.3 bins=1 x=1664..1696
+DROPOUT f288 t=2400ms dt=8.3 bins=1 x=1792..1824
+gaps>16.7ms: 16 (includes PNG-queue drops)
