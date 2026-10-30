@@ -2925,7 +2925,32 @@ pub fn setPaneSidebarWidth(self: *Window, dip: f32) void {
         if (timer) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
         self.reportResizePass("sidebar");
         self.syncPaneSidebar();
+        self.paintSidebarTick();
         if (timer) |*t| self.recordDragTick(t.read() / std.time.ns_per_us);
+    }
+}
+
+/// Paint what a sidebar edge-drag tick just uncovered, before the next tick
+/// (T2418). The panel is resized after the grid's band paint, and a widened
+/// panel's new strip - or the window pixels a narrowed one gives back - is
+/// only marked invalid. During the drag the next mouse move is always queued
+/// by the time a tick ends, so WM_PAINT never ran: the strip kept the window
+/// pixels it was grown over, the accent bar the gutter had painted there on
+/// each earlier tick. The user's screenshot (1.50.9) was a panel still drawn
+/// at its drag-start width with fifteen copies of the bar beside it.
+/// `GHOZTTY_KEEP_VACATED_GUTTERS` leaves it to WM_PAINT, the control the
+/// `sidebar tick unpainted=` line is measured against.
+fn paintSidebarTick(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    const sb = self.sidebar orelse return;
+    if (!self.keep_vacated_gutters) {
+        _ = w32.UpdateWindow(sb.hwnd);
+        _ = w32.UpdateWindow(hwnd);
+    }
+    if (self.drag_perf_on) {
+        const panel = w32.GetUpdateRect(sb.hwnd, null, 0) != 0;
+        const window = w32.GetUpdateRect(hwnd, null, 0) != 0;
+        log.info("sidebar tick unpainted={d} panel={} window={}", .{ @intFromBool(panel or window), panel, window });
     }
 }
 

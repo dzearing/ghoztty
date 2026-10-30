@@ -369,6 +369,19 @@ try {
     Assert "the dragged gutter shows the bar at full strength (painted: $($bars -join ','))" ($bars -contains 'drag')
     $last = @($lines | Where-Object { $_ -match 'gutter bar ' } | Select-Object -Last 1)
     Assert "letting go leaves no bar lit (last: $last)" ($last.Count -eq 1 -and $last[0] -match 'gutter bar none')
+    # T2418: every tick ends with the panel and the window fully painted. A
+    # widened panel's new strip used to wait for a WM_PAINT the next queued
+    # move always beat, so it showed the bar the gutter had painted there on
+    # each earlier tick - the user's trail of copies. Under
+    # GHOZTTY_KEEP_VACATED_GUTTERS (the control) the strip is left invalid.
+    $ticks = @($lines | Where-Object { $_ -match 'sidebar tick unpainted=(\d)' } | ForEach-Object { [int]([regex]::Match($_, 'unpainted=(\d)').Groups[1].Value) })
+    $stale = @($ticks | Where-Object { $_ -ne 0 }).Count
+    Assert "the drag ran ticks that report their paint state ($($ticks.Count))" ($ticks.Count -ge 2)
+    if ($env:GHOZTTY_KEEP_VACATED_GUTTERS) {
+        Assert "CONTROL: without the tick paint the uncovered strip is left unpainted ($stale of $($ticks.Count) ticks)" ($stale -ge 1)
+    } else {
+        Assert "no tick leaves the panel or the window unpainted for the next tick ($stale of $($ticks.Count))" ($stale -eq 0)
+    }
     $p = Get-Panes $top | Where-Object { $_.Hwnd -eq $hP }
     Assert "the grid keeps its margin beside the new panel (P.left $($p.Left), panel.right $($sb.Right))" ($p.Left - $sb.Right -ge (Px 10) - 1 -and $p.Left - $sb.Right -le (Px 14))
 
@@ -397,7 +410,7 @@ Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
 Complete-TestBody  # T1039: the run reached the end of its body
 
-if ($script:failures -eq 0 -and -not $NegativeControl) {
+if ($script:failures -eq 0 -and -not $NegativeControl -and -not $env:GHOZTTY_KEEP_VACATED_GUTTERS) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard pane-sidebar-resize -Repo $repo 2>&1 | ForEach-Object { "  $_" }
