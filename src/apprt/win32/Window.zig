@@ -7645,7 +7645,14 @@ pub fn layoutSplits(self: *Window) void {
     if (pane_stash.stashedCount(tree) > 0) self.placeStashed(tree, rect, &hdwp);
     // Every pane of this pass lands in ONE frame here, before the divider
     // bands are painted below (T1031).
+    var batch_t0: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&batch_t0);
     endPaneBatch(hdwp);
+    if (stackTraceOn()) {
+        var batch_t1: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&batch_t1);
+        log.info("stack trace batch qpc={d} end={d}", .{ batch_t0, batch_t1 });
+    }
     if (self.hwnd) |hwnd| self.clearVacatedPaneStrips(hwnd, old_panes[0..old_len]);
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
     self.cutCardRegions();
@@ -8109,6 +8116,8 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         };
     }
     const f = view.strip_face.?;
+    var tb: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tb);
     const w = vis.width();
     const ht = vis.height();
     const frame = f.begin(w, ht) orelse return f.shown;
@@ -8166,7 +8175,18 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // the band, read at the face's corner where no name is drawn.
     log.debug("strip face alpha={d} band={x:0>6} size={d}x{d}", .{ alpha, frame.pixels[0] & 0xFF_FFFF, w, ht });
     const face_was_up = f.shown;
+    var tq: [4]i64 = .{ 0, 0, 0, 0 };
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[0]);
     f.commit(pt.x, pt.y, alpha, region);
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[1]);
+    // The trace's cost of a fold's first face (T2485 D10): its paint, the
+    // commit, the composition wait and the pane's hide, in microseconds.
+    defer if (stackTraceOn() and carried != null and !face_was_up and tq[2] != 0) {
+        _ = w32.QueryPerformanceCounter(&tq[3]);
+        log.info("stack trace face first paint_us={d} commit_us={d} flush_us={d} hide_us={d}", .{
+            @divTrunc(tq[0] - tb, 10), @divTrunc(tq[1] - tq[0], 10), @divTrunc(tq[2] - tq[1], 10), @divTrunc(tq[3] - tq[2], 10),
+        });
+    };
     // The face is up carrying the card, so the live pane under it goes -
     // after, never before, so no frame shows the desk where the card is. A
     // face this tick first showed is on screen only after the next
@@ -8176,6 +8196,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // a squeezed held pane draws blank and unclipped over the blades.
     if (carried != null and live and f.shown) {
         if (!face_was_up) _ = w32.DwmFlush();
+        if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[2]);
         _ = w32.SetWindowPos(h, null, 0, 0, 0, 0, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE |
             w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_HIDEWINDOW);
         view.setVisible(false);

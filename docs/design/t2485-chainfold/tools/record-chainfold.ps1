@@ -93,6 +93,24 @@ try {
     [void]$pb.Line($tx, $gy, $DragMs); [void]$pb.Hold(900); [void]$pb.Release(); [void]$pb.Hold(400)
     $path = $pb.Build()
 
+    # run23 (2026-10-30): another window sat over the test window, so the
+    # capture recorded it and the press landed in it. Press only on our own.
+    if (-not ('T2485Hit' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class T2485Hit {
+    [StructLayout(LayoutKind.Sequential)] public struct P { public int X, Y; }
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPhysicalPoint(P p);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint f);
+    public static long RootAt(int x, int y) { var p = new P(); p.X = x; p.Y = y; return GetAncestor(WindowFromPhysicalPoint(p), 2).ToInt64(); }
+}
+'@
+    }
+    foreach ($pt in @(@($gx, $gy), @($tx, $gy))) {
+        $root = [T2485Hit]::RootAt($pt[0], $pt[1])
+        if ($root -ne ([IntPtr]$top).ToInt64()) { "SKIP covered: window $root, not the test window, is at $($pt[0]),$($pt[1])"; exit 3 }
+    }
+
     $s = Start-FrameCapture -X $fr[0] -Y $fr[1] -W $fr[2] -H $fr[3] -PngDir $frames -SampleEvery 1 -QueueBytes 3GB
     Start-Sleep -Milliseconds 400
     $played = Invoke-FrameLabInput -Path $path -Presence (Get-UserPresence)
