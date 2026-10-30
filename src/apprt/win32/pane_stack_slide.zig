@@ -232,6 +232,11 @@ pub const StripCard = struct {
     /// The axis its stack runs along, which its strip's name reads by
     /// (T2288's face).
     axis: Direction = .horizontal,
+    /// Going INTO its strip (tucked at the end of the glide), else coming out
+    /// of it. Which way a card goes is decided by its tucked state, never by
+    /// its width: a strip that widens as the stack makes room is not an
+    /// opening (T2485 D2).
+    into: bool = true,
 };
 
 /// A rect's four edges as the glide carries them, in fractional pixels.
@@ -429,8 +434,9 @@ pub const Slide = struct {
     /// nothing in it changes size on the way.
     pub fn folding(self: *const Slide, id: Id) bool {
         const c = self.find(id) orelse return false;
-        if (c.strip == null or c.drawn.eql(c.to)) return false;
-        return Edges.of(c.to).extent() < c.drawn.extent();
+        const s = c.strip orelse return false;
+        if (c.drawn.eql(c.to)) return false;
+        return s.into;
     }
 
     /// Whether card `id` is on its way OUT of its strip (T2458): a strip card
@@ -439,8 +445,9 @@ pub const Slide = struct {
     /// fading it in as the card widens.
     pub fn unfolding(self: *const Slide, id: Id) bool {
         const c = self.find(id) orelse return false;
-        if (c.strip == null or c.drawn.eql(c.to)) return false;
-        return Edges.of(c.to).extent() > c.drawn.extent();
+        const s = c.strip orelse return false;
+        if (c.drawn.eql(c.to)) return false;
+        return !s.into;
     }
 
     /// Where card `id`'s pane is drawn, caught up or not; null when this glide
@@ -727,11 +734,17 @@ fn holdReach(out: *Slide, a: Placed, b: Placed, current: ?*const Slide) void {
 /// Carry on a card the glide under way still has gliding into its strip, from
 /// where it is drawn, toward its strip as laid out now: a layout that comes
 /// mid-fold (a sidebar column shift) never snaps it onto its strip. Whether
-/// it was such a card.
+/// it was such a card. One that has already folded and caught up IS its
+/// strip, resting under the drag: it moves strip-only like any other strip
+/// (T2485 D2) - carried as a card, the stack widening its strip read as it
+/// opening out again, on every blade, at every later fold.
 fn carryStripCard(out: *Slide, a: Placed, current: ?*const Slide) bool {
     const cur = current orelse return false;
     const c = cur.find(a.id) orelse return false;
-    const s = c.strip orelse return false;
+    var s = c.strip orelse return false;
+    if (s.into and c.drawn.eql(c.to)) return false;
+    // Tucked at the end, so on its way in, whichever way it was going.
+    s.into = true;
     const from = shownAt(c, cur.resize);
     const to = a.target();
     if (std.meta.eql(from, to)) return true;
@@ -792,6 +805,7 @@ fn stripCard(b: Placed, a: Placed, from: PxRect, resize: bool) ?StripCard {
                 .{ .w = b.rect.width(), .h = b.rect.height() },
             .anchor = Anchor.of(b.axis, leads(strip, a.rect, b.axis)),
             .axis = b.axis,
+            .into = false,
         };
     }
     return null;
@@ -1628,6 +1642,54 @@ test "plan: a card still folding into its strip carries on through a column shif
     try testing.expectEqual(drawn, next.cards[0].from);
     try testing.expectEqual(r(784, 0, 36, 600), next.cards[0].to);
     try testing.expect(next.cards[0].strip != null);
+}
+
+test "plan: a blade already in its strip moves strip-only as the next pane folds, never unfolding (T2485 D2)" {
+    // A drag's chain fold: pane 2 has folded into a 45 px strip and the glide
+    // rests there, caught up.
+    const shown = [_]Placed{
+        .{ .id = 2, .rect = r(400, 0, 400, 600), .tucked = false },
+        .{ .id = 3, .rect = r(800, 0, 400, 600), .tucked = false },
+    };
+    const one = [_]Placed{
+        .{ .id = 2, .rect = r(1924, 0, 400, 600), .tucked = true, .strip = r(1924, 0, 45, 600) },
+        .{ .id = 3, .rect = r(800, 0, 400, 600), .tucked = false },
+    };
+    var first = plan(&shown, &one, null, glide_ms, true);
+    while (!first.step(16)) {}
+    // Pane 3 folds next: the stack makes room, and pane 2's strip moves left
+    // and widens 45 -> 60. A strip that stays a strip is a move, not an
+    // unfold - it must not take the opening path.
+    const two = [_]Placed{
+        .{ .id = 2, .rect = r(1909, 0, 400, 600), .tucked = true, .strip = r(1909, 0, 60, 600) },
+        .{ .id = 3, .rect = r(1940, 0, 400, 600), .tucked = true, .strip = r(1940, 0, 42, 600) },
+    };
+    var next = plan(&one, &two, &first, glide_ms, true);
+    try testing.expect(!next.unfolding(2));
+    try testing.expect(!next.folding(2));
+    try testing.expectEqual(@as(?PxRect, null), next.cardRect(2));
+    try testing.expect(next.folding(3));
+    try testing.expect(!next.unfolding(3));
+    try testing.expect(next.findStrip(2) != null);
+    var frames: usize = 0;
+    while (!next.step(16)) : (frames += 1) {
+        if (frames > 1000) break;
+        try testing.expect(!next.unfolding(2));
+        try testing.expect(!next.folding(2));
+    }
+}
+
+test "folding: a card turned back into its strip mid-opening reads folding, not unfolding (T2485 D2)" {
+    const tucked = [_]Placed{.{ .id = 1, .rect = r(764, 0, 400, 600), .tucked = true, .strip = r(764, 0, 36, 600) }};
+    const on_show = [_]Placed{.{ .id = 1, .rect = r(400, 0, 400, 600), .tucked = false }};
+    var opening = plan(&tucked, &on_show, null, glide_ms, true);
+    _ = opening.step(16);
+    _ = opening.step(16);
+    // The hand turns back: tucked again, toward a strip that is now WIDER
+    // than the card is drawn.
+    const back = [_]Placed{.{ .id = 1, .rect = r(700, 0, 400, 600), .tucked = true, .strip = r(700, 0, 200, 600) }};
+    var turned = plan(&on_show, &back, &opening, glide_ms, true);
+    try testing.expect(!turned.unfolding(1));
 }
 
 test "retarget: a moving strip follows its strip as laid out now (T2417)" {
