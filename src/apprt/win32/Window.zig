@@ -2067,9 +2067,6 @@ pub fn deinit(self: *Window) void {
     // Drop IPC names pointing at this window before the memory can be
     // recycled.
     self.app.ipcForget(.{ .window = self });
-    self.endRowDrag();
-    if (self.pane_stacks) |*st| st.deinit();
-    self.pane_stacks = null;
     if (self.ipc_name) |n| {
         self.app.core_app.alloc.free(n);
         self.ipc_name = null;
@@ -2082,7 +2079,6 @@ pub fn deinit(self: *Window) void {
 
     // Close all tab surfaces.
     self.cleanupAllSurfaces();
-    self.pane_desk.deinit();
 
     // Tear down the remote-agent transport AFTER every surface is gone:
     // each remote surface's termio backend borrows the transport's `conn`,
@@ -2099,28 +2095,48 @@ pub fn deinit(self: *Window) void {
         self.remote_machine = null;
     }
 
-    // Delete the chrome fonts.
-    if (self.tab_font) |font| {
-        _ = w32.DeleteObject(font);
-        self.tab_font = null;
-    }
-    if (self.pill_font) |font| {
-        _ = w32.DeleteObject(font);
-        self.pill_font = null;
-    }
-
-    // The full-screen exit button is owned by this HWND; destroy it first
-    // so its WndProc can never run against a freed window (T2011).
-    if (self.fullscreen_exit_btn) |b| {
-        b.destroy();
-        self.fullscreen_exit_btn = null;
-    }
+    // The chrome fonts, the desk's bitmaps, the pane stacks and the
+    // full-screen exit button (owned by this HWND; destroyed first so its
+    // WndProc can never run against a freed window, T2011).
+    self.releaseOwnedResources();
 
     // Clear GWLP_USERDATA before destroying to prevent stale pointer access.
     if (self.hwnd) |hwnd| {
         _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, 0);
         _ = w32.DestroyWindow(hwnd);
         self.hwnd = null;
+    }
+}
+
+/// Free everything the window owns that is not a pane: GDI objects, the
+/// desk's cached bitmaps, the pane-stack bookkeeping and the owned chrome
+/// windows. Both ends of a window's life run it - `deinit` (app quit) and
+/// `onDestroy` (a user close) - and those two paths are disjoint, since
+/// `deinit` clears GWLP_USERDATA before its DestroyWindow. Idempotent.
+///
+/// T2498: it exists because the two paths had drifted. `onDestroy` freed
+/// the fonts and nothing else, so every closed window kept the desk's
+/// DC+DIB pairs (4 GDI objects and several MB of pixels at a default size),
+/// its PaneStackState, an armed row drag, the rename font and the
+/// full-screen exit button - for the life of the app.
+fn releaseOwnedResources(self: *Window) void {
+    self.endRowDrag();
+    if (self.pane_stacks) |*st| st.deinit();
+    self.pane_stacks = null;
+    self.pane_desk.deinit();
+    if (self.drop_preview) |dp| {
+        dp.destroy();
+        self.drop_preview = null;
+    }
+    if (self.fullscreen_exit_btn) |b| {
+        b.destroy();
+        self.fullscreen_exit_btn = null;
+    }
+    inline for (.{ "tab_font", "pill_font", "rename_font" }) |field| {
+        if (@field(self, field)) |font| {
+            _ = w32.DeleteObject(font);
+            @field(self, field) = null;
+        }
     }
 }
 
@@ -16099,18 +16115,7 @@ fn onDestroy(self: *Window) void {
 
     // Quick terminal windows are managed by QuickTerminal, not the windows list.
     if (self.is_quick_terminal) {
-        if (self.drop_preview) |dp| {
-            dp.destroy();
-            self.drop_preview = null;
-        }
-        if (self.tab_font) |font| {
-            _ = w32.DeleteObject(font);
-            self.tab_font = null;
-        }
-        if (self.pill_font) |font| {
-            _ = w32.DeleteObject(font);
-            self.pill_font = null;
-        }
+        self.releaseOwnedResources();
         self.hwnd = null;
         // QuickTerminal handles the rest of cleanup (freeing self, quit timer).
         if (app.quick_terminal) |qt| {
@@ -16187,18 +16192,7 @@ fn onDestroy(self: *Window) void {
     }
 
     // Clean up Window-level resources.
-    if (self.drop_preview) |dp| {
-        dp.destroy();
-        self.drop_preview = null;
-    }
-    if (self.tab_font) |font| {
-        _ = w32.DeleteObject(font);
-        self.tab_font = null;
-    }
-    if (self.pill_font) |font| {
-        _ = w32.DeleteObject(font);
-        self.pill_font = null;
-    }
+    self.releaseOwnedResources();
     self.hwnd = null;
 
     // Free the Window allocation.
