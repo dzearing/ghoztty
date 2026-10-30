@@ -1119,5 +1119,27 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.50.0/Ghoztty-1.50.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="9B2x6w4mNBEM1c3WtnMkcNpaKzqzQhImRxJsE8dhlEu5iAFfLiuYa+pkF2xoryKkYiAJxCPgL+oe/r2jlbBTDQ==" length="26936336" />
         </item>
+        <item>
+            <title>Version 1.50.1</title>
+            <sparkle:version>1.50.1</sparkle:version>
+            <sparkle:shortVersionString>1.50.1</sparkle:shortVersionString>
+            <pubDate>Fri, 30 Oct 2026 03:21:54 +0000</pubDate>
+            <description>{
+  "version": "1.50.1",
+  "sections": [
+    {
+      "title": "Memory and processes",
+      "items": [
+        { "title": "Closed windows give their memory back", "text": "Closing a window frees everything in it again — about 100 MB per window, which since v1.44.0 stayed in use until you quit." },
+        { "title": "Closing a pane ends what it was running", "text": "A closed split's shell or session now exits once the close can no longer be undone (5 seconds by default, set by undo-timeout), instead of lingering until the window's layout changed again." },
+        { "title": "Hidden windows use less memory", "text": "A window that's covered, minimized, or on another Space drops its spare rendering buffers and picks up where it left off when you come back." },
+        { "title": "Fewer things left running", "text": "Pane animations and failed viewer opens no longer keep running after the pane is gone." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.50.1/Ghoztty-1.50.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="t8FtQc8QIxpp267tfP01U2Mnagp263iyIVxDhOlhBTJ7B9TWDCTUKRApKfmeg0vQGqQbOW/dMG6/m2v3aQQ4DQ==" length="26936036" />
+        </item>
     </channel>
 </rss>
