@@ -952,10 +952,29 @@ $GuardTable = @(
         Stamp  = 'test\win32\window-close-memory.stamp.json'
         Covers = @(
             'test\win32\window-close-memory.ps1',
+            'test\win32\lib\ProcessMemory.ps1',
             'src\apprt\win32\Window.zig',
             'src\apprt\win32\PaneDesk.zig',
             'src\apprt\win32\Surface.zig',
             'src\renderer\gl_comp_present.zig'
+        )
+    },
+    # T2494: the PANE half of the same question - what a split, a viewer, a
+    # viewer closed before its WebView2 controller arrived, a split closed
+    # mid-layout, and a tab give back while their window stays open. Covers
+    # the close and undo-expiry paths a pane's teardown runs through and the
+    # viewer's controller/renderer release.
+    [pscustomobject]@{
+        Name   = 'pane-close-memory'
+        Script = 'test\win32\pane-close-memory.ps1'
+        Stamp  = 'test\win32\pane-close-memory.stamp.json'
+        Covers = @(
+            'test\win32\pane-close-memory.ps1',
+            'test\win32\lib\ProcessMemory.ps1',
+            'src\apprt\win32\CloseUndo.zig',
+            'src\apprt\win32\PaneView.zig',
+            'src\apprt\win32\ViewerPane.zig',
+            'src\apprt\win32\Surface.zig'
         )
     },
     # T827: `+rearrange` over a window that holds a VIEWER pane. Main fixed a

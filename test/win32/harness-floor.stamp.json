@@ -1,9 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-29T23:41:19-07:00",
-    "commit":  "7aab7f13a",
+    "generated":  "2026-10-30T00:42:44-07:00",
+    "commit":  "5ba434046",
     "uncommitted":  [
+                        "test/win32/lib/ProcessMemory.ps1",
+                        "test/win32/pane-close-memory.ps1",
                         "test/win32/window-close-memory.ps1"
                     ],
     "files":  {
@@ -293,6 +295,7 @@
                   "test/win32/lib/PipeBridge.ps1":  "448d2d97a731911d9a9dea55e529a64a546e425cbf38df6ba3bb083d7794000d",
                   "test/win32/lib/PixelOracleAudit.ps1":  "7b18849da492030e15f819601e3fbde28f4042cd6e9c3ab6b11063b22071937b",
                   "test/win32/lib/PixelScan.ps1":  "41c312f9a9db8bd3b6402118af61aa445e6f25f2dfa15f2bd45d1fe5731bb73d",
+                  "test/win32/lib/ProcessMemory.ps1":  "fc65192e6949da7e505d963e246a029ab56d25cf4099e2d4b0fc4aa7a12dfe6f",
                   "test/win32/lib/RebootShape.ps1":  "6f38d632f286dc5514f3e7973f82bcb7481953e17a20aa8215f631b8521a5c45",
                   "test/win32/lib/RetiredClaims.ps1":  "3fbaacd49f9341d0c4cf7c4a03ed0487a1d371cf6b395e9984cf2ea12f5876bb",
                   "test/win32/lib/RingSnapshot.ps1":  "fd4d7b91f60409df62a3a90461e03783dbf2b655aea98487152368ea4386912e",
@@ -348,6 +351,7 @@
                   "test/win32/pane-banner.ps1":  "8bd571ba481f09742b662914b19028afd106e921b63457b9389478e5841e5933",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
+                  "test/win32/pane-close-memory.ps1":  "c89137d1d2faa163c0d99e4676fad1d3c7b3a975e8fae3aa4aad64d834aa7e86",
                   "test/win32/pane-elevation.ps1":  "d762a26f3f1696d8ba5c9fb53c2707b0565e011388a26b4eaa5a8778a44bc8e8",
                   "test/win32/pane-grab-handle.ps1":  "d0abccbdc04d0e399b5fda02f14e3d701d8f6e99ed1d54f217023af089745c6c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
@@ -555,7 +559,7 @@
                   "test/win32/wheel-scroll.ps1":  "5ddcfef5925d88800a7bfe738e3df7d75a0df62fe400243070fba6f78cc8a2a1",
                   "test/win32/window-active.ps1":  "9151aa942d89c9db56f8fe9531b66c67285d311d17d50d8c43b8bec7b1b778df",
                   "test/win32/window-active-audit.ps1":  "713214a5212d2f50713ae9eaff05d788293b6f8ada9b6daa78d1dcf081406879",
-                  "test/win32/window-close-memory.ps1":  "9ff1cd33ff4a64606a56a5df23f6e2b76aa20dfc1a2019923a19dc2eb97eb52b",
+                  "test/win32/window-close-memory.ps1":  "dade4d2732ff38471af7899b604bdd503d982385825b1b9395fa3c7731d1232f",
                   "test/win32/window-color.ps1":  "ee0cd62d72645ee63415938b2ca77b3b29b5cd7deb1b4ff3ee0fd11053465f93",
                   "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",

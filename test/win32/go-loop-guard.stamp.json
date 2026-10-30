@@ -1,8 +1,8 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-10-29T23:48:28-07:00",
-    "commit":  "ab3a743b7",
+    "generated":  "2026-10-30T00:52:25-07:00",
+    "commit":  "5ba434046",
     "uncommitted":  [
 
                     ],
