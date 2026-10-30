@@ -3,316 +3,465 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Ghoztty: A Programmable Terminal for AI Agents</title>
-  <meta name="description" content="A fork of Ghostty with CLI-driven window management. Let Claude Code create, split, and manage terminal windows programmatically." />
+  <title>Ghoztty: The Terminal Your Agents Can Drive</title>
+  <meta name="description" content="Ghoztty is Ghostty with a scriptable window manager. Claude Code and Copilot open side panes, show docs and diffs, keep status banners current, and tell you when they need you." />
+  <meta name="color-scheme" content="dark light" />
+  <meta property="og:title" content="Ghoztty: the terminal your agents can drive" />
+  <meta property="og:description" content="Ghostty with a scriptable window manager, live viewers, status banners and activity states for Claude Code and Copilot." />
+  <meta property="og:image" content="https://dzearing.github.io/ghoztty/landing/shots/hero.webp" />
+  <link rel="icon" type="image/png" href="landing/favicon-64.png" />
+  <link rel="preload" as="image" href="landing/shots/hero.webp" fetchpriority="high" />
   <link rel="stylesheet" href="landing/styles.css" />
 </head>
 <body>
-  <!-- Nav -->
-  <nav>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="nav">
     <div class="nav-inner">
       <a href="#" class="logo">
-        <img src="landing/icon.png" alt="Ghoztty" class="logo-icon" />
+        <img src="landing/icon-256.webp" alt="" class="logo-icon" width="28" height="28" />
         <span>Ghoztty</span>
       </a>
       <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#skill">Claude Skill</a>
-        <a href="#install">Install</a>
+        <a href="#scriptable">Scriptable</a>
+        <a href="#windows">Windows</a>
+        <a href="#agents">Agents</a>
         <a href="https://github.com/dzearing/ghoztty" target="_blank" rel="noopener">GitHub</a>
         <a href="#download" class="nav-cta">Download</a>
       </div>
     </div>
   </nav>
 
-  <!-- Hero -->
-  <section class="hero">
-    <div class="hero-glow"></div>
-    <div class="hero-content">
-      <img src="landing/icon.png" alt="Ghoztty" class="hero-icon" />
-      <div class="hero-text">
-        <div class="badge">Open Source &middot; macOS &amp; Windows &middot; Ghostty Fork</div>
-        <h1>Your terminal,<br /><span class="gradient-text">agent-driven.</span></h1>
-        <p class="hero-sub">
-          Ghoztty is a programmable fork of Ghostty that lets AI agents
-          create windows, split panes, and manage layouts from the command line.
+  <main id="main">
+    <!-- Hero -->
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">
+          <img src="landing/icon-256.webp" alt="" width="20" height="20" />
+          A fork of Ghostty &middot; macOS &amp; Windows &middot; open source
+        </p>
+        <h1>The terminal your <span class="accent-text">agents can drive.</span></h1>
+        <p class="lede">
+          Ghoztty is Ghostty with a window manager you can script. Claude Code
+          and Copilot open panes beside you, show you the plan and the diff,
+          keep a status banner current, and tell you which of them needs you.
         </p>
         <div class="hero-actions">
-        <a href="#download" class="btn btn-primary">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M9 2v10m0 0L5 8.5M9 12l4-3.5M3 14.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Download v1.51.0
-        </a>
-        <a href="https://github.com/dzearing/ghoztty" target="_blank" rel="noopener" class="btn btn-secondary">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M9 1.5C4.86 1.5 1.5 4.86 1.5 9c0 3.31 2.15 6.13 5.13 7.12.37.07.51-.16.51-.36v-1.26c-2.09.45-2.53-1.01-2.53-1.01-.34-.87-.83-1.1-.83-1.1-.68-.46.05-.45.05-.45.75.05 1.15.77 1.15.77.67 1.14 1.75.81 2.17.62.07-.48.26-.81.47-.99-1.67-.19-3.42-.83-3.42-3.71 0-.82.29-1.49.77-2.01-.08-.19-.33-.95.07-1.99 0 0 .63-.2 2.06.77a7.17 7.17 0 013.74 0c1.43-.97 2.06-.77 2.06-.77.4 1.04.15 1.8.07 1.99.48.52.77 1.19.77 2.01 0 2.89-1.76 3.52-3.43 3.71.27.23.51.69.51 1.39v2.07c0 .2.14.43.51.36A7.5 7.5 0 0016.5 9c0-4.14-3.36-7.5-7.5-7.5z" fill="currentColor"/>
-          </svg>
-          View on GitHub
-        </a>
+          <a href="#download" class="btn btn-primary">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path d="M9 2v10m0 0L5 8.5M9 12l4-3.5M3 14.5h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Download v1.50.0
+          </a>
+          <a href="#scriptable" class="btn btn-secondary">See what it does</a>
+        </div>
+        <p class="hero-note">Free. Signed and notarized on macOS. Everything Ghostty does, plus the parts below.</p>
+      </div>
+
+      <figure class="hero-shot">
+        <div class="stage stage-hero">
+          <img src="landing/shots/hero.webp" width="2400" height="1470" fetchpriority="high"
+               alt="A Ghoztty window: a sidebar listing every window grouped by project, a Claude Code session with a status banner, a rendered markdown plan, and the branch diff." />
+          <span class="pin" style="--x: 2%; --y: 93.5%"><b>1</b>Every window, grouped by project</span>
+          <span class="pin" style="--x: 30%; --y: 1.2%"><b>2</b>A banner the agent keeps current</span>
+          <span class="pin" style="--x: 70%; --y: 1.2%"><b>3</b>The plan, rendered beside you</span>
+          <span class="pin" style="--x: 70%; --y: 93.5%"><b>4</b>The branch diff, live</span>
+        </div>
+        <figcaption>
+          Real screenshot. Claude Code added rate limiting, then ran
+          <code>ghoztty +split --view=docs/plan.md</code> and
+          <code>ghoztty +split --view=git-diff:main...HEAD</code> to put its work beside you.
+        </figcaption>
+      </figure>
+    </header>
+
+    <!-- Pillars -->
+    <section class="pillars" aria-label="Why Ghoztty">
+      <a class="pillar" href="#scriptable">
+        <span class="pillar-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 17l6-5-6-5M12 19h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <h2>Scriptable</h2>
+        <p>Windows, splits, viewers, banners and keystrokes are one <code>ghoztty</code> command away. Your agent learns them from the bundled skill.</p>
+      </a>
+      <a class="pillar" href="#windows">
+        <span class="pillar-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M9 4v16M13 9h5M13 13h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </span>
+        <h2>Easy to manage</h2>
+        <p>One sidebar for every window. Stash panes you aren't using, let extra panes stack, and give each window its own glass-and-gradient look.</p>
+      </a>
+      <a class="pillar" href="#agents">
+        <span class="pillar-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3l2.2 5.3L20 9l-4.4 3.8L17 18.5 12 15.6 7 18.5l1.4-5.7L4 9l5.8-.7L12 3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        </span>
+        <h2>Agent friendly</h2>
+        <p>See which agent is busy and which has a question. Panes survive restarts, link back from any document, and can run on your other machines.</p>
+      </a>
+    </section>
+
+    <!-- Scriptable -->
+    <section class="section" id="scriptable">
+      <div class="section-head">
+        <p class="kicker">Scriptable with Claude Code</p>
+        <h2>One CLI for every window and pane.</h2>
+        <p>Copy any of these into a Ghoztty pane. Each picture is what it produced.</p>
+      </div>
+
+      <div class="explorer" data-tabs>
+        <div class="explorer-list" role="tablist" aria-label="Ghoztty commands">
+          <button role="tab" id="tab-window" aria-controls="panel-window" aria-selected="true">
+            <strong>Open a window with a split</strong>
+            <span>Dev server on top, tests below</span>
+          </button>
+          <button role="tab" id="tab-view" aria-controls="panel-view" aria-selected="false" tabindex="-1">
+            <strong>Show a document beside you</strong>
+            <span>Markdown, code, images, web pages</span>
+          </button>
+          <button role="tab" id="tab-diff" aria-controls="panel-diff" aria-selected="false" tabindex="-1">
+            <strong>Show the branch diff</strong>
+            <span>File tree, hunks, live updates</span>
+          </button>
+          <button role="tab" id="tab-banner" aria-controls="panel-banner" aria-selected="false" tabindex="-1">
+            <strong>Pin a status banner</strong>
+            <span>Markdown card above a pane</span>
+          </button>
+          <button role="tab" id="tab-list" aria-controls="panel-list" aria-selected="false" tabindex="-1">
+            <strong>List every window and pane</strong>
+            <span>Names, states, ids, or JSON</span>
+          </button>
+          <button role="tab" id="tab-keys" aria-controls="panel-keys" aria-selected="false" tabindex="-1">
+            <strong>Type into another pane</strong>
+            <span>Then read back what it printed</span>
+          </button>
+          <button role="tab" id="tab-state" aria-controls="panel-state" aria-selected="false" tabindex="-1">
+            <strong>Report activity</strong>
+            <span>idle, busy, or needs_input</span>
+          </button>
+        </div>
+
+        <div class="explorer-panels">
+          <div role="tabpanel" id="panel-window" aria-labelledby="tab-window">
+            <pre class="code"><code>ghoztty +new-window --target=orbit --working-directory=~/src/orbit \
+  --command="npm run dev" --split=down --split-command="npm test"</code></pre>
+            <div class="stage"><img src="landing/shots/cli-window.webp" width="1800" height="1178" loading="lazy" alt="A new window titled orbit: main with npm run dev in the top pane and passing tests in the bottom pane." /></div>
+            <p class="panel-note"><code>--target</code> names the window, so running the same line again focuses it instead of opening a second one.</p>
+          </div>
+          <div role="tabpanel" id="panel-view" aria-labelledby="tab-view" hidden>
+            <pre class="code"><code>ghoztty +split --view=docs/plan.md</code></pre>
+            <div class="stage"><img src="landing/shots/markdown.webp" width="1328" height="922" loading="lazy" alt="A viewer pane rendering a markdown plan with headings, bold text and a table." /></div>
+            <p class="panel-note">The viewer reloads when the file is saved and keeps your place. <code>--view</code> also takes code files, images, HTML pages and URLs.</p>
+          </div>
+          <div role="tabpanel" id="panel-diff" aria-labelledby="tab-diff" hidden>
+            <pre class="code"><code>ghoztty +split --view=git-diff:main...HEAD</code></pre>
+            <div class="stage"><img src="landing/shots/diff.webp" width="2000" height="1086" loading="lazy" alt="A diff viewer with a file tree on the left and the added rate-limit middleware on the right." /></div>
+            <p class="panel-note">Also <code>git-status:</code> for the working tree, or <code>git-diff:&lt;sha&gt;</code> for one commit. Unified or side by side.</p>
+          </div>
+          <div role="tabpanel" id="panel-banner" aria-labelledby="tab-banner" hidden>
+            <pre class="code"><code>ghoztty +set-banner --target="$GHOZTTY_PANE_ID" \
+  "## Add API rate limiting\n**PR** [#482](https://github.com/you/orbit/pull/482) · 37 tests passing"</code></pre>
+            <div class="stage"><img src="landing/shots/banner.webp" width="1304" height="664" loading="lazy" alt="A status banner above a Claude Code pane showing the task title, goal, prompt, status, a checklist of results and a PR link." /></div>
+            <p class="panel-note">Headings, tables, checklists and links all render. <code>$GHOZTTY_PANE_ID</code> is set in every pane, so an agent always knows its own.</p>
+          </div>
+          <div role="tabpanel" id="panel-list" aria-labelledby="tab-list" hidden>
+            <pre class="code"><code>ghoztty +list          # or: ghoztty +list --json</code></pre>
+            <div class="stage"><img src="landing/shots/cli-list.webp" width="2000" height="635" loading="lazy" alt="Terminal output of ghoztty +list showing each window, its panes, their titles, process ids and states such as busy and question." /></div>
+            <p class="panel-note">Every window, tab and pane, with names you can target and the activity state of each pane.</p>
+          </div>
+          <div role="tabpanel" id="panel-keys" aria-labelledby="tab-keys" hidden>
+            <pre class="code"><code>ghoztty +send-keys --target=tests "npm test\n"
+ghoztty +read --name=tests --lines=6</code></pre>
+            <div class="stage"><img src="landing/shots/cli-sendkeys.webp" width="1900" height="789" loading="lazy" alt="Claude Code on the left runs ghoztty +send-keys and +read; the tests pane on the right shows the test run it started." /></div>
+            <p class="panel-note">The trailing <code>\n</code> presses Return. <code>--when-idle</code> waits until a Claude Code pane is ready for input.</p>
+          </div>
+          <div role="tabpanel" id="panel-state" aria-labelledby="tab-state" hidden>
+            <pre class="code"><code>ghoztty +set-state --target=migrations --state=needs_input</code></pre>
+            <div class="stage"><img src="landing/shots/question.webp" width="1900" height="981" loading="lazy" alt="A window titled billing: migrations (question) where Claude Code is asking for permission to run a migration." /></div>
+            <p class="panel-note">The window title gains <em>(busy)</em> or <em>(question)</em>. For Claude Code you never call this yourself: the installed hooks do.</p>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- Terminal mockup -->
-    <div class="hero-mockup">
-      <div class="mockup-window">
-        <div class="mockup-titlebar">
-          <div class="dot red"></div>
-          <div class="dot yellow"></div>
-          <div class="dot green"></div>
-          <span class="titlebar-text">ide</span>
+      <div class="callout">
+        <div>
+          <h3>You don't type these. Your agent does.</h3>
+          <p>
+            Ghoztty ships a <code>ghoztty</code> skill and hooks for Claude Code
+            and GitHub Copilot CLI. Install them once from
+            <strong>Ghoztty &rarr; Set Up Agent Integrations&hellip;</strong>,
+            then just ask: &ldquo;open the plan beside me&rdquo;, &ldquo;show me
+            what changed on this branch&rdquo;, &ldquo;run the tests in my
+            other pane&rdquo;. New panes open without stealing focus, so you
+            keep typing where you were.
+          </p>
         </div>
-        <div class="mockup-split">
-          <div class="pane pane-main pane-color-1">
-            <div class="pane-label">nvim .</div>
-            <div class="pane-line"><span class="hl-keyword">fn</span> <span class="hl-fn">main</span>() !<span class="hl-type">void</span> {</div>
-            <div class="pane-line">&nbsp;&nbsp;<span class="hl-keyword">const</span> app = <span class="hl-fn">init</span>();</div>
-            <div class="pane-line">&nbsp;&nbsp;app.<span class="hl-fn">run</span>();</div>
-            <div class="pane-line">}</div>
+        <ul class="callout-list">
+          <li><span>Ask</span>&ldquo;Add rate limiting, then open the plan and the diff beside me.&rdquo;</li>
+          <li><span>Claude runs</span><code>ghoztty +split --view=docs/plan.md</code></li>
+          <li><span>You see</span>The plan in a side pane, re-rendered on every save.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Window management -->
+    <section class="section" id="windows">
+      <div class="section-head">
+        <p class="kicker">Easy window management</p>
+        <h2>Dozens of panes, still easy to find.</h2>
+        <p>When several agents each have a window, the sidebar is how you keep track of them.</p>
+      </div>
+
+      <article class="feature">
+        <div class="feature-media">
+          <div class="stage stage-tall">
+            <video src="landing/shots/sidebar-busy.mp4" poster="landing/shots/sidebar-busy-poster.webp"
+                   width="492" height="1160" autoplay muted loop playsinline preload="none"
+                   aria-label="The pane sidebar in All windows mode. The busy csv-export pane shimmers."></video>
           </div>
-          <div class="pane-split-v"></div>
-          <div class="pane-right">
-            <div class="pane pane-top pane-color-2">
-              <div class="pane-label">term</div>
-              <div class="pane-line"><span class="hl-prompt">$</span> zig build <span class="hl-ok">OK</span></div>
-              <div class="pane-line"><span class="hl-prompt">$</span> <span class="hl-cursor">_</span></div>
+        </div>
+        <div class="feature-copy">
+          <h3>Every window in one sidebar</h3>
+          <p>Toggle it with <kbd>⌃⌘S</kbd>. Switch on <strong>All windows</strong> and windows titled <code>project: worktree</code> group under their project.</p>
+          <ul class="checks">
+            <li>Drag rows to reorder windows and panes, or drop a window into another group.</li>
+            <li>Hover and click the pencil to rename a window, group or pane in place.</li>
+            <li><strong>+</strong> buttons open a window, a window in that project, or a split.</li>
+            <li>A busy pane's row shimmers, so you can see which agents are still working.</li>
+            <li>Search by window title, pane title, banner text or directory.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="feature feature-flip">
+        <div class="feature-media">
+          <div class="stage"><img src="landing/shots/stash.webp" width="1900" height="1095" loading="lazy" alt="The sidebar's Stashed tray holding an npm run dev pane while four panes stay on screen." /></div>
+        </div>
+        <div class="feature-copy">
+          <h3>Stash panes you aren't watching</h3>
+          <p>Drag a pane into the tray at the bottom of the sidebar, or press <kbd>⇧⌘M</kbd>. It leaves the layout but keeps running.</p>
+          <ul class="checks">
+            <li>Click it to put it back in the exact slot it came from.</li>
+            <li><kbd>⌥</kbd>-click swaps it with the pane you're in.</li>
+            <li>Scripts can do the same: <code>ghoztty +stash --target=logs</code> and <code>+restore</code>.</li>
+            <li>Stashed panes are still there after a relaunch.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="feature">
+        <div class="feature-media">
+          <div class="stage"><img src="landing/shots/stacked.webp" width="1900" height="1095" loading="lazy" alt="A window with five panes: two have tucked into narrow labeled strips on the left so the other three stay readable, on a green-to-purple gradient." /></div>
+        </div>
+        <div class="feature-copy">
+          <h3>Panes stack instead of shrinking</h3>
+          <p>A pane never gets narrower than 225pt. When a row runs out of room, the extra panes tuck into labeled strips at the edge.</p>
+          <ul class="checks">
+            <li>Click a strip to bring that pane on show.</li>
+            <li>Drag a strip to the tray to stash it, or to a screen edge for its own window.</li>
+            <li>Panes are glass cards on a gradient. Each new window gets its own colors, or pass <code>--color=random</code>.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="feature feature-flip feature-text-only">
+        <div class="feature-copy">
+          <h3>Hero Mode for the pane that matters</h3>
+          <p>
+            <strong>Window &rarr; Toggle Hero Mode</strong> (<kbd>⇧⌘Space</kbd>)
+            shows the focused pane full size with a scrolling carousel of the
+            window's other panes beside it. <kbd>⇧⌘↑</kbd> and <kbd>⇧⌘↓</kbd>
+            move between them. It works with viewer panes too.
+          </p>
+        </div>
+      </article>
+    </section>
+
+    <!-- Agents -->
+    <section class="section" id="agents">
+      <div class="section-head">
+        <p class="kicker">Claude Code and Copilot friendly</p>
+        <h2>Built for a day of running agents.</h2>
+        <p>Know who needs you, see what each one is doing, and never lose a session.</p>
+      </div>
+
+      <article class="feature">
+        <div class="feature-media">
+          <div class="stage"><img src="landing/shots/question.webp" width="1900" height="981" loading="lazy" alt="A Claude Code permission prompt in a window whose title ends in (question); the sidebar lists the other agents' windows." /></div>
+        </div>
+        <div class="feature-copy">
+          <h3>See which agent needs you</h3>
+          <p>Every pane is <em>idle</em>, <em>busy</em> or waiting on a <em>question</em>. A window shows the most urgent of its panes.</p>
+          <ul class="checks">
+            <li>Titles gain <em>(busy)</em> or <em>(question)</em>, and a question bounces the Dock icon.</li>
+            <li>Busy rows shimmer in the sidebar.</li>
+            <li>With Claude Code it's automatic: a pane stays busy while subagents run and only asks when there is a real prompt.</li>
+            <li>Copilot CLI gets the banner hooks and goes idle when a session stops.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="feature feature-flip">
+        <div class="feature-media">
+          <div class="stage"><img src="landing/shots/banner.webp" width="1304" height="664" loading="lazy" alt="A status banner with title, goal, prompt, status, a results checklist and a PR link above a Claude Code transcript." /></div>
+        </div>
+        <div class="feature-copy">
+          <h3>Banners that stay current</h3>
+          <p>The installed hooks keep a card above each agent's pane: the task, the goal, what you last asked, its status, what landed and the PR.</p>
+          <ul class="checks">
+            <li>Updated as you prompt and when each turn ends.</li>
+            <li>Collapses to one line with its chevron.</li>
+            <li>The sidebar shows a pane's banner title, so rows read like a task list.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="feature">
+        <div class="feature-media">
+          <div class="stage"><img src="landing/shots/focus-links.webp" width="2000" height="857" loading="lazy" alt="A generated markdown summary of four agents, each row with a Focus pane link." /></div>
+        </div>
+        <div class="feature-copy">
+          <h3>Links that jump back to a pane</h3>
+          <p>
+            <code>ghoztty://focus/&lt;window-or-pane&gt;</code> brings that window or
+            pane to the front, even out of the stash tray. Put them in reports,
+            dashboards or banners your agents write.
+          </p>
+          <p class="fine">Focus is the only thing a link can do. It can't run commands.</p>
+        </div>
+      </article>
+
+      <div class="cards">
+        <article class="card">
+          <span class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 0 1 13.7-5.6M20 12a8 8 0 0 1-13.7 5.6M17.7 3v3.6h-3.6M6.3 21v-3.6h3.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <h3>Sessions survive restarts</h3>
+          <p>
+            Shells run under a background agent, so quitting Ghoztty, a crash
+            or an update doesn't end them. Relaunch and you get the same
+            processes back, with layout, split sizes, titles and scrollback.
+          </p>
+          <p class="fine">After a reboot each pane reopens as a fresh shell in its last directory, with its old scrollback. On by default. <code>ghoztty +sessions</code> lists them.</p>
+        </article>
+        <article class="card">
+          <span class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="11" y="10" width="10" height="8" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M6 18h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <h3>Terminals on your other machines</h3>
+          <p>
+            <strong>File &rarr; New Remote Window</strong> opens a shell on
+            another machine running the Ghoztty agent, such as a Windows box
+            with the installer below. Sign in with Google and enroll the
+            machine once.
+          </p>
+          <p class="fine">Both sides connect out to a relay, so it works through NAT and firewalls. Remote panes get the same banners, viewers and states.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Install -->
+    <section class="section" id="install">
+      <div class="section-head">
+        <p class="kicker">Get started</p>
+        <h2>Two minutes to set up.</h2>
+      </div>
+      <ol class="steps">
+        <li>
+          <h3>Install Ghoztty</h3>
+          <p>macOS: open the DMG and drag Ghoztty to Applications. Windows: run the per-user installer. Both set up the <code>ghoztty</code> command for you.</p>
+        </li>
+        <li>
+          <h3>Set up your agents</h3>
+          <p>Choose <strong>Ghoztty &rarr; Set Up Agent Integrations&hellip;</strong> to install the skill and hooks for Claude Code and Copilot CLI. The banner hooks use <code>jq</code> (<code>brew install jq</code>).</p>
+        </li>
+        <li>
+          <h3>Ask</h3>
+          <p>&ldquo;Show me the diff for this branch.&rdquo; &ldquo;Open the README beside me.&rdquo; &ldquo;Start the dev server in a pane below.&rdquo;</p>
+        </li>
+      </ol>
+    </section>
+
+    <!-- Download -->
+    <section class="download" id="download">
+      <div class="section-inner">
+        <div class="section-head">
+          <h2>Ready to try it?</h2>
+          <p>Free and open source &mdash; signed and notarized on macOS, a per-user installer on Windows.</p>
+        </div>
+        <div class="download-cards">
+          <a href="https://github.com/dzearing/ghoztty/releases/download/v1.50.0/Ghoztty-1.50.0-arm64.dmg" class="download-card">
+            <div class="download-icon">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                <path d="M16 4v16m0 0l-5-5m5 5l5-5M6 26h20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
             </div>
-            <div class="pane-split-h"></div>
-            <div class="pane pane-bottom pane-color-3">
-              <div class="pane-label">logs</div>
-              <div class="pane-line"><span class="hl-dim">21:03:12</span> <span class="hl-ok">INFO</span> server started</div>
-              <div class="pane-line"><span class="hl-dim">21:03:14</span> <span class="hl-ok">INFO</span> ready on :8080</div>
+            <div class="download-info">
+              <strong>macOS DMG</strong>
+              <span>Apple Silicon &middot; Signed &amp; Notarized</span>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Features -->
-  <section class="features" id="features">
-    <div class="section-inner">
-      <div class="section-header">
-        <h2>Terminal management<br /><span class="gradient-text">as an API.</span></h2>
-        <p>Three idempotent CLI commands give agents full control over your terminal layout.</p>
-      </div>
-      <div class="feature-grid">
-        <div class="feature-card">
-          <div class="feature-icon accent-green">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M3 9h18" stroke="currentColor" stroke-width="1.5"/>
-              <circle cx="6" cy="6" r="1" fill="currentColor"/>
-              <circle cx="9" cy="6" r="1" fill="currentColor"/>
-            </svg>
-          </div>
-          <h3>+new-window</h3>
-          <p>Create or focus a named terminal window. Auto-launches Ghoztty if no instance is running. Idempotent by name.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon accent-blue">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="1.5"/>
-            </svg>
-          </div>
-          <h3>+split</h3>
-          <p>Split any pane in four directions. Name the new pane for later targeting. Nest splits to build complex layouts.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon accent-pink">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <h3>+close</h3>
-          <p>Close a named pane or window by target. Closing a nonexistent target succeeds silently, so teardown scripts are safe.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon accent-purple">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M7 7h10v10H7z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-              <path d="M7 7L3 3m10 4l4-4M7 17l-4 4m14-4l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <h3>Named Targets</h3>
-          <p>Every window and pane gets a name. Reference them from any command, any process. No PID tracking needed.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon accent-orange">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <rect x="2" y="4" width="20" height="16" rx="3" stroke="currentColor" stroke-width="1.5"/>
-              <rect x="5" y="7" width="5" height="3" rx="1" fill="#ff6482" opacity="0.8"/>
-              <rect x="12" y="7" width="5" height="3" rx="1" fill="#60a5fa" opacity="0.8"/>
-              <rect x="5" y="12" width="5" height="3" rx="1" fill="#30d158" opacity="0.8"/>
-              <rect x="12" y="12" width="5" height="3" rx="1" fill="#ff9f0a" opacity="0.8"/>
-            </svg>
-          </div>
-          <h3>Colored Windows</h3>
-          <p>Assign colors to windows and panes for instant visual identification. Keep track of your workspace at a glance.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" stroke="currentColor" stroke-width="1.5"/>
-              <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <h3>Full Ghostty</h3>
-          <p>GPU-accelerated rendering, native macOS integration, ligatures, sixel graphics. Everything from Ghostty, plus IPC.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Claude Skill -->
-  <section class="skill" id="skill">
-    <div class="section-inner">
-      <div class="section-header">
-        <h2>Works with<br /><span class="gradient-text">Claude Code.</span></h2>
-        <p>With the Ghoztty plugin installed, Claude manages terminal windows for you.</p>
-      </div>
-      <div class="skill-demo">
-        <div class="skill-example">
-          <div class="skill-step">
-            <div class="step-number">1</div>
-            <div class="step-content">
-              <h3>Ask Claude to set up a workspace</h3>
-              <div class="code-block">
-                <code>"Open a terminal with nvim, a build watcher, and a log tail"</code>
-              </div>
+            <div class="download-action">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
             </div>
-          </div>
-          <div class="skill-step">
-            <div class="step-number">2</div>
-            <div class="step-content">
-              <h3>Claude creates the layout</h3>
-              <div class="code-block"><pre><code><span class="hl-dim"># Claude runs these automatically:</span>
-ghoztty +new-window --target=ide --command="nvim ."
-ghoztty +split --target=ide --name=build \
-  --direction=down --command="zig build -Doptimize=Debug --watch"
-ghoztty +split --target=ide --name=logs \
-  --direction=right --command="tail -f app.log"</code></pre>
-              </div>
+          </a>
+          <a id="win-msi-link" href="https://github.com/dzearing/ghoztty/releases/download/win-v1.50.9/Ghoztty-1.50.9-x64.msi" class="download-card">
+            <div class="download-icon">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                <path d="M16 4v16m0 0l-5-5m5 5l5-5M6 26h20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
             </div>
-          </div>
+            <div class="download-info">
+              <strong>Windows Installer</strong>
+              <span>x64 &middot; Per-user, no admin</span>
+            </div>
+            <div class="download-action">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+          </a>
         </div>
+        <p class="download-note">
+          macOS v1.50.0 &middot; macOS 13+ (Apple Silicon) &middot;
+          <a href="https://github.com/dzearing/ghoztty/releases">All releases</a>
+        </p>
+        <p class="download-note">
+          Windows <span id="win-version">v1.50.9</span> &middot; Windows 10 1809+ (64-bit) &middot;
+          no installer? grab the
+          <a id="win-zip-link" href="https://github.com/dzearing/ghoztty/releases/download/win-v1.50.9/Ghoztty-portable-1.50.9-x64.zip">portable ZIP</a>
+        </p>
+        <p class="download-note" id="win-smartscreen-note">
+            The Windows build is not code-signed, so SmartScreen shows
+            &ldquo;Windows protected your PC&rdquo; the first time you run it.
+            Choose <b>Run anyway</b> &mdash; on some versions of Windows that
+            button is behind <b>More info</b> first. This is a way to override
+            the warning, not a sign the file is trusted, so only do it for a
+            download from this page.
+          </p>
+          <p class="download-note" id="win-defender-note">
+            On some machines Microsoft Defender goes further than a warning and
+            quarantines the files, naming
+            <b>Trojan:Script/Wacatac.C!ml</b>. The <b>!ml</b> ending means
+            Defender&rsquo;s machine-learning model guessed rather than matched a
+            known threat, and a new unsigned program is exactly what it guesses
+            about. To get the files back, open <b>Windows Security</b> &rarr;
+            <b>Protection history</b>, find the Ghoztty item and choose
+            <b>Restore</b>, then run the installer again. Every Windows build is
+            compiled in the open by GitHub Actions from
+            <a href="https://github.com/dzearing/ghoztty/actions/workflows/release-windows.yml">this
+            repository&rsquo;s release workflow</a>, so you can check where your
+            download came from before you do.
+          </p>
+        <p class="download-fine">Screenshots show the macOS app with staged demo projects.</p>
       </div>
-    </div>
-  </section>
+    </section>
+  </main>
 
-  <!-- Install -->
-  <section class="install" id="install">
-    <div class="section-inner">
-      <div class="section-header">
-        <h2>Get started<br /><span class="gradient-text">in two steps.</span></h2>
-      </div>
-      <div class="install-steps">
-        <div class="install-card">
-          <div class="install-card-header">
-            <span class="install-badge">Step 1</span>
-            <h3>Install Ghoztty</h3>
-          </div>
-          <p><b>macOS:</b> download the DMG, drag Ghoztty to Applications, and launch it. <b>Windows:</b> run the per-user MSI &mdash; it upgrades an existing install in place. Either way Ghoztty sets up the <code>ghoztty</code> CLI for you and keeps it working after updates. No terminal commands, no admin password.</p>
-          <a href="#download" class="btn btn-primary">Download Ghoztty</a>
-        </div>
-        <div class="install-card">
-          <div class="install-card-header">
-            <span class="install-badge">Step 2</span>
-            <h3>Add the Claude Skill</h3>
-          </div>
-          <p>Install the ghoztty plugin so Claude Code knows how to drive Ghoztty.</p>
-          <div class="code-block">
-            <code>claude plugin marketplace add dzearing/ghoztty-claude-plugin<br />claude plugin install ghoztty@ghoztty-claude-plugin</code>
-          </div>
-          <p>That's it. Ask Claude to open windows, create splits, or tear down layouts. It handles the IPC commands automatically.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Download -->
-  <section class="download" id="download">
-    <div class="section-inner">
-      <div class="download-glow"></div>
-      <div class="section-header">
-        <h2>Ready to try?</h2>
-        <p>Free and open source &mdash; signed and notarized on macOS, a per-user installer on Windows.</p>
-      </div>
-      <div class="download-cards">
-        <a href="https://github.com/dzearing/ghoztty/releases/download/v1.51.0/Ghoztty-1.51.0-arm64.dmg" class="download-card">
-          <div class="download-icon">
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <path d="M16 4v16m0 0l-5-5m5 5l5-5M6 26h20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <div class="download-info">
-            <strong>macOS DMG</strong>
-            <span>Apple Silicon &middot; Signed &amp; Notarized</span>
-          </div>
-          <div class="download-action">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-        </a>
-        <a id="win-msi-link" href="https://github.com/dzearing/ghoztty/releases/download/win-v1.51.2/Ghoztty-1.51.2-x64.msi" class="download-card">
-          <div class="download-icon">
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <path d="M16 4v16m0 0l-5-5m5 5l5-5M6 26h20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <div class="download-info">
-            <strong>Windows Installer</strong>
-            <span>x64 &middot; Per-user, no admin</span>
-          </div>
-          <div class="download-action">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
-        </a>
-      </div>
-      <p class="download-note">
-        macOS v1.51.0 &middot; macOS 13+ (Apple Silicon) &middot;
-        <a href="https://github.com/dzearing/ghoztty/releases">All releases</a>
-      </p>
-      <p class="download-note">
-        Windows <span id="win-version">v1.51.2</span> &middot; Windows 10 1809+ (64-bit) &middot;
-        no installer? grab the
-        <a id="win-zip-link" href="https://github.com/dzearing/ghoztty/releases/download/win-v1.51.2/Ghoztty-portable-1.51.2-x64.zip">portable ZIP</a>
-      </p>
-      <p class="download-note" id="win-smartscreen-note">
-        The Windows build is not code-signed, so SmartScreen shows
-        &ldquo;Windows protected your PC&rdquo; the first time you run it.
-        Choose <b>Run anyway</b> &mdash; on some versions of Windows that
-        button is behind <b>More info</b> first. This is a way to override
-        the warning, not a sign the file is trusted, so only do it for a
-        download from this page.
-      </p>
-      <p class="download-note" id="win-defender-note">
-        On some machines Microsoft Defender goes further than a warning and
-        quarantines the files, naming
-        <b>Trojan:Script/Wacatac.C!ml</b>. The <b>!ml</b> ending means
-        Defender&rsquo;s machine-learning model guessed rather than matched a
-        known threat, and a new unsigned program is exactly what it guesses
-        about. To get the files back, open <b>Windows Security</b> &rarr;
-        <b>Protection history</b>, find the Ghoztty item and choose
-        <b>Restore</b>, then run the installer again. Every Windows build is
-        compiled in the open by GitHub Actions from
-        <a href="https://github.com/dzearing/ghoztty/actions/workflows/release-windows.yml">this
-        repository&rsquo;s release workflow</a>, so you can check where your
-        download came from before you do.
-      </p>
-    </div>
-  </section>
-
-  <!-- Footer -->
   <footer>
     <div class="footer-inner">
       <div class="footer-brand">
-        <img src="landing/icon.png" alt="Ghoztty" class="logo-icon small" />
+        <img src="landing/icon-256.webp" alt="" class="logo-icon small" width="22" height="22" />
         <span>Ghoztty</span>
       </div>
       <div class="footer-links">
@@ -321,7 +470,7 @@ ghoztty +split --target=ide --name=logs \
         <a href="https://github.com/dzearing/ghoztty/issues" target="_blank" rel="noopener">Issues</a>
         <a href="https://github.com/ghostty-org/ghostty" target="_blank" rel="noopener">Ghostty</a>
       </div>
-      <p class="footer-copy">Built by <a href="https://github.com/dzearing" target="_blank" rel="noopener">dzearing</a></p>
+      <p class="footer-copy">Built on <a href="https://ghostty.org" target="_blank" rel="noopener">Ghostty</a> by <a href="https://github.com/dzearing" target="_blank" rel="noopener">dzearing</a></p>
     </div>
   </footer>
 
