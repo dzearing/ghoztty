@@ -405,7 +405,7 @@ footer { border-top: 1px solid var(--line); }
    reflection, the caption and the dots all fit on screen below the hero. */
 .showcase {
   --w: min(860px, calc((100svh - 500px) * 1.6), calc(100vw - 150px));
-  margin: 20px 0 0; overflow: hidden;
+  margin: 20px 0 0; padding-bottom: 8px; overflow: hidden;
 }
 .showcase-stage { position: relative; }
 
@@ -413,7 +413,7 @@ footer { border-top: 1px solid var(--line); }
    turn away to either side. main.js places each slide as the row glides. */
 .showcase-track {
   position: relative; height: calc(var(--w) / 1.6 + 58px);
-  perspective: 1400px; outline: none; touch-action: pan-y; cursor: grab;
+  perspective: 1400px; touch-action: pan-y; cursor: grab;
   user-select: none; -webkit-user-select: none;
 }
 .showcase-track.dragging { cursor: grabbing; }
@@ -461,12 +461,18 @@ footer { border-top: 1px solid var(--line); }
 .nav-btn[data-prev] { left: calc(50% - var(--w) / 2 - 58px); }
 .nav-btn[data-next] { left: calc(50% + var(--w) / 2 + 18px); }
 .nav-btn:hover { border-color: var(--accent); color: var(--accent); }
-.dots { display: flex; justify-content: center; gap: 8px; margin-top: 10px; }
+.showcase-track:focus-visible { outline-offset: 6px; border-radius: 12px; }
+/* Each dot has a fixed slot, so the active bar grows inside its own slot
+   and the other dots never move. */
+.dots { display: flex; justify-content: center; margin-top: 6px; }
 .dots button {
-  width: 8px; height: 8px; padding: 0; border-radius: 999px; border: 0; cursor: pointer;
-  background: var(--line-strong); transition: width 0.25s ease, background 0.25s ease;
+  position: relative; width: 22px; height: 24px; padding: 0; border: 0; background: none; cursor: pointer;
 }
-.dots button[aria-selected="true"] { width: 26px; background: var(--accent); }
+.dots button::before {
+  content: ""; position: absolute; top: 8px; left: 7px; width: 8px; height: 8px; border-radius: 999px;
+  background: var(--line-strong); transition: left 0.25s ease, width 0.25s ease, background 0.25s ease;
+}
+.dots button[aria-current="true"]::before { left: 1px; width: 20px; background: var(--accent); }
 
 @media (max-width: 760px) {
   .showcase { --w: calc(100vw - 64px); }

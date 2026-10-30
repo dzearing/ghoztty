@@ -34,8 +34,9 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
   const dotButtons = slides.map((slide, i) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.setAttribute("role", "tab");
-    b.setAttribute("aria-label", slide.querySelector("strong").textContent);
+    // WebKit leaves buttons out of Tab order unless they ask to be in it.
+    b.tabIndex = 0;
+    b.setAttribute("aria-label", `${i + 1} of ${count}: ${slide.querySelector("strong").textContent}`);
     b.addEventListener("click", () => { stop(); glideTo(i); });
     dots.appendChild(b);
     return b;
@@ -80,7 +81,7 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
       const v = s.querySelector(".slide-media video");
       if (v) k === i && !reduceMotion ? v.play().catch(() => {}) : v.pause();
     });
-    dotButtons.forEach((b, k) => b.setAttribute("aria-selected", String(k === i)));
+    dotButtons.forEach((b, k) => k === i ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current"));
     caption.classList.add("fading");
     clearTimeout(caption.swap);
     caption.swap = setTimeout(() => {
