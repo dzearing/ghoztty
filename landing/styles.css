@@ -420,7 +420,6 @@ footer { border-top: 1px solid var(--line); }
   display: block; color: var(--text); font-size: clamp(20px, 2.6vw, 28px);
   letter-spacing: -0.02em; margin-bottom: 2px;
 }
-.showcase-controls { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 22px; }
 .nav-btn {
   width: 40px; height: 40px; border-radius: 50%; cursor: pointer; font-size: 18px;
   color: var(--text); background: var(--bg-card); border: 1px solid var(--line-strong);
@@ -432,7 +431,6 @@ footer { border-top: 1px solid var(--line); }
   background: var(--line-strong); transition: width 0.25s ease, background 0.25s ease;
 }
 .dots button[aria-selected="true"] { width: 26px; background: var(--accent); }
-.extras { margin-top: 28px; text-align: center; color: var(--text-3); font-size: 14.5px; }
 .download { padding-top: 80px; }
 @media (max-width: 760px) {
   .slide-media { aspect-ratio: 4 / 3; border-radius: 16px; }
@@ -451,7 +449,30 @@ footer { border-top: 1px solid var(--line); }
 .slide figcaption strong { font-size: clamp(18px, 2vw, 22px); }
 .slide figcaption { font-size: 15px; }
 .slide { gap: 12px; }
-.showcase-controls { margin-top: 14px; }
 @media (max-width: 760px) { .slide-media { height: auto; aspect-ratio: 4 / 3; } }
 .showcase { max-width: min(920px, calc(58vh * 1.6 + 48px)); }
 .slide-media { height: auto; aspect-ratio: 16 / 10; padding: clamp(10px, 2.2vw, 26px); }
+
+/* Arrows sit beside the screenshot, and the whole carousel (image, caption,
+   dots) is sized to fit the screen below the hero. */
+.hero-copy { max-width: 1040px; }
+.hero { padding-top: 36px; }
+.showcase { max-width: min(1080px, calc((100svh - 495px) * 1.6 + 164px)); margin-top: 16px; }
+.showcase-stage { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 18px; }
+.showcase-stage .nav-btn { align-self: center; transform: translateY(-36px); }
+.dots { justify-content: center; margin-top: 14px; }
+@media (max-width: 760px) {
+  .showcase-stage { grid-template-columns: minmax(0, 1fr); }
+  .showcase-stage .nav-btn { display: none; }
+}
+
+/* An Apple-style reflection under each screenshot: a flipped copy of the
+   frame (built by main.js), clipped to a short strip and faded out. */
+.reflection {
+  height: 44px; margin-top: -6px; overflow: hidden; pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 90%);
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 90%);
+}
+.reflection > .slide-media { transform: scaleY(-1); }
+.slide figcaption { margin-top: 0; }
+.showcase-stage .nav-btn { transform: translateY(-62px); }

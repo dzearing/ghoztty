@@ -49,6 +49,8 @@
 
     <!-- Carousel -->
     <section class="showcase" aria-roledescription="carousel" aria-label="What Ghoztty can do" data-carousel>
+      <div class="showcase-stage">
+      <button type="button" class="nav-btn" data-prev aria-label="Previous">&#8592;</button>
       <div class="showcase-track" tabindex="0">
         <figure class="slide">
           <div class="slide-media"><img src="landing/shots/hero.webp" width="2400" height="1470" fetchpriority="high" alt="Claude Code with its plan and branch diff open beside it, and a sidebar of every window." /></div>
@@ -91,12 +93,9 @@
           <figcaption><strong>Links back to any pane</strong>Agent reports link straight to the window that needs you.</figcaption>
         </figure>
       </div>
-      <div class="showcase-controls">
-        <button type="button" class="nav-btn" data-prev aria-label="Previous">&#8592;</button>
-        <div class="dots" role="tablist" aria-label="Slides"></div>
-        <button type="button" class="nav-btn" data-next aria-label="Next">&#8594;</button>
+      <button type="button" class="nav-btn" data-next aria-label="Next">&#8594;</button>
       </div>
-      <p class="extras">Also: sessions survive restarts &middot; terminals on your other machines &middot; everything Ghostty does</p>
+      <div class="dots" role="tablist" aria-label="Slides"></div>
     </section>
 
     <!-- Download -->

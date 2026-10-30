@@ -8,6 +8,27 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
   let index = 0;
   let timer = null;
 
+  // A flipped copy of each frame makes the reflection under it. A video's
+  // reflection shows its poster; the motion is too small to notice there.
+  slides.forEach((slide) => {
+    const media = slide.querySelector(".slide-media");
+    const copy = media.cloneNode(true);
+    copy.querySelectorAll("img").forEach((img) => { img.alt = ""; img.removeAttribute("fetchpriority"); });
+    copy.querySelectorAll("video").forEach((video) => {
+      const poster = document.createElement("img");
+      poster.src = video.poster;
+      poster.alt = "";
+      poster.width = video.width;
+      poster.height = video.height;
+      video.replaceWith(poster);
+    });
+    const reflection = document.createElement("div");
+    reflection.className = "reflection";
+    reflection.setAttribute("aria-hidden", "true");
+    reflection.appendChild(copy);
+    media.after(reflection);
+  });
+
   const dotButtons = slides.map((slide, i) => {
     const b = document.createElement("button");
     b.type = "button";
