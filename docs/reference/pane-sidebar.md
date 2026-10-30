@@ -322,6 +322,42 @@ shows the same view of it (see *Shared across windows*). Read before touching
   above the groups, and a window let go at the top level below a group
   lands at the end of the lone windows (`PaneSidebarItemReorder.banded`,
   `PaneSidebarCrossDrop.banded`).
+- **An Ungrouped header over the lone windows whenever there is a group**
+  (`PaneSidebarWindowGrouping.headsUngrouped`; `PaneSidebarProjectHeader`
+  with no project): the same sticky 32pt band, count and tools as a group's,
+  captioned "Ungrouped" (tried unlabeled: a blank band read as a group with no
+  name). With no group — or no lone window — the list stays flat, no header,
+  as before. It is **pinned on top, never dragged** (a click folds it; it is
+  not in `windowOrder`), and its windows still reorder as lone windows do,
+  among the top level. It folds like a group, apart from the group folds
+  (`PaneSidebarSharedState.isUngroupedFolded`, shared, not persisted); a group
+  drag leaves it as it is. Its **+** opens a new ungrouped window (as a group's
+  +, from its first window as listed, untitled); its **×** closes its windows
+  as a group's × does; its **pencil** names them as a group: an empty field
+  (placeholder "Group name") retitles each `<name>: <title>`, pinned, and the
+  new group stands where they were, first among the groups — named as an
+  existing group they join it, ahead of its windows
+  (`PaneSidebarWindowGrouping.renaming(ungroupedTo:in:)`,
+  `groupUngroupedFromSidebar`). Not in the rail, and not in this window's
+  own Panes list. Captures: `PaneSidebarSyncWindowTests.ungroupedHeaderCaptures`.
+- **A window row's right-click menu** (`PaneSidebarView.windowMenu`, through
+  `paneSidebarItemDrag(menu:)` → `PaneSidebarItemDragView.menu(for:)`; in
+  either list):
+  - **Create Group…** turns the row's name into an empty field (placeholder
+    "Group name"; `PaneSidebarRename.key(groupFor:)`), in place as a rename
+    is. Return makes the window `<group>: <name>` — into that group, new or
+    existing; Escape or nothing typed changes nothing.
+  - **Move to Group ▸** every other group, as listed (only when there is
+    one; `PaneSidebarWindowGrouping.groups(movingTo:in:)`).
+  - **Remove from Group** (grouped windows only): back to its own name.
+  Each keeps the window's own name (`PaneSidebarWindowGrouping.title(_:inGroup:)`;
+  a group name that couldn't read back — empty, over 40 characters, its own
+  `: ` — changes nothing), is the user's title (`windowTitleIsUsers`, so no
+  script renames over it), and moves it as a rename would
+  (`moveToGroupFromSidebar` → `renameWindowKeepingPlace`): a new group where
+  the window was, into an existing group at the edge nearest it, out of one
+  to the end of the ungrouped windows. Test:
+  `PaneSidebarSyncWindowTests.groupsFromTheSidebar`.
 - **Every row is one height**: a pane row (and a rail tile) is a window row's
   height (`PaneSidebarRow.height` = `PaneSidebarWindowHeader.height`, 32pt
   with its gap).
@@ -355,10 +391,11 @@ shows the same view of it (see *Shared across windows*). Read before touching
   left it there (`aNewWindowDoesNotPutTheCaretInTheSearch`).
 - Switching scopes slides the lists past each other (this window on the left,
   all windows on the right).
-- Hovering a **window** row or a **project** header puts + and × where its
-  count was (+ adds — see *Adding from the sidebar*). A window's × closes that window (that tab, in a tab
-  group); a project's closes every window under it — while searching, the
-  matching windows it shows and counts.
+- Hovering a **window** row, a **project** header or the **Ungrouped**
+  header puts + and × where its count was (+ adds — see *Adding from the
+  sidebar*). A window's × closes that window (that tab, in a tab
+  group); a project's (or Ungrouped's) closes every window under it — while
+  searching, the matching windows it shows and counts.
 
 ## Reordering windows and groups
 
@@ -437,9 +474,14 @@ shows the same view of it (see *Shared across windows*). Read before touching
     one never moved it. Tests: `PaneSidebarWindowOrderTests.renaming*`,
     `PaneSidebarSyncWindowTests.renamingInTheSidebarKeepsTheOrder` (the real
     fields, two windows' lists).
-  - A window's field holds its whole title, `<project>: ` included, so
-    typing `a: foo` moves it to group `a` as `foo`; empty goes back to
-    following the window's own title. Any window rename redraws every
+  - **A grouped window's field holds its own name alone** — not its
+    `<project>: ` — and keeps the prefix on commit, so retyping or clearing
+    it can't ungroup the window by accident (`PaneSidebarWindowGrouping.renamed`):
+    empty changes nothing, and a `: ` typed in stays part of the name.
+    Leaving a group is an explicit action: Remove from Group, or a drag out.
+    An ungrouped window's field holds its whole title, so typing `a: foo`
+    still moves it to group `a` as `foo`, and empty goes back to following
+    the window's own title. Any window rename redraws every
     sidebar (`windowTitleOverride` → `PaneRoster.changed`).
   - A group's field holds its name: each of its windows is retitled
     `<new>: <name>`; empty ungroups them (`renameGroupFromSidebar`).
@@ -497,7 +539,7 @@ shows the same view of it (see *Shared across windows*). Read before touching
 
 ## Adding from the sidebar
 
-Three + buttons, each a MANUAL surface: they focus as Cmd-N / Cmd-D do (the
+Four + buttons, each a MANUAL surface: they focus as Cmd-N / Cmd-D do (the
 CLI's background-by-default `IPCFocusPolicy` does not apply). The row and
 header ones are `PaneSidebarItemButton`s beside the × (+ then ×, where the
 count was, on hover); a click on one never starts a row drag or raises the
@@ -516,6 +558,9 @@ row's window through its tap.
   of `<project>: new` — or the first free `new-2`, `new-3`, … checked against
   every window's title at click time (`PaneSidebarNewWindowName`) — so it
   lands in the group. `newWindowInGroupFromSidebar`.
+- **Ungrouped header +**: a new window opened the same way from the
+  Ungrouped header's first window, untitled, so it lands among the ungrouped
+  windows.
 - **Window row +**: raises that window and splits its focused pane in the
   **last direction split by hand**, app-wide (`PaneSplitMemory`, default
   right; not persisted). A split by hand is any that comes back from the core

@@ -48,6 +48,7 @@ struct PaneSidebarSyncWindowTests {
         shared.width = 260
         shared.windowOrder = []
         shared.foldedProjects = []
+        shared.isUngroupedFolded = false
         shared.showsAllWindows = false
         _ = await poll(timeout: 10) { controllers.allSatisfy { $0.window?.isVisible == true } }
         for c in controllers { c.window?.setContentSize(size) }
@@ -419,10 +420,15 @@ struct PaneSidebarSyncWindowTests {
             #expect(shown(viewer) == ["alpha", "beta", "delta", "aaa", "[proj]", "  one", "  two"])
         }
 
-        // A grouped window renamed within its group.
+        // A grouped window renamed within its group: the field holds its
+        // name alone, and the group stays.
         let two = windows[5]
-        try await renameInSidebar(PaneSidebarWindowGrouping.key(window: two.paneSidebarState.windowID), to: "proj: a", in: a)
+        try await renameInSidebar(PaneSidebarWindowGrouping.key(window: two.paneSidebarState.windowID), to: "a", in: a)
+        #expect(two.windowTitleOverride == "proj: a")
         #expect(shown(a) == ["alpha", "beta", "delta", "aaa", "[proj]", "  one", "  a"])
+        // Emptied, it stays as it was: never an accidental ungroup.
+        try await renameInSidebar(PaneSidebarWindowGrouping.key(window: two.paneSidebarState.windowID), to: "", in: a)
+        #expect(two.windowTitleOverride == "proj: a")
 
         // The group → "aa", which by name would go first.
         try await renameInSidebar(PaneSidebarWindowGrouping.key(project: "proj"), to: "aa", in: a)
@@ -443,6 +449,88 @@ struct PaneSidebarSyncWindowTests {
         try await renameInSidebar(PaneSidebarRename.key(pane: second.id), to: "aaa", in: a)
         #expect(surface.title == "aaa")
         #expect(a.paneSidebarPanes.map(\.id) == panes, "a pane's rename moves nothing")
+        await close(windows, restoring: saved)
+    }
+
+    /// Groups made and changed from the sidebar, through the real fields
+    /// and menu: Create Group… names a group in place (pinned as the
+    /// user's), Move to Group and Remove from Group retitle keeping the
+    /// window's name, and the Ungrouped header — on top, only beside a group
+    /// — names its windows as a group. Every window's list agrees.
+    @Test func groupsFromTheSidebar() async throws {
+        let saved = save()
+        let windows = try await open(["alpha", "beta", "gamma"])
+        let a = windows[0], other = windows[2]
+        a.paneSidebarState.showsAllWindows = true
+        await settle(0.8)
+        let key = { (c: TerminalController) in PaneSidebarWindowGrouping.key(window: c.paneSidebarState.windowID) }
+        #expect(shown(a) == ["alpha", "beta", "gamma"])
+        #expect(!PaneSidebarWindowGrouping.headsUngrouped(a.paneSidebarSections), "no group, no header")
+
+        // Each window row right-clicks to the window menu.
+        let host = try #require(a.paneSidebarHost)
+        let click = try #require(NSEvent.mouseEvent(
+            with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let rowMenus = all(PaneSidebarItemDragView.self, in: host).compactMap { $0.menu(for: click) }
+        #expect(rowMenus.count == 3)
+        #expect(rowMenus.allSatisfy { $0.items.first?.title == "Create Group…" })
+
+        // Create Group… on beta: its menu, then its name typed in place.
+        let menu = PaneSidebarView.windowMenu(windows[1])
+        #expect(menu.items.map(\.title) == ["Create Group…"], "no group to move to, none to leave")
+        _ = menu.performActionForItem(at: 0)
+        #expect(PaneSidebarRename.shared.editing == PaneSidebarRename.key(groupFor: key(windows[1])))
+        try await renameInSidebar(PaneSidebarRename.key(groupFor: key(windows[1])), to: "proj", in: a)
+        #expect(windows[1].windowTitleOverride == "proj: beta")
+        #expect(windows[1].windowTitleIsUsers, "a user's title: no script renames over it")
+        for viewer in [a, other] {
+            #expect(shown(viewer) == ["alpha", "gamma", "[proj]", "  beta"])
+            #expect(PaneSidebarWindowGrouping.headsUngrouped(viewer.paneSidebarSections))
+        }
+
+        // Move to Group on gamma, then Remove from Group.
+        let gammaMenu = PaneSidebarView.windowMenu(windows[2])
+        #expect(gammaMenu.items.map(\.title) == ["Create Group…", "Move to Group"])
+        let move = try #require(gammaMenu.items[1].submenu)
+        #expect(move.items.map(\.title) == ["proj"])
+        _ = move.performActionForItem(at: 0)
+        await settle(0.3)
+        #expect(windows[2].windowTitleOverride == "proj: gamma")
+        #expect(shown(a) == ["alpha", "[proj]", "  gamma", "  beta"])
+        let removeMenu = PaneSidebarView.windowMenu(windows[2])
+        #expect(removeMenu.items.map(\.title) == ["Create Group…", "Remove from Group"])
+        _ = removeMenu.performActionForItem(at: 1)
+        await settle(0.3)
+        #expect(windows[2].windowTitleOverride == "gamma")
+        #expect(shown(a) == ["alpha", "gamma", "[proj]", "  beta"])
+
+        // The Ungrouped header named: its windows become that group.
+        try await renameInSidebar(PaneSidebarRename.ungroupedKey, to: "misc", in: a)
+        #expect(windows[0].windowTitleOverride == "misc: alpha")
+        #expect(windows[2].windowTitleOverride == "misc: gamma")
+        for viewer in [a, other] {
+            #expect(shown(viewer) == ["[misc]", "  alpha", "  gamma", "[proj]", "  beta"])
+            #expect(!PaneSidebarWindowGrouping.headsUngrouped(viewer.paneSidebarSections), "nothing left ungrouped")
+        }
+        await close(windows, restoring: saved)
+    }
+
+    /// The Ungrouped header by eye, open and folded:
+    /// `/tmp/pane-sidebar-snapshots/reorder-ungrouped-*.png`.
+    @Test func ungroupedHeaderCaptures() async throws {
+        let saved = save()
+        let windows = try await open(["Notes", "Build", "alpha: one", "alpha: two", "beta: main"],
+                                     size: NSSize(width: 900, height: 620))
+        let a = windows[0]
+        let window = try #require(a.window)
+        a.paneSidebarState.showsAllWindows = true
+        await settle(0.8)
+        try await capture(window, "ungrouped-open")
+        a.paneSidebarState.isUngroupedFolded = true
+        await settle(0.6)
+        try await capture(window, "ungrouped-folded")
+        a.paneSidebarState.isUngroupedFolded = false
         await close(windows, restoring: saved)
     }
 

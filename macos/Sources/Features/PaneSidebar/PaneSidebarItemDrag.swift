@@ -636,8 +636,14 @@ final class PaneSidebarItemDragView: HoverTrackingView {
     var onBegin: ((CGFloat) -> Void)?
     var onMove: ((CGFloat) -> Void)?
     var onEnd: ((Bool) -> Void)?
+    /// Its right-click menu, built as it opens; nil for none.
+    var menuProvider: (() -> NSMenu?)?
 
     private var downLocation: NSPoint?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        menuProvider?() ?? super.menu(for: event)
+    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -706,6 +712,7 @@ struct PaneSidebarItemDragSource: NSViewRepresentable {
     let siblings: [String]
     let controller: BaseTerminalController
     let help: String
+    var menu: (() -> NSMenu?)?
     let onClick: () -> Void
 
     func makeNSView(context: Context) -> PaneSidebarItemDragView {
@@ -722,6 +729,7 @@ struct PaneSidebarItemDragSource: NSViewRepresentable {
         let (key, siblings, controller) = (key, siblings, controller)
         view.toolTip = help
         view.onClick = onClick
+        view.menuProvider = menu
         view.onBegin = { y in
             PaneSidebarItemDrag.shared.begin(key, siblings: siblings, in: controller, screenY: y)
         }
@@ -733,7 +741,7 @@ struct PaneSidebarItemDragSource: NSViewRepresentable {
 extension View {
     /// Makes a window row or project header clickable and draggable
     /// everywhere but its leading `leading` and trailing `trailing` points,
-    /// where its own controls are.
+    /// where its own controls are. `menu` builds its right-click menu.
     func paneSidebarItemDrag(
         key: String,
         siblings: [String],
@@ -741,11 +749,12 @@ extension View {
         leading: CGFloat,
         trailing: CGFloat,
         help: String,
+        menu: (() -> NSMenu?)? = nil,
         onClick: @escaping () -> Void
     ) -> some View {
         modifier(PaneSidebarItemDragOverlay(
             key: key, siblings: siblings, controller: controller,
-            leading: leading, trailing: trailing, help: help, onClick: onClick))
+            leading: leading, trailing: trailing, help: help, menu: menu, onClick: onClick))
     }
 }
 
@@ -756,6 +765,7 @@ private struct PaneSidebarItemDragOverlay: ViewModifier {
     let leading: CGFloat
     let trailing: CGFloat
     let help: String
+    let menu: (() -> NSMenu?)?
     let onClick: () -> Void
 
     @Environment(\.paneSidebarInteractive) private var isInteractive
@@ -763,12 +773,14 @@ private struct PaneSidebarItemDragOverlay: ViewModifier {
 
     func body(content: Content) -> some View {
         content.overlay {
-            // Renamed in place: the field takes the clicks.
-            if isInteractive && rename.editing != key {
+            // Renamed in place (or named into a new group): the field takes
+            // the clicks.
+            if isInteractive && !rename.isEditing(key) {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: leading).allowsHitTesting(false)
                     PaneSidebarItemDragSource(
-                        key: key, siblings: siblings, controller: controller, help: help, onClick: onClick)
+                        key: key, siblings: siblings, controller: controller, help: help, menu: menu,
+                        onClick: onClick)
                     Color.clear.frame(width: trailing).allowsHitTesting(false)
                 }
             }
