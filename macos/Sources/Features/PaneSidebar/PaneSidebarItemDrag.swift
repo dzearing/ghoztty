@@ -107,22 +107,22 @@ enum PaneSidebarCrossDrop {
     }
 
     /// Where it lands at slot `slot` of `rows` — the list without it, closed
-    /// up where it left — with its top at `top`. Right under a header, or
-    /// between two of a group's windows, it joins that group. Just after a
-    /// group's last window (or a folded group's header) it could be either:
-    /// held in the upper half of that slot it joins the group's end, in the
-    /// lower half it lands after the group, at the top level.
-    static func destination(rows: [Row], slot: Int, top: CGFloat) -> Destination {
+    /// up where it left. Right under a header, between two of a group's
+    /// windows, or past a group's end (its last window, or a folded group's
+    /// header) it is in that group: the ungrouped windows lead the list
+    /// (`PaneSidebarWindowGrouping.lonesFirst`), so a top-level slot after a
+    /// group could only land up among them — a jump nobody dragged to. (It
+    /// was split at the slot's middle, lower half out of the group: a
+    /// group's last window grabbed starts in that lower half, and wanted
+    /// out at once.) Out of a group is up among the ungrouped windows, or
+    /// above the first group when there are none.
+    static func destination(rows: [Row], slot: Int) -> Destination {
         let slot = Swift.min(Swift.max(slot, 0), rows.count)
         let before = rows[..<slot]
-        let topLevel = Destination.topLevel(index: before.filter { $0.isHeader || $0.project == nil }.count)
-        guard let prev = before.last, let project = prev.project else { return topLevel }
-        let join = Destination.group(project, index: before.filter { !$0.isHeader && $0.project == project }.count)
-        let next = slot < rows.count ? rows[slot] : nil
-        if let next, !next.isHeader, next.project == project { return join }
-        // The slot runs from that last row's top to its bottom (and the
-        // list's end clamps it there): split at its middle.
-        return top < prev.frame.midY ? join : topLevel
+        guard let prev = before.last, let project = prev.project else {
+            return .topLevel(index: before.filter { $0.isHeader || $0.project == nil }.count)
+        }
+        return .group(project, index: before.filter { !$0.isHeader && $0.project == project }.count)
     }
 
     /// `destination` at `slot`, kept out of the groups' band: a window let
@@ -434,7 +434,7 @@ final class PaneSidebarItemDrag: ObservableObject {
         let middle = top + frame.height / 2
         let pointed = others.filter { $0.frame.midY < middle }.count
         let (destination, slot) = PaneSidebarCrossDrop.banded(
-            PaneSidebarCrossDrop.destination(rows: others, slot: pointed, top: top), slot: pointed, rows: others)
+            PaneSidebarCrossDrop.destination(rows: others, slot: pointed), slot: pointed, rows: others)
         if slot != target { target = slot }
         if destination != self.destination { self.destination = destination }
         // Joining a group it is not in already: its header says so.

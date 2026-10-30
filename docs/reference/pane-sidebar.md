@@ -319,8 +319,8 @@ shows the same view of it (see *Shared across windows*). Read before touching
   groups read as one of the windows of the group above it, and stayed when
   that group folded (`ungroupedWindowsComeBeforeEveryGroup`). A drag keeps
   each on its side: a group stops below the lone windows, a lone window
-  above the groups, and a window let go at the top level below a group
-  lands at the end of the lone windows (`PaneSidebarItemReorder.banded`,
+  above the groups, and a window is out of a group only up among the lone
+  windows (`PaneSidebarItemReorder.banded`,
   `PaneSidebarCrossDrop.banded`).
 - **An Ungrouped header over the lone windows whenever there is a group**
   (`PaneSidebarWindowGrouping.headsUngrouped`; `PaneSidebarProjectHeader`
@@ -438,9 +438,14 @@ shows the same view of it (see *Shared across windows*). Read before touching
   lone windows (`PaneSidebarCrossDrop`) — and every row slides on its own: a
   group's windows report frames and slide under `<group>#windows`
   (`PaneSidebarItemDrag.windowsSuffix`), apart from its header; a group drag
-  still moves the two as one. Right under a header or between a group's
-  windows it joins that group; just past a group's last row, the upper half
-  of the slot joins it and the lower half lands after it, at the top level.
+  still moves the two as one. Right under a header, between a group's
+  windows, or anywhere past a group's last row (or a folded group's header)
+  it is in that group; it leaves a group only when dragged up among the
+  ungrouped windows (above the first group, when there are none). A
+  top-level slot after a group could only land up among the ungrouped
+  windows, a jump nobody dragged to — that slot was once split at its
+  middle, and a group's last window, grabbed, started in its lower half and
+  wanted out at once (`PaneSidebarCrossDropTests.pastAGroupsEndItStaysInThatGroup`).
   Joining a group it is not in outlines that group's header
   (`PaneSidebarJoinHighlight`). Dropped in another group it is renamed
   `<project>: <name>`, dropped out of one just `<name>` — pinned, as Change

@@ -578,17 +578,37 @@ struct PaneSidebarSyncWindowTests {
             #expect(!viewer.paneSidebarSections.contains { $0.project == "beta" }, "beta is gone")
         }
 
-        // `one` out, past the end of the list: ungrouped windows lead it,
-        // so it lands after `solo`, above alpha.
+        // The report: `two`, alpha's last window, grabbed — and dragged past
+        // the list's end — stays in alpha; it never wants out on its own.
+        let two = key(windows[1])
+        drag.begin(two, siblings: [two], in: a, screenY: 0)
+        await settle(0.4)
+        let twoY = try screenY(of: two, in: a)
+        let end = try screenY(of: two, in: a, fraction: 1.4)
+        drag.end(commit: false)
+        await settle(0.5)
+        drag.begin(two, siblings: [two], in: a, screenY: twoY)
+        await settle(0.4)
+        drag.move(screenY: twoY + 1)
+        await settle(0.4)
+        #expect(drag.destination == .group("alpha", index: 2), "grabbed: \(String(describing: drag.destination))")
+        drag.move(screenY: end)
+        await settle(0.4)
+        #expect(drag.destination == .group("alpha", index: 2), "past the end: \(String(describing: drag.destination))")
+        drag.end(commit: false)
+        await settle(0.6)
+        #expect(windows[1].windowTitleOverride == "alpha: two")
+
+        // `one` out: up among the ungrouped windows, after `solo`.
         drag.begin(one, siblings: [one], in: a, screenY: 0)
         await settle(0.4)
         let oneY = try screenY(of: one, in: a)
-        let end = try screenY(of: key(windows[1]), in: a, fraction: 1.4)
+        let soloBottom = try screenY(of: key(other), in: a, fraction: 1)
         drag.end(commit: false)
         await settle(0.5)
         drag.begin(one, siblings: [one], in: a, screenY: oneY)
         await settle(0.4)
-        drag.move(screenY: end)
+        drag.move(screenY: soloBottom)
         await settle(0.4)
         #expect(drag.destination == .topLevel(index: 1), "\(String(describing: drag.destination))")
         drag.end(commit: true)

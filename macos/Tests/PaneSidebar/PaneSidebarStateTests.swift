@@ -1011,21 +1011,20 @@ struct PaneSidebarCrossDropTests {
     }()
 
     @Test func underAHeaderOrBetweenItsWindowsItJoinsTheGroup() {
-        #expect(C.destination(rows: rows, slot: 0, top: 0) == .topLevel(index: 0))
-        #expect(C.destination(rows: rows, slot: 2, top: 64) == .group("p", index: 0))
-        #expect(C.destination(rows: rows, slot: 3, top: 96) == .group("p", index: 1))
+        #expect(C.destination(rows: rows, slot: 0) == .topLevel(index: 0))
+        #expect(C.destination(rows: rows, slot: 2) == .group("p", index: 0))
+        #expect(C.destination(rows: rows, slot: 3) == .group("p", index: 1))
         // Between two lone items: the top level.
-        #expect(C.destination(rows: rows, slot: 1, top: 32) == .topLevel(index: 1))
+        #expect(C.destination(rows: rows, slot: 1) == .topLevel(index: 1))
     }
 
-    @Test func pastAGroupsLastWindowTheSlotIsSplitInHalf() {
-        // After `p2` (96…128), before `b` (128): upper half joins `p`'s end,
-        // lower half lands after the group, at the top level.
-        #expect(C.destination(rows: rows, slot: 4, top: 100) == .group("p", index: 2))
-        #expect(C.destination(rows: rows, slot: 4, top: 120) == .topLevel(index: 2))
+    @Test func pastAGroupsLastWindowItIsStillInTheGroup() {
+        // After `p2` (96…128), before `b` (128): either half, `p`'s end.
+        #expect(C.destination(rows: rows, slot: 4) == .group("p", index: 2))
+        #expect(C.destination(rows: rows, slot: 4) == .group("p", index: 2))
         // Past a folded group's header, at the end of the list: the same.
-        #expect(C.destination(rows: rows, slot: 6, top: 165) == .group("q", index: 0))
-        #expect(C.destination(rows: rows, slot: 6, top: 190) == .topLevel(index: 4))
+        #expect(C.destination(rows: rows, slot: 6) == .group("q", index: 0))
+        #expect(C.destination(rows: rows, slot: 6) == .group("q", index: 0))
     }
 
     /// Ungrouped windows lead the list: let go at the top level below a
@@ -1040,6 +1039,35 @@ struct PaneSidebarCrossDropTests {
         #expect(C.banded(.topLevel(index: 3), slot: 4, rows: rows) == (.topLevel(index: 2), 2))
         #expect(C.banded(.topLevel(index: 1), slot: 1, rows: rows) == (.topLevel(index: 1), 1), "among them: as is")
         #expect(C.banded(.group("p", index: 1), slot: 4, rows: rows) == (.group("p", index: 1), 4), "joining: as is")
+    }
+
+    /// The report: a group's last window, grabbed, wanted out of its group
+    /// at once (its top starts in the lower half of the slot after the
+    /// window above it), and one dragged up over another group's end
+    /// opened a gap among the ungrouped windows on top. Past a group's end
+    /// is still that group: the ungrouped windows are reached only by
+    /// going up among them.
+    @Test func pastAGroupsEndItStaysInThatGroup() {
+        // lone `a`, `b`, then `[p]` with `p1` (`p2` dragged), then `[q]` with `q1`.
+        let items: [(String, String?, Bool)] = [
+            ("window:a", nil, false), ("window:b", nil, false),
+            ("project:p", "p", true), ("window:p1", "p", false),
+            ("project:q", "q", true), ("window:q1", "q", false),
+        ]
+        let rows = items.enumerated().map { index, item in
+            C.Row(key: item.0, project: item.1, isHeader: item.2,
+                  frame: CGRect(x: 0, y: CGFloat(index) * 32, width: 200, height: 32))
+        }
+        // `p2` where it was grabbed: its top at `p1`'s bottom.
+        let grabbed = C.destination(rows: rows, slot: 4)
+        #expect(grabbed == .group("p", index: 1))
+        #expect(C.banded(grabbed, slot: 4, rows: rows) == (.group("p", index: 1), 4))
+        // Lower still, before `[q]`'s header, and past the list's end.
+        #expect(C.destination(rows: rows, slot: 4) == .group("p", index: 1))
+        #expect(C.destination(rows: rows, slot: 6) == .group("q", index: 1))
+        // Up among the ungrouped windows: out of the group.
+        #expect(C.destination(rows: rows, slot: 2) == .topLevel(index: 2))
+        #expect(C.destination(rows: rows, slot: 0) == .topLevel(index: 0))
     }
 
     @Test func itsNameSaysWhichGroupItIsIn() {
