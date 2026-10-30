@@ -554,6 +554,7 @@ test {
     // Pure win32 pane-layer rule — whether a terminal pane window gets a
     // composition surface of its own (T2499), same no-OS-imports deal.
     _ = @import("win32/pane_layer.zig");
+    _ = @import("win32/trace_ring.zig");
 
     // Pure win32 surface-window routing — which of a Surface's three windows a
     // message arrived for, and what a WM_DESTROY on it may clear (T613), same

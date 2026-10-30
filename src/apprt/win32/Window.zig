@@ -162,6 +162,7 @@ const pane_stack_layout = @import("pane_stack_layout.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
 const pane_stack_slide = @import("pane_stack_slide.zig");
 const strip_face = @import("strip_face.zig");
+const trace_ring = @import("trace_ring.zig");
 const drag_hold = @import("drag_hold.zig");
 const StripFace = @import("StripFace.zig").StripFace;
 const pane_stack_state = @import("pane_stack_state.zig");
@@ -7742,19 +7743,24 @@ pub fn layoutSplits(self: *Window) void {
     if (stackTraceOn()) {
         var batch_t1: i64 = 0;
         _ = w32.QueryPerformanceCounter(&batch_t1);
-        log.info("stack trace batch qpc={d} end={d} plan={d} grid={d}", .{ batch_t0, batch_t1, plan_t0, plan_t1 });
+        stackTrace("stack trace batch qpc={d} end={d} plan={d} grid={d}", .{ batch_t0, batch_t1, plan_t0, plan_t1 });
     }
     // The regions first, when the desk fills what the panes left (T2516):
     // that paint clips to the children as they now stand, so the corners a
     // new cut gives back to the window are its to paint (`desk_paints_next`).
     const desk_fill = self.applied_pane_style == .elevated;
     if (desk_fill) self.cutCardRegions();
+    if (stackTraceOn()) {
+        var cut_t1: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&cut_t1);
+        stackTrace("stack trace cut qpc={d}", .{cut_t1});
+    }
     if (self.hwnd) |h| resizeTrace("cut-end", h);
     if (self.hwnd) |hwnd| self.clearVacatedPaneStrips(hwnd, old_panes[0..old_len]);
     if (stackTraceOn()) {
         var clear_t1: i64 = 0;
         _ = w32.QueryPerformanceCounter(&clear_t1);
-        log.info("stack trace cleared qpc={d}", .{clear_t1});
+        stackTrace("stack trace cleared qpc={d}", .{clear_t1});
     }
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
     if (!desk_fill) self.cutCardRegions();
@@ -8181,7 +8187,7 @@ fn retireStripFaces(self: *Window) void {
     if (stackTraceOn()) {
         var t: i64 = 0;
         _ = w32.QueryPerformanceCounter(&t);
-        log.info("stack trace faces retired after the desk paint n={d} qpc={d}", .{ n, t });
+        stackTrace("stack trace faces retired after the desk paint n={d} qpc={d}", .{ n, t });
     } else log.debug("stack strip faces retired after the desk paint n={d}", .{n});
 }
 
@@ -8334,10 +8340,23 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[0]);
     f.commit(pt.x, pt.y, alpha, region);
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[1]);
+    // Every face commit, where it stands against the pane window it carries
+    // (T2485 D17): set against a captured frame, it says whether a dark
+    // column at a fold's start is the face's, the pane's, or neither's.
+    if (stackTraceOn()) stackTrace("stack trace face hwnd={x} qpc={d} vis={f} at={f} pull={d} alpha={d} carried={} live={}", .{
+        @intFromPtr(h),
+        tq[1],
+        traceRect(vis),
+        traceRect(at),
+        view.fold_pull[0],
+        alpha,
+        carried != null,
+        live,
+    });
     // The trace's cost of a fold's first face (T2485 D10): its paint and the
     // commit, in microseconds.
     if (stackTraceOn() and carried != null and !face_was_up and f.shown) {
-        log.info("stack trace face first paint_us={d} commit_us={d} live={d}", .{
+        stackTrace("stack trace face first paint_us={d} commit_us={d} live={d}", .{
             @divTrunc(tq[0] - tb, 10), @divTrunc(tq[1] - tq[0], 10), @intFromBool(live),
         });
     }
@@ -8907,7 +8926,7 @@ fn winRect(r: pane_stack_grid.PxRect) w32.RECT {
 /// the branch `planStackSlide` took, each card's glide, and where `placeGrid`
 /// put each pane and why - so a frame capture can name what moved a pane.
 /// Read once and cached: it runs on every drag step.
-var stack_trace_state: ?bool = null;
+var stack_trace_state: ?trace_ring.Mode = null;
 var resize_trace_state: ?bool = null;
 
 /// `GHOZTTY_RESIZE_TRACE` (T2516): QPC stamps on a window resize's messages,
@@ -8937,11 +8956,40 @@ fn resizeTrace(comptime what: []const u8, hwnd: w32.HWND) void {
     log.info("resize trace " ++ what ++ " qpc={d} w={d}", .{ t, r.right - r.left });
 }
 
-fn stackTraceOn() bool {
+fn stackTraceMode() trace_ring.Mode {
     if (stack_trace_state) |v| return v;
-    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_STACK_TRACE");
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_STACK_TRACE") catch null;
+    defer if (raw) |r| std.heap.page_allocator.free(r);
+    const v = trace_ring.modeOf(raw);
     stack_trace_state = v;
     return v;
+}
+
+fn stackTraceOn() bool {
+    return stackTraceMode() != .off;
+}
+
+/// `GHOZTTY_STACK_TRACE=ring` (T2485 D17): the trace's lines, kept in memory
+/// while a drag runs and written out when it ends (`flushStackTrace`), so the
+/// trace no longer slows the glide it is recording. 16384 lines of 256 bytes,
+/// zeroed, so the pages stay untouched unless the knob is set.
+var stack_ring: trace_ring.Ring(16384, 256) = .{};
+
+fn stackTrace(comptime fmt: []const u8, args: anytype) void {
+    switch (stackTraceMode()) {
+        .off => {},
+        .log => log.info(fmt, args),
+        .ring => stack_ring.add(fmt, args),
+    }
+}
+
+/// Write out what the ring holds, oldest first, and empty it.
+fn flushStackTrace() void {
+    if (stackTraceMode() != .ring or stack_ring.count == 0) return;
+    log.info("stack trace ring lines={d} dropped={d}", .{ stack_ring.count, stack_ring.dropped });
+    var it = stack_ring.iterator();
+    while (it.next()) |line| log.info("{s}", .{line});
+    stack_ring.clear();
 }
 
 /// A rect for the stack trace: `left,top+wxh`, or `-` for none.
@@ -9023,7 +9071,7 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
                 }
             }
         }
-        if (stackTraceOn()) log.info("stack trace place hwnd={x} grid={f} tucked={} src={s} rect={f} card={f} shown={} carried={} opening={} snap={s} face={}", .{
+        if (stackTraceOn()) stackTrace("stack trace place hwnd={x} grid={f} tucked={} src={s} rect={f} card={f} shown={} carried={} opening={} snap={s} face={}", .{
             if (view.hwnd()) |h| @intFromPtr(h) else 0,
             traceRect(p.rect),
             p.is_tucked,
@@ -9163,10 +9211,10 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
 /// Log the glide a layout pass just planned or retargeted (`GHOZTTY_STACK_TRACE`):
 /// every card's from, drawn, target and whether it folds.
 fn traceStackPlan(self: *Window, why: []const u8, s: *const pane_stack_slide.Slide) void {
-    log.info("stack trace plan {s} cards={d} strips={d} resting={}", .{ why, s.len, s.strips_len, self.stack_slide_last == null });
+    stackTrace("stack trace plan {s} cards={d} strips={d} resting={}", .{ why, s.len, s.strips_len, self.stack_slide_last == null });
     for (s.items()) |c| {
         const view: *PaneView = @ptrFromInt(c.id);
-        log.info("stack trace card hwnd={x} from={f} drawn={f} to={f} strip={} into={}", .{
+        stackTrace("stack trace card hwnd={x} from={f} drawn={f} to={f} strip={} into={}", .{
             if (view.hwnd()) |h| @intFromPtr(h) else 0,
             traceRect(c.from),
             traceRect(c.drawn.round()),
@@ -9320,6 +9368,8 @@ fn restStackSlide(self: *Window) void {
 fn endStackSlide(self: *Window) void {
     self.restStackSlide();
     self.stack_slide = null;
+    // The ring's lines go out once nothing is moving any more (T2485 D17).
+    if (!self.dragging_split) flushStackTrace();
     // Every card is a live pane again (T2457), and one that opened says how
     // often it was resized on the way once it is placed (T2458).
     for (0..self.tab_count) |tab| {
@@ -9467,7 +9517,7 @@ fn stackSlideTick(self: *Window) void {
     // the captured frames (`stack trace batch` carries the same clock).
     if (stackTraceOn()) {
         const cost_us = if (std.time.Instant.now()) |e| e.since(now) / std.time.ns_per_us else |_| 0;
-        log.info("stack trace tick gap_us={d} cost_us={d} wait_us={d} waits={d} resizes={d} timeouts={d} resize_us={d} place_us={d} paint_us={d} cards_us={d} overlay_us={d}", .{
+        stackTrace("stack trace tick gap_us={d} cost_us={d} wait_us={d} waits={d} resizes={d} timeouts={d} resize_us={d} place_us={d} paint_us={d} cards_us={d} overlay_us={d}", .{
             gap_us orelse 0,
             cost_us,
             self.frame_wait_last_us,
@@ -10443,7 +10493,7 @@ fn paintDeskUnderPanes(self: *Window, slots: []const PaneSlot, area: w32.RECT, n
     }
     for (names) |r| _ = w32.ExcludeClipRect(dc, r.left + area.left, r.top + area.top, r.right + area.left, r.bottom + area.top);
     self.pane_desk.blitUnder(dc, area.left, area.top, rects[0..n]);
-    if (stackTraceOn()) log.info("stack trace desk under panes n={d}", .{n});
+    if (stackTraceOn()) stackTrace("stack trace desk under panes n={d}", .{n});
 }
 
 /// A glass pane's renderer draws the desk itself (T1833). A pane child is
@@ -11723,6 +11773,8 @@ fn endDividerDrag(self: *Window) void {
     // Nothing left moving: the terminals take their size (T2459).
     self.syncDragHolds(false);
     self.reportDragCost("divider");
+    // A glide still settling flushes the trace's ring when it ends.
+    if (self.stack_slide == null) flushStackTrace();
     _ = w32.ReleaseCapture();
     // Re-derive hover from where the pointer actually ended up: the ratio is
     // clamped to [0.1, 0.9], so a drag pushed to the limit leaves the band
