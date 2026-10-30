@@ -1,4 +1,10 @@
+# suite-timeout-sec: 2400
 # test-reach acceptance (T1191, T1237): a module's unit tests may not sit un-run.
+#
+# The cap above is long because two full zig test compiles behind a busy floor
+# lock overran the floor's 900s twice on 2026-10-29 and were scored `stall`
+# while working (alone: ~8 min). A real hang is still caught in 5 min by the
+# runner's idle watch (lib\TreeIdle.ps1), which this script does not opt out of.
 #
 #   powershell -NoProfile -File test\win32\test-reach-audit.ps1
 #   powershell -NoProfile -File test\win32\test-reach-audit.ps1 -TeethCheck
