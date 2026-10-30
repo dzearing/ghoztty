@@ -36,6 +36,7 @@ const w32 = @import("win32.zig");
 const drag_perf = @import("drag_perf.zig");
 const lab_plant = @import("lab_plant.zig");
 const resize_paint = @import("resize_paint.zig");
+const pane_layer = @import("pane_layer.zig");
 const clipboard_open = @import("clipboard_open.zig");
 const utf16_text = @import("utf16_text.zig");
 const Scrollbar = @import("Scrollbar.zig").Scrollbar;
@@ -540,6 +541,10 @@ snap_dib_bits: ?[*]u8 = null,
 snap_dib_w: i32 = 0,
 snap_dib_h: i32 = 0,
 snap_dib_seq: u32 = 0,
+
+/// The pane window is a layered child with a surface of its own (T2499,
+/// `pane_layer.zig`). GUI thread only.
+own_layer: bool = false,
 /// GUI-thread-only: when the carousel heartbeat last asked this pane for a
 /// thumbnail (T1423), or null for never. What `hero_snap_schedule` paces the
 /// next request against. `captureContent` deliberately does not stamp it.
@@ -594,6 +599,18 @@ pub fn liveProgress(self: *const Surface, now_ms: i64) ?busy_light.Report {
     const r = self.progress orelse return null;
     if (now_ms - self.progress_at_ms >= busy_light.EXPIRE_MS) return null;
     return r;
+}
+
+/// Give the pane window back to its top-level's surface (T2499): a window
+/// turning translucent must not keep an opaque layer over its panes. The
+/// caller repaints, as `Window.setTranslucent` already does.
+pub fn dropOwnLayer(self: *Surface) void {
+    if (!self.own_layer) return;
+    self.own_layer = false;
+    const hwnd = self.hwnd orelse return;
+    const ex = w32.GetWindowLongW(hwnd, w32.GWL_EXSTYLE);
+    _ = w32.SetWindowLongW(hwnd, w32.GWL_EXSTYLE, ex & ~w32.WS_EX_LAYERED);
+    log.info("terminal pane gave up its own layer: the window turned translucent", .{});
 }
 
 pub fn paneId(self: *const Surface) []const u8 {
@@ -784,6 +801,17 @@ fn initOnce(
     errdefer {
         _ = w32.DestroyWindow(hwnd);
         self.hwnd = null;
+    }
+    // A surface of its own, so the GPU memory its presents use goes when the
+    // pane does rather than when the window does (T2499, `pane_layer.zig`).
+    // Never in a translucent window, or the configured one may turn so: the
+    // layer is composed opaque. `dropOwnLayer` undoes it if the window turns
+    // translucent later.
+    const config_translucent = app.config.@"background-opacity" < 1.0;
+    if (pane_layer.wantOwnLayer(pane_layer.enabled(), parent.translucent or config_translucent)) {
+        Window.composeOpaqueLayer(hwnd, "terminal pane");
+        self.own_layer = true;
+        log.info("terminal pane has its own layer (GHOZTTY_PANE_LAYER)", .{});
     }
 
     // Accept dropped files so a file dragged onto the terminal pastes
