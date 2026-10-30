@@ -1,0 +1,108 @@
+diff --git a/src/apprt/win32/Window.zig b/src/apprt/win32/Window.zig
+index 7b05340a5..3a39ddc79 100644
+--- a/src/apprt/win32/Window.zig
++++ b/src/apprt/win32/Window.zig
+@@ -883,6 +883,9 @@ stack_slide_last: ?std.time.Instant = null,
+ /// (T2401): that one counts at most one display period, so the layout that
+ /// started it is not spent as motion nobody saw.
+ stack_slide_fresh: bool = false,
++/// Since when the glide has held for a folding pane's frame (T2485,
++/// `pane_stack_slide.foldWaitDt`). Null while no fold waits.
++fold_wait_since: ?std.time.Instant = null,
+ /// A test's slow frames (T2442; `GHOZTTY_STACK_SLIDE_DT_MS`, read once): every
+ /// tick steps the glide as if this long had passed. Null in use.
+ stack_slide_dt_ms: ?f64 = null,
+@@ -9078,6 +9081,17 @@ fn stackDragEnded(self: *Window) void {
+     if (s.settled()) self.endStackSlide() else self.runStackSlide();
+ }
+ 
++/// Whether a card of the active tab is folding and its pane's last frame
++/// (T2457) has not been read back yet: the pane is still live under it.
++fn foldAwaitingFrame(self: *Window) bool {
++    if (self.tab_count == 0) return false;
++    var it = self.tab_trees[self.active_tab].iterator();
++    while (it.next()) |entry| {
++        if (entry.view.glide_snap == .waiting and !entry.view.glide_unfold) return true;
++    }
++    return false;
++}
++
+ /// One frame of the glide: every card eased toward its slot by the time since
+ /// the last (Mac `PaneStageView.stepGlide`). Once every card has caught up the
+ /// glide ends and lays every card out at its slot - which is where a card that
+@@ -9107,6 +9121,20 @@ fn stackSlideTick(self: *Window) void {
+     // frame time the user's window had under a drag, on a box whose own
+     // frames are quick.
+     if (self.stack_slide_dt_ms) |ms| dt = ms;
++    // A fold still waiting for its pane's last frame (T2485): the glide holds
++    // still, bounded, so the run never steps over a pane that is still live -
++    // run17 f209 showed the folding pane cut by its neighbour for a frame and
++    // its card a long step on in the next. The time held is not one long
++    // frame after: the clock above already moved on to now.
++    if (self.foldAwaitingFrame()) {
++        const since = self.fold_wait_since orelse now;
++        self.fold_wait_since = since;
++        const waited: f64 = @as(f64, @floatFromInt(now.since(since))) / std.time.ns_per_ms;
++        const held = pane_stack_slide.foldWaitDt(dt, true, waited);
++        // The acceptance oracle (stack-fold-slide.ps1): the glide held for it.
++        if (held == 0 and dt > 0) log.debug("stack glide holds for a fold frame waited_ms={d:.0}", .{waited});
++        dt = held;
++    } else self.fold_wait_since = null;
+     // T2448: time this tick, and its distance from the last one, for the
+     // glide line `reportGlideCost` writes when the drag ends.
+     const gap_us: ?u64 = if (self.glide_tick_prev) |p| now.since(p) / std.time.ns_per_us else null;
+diff --git a/src/apprt/win32/pane_stack_slide.zig b/src/apprt/win32/pane_stack_slide.zig
+index dc7d3fe2a..9a2ace3a8 100644
+--- a/src/apprt/win32/pane_stack_slide.zig
++++ b/src/apprt/win32/pane_stack_slide.zig
+@@ -71,6 +71,21 @@ pub fn stretchedGlideMs(slide_ms: f64) f64 {
+     return @max(slide_ms, 0) * glide_ms / 380;
+ }
+ 
++/// The longest a glide holds still for a folding pane's last frame (T2485).
++/// A fold's card is that frame; until it is read back the pane is still live,
++/// and stepping the run over it showed the pane cut by its neighbour for a
++/// frame, then its card a long step on. The read-back takes a tick or two; a
++/// frame that never comes lets the glide go on without it after this long.
++pub const fold_frame_wait_ms: f64 = 100;
++
++/// The time a glide step counts while a fold waits for its frame (T2485):
++/// none, until the wait has run `fold_frame_wait_ms`, so the run and the
++/// folding card start moving on the same tick its card lands.
++pub fn foldWaitDt(dt_ms: f64, fold_waiting: bool, waited_ms: f64) f64 {
++    if (fold_waiting and waited_ms < fold_frame_wait_ms) return 0;
++    return dt_ms;
++}
++
+ /// The fraction of the way to its target an edge goes in `dt_ms`, for a glide
+ /// of time constant `tau_ms`. No time constant is no glide: all the way.
+ pub fn followK(dt_ms: f64, tau_ms: f64) f64 {
+@@ -1724,3 +1739,28 @@ test "leadingLag: the grid's leading edge as drawn, against where the layout put
+     const none: Slide = .{};
+     try testing.expectEqual(@as(?i32, null), none.leadingLag());
+ }
++
++test "foldWaitDt: the glide holds still while a fold waits for its frame, then goes on (T2485)" {
++    // The run's card and the folding card, as the fold starts.
++    const before = [_]Placed{
++        .{ .id = 3, .rect = r(335, 0, 295, 600), .tucked = false },
++        .{ .id = 4, .rect = r(630, 0, 295, 600), .tucked = false },
++    };
++    const after = [_]Placed{
++        .{ .id = 3, .rect = r(576, 0, 295, 600), .tucked = false },
++        .{ .id = 4, .rect = r(870, 0, 295, 600), .tucked = true, .strip = r(870, 0, 45, 600) },
++    };
++    var s = plan(&before, &after, null, glide_ms, true);
++    try testing.expect(s.folding(4));
++    // Waiting for the frame: a 46 ms tick moves nobody - the run does not
++    // step over a pane that is still live.
++    try testing.expect(!s.step(foldWaitDt(46, true, 30)));
++    try testing.expectEqual(@as(i32, 335), s.placed(3).?.left);
++    try testing.expectEqual(@as(i32, 630), s.placed(4).?.left);
++    // The frame landed: the same tick moves the run and the card together.
++    _ = s.step(foldWaitDt(16, false, 30));
++    try testing.expect(s.placed(3).?.left > 335);
++    // A frame that never comes holds the glide no longer than the bound.
++    try testing.expectEqual(@as(f64, 16), foldWaitDt(16, true, fold_frame_wait_ms));
++    try testing.expectEqual(@as(f64, 0), foldWaitDt(16, true, fold_frame_wait_ms - 1));
++}
