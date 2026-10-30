@@ -378,6 +378,119 @@ pub fn renderDesk(buf: []u32, w: usize, h: usize, full_w: f32, full_h: f32, pal:
     }
 }
 
+/// The window's desk is rendered at 1/this of its size and upscaled
+/// (`upscaleDesk`). An eighth (T2520, was a quarter) still lands within a
+/// level or two of the exact gradient once both sides are a few hundred
+/// pixels, and renders in a quarter of the time - it is paid on every step
+/// of a window-edge drag. A smaller desk is cheap anyway and keeps a
+/// quarter, since an eighth of it is too few texels for the spotlight's
+/// kink (eight levels off at 333 x 97).
+pub fn deskDownscale(w: usize, h: usize) usize {
+    return if (@min(w, h) >= 400) 8 else 4;
+}
+
+/// Where each column (or row) of a `dst_n`-wide upscale reads from a `src_n`-wide
+/// source (T2520): the left source texel and the right one's weight out of 256,
+/// with source texel centres mapped to the destination's the way a stretch of
+/// `0..src_n` over `0..dst_n` places them. The last texel is held, not wrapped.
+fn upscaleTap(i: usize, src_n: usize, dst_n: usize) struct { at: usize, t: u32 } {
+    // u = (i + 0.5) * src_n / dst_n - 0.5, in 1/256ths.
+    const num: i64 = @intCast((2 * i + 1) * src_n * 256);
+    const u = @divFloor(num, @as(i64, @intCast(2 * dst_n))) - 128;
+    const max: i64 = @intCast((src_n - 1) * 256);
+    const c = std.math.clamp(u, 0, max);
+    const at: usize = @intCast(c >> 8);
+    if (at + 1 >= src_n) return .{ .at = src_n - 2, .t = 256 };
+    return .{ .at = at, .t = @intCast(c & 0xFF) };
+}
+
+/// `a` toward `b` by `t`/256, for 0x00RRGGBB pixels, rounded: red and blue in
+/// one multiply, green in another. The weights sum to 256, so no channel
+/// carries into its neighbour and the top byte stays 0.
+inline fn lerpPacked(comptime T: type, a: T, b: T, t: T) T {
+    const rb_mask = lanes(T, 0x00FF_00FF);
+    const g_mask = lanes(T, 0x0000_FF00);
+    // Wrapping operators only to spare the overflow checks: none can wrap.
+    const s = lanes(T, 256) -% t;
+    const rb = ((a & rb_mask) *% s +% (b & rb_mask) *% t +% lanes(T, 0x0080_0080)) >> lanes(T, 8);
+    const g = ((a & g_mask) *% s +% (b & g_mask) *% t +% lanes(T, 0x0000_8000)) >> lanes(T, 8);
+    return (rb & rb_mask) | (g & g_mask);
+}
+
+/// `v` in every lane of `T`, or `v` itself when `T` is a plain integer.
+inline fn lanes(comptime T: type, comptime v: u32) T {
+    return if (@typeInfo(T) == .vector) @splat(v) else v;
+}
+
+/// Bilinearly upscale a desk rendered small (`renderDesk` at `src_w` x `src_h`)
+/// into `dst`, `dst_w` x `dst_h` 0x00RRGGBB pixels (T2520). This is what GDI's
+/// `HALFTONE` stretch did for the window's desk, at a fraction of the cost: a
+/// window-edge drag builds a desk at a new size on every step, and the stretch
+/// and the alpha pass after it took ~3.5 ms of the ~8 ms a 120 Hz frame has.
+/// Each source row is widened once (`rows` holds two of them, `2 * dst_w`
+/// pixels) and every output row is a blend of the two around it, eight
+/// pixels at a time. `cols` is `dst_w` taps of scratch.
+pub fn upscaleDesk(
+    dst: []u32,
+    dst_w: usize,
+    dst_h: usize,
+    src: []const u32,
+    src_w: usize,
+    src_h: usize,
+    rows: []u32,
+    cols: []u32,
+) void {
+    std.debug.assert(src_w >= 2 and src_h >= 2);
+    std.debug.assert(dst.len >= dst_w * dst_h and src.len >= src_w * src_h);
+    std.debug.assert(rows.len >= 2 * dst_w and cols.len >= dst_w);
+    if (dst_w == 0 or dst_h == 0) return;
+    // Every index below is bounded by the lengths just checked and by
+    // `upscaleTap`; the per-pixel checks were a third of the time.
+    @setRuntimeSafety(false);
+    // A column's tap packed as at << 9 | t (t is 0...256).
+    for (cols[0..dst_w], 0..) |*c, x| {
+        const tap = upscaleTap(x, src_w, dst_w);
+        c.* = @as(u32, @intCast(tap.at)) << 9 | tap.t;
+    }
+    var wide: [2][]u32 = .{ rows[0..dst_w], rows[dst_w .. 2 * dst_w] };
+    // Which source row each of `wide` holds; none yet.
+    var held: [2]usize = .{ std.math.maxInt(usize), std.math.maxInt(usize) };
+    const V = @Vector(8, u32);
+    for (0..dst_h) |y| {
+        const tap = upscaleTap(y, src_h, dst_h);
+        // Widen the two source rows this output row sits between, reusing
+        // whichever the last row already widened.
+        for (0..2) |k| {
+            const want = tap.at + k;
+            const slot = if (held[0] == want) 0 else if (held[1] == want) 1 else blk: {
+                // The slot the other tap does not need.
+                const other = tap.at + (1 - k);
+                const s: usize = if (held[0] == other) 1 else 0;
+                const line = src[want * src_w ..][0..src_w];
+                for (wide[s], cols[0..dst_w]) |*o, c| {
+                    const at = c >> 9;
+                    o.* = lerpPacked(u32, line[at], line[at + 1], c & 0x1FF);
+                }
+                held[s] = want;
+                break :blk s;
+            };
+            if (slot != k) {
+                std.mem.swap([]u32, &wide[0], &wide[1]);
+                std.mem.swap(usize, &held[0], &held[1]);
+            }
+        }
+        const out = dst[y * dst_w ..][0..dst_w];
+        const tv: V = @splat(tap.t);
+        var x: usize = 0;
+        while (x + 8 <= dst_w) : (x += 8) {
+            const a: V = wide[0][x..][0..8].*;
+            const b: V = wide[1][x..][0..8].*;
+            out[x..][0..8].* = lerpPacked(V, a, b, tv);
+        }
+        while (x < dst_w) : (x += 1) out[x] = lerpPacked(u32, wide[0][x], wide[1][x], tap.t);
+    }
+}
+
 /// Render the part of a `full_w` x `full_h` window's desk that lies under
 /// the window rect (`rx`, `ry`, `rw`, `rh`) into a `w` x `h` RGBA buffer
 /// (rows top-down, alpha 255) - a glass pane's backdrop (T1833): the
@@ -492,6 +605,85 @@ test "T1831: renderDesk samples the full window however small the buffer" {
     renderDesk(&buf, 4, 3, 1000, 600, pal);
     try testing.expectEqual(pal.at(125, 100, 1000, 600).pack(), buf[0]);
     try testing.expectEqual(pal.at(875, 500, 1000, 600).pack(), buf[11]);
+}
+
+/// The largest channel difference between two 0x00RRGGBB pixels.
+fn chanDiff(a: u32, b: u32) u32 {
+    var m: u32 = 0;
+    inline for (.{ 0, 8, 16 }) |s| {
+        const x: i32 = @intCast((a >> s) & 0xFF);
+        const y: i32 = @intCast((b >> s) & 0xFF);
+        m = @max(m, @abs(x - y));
+    }
+    return m;
+}
+
+test "T2520: the upscaled desk is the gradient itself, within a few levels, at every size a drag passes through" {
+    const alloc = testing.allocator;
+    const pals = [_]Palette{
+        Palette.ocean(false),
+        Palette.ocean(true),
+        (Variant{ .seed = 0xDEAD_BEEF_1234_5678 }).palette(false),
+        (Variant{ .seed = 42 }).palette(true),
+    };
+    // A window, odd sizes with a width that is not a multiple of eight, the
+    // smallest that takes an eighth, a strip, and a tiny one.
+    const sizes = [_][2]usize{ .{ 1400, 800 }, .{ 1387, 801 }, .{ 401, 400 }, .{ 333, 97 }, .{ 9, 5 } };
+    for (pals) |pal| for (sizes) |sz| {
+        const w = sz[0];
+        const h = sz[1];
+        const ds = deskDownscale(w, h);
+        const sw = @max(w / ds, 1) + 1;
+        const sh = @max(h / ds, 1) + 1;
+        const small = try alloc.alloc(u32, sw * sh);
+        defer alloc.free(small);
+        const exact = try alloc.alloc(u32, w * h);
+        defer alloc.free(exact);
+        const got = try alloc.alloc(u32, w * h);
+        defer alloc.free(got);
+        const rows = try alloc.alloc(u32, 2 * w);
+        defer alloc.free(rows);
+        const cols = try alloc.alloc(u32, w);
+        defer alloc.free(cols);
+        const fw: f32 = @floatFromInt(w);
+        const fh: f32 = @floatFromInt(h);
+        renderDesk(small, sw, sh, fw, fh, pal);
+        renderDesk(exact, w, h, fw, fh, pal);
+        upscaleDesk(got, w, h, small, sw, sh, rows, cols);
+        var worst: u32 = 0;
+        for (exact, got) |e, g| {
+            // The buffer contract: 0x00RRGGBB, the top byte clear.
+            try testing.expectEqual(@as(u32, 0), g >> 24);
+            worst = @max(worst, chanDiff(e, g));
+        }
+        // Measured: one or two levels at a window's size, four on a narrow
+        // strip across the spotlight's kink. A window a few pixels across has
+        // too few texels to say anything about, so it only keeps the contract.
+        if (w >= 100) try testing.expect(worst <= 4);
+    };
+}
+
+test "T2520: an upscale of a flat source is that colour everywhere, rows reused or not" {
+    var small: [5 * 4]u32 = undefined;
+    @memset(&small, 0x0012_3456);
+    var out: [37 * 23]u32 = undefined;
+    var rows: [2 * 37]u32 = undefined;
+    var cols: [37]u32 = undefined;
+    upscaleDesk(&out, 37, 23, &small, 5, 4, &rows, &cols);
+    for (out) |p| try testing.expectEqual(@as(u32, 0x0012_3456), p);
+    // A vertical ramp: each output row is one colour, and never darker than
+    // the row above it.
+    for (0..4) |r| for (0..5) |c| {
+        small[r * 5 + c] = packRgb(@intCast(r * 80), 0, 0);
+    };
+    upscaleDesk(&out, 37, 23, &small, 5, 4, &rows, &cols);
+    var prev: u32 = 0;
+    for (0..23) |y| {
+        const first = out[y * 37];
+        for (out[y * 37 ..][0..37]) |p| try testing.expectEqual(first, p);
+        try testing.expect(first >= prev);
+        prev = first;
+    }
 }
 
 test "T1832: SplitMix64 is the reference generator, bit for bit" {

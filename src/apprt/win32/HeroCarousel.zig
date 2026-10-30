@@ -250,17 +250,23 @@ pub const BAND_SHADE_ALPHA: u8 = 77;
 /// desk the window paint blits, so the two meet without a seam.
 fn blitDesk(win: *Window, dc: w32.HDC, region: w32.RECT) bool {
     const g = win.glassDesk() orelse return false;
-    _ = w32.BitBlt(
-        dc,
-        0,
-        0,
-        region.right - region.left,
-        region.bottom - region.top,
-        g.desk.dc,
-        region.left - g.area.left,
-        region.top - g.area.top,
-        w32.SRCCOPY,
-    );
+    // The desk is plain pixels (T2520): hand GDI just the rows under
+    // `region` - every row, so a top-down bitmap's source origin cannot
+    // matter - and the columns by offset.
+    const x = region.left - g.area.left;
+    const y = region.top - g.area.top;
+    const w = @min(region.right - region.left, g.desk.w - x);
+    const h = @min(region.bottom - region.top, g.desk.h - y);
+    if (x < 0 or y < 0 or w <= 0 or h <= 0) return false;
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = g.desk.w,
+        .biHeight = -h,
+        .biPlanes = 1,
+        .biBitCount = 32,
+        .biCompression = w32.BI_RGB,
+    } };
+    const rows = g.desk.pixels[@as(usize, @intCast(y * g.desk.w))..];
+    _ = w32.StretchDIBits(dc, 0, 0, w, h, x, 0, w, h, rows.ptr, &bmi, w32.DIB_RGB_COLORS, w32.SRCCOPY);
     return true;
 }
 

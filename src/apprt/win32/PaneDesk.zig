@@ -4,12 +4,14 @@
 //! shadow, its antialiased corners and its rim - painted into the window's DC
 //! in one `BitBlt`. The math is `pane_elevation.zig`; this owns the bitmaps.
 //!
-//! Two cached 32bpp DIB sections, both the size of the content area:
+//! Two cached 32bpp buffers, both the size of the content area:
 //!
-//!   * `desk` - the gradient alone. Rendered at a quarter of the size and
-//!     stretched (`HALFTONE`): the gradient has no detail to lose, and it is
-//!     only redone when the size, the light/dark flavour or the window's
-//!     variant changes.
+//!   * `desk` - the gradient alone, in plain memory reused across sizes
+//!     (T2520). Rendered at a quarter or an eighth of the size and stretched
+//!     (bilinear, `desk_palette.upscaleDesk`): the gradient has no detail to
+//!     lose, and it is only redone when the size, the light/dark flavour or
+//!     the window's variant changes - which is every step of a window-edge
+//!     drag, so it has to be cheap.
 //!   * `comp` - a copy of the desk with the cards painted on. A divider drag
 //!     moves cards every frame, but only the ones beside the divider: a paint
 //!     composes again just the rectangle the moved cards, strips and bar
@@ -45,9 +47,6 @@ const blade_shadow = @import("blade_shadow.zig");
 const gutter_bar = @import("gutter_bar.zig");
 
 const log = std.log.scoped(.pane_desk);
-
-/// The desk is rendered at 1/DESK_DOWNSCALE of the window and stretched.
-const DESK_DOWNSCALE: usize = 4;
 
 const Dib = struct {
     dc: w32.HDC,
@@ -94,6 +93,21 @@ const Dib = struct {
 
     fn pixels(self: Dib) []u32 {
         return self.bits[0..@intCast(self.w * self.h)];
+    }
+};
+
+/// The rendered gradient (T2520): plain memory rather than a bitmap, since
+/// nothing blits from it - it is read into `comp` and cropped for glass.
+/// Its buffer outlives a size, so a window-edge drag, which needs a desk at
+/// a new size on every step, writes into memory that is already there
+/// instead of faulting in a fresh 4 MB bitmap every time.
+const Desk = struct {
+    px: []u32,
+    w: i32,
+    h: i32,
+
+    fn pixels(self: Desk) []u32 {
+        return self.px;
     }
 };
 
@@ -152,7 +166,9 @@ const light_alloc = std.heap.page_allocator;
 lights: [MAX_LIGHTS]LightCache = [_]LightCache{.{}} ** MAX_LIGHTS,
 light_n: usize = 0,
 
-desk: ?Dib = null,
+desk: ?Desk = null,
+/// What `desk` points into; kept at its largest size.
+desk_buf: std.ArrayListUnmanaged(u32) = .empty,
 desk_light: bool = false,
 desk_variant: ?desk_palette.Variant = null,
 /// Bumped whenever `desk` is re-rendered, so a cache built from it (the
@@ -183,6 +199,10 @@ partial_permille: u64 = 0,
 /// composed, and the desk under it for a glass strip's band.
 scratch: std.ArrayListUnmanaged(u32) = .empty,
 scratch_desk: std.ArrayListUnmanaged(u32) = .empty,
+/// `ensureDesk`'s buffers, kept between desks (T2520): the gradient at a
+/// quarter of the size, then the upscale's two widened rows and column taps.
+/// A window-edge drag builds a desk on every step.
+scratch_grad: std.ArrayListUnmanaged(u32) = .empty,
 /// Set by the window around a paint whose caller repaints only what moved
 /// (a layout pass's or an animation's `GetDC` paint, T2454): a partial
 /// compose then blits only what it composed, and the lights. Never set for
@@ -487,15 +507,13 @@ const Memo = struct {
 /// desk runs under the sidebar's column, and the sidebar is a child window
 /// the window's own blit never reaches.
 pub const Backdrop = struct {
-    dc: w32.HDC,
     pixels: []const u32,
     w: i32,
     h: i32,
     gen: u32,
 
     /// The same desk from row `rows` down: the content area's slice when
-    /// the desk also runs up under a glass title bar (T1886). `dc` is the
-    /// whole desk's and is not moved.
+    /// the desk also runs up under a glass title bar (T1886).
     pub fn below(self: Backdrop, rows: i32) ?Backdrop {
         if (rows <= 0) return self;
         if (rows >= self.h) return null;
@@ -511,16 +529,17 @@ pub const Backdrop = struct {
 pub fn backdrop(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Backdrop {
     if (w <= 0 or h <= 0) return null;
     const d = self.ensureDesk(w, h, is_light, variant) orelse return null;
-    return .{ .dc = d.dc, .pixels = d.pixels(), .w = d.w, .h = d.h, .gen = self.desk_gen };
+    return .{ .pixels = d.pixels(), .w = d.w, .h = d.h, .gen = self.desk_gen };
 }
 
 pub fn deinit(self: *PaneDesk) void {
     for (&self.lights) |*c| c.px.deinit(light_alloc);
     self.scratch.deinit(light_alloc);
     self.scratch_desk.deinit(light_alloc);
+    self.scratch_grad.deinit(light_alloc);
     self.names_saved.deinit(light_alloc);
     if (self.prepared) |*p| p.deinit();
-    if (self.desk) |d| d.destroy();
+    self.desk_buf.deinit(light_alloc);
     if (self.comp) |c| c.destroy();
     if (self.out) |o| o.destroy();
     // Keep counting across a reset, so no later desk reuses a generation a
@@ -658,7 +677,7 @@ fn addLightStrips(self: *const PaneDesk, rects: *Memo.Rects, comp: Dib) void {
 
 /// One rectangle of `comp` onto the window, through `out` on a translucent
 /// one (T2454).
-fn blitRect(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: Dib, desk: Dib, opacity: ?u8, r: busy_light.Rect) void {
+fn blitRect(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: Dib, desk: Desk, opacity: ?u8, r: busy_light.Rect) void {
     if (r.right <= r.left or r.bottom <= r.top) return;
     const src = if (opacity) |o| src: {
         const out = self.ensureOut(comp.w, comp.h) orelse return;
@@ -674,7 +693,7 @@ fn blitRect(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: D
     _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, src, r.left, r.top, w32.SRCCOPY);
 }
 
-fn timedBlit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: i32, comp: Dib, desk: Dib, opacity: ?u8) void {
+fn timedBlit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: i32, comp: Dib, desk: Desk, opacity: ?u8) void {
     var timer = std.time.Timer.start() catch null;
     self.blit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
     if (timer) |*t| self.blit_ns +|= t.read();
@@ -896,7 +915,7 @@ fn preparedFor(self: *PaneDesk, style: pane_elevation.CardStyle) ?*const pane_el
 fn composePartial(
     self: *PaneDesk,
     comp: Dib,
-    desk: Dib,
+    desk: Desk,
     rects: []const busy_light.Rect,
     cards: []const pane_elevation.Card,
     strips: []const pane_stack_strip.Band,
@@ -1009,7 +1028,7 @@ fn composeRect(
 }
 
 /// `comp` onto the window - through `out` on a translucent one (T1852).
-fn blit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: i32, comp: Dib, desk: Dib, opacity: ?u8) void {
+fn blit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: i32, comp: Dib, desk: Desk, opacity: ?u8) void {
     if (opacity) |o| {
         const out = self.ensureOut(w, h) orelse return;
         desk_palette.translucentSpan(out.pixels(), comp.pixels(), desk.pixels(), o);
@@ -1083,7 +1102,7 @@ pub fn paintLightFrame(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i
     const comp = self.comp orelse return;
     // Translucent (T1852): each strip is re-premultiplied into `out` first,
     // from the desk the last full paint used.
-    const tr: ?struct { out: Dib, desk: Dib, o: u8 } = if (opacity) |o| blk: {
+    const tr: ?struct { out: Dib, desk: Desk, o: u8 } = if (opacity) |o| blk: {
         const out = self.out orelse return;
         const desk = self.desk orelse return;
         if (out.w != comp.w or out.h != comp.h or desk.w != comp.w or desk.h != comp.h) return;
@@ -1153,22 +1172,29 @@ fn ensureOut(self: *PaneDesk, w: i32, h: i32) ?Dib {
     return self.out;
 }
 
-fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Dib {
+fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Desk {
     if (self.desk) |d| {
         if (d.w == w and d.h == h and self.desk_light == is_light and
             std.meta.eql(self.desk_variant, variant)) return d;
-        d.destroy();
         self.desk = null;
     }
-    const full = Dib.create(w, h) orelse return null;
+    var tq: [4]i64 = .{ 0, 0, 0, 0 };
+    _ = w32.QueryPerformanceCounter(&tq[0]);
+    const uw: usize = @intCast(w);
+    const uh: usize = @intCast(h);
+    // Grown, never shrunk: the next step of a drag reuses what this one
+    // touched.
+    self.desk_buf.resize(light_alloc, uw * uh) catch return null;
+    const full: Desk = .{ .px = self.desk_buf.items, .w = w, .h = h };
+    _ = w32.QueryPerformanceCounter(&tq[1]);
 
-    const sw: usize = @max(@as(usize, @intCast(w)) / DESK_DOWNSCALE, 1) + 1;
-    const sh: usize = @max(@as(usize, @intCast(h)) / DESK_DOWNSCALE, 1) + 1;
-    const small = std.heap.page_allocator.alloc(u32, sw * sh) catch {
-        full.destroy();
-        return null;
-    };
-    defer std.heap.page_allocator.free(small);
+    // Rendered small and stretched; `deskDownscale` says how small, and its
+    // accuracy test holds the stretch to the exact gradient.
+    const ds = desk_palette.deskDownscale(uw, uh);
+    const sw: usize = @max(uw / ds, 1) + 1;
+    const sh: usize = @max(uh / ds, 1) + 1;
+    self.scratch_grad.resize(light_alloc, sw * sh + 3 * uw) catch return null;
+    const small = self.scratch_grad.items[0 .. sw * sh];
     desk_palette.renderDesk(
         small,
         sw,
@@ -1177,34 +1203,23 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
         @floatFromInt(h),
         desk_palette.Palette.forWindow(variant, is_light),
     );
-    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
-        .biWidth = @intCast(sw),
-        .biHeight = -@as(i32, @intCast(sh)),
-        .biPlanes = 1,
-        .biBitCount = 32,
-        .biCompression = w32.BI_RGB,
-    } };
-    _ = w32.SetStretchBltMode(full.dc, w32.HALFTONE);
-    _ = w32.SetBrushOrgEx(full.dc, 0, 0, null);
-    if (w32.StretchDIBits(
-        full.dc,
-        0,
-        0,
-        w,
-        h,
-        0,
-        0,
-        @intCast(sw),
-        @intCast(sh),
-        small.ptr,
-        &bmi,
-        w32.DIB_RGB_COLORS,
-        w32.SRCCOPY,
-    ) == 0) log.warn("desk stretch failed {d}x{d}", .{ w, h });
-    // GDI may leave the alpha byte of a stretched pixel non-zero; the paint
-    // is `SRCCOPY` into an opaque window, but a per-pixel-alpha window would
-    // read it, so keep the buffer's contract (0x00RRGGBB) exact.
-    for (full.pixels()) |*p| p.* &= 0x00FF_FFFF;
+    _ = w32.QueryPerformanceCounter(&tq[2]);
+    // Our own bilinear stretch, with the top byte clear (T2520): GDI's
+    // `HALFTONE` into a fresh bitmap, and the alpha pass it needed after,
+    // were most of a resize step's desk.
+    const rest = self.scratch_grad.items[sw * sh ..];
+    desk_palette.upscaleDesk(full.px, uw, uh, small, sw, sh, rest[0 .. 2 * uw], rest[2 * uw ..][0..uw]);
+    _ = w32.QueryPerformanceCounter(&tq[3]);
+    if (resizeTraceOn()) {
+        const f = qpcFreq();
+        log.info("desk build create_us={d} render_us={d} scale_us={d} ({d}x{d})", .{
+            @divTrunc((tq[1] - tq[0]) * 1_000_000, f),
+            @divTrunc((tq[2] - tq[1]) * 1_000_000, f),
+            @divTrunc((tq[3] - tq[2]) * 1_000_000, f),
+            w,
+            h,
+        });
+    }
     self.desk_gen +%= 1;
     self.desk = full;
     self.desk_light = is_light;
