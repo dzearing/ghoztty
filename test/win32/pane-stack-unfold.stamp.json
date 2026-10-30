@@ -1,13 +1,13 @@
 {
     "guard":  "pane-stack-unfold",
     "script":  "test/win32/pane-stack-unfold.ps1",
-    "generated":  "2026-10-29T19:41:13-07:00",
-    "commit":  "f050e072b",
+    "generated":  "2026-10-29T20:24:35-07:00",
+    "commit":  "0654fdd01",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/pane_stack_slide.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/pane_stack_slide.zig":  "31f0dfd29ee8e8b85d8e6899453d093491c0ef22dd5e1206f9fe75324dc27af1",
+                  "src/apprt/win32/pane_stack_slide.zig":  "6ee6c49603941566fbed39f9d74d14726052a812045dffcaa400ec6cad5e1196",
                   "src/apprt/win32/Window.zig":  "6636604ccfff29779b51b66b79af170ae523b97b21469f4b28fb6da565683851",
                   "test/win32/pane-stack-unfold.ps1":  "8c71ab3902fe416103acd2c6ed655340e87efe2eac944e899daa384dfd04ccbd"
               }

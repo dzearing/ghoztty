@@ -1,11 +1,10 @@
 {
     "guard":  "printclient-audit",
     "script":  "test/win32/printclient-audit.ps1",
-    "generated":  "2026-10-29T19:50:23-07:00",
-    "commit":  "f050e072b",
+    "generated":  "2026-10-29T20:48:12-07:00",
+    "commit":  "0654fdd01",
     "uncommitted":  [
-                        "src/apprt/win32/strip_face.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/pane_stack_slide.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -203,7 +202,7 @@
                   "src/apprt/win32/pane_stack_fuzz.zig":  "c3350845b4848bb0b12ffac96d5d47f8c7a66b88edc68aa109d1009007e568bb",
                   "src/apprt/win32/pane_stack_grid.zig":  "8a9a01418bde71d2884227e8c987ed707bbc57d12f9ad07ef607efd5de687215",
                   "src/apprt/win32/pane_stack_layout.zig":  "ec79e4c0a9ee7720d59936c2d9ed06cc1604c70ca222ec8de351ca7dd3ce5fda",
-                  "src/apprt/win32/pane_stack_slide.zig":  "31f0dfd29ee8e8b85d8e6899453d093491c0ef22dd5e1206f9fe75324dc27af1",
+                  "src/apprt/win32/pane_stack_slide.zig":  "6ee6c49603941566fbed39f9d74d14726052a812045dffcaa400ec6cad5e1196",
                   "src/apprt/win32/pane_stack_state.zig":  "c15d1ccdc76fbfe92e93fb3602b93ddb062b4320a7748105d9896d2ef4404454",
                   "src/apprt/win32/pane_stack_strip.zig":  "49f266294e31b13b2f3309c0fead5663e2a40002b5a862e83fc59398615e188b",
                   "src/apprt/win32/pane_stash.zig":  "9630f313b9811db3497998a01772b4dce32497326ba99fdef7a2c883f48530cb",
