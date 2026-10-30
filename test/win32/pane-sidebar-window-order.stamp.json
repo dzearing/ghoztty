@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-window-order",
     "script":  "test/win32/pane-sidebar-window-order.ps1",
-    "generated":  "2026-10-30T07:12:06-07:00",
-    "commit":  "7ea4c133b",
+    "generated":  "2026-10-30T08:13:03-07:00",
+    "commit":  "8606fc2c1",
     "uncommitted":  [
 
                     ],

@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-30T07:13:36-07:00",
-    "commit":  "7ea4c133b",
+    "generated":  "2026-10-30T08:14:29-07:00",
+    "commit":  "8606fc2c1",
     "uncommitted":  [
 
                     ],
@@ -254,7 +254,7 @@
                   "src/apprt/win32/pane_grab_handle.zig":  "c88d26a4c72cb14f51081890cb915598da1115058c14df06bd0707c8989e1f95",
                   "src/apprt/win32/pane_hue.zig":  "a9728a736592c2792ef3ccb3e6016b3101113454f68fc527f80568ed0a849e64",
                   "src/apprt/win32/pane_id.zig":  "52eb9e09bad8aff68127e9026db67d8cd4277a3c53ec6923958f46a1d1a55165",
-                  "src/apprt/win32/pane_layer.zig":  "c8ebbcfa36c25f300d96ad7af1b232b27aaf505eb6d2e72389abb065f5a69bee",
+                  "src/apprt/win32/pane_layer.zig":  "cea26bdc728715422e7faab67c22a78b49dab5de61f149c1a30b40cc772c27d6",
                   "src/apprt/win32/pane_refcount.zig":  "ea4cb30787d3ff3582bf7a6615bc1c75688c51c25d0c2319ffb34cef6c28c1ea",
                   "src/apprt/win32/pane_relocate.zig":  "142dafc0a932792f9f994d3f6bb2563040fefba8c9e0fac3dddfb9d291f00045",
                   "src/apprt/win32/pane_sidebar.zig":  "50e603f586f3ca0d54415eafb3cbe36139a8da79a46964c4825034f446705d45",
@@ -340,7 +340,7 @@
                   "src/apprt/win32/startup_window.zig":  "3d45bcc8f084829e2cc5d69222f4aee9d8b2d479ee89731859c50d82e0dbdc8e",
                   "src/apprt/win32/strip_face.zig":  "05e52a05a98aa3731ca6b321b124cdadb6667d294c6a5dce766b5dc3f499105d",
                   "src/apprt/win32/StripFace.zig":  "101a541f3f300a52e0f00e8d2de8902c58e591851fe8031e2a9cda8b13a7997b",
-                  "src/apprt/win32/Surface.zig":  "ea7d425948283e370864f288f082075ec73e4bcc7626d093b75e2030b3280030",
+                  "src/apprt/win32/Surface.zig":  "23b18d20863501657b5189f1158f0bc9c4a0627a689e48075bdd46a87e4e493f",
                   "src/apprt/win32/surface_reap.zig":  "ba55e7ecb6cec9383f704064427889dc276ac8dff7e46844f8a4a790e6b586e9",
                   "src/apprt/win32/surface_window_role.zig":  "5af08d4834c92f03c30c4a642d598f21e7961c8bf976b63c55d91f90bf652528",
                   "src/apprt/win32/system_colors.zig":  "0634f5778186d7f3a7359689523fc96b9b9c273bbc211b824951f19a69ebbe47",
@@ -1337,7 +1337,7 @@
                   "test/win32/reset-context.ps1":  "54e0f328f37b3dc7694d1ae00013569ce64b504094ce00138baf2ad71ea0d0dd",
                   "test/win32/reset-window-size.ps1":  "28e18f6472e20ae4a5e0f9b5d93ec392c6a81e67c8b519785e1b433b18ada3ba",
                   "test/win32/resize-debounce.ps1":  "90430eb891a21838fc22200d3cb6baf87e1fd70fbe16a8f06555ebd1d8adfc5e",
-                  "test/win32/resize-flicker.ps1":  "3be3634de83a71315667bf8d30c977658c51fda149a65d6eea0ac4e3e44f8f4a",
+                  "test/win32/resize-flicker.ps1":  "315de06547cb304ca0eee2727faa8b85536155201ca212371e095f831e02fc91",
                   "test/win32/resolve-window-persist.ps1":  "9771bd0681e4d07ab37db752daf7e3e3fee9c6474947c6d7b71d5f2917eda9dc",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",

@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-header",
     "script":  "test/win32/rearrange-header.ps1",
-    "generated":  "2026-10-30T07:05:23-07:00",
-    "commit":  "7ea4c133b",
+    "generated":  "2026-10-30T08:06:30-07:00",
+    "commit":  "8606fc2c1",
     "uncommitted":  [
 
                     ],

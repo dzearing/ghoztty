@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-hover-resync",
     "script":  "test/win32/pane-sidebar-hover-resync.ps1",
-    "generated":  "2026-10-30T07:04:45-07:00",
-    "commit":  "7ea4c133b",
+    "generated":  "2026-10-30T08:05:28-07:00",
+    "commit":  "8606fc2c1",
     "uncommitted":  [
 
                     ],

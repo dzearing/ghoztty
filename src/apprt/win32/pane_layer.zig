@@ -16,29 +16,30 @@
 //! - A constant-alpha layer is composed OPAQUE whatever alpha its pixels
 //!   carry, so a translucent window (`background-opacity` < 1) keeps the plain
 //!   child - layering it would stop the desktop showing through the panes.
-//! - What a layered GL pane looks like on screen has not been photographed:
-//!   DWM composes only the input desktop, so the off-desktop harnesses cannot
-//!   see it. Until that check is made it is opt-in, `GHOZTTY_PANE_LAYER=1`,
-//!   the same shape as `GHOZTTY_COMP_PRESENT`.
+//! - It is ON by default since T2502, after a layered pane was photographed on
+//!   the real desktop (text, cursor, split, resize, divider drag, stack folds)
+//!   and T2503 showed resize-flicker reads the same with and without it.
+//!   `GHOZTTY_PANE_LAYER=0` turns it off, as an escape hatch and for A/B runs.
 const std = @import("std");
 const builtin = @import("builtin");
 
-/// The environment knob that opts panes into their own layer. Read per pane.
+/// The environment knob that opts panes OUT of their own layer. Read per pane.
 pub const env_knob = "GHOZTTY_PANE_LAYER";
 
-/// Whether the knob's value asks for it. "1"/"true"/"on".
-pub fn knobOn(value: ?[]const u8) bool {
-    const v = std.mem.trim(u8, value orelse return false, " \t\r\n");
-    return std.mem.eql(u8, v, "1") or
-        std.ascii.eqlIgnoreCase(v, "true") or
-        std.ascii.eqlIgnoreCase(v, "on");
+/// Whether the knob's value allows it: unset, or anything but
+/// "0"/"false"/"off", leaves the default (on).
+pub fn knobAllows(value: ?[]const u8) bool {
+    const v = std.mem.trim(u8, value orelse return true, " \t\r\n");
+    return !(std.mem.eql(u8, v, "0") or
+        std.ascii.eqlIgnoreCase(v, "false") or
+        std.ascii.eqlIgnoreCase(v, "off"));
 }
 
 pub fn enabled() bool {
     if (comptime builtin.os.tag != .windows) return false;
-    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, env_knob) catch return false;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, env_knob) catch return true;
     defer std.heap.page_allocator.free(raw);
-    return knobOn(raw);
+    return knobAllows(raw);
 }
 
 /// Should a pane in a window in this state be its own layer?
@@ -46,14 +47,14 @@ pub fn wantOwnLayer(opted_in: bool, window_translucent: bool) bool {
     return opted_in and !window_translucent;
 }
 
-test "knobOn accepts the usual spellings and nothing else" {
-    try std.testing.expect(knobOn("1"));
-    try std.testing.expect(knobOn(" TRUE\r\n"));
-    try std.testing.expect(knobOn("on"));
-    try std.testing.expect(!knobOn(null));
-    try std.testing.expect(!knobOn(""));
-    try std.testing.expect(!knobOn("0"));
-    try std.testing.expect(!knobOn("yes please"));
+test "knobAllows is on unless the knob says off" {
+    try std.testing.expect(knobAllows(null));
+    try std.testing.expect(knobAllows(""));
+    try std.testing.expect(knobAllows("1"));
+    try std.testing.expect(knobAllows("on"));
+    try std.testing.expect(!knobAllows("0"));
+    try std.testing.expect(!knobAllows(" FALSE\r\n"));
+    try std.testing.expect(!knobAllows("off"));
 }
 
 test "a translucent window never layers its panes" {

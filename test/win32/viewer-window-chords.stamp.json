@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-window-chords",
     "script":  "test/win32/viewer-window-chords.ps1",
-    "generated":  "2026-10-30T07:10:24-07:00",
-    "commit":  "7ea4c133b",
+    "generated":  "2026-10-30T08:11:21-07:00",
+    "commit":  "8606fc2c1",
     "uncommitted":  [
 
                     ],
