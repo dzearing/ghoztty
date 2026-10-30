@@ -258,6 +258,17 @@ extension Ghostty {
             }
         }
 
+        /// The pane was closed for good (its close can no longer be undone):
+        /// free the core surface now — the child process, or the agent
+        /// session as the close intent says, its IO and renderer threads and
+        /// its render targets — rather than when the last reference to this
+        /// view goes. SwiftUI can hold a closed pane's view well past its
+        /// close (see `ClosedPaneRelease`). What is left is an inert view:
+        /// every use of `surface` already handles nil.
+        func releaseClosedSurface() {
+            surfaceModel = nil
+        }
+
         /// Returns the data model for this surface.
         ///
         /// Note: eventually, all surface access will be through this, but presently its in a transition

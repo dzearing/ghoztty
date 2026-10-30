@@ -1236,6 +1236,9 @@ class BaseTerminalController: NSWindowController,
         // pane moved between windows) is live again and must be un-hidden --
         // which is the same set `keepAlive`/`spared` clear the close intent for.
         for view in plan.close { ClosingSessions.shared.mark(view.surfaceView?.boundRemoteSessionID) }
+        // ...and free a closed terminal (its process or session) once the close
+        // can no longer be undone, however long its view stays referenced.
+        for view in plan.close { ClosedPaneRelease.schedule(view, undoWindow: undoExpiration) }
         for view in plan.keepAlive { ClosingSessions.shared.unmark(view.surfaceView?.boundRemoteSessionID) }
         for view in plan.spared { ClosingSessions.shared.unmark(view.surfaceView?.boundRemoteSessionID) }
 

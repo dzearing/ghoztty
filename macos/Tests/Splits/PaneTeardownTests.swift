@@ -65,6 +65,63 @@ struct PaneTeardownTests {
         #expect(freed, "still alive: \(refs.compactMap { $0.object.map { String(describing: type(of: $0)) } })")
     }
 
+    /// A closed split's terminal — its process, threads, render targets — is
+    /// freed once the close can no longer be undone, even while its view is
+    /// still referenced: in the app, the last split closed in a window stayed
+    /// referenced until that window's tree next changed shape, and its shell
+    /// kept running till then. This test holds the view itself.
+    @Test func aClosedSplitFreesItsTerminalWhileItsViewIsHeld() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        await settle(0.5)
+        let held = try #require(b.surfaceView)
+        #expect(held.surface != nil)
+
+        controller.closeSurface(try #require(controller.surfaceTree.root?.node(view: b)), withConfirmation: false)
+        // Inside the undo window the terminal lives: an undo brings it back as it was.
+        await settle(1.0)
+        #expect(held.surface != nil, "freed before its close could no longer be undone")
+        let freed = await poll(timeout: controller.undoExpiration.timeInterval + 3) { held.surface == nil }
+        #expect(freed, "the closed terminal is still running")
+    }
+
+    /// An undone close keeps its terminal: the release the close scheduled
+    /// finds the pane back in the tree — even if it is closed again since,
+    /// whose own undo window the first close's release must not cut short.
+    @Test func anUndoneCloseKeepsItsTerminal() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        await settle(0.5)
+        let surface = try #require(b.surfaceView)
+        let undo = controller.undoExpiration.timeInterval
+
+        // Closed, undone: still in the tree past the first release's deadline.
+        controller.closeSurface(try #require(controller.surfaceTree.root?.node(view: b)), withConfirmation: false)
+        await settle(0.5)
+        controller.undoManager?.undo()
+        #expect(controller.surfaceTree.root?.node(view: b) != nil)
+        // Closed again just before the first release fires: that one must not
+        // free it; only the second, a full undo window later, may.
+        await settle(undo - 1.0)
+        controller.closeSurface(try #require(controller.surfaceTree.root?.node(view: b)), withConfirmation: false)
+        await settle(2.0)
+        #expect(surface.surface != nil, "the first close's release freed a pane closed again since")
+        controller.undoManager?.undo()
+        #expect(controller.surfaceTree.root?.node(view: b) != nil)
+        await settle(undo + 1.0)
+        #expect(surface.surface != nil, "an undone close's terminal was freed")
+    }
+
     /// A viewer built for a split that cannot go in (its anchor left the
     /// tree) is detached: otherwise its chrome's SwiftUI host — mounted in
     /// `init` — holds it back, and with it its web view and app-wide event
