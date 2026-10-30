@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-30T05:17:28-07:00",
-    "commit":  "ce89ab221",
+    "generated":  "2026-10-30T06:12:55-07:00",
+    "commit":  "19d152bf6",
     "uncommitted":  [
 
                     ],
@@ -1096,7 +1096,7 @@
                   "test/win32/close-confirm-idle.ps1":  "006f7f5177a180e8f9cf47b15041d806c9119e868e095e5632a69b49c49a836b",
                   "test/win32/close-glyph-white.ps1":  "6d6b3cc1c05e01ad16553375b1b4fbaa06ced25c674d0138108c41f692652238",
                   "test/win32/close-overlays.ps1":  "fbae579f29000563f149741bf923913019bde41ae2ebfdcf9d6ccdf92a9b1d79",
-                  "test/win32/close-undo.ps1":  "fed06626d7e7ddb4c092063d142e7f87a7468cde565a355445e6bec932ed6938",
+                  "test/win32/close-undo.ps1":  "f0d5e471acf3b10c6ac9905e916ae094a11c43677818827586974b990f164c42",
                   "test/win32/color-contrast.ps1":  "a0d85f63a9efea20b550fb7fe4add84e412859a53a40eca2937b5e08353c698f",
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",

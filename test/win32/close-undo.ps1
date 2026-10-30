@@ -18,6 +18,9 @@
 #   4y. Expiry: the parked window's HWND is destroyed and its shell exits.
 #   5. Expiry: close it and wait out the timeout - the HWND is destroyed, the
 #      shell has exited, and ctrl+shift+z has nothing to bring back.
+#   5r. A re-close after an undo restarts the clock (T2489, Mac ef57f03fd): the
+#      shell outlives the first close's deadline and exits one full timeout
+#      after the re-close, not before.
 # Phase B (session-persistence on, private agent lineage, --undo-timeout=5s):
 #   6. +close an agent-backed split: during the undo window its session is
 #      still alive AND attached (held for us); undo re-shows the same pane on
@@ -311,6 +314,44 @@ try {
     [void](Send-Chord $top $hP 'Z')
     Start-Sleep -Milliseconds 800
     Assert "nothing comes back after the expiry" ((Get-Leaves).Count -eq $leavesNow -and $null -eq (Get-LeafById $u1Id))
+
+    "== 5r: a re-close after an undo restarts the clock (T2489)"
+    # Mac ef57f03fd: a closed pane's process ends when ITS undo-timeout runs
+    # out. Close u2, undo it most of the way through the 6s window, close it
+    # again: the shell must outlive the FIRST close's deadline and end one
+    # full timeout after the re-close.
+    [void](Invoke-Cli "+split --direction=right --name=u2")
+    $u2 = $null
+    [void](Wait-Until { $script:u2 = Get-LeafByName 'u2'; $null -ne $script:u2 })
+    $u2 = $script:u2
+    $u2Id = if ($null -ne $u2) { $u2.id } else { '' }
+    $u2Pid = if ($null -ne $u2) { [int]$u2.pid } else { 0 }
+    Assert "setup: u2 is listed with a live shell (pid $u2Pid)" ($u2Id -ne '' -and (Test-ProcAlive $u2Pid))
+    $t0 = Get-Date
+    Assert "+close u2 exit 0" ((Invoke-Cli "+close --target=u2") -eq 0)
+    Assert "u2 left +list" (Wait-Until { $null -eq (Get-LeafById $u2Id) })
+    $wake = $t0.AddSeconds(3.5) - (Get-Date)
+    if ($wake.TotalMilliseconds -gt 0) { Start-Sleep -Milliseconds ([int]$wake.TotalMilliseconds) }
+    Assert "ctrl+shift+z delivered (u2)" (Send-Chord $top $hP 'Z')
+    Assert "u2 is back, same shell" (Wait-Until { $l = Get-LeafById $u2Id; $null -ne $l -and [int]$l.pid -eq $u2Pid } 2)
+    $t1 = Get-Date
+    Assert "+close u2 again exit 0" ((Invoke-Cli "+close --target=u2") -eq 0)
+    $reclose = ($t1 - $t0).TotalSeconds
+    Assert "the re-close landed before the first deadline ($([math]::Round($reclose, 1))s of 6s)" ($reclose -lt 5.5)
+    # Past the first close's deadline, with margin: still parked, still alive.
+    $wake = $t0.AddSeconds(8) - (Get-Date)
+    if ($wake.TotalMilliseconds -gt 0) { Start-Sleep -Milliseconds ([int]$wake.TotalMilliseconds) }
+    $atFirst = ((Get-Date) - $t1).TotalSeconds
+    Assert "u2's shell outlived the first close's deadline ($([math]::Round($atFirst, 1))s after the re-close)" (Test-ProcAlive $u2Pid)
+    $endedAt = $null
+    $deadline = $t1.AddSeconds(14)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Test-ProcAlive $u2Pid)) { $endedAt = Get-Date; break }
+        Start-Sleep -Milliseconds 200
+    }
+    Assert "u2's shell exited after the re-close's 6s ran out" ($null -ne $endedAt)
+    $after = if ($null -ne $endedAt) { ($endedAt - $t1).TotalSeconds } else { -1 }
+    Assert "and not before it: ended $([math]::Round($after, 1))s after the re-close (>= 5.5s)" ($after -ge 5.5)
     Assert "no crash (phase A)" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids
     [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
