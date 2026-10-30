@@ -345,6 +345,53 @@ struct PaneSidebarView: View {
 
         let topLevel = sections.map(\.id)
         let reporting = itemDrag.isDragging(in: controller)
+        // Beside a group, the ungrouped windows (which lead the list) go
+        // under a header of their own: pinned on top, not dragged, folded
+        // like a group. With no group the list stays flat.
+        let headsUngrouped = !isRail && PaneSidebarWindowGrouping.headsUngrouped(sections)
+        if headsUngrouped {
+            let lones = sections.filter { $0.project == nil }.flatMap(\.windows)
+            let folded = matches == nil && state.isUngroupedFolded
+            let onFold = {
+                withAnimation(PaneSidebarOutline.foldAnimation) { state.isUngroupedFolded.toggle() }
+            }
+            Section {
+                if !folded {
+                    PaneSidebarOutline.headerGapView
+                    ForEach(lones, id: \.id) { entry in
+                        if let owner = byID[entry.id] {
+                            windowGroup(owner, isThisWindow: owner === controller, label: entry.label,
+                                        matches: matches?[entry.id], siblings: topLevel)
+                                .transition(PaneSidebarOutline.foldTransition)
+                                .modifier(PaneSidebarItemShift(key: entry.key, drag: itemDrag, isActive: reporting))
+                        }
+                    }
+                }
+            } header: {
+                PaneSidebarProjectHeader(
+                    project: nil,
+                    windowCount: lones.count,
+                    isFolded: folded,
+                    onAdd: {
+                        BaseTerminalController.newWindowFromSidebar(
+                            controller.ghostty, from: lones.first.flatMap { byID[$0.id] })
+                    },
+                    onClose: {
+                        BaseTerminalController.closeWindowsFromSidebar(lones.compactMap { byID[$0.id] })
+                    },
+                    onFold: onFold,
+                    onRename: { name in
+                        BaseTerminalController.groupUngroupedFromSidebar(
+                            name, windows: lones.compactMap { byID[$0.id] })
+                    })
+                    // Clicked, it folds; never dragged — it stays on top.
+                    .paneSidebarItemDrag(
+                        key: PaneSidebarRename.ungroupedKey, siblings: [], controller: controller,
+                        leading: 0, trailing: PaneSidebarProjectHeader.trailingControls,
+                        help: folded ? "Show the ungrouped windows" : "Hide the ungrouped windows",
+                        onClick: onFold)
+            }
+        }
         ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
             if let project = section.project, !isRail {
                 let folded = matches == nil && state.foldedProjects.contains(project)
@@ -413,10 +460,10 @@ struct PaneSidebarView: View {
                             help: folded ? "Show \(project)’s windows — drag to reorder"
                                 : "Hide \(project)’s windows — drag to reorder",
                             onClick: onFold)
-                        .modifier(PaneSidebarJoinHighlight(project: project, motion: itemDrag.motion))
+                        .modifier(PaneSidebarJoinHighlight(project: project, motion: itemDrag.motion, isActive: reporting))
                         .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                 }
-            } else {
+            } else if !headsUngrouped {
                 ForEach(section.windows, id: \.id) { entry in
                     if let owner = byID[entry.id] {
                         // No divider between lone windows: their headers
@@ -480,7 +527,8 @@ struct PaneSidebarView: View {
                         controller: controller,
                         leading: PaneSidebarWindowHeader.leadingControls(indent: indent),
                         trailing: PaneSidebarWindowHeader.trailingControls,
-                        help: isThisWindow ? "This window — drag to reorder" : "Raise this window — drag to reorder") {
+                        help: isThisWindow ? "This window — drag to reorder" : "Raise this window — drag to reorder",
+                        menu: { Self.windowMenu(owner) }) {
                             isThisWindow ? onFold() : raise()
                         }
             }
@@ -511,6 +559,31 @@ struct PaneSidebarView: View {
                 }
             }
         }
+    }
+
+    /// A window row's right-click menu, built as it opens: Create Group…
+    /// (its name typed in place, `PaneSidebarRename.key(groupFor:)`), Move
+    /// to Group with every other group, and — grouped — Remove from Group.
+    static func windowMenu(_ owner: BaseTerminalController) -> NSMenu {
+        let key = PaneSidebarWindowGrouping.key(window: owner.paneSidebarState.windowID)
+        let title = PaneSidebarText.windowTitle(of: owner)
+        let menu = NSMenu()
+        menu.addItem(PaneSidebarMenuItem("Create Group…") {
+            PaneSidebarRename.shared.editing = PaneSidebarRename.key(groupFor: key)
+        })
+        let groups = PaneSidebarWindowGrouping.groups(movingTo: title, in: owner.paneSidebarSections)
+        if !groups.isEmpty {
+            let move = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
+            move.submenu = NSMenu()
+            for group in groups {
+                move.submenu?.addItem(PaneSidebarMenuItem(group) { owner.moveToGroupFromSidebar(group) })
+            }
+            menu.addItem(move)
+        }
+        if PaneSidebarWindowGrouping.split(title) != nil {
+            menu.addItem(PaneSidebarMenuItem("Remove from Group") { owner.moveToGroupFromSidebar(nil) })
+        }
+        return menu
     }
 
     /// A window's panes and tray, one after the other: a group of the
@@ -886,6 +959,32 @@ final class PaneSidebarRename: ObservableObject {
     @Published var editing: String?
 
     static func key(pane id: UUID) -> String { "pane:\(id)" }
+    /// A window row naming a new group for its window (Create Group…), by
+    /// the window's key.
+    static func key(groupFor window: String) -> String { "group-for:" + window }
+    /// The Ungrouped header, naming its windows as a group.
+    static let ungroupedKey = "ungrouped"
+
+    /// Whether item `key` is being edited: renamed, or (a window) named
+    /// into a new group.
+    func isEditing(_ key: String) -> Bool {
+        editing == key || editing == Self.key(groupFor: key)
+    }
+}
+
+/// A menu item that runs a closure: its own target, which the menu keeps.
+final class PaneSidebarMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(_ title: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    @objc private func run() { handler() }
 }
 
 /// A sidebar item's name, edited in place (`PaneSidebarRename`): a
@@ -895,6 +994,7 @@ final class PaneSidebarRename: ObservableObject {
 /// terminal.) Return or clicking away ends it with the text; Escape with nil.
 struct PaneSidebarRenameField: NSViewRepresentable {
     let initial: String
+    var placeholder: String?
     var font: NSFont = .systemFont(ofSize: 12, weight: .semibold)
     let onEnd: (String?) -> Void
 
@@ -903,6 +1003,7 @@ struct PaneSidebarRenameField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField(string: initial)
         field.font = font
+        field.placeholderString = placeholder
         field.isBezeled = false
         field.isBordered = false
         field.drawsBackground = false
@@ -1005,7 +1106,11 @@ struct PaneSidebarWindowHeader: View {
     }
 
     private var key: String { PaneSidebarWindowGrouping.key(window: owner.paneSidebarState.windowID) }
-    private var isEditing: Bool { rename.editing == key }
+    /// Renamed in place.
+    private var isRenaming: Bool { rename.editing == key }
+    /// Named into a new group (Create Group…).
+    private var isNamingGroup: Bool { rename.editing == PaneSidebarRename.key(groupFor: key) }
+    private var isEditing: Bool { rename.isEditing(key) }
 
     /// How a window's row is selected.
     enum Selection { case none, unemphasized, accent }
@@ -1068,8 +1173,10 @@ struct PaneSidebarWindowHeader: View {
             // The PARENT row: the window's own name, at the weight a sidebar
             // gives a group, with its panes indented beneath it.
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                if isEditing {
+                if isRenaming {
                     nameField
+                } else if isNamingGroup {
+                    groupField
                 } else {
                     Text(title)
                         .font(.system(size: 12, weight: .semibold))
@@ -1136,17 +1243,33 @@ struct PaneSidebarWindowHeader: View {
         // `paneSidebarItemDrag`, between its chevron and its count.
     }
 
-    /// The whole title in place of the name — a grouped window's
-    /// `<project>: ` too, so the group can be changed here. Return keeps it,
-    /// Escape or an unchanged name leaves the window as it was, and an
-    /// empty one goes back to following the window's own title.
+    /// The name in place of the name: a grouped window's own name alone,
+    /// its `<project>: ` kept on commit, so a rename never ungroups it
+    /// (Remove from Group, or a drag out, does); an ungrouped window's whole
+    /// title, so typing `<project>: ` still groups it. Return keeps it,
+    /// Escape or an unchanged name leaves the window as it was; empty, a
+    /// grouped window stays as it was and an ungrouped one goes back to
+    /// following its own title (`PaneSidebarWindowGrouping.renamed`).
     private var nameField: some View {
-        PaneSidebarRenameField(initial: currentTitle) { name in
+        let title = currentTitle
+        let initial = PaneSidebarWindowGrouping.split(title) == nil ? title : PaneSidebarWindowGrouping.name(of: title)
+        return PaneSidebarRenameField(initial: initial) { name in
             rename.editing = nil
-            guard let name = name?.trimmingCharacters(in: .whitespaces) else { return }
             // Unchanged: don't pin a title that was following the shell.
-            guard name != currentTitle else { return }
-            owner.renameWindowKeepingPlace(name.isEmpty ? nil : name)
+            guard let name, let renamed = PaneSidebarWindowGrouping.renamed(title, name: name) else { return }
+            owner.renameWindowKeepingPlace(renamed.isEmpty ? nil : renamed)
+        }
+        .frame(height: Self.contentHeight)
+    }
+
+    /// Create Group…: an empty field for the group's name, in place of the
+    /// window's. Return makes the window `<group>: <name>` — into that group,
+    /// new or not; Escape or nothing typed leaves it as it was.
+    private var groupField: some View {
+        PaneSidebarRenameField(initial: "", placeholder: "Group name") { name in
+            rename.editing = nil
+            guard let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return }
+            owner.moveToGroupFromSidebar(name)
         }
         .frame(height: Self.contentHeight)
     }
@@ -1247,9 +1370,18 @@ struct PaneSidebarRailAddSlot: View {
 /// A `<project>: …` group's header: sticky at the top of the list while its
 /// windows scroll under it, and folds them away. On Liquid Glass so rows
 /// passing beneath stay legible (see `glassBackdrop`).
+///
+/// With `project` nil it is the **Ungrouped** header, over the windows in no
+/// group, at the top of the list whenever there is a group
+/// (`PaneSidebarWindowGrouping.headsUngrouped`): the same pencil, + and ×,
+/// where the pencil names its windows as a group.
 private struct PaneSidebarProjectHeader: View {
     /// Its band's height: a little under a row's, its caption centered in it.
     static let height: CGFloat = 32
+
+    /// The Ungrouped header's caption. (Tried without one: a blank band
+    /// read as a group with no name, not as the windows in none.)
+    static let ungroupedLabel = "Ungrouped"
 
     /// The pencil, + and ×'s start, from the header's trailing edge: the drag
     /// source (`paneSidebarItemDrag`, which also folds on a click) stops there.
@@ -1258,31 +1390,45 @@ private struct PaneSidebarProjectHeader: View {
             + 3 * PaneSidebarItemButton.size + 2 * PaneSidebarRow.trailingButtonSpacing
     }
 
-    let project: String
+    /// The group, or nil for the Ungrouped header.
+    let project: String?
     let windowCount: Int
     let isFolded: Bool
-    /// A new window in the group, focused (as Cmd-N).
+    /// A new window in the group (ungrouped, for the Ungrouped header),
+    /// focused (as Cmd-N).
     let onAdd: () -> Void
-    /// Close every window in the group: no questions, no focus taken.
+    /// Close every window under it: no questions, no focus taken.
     let onClose: () -> Void
     let onFold: () -> Void
     /// Rename the group: every window in it takes the new `<project>: `.
+    /// The Ungrouped header's: its windows become that group.
     let onRename: (String) -> Void
 
     @State private var isHovered = false
     @ObservedObject private var rename = PaneSidebarRename.shared
     @Environment(\.paneSidebarInteractive) private var isInteractive
 
-    private var isEditing: Bool { rename.editing == PaneSidebarWindowGrouping.key(project: project) }
+    private var renameKey: String {
+        project.map(PaneSidebarWindowGrouping.key(project:)) ?? PaneSidebarRename.ungroupedKey
+    }
+    private var isEditing: Bool { rename.editing == renameKey }
+    /// What it is called, for help and accessibility.
+    private var name: String { project ?? Self.ungroupedLabel }
 
     var body: some View {
         HStack(spacing: 0) {
             if isEditing {
                 HStack(spacing: PaneSidebarOutline.chevronSpacing) {
                     Color.clear.frame(width: PaneSidebarOutline.chevronWidth, height: 14)
-                    PaneSidebarRenameField(initial: project, font: .systemFont(ofSize: 11, weight: .semibold)) { name in
+                    // The Ungrouped header starts empty: it names a new group.
+                    PaneSidebarRenameField(
+                        initial: project ?? "", placeholder: project == nil ? "Group name" : nil,
+                        font: .systemFont(ofSize: 11, weight: .semibold)
+                    ) { name in
                         rename.editing = nil
                         guard let name = name?.trimmingCharacters(in: .whitespaces), name != project else { return }
+                        // Ungrouped stays ungrouped unless named.
+                        guard project != nil || !name.isEmpty else { return }
                         onRename(name)
                     }
                     .frame(height: 14)
@@ -1296,10 +1442,10 @@ private struct PaneSidebarProjectHeader: View {
                         .rotationEffect(.degrees(isFolded ? -90 : 0))
                         .foregroundStyle(.secondary)
                         .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
-                    Text(project.uppercased())
+                    Text((project ?? Self.ungroupedLabel).uppercased())
                         .font(.system(size: 10.5, weight: .semibold))
                         .tracking(0.6)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(project == nil ? .tertiary : .secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
@@ -1308,8 +1454,8 @@ private struct PaneSidebarProjectHeader: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(isFolded ? "Show \(project)’s windows" : "Hide \(project)’s windows")
-            .accessibilityLabel("\(project), \(windowCount) windows")
+            .help(isFolded ? "Show \(name)’s windows" : "Hide \(name)’s windows")
+            .accessibilityLabel("\(name), \(windowCount) windows")
             .accessibilityAddTraits(.isHeader)
             }
 
@@ -1319,11 +1465,14 @@ private struct PaneSidebarProjectHeader: View {
                     .opacity(isHovered && isInteractive && !isEditing ? 0 : 1)
                 if isHovered && isInteractive && !isEditing {
                     HStack(spacing: PaneSidebarRow.trailingButtonSpacing) {
-                        PaneSidebarItemButton(symbol: "pencil", help: "Rename group") {
-                            rename.editing = PaneSidebarWindowGrouping.key(project: project)
+                        PaneSidebarItemButton(
+                            symbol: "pencil", help: project == nil ? "Make these windows a group" : "Rename group"
+                        ) {
+                            rename.editing = renameKey
                         }
                         PaneSidebarItemButton(
-                            symbol: "plus", help: "New window in \(project)", action: onAdd)
+                            symbol: "plus", help: project.map { "New window in \($0)" } ?? "New ungrouped window",
+                            action: onAdd)
                         PaneSidebarItemButton(
                             symbol: "xmark",
                             help: windowCount == 1 ? "Close its window" : "Close its \(windowCount) windows",
@@ -1767,6 +1916,33 @@ extension BaseTerminalController {
     /// every window's sidebar. A rename by the user — the sidebar's field,
     /// the Change Window Title prompt; a programmatic title (`+rename`,
     /// `+new-window --title`) still places a window by name.
+    /// Move this window into group `project` — nil: out of any — as the
+    /// user, keeping its own name and its place in the list (Create Group…,
+    /// Move to Group, Remove from Group). A name that can't head a group
+    /// changes nothing (`PaneSidebarWindowGrouping.title(_:inGroup:)`).
+    func moveToGroupFromSidebar(_ project: String?) {
+        let title = PaneSidebarText.windowTitle(of: self)
+        guard let titled = PaneSidebarWindowGrouping.title(title, inGroup: project), titled != title else { return }
+        renameWindowKeepingPlace(titled)
+    }
+
+    /// The Ungrouped header named: each of its `windows` is retitled
+    /// `<name>: <title>` — pinned, as Change Window Title pins it — making
+    /// them group `name` (or joining it, if there is one) where they were
+    /// (`PaneSidebarWindowGrouping.renaming(ungroupedTo:in:)`).
+    static func groupUngroupedFromSidebar(_ name: String, windows: [BaseTerminalController]) {
+        guard let sections = windows.first?.paneSidebarSections else { return }
+        let titled = windows.compactMap { window in
+            PaneSidebarWindowGrouping.title(PaneSidebarText.windowTitle(of: window), inGroup: name).map { (window, $0) }
+        }
+        // A name that can't head a group (`title(_:inGroup:)`) leaves them all.
+        guard titled.count == windows.count else { return }
+        let shared = PaneSidebarSharedState.shared
+        let order = PaneSidebarWindowGrouping.renaming(ungroupedTo: name, in: sections)
+        if order != shared.windowOrder { shared.windowOrder = order }
+        for (window, title) in titled { window.setWindowTitle(title, byUser: true) }
+    }
+
     func renameWindowKeepingPlace(_ title: String?) {
         let sections = paneSidebarSections
         setWindowTitle(title, byUser: true)

@@ -826,6 +826,93 @@ struct PaneSidebarWindowOrderTests {
             "Build logs", "[relay]", "  alpha", "  wt-2", "  wt-10", "  main"])
     }
 
+    // MARK: Groups from the sidebar
+
+    /// The Ungrouped header shows only beside a group: a list of lone
+    /// windows stays flat, and a list of groups alone has nothing under it.
+    @Test func theUngroupedHeaderShowsOnlyBesideAGroup() {
+        #expect(!G.headsUngrouped(G.sections(windows(["alpha", "beta"]), order: [])))
+        #expect(!G.headsUngrouped(G.sections(windows(["a: one", "b: two"]), order: [])))
+        #expect(G.headsUngrouped(G.sections(windows(titles), order: [])))
+    }
+
+    /// A grouped window's field holds its name alone: the group is kept on
+    /// commit, and emptying it changes nothing — never an accidental
+    /// ungroup. An ungrouped window's holds its whole title, as before.
+    @Test func renamingAGroupedWindowKeepsItsGroup() {
+        #expect(G.renamed("ghoztty: wt-2", name: "wt-3") == "ghoztty: wt-3")
+        #expect(G.renamed("ghoztty: wt-2", name: " wt-3 ") == "ghoztty: wt-3")
+        #expect(G.renamed("ghoztty: wt-2", name: "") == nil, "empty keeps it")
+        #expect(G.renamed("ghoztty: wt-2", name: "wt-2") == nil, "unchanged")
+        // A `<project>: ` typed in moves it to that group.
+        #expect(G.renamed("ghoztty: wt-2", name: "relay: x") == "relay: x")
+        #expect(G.renamed("ghoztty: wt-2", name: "ghoztty: wt-2") == nil, "unchanged")
+        #expect(G.renamed("ghoztty: wt-2", name: "ghoztty: wt-3") == "ghoztty: wt-3")
+        // Only a real prefix: a `:` without the space stays in the name.
+        #expect(G.renamed("ghoztty: wt-2", name: "a:b") == "ghoztty: a:b")
+        // Ungrouped: the whole title; `<project>: ` typed still groups it.
+        #expect(G.renamed("Build logs", name: "relay: logs") == "relay: logs")
+        #expect(G.renamed("Build logs", name: "") == "", "follows its own title again")
+        #expect(G.renamed("Build logs", name: "Build logs") == nil)
+    }
+
+    /// Create Group…, Move to Group and Remove from Group retitle a window
+    /// keeping its own name.
+    @Test func movingAWindowToAGroupKeepsItsName() {
+        #expect(G.title("Build logs", inGroup: "relay") == "relay: Build logs")
+        #expect(G.title("ghoztty: wt-2", inGroup: "relay") == "relay: wt-2")
+        #expect(G.title("ghoztty: wt-2", inGroup: nil) == "wt-2")
+        #expect(G.title("Build logs", inGroup: nil) == "Build logs")
+        #expect(G.title("Build logs", inGroup: " relay ") == "relay: Build logs")
+        // Names that could not head a group.
+        #expect(G.title("Build logs", inGroup: "") == nil)
+        #expect(G.title("Build logs", inGroup: "a: b") == nil)
+        #expect(G.title("Build logs", inGroup: String(repeating: "x", count: 41)) == nil)
+        let sections = G.sections(windows(titles), order: [])
+        #expect(G.groups(movingTo: "ghoztty: wt-2", in: sections) == ["relay"])
+        #expect(G.groups(movingTo: "Build logs", in: sections) == ["ghoztty", "relay"])
+    }
+
+    /// Create Group… on a lone window makes the group where it was: first
+    /// among the groups; the other lone windows stay on top.
+    @Test func creatingAGroupFromALoneWindow() {
+        let open = windows(["alpha", "beta", "relay: main"])
+        let before = G.sections(open, order: [])
+        let title = G.title("beta", inGroup: "new")!
+        let order = G.renaming(window: 2, to: title, in: before)
+        #expect(shown(G.sections(retitled(open, 2, title), order: order)) == [
+            "alpha", "[new]", "  beta", "[relay]", "  main"])
+    }
+
+    /// Move to Group puts a window into an existing group; Remove from
+    /// Group puts it at the end of the ungrouped windows, just above the
+    /// groups.
+    @Test func movingAWindowBetweenGroups() {
+        let open = windows(titles)
+        let before = G.sections(open, order: [])
+        let moved = G.title("Build logs", inGroup: "relay")!
+        #expect(shown(G.sections(retitled(open, 3, moved), order: G.renaming(window: 3, to: moved, in: before))) == [
+            "[ghoztty]", "  alpha", "  wt-2", "  wt-10", "[relay]", "  Build logs", "  main"])
+        let removed = G.title("ghoztty: wt-2", inGroup: nil)!
+        #expect(shown(G.sections(retitled(open, 2, removed), order: G.renaming(window: 2, to: removed, in: before))) == [
+            "Build logs", "wt-2", "[ghoztty]", "  alpha", "  wt-10", "[relay]", "  main"])
+    }
+
+    /// The Ungrouped header renamed: its windows become that group, first
+    /// among the groups, in their order — or join a group of that name.
+    @Test func namingTheUngroupedWindowsMakesThemAGroup() {
+        let open = windows(["zeta", "beta", "relay: main", "ghoztty: wt-2"])
+        let before = G.sections(open, order: [])
+        #expect(shown(before) == ["beta", "zeta", "[ghoztty]", "  wt-2", "[relay]", "  main"])
+        let grouped = open.map { $0.id <= 2 ? (id: $0.id, title: G.title($0.title, inGroup: "zz")!) : $0 }
+        #expect(shown(G.sections(grouped, order: G.renaming(ungroupedTo: "zz", in: before))) == [
+            "[zz]", "  beta", "  zeta", "[ghoztty]", "  wt-2", "[relay]", "  main"])
+        // Named as an existing group: they join it, ahead of its windows.
+        let joined = open.map { $0.id <= 2 ? (id: $0.id, title: G.title($0.title, inGroup: "relay")!) : $0 }
+        #expect(shown(G.sections(joined, order: G.renaming(ungroupedTo: "relay", in: before))) == [
+            "[ghoztty]", "  wt-2", "[relay]", "  beta", "  zeta", "  main"])
+    }
+
     /// A window opened after a rename pinned the list still lands beside
     /// its name neighbour.
     @Test func aWindowOpenedAfterARenameGoesAfterItsNameNeighbour() {
@@ -927,21 +1014,20 @@ struct PaneSidebarCrossDropTests {
     }()
 
     @Test func underAHeaderOrBetweenItsWindowsItJoinsTheGroup() {
-        #expect(C.destination(rows: rows, slot: 0, top: 0) == .topLevel(index: 0))
-        #expect(C.destination(rows: rows, slot: 2, top: 64) == .group("p", index: 0))
-        #expect(C.destination(rows: rows, slot: 3, top: 96) == .group("p", index: 1))
+        #expect(C.destination(rows: rows, slot: 0) == .topLevel(index: 0))
+        #expect(C.destination(rows: rows, slot: 2) == .group("p", index: 0))
+        #expect(C.destination(rows: rows, slot: 3) == .group("p", index: 1))
         // Between two lone items: the top level.
-        #expect(C.destination(rows: rows, slot: 1, top: 32) == .topLevel(index: 1))
+        #expect(C.destination(rows: rows, slot: 1) == .topLevel(index: 1))
     }
 
-    @Test func pastAGroupsLastWindowTheSlotIsSplitInHalf() {
-        // After `p2` (96…128), before `b` (128): upper half joins `p`'s end,
-        // lower half lands after the group, at the top level.
-        #expect(C.destination(rows: rows, slot: 4, top: 100) == .group("p", index: 2))
-        #expect(C.destination(rows: rows, slot: 4, top: 120) == .topLevel(index: 2))
+    @Test func pastAGroupsLastWindowItIsStillInTheGroup() {
+        // After `p2` (96…128), before `b` (128): either half, `p`'s end.
+        #expect(C.destination(rows: rows, slot: 4) == .group("p", index: 2))
+        #expect(C.destination(rows: rows, slot: 4) == .group("p", index: 2))
         // Past a folded group's header, at the end of the list: the same.
-        #expect(C.destination(rows: rows, slot: 6, top: 165) == .group("q", index: 0))
-        #expect(C.destination(rows: rows, slot: 6, top: 190) == .topLevel(index: 4))
+        #expect(C.destination(rows: rows, slot: 6) == .group("q", index: 0))
+        #expect(C.destination(rows: rows, slot: 6) == .group("q", index: 0))
     }
 
     /// Ungrouped windows lead the list: let go at the top level below a
@@ -956,6 +1042,35 @@ struct PaneSidebarCrossDropTests {
         #expect(C.banded(.topLevel(index: 3), slot: 4, rows: rows) == (.topLevel(index: 2), 2))
         #expect(C.banded(.topLevel(index: 1), slot: 1, rows: rows) == (.topLevel(index: 1), 1), "among them: as is")
         #expect(C.banded(.group("p", index: 1), slot: 4, rows: rows) == (.group("p", index: 1), 4), "joining: as is")
+    }
+
+    /// The report: a group's last window, grabbed, wanted out of its group
+    /// at once (its top starts in the lower half of the slot after the
+    /// window above it), and one dragged up over another group's end
+    /// opened a gap among the ungrouped windows on top. Past a group's end
+    /// is still that group: the ungrouped windows are reached only by
+    /// going up among them.
+    @Test func pastAGroupsEndItStaysInThatGroup() {
+        // lone `a`, `b`, then `[p]` with `p1` (`p2` dragged), then `[q]` with `q1`.
+        let items: [(String, String?, Bool)] = [
+            ("window:a", nil, false), ("window:b", nil, false),
+            ("project:p", "p", true), ("window:p1", "p", false),
+            ("project:q", "q", true), ("window:q1", "q", false),
+        ]
+        let rows = items.enumerated().map { index, item in
+            C.Row(key: item.0, project: item.1, isHeader: item.2,
+                  frame: CGRect(x: 0, y: CGFloat(index) * 32, width: 200, height: 32))
+        }
+        // `p2` where it was grabbed: its top at `p1`'s bottom.
+        let grabbed = C.destination(rows: rows, slot: 4)
+        #expect(grabbed == .group("p", index: 1))
+        #expect(C.banded(grabbed, slot: 4, rows: rows) == (.group("p", index: 1), 4))
+        // Lower still, before `[q]`'s header, and past the list's end.
+        #expect(C.destination(rows: rows, slot: 4) == .group("p", index: 1))
+        #expect(C.destination(rows: rows, slot: 6) == .group("q", index: 1))
+        // Up among the ungrouped windows: out of the group.
+        #expect(C.destination(rows: rows, slot: 2) == .topLevel(index: 2))
+        #expect(C.destination(rows: rows, slot: 0) == .topLevel(index: 0))
     }
 
     @Test func itsNameSaysWhichGroupItIsIn() {
