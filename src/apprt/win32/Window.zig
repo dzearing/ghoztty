@@ -10401,8 +10401,49 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         .glass = glass,
         .glows = glows[0..ng],
     }, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
+    if (hero_split == null and self.deskOpacity() == null) self.paintDeskUnderPanes(slots[0..n], area, name_rects[0..nn]);
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
     if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
+}
+
+/// Keep the desk in the window's own pixels under every layered pane (T2485
+/// A2). A layered pane has a surface of its own (T2499/T2502), so the window
+/// never painted under it (`WS_CLIPCHILDREN`); when a drag moved the pane,
+/// the strip it left showed those never-painted pixels - pure black, a full
+/// column for a frame - until the desk fill after the batch reached it. Laid
+/// here, after every desk paint, that strip already holds the desk the moment
+/// the move lands. Only layered panes: a plain child (a translucent window,
+/// `GHOZTTY_PANE_LAYER=0`) presents into these same pixels, and every other
+/// visible child is clipped out, as are the strips' names, which the desk's
+/// cached picture does not hold.
+fn paintDeskUnderPanes(self: *Window, slots: []const PaneSlot, area: w32.RECT, names: []const busy_light.Rect) void {
+    const parent = self.hwnd orelse return;
+    var rects: [MAX_DRAG_NODES]busy_light.Rect = undefined;
+    var under: [MAX_DRAG_NODES]w32.HWND = undefined;
+    var n: usize = 0;
+    for (slots) |slot| {
+        if (n >= rects.len) break;
+        const h = slot.view.hwnd() orelse continue;
+        if (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) continue;
+        if (w32.GetWindowLongW(h, w32.GWL_EXSTYLE) & w32.WS_EX_LAYERED == 0) continue;
+        const r = childClientRect(parent, h) orelse continue;
+        rects[n] = .{ .left = r.left - area.left, .top = r.top - area.top, .right = r.right - area.left, .bottom = r.bottom - area.top };
+        under[n] = h;
+        n += 1;
+    }
+    if (n == 0) return;
+    const dc = w32.GetDCEx(parent, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS) orelse return;
+    defer _ = w32.ReleaseDC(parent, dc);
+    var child = w32.GetWindow(parent, w32.GW_CHILD);
+    while (child) |c| : (child = w32.GetWindow(c, w32.GW_HWNDNEXT)) {
+        if (std.mem.indexOfScalar(w32.HWND, under[0..n], c) != null) continue;
+        if (w32.IsWindowVisible(c) == 0) continue;
+        const r = childClientRect(parent, c) orelse continue;
+        _ = w32.ExcludeClipRect(dc, r.left, r.top, r.right, r.bottom);
+    }
+    for (names) |r| _ = w32.ExcludeClipRect(dc, r.left + area.left, r.top + area.top, r.right + area.left, r.bottom + area.top);
+    self.pane_desk.blitUnder(dc, area.left, area.top, rects[0..n]);
+    if (stackTraceOn()) log.info("stack trace desk under panes n={d}", .{n});
 }
 
 /// A glass pane's renderer draws the desk itself (T1833). A pane child is

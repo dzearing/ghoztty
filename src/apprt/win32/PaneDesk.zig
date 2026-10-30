@@ -715,6 +715,21 @@ fn liftNames(self: *PaneDesk, comp: Dib) void {
     restoreUnder(comp.pixels(), comp.w, comp.h, n.rects, self.names_saved.items);
 }
 
+/// Lay the composed desk under the panes (T2485 A2): `rects` in the desk's
+/// own pixels, through a DC that does not clip them away. A layered pane is
+/// composed over the window, so nothing here shows while it stands there;
+/// what it holds is what the strip a moving pane leaves shows until the next
+/// paint reaches it - the desk, rather than pixels nothing ever painted.
+pub fn blitUnder(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, rects: []const busy_light.Rect) void {
+    const comp = self.comp orelse return;
+    var timer = std.time.Timer.start() catch null;
+    for (rects) |r| {
+        const c = clipTo(r, comp.w, comp.h) orelse continue;
+        _ = w32.BitBlt(hdc, origin_x + c.left, origin_y + c.top, c.right - c.left, c.bottom - c.top, comp.dc, c.left, c.top, w32.SRCCOPY);
+    }
+    if (timer) |*t| self.blit_ns +|= t.read();
+}
+
 fn clipTo(r: busy_light.Rect, w: i32, h: i32) ?busy_light.Rect {
     const c: busy_light.Rect = .{
         .left = std.math.clamp(r.left, 0, w),
