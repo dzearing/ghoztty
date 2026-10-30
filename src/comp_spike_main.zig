@@ -62,6 +62,17 @@ const Opts = struct {
     grab_hwnd: usize = 0,
     /// How long to wait for the first frame of a grab.
     grab_wait_ms: u32 = 3000,
+    /// `--film-hwnd=<n>` (T2516): like a grab, but EVERY frame DWM composes
+    /// for `--film-ms`, each written to `--film-dir` as `fNNNN.bmp` cropped
+    /// to the window's size in that frame, plus `frames.txt` (index, time,
+    /// content size). `ready` appears in the directory once the first frame
+    /// has arrived, so a driver knows when to start moving the window.
+    film_hwnd: usize = 0,
+    film_ms: u32 = 2000,
+    film_dir: []const u8 = "film",
+    /// The frame pool's size: the LARGEST the window gets while filmed.
+    pool_w: i32 = 0,
+    pool_h: i32 = 0,
 };
 
 const HWND_BOTTOM: ?w32.HWND = @ptrFromInt(1);
@@ -667,6 +678,16 @@ fn parseArgs(alloc: std.mem.Allocator) !void {
             opts.grab_hwnd = try std.fmt.parseInt(usize, a[12..], 0);
         } else if (std.mem.startsWith(u8, a, "--grab-wait-ms=")) {
             opts.grab_wait_ms = try std.fmt.parseInt(u32, a[15..], 10);
+        } else if (std.mem.startsWith(u8, a, "--film-hwnd=")) {
+            opts.film_hwnd = try std.fmt.parseInt(usize, a[12..], 0);
+        } else if (std.mem.startsWith(u8, a, "--film-ms=")) {
+            opts.film_ms = try std.fmt.parseInt(u32, a[10..], 10);
+        } else if (std.mem.startsWith(u8, a, "--film-dir=")) {
+            opts.film_dir = a[11..];
+        } else if (std.mem.startsWith(u8, a, "--pool-w=")) {
+            opts.pool_w = try std.fmt.parseInt(i32, a[9..], 10);
+        } else if (std.mem.startsWith(u8, a, "--pool-h=")) {
+            opts.pool_h = try std.fmt.parseInt(i32, a[9..], 10);
         } else if (std.mem.startsWith(u8, a, "--out=")) {
             opts.out = a[6..];
         } else return error.UnknownArg;
@@ -683,6 +704,7 @@ pub fn main() !u8 {
     };
     qpf = @intCast(std.os.windows.QueryPerformanceFrequency());
     if (opts.grab_hwnd != 0) return grabMain(gpa.allocator());
+    if (opts.film_hwnd != 0) return filmMain(gpa.allocator());
 
     const main_class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyCompSpike");
     const blade_class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyCompSpikeBlade");
@@ -813,6 +835,81 @@ fn grabMain(alloc: std.mem.Allocator) u8 {
         return 3;
     };
     std.debug.print("GRAB ok width={d} height={d} frames={d} warp={} out={s}\n", .{ img.width, img.height, seen, cap.warp, opts.out });
+    return 0;
+}
+
+/// Film every frame of `--film-hwnd` for `--film-ms` (T2516). Frames are held
+/// in memory until the film ends and only then written, so disk speed can never
+/// be why a frame went missing.
+fn filmMain(alloc: std.mem.Allocator) u8 {
+    const hwnd: w32.HWND = @ptrFromInt(opts.film_hwnd);
+    const pool: ?wgc.SizeInt32 = if (opts.pool_w > 0 and opts.pool_h > 0) .{ .w = opts.pool_w, .h = opts.pool_h } else null;
+    var cap = wgc.Capture.initSized(alloc, hwnd, pool) catch |e| {
+        std.debug.print("FILM init=FAILED stage={s} error={s} hr=0x{x}\n", .{ wgc.stage, @errorName(e), @as(u32, @bitCast(wgc.lastHr())) });
+        return 3;
+    };
+    defer cap.deinit();
+    std.fs.cwd().makePath(opts.film_dir) catch {};
+    var dir = std.fs.cwd().openDir(opts.film_dir, .{}) catch |e| {
+        std.debug.print("FILM dir=FAILED error={s}\n", .{@errorName(e)});
+        return 3;
+    };
+    defer dir.close();
+
+    var frames: std.ArrayList(wgc.Image) = .empty;
+    // The first frame a session hands back can predate it; it only arms.
+    const first_deadline = std.time.milliTimestamp() + opts.grab_wait_ms;
+    var armed = false;
+    while (!armed and std.time.milliTimestamp() < first_deadline) {
+        const img = cap.grab(alloc) catch null orelse {
+            std.Thread.sleep(2 * std.time.ns_per_ms);
+            continue;
+        };
+        alloc.free(img.pixels);
+        armed = true;
+    }
+    if (!armed) {
+        std.debug.print("FILM frame=NONE waited_ms={d}\n", .{opts.grab_wait_ms});
+        return 4;
+    }
+    if (dir.createFile("ready", .{})) |f| f.close() else |_| {}
+
+    const deadline = std.time.milliTimestamp() + opts.film_ms;
+    while (std.time.milliTimestamp() < deadline) {
+        const img = cap.grab(alloc) catch |e| {
+            std.debug.print("FILM frame=FAILED error={s} hr=0x{x}\n", .{ @errorName(e), @as(u32, @bitCast(wgc.lastHr())) });
+            return 3;
+        } orelse {
+            std.Thread.sleep(1 * std.time.ns_per_ms);
+            continue;
+        };
+        frames.append(alloc, img) catch return 3;
+    }
+
+    var list: std.ArrayList(u8) = .empty;
+    for (frames.items, 0..) |img, i| {
+        // Crop to the window as it was in this frame.
+        var crop = img;
+        const cw: u32 = if (img.content.w > 0) @min(img.width, @as(u32, @intCast(img.content.w))) else img.width;
+        const ch: u32 = if (img.content.h > 0) @min(img.height, @as(u32, @intCast(img.content.h))) else img.height;
+        if (cw != img.width or ch != img.height) {
+            const px = alloc.alloc(u8, @as(usize, cw) * ch * 4) catch return 3;
+            var y: usize = 0;
+            while (y < ch) : (y += 1) @memcpy(px[y * cw * 4 ..][0 .. cw * 4], img.pixels[y * img.width * 4 ..][0 .. cw * 4]);
+            crop = .{ .time_100ns = img.time_100ns, .width = cw, .height = ch, .pixels = px, .content = img.content };
+        }
+        var name_buf: [32]u8 = undefined;
+        const name = std.fmt.bufPrint(&name_buf, "f{d:0>4}.bmp", .{i}) catch return 3;
+        var path_buf: [1024]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ opts.film_dir, name }) catch return 3;
+        writeBmp(path, crop) catch |e| {
+            std.debug.print("FILM write=FAILED error={s}\n", .{@errorName(e)});
+            return 3;
+        };
+        list.print(alloc, "{d} {d} {d} {d}\n", .{ i, img.time_100ns, img.content.w, img.content.h }) catch return 3;
+    }
+    dir.writeFile(.{ .sub_path = "frames.txt", .data = list.items }) catch return 3;
+    std.debug.print("FILM ok frames={d} warp={} dir={s}\n", .{ frames.items.len, cap.warp, opts.film_dir });
     return 0;
 }
 

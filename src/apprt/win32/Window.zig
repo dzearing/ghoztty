@@ -708,6 +708,10 @@ keep_vacated_gutters: bool = false,
 /// The pane rects `clearVacatedPaneStrips` is filling, for the paint callback
 /// it hands `paintAlphaCorrect` (T2418). Empty outside that call.
 vacated_pane_strips: []const w32.RECT = &.{},
+/// Set when `clearVacatedPaneStrips` painted the DESK into what the panes left
+/// (T2516), so the pass's closing desk paint blits whole rather than only what
+/// it composed again - the strips' paint already composed it, clipped.
+vacated_desk_painted: bool = false,
 /// `GHOZTTY_CLEAR_WHOLE_GUTTERS`: clear every old gutter whole, the pre-T2400
 /// shape, including the parts the new bands are about to repaint and the
 /// pixels of a viewer pane standing over one. The negative control for the
@@ -7702,6 +7706,11 @@ pub fn layoutSplits(self: *Window) void {
         _ = w32.QueryPerformanceCounter(&batch_t1);
         log.info("stack trace batch qpc={d} end={d} plan={d} grid={d}", .{ batch_t0, batch_t1, plan_t0, plan_t1 });
     }
+    // The regions first, when the desk fills what the panes left (T2516):
+    // that paint clips to the children as they now stand, so the corners a
+    // new cut gives back to the window are its to paint (`desk_paints_next`).
+    const desk_fill = self.applied_pane_style == .elevated;
+    if (desk_fill) self.cutCardRegions();
     if (self.hwnd) |hwnd| self.clearVacatedPaneStrips(hwnd, old_panes[0..old_len]);
     if (stackTraceOn()) {
         var clear_t1: i64 = 0;
@@ -7709,7 +7718,7 @@ pub fn layoutSplits(self: *Window) void {
         log.info("stack trace cleared qpc={d}", .{clear_t1});
     }
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
-    self.cutCardRegions();
+    if (!desk_fill) self.cutCardRegions();
     // Before the bands are painted, never after (T2414, above). A strip face
     // this pass drops is hidden after the paint below, not here.
     self.face_hides_deferred = true;
@@ -7738,7 +7747,12 @@ pub fn layoutSplits(self: *Window) void {
             // The desk blits only what it composed again, and whatever the
             // window holds invalid by now (T2454), so the validation below
             // still covers nothing it did not paint.
-            self.pane_desk.blit_changed_only = true;
+            //
+            // Not after a desk fill of the vacated strips (T2516): that paint
+            // composed the desk already and blitted only the strips, so here
+            // nothing reads as changed and the rest would never go out.
+            self.pane_desk.blit_changed_only = !self.vacated_desk_painted;
+            self.vacated_desk_painted = false;
             self.paintAlphaCorrect(dc, paintMovedBands);
             self.pane_desk.blit_changed_only = false;
             _ = w32.ReleaseDC(hwnd, dc);
@@ -9712,6 +9726,22 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
     const dc = w32.GetDCEx(hwnd, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS | w32.DCX_CLIPCHILDREN) orelse return;
     defer _ = w32.ReleaseDC(hwnd, dc);
     _ = w32.IntersectClipRect(dc, box.left, box.top, box.right, box.bottom);
+    // On the desk the strips get the DESK, not the background (T2516). The
+    // band paint that replaces this fill is a separate GDI flush, and the
+    // compositor shows a frame between them: on a window-edge resize that was
+    // one frame of flat background round every card on every step - the
+    // user's "blank areas". Painted with the desk itself, the in-between frame
+    // already shows the pixels the band paint will put there. The gutter
+    // record is the PREVIOUS pass's until the band paint, which clears from it.
+    if (self.applied_pane_style == .elevated and !self.tab_hero_active[self.active_tab]) {
+        const gutters = self.painted_gutters;
+        const gutters_len = self.painted_gutters_len;
+        self.paintAlphaCorrect(dc, paintMovedBands);
+        self.painted_gutters = gutters;
+        self.painted_gutters_len = gutters_len;
+        self.vacated_desk_painted = true;
+        return;
+    }
     self.vacated_pane_strips = old;
     defer self.vacated_pane_strips = &.{};
     self.paintAlphaCorrect(dc, paintVacatedPaneStrips);

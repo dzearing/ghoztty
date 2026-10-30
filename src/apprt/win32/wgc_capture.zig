@@ -163,6 +163,10 @@ pub const Image = struct {
     width: u32,
     height: u32,
     pixels: []u8,
+    /// The window's size in this frame (`ContentSize`), which is smaller than
+    /// `width` x `height` when the pool was sized for a bigger window; the
+    /// rest of the buffer holds nothing of it.
+    content: SizeInt32 = .{ .w = 0, .h = 0 },
 };
 
 /// A capture session on one window. Create, use and destroy it on ONE thread;
@@ -188,6 +192,15 @@ pub const Capture = struct {
     default_min_interval: ?i64 = null,
 
     pub fn init(alloc: std.mem.Allocator, hwnd: HWND) Error!Capture {
+        return initSized(alloc, hwnd, null);
+    }
+
+    /// `init` with the frame pool sized to `pool_size` rather than to the window
+    /// as it is now (T2516). A window filmed while it resizes needs buffers
+    /// big enough for its LARGEST size: WGC writes each frame's content at
+    /// the buffer's top-left and clips what does not fit, so a pool sized to
+    /// the starting width would cut off a growing window's right edge.
+    pub fn initSized(alloc: std.mem.Allocator, hwnd: HWND, pool_size: ?SizeInt32) Error!Capture {
         const e = try loadEntry();
         stage = "ro-initialize";
         const hr = e.ro_initialize(1); // RO_INIT_MULTITHREADED
@@ -236,6 +249,7 @@ pub const Capture = struct {
         // 2026-10-29) CreateCaptureSession then refuses with
         // ERROR_INVALID_STATE (0x8007139F). WGC needs the input desktop.
         if (size.w <= 0 or size.h <= 0) size = .{ .w = 1024, .h = 720 };
+        if (pool_size) |p| size = .{ .w = @max(size.w, p.w), .h = @max(size.h, p.h) };
 
         stage = "frame-pool";
         // IDirect3D11CaptureFramePoolStatics2 slot 6: CreateFreeThreaded.
@@ -375,7 +389,7 @@ pub const Capture = struct {
         while (y < h) : (y += 1) {
             @memcpy(pixels[y * w * 4 ..][0 .. w * 4], src[y * mapped.row_pitch ..][0 .. w * 4]);
         }
-        return .{ .time_100ns = t.time, .width = w, .height = h, .pixels = pixels };
+        return .{ .time_100ns = t.time, .width = w, .height = h, .pixels = pixels, .content = t.content };
     }
 
     const Taken = struct {
@@ -383,6 +397,7 @@ pub const Capture = struct {
         tex: Obj,
         time: i64,
         desc: D3D11_TEXTURE2D_DESC,
+        content: SizeInt32,
 
         fn done(self: Taken) void {
             rt.release(self.tex);
@@ -403,6 +418,10 @@ pub const Capture = struct {
         var t: i64 = 0;
         const GetTime = *const fn (Obj, *i64) callconv(.winapi) HRESULT;
         try check(slot(GetTime, frame, 7)(frame, &t));
+        // Slot 8: get_ContentSize.
+        var content: SizeInt32 = .{ .w = 0, .h = 0 };
+        const GetContent = *const fn (Obj, *SizeInt32) callconv(.winapi) HRESULT;
+        _ = slot(GetContent, frame, 8)(frame, &content);
 
         // Slot 6: get_Surface, then the D3D11 texture behind it.
         var sf: ?Obj = null;
@@ -421,7 +440,7 @@ pub const Capture = struct {
         var desc: D3D11_TEXTURE2D_DESC = undefined;
         const GetDesc = *const fn (Obj, *D3D11_TEXTURE2D_DESC) callconv(.winapi) void;
         slot(GetDesc, tex, 10)(tex, &desc);
-        return .{ .frame = frame, .tex = tex, .time = t, .desc = desc };
+        return .{ .frame = frame, .tex = tex, .time = t, .desc = desc, .content = content };
     }
 
     // ID3D11DeviceContext slot 14: Map; slot 15: Unmap.
