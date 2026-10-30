@@ -42,6 +42,7 @@ const Scrollbar = @import("Scrollbar.zig").Scrollbar;
 const window_broadcast = @import("window_broadcast.zig");
 const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const BellBorder = @import("BellBorder.zig").BellBorder;
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const ReadonlyBadge = @import("ReadonlyBadge.zig").ReadonlyBadge;
 const KeyStateIndicator = @import("KeyStateIndicator.zig").KeyStateIndicator;
@@ -258,6 +259,11 @@ dim_overlay: ?*DimOverlay = null,
 /// The `bell-features = border` frame (T1919), created on the first bell
 /// that wants it. Driven by Window.updateBellBorders.
 bell_border: ?*BellBorder = null,
+
+/// Where this pane's renderer hands its composition tree to the window thread
+/// when it presents through a swap chain (T2467), so overlays can be child
+/// visuals of the pane instead of popups. Empty on the SwapBuffers path.
+comp_overlay_slot: comp_overlay.Slot = .{},
 
 /// Sticky pane banner (T35): overlay strip above the terminal content,
 /// plus the raw markdown source (owned) so the editor can prefill it and
@@ -1459,6 +1465,7 @@ pub fn updateBellBorder(self: *Surface) void {
             self.app.core_app.alloc,
             hwnd,
             self.app.hinstance,
+            &self.comp_overlay_slot,
         ) catch |err| {
             log.warn("bell border create failed err={}", .{err});
             return;

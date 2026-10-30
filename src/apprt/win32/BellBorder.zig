@@ -14,6 +14,12 @@
 //! with no source DC - the documented way to change only the blend - so it
 //! never re-renders the frame. Pure logic (stroke width, frame pixels, the
 //! curve) is in bell_math.zig and unit-tested in every lane.
+//!
+//! When the pane presents through a composition swap chain (T2466) the frame
+//! is a child visual of the pane's visual instead (T2467, comp_overlay.zig):
+//! same pixels, same fade (the visual's opacity), but pane-local, so a pane
+//! that moves takes it along with no window move at all. The popup stays as
+//! the path for a pane on SwapBuffers.
 
 const std = @import("std");
 const w32 = @import("win32.zig");
@@ -21,6 +27,7 @@ const FrameClock = @import("FrameClock.zig");
 const pane_clip = @import("pane_clip.zig");
 const bell_math = @import("bell_math.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 
 const log = std.log.scoped(.win32_bell_border);
 
@@ -36,8 +43,14 @@ pub const BellBorder = struct {
     owner: w32.HWND,
     hwnd: w32.HWND,
 
-    /// The popup is shown (it may be mid fade-out at any alpha).
+    /// The frame is up (it may be mid fade-out at any alpha), as the popup
+    /// or - when `on_visual` - as the pane's child visual.
     shown: bool = false,
+    on_visual: bool = false,
+    /// The pane renderer's composition tree (T2467) and the frame's layer on
+    /// it; the layer is inactive while the pane presents with SwapBuffers.
+    slot: *comp_overlay.Slot,
+    layer: comp_overlay.Layer = .{},
     /// Where the frame was last placed, in screen pixels.
     placed: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
     /// The stroke width the frame was last rendered at.
@@ -57,12 +70,13 @@ pub const BellBorder = struct {
         alloc: std.mem.Allocator,
         owner: w32.HWND,
         hinstance: w32.HINSTANCE,
+        slot: *comp_overlay.Slot,
     ) !*BellBorder {
         try registerClassOnce(hinstance);
 
         const self = try alloc.create(BellBorder);
         errdefer alloc.destroy(self);
-        self.* = .{ .alloc = alloc, .owner = owner, .hwnd = undefined };
+        self.* = .{ .alloc = alloc, .owner = owner, .hwnd = undefined, .slot = slot };
 
         // The DimOverlay set: composited above OpenGL, click-through, never
         // activates, out of the taskbar and Alt-Tab.
@@ -90,6 +104,7 @@ pub const BellBorder = struct {
 
     pub fn destroy(self: *BellBorder) void {
         FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
+        self.layer.deinit();
         _ = w32.DestroyWindow(self.hwnd);
         if (self.px.len > 0) self.alloc.free(self.px);
         self.alloc.destroy(self);
@@ -100,6 +115,21 @@ pub const BellBorder = struct {
     /// focus, move and config event the dim overlays do: it also keeps the
     /// frame glued to the pane through a resize, a divider drag and a move.
     pub fn update(self: *BellBorder, want: bool, scale: f32) void {
+        const visual = self.layer.sync(self.slot);
+        if (visual != self.on_visual) {
+            // The pane gained or lost its composition tree: the frame leaves
+            // the old path at once and is put up afresh on the new one.
+            // (A retracted tree already took the visual with it.)
+            if (self.shown) {
+                if (!self.on_visual) _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+                self.shown = false;
+            }
+            self.on_visual = visual;
+            self.width_px = 0;
+            self.fade_to = 0;
+        }
+        if (visual) return self.updateVisual(want, scale);
+
         // A pane on a background tab, behind a zoom or being torn down has
         // nothing to frame: gone at once, no fade (there is nothing to watch).
         // Nor has one partly outside its window, mid-slide (T2227): the
@@ -154,6 +184,56 @@ pub const BellBorder = struct {
         w32.healOverlayZOrderAfterMove(self.hwnd, self.owner, was_shown);
     }
 
+    /// The visual path: the frame is pane-local at (0,0), clipped by the pane
+    /// window itself, so neither a move nor a partly-hidden pane mid-slide is
+    /// anything to it - only a new size re-renders it.
+    fn updateVisual(self: *BellBorder, want: bool, scale: f32) void {
+        if (!want) {
+            if (self.shown) self.startFade(0);
+            return;
+        }
+        var rect: w32.RECT = undefined;
+        if (w32.GetClientRect(self.owner, &rect) == 0) return;
+        const w = rect.right - rect.left;
+        const h = rect.bottom - rect.top;
+        if (w <= 0 or h <= 0) {
+            self.hideNow();
+            return;
+        }
+        const width_px = bell_math.borderWidthPx(scale);
+        const uw: u32 = @intCast(w);
+        const uh: u32 = @intCast(h);
+        if (!self.layer.hasPixels() or uw != self.layer.width or uh != self.layer.height or width_px != self.width_px) {
+            const n: usize = @as(usize, uw) * uh;
+            if (!self.ensurePx(n)) return;
+            bell_math.renderFrame(self.px[0..n], w, h, width_px);
+            if (!self.layer.setPixels(self.px[0..n], uw, uh)) {
+                log.warn("bell border visual upload failed {d}x{d}", .{ w, h });
+                return;
+            }
+        }
+        self.width_px = width_px;
+        // A rebuilt tree (the renderer remade its chain) is a fresh layer
+        // under a frame that is still up: attach it again.
+        if (!self.shown or !self.layer.attached) {
+            self.layer.setOpacity(self.alpha);
+            self.layer.setVisible(true);
+            self.shown = true;
+            log.info("bell border shown as visual px={d} size={d}x{d}", .{ width_px, w, h });
+        }
+        if (self.fade_to != 255) self.startFade(255);
+    }
+
+    fn ensurePx(self: *BellBorder, n: usize) bool {
+        if (self.px.len >= n) return true;
+        if (self.px.len > 0) self.alloc.free(self.px);
+        self.px = self.alloc.alloc(u32, n) catch {
+            self.px = &.{};
+            return false;
+        };
+        return true;
+    }
+
     /// Clip the frame to the owner's window region - an elevated pane is a
     /// rounded card (T1831). Same contract as `DimOverlay.matchOwnerRegion`.
     pub fn matchOwnerRegion(self: *BellBorder, key: u64) void {
@@ -183,9 +263,9 @@ pub const BellBorder = struct {
         self.fade_from = 0;
         self.fade_to = 0;
         if (!self.shown) return;
-        _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+        if (self.on_visual) self.layer.setVisible(false) else _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         self.shown = false;
-        log.info("bell border hidden", .{});
+        log.info("bell border hidden visual={}", .{self.on_visual});
     }
 
     fn startFade(self: *BellBorder, to: u8) void {
@@ -210,6 +290,7 @@ pub const BellBorder = struct {
     fn setAlpha(self: *BellBorder, a: u8) void {
         if (a == self.alpha) return;
         self.alpha = a;
+        if (self.on_visual) return self.layer.setOpacity(a);
         const blend = w32.BLENDFUNCTION{ .SourceConstantAlpha = a };
         _ = w32.UpdateLayeredWindow(self.hwnd, null, null, null, null, null, 0, &blend, w32.ULW_ALPHA);
     }
@@ -220,13 +301,7 @@ pub const BellBorder = struct {
         const w = rect.right - rect.left;
         const h = rect.bottom - rect.top;
         const n: usize = @intCast(w * h);
-        if (self.px.len < n) {
-            if (self.px.len > 0) self.alloc.free(self.px);
-            self.px = self.alloc.alloc(u32, n) catch {
-                self.px = &.{};
-                return false;
-            };
-        }
+        if (!self.ensurePx(n)) return false;
         bell_math.renderFrame(self.px[0..n], w, h, width_px);
 
         const screen_dc = w32.GetDC(null) orelse return false;

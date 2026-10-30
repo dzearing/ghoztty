@@ -87,6 +87,7 @@ const tray_notify = @import("tray_notify.zig");
 const remote_session = @import("remote_session.zig");
 const occlusion = @import("occlusion.zig");
 const low_power = @import("../../renderer/low_power.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const remote_effects = configpkg.remote_effects;
 const msg_timer = @import("msg_timer.zig");
 const orphan_notify = @import("orphan_notify.zig");
@@ -12979,6 +12980,13 @@ fn surfaceWndProc(
                 return @bitCast(@intFromPtr(@as(*const anyopaque, @ptrCast(brush))));
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
+        // The pane's renderer published or retracted its composition tree
+        // (T2467): move the overlays onto it, or back to their popups.
+        comp_overlay.WM_APP_COMP_OVERLAY => {
+            surface.updateBellBorder();
+            return 0;
         },
 
         w32.WM_ACTIVATE => {

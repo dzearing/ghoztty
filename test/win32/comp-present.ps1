@@ -19,6 +19,11 @@
 #      context builds its chain again (T1690's seam).
 #   D. Negative control: with the knob off, no pane touches the composition
 #      path.
+#   E. Overlays as child visuals (T2467): a pane on the chain publishes its
+#      tree, and a BEL in it puts the bell border up as a child visual of the
+#      pane - no GhozttyBellBorder popup is ever shown, a window move re-shows
+#      nothing, and a key fades it out and takes it off. (The knob-off popup
+#      path is bell-border.ps1.)
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -131,15 +136,15 @@ $onLine = 'pane presents through a composition swap chain'
 $failLine = 'composition present failed'
 $unavailLine = 'composition present unavailable'
 
-function Start-Arm($name) {
+function Start-Arm($name, [string[]]$Extra = @()) {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
     $dir = Join-Path $root $name
     New-Item -ItemType Directory -Force $dir | Out-Null
     $env:LOCALAPPDATA = $dir
     $err = Join-Path $dir 'stderr.txt'
-    $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
+    $app = Start-OnTestDesktop -Exe $Exe -Arguments (@(
         '--config-default-files=false', '--session-persistence=false',
-        "--title=t2466-$name") -StdErr $err
+        "--title=t2466-$name") + $Extra) -StdErr $err
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
     & $Exe +new-window "--target=comp$name" | Out-Null
     $win = Wait-Win "comp$name"
@@ -205,7 +210,11 @@ try {
     Start-Sleep -Milliseconds 800
     Assert "B3 the app is still running" (Test-Alive $b)
     Assert "B4 the pane draws text after the fallback" (Test-DrawsText $b.Target)
-    Assert "B5 the fallback happened once, not per frame" ((Count-Log $b.Err $failLine) -eq 1)
+    # The arm has two panes (its startup window and the +new-window one), and
+    # each fails its own 6th present - so one line per pane, never one per
+    # frame. Which of them reaches 6 frames first is timing (1 or 2 lines).
+    $nb = Count-Log $b.Err $failLine
+    Assert "B5 the fallback happened once per pane, not per frame ($nb lines)" ($nb -ge 1 -and $nb -le 2)
 
     # ========================================================================
     "== C: a lost device on the composition path rebuilds its chain"
@@ -242,6 +251,55 @@ try {
     $text = Read-Text $d.Err
     Assert "D2 and no composition line was logged" `
         ($text -notmatch $onLine -and $text -notmatch $failLine -and $text -notmatch $unavailLine)
+
+    # ========================================================================
+    "== E: the bell border is a child visual of the pane, not a popup (T2467)"
+    # ========================================================================
+    Set-Knobs '1' $null $null
+    $e = Start-Arm 'e' @('--command=powershell.exe -NoLogo', '--bell-features=border,title')
+    Assert "E0 the arm's window came up" ($e.Top -ne [IntPtr]::Zero -and $null -ne $e.Win)
+    Assert "E1 the pane published its overlay tree" (Wait-Log $e.Err 'pane overlay tree published' 15000)
+    & $Exe +split "--target=$($e.Target)" '--direction=right' '--name=compe2' '--shell=powershell' 2>$null | Out-Null
+    $two = $false
+    for ($t = 0; $t -lt 50 -and -not $two; $t++) {
+        $two = (Count-Log $e.Err 'pane overlay tree published') -ge 2
+        if (-not $two) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "E2 the split pane published its tree too" $two
+    $shown = $false
+    for ($i = 0; $i -lt 6 -and -not $shown; $i++) {
+        # The pane's powershell evaluates [char]7 and echoes the BEL.
+        & $Exe +send-keys '--target=compe2' '[char]7' Enter 2>$null | Out-Null
+        $shown = Wait-Log $e.Err 'bell border shown as visual px=\d+' 2500
+    }
+    Assert "E3 a BEL put the bell border up as a visual (log)" $shown
+    Assert "E4 the fade-in finished at full opacity (log)" (Wait-Log $e.Err 'bell border fade done alpha=255' 3000)
+    # The split went into the arm's +new-window window, not the startup one:
+    # the window to move and key into is the one holding both panes.
+    $eTop = [IntPtr]::Zero
+    foreach ($w in @(Get-TestWindows -ProcessId $e.App.Pid -Class 'GhozttyWindow')) {
+        $n = @(Get-TestChildWindows -Window ([IntPtr]$w.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible).Count
+        if ($n -ge 2) { $eTop = [IntPtr]$w.Hwnd }
+    }
+    Assert "E5a found the two-pane window" ($eTop -ne [IntPtr]::Zero)
+    $borders = @(Get-TestWindows -ProcessId $e.App.Pid -Class 'GhozttyBellBorder')
+    Assert "E5 no bell border popup is visible ($($borders.Count))" ($borders.Count -eq 0)
+    $wr = Get-TestWindowRect -Window $eTop
+    [void](Set-TestWindowPos -Window $eTop -X ($wr.Left + 70) -Y ($wr.Top + 40))
+    Start-Sleep -Milliseconds 800
+    $borders = @(Get-TestWindows -ProcessId $e.App.Pid -Class 'GhozttyBellBorder')
+    Assert "E6 after a window move still no popup, and the frame was never re-shown" `
+        ($borders.Count -eq 0 -and (Count-Log $e.Err 'bell border shown') -eq 1)
+    $pane = @(Get-TestChildWindows -Window $eTop -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left, Top)[1]
+    if ($pane) { [void](Send-TestControlKey -Control ([IntPtr]$pane.Hwnd) -Key 'Right') }
+    $off = (Wait-Log $e.Err 'bell border hidden visual=true' 4000) -and (Wait-Log $e.Err 'bell border fade done alpha=0' 500)
+    Assert "E7 a key in the pane faded the frame out and took it off (log)" $off
+    if (-not $off) {
+        "    pane=$(if ($pane) { $pane.Hwnd } else { '<none>' }); bell lines:"
+        (Read-Text $e.Err) -split "`n" | Where-Object { $_ -match 'bell|overlay' } | Select-Object -Last 12 | ForEach-Object { "      $_" }
+    }
+    Assert "E8 the app is still running, nothing fell back" ((Test-Alive $e) -and (Count-Log $e.Err $failLine) -eq 0)
+    Assert "E9 the rung pane still draws text" (Test-DrawsText 'compe2')
 
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 

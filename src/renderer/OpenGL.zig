@@ -15,6 +15,7 @@ const low_power = @import("low_power.zig");
 const gl_loader = @import("gl_loader.zig");
 const gl_robust = @import("gl_robust.zig");
 const gl_comp_present = @import("gl_comp_present.zig");
+const comp_overlay = @import("comp_overlay.zig");
 const build_config = @import("../build_config.zig");
 const resize_paint = @import("../apprt/win32/resize_paint.zig");
 const Renderer = rendererpkg.GenericRenderer(OpenGL);
@@ -456,6 +457,7 @@ pub fn threadExit(self: *const OpenGL) void {
             // The presenter's GL names and interop device belong to this
             // context, so they go while it is still current.
             if (self.comp) |p| {
+                compRetract(self);
                 p.deinit();
                 self.alloc.destroy(p);
             }
@@ -652,6 +654,7 @@ fn markLost(self: *OpenGL, why: []const u8) void {
     self.snap_w = 0;
     self.snap_h = 0;
     if (self.comp) |p| {
+        compRetract(self);
         p.abandon();
         self.alloc.destroy(p);
         self.comp = null;
@@ -999,6 +1002,19 @@ fn compInit(self: *OpenGL, width: usize, height: usize) void {
     };
     self.comp = p;
     log.info("pane presents through a composition swap chain warp={}", .{p.warp});
+    // Hand the tree to the window thread for its overlay visuals (T2467).
+    if (p.overlayTree()) |tree| {
+        self.rt_surface.comp_overlay_slot.publish(tree, comp_overlay.RefOps.com);
+        comp_overlay.notify(hwnd);
+        log.info("pane overlay tree published", .{});
+    }
+}
+
+/// Take the presenter's tree back from the window thread before it goes; the
+/// window thread re-syncs its overlays (to popups) on the posted message.
+fn compRetract(self: *const OpenGL) void {
+    if (!self.rt_surface.comp_overlay_slot.retract(comp_overlay.RefOps.com)) return;
+    if (self.rt_surface.hwnd) |hwnd| comp_overlay.notify(hwnd);
 }
 
 /// A frame on the composition path failed: drop to SwapBuffers for the life
@@ -1011,6 +1027,7 @@ fn compFail(self: *OpenGL, err: anyerror) void {
         "composition present failed ({}) at {s} hr=0x{x}; falling back to SwapBuffers",
         .{ err, f.stage, @as(u32, @bitCast(f.hr)) },
     );
+    compRetract(self);
     p.deinit();
     self.alloc.destroy(p);
     self.comp = null;

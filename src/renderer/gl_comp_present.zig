@@ -34,6 +34,7 @@ const builtin = @import("builtin");
 const gl = @import("opengl");
 const gl_loader = @import("gl_loader.zig");
 const gl_robust = @import("gl_robust.zig");
+const comp_overlay = @import("comp_overlay.zig");
 
 const log = std.log.scoped(.comp_present);
 
@@ -468,6 +469,21 @@ pub const Presenter = struct {
         stage = "present";
         // Sync interval 1: one frame per vblank, the same pacing SwapBuffers had.
         try check(slot(*const fn (Obj, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_present)(self.swap, 1, 0));
+    }
+
+    /// The tree the pane's window thread hangs its overlay visuals under
+    /// (T2467, `comp_overlay.zig`). Null when the D3D11 context cannot be made
+    /// multithread-protected: the window thread uploads overlay pixels through
+    /// it while this thread copies frames, so an unprotected context is not
+    /// shared and the overlays stay popups.
+    pub fn overlayTree(self: *Presenter) ?comp_overlay.Shared {
+        const mt = query(self.device, &comp_overlay.IID_ID3D10Multithread) catch {
+            log.warn("ID3D10Multithread unavailable; overlays stay popups", .{});
+            return null;
+        };
+        defer release(mt);
+        _ = slot(*const fn (Obj, i32) callconv(.winapi) i32, mt, comp_overlay.slot_multithread_set_protected)(mt, 1);
+        return .{ .dcomp = self.dcomp, .context = self.context, .root = self.visual };
     }
 
     /// Tear everything down. Needs the GL context that `init` ran under to be
