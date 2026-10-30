@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-29T22:10:42-07:00",
-    "commit":  "d5b32e871",
+    "generated":  "2026-10-29T22:23:57-07:00",
+    "commit":  "c6a104930",
     "uncommitted":  [
 
                     ],
@@ -280,7 +280,7 @@
                   "src/apprt/win32/pane_stack_state.zig":  "c15d1ccdc76fbfe92e93fb3602b93ddb062b4320a7748105d9896d2ef4404454",
                   "src/apprt/win32/pane_stack_strip.zig":  "49f266294e31b13b2f3309c0fead5663e2a40002b5a862e83fc59398615e188b",
                   "src/apprt/win32/pane_stash.zig":  "9630f313b9811db3497998a01772b4dce32497326ba99fdef7a2c883f48530cb",
-                  "src/apprt/win32/PaneDesk.zig":  "4750e501ffef698c6dd71cb433c60c0c8b68b7b8ea9fab83d8a1f970b09d03bf",
+                  "src/apprt/win32/PaneDesk.zig":  "71c2679c2e7253c9ebdac0965a86231eb24318f2efd555a7ce9a041d565edb17",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
                   "src/apprt/win32/PaneSidebar.zig":  "a844356ff8726bf0a2abc90ef6b3498620cac55cbb8b898edf2bbf8e991a7f5e",
@@ -408,7 +408,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "057ff107fb651a473362023eb0d0a70237863f964614412c155cbd4872660020",
-                  "src/apprt/win32/Window.zig":  "6636604ccfff29779b51b66b79af170ae523b97b21469f4b28fb6da565683851",
+                  "src/apprt/win32/Window.zig":  "5a3dd0394857724104563c7e109d4c95b5f247b8a1fe914a658fa79dc82f67d7",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
