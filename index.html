@@ -68,9 +68,7 @@
           <span class="pin" style="--x: 70%; --y: 93.5%"><b>4</b>The branch diff, live</span>
         </div>
         <figcaption>
-          Real screenshot. Claude Code added rate limiting, then ran
-          <code>ghoztty +split --view=docs/plan.md</code> and
-          <code>ghoztty +split --view=git-diff:main...HEAD</code> to put its work beside you.
+          Claude Code finished a task, then opened its plan and the branch diff beside the conversation.
         </figcaption>
       </figure>
     </header>
@@ -145,23 +143,23 @@
             <pre class="code"><code>ghoztty +new-window --target=orbit --working-directory=~/src/orbit \
   --command="npm run dev" --split=down --split-command="npm test"</code></pre>
             <div class="stage"><img src="landing/shots/cli-window.webp" width="1800" height="1178" loading="lazy" alt="A new window titled orbit: main with npm run dev in the top pane and passing tests in the bottom pane." /></div>
-            <p class="panel-note"><code>--target</code> names the window, so running the same line again focuses it instead of opening a second one.</p>
+            <p class="panel-note">Run it again and Ghoztty focuses the window it already opened instead of making a second one.</p>
           </div>
           <div role="tabpanel" id="panel-view" aria-labelledby="tab-view" hidden>
             <pre class="code"><code>ghoztty +split --view=docs/plan.md</code></pre>
             <div class="stage"><img src="landing/shots/markdown.webp" width="1328" height="922" loading="lazy" alt="A viewer pane rendering a markdown plan with headings, bold text and a table." /></div>
-            <p class="panel-note">The viewer reloads when the file is saved and keeps your place. <code>--view</code> also takes code files, images, HTML pages and URLs.</p>
+            <p class="panel-note">The viewer reloads when the file is saved and keeps your place. It also shows code, images, HTML pages and websites.</p>
           </div>
           <div role="tabpanel" id="panel-diff" aria-labelledby="tab-diff" hidden>
             <pre class="code"><code>ghoztty +split --view=git-diff:main...HEAD</code></pre>
-            <div class="stage"><img src="landing/shots/diff.webp" width="2000" height="1086" loading="lazy" alt="A diff viewer with a file tree on the left and the added rate-limit middleware on the right." /></div>
+            <div class="stage"><img src="landing/shots/diff.webp" width="2000" height="1086" loading="lazy" alt="A diff viewer with a file tree on the left and a new source file on the right." /></div>
             <p class="panel-note">Also <code>git-status:</code> for the working tree, or <code>git-diff:&lt;sha&gt;</code> for one commit. Unified or side by side.</p>
           </div>
           <div role="tabpanel" id="panel-banner" aria-labelledby="tab-banner" hidden>
             <pre class="code"><code>ghoztty +set-banner --target="$GHOZTTY_PANE_ID" \
-  "## Add API rate limiting\n**PR** [#482](https://github.com/you/orbit/pull/482) · 37 tests passing"</code></pre>
+  "## Fix login redirect\n**PR** [#123](https://github.com/you/app/pull/123) · tests passing"</code></pre>
             <div class="stage"><img src="landing/shots/banner.webp" width="1304" height="664" loading="lazy" alt="A status banner above a Claude Code pane showing the task title, goal, prompt, status, a checklist of results and a PR link." /></div>
-            <p class="panel-note">Headings, tables, checklists and links all render. <code>$GHOZTTY_PANE_ID</code> is set in every pane, so an agent always knows its own.</p>
+            <p class="panel-note">Headings, tables, checklists and links all render. Every pane knows its own id, so an agent always updates its own banner.</p>
           </div>
           <div role="tabpanel" id="panel-list" aria-labelledby="tab-list" hidden>
             <pre class="code"><code>ghoztty +list          # or: ghoztty +list --json</code></pre>
@@ -172,7 +170,7 @@
             <pre class="code"><code>ghoztty +send-keys --target=tests "npm test\n"
 ghoztty +read --name=tests --lines=6</code></pre>
             <div class="stage"><img src="landing/shots/cli-sendkeys.webp" width="1900" height="789" loading="lazy" alt="Claude Code on the left runs ghoztty +send-keys and +read; the tests pane on the right shows the test run it started." /></div>
-            <p class="panel-note">The trailing <code>\n</code> presses Return. <code>--when-idle</code> waits until a Claude Code pane is ready for input.</p>
+            <p class="panel-note">Type into any pane, then read back what it printed. An agent can even wait until another Claude Code session is ready before typing.</p>
           </div>
           <div role="tabpanel" id="panel-state" aria-labelledby="tab-state" hidden>
             <pre class="code"><code>ghoztty +set-state --target=migrations --state=needs_input</code></pre>
@@ -196,7 +194,7 @@ ghoztty +read --name=tests --lines=6</code></pre>
           </p>
         </div>
         <ul class="callout-list">
-          <li><span>Ask</span>&ldquo;Add rate limiting, then open the plan and the diff beside me.&rdquo;</li>
+          <li><span>Ask</span>&ldquo;Open the plan and the diff beside me.&rdquo;</li>
           <li><span>Claude runs</span><code>ghoztty +split --view=docs/plan.md</code></li>
           <li><span>You see</span>The plan in a side pane, re-rendered on every save.</li>
         </ul>
@@ -242,7 +240,7 @@ ghoztty +read --name=tests --lines=6</code></pre>
           <ul class="checks">
             <li>Click it to put it back in the exact slot it came from.</li>
             <li><kbd>⌥</kbd>-click swaps it with the pane you're in.</li>
-            <li>Scripts can do the same: <code>ghoztty +stash --target=logs</code> and <code>+restore</code>.</li>
+            <li>Scripts and agents can stash and restore panes too.</li>
             <li>Stashed panes are still there after a relaunch.</li>
           </ul>
         </div>
@@ -258,7 +256,7 @@ ghoztty +read --name=tests --lines=6</code></pre>
           <ul class="checks">
             <li>Click a strip to bring that pane on show.</li>
             <li>Drag a strip to the tray to stash it, or to a screen edge for its own window.</li>
-            <li>Panes are glass cards on a gradient. Each new window gets its own colors, or pass <code>--color=random</code>.</li>
+            <li>Panes are glass cards on a gradient. Each new window gets its own colors.</li>
           </ul>
         </div>
       </article>
