@@ -983,6 +983,19 @@ was_maximized: bool = false,
 /// and spent by that first show; a user-opened window never sets it.
 background_first_show: bool = false,
 
+/// A GHOST window (T2488, debug builds only, `GHOZTTY_DEBUG_GHOST=1`): on the
+/// input desktop so DWM composes it and Windows.Graphics.Capture can film it,
+/// and invisible to the person at the desk - layered at alpha 1/255,
+/// click-through, a tool window that never activates, at the bottom of the
+/// z-order. The on-screen picture of the composition present path can then be
+/// checked while the user is working (the shape T2463 measured for the spike).
+ghost: bool = false,
+/// `GHOZTTY_DEBUG_GHOST=bottom`: the same ghost WITHOUT the layered alpha -
+/// opaque, at the bottom of the z-order. T2488 measured that a DirectComposition
+/// visual on a pane under a layered (alpha) top-level is not in the composed
+/// picture, so the composition path is filmed this way instead.
+ghost_opaque: bool = false,
+
 /// The NEXT split inserted into this window leaves keyboard focus where it is
 /// (T1797): the pane that had it - normally the one the `+split` was run from -
 /// keeps it, and the tab's active pane does not move to the new one. A baton
@@ -1715,7 +1728,9 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         .app = app,
         .is_quick_terminal = options.is_quick_terminal,
         .pending_surface_overrides = options.surface_overrides,
-        .background_first_show = options.background,
+        .background_first_show = options.background or ghostRequested(),
+        .ghost = ghostRequested(),
+        .ghost_opaque = ghostOpaqueRequested(),
         .pane_sidebar_expanded = PaneSidebar.remembered.expanded,
         .pane_sidebar_hidden = PaneSidebar.remembered.hidden,
         .pane_sidebar_width_dip = PaneSidebar.remembered.width_dip,
@@ -1773,7 +1788,14 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         w32.WS_POPUP | w32.WS_THICKFRAME
     else
         w32.WS_OVERLAPPEDWINDOW;
-    const ex_style: u32 = if (options.is_quick_terminal) w32.WS_EX_TOOLWINDOW else 0;
+    const ex_style: u32 = if (options.is_quick_terminal)
+        w32.WS_EX_TOOLWINDOW
+    else if (self.ghost and self.ghost_opaque)
+        w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE
+    else if (self.ghost)
+        w32.WS_EX_LAYERED | w32.WS_EX_TRANSPARENT | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE
+    else
+        0;
 
     // Cascade non-quick-terminal windows: stack each new window 30px
     // down/right of the most recently created window. Stops once the
@@ -1908,6 +1930,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         _ = w32.DestroyWindow(hwnd);
         self.hwnd = null;
     }
+    if (self.ghost and !self.ghost_opaque) _ = w32.SetLayeredWindowAttributes(hwnd, 0, 1, w32.LWA_ALPHA);
 
     // Store the Window pointer in GWLP_USERDATA for the WndProc.
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
@@ -3736,7 +3759,10 @@ pub fn insertPaneAsTabAt(
         // Quick terminal windows are shown by QuickTerminal.animateIn() instead.
         if (!self.is_quick_terminal) {
             if (self.hwnd) |h| {
-                if (self.background_first_show) {
+                if (self.ghost) {
+                    _ = w32.ShowWindow(h, w32.SW_SHOWNOACTIVATE);
+                    _ = w32.SetWindowPos(h, @ptrFromInt(1), 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE); // HWND_BOTTOM
+                } else if (self.background_first_show) {
                     self.showInBackground(h);
                 } else {
                     // T85: first show honors the remembered/config maximized
@@ -6393,6 +6419,20 @@ fn collapseAfterRelocation(self: *Window, source_tab: usize, fallback: *PaneView
 pub fn isForcedOpaque(self: *const Window) bool {
     if (self.app.config.@"background-opacity" >= 1.0) return false;
     return self.toggled_opaque;
+}
+
+/// `GHOZTTY_DEBUG_GHOST` (T2488), honoured by debug builds only: a release
+/// build ignores it, so no environment can make the user's terminal invisible.
+fn ghostRequested() bool {
+    if (comptime builtin.mode != .Debug) return false;
+    return std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_GHOST");
+}
+
+fn ghostOpaqueRequested() bool {
+    if (comptime builtin.mode != .Debug) return false;
+    const v = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_GHOST") catch return false;
+    defer std.heap.page_allocator.free(v);
+    return std.mem.eql(u8, v, "bottom");
 }
 
 /// Bring the window a pane was just dropped into to the front.

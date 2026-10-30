@@ -55,6 +55,13 @@ const Opts = struct {
     /// Alpha 1/255, click-through, bottom of the z-order: on screen for DWM
     /// and capture, invisible to the person at the desk.
     ghost: bool = false,
+    /// `--grab-hwnd=<n>` (T2488): no spike window at all. Capture ONE whole
+    /// frame of another process's window with WGC and write it to `--out` as
+    /// a top-down 32-bit BMP - the on-screen picture of the app's ghost
+    /// window, which the background test desktop cannot produce.
+    grab_hwnd: usize = 0,
+    /// How long to wait for the first frame of a grab.
+    grab_wait_ms: u32 = 3000,
 };
 
 const HWND_BOTTOM: ?w32.HWND = @ptrFromInt(1);
@@ -656,6 +663,10 @@ fn parseArgs(alloc: std.mem.Allocator) !void {
             opts.x = try std.fmt.parseInt(i32, a[4..], 10);
         } else if (std.mem.startsWith(u8, a, "--y=")) {
             opts.y = try std.fmt.parseInt(i32, a[4..], 10);
+        } else if (std.mem.startsWith(u8, a, "--grab-hwnd=")) {
+            opts.grab_hwnd = try std.fmt.parseInt(usize, a[12..], 0);
+        } else if (std.mem.startsWith(u8, a, "--grab-wait-ms=")) {
+            opts.grab_wait_ms = try std.fmt.parseInt(u32, a[15..], 10);
         } else if (std.mem.startsWith(u8, a, "--out=")) {
             opts.out = a[6..];
         } else return error.UnknownArg;
@@ -671,6 +682,7 @@ pub fn main() !u8 {
         return 2;
     };
     qpf = @intCast(std.os.windows.QueryPerformanceFrequency());
+    if (opts.grab_hwnd != 0) return grabMain(gpa.allocator());
 
     const main_class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyCompSpike");
     const blade_class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyCompSpikeBlade");
@@ -762,6 +774,66 @@ pub fn main() !u8 {
     if (opts.thread == .worker) _ = PostThreadMessageW(worker_tid.load(.acquire), WM_APP_QUIT, 0, 0);
     flushReport();
     return 0;
+}
+
+// ---- grab (T2488) ------------------------------------------------------------
+
+/// Capture one whole frame of `--grab-hwnd` and write it to `--out` as a BMP.
+/// The SECOND frame is the one written: the first a new capture session hands
+/// back can be the picture from before the session started.
+fn grabMain(alloc: std.mem.Allocator) u8 {
+    const hwnd: w32.HWND = @ptrFromInt(opts.grab_hwnd);
+    var cap = wgc.Capture.init(alloc, hwnd) catch |e| {
+        std.debug.print("GRAB init=FAILED stage={s} error={s} hr=0x{x}\n", .{ wgc.stage, @errorName(e), @as(u32, @bitCast(wgc.lastHr())) });
+        return 3;
+    };
+    defer cap.deinit();
+    const deadline = std.time.milliTimestamp() + opts.grab_wait_ms;
+    var seen: u32 = 0;
+    var last: ?wgc.Image = null;
+    while (std.time.milliTimestamp() < deadline) {
+        const img = cap.grab(alloc) catch |e| {
+            std.debug.print("GRAB frame=FAILED error={s} hr=0x{x}\n", .{ @errorName(e), @as(u32, @bitCast(wgc.lastHr())) });
+            return 3;
+        } orelse {
+            std.Thread.sleep(5 * std.time.ns_per_ms);
+            continue;
+        };
+        if (last) |old| alloc.free(old.pixels);
+        last = img;
+        seen += 1;
+        if (seen >= 2) break;
+    }
+    const img = last orelse {
+        std.debug.print("GRAB frame=NONE waited_ms={d}\n", .{opts.grab_wait_ms});
+        return 4;
+    };
+    writeBmp(opts.out, img) catch |e| {
+        std.debug.print("GRAB write=FAILED error={s}\n", .{@errorName(e)});
+        return 3;
+    };
+    std.debug.print("GRAB ok width={d} height={d} frames={d} warp={} out={s}\n", .{ img.width, img.height, seen, cap.warp, opts.out });
+    return 0;
+}
+
+/// A top-down (negative height) 32-bit BI_RGB bitmap of BGRA rows.
+fn writeBmp(path: []const u8, img: wgc.Image) !void {
+    const f = try std.fs.cwd().createFile(path, .{});
+    defer f.close();
+    const data_len: u32 = @intCast(img.pixels.len);
+    var hdr: [54]u8 = @splat(0);
+    hdr[0] = 'B';
+    hdr[1] = 'M';
+    std.mem.writeInt(u32, hdr[2..6], 54 + data_len, .little);
+    std.mem.writeInt(u32, hdr[10..14], 54, .little);
+    std.mem.writeInt(u32, hdr[14..18], 40, .little);
+    std.mem.writeInt(i32, hdr[18..22], @intCast(img.width), .little);
+    std.mem.writeInt(i32, hdr[22..26], -@as(i32, @intCast(img.height)), .little);
+    std.mem.writeInt(u16, hdr[26..28], 1, .little);
+    std.mem.writeInt(u16, hdr[28..30], 32, .little);
+    std.mem.writeInt(u32, hdr[34..38], data_len, .little);
+    try f.writeAll(&hdr);
+    try f.writeAll(img.pixels);
 }
 
 test {

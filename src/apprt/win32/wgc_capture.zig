@@ -156,6 +156,15 @@ pub const Frame = struct {
     width: u32,
 };
 
+/// One whole captured frame (`Capture.grab`): BGRA, `width * 4` bytes per
+/// row, top row first. The caller frees `pixels`.
+pub const Image = struct {
+    time_100ns: i64,
+    width: u32,
+    height: u32,
+    pixels: []u8,
+};
+
 /// A capture session on one window. Create, use and destroy it on ONE thread;
 /// the frame pool is free-threaded, so that thread needs no message pump.
 pub const Capture = struct {
@@ -307,12 +316,88 @@ pub const Capture = struct {
     /// The next frame DWM produced for the window, with one row of it read
     /// back at `row_frac` of its height, or null when none is waiting.
     pub fn next(self: *Capture, row_frac: f32) Error!?Frame {
+        const t = try self.take() orelse return null;
+        defer t.done();
+        try self.ensureStaging(t.desc.width);
+
+        const y: u32 = @min(t.desc.height -| 1, @as(u32, @intFromFloat(@as(f32, @floatFromInt(t.desc.height)) * row_frac)));
+        const box: D3D11_BOX = .{ .left = 0, .top = y, .front = 0, .right = t.desc.width, .bottom = y + 1, .back = 1 };
+        // ID3D11DeviceContext slot 46: CopySubresourceRegion.
+        const CopyRegion = *const fn (Obj, Obj, u32, u32, u32, u32, Obj, u32, *const D3D11_BOX) callconv(.winapi) void;
+        slot(CopyRegion, self.context, 46)(self.context, self.staging.?, 0, 0, 0, 0, t.tex, 0, &box);
+
+        const mapped = try self.map(self.staging.?);
+        defer self.unmap(self.staging.?);
+        const n = t.desc.width * 4;
+        @memcpy(self.row_buf[0..n], (mapped.data orelse return error.ComFailed)[0..n]);
+        return .{ .time_100ns = t.time, .row = self.row_buf[0..n], .width = t.desc.width };
+    }
+
+    /// The next frame DWM produced for the window, read back WHOLE (T2488):
+    /// tightly packed BGRA rows, top row first, owned by the caller. Null when
+    /// none is waiting. The texture WGC hands back is the window's composed
+    /// picture top-down, so a caller can judge orientation directly from it.
+    pub fn grab(self: *Capture, alloc: std.mem.Allocator) Error!?Image {
+        const t = try self.take() orelse return null;
+        defer t.done();
+        const w = t.desc.width;
+        const h = t.desc.height;
+        if (w == 0 or h == 0) return error.ComFailed;
+
+        const desc: D3D11_TEXTURE2D_DESC = .{
+            .width = w,
+            .height = h,
+            .mip_levels = 1,
+            .array_size = 1,
+            .format = DXGI_FORMAT_B8G8R8A8_UNORM,
+            .sample_count = 1,
+            .sample_quality = 0,
+            .usage = D3D11_USAGE_STAGING,
+            .bind_flags = 0,
+            .cpu_access_flags = D3D11_CPU_ACCESS_READ,
+            .misc_flags = 0,
+        };
+        var out: ?Obj = null;
+        const Create = *const fn (Obj, *const D3D11_TEXTURE2D_DESC, ?*const anyopaque, *?Obj) callconv(.winapi) HRESULT;
+        try check(slot(Create, self.device, 5)(self.device, &desc, null, &out));
+        const staging = out orelse return error.ComFailed;
+        defer release(staging);
+
+        const box: D3D11_BOX = .{ .left = 0, .top = 0, .front = 0, .right = w, .bottom = h, .back = 1 };
+        const CopyRegion = *const fn (Obj, Obj, u32, u32, u32, u32, Obj, u32, *const D3D11_BOX) callconv(.winapi) void;
+        slot(CopyRegion, self.context, 46)(self.context, staging, 0, 0, 0, 0, t.tex, 0, &box);
+
+        const mapped = try self.map(staging);
+        defer self.unmap(staging);
+        const src = mapped.data orelse return error.ComFailed;
+        const pixels = alloc.alloc(u8, @as(usize, w) * h * 4) catch return error.ComFailed;
+        var y: usize = 0;
+        while (y < h) : (y += 1) {
+            @memcpy(pixels[y * w * 4 ..][0 .. w * 4], src[y * mapped.row_pitch ..][0 .. w * 4]);
+        }
+        return .{ .time_100ns = t.time, .width = w, .height = h, .pixels = pixels };
+    }
+
+    const Taken = struct {
+        frame: Obj,
+        tex: Obj,
+        time: i64,
+        desc: D3D11_TEXTURE2D_DESC,
+
+        fn done(self: Taken) void {
+            rt.release(self.tex);
+            closeAndRelease(self.frame);
+        }
+    };
+
+    /// TryGetNextFrame plus the D3D11 texture behind it; the caller releases.
+    fn take(self: *Capture) Error!?Taken {
         // IDirect3D11CaptureFramePool slot 7: TryGetNextFrame.
         var f: ?Obj = null;
         const TryGet = *const fn (Obj, *?Obj) callconv(.winapi) HRESULT;
         try check(slot(TryGet, self.pool, 7)(self.pool, &f));
         const frame = f orelse return null;
-        defer closeAndRelease(frame);
+        errdefer closeAndRelease(frame);
 
         // IDirect3D11CaptureFrame slot 7: get_SystemRelativeTime.
         var t: i64 = 0;
@@ -331,29 +416,25 @@ pub const Capture = struct {
         const GetInterface = *const fn (Obj, *const GUID, *?Obj) callconv(.winapi) HRESULT;
         try check(slot(GetInterface, access, 3)(access, &IID_ID3D11Texture2D, &tx));
         const tex = tx orelse return error.ComFailed;
-        defer release(tex);
 
         // ID3D11Texture2D slot 10: GetDesc.
         var desc: D3D11_TEXTURE2D_DESC = undefined;
         const GetDesc = *const fn (Obj, *D3D11_TEXTURE2D_DESC) callconv(.winapi) void;
         slot(GetDesc, tex, 10)(tex, &desc);
-        try self.ensureStaging(desc.width);
+        return .{ .frame = frame, .tex = tex, .time = t, .desc = desc };
+    }
 
-        const y: u32 = @min(desc.height -| 1, @as(u32, @intFromFloat(@as(f32, @floatFromInt(desc.height)) * row_frac)));
-        const box: D3D11_BOX = .{ .left = 0, .top = y, .front = 0, .right = desc.width, .bottom = y + 1, .back = 1 };
-        // ID3D11DeviceContext slot 46: CopySubresourceRegion.
-        const CopyRegion = *const fn (Obj, Obj, u32, u32, u32, u32, Obj, u32, *const D3D11_BOX) callconv(.winapi) void;
-        slot(CopyRegion, self.context, 46)(self.context, self.staging.?, 0, 0, 0, 0, tex, 0, &box);
-
-        // Slot 14: Map; slot 15: Unmap.
+    // ID3D11DeviceContext slot 14: Map; slot 15: Unmap.
+    fn map(self: *Capture, res: Obj) Error!D3D11_MAPPED_SUBRESOURCE {
         var mapped: D3D11_MAPPED_SUBRESOURCE = undefined;
         const Map = *const fn (Obj, Obj, u32, u32, u32, *D3D11_MAPPED_SUBRESOURCE) callconv(.winapi) HRESULT;
-        try check(slot(Map, self.context, 14)(self.context, self.staging.?, 0, D3D11_MAP_READ, 0, &mapped));
+        try check(slot(Map, self.context, 14)(self.context, res, 0, D3D11_MAP_READ, 0, &mapped));
+        return mapped;
+    }
+
+    fn unmap(self: *Capture, res: Obj) void {
         const Unmap = *const fn (Obj, Obj, u32) callconv(.winapi) void;
-        defer slot(Unmap, self.context, 15)(self.context, self.staging.?, 0);
-        const n = desc.width * 4;
-        @memcpy(self.row_buf[0..n], (mapped.data orelse return error.ComFailed)[0..n]);
-        return .{ .time_100ns = t, .row = self.row_buf[0..n], .width = desc.width };
+        slot(Unmap, self.context, 15)(self.context, res, 0);
     }
 
     fn ensureStaging(self: *Capture, width: u32) Error!void {

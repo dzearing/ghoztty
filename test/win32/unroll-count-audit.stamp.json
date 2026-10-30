@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-30T07:28:12-07:00",
-    "commit":  "bf5418a7e",
+    "generated":  "2026-10-30T10:04:08-07:00",
+    "commit":  "23e0ace7f",
     "uncommitted":  [
-                        "test/win32/unroll-count-audit.baseline.json"
+                        "scripts/comp-present-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -15,6 +15,7 @@
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
+                  "scripts/comp-present-onscreen.ps1":  "6072c86787b9488bea95f031e47c131b0bc800c1a7920fd8814bae92a486d4a5",
                   "scripts/comp-spike.ps1":  "0cb3e4fbe75df1ed7645ce6fd2a28ca71177ab94a87febee45e13a1201d10ab7",
                   "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
