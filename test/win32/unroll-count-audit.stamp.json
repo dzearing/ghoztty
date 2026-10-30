@@ -1,8 +1,8 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-30T11:29:15-07:00",
-    "commit":  "bc1a2105e",
+    "generated":  "2026-10-30T13:14:39-07:00",
+    "commit":  "3e26994eb",
     "uncommitted":  [
                         "scripts/resize-sync-onscreen.ps1"
                     ],
@@ -87,7 +87,7 @@
                   "scripts/publish-windows-tag.ps1":  "8f55c46c6de05261d252468afd35246dfa18b97aea63f079a6f7d235f6b7e055",
                   "scripts/rdp-perf-probe.ps1":  "b5e70fb1c4b8eb1ae74033ad8131b48e9aa20a3aacc7b4291d355d81c33b866a",
                   "scripts/report-false-positive.ps1":  "67875bcfc4d235afa9a8810294a7ea9d48fc7cb57f69e74c9617970b65d68534",
-                  "scripts/resize-sync-onscreen.ps1":  "6cb112df29b4cacf4694129a8335d9a4bd270fe6e28e3b3ac9dfd806c34e8939",
+                  "scripts/resize-sync-onscreen.ps1":  "8e332fc867e14cb3dcdaf1e555ea20e2b7090328da4c5a4fe39a5809c30b9781",
                   "scripts/ship-feature.ps1":  "b53f3d8a44440cf33b6e2ce3c40819ca0695ffa48b1226b7545eddf8cac45915",
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",
