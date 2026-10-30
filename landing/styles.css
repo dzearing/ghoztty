@@ -395,29 +395,44 @@ footer { border-top: 1px solid var(--line); }
 
 /* ── Showcase carousel ── */
 
-.hero { padding-bottom: 8px; }
-.showcase { max-width: 1280px; margin: 24px auto 0; padding: 0 24px; }
-.showcase-track {
-  display: grid; grid-auto-flow: column; grid-auto-columns: 100%;
-  overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth;
-  scrollbar-width: none; border-radius: 24px;
+.hero { padding: 36px 24px 8px; }
+.hero-copy { max-width: 1040px; }
+.hero h1 { margin-top: 0; font-size: clamp(36px, 5.2vw, 58px); }
+.lede { margin-top: 14px; }
+.hero-actions { margin-top: 22px; }
+
+/* Sized from the viewport height so the screenshot, its reflection, the
+   caption and the dots all fit on screen below the hero. */
+.showcase { max-width: min(1080px, calc((100svh - 515px) * 1.6 + 164px)); margin: 20px auto 0; padding: 0 24px; }
+.showcase-stage { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; }
+.showcase-stage .nav-btn { transform: translateY(-64px); }
+
+/* The slides stack in one cell and crossfade, so nothing ever scrolls. */
+.showcase-track { display: grid; outline: none; touch-action: pan-y; }
+.slide {
+  grid-area: 1 / 1; display: grid; margin: 0;
+  opacity: 0; visibility: hidden; transition: opacity 0.6s ease, visibility 0s linear 0.6s;
 }
-.showcase-track::-webkit-scrollbar { display: none; }
-.slide { scroll-snap-align: center; display: grid; gap: 18px; padding: 0 2px; }
-.slide-media {
-  aspect-ratio: 16 / 10;
-  display: grid; place-items: center;
-  background: var(--stage); border: 1px solid var(--stage-line); border-radius: 24px;
-  padding: clamp(12px, 3.5vw, 48px); overflow: hidden;
-}
+.slide.is-on { opacity: 1; visibility: visible; transition: opacity 0.6s ease; }
+
+/* Each screenshot sits on the bottom edge of its box, like on a shelf. */
+.slide-media { aspect-ratio: 16 / 10; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
 .slide-media img, .slide-media video {
-  max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain;
-  border-radius: clamp(6px, 1vw, 12px);
-  filter: drop-shadow(0 30px 50px rgba(0, 0, 0, 0.5));
+  width: 100%; height: 100%; object-fit: contain; object-position: center bottom;
 }
-.slide figcaption { text-align: center; color: var(--text-2); font-size: clamp(15px, 1.6vw, 18px); }
+
+/* Its reflection is a flipped copy of the box (built by main.js), clipped to
+   a short strip just under the screenshot and faded out. */
+.reflection {
+  height: 56px; margin-top: 2px; overflow: hidden; pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.32), transparent);
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.32), transparent);
+}
+.reflection > .slide-media { transform: scaleY(-1); }
+
+.slide figcaption { margin-top: 10px; text-align: center; color: var(--text-2); font-size: 15px; }
 .slide figcaption strong {
-  display: block; color: var(--text); font-size: clamp(20px, 2.6vw, 28px);
+  display: block; color: var(--text); font-size: clamp(18px, 2vw, 22px);
   letter-spacing: -0.02em; margin-bottom: 2px;
 }
 .nav-btn {
@@ -425,54 +440,27 @@ footer { border-top: 1px solid var(--line); }
   color: var(--text); background: var(--bg-card); border: 1px solid var(--line-strong);
 }
 .nav-btn:hover { border-color: var(--accent); color: var(--accent); }
-.dots { display: flex; gap: 8px; }
+.dots { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
 .dots button {
   width: 8px; height: 8px; padding: 0; border-radius: 999px; border: 0; cursor: pointer;
   background: var(--line-strong); transition: width 0.25s ease, background 0.25s ease;
 }
 .dots button[aria-selected="true"] { width: 26px; background: var(--accent); }
-.download { padding-top: 80px; }
-@media (max-width: 760px) {
-  .slide-media { aspect-ratio: 4 / 3; border-radius: 16px; }
-  .showcase-track { border-radius: 16px; }
-}
-.hero { padding-top: 48px; }
-.hero h1 { margin-top: 0; font-size: clamp(36px, 5.2vw, 58px); }
-.lede { margin-top: 14px; }
-.hero-actions { margin-top: 22px; }
-.slide-media { aspect-ratio: auto; height: min(64vh, 720px); }
-@media (max-width: 760px) { .slide-media { height: auto; aspect-ratio: 4 / 3; } }
-.slide-media { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
-.slide-media video { height: 100%; }
-.showcase { max-width: 960px; }
-.slide-media { height: min(50vh, 540px); padding: clamp(10px, 2.4vw, 32px); }
-.slide figcaption strong { font-size: clamp(18px, 2vw, 22px); }
-.slide figcaption { font-size: 15px; }
-.slide { gap: 12px; }
-@media (max-width: 760px) { .slide-media { height: auto; aspect-ratio: 4 / 3; } }
-.showcase { max-width: min(920px, calc(58vh * 1.6 + 48px)); }
-.slide-media { height: auto; aspect-ratio: 16 / 10; padding: clamp(10px, 2.2vw, 26px); }
 
-/* Arrows sit beside the screenshot, and the whole carousel (image, caption,
-   dots) is sized to fit the screen below the hero. */
-.hero-copy { max-width: 1040px; }
-.hero { padding-top: 36px; }
-.showcase { max-width: min(1080px, calc((100svh - 495px) * 1.6 + 164px)); margin-top: 16px; }
-.showcase-stage { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 18px; }
-.showcase-stage .nav-btn { align-self: center; transform: translateY(-36px); }
-.dots { justify-content: center; margin-top: 14px; }
 @media (max-width: 760px) {
+  .slide-media { aspect-ratio: 4 / 3; }
   .showcase-stage { grid-template-columns: minmax(0, 1fr); }
   .showcase-stage .nav-btn { display: none; }
 }
 
-/* An Apple-style reflection under each screenshot: a flipped copy of the
-   frame (built by main.js), clipped to a short strip and faded out. */
-.reflection {
-  height: 44px; margin-top: -6px; overflow: hidden; pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 90%);
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 90%);
+.download { padding-top: 80px; }
+
+/* The Windows SmartScreen and Defender notes fold away until asked for. */
+.win-notes { max-width: 760px; margin: 18px auto 0; text-align: left; }
+.win-notes summary {
+  cursor: pointer; text-align: center; color: var(--text-3); font-size: 14px; list-style: none;
 }
-.reflection > .slide-media { transform: scaleY(-1); }
-.slide figcaption { margin-top: 0; }
-.showcase-stage .nav-btn { transform: translateY(-62px); }
+.win-notes summary::-webkit-details-marker { display: none; }
+.win-notes summary::after { content: " \25B8"; }
+.win-notes[open] summary::after { content: " \25BE"; }
+.win-notes summary:hover { color: var(--text-2); }

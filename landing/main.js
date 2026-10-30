@@ -1,5 +1,5 @@
-// Showcase carousel: a scroll-snap track with arrows, dots and a gentle autoplay
-// that stops for good once the visitor takes over.
+// Showcase carousel: stacked slides that crossfade, with arrows, dots, swipes
+// and a gentle autoplay that stops for good once the visitor takes over.
 document.querySelectorAll("[data-carousel]").forEach((root) => {
   const track = root.querySelector(".showcase-track");
   const slides = [...track.children];
@@ -8,7 +8,7 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
   let index = 0;
   let timer = null;
 
-  // A flipped copy of each frame makes the reflection under it. A video's
+  // A flipped copy of each screenshot makes the reflection under it. A video's
   // reflection shows its poster; the motion is too small to notice there.
   slides.forEach((slide) => {
     const media = slide.querySelector(".slide-media");
@@ -39,8 +39,8 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
     return b;
   });
 
-  // A slide's image loads before the carousel moves to it, so it never
-  // slides onto a half-decoded picture. Neighbours load ahead of time.
+  // A slide's image loads before the carousel shows it, so it never fades in
+  // a half-decoded picture. Neighbours load ahead of time.
   const ready = (k) => {
     const img = slides[(k + slides.length) % slides.length].querySelector("img");
     if (!img) return Promise.resolve();
@@ -49,32 +49,27 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
     return Promise.race([decoded, new Promise((r) => setTimeout(r, 4000))]);
   };
 
+  const show = (i) => {
+    index = i;
+    slides.forEach((s, k) => {
+      s.classList.toggle("is-on", k === i);
+      s.setAttribute("aria-hidden", String(k !== i));
+      const v = s.querySelector(".slide-media video");
+      if (v) k === i && !reduceMotion ? v.play().catch(() => {}) : v.pause();
+    });
+    dotButtons.forEach((b, k) => b.setAttribute("aria-selected", String(k === i)));
+    ready(i + 1);
+    ready(i - 1);
+  };
+
   let pending = 0;
   const go = async (i) => {
     const target = (i + slides.length) % slides.length;
     const ticket = ++pending;
     await ready(target);
     if (ticket !== pending) return; // a newer request superseded this one
-    index = target;
-    track.scrollTo({ left: slides[index].offsetLeft - track.offsetLeft, behavior: reduceMotion ? "auto" : "smooth" });
+    show(target);
   };
-
-  const mark = (i) => {
-    index = i;
-    ready(i + 1);
-    ready(i - 1);
-    dotButtons.forEach((b, k) => b.setAttribute("aria-selected", String(k === i)));
-    slides.forEach((s, k) => {
-      const v = s.querySelector("video");
-      if (v) k === i && !reduceMotion ? v.play().catch(() => {}) : v.pause();
-    });
-  };
-
-  // Which slide is on show follows the scroll position (arrows, dots, swipes).
-  const onShow = new IntersectionObserver((entries) => {
-    entries.forEach((e) => { if (e.isIntersecting) mark(slides.indexOf(e.target)); });
-  }, { root: track, threshold: 0.6 });
-  slides.forEach((s) => onShow.observe(s));
 
   const stop = () => { clearInterval(timer); timer = null; };
   root.querySelector("[data-prev]").addEventListener("click", () => { stop(); go(index - 1); });
@@ -83,15 +78,25 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
     if (e.key === "ArrowRight") { e.preventDefault(); stop(); go(index + 1); }
     if (e.key === "ArrowLeft") { e.preventDefault(); stop(); go(index - 1); }
   });
-  ["pointerdown", "wheel", "touchstart"].forEach((ev) => track.addEventListener(ev, stop, { passive: true }));
 
-  mark(0);
+  // A horizontal swipe moves one slide.
+  let startX = null;
+  track.addEventListener("pointerdown", (e) => { startX = e.clientX; stop(); });
+  track.addEventListener("pointerup", (e) => {
+    if (startX === null) return;
+    const dx = e.clientX - startX;
+    startX = null;
+    if (Math.abs(dx) > 40) go(index + (dx < 0 ? 1 : -1));
+  });
+
+  show(0);
   // Then warm every remaining slide once the page has settled.
   window.addEventListener("load", () => {
     const warm = () => slides.forEach((_, k) => ready(k));
     "requestIdleCallback" in window ? requestIdleCallback(warm) : setTimeout(warm, 1500);
   });
-  if (!reduceMotion) timer = setInterval(() => go(index + 1), 5000);
+  // Autoplay only advances while the page is on screen.
+  if (!reduceMotion) timer = setInterval(() => { if (!document.hidden) go(index + 1); }, 5000);
 });
 
 // The Remote Agent section that fetched the relay's agent version.json went
