@@ -8175,28 +8175,27 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // the band, read at the face's corner where no name is drawn.
     log.debug("strip face alpha={d} band={x:0>6} size={d}x{d}", .{ alpha, frame.pixels[0] & 0xFF_FFFF, w, ht });
     const face_was_up = f.shown;
-    var tq: [4]i64 = .{ 0, 0, 0, 0 };
+    var tq: [2]i64 = .{ 0, 0 };
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[0]);
     f.commit(pt.x, pt.y, alpha, region);
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[1]);
-    // The trace's cost of a fold's first face (T2485 D10): its paint, the
-    // commit, the composition wait and the pane's hide, in microseconds.
-    defer if (stackTraceOn() and carried != null and !face_was_up and tq[2] != 0) {
-        _ = w32.QueryPerformanceCounter(&tq[3]);
-        log.info("stack trace face first paint_us={d} commit_us={d} flush_us={d} hide_us={d}", .{
-            @divTrunc(tq[0] - tb, 10), @divTrunc(tq[1] - tq[0], 10), @divTrunc(tq[2] - tq[1], 10), @divTrunc(tq[3] - tq[2], 10),
+    // The trace's cost of a fold's first face (T2485 D10): its paint and the
+    // commit, in microseconds.
+    if (stackTraceOn() and carried != null and !face_was_up and f.shown) {
+        log.info("stack trace face first paint_us={d} commit_us={d} live={d}", .{
+            @divTrunc(tq[0] - tb, 10), @divTrunc(tq[1] - tq[0], 10), @intFromBool(live),
         });
-    };
+    }
     // The face is up carrying the card, so the live pane under it goes -
     // after, never before, so no frame shows the desk where the card is. A
-    // face this tick first showed is on screen only after the next
+    // face this pass first showed is on screen only after the next
     // composition (T2485 A1): hiding the pane at once left one frame with
-    // neither, an empty card at every fold's start. So wait that composition
-    // out, once per fold. Leaving the pane up for a tick instead was worse:
-    // a squeezed held pane draws blank and unclipped over the blades.
-    if (carried != null and live and f.shown) {
-        if (!face_was_up) _ = w32.DwmFlush();
-        if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[2]);
+    // neither, an empty card at every fold's start. Waiting that composition
+    // out here (DwmFlush) cost the pass 7-13 ms, a dropped frame and a jump
+    // at every fold (T2485 D10). So the pane stays up under the face for this
+    // pass, and the next pass's placement batch hides it (`placeGrid` hides a
+    // card its face carries) in the same frame as its neighbours' moves.
+    if (carried != null and live and f.shown and face_was_up) {
         _ = w32.SetWindowPos(h, null, 0, 0, 0, 0, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE |
             w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_HIDEWINDOW);
         view.setVisible(false);
