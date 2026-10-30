@@ -8037,7 +8037,14 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     const carried: ?strip_face.Content = carried: {
         if (view.glide_snap != .ready) break :carried null;
         const fr = view.glideFrame() orelse break :carried null;
-        if (!opening and (fr.w != at.width() or fr.h != at.height())) break :carried null;
+        if (!opening and !strip_face.carriedFits(fr.w, fr.h, at.width(), at.height())) {
+            // T2485 oracle: the carried frame no longer fits the window it
+            // stands in for, so the card falls back to the live pane.
+            log.debug("stack fold carried dropped frame={d}x{d} at={d}x{d} live={d}", .{
+                fr.w, fr.h, at.width(), at.height(), @intFromBool(live),
+            });
+            break :carried null;
+        }
         break :carried .{ .pixels = fr.pixels, .w = fr.w, .h = fr.h, .x = 0, .y = 0 };
     };
     if (!live and carried == null and !opening) return false;

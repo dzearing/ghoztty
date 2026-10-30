@@ -116,6 +116,19 @@ pub fn blendContent(buf: []u32, w: usize, h: usize, content: Content, alpha: u8)
     }
 }
 
+/// How far a carried frame may be off the window it stands in for and still
+/// carry the card, in px (T2485). The held rect is re-derived each frame and
+/// can round a pixel away from the size the frame was read back at; `blend
+/// Content` pins and clips the frame, so a pixel or two of slack draws the
+/// same card. Refusing it dropped the face and showed the live pane on
+/// alternate frames: the folding blade's text blinking on and off.
+pub const carried_slack_px: i32 = 2;
+
+/// Whether a carried frame `fw` x `fh` still fits a window `aw` x `ah`.
+pub fn carriedFits(fw: i32, fh: i32, aw: i32, ah: i32) bool {
+    return @abs(fw - aw) <= carried_slack_px and @abs(fh - ah) <= carried_slack_px;
+}
+
 /// The face's constant alpha for `collapse` (0..1).
 pub fn alphaOf(collapse: f64) u8 {
     return @intFromFloat(@round(std.math.clamp(collapse, 0, 1) * 255));
@@ -247,6 +260,15 @@ test "blendContent: the content over the band at alpha, pinned, bottom-up, opaqu
     blendContent(&none, 2, 1, .{ .pixels = &white, .w = 1, .h = 1, .x = 0, .y = 1 }, 255);
     try testing.expectEqual(band, none[0]);
     try testing.expectEqual(band, none[1]);
+}
+
+test "carriedFits: a pixel or two of rounding still carries, a real resize does not (T2485)" {
+    try testing.expect(carriedFits(282, 923, 282, 923));
+    // The run1 probe's shape: read back at 282, held at 281.
+    try testing.expect(carriedFits(282, 923, 281, 923));
+    try testing.expect(carriedFits(280, 921, 282, 923));
+    try testing.expect(!carriedFits(282, 923, 279, 923));
+    try testing.expect(!carriedFits(282, 923, 282, 900));
 }
 
 test "alphaOf: the collapse as a byte, clamped" {
