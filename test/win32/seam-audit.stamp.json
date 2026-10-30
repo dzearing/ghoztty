@@ -1,15 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-29T16:54:28-07:00",
-    "commit":  "b537c0fac",
+    "generated":  "2026-10-29T17:28:30-07:00",
+    "commit":  "ff6133a71",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig",
-                        "src/termio/message.zig",
-                        "src/termio/stream_handler.zig",
-                        "src/termio/Termio.zig",
-                        "src/termio/Thread.zig",
-                        "src/termio/title_pace.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -506,7 +501,7 @@
                   "src/renderer/backend.zig":  "6c17bdd1d4eeb9eda89fc7259147fd4e28b207a684dece941104c6e1e6cf5b79",
                   "src/renderer/cell.zig":  "e7b1395f5740944729142bdb88371003d61839c05f0baef19ccd64a6642663f5",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
-                  "src/renderer/generic.zig":  "a1975be31d19ffd90a2d5bdfa887b97344cd300550350990a5d1e3eeb0932073",
+                  "src/renderer/generic.zig":  "1c1132fd8bef69cd4ac157c59c9fb2d010f41a0b568e4ffe567d8e075c055d8e",
                   "src/renderer/gl_loader.zig":  "f79e254d9bd6132bec1db99dad0fed3c9860b175ddebae5fd3707101a5563c93",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
                   "src/renderer/gl_robust.zig":  "70d950fc2a359d24df6783cfbe2ffc3812daf307834f0afa65e61ae8e9c38614",
@@ -514,7 +509,7 @@
                   "src/renderer/link.zig":  "4cd5fe0202a1eadc19920fa664e0a4a139365e263754608051944ff6fdaaed36",
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
                   "src/renderer/message.zig":  "ea7a01ec29b0fc5ba99beccb00b090a6d910dbcc23575796c2a840d5a32d11e7",
-                  "src/renderer/Metal.zig":  "0ff484cb116f11029b59a06a97d3866b7011c57b6b8cdb63a145df14afd8aa80",
+                  "src/renderer/Metal.zig":  "805d79782476bdfd4946d578134becc2483d73dcee7af7a495cdbdd8e428d6f4",
                   "src/renderer/OpenGL.zig":  "c9a2ab3721d064730985f23cf2702683a036dc394a467b76ea5c0d3178fcb7c0",
                   "src/renderer/Options.zig":  "884d0510167fbc720bde36b502c75ff9ed4b5fcce47a07c8c3b74cbc490ed6fd",
                   "src/renderer/Overlay.zig":  "7cbdcee4452a18989936b19ad73484a64182d9660bd25dc95997ec18edec109e",

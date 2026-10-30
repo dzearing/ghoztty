@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-29T16:54:51-07:00",
-    "commit":  "b537c0fac",
+    "generated":  "2026-10-29T17:28:38-07:00",
+    "commit":  "ff6133a71",
     "uncommitted":  [
 
                     ],
@@ -805,7 +805,7 @@
                   "src/renderer/backend.zig":  "6c17bdd1d4eeb9eda89fc7259147fd4e28b207a684dece941104c6e1e6cf5b79",
                   "src/renderer/cell.zig":  "e7b1395f5740944729142bdb88371003d61839c05f0baef19ccd64a6642663f5",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
-                  "src/renderer/generic.zig":  "a1975be31d19ffd90a2d5bdfa887b97344cd300550350990a5d1e3eeb0932073",
+                  "src/renderer/generic.zig":  "1c1132fd8bef69cd4ac157c59c9fb2d010f41a0b568e4ffe567d8e075c055d8e",
                   "src/renderer/gl_loader.zig":  "f79e254d9bd6132bec1db99dad0fed3c9860b175ddebae5fd3707101a5563c93",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
                   "src/renderer/gl_robust.zig":  "70d950fc2a359d24df6783cfbe2ffc3812daf307834f0afa65e61ae8e9c38614",
@@ -813,7 +813,7 @@
                   "src/renderer/link.zig":  "4cd5fe0202a1eadc19920fa664e0a4a139365e263754608051944ff6fdaaed36",
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
                   "src/renderer/message.zig":  "ea7a01ec29b0fc5ba99beccb00b090a6d910dbcc23575796c2a840d5a32d11e7",
-                  "src/renderer/Metal.zig":  "0ff484cb116f11029b59a06a97d3866b7011c57b6b8cdb63a145df14afd8aa80",
+                  "src/renderer/Metal.zig":  "805d79782476bdfd4946d578134becc2483d73dcee7af7a495cdbdd8e428d6f4",
                   "src/renderer/metal/api.zig":  "94221c8180163567ccbe4a851924419b801d27af9b3b930482f695771d4db1fd",
                   "src/renderer/metal/buffer.zig":  "a7ca199938f2b345ab0cae32b371bb968b83a5c1b3407806856e626021f87c59",
                   "src/renderer/metal/Frame.zig":  "e4e3cf3bb1d65193816322e88c68f395594fa9954b853c5d004ab075b134f3af",
@@ -1161,6 +1161,7 @@
                   "test/win32/frame-lab-scene.ps1":  "2ed3fdcc10b378d720a4ef23d95bbcc1a58cd9eaddb2f920dc625a163ade0f8a",
                   "test/win32/frame-score.ps1":  "52da37c6fdbfe72d9d34d02ab00d41203cbd3002c7ef2f68018dd95877f3d21c",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
+                  "test/win32/fullscreen-guard.ps1":  "a6c1a301a11d7493a2e7b5411fbcb25daea08302c0a822e91d98fd6db0a67450",
                   "test/win32/gate-negatives.ps1":  "3e861edd09da86c4e7c0bdb0f7a708ea3a215b520dac4b557cc797c616293b5f",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
