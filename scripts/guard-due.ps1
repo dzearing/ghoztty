@@ -939,6 +939,25 @@ $GuardTable = @(
             'src\apprt\win32\ViewerPane.zig'
         )
     },
+    # T2473: what a closed window gives back - private bytes, handles, GDI/USER,
+    # threads, child processes and GPU memory across repeated open/close of a
+    # split window with a viewer. The only harness that measures a window's
+    # teardown instead of its survival, so it covers the teardown itself (the
+    # window, its panes, the desk it paints, the surface's GL/composition
+    # present) - a free dropped from any of them is a per-window leak that
+    # every other script passes over.
+    [pscustomobject]@{
+        Name   = 'window-close-memory'
+        Script = 'test\win32\window-close-memory.ps1'
+        Stamp  = 'test\win32\window-close-memory.stamp.json'
+        Covers = @(
+            'test\win32\window-close-memory.ps1',
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\PaneDesk.zig',
+            'src\apprt\win32\Surface.zig',
+            'src\renderer\gl_comp_present.zig'
+        )
+    },
     # T827: `+rearrange` over a window that holds a VIEWER pane. Main fixed a
     # Mac defect where a layout naming a preview pane failed with 'pane is no
     # longer alive' - win32 resolves names to *PaneView and cannot have it by

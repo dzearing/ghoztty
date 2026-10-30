@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-29T22:13:02-07:00",
-    "commit":  "d5b32e871",
+    "generated":  "2026-10-29T23:41:19-07:00",
+    "commit":  "7aab7f13a",
     "uncommitted":  [
-                        "test/win32/comp-present.ps1"
+                        "test/win32/window-close-memory.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -555,6 +555,7 @@
                   "test/win32/wheel-scroll.ps1":  "5ddcfef5925d88800a7bfe738e3df7d75a0df62fe400243070fba6f78cc8a2a1",
                   "test/win32/window-active.ps1":  "9151aa942d89c9db56f8fe9531b66c67285d311d17d50d8c43b8bec7b1b778df",
                   "test/win32/window-active-audit.ps1":  "713214a5212d2f50713ae9eaff05d788293b6f8ada9b6daa78d1dcf081406879",
+                  "test/win32/window-close-memory.ps1":  "9ff1cd33ff4a64606a56a5df23f6e2b76aa20dfc1a2019923a19dc2eb97eb52b",
                   "test/win32/window-color.ps1":  "ee0cd62d72645ee63415938b2ca77b3b29b5cd7deb1b4ff3ee0fd11053465f93",
                   "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
