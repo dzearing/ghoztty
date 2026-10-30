@@ -401,19 +401,27 @@ footer { border-top: 1px solid var(--line); }
 .lede { margin-top: 14px; }
 .hero-actions { margin-top: 22px; }
 
-/* Sized from the viewport height so the screenshot, its reflection, the
-   caption and the dots all fit on screen below the hero. */
-.showcase { max-width: min(1080px, calc((100svh - 515px) * 1.6 + 164px)); margin: 20px auto 0; padding: 0 24px; }
-.showcase-stage { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; }
-.showcase-stage .nav-btn { transform: translateY(-64px); }
-
-/* The slides stack in one cell and crossfade, so nothing ever scrolls. */
-.showcase-track { display: grid; outline: none; touch-action: pan-y; }
-.slide {
-  grid-area: 1 / 1; display: grid; margin: 0;
-  opacity: 0; visibility: hidden; transition: opacity 0.6s ease, visibility 0s linear 0.6s;
+/* The centre screenshot is sized from the viewport height so it, its
+   reflection, the caption and the dots all fit on screen below the hero. */
+.showcase {
+  --w: min(860px, calc((100svh - 500px) * 1.6), calc(100vw - 150px));
+  margin: 20px 0 0; overflow: hidden;
 }
-.slide.is-on { opacity: 1; visibility: visible; transition: opacity 0.6s ease; }
+.showcase-stage { position: relative; }
+
+/* A row of screenshots in 3D: the centre one faces you and its neighbours
+   turn away to either side. main.js places each slide as the row glides. */
+.showcase-track {
+  position: relative; height: calc(var(--w) / 1.6 + 58px);
+  perspective: 1400px; outline: none; touch-action: pan-y; cursor: grab;
+  user-select: none; -webkit-user-select: none;
+}
+.showcase-track.dragging { cursor: grabbing; }
+.slide {
+  position: absolute; top: 0; left: 50%; width: var(--w); margin: 0 0 0 calc(var(--w) / -2);
+  will-change: transform, opacity; transform-origin: 50% 40%;
+}
+.slide img, .slide video { -webkit-user-drag: none; pointer-events: none; }
 
 /* Each screenshot sits on the bottom edge of its box, like on a shelf. */
 .slide-media { aspect-ratio: 16 / 10; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
@@ -428,19 +436,32 @@ footer { border-top: 1px solid var(--line); }
   -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.32), transparent);
   mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.32), transparent);
 }
-.reflection > .slide-media { transform: scaleY(-1); }
+.reflection > .slide-media { transform: scaleY(-1); filter: blur(3px); }
 
-.slide figcaption { margin-top: 10px; text-align: center; color: var(--text-2); font-size: 15px; }
-.slide figcaption strong {
+/* Captions are read from the slides but shown once, under the row. */
+.slide figcaption {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.showcase-caption {
+  min-height: 3.2em; margin: 10px auto 0; padding: 0 24px; max-width: 720px;
+  text-align: center; color: var(--text-2); font-size: 15px; transition: opacity 0.2s ease;
+}
+.showcase-caption strong {
   display: block; color: var(--text); font-size: clamp(18px, 2vw, 22px);
   letter-spacing: -0.02em; margin-bottom: 2px;
 }
+.showcase-caption.fading { opacity: 0; }
+
 .nav-btn {
+  position: absolute; top: calc(var(--w) / 3.2 - 20px); z-index: 200;
   width: 40px; height: 40px; border-radius: 50%; cursor: pointer; font-size: 18px;
-  color: var(--text); background: var(--bg-card); border: 1px solid var(--line-strong);
+  color: var(--text); background: color-mix(in srgb, var(--bg-card) 85%, transparent);
+  border: 1px solid var(--line-strong); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
+.nav-btn[data-prev] { left: calc(50% - var(--w) / 2 - 58px); }
+.nav-btn[data-next] { left: calc(50% + var(--w) / 2 + 18px); }
 .nav-btn:hover { border-color: var(--accent); color: var(--accent); }
-.dots { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
+.dots { display: flex; justify-content: center; gap: 8px; margin-top: 10px; }
 .dots button {
   width: 8px; height: 8px; padding: 0; border-radius: 999px; border: 0; cursor: pointer;
   background: var(--line-strong); transition: width 0.25s ease, background 0.25s ease;
@@ -448,9 +469,10 @@ footer { border-top: 1px solid var(--line); }
 .dots button[aria-selected="true"] { width: 26px; background: var(--accent); }
 
 @media (max-width: 760px) {
+  .showcase { --w: calc(100vw - 64px); }
   .slide-media { aspect-ratio: 4 / 3; }
-  .showcase-stage { grid-template-columns: minmax(0, 1fr); }
-  .showcase-stage .nav-btn { display: none; }
+  .showcase-track { height: calc(var(--w) * 0.75 + 58px); }
+  .nav-btn { display: none; }
 }
 
 .download { padding-top: 80px; }
