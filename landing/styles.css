@@ -446,3 +446,12 @@ footer { border-top: 1px solid var(--line); }
 @media (max-width: 760px) { .slide-media { height: auto; aspect-ratio: 4 / 3; } }
 .slide-media { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
 .slide-media video { height: 100%; }
+.showcase { max-width: 960px; }
+.slide-media { height: min(50vh, 540px); padding: clamp(10px, 2.4vw, 32px); }
+.slide figcaption strong { font-size: clamp(18px, 2vw, 22px); }
+.slide figcaption { font-size: 15px; }
+.slide { gap: 12px; }
+.showcase-controls { margin-top: 14px; }
+@media (max-width: 760px) { .slide-media { height: auto; aspect-ratio: 4 / 3; } }
+.showcase { max-width: min(920px, calc(58vh * 1.6 + 48px)); }
+.slide-media { height: auto; aspect-ratio: 16 / 10; padding: clamp(10px, 2.2vw, 26px); }
