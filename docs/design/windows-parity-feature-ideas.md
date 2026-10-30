@@ -583,3 +583,11 @@ as the digest that showed them.
 - An update that runs slower says so (folds and drags measured against the last version; a note offers the previous release)
 - Smooth on both monitors (glides switch to the refresh rate of the screen a window moves onto, no stutter crossing)
 - Windows you are not watching skip the animation (covered or minimized windows finish folds and slides in one step)
+
+## 2026-10-30
+
+- See the size while you drag (columns x rows badge on each pane during a divider or window-edge drag, catching at 80 and 120 columns)
+- Hold my place while output keeps coming (scrolled-up view stays still in a busy pane; an "N new lines" chip jumps back)
+- Dividers line up on their own (new angle on snapping dividers: a mouse-dragged divider snaps into line with a neighbouring split's divider)
+- What Ghoztty itself is using (new angle on the per-pane readout: the app's own memory per window and pane, a window holding too much is marked)
+- Closing things makes the app lighter, and you can see it (closed window/split memory returns within seconds; About shows the total drop)
