@@ -825,13 +825,14 @@ enum PaneSidebarWindowGrouping {
     /// What a window's rename field commits, or nil for nothing to change.
     /// A grouped window's field holds its name alone, so its `<project>: `
     /// is kept, and an empty name changes nothing — leaving a group is its
-    /// own action, never a slip of the field. An ungrouped window's holds
-    /// its whole title, and empty ("") goes back to following the window's
-    /// own title.
+    /// own action, never a slip of the field. A `<project>: ` typed in names
+    /// the group outright, moving the window there. An ungrouped window's
+    /// holds its whole title, and empty ("") goes back to following the
+    /// window's own title.
     static func renamed(_ title: String, name: String) -> String? {
         let name = name.trimmingCharacters(in: .whitespaces)
         guard let project = split(title)?.project else { return name == title ? nil : name }
-        let renamed = "\(project): \(name)"
+        let renamed = split(name) == nil ? "\(project): \(name)" : name
         return name.isEmpty || renamed == title ? nil : renamed
     }
 

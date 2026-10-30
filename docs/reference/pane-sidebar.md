@@ -482,8 +482,9 @@ shows the same view of it (see *Shared across windows*). Read before touching
   - **A grouped window's field holds its own name alone** — not its
     `<project>: ` — and keeps the prefix on commit, so retyping or clearing
     it can't ungroup the window by accident (`PaneSidebarWindowGrouping.renamed`):
-    empty changes nothing, and a `: ` typed in stays part of the name.
-    Leaving a group is an explicit action: Remove from Group, or a drag out.
+    empty changes nothing. Typing a `<project>: ` names the group outright
+    (`dzearing: foo` moves the window to group `dzearing` as `foo`), but
+    leaving a group is an explicit action: Remove from Group, or a drag out.
     An ungrouped window's field holds its whole title, so typing `a: foo`
     still moves it to group `a` as `foo`, and empty goes back to following
     the window's own title. Any window rename redraws every

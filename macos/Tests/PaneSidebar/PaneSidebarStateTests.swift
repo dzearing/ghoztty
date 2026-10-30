@@ -844,9 +844,12 @@ struct PaneSidebarWindowOrderTests {
         #expect(G.renamed("ghoztty: wt-2", name: " wt-3 ") == "ghoztty: wt-3")
         #expect(G.renamed("ghoztty: wt-2", name: "") == nil, "empty keeps it")
         #expect(G.renamed("ghoztty: wt-2", name: "wt-2") == nil, "unchanged")
-        // A `: ` typed into the name stays part of the name.
-        #expect(G.renamed("ghoztty: wt-2", name: "relay: x") == "ghoztty: relay: x")
-        #expect(G.split(G.renamed("ghoztty: wt-2", name: "relay: x")!)?.project == "ghoztty")
+        // A `<project>: ` typed in moves it to that group.
+        #expect(G.renamed("ghoztty: wt-2", name: "relay: x") == "relay: x")
+        #expect(G.renamed("ghoztty: wt-2", name: "ghoztty: wt-2") == nil, "unchanged")
+        #expect(G.renamed("ghoztty: wt-2", name: "ghoztty: wt-3") == "ghoztty: wt-3")
+        // Only a real prefix: a `:` without the space stays in the name.
+        #expect(G.renamed("ghoztty: wt-2", name: "a:b") == "ghoztty: a:b")
         // Ungrouped: the whole title; `<project>: ` typed still groups it.
         #expect(G.renamed("Build logs", name: "relay: logs") == "relay: logs")
         #expect(G.renamed("Build logs", name: "") == "", "follows its own title again")
