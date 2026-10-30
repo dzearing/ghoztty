@@ -21,9 +21,11 @@
 #       T2160: with -Glass (glass panes on, the elevated style) the strip is
 #       laid over the tucked card's glass sheet, so the desk tints it: each
 #       strip reads the colour the desk beside it predicts, and the opaque
-#       colour would not be
+#       colour would not be. T2505: that colour is the card's glass alone -
+#       no dark fill over it - so a blade is the same material as the pane
 #   D7) T2121: hovering a strip lightens its card's scrim - 45% to 20% - so the
-#       strip reads the lighter colour, and goes back when the pointer leaves
+#       strip reads the lighter colour, and goes back when the pointer leaves.
+#       On glass (T2505) the strip keeps its glass and only the ink changes
 #   D2) the strip's label follows the banner title: a long `## ...` title set
 #       with +set-banner runs further down the strip than a short one
 #   D3) a click on a tucked pane's strip brings that pane on show (its window
@@ -162,8 +164,10 @@ function Get-ExpectedStrip([int[]]$bg, [switch]$Hovered) {
 # `pane_stack_strip.GlassLut` resolves it - the tucked card's sheet, which is
 # every pane's since T2281 (`GLASS_TINT` 40% of the background over the desk,
 # in linear light, quantised to 4096 steps as `pane_elevation.mixChannel` is;
-# T2086's thinner, faded unfocused sheet is gone with Mac 9da9618f8), then
-# the scrim and the 82% strip over that. Each channel alone.
+# T2086's thinner, faded unfocused sheet is gone with Mac 9da9618f8) and
+# nothing over it: since T2505 a glass strip is its card's glass, as Mac's
+# card-style strip is (`isFilled` false), so hovering changes only the ink.
+# Each channel alone.
 function ConvertTo-Linear([double]$c) {
     $c = $c / 255.0
     if ($c -le 0.04045) { return $c / 12.92 }
@@ -179,23 +183,24 @@ function ConvertTo-Srgb([double]$l) {
 }
 function Get-ExpectedGlassStrip([int[]]$bg, $desk, [switch]$Hovered) {
     if ($null -eq $desk) { return $null }
-    $aw = [MidpointRounding]::AwayFromZero
     $t = 0.4
-    $scrim = if ($Hovered) { 0.2 } else { 0.45 }
     $d = @([int]$desk.R, [int]$desk.G, [int]$desk.B)
     $out = @()
     for ($i = 0; $i -lt 3; $i++) {
-        $m = ConvertTo-Srgb ((ConvertTo-Linear $d[$i]) * (1 - $t) + (ConvertTo-Linear $bg[$i]) * $t)
-        $sheet = $m
-        $base = [math]::Round($bg[$i] * 0.65, $aw)
-        $under = [math]::Round($sheet * (1 - $scrim), $aw)
-        $out += [int][math]::Round($under * 0.18 + $base * 0.82, $aw)
+        $out += ConvertTo-Srgb ((ConvertTo-Linear $d[$i]) * (1 - $t) + (ConvertTo-Linear $bg[$i]) * $t)
     }
     return $out
 }
 # The desk beside tucked pane `$p` at row `$y`: in the gap before its strip.
 function Get-DeskBeside($shot, $p, [int]$y) {
     return Get-TestPixel -Shot $shot -X ($p.Left - [int][math]::Floor(4 * $script:scale)) -Y $y
+}
+# The desk straight above tucked pane `$p` at column `$x`, in the grid margin
+# over its strip (T2505). Since the strip became the card's glass the desk
+# carries 60% into it, so the sample must lie over the same column: beside
+# it lands on the strip behind, a different glass pixel altogether.
+function Get-DeskAbove($shot, $p, [int]$x) {
+    return Get-TestPixel -Shot $shot -X $x -Y ($p.Top - [int][math]::Floor(4 * $script:scale))
 }
 
 function Test-Near($c, [int[]]$rgb, [int]$tol = 4) {
@@ -218,14 +223,19 @@ function Measure-Strip($shot, $p) {
     $y = $p.Top + 4
     $x0 = $p.Left + $script:cornerPx + 2
     $c0 = Get-TestPixel -Shot $shot -X $x0 -Y $y
-    $wy = if ($Glass) { $p.Bottom - $script:cornerPx - 4 } else { $y }
-    $cw = Get-TestPixel -Shot $shot -X $x0 -Y $wy
+    # T2505: a glass strip is the desk's own light at 60%, so on any one row
+    # the desk past it can read within the walk's tolerance; a real edge
+    # stops a walk on every row, so on glass the shorter of two is the strip.
+    $rows = if ($Glass) { @($y, ($p.Bottom - $script:cornerPx - 4)) } else { @($y) }
     $w = 0
-    if ($null -ne $cw) {
+    foreach ($wy in $rows) {
+        $cw = Get-TestPixel -Shot $shot -X $x0 -Y $wy
+        if ($null -eq $cw) { continue }
         $rgb = @([int]$cw.R, [int]$cw.G, [int]$cw.B)
         $x = $x0
         while ($x -lt $p.Right -and (Test-Near (Get-TestPixel -Shot $shot -X $x -Y $wy) $rgb 6)) { $x++ }
-        $w = $x - $p.Left
+        $rw = $x - $p.Left
+        if ($w -eq 0 -or $rw -lt $w) { $w = $rw }
     }
     return [pscustomobject]@{ Color = $c0; Width = $w }
 }
@@ -411,7 +421,7 @@ try {
             $ref = $expected
             if ($Glass -and -not $NegativeControl) {
                 # T2160: over the sheet, so the desk beside it predicts it.
-                $deskAt = Get-DeskBeside $shot $t.Pane ($t.Pane.Top + 4)
+                $deskAt = Get-DeskAbove $shot $t.Pane ($t.Pane.Left + $script:cornerPx + 2)
                 $glassExp = Get-ExpectedGlassStrip @(0x28, 0x2c, 0x34) $deskAt
                 $apart = if ($glassExp) { [math]::Abs($glassExp[0] - $expected[0]) + [math]::Abs($glassExp[1] - $expected[1]) + [math]::Abs($glassExp[2] - $expected[2]) } else { 0 }
                 Say ("      glass: desk beside {0} -> expected rgb({1}); opaque would be rgb({2}), {3} levels apart" -f (Format-Rgb $deskAt), ($glassExp -join ','), ($expected -join ','), $apart)
@@ -447,11 +457,30 @@ try {
                     $ds = [math]::Abs($c.R - $ref[0]) + [math]::Abs($c.G - $ref[1]) + [math]::Abs($c.B - $ref[2])
                     return ($dd -lt $ds)
                 }
-                Assert ((& $nearDesk $lead $deskTop) -and (& $nearDesk $leadLow $deskLow)) ("D1: its leading corners are rounded - the desk shows there (top {0} vs desk {1}, bottom {2} vs desk {3})" -f (Format-Rgb $lead), (Format-Rgb $deskTop), (Format-Rgb $leadLow), (Format-Rgb $deskLow))
+                # On glass (T2505) a strip whose leading corner lies over the
+                # strip behind it shows that strip's glass there - the same
+                # material it is - so the curve is read only over open desk.
+                $overStrip = $Glass -and @($tucked | Where-Object { $_.Pane.Left -lt $t.Pane.Left -and $_.Pane.Left + $strips[$_.Pane.Hwnd].Width -ge $gapX }).Count -gt 0
+                if ($overStrip) { Say ("      glass: x={0}'s leading corner lies over the strip behind it; its curve is not readable" -f $t.Pane.Left) }
+                else { Assert ((& $nearDesk $lead $deskTop) -and (& $nearDesk $leadLow $deskLow)) ("D1: its leading corners are rounded - the desk shows there (top {0} vs desk {1}, bottom {2} vs desk {3})" -f (Format-Rgb $lead), (Format-Rgb $deskTop), (Format-Rgb $leadLow), (Format-Rgb $deskLow)) }
             } else {
                 Assert ((Test-Near $lead $expected) -and (Test-Near $leadLow $expected)) ("D1: its leading corners are square in the flat style (top {0}, bottom {1})" -f (Format-Rgb $lead), (Format-Rgb $leadLow))
             }
-            Assert (Test-Near $trail $ref $(if ($Glass) { 1 } else { 4 })) "D1: its trailing corner is square ($(Format-Rgb $trail) vs rgb($($ref -join ',')))"
+            # On glass the corner's own column predicts it (T2505): the desk
+            # under it is not the desk under the colour sample.
+            if ($Glass -and -not $NegativeControl) {
+                $trailExp = Get-ExpectedGlassStrip @(0x28, 0x2c, 0x34) (Get-DeskAbove $shot $t.Pane ($t.Pane.Left + $m.Width - 2))
+                if ($trailExp) { $ref = $trailExp }
+            }
+            # Square only where it reaches under the strip in front (T2283):
+            # a strip with open desk past it ends in its card's own rounded
+            # corner, which only glass lets the oracle tell apart (T2505).
+            $tuckedUnder = -not $Glass -or @($tucked | Where-Object { $_.Pane.Left -gt $t.Pane.Left -and $_.Pane.Left -le $t.Pane.Left + $m.Width + 2 }).Count -gt 0
+            if ($tuckedUnder) {
+                Assert (Test-Near $trail $ref $(if ($Glass) { 2 } else { 4 })) "D1: its trailing corner is square ($(Format-Rgb $trail) vs rgb($($ref -join ',')))"
+            } else {
+                Say ("      glass: x={0} has open desk past it, so its trailing corner is its card's ({1})" -f $t.Pane.Left, (Format-Rgb $trail))
+            }
         }
     } finally { Close-TestWindowPixels -Shot $shot }
 
@@ -463,27 +492,34 @@ try {
         $hoverExp = Get-ExpectedStrip @(0x28, 0x2c, 0x34) -Hovered
         $restExp = $expected
         $tol = 1
+        $my = $h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 2)
+        $sx = if ($Glass) { $h.Pane.Left + [int][math]::Ceiling(4 * $script:scale) } else { $h.Pane.Left + $hw - 3 }
         $shot = Get-Shot $top
         try {
             $rest = Get-StripMid $shot $h.Pane $hw
             if ($Glass) {
+                # T2505: just inside the leading edge - past its rim, short of
+                # the name down the middle, clear of the front blade's shadow
+                # on the trailing side, which the glass shows now.
+                $rest = Get-TestPixel -Shot $shot -X $sx -Y $my
                 # T2160: both read over the sheet on the desk at that row.
                 $deskMid = Get-DeskBeside $shot $h.Pane ($h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 2))
                 $restExp = Get-ExpectedGlassStrip @(0x28, 0x2c, 0x34) $deskMid
-                $hoverExp = Get-ExpectedGlassStrip @(0x28, 0x2c, 0x34) $deskMid -Hovered
-                # Read straight off the desk beside it, so as tight as the
-                # opaque check: 2 would already admit the opaque strip.
-                $tol = 1
+                # T2505: the glass is the card's and hover leaves it be (Mac
+                # lightens only the name's ink).
+                $hoverExp = $restExp
+                # The desk is read a corner's width off the sample and carries
+                # 60% into the glass (T2505); the opaque strip is ~70 off.
+                $tol = 3
             }
         } finally { Close-TestWindowPixels -Shot $shot }
         # A posted move cannot be photographed hovered off the input desktop
         # (the leave drains before the paint); `capture-hover` moves, paints
         # and photographs on one stack (T282).
-        $my = $h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 2)
         $hot = Get-TestHoverCapture -Hwnd $top -X ($h.Pane.Left + [int]($hw / 2)) -Y ($h.Pane.Top + [int](($h.Pane.Bottom - $h.Pane.Top) / 3))
         $lit = $null
         if ($hot) {
-            $lit = $hot.Bitmap.GetPixel($h.Pane.Left + $hw - 3 - $hot.Left, $my - $hot.Top)
+            $lit = $hot.Bitmap.GetPixel($sx - $hot.Left, $my - $hot.Top)
             Close-TestHoverCapture $hot
         }
         # Off every strip: over the first pane on show.
@@ -491,16 +527,26 @@ try {
         $cold = Get-TestHoverCapture -Hwnd $top -X ($away.Left + [int](($away.Right - $away.Left) / 2)) -Y ($away.Top + [int](($away.Bottom - $away.Top) / 2))
         $back = $null
         if ($cold) {
-            $back = $cold.Bitmap.GetPixel($h.Pane.Left + $hw - 3 - $cold.Left, $my - $cold.Top)
+            $back = $cold.Bitmap.GetPixel($sx - $cold.Left, $my - $cold.Top)
             Close-TestHoverCapture $cold
         }
         if ($Glass) { Say ("      glass: desk beside the strip's middle {0}" -f (Format-Rgb $deskMid)) }
         Say ("      at rest {0}, hovered {1} (changed={5}), elsewhere {2}; expected rgb({3}) -> rgb({4}) {6}" -f (Format-Rgb $rest), (Format-Rgb $lit), (Format-Rgb $back), ($restExp -join ','), ($hoverExp -join ','), $(if ($hot) { $hot.Changed }), (Get-LastHoverCaptureError))
         Assert ($null -ne $hot -and $hot.Changed) "D7: hovering the strip changes the frame (changed=$(if ($hot) { $hot.Changed }))"
-        Assert (Test-Near $rest $restExp $tol) "D7: at rest the strip is rgb($($restExp -join ',')) ($(Format-Rgb $rest))"
-        Assert (Test-Near $lit $hoverExp $tol) "D7: hovered, it lightens to rgb($($hoverExp -join ',')) with its scrim ($(Format-Rgb $lit))"
-        Assert ($null -ne $lit -and $null -ne $rest -and ($lit.R + $lit.G + $lit.B) -gt ($rest.R + $rest.G + $rest.B)) 'D7: the hovered strip is lighter than at rest'
-        Assert (Test-Near $back $restExp $tol) "D7: hovering a pane on show leaves the strip at rest ($(Format-Rgb $back))"
+        if ($Glass) {
+            # T2505: D1 proves the glass value against a clean desk sample; the
+            # desk beside this row lies in the blade's own outward shadow. What
+            # D7 owns on glass is that hover leaves the glass as it is.
+            $restRgb = if ($rest) { @([int]$rest.R, [int]$rest.G, [int]$rest.B) } else { @(-999, -999, -999) }
+            Assert (-not (Test-Near $rest $expected 6)) "D7: at rest the strip is glass, not the opaque rgb($($expected -join ',')) ($(Format-Rgb $rest))"
+            Assert (Test-Near $lit $restRgb 1) "D7: hovered, a glass strip keeps its glass ($(Format-Rgb $lit) vs at rest $(Format-Rgb $rest))"
+            Assert (Test-Near $back $restRgb 1) "D7: hovering a pane on show leaves the strip at rest ($(Format-Rgb $back))"
+        } else {
+            Assert (Test-Near $rest $restExp $tol) "D7: at rest the strip is rgb($($restExp -join ',')) ($(Format-Rgb $rest))"
+            Assert (Test-Near $lit $hoverExp $tol) "D7: hovered, it lightens to rgb($($hoverExp -join ',')) with its scrim ($(Format-Rgb $lit))"
+            Assert ($null -ne $lit -and $null -ne $rest -and ($lit.R + $lit.G + $lit.B) -gt ($rest.R + $rest.G + $rest.B)) 'D7: the hovered strip is lighter than at rest'
+            Assert (Test-Near $back $restExp $tol) "D7: hovering a pane on show leaves the strip at rest ($(Format-Rgb $back))"
+        }
     }
 
     # ---- D2: the label follows the banner title --------------------------------

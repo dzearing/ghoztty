@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-30T09:20:06-07:00",
-    "commit":  "3c6a14a6f",
+    "generated":  "2026-10-30T13:21:12-07:00",
+    "commit":  "d52f17190",
     "uncommitted":  [
-
+                        "test/win32/pane-stack-strip.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -378,7 +378,7 @@
                   "test/win32/pane-stack-focus.ps1":  "186fe0cb2691714d5b2d23ec1ef558249464e24e6109a3ce54964892b7bcfa6b",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",
                   "test/win32/pane-stack-slide.ps1":  "351858c008d828e2881ab7ddc1b02d519366d32bdf9ad20fa0ea0189c9d072c9",
-                  "test/win32/pane-stack-strip.ps1":  "24b9391d9a3ea08877a22d237cffce63eebac1a4624e6c8ce8b9bbdf13dbe120",
+                  "test/win32/pane-stack-strip.ps1":  "0e4164508a5d3057ad6865bed612de0ce5b26327e5ca12d821cf326ad06300f6",
                   "test/win32/pane-stack-unfold.ps1":  "8c71ab3902fe416103acd2c6ed655340e87efe2eac944e899daa384dfd04ccbd",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",

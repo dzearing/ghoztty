@@ -312,7 +312,6 @@ test "fillGlass: each pixel the strip over the desk under it, clamped at the des
     const lut = pane_stack_strip.GlassLut.init(.{
         .bg = .{ .r = 30, .g = 30, .b = 40 },
         .sheet = .{},
-        .hovered = false,
     });
     // A 3x2 desk with a distinct pixel each.
     const desk = [_]u32{ 0x000000, 0x404040, 0x808080, 0x202020, 0x606060, 0xFFFFFF };

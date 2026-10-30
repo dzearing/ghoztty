@@ -8240,7 +8240,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     const bg = self.stripBackground();
     const strip_rgb = pane_stack_strip.stripRgb(bg, false);
     if (self.glassDesk()) |g| {
-        const lut = pane_stack_strip.GlassLut.init(.{ .bg = bg, .sheet = .{}, .hovered = false });
+        const lut = pane_stack_strip.GlassLut.init(.{ .bg = bg, .sheet = .{} });
         strip_face.fillGlass(frame.pixels, @intCast(w), @intCast(ht), .{
             .pixels = g.desk.pixels,
             .w = g.desk.w,
@@ -10250,9 +10250,9 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             },
             .axis = s.axis,
             .rgb = pane_stack_strip.stripRgb(strip_bg, hovered),
-            // A glass card's strip is laid over its sheet (T2160) - every
+            // A glass card's strip is its sheet (T2160, T2505) - every
             // pane's is the same since T2281.
-            .glass = if (glass) .{ .bg = strip_bg, .sheet = .{}, .hovered = hovered } else null,
+            .glass = if (glass) .{ .bg = strip_bg, .sheet = .{} } else null,
             .leads = s.leads,
             .collapse = s.glide orelse 1,
             .band = s.glide == null,

@@ -809,10 +809,10 @@ fn composeOver(
         // rounded ends (T2410).
         blade_shadow.paint(buf, w, h, s.tab, s.axis, s.leads, s.collapse, style.is_light, style.scale, radius);
         if (!s.band) continue;
-        // On glass the band sits over the tucked card's sheet, so the desk
-        // under it tints it (T2160).
+        // On glass the band is the tucked card's sheet, so the desk reads
+        // through it (T2160, T2505), edged with the card's rim.
         if (s.glass) |g|
-            pane_stack_strip.paintGlassBand(buf, desk, w, h, s.tab, s.axis, g, radius)
+            pane_stack_strip.paintGlassBand(buf, desk, w, h, s.tab, s.axis, g, radius, pane_stack_strip.Rim.glass(style.is_light, style.scale))
         else
             pane_stack_strip.paintBand(buf, w, h, s.tab, s.axis, s.rgb, radius);
     }
@@ -1235,7 +1235,7 @@ test "T2454: composing only the rectangle that changed paints exactly what a who
     };
     const base_strips = [_]pane_stack_strip.Band{
         .{ .tab = .{ .left = 880, .top = 10, .right = 900, .bottom = 450 }, .axis = .horizontal, .rgb = .{ .r = 60, .g = 60, .b = 70 }, .leads = false },
-        .{ .tab = .{ .left = 902, .top = 10, .right = 920, .bottom = 450 }, .axis = .horizontal, .rgb = .{ .r = 60, .g = 60, .b = 70 }, .leads = false, .glass = .{ .bg = .{ .r = 20, .g = 20, .b = 24 }, .sheet = .{}, .hovered = false } },
+        .{ .tab = .{ .left = 902, .top = 10, .right = 920, .bottom = 450 }, .axis = .horizontal, .rgb = .{ .r = 60, .g = 60, .b = 70 }, .leads = false, .glass = .{ .bg = .{ .r = 20, .g = 20, .b = 24 }, .sheet = .{} } },
         // The fourth card gliding into its strip: only its blade shadow.
         .{ .tab = .{ .left = 680, .top = 240, .right = 870, .bottom = 450 }, .axis = .horizontal, .rgb = .{ .r = 60, .g = 60, .b = 70 }, .leads = false, .collapse = 0.5, .band = false },
     };

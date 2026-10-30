@@ -51,9 +51,7 @@ pub fn stripRgb(bg: Rgb, hovered: bool) Rgb {
 
 /// The strip's fill where the pane under it shows `pane`: `stripRgb`'s
 /// layers with the scrim laid over that pixel rather than over the flat
-/// background. They differ on a glass pane (T2160), whose card is a sheet
-/// of `bg` over the desk, so the desk tints the strip through it as it does
-/// on Mac.
+/// background. A glass strip is not filled at all (T2505, `Glass`).
 pub fn stripOver(pane: Rgb, bg: Rgb, hovered: bool) Rgb {
     const light = color_math.isLight(bg);
     const base = color_math.mix(bg, black, if (light) 0.06 else 0.35);
@@ -61,18 +59,40 @@ pub fn stripOver(pane: Rgb, bg: Rgb, hovered: bool) Rgb {
     return color_math.mix(under, base, if (light) 0.85 else 0.82);
 }
 
-/// A strip on a glass pane (T2160): the pane's background, the sheet the
-/// tucked card shows (every pane's is the same since T2281), and whether it
-/// is hovered.
+/// A strip on a glass pane (T2160): the pane's background and the sheet the
+/// tucked card shows (every pane's is the same since T2281).
+///
+/// On glass the strip is the card itself (T2505): Mac lays no fill of its own
+/// over a card (`PaneStackTabFace.isFilled` is false in the card style), so a
+/// tucked pane is its card's glass sheet at the strip's size - the desk reads
+/// through it as it does through the pane - with the rim along its edge.
+/// Hovering it changes only the name's ink.
 pub const Glass = struct {
     bg: Rgb,
     sheet: pane_elevation.Sheet,
-    hovered: bool,
 };
 
-/// `stripOver` a glass sheet, per desk channel value, as byte tables: every
-/// layer - the sheet's linear-light mix, the scrim, the strip - works on
-/// each channel alone, so one lookup per channel is the whole answer.
+/// The hairline a glass strip is edged with: the card's own rim at rest
+/// (`pane_elevation.rimAlpha`), `width` pixels wide.
+pub const Rim = struct {
+    rgb: Rgb,
+    alpha: f32,
+    width: f32,
+
+    /// An unfocused glass card's rim at `scale`, against a fill that is
+    /// light or not.
+    pub fn glass(is_light: bool, scale: f32) Rim {
+        return .{
+            .rgb = if (is_light) black else white,
+            .alpha = pane_elevation.rimAlpha(true, is_light, 0),
+            .width = pane_elevation.RIM_DIP * scale,
+        };
+    }
+};
+
+/// A glass strip's sheet, per desk channel value, as byte tables: the
+/// sheet's linear-light mix works on each channel alone, so one lookup per
+/// channel is the whole answer.
 pub const GlassLut = struct {
     r: [256]u8,
     g: [256]u8,
@@ -83,14 +103,9 @@ pub const GlassLut = struct {
         for (0..256) |i| {
             const c: u32 = @intCast(i);
             const s = pane_elevation.sheetMix((c << 16) | (c << 8) | c, glass.bg, glass.sheet);
-            const out = stripOver(.{
-                .r = @truncate(s >> 16),
-                .g = @truncate(s >> 8),
-                .b = @truncate(s),
-            }, glass.bg, glass.hovered);
-            l.r[i] = out.r;
-            l.g[i] = out.g;
-            l.b[i] = out.b;
+            l.r[i] = @truncate(s >> 16);
+            l.g[i] = @truncate(s >> 8);
+            l.b[i] = @truncate(s);
         }
         return l;
     }
@@ -136,8 +151,8 @@ pub const Band = struct {
     tab: Rect,
     axis: Direction,
     rgb: Rgb,
-    /// Set on a glass pane (T2160): the band is resolved per pixel over the
-    /// sheet on the desk under it, and `rgb` is only the label's reference.
+    /// Set on a glass pane (T2160): the band is the card's sheet over the
+    /// desk under each pixel (T2505), and `rgb` is only the label's reference.
     glass: ?Glass = null,
     /// Whether the strip lies before its stack's run (`Leaf.strip_leads`):
     /// its blade shadow leans the other way, away from the run (T2307).
@@ -160,16 +175,16 @@ pub const Band = struct {
 /// laid over one another. `tab` is in buffer pixels and is clipped to the
 /// buffer; `radius` 0 paints a plain band.
 pub fn paintBand(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, rgb: Rgb, radius: i32) void {
-    paintWith(buf, w, h, tab, axis, radius, Solid{ .rgb = rgb });
+    paintWith(buf, w, h, tab, axis, radius, Solid{ .rgb = rgb }, null);
 }
 
-/// `paintBand` on a glass pane (T2160): each pixel is the strip over the
-/// sheet on `desk` there (the bare desk, `w` x `h` like `buf`), rather than
-/// one colour resolved over the opaque background.
-pub fn paintGlassBand(buf: []u32, desk: []const u32, w: usize, h: usize, tab: Rect, axis: Direction, glass: Glass, radius: i32) void {
+/// `paintBand` on a glass pane (T2160): each pixel is the card's sheet over
+/// `desk` there (the bare desk, `w` x `h` like `buf`), edged with `rim` -
+/// the tucked card itself, through which the desk reads (T2505).
+pub fn paintGlassBand(buf: []u32, desk: []const u32, w: usize, h: usize, tab: Rect, axis: Direction, glass: Glass, radius: i32, rim: ?Rim) void {
     std.debug.assert(desk.len >= w * h);
     const lut = GlassLut.init(glass);
-    paintWith(buf, w, h, tab, axis, radius, OverDesk{ .lut = &lut, .desk = desk });
+    paintWith(buf, w, h, tab, axis, radius, OverDesk{ .lut = &lut, .desk = desk }, rim);
 }
 
 const Solid = struct {
@@ -187,7 +202,7 @@ const OverDesk = struct {
     }
 };
 
-fn paintWith(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, radius: i32, source: anytype) void {
+fn paintWith(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, radius: i32, source: anytype, rim: ?Rim) void {
     const x0: i32 = @max(tab.left, 0);
     const y0: i32 = @max(tab.top, 0);
     const x1: i32 = @min(tab.right, @as(i32, @intCast(w)));
@@ -200,31 +215,55 @@ fn paintWith(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, radius:
         .vertical => .{ tab.width(), tab.height() },
     };
     const rad: i32 = @max(0, @min(radius, @min(@divTrunc(shared, 2), other)));
+    // How far in from a straight edge a pixel can still be rim; past it, and
+    // off the corner squares, a pixel is the source alone (T2505). Each row's
+    // run between those is copied straight, so the rim costs only the edges.
+    const reach: i32 = if (rim) |r| @as(i32, @intFromFloat(@ceil(r.width))) else 0;
     var y = y0;
     while (y < y1) : (y += 1) {
         const row = @as(usize, @intCast(y)) * w;
+        const edge_row = y < tab.top + reach or y >= tab.bottom - reach;
+        const corner_row = y < tab.top + rad or y >= tab.bottom - rad;
+        const inset: i32 = if (corner_row) @max(rad, reach) else reach;
+        const mid0: i32 = if (edge_row) x1 else std.math.clamp(tab.left + inset, x0, x1);
+        const mid1: i32 = if (edge_row) x1 else std.math.clamp(tab.right - inset, mid0, x1);
         var x = x0;
-        while (x < x1) : (x += 1) {
+        while (x < mid0) : (x += 1) edgePixel(buf, row + @as(usize, @intCast(x)), tab, axis, rad, x, y, source, rim);
+        while (x < mid1) : (x += 1) {
             const i = row + @as(usize, @intCast(x));
-            const a = bandCoverage(tab, axis, rad, x, y);
-            if (a <= 0) continue;
             const rgb = source.at(i);
-            if (a >= 1) {
-                buf[i] = desk_palette.packRgb(rgb.r, rgb.g, rgb.b) | 0xFF00_0000;
-                continue;
-            }
-            const src: desk_palette.Rgbf = .{
-                .r = @floatFromInt(rgb.r),
-                .g = @floatFromInt(rgb.g),
-                .b = @floatFromInt(rgb.b),
-            };
-            const dst = buf[i];
-            buf[i] = desk_palette.withCoverage(
-                desk_palette.Rgbf.lerp(desk_palette.Rgbf.unpack(dst), src, a).pack(),
-                desk_palette.coverOver(desk_palette.coverage(dst), a),
-            );
+            buf[i] = desk_palette.packRgb(rgb.r, rgb.g, rgb.b) | 0xFF00_0000;
         }
+        while (x < x1) : (x += 1) edgePixel(buf, row + @as(usize, @intCast(x)), tab, axis, rad, x, y, source, rim);
     }
+}
+
+/// One pixel of a band where its corner curve or its rim can reach.
+fn edgePixel(buf: []u32, i: usize, tab: Rect, axis: Direction, rad: i32, x: i32, y: i32, source: anytype, rim: ?Rim) void {
+    const a = bandCoverage(tab, axis, rad, x, y);
+    if (a <= 0) return;
+    var rgb = source.at(i);
+    // The rim: of the `a` the band covers, what lies within `width` of its
+    // edge, as `pane_elevation.paintCards` rims a card.
+    if (rim) |r| {
+        const inner = std.math.clamp(0.5 - (bandDistance(tab, rad, x, y) + r.width), 0, 1);
+        const ring = @max(0, a - inner);
+        if (ring > 0) rgb = color_math.mix(rgb, r.rgb, @floatCast(r.alpha * ring / a));
+    }
+    if (a >= 1) {
+        buf[i] = desk_palette.packRgb(rgb.r, rgb.g, rgb.b) | 0xFF00_0000;
+        return;
+    }
+    const src: desk_palette.Rgbf = .{
+        .r = @floatFromInt(rgb.r),
+        .g = @floatFromInt(rgb.g),
+        .b = @floatFromInt(rgb.b),
+    };
+    const dst = buf[i];
+    buf[i] = desk_palette.withCoverage(
+        desk_palette.Rgbf.lerp(desk_palette.Rgbf.unpack(dst), src, a).pack(),
+        desk_palette.coverOver(desk_palette.coverage(dst), a),
+    );
 }
 
 /// How much of pixel (x, y) the band covers, 0..1: all of it off the corner
@@ -247,6 +286,23 @@ pub fn bandCoverage(tab: Rect, axis: Direction, rad: i32, x: i32, y: i32) f32 {
     const cy = if (py < t + r) t + r else b - r;
     const d = @sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy)) - r;
     return std.math.clamp(0.5 - d, 0, 1);
+}
+
+/// The signed distance from pixel (x, y)'s centre to the edge of `tab` with
+/// corners of radius `rad`: negative inside.
+fn bandDistance(tab: Rect, rad: i32, x: i32, y: i32) f32 {
+    const r: f32 = @floatFromInt(rad);
+    const px: f32 = @as(f32, @floatFromInt(x)) + 0.5;
+    const py: f32 = @as(f32, @floatFromInt(y)) + 0.5;
+    const hw: f32 = @as(f32, @floatFromInt(tab.width())) / 2;
+    const hh: f32 = @as(f32, @floatFromInt(tab.height())) / 2;
+    const mx: f32 = @as(f32, @floatFromInt(tab.left)) + hw;
+    const my: f32 = @as(f32, @floatFromInt(tab.top)) + hh;
+    const qx = @abs(px - mx) - (hw - r);
+    const qy = @abs(py - my) - (hh - r);
+    const ox = @max(qx, 0);
+    const oy = @max(qy, 0);
+    return @sqrt(ox * ox + oy * oy) + @min(@max(qx, qy), 0) - r;
 }
 
 /// The part of a strip that shows, where its name is centred (Mac afc64dc53
@@ -456,38 +512,72 @@ test "pane_stack_strip: an elevated band is a card at strip size - every corner 
     try testing.expectEqual(desk, buf3[20 * w + 20]);
 }
 
-test "pane_stack_strip: on glass the strip is resolved over the sheet, so the desk tints it" {
+test "T2505: on glass the strip is the card's own sheet, so the desk reads through it as it does the pane" {
     const bg: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
-    // Over a desk pixel that is the background itself, glass changes
-    // nothing: the sheet over it is the background.
-    const thin: pane_elevation.Sheet = .{};
-    const lut = GlassLut.init(.{ .bg = bg, .sheet = thin, .hovered = false });
-    const same = lut.at(desk_palette.packRgb(bg.r, bg.g, bg.b));
-    try testing.expectEqual(stripRgb(bg, false), same);
-    // Over a blue desk the strip leans blue, and over a red one red: the
-    // opaque strip is the same colour on both.
-    const blue = lut.at(desk_palette.packRgb(20, 60, 160));
-    const red = lut.at(desk_palette.packRgb(160, 40, 30));
-    try testing.expect(blue.b > same.b and blue.b > red.b);
-    try testing.expect(red.r > same.r and red.r > blue.r);
-    // Still a dark band: darker than the sheet it sits on.
-    const sheet = pane_elevation.sheetMix(desk_palette.packRgb(20, 60, 160), bg, thin);
-    try testing.expect(color_math.luminance(blue) < color_math.luminance(.{
-        .r = @truncate(sheet >> 16),
-        .g = @truncate(sheet >> 8),
-        .b = @truncate(sheet),
-    }));
-    // Hovered lightens it, as on an opaque pane.
-    const hl = GlassLut.init(.{ .bg = bg, .sheet = thin, .hovered = true });
-    try testing.expect(color_math.luminance(hl.at(desk_palette.packRgb(20, 60, 160))) > color_math.luminance(blue));
-    // The table is the per-pixel layers exactly.
-    const d: u32 = desk_palette.packRgb(90, 120, 200);
-    const s = pane_elevation.sheetMix(d, bg, thin);
-    try testing.expectEqual(stripOver(.{
-        .r = @truncate(s >> 16),
-        .g = @truncate(s >> 8),
-        .b = @truncate(s),
-    }, bg, false), lut.at(d));
+    const sheet: pane_elevation.Sheet = .{};
+    const lut = GlassLut.init(.{ .bg = bg, .sheet = sheet });
+    // Over a desk pixel that is the background itself, the sheet is the
+    // background: no dark fill of its own laid over it.
+    try testing.expectEqual(bg, lut.at(desk_palette.packRgb(bg.r, bg.g, bg.b)));
+    // Every pixel is exactly the glass the pane's own card shows there, so a
+    // blade and the pane beside it read as the same material.
+    for ([_]u32{ desk_palette.packRgb(20, 60, 160), desk_palette.packRgb(160, 40, 30), desk_palette.packRgb(30, 140, 130), desk_palette.packRgb(240, 240, 240) }) |d| {
+        const s = pane_elevation.sheetMix(d, bg, sheet);
+        try testing.expectEqual(Rgb{ .r = @truncate(s >> 16), .g = @truncate(s >> 8), .b = @truncate(s) }, lut.at(d));
+        try testing.expectEqual(pane_elevation.glassMix(d, bg, pane_elevation.GLASS_TINT), s);
+    }
+    // The desk shows through: two desk stops a long way apart stay a long
+    // way apart. The old opaque blade (T2160's dark fill at 82% over the
+    // sheet) squeezed this teal-to-navy step to a few levels.
+    const teal = lut.at(desk_palette.packRgb(30, 140, 130));
+    const navy = lut.at(desk_palette.packRgb(20, 40, 90));
+    try testing.expect(@as(i32, teal.g) - @as(i32, navy.g) > 50);
+}
+
+test "T2505: a glass strip is edged with the card's rim and nothing else" {
+    const w = 40;
+    const h = 60;
+    const bg: Rgb = .{ .r = 0x28, .g = 0x2c, .b = 0x34 };
+    var desk: [w * h]u32 = undefined;
+    for (&desk) |*p| p.* = desk_palette.packRgb(30, 140, 130) | 0xFF00_0000;
+    var buf = desk;
+    const glass: Glass = .{ .bg = bg, .sheet = .{} };
+    const tab: Rect = .{ .left = 5, .top = 5, .right = 25, .bottom = 55 };
+    const rim = Rim.glass(false, 2);
+    paintGlassBand(&buf, &desk, w, h, tab, .horizontal, glass, 8, rim);
+    const lut = GlassLut.init(glass);
+    const inside = lut.at(desk[30 * w + 15]);
+    const pack = struct {
+        fn f(c: Rgb) u32 {
+            return desk_palette.packRgb(c.r, c.g, c.b) | 0xFF00_0000;
+        }
+    }.f;
+    // Away from the edge: the sheet alone.
+    try testing.expectEqual(pack(inside), buf[30 * w + 15]);
+    // The edge pixel, a whole rim width of the band: the rim over the sheet.
+    try testing.expectEqual(pack(color_math.mix(inside, .{ .r = 255, .g = 255, .b = 255 }, @floatCast(rim.alpha))), buf[30 * w + 5]);
+    try testing.expectEqual(pack(color_math.mix(inside, .{ .r = 255, .g = 255, .b = 255 }, @floatCast(rim.alpha))), buf[30 * w + 24]);
+    // A pixel further in than the rim's width is not rimmed.
+    try testing.expectEqual(pack(inside), buf[30 * w + 7]);
+    // Skipping the band's middle loses nothing: every pixel, corners
+    // included, is what the distance computed for it would make it.
+    const rad: i32 = 8;
+    var y: i32 = tab.top;
+    while (y < tab.bottom) : (y += 1) {
+        var x: i32 = tab.left;
+        while (x < tab.right) : (x += 1) {
+            const a = bandCoverage(tab, .horizontal, rad, x, y);
+            if (a < 1) continue;
+            const inner = std.math.clamp(0.5 - (bandDistance(tab, rad, x, y) + rim.width), 0, 1);
+            const ring = @max(0, a - inner);
+            const i: usize = @intCast(y * w + x);
+            const want = if (ring > 0) color_math.mix(inside, rim.rgb, @floatCast(rim.alpha * ring / a)) else inside;
+            try testing.expectEqual(pack(want), buf[i]);
+        }
+    }
+    // Unfocused glass rim: white 10% on a dark card, black 8% on a light one.
+    try testing.expectEqual(@as(f32, 0.10), rim.alpha);
+    try testing.expectEqual(@as(f32, 0.08), Rim.glass(true, 1).alpha);
 }
 
 test "pane_stack_strip: a glass band follows the desk under each pixel and keeps the rounded corners" {
@@ -501,9 +591,9 @@ test "pane_stack_strip: a glass band follows the desk under each pixel and keeps
         desk[y * w + x] = desk_palette.packRgb(@intCast(t), 40, @intCast(255 - t)) | 0xFF00_0000;
     };
     var buf = desk;
-    const glass: Glass = .{ .bg = bg, .sheet = .{}, .hovered = false };
+    const glass: Glass = .{ .bg = bg, .sheet = .{} };
     const tab: Rect = .{ .left = 5, .top = 5, .right = 25, .bottom = 55 };
-    paintGlassBand(&buf, &desk, w, h, tab, .horizontal, glass, 8);
+    paintGlassBand(&buf, &desk, w, h, tab, .horizontal, glass, 8, null);
     const lut = GlassLut.init(glass);
     // Inside: the strip over that row's desk, opaque; the rows differ.
     const top = lut.at(desk[10 * w + 15]);
