@@ -1141,5 +1141,27 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.50.1/Ghoztty-1.50.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="t8FtQc8QIxpp267tfP01U2Mnagp263iyIVxDhOlhBTJ7B9TWDCTUKRApKfmeg0vQGqQbOW/dMG6/m2v3aQQ4DQ==" length="26936036" />
         </item>
+        <item>
+            <title>Version 1.51.0</title>
+            <sparkle:version>1.51.0</sparkle:version>
+            <sparkle:shortVersionString>1.51.0</sparkle:shortVersionString>
+            <pubDate>Fri, 30 Oct 2026 20:24:04 +0000</pubDate>
+            <description>{
+  "version": "1.51.0",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "Make groups from the sidebar", "text": "Right-click a window in the all-windows list and choose Create Group… to name a group right there. Move to Group and Remove from Group move windows between groups without retyping their titles." },
+        { "title": "Renames keep the group", "text": "Renaming a grouped window edits just its own name, so you can't ungroup it by accident. Type a group: prefix to move it to another group on purpose." },
+        { "title": "An Ungrouped section", "text": "Once you have a group, windows without one gather under an Ungrouped header at the top. Use its + for a new window, × to close them, or Rename to turn them all into a group." },
+        { "title": "Steadier group drags", "text": "A window dragged past the end of a group stays in that group; it only leaves when you drag it up among the ungrouped windows. The group you're dropping into glows softly, and only in the window you're dragging in." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.51.0/Ghoztty-1.51.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="fI+T8gHEWnQEmA/FHf/q4DVYEgjMlSH1D2tqwgIhunk3NM+rN9R6N5etasuQKeKaO+p9cBb5mjleNnR6fFUEBA==" length="26964219" />
+        </item>
     </channel>
 </rss>
