@@ -817,6 +817,11 @@ frame_resize_us: u64 = 0,
 /// repaint that follows it. The two halves of the layout pass that are not the
 /// wait or the overlays.
 frame_place_us: u64 = 0,
+/// Strip faces a grid layout pass retires, hidden only once the desk has
+/// painted the strips they stood for (T2485 anomaly a, `retireStripFaces`).
+face_hides: [MAX_FRAME_WAITS]*PaneView = undefined,
+face_hides_len: usize = 0,
+face_hides_deferred: bool = false,
 frame_paint_us: u64 = 0,
 /// The elevated style's card-region cut after placement (T1906).
 frame_cards_us: u64 = 0,
@@ -7634,10 +7639,14 @@ pub fn layoutSplits(self: *Window) void {
         resize_paint.present_gate.unlock();
     };
     var hdwp = beginPaneBatch(self.leafCount(self.active_tab));
+    var plan_t0: i64 = 0;
+    var plan_t1: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&plan_t0);
     if (self.stackGrid()) |laid| {
         var grid = laid;
         defer grid.deinit();
         self.planStackSlide(tree, &grid);
+        if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&plan_t1);
         self.placeGrid(tree, &grid, &hdwp);
         // The runs on show stick to the next layout (`stickyRun`).
         self.stackState().noteStacks(grid.result.stacks.items) catch {};
@@ -7651,14 +7660,23 @@ pub fn layoutSplits(self: *Window) void {
     if (stackTraceOn()) {
         var batch_t1: i64 = 0;
         _ = w32.QueryPerformanceCounter(&batch_t1);
-        log.info("stack trace batch qpc={d} end={d}", .{ batch_t0, batch_t1 });
+        log.info("stack trace batch qpc={d} end={d} plan={d} grid={d}", .{ batch_t0, batch_t1, plan_t0, plan_t1 });
     }
     if (self.hwnd) |hwnd| self.clearVacatedPaneStrips(hwnd, old_panes[0..old_len]);
+    if (stackTraceOn()) {
+        var clear_t1: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&clear_t1);
+        log.info("stack trace cleared qpc={d}", .{clear_t1});
+    }
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
     self.cutCardRegions();
-    // Before the bands are painted, never after (T2414, above).
+    // Before the bands are painted, never after (T2414, above). A strip face
+    // this pass drops is hidden after the paint below, not here.
+    self.face_hides_deferred = true;
     self.placePaneOverlays();
+    self.face_hides_deferred = false;
     overlays_placed = true;
+    defer self.retireStripFaces();
 
     // Paint divider lines directly using GetDC (not BeginPaint, which
     // clips to the invalid region and misses the content area gaps).
@@ -8035,9 +8053,40 @@ fn updateStripFaces(self: *Window) void {
                 });
             }
             if (tab == self.active_tab and self.paintStripFace(entry.view)) continue;
-            if (entry.view.strip_face) |f| f.hide();
+            const f = entry.view.strip_face orelse continue;
+            if (!f.shown) {
+                f.hide();
+                continue;
+            }
+            if (self.face_hides_deferred and self.face_hides_len < self.face_hides.len) {
+                self.face_hides[self.face_hides_len] = entry.view;
+                self.face_hides_len += 1;
+            } else f.hide();
         }
     }
+}
+
+/// Hide the strip faces a grid layout pass dropped, after the pass has painted
+/// the desk (T2485 anomaly a). A face that has caught up stands for the strip
+/// the desk paints in its place - the same band, the same name. Hidden before
+/// that paint, DWM could compose the window in between and show the slot's
+/// old desk pixels, an empty card, for a frame: an already-folded blade
+/// blinking as the next pane folds. Hidden after it, whichever of the two
+/// lands first, the slot shows the same strip.
+fn retireStripFaces(self: *Window) void {
+    const n = self.face_hides_len;
+    self.face_hides_len = 0;
+    if (n == 0) return;
+    // The desk's GDI paint is queued ahead of the hide.
+    _ = w32.GdiFlush();
+    for (self.face_hides[0..n]) |view| {
+        if (view.strip_face) |f| f.hide();
+    }
+    if (stackTraceOn()) {
+        var t: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&t);
+        log.info("stack trace faces retired after the desk paint n={d} qpc={d}", .{ n, t });
+    } else log.debug("stack strip faces retired after the desk paint n={d}", .{n});
 }
 
 /// The face over `view`'s card, at the card's collapse: the strip's band and
@@ -9250,6 +9299,24 @@ fn stackSlideTick(self: *Window) void {
     // waits for its frame at the new size. A tick that only moves cards
     // resizes nothing and waits for nothing.
     self.layoutSplitsLive();
+    // T2485: where a glide frame's time goes, tick by tick, to set against
+    // the captured frames (`stack trace batch` carries the same clock).
+    if (stackTraceOn()) {
+        const cost_us = if (std.time.Instant.now()) |e| e.since(now) / std.time.ns_per_us else |_| 0;
+        log.info("stack trace tick gap_us={d} cost_us={d} wait_us={d} waits={d} resizes={d} timeouts={d} resize_us={d} place_us={d} paint_us={d} cards_us={d} overlay_us={d}", .{
+            gap_us orelse 0,
+            cost_us,
+            self.frame_wait_last_us,
+            self.frame_wait_count,
+            self.frame_wait_resizes,
+            self.frame_wait_timeouts,
+            self.frame_resize_us,
+            self.frame_place_us,
+            self.frame_paint_us,
+            self.frame_cards_us,
+            self.frame_overlay_us,
+        });
+    }
     // The sidebar's card follows the grid's edge in the same frame (T2406;
     // Mac `PaneStageView.didStep`), and its edge's gutter with it.
     if (self.stack_slide_column) {

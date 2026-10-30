@@ -15,7 +15,8 @@ param(
     [double]$DragPanes = 3.4,              # how many pane widths the grip travels
     [int]$DragMs = 1600,
     [string]$Style = '',
-    [string]$StdErr = ''                   # keep the app's log (debug build + GHOZTTY_LOG=debug)
+    [string]$StdErr = '',                  # keep the app's log (debug build + GHOZTTY_LOG=debug)
+    [int]$SampleEvery = 1                  # 1 = a PNG of every frame; large = timing only (the PNG writer loads the box)
 )
 $ErrorActionPreference = 'Stop'
 $t2485Lib = Join-Path $PSScriptRoot '..\..\..\..\test\win32\lib'
@@ -111,7 +112,7 @@ public static class T2485Hit {
         if ($root -ne ([IntPtr]$top).ToInt64()) { "SKIP covered: window $root, not the test window, is at $($pt[0]),$($pt[1])"; exit 3 }
     }
 
-    $s = Start-FrameCapture -X $fr[0] -Y $fr[1] -W $fr[2] -H $fr[3] -PngDir $frames -SampleEvery 1 -QueueBytes 3GB
+    $s = Start-FrameCapture -X $fr[0] -Y $fr[1] -W $fr[2] -H $fr[3] -PngDir $frames -SampleEvery $SampleEvery -QueueBytes 3GB
     Start-Sleep -Milliseconds 400
     $played = Invoke-FrameLabInput -Path $path -Presence (Get-UserPresence)
     Start-Sleep -Milliseconds 1200
