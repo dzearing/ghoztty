@@ -8714,6 +8714,32 @@ fn winRect(r: pane_stack_grid.PxRect) w32.RECT {
     return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
 }
 
+/// `GHOZTTY_STACK_TRACE` (T2485 D9): log every card the layout pass places -
+/// the branch `planStackSlide` took, each card's glide, and where `placeGrid`
+/// put each pane and why - so a frame capture can name what moved a pane.
+/// Read once and cached: it runs on every drag step.
+var stack_trace_state: ?bool = null;
+
+fn stackTraceOn() bool {
+    if (stack_trace_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_STACK_TRACE");
+    stack_trace_state = v;
+    return v;
+}
+
+/// A rect for the stack trace: `left,top+wxh`, or `-` for none.
+const TraceRect = struct {
+    r: ?pane_stack_grid.PxRect,
+    pub fn format(self: TraceRect, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        const r = self.r orelse return w.writeAll("-");
+        try w.print("{d},{d}+{d}x{d}", .{ r.left, r.top, r.width(), r.height() });
+    }
+};
+
+fn traceRect(r: ?pane_stack_grid.PxRect) TraceRect {
+    return .{ .r = r };
+}
+
 /// Place every visible pane where `grid` puts it. A card tucked behind its
 /// stack's run is hidden, at its tucked place, and held at the size it last
 /// had on show (T2105; `planStackSlide` keeps the size): a row reflowing
@@ -8756,6 +8782,19 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         const rect = sliding orelse if (!p.is_tucked)
             p.rect
         else if (view.stack_held) |s| pane_stack_slide.heldRect(p.rect, s) else p.rect;
+        if (stackTraceOn()) log.info("stack trace place hwnd={x} grid={f} tucked={} src={s} rect={f} card={f} shown={} carried={} opening={} snap={s} face={}", .{
+            if (view.hwnd()) |h| @intFromPtr(h) else 0,
+            traceRect(p.rect),
+            p.is_tucked,
+            if (sliding != null) "slide" else if (p.is_tucked) "held" else "grid",
+            traceRect(rect),
+            traceRect(self.stackSlideCardRect(id)),
+            shown,
+            carried,
+            opening,
+            @tagName(view.glide_snap),
+            if (view.strip_face) |f| f.shown else false,
+        });
         if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, winRect(rect), shown);
     }
 }
@@ -8839,15 +8878,28 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
     } else if (pane_stack_slide.runsChanged(before, now[0..n])) {
         if (App.clientAreaAnimationsEnabled()) {
             const current: ?*const pane_stack_slide.Slide = if (self.stack_slide) |*s| s else null;
+            if (stackTraceOn()) if (current) |cur| self.traceStackPlan("was", cur);
             // A drag's fold or unfold resizes on the way, as the drag does
             // on every move (T2186).
             var next = pane_stack_slide.plan(before, now[0..n], current, stackGlideMs(), self.stackGesturing());
             // The strip's fade gets three frames however slow they are (T2442).
             next.fade = strip_face.fadeOf(self.scale);
+            if (stackTraceOn()) self.traceStackPlan("runs", &next);
             if (next.active()) {
                 self.stack_slide = next;
                 self.orderStackCards(tree, grid);
                 self.armGlideSnaps(tree);
+                // A fold that interrupts a glide under way starts a glide too
+                // (T2485 D9): its first frame counts at most one period
+                // (T2401), like one that starts from rest. The pass that
+                // planned it moves every card and asks the folding pane for
+                // its frame; counted as motion, that time put most of the
+                // fold - and the run beside it - into one frame, with the
+                // folding pane still live (run17 f209, run18 f211).
+                if (self.stack_slide_last != null) {
+                    self.stack_slide_fresh = true;
+                    log.debug("stack glide replanned under way: first frame fresh", .{});
+                }
                 self.runStackSlide();
             } else self.endStackSlide();
         } else self.endStackSlide();
@@ -8857,6 +8909,7 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
         // and a glide resting under the drag wakes up. One that has caught up
         // once the drag is over is done.
         if (s.retarget(now[0..n])) {
+            if (stackTraceOn()) self.traceStackPlan("retarget", s);
             self.runStackSlide();
         } else if (s.settled() and !self.stackGesturing()) self.endStackSlide();
     }
@@ -8864,6 +8917,23 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
     self.stack_placed_len = n;
     self.stack_placed_tab = self.active_tab;
     self.stack_placed_grid = rect;
+}
+
+/// Log the glide a layout pass just planned or retargeted (`GHOZTTY_STACK_TRACE`):
+/// every card's from, drawn, target and whether it folds.
+fn traceStackPlan(self: *Window, why: []const u8, s: *const pane_stack_slide.Slide) void {
+    log.info("stack trace plan {s} cards={d} strips={d} resting={}", .{ why, s.len, s.strips_len, self.stack_slide_last == null });
+    for (s.items()) |c| {
+        const view: *PaneView = @ptrFromInt(c.id);
+        log.info("stack trace card hwnd={x} from={f} drawn={f} to={f} strip={} into={}", .{
+            if (view.hwnd()) |h| @intFromPtr(h) else 0,
+            traceRect(c.from),
+            traceRect(c.drawn.round()),
+            traceRect(c.to),
+            c.strip != null,
+            if (c.strip) |st| st.into else false,
+        });
+    }
 }
 
 /// The glide's time constant: Mac's, for a click's glide and a drag's alike
