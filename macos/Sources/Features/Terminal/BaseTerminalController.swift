@@ -835,11 +835,22 @@ class BaseTerminalController: NSWindowController,
         viewer: ViewerView,
         ratio: Double = 0.5
     ) -> PaneView? {
-        guard let oldPane = surfaceTree.pane(for: oldView) else { return nil }
+        guard let oldPane = surfaceTree.pane(for: oldView) else {
+            viewer.setDetached(true)
+            return nil
+        }
         return newViewerSplit(atPane: oldPane, direction: direction, viewer: viewer, ratio: ratio)
     }
 
     /// Viewer split anchored at any existing pane (terminal or viewer).
+    ///
+    /// A viewer that does not make it into the tree is detached before
+    /// returning nil: `ViewerView.init` mounts its chrome, whose SwiftUI host
+    /// holds the viewer back, and starts its page load, file watcher and
+    /// app-wide event monitor. Only `setDetached(true)` breaks that cycle, and
+    /// it is otherwise reached only through a tree change — so without it a
+    /// failed insert kept the viewer, its web content process and its monitor
+    /// alive for the rest of the app's life.
     @discardableResult
     func newViewerSplit(
         atPane oldPane: PaneView,
@@ -847,7 +858,10 @@ class BaseTerminalController: NSWindowController,
         viewer: ViewerView,
         ratio: Double = 0.5
     ) -> PaneView? {
-        guard surfaceTree.root?.node(view: oldPane) != nil else { return nil }
+        guard surfaceTree.root?.node(view: oldPane) != nil else {
+            viewer.setDetached(true)
+            return nil
+        }
         restoreSplitAnchor(oldPane)
 
         let pane = PaneView(viewer: viewer)
@@ -860,6 +874,7 @@ class BaseTerminalController: NSWindowController,
                 ratio: ratio)
         } catch {
             Ghostty.logger.warning("failed to insert viewer split: \(error)")
+            viewer.setDetached(true)
             return nil
         }
 

@@ -36,6 +36,12 @@ pub const custom_shader_y_is_down = true;
 /// Triple buffering.
 pub const swap_chain_count = 3;
 
+/// The layer retains the IOSurface it displays (`contents`), independent of
+/// the swap-chain frame that rendered it, and `presentLastTarget` is a no-op.
+/// So the renderer may free every frame's target while the surface is hidden
+/// without the window going blank: see `releaseHiddenTargets` in generic.zig.
+pub const presented_target_outlives_frame = true;
+
 const log = std.log.scoped(.metal);
 
 layer: IOSurfaceLayer,
