@@ -466,17 +466,38 @@ try {
     }
     Assert ($winViolations.Count -eq 0) ('panes tile across whole-window resizes' +
         $(if ($winViolations.Count) { ' -- ' + (($winViolations | Select-Object -First 4) -join '; ') } else { '' }))
-    $decisions = Get-EraseDecisions $errlog
-    $winFilling = Get-BlankingErases $decisions $seen
+    # T2503: a LAYERED pane (GHOZTTY_PANE_LAYER=1, T2499) keeps a surface of
+    # its own, and the system sends it no WM_ERASEBKGND when its parent resizes
+    # (5 of 5 runs, 0 decisions; an RDW_INVALIDATE|RDW_ERASE|RDW_ERASENOW raised
+    # on the pane from here produced none either). So for those panes the
+    # vacuity check below cannot ask "did the resize reach the handler" - it
+    # never will, and that is WHY such a pane cannot blank itself on a resize.
+    # What it asks instead is that the panes really are opaque layers (style
+    # AND layered attributes, alpha 255): the state in which zero decisions is
+    # the right answer rather than a dead oracle. Section A already showed the
+    # oracle live for this build.
+    $panesNow = @(Get-VisiblePanes ([IntPtr]$top))
+    $layered = @($panesNow | Where-Object {
+        (((Get-TestWindowStyle -Window ([IntPtr]$_.Hwnd) -ExStyle) -band 0x80000) -ne 0) -and
+        ($(Get-TestLayeredAttrs -Window ([IntPtr]$_.Hwnd)).Alpha -eq 255) })
+    $allLayered = ($panesNow.Count -gt 0) -and ($layered.Count -eq $panesNow.Count)
+    $decisions = @(Get-EraseDecisions $errlog)
+    $winFilling = @(Get-BlankingErases $decisions $seen)
     # The window-edge drag is the one interaction that already had a
     # synchronous-present path, and it is also the one that proves the path was
     # never actually synchronous: `signalFrameDrawn` had no caller, so the wait
     # it feeds sat on an event nobody set and expired after 16ms every time.
     Assert ($winFilling.Count -eq 0) ('no pane blanks itself across window resizes' +
         $(if ($winFilling.Count) { ' -- ' + (($winFilling | Select-Object -First 4) -join ', ') } else { '' }))
-    Assert ($decisions.Count -gt $seen) `
-        ("window resizes actually reached the erase handler ($($decisions.Count - $seen) new decision(s)) - " +
-         "without this the assertion above has nothing to be true about")
+    if ($allLayered) {
+        Assert ($decisions.Count -eq $seen) `
+            ("every pane is an opaque layer ($($layered.Count) of $($panesNow.Count), alpha 255), so a window resize " +
+             "takes no erase at all ($($decisions.Count - $seen) new decision(s)) - nothing there can blank a pane")
+    } else {
+        Assert ($decisions.Count -gt $seen) `
+            ("window resizes actually reached the erase handler ($($decisions.Count - $seen) new decision(s)) - " +
+             "without this the assertion above has nothing to be true about")
+    }
     $seen = $decisions.Count
 
     # ---- C3. across a banner expand/collapse ----------------------------

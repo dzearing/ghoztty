@@ -5778,7 +5778,7 @@ pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
     // so the resize wait has to be WOKEN by this signal rather than finding
     // the frame already there. Zero, and therefore free, outside a harness.
     const lag = self.present_lag_ms;
-    if (lag != 0) std.Thread.sleep(@as(u64, lag) * std.time.ns_per_ms);
+    if (lag != 0) presentLagSleep(lag);
     // Ordered before the event for the same reason `has_presented_frame` is:
     // a thread the event wakes must never read a size older than the frame it
     // was woken for (T1476).
@@ -5794,6 +5794,29 @@ pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
     if (self.frame_event) |event| {
         _ = w32.SetEvent(event);
     }
+}
+
+/// Hold the frame signal back `ms` milliseconds, and actually that long
+/// (T2503). `Sleep` rounds up to the system timer tick, ~15.6 ms on a process
+/// that has not asked for a finer one, so the 8 ms lag the harnesses set came
+/// out as 12 or 27 ms depending on where the tick fell: past the 16 ms frame
+/// budget about half the time, decided by timer phase rather than by anything
+/// the renderer did. A layered pane's slightly slower placement moved that
+/// phase and read as a pane that fell behind the drag. A high-resolution
+/// waitable timer keeps the lag the length the knob says. Harness-only path.
+fn presentLagSleep(ms: u8) void {
+    const ns = @as(u64, ms) * std.time.ns_per_ms;
+    const timer = w32.CreateWaitableTimerExW(
+        null,
+        null,
+        w32.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+        w32.TIMER_ALL_ACCESS,
+    ) orelse return std.Thread.sleep(ns);
+    defer _ = w32.CloseHandle(timer);
+    // Relative due time, in 100 ns units.
+    const due: i64 = -@as(i64, @intCast(ns / 100));
+    if (w32.SetWaitableTimer(timer, &due, 0, null, null, 0) == 0) return std.Thread.sleep(ns);
+    _ = w32.WaitForSingleObject(timer, w32.INFINITE);
 }
 
 /// Raise or clear the pane's bell mark, telling the window (sidebar dot, title
