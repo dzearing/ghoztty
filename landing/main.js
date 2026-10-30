@@ -18,13 +18,30 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
     return b;
   });
 
-  const go = (i) => {
-    index = (i + slides.length) % slides.length;
+  // A slide's image loads before the carousel moves to it, so it never
+  // slides onto a half-decoded picture. Neighbours load ahead of time.
+  const ready = (k) => {
+    const img = slides[(k + slides.length) % slides.length].querySelector("img");
+    if (!img) return Promise.resolve();
+    img.loading = "eager";
+    const decoded = img.decode ? img.decode().catch(() => {}) : Promise.resolve();
+    return Promise.race([decoded, new Promise((r) => setTimeout(r, 4000))]);
+  };
+
+  let pending = 0;
+  const go = async (i) => {
+    const target = (i + slides.length) % slides.length;
+    const ticket = ++pending;
+    await ready(target);
+    if (ticket !== pending) return; // a newer request superseded this one
+    index = target;
     track.scrollTo({ left: slides[index].offsetLeft - track.offsetLeft, behavior: reduceMotion ? "auto" : "smooth" });
   };
 
   const mark = (i) => {
     index = i;
+    ready(i + 1);
+    ready(i - 1);
     dotButtons.forEach((b, k) => b.setAttribute("aria-selected", String(k === i)));
     slides.forEach((s, k) => {
       const v = s.querySelector("video");
@@ -48,6 +65,11 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
   ["pointerdown", "wheel", "touchstart"].forEach((ev) => track.addEventListener(ev, stop, { passive: true }));
 
   mark(0);
+  // Then warm every remaining slide once the page has settled.
+  window.addEventListener("load", () => {
+    const warm = () => slides.forEach((_, k) => ready(k));
+    "requestIdleCallback" in window ? requestIdleCallback(warm) : setTimeout(warm, 1500);
+  });
   if (!reduceMotion) timer = setInterval(() => go(index + 1), 5000);
 });
 
