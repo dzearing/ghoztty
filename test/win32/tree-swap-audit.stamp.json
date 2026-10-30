@@ -1,8 +1,8 @@
 {
     "guard":  "tree-swap",
     "script":  "test/win32/tree-swap-audit.ps1",
-    "generated":  "2026-10-30T08:20:09-07:00",
-    "commit":  "f00cbd037",
+    "generated":  "2026-10-30T09:06:57-07:00",
+    "commit":  "0a84ebfa1",
     "uncommitted":  [
 
                     ],
@@ -180,7 +180,7 @@
                   "src/apprt/win32/pane_grab_handle.zig":  "c88d26a4c72cb14f51081890cb915598da1115058c14df06bd0707c8989e1f95",
                   "src/apprt/win32/pane_hue.zig":  "a9728a736592c2792ef3ccb3e6016b3101113454f68fc527f80568ed0a849e64",
                   "src/apprt/win32/pane_id.zig":  "52eb9e09bad8aff68127e9026db67d8cd4277a3c53ec6923958f46a1d1a55165",
-                  "src/apprt/win32/pane_layer.zig":  "c8ebbcfa36c25f300d96ad7af1b232b27aaf505eb6d2e72389abb065f5a69bee",
+                  "src/apprt/win32/pane_layer.zig":  "cea26bdc728715422e7faab67c22a78b49dab5de61f149c1a30b40cc772c27d6",
                   "src/apprt/win32/pane_refcount.zig":  "ea4cb30787d3ff3582bf7a6615bc1c75688c51c25d0c2319ffb34cef6c28c1ea",
                   "src/apprt/win32/pane_relocate.zig":  "142dafc0a932792f9f994d3f6bb2563040fefba8c9e0fac3dddfb9d291f00045",
                   "src/apprt/win32/pane_sidebar.zig":  "50e603f586f3ca0d54415eafb3cbe36139a8da79a46964c4825034f446705d45",
