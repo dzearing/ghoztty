@@ -6,11 +6,11 @@
 //!
 //! The `DimOverlay` shape: a WS_EX_LAYERED popup owned by the pane's child
 //! HWND, so DWM composites it above OpenGL and WebView2 content alike, and
-//! WS_EX_TRANSPARENT so it never takes the pointer. Uniform alpha, so it is
-//! SetLayeredWindowAttributes(LWA_ALPHA) as the dim wash is, and it paints
-//! itself from the frame the window drew into its DIB (`begin`/`commit`) -
-//! which is what lets a pixel probe photograph it through WM_PRINT, where an
-//! UpdateLayeredWindow face reads back black.
+//! WS_EX_TRANSPARENT so it never takes the pointer. Uniform alpha, committed
+//! with UpdateLayeredWindow (T2485 D7) from the frame the window drew into
+//! its DIB (`begin`/`commit`). A copy of that frame answers WM_PRINT, so a
+//! pixel probe can still photograph it, where DefWindowProc would read an
+//! UpdateLayeredWindow face back black.
 
 const std = @import("std");
 const w32 = @import("win32.zig");
@@ -38,7 +38,7 @@ pub const StripFace = struct {
     w: i32 = 0,
     h: i32 = 0,
 
-    /// The frame on screen, which WM_PAINT and WM_PRINT paint from.
+    /// A copy of the frame on screen, which WM_PRINT paints from.
     px: []u32 = &.{},
     px_w: i32 = 0,
     px_h: i32 = 0,
@@ -116,20 +116,25 @@ pub const StripFace = struct {
         }
         _ = w32.GdiFlush();
         self.keep();
-        // The alpha before the first show: a layered window with none set is
-        // not drawn at all.
-        if (!self.shown or alpha != self.alpha) {
-            _ = w32.SetLayeredWindowAttributes(self.hwnd, 0, alpha, w32.LWA_ALPHA);
-            self.alpha = alpha;
-        }
         chrome_fanout.noteMove(.dim);
-        _ = w32.SetWindowPos(self.hwnd, null, left, top, self.px_w, self.px_h, w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_SHOWWINDOW);
         if (w32.SetWindowRgn(self.hwnd, region, 0) == 0) if (region) |r| {
             _ = w32.DeleteObject(r);
         };
-        // Painted now, not when the queue is next idle: the glide's next
-        // frame is already on its way.
-        _ = w32.RedrawWindow(self.hwnd, null, null, w32.RDW_INVALIDATE | w32.RDW_UPDATENOW);
+        // Pixels, place and alpha in one UpdateLayeredWindow, which DWM takes
+        // whole at its next composition (T2485 D7). Painting the redirection
+        // surface through WM_PAINT after a SetLayeredWindowAttributes reached
+        // the screen 1-3 frames after the pane under it was hidden, so a
+        // fold's first frames showed neither. The source alpha is not read
+        // (AlphaFormat 0): the face is uniform, as the dim wash is.
+        const dst_pt = w32.POINT{ .x = left, .y = top };
+        const dst_size = w32.SIZE{ .cx = self.w, .cy = self.h };
+        const src_pt = w32.POINT{ .x = 0, .y = 0 };
+        const blend = w32.BLENDFUNCTION{ .SourceConstantAlpha = alpha, .AlphaFormat = 0 };
+        if (w32.UpdateLayeredWindow(self.hwnd, null, &dst_pt, &dst_size, self.mem_dc, &src_pt, 0, &blend, w32.ULW_ALPHA) == 0)
+            log.warn("strip face UpdateLayeredWindow failed err={d}", .{w32.GetLastError()});
+        self.alpha = alpha;
+        if (!self.shown)
+            _ = w32.SetWindowPos(self.hwnd, null, 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_SHOWWINDOW);
         const was_shown = self.shown;
         if (!was_shown) {
             self.shown = true;
