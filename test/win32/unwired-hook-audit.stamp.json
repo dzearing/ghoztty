@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-10-29T17:28:38-07:00",
-    "commit":  "ff6133a71",
+    "generated":  "2026-10-29T19:06:58-07:00",
+    "commit":  "b2fe1644f",
     "uncommitted":  [
 
                     ],
@@ -1386,7 +1386,7 @@
                   "test/win32/stash-restore.ps1":  "872e2e0c8b6b8ce06145cc783a37ddffc32b24e7e2bfb5cb9a624f037a2f6809",
                   "test/win32/stderr-capture-audit.ps1":  "928dd559d8e1df45f9fce6baa0071a920d997aca8977790161b1c41c34368efe",
                   "test/win32/stderr-launch-capture.ps1":  "7c95a6330bbc5d8e441a55cd8a63ef764d4a6a6fefad6b91f0726db02985746b",
-                  "test/win32/suite-run.ps1":  "beccf87dca0401f6560614be036a73ff046d40fe6592e70b057646a7489a2a69",
+                  "test/win32/suite-run.ps1":  "eb659bbb368bac2bc8e1ed8c3384c389aa191b64636d4264c1b4242485eb261a",
                   "test/win32/tab-color.ps1":  "af75bcd47eeb68cf93ee056b7aa4e14e147314ab8b4adc3a9c0eb27dfb43f967",
                   "test/win32/tab-overview-action.ps1":  "e20977448b9d6f5a30acf7e71cfa6cae58389f9e719eab6884dcab83f5de8938",
                   "test/win32/tab-strip.ps1":  "fb806bccc6858acb4d5fdc3a8e295cadfda71a71b36ea4e72de2cb188909fb84",

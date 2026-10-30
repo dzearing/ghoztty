@@ -67,6 +67,7 @@
 Set-StrictMode -Off
 
 . (Join-Path $PSScriptRoot 'RunVerdict.ps1')
+. (Join-Path $PSScriptRoot 'TreeIdle.ps1')
 
 # The repo's path as the acceptance scripts spell it. Fixed: in lane B the
 # runner's own repo is D:\git\ghoztty-b, and a literal taken from it would not
@@ -657,6 +658,9 @@ function Invoke-AcceptanceRun {
         # honoured in full. suite-run.ps1 -Jobs passes its -MaxTimeoutSec here
         # so a parallel sweep is bounded exactly like a serial one (T1092).
         [int]$MaxTimeoutSec = 0,
+        # A job whose whole tree shows no CPU and no output this long is hung and
+        # killed then, not at its cap (TreeIdle.ps1; `# suite-idle-sec:` overrides).
+        [int]$IdleSec = 300,
         [string]$RepoLiteral,
         [switch]$NoConfirm,
         [switch]$FailFast,
@@ -686,6 +690,7 @@ function Invoke-AcceptanceRun {
             Class = $(if ($Width -le 1) { 'serial' } else { $cls.Class })
             StaticClass = $cls.Class; Reasons = $cls.Reasons; Inject = $cls.Inject
             Timeout = $cap
+            Idle = (Get-ScriptIdleSeconds -Text $srcText -Default $IdleSec)
         }
         if ($foreign -and (@($cls.Pinned).Count -gt 0 -or @($cls.Unscoped).Count -gt 0)) {
             $item | Add-Member -NotePropertyName Pinned -NotePropertyValue @($cls.Pinned)
@@ -773,7 +778,17 @@ function Invoke-AcceptanceRun {
         $job | Add-Member -NotePropertyName Item -NotePropertyValue $item
         $job | Add-Member -NotePropertyName Slot -NotePropertyValue $slot
         $job | Add-Member -NotePropertyName Phase -NotePropertyValue $phase
+        $job | Add-Member -NotePropertyName Watch -NotePropertyValue (
+            New-TreeIdleWatch -RootPid $job.Process.Id -LogPaths @($job.Out, $job.Err) -IdleSeconds $item.Idle)
         return $job
+    }
+    # Done = exited, past its cap, or hung (no CPU and no output in its tree).
+    $isOver = {
+        param($job)
+        if ($job.Process.HasExited) { return $true }
+        if (((Get-Date) - $job.Started).TotalSeconds -gt $job.Item.Timeout) { return $true }
+        if (Test-TreeIdle -Watch $job.Watch) { $job.Watch.Killed = $true; return $true }
+        return $false
     }
     $finish = {
         param($job, [bool]$timedOut)
@@ -784,11 +799,13 @@ function Invoke-AcceptanceRun {
         $code = -1
         try { $code = [int]$job.Process.ExitCode } catch {}
         $v = Get-RunVerdict -ExitCode $code -LogPath $job.Out -TimedOut $timedOut -AltLogPath $job.Err
+        $vLine = $v.Line
+        if ($timedOut -and $job.Watch.Killed) { $vLine = Get-TreeIdleLine -Watch $job.Watch }
         if ($job.Item.Class -eq 'parallel' -and $job.Phase -eq 'pool') { [void](Stop-ApWorkerProcess -Root $workers[$job.Slot].Root) }
         $row = [pscustomobject]@{
             Seq = $job.Item.Seq; Name = $job.Item.Name; Script = $job.Item.Script; Args = $job.Item.Args
             Class = $job.Item.Class; Slot = $job.Slot; Phase = $job.Phase
-            Kind = $v.Kind; Line = $v.Line; ExitCode = $code
+            Kind = $v.Kind; Line = $vLine; ExitCode = $code
             Started = $job.Started; Ended = (Get-Date); Log = $job.Out
         }
         & $OnResult $row | Out-Host
@@ -798,9 +815,8 @@ function Invoke-AcceptanceRun {
         param($running)
         # Poll every running job; return the ones that finished or timed out.
         foreach ($j in @($running)) {
-            $over = ((Get-Date) - $j.Started).TotalSeconds -gt $j.Item.Timeout
-            if ($j.Process.HasExited -or $over) {
-                [pscustomobject]@{ Job = $j; TimedOut = [bool]($over -and -not $j.Process.HasExited) }
+            if (& $isOver $j) {
+                [pscustomobject]@{ Job = $j; TimedOut = [bool](-not $j.Process.HasExited) }
             }
         }
     }
@@ -810,7 +826,7 @@ function Invoke-AcceptanceRun {
         foreach ($item in $queue) {
             if ($stopped) { break }
             $job = & $runOne $item 0 'pool'
-            while (-not $job.Process.HasExited -and ((Get-Date) - $job.Started).TotalSeconds -le $item.Timeout) { Start-Sleep -Milliseconds 250 }
+            while (-not (& $isOver $job)) { Start-Sleep -Milliseconds 250 }
             $row = & $finish $job (-not $job.Process.HasExited)
             [void]$results.Add($row)
             if ($FailFast -and (& $isRed $row)) { $stopped = $true }
@@ -852,7 +868,7 @@ function Invoke-AcceptanceRun {
         foreach ($item in @($queue | Where-Object { $_.Class -eq 'exclusive' })) {
             if ($stopped) { break }
             $job = & $runOne $item 0 'pool'
-            while (-not $job.Process.HasExited -and ((Get-Date) - $job.Started).TotalSeconds -le $item.Timeout) { Start-Sleep -Milliseconds 250 }
+            while (-not (& $isOver $job)) { Start-Sleep -Milliseconds 250 }
             $row = & $finish $job (-not $job.Process.HasExited)
             [void]$results.Add($row)
             if ($FailFast -and (& $isRed $row)) { $stopped = $true }
@@ -861,7 +877,7 @@ function Invoke-AcceptanceRun {
             foreach ($r in @($results | Where-Object { $_.Phase -eq 'pool' -and $_.Class -ne 'exclusive' -and $_.Kind -notin @('pass', 'skip') })) {
                 $item = @($queue | Where-Object { $_.Seq -eq $r.Seq })[0]
                 $job = & $runOne $item 0 'confirm'
-                while (-not $job.Process.HasExited -and ((Get-Date) - $job.Started).TotalSeconds -le $item.Timeout) { Start-Sleep -Milliseconds 250 }
+                while (-not (& $isOver $job)) { Start-Sleep -Milliseconds 250 }
                 [void]$results.Add((& $finish $job (-not $job.Process.HasExited)))
             }
         }

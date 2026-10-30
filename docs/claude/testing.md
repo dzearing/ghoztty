@@ -47,6 +47,17 @@ WebView2 hosts, log tail) instead of hanging forever with nothing to read. Exit
 0 pass / 1 fail / 2 wedged / 3 wall-clock cap; `-Lane <one>`, `-Repeat N`,
 `-Filter <test-filter>`, `-SelfTest` to prove the detector itself.
 
+**Acceptance scripts get the same hang detector** (2026-10-29).
+`suite-run.ps1`, and so `harness-floor.ps1` and the parallel runner, kill a
+script whose whole process tree shows no CPU and no new output for
+`-IdleSec` (default 300 s). It is scored `stall` with an `IDLE-KILLED` line
+right away, not at its wall-clock cap, so one hung script no longer holds the
+floor lock for the full 15 minutes. A script that is burning CPU or writing
+output is never idle-killed, however long it runs. A script that waits silently
+on purpose declares its own window with `# suite-idle-sec: <N>` (0 = off).
+The detector is `scripts\lib\TreeIdle.ps1`. It reuses floor-lane's tree and
+CPU functions by AST, so the two cannot drift.
+
 **`-Lane all` runs its lanes side by side** (T1959). Each lane is an
 `-Isolated` child of the script with its own build root,
 `zig-lanes\<lane>\.zig-cache` and `zig-lanes\<lane>\zig-out`, and the set takes

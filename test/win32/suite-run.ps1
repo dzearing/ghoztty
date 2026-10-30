@@ -310,6 +310,53 @@ try {
         (@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
                 Where-Object { $_.CommandLine -and $_.CommandLine -like '*g-hang.ps1*' }).Count -eq 0) ''
 
+    # --- C-idle. a silent, CPU-idle tree is hung - killed before the cap --
+    # 2026-10-29: the cap alone let a hung script hold its slot for the whole
+    # 15 minutes, and killed a slow-but-working one at the same mark. The idle
+    # watch (lib\TreeIdle.ps1) ends the first early and leaves the second be.
+    # These fixtures live only for this section so no other section's row
+    # counts move.
+    Write-Host ''
+    Write-Host '-- C-idle. hung = no CPU and no output in the whole tree'
+    Set-FixtureScript 'i-busy.ps1' @'
+$end = (Get-Date).AddSeconds(25)
+$x = 0
+while ((Get-Date) -lt $end) { $x++ }
+"ALL PASS (1 assertions)"
+exit 0
+'@
+    Set-FixtureScript 'j-optout.ps1' (('#' + ' suite-idle-sec: 0') + "`n" + @'
+Start-Sleep -Seconds 90
+"ALL PASS (1 assertions)"
+exit 0
+'@)
+    try {
+        $dirCi = Join-Path $Fixture 'runCidle'
+        $null = Invoke-Runner @('-Order', 'g-hang.ps1,i-busy.ps1', '-OutDir', $dirCi, '-TimeoutSec', '120', '-IdleSec', '10')
+        $sCi = Get-Summary $dirCi
+        $hang = @($sCi.results | Where-Object { $_.Name -eq 'g-hang.ps1' })[0]
+        Check 'C5 a silent, idle script is scored stall' ((Get-Verdict $sCi 'g-hang.ps1') -eq 'stall') (Get-Verdict $sCi 'g-hang.ps1')
+        Check 'C6 it is killed by the idle watch, long before its 120s cap' ($hang -and $hang.Seconds -lt 60) "$($hang.Seconds)s"
+        Check 'C7 its row says it was idle-killed, not capped' ($hang -and [string]$hang.Line -match 'IDLE-KILLED') "$($hang.Line)"
+        Check 'C8 a silent script that burns CPU is never idle (passes at 25s with a 10s idle window)' `
+            ((Get-Verdict $sCi 'i-busy.ps1') -eq 'pass') (Get-Verdict $sCi 'i-busy.ps1')
+
+        $dirCo = Join-Path $Fixture 'runCoptout'
+        $null = Invoke-Runner @('-Order', 'j-optout.ps1', '-OutDir', $dirCo, '-TimeoutSec', '35', '-IdleSec', '10')
+        $opt = @((Get-Summary $dirCo).results | Where-Object { $_.Name -eq 'j-optout.ps1' })[0]
+        Check 'C9 "# suite-idle-sec: 0" opts out: only the cap ends it' `
+            ($opt -and $opt.Seconds -ge 33 -and [string]$opt.Line -notmatch 'IDLE-KILLED') "$($opt.Seconds)s $($opt.Line)"
+
+        $dirCj = Join-Path $Fixture 'runCidleJobs'
+        $null = Invoke-Runner @('-Order', 'g-hang.ps1,b-pass.ps1', '-OutDir', $dirCj, '-TimeoutSec', '120', '-IdleSec', '10', '-Jobs', '2', '-NoSweep')
+        $hj = @((Get-Summary $dirCj).results | Where-Object { $_.Name -eq 'g-hang.ps1' })
+        Check 'C10 the parallel runner idle-kills too' `
+            ($hj.Count -gt 0 -and $hj[0].Verdict -eq 'stall' -and $hj[0].Seconds -lt 60 -and [string]$hj[0].Line -match 'IDLE-KILLED') `
+            "$(if ($hj.Count) { "$($hj[0].Verdict) $($hj[0].Seconds)s $($hj[0].Line)" } else { 'no row' })"
+    } finally {
+        Remove-Item -LiteralPath (Join-Path $FixTests 'i-busy.ps1'), (Join-Path $FixTests 'j-optout.ps1') -ErrorAction SilentlyContinue
+    }
+
     # --- D. order ----------------------------------------------------------
     Write-Host ''
     Write-Host '-- D. order'

@@ -139,6 +139,12 @@ param(
     # and the rows it truncates say so.
     [int]$MaxTimeoutSec = 0,
 
+    # A script whose whole process tree shows no CPU and no new output for this
+    # long is hung: it is killed and scored `stall` now, not at the cap above.
+    # A script declares its own window with `# suite-idle-sec: <N>` (0 = off).
+    # 0 here turns the idle watch off for the run. See lib\TreeIdle.ps1.
+    [int]$IdleSec = 300,
+
     # Where the logs and summary.json go. Defaults to a timestamped directory
     # under temp\suite-runs\.
     [string]$OutDir,
@@ -342,6 +348,7 @@ function Sort-SuiteOrder {
 # same, with the same classifier, so the two can never disagree about which
 # parameters those are. In the literal checkout nothing is added.
 . (Join-Path $PSScriptRoot 'lib\AcceptanceParallel.ps1')
+. (Join-Path $PSScriptRoot 'lib\TreeIdle.ps1')
 function Get-SuiteRerootArgs {
     param([string]$ScriptPath, [string]$Root)
     if (Test-ApSamePath $Root $script:ApRepoLiteral) { return @() }
@@ -459,8 +466,15 @@ function Invoke-SuiteScript {
     # redirected child and a working script is scored as broken.
     $null = $p.Handle
 
-    if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
-        $timedOut = $true
+    # The cap bounds a script that is still working; the idle watch (TreeIdle.ps1)
+    # ends one whose whole tree has gone silent long before the cap does.
+    $idle = New-TreeIdleWatch -RootPid $p.Id -LogPaths @($outFile, $errFile) `
+        -IdleSeconds (Get-ScriptIdleSeconds -Text ([IO.File]::ReadAllText($Script.Path)) -Default $IdleSec)
+    while (-not $p.WaitForExit(1000)) {
+        if ($sw.Elapsed.TotalSeconds -ge $TimeoutSeconds) { $timedOut = $true; break }
+        if (Test-TreeIdle -Watch $idle) { $timedOut = $true; $idle.Killed = $true; break }
+    }
+    if ($timedOut) {
         try { & taskkill.exe /T /F /PID $p.Id *> $null } catch { }
         try { $null = $p.WaitForExit(5000) } catch { }
     } else {
@@ -473,6 +487,8 @@ function Invoke-SuiteScript {
     # Scored BEFORE the fold below, from the two streams as separate files
     # (T1125) - see Get-RunVerdict for why the merged file cannot be scored.
     $v = Get-RunVerdict -ExitCode $code -LogPath $outFile -TimedOut $timedOut -AltLogPath $errFile
+    $vLine = $v.Line
+    if ($idle.Killed) { $vLine = Get-TreeIdleLine -Watch $idle }
 
     # Fold stderr into the log so one file is the whole story, then drop it.
     if ((Test-Path -LiteralPath $errFile) -and (Get-Item -LiteralPath $errFile).Length -gt 0) {
@@ -483,7 +499,7 @@ function Invoke-SuiteScript {
 
     return [pscustomobject]@{
         Verdict = $v.Kind
-        Line    = $v.Line
+        Line    = $vLine
         Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1)
         Exit    = $code
         Log     = $outFile
@@ -1032,7 +1048,7 @@ function Invoke-ParallelSweep {
     }
 
     $null = Invoke-AcceptanceRun -Repo $Repo -Jobs $jobList -Width $Jobs -LogDir $OutDir `
-        -TimeoutSec $TimeoutSec -MaxTimeoutSec $MaxTimeoutSec -NoConfirm -OnResult $onResult
+        -TimeoutSec $TimeoutSec -MaxTimeoutSec $MaxTimeoutSec -IdleSec $IdleSec -NoConfirm -OnResult $onResult
 
     if (-not $NoSweep) {
         $leaked = Invoke-LeakSweep -ZigOut $zigOut
