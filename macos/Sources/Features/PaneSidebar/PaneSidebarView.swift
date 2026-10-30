@@ -460,7 +460,7 @@ struct PaneSidebarView: View {
                             help: folded ? "Show \(project)’s windows — drag to reorder"
                                 : "Hide \(project)’s windows — drag to reorder",
                             onClick: onFold)
-                        .modifier(PaneSidebarJoinHighlight(project: project, motion: itemDrag.motion))
+                        .modifier(PaneSidebarJoinHighlight(project: project, motion: itemDrag.motion, isActive: reporting))
                         .modifier(PaneSidebarItemShift(key: section.id, drag: itemDrag, isActive: reporting, showsBacking: false))
                 }
             } else if !headsUngrouped {

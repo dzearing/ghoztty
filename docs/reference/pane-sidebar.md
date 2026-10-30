@@ -446,7 +446,8 @@ shows the same view of it (see *Shared across windows*). Read before touching
   windows, a jump nobody dragged to — that slot was once split at its
   middle, and a group's last window, grabbed, started in its lower half and
   wanted out at once (`PaneSidebarCrossDropTests.pastAGroupsEndItStaysInThatGroup`).
-  Joining a group it is not in outlines that group's header
+  Joining a group it is not in lights that group's header with a soft
+  accent wash and glow, no outline
   (`PaneSidebarJoinHighlight`). Dropped in another group it is renamed
   `<project>: <name>`, dropped out of one just `<name>` — pinned, as Change
   Window Title pins it. Grabbed open, it folds to its row under the pointer

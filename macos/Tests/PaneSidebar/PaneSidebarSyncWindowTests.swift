@@ -531,6 +531,27 @@ struct PaneSidebarSyncWindowTests {
         await settle(0.6)
         try await capture(window, "ungrouped-folded")
         a.paneSidebarState.isUngroupedFolded = false
+        await settle(0.6)
+        // `Build` held over alpha's last window: alpha's header lit to join.
+        let drag = PaneSidebarItemDrag.shared
+        let build = PaneSidebarWindowGrouping.key(window: windows[1].paneSidebarState.windowID)
+        let two = PaneSidebarWindowGrouping.key(window: windows[3].paneSidebarState.windowID)
+        drag.begin(build, siblings: [build], in: a, screenY: 0)
+        await settle(0.4)
+        let buildY = try screenY(of: build, in: a)
+        let twoBottom = try screenY(of: two, in: a, fraction: 1)
+        drag.end(commit: false)
+        await settle(0.5)
+        drag.begin(build, siblings: [build], in: a, screenY: buildY)
+        await settle(0.4)
+        drag.move(screenY: twoBottom)
+        await settle(0.6)
+        guard case .group = drag.destination else {
+            Issue.record("joins a group: \(String(describing: drag.destination))"); return
+        }
+        try await capture(window, "join-highlight")
+        drag.end(commit: false)
+        await settle(0.5)
         await close(windows, restoring: saved)
     }
 

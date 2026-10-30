@@ -855,18 +855,23 @@ struct PaneSidebarLiftBacking: View {
     }
 }
 
-/// A project header while a window is dragged into its group: outlined in
-/// the accent color, so a drop just past its last window reads as joining
-/// it rather than landing after it (`PaneSidebarCrossDrop.destination`).
+/// A project header while a window is dragged into its group: lit with a
+/// soft accent wash and glow (no outline), so a drop just past its last
+/// window reads as joining it rather than landing after it
+/// (`PaneSidebarCrossDrop.destination`). Only in the window dragged in:
+/// the drag is shared, but other windows' lists sit still.
 struct PaneSidebarJoinHighlight: ViewModifier {
     let project: String
     @ObservedObject var motion: PaneSidebarItemDragMotion
+    let isActive: Bool
 
     func body(content: Content) -> some View {
-        let joins = motion.joining == project
-        content.overlay {
+        let joins = isActive && motion.joining == project
+        let accent = Color(nsColor: .controlAccentColor)
+        content.background {
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2)
+                .fill(accent.opacity(0.22))
+                .shadow(color: accent.opacity(0.45), radius: 6)
                 .padding(.horizontal, SidePanelRow.fillInset)
                 .opacity(joins ? 1 : 0)
                 .animation(.easeOut(duration: 0.12), value: joins)
