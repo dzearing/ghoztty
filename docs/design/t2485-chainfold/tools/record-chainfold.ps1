@@ -14,7 +14,8 @@ param(
     [int]$WinW = 1600, [int]$WinH = 800,   # DIP
     [double]$DragPanes = 3.4,              # how many pane widths the grip travels
     [int]$DragMs = 1600,
-    [string]$Style = ''
+    [string]$Style = '',
+    [string]$StdErr = ''                   # keep the app's log (debug build + GHOZTTY_LOG=debug)
 )
 $ErrorActionPreference = 'Stop'
 $t2485Lib = Join-Path $PSScriptRoot '..\..\..\..\test\win32\lib'
@@ -44,7 +45,7 @@ function PaneArgv([int]$i) {
 
 $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 $argv = @('--config-default-files=false', '--session-persistence=false', "--config-file=$conf", '-e') + (PaneArgv 1)
-$proc = Start-Process -FilePath $Exe -ArgumentList $argv -PassThru
+$proc = if ($StdErr) { Start-Process -FilePath $Exe -ArgumentList $argv -PassThru -RedirectStandardError $StdErr } else { Start-Process -FilePath $Exe -ArgumentList $argv -PassThru }
 try {
     $top = [IntPtr]::Zero
     $deadline = (Get-Date).AddSeconds(20)

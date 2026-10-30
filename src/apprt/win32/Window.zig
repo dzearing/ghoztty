@@ -9533,15 +9533,33 @@ fn flatLine(self: *const Window, gutter: w32.RECT, d: pane_stack_layout.Directio
 ///
 /// In the elevated style the band itself is the desk's to paint
 /// (`paintPaneDesk`, T2121), so its leading corners can be the card's
-/// antialiased curve; only the name is laid on here.
+/// antialiased curve; only the name is laid on here - and on an opaque
+/// window not even that, since the desk lays the names into its own blit
+/// (`PaneDesk.names`, T2485).
 fn paintStackStrips(self: *Window, hdc: w32.HDC) void {
+    const elevated = self.paneStyle() == .elevated;
+    // The desk just blitted the names with their bands (T2485), and in the
+    // elevated style the names are all there is to lay here.
+    if (elevated and self.pane_desk.names_laid) {
+        self.pane_desk.names_laid = false;
+        return;
+    }
+    self.paintStripBandsAndNames(hdc, !elevated);
+}
+
+/// The desk's `PaneDesk.Names` hook: the names alone, into its picture.
+fn drawDeskStripNames(ctx: *anyopaque, hdc: w32.HDC) void {
+    const self: *Window = @ptrCast(@alignCast(ctx));
+    self.paintStripBandsAndNames(hdc, false);
+}
+
+fn paintStripBandsAndNames(self: *Window, hdc: w32.HDC, bands: bool) void {
     var strips: [MAX_DRAG_NODES]TuckedStrip = undefined;
     const n = self.tuckedStrips(&strips);
     if (n == 0) return;
 
     const bg = self.stripBackground();
     const light = color_math.isLight(bg);
-    const elevated = self.paneStyle() == .elevated;
     // The hovered strip's card has a lighter scrim (T2121; Mac
     // `PaneCardView.updateScrim`), which the strip lightens with.
     const strip_rgb = pane_stack_strip.stripRgb(bg, false);
@@ -9567,7 +9585,7 @@ fn paintStackStrips(self: *Window, hdc: w32.HDC) void {
         // its face carries the name (T2288).
         if (s.glide != null) continue;
         const hovered = if (self.strip_hover) |h| h == s.view else false;
-        if (!elevated) {
+        if (bands) {
             var band: w32.RECT = .{ .left = s.tab.left, .top = s.tab.top, .right = s.tab.right, .bottom = s.tab.bottom };
             _ = w32.FillRect(hdc, &band, if (hovered) hover_brush else brush);
         }
@@ -9993,6 +10011,17 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             };
         }
     }
+    // The strips' names go out in the desk's own blit (T2485): laid by
+    // `paintStackStrips` after it, the bands could be composited nameless.
+    var name_rects: [MAX_DRAG_NODES]busy_light.Rect = undefined;
+    var nn: usize = 0;
+    for (tucked[0..nt]) |s| {
+        if (s.glide != null) continue;
+        name_rects[nn] = .{ .left = s.tab.left - area.left, .top = s.tab.top - area.top, .right = s.tab.right - area.left, .bottom = s.tab.bottom - area.top };
+        nn += 1;
+    }
+    self.pane_desk.names = if (nn > 0) .{ .ctx = self, .rects = name_rects[0..nn], .draw = drawDeskStripNames } else null;
+    defer self.pane_desk.names = null;
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),

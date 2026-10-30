@@ -119,6 +119,16 @@ pub const Bar = struct {
 /// that big has no room for one to read anyway.
 pub const MAX_LIGHTS: usize = 16;
 
+/// The caller's hook for laying the strips' names into a paint (T2485).
+pub const Names = struct {
+    ctx: *anyopaque,
+    /// Where the names may draw, in content-area pixels; nothing outside
+    /// them is touched.
+    rects: []const busy_light.Rect,
+    /// Draws the names into `hdc` in window client coordinates.
+    draw: *const fn (ctx: *anyopaque, hdc: w32.HDC) void,
+};
+
 /// A light's ring, cached for the geometry it was built for.
 const LightCache = struct {
     key: usize = 0,
@@ -184,6 +194,16 @@ also_blit: ?busy_light.Rect = null,
 /// What the last paint put on the window when it was not the whole content
 /// area (content-area pixels).
 last_blit: ?Memo.Rects = null,
+/// The tucked strips' names, laid into `comp` for the blit and lifted off it
+/// after (T2485), so a band and its name reach the window in the same
+/// `BitBlt`. Drawn after it, as their own GDI pass, the window could be
+/// composited in between - and was, for frames at a time, while the panes
+/// reflowed under a resting drag: every blade showed its band with no name.
+/// Set by the caller around one `paint`; opaque windows only.
+names: ?Names = null,
+/// Whether the last `paint` laid `names` (the caller then draws none).
+names_laid: bool = false,
+names_saved: std.ArrayListUnmanaged(u32) = .empty,
 /// The card style's shadow patch, built once for every compose of the style
 /// rather than once a rectangle (T2454).
 prepared: ?pane_elevation.Prepared = null,
@@ -498,6 +518,7 @@ pub fn deinit(self: *PaneDesk) void {
     for (&self.lights) |*c| c.px.deinit(light_alloc);
     self.scratch.deinit(light_alloc);
     self.scratch_desk.deinit(light_alloc);
+    self.names_saved.deinit(light_alloc);
     if (self.prepared) |*p| p.deinit();
     if (self.desk) |d| d.destroy();
     if (self.comp) |c| c.destroy();
@@ -533,6 +554,7 @@ pub fn paint(
     /// when it is opaque (T1852).
     opacity: ?u8,
 ) void {
+    self.names_laid = false;
     if (w <= 0 or h <= 0) return;
     const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
     const fresh = self.comp == null or self.comp.?.w != w or self.comp.?.h != h;
@@ -547,6 +569,8 @@ pub fn paint(
             busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
         }
         self.last_blit = null;
+        const laid = self.layNames(comp, origin_x, origin_y, opacity);
+        defer if (laid) self.liftNames(comp);
         return self.timedBlit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
     }
     self.memo_misses +|= 1;
@@ -573,9 +597,13 @@ pub fn paint(
     self.memo.store(w, h, self.desk_gen, cards, strips, style, bar, lights);
     if (timer) |*t| self.compose_ns +|= t.read();
     self.last_blit = null;
+    const laid = self.layNames(comp, origin_x, origin_y, opacity);
+    defer if (laid) self.liftNames(comp);
     if (shown) |*sh| {
         self.addLightStrips(sh, comp);
         if (self.also_blit) |r| sh.add(r.left, r.top, r.right, r.bottom);
+        // Every name goes out with this paint: the window draws none itself.
+        if (laid) for (self.names.?.rects) |r| sh.add(r.left, r.top, r.right, r.bottom);
         if (sh.area() * 4 <= @as(i64, w) * h * 3) {
             var timer2 = std.time.Timer.start() catch null;
             for (sh.slice()) |r| self.blitRect(hdc, origin_x, origin_y, comp, desk, opacity, r);
@@ -617,6 +645,129 @@ fn timedBlit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32
     var timer = std.time.Timer.start() catch null;
     self.blit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
     if (timer) |*t| self.blit_ns +|= t.read();
+}
+
+/// Lay `names` into `comp` for the blit (T2485), keeping what was under
+/// them for `liftNames`. False - and the caller's own pass draws them - on a
+/// translucent window, or when there is nothing to lay.
+fn layNames(self: *PaneDesk, comp: Dib, origin_x: i32, origin_y: i32, opacity: ?u8) bool {
+    const n = self.names orelse return false;
+    if (opacity != null or n.rects.len == 0) return false;
+    self.names_saved.clearRetainingCapacity();
+    saveUnder(comp.pixels(), comp.w, comp.h, n.rects, &self.names_saved) catch return false;
+    const rgn = w32.CreateRectRgn(0, 0, 0, 0) orelse return false;
+    defer _ = w32.DeleteObject(rgn);
+    for (n.rects) |r| {
+        const c = clipTo(r, comp.w, comp.h) orelse continue;
+        const one = w32.CreateRectRgn(c.left, c.top, c.right, c.bottom) orelse continue;
+        _ = w32.CombineRgn(rgn, rgn, one, w32.RGN_OR);
+        _ = w32.DeleteObject(one);
+    }
+    const saved = w32.SaveDC(comp.dc);
+    _ = w32.SelectClipRgn(comp.dc, rgn);
+    _ = w32.SetViewportOrgEx(comp.dc, -origin_x, -origin_y, null);
+    n.draw(n.ctx, comp.dc);
+    _ = w32.RestoreDC(comp.dc, saved);
+    // The text is in the pixels before anything reads them.
+    _ = w32.GdiFlush();
+    self.names_laid = true;
+    return true;
+}
+
+/// Put back what `layNames` drew over, once the blit has read it: `comp` is
+/// the cached picture, and the names are not part of it.
+fn liftNames(self: *PaneDesk, comp: Dib) void {
+    _ = w32.GdiFlush();
+    const n = self.names orelse return;
+    restoreUnder(comp.pixels(), comp.w, comp.h, n.rects, self.names_saved.items);
+}
+
+fn clipTo(r: busy_light.Rect, w: i32, h: i32) ?busy_light.Rect {
+    const c: busy_light.Rect = .{
+        .left = std.math.clamp(r.left, 0, w),
+        .top = std.math.clamp(r.top, 0, h),
+        .right = std.math.clamp(r.right, 0, w),
+        .bottom = std.math.clamp(r.bottom, 0, h),
+    };
+    if (c.right <= c.left or c.bottom <= c.top) return null;
+    return c;
+}
+
+/// Append the pixels of `buf` (`w` x `h`) under each of `rects`, in order.
+fn saveUnder(buf: []const u32, w: i32, h: i32, rects: []const busy_light.Rect, out: *std.ArrayListUnmanaged(u32)) !void {
+    const stride: usize = @intCast(w);
+    for (rects) |r| {
+        const c = clipTo(r, w, h) orelse continue;
+        const rw: usize = @intCast(c.right - c.left);
+        var y: usize = @intCast(c.top);
+        while (y < c.bottom) : (y += 1) {
+            const a = y * stride + @as(usize, @intCast(c.left));
+            try out.appendSlice(light_alloc, buf[a..][0..rw]);
+        }
+    }
+}
+
+/// Undo `saveUnder` over the same `rects`, last first, so where two overlap
+/// the pixels from before either was drawn are the ones that stay.
+fn restoreUnder(buf: []u32, w: i32, h: i32, rects: []const busy_light.Rect, saved: []const u32) void {
+    const stride: usize = @intCast(w);
+    var end: usize = saved.len;
+    var i: usize = rects.len;
+    while (i > 0) {
+        i -= 1;
+        const c = clipTo(rects[i], w, h) orelse continue;
+        const rw: usize = @intCast(c.right - c.left);
+        const rh: usize = @intCast(c.bottom - c.top);
+        if (end < rw * rh) return;
+        var at = end - rw * rh;
+        end = at;
+        var y: usize = @intCast(c.top);
+        while (y < c.bottom) : (y += 1) {
+            const a = y * stride + @as(usize, @intCast(c.left));
+            @memcpy(buf[a..][0..rw], saved[at..][0..rw]);
+            at += rw;
+        }
+    }
+}
+
+test "a name laid for the blit is lifted off the cached picture, overlaps and edges included" {
+    const w: i32 = 8;
+    const h: i32 = 6;
+    var buf: [48]u32 = undefined;
+    for (&buf, 0..) |*p, i| p.* = @intCast(i);
+    const orig = buf;
+    // Two overlapping strips and one hanging off the right and bottom edges.
+    const rects = [_]busy_light.Rect{
+        .{ .left = 1, .top = 0, .right = 3, .bottom = 6 },
+        .{ .left = 2, .top = 1, .right = 5, .bottom = 4 },
+        .{ .left = 6, .top = 4, .right = 12, .bottom = 9 },
+    };
+    var saved: std.ArrayListUnmanaged(u32) = .empty;
+    defer saved.deinit(light_alloc);
+    try saveUnder(&buf, w, h, &rects, &saved);
+    try std.testing.expectEqual(@as(usize, 12 + 9 + 4), saved.items.len);
+    // "Draw" over every rect.
+    for (rects) |r| {
+        const c = clipTo(r, w, h).?;
+        var y = c.top;
+        while (y < c.bottom) : (y += 1) {
+            var x = c.left;
+            while (x < c.right) : (x += 1) buf[@intCast(y * w + x)] = 0xFFFF_FFFF;
+        }
+    }
+    restoreUnder(&buf, w, h, &rects, saved.items);
+    try std.testing.expectEqualSlices(u32, &orig, &buf);
+}
+
+test "a name rect wholly outside the picture saves nothing and restores nothing" {
+    var buf = [_]u32{ 1, 2, 3, 4 };
+    const rects = [_]busy_light.Rect{.{ .left = 5, .top = 0, .right = 9, .bottom = 2 }};
+    var saved: std.ArrayListUnmanaged(u32) = .empty;
+    defer saved.deinit(light_alloc);
+    try saveUnder(&buf, 2, 2, &rects, &saved);
+    try std.testing.expectEqual(@as(usize, 0), saved.items.len);
+    restoreUnder(&buf, 2, 2, &rects, saved.items);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 3, 4 }, &buf);
 }
 
 /// Lay `cards`, `strips` and `bar` over `buf`, which holds the desk `desk`
