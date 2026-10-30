@@ -530,6 +530,21 @@ pub fn deinit(self: *PaneDesk) void {
 
 /// Paint the desk and `cards` (in content-area pixels, i.e. relative to
 /// `origin_x`/`origin_y`) into `hdc` over a `w` x `h` content area.
+var resize_trace_state: ?bool = null;
+
+fn resizeTraceOn() bool {
+    if (resize_trace_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_TRACE");
+    resize_trace_state = v;
+    return v;
+}
+
+fn qpcFreq() i64 {
+    var f: i64 = 0;
+    _ = w32.QueryPerformanceFrequency(&f);
+    return @max(f, 1);
+}
+
 pub fn paint(
     self: *PaneDesk,
     hdc: w32.HDC,
@@ -556,9 +571,27 @@ pub fn paint(
 ) void {
     self.names_laid = false;
     if (w <= 0 or h <= 0) return;
+    var tq0: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&tq0);
     const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
+    var tq1: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&tq1);
     const fresh = self.comp == null or self.comp.?.w != w or self.comp.?.h != h;
     const comp = self.ensureComp(w, h) orelse return;
+    var tq2: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&tq2);
+    // A new size is a whole new desk (T2516): what each part of that costs, on
+    // every window-resize step, under `GHOZTTY_RESIZE_TRACE`.
+    defer if (fresh and resizeTraceOn()) {
+        var tq3: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&tq3);
+        const f = qpcFreq();
+        log.info("desk trace desk_us={d} comp_us={d} rest_us={d}", .{
+            @divTrunc((tq1 - tq0) * 1_000_000, f),
+            @divTrunc((tq2 - tq1) * 1_000_000, f),
+            @divTrunc((tq3 - tq2) * 1_000_000, f),
+        });
+    };
     // The same picture as last time (T2448): the lights' rings are re-drawn
     // over their cached bases at this paint's head, and the composed pixels
     // under them are already right.

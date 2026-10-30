@@ -6427,13 +6427,21 @@ pub fn isForcedOpaque(self: *const Window) bool {
 
 /// `GHOZTTY_DEBUG_GHOST` (T2488), honoured by debug builds only: a release
 /// build ignores it, so no environment can make the user's terminal invisible.
+/// ReleaseSafe counts as debug here (T2516), as it does for the endpoints
+/// (`build_config.is_debug`): release.yml refuses to publish one, and it is how
+/// a film measures paint timing at release speed without a window the person at
+/// the desk can see.
 fn ghostRequested() bool {
-    if (comptime builtin.mode != .Debug) return false;
+    if (comptime !ghostBuild()) return false;
     return std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_GHOST");
 }
 
+fn ghostBuild() bool {
+    return builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
+}
+
 fn ghostOpaqueRequested() bool {
-    if (comptime builtin.mode != .Debug) return false;
+    if (comptime !ghostBuild()) return false;
     const v = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_GHOST") catch return false;
     defer std.heap.page_allocator.free(v);
     return std.mem.eql(u8, v, "bottom");
@@ -7507,6 +7515,8 @@ fn endFrameWaitBatch(self: *Window) void {
     const n = self.frame_wait_len;
     self.frame_wait_len = 0;
     if (n == 0) return;
+    if (self.hwnd) |h| resizeTrace("wait-begin", h);
+    defer if (self.hwnd) |h| resizeTrace("wait-end", h);
 
     var timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
     // T1476: keep waiting while any pane's LAST PRESENT is still at the size
@@ -7700,7 +7710,10 @@ pub fn layoutSplits(self: *Window) void {
     // bands are painted below (T1031).
     var batch_t0: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&batch_t0);
+    if (self.hwnd) |h| resizeTrace("batch-begin", h);
     endPaneBatch(hdwp);
+    if (self.hwnd) |h| resizeTrace("batch-end", h);
+    if (resizeTraceOn()) log.info("resize trace viewer total_us={d} bounds_us={d} nav_us={d}", .{ ViewerPane.sync_cost.total_ns / 1000, ViewerPane.sync_cost.bounds_ns / 1000, ViewerPane.sync_cost.nav_ns / 1000 });
     if (stackTraceOn()) {
         var batch_t1: i64 = 0;
         _ = w32.QueryPerformanceCounter(&batch_t1);
@@ -7711,6 +7724,7 @@ pub fn layoutSplits(self: *Window) void {
     // new cut gives back to the window are its to paint (`desk_paints_next`).
     const desk_fill = self.applied_pane_style == .elevated;
     if (desk_fill) self.cutCardRegions();
+    if (self.hwnd) |h| resizeTrace("cut-end", h);
     if (self.hwnd) |hwnd| self.clearVacatedPaneStrips(hwnd, old_panes[0..old_len]);
     if (stackTraceOn()) {
         var clear_t1: i64 = 0;
@@ -7719,12 +7733,14 @@ pub fn layoutSplits(self: *Window) void {
     }
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
     if (!desk_fill) self.cutCardRegions();
+    if (self.hwnd) |h| resizeTrace("regions-end", h);
     // Before the bands are painted, never after (T2414, above). A strip face
     // this pass drops is hidden after the paint below, not here.
     self.face_hides_deferred = true;
     self.placePaneOverlays();
     self.face_hides_deferred = false;
     overlays_placed = true;
+    if (self.hwnd) |h| resizeTrace("overlays-end", h);
     defer self.retireStripFaces();
 
     // Paint divider lines directly using GetDC (not BeginPaint, which
@@ -7756,6 +7772,7 @@ pub fn layoutSplits(self: *Window) void {
             self.paintAlphaCorrect(dc, paintMovedBands);
             self.pane_desk.blit_changed_only = false;
             _ = w32.ReleaseDC(hwnd, dc);
+            resizeTrace("paint-end", hwnd);
             // What this pass just painted is current, so the paint its own pane
             // moves queued there (the parent pixels a moved child exposes) has
             // nothing left to draw (T2448). Under a glide that queued paint
@@ -8866,6 +8883,34 @@ fn winRect(r: pane_stack_grid.PxRect) w32.RECT {
 /// put each pane and why - so a frame capture can name what moved a pane.
 /// Read once and cached: it runs on every drag step.
 var stack_trace_state: ?bool = null;
+var resize_trace_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_TRACE` (T2516): QPC stamps on a window resize's messages,
+/// so a film of the window (whose frames carry the compose's QPC time) can be
+/// lined up against when the pass that should have painted each one ran.
+fn resizeTraceOn() bool {
+    if (resize_trace_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_TRACE");
+    resize_trace_state = v;
+    return v;
+}
+
+fn resizeTraceMsg(hwnd: w32.HWND, msg: u32) void {
+    var t: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t);
+    var r: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    _ = w32.GetWindowRect(hwnd, &r);
+    log.info("resize trace msg=0x{x} qpc={d} w={d}", .{ msg, t, r.right - r.left });
+}
+
+fn resizeTrace(comptime what: []const u8, hwnd: w32.HWND) void {
+    if (!resizeTraceOn()) return;
+    var t: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t);
+    var r: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    _ = w32.GetWindowRect(hwnd, &r);
+    log.info("resize trace " ++ what ++ " qpc={d} w={d}", .{ t, r.right - r.left });
+}
 
 fn stackTraceOn() bool {
     if (stack_trace_state) |v| return v;
@@ -16519,6 +16564,8 @@ pub fn windowWndProc(
         else => {},
     };
 
+    if (resizeTraceOn()) resizeTraceMsg(hwnd, msg);
+
     switch (msg) {
         // --- Custom caption bar (T254) ---------------------------------
         //
@@ -16528,6 +16575,7 @@ pub fn windowWndProc(
         // for a frame we have not configured yet. The SWP_FRAMECHANGED in
         // `init` is what re-asks once we are ready.
         w32.WM_NCCALCSIZE => {
+            if (wparam != 0) resizeTrace("nccalc", hwnd);
             if (window.handleNcCalcSize(wparam, lparam)) |r| return r;
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
@@ -16837,11 +16885,13 @@ pub fn windowWndProc(
             // to "restore", so both a resize and a maximize/restore change
             // what it should be showing (T254).
             window.invalidateCaption();
+            resizeTrace("size-begin", hwnd);
             window.handleResize(switch (wparam) {
                 w32.SIZE_MAXIMIZED => "maximized",
                 w32.SIZE_RESTORED => "restored",
                 else => "other",
             });
+            resizeTrace("size-end", hwnd);
             return 0;
         },
         w32.WM_MOVE => {

@@ -32,6 +32,16 @@
 # Drags (each a stream of SetWindowPos steps, ~one per frame, inside a
 # WM_ENTERSIZEMOVE/WM_EXITSIZEMOVE pair like a real edge drag):
 #   right-shrink, right-grow, left-shrink, left-grow
+# Each step is posted to the window's own thread (SWP_ASYNCWINDOWPOS), where a
+# real drag's modal size loop runs; -CrossThread keeps the old shape.
+#
+# Timing (T2516): set GHOZTTY_RESIZE_TRACE=1 and the app logs a QPC stamp per
+# top-level message and per phase of the layout pass (`resize trace ...`) and
+# what a fresh desk costs (`desk trace ...`); each film's frames.txt holds the
+# compose's QPC time (100 ns units), so the two line up frame by frame. For
+# release-speed numbers pass -Exe a ReleaseSafe build (`zig build
+# -Dapp-runtime=win32 -Doptimize=ReleaseSafe --prefix zig-out-rsafe`): it keeps
+# the -debug endpoints and honours the ghost knob, and is never published.
 #
 #   powershell -NoProfile -File scripts\resize-sync-onscreen.ps1
 #   powershell -NoProfile -File scripts\resize-sync-onscreen.ps1 -NegativeControl   # must go red
@@ -53,7 +63,14 @@ param(
     [switch]$KeepFrames,
     # Re-score films already in -OutDir without running anything.
     [switch]$ScoreOnly,
-    [switch]$NegativeControl
+    [switch]$NegativeControl,
+    # Resize from THIS thread (a plain cross-process SetWindowPos) instead of
+    # posting each step to the window's own thread. Cross-process, Windows
+    # shows the new frame before the app is even sent WM_WINDOWPOSCHANGED
+    # (~20 ms on the 2026-10-30 trace), which no app-side change can close
+    # and which a real edge drag - the modal size loop runs on the window's
+    # thread - never does.
+    [switch]$CrossThread
 )
 
 $ErrorActionPreference = 'Continue'
@@ -112,16 +129,26 @@ public static class RsWin {
     }
     // One edge drag: `steps` SetWindowPos calls `stepMs` apart, inside the
     // size-loop bracket a real drag raises. dx/dw are per-step deltas.
-    public static void Drag(IntPtr h, int steps, int dx, int dw, int stepMs) {
+    public static void Drag(IntPtr h, int steps, int dx, int dw, int stepMs, bool crossThread) {
         const uint NOZ = 0x0004, NOACT = 0x0010;
+        // SWP_ASYNCWINDOWPOS: the move runs on the window's own thread, which
+        // is where a real edge drag's modal size loop calls SetWindowPos.
+        uint ASYNC = crossThread ? 0u : 0x4000u;
         RECT r; GetWindowRect(h, out r);
         int x = r.L, y = r.T, w = r.R - r.L, hh = r.B - r.T;
         SendMessage(h, 0x0231, IntPtr.Zero, IntPtr.Zero); // WM_ENTERSIZEMOVE
         var sw = System.Diagnostics.Stopwatch.StartNew();
         for (int i = 1; i <= steps; i++) {
-            SetWindowPos(h, IntPtr.Zero, x + dx * i, y, w + dw * i, hh, NOZ | NOACT);
+            SetWindowPos(h, IntPtr.Zero, x + dx * i, y, w + dw * i, hh, NOZ | NOACT | ASYNC);
             long due = (long)i * stepMs;
             while (sw.ElapsedMilliseconds < due) System.Threading.Thread.Sleep(1);
+        }
+        // An async move is posted: let the last one land inside the bracket.
+        var settle = System.Diagnostics.Stopwatch.StartNew();
+        while (!crossThread && settle.ElapsedMilliseconds < 3000) {
+            RECT n; GetWindowRect(h, out n);
+            if (n.L == x + dx * steps && n.R - n.L == w + dw * steps) break;
+            System.Threading.Thread.Sleep(2);
         }
         SendMessage(h, 0x0232, IntPtr.Zero, IntPtr.Zero); // WM_EXITSIZEMOVE
     }
@@ -329,7 +356,7 @@ try {
         for ($t = 0; $t -lt 100 -and -not $ready; $t++) { $ready = Test-Path (Join-Path $dir 'ready'); if (-not $ready) { Start-Sleep -Milliseconds 50 } }
         Assert "$drag.0 the film started" $ready
         Start-Sleep -Milliseconds 400
-        [RsWin]::Drag($hw, $Steps, $dx, $dw, $StepMs)
+        [RsWin]::Drag($hw, $Steps, $dx, $dw, $StepMs, [bool]$CrossThread)
         [void]$fp.WaitForExit(60000)
         $filmOut = (Read-Text $filmErr).Trim()
         "  $filmOut"
