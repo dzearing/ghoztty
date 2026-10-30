@@ -78,6 +78,17 @@ card_region_key: u64 = 0,
 /// without a redraw (`pane_stack_slide.cutNeedsRedraw`).
 card_region_cut: ?pane_stack_slide.Rect = null,
 
+/// What of this pane's child its region shows, in its own coordinates, in
+/// either style, or null when it has no region (T2485 D14): what a move lands
+/// with until the pass's cut follows it. `Window.applyCardRegions` owns it.
+card_region_shown: ?pane_stack_slide.Rect = null,
+
+/// How far the last layout pass pulled this folding pane's window back inside
+/// its card (T2485 D14, `pane_stack_slide.spillPull`), so its strip face pins
+/// the carried frame where the glide has the pane rather than where the pull
+/// left the window. `Window.placeGrid` owns it.
+fold_pull: [2]i32 = .{ 0, 0 },
+
 /// The desk slice this pane's terminal was last handed as its glass
 /// backdrop (T1833): a hash of where the pane sits on which desk, or 0 for
 /// none. `Window.syncGlassBackdrops` owns it, so a paint that moved nothing

@@ -638,6 +638,37 @@ pub fn clip(window: PxRect, card: PxRect) ?PxRect {
     };
 }
 
+/// How far to pull a live pane window back, along each axis, so that the part
+/// of it its CURRENT region shows stays inside its card once the batch has
+/// moved it to `window` (T2485 D14). The move lands in the placement batch and
+/// the new cut in a later `SetWindowRgn`, two window-manager transactions with
+/// a composition free to fall between them: a folding pane moved past the
+/// stack's edge with last frame's region (or none) showed its text over the
+/// first blade for that frame. Pulled back, nothing of it leaves the card
+/// whichever lands first; the cut that follows is taken where it then is.
+/// `shown` is what the window's region shows, in its own coordinates (null =
+/// all of it). A window bigger than its card on both sides of an axis is
+/// left alone on that axis: no pull keeps both edges in.
+pub fn spillPull(window: PxRect, shown: ?PxRect, card: PxRect) struct { dx: i32, dy: i32 } {
+    const s = shown orelse PxRect{ .right = window.width(), .bottom = window.height() };
+    const vis: PxRect = .{
+        .left = window.left + s.left,
+        .top = window.top + s.top,
+        .right = window.left + s.right,
+        .bottom = window.top + s.bottom,
+    };
+    return .{ .dx = pullInto(vis.left, vis.right, card.left, card.right), .dy = pullInto(vis.top, vis.bottom, card.top, card.bottom) };
+}
+
+/// The pull goes the whole way even when it takes the window's other edge out
+/// past its card: that edge faces the run, whose cards lie above a folding one
+/// (`orderStackCards`), so at most a gutter's width of it shows for the frame.
+fn pullInto(lo: i32, hi: i32, min: i32, max: i32) i32 {
+    if (hi > max and lo >= min) return max - hi;
+    if (lo < min and hi <= max) return min - lo;
+    return 0;
+}
+
 /// Whether re-cutting a sliding pane from `prev` to `next` (both window
 /// regions, in the window's own coordinates, as `clip` makes them) needs the
 /// pane redrawn (T2415). A cut that only shrinks - a card folding into its
@@ -1506,6 +1537,26 @@ test "clip: a window inside its card is not cut" {
     try testing.expectEqual(@as(?PxRect, null), clip(r(10, 10, 100, 100), r(0, 0, 200, 200)));
     // Bigger than its card: cut to it, from the window's own origin.
     try testing.expectEqual(PxRect{ .left = 0, .top = 0, .right = 450, .bottom = 600 }, clip(r(0, 0, 900, 600), r(0, 0, 450, 600)).?);
+}
+
+test "spillPull: a folding pane moved past its card is pulled back inside it (T2485 D14)" {
+    // run31 f207: window 1614+290 with no region yet, card 1614+254 - the
+    // last 36 px ran over the first blade until the cut landed.
+    const run31 = spillPull(r(1614, 53, 290, 916), null, r(1614, 53, 254, 916));
+    try testing.expectEqual(@as(i32, -36), run31.dx);
+    try testing.expectEqual(@as(i32, 0), run31.dy);
+    // Last frame's cut still on the window: only what it shows counts.
+    const cut = spillPull(r(1614, 53, 290, 916), r(0, 0, 260, 916), r(1614, 53, 254, 916));
+    try testing.expectEqual(@as(i32, -6), cut.dx);
+    // Already inside: nothing moves.
+    try testing.expectEqual(@as(i32, 0), spillPull(r(1569, 53, 290, 916), null, r(1569, 53, 297, 916)).dx);
+    // A leading stack: the pane spills off the card's left edge and is
+    // pulled right.
+    try testing.expectEqual(@as(i32, 40), spillPull(r(60, 0, 300, 600), null, r(100, 0, 400, 600)).dx);
+    // Bigger than its card on both sides: no pull can help, so none.
+    try testing.expectEqual(@as(i32, 0), spillPull(r(0, 0, 500, 600), null, r(100, 0, 200, 600)).dx);
+    // The vertical axis the same way.
+    try testing.expectEqual(@as(i32, -30), spillPull(r(0, 300, 400, 330), null, r(0, 300, 400, 300)).dy);
 }
 
 test "cutNeedsRedraw: a fold's shrinking cut is never redrawn, a growing one is (T2415)" {

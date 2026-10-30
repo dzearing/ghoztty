@@ -8148,6 +8148,16 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // window cut to its card, inside the client area.
     const at = childClientRect(parent, h) orelse return false;
     if (opening) askOpeningFrame(view, at);
+    // Where the glide has the pane: a fold's window pulled back inside its
+    // card for the move (T2485 D14) is still drawn - and its frame carried -
+    // where the glide puts it, so the face does not hold the pull's offset
+    // and then jump when the hidden window goes back.
+    const glide_at: pane_stack_grid.PxRect = .{
+        .left = at.left - view.fold_pull[0],
+        .top = at.top - view.fold_pull[1],
+        .right = at.right - view.fold_pull[0],
+        .bottom = at.bottom - view.fold_pull[1],
+    };
     // A fold carrying its pane's last frame (T2457): the face is the whole
     // card, opaque, with the frame laid over the band at what is left of the
     // content's strength. The frame is the pane at the size it is held at, so
@@ -8176,10 +8186,10 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     var client: w32.RECT = undefined;
     if (w32.GetClientRect(parent, &client) == 0) return false;
     const vis: pane_stack_grid.PxRect = .{
-        .left = @max(@max(at.left, inner.left), client.left),
-        .top = @max(@max(at.top, inner.top), client.top),
-        .right = @min(@min(at.right, inner.right), client.right),
-        .bottom = @min(@min(at.bottom, inner.bottom), client.bottom),
+        .left = @max(@max(glide_at.left, inner.left), client.left),
+        .top = @max(@max(glide_at.top, inner.top), client.top),
+        .right = @min(@min(glide_at.right, inner.right), client.right),
+        .bottom = @min(@min(glide_at.bottom, inner.bottom), client.bottom),
     };
     if (vis.width() <= 0 or vis.height() <= 0) return false;
     // Carried, the content fades over the whole tween, measured along the
@@ -8242,8 +8252,8 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // what the content has lost.
     if (carried) |c| {
         var pinned = c;
-        pinned.x = at.left - vis.left;
-        pinned.y = at.top - vis.top;
+        pinned.x = glide_at.left - vis.left;
+        pinned.y = glide_at.top - vis.top;
         strip_face.blendContent(frame.pixels, @intCast(w), @intCast(ht), pinned, content_alpha);
     }
 
@@ -8547,6 +8557,7 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
             entry.view.card_region_key = key;
             const prev_cut = entry.view.card_region_cut;
             entry.view.card_region_cut = cut;
+            entry.view.card_region_shown = if (key == 0) null else cut orelse shown;
             if (key == 0) {
                 _ = w32.SetWindowRgn(h, null, @intFromBool(redraw == .redraw));
                 continue;
@@ -8558,7 +8569,12 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 // a pane whose content had not changed - the T1906 cost, per
                 // frame - and the layout pass's own paint already covers what
                 // the cut gave back. Only a cut that grows has pixels to draw.
-                const repaint = redraw == .redraw and pane_stack_slide.cutNeedsRedraw(prev_cut, c);
+                // Nor does a hidden one, whose face carries it (T2485 D14: the
+                // pass after a fold's face takes over puts the pane back where
+                // its glide has it, out from under the pull that held it
+                // inside its card); showing it again paints it whole.
+                const visible = w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0;
+                const repaint = redraw == .redraw and visible and pane_stack_slide.cutNeedsRedraw(prev_cut, c);
                 // The acceptance oracle (stack-fold-slide.ps1 F14).
                 log.debug("stack cut redraw={d} width={d}", .{ @intFromBool(repaint), c.width() });
                 if (w32.SetWindowRgn(h, rect_rgn, @intFromBool(repaint)) == 0) _ = w32.DeleteObject(rect_rgn);
@@ -8896,9 +8912,33 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         const opening = sliding != null and view.glide_unfold and view.glide_snap != .none;
         const shown = (!p.is_tucked or sliding != null) and !carried and !opening;
         view.setVisible(shown or opening);
-        const rect = sliding orelse if (!p.is_tucked)
+        var rect = sliding orelse if (!p.is_tucked)
             p.rect
         else if (view.stack_held) |s| pane_stack_slide.heldRect(p.rect, s) else p.rect;
+        // A folding pane still live (its face not up yet) is moved in this
+        // batch and cut only after it: kept inside its card under the region
+        // it has now, so no frame shows it over the blade stack (T2485 D14).
+        view.fold_pull = .{ 0, 0 };
+        if (shown and sliding != null and view.glide_snap != .none and !view.glide_unfold) {
+            if (self.stackSlideCardRect(id)) |card| {
+                const leaf = self.leafRect(view, winRect(rect));
+                const inner = self.leafRect(view, winRect(card));
+                const pull = pane_stack_slide.spillPull(
+                    .{ .left = leaf.left, .top = leaf.top, .right = leaf.right, .bottom = leaf.bottom },
+                    view.card_region_shown,
+                    .{ .left = inner.left, .top = inner.top, .right = inner.right, .bottom = inner.bottom },
+                );
+                if (pull.dx != 0 or pull.dy != 0) {
+                    rect.left += pull.dx;
+                    rect.right += pull.dx;
+                    rect.top += pull.dy;
+                    rect.bottom += pull.dy;
+                    view.fold_pull = .{ pull.dx, pull.dy };
+                    // T2485's capture oracle: which fold starts were held.
+                    log.debug("stack fold pulled inside its card dx={d} dy={d}", .{ pull.dx, pull.dy });
+                }
+            }
+        }
         if (stackTraceOn()) log.info("stack trace place hwnd={x} grid={f} tucked={} src={s} rect={f} card={f} shown={} carried={} opening={} snap={s} face={}", .{
             if (view.hwnd()) |h| @intFromPtr(h) else 0,
             traceRect(p.rect),
