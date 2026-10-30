@@ -8033,17 +8033,21 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // content's strength. The frame is the pane at the size it is held at, so
     // it must match the window it stands in for. An opening card's frame is
     // the size it was asked at; a hand that re-sizes it mid-glide has the
-    // last one drawn pinned all the same until the next lands.
+    // last one drawn pinned all the same until the next lands. A folding
+    // card keeps its frame whatever the window does after (T2485): the drag
+    // goes on squeezing the held window while the terminal stays held, so the
+    // frame pinned and clipped is what the pane shows. Dropping it fell back
+    // to a live pane the fold had already hidden - a frame with no card at
+    // all, flipping with one showing it.
     const carried: ?strip_face.Content = carried: {
         if (view.glide_snap != .ready) break :carried null;
         const fr = view.glideFrame() orelse break :carried null;
         if (!opening and !strip_face.carriedFits(fr.w, fr.h, at.width(), at.height())) {
-            // T2485 oracle: the carried frame no longer fits the window it
-            // stands in for, so the card falls back to the live pane.
-            log.debug("stack fold carried dropped frame={d}x{d} at={d}x{d} live={d}", .{
+            // T2485 oracle: the window moved off the frame's size; the frame
+            // still carries the card, pinned and clipped.
+            log.debug("stack fold carried misfit frame={d}x{d} at={d}x{d} live={d}", .{
                 fr.w, fr.h, at.width(), at.height(), @intFromBool(live),
             });
-            break :carried null;
         }
         break :carried .{ .pixels = fr.pixels, .w = fr.w, .h = fr.h, .x = 0, .y = 0 };
     };

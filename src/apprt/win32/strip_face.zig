@@ -117,11 +117,11 @@ pub fn blendContent(buf: []u32, w: usize, h: usize, content: Content, alpha: u8)
 }
 
 /// How far a carried frame may be off the window it stands in for and still
-/// carry the card, in px (T2485). The held rect is re-derived each frame and
-/// can round a pixel away from the size the frame was read back at; `blend
-/// Content` pins and clips the frame, so a pixel or two of slack draws the
-/// same card. Refusing it dropped the face and showed the live pane on
-/// alternate frames: the folding blade's text blinking on and off.
+/// count as fitting it, in px (T2485). The held rect is re-derived each frame
+/// and can round a pixel away from the size the frame was read back at. A
+/// fold carries its frame either way (`blendContent` pins and clips it); a
+/// misfit past this is only logged, as the oracle for a window the drag kept
+/// squeezing after the frame was read.
 pub const carried_slack_px: i32 = 2;
 
 /// Whether a carried frame `fw` x `fh` still fits a window `aw` x `ah`.
@@ -262,7 +262,19 @@ test "blendContent: the content over the band at alpha, pinned, bottom-up, opaqu
     try testing.expectEqual(band, none[1]);
 }
 
-test "carriedFits: a pixel or two of rounding still carries, a real resize does not (T2485)" {
+test "blendContent: a frame wider than the window it stands in for still covers it, clipped (T2485)" {
+    // The run8 shape scaled down: read back at 4 wide, the drag then squeezed
+    // the window to 3. Every face pixel is the frame's, never the band.
+    const band: u32 = 0xFF00_0000;
+    var buf = [_]u32{band} ** 3;
+    const frame = [_]u32{ 0x00_000001, 0x00_000002, 0x00_000003, 0x00_000004 };
+    blendContent(&buf, 3, 1, .{ .pixels = &frame, .w = 4, .h = 1, .x = 0, .y = 0 }, 255);
+    try testing.expectEqual(@as(u32, 0xFF00_0001), buf[0]);
+    try testing.expectEqual(@as(u32, 0xFF00_0002), buf[1]);
+    try testing.expectEqual(@as(u32, 0xFF00_0003), buf[2]);
+}
+
+test "carriedFits: a pixel or two of rounding still fits, a real resize does not (T2485)" {
     try testing.expect(carriedFits(282, 923, 282, 923));
     // The run1 probe's shape: read back at 282, held at 281.
     try testing.expect(carriedFits(282, 923, 281, 923));

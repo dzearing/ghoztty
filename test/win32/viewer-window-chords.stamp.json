@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-window-chords",
     "script":  "test/win32/viewer-window-chords.ps1",
-    "generated":  "2026-10-29T19:48:50-07:00",
-    "commit":  "f050e072b",
+    "generated":  "2026-10-29T23:12:31-07:00",
+    "commit":  "d746b944d",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
@@ -10,7 +10,7 @@
                   "src/App.zig":  "a7b7c41de33b8d08f388e84254095c4ea76658b4ca362bcfd1e8d2e122227654",
                   "src/apprt/win32/viewer_accel.zig":  "eddd19b45c76df3c4f397d96455e8690717b42f1f25de40b9d3c614f0e72e975",
                   "src/apprt/win32/ViewerPane.zig":  "606d2f99053e2b92f1358d708c5503d5b5fe807585991c0fcd5c8094b122229b",
-                  "src/apprt/win32/Window.zig":  "6636604ccfff29779b51b66b79af170ae523b97b21469f4b28fb6da565683851",
+                  "src/apprt/win32/Window.zig":  "88a434f0aad441d257c05aafe5fee51938192680854104c0e0647596d3bdae24",
                   "test/win32/viewer-window-chords.ps1":  "98a12374e5503edcbc5fbdefde9cd8d82bd5bcf59089e0775e18b3787a3c02e7"
               }
 }

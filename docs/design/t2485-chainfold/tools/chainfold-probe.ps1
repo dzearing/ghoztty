@@ -57,7 +57,7 @@ try {
     Start-Sleep -Seconds 2
     $lines = @(Get-Content $errlog | Select-Object -Skip $mark)
     Write-Host "log lines during drag: $($lines.Count)"
-    foreach ($p in 'stack fold carried dropped', 'stack fold carried content', 'carries its frame', 'divider drag run=', 'strip face alpha', 'window resize cause', 'timeouts=[1-9]', 'stale=[1-9]') {
+    foreach ($p in 'stack fold carried misfit', 'stack fold carried content', 'carries its frame', 'divider drag run=', 'strip face alpha', 'window resize cause', 'timeouts=[1-9]', 'stale=[1-9]') {
         Write-Host ("{0,-30} {1}" -f $p, @($lines | Select-String -Pattern $p).Count)
     }
     $lines | Out-File (Join-Path $root 'drag.log') -Encoding utf8
