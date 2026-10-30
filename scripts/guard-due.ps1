@@ -6039,6 +6039,24 @@ $GuardTable = @(
             'test\win32\conpty-sync-hold.ps1'
         )
     },
+    # Terminal title pacing (T2428): a pane that re-titles itself per output
+    # line (cmd's `for /L ... do @echo`) sends at most one title per frame, and
+    # the last one still lands when the output stops. The policy lives in
+    # title_pace.zig; the stream handler holds the title, Termio paces it after
+    # each chunk and the termio thread runs the trailing timer. About a minute,
+    # off the input desktop.
+    [pscustomobject]@{
+        Name   = 'title-flood'
+        Script = 'test\win32\title-flood.ps1'
+        Stamp  = 'test\win32\title-flood.stamp.json'
+        Covers = @(
+            'src\termio\title_pace.zig',
+            'src\termio\stream_handler.zig',
+            'src\termio\Termio.zig',
+            'src\termio\Thread.zig',
+            'test\win32\title-flood.ps1'
+        )
+    },
     # The leak teardown (T199, T1127). `lib\HarnessLeak.ps1` is the only thing
     # standing between a harness that dies mid-run and a live app left on the
     # box, and since T1127 it is also what stops the ordinary scripts leaking

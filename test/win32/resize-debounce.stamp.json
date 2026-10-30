@@ -1,14 +1,13 @@
 {
     "guard":  "resize-debounce",
     "script":  "test/win32/resize-debounce.ps1",
-    "generated":  "2026-10-29T14:24:37-07:00",
-    "commit":  "e24ad43cb",
+    "generated":  "2026-10-29T16:59:22-07:00",
+    "commit":  "b537c0fac",
     "uncommitted":  [
-                        "src/termio/Thread.zig",
-                        "test/win32/resize-debounce.ps1"
+                        "src/termio/Thread.zig"
                     ],
     "files":  {
-                  "src/termio/Thread.zig":  "d5dd36f38bec7fe86dd47046b3fc3b8e1aa8b929e84780897a5d718877552cfe",
+                  "src/termio/Thread.zig":  "bfa1746e37c901b65ace3c15395270cffb4883ff9aabf9d4ed354f7f3be52e9c",
                   "test/win32/lib/count-resizes.ps1":  "bd9031b210198942ee1b7e9060d8bf46beebe35d217dd0f1abec75715802ce0e",
                   "test/win32/resize-debounce.ps1":  "90430eb891a21838fc22200d3cb6baf87e1fd70fbe16a8f06555ebd1d8adfc5e"
               }

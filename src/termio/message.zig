@@ -76,6 +76,10 @@ pub const Message = union(enum) {
     /// moment the content has landed (T1763, `conpty_sync_hold`).
     sync_hold: void,
 
+    /// A terminal title is held for its interval (T2428, `title_pace`).
+    /// Arm the timer that sends it after this many nanoseconds.
+    title_flush: u64,
+
     /// Enable or disable linefeed mode (mode 20).
     linefeed_mode: bool,
 

@@ -12677,6 +12677,12 @@ pub fn onPaneTitleChanged(self: *Window, pane: *PaneView, title: [:0]const u8) v
     var wbuf: [256]u16 = undefined;
     const wlen = std.unicode.utf8ToUtf16Le(&wbuf, title) catch 0;
     const len: u16 = @intCast(@min(wlen, 255));
+    // The caption and the tab label already say this: re-setting the caption
+    // is a frame repaint for nothing (T2428), the same guard refreshTabTitle
+    // has.
+    if (len == self.tab_title_lens[tab_idx] and
+        std.mem.eql(u16, self.tab_titles[tab_idx][0..len], wbuf[0..len]))
+        return;
     @memcpy(self.tab_titles[tab_idx][0..len], wbuf[0..len]);
     self.tab_title_lens[tab_idx] = len;
     if (tab_idx == self.active_tab) self.updateWindowTitle();

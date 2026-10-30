@@ -96,6 +96,11 @@ prompt_redraw: xev.Timer,
 prompt_redraw_c: xev.Completion = .{},
 prompt_redraw_cancel_c: xev.Completion = .{},
 
+/// Sends a terminal title held for its interval (T2428, `title_pace`).
+title: xev.Timer,
+title_c: xev.Completion = .{},
+title_cancel_c: xev.Completion = .{},
+
 flags: packed struct {
     /// This is set to true only when an abnormal exit is detected. It
     /// tells our mailbox system to drain and ignore all messages.
@@ -138,6 +143,9 @@ pub fn init(
     var prompt_redraw_h = try xev.Timer.init();
     errdefer prompt_redraw_h.deinit();
 
+    var title_h = try xev.Timer.init();
+    errdefer title_h.deinit();
+
     return Thread{
         .alloc = alloc,
         .loop = loop,
@@ -146,6 +154,7 @@ pub fn init(
         .coalesce = coalesce_h,
         .sync_reset = sync_reset_h,
         .prompt_redraw = prompt_redraw_h,
+        .title = title_h,
     };
 }
 
@@ -156,6 +165,7 @@ pub fn deinit(self: *Thread) void {
     self.coalesce.deinit();
     self.sync_reset.deinit();
     self.prompt_redraw.deinit();
+    self.title.deinit();
     self.stop.deinit();
     self.loop.deinit();
 }
@@ -389,6 +399,7 @@ fn drainMailbox(
             .jump_to_prompt => |v| try io.jumpToPrompt(v),
             .start_synchronized_output => self.startSynchronizedOutput(cb),
             .sync_hold => self.armSyncHold(cb, conpty_sync_hold.idle_ns),
+            .title_flush => |ns| self.armTitle(cb, ns),
             .linefeed_mode => |v| self.flags.linefeed_mode = v,
             .focused => |v| try io.focusGained(data, v),
             .write_small => |v| try io.queueWrite(
@@ -444,6 +455,37 @@ fn armSyncHold(self: *Thread, cb: *CallbackData, wait_ns: u64) void {
         cb,
         syncHoldCallback,
     );
+}
+
+fn armTitle(self: *Thread, cb: *CallbackData, wait_ns: u64) void {
+    // The loop's clock is cached; after an idle stretch it is stale and the
+    // timer, measured from it, would fire at once.
+    self.loop.update_now();
+    self.title.reset(
+        &self.loop,
+        &self.title_c,
+        &self.title_cancel_c,
+        std.math.divCeil(u64, wait_ns, std.time.ns_per_ms) catch 1,
+        CallbackData,
+        cb,
+        titleCallback,
+    );
+}
+
+fn titleCallback(
+    cb_: ?*CallbackData,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = r catch |err| switch (err) {
+        error.Canceled => return .disarm,
+        else => log.warn("error during title callback err={}", .{err}),
+    };
+    // Sent even on a timer error: a held title must not be stranded.
+    const cb = cb_ orelse return .disarm;
+    cb.io.titleDue();
+    return .disarm;
 }
 
 fn syncHoldCallback(

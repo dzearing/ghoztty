@@ -12,6 +12,7 @@ const termio = @import("../termio.zig");
 const terminal = @import("../terminal/main.zig");
 const terminfo = @import("../terminfo/main.zig");
 const conpty_sync_hold = @import("conpty_sync_hold.zig");
+const title_pace = @import("title_pace.zig");
 const history_guard = @import("history_guard.zig");
 const posix = std.posix;
 
@@ -91,6 +92,14 @@ pub const StreamHandler = struct {
     /// This is set to true when we've seen a title escape sequence. We use
     /// this to determine if we need to default the window title.
     seen_title: bool = false,
+
+    /// The newest title the program set that has not been sent yet, and how
+    /// often one may be (T2428, `title_pace`). `paceTitle` decides after each
+    /// chunk of output; any other surface message sends it first, so the
+    /// order of what the surface hears is unchanged.
+    pending_title: ?[256]u8 = null,
+    title_pace: title_pace.Pace = .{},
+    title_clock: ?std.time.Instant = null,
 
     /// Set once a shell has reported a working directory (OSC 7). See
     /// `reportPwd` for what the FIRST one means: any title set before it is
@@ -181,7 +190,55 @@ pub const StreamHandler = struct {
         self.messageWriter(.{ .color_scheme_report = .{ .force = false } });
     }
 
+    /// Nanoseconds on a monotonic clock that starts at the first title.
+    fn titleNow(self: *StreamHandler) u64 {
+        const now = std.time.Instant.now() catch return 0;
+        const base = self.title_clock orelse {
+            self.title_clock = now;
+            return 0;
+        };
+        return now.since(base);
+    }
+
+    /// A chunk of output has been parsed: send the held title, or leave it
+    /// for the timer (T2428).
+    pub fn paceTitle(self: *StreamHandler) void {
+        if (self.pending_title == null) return;
+        switch (self.title_pace.held(self.titleNow())) {
+            .send => self.sendTitle(),
+            .arm => |ns| self.messageWriter(.{ .title_flush = ns }),
+            .hold => {},
+        }
+    }
+
+    /// The title timer fired: send whatever is held (T2428).
+    pub fn titleDue(self: *StreamHandler) void {
+        self.title_pace.due(self.titleNow());
+        self.sendTitle();
+    }
+
+    /// Ahead of any other surface message: the held title goes first.
+    fn flushTitle(self: *StreamHandler) void {
+        if (self.pending_title == null) return;
+        self.title_pace.sent(self.titleNow());
+        self.sendTitle();
+    }
+
+    fn sendTitle(self: *StreamHandler) void {
+        const buf = self.pending_title orelse return;
+        self.pending_title = null;
+        self.pushSurfaceMessage(.{ .set_title = buf });
+    }
+
     inline fn surfaceMessageWriter(
+        self: *StreamHandler,
+        msg: apprt.surface.Message,
+    ) void {
+        self.flushTitle();
+        self.pushSurfaceMessage(msg);
+    }
+
+    fn pushSurfaceMessage(
         self: *StreamHandler,
         msg: apprt.surface.Message,
     ) void {
@@ -1112,6 +1169,11 @@ pub const StreamHandler = struct {
             return;
         }
 
+        // A repeat of the title already in force changes nothing anywhere, so
+        // it is not held or sent at all (T2428). A title that does change is
+        // held and paced by `paceTitle`.
+        if (isRepeatTitle(self.seen_title, self.terminal.getTitle(), title)) return;
+
         // Set the title on the terminal state. We ignore any errors since
         // we can continue to operate just fine without it.
         self.terminal.setTitle(title) catch |err| {
@@ -1133,13 +1195,13 @@ pub const StreamHandler = struct {
                 buf[pwd.len] = 0;
             }
 
-            self.surfaceMessageWriter(.{ .set_title = buf });
+            self.pending_title = buf;
             self.seen_title = false;
             return;
         }
 
         self.seen_title = true;
-        self.surfaceMessageWriter(.{ .set_title = buf });
+        self.pending_title = buf;
     }
 
     inline fn setMouseShape(
@@ -1723,6 +1785,32 @@ pub const StreamHandler = struct {
         }
     }
 };
+
+/// Is an OSC 0/2 title a repeat that would change nothing (T2428)? Only a
+/// non-empty title that matches the one a program already set: while
+/// `seen_title` is false the window shows the pwd (or nothing), so the same
+/// string arriving then is a real change, and the empty title always takes
+/// the reset-to-pwd path.
+fn isRepeatTitle(seen_title: bool, current: ?[]const u8, title: []const u8) bool {
+    if (!seen_title or title.len == 0) return false;
+    const cur = current orelse return false;
+    return std.mem.eql(u8, cur, title);
+}
+
+test "isRepeatTitle: the title already in force is a repeat" {
+    const testing = std.testing;
+    try testing.expect(isRepeatTitle(true, "cmd.exe - for", "cmd.exe - for"));
+    try testing.expect(!isRepeatTitle(true, "cmd.exe - for", "cmd.exe"));
+    try testing.expect(!isRepeatTitle(true, null, "cmd.exe"));
+}
+
+test "isRepeatTitle: a title the window is not showing yet is never a repeat" {
+    const testing = std.testing;
+    // The pwd stands in until a program titles the pane.
+    try testing.expect(!isRepeatTitle(false, "C:\\src", "C:\\src"));
+    // The empty title resets to the pwd, whatever came before.
+    try testing.expect(!isRepeatTitle(true, null, ""));
+}
 
 /// Does this title look like the shell titling its console with its own image
 /// path, rather than a title anybody chose? (T512/T1396.)

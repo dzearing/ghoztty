@@ -935,6 +935,13 @@ pub fn resetSynchronizedOutput(self: *Termio) void {
     self.renderer_wakeup.notify() catch {};
 }
 
+/// The held terminal title's interval is up: send it (T2428).
+pub fn titleDue(self: *Termio) void {
+    self.renderer_state.mutex.lock();
+    defer self.renderer_state.mutex.unlock();
+    self.terminal_stream.handler.titleDue();
+}
+
 /// Ask a held ConPTY frame whether its content has landed (T1763). Returns
 /// how long to wait before asking again, or null when the hold is over — in
 /// which case synchronized output has been ended and a render requested.
@@ -1199,6 +1206,9 @@ fn processOutputLocked(self: *Termio, buf: []const u8) void {
     } else {
         self.terminal_stream.nextSlice(buf);
     }
+
+    // A title this chunk set goes out now or on its timer (T2428).
+    self.terminal_stream.handler.paceTitle();
 
     // The shell is redrawing the prompt a resize cleared: the renderer
     // shows it once this goes quiet.
