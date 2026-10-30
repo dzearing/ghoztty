@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-29T20:52:50-07:00",
-    "commit":  "2de03c88a",
+    "generated":  "2026-10-29T22:52:12-07:00",
+    "commit":  "c6a104930",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/go-loop-health.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -34,7 +34,7 @@
                   "scripts/git-commit-guard.ps1":  "403f237ec4c34e94862e20b23586bfa4d5cb286b0d8179f67e402f361a024374",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "477da022a14cb53e9502ace9dcdfb3006ea550e773dca9f2422c1a3499775416",
-                  "scripts/go-loop-health.ps1":  "becaebfb01ef3286d90d76ec88c6e769dd1fd93ea8991b3c3aca4ca19bdcd467",
+                  "scripts/go-loop-health.ps1":  "01ebcc1f5a53a58ecb399203c371fc75115360b4fcf41c03e70799180567363d",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",

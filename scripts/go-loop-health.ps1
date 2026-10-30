@@ -538,7 +538,12 @@ if (-not $turnStalled -and $alive -and -not $NoPaneProbe -and $pane -and
 }
 if (-not $watchdog) { $notes += 'watchdog is not running' }
 if (-not $dashboard) { $notes += "dashboard is not listening on $Port" }
-if ($inProgress.Count -gt 1) { $notes += "$($inProgress.Count) tasks claimed in-progress" }
+# One claim per running lane is the normal shape with two lanes (2026-10-29:
+# a:T2473 + b:T2485 printed DEGRADED); only claims beyond that are a leftover.
+$heldLanes = @($lanes | Where-Object { $_.state -eq 'held' }).Count
+if ($inProgress.Count -gt [Math]::Max(1, $heldLanes)) {
+    $notes += "$($inProgress.Count) tasks claimed in-progress for $([Math]::Max(1, $heldLanes)) running lane(s)"
+}
 if ($digestState -eq 'missing') {
     $notes += "today's digest is missing - go.md step 0.5, write $digestRel (never backfill an older day)"
 } elseif ($digest.State -eq 'partial') {
