@@ -1,0 +1,18 @@
+diff --git a/src/apprt/win32/Window.zig b/src/apprt/win32/Window.zig
+index 7b05340a5..87499cfb7 100644
+--- a/src/apprt/win32/Window.zig
++++ b/src/apprt/win32/Window.zig
+@@ -7989,6 +7989,13 @@ pub fn updateHoverTints(self: *Window) void {
+ /// and the strip the window paints - the same band, the same name - takes
+ /// over, so nothing pops.
+ fn updateStripFaces(self: *Window) void {
++    // T2485 oracle: stamps this pass on the capture's clock, so a recorded
++    // frame can be matched to the face lines that follow.
++    if (self.stack_slide != null) {
++        var qpc: i64 = 0;
++        _ = w32.QueryPerformanceCounter(&qpc);
++        log.debug("strip faces pass qpc={d}", .{qpc});
++    }
+     for (0..self.tab_count) |tab| {
+         var it = self.tab_trees[tab].iterator();
+         while (it.next()) |entry| {
