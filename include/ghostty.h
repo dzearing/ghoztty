@@ -1265,6 +1265,8 @@ GHOSTTY_API bool ghostty_config_key_binding(ghostty_config_t,
 GHOSTTY_API uint32_t ghostty_config_diagnostics_count(ghostty_config_t);
 GHOSTTY_API ghostty_diagnostic_s ghostty_config_get_diagnostic(ghostty_config_t, uint32_t);
 GHOSTTY_API ghostty_string_s ghostty_config_open_path(void);
+GHOSTTY_API ghostty_string_s ghostty_config_schema_json(ghostty_config_t, bool);
+GHOSTTY_API ghostty_string_s ghostty_config_preferred_path(void);
 
 GHOSTTY_API ghostty_app_t ghostty_app_new(const ghostty_runtime_config_s*,
                                              ghostty_config_t);

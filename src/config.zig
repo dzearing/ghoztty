@@ -54,4 +54,5 @@ pub const Wasm = if (!builtin.target.cpu.arch.isWasm()) struct {} else @import("
 
 test {
     @import("std").testing.refAllDecls(@This());
+    _ = @import("config/schema_json.zig");
 }
