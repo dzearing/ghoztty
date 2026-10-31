@@ -297,7 +297,9 @@ shows the same view of it (see *Shared across windows*). Read before touching
 
 ## All windows
 
-- Header toggle (off by default) groups every window's panes. Its caption
+- Header toggle (**on by default**: a first launch opens in all windows;
+  after that the last choice is kept, `PaneSidebarShowsAllWindows`) groups
+  every window's panes. Its caption
   counts the windows. Every window starts **folded**, the one the list was
   turned on from included — one row per window, the overview the scope is for
   (search unfolds all; `PaneSidebarState.isWindowFolded`). The
@@ -624,7 +626,9 @@ row's window through its tap.
   expanded flag keeps its pre-rename name in window state
   (`paneSidebarPinned`) and its fallback key in the defaults
   (`PaneSidebarPinned`) — pinned WAS the full panel, so old state decodes
-  unchanged. The all-windows scope, search and folds are never persisted.
+  unchanged. The all-windows scope persists (`PaneSidebarShowsAllWindows`,
+  on when unset); its search and folds never do, so a launch starts every
+  window folded, as turning it on does.
 - Keybinds (macOS defaults): `toggle_pane_sidebar` Ctrl+Cmd+S, `stash_pane`
   Shift+Cmd+M, `restore_stashed_pane` (unbound); Window menu items for all three.
 
