@@ -834,6 +834,12 @@ frame_place_us: u64 = 0,
 face_hides: [MAX_FRAME_WAITS]*PaneView = undefined,
 face_hides_len: usize = 0,
 face_hides_deferred: bool = false,
+/// A grid layout pass committed its strip faces straight after the placement
+/// batch (T2485 D15 i, `commitStripFacesEarly`), so the overlay pass later in
+/// the same pass leaves them alone; `face_region_planned` is set while those
+/// faces take the region the pass's cut is about to apply.
+strip_faces_placed: bool = false,
+face_region_planned: bool = false,
 frame_paint_us: u64 = 0,
 /// The elevated style's card-region cut after placement (T1906).
 frame_cards_us: u64 = 0,
@@ -7756,6 +7762,9 @@ pub fn layoutSplits(self: *Window) void {
         _ = w32.QueryPerformanceCounter(&batch_t1);
         stackTrace("stack trace batch qpc={d} end={d} plan={d} grid={d}", .{ batch_t0, batch_t1, plan_t0, plan_t1 });
     }
+    // The strip faces next, before the cut and the desk fill (T2485 D15 i).
+    defer self.strip_faces_placed = false;
+    self.commitStripFacesEarly();
     // The regions first, when the desk fills what the panes left (T2516):
     // that paint clips to the children as they now stand, so the corners a
     // new cut gives back to the window are its to paint (`desk_paints_next`).
@@ -7881,8 +7890,9 @@ pub fn updateDimOverlays(self: *Window) void {
         null;
 
     // The strip's face over a card gliding into or out of its strip (T2288)
-    // is laid first: a pane wearing one yields its dim wash to it.
-    self.updateStripFaces();
+    // is laid first: a pane wearing one yields its dim wash to it. A grid
+    // pass may have laid them already, straight after its batch.
+    if (!self.strip_faces_placed) self.updateStripFaces();
 
     for (0..self.tab_count) |tab| {
         const tree = self.tab_trees[tab];
@@ -8179,6 +8189,46 @@ fn updateStripFaces(self: *Window) void {
     }
 }
 
+/// Commit the strip faces straight after a grid pass's placement batch (T2485
+/// D15 i). Laid with the other overlays, a face went up after the region cut
+/// and the desk fill of the strips the panes left - 8 ms median and up to 18
+/// after the batch on the real desktop (run57/run58) - so on nearly every glide
+/// tick the compositor showed the panes moved and the folding card's face
+/// still where the last tick had it: each tick's step landed over two frames,
+/// and a frame carrying both read as a jump. The face takes the region the cut
+/// is about to apply (`plannedCardRegion`), and a face this pass drops is
+/// still hidden only after the desk paint (`retireStripFaces`).
+/// `GHOZTTY_FACE_ORDER=legacy` keeps the old order for an A/B.
+fn commitStripFacesEarly(self: *Window) void {
+    if (faceOrderLegacy() or self.closing) return;
+    self.face_hides_deferred = true;
+    self.face_region_planned = true;
+    self.updateStripFaces();
+    self.face_region_planned = false;
+    self.face_hides_deferred = false;
+    self.strip_faces_placed = true;
+    if (stackTraceOn()) {
+        var t: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&t);
+        stackTrace("stack trace faces early qpc={d}", .{t});
+    }
+}
+
+/// `GHOZTTY_FACE_ORDER=legacy` (T2485 D15 i A/B): commit the strip faces with
+/// the other overlays, after the cut and the desk fill.
+fn faceOrderLegacy() bool {
+    const S = struct {
+        var v: ?bool = null;
+    };
+    if (S.v) |v| return v;
+    const v = if (std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_FACE_ORDER")) |s| blk: {
+        defer std.heap.page_allocator.free(s);
+        break :blk std.mem.eql(u8, s, "legacy");
+    } else |_| false;
+    S.v = v;
+    return v;
+}
+
 /// Hide the strip faces a grid layout pass dropped, after the pass has painted
 /// the desk (T2485 anomaly a). A face that has caught up stands for the strip
 /// the desk paints in its place - the same band, the same name. Hidden before
@@ -8331,9 +8381,16 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     }
 
     // Cut to the pane's own region - its card's rounded shape, or its slide
-    // cut - from where the face sits inside the pane window.
+    // cut - from where the face sits inside the pane window. Committed ahead
+    // of this pass's cut (`commitStripFacesEarly`), the face takes the region
+    // the cut is about to give the pane, not the one it still has.
     var region: ?*anyopaque = null;
-    if (w32.CreateRectRgn(0, 0, 0, 0)) |rgn| {
+    if (self.face_region_planned) {
+        if (self.plannedCardRegion(view, h)) |rgn| {
+            _ = w32.OffsetRgn(rgn, at.left - vis.left, at.top - vis.top);
+            region = rgn;
+        }
+    } else if (w32.CreateRectRgn(0, 0, 0, 0)) |rgn| {
         if (w32.GetWindowRgn(h, rgn) == 0) {
             _ = w32.DeleteObject(rgn);
         } else {
@@ -8601,41 +8658,11 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
             const h = entry.view.hwnd() orelse continue;
-            var key: u64 = 0;
-            // What of the window the rounded card region covers, in its own
-            // coordinates: all of it, or (mid-slide) the part in its card.
-            var shown: pane_stack_grid.PxRect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
-            var square_top = false;
-            // A banner with no header above it is the card's top, so its
-            // strip takes the card's top corners (T1851).
-            var banner_corner: i32 = 0;
-            // Mid-slide, a pane held bigger than its card is cut to the card
-            // in either style (T2187), so it never covers a pane sliding in.
-            var cut: ?pane_stack_grid.PxRect = null;
-            // Only a pane the grid placed in a card is in `slots`; a stashed,
-            // hidden-by-zoom or other-tab pane keeps (or gets back) no region.
-            for (slots[0..n]) |slot| {
-                if (slot.view != entry.view) continue;
-                if (self.rearrangeHeaderInset(slot.rect) == 0) banner_corner = d;
-                const at = childClientRect(parent, h) orelse break;
-                shown = .{ .left = 0, .top = 0, .right = at.width(), .bottom = at.height() };
-                if (tab == self.active_tab) if (self.slideClip(entry.view, at)) |c| {
-                    shown = c;
-                };
-                // A header or banner above the pane: the band carries the
-                // card's top curve, the pane's own top corners stay square.
-                square_top = at.top + shown.top > self.cardInner(slot.rect).top;
-                key = cardRegionKey(false, shown, square_top);
-                break;
-            }
-            if (!elevated and tab == self.active_tab) {
-                if (childClientRect(parent, h)) |at| {
-                    cut = self.slideClip(entry.view, at);
-                    if (cut) |c| key = cardRegionKey(true, c, false);
-                }
-            }
+            const plan = self.cardRegionPlan(parent, slots[0..n], tab, entry.view, h, elevated, d);
+            const key = plan.key;
+            const cut = plan.cut;
             if (entry.view.surface()) |s| {
-                s.setBannerCardCorner(banner_corner);
+                s.setBannerCardCorner(plan.banner_corner);
                 s.setBannerGlass(banner_glass);
                 s.setBannerNested(elevated);
             }
@@ -8643,7 +8670,7 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
             entry.view.card_region_key = key;
             const prev_cut = entry.view.card_region_cut;
             entry.view.card_region_cut = cut;
-            entry.view.card_region_shown = if (key == 0) null else cut orelse shown;
+            entry.view.card_region_shown = if (key == 0) null else cut orelse plan.shown;
             if (key == 0) {
                 _ = w32.SetWindowRgn(h, null, @intFromBool(redraw == .redraw));
                 continue;
@@ -8666,14 +8693,88 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 if (w32.SetWindowRgn(h, rect_rgn, @intFromBool(repaint)) == 0) _ = w32.DeleteObject(rect_rgn);
                 continue;
             }
-            // Square top: the rounded rect starts a whole corner ABOVE what
-            // shows, so its top corners fall outside it.
-            const top: i32 = if (square_top) shown.top - d else shown.top;
-            const rgn = w32.CreateRoundRectRgn(shown.left, top, shown.right + 1, shown.bottom + 1, d, d) orelse continue;
+            const rgn = createCardRegion(plan, d) orelse continue;
             // The system owns the region from here; it is never deleted.
             if (w32.SetWindowRgn(h, rgn, @intFromBool(redraw == .redraw)) == 0) _ = w32.DeleteObject(rgn);
         }
     }
+}
+
+/// The region `applyCardRegions` gives one pane, worked out without applying
+/// it - so a strip face committed before the cut (T2485 D15 i) is cut to the
+/// shape its pane is about to get rather than the one it had last pass.
+const CardRegionPlan = struct {
+    /// `cardRegionKey`, or 0 for no region.
+    key: u64 = 0,
+    /// What of the window the rounded card region covers, in its own
+    /// coordinates: all of it, or (mid-slide) the part in its card.
+    shown: pane_stack_grid.PxRect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+    square_top: bool = false,
+    /// A banner with no header above it is the card's top, so its strip
+    /// takes the card's top corners (T1851).
+    banner_corner: i32 = 0,
+    /// Mid-slide, a pane held bigger than its card is cut to the card in
+    /// either style (T2187), so it never covers a pane sliding in.
+    cut: ?pane_stack_grid.PxRect = null,
+};
+
+fn cardRegionPlan(
+    self: *Window,
+    parent: w32.HWND,
+    slots: []const PaneSlot,
+    tab: usize,
+    view: *PaneView,
+    h: w32.HWND,
+    elevated: bool,
+    d: i32,
+) CardRegionPlan {
+    var plan: CardRegionPlan = .{};
+    // Only a pane the grid placed in a card is in `slots`; a stashed,
+    // hidden-by-zoom or other-tab pane keeps (or gets back) no region.
+    for (slots) |slot| {
+        if (slot.view != view) continue;
+        if (self.rearrangeHeaderInset(slot.rect) == 0) plan.banner_corner = d;
+        const at = childClientRect(parent, h) orelse break;
+        plan.shown = .{ .left = 0, .top = 0, .right = at.width(), .bottom = at.height() };
+        if (tab == self.active_tab) if (self.slideClip(view, at)) |c| {
+            plan.shown = c;
+        };
+        // A header or banner above the pane: the band carries the card's top
+        // curve, the pane's own top corners stay square.
+        plan.square_top = at.top + plan.shown.top > self.cardInner(slot.rect).top;
+        plan.key = cardRegionKey(false, plan.shown, plan.square_top);
+        break;
+    }
+    if (!elevated and tab == self.active_tab) {
+        if (childClientRect(parent, h)) |at| {
+            plan.cut = self.slideClip(view, at);
+            if (plan.cut) |c| plan.key = cardRegionKey(true, c, false);
+        }
+    }
+    return plan;
+}
+
+/// A new region for `plan` (null for none): the plain cut, else the card's
+/// rounded rect. The caller owns it until `SetWindowRgn` takes it.
+fn createCardRegion(plan: CardRegionPlan, d: i32) ?*anyopaque {
+    if (plan.key == 0) return null;
+    if (plan.cut) |c| return w32.CreateRectRgn(c.left, c.top, c.right, c.bottom);
+    const shown = plan.shown;
+    // Square top: the rounded rect starts a whole corner ABOVE what shows, so
+    // its top corners fall outside it.
+    const top: i32 = if (plan.square_top) shown.top - d else shown.top;
+    return w32.CreateRoundRectRgn(shown.left, top, shown.right + 1, shown.bottom + 1, d, d);
+}
+
+/// The region the next `cutCardRegions` gives `view`'s window, for a strip
+/// face committed ahead of it (T2485 D15 i). Null when the pane gets none.
+fn plannedCardRegion(self: *Window, view: *PaneView, h: w32.HWND) ?*anyopaque {
+    const parent = self.hwnd orelse return null;
+    const elevated = self.applied_pane_style == .elevated;
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = if (elevated) self.deskSlots(&slots) else 0;
+    const d = 2 * pane_elevation.childRadiusPx(self.scale);
+    return createCardRegion(self.cardRegionPlan(parent, slots[0..n], self.active_tab, view, h, elevated, d), d);
 }
 
 /// Hide one pane through the batch, leaving its geometry alone. Same batch as
