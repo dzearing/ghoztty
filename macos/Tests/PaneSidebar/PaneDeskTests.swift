@@ -102,6 +102,20 @@ struct PaneDeskTests {
         #expect(PaneDeskVariant.forNewWindow(base, style: .elevated)?.deskVariant == PaneDeskVariant(seed: 7))
     }
 
+    @Test func theRandomGradientIsTheDefault() {
+        #expect(PaneDeskVariant.forNewWindow(nil, style: .elevated, gradient: .random)?.deskVariant != nil)
+    }
+
+    /// `macos-window-gradient = ocean`: a window opened by hand stays on the
+    /// shared ocean desk (no variant), and a requested one is still kept.
+    @Test func theOceanGradientLeavesANewWindowOnTheSharedDesk() {
+        #expect(PaneDeskVariant.forNewWindow(nil, style: .elevated, gradient: .ocean)?.deskVariant == nil)
+        var base = Ghostty.SurfaceConfiguration()
+        base.deskVariant = PaneDeskVariant(seed: 7)
+        #expect(PaneDeskVariant.forNewWindow(base, style: .elevated, gradient: .ocean)?.deskVariant
+            == PaneDeskVariant(seed: 7))
+    }
+
     @Test func theFlatStyleHasNoDeskToVary() {
         #expect(PaneDeskVariant.forNewWindow(nil, style: .flat)?.deskVariant == nil)
     }

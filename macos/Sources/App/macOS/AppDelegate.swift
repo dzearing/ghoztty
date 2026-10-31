@@ -250,6 +250,10 @@ class AppDelegate: NSObject,
         // Before any window reads it: older builds' rearrange mode left
         // AppKit's "always show the tab bar" preference on.
         TabBarVisibilityPreference.clearLeakedPreferenceOnce()
+
+        // Before any window is restored: every window's sidebar starts as
+        // `macos-pane-sidebar` says.
+        PaneSidebarSharedState.shared.applyStart(ghostty.config.macosPaneSidebar)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -999,10 +1003,12 @@ class AppDelegate: NSObject,
         // preferred/key window otherwise.
         let parent = (notification.object as? Ghostty.SurfaceView)?.window
             ?? TerminalController.preferredParent?.window
-        // A window opened by hand (Cmd-N) gets its own random gradient.
+        // A window opened by hand (Cmd-N) gets its own random gradient
+        // (`macos-window-gradient`).
         TerminalController.newWindowInheritingRemote(
             ghostty,
-            withBaseConfig: PaneDeskVariant.forNewWindow(config, style: ghostty.config.macosPaneStyle),
+            withBaseConfig: PaneDeskVariant.forNewWindow(
+                config, style: ghostty.config.macosPaneStyle, gradient: ghostty.config.macosWindowGradient),
             from: parent)
     }
 
@@ -1033,6 +1039,13 @@ class AppDelegate: NSObject,
     private func ghosttyConfigDidChange(config: Ghostty.Config) {
         // Update the config we need to store
         self.derivedConfig = DerivedConfig(config)
+
+        // `macos-pane-sidebar`: how the shared pane sidebar starts. Also
+        // applied in `applicationWillFinishLaunching`, before any window is
+        // restored; applied again only when a reload changes it. Config
+        // changes are posted on the main thread.
+        let sidebarStart = config.macosPaneSidebar
+        MainActor.assumeIsolated { PaneSidebarSharedState.shared.applyStart(sidebarStart) }
 
         // Session persistence: warm the local-agent connection in the
         // background so the first persistent window doesn't block the main
@@ -1263,10 +1276,11 @@ class AppDelegate: NSObject,
 
     @IBAction func newWindow(_ sender: Any?) {
         // A window opened by hand (Cmd-N with no terminal focused, the dock
-        // menu) gets its own random gradient.
+        // menu) gets its own random gradient (`macos-window-gradient`).
         _ = TerminalController.newWindow(
             ghostty,
-            withBaseConfig: PaneDeskVariant.forNewWindow(nil, style: ghostty.config.macosPaneStyle))
+            withBaseConfig: PaneDeskVariant.forNewWindow(
+                nil, style: ghostty.config.macosPaneStyle, gradient: ghostty.config.macosWindowGradient))
     }
 
     /// New Window with target picker (Cmd-Shift-N): ALWAYS shows a chooser

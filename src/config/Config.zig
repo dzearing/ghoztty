@@ -3381,6 +3381,80 @@ keybind: Keybinds = .{},
 /// Changing this option at runtime applies to every window.
 @"macos-pane-glass": bool = true,
 
+/// The gradient a window opened by hand (Cmd-N, the New Window menu item or
+/// command palette entry) gets in the `elevated` pane style. macOS only;
+/// ignored in the `flat` style.
+///
+/// Valid values:
+///
+///   * `random` - Each new window gets its own gradient from a random hue, so
+///     side-by-side windows are easy to tell apart. The same as
+///     `+new-window --color=random`.
+///
+///   * `ocean` - Every new window gets the shared soft blue-to-teal gradient.
+///
+/// A window opened with an explicit `--color` keeps that color either way. A
+/// window keeps the gradient it was given when it is restored.
+///
+/// The default value is `random`.
+///
+/// Changing this option at runtime only applies to new windows.
+@"macos-window-gradient": MacWindowGradient = .random,
+
+/// How the pane sidebar starts. macOS only.
+///
+/// The sidebar is one view shared by every window: expanding, collapsing,
+/// hiding or showing it in one window (the button at its top, or
+/// `toggle_pane_sidebar`, Ctrl+Cmd+S by default) does the same in all of them.
+///
+/// Valid values:
+///
+///   * `remember` - Start the way it was last left, across relaunches.
+///
+///   * `expanded` - Start as the full list of panes.
+///
+///   * `collapsed` - Start as the narrow icon-only rail.
+///
+///   * `hidden` - Start hidden.
+///
+/// With any value but `remember`, the sidebar starts that way at every
+/// launch (and when this option is changed at runtime); toggling it
+/// afterwards still works until the next launch. A window narrower than
+/// 720pt always shows the rail in place of the full list.
+///
+/// The default value is `remember`.
+@"macos-pane-sidebar": MacPaneSidebar = .remember,
+
+/// The smallest width, in points, a pane may be before its row of panes
+/// stacks: a row that cannot fit every pane side by side at this width keeps
+/// as many on show as fit and minimizes the rest into strips at its edge.
+/// macOS only.
+///
+/// The value is clamped to 120 through 800. The default value is 225, about
+/// 26 columns of a typical font.
+///
+/// Changing this option at runtime applies to every window.
+@"macos-pane-min-width": u32 = 225,
+
+/// The smallest height, in points, a pane may be before its column of panes
+/// stacks (see `macos-pane-min-width`). macOS only.
+///
+/// The value is clamped to 80 through 600. The default value is 125, about
+/// seven rows of a typical font.
+///
+/// Changing this option at runtime applies to every window.
+@"macos-pane-min-height": u32 = 125,
+
+/// The share of the window's width the pane carousel takes when hero mode
+/// (`toggle_hero_mode`) is turned on, as a fraction from 0 to 1. The hero
+/// pane takes the rest. macOS only.
+///
+/// Dragging the divider between the hero pane and the carousel still resizes
+/// it, per window; that size is kept until the window closes.
+///
+/// The value is clamped to 0.1 through 0.6. The default value is 0.25.
+@"macos-hero-carousel-ratio": f64 = 0.25,
+
 /// Whether the proxy icon in the macOS titlebar is visible. The proxy icon
 /// is the icon that represents the folder of the current working directory.
 /// You can see this very clearly in the macOS built-in Terminal.app
@@ -4801,6 +4875,12 @@ pub fn finalize(self: *Config) !void {
 
     // Clamp our contrast
     self.@"minimum-contrast" = @min(21, @max(1, self.@"minimum-contrast"));
+
+    // Clamp the macOS pane minimums and hero carousel share (see each
+    // option's docs for the range).
+    self.@"macos-pane-min-width" = std.math.clamp(self.@"macos-pane-min-width", 120, 800);
+    self.@"macos-pane-min-height" = std.math.clamp(self.@"macos-pane-min-height", 80, 600);
+    self.@"macos-hero-carousel-ratio" = std.math.clamp(self.@"macos-hero-carousel-ratio", 0.1, 0.6);
 
     // Minimum window size
     if (self.@"window-width" > 0) self.@"window-width" = @max(10, self.@"window-width");
@@ -9248,6 +9328,20 @@ pub const MacPaneStyle = enum {
     flat,
 };
 
+/// See macos-window-gradient
+pub const MacWindowGradient = enum {
+    random,
+    ocean,
+};
+
+/// See macos-pane-sidebar
+pub const MacPaneSidebar = enum {
+    remember,
+    expanded,
+    collapsed,
+    hidden,
+};
+
 /// See macos-titlebar-proxy-icon
 pub const MacTitlebarProxyIcon = enum {
     visible,
@@ -11187,5 +11281,55 @@ test "compatibility: window new-window" {
             MacOSDockDropBehavior.@"new-window",
             cfg.@"macos-dock-drop-behavior",
         );
+    }
+}
+
+test "macos pane layout options: defaults, values and clamps" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        try cfg.finalize();
+        try testing.expectEqual(MacWindowGradient.random, cfg.@"macos-window-gradient");
+        try testing.expectEqual(MacPaneSidebar.remember, cfg.@"macos-pane-sidebar");
+        try testing.expectEqual(@as(u32, 225), cfg.@"macos-pane-min-width");
+        try testing.expectEqual(@as(u32, 125), cfg.@"macos-pane-min-height");
+        try testing.expectEqual(@as(f64, 0.25), cfg.@"macos-hero-carousel-ratio");
+    }
+
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var it: TestIterator = .{ .data = &.{
+            "--macos-window-gradient=ocean",
+            "--macos-pane-sidebar=collapsed",
+            "--macos-pane-min-width=300",
+            "--macos-pane-min-height=200",
+            "--macos-hero-carousel-ratio=0.4",
+        } };
+        try cfg.loadIter(alloc, &it);
+        try cfg.finalize();
+        try testing.expectEqual(MacWindowGradient.ocean, cfg.@"macos-window-gradient");
+        try testing.expectEqual(MacPaneSidebar.collapsed, cfg.@"macos-pane-sidebar");
+        try testing.expectEqual(@as(u32, 300), cfg.@"macos-pane-min-width");
+        try testing.expectEqual(@as(u32, 200), cfg.@"macos-pane-min-height");
+        try testing.expectEqual(@as(f64, 0.4), cfg.@"macos-hero-carousel-ratio");
+    }
+
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var it: TestIterator = .{ .data = &.{
+            "--macos-pane-min-width=10",
+            "--macos-pane-min-height=5000",
+            "--macos-hero-carousel-ratio=0.9",
+        } };
+        try cfg.loadIter(alloc, &it);
+        try cfg.finalize();
+        try testing.expectEqual(@as(u32, 120), cfg.@"macos-pane-min-width");
+        try testing.expectEqual(@as(u32, 600), cfg.@"macos-pane-min-height");
+        try testing.expectEqual(@as(f64, 0.6), cfg.@"macos-hero-carousel-ratio");
     }
 }

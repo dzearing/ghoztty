@@ -12,7 +12,16 @@ for divider drags; captures to `/tmp/pane-stack-snapshots`).
 
 ## The rule
 
-**A pane is never narrower than 225pt, or shorter than 125pt.** A row of panes that
+**A pane is never narrower than 225pt, or shorter than 125pt** — by default:
+`macos-pane-min-width` / `macos-pane-min-height` set the minimum (clamped to
+120–800 and 80–600pt by the core's `finalize` and again by the accessor,
+`Ghostty.Config.paneMinimumSize`). It reaches the layout through
+`Metrics.forStyle(paneGap:minimumPaneSize:)`, built in ONE place
+(`TerminalSplitTreeView`) for both the grid and the stashed-pane slots, and
+the keyboard resize / lone-divider drag pass it to `SplitTree` as `minimum:`
+(`Metrics.minimumPaneSize` is only the default). It is read on every layout
+pass, so a config reload restacks on the next one. Tests:
+`aConfiguredMinimumDecidesWhenARowStacks`, `ConfigTests.paneMinimumSize…`. A row of panes that
 cannot fit side by side at that minimum becomes a **stack**: as many panes as
 fit stay on show (the **run**), and the rest are **minimized** into strips at
 the edge they live on — the pane's own card at the strip's size (same glass,

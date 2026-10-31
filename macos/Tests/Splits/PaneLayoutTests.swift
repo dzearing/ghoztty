@@ -338,6 +338,27 @@ struct PaneLayoutTests {
         #expect(PaneStackState.noting(a, in: []) == [a])
     }
 
+    // MARK: - Configured minimum (macos-pane-min-width / -height)
+
+    @Test func forStyleDefaultsToTheBuiltInMinimum() {
+        #expect(PaneLayout.Metrics.forStyle(paneGap: 10).minimumPaneSize == CGSize(width: 225, height: 125))
+    }
+
+    /// Four columns in 1000pt sit side by side at the default 225pt minimum
+    /// and stack once the configured minimum is wider than a quarter.
+    @Test func aConfiguredMinimumDecidesWhenARowStacks() throws {
+        let (node, _) = try row()
+        let rect = CGRect(x: 0, y: 0, width: 1000, height: 600)
+        let roomy = PaneLayout.compute(
+            node, in: rect, metrics: .forStyle(paneGap: 10), rank: { _ in nil }, pin: { _ in nil })
+        #expect(roomy.stacks.isEmpty)
+        let wide = PaneLayout.compute(
+            node, in: rect, metrics: .forStyle(paneGap: 10, minimumPaneSize: CGSize(width: 300, height: 125)),
+            rank: { _ in nil }, pin: { _ in nil })
+        #expect(!wide.stacks.isEmpty)
+        #expect(wide.leaves.values.filter { !$0.isTucked }.allSatisfy { $0.frame.width >= 300 })
+    }
+
     // MARK: - Minimums the divider clamps against
 
     @Test func theDividerClampFallsBackToStackedMinimumsWhenNeeded() throws {

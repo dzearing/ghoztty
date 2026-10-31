@@ -28,12 +28,47 @@ final class PaneSidebarSharedState: ObservableObject {
 
     /// The full list (true) or the icon-only rail (false).
     @Published var isExpanded: Bool {
-        didSet { if isExpanded != oldValue { defaults.set(isExpanded, forKey: Self.expandedKey) } }
+        didSet {
+            if isExpanded != oldValue && !isApplyingStart { defaults.set(isExpanded, forKey: Self.expandedKey) }
+        }
     }
 
     /// Hidden outright (Ctrl+Cmd+S).
     @Published var isHidden: Bool {
-        didSet { if isHidden != oldValue { defaults.set(isHidden, forKey: Self.hiddenKey) } }
+        didSet { if isHidden != oldValue && !isApplyingStart { defaults.set(isHidden, forKey: Self.hiddenKey) } }
+    }
+
+    /// `applyStart` is setting the flags: what the config forces is not
+    /// what the user last left, so it is not remembered.
+    private var isApplyingStart = false
+
+    /// The `macos-pane-sidebar` value last applied (`applyStart`).
+    private(set) var appliedStart: Ghostty.Config.MacOSPaneSidebar?
+
+    /// Start the sidebar as `macos-pane-sidebar` says: at launch, and again
+    /// when a config reload CHANGES the value (a reload that leaves it alone
+    /// must not undo the user's toggles since). `remember` leaves the flags
+    /// as the defaults had them. A forced state is not written to the
+    /// defaults, so `remember` still has the user's own last choice; a
+    /// toggle afterwards is written as always. `hidden` keeps the
+    /// remembered expanded/rail choice for when the sidebar is shown again.
+    func applyStart(_ start: Ghostty.Config.MacOSPaneSidebar) {
+        guard start != appliedStart else { return }
+        appliedStart = start
+        isApplyingStart = true
+        defer { isApplyingStart = false }
+        switch start {
+        case .remember:
+            break
+        case .expanded:
+            isHidden = false
+            isExpanded = true
+        case .collapsed:
+            isHidden = false
+            isExpanded = false
+        case .hidden:
+            isHidden = true
+        }
     }
 
     /// The expanded panel's width. Written to the defaults once an edge drag

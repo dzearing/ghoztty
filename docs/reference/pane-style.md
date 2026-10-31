@@ -31,7 +31,12 @@ anything painted behind or over a pane. Settled in the pane-sidebar mock
 
 **A window opened by hand (Cmd-N, the New Window menu item / palette command)
 gets a random gradient by default**, exactly as **`+new-window --color=random`**
-does. In the elevated style that gives the window its OWN gradient
+does. **`macos-window-gradient`** (`random` default | `ocean`) picks this:
+`ocean` leaves a hand-opened window on the shared ocean desk instead
+(`PaneDeskVariant.forNewWindow(_:style:gradient:)`; config read as
+`Ghostty.Config.macosWindowGradient`). A window opened with `--color` keeps
+its color either way, and a restored window keeps its persisted seed. Test:
+`theOceanGradientLeavesANewWindowOnTheSharedDesk` (`PaneDeskTests`). In the elevated style that gives the window its OWN gradient
 (`PaneDeskVariant`: a persisted seed; ONE random hue from the whole wheel, with
 a soft spotlight from the top center, getting darker toward the
 bottom-trailing corner on a dark theme and lighter on a light one, where a dim
@@ -81,7 +86,13 @@ banner card `PaneGlass.bannerTint` 25%.
   the mock's icon set drawn natively (`PaneSidebarSymbol`), not SF Symbols.
   Folding a window or project group animates.
 - **Hero mode** shows its pane as the same glass card — the hero container
-  paints no fill of its own on glass (`HeroPaneContainer.isGlass`).
+  paints no fill of its own on glass (`HeroPaneContainer.isGlass`). The
+  carousel beside it starts at **`macos-hero-carousel-ratio`** of the window
+  (default 0.25, clamped 0.1–0.6 — `HeroModeState.clampedCarouselRatio`;
+  config read as `Ghostty.Config.macosHeroCarouselRatio`) each time hero
+  turns on, until its divider is dragged in that window: from then on the
+  window keeps the dragged share (`HeroModeState.isCarouselResized`). Tests:
+  `HeroCarouselRatioTests`.
 - **A stacked row has no solid cards**: a tucked card is a card of the
   strip's size, so nothing lies under a card on show and every card and strip
   is glass (see [stacked-panes.md](stacked-panes.md)).

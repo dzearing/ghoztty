@@ -106,6 +106,76 @@ struct ConfigTests {
         #expect(config.macosTitlebarStyle == expected)
     }
 
+    // MARK: - Pane layout (macos-window-gradient, macos-pane-sidebar,
+    // macos-pane-min-width/-height, macos-hero-carousel-ratio)
+
+    @Test func macosWindowGradientDefaultsToRandom() throws {
+        let config = try TemporaryConfig("")
+        #expect(config.macosWindowGradient == .random)
+    }
+
+    @Test(arguments: [
+        ("random", Ghostty.Config.MacOSWindowGradient.random),
+        ("ocean", Ghostty.Config.MacOSWindowGradient.ocean),
+    ])
+    func macosWindowGradientValues(raw: String, expected: Ghostty.Config.MacOSWindowGradient) throws {
+        let config = try TemporaryConfig("macos-window-gradient = \(raw)")
+        #expect(config.macosWindowGradient == expected)
+    }
+
+    @Test func macosPaneSidebarDefaultsToRemember() throws {
+        let config = try TemporaryConfig("")
+        #expect(config.macosPaneSidebar == .remember)
+    }
+
+    @Test(arguments: [
+        ("remember", Ghostty.Config.MacOSPaneSidebar.remember),
+        ("expanded", Ghostty.Config.MacOSPaneSidebar.expanded),
+        ("collapsed", Ghostty.Config.MacOSPaneSidebar.collapsed),
+        ("hidden", Ghostty.Config.MacOSPaneSidebar.hidden),
+    ])
+    func macosPaneSidebarValues(raw: String, expected: Ghostty.Config.MacOSPaneSidebar) throws {
+        let config = try TemporaryConfig("macos-pane-sidebar = \(raw)")
+        #expect(config.macosPaneSidebar == expected)
+    }
+
+    @Test func paneMinimumSizeDefaultsToTheBuiltInFloor() throws {
+        let config = try TemporaryConfig("")
+        #expect(config.paneMinimumSize == CGSize(width: 225, height: 125))
+        #expect(config.paneMinimumSize == PaneLayout.Metrics.minimumPaneSize)
+    }
+
+    @Test func paneMinimumSizeSet() throws {
+        let config = try TemporaryConfig("""
+        macos-pane-min-width = 300
+        macos-pane-min-height = 200
+        """)
+        #expect(config.paneMinimumSize == CGSize(width: 300, height: 200))
+    }
+
+    @Test(arguments: [
+        ("10", "5", CGSize(width: 120, height: 80)),
+        ("5000", "5000", CGSize(width: 800, height: 600)),
+    ])
+    func paneMinimumSizeIsClamped(width: String, height: String, expected: CGSize) throws {
+        let config = try TemporaryConfig("""
+        macos-pane-min-width = \(width)
+        macos-pane-min-height = \(height)
+        """)
+        #expect(config.paneMinimumSize == expected)
+    }
+
+    @Test func macosHeroCarouselRatioDefaultsToAQuarter() throws {
+        let config = try TemporaryConfig("")
+        #expect(config.macosHeroCarouselRatio == 0.25)
+    }
+
+    @Test(arguments: [("0.4", 0.4), ("0.01", 0.1), ("0.9", 0.6)])
+    func macosHeroCarouselRatioValues(raw: String, expected: Double) throws {
+        let config = try TemporaryConfig("macos-hero-carousel-ratio = \(raw)")
+        #expect(abs(config.macosHeroCarouselRatio - CGFloat(expected)) < 0.000_001)
+    }
+
     /// This fork's default: no dimensions popup over every pane on each
     /// divider drag (upstream Ghostty's is `after-first`).
     @Test func resizeOverlayDefaultsToNever() throws {
