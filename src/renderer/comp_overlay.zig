@@ -131,6 +131,11 @@ const slot_dcomp_commit = 3;
 const slot_dcomp_create_visual = 7;
 const slot_dcomp_create_surface = 8;
 const slot_dcomp_create_effect_group = 23;
+const slot_dcomp_create_animation = 25;
+// IDCompositionAnimation (dcompanimation.h): Reset 3, SetAbsoluteBeginTime 4,
+// AddCubic 5, AddSinusoidal 6, AddRepeat 7, End 8.
+const slot_anim_add_cubic = 5;
+const slot_anim_end = 8;
 // IDCompositionVisual. SetTransform(transform) 7, SetTransform(matrix) 8.
 const slot_visual_set_transform_matrix = 8;
 const slot_visual_set_effect = 10;
@@ -139,6 +144,7 @@ const slot_visual_set_content = 15;
 const slot_visual_add_visual = 16;
 const slot_visual_remove_visual = 17;
 // IDCompositionEffectGroup: SetOpacity(animation) 3, SetOpacity(float) 4.
+const slot_effect_set_opacity_anim = 3;
 const slot_effect_set_opacity_float = 4;
 // IDCompositionSurface.
 const slot_surface_begin_draw = 3;
@@ -211,6 +217,60 @@ pub fn uploadBox(x: i32, y: i32, w: u32, h: u32) D3D11_BOX {
     const l: u32 = @intCast(@max(x, 0));
     const t: u32 = @intCast(@max(y, 0));
     return .{ .left = l, .top = t, .front = 0, .right = l + w, .bottom = t + h, .back = 1 };
+}
+
+/// One `IDCompositionAnimation::AddCubic` segment (T2469): from `begin_s`
+/// on, the value is c0 + c1*s + c2*s^2 + c3*s^3, with `s` the seconds since
+/// `begin_s`. DirectComposition has no easing curves, only these polynomials,
+/// so an ease is handed to it as a run of them (`fitCurve`).
+pub const Cubic = struct {
+    begin_s: f64,
+    c0: f64,
+    c1: f64,
+    c2: f64,
+    c3: f64,
+
+    pub fn at(self: Cubic, t_s: f64) f64 {
+        const s = t_s - self.begin_s;
+        return self.c0 + s * (self.c1 + s * (self.c2 + s * self.c3));
+    }
+};
+
+/// How many cubics an ease is cut into: enough that the fitted curve is
+/// within a quarter of one 8-bit opacity step of the exact one.
+pub const ease_segments = 8;
+
+/// Fit a 0..1 easing curve `curve(t)` (t a 0..1 time fraction) over
+/// `duration_s` as `out.len` C1-continuous Hermite cubics, each matching the
+/// curve's value and slope at both of its ends.
+pub fn fitCurve(curve: *const fn (f64) f64, duration_s: f64, out: []Cubic) void {
+    const n: f64 = @floatFromInt(out.len);
+    const h = duration_s / n;
+    for (out, 0..) |*c, i| {
+        const t0 = @as(f64, @floatFromInt(i)) / n;
+        const t1 = @as(f64, @floatFromInt(i + 1)) / n;
+        const p0 = curve(t0);
+        const p1 = curve(t1);
+        // Slopes per second: the curve's per-fraction slope over the duration.
+        const m0 = slope(curve, t0) / duration_s;
+        const m1 = slope(curve, t1) / duration_s;
+        c.* = .{
+            .begin_s = h * @as(f64, @floatFromInt(i)),
+            .c0 = p0,
+            .c1 = m0,
+            .c2 = (3 * (p1 - p0) / h - 2 * m0 - m1) / h,
+            .c3 = (2 * (p0 - p1) / h + m0 + m1) / (h * h),
+        };
+    }
+}
+
+/// A curve's slope at `t`, one-sided at the ends so it never samples
+/// outside 0..1 (where an ease is clamped flat).
+fn slope(curve: *const fn (f64) f64, t: f64) f64 {
+    const d = 1e-5;
+    const lo = @max(t - d, 0);
+    const hi = @min(t + d, 1);
+    return (curve(hi) - curve(lo)) / (hi - lo);
 }
 
 /// One overlay as a child visual of a pane's root visual. Window thread only.
@@ -321,6 +381,35 @@ pub const Layer = struct {
         if (self.effect == null) return;
         self.applyOpacity();
         self.commit();
+    }
+
+    /// Hand a whole fade to the compositor (T2469): `from` -> `to` along
+    /// `curve` (from `fitCurve`, in 0..1 units) over `duration_s`, declared in
+    /// one commit and then run by DWM at the display's refresh. No step of it
+    /// waits on this thread. False: nothing was declared and the caller steps
+    /// the fade itself with `setOpacity`.
+    pub fn animateOpacity(self: *Layer, from: u8, to: u8, curve: []const Cubic, duration_s: f64) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const d = self.dev orelse return false;
+        const e = self.effect orelse return false;
+        var made: ?Obj = null;
+        if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_animation)(d.dcomp, &made))) return false;
+        const anim = made orelse return false;
+        // The effect keeps its own snapshot of the function once it is set.
+        defer comRelease(anim);
+        const f0: f64 = @as(f64, @floatFromInt(from)) / 255.0;
+        const span: f64 = (@as(f64, @floatFromInt(to)) - @as(f64, @floatFromInt(from))) / 255.0;
+        const add = slot(*const fn (Obj, f64, f32, f32, f32, f32) callconv(.winapi) HRESULT, anim, slot_anim_add_cubic);
+        for (curve) |c| {
+            if (!ok(add(anim, c.begin_s, @floatCast(f0 + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)))) return false;
+        }
+        const end_v: f32 = @as(f32, @floatFromInt(to)) / 255.0;
+        if (!ok(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_anim_end)(anim, duration_s, end_v))) return false;
+        if (!ok(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, e, slot_effect_set_opacity_anim)(e, anim))) return false;
+        // Where the fade lands: a later static `setOpacity(to)` is a no-op.
+        self.opacity = to;
+        self.commit();
+        return true;
     }
 
     fn applyOpacity(self: *Layer) void {
@@ -443,6 +532,30 @@ test "uploadBox places the pixels at the BeginDraw offset" {
     try std.testing.expectEqual(D3D11_BOX{ .left = 16, .top = 32, .front = 0, .right = 116, .bottom = 82, .back = 1 }, b);
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(D3D11_BOX));
     try std.testing.expectEqual(@as(u32, 0x8000 + 44), WM_APP_COMP_OVERLAY);
+}
+
+fn smoothstep(t: f64) f64 {
+    const c = std.math.clamp(t, 0, 1);
+    return c * c * (3 - 2 * c);
+}
+
+test "fitCurve: segments tile the duration, are C0 at every joint and land on the curve" {
+    var segs: [ease_segments]Cubic = undefined;
+    fitCurve(smoothstep, 0.3, &segs);
+    try std.testing.expectEqual(@as(f64, 0), segs[0].begin_s);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), segs[0].c0, 1e-12);
+    for (segs[1..], 1..) |s, i| {
+        // Each segment starts where the previous one ends.
+        try std.testing.expectApproxEqAbs(segs[i - 1].at(s.begin_s), s.c0, 1e-9);
+        try std.testing.expectApproxEqAbs(0.3 * @as(f64, @floatFromInt(i)) / ease_segments, s.begin_s, 1e-12);
+    }
+    try std.testing.expectApproxEqAbs(@as(f64, 1), segs[ease_segments - 1].at(0.3), 1e-9);
+    // A cubic curve is reproduced (up to the slope estimate).
+    for (0..301) |k| {
+        const t_s = @as(f64, @floatFromInt(k)) / 1000.0;
+        const i = @min(@as(usize, @intFromFloat(t_s / 0.3 * ease_segments)), ease_segments - 1);
+        try std.testing.expectApproxEqAbs(smoothstep(t_s / 0.3), segs[i].at(t_s), 1e-6);
+    }
 }
 
 test "Matrix3x2 is D2D_MATRIX_3X2_F: six floats, scale on the diagonal" {

@@ -1,15 +1,16 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-31T08:10:48-07:00",
-    "commit":  "18d4f3f60",
+    "generated":  "2026-10-31T10:17:10-07:00",
+    "commit":  "19d18bed5",
     "uncommitted":  [
-                        "scripts/comp-desk-onscreen.ps1"
+                        "scripts/bell-fade-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
                   "scripts/agent-stamp-inputs.ps1":  "0763da8ff3ca2fee6baf1225486039bae3f38e141fe85e51baffa3cf537d7b61",
                   "scripts/arp-version-check.ps1":  "5b54ae7cb88d3517dc9c5d250e95c44d7a02a34fdc31ac57656d09b17d088615",
+                  "scripts/bell-fade-onscreen.ps1":  "92fe36eb626df39f46e89f37b3a3d23712a379232ea620ba75c6ff496b729871",
                   "scripts/blur-backdrop-probe.ps1":  "161435ffccf4a2e759d1f24887ced73c4c7c44da9d473a24eccbd977dc4cc38f",
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",

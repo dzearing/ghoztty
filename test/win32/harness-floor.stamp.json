@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-31T06:49:27-07:00",
-    "commit":  "ddb059c87",
+    "generated":  "2026-10-31T10:37:08-07:00",
+    "commit":  "19d18bed5",
     "uncommitted":  [
-                        "test/win32/stack-collapse-drag.ps1"
+                        "test/win32/bell-border.ps1",
+                        "test/win32/comp-present.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -50,7 +51,7 @@
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791",
                   "test/win32/banner-resize-repaint.ps1":  "499fac53076f7641063f8ce3dab59a859ee9a947ce44ca6f2b05b08767c677f8",
-                  "test/win32/bell-border.ps1":  "46652c74e867a0424e930baf04a336e6a44e79bb9ac4888800e0047e4616cb04",
+                  "test/win32/bell-border.ps1":  "468f3874890cf02ce7917b5f5fe2cb95fdb5f4e2193df0250f8c58846f1ecd12",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/blade-shadow.ps1":  "a324592e11e92841a183b026f3b38c397bc340c9205fbc3f583040f913de7b7c",
                   "test/win32/body-complete-audit.ps1":  "7bcfb72758ab09e738c3d99e36a7b923ce098764b4e0ace8b170ac8c5e002131",
@@ -107,7 +108,7 @@
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
                   "test/win32/comp-chrome.ps1":  "8dd063fccb97d7cf90c35bf415f9fbfab707f7198d440fdc89cddcd0c7151163",
-                  "test/win32/comp-present.ps1":  "206466bf2339a934d4805e608f920d470105b8c2dba1bfa2573fabdfc28c00ad",
+                  "test/win32/comp-present.ps1":  "c4698c4d2ec4b07c63203a862a8ce9d589dbf9981856060cbbbd5ff6d4a12ff8",
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",

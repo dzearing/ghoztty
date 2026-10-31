@@ -20,8 +20,15 @@
 //! same pixels, same fade (the visual's opacity), but pane-local, so a pane
 //! that moves takes it along with no window move at all. The popup stays as
 //! the path for a pane on SwapBuffers.
+//!
+//! On the visual path the fade is not stepped here at all (T2469): the whole
+//! easeInOut is declared to the compositor as one animation, which DWM runs at
+//! the display's refresh however busy this thread is. The timer then fires
+//! once, at the end, for the bookkeeping (the `fade done` line, hiding a frame
+//! that faded out).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const FrameClock = @import("FrameClock.zig");
 const pane_clip = @import("pane_clip.zig");
@@ -60,6 +67,12 @@ pub const BellBorder = struct {
     fade_from: u8 = 0,
     fade_to: u8 = 0,
     fade_t0_ms: i64 = 0,
+    /// A fade is under way (its timer is armed), and whether the compositor
+    /// runs it (declared once) rather than this thread stepping it.
+    fading: bool = false,
+    fade_on_compositor: bool = false,
+    /// UI-thread steps the current fade took: 0 when the compositor ran it.
+    fade_steps: u32 = 0,
     /// The owner's region the frame was last clipped to; see
     /// `DimOverlay.matchOwnerRegion` (T1831).
     region_key: u64 = 0,
@@ -127,6 +140,10 @@ pub const BellBorder = struct {
             self.on_visual = visual;
             self.width_px = 0;
             self.fade_to = 0;
+            FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
+            self.alpha = 0;
+            self.fading = false;
+            self.fade_on_compositor = false;
         }
         if (visual) return self.updateVisual(want, scale);
 
@@ -216,10 +233,14 @@ pub const BellBorder = struct {
         // A rebuilt tree (the renderer remade its chain) is a fresh layer
         // under a frame that is still up: attach it again.
         if (!self.shown or !self.layer.attached) {
+            // A rebuilt layer starts from where the fade has got to, and a
+            // fade in flight is declared again on it from there.
+            self.alpha = self.currentAlpha();
             self.layer.setOpacity(self.alpha);
             self.layer.setVisible(true);
             self.shown = true;
             log.info("bell border shown as visual px={d} size={d}x{d}", .{ width_px, w, h });
+            if (self.fading and self.fade_on_compositor) self.redeclareFade();
         }
         if (self.fade_to != 255) self.startFade(255);
     }
@@ -262,6 +283,8 @@ pub const BellBorder = struct {
         self.alpha = 0;
         self.fade_from = 0;
         self.fade_to = 0;
+        self.fading = false;
+        self.fade_on_compositor = false;
         if (!self.shown) return;
         if (self.on_visual) self.layer.setVisible(false) else _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         self.shown = false;
@@ -270,20 +293,91 @@ pub const BellBorder = struct {
 
     fn startFade(self: *BellBorder, to: u8) void {
         if (self.fade_to == to) return;
+        // A compositor fade's value lives in DWM; this side knows it from the
+        // clock. A stepped fade's `alpha` is already the value on screen.
+        if (self.fade_on_compositor) self.alpha = self.currentAlpha();
         self.fade_from = self.alpha;
         self.fade_to = to;
         self.fade_t0_ms = std.time.milliTimestamp();
-        _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_TICK_MS);
+        self.fade_steps = 0;
+        self.fading = true;
+        FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
+        self.fade_on_compositor = self.on_visual and self.declareFade();
+        if (self.fade_on_compositor) {
+            log.info("bell border fade on compositor from={d} to={d}", .{ self.fade_from, to });
+            _ = w32.SetTimer(self.hwnd, FADE_TIMER_ID, @intCast(bell_math.fade_ms), null);
+        } else {
+            _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_TICK_MS);
+        }
+        debugStall();
+    }
+
+    /// `GHOZTTY_DEBUG_BELL_FADE_STALL_MS=<n>` (debug builds, T2469): block
+    /// this thread for n ms the moment a fade starts - the on-screen oracle's
+    /// stand-in for a busy UI thread (`scripts\bell-fade-onscreen.ps1`). A
+    /// compositor fade keeps moving through it; a stepped one freezes.
+    fn debugStall() void {
+        if (comptime builtin.mode != .Debug) return;
+        const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_BELL_FADE_STALL_MS") catch return;
+        defer std.heap.page_allocator.free(raw);
+        const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
+        if (ms == 0) return;
+        log.info("bell border debug stall ms={d}", .{ms});
+        std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
+    }
+
+    /// Declare `fade_from` -> `fade_to` to the compositor as one eased
+    /// animation. False: the layer could not take it, so the caller steps it.
+    fn declareFade(self: *BellBorder) bool {
+        var segs: [comp_overlay.ease_segments]comp_overlay.Cubic = undefined;
+        const dur_s = @as(f64, @floatFromInt(bell_math.fade_ms)) / 1000.0;
+        comp_overlay.fitCurve(bell_math.easeInOut, dur_s, &segs);
+        // `GHOZTTY_DEBUG_BELL_FADE_STEPPED=1` (debug builds): step the
+        // visual's fade on this thread instead - the on-screen oracle's A/B
+        // arm, the same visual driven the old way.
+        if (comptime builtin.mode == .Debug) {
+            if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_BELL_FADE_STEPPED")) return false;
+        }
+        if (self.layer.animateOpacity(self.fade_from, self.fade_to, &segs, dur_s)) return true;
+        log.warn("bell border fade could not go on the compositor; stepping it", .{});
+        return false;
+    }
+
+    /// The renderer rebuilt the tree mid-fade: carry on from the value the
+    /// fade had reached, over a fresh full curve (what a retarget does too).
+    fn redeclareFade(self: *BellBorder) void {
+        const to = self.fade_to;
+        self.fade_to = self.alpha;
+        self.fade_on_compositor = false;
+        self.startFade(to);
+    }
+
+    /// Where the fade is now: read off its curve by the clock.
+    fn currentAlpha(self: *const BellBorder) u8 {
+        if (!self.fading) return self.alpha;
+        return bell_math.fadeAlpha(self.fade_from, self.fade_to, std.time.milliTimestamp() - self.fade_t0_ms);
     }
 
     fn fadeTick(self: *BellBorder) void {
         const elapsed = std.time.milliTimestamp() - self.fade_t0_ms;
-        const a = bell_math.fadeAlpha(self.fade_from, self.fade_to, elapsed);
-        self.setAlpha(a);
-        if (a != self.fade_to) return;
+        if (self.fade_on_compositor) {
+            // The one end-of-fade tick. A timer that came in early waits out
+            // the rest; the compositor already holds the final value.
+            if (elapsed < bell_math.fade_ms) {
+                _ = w32.SetTimer(self.hwnd, FADE_TIMER_ID, @intCast(bell_math.fade_ms - elapsed), null);
+                return;
+            }
+            self.alpha = self.fade_to;
+        } else {
+            self.fade_steps += 1;
+            const a = bell_math.fadeAlpha(self.fade_from, self.fade_to, elapsed);
+            self.setAlpha(a);
+            if (a != self.fade_to) return;
+        }
         FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
-        log.info("bell border fade done alpha={d} ms={d}", .{ a, elapsed });
-        if (a == 0) self.hideNow();
+        self.fading = false;
+        log.info("bell border fade done alpha={d} ms={d} compositor={} ui_steps={d}", .{ self.alpha, elapsed, self.fade_on_compositor, self.fade_steps });
+        if (self.alpha == 0) self.hideNow();
     }
 
     /// Change only the blend: no source DC, so the frame is not re-rendered.

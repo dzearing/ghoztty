@@ -278,6 +278,10 @@ try {
     }
     Assert "E3 a BEL put the bell border up as a visual (log)" $shown
     Assert "E4 the fade-in finished at full opacity (log)" (Wait-Log $e.Err 'bell border fade done alpha=255' 3000)
+    # T2469: the visual path declares the whole fade to the compositor once
+    # and never steps it on the UI thread.
+    Assert "E4a the fade-in was declared to the compositor (log)" (Wait-Log $e.Err 'bell border fade on compositor from=0 to=255' 500)
+    Assert "E4b ... and took no UI-thread steps (log)" (Wait-Log $e.Err 'bell border fade done alpha=255 ms=\d+ compositor=true ui_steps=0' 500)
     # The split went into the arm's +new-window window, not the startup one:
     # the window to move and key into is the one holding both panes.
     $eTop = [IntPtr]::Zero
@@ -298,6 +302,8 @@ try {
     if ($pane) { [void](Send-TestControlKey -Control ([IntPtr]$pane.Hwnd) -Key 'Right') }
     $off = (Wait-Log $e.Err 'bell border hidden visual=true' 4000) -and (Wait-Log $e.Err 'bell border fade done alpha=0' 500)
     Assert "E7 a key in the pane faded the frame out and took it off (log)" $off
+    Assert "E7a the fade-out ran on the compositor too, no UI-thread steps (log)" `
+        (Wait-Log $e.Err 'bell border fade done alpha=0 ms=\d+ compositor=true ui_steps=0' 500)
     if (-not $off) {
         "    pane=$(if ($pane) { $pane.Hwnd } else { '<none>' }); bell lines:"
         (Read-Text $e.Err) -split "`n" | Where-Object { $_ -match 'bell|overlay' } | Select-Object -Last 12 | ForEach-Object { "      $_" }

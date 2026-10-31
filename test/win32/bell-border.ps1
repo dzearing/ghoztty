@@ -150,6 +150,10 @@ try {
     $faded = Wait-Log $mark 'bell border fade done alpha=255' 2000
     "  $faded"
     Assert "the fade-in finished at full opacity (log)" ($null -ne $faded)
+    # T2469: a popup frame has no compositor visual, so its fade is still
+    # stepped here - the compositor path is comp-present.ps1 section E.
+    Assert "the popup's fade was stepped on the UI thread (log)" `
+        ($null -ne $faded -and $faded -match 'compositor=false ui_steps=[1-9]')
 
     "== 2: the frame follows the pane through a resize and a move"
     $wr = Get-TestWindowRect -Window $top

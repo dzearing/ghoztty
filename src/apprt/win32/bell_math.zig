@@ -237,3 +237,18 @@ test "fadeAlpha runs from..to over 0.3s and retargets from where it is" {
     try std.testing.expectEqual(@as(u8, 64), fadeAlpha(128, 0, 150));
     try std.testing.expectEqual(@as(u8, 40), fadeAlpha(40, 200, -5));
 }
+
+test "the compositor's fitted fade stays within a quarter step of easeInOut (T2469)" {
+    const comp_overlay = @import("../../renderer/comp_overlay.zig");
+    const dur: f64 = @as(f64, @floatFromInt(fade_ms)) / 1000.0;
+    var segs: [comp_overlay.ease_segments]comp_overlay.Cubic = undefined;
+    comp_overlay.fitCurve(easeInOut, dur, &segs);
+    var worst: f64 = 0;
+    for (0..3001) |k| {
+        const t_s = dur * @as(f64, @floatFromInt(k)) / 3000.0;
+        const i = @min(@as(usize, @intFromFloat(t_s / dur * comp_overlay.ease_segments)), comp_overlay.ease_segments - 1);
+        worst = @max(worst, @abs(segs[i].at(t_s) - easeInOut(t_s / dur)));
+    }
+    // In 8-bit opacity: under 0.25 of a step anywhere along the fade.
+    try std.testing.expect(worst * 255 < 0.25);
+}
