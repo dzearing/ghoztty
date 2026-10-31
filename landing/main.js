@@ -90,20 +90,29 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
     }, reduceMotion ? 0 : 160);
   };
 
-  // Ease `pos` toward `target` each frame; input moves `pos` directly.
+  // A critically damped spring pulls `pos` to `target` without overshooting.
+  // It keeps whatever speed a swipe or drag left it with, so the row never
+  // jerks into a correction. Input moves `pos` directly.
+  let vel = 0;
   let frame = 0;
   let last = 0;
+  const stiffness = 16;
   const step = (now) => {
-    const dt = Math.min(64, now - (last || now));
+    const dt = Math.min(64, now - (last || now)) / 1000;
     last = now;
-    const k = reduceMotion ? 1 : 1 - Math.exp(-dt / 140);
-    pos += (target - pos) * k;
-    if (Math.abs(target - pos) < 0.0005) pos = target;
+    if (reduceMotion) { pos = target; vel = 0; }
+    for (let t = 0; t < dt; t += 1 / 240) {
+      const h = Math.min(1 / 240, dt - t);
+      vel += (stiffness * stiffness * (target - pos) - 2 * stiffness * vel) * h;
+      pos += vel * h;
+    }
+    if (Math.abs(target - pos) < 0.0005 && Math.abs(vel) < 0.01) { pos = target; vel = 0; }
     place();
     frame = pos === target ? 0 : requestAnimationFrame(step);
     if (!frame) last = 0;
   };
   const animate = () => { if (!frame) frame = requestAnimationFrame(step); };
+  const hold = () => { cancelAnimationFrame(frame); frame = 0; last = 0; vel = 0; };
 
   // Glide to the copy of slide i nearest the current position, once its image
   // has loaded, so a half-decoded picture never comes to the centre.
@@ -133,19 +142,51 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
   });
 
   // A sideways trackpad swipe or shift-wheel moves the row with the fingers,
-  // then it settles on the nearest slide.
+  // at most one slide either way. Once the swipe starts to coast, it picks the
+  // slide the coast would reach and glides there, ignoring the rest of the
+  // coast, so it never sits between slides waiting for the trackpad to stop.
+  let swipe = null;
   let wheelEnd = 0;
+  const land = () => {
+    clearTimeout(wheelEnd);
+    if (!swipe || swipe.landed) return;
+    swipe.landed = true;
+    // A coast carries on for roughly a dozen more steps of the latest one.
+    const off = pos + swipe.d * 12 - swipe.from;
+    target = swipe.from + (Math.abs(off) > 0.3 ? Math.sign(off) : 0);
+    vel = swipe.v;
+    animate();
+  };
   track.addEventListener("wheel", (e) => {
     const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.shiftKey ? e.deltaY : 0;
     if (!dx) return;
     e.preventDefault();
     stop();
     ++ticket;
-    pos += dx / (slides[0].offsetWidth * 0.76);
+    const d = dx / (slides[0].offsetWidth * 0.76);
+    const now = e.timeStamp;
+    const size = Math.abs(d);
+    // A coast only ever slows, so a pause or a step that clearly speeds up
+    // means new fingers and a new swipe.
+    const fresh = !swipe || now - swipe.t > 120 || (swipe.landed && size > swipe.size * 1.5 && size - swipe.size > 0.004);
+    if (fresh) {
+      swipe = { from: Math.round(target), t: now, size: 0, peak: 0, slowing: 0, v: 0, d: 0, landed: false };
+    }
+    const dt = Math.max(1, now - swipe.t) / 1000;
+    swipe.t = now;
+    const shrinking = !fresh && size < swipe.size && size < swipe.peak * 0.8;
+    swipe.size = size;
+    if (swipe.landed) return;
+    hold();
+    pos = Math.max(swipe.from - 1, Math.min(swipe.from + 1, pos + d));
     target = pos;
+    swipe.d = d;
+    swipe.v = fresh ? 0 : swipe.v * 0.5 + (d / dt) * 0.5;
+    swipe.peak = Math.max(swipe.peak, size);
+    swipe.slowing = shrinking ? swipe.slowing + 1 : 0;
     place();
-    clearTimeout(wheelEnd);
-    wheelEnd = setTimeout(() => { target = Math.round(pos); animate(); }, 90);
+    if (swipe.slowing >= 2) land();
+    else { clearTimeout(wheelEnd); wheelEnd = setTimeout(land, 120); }
   }, { passive: false });
 
   // A drag moves it the same way and a flick carries on a little.
@@ -153,6 +194,7 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
   track.addEventListener("pointerdown", (e) => {
     stop();
     ++ticket;
+    hold();
     drag = { x: e.clientX, pos, v: 0, t: e.timeStamp, lastX: e.clientX };
     track.setPointerCapture(e.pointerId);
     track.classList.add("dragging");
@@ -171,6 +213,7 @@ document.querySelectorAll("[data-carousel]").forEach((root) => {
   const release = () => {
     if (!drag) return;
     target = Math.round(pos + Math.max(-2, Math.min(2, drag.v * 180)));
+    vel = drag.v * 1000;
     drag = null;
     track.classList.remove("dragging");
     animate();
