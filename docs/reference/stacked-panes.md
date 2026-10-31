@@ -323,6 +323,9 @@ corrected at its end. (A Core Animation slide used to run against the hand.)
 - **Every item glides**, strips included, by the rect it is drawn in
   (`pullingTheLastStripOutOfAFullRowSettlesWhole`). The drag's bar is drawn
   over the gutter as the cards draw it (`PaneStageView.shownGutter`).
+  A gliding strip's clip moves with its frame: left at the target's, a
+  stage moved but not yet resized (a sidebar edge drag) cut the strip
+  short at its far end for a frame (`theSidebarsEdgeDraggedByTheMouse`).
 - Tests: `aStripPulledOutFollowsTheHandWithNothingSliding` (every card sampled
   through a hand-paced drag: nothing on its own clock, the gutter its width,
   the pane seen on its way in, the bar over the drawn gutter).

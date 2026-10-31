@@ -88,7 +88,12 @@ shows the same view of it (see *Shared across windows*). Read before touching
   (`PaneStageView.leadingLag`, on screen, the stage's own move still to come
   counted in), so the gutter is the same at every frame and neither passes
   under the other. Two easings side by side drifted a frame or two apart —
-  the card grew over the grid, or the grid slid under it. With no grid glide
+  the card grew over the grid, or the grid slid under it. **A new width
+  mid-glide waits for the grid's move**: the stage takes a new size a beat
+  before its frame moves for it, so a width taken at once put the card a
+  drag step past the grid for a frame on every step of an edge drag; it is
+  held (`PaneSidebarCardGlide.pending`) until the stage's origin moves, or
+  `followWait` (`theSidebarsEdgeDraggedByTheMouse`). With no grid glide
   to follow it eases alone on the grid's curve. The glide starts in the
   controller's turn (`noteModeChange`), with the grid's. Freed mid-glide (the
   sidebar hidden, its window closed), the card's 120Hz timer stops itself and
