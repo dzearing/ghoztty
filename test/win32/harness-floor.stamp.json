@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-30T21:22:49-07:00",
-    "commit":  "f8b74a540",
+    "generated":  "2026-10-30T21:48:19-07:00",
+    "commit":  "8a9e77fd7",
     "uncommitted":  [
-                        "test/win32/chainfold.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -61,7 +61,7 @@
                   "test/win32/caller-anchor.ps1":  "e51f43169e0cb021ffbcc719cbf36be8882b65940a6c5c5a461cd7c679732135",
                   "test/win32/caption-bar.ps1":  "aab923aa402dd8afa921a6c7b982f6989510a0b4b50305ce85fc20b7a2ebd6e1",
                   "test/win32/caption-click-modal.ps1":  "f3e87c81c7fdf55c7c8a6886ccf7a82d202d04f3ab1393eefcdd251a697f585d",
-                  "test/win32/chainfold.ps1":  "333e1c8bcf4d9a5c4d47b986857d8ade28736e201d64bd338dbbb60cba91b5b9",
+                  "test/win32/chainfold.ps1":  "cf08634e16750c17bbb145e4ce9d80b87f2b8deb2a443b29ceb6fe78ee00c09c",
                   "test/win32/checkout-guard.ps1":  "d2757d2072ad93548f99073d50cdb316e927a31ac80d2aa5b77792de9506c619",
                   "test/win32/chooser-close-chord.ps1":  "915f4d2ed48cee38183a7055c05ad94e38d0eded192cb087bdf2ebf20cbb5955",
                   "test/win32/chooser-conn-pool.ps1":  "2a9eab47b8339ca2f04efaea672243c48ddd4bdee581aee487e96b690dbacd3f",
