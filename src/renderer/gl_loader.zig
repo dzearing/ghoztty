@@ -163,6 +163,7 @@ pub const Api = struct {
     makeCurrent: *const fn (HDC, HGLRC) callconv(.winapi) i32,
     deleteContext: *const fn (HGLRC) callconv(.winapi) i32,
     getCurrentDC: *const fn () callconv(.winapi) HDC,
+    getCurrentContext: *const fn () callconv(.winapi) HGLRC,
     getProcAddress: *const fn ([*:0]const u8) callconv(.winapi) ?Proc,
 
     choosePixelFormat: *const fn (HDC, *const anyopaque) callconv(.winapi) i32,
@@ -212,6 +213,7 @@ pub const Api = struct {
             .makeCurrent = @ptrCast(try required(module, "wglMakeCurrent")),
             .deleteContext = @ptrCast(try required(module, "wglDeleteContext")),
             .getCurrentDC = @ptrCast(try required(module, "wglGetCurrentDC")),
+            .getCurrentContext = @ptrCast(try required(module, "wglGetCurrentContext")),
             .getProcAddress = @ptrCast(try required(module, "wglGetProcAddress")),
             .choosePixelFormat = if (standalone)
                 @ptrCast(own_choose.?)

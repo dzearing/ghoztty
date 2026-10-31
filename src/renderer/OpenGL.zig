@@ -87,6 +87,14 @@ last_target: ?Target = null,
 /// thread only.
 drawn_client: u64 = 0,
 
+/// The client size the previous frame was drawn for (T2485 D22), so a frame
+/// can tell it is the first at a new size. Win32 only; renderer thread only.
+resize_prev_client: u64 = 0,
+
+/// Set by `surfaceSize` on the first frame at a new client size, read by
+/// `drawFrameEnd` (T2485 D22 `GHOZTTY_RESIZE_FIX=twice`).
+resize_first_frame: bool = false,
+
 /// The frame lab's planted magenta frame (T2383, `apprt/win32/lab_plant.zig`):
 /// set by the renderer for one frame, consumed by the next `present`, which
 /// clears the window to magenta instead of blitting the target. Renderer
@@ -497,6 +505,25 @@ pub fn drawFrameStart(self: *OpenGL) void {
     _ = self;
 }
 
+const ResizeFix = enum { off, rebind, twice };
+var resize_fix_state: ?ResizeFix = null;
+
+/// `GHOZTTY_RESIZE_FIX` (T2485 D22): `rebind` by default (run67: black
+/// frames 9 -> 0 against run65 off, no cost to the glide); `off` for an A/B,
+/// `twice` for the alternative that presents the frame again (black 0 too, but
+/// gaps 4 -> 20, run66). Read once.
+fn resizeFix() ResizeFix {
+    if (resize_fix_state) |v| return v;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_RESIZE_FIX") catch null;
+    defer if (raw) |r| std.heap.page_allocator.free(r);
+    const v: ResizeFix = if (raw) |r|
+        (if (std.mem.eql(u8, r, "off")) .off else if (std.mem.eql(u8, r, "twice")) .twice else .rebind)
+    else
+        .rebind;
+    resize_fix_state = v;
+    return v;
+}
+
 /// Actions taken after `drawFrame` is done.
 ///
 /// On Win32 with double-buffered WGL, swap the front/back buffers
@@ -527,6 +554,7 @@ pub fn drawFrameEnd(self: *OpenGL) void {
         // The composition path still owes the interop unlock (T2466).
         if (self.comp) |p| p.end(false) catch |err| self.compFail(err);
         log.debug("frame dropped: the window was resized while it was drawn", .{});
+        self.rt_surface.tracePresent(self.drawn_client, false);
         return;
     }
     if (hdc != null) {
@@ -543,6 +571,17 @@ pub fn drawFrameEnd(self: *OpenGL) void {
             _ = gl_loader.active().swapBuffers(hdc);
         }
         if (retire) gl.finish();
+        self.rt_surface.tracePresent(self.drawn_client, true);
+        // T2485 D22 experiment: present the first frame at a new size twice,
+        // so the second swap lands in a back buffer the driver has resized.
+        if (self.resize_first_frame and resizeFix() == .twice and self.comp == null) {
+            self.resize_first_frame = false;
+            if (self.last_target) |t| {
+                self.present(t) catch {};
+                _ = gl_loader.active().swapBuffers(hdc);
+                self.rt_surface.tracePresent(self.drawn_client, true);
+            }
+        }
         if (swap_start) |start| {
             if (perf.now()) |end| swap_ns = end.since(start);
         }
@@ -883,6 +922,17 @@ pub fn surfaceSize(self: *OpenGL) !struct { width: u32, height: u32 } {
                 // Update glViewport to match
                 gl.glad.context.Viewport.?(0, 0, @intCast(w), @intCast(h));
                 self.drawn_client = resize_paint.packSize(w, h);
+                self.resize_first_frame = self.resize_prev_client != 0 and
+                    self.resize_prev_client != self.drawn_client;
+                self.resize_prev_client = self.drawn_client;
+                // T2485 D22: the first swap after a resize can land
+                // in a back buffer still at the old size - the old width's
+                // picture with black beyond it, for one frame. Re-making the
+                // context current asks the driver to revalidate the drawable.
+                if (self.resize_first_frame and resizeFix() == .rebind) {
+                    const api = gl_loader.active();
+                    _ = api.makeCurrent(hdc, api.getCurrentContext());
+                }
                 return .{ .width = w, .height = h };
             }
         }

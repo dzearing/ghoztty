@@ -5813,6 +5813,12 @@ pub fn labPlantOnFrame(self: *Surface, size_changed: bool) lab_plant.FrameFire {
     return fire;
 }
 
+/// Renderer thread, at each frame's end: the stack trace's present line
+/// (T2485 D22), a swap or a dropped frame at the size it was drawn for.
+pub fn tracePresent(self: *Surface, drawn: u64, swapped: bool) void {
+    Window.tracePresent(self.hwnd, drawn, swapped);
+}
+
 /// Called by the renderer thread after SwapBuffers to signal that a
 /// frame has been presented. Wakes the main thread if it's blocking
 /// in handleResize during live resize.

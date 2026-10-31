@@ -1,10 +1,13 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-31T04:29:42-07:00",
-    "commit":  "7bcc2f8f8",
+    "generated":  "2026-10-31T05:12:14-07:00",
+    "commit":  "28d2c29f6",
     "uncommitted":  [
-
+                        "src/apprt/win32/Surface.zig",
+                        "src/apprt/win32/Window.zig",
+                        "src/renderer/gl_loader.zig",
+                        "src/renderer/OpenGL.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -340,7 +343,7 @@
                   "src/apprt/win32/startup_window.zig":  "3d45bcc8f084829e2cc5d69222f4aee9d8b2d479ee89731859c50d82e0dbdc8e",
                   "src/apprt/win32/strip_face.zig":  "619ac3652ee55e4cd11e7343730c1c6265d8fc9f1bb9cede73875282ef85da69",
                   "src/apprt/win32/StripFace.zig":  "101a541f3f300a52e0f00e8d2de8902c58e591851fe8031e2a9cda8b13a7997b",
-                  "src/apprt/win32/Surface.zig":  "5396363b0658bee13b5297d66ffe75eeb761d36694d7eb56703694b1dfa4644a",
+                  "src/apprt/win32/Surface.zig":  "6d4ab91f7642e0827eb1a12a5ea662bc5de5ffc70a8b1605b0904fe3c6d23307",
                   "src/apprt/win32/surface_reap.zig":  "ba55e7ecb6cec9383f704064427889dc276ac8dff7e46844f8a4a790e6b586e9",
                   "src/apprt/win32/surface_window_role.zig":  "5af08d4834c92f03c30c4a642d598f21e7961c8bf976b63c55d91f90bf652528",
                   "src/apprt/win32/system_colors.zig":  "0634f5778186d7f3a7359689523fc96b9b9c273bbc211b824951f19a69ebbe47",
@@ -410,7 +413,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "69db8c2b3aab60d6f7a72cf10d65d1d0a5a051a7880ec113d0b9820615afeb96",
-                  "src/apprt/win32/Window.zig":  "d8f9288720029eb106b103f0dbe3003fd55efbb1988be68dc378efaf329813fc",
+                  "src/apprt/win32/Window.zig":  "62e48b2f869e335e58eb30917fd69ea7f4499d6b79be55a1654937056aa040df",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -810,7 +813,7 @@
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
                   "src/renderer/generic.zig":  "1c1132fd8bef69cd4ac157c59c9fb2d010f41a0b568e4ffe567d8e075c055d8e",
                   "src/renderer/gl_comp_present.zig":  "c14f1aeb855751d581727f4c568ee56bf49d6f6c489d742623fdc30bbff011f7",
-                  "src/renderer/gl_loader.zig":  "f79e254d9bd6132bec1db99dad0fed3c9860b175ddebae5fd3707101a5563c93",
+                  "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
                   "src/renderer/gl_robust.zig":  "70d950fc2a359d24df6783cfbe2ffc3812daf307834f0afa65e61ae8e9c38614",
                   "src/renderer/image.zig":  "e3c29fda5d2da44e41bb4f92b1a939e6bf9bc2e61100071712e21e7d67199d5f",
@@ -828,7 +831,7 @@
                   "src/renderer/metal/shaders.zig":  "0b11b90756a624e6784dad37bc375b423879d381f3b5c48674f28cd4992fee32",
                   "src/renderer/metal/Target.zig":  "42f91c369484252d2e3ba8417a0d91aefa5ccfcab2c3ac52aa3d93febda65c04",
                   "src/renderer/metal/Texture.zig":  "73a5c2caa4cf00cff88a4136bf14c5f85b9f269a187418794af74feac7eaabbc",
-                  "src/renderer/OpenGL.zig":  "35f663dab85276444eb795893d16dc857ef19261d32b24dc3cb27a4694df2e64",
+                  "src/renderer/OpenGL.zig":  "c123014f9b22900a9c5e326a79d98d64916574ae47be1cb009df3a8a2525743b",
                   "src/renderer/opengl/buffer.zig":  "373e7c32ad2277636eaa166dc8e08780a03e991ac56f560a48f1af1b6dca2d0a",
                   "src/renderer/opengl/Frame.zig":  "7091102831b4ea0fa86247d06eb362509f36523e22cdd7083940119ccbd33b30",
                   "src/renderer/opengl/Pipeline.zig":  "47ae430d1ccaaa1ab75052eb3638b47e0fe0dd337d5170884da7dee4d11d5193",

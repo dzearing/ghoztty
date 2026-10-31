@@ -9135,9 +9135,44 @@ fn stackTrace(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
+/// The renderer threads' presents (T2485 D22): what each pane's surface
+/// actually received, a swap or a dropped frame, at what size, on the frame
+/// clock. Its own ring behind a lock, since every pane renders on its own
+/// thread; flushed with the stack trace's.
+var present_ring: trace_ring.Ring(8192, 128) = .{};
+var present_ring_lock: std.Thread.Mutex = .{};
+
+/// Renderer thread, once per frame end, when the stack trace is on.
+pub fn tracePresent(hwnd: ?w32.HWND, drawn: u64, swapped: bool) void {
+    if (!stackTraceOn()) return;
+    var t: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t);
+    const h: usize = if (hwnd) |p| @intFromPtr(p) else 0;
+    const w: u32 = @truncate(drawn >> 32);
+    const ht: u32 = @truncate(drawn);
+    if (stackTraceMode() == .log) {
+        log.info("stack trace present hwnd={x} qpc={d} size={d}x{d} swapped={}", .{ h, t, w, ht, swapped });
+        return;
+    }
+    present_ring_lock.lock();
+    defer present_ring_lock.unlock();
+    present_ring.add("stack trace present hwnd={x} qpc={d} size={d}x{d} swapped={}", .{ h, t, w, ht, swapped });
+}
+
 /// Write out what the ring holds, oldest first, and empty it.
 fn flushStackTrace() void {
-    if (stackTraceMode() != .ring or stack_ring.count == 0) return;
+    if (stackTraceMode() != .ring) return;
+    {
+        present_ring_lock.lock();
+        defer present_ring_lock.unlock();
+        if (present_ring.count > 0) {
+            log.info("stack trace ring presents={d} dropped={d}", .{ present_ring.count, present_ring.dropped });
+            var pit = present_ring.iterator();
+            while (pit.next()) |line| log.info("{s}", .{line});
+            present_ring.clear();
+        }
+    }
+    if (stack_ring.count == 0) return;
     log.info("stack trace ring lines={d} dropped={d}", .{ stack_ring.count, stack_ring.dropped });
     var it = stack_ring.iterator();
     while (it.next()) |line| log.info("{s}", .{line});
