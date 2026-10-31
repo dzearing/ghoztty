@@ -142,12 +142,14 @@ struct PaneSidebarSharedStateTests {
         a.isExpanded = true
         a.isHidden = true
         a.width = 300
+        a.showsAllWindows = false
+        #expect(!b.showsAllWindows)
         a.showsAllWindows = true
         a.filter = "relay"
         a.foldedProjects = ["ghoztty"]
         #expect(b.isExpanded && b.isHidden && b.width == 300)
         #expect(b.showsAllWindows && b.filter == "relay" && b.foldedProjects == ["ghoztty"])
-        #expect(bChanged >= 6, "b's sidebar re-renders for each: \(bChanged)")
+        #expect(bChanged >= 7, "b's sidebar re-renders for each: \(bChanged)")
     }
 
     @Test func thePaneOrderIsEachWindowsOwn() {
@@ -158,20 +160,40 @@ struct PaneSidebarSharedStateTests {
         #expect(a.windowID != b.windowID)
     }
 
-    @Test func theLayoutAndTheOrderPersistTheScopeDoesNot() async throws {
+    @Test func theLayoutTheOrderAndTheScopePersist() async throws {
         let store = defaults()
         let shared = PaneSidebarSharedState(defaults: store)
         shared.isExpanded = true
         shared.isHidden = true
         shared.width = 300
         shared.windowOrder = ["project:relay", "project:ghoztty"]
-        shared.setShowsAllWindows(true)
+        shared.setShowsAllWindows(false)
         // The width is written once a drag pauses.
         try await Task.sleep(nanoseconds: 500_000_000)
         let relaunched = PaneSidebarSharedState(defaults: store)
         #expect(relaunched.isExpanded && relaunched.isHidden && relaunched.width == 300)
         #expect(relaunched.windowOrder == ["project:relay", "project:ghoztty"])
-        #expect(!relaunched.showsAllWindows, "the all-windows scope starts off")
+        #expect(!relaunched.showsAllWindows, "this window, left that way, stays")
+    }
+
+    /// The all-windows scope is the default: a first launch opens in it, every
+    /// window folded and no search, as turning it on does; turned back on,
+    /// the next launch is in it again, its folds and search forgotten.
+    @Test func allWindowsIsTheDefaultScope() {
+        let store = defaults()
+        let first = PaneSidebarSharedState(defaults: store)
+        #expect(first.showsAllWindows, "a first launch opens in all windows")
+        #expect(first.unfoldedWindows.isEmpty && first.filter.isEmpty)
+        let a = PaneSidebarState(shared: first), b = PaneSidebarState(shared: first)
+        #expect(a.isWindowFolded(a.windowID, isSearching: false), "every window starts folded")
+        #expect(a.isWindowFolded(b.windowID, isSearching: false))
+        first.setShowsAllWindows(false)
+        first.setShowsAllWindows(true)
+        first.unfoldedWindows = [a.windowID]
+        first.filter = "x"
+        let relaunched = PaneSidebarSharedState(defaults: store)
+        #expect(relaunched.showsAllWindows)
+        #expect(relaunched.unfoldedWindows.isEmpty && relaunched.filter.isEmpty, "folds and search do not persist")
     }
 
     @Test func theLegacyPinReadsAsExpanded() {

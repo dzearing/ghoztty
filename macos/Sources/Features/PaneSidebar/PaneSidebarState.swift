@@ -12,9 +12,10 @@ import SwiftUI
 ///   sidebar column, so they persist (UserDefaults). Each window still applies
 ///   its own presentation rule on top: a window under 720pt shows the rail
 ///   whatever `isExpanded` says (`PaneSidebarState.mode`).
-/// - **The all-windows list** — the scope, the search, the folds, the custom
-///   order of windows and project groups (`windowOrder`, persisted), and the
-///   scroll position (`PaneSidebarScrollSync`).
+/// - **The all-windows list** — the scope (persisted, on by default), the
+///   search, the folds, the custom order of windows and project groups
+///   (`windowOrder`, persisted), and the scroll position
+///   (`PaneSidebarScrollSync`).
 @MainActor
 final class PaneSidebarSharedState: ObservableObject {
     /// A test host keeps its own throwaway store: window tests hide and
@@ -49,9 +50,13 @@ final class PaneSidebarSharedState: ObservableObject {
     }
     private var widthWrite: DispatchWorkItem?
 
-    /// List panes from every window, grouped by window. Off at launch.
-    @Published var showsAllWindows: Bool = false {
+    /// List panes from every window, grouped by window. On at launch unless
+    /// the user last left it off: the scope persists (`allWindowsKey`), its
+    /// search and folds do not — a launch starts every window folded, as
+    /// turning it on does (`setShowsAllWindows`).
+    @Published var showsAllWindows: Bool {
         didSet {
+            if showsAllWindows != oldValue { defaults.set(showsAllWindows, forKey: Self.allWindowsKey) }
             // A filter belongs to one look at every window, not to the next
             // one — and so do the window folds: each look starts from the
             // default.
@@ -113,6 +118,7 @@ final class PaneSidebarSharedState: ObservableObject {
         let stored = defaults.double(forKey: Self.widthKey)
         width = stored > 0 ? PaneSidebarState.clampWidth(CGFloat(stored)) : PaneSidebarState.defaultWidth
         windowOrder = defaults.stringArray(forKey: Self.windowOrderKey) ?? []
+        showsAllWindows = defaults.object(forKey: Self.allWindowsKey) as? Bool ?? true
     }
 
     /// The all-windows toggle. Turning it on folds every window to its row —
@@ -132,6 +138,7 @@ final class PaneSidebarSharedState: ObservableObject {
     static let hiddenKey = "PaneSidebarHidden"
     static let widthKey = "PaneSidebarWidth"
     static let windowOrderKey = "PaneSidebarWindowOrder"
+    static let allWindowsKey = "PaneSidebarShowsAllWindows"
 
     nonisolated static func storedExpanded(_ defaults: UserDefaults) -> Bool {
         defaults.object(forKey: expandedKey) as? Bool

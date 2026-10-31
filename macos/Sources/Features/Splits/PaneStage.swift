@@ -96,7 +96,10 @@ final class PaneStageView: NSView {
     /// away from where it was: missed, every card jumped the shift for a
     /// frame — under the sidebar, or a blade pulled off its edge and back.
     private var placedOrigin: CGPoint?
-    private var originInWindow: CGPoint { convert(CGPoint.zero, to: nil) }
+    /// Where the stage is in the window now. The pane sidebar's card glide
+    /// watches it to tell when the grid has moved for a new sidebar width
+    /// (`PaneSidebarCardGlide.update`).
+    var originInWindow: CGPoint { convert(CGPoint.zero, to: nil) }
     private var ancestorObservers: [NSObjectProtocol] = []
 
     override var frame: NSRect {
@@ -507,6 +510,10 @@ final class PaneStageView: NSView {
                 let dx = leads || axis == .vertical ? next.minX - to.minX : next.maxX - to.maxX
                 let dy = leads || axis == .horizontal ? next.minY - to.minY : next.maxY - to.maxY
                 leaf.frame = leaf.frame.offsetBy(dx: dx, dy: dy)
+                // Its clip with it: left at the target's, a stage moved and
+                // not yet resized (a sidebar edge drag) cut the strip short
+                // at its far end for a frame.
+                leaf.clip = leaf.clip?.offsetBy(dx: dx, dy: dy)
                 leaf.tab = tab
             }
             if glide.asCard[id] != true { view.glideAnchor = nil }
