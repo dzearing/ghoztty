@@ -1,12 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-31T15:32:08-07:00",
-    "commit":  "583a653ac",
+    "generated":  "2026-10-31T16:05:52-07:00",
+    "commit":  "f1e9a42db",
     "uncommitted":  [
-                        "src/apprt/win32/chrome_comp.zig",
-                        "src/apprt/win32/win32.zig",
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -270,7 +268,7 @@
                   "src/apprt/win32/startup_window.zig":  "3d45bcc8f084829e2cc5d69222f4aee9d8b2d479ee89731859c50d82e0dbdc8e",
                   "src/apprt/win32/strip_face.zig":  "619ac3652ee55e4cd11e7343730c1c6265d8fc9f1bb9cede73875282ef85da69",
                   "src/apprt/win32/StripFace.zig":  "101a541f3f300a52e0f00e8d2de8902c58e591851fe8031e2a9cda8b13a7997b",
-                  "src/apprt/win32/Surface.zig":  "87fcfd4b97faa644f9d05fdebe48b5f29028b00f31dc055667bd4917a915656e",
+                  "src/apprt/win32/Surface.zig":  "5c662cfc68489130e737c4d1c951edde3a083639d20e501da76157761487d005",
                   "src/apprt/win32/surface_reap.zig":  "ba55e7ecb6cec9383f704064427889dc276ac8dff7e46844f8a4a790e6b586e9",
                   "src/apprt/win32/surface_window_role.zig":  "5af08d4834c92f03c30c4a642d598f21e7961c8bf976b63c55d91f90bf652528",
                   "src/apprt/win32/system_colors.zig":  "0634f5778186d7f3a7359689523fc96b9b9c273bbc211b824951f19a69ebbe47",
@@ -507,7 +505,7 @@
                   "src/remote/ws_client.zig":  "e5ebe28e8a2e5442c596a12fcaa6468d9646d9aaeaa08c40e5f1dce1e71370c2",
                   "src/renderer/backend.zig":  "6c17bdd1d4eeb9eda89fc7259147fd4e28b207a684dece941104c6e1e6cf5b79",
                   "src/renderer/cell.zig":  "e7b1395f5740944729142bdb88371003d61839c05f0baef19ccd64a6642663f5",
-                  "src/renderer/comp_overlay.zig":  "b05cf65b38b0b2b24dd6636cf5d7428d637e57354dab9ba2b65fb9e4530e34f7",
+                  "src/renderer/comp_overlay.zig":  "3a88671a52f9b37ae877481302834ee50c142e9bec8b5bd593c04f364672ca43",
                   "src/renderer/comp_tree.zig":  "a26fb4ccf7b0418725b92d571ac402d681fd9b60c348c4ddbabcf660c6556c54",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
                   "src/renderer/generic.zig":  "1c1132fd8bef69cd4ac157c59c9fb2d010f41a0b568e4ffe567d8e075c055d8e",
