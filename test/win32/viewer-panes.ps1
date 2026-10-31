@@ -1274,6 +1274,11 @@ try {
             # ctrl+l is the address bar (Mac's Cmd+L).
             Assert (Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers ctrl -Key L) 'T161 ctrl+l injected at the viewer'
             Assert (Wait-T161AddressFocused $t161top $t161host) 'T161 ctrl+l from a viewer focused the address bar'
+            # T2538: the field is a live window on screen only while it is
+            # edited; at rest the bar paints it and the EDIT is hidden.
+            $t2538ed = @(foreach ($nb in @(Get-TestChildWindows -Window $t161host -Class 'GhozttyViewerNav')) {
+                Get-TestChildWindows -Window ([IntPtr][int64]$nb.Hwnd) -Class 'Edit' })
+            Assert ($t2538ed.Count -ge 1 -and $t2538ed[0].Visible) 'T2538 the focused address field is the live EDIT, on screen'
 
             # ctrl+r AT the address field still reloads the pane: the chords
             # are pane-scoped, not page-scoped, and the field is in the pane.
@@ -1285,6 +1290,10 @@ try {
             # alt+d is the Windows-native address-bar alias.
             Focus-TestWindow -Window $t161top -Child $t161host | Out-Null
             Start-Sleep -Milliseconds 400
+            # T2538: focus left the field, so it is back to the bar's paint.
+            $t2538ed = @(foreach ($nb in @(Get-TestChildWindows -Window $t161host -Class 'GhozttyViewerNav')) {
+                Get-TestChildWindows -Window ([IntPtr][int64]$nb.Hwnd) -Class 'Edit' })
+            Assert ($t2538ed.Count -ge 1 -and -not $t2538ed[0].Visible) 'T2538 the address EDIT hides again once focus leaves it'
             Assert (Send-TestViewerChord -Window $t161top -Target $t161chrome -Modifiers alt -Key D) 'T161 alt+d injected at the viewer'
             Assert (Wait-T161AddressFocused $t161top $t161host) 'T161 alt+d from a viewer focused the address bar'
 

@@ -37,6 +37,7 @@ const type_ramp = @import("type_ramp.zig");
 const icon_button = @import("icon_button.zig");
 const icon_paint = @import("icon_button_paint.zig");
 const layout_mod = @import("viewer_nav_layout.zig");
+const field_mod = @import("viewer_nav_field.zig");
 const viewer_nav = @import("viewer_nav.zig");
 const viewer_worktree = @import("viewer_worktree.zig");
 const viewer_accel = @import("viewer_accel.zig");
@@ -64,6 +65,11 @@ pub const WM_APP_SELECT_ALL: u32 = w32.WM_APP + 1;
 pub const WM_APP_OVERFLOW_MENU: u32 = w32.WM_APP + 2;
 
 const edit_id: usize = 1;
+
+/// The idle EDIT's deferred move (T2538, `syncEdit`): one beat after the band
+/// last moved, so a drag's steps never pay for it.
+const edit_sync_timer: usize = 0x2538;
+const edit_sync_ms: u32 = 120;
 
 /// Bytes the tooltip log line may hold: every button in the strip, each a name
 /// and two rects at roughly 70 bytes. Sized with headroom because the writer
@@ -174,6 +180,34 @@ font: ?*anyopaque = null, // HFONT (CreateFontW's own return shape)
 glass_px: std.ArrayListUnmanaged(u32) = .empty,
 edit_brush: ?w32.HBRUSH = null,
 
+/// Whether the address field is a live window on screen (T2538). Only while it
+/// holds focus: the rest of the time the EDIT is HIDDEN and the bar paints it
+/// itself, by having the hidden control print into the band (`paintField`), so
+/// a window-edge drag moves one visible window and paints once. Two visible
+/// child windows were ~0.33 ms of every layout pass in the EDIT's move and show
+/// alone. The hidden EDIT is still moved with the bar - a hidden move is cheap
+/// - so its rect, its text and its scroll stay the truth every reader uses,
+/// and the field it prints is the field the user would see.
+editing: bool = false,
+
+/// Where `place` last laid the field out (bar-local), and whether the hidden
+/// EDIT has not been moved there yet (`syncEdit`).
+field_rect: ?w32.RECT = null,
+edit_stale: bool = false,
+
+/// The idle field's pixels (T2538): the EDIT printed once, `cache_w` wide -
+/// wide enough for all of its text - and re-printed only when its text,
+/// theme, font or height changes. A paint at any narrower width is two blits
+/// (`field_cache.compose`), never a print, so a drag repaints the field from
+/// memory. `cache_k` is the right margin plus border the narrower field ends in.
+cache_dc: ?w32.HDC = null,
+cache_bmp: ?*anyopaque = null,
+cache_old: ?*anyopaque = null,
+cache_w: i32 = 0,
+cache_h: i32 = 0,
+cache_k: i32 = 0,
+cache_dirty: bool = true,
+
 // Theme, derived from the pane's background in `applyTheme`.
 bar_rgb: color_math.Rgb = .{ .r = 0x20, .g = 0x20, .b = 0x20 },
 field_rgb: color_math.Rgb = .{ .r = 0x1A, .g = 0x1A, .b = 0x1A },
@@ -254,7 +288,9 @@ pub fn create(
         0,
         std.unicode.utf8ToUtf16LeStringLiteral("EDIT"),
         std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_CHILD | w32.WS_VISIBLE_STYLE | w32.ES_AUTOHSCROLL | w32.WS_BORDER,
+        // Hidden from birth (T2538): the field is a window on screen only
+        // while it is being edited - see `editing`.
+        w32.WS_CHILD | w32.ES_AUTOHSCROLL | w32.WS_BORDER,
         0,
         0,
         0,
@@ -306,6 +342,7 @@ pub fn destroy(self: *ViewerNavBar) void {
     _ = w32.DestroyWindow(self.hwnd); // destroys the EDIT with it
     if (self.font) |f| _ = w32.DeleteObject(@ptrCast(f));
     if (self.edit_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
+    self.freeCache();
     self.glass_px.deinit(self.alloc);
     self.alloc.destroy(self);
 }
@@ -369,6 +406,7 @@ pub fn applyTheme(self: *ViewerNavBar) void {
             std.unicode.utf8ToUtf16LeStringLiteral("Explorer"),
         null,
     );
+    self.cache_dirty = true;
     _ = w32.InvalidateRect(self.hwnd, null, 1);
 }
 
@@ -428,20 +466,31 @@ pub fn placementChanged(old: ?Placement, new: Placement) bool {
     return !std.meta.eql(o, new);
 }
 
+/// The bar as Windows reports it, and the field as `place` last laid it out.
+/// The field is NOT read back from the EDIT (T2538): an idle EDIT is moved
+/// late, by `syncEdit`, so its rect may legitimately trail the band's.
 fn currentPlacement(self: *const ViewerNavBar) ?Placement {
     var br: w32.RECT = undefined;
-    var er: w32.RECT = undefined;
     if (w32.GetWindowRect(self.hwnd, &br) == 0) return null;
-    if (w32.GetWindowRect(self.edit, &er) == 0) return null;
+    const f = self.field_rect orelse return null;
     return .{
         .bar = .{ .left = 0, .top = 0, .right = br.right - br.left, .bottom = br.bottom - br.top },
-        .edit = .{
-            .left = er.left - br.left,
-            .top = er.top - br.top,
-            .right = er.right - br.left,
-            .bottom = er.bottom - br.top,
-        },
+        .edit = f,
     };
+}
+
+/// Move the EDIT to the field `place` last laid out, if it is not there yet.
+/// Immediate while the field is being edited; otherwise deferred to
+/// `edit_sync_timer` so a drag moves no EDIT at all (T2538) - the rect is
+/// still the truth a beat after the band stops moving, and `beginEdit` syncs
+/// it before the control is ever shown.
+fn syncEdit(self: *ViewerNavBar) void {
+    _ = w32.KillTimer(self.hwnd, edit_sync_timer);
+    if (!self.edit_stale) return;
+    const f = self.field_rect orelse return;
+    self.edit_stale = false;
+    const flags = w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOREDRAW | w32.SWP_NOCOPYBITS;
+    _ = w32.SetWindowPos(self.edit, null, f.left, f.top, f.right - f.left, f.bottom - f.top, flags);
 }
 
 /// Position the bar across the top of the pane and its EDIT inside it.
@@ -472,15 +521,20 @@ pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
     const changed = placementChanged(self.currentPlacement(), want);
     const flags = w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOREDRAW | w32.SWP_NOCOPYBITS;
     var t = tnow();
-    if (changed) {
+    if (self.field_rect == null or !std.meta.eql(self.field_rect.?, want.edit)) {
+        if (self.field_rect) |old| {
+            if (old.bottom - old.top != want.edit.bottom - want.edit.top) self.cache_dirty = true;
+        }
+        self.field_rect = want.edit;
+        self.edit_stale = true;
         // The field first: shrinking the bar first would clip it for nothing.
-        _ = w32.SetWindowPos(self.edit, null, want.edit.left, want.edit.top, field_w, want.edit.bottom - want.edit.top, flags);
+        if (self.editing) self.syncEdit() else _ = w32.SetTimer(self.hwnd, edit_sync_timer, edit_sync_ms, null);
     }
-    // In the minimum band the field is not painted at all (T1159), and an EDIT
-    // moved to zero width is still a focusable control that draws a caret at
-    // the band's left edge. Hidden, it is out of the tab order and off the
-    // screen, which is what "absent" has to mean for it to read as designed.
-    _ = w32.ShowWindow(self.edit, if (field_w > 0) w32.SW_SHOWNA else w32.SW_HIDE);
+    // Shown only while it is being edited (T2538); otherwise the band paints
+    // it. In the minimum band the field is not painted at all (T1159), and an
+    // EDIT moved to zero width is still a focusable control that draws a caret
+    // at the band's left edge, so it stays hidden there even while focused.
+    self.syncEditVisible(field_w);
     place_cost.edit_ns +|= tsince(t);
     t = tnow();
     if (changed) _ = w32.SetWindowPos(self.hwnd, null, 0, 0, width, l.bar_h, flags);
@@ -524,6 +578,7 @@ fn applyScaleFont(self: *ViewerNavBar, scale: f32) void {
             std.unicode.utf8ToUtf16LeStringLiteral(type_ramp.face),
         );
         if (self.font) |f| _ = w32.SendMessageW(self.edit, w32.WM_SETFONT, @intFromPtr(f), 1);
+        self.fieldChanged();
     }
 }
 
@@ -829,6 +884,8 @@ pub fn forceAddress(self: *ViewerNavBar, text: []const u8) void {
     const n = std.unicode.utf8ToUtf16Le(buf[0 .. buf.len - 1], text) catch 0;
     buf[n] = 0;
     _ = w32.SetWindowTextW(self.edit, buf[0..n :0]);
+    // A hidden EDIT repaints nothing; the band carries its pixels (T2538).
+    self.fieldChanged();
 }
 
 /// UTF-16 buffer bound for the field's text: the address module's own cap
@@ -839,6 +896,7 @@ const address_cap_utf16 = viewer_nav.max_address + 1;
 /// keyboard entry point (the blank browser pane's palette command, and later
 /// the ctrl+l / alt+d chords).
 pub fn focusAddress(self: *ViewerNavBar) void {
+    self.beginEdit();
     _ = w32.SetFocus(self.edit);
     _ = w32.SendMessageW(self.edit, w32.EM_SETSEL, 0, -1);
 }
@@ -1082,6 +1140,177 @@ fn paint(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) void {
         const color = if (enabled) self.text_ref else self.secondary_ref;
         icon_paint.glyph(hdc, m, icon_button.glyphTarget(m, box, glyph), glyph, color);
     }
+    if (!self.editing) self.paintField(hdc, l.address);
+}
+
+/// The address field while it is NOT being edited (T2538), painted from the
+/// cached print of the hidden EDIT - border, colours via `WM_CTLCOLOREDIT`,
+/// text or the cue banner - so the idle field is the control's own pixels and
+/// cannot drift from what the focused one shows. Two blits; the EDIT is only
+/// printed again when `cache_dirty` or the field outgrew the cache.
+fn paintField(self: *ViewerNavBar, hdc: w32.HDC, field: layout_mod.Rect) void {
+    const w = field.width();
+    const h = field.height();
+    if (w <= 0 or h <= 0) return;
+    if (!self.ensureCache(w, h)) return;
+    const src = self.cache_dc orelse return;
+    for (field_mod.blits(w, self.cache_w, self.cache_k)) |b| {
+        if (b.w <= 0) continue;
+        _ = w32.BitBlt(hdc, field.left + b.dst_x, field.top, b.w, h, src, b.src_x, 0, w32.SRCCOPY);
+    }
+}
+
+/// Upper bound on the cache's width in pixels: an address longer than this
+/// runs into the cached edge rather than growing the bitmap without limit.
+const cache_cap: i32 = 8192;
+
+/// Print the hidden EDIT into the cache if a paint at `w` x `h` needs it. The
+/// EDIT is moved to the cache's width for the print and left marked stale, so
+/// `syncEdit` brings it back to the field a beat later (or at once, if editing
+/// starts first).
+fn ensureCache(self: *ViewerNavBar, w: i32, h: i32) bool {
+    if (!field_mod.needsReprint(self.cache_dirty, self.cache_w, self.cache_h, w, h)) return true;
+    const screen = w32.GetDC(null) orelse return false;
+    defer _ = w32.ReleaseDC(null, screen);
+    const g = cacheGeometry(self.edit, self.font, screen, w);
+
+    if (self.cache_dc == null) self.cache_dc = w32.CreateCompatibleDC(screen);
+    const dc = self.cache_dc orelse return false;
+    if (g.cw != self.cache_w or h != self.cache_h or self.cache_bmp == null) {
+        const bmp = w32.CreateCompatibleBitmap(screen, g.cw, h) orelse return false;
+        const prev = w32.SelectObject(dc, bmp);
+        if (self.cache_bmp) |old| {
+            _ = w32.DeleteObject(old);
+        } else {
+            self.cache_old = prev;
+        }
+        self.cache_bmp = bmp;
+    }
+
+    const f = self.field_rect orelse return false;
+    const flags = w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOREDRAW | w32.SWP_NOCOPYBITS;
+    _ = w32.SetWindowPos(self.edit, null, f.left, f.top, g.cw, h, flags);
+    self.edit_stale = true;
+    _ = w32.SetTimer(self.hwnd, edit_sync_timer, edit_sync_ms, null);
+    printEdit(self.edit, dc);
+    self.cache_w = g.cw;
+    self.cache_h = h;
+    self.cache_k = clipTail(self.edit);
+    self.cache_dirty = false;
+    return true;
+}
+
+/// How wide to print `edit` for a `w`-wide field, and how many trailing
+/// columns (right margin plus border) the field ends in.
+fn cacheGeometry(edit: w32.HWND, font: ?*anyopaque, screen: w32.HDC, w: i32) struct { cw: i32, k: i32 } {
+    // How wide the text is in the field's font.
+    var text: [address_cap_utf16]u16 = undefined;
+    const n = w32.GetWindowTextW(edit, &text, text.len);
+    var size: w32.SIZE = .{ .cx = 0, .cy = 0 };
+    if (n > 0) {
+        const old_font = if (font) |f| w32.SelectObject(screen, f) else null;
+        _ = w32.GetTextExtentPoint32W(screen, &text, n, &size);
+        if (old_font) |f| _ = w32.SelectObject(screen, f);
+    }
+    const margins: usize = @bitCast(w32.SendMessageW(edit, w32.EM_GETMARGINS, 0, 0));
+    const margin_l: i32 = @intCast(margins & 0xFFFF);
+    const margin_r: i32 = @intCast((margins >> 16) & 0xFFFF);
+    // The border's width on each side: the EDIT's window rect against its
+    // client rect, which `WS_BORDER` (and its theme) decide.
+    var wr: w32.RECT = undefined;
+    var cr: w32.RECT = undefined;
+    const border: i32 = if (w32.GetWindowRect(edit, &wr) != 0 and w32.GetClientRect(edit, &cr) != 0)
+        @max(@divTrunc((wr.right - wr.left) - (cr.right - cr.left), 2), 0)
+    else
+        1;
+    // `k` here only widens the cache, so its own edge is clear of text; the
+    // edge the splice keeps is read off the control (`clipTail`).
+    return .{ .cw = field_mod.cacheWidth(w, border + margin_l, size.cx, margin_r + border, cache_cap), .k = margin_r + border };
+}
+
+/// How many columns at the right end of the EDIT its text is never drawn
+/// into: the control's inner inset (its border plus padding), which it clips
+/// text to on BOTH sides. Read off the control as its formatting rect's left
+/// edge less its left margin, since the right margin does not clip: a long
+/// address has ink in the right-margin columns. comctl32 v6 also draws a
+/// `WS_BORDER` edit's border inside the client rect, so the window and client
+/// rects agree and cannot say this. Both found by T2538's test, which holds
+/// the splice to the EDIT's own print.
+fn clipTail(edit: w32.HWND) i32 {
+    var fr: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    _ = w32.SendMessageW(edit, w32.EM_GETRECT, 0, @bitCast(@intFromPtr(&fr)));
+    const margins: usize = @bitCast(w32.SendMessageW(edit, w32.EM_GETMARGINS, 0, 0));
+    const margin_l: i32 = @intCast(margins & 0xFFFF);
+    return @max(fr.left - margin_l, 0);
+}
+
+/// The EDIT, whole - border, background, text or cue banner - into `dc`.
+fn printEdit(edit: w32.HWND, dc: w32.HDC) void {
+    _ = w32.SendMessageW(
+        edit,
+        w32.WM_PRINT,
+        @intFromPtr(dc),
+        w32.PRF_NONCLIENT | w32.PRF_CLIENT | w32.PRF_ERASEBKGND,
+    );
+}
+
+fn freeCache(self: *ViewerNavBar) void {
+    if (self.cache_dc) |dc| {
+        if (self.cache_old) |o| _ = w32.SelectObject(dc, o);
+        _ = w32.DeleteDC(dc);
+    }
+    if (self.cache_bmp) |b| _ = w32.DeleteObject(b);
+    self.cache_dc = null;
+    self.cache_bmp = null;
+    self.cache_old = null;
+}
+
+/// The idle field's pixels are stale: re-print before the next paint, and ask
+/// for that paint.
+fn fieldChanged(self: *ViewerNavBar) void {
+    self.cache_dirty = true;
+    if (!self.editing) _ = w32.InvalidateRect(self.hwnd, null, 0);
+}
+
+/// Whether the EDIT should be on screen: being edited, and with room to be
+/// legible. Pure, so the rule is testable without a window.
+pub fn editVisible(editing: bool, field_w: i32) bool {
+    return editing and field_w > 0;
+}
+
+fn syncEditVisible(self: *ViewerNavBar, field_w: i32) void {
+    const want = editVisible(self.editing, field_w);
+    if ((w32.IsWindowVisible(self.edit) != 0) == want) return;
+    _ = w32.ShowWindow(self.edit, if (want) w32.SW_SHOWNA else w32.SW_HIDE);
+}
+
+fn fieldWidth(self: *ViewerNavBar) i32 {
+    return @max(self.currentLayout().address.width(), 0);
+}
+
+/// The field became the focus (a click, a chord, a restored focus): put the
+/// real control on screen over its printed image.
+fn beginEdit(self: *ViewerNavBar) void {
+    self.syncEdit();
+    self.editing = true;
+    self.syncEditVisible(self.fieldWidth());
+}
+
+/// The field lost focus: back to the printed image. The scroll returns to the
+/// start of the address first, so a long address reads from its beginning the
+/// way a browser omnibox does after a blur.
+fn endEdit(self: *ViewerNavBar) void {
+    self.editing = false;
+    _ = w32.SendMessageW(self.edit, w32.EM_SETSEL, 0, 0);
+    self.syncEditVisible(self.fieldWidth());
+    // Typing may have changed the text; the print is stale either way.
+    self.fieldChanged();
+}
+
+/// Whether bar-local (x, y) is over the painted address field.
+fn overField(self: *ViewerNavBar, x: i32, y: i32) bool {
+    const f = self.currentLayout().address;
+    return f.width() > 0 and x >= f.left and x < f.right and y >= f.top and y < f.bottom;
 }
 
 /// On a glass pane the band is a material over the sheet rather than a solid
@@ -1189,6 +1418,16 @@ fn wndProc(
         w32.WM_LBUTTONDOWN => {
             const x: i32 = @intCast(@as(i16, @bitCast(@as(u16, @intCast(lparam & 0xFFFF)))));
             const y: i32 = @intCast(@as(i16, @bitCast(@as(u16, @intCast((lparam >> 16) & 0xFFFF)))));
+            // A click on the printed field (T2538) is a click into an
+            // unfocused field: the control comes up with the whole address
+            // selected, the omnibox rule `noteClickDown` keeps for the
+            // visible one.
+            if (!self.editing and self.overField(x, y)) {
+                self.beginEdit();
+                _ = w32.SetFocus(self.edit);
+                _ = w32.SendMessageW(self.edit, w32.EM_SETSEL, 0, -1);
+                return 0;
+            }
             const l = self.currentLayout();
             if (l.hitButton(self.scale, x, y)) |b| {
                 if (self.buttonEnabled(b)) {
@@ -1214,6 +1453,28 @@ fn wndProc(
             return 0;
         },
 
+        w32.WM_TIMER => {
+            if (wparam == edit_sync_timer) {
+                self.syncEdit();
+                return 0;
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
+        // The I-beam over the printed field, as over the control itself.
+        w32.WM_SETCURSOR => {
+            if ((lparam & 0xFFFF) == w32.HTCLIENT and !self.editing) {
+                var pt: w32.POINT = undefined;
+                if (w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0 and
+                    self.overField(pt.x, pt.y))
+                {
+                    _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_IBEAM));
+                    return 1;
+                }
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
         WM_APP_SELECT_ALL => {
             _ = w32.SendMessageW(self.edit, w32.EM_SETSEL, 0, -1);
             return 0;
@@ -1237,7 +1498,10 @@ fn wndProc(
         w32.WM_COMMAND => {
             const code: u16 = @intCast((wparam >> 16) & 0xFFFF);
             const id: u16 = @intCast(wparam & 0xFFFF);
+            if (id == edit_id and code == w32.EN_KILLFOCUS) self.endEdit();
             if (id == edit_id and code == w32.EN_SETFOCUS) {
+                // However focus arrived, the control is what is on screen now.
+                self.beginEdit();
                 // A KEYBOARD arrival (tab, palette command) should select all,
                 // and a click arrival is handled by noteClickDown/Up. The
                 // click case is distinguishable: the mouse is down over us.
@@ -1287,6 +1551,15 @@ test "viewer nav class: a resize invalidates the whole bar" {
 // T2531: the band is repainted only when a rect actually moved. A field that
 // slid sideways without changing size is a change too - the moves go out with
 // `SWP_NOREDRAW`, so nothing else would repaint it.
+// T2538: the EDIT is a window on screen only while it is being edited, and
+// never in the minimum band, focused or not.
+test "T2538: editVisible only while editing and wide enough" {
+    try std.testing.expect(editVisible(true, 200));
+    try std.testing.expect(!editVisible(false, 200));
+    try std.testing.expect(!editVisible(true, 0));
+    try std.testing.expect(!editVisible(false, 0));
+}
+
 test "T2531: placementChanged sees size, position, and an unknown rect" {
     const at: Placement = .{
         .bar = .{ .left = 0, .top = 0, .right = 600, .bottom = 36 },
@@ -1305,4 +1578,134 @@ test "T2531: placementChanged sees size, position, and an unknown rect" {
     var taller = at;
     taller.bar.bottom = 44;
     try std.testing.expect(placementChanged(at, taller));
+}
+
+// T2538: the idle field is the hidden EDIT printed once, wide, and spliced to
+// the field's width with `field_mod.blits`. The splice has to be exactly what
+// the EDIT prints at that width, border and partly-clipped glyphs included,
+// or a drag shows a field that is not the control's. Out of process this
+// cannot be asked (PrintWindow refuses a hidden window), so it is asked here,
+// of a real EDIT with the bar's styles, at widths that clip a long address
+// mid-glyph and that hold a short one whole.
+test "T2538: the cache spliced to a narrower width is the EDIT's own print there" {
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    // The app's EDIT is comctl32 v6's (the app manifest asks for it); the
+    // test exe has no manifest and would get user32's classic EDIT, which
+    // prints nothing. So the test borrows the app's manifest for its windows.
+    const ActCtx = struct {
+        const ACTCTXW = extern struct {
+            cbSize: u32 = @sizeOf(@This()),
+            dwFlags: u32 = 0,
+            lpSource: [*:0]const u16,
+            wProcessorArchitecture: u16 = 0,
+            wLangId: u16 = 0,
+            lpAssemblyDirectory: ?[*:0]const u16 = null,
+            lpResourceName: ?[*:0]const u16 = null,
+            lpApplicationName: ?[*:0]const u16 = null,
+            hModule: ?*anyopaque = null,
+        };
+        extern "kernel32" fn CreateActCtxW(*const ACTCTXW) callconv(.winapi) isize;
+        extern "kernel32" fn ActivateActCtx(isize, *usize) callconv(.winapi) i32;
+        extern "kernel32" fn DeactivateActCtx(u32, usize) callconv(.winapi) i32;
+        extern "kernel32" fn ReleaseActCtx(isize) callconv(.winapi) void;
+    };
+    const manifest = std.fs.cwd().realpathAlloc(std.testing.allocator, "dist/windows/ghostty.manifest") catch
+        return error.SkipZigTest;
+    defer std.testing.allocator.free(manifest);
+    const manifest_w = try std.unicode.utf8ToUtf16LeAllocZ(std.testing.allocator, manifest);
+    defer std.testing.allocator.free(manifest_w);
+    const actx = ActCtx.CreateActCtxW(&.{ .lpSource = manifest_w.ptr });
+    if (actx == -1) return error.SkipZigTest;
+    defer ActCtx.ReleaseActCtx(actx);
+    var cookie: usize = 0;
+    if (ActCtx.ActivateActCtx(actx, &cookie) == 0) return error.SkipZigTest;
+    defer _ = ActCtx.DeactivateActCtx(0, cookie);
+
+    const hinst = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
+    const parent = w32.CreateWindowExW(0, L("STATIC"), L(""), w32.WS_POPUP, 0, 0, 10, 10, null, null, hinst, null) orelse
+        return error.SkipZigTest;
+    defer _ = w32.DestroyWindow(parent);
+    const edit = w32.CreateWindowExW(0, L("EDIT"), L(""), w32.WS_CHILD | w32.ES_AUTOHSCROLL | w32.WS_BORDER, 0, 0, 900, 28, parent, null, hinst, null) orelse
+        return error.SkipZigTest;
+    const font = w32.CreateFontW(-15, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, L("Segoe UI"));
+    defer if (font) |f| {
+        _ = w32.DeleteObject(@ptrCast(f));
+    };
+    if (font) |f| _ = w32.SendMessageW(edit, w32.WM_SETFONT, @intFromPtr(f), 0);
+    const screen = w32.GetDC(null) orelse return error.SkipZigTest;
+    defer _ = w32.ReleaseDC(null, screen);
+    const h: i32 = 28;
+    const flags = w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOREDRAW;
+
+    const texts = [_][:0]const u16{
+        L("D:\\git\\ghoztty\\README.md"),
+        L("https://example.com/a/rather/long/address/that/runs/well/past/the/field/it/sits/in?q=1"),
+        L(""),
+    };
+    var compared: usize = 0;
+    for (texts) |text| {
+        _ = w32.SetWindowTextW(edit, text);
+        for ([_]i32{ 41, 133, 250, 377 }) |w| {
+            const g = cacheGeometry(edit, font, screen, w);
+            try std.testing.expect(g.cw >= w);
+
+            const wide_dc = w32.CreateCompatibleDC(screen) orelse return error.SkipZigTest;
+            defer _ = w32.DeleteDC(wide_dc);
+            const wide_bmp = w32.CreateCompatibleBitmap(screen, g.cw, h) orelse return error.SkipZigTest;
+            defer _ = w32.DeleteObject(wide_bmp);
+            const wide_old = w32.SelectObject(wide_dc, wide_bmp);
+            defer _ = w32.SelectObject(wide_dc, wide_old);
+            _ = w32.SetWindowPos(edit, null, 0, 0, g.cw, h, flags);
+            printEdit(edit, wide_dc);
+
+            const own_dc = w32.CreateCompatibleDC(screen) orelse return error.SkipZigTest;
+            defer _ = w32.DeleteDC(own_dc);
+            const own_bmp = w32.CreateCompatibleBitmap(screen, w, h) orelse return error.SkipZigTest;
+            defer _ = w32.DeleteObject(own_bmp);
+            const own_old = w32.SelectObject(own_dc, own_bmp);
+            defer _ = w32.SelectObject(own_dc, own_old);
+            _ = w32.SetWindowPos(edit, null, 0, 0, w, h, flags);
+            printEdit(edit, own_dc);
+
+            const out_dc = w32.CreateCompatibleDC(screen) orelse return error.SkipZigTest;
+            defer _ = w32.DeleteDC(out_dc);
+            const out_bmp = w32.CreateCompatibleBitmap(screen, w, h) orelse return error.SkipZigTest;
+            defer _ = w32.DeleteObject(out_bmp);
+            const out_old = w32.SelectObject(out_dc, out_bmp);
+            defer _ = w32.SelectObject(out_dc, out_old);
+            const k = clipTail(edit);
+            for (field_mod.blits(w, g.cw, k)) |b| {
+                if (b.w <= 0) continue;
+                _ = w32.BitBlt(out_dc, b.dst_x, 0, b.w, h, wide_dc, b.src_x, 0, w32.SRCCOPY);
+            }
+
+            // Positive control: the EDIT really printed (its border, and its
+            // text where there is any), so two blank bitmaps cannot agree.
+            const fill = w32.GetPixel(own_dc, @divTrunc(w, 2), 1);
+            var ink: usize = 0;
+            var y: i32 = 0;
+            while (y < h) : (y += 1) {
+                var x: i32 = 0;
+                while (x < w) : (x += 1) {
+                    if (w32.GetPixel(own_dc, x, y) != fill) ink += 1;
+                }
+            }
+            if (text.len > 0 and w > 100) try std.testing.expect(ink > @as(usize, @intCast(2 * (w + h))) + 20);
+
+            y = 0;
+            while (y < h) : (y += 1) {
+                var x: i32 = 0;
+                while (x < w) : (x += 1) {
+                    const want = w32.GetPixel(own_dc, x, y);
+                    const got = w32.GetPixel(out_dc, x, y);
+                    if (want != got) {
+                        std.debug.print("T2538 splice differs: text len {d}, w {d} (cache {d}, k {d}) at {d},{d}: want {x} got {x}\n", .{ text.len, w, g.cw, k, x, y, want, got });
+                        return error.TestExpectedEqual;
+                    }
+                    compared += 1;
+                }
+            }
+        }
+    }
+    try std.testing.expect(compared > 0);
 }

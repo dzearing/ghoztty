@@ -170,6 +170,11 @@ pub const WM_PRINTCLIENT: u32 = 0x0318;
 /// Its default asks for WM_ERASEBKGND and WM_PRINTCLIENT in turn; a window
 /// with no frame can answer it directly (T2288).
 pub const WM_PRINT: u32 = 0x0317;
+/// `WM_PRINT`'s lparam: which parts to paint. A window answering it while
+/// hidden still paints - only `PRF_CHECKVISIBLE` would make it decline.
+pub const PRF_NONCLIENT: isize = 0x0002;
+pub const PRF_CLIENT: isize = 0x0004;
+pub const PRF_ERASEBKGND: isize = 0x0008;
 pub const WM_TIMER: u32 = 0x0113;
 pub const WM_ENTERSIZEMOVE: u32 = 0x0231;
 pub const WM_EXITSIZEMOVE: u32 = 0x0232;
@@ -1468,6 +1473,10 @@ pub const DRAWITEMSTRUCT = extern struct {
 
 // EDIT cue banner ("placeholder" text shown while empty and unfocused).
 pub const EM_SETCUEBANNER: u32 = 0x1501;
+/// An EDIT's left (LOWORD) and right (HIWORD) margins, in pixels.
+pub const EM_GETMARGINS: u32 = 0x00D4;
+/// An EDIT's formatting rectangle (lparam: *RECT): where its text starts.
+pub const EM_GETRECT: u32 = 0x00B2;
 /// Select a range of an EDIT's text; `(0, -1)` selects all, so typing replaces
 /// a seeded value.
 pub const EM_GETSEL: u32 = 0x00B0;
@@ -2083,6 +2092,7 @@ pub extern "gdi32" fn BitBlt(hdcDest: HDC, x: i32, y: i32, cx: i32, cy: i32, hdc
 /// alpha-correct chrome buffer has to be for this paint).
 pub extern "gdi32" fn GetClipBox(hdc: HDC, lprect: *RECT) callconv(.winapi) i32;
 pub extern "gdi32" fn SetViewportOrgEx(hdc: HDC, x: i32, y: i32, lppt: ?*POINT) callconv(.winapi) i32;
+pub extern "gdi32" fn OffsetViewportOrgEx(hdc: HDC, x: i32, y: i32, lppt: ?*POINT) callconv(.winapi) i32;
 // DrawTextW is exported by user32.dll, not gdi32.dll. The previous
 // declaration on gdi32 worked only because user32 was linked anyway.
 pub extern "user32" fn DrawTextW(hdc: HDC, lpchText: [*]const u16, cchText: i32, lprc: *RECT, format: u32) callconv(.winapi) i32;

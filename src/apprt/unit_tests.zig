@@ -475,6 +475,10 @@ test {
     // no-OS-imports deal.
     _ = @import("win32/viewer_nav_layout.zig");
 
+    // Pure win32 nav-bar idle address field: the cache's width and the two
+    // blits that paint the field from it at any width (T2538), same deal.
+    _ = @import("win32/viewer_nav_field.zig");
+
     // Pure win32 find-in-page — how the count reads, the Escape/Return
     // precedence across the pane's text fields, the JavaScript the card
     // evaluates, and the card's geometry (T1184), same no-OS-imports deal.

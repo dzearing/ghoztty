@@ -226,6 +226,54 @@ try {
                 "C: the document starts below the bar (page top=$($md.PageTop), bar bottom=$($md.Bar.Bottom))"
         }
     }
+    # F (T2538): the address field at rest is the bar's own paint. The EDIT is
+    # HIDDEN until it is edited, so a resize drag moves one visible window, but
+    # it is still moved with the bar (its rect is what every reader uses) and
+    # the bar prints it into the band. The oracle is the bar's synchronous
+    # capture (WM_PRINTCLIENT, the bar's own paint and nothing of any child's):
+    # the README path has to be ink inside the field's rect. Before T2538 that
+    # capture held only the band there - the field was a child window's pixels
+    # - so a bar that stopped printing the field scores zero ink and goes red.
+    Write-Host ''
+    Write-Host 'F: the idle address field is painted by the bar, its EDIT hidden'
+    if ($md) {
+        $barH = [IntPtr]$md.Bar.Hwnd
+        $edits = @(Get-TestChildWindows -Window $barH -Class 'Edit')
+        Assert ($edits.Count -eq 1) "F: the bar still owns one address EDIT (got $($edits.Count))"
+        if ($edits.Count -eq 1) {
+            $ed = $edits[0]
+            Assert (-not $ed.Visible) 'F: the EDIT is hidden while nobody is editing it'
+            Assert ($ed.Width -gt 0) "F: the hidden EDIT is still placed in the band (width $($ed.Width))"
+            $shot = $null
+            try { $shot = Get-TestWindowPixels -Window $barH -Sync -AllowUniform } catch { $shot = $null }
+            Assert ($null -ne $shot) 'F: the bar answered a synchronous capture'
+            if ($shot) {
+                try {
+                    $fx0 = $ed.Left - $md.Bar.Left; $fy0 = $ed.Top - $md.Bar.Top
+                    $fx1 = [Math]::Min($fx0 + $ed.Width, $shot.Width)
+                    $fy1 = [Math]::Min($fy0 + $ed.Height, $shot.Height)
+                    # The field's fill, sampled just inside its border.
+                    $fill = $shot.Bitmap.GetPixel([Math]::Min($fx0 + 3, $fx1 - 1), [Math]::Min($fy0 + 3, $fy1 - 1))
+                    $band = $shot.Bitmap.GetPixel([Math]::Max($shot.Width - 2, 0), 1)
+                    $ink = 0
+                    for ($y = $fy0 + 2; $y -lt $fy1 - 2; $y++) {
+                        for ($x = $fx0 + 2; $x -lt $fx1 - 2; $x++) {
+                            $p = $shot.Bitmap.GetPixel($x, $y)
+                            $d = [Math]::Max([Math]::Abs($p.R - $fill.R), [Math]::Max([Math]::Abs($p.G - $fill.G), [Math]::Abs($p.B - $fill.B)))
+                            if ($d -gt 60) { $ink++ }
+                        }
+                    }
+                    Write-Host "      field ${fx0},${fy0}..${fx1},${fy1} fill=$($fill.Name) band=$($band.Name) ink=$ink"
+                    Assert ($ink -gt 40) "F: the address text is ink inside the field's rect ($ink px)"
+                    # Exactness - the cache spliced to this width against the
+                    # EDIT printed at it - is the win32 lane's T2538 test:
+                    # PrintWindow refuses a hidden window, so it cannot be
+                    # asked from out here.
+                } finally { $shot.Bitmap.Dispose() }
+            }
+        }
+    }
+
     Invoke-Verb @('+close', '--target=vpC') | Out-Null
     Start-Sleep -Milliseconds 800
 
