@@ -28,6 +28,7 @@ const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const layout = @import("pane_stack_layout.zig");
 const pane_stash = @import("pane_stash.zig");
+const split_ratio_shadow = @import("split_ratio_shadow.zig");
 
 pub const Id = layout.Id;
 pub const Node = layout.Node;
@@ -112,6 +113,22 @@ fn resolve(tree: anytype, i: usize, nodes: []Node, comptime idOf: anytype, compt
             } };
             return @intCast(i);
         },
+    }
+}
+
+/// Lay the exact ratios `shadow` holds for `tree` over the f16 ones `build`
+/// read (T2485 D19, `split_ratio_shadow`): a pane beyond a dragged gutter keeps
+/// its pixels instead of shaking by one with the f16's rounding.
+pub fn applyShadow(built: *Built, tree: anytype, shadow: *const split_ratio_shadow.Shadow) void {
+    if (shadow.len == 0) return;
+    for (built.nodes, 0..) |*n, i| {
+        if (n.* != .split or i >= tree.nodes.len) continue;
+        switch (tree.nodes[i]) {
+            .split => |s| if (shadow.exact(tree.nodes.ptr, @intCast(i), s.ratio)) |r| {
+                n.split.ratio = r;
+            },
+            else => {},
+        }
     }
 }
 
@@ -360,6 +377,70 @@ test "pane_stack_grid: the full build keeps a stashed pane's slot" {
     defer b.deinit(testing.allocator);
     try testing.expectEqual(@as(u32, 2), b.nodes[0].split.right);
     try testing.expectEqual(@as(Id, 2), b.nodes[3].leaf);
+}
+
+/// A row of six with its first gutter dragged a fraction of a pixel at a time
+/// and panes 3-6 kept at `rest` px each: how many left edges pane 5 took
+/// (T2485 D19). `shadowed` lays the exact ratios over the f16 ones, the way
+/// the window does.
+fn paneFiveEdges(rest: f64, shadowed: bool) !usize {
+    var v: [6]FakeView = undefined;
+    for (&v, 0..) |*x, i| x.* = .{ .id = i + 1 };
+    // a | (b | (c | (d | (e | f)))), what six successive splits build.
+    var n = [11]FakeNode{
+        .{ .split = .{ .layout = .horizontal, .ratio = 0, .left = h(1), .right = h(2) } },
+        .{ .leaf = &v[0] },
+        .{ .split = .{ .layout = .horizontal, .ratio = 0, .left = h(3), .right = h(4) } },
+        .{ .leaf = &v[1] },
+        .{ .split = .{ .layout = .horizontal, .ratio = 0, .left = h(5), .right = h(6) } },
+        .{ .leaf = &v[2] },
+        .{ .split = .{ .layout = .horizontal, .ratio = 0, .left = h(7), .right = h(8) } },
+        .{ .leaf = &v[3] },
+        .{ .split = .{ .layout = .horizontal, .ratio = 0, .left = h(9), .right = h(10) } },
+        .{ .leaf = &v[4] },
+        .{ .leaf = &v[5] },
+    };
+    const split_nodes = [_]usize{ 0, 2, 4, 6, 8 };
+    // The drag trades between panes 1 and 2.
+    const pair: f64 = 600.3;
+    var edges: [256]i32 = undefined;
+    var distinct: usize = 0;
+    var w1: f64 = 250;
+    while (w1 < 330) : (w1 += 0.7) {
+        const sizes = [6]f64{ w1, pair - w1, rest, rest, rest, rest };
+        var shadow: split_ratio_shadow.Shadow = .{};
+        for (split_nodes, 0..) |node, k| {
+            var tail: f64 = 0;
+            for (sizes[k..]) |s| tail += s;
+            const r = sizes[k] / tail;
+            n[node].split.ratio = @floatCast(r);
+            shadow.note(@ptrCast(&n), @intCast(node), r);
+        }
+        const tree = FakeTree{ .nodes = &n };
+        var b = try build(testing.allocator, tree, fakeId);
+        defer b.deinit(testing.allocator);
+        if (shadowed) applyShadow(&b, tree, &shadow);
+        var g = try computeBuilt(testing.allocator, b, .{ .right = 1982, .bottom = 900 }, 1, metrics(null), .{});
+        defer g.deinit();
+        const x = g.placement(5).?.rect.left;
+        if (std.mem.indexOfScalar(i32, edges[0..distinct], x) == null) {
+            edges[distinct] = x;
+            distinct += 1;
+        }
+    }
+    return distinct;
+}
+
+test "pane_stack_grid: a pane beyond the dragged gutter keeps its pixels (T2485 D19)" {
+    // Swept over pane widths, so some put pane 5's edge near a half pixel.
+    var shook: usize = 0;
+    var rest: f64 = 300;
+    while (rest < 306) : (rest += 0.13) {
+        if (try paneFiveEdges(rest, false) > 1) shook += 1;
+        try testing.expectEqual(@as(usize, 1), try paneFiveEdges(rest, true));
+    }
+    // The negative control: on the f16 ratios alone pane 5 shakes.
+    try testing.expect(shook > 0);
 }
 
 test "pane_stack_grid: a tree's rows are its panes on screen, chain by chain" {

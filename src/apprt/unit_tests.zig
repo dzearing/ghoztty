@@ -322,6 +322,8 @@ test {
     // The window's side of that layout - its split tree as the engine's
     // nodes, the engine's DIPs as pixel rects (T2107) - same deal.
     _ = @import("win32/pane_stack_grid.zig");
+    // The exact ratios behind the tree's f16 ones (T2485 D19) - same deal.
+    _ = @import("win32/split_ratio_shadow.zig");
     // What a tucked pane's strip looks like (T2109) - same deal.
     _ = @import("win32/pane_stack_strip.zig");
     // The accent bar a hovered or dragged gutter shows (T2253) - same deal.

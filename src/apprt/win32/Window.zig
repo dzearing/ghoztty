@@ -180,6 +180,7 @@ const DropHighlight = @import("DropHighlight.zig");
 const fullscreen_exit = @import("fullscreen_exit.zig");
 const FullscreenExit = @import("FullscreenExit.zig").FullscreenExit;
 const split_resize = @import("split_resize.zig");
+const split_ratio_shadow = @import("split_ratio_shadow.zig");
 const stack_drag = @import("stack_drag.zig");
 const drag_perf = @import("drag_perf.zig");
 
@@ -370,6 +371,11 @@ toggled_opaque: bool = false,
 /// Tab split trees owned by this window (fixed-capacity inline array).
 tab_count: usize = 0,
 tab_trees: [64]SplitTree(PaneView) = undefined,
+/// The exact ratios behind a tree's f16 ones (T2485 D19): written by
+/// `setSplitRatio`, read by the grid. Tied to the node array of the tree it
+/// was written for, so any other tree (another tab, a replaced tree) reads
+/// its own f16 ratios. Ratios are only written on the active tab.
+ratio_shadow: split_ratio_shadow.Shadow = .{},
 
 /// The currently focused PANE within each tab — a terminal or a viewer
 /// (T90c). Call sites that genuinely need a terminal narrow with
@@ -8919,6 +8925,7 @@ fn stackGridOfTab(self: *Window, tab: usize, comptime panes: pane_stack_grid.Pan
     }
     var built = pane_stack_grid.buildWith(gpa, tree, pane_stack_grid.viewId, panes) catch return null;
     defer built.deinit(gpa);
+    pane_stack_grid.applyShadow(&built, tree, &self.ratio_shadow);
     const r = self.gridRect();
     return pane_stack_grid.computeBuilt(
         gpa,
@@ -9082,7 +9089,7 @@ fn adoptDisplayedRatios(self: *Window) void {
             .leaf => {},
             .split => |sp| {
                 const shown = grid.result.displayed_ratio[d.node];
-                if (@abs(shown - @as(f64, sp.ratio)) > 1e-3) tree.resizeInPlace(@enumFromInt(d.node), @floatCast(shown));
+                if (@abs(shown - @as(f64, sp.ratio)) > 1e-3) self.setSplitRatio(self.active_tab, d.node, shown);
             },
         }
     }
@@ -11269,8 +11276,35 @@ fn rowRatios(self: *Window, d: pane_stack_layout.Direction, items: []const []con
     const gpa = self.app.core_app.alloc;
     var built = pane_stack_grid.buildWith(gpa, self.tab_trees[self.active_tab], pane_stack_grid.viewId, .visible) catch return null;
     defer built.deinit(gpa);
+    pane_stack_grid.applyShadow(&built, self.tab_trees[self.active_tab], &self.ratio_shadow);
     const root = built.root orelse return null;
     return pane_stack_layout.settingRow(gpa, built.nodes, root, d, items, shares) catch null;
+}
+
+/// Set split `node` of tab `tab`'s tree to `ratio`: the tree keeps it as an
+/// f16, and the grid lays it out from the exact value (T2485 D19), so a pane
+/// beyond a dragged gutter does not shake by a pixel with the f16's rounding.
+/// `GHOZTTY_RATIO_SHADOW=off` keeps the f16 alone for an A/B.
+fn setSplitRatio(self: *Window, tab: usize, node: anytype, ratio: anytype) void {
+    const tree = &self.tab_trees[tab];
+    const exact: f64 = @floatCast(ratio);
+    tree.resizeInPlace(@enumFromInt(node), @floatCast(exact));
+    if (!ratioShadowOff()) self.ratio_shadow.note(tree.nodes.ptr, @intCast(node), exact);
+}
+
+/// `GHOZTTY_RATIO_SHADOW=off` (T2485 D19 A/B): lay the tree out from its f16
+/// ratios alone, the shape before the fix.
+fn ratioShadowOff() bool {
+    const S = struct {
+        var v: ?bool = null;
+    };
+    if (S.v) |v| return v;
+    const v = if (std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_RATIO_SHADOW")) |s| blk: {
+        defer std.heap.page_allocator.free(s);
+        break :blk std.mem.eql(u8, s, "off");
+    } else |_| false;
+    S.v = v;
+    return v;
 }
 
 /// After a step of a row drag, the tree's side of it (Mac `dragRow`): all of
@@ -11287,7 +11321,7 @@ fn applyRowDrag(self: *Window, step: stack_drag.Step) void {
         // A pane closed under the drag: the noted splits may be gone.
         if (r.node >= tree.nodes.len) continue;
         switch (tree.nodes[r.node]) {
-            .split => tree.resizeInPlace(@enumFromInt(r.node), @floatCast(r.ratio)),
+            .split => self.setSplitRatio(self.active_tab, r.node, r.ratio),
             else => {},
         }
     }
@@ -11400,7 +11434,7 @@ pub fn evenStackRun(self: *Window, hit: GripHit) void {
             for (ratios) |r| {
                 if (r.node >= tree.nodes.len) continue;
                 switch (tree.nodes[r.node]) {
-                    .split => tree.resizeInPlace(@enumFromInt(r.node), @floatCast(r.ratio)),
+                    .split => self.setSplitRatio(self.active_tab, r.node, r.ratio),
                     else => {},
                 }
             }
@@ -12088,12 +12122,9 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     ) else 0;
 
     if (n == 0) {
-        self.tab_trees[self.active_tab].resizeInPlace(handle, @floatCast(new_ratio));
+        self.setSplitRatio(self.active_tab, @intFromEnum(handle), new_ratio);
     } else for (adjustments[0..n]) |a| {
-        self.tab_trees[self.active_tab].resizeInPlace(
-            @enumFromInt(a.handle),
-            @floatCast(a.ratio),
-        );
+        self.setSplitRatio(self.active_tab, a.handle, a.ratio);
     }
     self.layoutDragStep();
 }
@@ -12665,9 +12696,9 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
             self.stackGapPx(),
             sign * @as(i32, rs.amount),
         );
-        tree.resizeInPlace(target, @floatCast(solo));
+        self.setSplitRatio(self.active_tab, @intFromEnum(target), solo);
     } else for (adjustments[0..count]) |a| {
-        tree.resizeInPlace(@enumFromInt(a.handle), @floatCast(a.ratio));
+        self.setSplitRatio(self.active_tab, a.handle, a.ratio);
     }
 
     self.layoutSplits();
