@@ -217,6 +217,40 @@ pub fn gripBoundary(h: layout.StackHandle) usize {
     };
 }
 
+/// What a double-click on a grip did (`evenRun`).
+pub const EvenRun = union(enum) {
+    /// Part of the row is folded away: the run's shares are even in the stack
+    /// state, and the strips keep theirs.
+    run,
+    /// All of the row is on show, so the tree's ratios size it: set the row's
+    /// splits to these shares, one per item (`settingRow`). Caller frees.
+    tree: []f64,
+};
+
+/// A grip between two cards of a stacked row double-clicked (T2409, Mac
+/// 7e2d0a9da `TerminalSplitOperation.evenRun`): the cards on show even out,
+/// as a divider's double-click evens its splits. Null for a grip where the
+/// run meets its strips, which has no double-click.
+pub fn evenRun(gpa: Allocator, state: *PaneStackState, h: layout.StackHandle) Allocator.Error!?EvenRun {
+    switch (h.kind) {
+        .between => {},
+        .expand => return null,
+    }
+    const row = h.row;
+    const n = row.run.count();
+    if (n == 0) return null;
+    if (n >= row.items.len) {
+        const shares = try gpa.alloc(f64, row.items.len);
+        @memset(shares, 1.0 / @as(f64, @floatFromInt(row.items.len)));
+        return .{ .tree = shares };
+    }
+    const even = try gpa.alloc(f64, n);
+    defer gpa.free(even);
+    @memset(even, 1);
+    try state.show(row, row.run, even);
+    return .run;
+}
+
 /// What a step of a gutter drag does to the pane sidebar (`sidebarTuck`).
 pub const SidebarTuck = enum { none, tuck, untuck };
 
@@ -382,6 +416,81 @@ test "grip at the run's edge: pulled out brings the strip out alone, the other s
     step = try drag.moved(&state, 0);
     try testing.expect(step.restacked);
     try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 2 }, state.pin(&key_3)));
+}
+
+const items_5 = [_][]const Id{ &.{1}, &.{2}, &.{3}, &.{4}, &.{5} };
+const key_5 = [_]Id{ 1, 2, 3, 4, 5 };
+
+fn gripOf(row: Row, kind: layout.StackHandle.Kind) layout.StackHandle {
+    return .{
+        .row = row,
+        .direction = .horizontal,
+        .frame = .{ .w = row.extent, .h = 600 },
+        .position = 0,
+        .kind = kind,
+        .gutter = .{ .w = 10, .h = 600 },
+    };
+}
+
+test "T2409 even run: three uneven cards and two folded blades, a grip between cards evens the cards and keeps the blades" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    // The user's 2026-10-31 shape: a b c on show at 720 / 270 / 500, d and e
+    // folded into strips at the trailing edge.
+    const row: Row = .{
+        .items = &items_5,
+        .run = .{ .lo = 0, .hi = 2 },
+        .sizes = &.{ 720, 270, 500 },
+        .start = 0,
+        .extent = 1582,
+        .minimums = &.{ 300, 300, 300, 300, 300 },
+        .gap = 10,
+        .peek = 36,
+    };
+    try state.show(row, row.run, row.sizes);
+    // Either grip between cards: the same even run.
+    for ([_]usize{ 0, 1 }) |slot| {
+        const done = (try evenRun(testing.allocator, &state, gripOf(row, .{ .between = slot }))) orelse
+            return error.TestExpectedEvenRun;
+        try testing.expect(done == .run);
+        const shares = state.sharesFor(&key_5) orelse return error.TestExpectedShares;
+        try testing.expectEqual(@as(usize, 3), shares.len);
+        for (shares) |s| try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), s, 1e-9);
+        // The blades stay folded where they were.
+        try testing.expect(layout.Pin.eql(.{ .start = 0, .count = 3 }, state.pin(&key_5)));
+    }
+}
+
+test "T2409 even run: all of the row on show, the tree's splits get even shares" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    const done = (try evenRun(testing.allocator, &state, gripOf(rowOf3(), .{ .between = 0 }))) orelse
+        return error.TestExpectedEvenRun;
+    defer switch (done) {
+        .tree => |s| testing.allocator.free(s),
+        .run => {},
+    };
+    const shares = switch (done) {
+        .tree => |s| s,
+        .run => return error.TestExpectedTreeShares,
+    };
+    try testing.expectEqual(@as(usize, 3), shares.len);
+    for (shares) |s| try testing.expectApproxEqAbs(@as(f64, 1.0 / 3.0), s, 1e-9);
+    // Nothing pinned by it.
+    try testing.expect(state.pin(&key_3) == null);
+}
+
+test "T2409 even run: a grip where the run meets its strips has no double-click" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    var row = rowOf3();
+    row.run = .{ .lo = 0, .hi = 1 };
+    row.sizes = &.{ 700, 408 };
+    row.extent = 1164;
+    try state.show(row, row.run, row.sizes);
+    try testing.expect((try evenRun(testing.allocator, &state, gripOf(row, .{ .expand = .trailing }))) == null);
+    const shares = state.sharesFor(&key_3) orelse return error.TestExpectedShares;
+    try testing.expectApproxEqAbs(@as(f64, 700.0 / 1108.0), shares[0], 1e-9);
 }
 
 test "a row stacked for want of room, let go where it was pressed, stays unpinned" {

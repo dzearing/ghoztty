@@ -23,9 +23,15 @@
 #   F) the stack's trailing edge grip pushed OUTWARD leaves s2 a strip (the
 #      old rule brought it back), and pulled 400 DIP INTO the run brings s2
 #      back: three on show again
+#   G) T2409 (Mac 7e2d0a9da `evenRun`): s3 and s4 split off s2 and folded by
+#      a divider drag - the user's three cards and two blades. Each grip
+#      between cards, double-clicked after the other grip's drag unevened
+#      the cards, gives the three the same width, the blades keep their
+#      strips, and the second click starts no drag
 #
 # -NegativeControl inverts claim A to "three panes stay on show" - the
-# pre-T2124 answer - and MUST fail.
+# pre-T2124 answer - and skips G's double-clicks (the pre-T2409 answer); it
+# MUST fail.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -287,6 +293,78 @@ try {
         Assert ($f.Count -eq 3) "F: the edge grip pulled into the run brings s2 back - three on show (got $($f.Count))"
     } else {
         Assert $false 'F: not reached (E left the wrong number of panes)'
+    }
+
+    # ---- G: a grip between cards double-clicked evens the run (T2409) ---------
+    # The user's 2026-10-31 shape: three uneven cards on show and two folded
+    # blades at the trailing edge. s3 and s4 split off s2 are each under the
+    # minimum, so the row stacks and they fold into strips; the gutters
+    # between the three cards are then grips, which the T2285 divider
+    # double-click never reached.
+    Say '== G: three cards and two folded blades; double-click each grip between cards'
+    & $exe +split --pane=s2 --direction=right --name=s3 | Out-Null
+    Start-Sleep -Milliseconds 800
+    & $exe +split --pane=s3 --direction=right --name=s4 | Out-Null
+    Start-Sleep -Milliseconds 1200
+    function Get-Widths { @(Get-VisiblePanes $top | ForEach-Object { $_.Right - $_.Left }) }
+    function Get-Spread($w) { $m = ($w | Measure-Object -Maximum -Minimum); return ($m.Maximum - $m.Minimum) }
+    # All five fit side by side; the s2|s3 divider dragged to the row's end
+    # folds s4, then s3, and the fold sticks on release (E).
+    $g = @(Get-VisiblePanes $top)
+    if ($g.Count -eq 5) {
+        $dx = [int](($g[2].Right + $g[3].Left) / 2)
+        $toX = $g[4].Right - (Get-TestChromeDip -Dip 20 -Scale $scale)
+        [void](Send-TestMouse -Window $top -Target $top -X $dx -Y $y -Action down -HoldMs 0)
+        Start-Sleep -Milliseconds 150
+        Move-To $top $dx $toX $y
+        [void](Send-TestMouse -Window $top -Target $top -X $toX -Y $y -Action up -HoldMs 0)
+        Start-Sleep -Milliseconds 800
+    }
+    $g = @(Get-VisiblePanes $top)
+    Say ("      on show: {0} ({1})" -f $g.Count, (($g | ForEach-Object { "$($_.Left)-$($_.Right)" }) -join ' | '))
+    Assert ($g.Count -eq 3) "G: precondition - three cards on show, two folded (got $($g.Count))"
+    if ($g.Count -eq 3) {
+        $runRight = $g[2].Right
+        foreach ($slot in 0, 1) {
+            # Control: make the cards visibly uneven with the OTHER grip's
+            # drag, so a double-click that does nothing cannot pass.
+            $now = @(Get-VisiblePanes $top)
+            $other = 1 - $slot
+            $ox = [int](($now[$other].Right + $now[$other + 1].Left) / 2)
+            $pull = (Get-TestChromeDip -Dip 120 -Scale $scale) * $(if ($other -eq 0) { 1 } else { -1 })
+            [void](Send-TestMouse -Window $top -Target $top -X $ox -Y $y -Action down -HoldMs 0)
+            Start-Sleep -Milliseconds 150
+            Move-To $top $ox ($ox + $pull) $y
+            [void](Send-TestMouse -Window $top -Target $top -X ($ox + $pull) -Y $y -Action up -HoldMs 0)
+            Start-Sleep -Milliseconds 600
+            $w0 = @(Get-Widths)
+            Assert ($w0.Count -eq 3 -and (Get-Spread $w0) -gt 60) `
+                "G$slot control: the cards are uneven before the double-click (widths $($w0 -join '/'))"
+
+            $now = @(Get-VisiblePanes $top)
+            $gx = [int](($now[$slot].Right + $now[$slot + 1].Left) / 2)
+            if ($NegativeControl) {
+                # The pre-T2409 answer: no double-click at all.
+                Say "      NEGATIVE: grip $slot not double-clicked"
+            } else {
+                [void](Send-TestMouse -Window $top -Target $top -X $gx -Y $y -Action doubleclick)
+            }
+            Start-Sleep -Milliseconds 600
+            $w1 = @(Get-Widths)
+            $after = @(Get-VisiblePanes $top)
+            Say ("      grip {0} double-clicked: widths {1} -> {2}" -f $slot, ($w0 -join '/'), ($w1 -join '/'))
+            Assert ($w1.Count -eq 3 -and (Get-Spread $w1) -le 2) `
+                "G${slot}: double-clicking grip $slot between cards gives the three cards the same width (widths $($w1 -join '/'))"
+            Assert ($after.Count -eq 3 -and [math]::Abs($after[2].Right - $runRight) -le 2) `
+                "G${slot}: the folded blades keep their strips - the run still ends at $runRight (got $(if ($after.Count) { $after[-1].Right }))"
+
+            # The second click began no drag: the pointer moved afterwards,
+            # button up, moves nothing.
+            Move-To $top $gx ($gx + (Get-TestChromeDip -Dip 80 -Scale $scale)) $y
+            $w2 = @(Get-Widths)
+            Assert (($w2 -join '/') -eq ($w1 -join '/')) `
+                "G${slot}: the second click starts no drag - moving the pointer after it changes nothing ($($w1 -join '/') -> $($w2 -join '/'))"
+        }
     }
 
     Complete-TestBody

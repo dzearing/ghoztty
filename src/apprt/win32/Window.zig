@@ -11371,6 +11371,41 @@ fn startGripDrag(self: *Window, hit: GripHit, x: i32, y: i32) void {
     if (self.hwnd) |hwnd| _ = w32.SetCapture(hwnd);
 }
 
+/// A grip double-clicked (T2409, Mac `TerminalSplitOperation.evenRun`): between
+/// two cards, the cards on show even out - the tree's ratios when all of the
+/// row is on show, else the run's shares. A grip where the run meets its
+/// strips has no double-click.
+pub fn evenStackRun(self: *Window, hit: GripHit) void {
+    var grid = self.stackGrid() orelse return;
+    defer grid.deinit();
+    if (hit.index >= grid.result.stack_handles.items.len) return;
+    const h = grid.result.stack_handles.items[hit.index];
+    const gpa = self.app.core_app.alloc;
+    const done = (stack_drag.evenRun(gpa, self.stackState(), h) catch |err| {
+        log.warn("stack run not evened: {}", .{err});
+        return;
+    }) orelse return;
+    switch (done) {
+        .run => {},
+        .tree => |shares| {
+            defer gpa.free(shares);
+            const ratios = self.rowRatios(h.direction, h.row.items, shares) orelse return;
+            defer gpa.free(ratios);
+            const tree = &self.tab_trees[self.active_tab];
+            for (ratios) |r| {
+                if (r.node >= tree.nodes.len) continue;
+                switch (tree.nodes[r.node]) {
+                    .split => tree.resizeInPlace(@enumFromInt(r.node), @floatCast(r.ratio)),
+                    else => {},
+                }
+            }
+        },
+    }
+    log.info("stack grip double-click evened the run ({s})", .{@tagName(done)});
+    self.layoutSplits();
+    self.app.markLayoutDirty();
+}
+
 fn updateGripDrag(self: *Window, x: i32, y: i32) void {
     const g = self.grip_drag orelse return;
     if (self.row_drag == null) return;
@@ -17682,6 +17717,14 @@ pub fn windowWndProc(
             // three panes in a row 50/25/25.
             if (window.hitTestDivider(x, y)) |hit| {
                 window.equalizeSplitsOnly(hit.layout);
+                return 0;
+            }
+            // Double-click a grip between two stacked cards: even out the run
+            // on show, folded blades keeping their strips (T2409, Mac
+            // 7e2d0a9da `evenRun`). The second press arrives here, not at
+            // WM_LBUTTONDOWN, so it never starts a grip drag.
+            if (window.hitTestStackGrip(x, y)) |hit| {
+                window.evenStackRun(hit);
                 return 0;
             }
             return 0;
