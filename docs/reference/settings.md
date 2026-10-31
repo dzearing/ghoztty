@@ -19,7 +19,9 @@ approved mock: `temp/mocks/settings/` (not committed).
   parsed by Ghostty itself on a scratch config (`ConfigValidator`, via
   `ghostty_config_load_file` + diagnostics); a rejection shows on the row
   ("invalid value … — not saved"). Controls also bound their input (ranges,
-  existing executables for shells, `KEY=VALUE` for env…).
+  existing executables for shells…). `env` is deliberately not on a page —
+  environment belongs in the shell's profile — but stays editable under
+  All Settings.
 - **Changes apply live** through the normal `reloadConfig()`; plain keys read
   their value straight from the file when the file sets them, so the UI
   updates without waiting for the reload round-trip.
@@ -84,7 +86,7 @@ enum value without a curated label, so a new value is never hidden.
 Appearance (live preview, theme, font, cursor, window), Panes & Windows
 (pane style, glass, dimming, `macos-window-gradient`, `macos-pane-sidebar`,
 `macos-pane-min-width`/`-height`, `macos-hero-carousel-ratio`, new windows),
-Terminal (shell, starting folder, env, scrollback, shell integration, copy &
+Terminal (shell, starting folder, scrollback, shell integration, copy &
 paste, mouse, notifications), Keyboard, Sessions & Agent, Remote Machines,
 Updates, Advanced (config file, includes, backups, All Settings).
 

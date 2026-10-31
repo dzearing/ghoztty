@@ -257,8 +257,6 @@ enum SettingsPages {
                 SettingRow("window-inherit-working-directory", "New windows open in the current folder", .toggle),
                 SettingRow("split-inherit-working-directory", "New panes open in the current folder", .toggle),
                 SettingRow("tab-inherit-working-directory", "New tabs open in the current folder", .toggle),
-                SettingRow("env", "Environment variables", .list(placeholder: "KEY=VALUE"),
-                           hint: "Added to every shell, as KEY=VALUE."),
                 SettingRow("command-shell", "Shell for scripted windows", .shell(scripted: true),
                            hint: "Runs the command of ghoztty +new-window --command=…, with -lic so your profile loads."),
             ]),
