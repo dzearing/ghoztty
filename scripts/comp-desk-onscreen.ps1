@@ -21,6 +21,18 @@
 #             magenta visual). Only used by -NegativeControl, which scores it
 #             as the visual arm: the match must then FAIL, or the comparison
 #             cannot tell a desk from no desk.
+#   - freeze: knob on with GHOZTTY_COMP_CHROME_CAPTION_FREEZE (the caption
+#             visual drops every dirty-rect upload). Only used by
+#             -NegativeControl, which scores its PRESSED frame as the visual
+#             arm's: the caption match must then FAIL, or a band that stopped
+#             updating after its first upload would pass.
+#
+# The caption band (T2543): with the desk on the compositor the caption and
+# tab bar paint into a mirror and go up as a visual above the desk, so the
+# window's own band is never painted either. Each arm is grabbed twice: at
+# rest, and after a posted WM_NCLBUTTONDOWN on the minimize button (a press
+# survives the pointer being elsewhere, unlike a hover) - the pressed slab is
+# a dirty-rect upload, and its frame must match GDI's too, band rows included.
 #
 #   powershell -NoProfile -File scripts\comp-desk-onscreen.ps1
 #   powershell -NoProfile -File scripts\comp-desk-onscreen.ps1 -NegativeControl   # must go red
@@ -58,7 +70,7 @@ if (-not (Test-Path $Spike)) { "SETUP FAIL: $Spike not found - zig build comp-sp
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-desk-onscreen-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_CHROME_TEST_FILL', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION'
+$knobs = 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_CHROME_TEST_FILL', 'GHOZTTY_COMP_CHROME_CAPTION_FREEZE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -73,6 +85,11 @@ public static class DeskGhost {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    // Rows [0, rows) only: the caption band.
+    public static int DiffRows(byte[] a, byte[] b, int w, int rows, int stride, int tol) {
+        return Diff(a, b, w, rows, stride, tol);
+    }
     public static IntPtr[] TopLevel(uint pid, string cls) {
         var list = new List<IntPtr>();
         EnumWindows((h, l) => {
@@ -131,7 +148,7 @@ function Wait-Log($path, $pattern, $timeoutMs) {
 }
 
 $arms = @('gdi', 'visual')
-if ($NegativeControl) { $arms += 'fill' }
+if ($NegativeControl) { $arms += 'fill', 'freeze' }
 
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 [void](Set-GhozttyTestIsolation -Tag 'deskonscreen')
@@ -140,7 +157,9 @@ Register-RepoBuildTeardown -Exe $Exe | Out-Null
 $td = New-TestDesktop -Interactive
 
 $grabs = @{}
+$presses = @{}
 $logs = @{}
+$script:bandH = 0
 try {
     foreach ($arm in $arms) {
         "== arm '$arm'"
@@ -150,9 +169,10 @@ try {
         $env:LOCALAPPDATA = $dir
         $env:GHOZTTY_DEBUG_GHOST = 'bottom'
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
-        Remove-Item env:GHOZTTY_COMP_CHROME, env:GHOZTTY_COMP_CHROME_TEST_FILL -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_COMP_CHROME, env:GHOZTTY_COMP_CHROME_TEST_FILL, env:GHOZTTY_COMP_CHROME_CAPTION_FREEZE -ErrorAction SilentlyContinue
         if ($arm -ne 'gdi') { $env:GHOZTTY_COMP_CHROME = '1' }
         if ($arm -eq 'fill') { $env:GHOZTTY_COMP_CHROME_TEST_FILL = '1' }
+        if ($arm -eq 'freeze') { $env:GHOZTTY_COMP_CHROME_CAPTION_FREEZE = '1' }
         $err = Join-Path $dir 'stderr.txt'
         $logs[$arm] = $err
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
@@ -179,9 +199,12 @@ try {
         foreach ($p in 'desk', 'desk-right') { & $Exe +send-keys "--target=$p" 'cls' Enter 2>$null | Out-Null }
         Start-Sleep -Milliseconds 2000
 
-        if ($arm -eq 'visual') {
+        if ($arm -eq 'visual' -or $arm -eq 'freeze') {
             Assert "$arm.2 the desk visual attached" (Wait-Log $err 'chrome desk visual attached' 10000)
             Assert "$arm.3 the desk never fell back to GDI" ((Read-Text $err) -notmatch 'chrome desk visual (failed|detached)')
+            Assert "$arm.3c the caption visual attached above it" (Wait-Log $err 'chrome caption visual attached' 10000)
+            Assert "$arm.3d the caption never fell back to GDI" ((Read-Text $err) -notmatch 'chrome caption visual (failed|detached)')
+            if ((Read-Text $err) -match 'chrome caption visual attached: (\d+)x(\d+)') { $script:bandH = [int]$Matches[2] }
         } elseif ($arm -eq 'fill') {
             Assert "$arm.2 the test fill is up (the desk stays GDI under it)" (Wait-Log $err 'chrome composition test fill attached' 10000)
         } else {
@@ -201,6 +224,20 @@ try {
         "  $grabOut"
         Assert "$arm.4 WGC grabbed a frame of the ghost" ($grabOut -match '^GRAB ok' -and (Test-Path $bmpPath))
         if (Test-Path $bmpPath) { $grabs[$arm] = Get-Pixels $bmpPath }
+
+        # The press: WM_NCLBUTTONDOWN (0xA1) with HTMINBUTTON (8). Never
+        # released, so the slab stays pressed for the grab.
+        [void][DeskGhost]::PostMessage($hw, 0xA1, [IntPtr]8, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 1200
+        $pressPath = Join-Path $dir 'press.bmp'
+        $pressErr = Join-Path $dir 'press.txt'
+        $gp = Start-Process -FilePath $Spike -ArgumentList @("--grab-hwnd=$([int64]$hw)", "--out=`"$pressPath`"") `
+            -NoNewWindow -PassThru -RedirectStandardError $pressErr
+        [void]$gp.WaitForExit(15000)
+        $pressOut = (Read-Text $pressErr).Trim()
+        "  press: $pressOut"
+        Assert "$arm.5 WGC grabbed the pressed frame" ($pressOut -match '^GRAB ok' -and (Test-Path $pressPath))
+        if (Test-Path $pressPath) { $presses[$arm] = Get-Pixels $pressPath }
     }
 } finally {
     foreach ($k in $knobs) {
@@ -228,6 +265,39 @@ if (-not $ref -or -not $g) {
     "  $src vs gdi: $($g.W)x$($g.H) differing=$diff ($('{0:P2}' -f ($diff / [double]$total))) black=$black (gdi $blackRef)"
     Assert "match.1 the $src frame's desk matches the GDI desk (<= $('{0:P1}' -f $MaxDiffShare) differ by > $Tolerance)" ($diff -le $total * $MaxDiffShare)
     Assert "match.2 no never-painted (black) pixels beyond the GDI frame's" ($black -le $blackRef + $total * 0.001)
+}
+
+# The caption band at rest and pressed (T2543): the pressed frame is the
+# visual arm's (the freeze arm's under -NegativeControl).
+$psrc = if ($NegativeControl) { 'freeze' } else { 'visual' }
+$pref = $presses['gdi']
+$pg = $presses[$psrc]
+Assert "band.0 the caption band's height came from the log ($script:bandH rows)" ($script:bandH -gt 0)
+if ($pref -and $ref -and $script:bandH -gt 0 -and $pref.W -eq $ref.W -and $pref.H -eq $ref.H) {
+    # Positive control: the press is visible at all in the GDI picture.
+    $moved = [DeskGhost]::DiffRows($ref.B, $pref.B, $ref.W, $script:bandH, $ref.Stride, $Tolerance)
+    "  gdi rest vs pressed band: differing=$moved"
+    Assert "band.1 the press changes the GDI caption band (positive control)" ($moved -gt 20)
+}
+if ($ref -and $g -and $script:bandH -gt 0 -and $ref.W -eq $g.W -and $ref.H -eq $g.H) {
+    $bd = [DeskGhost]::DiffRows($ref.B, $g.B, $g.W, $script:bandH, $g.Stride, $Tolerance)
+    "  $src vs gdi band at rest: differing=$bd of $($g.W * $script:bandH)"
+    Assert "band.2 the $src caption band at rest matches GDI's" ($bd -le $g.W * $script:bandH * $MaxDiffShare)
+}
+if (-not $pref -or -not $pg) {
+    Assert "press.0 both pressed frames to compare" $false
+} elseif ($pref.W -ne $pg.W -or $pref.H -ne $pg.H) {
+    Assert "press.0 the pressed frames are the same size" $false
+} else {
+    $ptotal = $pg.W * $pg.H
+    $pd = [DeskGhost]::Diff($pref.B, $pg.B, $pg.W, $pg.H, $pg.Stride, $Tolerance)
+    "  $psrc vs gdi pressed: differing=$pd ($('{0:P2}' -f ($pd / [double]$ptotal)))"
+    Assert "press.1 the $psrc pressed frame matches GDI's" ($pd -le $ptotal * $MaxDiffShare)
+    if ($script:bandH -gt 0) {
+        $pbd = [DeskGhost]::DiffRows($pref.B, $pg.B, $pg.W, $script:bandH, $pg.Stride, $Tolerance)
+        "  $psrc vs gdi pressed band: differing=$pbd of $($pg.W * $script:bandH)"
+        Assert "press.2 the $psrc pressed caption band matches GDI's (a dirty-rect upload)" ($pbd -le $pg.W * $script:bandH * $MaxDiffShare)
+    }
 }
 "  grabs kept in $OutDir"
 if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }

@@ -6,12 +6,16 @@
 //! A DComp target's visual tree composes ABOVE the window's own redirected
 //! GDI pixels - `topmost=FALSE` only puts it BELOW the window's child windows
 //! (the panes) - so any visual hung here hides every GDI chrome painter under
-//! it. The desk is the one visual so far (T2509): `PaneDesk`'s composed
-//! buffer, uploaded rectangle by rectangle as it changes, clipped to the
-//! content area below the caption. The window carries it only while no GDI
-//! painter draws over the desk (an opaque window, no hero tab, no rearrange
-//! header); otherwise the desk stays a GDI blit. T2510 moves the remaining
-//! painters over it.
+//! it. Two visuals hang from a container root. The desk (T2509): `PaneDesk`'s
+//! composed buffer, uploaded rectangle by rectangle as it changes, clipped to
+//! the content area below the caption. The window carries it only while no
+//! GDI painter draws over the desk (an opaque window, no hero tab, no
+//! rearrange header); otherwise the desk stays a GDI blit. Above it, while
+//! the desk is up, the caption band (T2543): the caption and tab bar painted
+//! by their own GDI painters into a persistent `Mirror` and uploaded by the
+//! paint's dirty rect. A window paint batches both into one commit
+//! (`beginBatch`/`flush`), so the band and the desk change in the same frame.
+//! T2544/T2545/T2541 move the remaining painters over.
 //!
 //! Why DirectComposition and not Windows.UI.Composition, same call as the pane
 //! presenter (`renderer/gl_comp_present.zig`): a DComp device commits
@@ -32,6 +36,9 @@
 //!     the client area on the target, drawn through the Direct2D context. On
 //!     screen it must cover the GDI chrome and sit under the panes - the
 //!     ordering every later step relies on.
+//!   - `GHOZTTY_COMP_CHROME_CAPTION_FREEZE=1` (scripts\comp-desk-onscreen.ps1
+//!     -NegativeControl): the caption visual takes its whole uploads and drops
+//!     every dirty-rect one, so a frozen band is something the oracle sees.
 //!
 //! Every slot below was checked against the 10.0.26100.0 SDK headers
 //! (d3d11.h, dxgi.h, dcomp.h, d2d1.h, d2d1_1.h).
@@ -132,6 +139,8 @@ const slot_dcomp_visual_set_offset_x = 4;
 const slot_dcomp_visual_set_offset_y = 6;
 const slot_dcomp_visual_set_clip_rect = 14;
 const slot_dcomp_visual_set_content = 15;
+const slot_dcomp_visual_add_visual = 16;
+const slot_dcomp_visual_remove_visual = 17;
 // ID3D11DeviceContext (ID3D11DeviceChild 3-6, CopyResource 47).
 const slot_d3d11_context_update_subresource = 48;
 
@@ -144,6 +153,77 @@ const D3D11_BOX = extern struct { left: u32, top: u32, front: u32, right: u32, b
 
 /// A rectangle of the desk's buffer, in its own pixels.
 pub const Rect = struct { left: i32, top: i32, right: i32, bottom: i32 };
+
+/// The part of a `w` x `h` band (client origin) that a paint clipped to
+/// `clip` reached, or null when it reached none of it.
+pub fn bandDirty(clip: Rect, w: i32, h: i32) ?Rect {
+    const r: Rect = .{
+        .left = std.math.clamp(clip.left, 0, w),
+        .top = std.math.clamp(clip.top, 0, h),
+        .right = std.math.clamp(clip.right, 0, w),
+        .bottom = std.math.clamp(clip.bottom, 0, h),
+    };
+    if (r.right <= r.left or r.bottom <= r.top) return null;
+    return r;
+}
+
+/// The caption band's persistent mirror (T2543): a top-down 32bpp DIB the
+/// width of the client area and the chrome's height, selected into a memory
+/// DC whose origin is the client's. The caption and tab bar painters draw
+/// into it exactly as they would into the window, and the band goes to the
+/// compositor (or, off it, to the window) from these pixels.
+pub const Mirror = struct {
+    dc: ?w32.HDC = null,
+    bmp: ?w32.HANDLE = null,
+    old: ?*anyopaque = null,
+    px: []u32 = &.{},
+    w: i32 = 0,
+    h: i32 = 0,
+
+    /// The mirror's DC at `w` x `h`, rebuilt (and so fresh) on a new size.
+    /// Null when GDI refused, and the caller paints the window instead.
+    pub fn ensure(self: *Mirror, ref: w32.HDC, w: i32, h: i32) ?w32.HDC {
+        if (w <= 0 or h <= 0) return null;
+        if (self.dc != null and w == self.w and h == self.h) return self.dc;
+        self.deinit();
+        const dc = w32.CreateCompatibleDC(ref) orelse return null;
+        var bits: ?*anyopaque = null;
+        const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+            .biWidth = w,
+            .biHeight = -h, // top-down
+            .biPlanes = 1,
+            .biBitCount = 32,
+            .biCompression = w32.BI_RGB,
+        } };
+        const bmp = w32.CreateDIBSection(dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
+            _ = w32.DeleteDC(dc);
+            return null;
+        };
+        const p = bits orelse {
+            _ = w32.DeleteObject(bmp);
+            _ = w32.DeleteDC(dc);
+            return null;
+        };
+        self.* = .{
+            .dc = dc,
+            .bmp = bmp,
+            .old = w32.SelectObject(dc, bmp),
+            .px = @as([*]u32, @ptrCast(@alignCast(p)))[0..@intCast(w * h)],
+            .w = w,
+            .h = h,
+        };
+        return dc;
+    }
+
+    pub fn deinit(self: *Mirror) void {
+        if (self.dc) |dc| {
+            if (self.old) |o| _ = w32.SelectObject(dc, o);
+            if (self.bmp) |b| _ = w32.DeleteObject(b);
+            _ = w32.DeleteDC(dc);
+        }
+        self.* = .{};
+    }
+};
 
 fn slot(comptime F: type, obj: Obj, index: usize) F {
     const vtbl: *const [*]const *const anyopaque = @ptrCast(@alignCast(obj));
@@ -256,6 +336,29 @@ pub const Host = struct {
     /// until the host is rebuilt.
     desk_failed: bool = false,
 
+    /// The target's root while the desk is up: a container whose children
+    /// are the desk and, above it, the caption band.
+    root_visual: ?Obj = null,
+    /// The caption band (T2543): the caption and tab bar's `Mirror`, at the
+    /// client origin above the desk. Lives only while the desk does.
+    cap_visual: ?Obj = null,
+    cap_surface: ?Obj = null,
+    cap_w: i32 = 0,
+    cap_h: i32 = 0,
+    /// Band uploads since the window last read them: whole, and rectangles.
+    cap_full: u32 = 0,
+    cap_partial: u32 = 0,
+    /// A step of the caption visual failed on this host; the band stays GDI
+    /// (over the desk visual's clip) until the host is rebuilt.
+    cap_failed: bool = false,
+    /// `GHOZTTY_COMP_CHROME_CAPTION_FREEZE`: drop dirty-rect band uploads.
+    cap_freeze: bool = false,
+
+    /// Set across a window paint: uploads leave the commit to `flush`, so
+    /// the desk and the caption band reach the screen in the same frame.
+    defer_commit: bool = false,
+    commit_pending: bool = false,
+
     /// How many times this window's host was rebuilt after a device loss.
     rebuilds: u32 = 0,
     /// `GHOZTTY_COMP_CHROME_FORCE_LOSS`: report the device lost once.
@@ -334,6 +437,7 @@ pub const Host = struct {
             .target_hr = target_hr,
             .d2d_hr = d2d_hr,
             .force_loss = seamBuild() and envOn("GHOZTTY_COMP_CHROME_FORCE_LOSS"),
+            .cap_freeze = seamBuild() and envOn("GHOZTTY_COMP_CHROME_CAPTION_FREEZE"),
         };
         if (seamBuild() and envOn("GHOZTTY_COMP_CHROME_TEST_FILL")) {
             // The fill is a test seam: failing it costs the probe, not the host.
@@ -443,11 +547,13 @@ pub const Host = struct {
     pub fn deskPlace(self: *Host, x: i32, y: i32, clip: Rect) Error!void {
         if (self.desk_visual == null) {
             stage = "desk-visual";
-            var visual: ?Obj = null;
-            try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_visual)(self.dcomp, &visual));
-            const vis = visual orelse return error.ComFailed;
+            const root = try self.ensureRoot();
+            const vis = try self.newVisual();
             errdefer release(vis);
-            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, vis));
+            // The desk is the bottom child: below the caption band if one is
+            // already there, named explicitly rather than leaning on what a
+            // null reference means.
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, 0, self.cap_visual));
             self.desk_visual = vis;
             // Placed below whatever it was before.
             self.desk_x = std.math.minInt(i32);
@@ -512,13 +618,118 @@ pub const Host = struct {
             self.desk_partial +|= 1;
             self.desk_partial_px +|= @intCast(@as(i64, c.right - c.left) * (c.bottom - c.top));
         }
+        try self.commit();
+    }
+
+    fn deskDraw(self: *Host, px: []const u32, w: i32, r: Rect) Error!void {
+        try self.drawRect(self.desk_surface.?, px, w, r);
+    }
+
+    /// Commit now, or at `flush` when a paint is batching its uploads.
+    fn commit(self: *Host) Error!void {
+        if (self.defer_commit) {
+            self.commit_pending = true;
+            return;
+        }
         try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp));
     }
 
-    /// One rectangle of the buffer into the surface. A surface may live in
+    /// Start batching a paint's uploads into one commit.
+    pub fn beginBatch(self: *Host) void {
+        self.defer_commit = true;
+    }
+
+    /// End the batch: everything the paint uploaded goes up in one commit.
+    pub fn flush(self: *Host) Error!void {
+        self.defer_commit = false;
+        if (!self.commit_pending) return;
+        self.commit_pending = false;
+        try self.commit();
+    }
+
+    fn newVisual(self: *Host) Error!Obj {
+        var visual: ?Obj = null;
+        try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_visual)(self.dcomp, &visual));
+        return visual orelse error.ComFailed;
+    }
+
+    /// The container the desk and the caption band hang from, made the
+    /// target's root the first time.
+    fn ensureRoot(self: *Host) Error!Obj {
+        if (self.root_visual) |r| return r;
+        const root = try self.newVisual();
+        errdefer release(root);
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, root));
+        self.root_visual = root;
+        return root;
+    }
+
+    pub fn capLive(self: *const Host) bool {
+        return self.cap_visual != null;
+    }
+
+    /// The caption band's mirror, `w` x `h` client pixels from the client
+    /// origin, into the visual above the desk: only `dirty` when the surface
+    /// already holds the rest (null: all of it). A new size, or a band that
+    /// was not up, takes the whole mirror. Only while the desk is up.
+    pub fn capUpload(self: *Host, px: []const u32, w: i32, h: i32, dirty: ?Rect) Error!void {
+        const desk = self.desk_visual orelse return error.Unavailable;
+        if (w <= 0 or h <= 0 or px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
+        var whole = dirty == null;
+        if (self.cap_visual == null) {
+            stage = "caption-visual";
+            const vis = try self.newVisual();
+            errdefer release(vis);
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, self.root_visual.?, slot_dcomp_visual_add_visual)(self.root_visual.?, vis, 1, desk));
+            self.cap_visual = vis;
+            log.info("chrome caption visual attached: {d}x{d}", .{ w, h });
+            whole = true;
+        }
+        if (self.cap_surface == null or w != self.cap_w or h != self.cap_h) {
+            stage = "caption-surface";
+            if (self.cap_surface) |old| release(old);
+            self.cap_surface = null;
+            var surface: ?Obj = null;
+            // Opaque, like the desk: GDI leaves the alpha byte at zero, and
+            // on an opaque window every pixel of the band is painted.
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE, &surface));
+            const surf = surface orelse return error.ComFailed;
+            errdefer release(surf);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.cap_visual.?, slot_dcomp_visual_set_content)(self.cap_visual.?, surf));
+            self.cap_surface = surf;
+            self.cap_w = w;
+            self.cap_h = h;
+            whole = true;
+        }
+        stage = "caption-upload";
+        if (!whole and self.cap_freeze) return;
+        const r = if (whole) Rect{ .left = 0, .top = 0, .right = w, .bottom = h } else bandDirty(dirty.?, w, h) orelse return;
+        try self.drawRect(self.cap_surface.?, px, w, r);
+        if (whole) self.cap_full +|= 1 else self.cap_partial +|= 1;
+        try self.commit();
+    }
+
+    /// Take the caption band off the compositor; the desk stays.
+    pub fn capHide(self: *Host) void {
+        const vis = self.cap_visual orelse return;
+        if (self.root_visual) |root| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_remove_visual)(root, vis);
+        self.commit() catch {};
+        self.releaseCap();
+        log.info("chrome caption visual detached", .{});
+    }
+
+    fn releaseCap(self: *Host) void {
+        if (self.cap_surface) |s| release(s);
+        if (self.cap_visual) |v| release(v);
+        self.cap_surface = null;
+        self.cap_visual = null;
+        self.cap_w = 0;
+        self.cap_h = 0;
+    }
+
+    /// One rectangle of a `w`-wide buffer into `surf`. A surface may live in
     /// an atlas, so the rows land at the offset `BeginDraw` hands back.
-    fn deskDraw(self: *Host, px: []const u32, w: i32, r: Rect) Error!void {
-        const surf = self.desk_surface.?;
+    fn drawRect(self: *Host, surf: Obj, px: []const u32, w: i32, r: Rect) Error!void {
         const update: w32.RECT = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
         var tex: ?Obj = null;
         var at: w32.POINT = .{ .x = 0, .y = 0 };
@@ -543,15 +754,22 @@ pub const Host = struct {
 
     /// Take the desk off the compositor: the window's own pixels show again
     /// in the same commit.
+    /// The caption band goes with it: it lives only above the desk.
     pub fn deskHide(self: *Host) void {
         if (self.desk_visual == null) return;
+        const had_cap = self.cap_visual != null;
         _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, null);
         _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
+        self.commit_pending = false;
         self.releaseDesk();
+        if (had_cap) log.info("chrome caption visual detached", .{});
         log.info("chrome desk visual detached", .{});
     }
 
     fn releaseDesk(self: *Host) void {
+        self.releaseCap();
+        if (self.root_visual) |r| release(r);
+        self.root_visual = null;
         if (self.desk_surface) |s| release(s);
         if (self.desk_visual) |v| release(v);
         self.desk_surface = null;
@@ -640,6 +858,16 @@ test "D2D structs match the SDK layout" {
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(D2D1_COLOR_F));
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(D2D1_RECT_F));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(D3D11_BOX));
+}
+
+test "T2543: a paint's clip reaches the caption band only where they overlap" {
+    // A caption hover: the band's own rect, wider than any client.
+    try std.testing.expectEqual(Rect{ .left = 0, .top = 0, .right = 800, .bottom = 40 }, bandDirty(.{ .left = 0, .top = 0, .right = 10000, .bottom = 40 }, 800, 40).?);
+    // A paint straddling the band's bottom edge keeps only the band's part.
+    try std.testing.expectEqual(Rect{ .left = 100, .top = 30, .right = 300, .bottom = 40 }, bandDirty(.{ .left = 100, .top = 30, .right = 300, .bottom = 400 }, 800, 40).?);
+    // A desk-only paint below the band reaches none of it.
+    try std.testing.expect(bandDirty(.{ .left = 0, .top = 40, .right = 800, .bottom = 600 }, 800, 40) == null);
+    try std.testing.expect(bandDirty(.{ .left = 0, .top = 0, .right = 0, .bottom = 40 }, 800, 40) == null);
 }
 
 test "loss labels name the cause" {

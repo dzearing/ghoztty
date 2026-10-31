@@ -1024,6 +1024,10 @@ chrome_host: ?chrome_comp.Host = null,
 /// Set around a `WM_PRINTCLIENT` paint: the desk blits into the caller's DC
 /// and leaves the chrome host's visual alone (T2509).
 desk_printing: bool = false,
+/// The caption band's persistent mirror (T2543): with a chrome host the
+/// caption and tab bar paint here, and the band goes from here to the
+/// host's caption visual (desk up) or to the window (desk on GDI).
+caption_mirror: chrome_comp.Mirror = .{},
 
 /// The NEXT split inserted into this window leaves keyboard focus where it is
 /// (T1797): the pane that had it - normally the one the `+split` was run from -
@@ -2189,6 +2193,7 @@ fn releaseOwnedResources(self: *Window) void {
     self.endRowDrag();
     if (self.chrome_host) |*cc| cc.deinit();
     self.chrome_host = null;
+    self.caption_mirror.deinit();
     if (self.pane_stacks) |*st| st.deinit();
     self.pane_stacks = null;
     self.pane_desk.deinit();
@@ -14377,8 +14382,14 @@ fn paintChromeInto(self: *Window, hdc_screen: w32.HDC) void {
 }
 
 fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
-    self.paintCaption(hdc_screen);
-    self.paintTabBar(hdc_screen);
+    // T2543: with a chrome host the caption band paints into its mirror, and
+    // `captionBandFinish` sends it on once this paint knows where the desk is.
+    const band_dc = self.captionBandTarget(hdc_screen);
+    const cap_was_live = if (self.chrome_host) |*h| h.capLive() else false;
+    if (band_dc != null) self.chrome_host.?.beginBatch();
+    self.paintCaption(band_dc orelse hdc_screen);
+    self.paintTabBar(band_dc orelse hdc_screen);
+    defer if (band_dc != null) self.captionBandFinish(hdc_screen, cap_was_live);
     // Dividers are part of the paint cycle (T155). BeginPaint clips to the
     // invalid region, so this covers an exposed band; the post-layout
     // GetDC pass in layoutSplits is what updates a band that MOVED without
@@ -14395,6 +14406,66 @@ fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
         // hero region is owner-painted (outgoing/incoming snapshots).
         if (self.hero_slide != null) HeroCarousel.paintSlide(self, hdc_screen);
     }
+}
+
+/// Where this paint's caption band goes (T2543): the mirror's DC when the
+/// window has a chrome host that can carry the desk, else null and the band
+/// paints the window as it always has. Never under `WM_PRINTCLIENT` (the
+/// caller's DC wants the pixels) or on a translucent window (its band is
+/// alpha-resolved with the rest of the chrome, T2541).
+fn captionBandTarget(self: *Window, hdc: w32.HDC) ?w32.HDC {
+    const host = if (self.chrome_host) |*h| h else return null;
+    const dc: ?w32.HDC = blk: {
+        if (self.translucent or self.desk_printing or !host.deskAvailable()) break :blk null;
+        const hwnd = self.hwnd orelse break :blk null;
+        var rc: w32.RECT = undefined;
+        if (w32.GetClientRect(hwnd, &rc) == 0) break :blk null;
+        break :blk self.caption_mirror.ensure(hdc, rc.right - rc.left, self.chromeHeight());
+    };
+    // No band to carry (no caption, no strip): nothing stays up for it.
+    if (dc == null and !self.desk_printing) host.capHide();
+    return dc;
+}
+
+/// The painted mirror, on: into the caption visual by this paint's dirty
+/// rect while the desk is up, else into the window. Then the batch's one
+/// commit, so the band and the desk land in the same frame.
+fn captionBandFinish(self: *Window, hdc: w32.HDC, cap_was_live: bool) void {
+    const host = if (self.chrome_host) |*h| h else return;
+    const m = &self.caption_mirror;
+    // GDI batches; its writes must be in the bits before they are read.
+    _ = w32.GdiFlush();
+    var box: w32.RECT = undefined;
+    const clip: chrome_comp.Rect = if (w32.GetClipBox(hdc, &box) != 0)
+        .{ .left = box.left, .top = box.top, .right = box.right, .bottom = box.bottom }
+    else
+        .{ .left = 0, .top = 0, .right = m.w, .bottom = m.h };
+    if (host.deskLive() and !host.cap_failed) {
+        host.capUpload(m.px, m.w, m.h, clip) catch {
+            const f = chrome_comp.Host.lastFailure();
+            log.warn("chrome caption visual failed at {s}: hr=0x{x:0>8}; caption stays GDI", .{ f.stage, chrome_comp.hex(f.hr) });
+            host.cap_failed = true;
+            host.capHide();
+            self.blitCaptionBandWhole();
+        };
+    } else if (cap_was_live) {
+        // The band just came off the compositor, and the window's own band
+        // was never painted while it was up: all of it, not just the clip.
+        self.blitCaptionBandWhole();
+    } else if (chrome_comp.bandDirty(clip, m.w, m.h)) |d| {
+        _ = w32.BitBlt(hdc, d.left, d.top, d.right - d.left, d.bottom - d.top, m.dc.?, d.left, d.top, w32.SRCCOPY);
+    }
+    host.flush() catch self.deskVisualFailed();
+}
+
+/// The whole mirror into the window, outside any paint's clip. Children in
+/// the band (the rename box) are clipped out.
+fn blitCaptionBandWhole(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    const src = self.caption_mirror.dc orelse return;
+    const dc = w32.GetDCEx(hwnd, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS | w32.DCX_CLIPCHILDREN) orelse return;
+    defer _ = w32.ReleaseDC(hwnd, dc);
+    _ = w32.BitBlt(dc, 0, 0, self.caption_mirror.w, self.caption_mirror.h, src, 0, 0, w32.SRCCOPY);
 }
 
 /// Light a strip button ("+" or "≡") the way Windows 11 does: a rounded rect
