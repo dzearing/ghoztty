@@ -1,0 +1,60 @@
+f136  qpc=2366745660575  (+8.3 ms)
+      -6.3 ms    desk under panes n=6
+      -6.3 ms    desk under panes n=6
+      -6.3 ms    plan runs cards=6 strips=0 resting=true
+      -6.3 ms    card hwnd=2010b42 from=91,53+400x916 drawn=91,53+400x916 to=91,53+421x916 strip=false into=false
+      -6.3 ms    card hwnd=25c0eb0 from=504,53+282x916 drawn=504,53+282x916 to=525,53+439x916 strip=false into=false
+      -6.3 ms    card hwnd=1e4017c from=799,53+281x916 drawn=799,53+281x916 to=977,53+302x916 strip=false into=false
+      -6.3 ms    card hwnd=2200caa from=1093,53+281x916 drawn=1093,53+281x916 to=1292,53+302x916 strip=false into=false
+      -6.3 ms    card hwnd=1410bb2 from=1387,53+281x916 drawn=1387,53+281x916 to=1607,53+304x916 strip=false into=false
+      -6.3 ms    card hwnd=41409b8 from=1681,53+288x916 drawn=1681,53+288x916 to=1924,53+45x916 strip=true into=true
+      -6.3 ms    place hwnd=2010b42 grid=91,53+421x916 tucked=false src=slide rect=91,53+400x916 card=91,53+400x916 shown=true carried=false opening=false snap=none face=false
+      -6.3 ms    place hwnd=25c0eb0 grid=525,53+439x916 tucked=false src=slide rect=504,53+282x916 card=504,53+282x916 shown=true carried=false opening=false snap=none face=false
+      -6.3 ms    place hwnd=1e4017c grid=977,53+302x916 tucked=false src=slide rect=799,53+281x916 card=799,53+281x916 shown=true carried=false opening=false snap=none face=false
+      -6.3 ms    place hwnd=2200caa grid=1292,53+302x916 tucked=false src=slide rect=1093,53+281x916 card=1093,53+281x916 shown=true carried=false opening=false snap=none face=false
+      -6.3 ms    place hwnd=1410bb2 grid=1607,53+304x916 tucked=false src=slide rect=1387,53+281x916 card=1387,53+281x916 shown=true carried=false opening=false snap=none face=false
+      -6.3 ms    place hwnd=41409b8 grid=1924,53+304x916 tucked=true src=slide rect=1681,53+288x916 card=1681,53+288x916 shown=true carried=false opening=false snap=waiting face=false
+      -6.3 ms  batch qpc=2366745597309 end=2366745598089 plan=2366745587892 grid=2366745597155
+      -6.2 ms  cut qpc=2366745598188
+      -1.5 ms  cleared qpc=2366745646017
+f137  qpc=2366745743907  (+8.3 ms)
+      -8.0 ms    desk under panes n=6
+      -8.0 ms    desk under panes n=6
+      -8.0 ms    place hwnd=2010b42 grid=91,53+421x916 tucked=false src=slide rect=91,53+403x916 card=91,53+403x916 shown=true carried=false opening=false snap=none face=false
+      -8.0 ms    place hwnd=25c0eb0 grid=525,53+439x916 tucked=false src=slide rect=507,53+303x916 card=507,53+303x916 shown=true carried=false opening=false snap=none face=false
+      -8.0 ms    place hwnd=1e4017c grid=977,53+302x916 tucked=false src=slide rect=823,53+284x916 card=823,53+284x916 shown=true carried=false opening=false snap=none face=false
+      -8.0 ms    place hwnd=2200caa grid=1292,53+302x916 tucked=false src=slide rect=1120,53+284x916 card=1120,53+284x916 shown=true carried=false opening=false snap=none face=false
+      -8.0 ms    place hwnd=1410bb2 grid=1607,53+304x916 tucked=false src=slide rect=1417,53+284x916 card=1417,53+284x916 shown=true carried=false opening=false snap=none face=false
+      -8.0 ms    place hwnd=41409b8 grid=1924,53+304x916 tucked=true src=slide rect=1681,53+288x916 card=1714,53+255x916 shown=true carried=false opening=false snap=ready face=false
+      -8.0 ms  batch qpc=2366745663840 end=2366745783418 plan=2366745663615 grid=2366745663727
+f138  qpc=2366745827238  (+8.3 ms)
+      -0.6 ms  cut qpc=2366745821581
+f139  qpc=2366745910570  (+8.3 ms)
+      -5.8 ms  cleared qpc=2366745852640
+      -0.3 ms  face hwnd=41409b8 qpc=2366745907071 vis=1715,54+253x914 at=1682,54+286x914 pull=-33 alpha=255 carried=true live=true
+f140  qpc=2366745993902  (+8.3 ms)
+f141  qpc=2366746077235  (+8.3 ms)
+      -6.2 ms    desk under panes n=6
+      -6.2 ms    face first paint_us=745 commit_us=3215 live=1
+      -6.2 ms    desk under panes n=6
+      -6.2 ms    tick gap_us=0 cost_us=25724 wait_us=0 waits=1 resizes=5 timeouts=0 resize_us=0 place_us=0 paint_us=0 cards_us=0 overlay_us=0
+      -6.2 ms    plan retarget cards=6 strips=0 resting=false
+      -6.2 ms    card hwnd=2010b42 from=91,53+400x916 drawn=91,53+413x916 to=91,53+547x916 strip=false into=false
+      -6.2 ms    card hwnd=25c0eb0 from=504,53+282x916 drawn=517,53+375x916 to=651,53+313x916 strip=false into=false
+      -6.2 ms    card hwnd=1e4017c from=799,53+281x916 drawn=905,53+294x916 to=977,53+302x916 strip=false into=false
+      -6.2 ms    card hwnd=2200caa from=1093,53+281x916 drawn=1212,53+293x916 to=1292,53+302x916 strip=false into=false
+      -6.2 ms    card hwnd=1410bb2 from=1387,53+281x916 drawn=1518,53+295x916 to=1607,53+304x916 strip=false into=false
+      -6.2 ms    card hwnd=41409b8 from=1681,53+288x916 drawn=1809,53+160x916 to=1924,53+45x916 strip=true into=true
+      -6.2 ms    place hwnd=2010b42 grid=91,53+547x916 tucked=false src=slide rect=91,53+413x916 card=91,53+413x916 shown=true carried=false opening=false snap=none face=false
+      -6.2 ms    place hwnd=25c0eb0 grid=651,53+313x916 tucked=false src=slide rect=517,53+375x916 card=517,53+375x916 shown=true carried=false opening=false snap=none face=false
+      -6.2 ms    place hwnd=1e4017c grid=977,53+302x916 tucked=false src=slide rect=905,53+294x916 card=905,53+294x916 shown=true carried=false opening=false snap=none face=false
+      -6.2 ms    place hwnd=2200caa grid=1292,53+302x916 tucked=false src=slide rect=1212,53+293x916 card=1212,53+293x916 shown=true carried=false opening=false snap=none face=false
+      -6.2 ms    place hwnd=1410bb2 grid=1607,53+304x916 tucked=false src=slide rect=1518,53+295x916 card=1518,53+295x916 shown=true carried=false opening=false snap=none face=false
+      -6.2 ms    place hwnd=41409b8 grid=1924,53+304x916 tucked=true src=slide rect=1809,53+288x916 card=1809,53+160x916 shown=false carried=true opening=false snap=ready face=true
+      -6.2 ms  batch qpc=2366746015106 end=2366746144385 plan=2366746008174 grid=2366746008338
+f142  qpc=2366746160566  (+8.3 ms)
+f143  qpc=2366746243899  (+8.3 ms)
+      -5.8 ms  cut qpc=2366746185776
+      -2.1 ms  cleared qpc=2366746222939
+      -0.1 ms  face hwnd=41409b8 qpc=2366746242830 vis=1810,54+158x914 at=1810,54+286x914 pull=0 alpha=255 carried=true live=false
+f144  qpc=2366746327231  (+8.3 ms)
