@@ -1662,6 +1662,13 @@ pub fn syncTreeVisual(self: *Surface) void {
         self.tree_visual = vis;
         self.tree_gen = got.gen;
         self.tree_epoch = h.rebuilds;
+        // The overlays hang under this visual, on the window's device
+        // (T2562), so a compositor move of the pane carries them with it.
+        // The presenter publishes no tree of its own in this mode. The
+        // window's context needs no multithread guard: the overlays, like
+        // the host, live on this thread.
+        self.comp_overlay_slot.publish(.{ .dcomp = h.dcomp, .context = h.context, .root = vis }, comp_overlay.RefOps.com);
+        comp_overlay.notify(hwnd);
     }
     // The pane's own style bit, not `IsWindowVisible`: a window not yet
     // shown would read every pane hidden (the dim pass's reason, T2185).
@@ -1682,6 +1689,11 @@ pub fn syncTreeVisual(self: *Surface) void {
 fn dropTreeVisual(self: *Surface) void {
     const vis = self.tree_visual orelse return;
     self.tree_visual = null;
+    // Its overlay tree goes with it (T2562); the overlays re-sync on the
+    // posted message, onto whatever is published next or back to popups.
+    if (self.comp_overlay_slot.retractRoot(vis, comp_overlay.RefOps.com)) {
+        if (self.hwnd) |hwnd| comp_overlay.notify(hwnd);
+    }
     if (self.parent_window.chrome_host) |*h| {
         if (h.rebuilds == self.tree_epoch) return h.paneDrop(vis);
     }

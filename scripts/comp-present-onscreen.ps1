@@ -173,6 +173,15 @@ public static class InkMath {
         }
         return ink == 0 ? 0.0 : (double)near / ink;
     }
+    // Mean luminance of [x0,x1) x [y0,y1), sampled every 2 px (T2562: is the
+    // dim wash on this pane's spot of the grab).
+    public static double MeanLum(byte[] b, int stride, int x0, int y0, int x1, int y1) {
+        long sum = 0, n = 0;
+        for (int y = y0; y < y1; y += 2) {
+            for (int x = x0, o = y * stride + x0 * 4; x < x1; x += 2, o += 8) { sum += (b[o] + b[o + 1] + b[o + 2]) / 3; n++; }
+        }
+        return n == 0 ? 0.0 : (double)sum / n;
+    }
 }
 '@
 
@@ -263,6 +272,8 @@ function Score-Grab($arm, $label, $hw, $target, $dir) {
     $refInk = @(0..($paneRows.Length - 1) | Where-Object { $paneRows[$_] -ge 3 }).Count
     $script:lastAt = $best.dx
     $script:lastW = $p.W
+    $script:lastGrab = $g
+    $script:lastRegion = @($x0, $y0, $x1, $y1)
     $line = "  grab $($g.W)x$($g.H) pane $($p.W)x$($p.H) at +$($best.dx)+$($best.dy) match=$('{0:N3}' -f $best.s) ink_rows=$($inkRows.Count) (ref $refInk) top_half=$topInk bottom_third=$bottomInk"
     $line
     Assert "$label.6 the pane on screen is not blank" ($inkRows.Count -ge 20)
@@ -296,10 +307,15 @@ try {
             if ($arm -eq 'tree') { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
         }
         $err = Join-Path $dir 'stderr.txt'
-        $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
+        $appArgs = @(
             '--config-default-files=false', '--session-persistence=false',
             '--window-width=110', '--window-height=34', '--background=#101418',
-            "--title=t2488-$arm") -StdErr $err
+            "--title=t2488-$arm")
+        # The tree arm's split leaves one pane unfocused; a white wash makes
+        # its dim visible on the grab (T2562) while its text stays ink. Glass
+        # panes never dim (T2281), so glass is off.
+        if ($arm -eq 'tree') { $appArgs += '--unfocused-split-opacity=0.7', '--unfocused-split-fill=#ffffff', '--macos-pane-glass=false' }
+        $app = Start-OnTestDesktop -Exe $Exe -Arguments $appArgs -StdErr $err
         $top = $null
         for ($t = 0; $t -lt 100 -and -not $top; $t++) {
             $w = @([GhostWin]::TopLevel([uint32]$app.Pid, 'GhozttyWindow'))
@@ -350,10 +366,37 @@ try {
             Mark-Pane "on$arm" 'for /L %i in (1,1,6) do @echo ## LEFT-%i ## llll ##'
             $script:lastAt = $null
             Score-Grab $arm "$arm.split-left" $hw "on$arm" $dir
-            $leftAt = $script:lastAt; $leftW = $script:lastW
+            $leftAt = $script:lastAt; $leftW = $script:lastW; $leftRegion = $script:lastRegion
             Score-Grab $arm "$arm.split-right" $hw "on$arm-r" $dir
             Assert "$arm.10 the right pane's picture sits right of the left pane's (left +$leftAt w$leftW, right +$($script:lastAt))" `
                 ($null -ne $leftAt -and $script:lastAt -ge ($leftAt + $leftW - 8))
+
+            # T2562: the overlays hang under the pane's visual in the window's
+            # tree, so they are on the grab at the pane's spot and no overlay
+            # popup window exists at all.
+            $text = Read-Text $err
+            Assert "$arm.11 the dim wash went onto the pane's visual" ($text -match 'dim overlay path visual=true')
+            Assert "$arm.11b the unfocused pane's wash is shown as a visual" ($text -match 'dim overlay shown as visual')
+            Assert "$arm.12 the scrollbar went onto the pane's visual" ($text -match 'scrollbar path visual=true')
+            $popups = @()
+            foreach ($cls in 'GhozttyDimOverlay', 'GhozttyScrollbar', 'GhozttyBellBorder') {
+                $popups += @([GhostWin]::TopLevel([uint32]$app.Pid, $cls) | ForEach-Object { $cls })
+            }
+            Assert "$arm.13 no overlay popup window is visible ($(if ($popups.Count) { $popups -join ',' } else { 'none' }))" ($popups.Count -eq 0)
+            # Both panes are in the last grab. One is unfocused and carries a
+            # white 30% wash: its background (the bottom third, no text) reads
+            # well above the other's dark #101418.
+            $g = $script:lastGrab
+            $lumOf = {
+                param($r)
+                $y0 = $r[1] + [int](($r[3] - $r[1]) * 2 / 3)
+                [InkMath]::MeanLum($g.B, $g.Stride, $r[0] + 4, $y0, $r[2] - 24, $r[3] - 4)
+            }
+            $lumL = & $lumOf $leftRegion
+            $lumR = & $lumOf $script:lastRegion
+            "  background lum: left=$('{0:N1}' -f $lumL) right=$('{0:N1}' -f $lumR)"
+            $hi = [Math]::Max($lumL, $lumR); $lo = [Math]::Min($lumL, $lumR)
+            Assert "$arm.14 exactly one pane is washed on the grab, at its own spot (washed >= 60, other <= 35)" ($hi -ge 60 -and $lo -le 35)
         }
     }
 } finally {

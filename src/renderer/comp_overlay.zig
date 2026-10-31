@@ -89,6 +89,23 @@ pub const Slot = struct {
         return old != null;
     }
 
+    /// Window thread (T2562): retract only if the published tree is the one
+    /// rooted at `root`. In pane-tree mode the window publishes its own tree
+    /// for the pane's visual; when it lets that visual go it must not take
+    /// down a tree the renderer has published since (a fallback presenter).
+    pub fn retractRoot(self: *Slot, root: Obj, ops: RefOps) bool {
+        self.mutex.lock();
+        const old = self.shared;
+        const mine = if (old) |o| o.root == root else false;
+        if (mine) {
+            self.shared = null;
+            self.generation +%= 1;
+        }
+        self.mutex.unlock();
+        if (mine) releaseShared(old.?, ops);
+        return mine;
+    }
+
     pub const Borrow = struct { generation: u64, shared: ?Shared };
 
     /// Window thread: the current generation, and - when it differs from
@@ -546,6 +563,26 @@ test "publish over a live publish releases the old tree" {
     try std.testing.expectEqual(@as(u64, 2), s.generation);
     _ = s.retract(Fake.ops);
     try std.testing.expectEqual([3]i32{ 0, 0, 0 }, Fake.refs);
+}
+
+test "retractRoot takes back only its own tree (T2562)" {
+    Fake.refs = .{ 0, 0, 0 };
+    var s: Slot = .{};
+    // Nothing published: nothing to take, the generation stays.
+    try std.testing.expect(!s.retractRoot(&Fake.objs[2], Fake.ops));
+    try std.testing.expectEqual(@as(u64, 0), s.generation);
+
+    s.publish(Fake.shared(), Fake.ops);
+    // A different root (the renderer's tree, say) is left alone.
+    try std.testing.expect(!s.retractRoot(&Fake.objs[0], Fake.ops));
+    try std.testing.expectEqual(@as(u64, 1), s.generation);
+    try std.testing.expectEqual([3]i32{ 1, 1, 1 }, Fake.refs);
+
+    // Its own root: retracted, refs released, generation moved.
+    try std.testing.expect(s.retractRoot(&Fake.objs[2], Fake.ops));
+    try std.testing.expectEqual(@as(u64, 2), s.generation);
+    try std.testing.expectEqual([3]i32{ 0, 0, 0 }, Fake.refs);
+    try std.testing.expect(s.shared == null);
 }
 
 test "uploadBox places the pixels at the BeginDraw offset" {
