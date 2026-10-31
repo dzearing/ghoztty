@@ -38,8 +38,8 @@
 #   powershell -NoProfile -File scripts\comp-desk-onscreen.ps1 -NegativeControl   # must go red
 
 param(
-    [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
-    [string]$Spike = 'D:\git\ghoztty\zig-out\bin\ghoztty-comp-spike.exe',
+    [string]$Exe = (Join-Path $PSScriptRoot '..\zig-out\bin\ghoztty.exe'),
+    [string]$Spike = (Join-Path $PSScriptRoot '..\zig-out\bin\ghoztty-comp-spike.exe'),
     [string]$OutDir,
     # Pixels whose largest channel differs by more than this count as differing.
     [int]$Tolerance = 12,
@@ -50,6 +50,8 @@ param(
 
 $ErrorActionPreference = 'Continue'
 Set-StrictMode -Off
+$Exe = [IO.Path]::GetFullPath($Exe)
+$Spike = [IO.Path]::GetFullPath($Spike)
 
 $testLib = Join-Path $PSScriptRoot '..\test\win32\lib'
 . (Join-Path $testLib 'CleanSlate.ps1')

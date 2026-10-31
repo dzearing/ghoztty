@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-31T14:25:54-07:00",
-    "commit":  "e5b6dfc48",
+    "generated":  "2026-10-31T15:32:18-07:00",
+    "commit":  "583a653ac",
     "uncommitted":  [
-                        "scripts/comp-present-onscreen.ps1"
+                        "scripts/comp-desk-onscreen.ps1",
+                        "scripts/comp-flat-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -17,8 +18,10 @@
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
                   "scripts/comp-chrome-onscreen.ps1":  "feb985408dd8ea6396dd0f234a79de4face1a32215ce763661ff66c081e4e58f",
-                  "scripts/comp-desk-onscreen.ps1":  "b3391841f292cfe426761075bec3c7631337543c9ebe3f817b8382e75807c71b",
+                  "scripts/comp-desk-onscreen.ps1":  "d0482983087b3a8426b7638f247ebf8e3e7bad4cf8a7e16d4c7e253ea797d290",
+                  "scripts/comp-flat-onscreen.ps1":  "cde964292ed5a46e425ee40faa9b6ad28c3814708c4c140fe4caf85abdf53eae",
                   "scripts/comp-glide-hold-onscreen.ps1":  "24ec06985babd3312c1a70329f20f49ff82b4ad2b6c3268ee5708586ee2194c4",
+                  "scripts/comp-overlay-onscreen.ps1":  "1a2566f9318a69009bf2c91c63875bcdb4da4dd03f08c201834ac2699cedcbb3",
                   "scripts/comp-present-glide.ps1":  "a530ebc0d8a0a400bcedb0fd25ee788c60f3abaf0aecc24d6031e15fca67eba4",
                   "scripts/comp-present-onscreen.ps1":  "362c984ff05899d9ad094efc7e8c6695d79fc123c4ac705b0d60b25a7aa68543",
                   "scripts/comp-spike.ps1":  "0cb3e4fbe75df1ed7645ce6fd2a28ca71177ab94a87febee45e13a1201d10ab7",

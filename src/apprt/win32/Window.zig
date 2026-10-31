@@ -1048,6 +1048,12 @@ overlay_keep: [2]chrome_comp.Rect = undefined,
 overlay_keep_n: usize = 0,
 /// This paint's desk is on the compositor and something paints over it.
 over_desk: bool = false,
+/// The flat style's bottom layer on the compositor (T2545): the gutters,
+/// divider lines, gutter bar and strips the flat style paints between the
+/// panes, drawn into this mirror and sent to the desk visual by what changed.
+/// `flat_live` says the desk visual is carrying it rather than `PaneDesk`.
+flat_desk: chrome_comp.FlatDesk = .{},
+flat_live: bool = false,
 
 /// The NEXT split inserted into this window leaves keyboard focus where it is
 /// (T1797): the pane that had it - normally the one the `+split` was run from -
@@ -2216,6 +2222,7 @@ fn releaseOwnedResources(self: *Window) void {
     self.caption_mirror.deinit();
     self.desk_overlay.deinit();
     self.overlay_scratch.deinit();
+    self.flat_desk.deinit();
     if (self.pane_stacks) |*st| st.deinit();
     self.pane_stacks = null;
     self.pane_desk.deinit();
@@ -5630,10 +5637,14 @@ fn repaintRearrangeHeaders(self: *Window) void {
     // Elevated (T1851): the card paint draws each band's rounded corners, in
     // the band's colour - which a carried pane changes - so the desk goes
     // down first, the way the post-layout pass paints it.
-    if (self.paneStyle() == .elevated)
-        self.paintAlphaCorrect(hdc, paintMovedBands)
-    else
+    if (self.paneStyle() == .elevated) {
+        self.paintAlphaCorrect(hdc, paintMovedBands);
+    } else {
+        // The flat desk's visual would hide them (T2545): headers put it
+        // back on GDI, and the paint that follows draws the rest.
+        if (self.flat_live and !self.flatEligible()) self.deskOffVisual();
         self.paintAlphaCorrect(hdc, paintRearrangeHeaders);
+    }
     _ = w32.ReleaseDC(h, hdc);
 }
 
@@ -9875,7 +9886,9 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
     const host: ?*chrome_comp.Host = if (self.chrome_host) |*h| (if (h.defer_commit) null else h) else null;
     if (host) |h| h.beginBatch();
     defer if (host) |h| h.flush() catch self.deskVisualFailed();
-    self.paintDividers(hdc);
+    // The flat style's bands to its desk visual (T2545), strips included.
+    const flat = self.flatPass(hdc, paintFlatBands, true);
+    if (!flat) self.paintDividers(hdc);
     // Same moved-band argument, one level in: a pane that just slid
     // takes its header band with it (T1530). On the compositor they paint
     // the desk's overlay, and the rest of it stays (T2544).
@@ -9885,7 +9898,7 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
         self.paintRearrangeHeaders(hdc);
     // A strip moves with its stack, and a banner change re-lays the window
     // out, so the relabelled strip is painted here too (T2109).
-    self.paintStackStrips(hdc);
+    if (!flat) self.paintStackStrips(hdc);
 }
 
 /// Paint divider lines between split panes in the active tab.
@@ -10054,6 +10067,8 @@ fn clearVacatedGutters(self: *Window, hwnd: w32.HWND) void {
     defer _ = w32.ReleaseDC(hwnd, dc);
     _ = w32.IntersectClipRect(dc, box.left, box.top, box.right, box.bottom);
     if (!self.clear_whole_gutters) self.excludeFromGutterClear(hwnd, dc);
+    // Under the flat desk's visual the clear is the visual's (T2545).
+    if (self.flatPass(dc, paintVacatedGutters, false)) return;
     self.paintAlphaCorrect(dc, paintVacatedGutters);
 }
 
@@ -10157,6 +10172,7 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
     }
     self.vacated_pane_strips = old;
     defer self.vacated_pane_strips = &.{};
+    if (self.flatPass(dc, paintVacatedPaneStrips, false)) return;
     self.paintAlphaCorrect(dc, paintVacatedPaneStrips);
 }
 
@@ -10775,6 +10791,8 @@ fn deskOnVisual(self: *Window, area: w32.RECT, eligible: bool) bool {
         if (host.deskLive()) self.pane_desk.forget();
         return false;
     }
+    // The flat desk's picture is not the elevated one (T2545).
+    if (self.flat_live) self.deskOffVisual();
     if (eligible and self.deskOpacity() == null and host.deskAvailable()) {
         const clip: chrome_comp.Rect = .{
             .left = area.left,
@@ -10791,14 +10809,130 @@ fn deskOnVisual(self: *Window, area: w32.RECT, eligible: bool) bool {
 /// The desk back on GDI: the visual goes, and the next paint composes and
 /// blits the whole picture into a window that never kept it.
 fn deskOffVisual(self: *Window) void {
+    self.flat_live = false;
     const host = if (self.chrome_host) |*h| h else return;
     if (!host.deskLive()) return;
+    const had_cap = host.capLive();
     host.deskHide();
     self.pane_desk.forget();
     self.desk_overlay.reset();
     self.over_desk = false;
     const area = self.deskRect();
-    if (self.hwnd) |hw| _ = w32.InvalidateRect(hw, &area, 0);
+    if (self.hwnd) |hw| {
+        _ = w32.InvalidateRect(hw, &area, 0);
+        // The caption band went with it, and the window's own band was never
+        // painted while it was up. A paint already under way blits it whole
+        // (`captionBandFinish`); one that comes later only reaches its clip.
+        if (had_cap) {
+            const band: w32.RECT = .{ .left = 0, .top = 0, .right = area.right, .bottom = self.chromeHeight() };
+            _ = w32.InvalidateRect(hw, &band, 0);
+        }
+    }
+}
+
+/// The flat style's window-owned pixels, in paint order (T2545): the
+/// gutters, their lines and bar, then the strips of tucked panes over them.
+fn paintFlatBands(self: *Window, hdc: w32.HDC) void {
+    self.paintDividers(hdc);
+    self.paintStackStrips(hdc);
+}
+
+/// Whether the flat style's pixels can ride the desk visual (T2545). Not
+/// while anything else paints the window's content area: rearrange headers
+/// and a hero tab's carousel stay GDI in the flat style, and so does a
+/// translucent window, whose chrome is alpha-resolved as one.
+fn flatEligible(self: *Window) bool {
+    if (self.tab_count == 0 or self.deskOpacity() != null) return false;
+    if (self.tab_hero_active[self.active_tab]) return false;
+    return self.rearrangeHeadersBox() == null;
+}
+
+/// Run a flat painter over the flat desk (T2545) instead of the window, and
+/// send what it changed to the desk visual; false when the window paints
+/// it as it always has. `ref`'s clip is the painter's: its clip region when
+/// it has one (the vacated-gutter clear's exclusions), else its clip box.
+/// Only `bands` - the band paint itself - may put the flat desk on the
+/// compositor; the clears in between just follow it there.
+fn flatPass(self: *Window, ref: w32.HDC, comptime painter: fn (*Window, w32.HDC) void, bands: bool) bool {
+    const host = if (self.chrome_host) |*h| h else return false;
+    // The caller's DC wants the pixels; the visual is left as it is.
+    if (self.desk_printing or self.paneStyle() == .elevated) return false;
+    if (!bands and !self.flat_live) return false;
+    if (!self.flatEligible() or !host.deskAvailable()) {
+        if (self.flat_live) self.deskOffVisual();
+        return false;
+    }
+    const area = self.deskRect();
+    const w = area.right - area.left;
+    const h = area.bottom - area.top;
+    if (w <= 0 or h <= 0) return false;
+    // Taking the visual over from the elevated desk: its picture goes first.
+    if (!self.flat_live and host.deskLive()) self.deskOffVisual();
+    const fd = &self.flat_desk;
+    if (!self.flat_live or !host.deskLive()) fd.valid = false;
+    const dc = fd.ensure(ref, area.left, area.top, w, h) orelse {
+        if (self.flat_live) self.deskOffVisual();
+        return false;
+    };
+    const clip: chrome_comp.Rect = .{ .left = area.left, .top = @max(area.top, self.chromeHeight()), .right = area.right, .bottom = area.bottom };
+    host.deskPlace(area.left, area.top, clip) catch {
+        self.deskVisualFailed();
+        return false;
+    };
+    if (!self.flat_live) log.info("chrome flat desk on the desk visual: {d}x{d}", .{ w, h });
+    self.flat_live = true;
+    if (!fd.valid) {
+        // New, moved, or back from GDI: every pixel of it, from scratch.
+        const saved = w32.SaveDC(dc);
+        _ = w32.SetViewportOrgEx(dc, -area.left, -area.top, null);
+        const bg = self.app.config.background;
+        if (w32.CreateSolidBrush(w32.RGB(bg.r, bg.g, bg.b))) |brush| {
+            _ = w32.FillRect(dc, &area, brush);
+            _ = w32.DeleteObject(brush);
+        }
+        self.paintFlatBands(dc);
+        if (saved != 0) _ = w32.RestoreDC(dc, saved);
+        _ = w32.GdiFlush();
+        host.deskUpload(fd.mirror.px, w, h, null) catch {
+            self.deskVisualFailed();
+            return false;
+        };
+        fd.synced();
+        fd.valid = true;
+        if (bands) return true;
+    }
+    var box: w32.RECT = undefined;
+    if (w32.GetClipBox(ref, &box) == 0) return true;
+    if (box.right <= box.left or box.bottom <= box.top) return true;
+    {
+        const saved = w32.SaveDC(dc);
+        defer if (saved != 0) {
+            _ = w32.RestoreDC(dc, saved);
+        };
+        // The clip in the mirror's device pixels, then the painters in client
+        // coordinates, as they draw into the window.
+        if (w32.CreateRectRgn(0, 0, 0, 0)) |rgn| {
+            defer _ = w32.DeleteObject(rgn);
+            if (w32.GetClipRgn(ref, rgn) == 1) {
+                _ = w32.OffsetRgn(rgn, -area.left, -area.top);
+                _ = w32.SelectClipRgn(dc, rgn);
+            } else _ = w32.IntersectClipRect(dc, box.left - area.left, box.top - area.top, box.right - area.left, box.bottom - area.top);
+        }
+        _ = w32.SetViewportOrgEx(dc, -area.left, -area.top, null);
+        painter(self, dc);
+    }
+    _ = w32.GdiFlush();
+    var buf: [64]chrome_comp.Rect = undefined;
+    const rs = fd.changed(.{ .left = box.left - area.left, .top = box.top - area.top, .right = box.right - area.left, .bottom = box.bottom - area.top }, &buf);
+    if (rs.len == 0 or host.flat_freeze) return true;
+    const full = host.desk_full;
+    host.deskUpload(fd.mirror.px, w, h, rs) catch {
+        self.deskVisualFailed();
+        return true;
+    };
+    // A new surface took the whole mirror, whatever `rs` said.
+    if (host.desk_full != full) fd.synced();
+    return true;
 }
 
 /// A step of the desk visual failed: say which, and leave this host's desk
@@ -14620,7 +14754,10 @@ fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
     // invalid region, so this covers an exposed band; the post-layout
     // GetDC pass in layoutSplits is what updates a band that MOVED without
     // anything invalidating the old spot.
-    self.paintDividers(hdc_screen);
+    // The flat style's own pixels go to its desk visual when it has one
+    // (T2545), the strips with them.
+    const flat = self.flatPass(hdc_screen, paintFlatBands, true);
+    if (!flat) self.paintDividers(hdc_screen);
     // The desk on the compositor (T2544): the headers and a hero tab's
     // carousel paint its overlay, over this paint's clip.
     const overlay = self.overlayRoute();
@@ -14636,7 +14773,7 @@ fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
     // window-owned pixels in the band between children.
     if (!overlay) self.paintRearrangeHeaders(hdc_screen);
     // So are the strips of tucked panes (T2109).
-    self.paintStackStrips(hdc_screen);
+    if (!flat) self.paintStackStrips(hdc_screen);
     if (!overlay and self.tab_count > 0 and self.tab_hero_active[self.active_tab]) {
         HeroCarousel.paint(self, hdc_screen);
         // While a selection slide runs every hero HWND is hidden and the

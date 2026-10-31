@@ -42,6 +42,10 @@
 //!     every dirty-rect one, so a frozen band is something the oracle sees.
 //!   - `GHOZTTY_COMP_CHROME_OVERLAY_FREEZE=1`: the same for the overlay
 //!     (T2544), so a header that stops updating is something it sees.
+//!   - `GHOZTTY_COMP_CHROME_FLAT_FREEZE=1`: the flat style's desk (T2545,
+//!     `FlatDesk`) sends only whole pictures, so a divider that moved and
+//!     stayed drawn where it was is something scripts\comp-flat-onscreen.ps1
+//!     sees.
 //!
 //! Every slot below was checked against the 10.0.26100.0 SDK headers
 //! (d3d11.h, dxgi.h, dcomp.h, d2d1.h, d2d1_1.h).
@@ -369,6 +373,109 @@ pub const Overlay = struct {
     }
 };
 
+/// The flat pane style's bottom layer (T2545). The flat style has no
+/// `PaneDesk` to compose a buffer: what the window owns between the panes is
+/// GDI - the gutters' background, the divider lines, the gutter bar, the
+/// strips of tucked panes and their names. With the desk visual carrying it,
+/// those painters draw into `mirror`, a persistent DIB the desk area's size
+/// holding exactly what the window's own pixels would, and what they changed
+/// goes up to the desk visual. `shadow` is what the visual holds, so a pass
+/// that repainted a whole band uploads only the rows it actually changed.
+pub const FlatDesk = struct {
+    mirror: Mirror = .{},
+    shadow: std.ArrayListUnmanaged(u32) = .empty,
+    x: i32 = 0,
+    y: i32 = 0,
+    /// The mirror holds the whole picture: painted whole since it was made,
+    /// and every flat painter has drawn into it since.
+    valid: bool = false,
+
+    const alloc = std.heap.page_allocator;
+
+    pub fn deinit(self: *FlatDesk) void {
+        self.mirror.deinit();
+        self.shadow.deinit(alloc);
+        self.* = .{};
+    }
+
+    /// The mirror's DC for an area at `(x, y)` (client pixels), `w` x `h`.
+    /// A new size or place makes the picture invalid: the caller paints it
+    /// whole. Null when GDI refused.
+    pub fn ensure(self: *FlatDesk, ref: w32.HDC, x: i32, y: i32, w: i32, h: i32) ?w32.HDC {
+        if (w != self.mirror.w or h != self.mirror.h or x != self.x or y != self.y) self.valid = false;
+        const dc = self.mirror.ensure(ref, w, h) orelse return null;
+        self.shadow.resize(alloc, self.mirror.px.len) catch return null;
+        self.x = x;
+        self.y = y;
+        return dc;
+    }
+
+    /// The visual took the whole mirror.
+    pub fn synced(self: *FlatDesk) void {
+        @memcpy(self.shadow.items, self.mirror.px);
+    }
+
+    /// What differs from the visual inside `raw` (the mirror's pixels), as at
+    /// most `out.len` rectangles, which the shadow then takes: the caller
+    /// uploads them.
+    pub fn changed(self: *FlatDesk, raw: Rect, out: []Rect) []Rect {
+        const rs = diffRects(self.mirror.px, self.shadow.items, self.mirror.w, self.mirror.h, raw, out);
+        for (rs) |r| copyRect(self.shadow.items, self.mirror.px, self.mirror.w, r);
+        return rs;
+    }
+};
+
+/// Where `cur` differs from `prev` (both `w` x `h`) inside `raw`, as row
+/// bands: consecutive rows that differ over the same span are one rectangle,
+/// so a moved divider line is one tall strip and a gutter bar a box. Colour
+/// only - GDI writes the alpha byte as it likes. When the rows need more
+/// rectangles than `out` holds, the last one grows to take the rest.
+pub fn diffRects(cur: []const u32, prev: []const u32, w: i32, h: i32, raw: Rect, out: []Rect) []Rect {
+    const r = bandDirty(raw, w, h) orelse return out[0..0];
+    if (out.len == 0) return out[0..0];
+    const cw: usize = @intCast(w);
+    var n: usize = 0;
+    var open = false;
+    var y = r.top;
+    while (y < r.bottom) : (y += 1) {
+        const row = @as(usize, @intCast(y)) * cw;
+        var lo: i32 = r.right;
+        var hi: i32 = r.left;
+        var x = r.left;
+        while (x < r.right) : (x += 1) {
+            const i = row + @as(usize, @intCast(x));
+            if ((cur[i] ^ prev[i]) & 0x00FF_FFFF != 0) {
+                lo = @min(lo, x);
+                hi = x + 1;
+            }
+        }
+        if (hi <= lo) {
+            open = false;
+            continue;
+        }
+        if (open and out[n - 1].left == lo and out[n - 1].right == hi) {
+            out[n - 1].bottom = y + 1;
+        } else if (n == out.len) {
+            out[n - 1] = unite(out[n - 1], .{ .left = lo, .top = y, .right = hi, .bottom = y + 1 }).?;
+        } else {
+            out[n] = .{ .left = lo, .top = y, .right = hi, .bottom = y + 1 };
+            n += 1;
+        }
+        open = true;
+    }
+    return out[0..n];
+}
+
+fn copyRect(dst: []u32, src: []const u32, w: i32, r: Rect) void {
+    const cw: usize = @intCast(w);
+    var y = r.top;
+    while (y < r.bottom) : (y += 1) {
+        const a = @as(usize, @intCast(y)) * cw + @as(usize, @intCast(r.left));
+        const b = a + @as(usize, @intCast(r.right - r.left));
+        @memcpy(dst[a..b], src[a..b]);
+    }
+}
+
 fn slot(comptime F: type, obj: Obj, index: usize) F {
     const vtbl: *const [*]const *const anyopaque = @ptrCast(@alignCast(obj));
     return @ptrCast(vtbl.*[index]);
@@ -513,6 +620,9 @@ pub const Host = struct {
     ovl_failed: bool = false,
     /// `GHOZTTY_COMP_CHROME_OVERLAY_FREEZE`: drop dirty-rect overlay uploads.
     ovl_freeze: bool = false,
+    /// `GHOZTTY_COMP_CHROME_FLAT_FREEZE`: the flat desk drops its dirty-rect
+    /// uploads (T2545; the window reads it, the host only carries it).
+    flat_freeze: bool = false,
 
     /// Set across a window paint: uploads leave the commit to `flush`, so
     /// the desk and the caption band reach the screen in the same frame.
@@ -607,6 +717,7 @@ pub const Host = struct {
             .force_loss = seamBuild() and envOn("GHOZTTY_COMP_CHROME_FORCE_LOSS"),
             .cap_freeze = seamBuild() and envOn("GHOZTTY_COMP_CHROME_CAPTION_FREEZE"),
             .ovl_freeze = seamBuild() and envOn("GHOZTTY_COMP_CHROME_OVERLAY_FREEZE"),
+            .flat_freeze = seamBuild() and envOn("GHOZTTY_COMP_CHROME_FLAT_FREEZE"),
         };
         if (seamBuild() and envOn("GHOZTTY_COMP_CHROME_TEST_FILL")) {
             // The fill is a test seam: failing it costs the probe, not the host.
@@ -1249,6 +1360,61 @@ test "T2544: unite is the bounding box, either side optional" {
     try std.testing.expectEqual(a, unite(a, null).?);
     try std.testing.expectEqual(b, unite(null, b).?);
     try std.testing.expect(unite(null, null) == null);
+}
+
+test "T2545: the flat desk uploads only the rows that changed, as row bands" {
+    var cur = [_]u32{0} ** 48; // 8x6
+    var prev = [_]u32{0} ** 48;
+    var out: [8]Rect = undefined;
+    const whole: Rect = .{ .left = 0, .top = 0, .right = 8, .bottom = 6 };
+    // Nothing changed: nothing to send.
+    try std.testing.expectEqual(@as(usize, 0), diffRects(&cur, &prev, 8, 6, whole, &out).len);
+    // Only the alpha byte changed (GDI's choice): nothing to send either.
+    cur[9] = 0xFF00_0000;
+    try std.testing.expectEqual(@as(usize, 0), diffRects(&cur, &prev, 8, 6, whole, &out).len);
+    // A divider line at x 3, every row: one tall strip.
+    for (0..6) |y| cur[y * 8 + 3] = 0x00808080;
+    var rs = diffRects(&cur, &prev, 8, 6, whole, &out);
+    try std.testing.expectEqual(@as(usize, 1), rs.len);
+    try std.testing.expectEqual(Rect{ .left = 3, .top = 0, .right = 4, .bottom = 6 }, rs[0]);
+    // A horizontal gutter across rows 2-3 as well: three bands.
+    for (2..4) |y| for (0..8) |x| {
+        cur[y * 8 + x] = 0x00202020;
+    };
+    rs = diffRects(&cur, &prev, 8, 6, whole, &out);
+    try std.testing.expectEqual(@as(usize, 3), rs.len);
+    try std.testing.expectEqual(Rect{ .left = 3, .top = 0, .right = 4, .bottom = 2 }, rs[0]);
+    try std.testing.expectEqual(Rect{ .left = 0, .top = 2, .right = 8, .bottom = 4 }, rs[1]);
+    try std.testing.expectEqual(Rect{ .left = 3, .top = 4, .right = 4, .bottom = 6 }, rs[2]);
+    // Only inside the region asked about.
+    rs = diffRects(&cur, &prev, 8, 6, .{ .left = 4, .top = 0, .right = 8, .bottom = 6 }, &out);
+    try std.testing.expectEqual(@as(usize, 1), rs.len);
+    try std.testing.expectEqual(Rect{ .left = 4, .top = 2, .right = 8, .bottom = 4 }, rs[0]);
+    // Out of rectangles: the last one takes the rest.
+    rs = diffRects(&cur, &prev, 8, 6, whole, out[0..2]);
+    try std.testing.expectEqual(@as(usize, 2), rs.len);
+    try std.testing.expectEqual(Rect{ .left = 0, .top = 2, .right = 8, .bottom = 6 }, rs[1]);
+}
+
+test "T2545: what the flat desk sent is what its shadow holds" {
+    var f: FlatDesk = .{};
+    defer f.deinit();
+    // No DC off the box's GDI here: drive the buffers the way `ensure` sizes them.
+    var px = [_]u32{0} ** 16;
+    f.mirror.px = &px;
+    f.mirror.w = 4;
+    f.mirror.h = 4;
+    try f.shadow.resize(FlatDesk.alloc, 16);
+    @memset(f.shadow.items, 0);
+    px[5] = 0x00112233;
+    var out: [4]Rect = undefined;
+    const rs = f.changed(.{ .left = 0, .top = 0, .right = 4, .bottom = 4 }, &out);
+    try std.testing.expectEqual(@as(usize, 1), rs.len);
+    try std.testing.expectEqual(Rect{ .left = 1, .top = 1, .right = 2, .bottom = 2 }, rs[0]);
+    try std.testing.expectEqual(@as(u32, 0x00112233), f.shadow.items[5]);
+    // Sent once: the same pass again has nothing to send.
+    try std.testing.expectEqual(@as(usize, 0), f.changed(.{ .left = 0, .top = 0, .right = 4, .bottom = 4 }, &out).len);
+    f.mirror = .{}; // not ours to free
 }
 
 test "loss labels name the cause" {

@@ -2179,6 +2179,9 @@ pub extern "user32" fn GetWindowRgn(hwnd: HWND, hrgn: ?*anyopaque) callconv(.win
 /// after.
 pub extern "gdi32" fn FillRgn(hdc: HDC, hrgn: *anyopaque, hbr: *anyopaque) callconv(.winapi) i32;
 pub extern "gdi32" fn SelectClipRgn(hdc: HDC, hrgn: ?*anyopaque) callconv(.winapi) i32;
+/// 1 with the DC's application clip region copied into `hrgn` (device
+/// pixels), 0 when it has none, -1 on error.
+pub extern "gdi32" fn GetClipRgn(hdc: HDC, hrgn: *anyopaque) callconv(.winapi) i32;
 /// Intersect the DC's clip with a rect. Preferred over `SelectClipRgn(dc, null)`
 /// to restore, which un-clips everything rather than what the caller added —
 /// `SaveDC`/`RestoreDC` around this pair is what puts the previous clip back.
