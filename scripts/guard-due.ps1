@@ -4272,6 +4272,24 @@ $GuardTable = @(
             'test\win32\frame-lab-live-scene.ps1'
         )
     },
+    # The chain-fold oracle (T2485): the four checks T2485 closes on - a
+    # band that blinks, a colour or rim neither end state has, a run of motion
+    # ending on a jump, a stall while the pointer moves - scored over every
+    # frame of a release capture. A threshold or a band index off by one reads
+    # a janky drag as clean (or a clean one as red) in a way no live run can
+    # tell apart from the app, so the oracle and the recorder it scores make
+    # this due. Synthetic frames written to temp; a few seconds. Its -Live
+    # mode moves the real pointer and never stamps.
+    [pscustomobject]@{
+        Name   = 'chainfold'
+        Script = 'test\win32\chainfold.ps1'
+        Stamp  = 'test\win32\chainfold.stamp.json'
+        Covers = @(
+            'test\win32\lib\ChainFoldOracle.ps1',
+            'docs\design\t2485-chainfold\tools\record-chainfold.ps1',
+            'test\win32\chainfold.ps1'
+        )
+    },
     # The lab's deterministic scene and its planted positive controls (T2383).
     # A card that draws one cell wrong makes every lab frame a false B2/B6, and
     # a plant that stops firing makes the lab's 100%-caught control vacuous - so

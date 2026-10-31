@@ -1,6 +1,6 @@
 <#
-  T2485 recorder (T2485 evidence tool; becomes test\win32\chainfold-capture.ps1 once the
-  oracle settles). Launches a sandboxed RELEASE build with N side-by-side
+  T2485 recorder. test\win32\chainfold.ps1 -Live runs it and scores the run
+  with test\win32\lib\ChainFoldOracle.ps1 (criteria a-d). Launches a sandboxed RELEASE build with N side-by-side
   panes, drags the first divider right with the real pointer so the panes to
   its right chain-collapse, and writes EVERY composed frame of the window rect
   as PNG plus a timeline.json. Gated on nobody being at the box.

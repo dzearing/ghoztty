@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-30T17:40:05-07:00",
-    "commit":  "8201e11a5",
+    "generated":  "2026-10-30T19:15:46-07:00",
+    "commit":  "36887010f",
     "uncommitted":  [
-                        "test/win32/comp-present.ps1"
+                        "test/win32/chainfold.ps1",
+                        "test/win32/lib/ChainFoldOracle.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -61,6 +62,7 @@
                   "test/win32/caller-anchor.ps1":  "e51f43169e0cb021ffbcc719cbf36be8882b65940a6c5c5a461cd7c679732135",
                   "test/win32/caption-bar.ps1":  "aab923aa402dd8afa921a6c7b982f6989510a0b4b50305ce85fc20b7a2ebd6e1",
                   "test/win32/caption-click-modal.ps1":  "f3e87c81c7fdf55c7c8a6886ccf7a82d202d04f3ab1393eefcdd251a697f585d",
+                  "test/win32/chainfold.ps1":  "cf08634e16750c17bbb145e4ce9d80b87f2b8deb2a443b29ceb6fe78ee00c09c",
                   "test/win32/checkout-guard.ps1":  "d2757d2072ad93548f99073d50cdb316e927a31ac80d2aa5b77792de9506c619",
                   "test/win32/chooser-close-chord.ps1":  "915f4d2ed48cee38183a7055c05ad94e38d0eded192cb087bdf2ebf20cbb5955",
                   "test/win32/chooser-conn-pool.ps1":  "2a9eab47b8339ca2f04efaea672243c48ddd4bdee581aee487e96b690dbacd3f",
@@ -105,7 +107,7 @@
                   "test/win32/color-contrast.ps1":  "a0d85f63a9efea20b550fb7fe4add84e412859a53a40eca2937b5e08353c698f",
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
-                  "test/win32/comp-present.ps1":  "206466bf2339a934d4805e608f920d470105b8c2dba1bfa2573fabdfc28c00ad",
+                  "test/win32/comp-present.ps1":  "3c43d7d8e4d25a98333e8613560977a4d325289cab15651ba36838cde816af30",
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",
@@ -241,6 +243,7 @@
                   "test/win32/lib/BrowserLeak.ps1":  "ae41845c0869dc0a37c9104ff6189f07d1e4ede98445bdecbeb3e222f5224826",
                   "test/win32/lib/BuildFresh.ps1":  "0314737dc6419b7d45d9421584a37dc009939b0384ae609378701c0cb306e31b",
                   "test/win32/lib/BuildMode.ps1":  "44e0d8bcd7731f8cad283d2362abb7828b6a37ae54d8b119e70c98d50a1e575f",
+                  "test/win32/lib/ChainFoldOracle.ps1":  "f3294f4563b3606218c3e50adb1cf3486050666070a68fa2b0a7efb57ac015bf",
                   "test/win32/lib/CheckoutGuard.ps1":  "e386d340814b5deebec8f5c09dfdcc31a6b3b45aae875daad03dd82d0d857f29",
                   "test/win32/lib/ChooserControls.ps1":  "a89ca8550ef8143250eb27df76bfa9e11b5c1af46f086ea23e07defd5d8eaec0",
                   "test/win32/lib/ChooserCursor.ps1":  "899edb2b38d63abcb8af6734687abf41a0f9e5906e1cd3d9508cc2b1e7cb1023",

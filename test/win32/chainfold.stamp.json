@@ -1,0 +1,16 @@
+{
+    "guard":  "chainfold",
+    "script":  "test/win32/chainfold.ps1",
+    "generated":  "2026-10-30T18:51:56-07:00",
+    "commit":  "36887010f",
+    "uncommitted":  [
+                        "docs/design/t2485-chainfold/tools/record-chainfold.ps1",
+                        "test/win32/chainfold.ps1",
+                        "test/win32/lib/ChainFoldOracle.ps1"
+                    ],
+    "files":  {
+                  "docs/design/t2485-chainfold/tools/record-chainfold.ps1":  "b72ec1ce2b3b56f4f7e2845e2f9c1bc96fcad95e8a394dae524fc6ae927def01",
+                  "test/win32/chainfold.ps1":  "cf08634e16750c17bbb145e4ce9d80b87f2b8deb2a443b29ceb6fe78ee00c09c",
+                  "test/win32/lib/ChainFoldOracle.ps1":  "f3294f4563b3606218c3e50adb1cf3486050666070a68fa2b0a7efb57ac015bf"
+              }
+}
