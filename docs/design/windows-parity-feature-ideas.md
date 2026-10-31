@@ -591,3 +591,12 @@ as the digest that showed them.
 - Dividers line up on their own (new angle on snapping dividers: a mouse-dragged divider snaps into line with a neighbouring split's divider)
 - What Ghoztty itself is using (new angle on the per-pane readout: the app's own memory per window and pane, a window holding too much is marked)
 - Closing things makes the app lighter, and you can see it (closed window/split memory returns within seconds; About shows the total drop)
+
+## 2026-10-31
+
+- Resize to a size you name (right-click a window edge, type 120x40 or pick a recent size; the window snaps to exactly that many columns and rows)
+- Keep this pane's width when the window resizes (lock a pane's width; only the other panes absorb a window resize)
+- How long since this pane printed anything (a "quiet 12m" note on the title strip and on folded blades)
+- Drag a pane's name to swap two panes (drop a title strip on another pane; they trade places, keeping sizes)
+- Smooth on a busy machine (under heavy system load, Ghoztty cuts its own animation work first so typing never waits)
+- The window resizes at the speed of your screen (new angle on smooth resizes: a 120 Hz promise, and About reports late frames in your last resize)
