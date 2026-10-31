@@ -104,6 +104,24 @@ pub fn needsReposition(state: RepositionState) bool {
         state.alpha_changed or state.color_changed;
 }
 
+/// The fill colour as the composition layer's pixel (T2491): a COLORREF
+/// (0x00BBGGRR) as opaque BGRA (0xAARRGGBB in a little-endian u32). Opaque,
+/// so premultiplied is the same value; the wash's alpha is the layer's
+/// opacity, as it is the popup's constant alpha.
+pub fn colorrefToBgra(color: u32) u32 {
+    const r = color & 0xff;
+    const g = (color >> 8) & 0xff;
+    const b = (color >> 16) & 0xff;
+    return 0xff000000 | (r << 16) | (g << 8) | b;
+}
+
+test "colorrefToBgra: red, green and blue land in their BGRA bytes, opaque" {
+    try std.testing.expectEqual(@as(u32, 0xffff0000), colorrefToBgra(0x000000ff));
+    try std.testing.expectEqual(@as(u32, 0xff00ff00), colorrefToBgra(0x0000ff00));
+    try std.testing.expectEqual(@as(u32, 0xff0000ff), colorrefToBgra(0x00ff0000));
+    try std.testing.expectEqual(@as(u32, 0xff101418), colorrefToBgra(0x00181410));
+}
+
 test "overlayAlpha: opacity 1 disables dimming" {
     try testing.expectEqual(@as(u8, 0), overlayAlpha(1.0));
 }

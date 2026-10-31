@@ -131,8 +131,10 @@ const slot_dcomp_commit = 3;
 const slot_dcomp_create_visual = 7;
 const slot_dcomp_create_surface = 8;
 const slot_dcomp_create_effect_group = 23;
-// IDCompositionVisual.
+// IDCompositionVisual. SetTransform(transform) 7, SetTransform(matrix) 8.
+const slot_visual_set_transform_matrix = 8;
 const slot_visual_set_effect = 10;
+const slot_visual_set_bitmap_interpolation_mode = 11;
 const slot_visual_set_content = 15;
 const slot_visual_add_visual = 16;
 const slot_visual_remove_visual = 17;
@@ -156,6 +158,28 @@ pub const D3D11_BOX = extern struct {
 };
 
 const POINT = extern struct { x: i32, y: i32 };
+
+/// D2D_MATRIX_3X2_F, row-major: (m11 m12; m21 m22; dx dy).
+pub const Matrix3x2 = extern struct {
+    m11: f32 = 1,
+    m12: f32 = 0,
+    m21: f32 = 0,
+    m22: f32 = 1,
+    dx: f32 = 0,
+    dy: f32 = 0,
+
+    pub fn scale(sx: f32, sy: f32) Matrix3x2 {
+        return .{ .m11 = sx, .m22 = sy };
+    }
+};
+
+/// DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR.
+const DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR: u32 = 0;
+
+/// How far a stretched solid layer reaches, in pane pixels (`Layer.cover`):
+/// past any pane a window can hold, so the pane window's own bounds are what
+/// clip it and no move or resize ever has to touch it.
+pub const cover_extent: f32 = 16384;
 
 pub fn slot(comptime F: type, obj: Obj, index: usize) F {
     const vtbl: *const [*]const *const anyopaque = @ptrCast(@alignCast(obj));
@@ -272,6 +296,20 @@ pub const Layer = struct {
         slot(*const fn (Obj, Obj, u32, *const D3D11_BOX, *const anyopaque, u32, u32) callconv(.winapi) void, d.context, slot_d3d11_context_update_subresource)(d.context, t, 0, &box, px.ptr, w * 4, 0);
         comRelease(t);
         if (!ok(slot(*const fn (Obj) callconv(.winapi) HRESULT, sf, slot_surface_end_draw)(sf))) return false;
+        self.commit();
+        return true;
+    }
+
+    /// Fill the whole pane with one premultiplied BGRA colour (T2491): a 1x1
+    /// surface stretched, without filtering, to `cover_extent`. The pane
+    /// window clips it, so it covers the pane at any size and a move or a
+    /// resize is nothing to it - no re-upload, no transform, no commit.
+    pub fn cover(self: *Layer, px: u32) bool {
+        const vis = self.visual orelse return false;
+        if (!self.setPixels(&.{px}, 1, 1)) return false;
+        if (!ok(slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, vis, slot_visual_set_bitmap_interpolation_mode)(vis, DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR))) return false;
+        const m = Matrix3x2.scale(cover_extent, cover_extent);
+        if (!ok(slot(*const fn (Obj, *const Matrix3x2) callconv(.winapi) HRESULT, vis, slot_visual_set_transform_matrix)(vis, &m))) return false;
         self.commit();
         return true;
     }
@@ -405,4 +443,10 @@ test "uploadBox places the pixels at the BeginDraw offset" {
     try std.testing.expectEqual(D3D11_BOX{ .left = 16, .top = 32, .front = 0, .right = 116, .bottom = 82, .back = 1 }, b);
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(D3D11_BOX));
     try std.testing.expectEqual(@as(u32, 0x8000 + 44), WM_APP_COMP_OVERLAY);
+}
+
+test "Matrix3x2 is D2D_MATRIX_3X2_F: six floats, scale on the diagonal" {
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(Matrix3x2));
+    const m = Matrix3x2.scale(3, 5);
+    try std.testing.expectEqual([6]f32{ 3, 0, 0, 5, 0, 0 }, @as([6]f32, @bitCast(m)));
 }

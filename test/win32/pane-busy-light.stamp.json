@@ -1,8 +1,8 @@
 {
     "guard":  "pane-busy-light",
     "script":  "test/win32/pane-busy-light.ps1",
-    "generated":  "2026-10-30T17:02:08-07:00",
-    "commit":  "c35baf81f",
+    "generated":  "2026-10-30T17:03:48-07:00",
+    "commit":  "8201e11a5",
     "uncommitted":  [
 
                     ],

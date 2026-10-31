@@ -1,8 +1,8 @@
 {
     "guard":  "pane-elevation",
     "script":  "test/win32/pane-elevation.ps1",
-    "generated":  "2026-10-30T17:16:12-07:00",
-    "commit":  "c35baf81f",
+    "generated":  "2026-10-30T17:27:45-07:00",
+    "commit":  "8201e11a5",
     "uncommitted":  [
 
                     ],

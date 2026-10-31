@@ -12,6 +12,15 @@
 //! SetLayeredWindowAttributes(LWA_ALPHA) + solid-brush paint instead of
 //! the scrollbar's UpdateLayeredWindow DIB path. Pure decision/alpha
 //! logic is in dim_math.zig (unit tested in every lane).
+//!
+//! When the pane presents through a composition swap chain (T2466) the wash
+//! is a child visual of the pane's visual instead (T2491, comp_overlay.zig):
+//! one colour pixel stretched over the whole pane, at the same alpha, clipped
+//! by the pane window itself. A move, a resize, a fold or a divider drag is
+//! nothing to it, so it cannot lag its pane. A pane with a banner keeps the
+//! popup: the wash reaches up over the banner band, outside the pane window,
+//! and stacks over the strip's popup (T2308), which a visual inside the pane
+//! cannot do. So does a viewer pane, which has no composition tree to join.
 
 const std = @import("std");
 const w32 = @import("win32.zig");
@@ -20,6 +29,7 @@ const chrome_fanout = @import("chrome_fanout.zig");
 const pane_clip = @import("pane_clip.zig");
 const FrameClock = @import("FrameClock.zig");
 const lab_plant = @import("lab_plant.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 
 const log = std.log.scoped(.win32_dim_overlay);
 
@@ -40,8 +50,17 @@ pub const DimOverlay = struct {
     /// so the first show() always sets the layered attributes.
     alpha: u8 = 0,
     /// The overlay is on screen at `placement` (T1295). `hide()` clears it,
-    /// so the show after a hide always repositions.
+    /// so the show after a hide always repositions. On the visual path it
+    /// means the layer is attached to the pane.
     shown: bool = false,
+    /// The pane renderer's composition tree (T2491), or null for a pane that
+    /// never has one (a viewer); the wash's layer on it.
+    slot: ?*comp_overlay.Slot,
+    layer: comp_overlay.Layer = .{},
+    /// The wash is the pane's child visual rather than the popup.
+    on_visual: bool = false,
+    /// The fill colour the layer's pixel was last uploaded in.
+    visual_color: ?u32 = null,
     /// The placement last handed to SetWindowPos. Only meaningful while
     /// `shown`.
     placement: dim_math.Placement = .{ .left = 0, .top = 0, .width = 0, .height = 0 },
@@ -98,6 +117,7 @@ pub const DimOverlay = struct {
         alloc: std.mem.Allocator,
         owner: w32.HWND,
         hinstance: w32.HINSTANCE,
+        slot: ?*comp_overlay.Slot,
     ) !*DimOverlay {
         try registerClassOnce(hinstance);
 
@@ -108,6 +128,7 @@ pub const DimOverlay = struct {
             .alloc = alloc,
             .owner = owner,
             .hwnd = undefined,
+            .slot = slot,
         };
 
         // WS_EX_LAYERED — DWM-composited above OpenGL, uniform alpha.
@@ -138,6 +159,7 @@ pub const DimOverlay = struct {
     }
 
     pub fn destroy(self: *DimOverlay) void {
+        self.layer.deinit();
         _ = w32.DestroyWindow(self.hwnd);
         if (self.brush) |b| _ = w32.DeleteObject(@ptrCast(b));
         self.alloc.destroy(self);
@@ -166,6 +188,21 @@ pub const DimOverlay = struct {
         self.lab_color = color;
         self.lab_alpha = alpha;
         if (self.lab_hold != 0) return false;
+
+        // The pane's composition tree, unless a banner band needs the popup.
+        const want_visual = self.band.height <= 0 and
+            if (self.slot) |s| self.layer.sync(s) else false;
+        if (want_visual != self.on_visual) {
+            // The wash leaves the old path at once and goes up afresh on the
+            // new one. (A retracted tree already took the visual with it.)
+            if (self.shown) {
+                if (self.on_visual) self.layer.setVisible(false) else _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+                self.shown = false;
+            }
+            self.on_visual = want_visual;
+            log.info("dim overlay path visual={}", .{want_visual});
+        }
+        if (want_visual) return self.showVisual(color, alpha);
 
         const color_changed = self.brush == null or color != self.color;
         if (color_changed) {
@@ -327,6 +364,39 @@ pub const DimOverlay = struct {
         return true;
     }
 
+    /// The visual path (T2491): the wash is pane-local and covers the whole
+    /// pane window, which clips it - to its card shape, and to the part in
+    /// view of a pane partly outside its window (T2227) - so only the colour,
+    /// the alpha and on/off are ever anything to do.
+    fn showVisual(self: *DimOverlay, color: u32, alpha: u8) bool {
+        if (pane_clip.ownerClip(self.owner) == .none) {
+            if (self.shown) self.hide();
+            return false;
+        }
+        var changed = false;
+        if (!self.layer.hasPixels() or self.visual_color != color) {
+            if (!self.layer.cover(dim_math.colorrefToBgra(color))) {
+                log.warn("dim overlay visual upload failed", .{});
+                return false;
+            }
+            self.visual_color = color;
+            changed = true;
+        }
+        if (alpha != self.layer.opacity) {
+            self.layer.setOpacity(alpha);
+            changed = true;
+        }
+        // A rebuilt tree (the renderer remade its chain) is a fresh layer
+        // under a wash that is still up: attach it again.
+        if (!self.shown or !self.layer.attached) {
+            self.layer.setVisible(true);
+            self.shown = true;
+            changed = true;
+            log.info("dim overlay shown as visual alpha={d}", .{alpha});
+        }
+        return changed;
+    }
+
     /// Clip the wash to the owner pane's window region (T1831): an elevated
     /// pane is a rounded card, and a rectangular wash over it would paint
     /// square dim corners onto the desk. `key` is the owner's
@@ -351,7 +421,7 @@ pub const DimOverlay = struct {
     /// card), so the order is read and, when wrong, the wash is put directly
     /// above the card. Returns whether it moved.
     pub fn seatOver(self: *DimOverlay, card: w32.HWND) bool {
-        if (T2308_NEUTERED or !self.shown) return false;
+        if (T2308_NEUTERED or !self.shown or self.on_visual) return false;
         if (w32.IsWindowVisible_(card) == 0) return false;
         if (w32.isBelowInBand(self.owner, self.hwnd, card)) return false;
         // Directly beneath whatever is directly above the card (null: the
@@ -414,8 +484,17 @@ pub const DimOverlay = struct {
             self.lab_hold = 0;
             FrameClock.disarm(self.hwnd, LAB_HOLD_TIMER_ID);
         }
-        _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+        if (self.on_visual) {
+            if (self.shown) log.info("dim overlay hidden visual=true", .{});
+            self.layer.setVisible(false);
+        } else _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         self.shown = false;
+    }
+
+    /// The wash's popup, when it is the one on screen - null on the visual
+    /// path, where it lives inside the pane (T2491).
+    pub fn shownPopup(self: *const DimOverlay) ?w32.HWND {
+        return if (self.shown and !self.on_visual) self.hwnd else null;
     }
 
     /// One frame-clock tick of a held wash (T2383): on the last one, catch up
@@ -492,7 +571,7 @@ test "DimOverlay: the lab's planted lag holds the armed move through two ticks, 
     lab_plant.setPlanForTest(.{ .overlay = 2 });
     defer lab_plant.setPlanForTest(.{});
 
-    const d = try DimOverlay.create(testing.allocator, owner, hinstance);
+    const d = try DimOverlay.create(testing.allocator, owner, hinstance, null);
     defer d.destroy();
     const color = w32.RGB(16, 16, 20);
 
@@ -555,7 +634,7 @@ test "DimOverlay: the wash covers the banner band and stacks over the strip (T23
     // The banner strip: a popup with the same owner, in the band.
     const strip = w32.CreateWindowExW(w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE, class, title, w32.WS_POPUP, 0, 0, 1, 1, owner, null, hinstance, null) orelse return error.Win32Error;
 
-    const d = try DimOverlay.create(testing.allocator, owner, hinstance);
+    const d = try DimOverlay.create(testing.allocator, owner, hinstance, null);
     defer d.destroy();
 
     var orect: w32.RECT = undefined;

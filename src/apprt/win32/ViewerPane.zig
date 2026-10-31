@@ -1836,6 +1836,7 @@ pub fn showDimOverlay(self: *ViewerPane, alloc: Allocator, color: u32, alpha: u8
             alloc,
             hwnd,
             hinstance,
+            null, // WebView2 presents itself: no composition tree to join
         ) catch |err| {
             log.warn("viewer dim overlay create failed err={}", .{err});
             return;

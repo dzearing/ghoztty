@@ -1,8 +1,8 @@
 {
     "guard":  "blade-shadow",
     "script":  "test/win32/blade-shadow.ps1",
-    "generated":  "2026-10-30T17:01:39-07:00",
-    "commit":  "c35baf81f",
+    "generated":  "2026-10-30T17:03:06-07:00",
+    "commit":  "8201e11a5",
     "uncommitted":  [
 
                     ],

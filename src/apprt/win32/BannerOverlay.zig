@@ -2587,7 +2587,7 @@ pub const BannerOverlay = struct {
     fn shownDim(self: *const BannerOverlay) ?w32.HWND {
         const s = self.surface orelse return null;
         const d = s.dim_overlay orelse return null;
-        return if (d.shown) d.hwnd else null;
+        return d.shownPopup();
     }
 
     /// Take the copy down and hand the pane back to the live terminal.

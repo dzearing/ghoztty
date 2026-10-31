@@ -12983,9 +12983,12 @@ fn surfaceWndProc(
         },
 
         // The pane's renderer published or retracted its composition tree
-        // (T2467): move the overlays onto it, or back to their popups.
+        // (T2467): move the overlays onto it, or back to their popups. The
+        // dim wash (T2491) re-runs through the window's pass, which owns the
+        // focus/zoom/tab decision of whether it is up at all.
         comp_overlay.WM_APP_COMP_OVERLAY => {
             surface.updateBellBorder();
+            surface.parent_window.updateDimOverlays();
             return 0;
         },
 

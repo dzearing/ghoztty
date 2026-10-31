@@ -1449,6 +1449,7 @@ pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, batch: ?*?w32.HDWP)
             self.app.core_app.alloc,
             hwnd,
             self.app.hinstance,
+            &self.comp_overlay_slot,
         ) catch |err| {
             log.warn("dim overlay create failed err={}", .{err});
             return;

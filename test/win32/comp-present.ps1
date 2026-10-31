@@ -24,6 +24,10 @@
 #      pane - no GhozttyBellBorder popup is ever shown, a window move re-shows
 #      nothing, and a key fades it out and takes it off. (The knob-off popup
 #      path is bell-border.ps1.)
+#   F. The unfocused-split dim as a child visual (T2491): the unfocused pane's
+#      wash goes up as a visual with no GhozttyDimOverlay popup, a window move
+#      and resize re-show nothing, and a banner sends it back to the popup
+#      (it must cover the band above the pane window). Knob-off: split-dim.ps1.
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -301,6 +305,53 @@ try {
     Assert "E8 the app is still running, nothing fell back" ((Test-Alive $e) -and (Count-Log $e.Err $failLine) -eq 0)
     Assert "E9 the rung pane still draws text" (Test-DrawsText 'compe2')
 
+    # ========================================================================
+    "== F: the unfocused dim is a child visual of the pane, not a popup (T2491)"
+    # ========================================================================
+    Set-Knobs '1' $null $null
+    # A solid pane: a glass one (the default) never dims (T2281).
+    $f = Start-Arm 'f' @('--macos-pane-glass=false')
+    Assert "F0 the arm's window came up" ($f.Top -ne [IntPtr]::Zero -and $null -ne $f.Win)
+    & $Exe +split "--target=$($f.Target)" '--direction=right' '--name=compf2' 2>$null | Out-Null
+    $dimUp = Wait-Log $f.Err 'dim overlay shown as visual alpha=\d+' 15000
+    Assert "F1 the unfocused pane's dim went up as a visual (log)" $dimUp
+    if (-not $dimUp) {
+        "    dim lines:"
+        (Read-Text $f.Err) -split "`n" | Where-Object { $_ -match 'dim|overlay tree|composition' } | Select-Object -Last 12 | ForEach-Object { "      $_" }
+    }
+    $fTop = [IntPtr]::Zero
+    foreach ($w in @(Get-TestWindows -ProcessId $f.App.Pid -Class 'GhozttyWindow')) {
+        $n = @(Get-TestChildWindows -Window ([IntPtr]$w.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible).Count
+        if ($n -ge 2) { $fTop = [IntPtr]$w.Hwnd }
+    }
+    Assert "F2a found the two-pane window" ($fTop -ne [IntPtr]::Zero)
+    $washes = @(Get-TestWindows -ProcessId $f.App.Pid -Class 'GhozttyDimOverlay')
+    Assert "F2 no dim popup is visible ($($washes.Count))" ($washes.Count -eq 0)
+    $shownBefore = Count-Log $f.Err 'dim overlay shown as visual'
+    $wr = Get-TestWindowRect -Window $fTop
+    [void](Set-TestWindowPos -Window $fTop -X ($wr.Left + 60) -Y ($wr.Top + 30))
+    Start-Sleep -Milliseconds 500
+    [void](Set-TestWindowSize -Window $fTop -Width 1000 -Height 640)
+    Start-Sleep -Milliseconds 800
+    $washes = @(Get-TestWindows -ProcessId $f.App.Pid -Class 'GhozttyDimOverlay')
+    $shownAfter = Count-Log $f.Err 'dim overlay shown as visual'
+    Assert "F3 a move and a resize show no popup and re-show nothing ($shownBefore -> $shownAfter, $($washes.Count) popups)" `
+        ($washes.Count -eq 0 -and $shownAfter -eq $shownBefore)
+    # A banner sends the dimmed pane's wash back to the popup: it has to reach
+    # up over the band, outside the pane window (T2308). Both panes carry one,
+    # so whichever is unfocused is the one asserted.
+    & $Exe +set-banner "--target=$($f.Target)" 'banner over the dim' 2>$null | Out-Null
+    & $Exe +set-banner '--target=compf2' 'banner over the dim' 2>$null | Out-Null
+    $popup = $false
+    for ($t = 0; $t -lt 25 -and -not $popup; $t++) {
+        $popup = @(Get-TestWindows -ProcessId $f.App.Pid -Class 'GhozttyDimOverlay').Count -eq 1
+        if (-not $popup) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "F4 with a banner the wash is the popup again (log + one visible popup)" `
+        ($popup -and (Count-Log $f.Err 'dim overlay path visual=false') -ge 1)
+    Assert "F5 the app is still running, nothing fell back" ((Test-Alive $f) -and (Count-Log $f.Err $failLine) -eq 0)
+    Assert "F6 the dimmed panes still draw text" ((Test-DrawsText $f.Target) -and (Test-DrawsText 'compf2'))
+
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
     # LAST statement of the top-level try (T1039).
@@ -324,4 +375,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 25
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 33
