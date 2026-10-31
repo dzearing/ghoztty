@@ -215,7 +215,7 @@ try {
         $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
         $out = Join-Path $repo "temp\chainfold-live\$stamp"
         'L. live: the chain-fold drag on a release build, every frame'
-        $rec = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'docs\design\t2485-chainfold\tools\record-chainfold.ps1') -Exe $Exe -Out $out -WinW $WinW -WinH $WinH 2>&1 | ForEach-Object { "$_" }
+        $rec = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'docs\design\t2485-chainfold\tools\record-chainfold.ps1') -Exe $Exe -Out $out -WinW $WinW -WinH $WinH -QueueGB $(if ($WinW -gt 2000) { 16 } else { 3 }) 2>&1 | ForEach-Object { "$_" }
         $rec | ForEach-Object { "  $_" }
         if (@($rec | Where-Object { $_ -match '^SKIP' }).Count -gt 0) {
             "  SKIP L: the recorder did not record (above)"
