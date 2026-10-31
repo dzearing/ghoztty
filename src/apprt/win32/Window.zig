@@ -1023,9 +1023,9 @@ ghost_opaque: bool = false,
 
 /// The chrome's composition host (T2508, `GHOZTTY_COMP_CHROME=1`): a
 /// DirectComposition target under the panes with a Direct2D context, which
-/// carries the desk as its one visual while nothing GDI draws over it
-/// (T2509). Null when the knob is off or the host could not be built, and the
-/// chrome is GDI either way.
+/// carries the desk (T2509), the caption band above it (T2543) and what the
+/// painters over the desk drew (T2544). Null when the knob is off or the
+/// host could not be built, and the chrome is GDI either way.
 chrome_host: ?chrome_comp.Host = null,
 /// Set around a `WM_PRINTCLIENT` paint: the desk blits into the caller's DC
 /// and leaves the chrome host's visual alone (T2509).
@@ -1034,6 +1034,20 @@ desk_printing: bool = false,
 /// caption and tab bar paint here, and the band goes from here to the
 /// host's caption visual (desk up) or to the window (desk on GDI).
 caption_mirror: chrome_comp.Mirror = .{},
+/// What the painters over the desk drew while the desk is on the compositor
+/// (T2544): the rearrange headers, a hero tab's carousel and slide. They
+/// paint `overlay_scratch` (the desk's size, prefilled with what is on
+/// screen) and the difference goes up as the desk's child visual.
+desk_overlay: chrome_comp.Overlay = .{},
+overlay_scratch: chrome_comp.Mirror = .{},
+/// The desk's origin in the client area, and the parts of it the desk's own
+/// blit is clipped away from (a hero tab's carousel, a running slide), in
+/// desk pixels - kept by an erase, as the GDI blit leaves them.
+overlay_origin: [2]i32 = .{ 0, 0 },
+overlay_keep: [2]chrome_comp.Rect = undefined,
+overlay_keep_n: usize = 0,
+/// This paint's desk is on the compositor and something paints over it.
+over_desk: bool = false,
 
 /// The NEXT split inserted into this window leaves keyboard focus where it is
 /// (T1797): the pane that had it - normally the one the `+split` was run from -
@@ -2200,6 +2214,8 @@ fn releaseOwnedResources(self: *Window) void {
     if (self.chrome_host) |*cc| cc.deinit();
     self.chrome_host = null;
     self.caption_mirror.deinit();
+    self.desk_overlay.deinit();
+    self.overlay_scratch.deinit();
     if (self.pane_stacks) |*st| st.deinit();
     self.pane_stacks = null;
     self.pane_desk.deinit();
@@ -8124,7 +8140,7 @@ fn paintBusyLightFrame(self: *Window, hdc: w32.HDC) void {
     const area = self.deskRect();
     // The rings go up to the desk's visual when it carries the desk (T2509).
     const live = if (self.chrome_host) |*ch| ch.deskLive() else false;
-    self.pane_desk.sink = if (live) .{ .ctx = self, .upload = deskSinkUpload } else null;
+    self.pane_desk.sink = if (live) .{ .ctx = self, .upload = deskSinkUploadLight } else null;
     defer self.pane_desk.sink = null;
     self.pane_desk.paintLightFrame(self.desk_hdc orelse hdc, area.left, area.top, self.busyHead(), self.deskOpacity());
 }
@@ -9854,10 +9870,19 @@ pub fn dividerConfiguredColor(self: *Window) color_math.Rgb {
 /// The post-layout `GetDC` pass: the bands a layout can MOVE (see the call
 /// site in `layoutSplits`). One painter so `paintAlphaCorrect` wraps both.
 fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
+    // The desk and the headers over it go up in one commit (T2544), as a
+    // paint's do.
+    const host: ?*chrome_comp.Host = if (self.chrome_host) |*h| (if (h.defer_commit) null else h) else null;
+    if (host) |h| h.beginBatch();
+    defer if (host) |h| h.flush() catch self.deskVisualFailed();
     self.paintDividers(hdc);
     // Same moved-band argument, one level in: a pane that just slid
-    // takes its header band with it (T1530).
-    self.paintRearrangeHeaders(hdc);
+    // takes its header band with it (T1530). On the compositor they paint
+    // the desk's overlay, and the rest of it stays (T2544).
+    if (self.overlayRoute())
+        self.overlayPass(hdc, self.rearrangeHeadersBox(), paintRearrangeHeaders)
+    else
+        self.paintRearrangeHeaders(hdc);
     // A strip moves with its stack, and a banner change re-lays the window
     // out, so the relabelled strip is painted here too (T2109).
     self.paintStackStrips(hdc);
@@ -10538,8 +10563,8 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     // One slot past the panes' for the sidebar's card (T1894).
     var cards: [MAX_DRAG_NODES + 1]pane_elevation.Card = undefined;
     const pal = self.chromePalette();
-    // A header band is a GDI painter over the desk (T2509): its window keeps
-    // the desk on GDI too, until T2510 lifts the painters over it.
+    // A header band is a GDI painter over the desk (T2509): on the compositor
+    // it paints the desk's overlay (T2544).
     var headers = false;
     for (slots[0..n], 0..) |slot, i| {
         cards[i] = .{
@@ -10716,9 +10741,14 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     }
     self.pane_desk.names = if (nn > 0) .{ .ctx = self, .rects = name_rects[0..nn], .draw = drawDeskStripNames } else null;
     defer self.pane_desk.names = null;
-    // The desk as the chrome host's bottom visual (T2509), when nothing GDI
-    // draws over it: the paint then uploads what changed instead of blitting.
-    const on_visual = self.deskOnVisual(area, hero_split == null and !headers);
+    // The desk as the chrome host's bottom visual (T2509): the paint then
+    // uploads what changed instead of blitting. What GDI draws over it goes
+    // to the desk's overlay (T2544); a host whose overlay failed keeps such a
+    // window's desk on GDI.
+    const over = headers or hero_split != null;
+    const on_visual = self.deskOnVisual(area, !over or self.overlayAvailable());
+    self.over_desk = on_visual and over;
+    if (on_visual) self.overlayPrepare(desk_dc, area, hero_split, over);
     self.pane_desk.sink = if (on_visual) .{ .ctx = self, .upload = deskSinkUpload } else null;
     defer self.pane_desk.sink = null;
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], .{
@@ -10765,6 +10795,8 @@ fn deskOffVisual(self: *Window) void {
     if (!host.deskLive()) return;
     host.deskHide();
     self.pane_desk.forget();
+    self.desk_overlay.reset();
+    self.over_desk = false;
     const area = self.deskRect();
     if (self.hwnd) |hw| _ = w32.InvalidateRect(hw, &area, 0);
 }
@@ -10779,9 +10811,20 @@ fn deskVisualFailed(self: *Window) void {
     self.deskOffVisual();
 }
 
-/// The desk's `PaneDesk.Sink` hook: what changed, into the visual.
+/// The desk's `PaneDesk.Sink` hook: what changed, into the visual. Where it
+/// lands, the overlay clears (T2544), as the GDI blit covers the painters.
 fn deskSinkUpload(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void {
-    const self: *Window = @ptrCast(@alignCast(ctx));
+    deskSinkSend(@ptrCast(@alignCast(ctx)), px, w, h, rects, true);
+}
+
+/// A busy light's frame (T1899): into the visual, and the overlay stays.
+/// Its GDI blit lays the rings over a header until the next paint draws the
+/// header again, which is a flash rather than a picture.
+fn deskSinkUploadLight(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void {
+    deskSinkSend(@ptrCast(@alignCast(ctx)), px, w, h, rects, false);
+}
+
+fn deskSinkSend(self: *Window, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect, erase: bool) void {
     const host = if (self.chrome_host) |*hh| hh else return;
     var buf: [64]chrome_comp.Rect = undefined;
     const rs: ?[]const chrome_comp.Rect = if (rects) |rr| blk: {
@@ -10789,7 +10832,143 @@ fn deskSinkUpload(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]co
         for (rr, buf[0..rr.len]) |r, *o| o.* = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
         break :blk buf[0..rr.len];
     } else null;
-    host.deskUpload(px, w, h, rs) catch self.deskVisualFailed();
+    const full = host.desk_full;
+    host.deskUpload(px, w, h, rs) catch return self.deskVisualFailed();
+    // A new surface took the whole buffer, whatever `rs` said.
+    const sent = if (host.desk_full != full) null else rs;
+    self.desk_overlay.deskUploaded(px, w, h, sent, erase, self.overlay_keep[0..self.overlay_keep_n]) catch self.overlayFailed();
+}
+
+/// Whether this window's host can carry the overlay (T2544).
+fn overlayAvailable(self: *const Window) bool {
+    const host = if (self.chrome_host) |*h| h else return false;
+    return !host.ovl_failed;
+}
+
+/// Before the desk's upload (T2544): where it sits, what its blit leaves
+/// alone, and - with nothing painting over it any more - no overlay. A
+/// paint that is not blitting only what changed covers the whole of `hdc`'s
+/// clip with the desk on the GDI path, so the overlay clears there too: a
+/// painter that lays no fill (a glass header's title) must draw over the
+/// desk, not over its own last picture.
+fn overlayPrepare(self: *Window, hdc: w32.HDC, area: w32.RECT, hero_split: ?hero_math.Split, over: bool) void {
+    const host = &self.chrome_host.?;
+    if (!over) {
+        if (host.ovlLive()) host.ovlHide();
+        self.desk_overlay.clear();
+        self.overlay_keep_n = 0;
+        return;
+    }
+    if (self.overlay_origin[0] != area.left or self.overlay_origin[1] != area.top) {
+        // Moved under its pixels: start the overlay over.
+        self.overlay_origin = .{ area.left, area.top };
+        self.desk_overlay.reset();
+    }
+    var keep: [2]chrome_comp.Rect = undefined;
+    var n: usize = 0;
+    if (hero_split) |sp| {
+        keep[n] = .{ .left = sp.divider.left - area.left, .top = sp.carousel.top - area.top, .right = sp.carousel.right - area.left, .bottom = sp.carousel.bottom - area.top };
+        n += 1;
+        if (self.hero_slide != null) {
+            keep[n] = .{ .left = sp.hero.left - area.left, .top = sp.hero.top - area.top, .right = sp.hero.right - area.left, .bottom = sp.hero.bottom - area.top };
+            n += 1;
+        }
+    }
+    // What was kept and is not now (a slide that ended, a carousel that
+    // moved) is the desk's again, which the GDI blit would have laid there.
+    for (self.overlay_keep[0..self.overlay_keep_n]) |old| {
+        for (keep[0..n]) |k| {
+            if (std.meta.eql(k, old)) break;
+        } else self.desk_overlay.erase(old, keep[0..n]);
+    }
+    self.overlay_keep = keep;
+    self.overlay_keep_n = n;
+    if (!self.pane_desk.blit_changed_only) {
+        var box: w32.RECT = undefined;
+        if (w32.GetClipBox(hdc, &box) != 0) self.desk_overlay.erase(.{
+            .left = box.left - area.left,
+            .top = box.top - area.top,
+            .right = box.right - area.left,
+            .bottom = box.bottom - area.top,
+        }, keep[0..n]);
+    }
+}
+
+/// The overlay failed (T2544): say where, and put this host's desk back on
+/// GDI while anything paints over it, where the painters reach the window.
+fn overlayFailed(self: *Window) void {
+    const host = if (self.chrome_host) |*h| h else return;
+    const f = chrome_comp.Host.lastFailure();
+    log.warn("chrome overlay visual failed at {s}: hr=0x{x:0>8}; desk stays GDI under painters", .{ f.stage, chrome_comp.hex(f.hr) });
+    host.ovl_failed = true;
+    host.ovlHide();
+    self.desk_overlay.clear();
+    if (self.over_desk) self.deskOffVisual();
+}
+
+/// Whether the painters over the desk paint its overlay this pass.
+fn overlayRoute(self: *const Window) bool {
+    const host = if (self.chrome_host) |*h| h else return false;
+    return self.over_desk and !self.desk_printing and host.deskLive() and !host.ovl_failed and self.paneStyle() == .elevated;
+}
+
+/// Run `painter` over the desk's overlay (T2544): into a copy of what is on
+/// screen over `clip` (client pixels) and everything a desk upload erased
+/// since the last pass, then what it left different from the desk goes up.
+/// A new overlay paints whole.
+fn overlayPass(self: *Window, ref: w32.HDC, clip: ?chrome_comp.Rect, comptime painter: fn (*Window, w32.HDC) void) void {
+    const host = &self.chrome_host.?;
+    const o = &self.desk_overlay;
+    if (o.w <= 0 or o.h <= 0) return;
+    const ox = self.overlay_origin[0];
+    const oy = self.overlay_origin[1];
+    const whole: chrome_comp.Rect = .{ .left = 0, .top = 0, .right = o.w, .bottom = o.h };
+    var want = o.dirty;
+    if (clip) |c| want = chrome_comp.unite(want, .{ .left = c.left - ox, .top = c.top - oy, .right = c.right - ox, .bottom = c.bottom - oy });
+    if (!host.ovlLive()) want = whole;
+    const r = chrome_comp.bandDirty(want orelse return, o.w, o.h) orelse return;
+    const dc = self.overlay_scratch.ensure(ref, o.w, o.h) orelse return self.overlayFailed();
+    o.prefill(self.overlay_scratch.px, r);
+    {
+        const saved = w32.SaveDC(dc);
+        defer _ = w32.RestoreDC(dc, saved);
+        // The painters draw in client coordinates.
+        _ = w32.SetViewportOrgEx(dc, -ox, -oy, null);
+        _ = w32.IntersectClipRect(dc, r.left + ox, r.top + oy, r.right + ox, r.bottom + oy);
+        painter(self, dc);
+    }
+    _ = w32.GdiFlush();
+    o.merge(self.overlay_scratch.px, r);
+    const dirty = o.takeDirty();
+    host.ovlUpload(o.px.items, o.w, o.h, if (host.ovlLive()) dirty else null) catch self.overlayFailed();
+}
+
+/// The paint cycle's painters over the desk: the headers, and a hero tab's
+/// carousel and running slide.
+fn paintOverDesk(self: *Window, hdc: w32.HDC) void {
+    self.paintRearrangeHeaders(hdc);
+    if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) {
+        HeroCarousel.paint(self, hdc);
+        if (self.hero_slide != null) HeroCarousel.paintSlide(self, hdc);
+    }
+}
+
+/// Every rearrange header's band (client pixels), or null with none showing
+/// - what a pass that repaints the headers outside the paint cycle reaches.
+fn rearrangeHeadersBox(self: *Window) ?chrome_comp.Rect {
+    if (!self.rearrange_mode or self.tab_count == 0 or self.tab_hero_active[self.active_tab]) return null;
+    const tree = self.tab_trees[self.active_tab];
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = if (tree.zoomed != null) blk: {
+        slots[0] = .{ .view = undefined, .rect = self.gridRect() };
+        break :blk @as(usize, 1);
+    } else self.collectPaneSlots(&slots);
+    var box: ?chrome_comp.Rect = null;
+    for (slots[0..n]) |slot| {
+        const l = self.rearrangeHeaderFor(slot.rect) orelse continue;
+        box = chrome_comp.unite(box, .{ .left = l.band.left, .top = l.band.top, .right = l.band.right, .bottom = l.band.bottom });
+    }
+    return box;
 }
 
 /// Keep the desk in the window's own pixels under every layered pane (T2485
@@ -14442,12 +14621,23 @@ fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
     // GetDC pass in layoutSplits is what updates a band that MOVED without
     // anything invalidating the old spot.
     self.paintDividers(hdc_screen);
+    // The desk on the compositor (T2544): the headers and a hero tab's
+    // carousel paint its overlay, over this paint's clip.
+    const overlay = self.overlayRoute();
+    if (overlay) {
+        var box: w32.RECT = undefined;
+        const clip: ?chrome_comp.Rect = if (w32.GetClipBox(hdc_screen, &box) != 0)
+            .{ .left = box.left, .top = box.top, .right = box.right, .bottom = box.bottom }
+        else
+            null;
+        self.overlayPass(hdc_screen, clip, paintOverDesk);
+    }
     // Pane headers ride the same cycle as the dividers (T1530): both are
     // window-owned pixels in the band between children.
-    self.paintRearrangeHeaders(hdc_screen);
+    if (!overlay) self.paintRearrangeHeaders(hdc_screen);
     // So are the strips of tucked panes (T2109).
     self.paintStackStrips(hdc_screen);
-    if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) {
+    if (!overlay and self.tab_count > 0 and self.tab_hero_active[self.active_tab]) {
         HeroCarousel.paint(self, hdc_screen);
         // While a selection slide runs every hero HWND is hidden and the
         // hero region is owner-painted (outgoing/incoming snapshots).

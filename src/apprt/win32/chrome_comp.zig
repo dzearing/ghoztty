@@ -8,14 +8,15 @@
 //! (the panes) - so any visual hung here hides every GDI chrome painter under
 //! it. Two visuals hang from a container root. The desk (T2509): `PaneDesk`'s
 //! composed buffer, uploaded rectangle by rectangle as it changes, clipped to
-//! the content area below the caption. The window carries it only while no
-//! GDI painter draws over the desk (an opaque window, no hero tab, no
-//! rearrange header); otherwise the desk stays a GDI blit. Above it, while
+//! the content area below the caption. The window carries it on an opaque
+//! window; the GDI painters that draw OVER the desk - rearrange headers, a
+//! hero tab's carousel and slide - paint an `Overlay` instead, which goes up
+//! as the desk's child visual (T2544). Above it, while
 //! the desk is up, the caption band (T2543): the caption and tab bar painted
 //! by their own GDI painters into a persistent `Mirror` and uploaded by the
 //! paint's dirty rect. A window paint batches both into one commit
 //! (`beginBatch`/`flush`), so the band and the desk change in the same frame.
-//! T2544/T2545/T2541 move the remaining painters over.
+//! T2545/T2541 move the remaining painters over.
 //!
 //! Why DirectComposition and not Windows.UI.Composition, same call as the pane
 //! presenter (`renderer/gl_comp_present.zig`): a DComp device commits
@@ -39,6 +40,8 @@
 //!   - `GHOZTTY_COMP_CHROME_CAPTION_FREEZE=1` (scripts\comp-desk-onscreen.ps1
 //!     -NegativeControl): the caption visual takes its whole uploads and drops
 //!     every dirty-rect one, so a frozen band is something the oracle sees.
+//!   - `GHOZTTY_COMP_CHROME_OVERLAY_FREEZE=1`: the same for the overlay
+//!     (T2544), so a header that stops updating is something it sees.
 //!
 //! Every slot below was checked against the 10.0.26100.0 SDK headers
 //! (d3d11.h, dxgi.h, dcomp.h, d2d1.h, d2d1_1.h).
@@ -226,6 +229,146 @@ pub const Mirror = struct {
     }
 };
 
+/// The smallest rectangle holding both, either of which may be absent.
+pub fn unite(a: ?Rect, b: ?Rect) ?Rect {
+    const x = a orelse return b;
+    const y = b orelse return x;
+    return .{
+        .left = @min(x.left, y.left),
+        .top = @min(x.top, y.top),
+        .right = @max(x.right, y.right),
+        .bottom = @max(x.bottom, y.bottom),
+    };
+}
+
+/// What the GDI painters that draw OVER the desk left there (T2544): the
+/// rearrange headers, a hero tab's carousel and its selection slide. On the
+/// GDI path they paint the window after the desk's blit; with the desk on the
+/// compositor they paint a scratch copy of what is on screen, and every pixel
+/// they left different from the desk becomes an opaque pixel of an overlay
+/// visual above it. Erase semantics are GDI's: a rectangle the desk uploads
+/// clears the overlay there, exactly as the desk's blit would have covered
+/// whatever the painters had drawn, and the painters then draw it again.
+///
+/// Buffers are the desk's own size and pixels. `desk` mirrors what the desk
+/// visual holds, so a painter that blends (ClearType, the glass band's shade)
+/// blends against the real desk; `px` is the overlay, premultiplied, each
+/// pixel either 0 or opaque.
+pub const Overlay = struct {
+    desk: std.ArrayListUnmanaged(u32) = .empty,
+    px: std.ArrayListUnmanaged(u32) = .empty,
+    w: i32 = 0,
+    h: i32 = 0,
+    /// What changed in `px` since it last went up, in its own pixels.
+    dirty: ?Rect = null,
+
+    const alloc = std.heap.page_allocator;
+
+    pub fn deinit(self: *Overlay) void {
+        self.desk.deinit(alloc);
+        self.px.deinit(alloc);
+        self.* = .{};
+    }
+
+    /// The desk left the compositor: the next upload starts the copy over.
+    pub fn reset(self: *Overlay) void {
+        self.w = 0;
+        self.h = 0;
+        self.dirty = null;
+    }
+
+    /// Nothing paints over the desk any more: the overlay is empty.
+    pub fn clear(self: *Overlay) void {
+        @memset(self.px.items, 0);
+        self.dirty = null;
+    }
+
+    /// The desk visual took `rects` of `src` (null: all of it). The copy
+    /// follows, and with `clears` the overlay clears there - except inside
+    /// `keep`, the regions the desk's own blit is clipped away from (a hero
+    /// tab's carousel, a running slide). A new size starts both over.
+    pub fn deskUploaded(self: *Overlay, src: []const u32, w: i32, h: i32, rects: ?[]const Rect, clears: bool, keep: []const Rect) error{OutOfMemory}!void {
+        var whole = rects == null;
+        if (w != self.w or h != self.h) {
+            const n: usize = @intCast(w * h);
+            try self.desk.resize(alloc, n);
+            try self.px.resize(alloc, n);
+            @memset(self.px.items, 0);
+            self.w = w;
+            self.h = h;
+            self.dirty = null;
+            whole = true;
+        }
+        const all = [_]Rect{.{ .left = 0, .top = 0, .right = w, .bottom = h }};
+        for (if (whole) all[0..] else rects.?) |raw| {
+            const r = bandDirty(raw, w, h) orelse continue;
+            self.copyDesk(src, r);
+            if (clears) self.erase(r, keep);
+        }
+    }
+
+    fn copyDesk(self: *Overlay, src: []const u32, r: Rect) void {
+        const cw: usize = @intCast(self.w);
+        var y = r.top;
+        while (y < r.bottom) : (y += 1) {
+            const a = @as(usize, @intCast(y)) * cw + @as(usize, @intCast(r.left));
+            const b = a + @as(usize, @intCast(r.right - r.left));
+            @memcpy(self.desk.items[a..b], src[a..b]);
+        }
+    }
+
+    /// Clear `r` of the overlay, outside `keep`.
+    pub fn erase(self: *Overlay, raw: Rect, keep: []const Rect) void {
+        const r = bandDirty(raw, self.w, self.h) orelse return;
+        const cw: usize = @intCast(self.w);
+        var y = r.top;
+        while (y < r.bottom) : (y += 1) {
+            var x = r.left;
+            while (x < r.right) : (x += 1) {
+                for (keep) |k| {
+                    if (x >= k.left and x < k.right and y >= k.top and y < k.bottom) break;
+                } else self.px.items[@as(usize, @intCast(y)) * cw + @as(usize, @intCast(x))] = 0;
+            }
+        }
+        self.dirty = unite(self.dirty, r);
+    }
+
+    /// What is on screen over `r`, into `out` (a buffer the overlay's size):
+    /// the overlay where it is painted, the desk elsewhere.
+    pub fn prefill(self: *const Overlay, out: []u32, r: Rect) void {
+        const cw: usize = @intCast(self.w);
+        var y = r.top;
+        while (y < r.bottom) : (y += 1) {
+            const a = @as(usize, @intCast(y)) * cw + @as(usize, @intCast(r.left));
+            const b = a + @as(usize, @intCast(r.right - r.left));
+            for (out[a..b], self.px.items[a..b], self.desk.items[a..b]) |*o, p, d| o.* = if (p >> 24 != 0) p else d;
+        }
+    }
+
+    /// The painters' result over `r` (`painted`, a buffer the overlay's size,
+    /// prefilled by `prefill`), into the overlay: every pixel that differs
+    /// from the desk is opaque, every other one clear - the desk under it is
+    /// the same colour. GDI leaves the alpha byte alone or zero, so only the
+    /// colour is compared.
+    pub fn merge(self: *Overlay, painted: []const u32, r: Rect) void {
+        const cw: usize = @intCast(self.w);
+        var y = r.top;
+        while (y < r.bottom) : (y += 1) {
+            const a = @as(usize, @intCast(y)) * cw + @as(usize, @intCast(r.left));
+            const b = a + @as(usize, @intCast(r.right - r.left));
+            for (self.px.items[a..b], painted[a..b], self.desk.items[a..b]) |*o, s, d| {
+                o.* = if ((s ^ d) & 0x00FF_FFFF == 0) 0 else s | 0xFF00_0000;
+            }
+        }
+        self.dirty = unite(self.dirty, r);
+    }
+
+    pub fn takeDirty(self: *Overlay) ?Rect {
+        defer self.dirty = null;
+        return self.dirty;
+    }
+};
+
 fn slot(comptime F: type, obj: Obj, index: usize) F {
     const vtbl: *const [*]const *const anyopaque = @ptrCast(@alignCast(obj));
     return @ptrCast(vtbl.*[index]);
@@ -355,6 +498,22 @@ pub const Host = struct {
     /// `GHOZTTY_COMP_CHROME_CAPTION_FREEZE`: drop dirty-rect band uploads.
     cap_freeze: bool = false,
 
+    /// What the painters over the desk drew (T2544), as a child of the desk
+    /// visual - so it has the desk's offset and clip - and the desk's size.
+    /// Lives only while the desk does.
+    ovl_visual: ?Obj = null,
+    ovl_surface: ?Obj = null,
+    ovl_w: i32 = 0,
+    ovl_h: i32 = 0,
+    /// Overlay uploads since the window last read them: whole, rectangles.
+    ovl_full: u32 = 0,
+    ovl_partial: u32 = 0,
+    /// A step of the overlay failed on this host; a window that needs one
+    /// keeps its desk on GDI until the host is rebuilt.
+    ovl_failed: bool = false,
+    /// `GHOZTTY_COMP_CHROME_OVERLAY_FREEZE`: drop dirty-rect overlay uploads.
+    ovl_freeze: bool = false,
+
     /// Set across a window paint: uploads leave the commit to `flush`, so
     /// the desk and the caption band reach the screen in the same frame.
     defer_commit: bool = false,
@@ -447,6 +606,7 @@ pub const Host = struct {
             .d2d_hr = d2d_hr,
             .force_loss = seamBuild() and envOn("GHOZTTY_COMP_CHROME_FORCE_LOSS"),
             .cap_freeze = seamBuild() and envOn("GHOZTTY_COMP_CHROME_CAPTION_FREEZE"),
+            .ovl_freeze = seamBuild() and envOn("GHOZTTY_COMP_CHROME_OVERLAY_FREEZE"),
         };
         if (seamBuild() and envOn("GHOZTTY_COMP_CHROME_TEST_FILL")) {
             // The fill is a test seam: failing it costs the probe, not the host.
@@ -736,6 +896,68 @@ pub const Host = struct {
         self.cap_h = 0;
     }
 
+    pub fn ovlLive(self: *const Host) bool {
+        return self.ovl_visual != null;
+    }
+
+    /// The overlay's `w` x `h` premultiplied pixels (`Overlay.px`) into the
+    /// visual over the desk: only `dirty` when the surface already holds the
+    /// rest (null: all of it). A new size, or an overlay that was not up,
+    /// takes all of it. Only while the desk is up.
+    pub fn ovlUpload(self: *Host, px: []const u32, w: i32, h: i32, dirty: ?Rect) Error!void {
+        const desk = self.desk_visual orelse return error.Unavailable;
+        if (w <= 0 or h <= 0 or px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
+        var whole = dirty == null;
+        if (self.ovl_visual == null) {
+            stage = "overlay-visual";
+            const vis = try self.newVisual();
+            errdefer release(vis);
+            // The desk's only child: drawn over its content, inside its clip.
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 1, null));
+            self.ovl_visual = vis;
+            log.info("chrome overlay visual attached: {d}x{d}", .{ w, h });
+            whole = true;
+        }
+        if (self.ovl_surface == null or w != self.ovl_w or h != self.ovl_h) {
+            stage = "overlay-surface";
+            if (self.ovl_surface) |old| release(old);
+            self.ovl_surface = null;
+            var surface: ?Obj = null;
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface));
+            const surf = surface orelse return error.ComFailed;
+            errdefer release(surf);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.ovl_visual.?, slot_dcomp_visual_set_content)(self.ovl_visual.?, surf));
+            self.ovl_surface = surf;
+            self.ovl_w = w;
+            self.ovl_h = h;
+            whole = true;
+        }
+        stage = "overlay-upload";
+        if (!whole and self.ovl_freeze) return;
+        const r = if (whole) Rect{ .left = 0, .top = 0, .right = w, .bottom = h } else bandDirty(dirty.?, w, h) orelse return;
+        try self.drawRect(self.ovl_surface.?, px, w, r);
+        if (whole) self.ovl_full +|= 1 else self.ovl_partial +|= 1;
+        try self.commit();
+    }
+
+    /// Take the overlay off the compositor; the desk stays.
+    pub fn ovlHide(self: *Host) void {
+        const vis = self.ovl_visual orelse return;
+        if (self.desk_visual) |desk| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_remove_visual)(desk, vis);
+        self.commit() catch {};
+        self.releaseOvl();
+        log.info("chrome overlay visual detached", .{});
+    }
+
+    fn releaseOvl(self: *Host) void {
+        if (self.ovl_surface) |s| release(s);
+        if (self.ovl_visual) |v| release(v);
+        self.ovl_surface = null;
+        self.ovl_visual = null;
+        self.ovl_w = 0;
+        self.ovl_h = 0;
+    }
+
     /// One rectangle of a `w`-wide buffer into `surf`. A surface may live in
     /// an atlas, so the rows land at the offset `BeginDraw` hands back.
     fn drawRect(self: *Host, surf: Obj, px: []const u32, w: i32, r: Rect) Error!void {
@@ -830,16 +1052,19 @@ pub const Host = struct {
     pub fn deskHide(self: *Host) void {
         if (self.desk_visual == null) return;
         const had_cap = self.cap_visual != null;
+        const had_ovl = self.ovl_visual != null;
         _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, null);
         _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
         self.commit_pending = false;
         self.releaseDesk();
         if (had_cap) log.info("chrome caption visual detached", .{});
+        if (had_ovl) log.info("chrome overlay visual detached", .{});
         log.info("chrome desk visual detached", .{});
     }
 
     fn releaseDesk(self: *Host) void {
         self.releaseCap();
+        self.releaseOvl();
         if (self.root_visual) |r| release(r);
         self.root_visual = null;
         if (self.desk_surface) |s| release(s);
@@ -946,6 +1171,84 @@ test "T2543: a paint's clip reaches the caption band only where they overlap" {
     // A desk-only paint below the band reaches none of it.
     try std.testing.expect(bandDirty(.{ .left = 0, .top = 40, .right = 800, .bottom = 600 }, 800, 40) == null);
     try std.testing.expect(bandDirty(.{ .left = 0, .top = 0, .right = 0, .bottom = 40 }, 800, 40) == null);
+}
+
+test "T2544: the overlay keeps what the painters drew over the desk, and a desk upload erases it" {
+    var o: Overlay = .{};
+    defer o.deinit();
+    const desk_a: u32 = 0x00102030;
+    const desk_b: u32 = 0x00405060;
+    var src = [_]u32{desk_a} ** 16; // 4x4
+    try o.deskUploaded(&src, 4, 4, null, true, &.{});
+    try std.testing.expectEqual(@as(usize, 16), o.px.items.len);
+
+    // A header painted over row 0: GDI writes alpha 0. One of its pixels
+    // happens to be the desk's colour, which shows the same either way.
+    var scratch = [_]u32{0xDEADBEEF} ** 16;
+    const whole: Rect = .{ .left = 0, .top = 0, .right = 4, .bottom = 4 };
+    o.prefill(&scratch, whole);
+    try std.testing.expectEqual(desk_a, scratch[5]);
+    scratch[0] = 0x00AABBCC;
+    scratch[1] = 0x00AABBCC;
+    scratch[2] = desk_a;
+    o.merge(&scratch, whole);
+    try std.testing.expectEqual(@as(u32, 0xFFAABBCC), o.px.items[0]);
+    try std.testing.expectEqual(@as(u32, 0), o.px.items[2]);
+    try std.testing.expectEqual(@as(u32, 0), o.px.items[5]);
+    try std.testing.expectEqual(whole, o.takeDirty().?);
+    try std.testing.expect(o.takeDirty() == null);
+
+    // A pass that paints nothing keeps what was there: the prefill is the
+    // screen, overlay included.
+    o.prefill(&scratch, whole);
+    try std.testing.expectEqual(@as(u32, 0xFFAABBCC), scratch[0]);
+    o.merge(&scratch, whole);
+    try std.testing.expectEqual(@as(u32, 0xFFAABBCC), o.px.items[1]);
+    _ = o.takeDirty();
+
+    // The desk uploads pixel 0's column (x 0, rows 0-1): the copy follows, the
+    // overlay clears there and only there, and that is what goes up next.
+    src[0] = desk_b;
+    try o.deskUploaded(&src, 4, 4, &.{.{ .left = 0, .top = 0, .right = 1, .bottom = 2 }}, true, &.{});
+    try std.testing.expectEqual(desk_b, o.desk.items[0]);
+    try std.testing.expectEqual(@as(u32, 0), o.px.items[0]);
+    try std.testing.expectEqual(@as(u32, 0xFFAABBCC), o.px.items[1]);
+    try std.testing.expectEqual(Rect{ .left = 0, .top = 0, .right = 1, .bottom = 2 }, o.takeDirty().?);
+
+    // A light frame's upload (no erase) moves the copy and leaves the overlay.
+    src[1] = desk_b;
+    try o.deskUploaded(&src, 4, 4, &.{.{ .left = 1, .top = 0, .right = 2, .bottom = 1 }}, false, &.{});
+    try std.testing.expectEqual(desk_b, o.desk.items[1]);
+    try std.testing.expectEqual(@as(u32, 0xFFAABBCC), o.px.items[1]);
+    try std.testing.expect(o.takeDirty() == null);
+}
+
+test "T2544: an erase leaves the regions the desk's blit is clipped away from" {
+    var o: Overlay = .{};
+    defer o.deinit();
+    var src = [_]u32{0} ** 16;
+    try o.deskUploaded(&src, 4, 4, null, true, &.{});
+    @memset(o.px.items, 0xFF112233);
+    // A carousel in the right half: a whole-desk upload clears only the left.
+    const keep = [_]Rect{.{ .left = 2, .top = 0, .right = 4, .bottom = 4 }};
+    try o.deskUploaded(&src, 4, 4, null, true, &keep);
+    try std.testing.expectEqual(@as(u32, 0), o.px.items[0]);
+    try std.testing.expectEqual(@as(u32, 0), o.px.items[13]);
+    try std.testing.expectEqual(@as(u32, 0xFF112233), o.px.items[2]);
+    try std.testing.expectEqual(@as(u32, 0xFF112233), o.px.items[15]);
+    // A new size starts the overlay over, clear.
+    var big = [_]u32{0} ** 20;
+    try o.deskUploaded(&big, 5, 4, null, true, &keep);
+    for (o.px.items) |p| try std.testing.expectEqual(@as(u32, 0), p);
+}
+
+test "T2544: unite is the bounding box, either side optional" {
+    const a: Rect = .{ .left = 0, .top = 5, .right = 10, .bottom = 6 };
+    const b: Rect = .{ .left = 4, .top = 0, .right = 8, .bottom = 9 };
+    try std.testing.expectEqual(Rect{ .left = 0, .top = 0, .right = 10, .bottom = 9 }, unite(a, b).?);
+    try std.testing.expectEqual(a, unite(a, null).?);
+    try std.testing.expectEqual(b, unite(null, b).?);
+    try std.testing.expect(unite(null, null) == null);
 }
 
 test "loss labels name the cause" {
