@@ -3056,6 +3056,31 @@ pub extern "gdi32" fn CreateDIBSection(
     offset: u32,
 ) callconv(.winapi) ?HANDLE;
 
+/// A pagefile-backed section a DIB can be created over (T2529), so its
+/// pages outlive any one bitmap.
+pub extern "kernel32" fn CreateFileMappingW(
+    hFile: HANDLE,
+    lpAttributes: ?*anyopaque,
+    flProtect: u32,
+    dwMaximumSizeHigh: u32,
+    dwMaximumSizeLow: u32,
+    lpName: ?[*:0]const u16,
+) callconv(.winapi) ?HANDLE;
+
+pub extern "kernel32" fn MapViewOfFile(
+    hFileMappingObject: HANDLE,
+    dwDesiredAccess: u32,
+    dwFileOffsetHigh: u32,
+    dwFileOffsetLow: u32,
+    dwNumberOfBytesToMap: usize,
+) callconv(.winapi) ?*anyopaque;
+
+pub extern "kernel32" fn UnmapViewOfFile(lpBaseAddress: *const anyopaque) callconv(.winapi) i32;
+
+pub const PAGE_READWRITE: u32 = 0x04;
+pub const FILE_MAP_WRITE: u32 = 0x0002;
+pub const FILE_MAP_READ: u32 = 0x0004;
+
 /// The `BITMAPV5HEADER` prefix, which is what `CF_DIBV5` on the clipboard
 /// starts with. Only the fields up to the masks are named: everything past
 /// them is colour-management metadata that GDI reads for us.

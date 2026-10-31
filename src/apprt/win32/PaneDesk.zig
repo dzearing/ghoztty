@@ -56,7 +56,11 @@ const Dib = struct {
     w: i32,
     h: i32,
 
-    fn create(w: i32, h: i32) ?Dib {
+    /// Over `backing`'s section when given (T2529), and then written
+    /// through its kept view rather than the one GDI maps for the bitmap.
+    fn create(w: i32, h: i32, backing: ?*Backing) ?Dib {
+        const bytes = @as(usize, @intCast(w)) * @as(usize, @intCast(h)) * 4;
+        const over = if (backing) |b| (if (b.ensure(bytes)) b else null) else null;
         const dc = w32.CreateCompatibleDC(null) orelse return null;
         var bits: ?*anyopaque = null;
         const bmi = w32.BITMAPINFO{ .bmiHeader = .{
@@ -66,7 +70,8 @@ const Dib = struct {
             .biBitCount = 32,
             .biCompression = w32.BI_RGB,
         } };
-        const bmp = w32.CreateDIBSection(dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
+        const section = if (over) |b| b.section else null;
+        const bmp = w32.CreateDIBSection(dc, &bmi, w32.DIB_RGB_COLORS, &bits, section, 0) orelse {
             _ = w32.DeleteDC(dc);
             return null;
         };
@@ -79,7 +84,7 @@ const Dib = struct {
             .dc = dc,
             .bmp = bmp,
             .old = w32.SelectObject(dc, bmp),
-            .bits = @ptrCast(@alignCast(p)),
+            .bits = if (over) |b| b.view.? else @ptrCast(@alignCast(p)),
             .w = w,
             .h = h,
         };
@@ -95,6 +100,100 @@ const Dib = struct {
         return self.bits[0..@intCast(self.w * self.h)];
     }
 };
+
+/// What `comp` and `out` are created over (T2529): a pagefile-backed
+/// section kept at the largest size asked for, and this process's own view
+/// of all of it, kept mapped. A window-edge drag needs both bitmaps at a new
+/// size on every step, and a fresh DIB section's pages are faulted in - and
+/// zeroed - by the first write to each, which was most of what a step's
+/// compose cost. Over a kept section the pages are already there, and the
+/// compose writes through a view whose pages were touched long ago.
+const Backing = struct {
+    section: ?w32.HANDLE = null,
+    view: ?[*]u32 = null,
+    bytes: usize = 0,
+
+    /// Room for `bytes`, keeping what is there when it fits. Grown with
+    /// headroom, so a drag that widens the window does not need a new
+    /// section on every step; given back when the window has shrunk to a
+    /// quarter of it, so one maximize does not pin its memory for good. A
+    /// bitmap over the old section must be gone first.
+    fn ensure(self: *Backing, bytes: usize) bool {
+        if (self.section != null and keeps(self.bytes, bytes)) return true;
+        self.deinit();
+        const want = sizeFor(bytes);
+        const s = w32.CreateFileMappingW(
+            w32.INVALID_HANDLE_VALUE,
+            null,
+            w32.PAGE_READWRITE,
+            @intCast(want >> 32),
+            @truncate(want),
+            null,
+        ) orelse return false;
+        const v = w32.MapViewOfFile(s, w32.FILE_MAP_READ | w32.FILE_MAP_WRITE, 0, 0, want) orelse {
+            _ = w32.CloseHandle(s);
+            return false;
+        };
+        self.* = .{ .section = s, .view = @ptrCast(@alignCast(v)), .bytes = want };
+        return true;
+    }
+
+    /// Whether a section of `have` bytes serves a bitmap of `bytes`.
+    fn keeps(have: usize, bytes: usize) bool {
+        return bytes <= have and bytes * 4 > have;
+    }
+
+    /// The section a bitmap of `bytes` gets: half as much again, whole
+    /// allocation granules.
+    fn sizeFor(bytes: usize) usize {
+        return std.mem.alignForward(usize, bytes + bytes / 2, 64 * 1024);
+    }
+
+    fn deinit(self: *Backing) void {
+        if (self.view) |v| _ = w32.UnmapViewOfFile(v);
+        if (self.section) |s| _ = w32.CloseHandle(s);
+        self.* = .{};
+    }
+};
+
+test "a resize step's bitmap reuses the section until it outgrows it or shrinks to a quarter of it" {
+    const B = Backing;
+    const step0 = 1400 * 770 * 4;
+    const have = B.sizeFor(step0);
+    try std.testing.expect(have >= step0 + step0 / 2);
+    try std.testing.expectEqual(@as(usize, 0), have % (64 * 1024));
+    // A drag that widens the window 12 px a step stays in it for many steps.
+    var w: usize = 1400;
+    var steps: usize = 0;
+    while (B.keeps(have, w * 770 * 4)) : (w += 12) steps += 1;
+    try std.testing.expect(steps > 30);
+    // Shrinking keeps it, until the window is a quarter of it.
+    try std.testing.expect(B.keeps(have, 700 * 770 * 4));
+    try std.testing.expect(!B.keeps(have, have / 4));
+    try std.testing.expect(!B.keeps(have, have + 1));
+}
+
+test "a bitmap over a kept section shows what was written through the kept view, at every size" {
+    var backing: Backing = .{};
+    defer backing.deinit();
+    const sizes = [_][2]i32{ .{ 64, 48 }, .{ 70, 40 }, .{ 64, 48 } };
+    var section: ?w32.HANDLE = null;
+    for (sizes, 0..) |sz, i| {
+        const d = Dib.create(sz[0], sz[1], &backing) orelse return error.SkipZigTest;
+        defer d.destroy();
+        // The same section every time: all three fit the first one's.
+        if (i == 0) section = backing.section else try std.testing.expectEqual(section, backing.section);
+        const px = d.pixels();
+        for (px, 0..) |*p, k| p.* = @intCast((k * 2654435761 + i) & 0x00FF_FFFF);
+        // GDI reads the bitmap through its own view of the same pages.
+        const x: i32 = sz[0] - 3;
+        const y: i32 = sz[1] - 2;
+        const want = px[@intCast(y * sz[0] + x)];
+        const got = w32.GetPixel(d.dc, x, y); // COLORREF is 0x00BBGGRR
+        const rgb = ((got & 0xFF) << 16) | (got & 0xFF00) | ((got >> 16) & 0xFF);
+        try std.testing.expectEqual(want, rgb);
+    }
+}
 
 /// The rendered gradient (T2520): plain memory rather than a bitmap, since
 /// nothing blits from it - it is read into `comp` and cropped for glass.
@@ -177,6 +276,9 @@ desk_gen: u32 = 0,
 comp: ?Dib = null,
 /// `comp` as a translucent window shows it (T1852); only ever created there.
 out: ?Dib = null,
+/// The sections `comp` and `out` are created over (T2529).
+comp_backing: Backing = .{},
+out_backing: Backing = .{},
 /// What `comp` was last composed from (T2448), so a paint asked for the same
 /// picture blits it instead of composing it again. The window composes on
 /// every layout pass AND on the `WM_PAINT` that pass's invalidation queues,
@@ -542,6 +644,8 @@ pub fn deinit(self: *PaneDesk) void {
     self.desk_buf.deinit(light_alloc);
     if (self.comp) |c| c.destroy();
     if (self.out) |o| o.destroy();
+    self.comp_backing.deinit();
+    self.out_backing.deinit();
     // Keep counting across a reset, so no later desk reuses a generation a
     // sidebar cache may still hold.
     self.* = .{ .desk_gen = self.desk_gen +% 1 };
@@ -599,16 +703,25 @@ pub fn paint(
     const comp = self.ensureComp(w, h) orelse return;
     var tq2: i64 = 0;
     _ = w32.QueryPerformanceCounter(&tq2);
+    // The rest, split (T2529): the compose itself, then the lights, then the
+    // names laid for the blit; what is left after that is the blit.
+    var tq_compose: i64 = tq2;
+    var tq_lights: i64 = tq2;
+    var tq_names: i64 = tq2;
     // A new size is a whole new desk (T2516): what each part of that costs, on
     // every window-resize step, under `GHOZTTY_RESIZE_TRACE`.
     defer if (fresh and resizeTraceOn()) {
         var tq3: i64 = 0;
         _ = w32.QueryPerformanceCounter(&tq3);
         const f = qpcFreq();
-        log.info("desk trace desk_us={d} comp_us={d} rest_us={d}", .{
+        log.info("desk trace desk_us={d} comp_us={d} rest_us={d} compose_us={d} lights_us={d} names_us={d} blit_us={d}", .{
             @divTrunc((tq1 - tq0) * 1_000_000, f),
             @divTrunc((tq2 - tq1) * 1_000_000, f),
             @divTrunc((tq3 - tq2) * 1_000_000, f),
+            @divTrunc((tq_compose - tq2) * 1_000_000, f),
+            @divTrunc((tq_lights - tq_compose) * 1_000_000, f),
+            @divTrunc((tq_names - tq_lights) * 1_000_000, f),
+            @divTrunc((tq3 - tq_names) * 1_000_000, f),
         });
     };
     // The same picture as last time (T2448): the lights' rings are re-drawn
@@ -639,6 +752,7 @@ pub fn paint(
     };
     if (done) self.partial_permille +|= @intCast(@divFloor(partial.rects.area() * 1000, @as(i64, w) * h));
     if (done) self.memo_partial +|= 1 else compose(comp.pixels(), desk.pixels(), @intCast(w), @intCast(h), cards, strips, style, bar, prep);
+    _ = w32.QueryPerformanceCounter(&tq_compose);
     // What changed on the window, for a paint that blits only that: the
     // rectangles composed, and every light's ring before and after - one
     // going out was just lifted off `comp`, and every ring moves anyway.
@@ -648,9 +762,11 @@ pub fn paint(
     for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
     self.memo.store(w, h, self.desk_gen, cards, strips, style, bar, lights);
     if (timer) |*t| self.compose_ns +|= t.read();
+    _ = w32.QueryPerformanceCounter(&tq_lights);
     self.last_blit = null;
     const laid = self.layNames(comp, origin_x, origin_y, opacity);
     defer if (laid) self.liftNames(comp);
+    _ = w32.QueryPerformanceCounter(&tq_names);
     if (shown) |*sh| {
         self.addLightStrips(sh, comp);
         if (self.also_blit) |r| sh.add(r.left, r.top, r.right, r.bottom);
@@ -679,7 +795,7 @@ fn addLightStrips(self: *const PaneDesk, rects: *Memo.Rects, comp: Dib) void {
 /// one (T2454).
 fn blitRect(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: Dib, desk: Desk, opacity: ?u8, r: busy_light.Rect) void {
     if (r.right <= r.left or r.bottom <= r.top) return;
-    const src = if (opacity) |o| src: {
+    if (opacity) |o| {
         const out = self.ensureOut(comp.w, comp.h) orelse return;
         const cw: usize = @intCast(comp.w);
         var y = r.top;
@@ -688,9 +804,10 @@ fn blitRect(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: D
             const b: usize = a + @as(usize, @intCast(r.right - r.left));
             desk_palette.translucentSpan(out.pixels()[a..b], comp.pixels()[a..b], desk.pixels()[a..b], o);
         }
-        break :src out.dc;
-    } else comp.dc;
-    _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, src, r.left, r.top, w32.SRCCOPY);
+        _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, out.dc, r.left, r.top, w32.SRCCOPY);
+        return;
+    }
+    blitPixels(hdc, origin_x, origin_y, comp, r);
 }
 
 fn timedBlit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: i32, comp: Dib, desk: Desk, opacity: ?u8) void {
@@ -1032,10 +1149,47 @@ fn blit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: 
     if (opacity) |o| {
         const out = self.ensureOut(w, h) orelse return;
         desk_palette.translucentSpan(out.pixels(), comp.pixels(), desk.pixels(), o);
+        // Through the DC: its alpha is the window's, and a DIB blit from
+        // memory is not held to keep that byte.
         _ = w32.BitBlt(hdc, origin_x, origin_y, w, h, out.dc, 0, 0, w32.SRCCOPY);
         return;
     }
-    _ = w32.BitBlt(hdc, origin_x, origin_y, w, h, comp.dc, 0, 0, w32.SRCCOPY);
+    blitPixels(hdc, origin_x, origin_y, comp, .{ .left = 0, .top = 0, .right = w, .bottom = h });
+}
+
+/// `r` of `dib` onto the window at its place from `origin`, read from the
+/// pixels rather than through the bitmap's DC (T2529). Over a kept section
+/// those are the view whose pages were touched long ago; the DC reads
+/// through the view GDI mapped for this bitmap, which is new with every
+/// size, and faulting its pages in is what the blit of a window-edge drag's
+/// step cost. Every row of `r`, so a top-down bitmap's source origin cannot
+/// matter.
+fn blitPixels(hdc: w32.HDC, origin_x: i32, origin_y: i32, dib: Dib, r: busy_light.Rect) void {
+    const c = clipTo(r, dib.w, dib.h) orelse return;
+    const h = c.bottom - c.top;
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = dib.w,
+        .biHeight = -h,
+        .biPlanes = 1,
+        .biBitCount = 32,
+        .biCompression = w32.BI_RGB,
+    } };
+    const rows = dib.pixels()[@as(usize, @intCast(c.top * dib.w))..];
+    _ = w32.StretchDIBits(
+        hdc,
+        origin_x + c.left,
+        origin_y + c.top,
+        c.right - c.left,
+        h,
+        c.left,
+        0,
+        c.right - c.left,
+        h,
+        rows.ptr,
+        &bmi,
+        w32.DIB_RGB_COLORS,
+        w32.SRCCOPY,
+    );
 }
 
 /// Match the ring caches to `lights` - keeping the ring of a pane whose
@@ -1158,7 +1312,7 @@ fn ensureComp(self: *PaneDesk, w: i32, h: i32) ?Dib {
         c.destroy();
         self.comp = null;
     }
-    self.comp = Dib.create(w, h);
+    self.comp = Dib.create(w, h, &self.comp_backing);
     return self.comp;
 }
 
@@ -1168,7 +1322,7 @@ fn ensureOut(self: *PaneDesk, w: i32, h: i32) ?Dib {
         o.destroy();
         self.out = null;
     }
-    self.out = Dib.create(w, h);
+    self.out = Dib.create(w, h, &self.out_backing);
     return self.out;
 }
 
