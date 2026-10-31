@@ -124,7 +124,22 @@ extension Ghostty {
             app.openConfig()
         }
 
+        /// `open_config` (⌘, / Preferences… / the palette): the Settings
+        /// window on macOS, which has its own "Open Config File" escape hatch.
         func openConfig() {
+            #if os(macOS)
+            if configPath == nil {
+                // Reached from menus, keybinds and the action callback, all on main.
+                MainActor.assumeIsolated { SettingsWindowController.show(ghostty: self) }
+                return
+            }
+            #endif
+            openConfigFile()
+        }
+
+        /// Open the config file itself in the user's editor (created empty
+        /// if it doesn't exist yet).
+        func openConfigFile() {
             let str = configPath ?? Ghostty.AllocatedString(ghostty_config_open_path()).string
             guard !str.isEmpty else { return }
             #if os(macOS)

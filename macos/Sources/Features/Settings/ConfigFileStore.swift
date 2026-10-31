@@ -131,9 +131,10 @@ final class ConfigFileStore {
     }
 
     /// Put a backup's contents back (itself a change, so it is backed up too).
-    func restore(_ backup: URL) throws {
+    @discardableResult
+    func restore(_ backup: URL) throws -> Change {
         let data = try Data(contentsOf: backup)
         guard let text = String(data: data, encoding: .utf8) else { throw StoreError.notUTF8(backup) }
-        try edit { $0 = ConfigFileText(text) }
+        return try edit { $0 = ConfigFileText(text) }
     }
 }
