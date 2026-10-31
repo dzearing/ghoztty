@@ -9288,6 +9288,13 @@ fn stackGesturing(self: *const Window) bool {
 /// it: a card tucking away goes under the run, not across it. Only the panes
 /// are reordered among themselves - the topmost stays where it is and the
 /// rest go beneath it - so no other child window changes place.
+///
+/// A pane already right under its neighbour is left alone, and the ones that
+/// do move go in one batch (T2485 D21). Before, every pane was re-stacked with
+/// its own `SetWindowPos`, moved or not, at the start of every fold: a z-order
+/// change re-inserts a layered child in the compositor's tree, and a pane that
+/// had not moved at all (run50 f298, run51 f294: pane 4) showed only the desk
+/// for one frame. `GHOZTTY_STACK_ORDER=legacy` keeps the old shape for an A/B.
 fn orderStackCards(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_grid.Grid) void {
     _ = self;
     var ids: [pane_stack_slide.max_cards]pane_stack_grid.Id = undefined;
@@ -9303,15 +9310,52 @@ fn orderStackCards(self: *Window, tree: SplitTree(PaneView), grid: *const pane_s
     }
     if (n < 2) return;
     pane_stack_layout.paintOrder(ids[0..n], &grid.result);
+    const legacy = stackOrderLegacy();
+    const flags: u32 = w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE | w32.SWP_NOOWNERZORDER;
+    var t0: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&t0);
+    var hdwp: ?w32.HDWP = if (legacy) null else beginPaneBatch(n);
+    var moved: usize = 0;
     var above: ?w32.HWND = null;
     var i = n;
     while (i > 0) {
         i -= 1;
         const view: *PaneView = @ptrFromInt(ids[i]);
         const h = view.hwnd() orelse continue;
-        if (above) |a| _ = w32.SetWindowPos(h, a, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE | w32.SWP_NOOWNERZORDER);
-        above = h;
+        defer above = h;
+        const a = above orelse continue;
+        if (!legacy and w32.GetWindow(h, w32.GW_HWNDPREV) == a) continue;
+        moved += 1;
+        if (hdwp) |batch| {
+            if (w32.DeferWindowPos(batch, h, a, 0, 0, 0, 0, flags)) |next| {
+                hdwp = next;
+                continue;
+            }
+            hdwp = null;
+        }
+        _ = w32.SetWindowPos(h, a, 0, 0, 0, 0, flags);
     }
+    endPaneBatch(hdwp);
+    if (stackTraceOn()) {
+        var t1: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&t1);
+        stackTrace("stack trace order qpc={d} end={d} panes={d} moved={d} legacy={}", .{ t0, t1, n, moved, legacy });
+    }
+}
+
+/// `GHOZTTY_STACK_ORDER=legacy` (T2485 D21 A/B): re-stack every pane on its
+/// own, the shape before the fix.
+fn stackOrderLegacy() bool {
+    const S = struct {
+        var v: ?bool = null;
+    };
+    if (S.v) |v| return v;
+    const v = if (std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_STACK_ORDER")) |s| blk: {
+        defer std.heap.page_allocator.free(s);
+        break :blk std.mem.eql(u8, s, "legacy");
+    } else |_| false;
+    S.v = v;
+    return v;
 }
 
 /// Ask each terminal folding into its strip for its last frame (T2457), so
