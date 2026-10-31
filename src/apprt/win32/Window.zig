@@ -155,6 +155,7 @@ const bell_math = @import("bell_math.zig");
 const chrome_alpha = @import("chrome_alpha.zig");
 const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
+const chrome_comp = @import("chrome_comp.zig");
 const split_geometry = @import("split_geometry.zig");
 const gutter_bar = @import("gutter_bar.zig");
 const pane_elevation = @import("pane_elevation.zig");
@@ -1013,6 +1014,12 @@ ghost: bool = false,
 /// visual on a pane under a layered (alpha) top-level is not in the composed
 /// picture, so the composition path is filmed this way instead.
 ghost_opaque: bool = false,
+
+/// The chrome's composition host (T2508, `GHOZTTY_COMP_CHROME=1`): a
+/// DirectComposition target under the panes with a Direct2D context, no
+/// visual attached yet. Null when the knob is off or the host could not be
+/// built, and the chrome is GDI either way.
+chrome_host: ?chrome_comp.Host = null,
 
 /// The NEXT split inserted into this window leaves keyboard focus where it is
 /// (T1797): the pane that had it - normally the one the `+split` was run from -
@@ -1949,6 +1956,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         self.hwnd = null;
     }
     if (self.ghost and !self.ghost_opaque) _ = w32.SetLayeredWindowAttributes(hwnd, 0, 1, w32.LWA_ALPHA);
+    if (chrome_comp.enabled()) self.chrome_host = chrome_comp.create(hwnd, 0);
 
     // Store the Window pointer in GWLP_USERDATA for the WndProc.
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
@@ -2175,6 +2183,8 @@ pub fn deinit(self: *Window) void {
 /// full-screen exit button - for the life of the app.
 fn releaseOwnedResources(self: *Window) void {
     self.endRowDrag();
+    if (self.chrome_host) |*cc| cc.deinit();
+    self.chrome_host = null;
     if (self.pane_stacks) |*st| st.deinit();
     self.pane_stacks = null;
     self.pane_desk.deinit();
@@ -14187,6 +14197,8 @@ fn paintWindow(self: *Window) void {
     // camera asked for is the one thing that must not read as the window
     // repainting itself. See `paint_probe.zig`.
     paint_probe.record(.window);
+    // T2508: a lost device is noticed here and the host rebuilt.
+    chrome_comp.poll(&self.chrome_host);
 
     var ps: w32.PAINTSTRUCT = undefined;
     const hdc_screen = w32.BeginPaint(hwnd, &ps) orelse return;

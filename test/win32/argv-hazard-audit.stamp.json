@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-30T21:21:26-07:00",
-    "commit":  "8a9e77fd7",
+    "generated":  "2026-10-31T03:51:02-07:00",
+    "commit":  "2263ae03f",
     "uncommitted":  [
-
+                        "scripts/comp-chrome-onscreen.ps1",
+                        "scripts/guard-due.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -15,6 +16,7 @@
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
+                  "scripts/comp-chrome-onscreen.ps1":  "feb985408dd8ea6396dd0f234a79de4face1a32215ce763661ff66c081e4e58f",
                   "scripts/comp-present-onscreen.ps1":  "6072c86787b9488bea95f031e47c131b0bc800c1a7920fd8814bae92a486d4a5",
                   "scripts/comp-spike.ps1":  "0cb3e4fbe75df1ed7645ce6fd2a28ca71177ab94a87febee45e13a1201d10ab7",
                   "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
@@ -39,7 +41,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
-                  "scripts/guard-due.ps1":  "b9a6609eb0d28529840f99512c434890da99805ed195a8d874b49bd761174afd",
+                  "scripts/guard-due.ps1":  "b6a758ca9f13e4c640420b821f422b1c7d76e371036e037e54adbe508a5f33ed",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "f055b029eedf4387b748f3e8e0e2b545e90023a017eddf18e5662024a1244ac8",

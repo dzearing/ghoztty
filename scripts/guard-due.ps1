@@ -2397,6 +2397,18 @@ $GuardTable = @(
             'test\win32\comp-present.ps1'
         )
     },
+    # The window chrome's composition host (T2508): D3D11 + Direct2D +
+    # DirectComposition vtable slots that only a live run checks, and a
+    # rebuild-on-device-loss path that only fires when the harness forces it.
+    [pscustomobject]@{
+        Name   = 'comp-chrome'
+        Script = 'test\win32\comp-chrome.ps1'
+        Stamp  = 'test\win32\comp-chrome.stamp.json'
+        Covers = @(
+            'src\apprt\win32\chrome_comp.zig',
+            'test\win32\comp-chrome.ps1'
+        )
+    },
     # The in-app update (T1178). This is the one code path that REPLACES the
     # app on disk and quits the terminal to do it, and every failure mode is
     # invisible to a compiler: an asset matcher that picks the wrong release,
