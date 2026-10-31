@@ -29,7 +29,6 @@ const w32 = @import("win32.zig");
 // scope so its own positive and negative controls are queued into the win32
 // test lane along with the class test below.
 const class_redraw = @import("class_redraw.zig");
-const chrome_reposition = @import("chrome_reposition.zig");
 const color_math = @import("color_math.zig");
 const chrome_theme = @import("chrome_theme.zig");
 const banner_card = @import("banner_card.zig");
@@ -192,10 +191,10 @@ fn registerClass(hinstance: ?w32.HINSTANCE) void {
         // `Layout.init(scale, width, shown)` - the buttons are anchored to the
         // right edge and the address field stretches between them - so a width
         // change makes every pixel stale, not just the strip the resize
-        // uncovers. `place()` resizes through `chrome_reposition.place`
-        // (T1392), which paints the update region in THIS frame; the class
-        // style is what makes that region the whole client rather than the
-        // sliver the widen uncovered.
+        // uncovers. `place()` moves with `SWP_NOREDRAW` and repaints the
+        // whole band itself in THIS frame (T1392/T2531), so the class style
+        // is the backstop for any other resize: it makes the region the
+        // whole client rather than the sliver the widen uncovered.
         .style = w32.CS_HREDRAW | w32.CS_VREDRAW,
         .lpfnWndProc = &wndProc,
         .cbClsExtra = 0,
@@ -389,12 +388,14 @@ pub fn shown(self: *const ViewerNavBar) layout_mod.Shown {
 /// pass for `GHOZTTY_RESIZE_TRACE`'s `resize trace viewer` line: the window
 /// resets it when a pass opens, beside `ViewerPane.sync_cost`. The bar is
 /// moved and repainted on every step of a window-edge drag, so each part of
-/// that is a share of a frame. `bar_ns` and `edit_ns` include the paint each
-/// move forces; `glass_ns` and `buttons_ns` are the bar's paint, split.
+/// that is a share of a frame. `bar_ns` and `edit_ns` are the two moves,
+/// `paint_ns` the one repaint of the band they share (T2531); `glass_ns` and
+/// `buttons_ns` are the bar's part of that paint, split.
 pub const PlaceCost = struct {
     bar_ns: u64 = 0,
     edit_ns: u64 = 0,
     tip_ns: u64 = 0,
+    paint_ns: u64 = 0,
     glass_ns: u64 = 0,
     buttons_ns: u64 = 0,
     paints: u32 = 0,
@@ -411,39 +412,98 @@ fn tsince(from: ?std.time.Instant) u64 {
     return now.since(s);
 }
 
+/// The bar's and the field's rects, bar-relative for the field, as `place`
+/// last left them or as Windows reports them now.
+pub const Placement = struct {
+    bar: w32.RECT,
+    edit: w32.RECT,
+};
+
+/// Whether `place` owes the band a repaint (T2531): any change to either rect
+/// - size OR position - or a rect Windows would not report. The moves go out
+/// with `SWP_NOREDRAW`, so nothing else repaints a field that only slid
+/// sideways; a pure-function answer keeps that from being forgotten.
+pub fn placementChanged(old: ?Placement, new: Placement) bool {
+    const o = old orelse return true;
+    return !std.meta.eql(o, new);
+}
+
+fn currentPlacement(self: *const ViewerNavBar) ?Placement {
+    var br: w32.RECT = undefined;
+    var er: w32.RECT = undefined;
+    if (w32.GetWindowRect(self.hwnd, &br) == 0) return null;
+    if (w32.GetWindowRect(self.edit, &er) == 0) return null;
+    return .{
+        .bar = .{ .left = 0, .top = 0, .right = br.right - br.left, .bottom = br.bottom - br.top },
+        .edit = .{
+            .left = er.left - br.left,
+            .top = er.top - br.top,
+            .right = er.right - br.left,
+            .bottom = er.bottom - br.top,
+        },
+    };
+}
+
 /// Position the bar across the top of the pane and its EDIT inside it.
 /// Idempotent and cheap; the pane calls it from every bounds sync while the
 /// bar is visible.
+///
+/// Both moves go out with `SWP_NOREDRAW` and the band is then painted ONCE,
+/// bar and field together, in this frame (T2531). The T1392 contract still
+/// holds - a drag never shows the bar a frame late, because the repaint is
+/// synchronous (`RDW_UPDATENOW`) rather than left to the next idle - but it
+/// used to be met twice over: `chrome_reposition.place` on the bar forced its
+/// paint, then the same call on the field forced a second one, each with its
+/// own BeginPaint/EndPaint and GDI flush. On a window-edge drag (ReleaseSafe,
+/// `resize-sync-onscreen.ps1`, 128 passes) that took the bar's share of a
+/// pass from ~1.45 ms to ~1.14 ms median.
 pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
     const l = layout_mod.Layout.init(scale, width, self.shown());
-    var t = tnow();
-    // Resize-aware reposition, not `MoveWindow(.., TRUE)` (T1392). A divider
-    // drag re-runs this per mouse-move, and `MoveWindow`'s repaint is deferred
-    // to the next idle — with the loop busy pumping sizing messages that lands
-    // a frame late, over a stretched blit of the old layout. That is the
-    // address bar visibly painting into the width the drag just revealed.
-    _ = chrome_reposition.place(self.hwnd, 0, 0, width, l.bar_h, 0);
-    place_cost.bar_ns +|= tsince(t);
-    t = tnow();
     const field_w = @max(l.address.right - l.address.left, 0);
-    // The field goes the same way: it is the widest thing in the band and it
-    // stretches with it, so a bar that repaints in-frame around a field that
-    // does not still reads as a lagging address bar.
-    _ = chrome_reposition.place(
-        self.edit,
-        l.address.left,
-        l.address.top,
-        field_w,
-        l.address.bottom - l.address.top,
-        0,
-    );
+    const want: Placement = .{
+        .bar = .{ .left = 0, .top = 0, .right = width, .bottom = l.bar_h },
+        .edit = .{
+            .left = l.address.left,
+            .top = l.address.top,
+            .right = l.address.left + field_w,
+            .bottom = l.address.bottom,
+        },
+    };
+    const changed = placementChanged(self.currentPlacement(), want);
+    const flags = w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOREDRAW | w32.SWP_NOCOPYBITS;
+    var t = tnow();
+    if (changed) {
+        // The field first: shrinking the bar first would clip it for nothing.
+        _ = w32.SetWindowPos(self.edit, null, want.edit.left, want.edit.top, field_w, want.edit.bottom - want.edit.top, flags);
+    }
     // In the minimum band the field is not painted at all (T1159), and an EDIT
     // moved to zero width is still a focusable control that draws a caret at
     // the band's left edge. Hidden, it is out of the tab order and off the
     // screen, which is what "absent" has to mean for it to read as designed.
     _ = w32.ShowWindow(self.edit, if (field_w > 0) w32.SW_SHOWNA else w32.SW_HIDE);
     place_cost.edit_ns +|= tsince(t);
-    if (self.scale != scale) {
+    t = tnow();
+    if (changed) _ = w32.SetWindowPos(self.hwnd, null, 0, 0, width, l.bar_h, flags);
+    place_cost.bar_ns +|= tsince(t);
+    t = tnow();
+    // `CS_HREDRAW | CS_VREDRAW` is what used to make a width change stale
+    // everywhere; with `SWP_NOREDRAW` that is now said here, explicitly: the
+    // whole bar, the field's border (`RDW_FRAME`) and its client, painted now.
+    if (changed) _ = w32.RedrawWindow(
+        self.hwnd,
+        null,
+        null,
+        w32.RDW_INVALIDATE | w32.RDW_FRAME | w32.RDW_ALLCHILDREN | w32.RDW_UPDATENOW,
+    );
+    place_cost.paint_ns +|= tsince(t);
+    if (self.scale != scale) self.applyScaleFont(scale);
+    t = tnow();
+    self.syncTip(l);
+    place_cost.tip_ns +|= tsince(t);
+}
+
+fn applyScaleFont(self: *ViewerNavBar, scale: f32) void {
+    {
         self.scale = scale;
         if (self.font) |f| _ = w32.DeleteObject(@ptrCast(f));
         const ramp = type_ramp.body(scale);
@@ -465,9 +525,6 @@ pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
         );
         if (self.font) |f| _ = w32.SendMessageW(self.edit, w32.WM_SETFONT, @intFromPtr(f), 1);
     }
-    t = tnow();
-    self.syncTip(l);
-    place_cost.tip_ns +|= tsince(t);
 }
 
 // -------------------------------------------------------------------------
@@ -1217,12 +1274,35 @@ fn activate(self: *ViewerNavBar, b: layout_mod.Button) void {
 
 // T467: the bar's buttons are anchored to its right edge and the address field
 // spans what is left, so a pane width change re-lays out every one of them.
-// `place()` resizes through `chrome_reposition.place` (T1392), which paints
-// the update region synchronously — the class is what decides that the region
-// is the whole bar and not the sliver the widen uncovered.
+// `place()` repaints the whole band synchronously itself (T1392/T2531); for
+// any other resize the class is what decides that the region is the whole bar
+// and not the sliver the widen uncovered.
 test "viewer nav class: a resize invalidates the whole bar" {
     const hinst = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
     registerClass(hinst);
     if (!class_registered) return error.SkipZigTest;
     try class_redraw.expectResizeInvalidatesWholeClient(CLASS_NAME);
+}
+
+// T2531: the band is repainted only when a rect actually moved. A field that
+// slid sideways without changing size is a change too - the moves go out with
+// `SWP_NOREDRAW`, so nothing else would repaint it.
+test "T2531: placementChanged sees size, position, and an unknown rect" {
+    const at: Placement = .{
+        .bar = .{ .left = 0, .top = 0, .right = 600, .bottom = 36 },
+        .edit = .{ .left = 80, .top = 6, .right = 500, .bottom = 30 },
+    };
+    try std.testing.expect(!placementChanged(at, at));
+    try std.testing.expect(placementChanged(null, at));
+    var wider = at;
+    wider.bar.right = 612;
+    wider.edit.right = 512;
+    try std.testing.expect(placementChanged(at, wider));
+    var slid = at;
+    slid.edit.left = 110;
+    slid.edit.right = 530;
+    try std.testing.expect(placementChanged(at, slid));
+    var taller = at;
+    taller.bar.bottom = 44;
+    try std.testing.expect(placementChanged(at, taller));
 }
