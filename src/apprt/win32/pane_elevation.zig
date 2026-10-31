@@ -186,6 +186,24 @@ const Frame = struct {
     fn edge(f: Frame, q: f32) f32 {
         return f.dist(q, @min(q, 0));
     }
+
+    /// The pixels of `[x0, x1)` between the card's two corners, where
+    /// `qx <= 0` (T2537). On a row whose `qy` is positive - above or below
+    /// the straight sides - every one of them is `dist(qx, qy)` of the same
+    /// bits: the corner term never engages and the edge term is `qy`'s.
+    fn flatSpan(f: Frame, x0: i32, x1: i32) [2]i32 {
+        const lo: i32 = @intFromFloat(@ceil(f.cx - f.ex - 0.5));
+        const hi: i32 = @intFromFloat(@floor(f.cx + f.ex - 0.5));
+        var a = std.math.clamp(lo, x0, x1);
+        var b = std.math.clamp(hi + 1, a, x1);
+        // The bounds as the per-pixel test reads them, not as the algebra
+        // does: `qx` is monotonic in |x - cx|, so the set is contiguous.
+        while (a < b and f.qx(@as(f32, @floatFromInt(a)) + 0.5) > 0) a += 1;
+        while (a > x0 and f.qx(@as(f32, @floatFromInt(a - 1)) + 0.5) <= 0) a -= 1;
+        while (b > a and f.qx(@as(f32, @floatFromInt(b - 1)) + 0.5) > 0) b -= 1;
+        while (b < x1 and f.qx(@as(f32, @floatFromInt(b)) + 0.5) <= 0) b += 1;
+        return .{ a, b };
+    }
 };
 
 /// Per-row/per-column tables over one card's reach (T1856): `q[i]` is the
@@ -328,6 +346,71 @@ fn blend(dst: u32, src: Rgbf, a: f32) u32 {
         Rgbf.lerp(unpack(dst), src, a).pack(),
         desk_palette.coverOver(desk_palette.coverage(dst), a),
     );
+}
+
+/// `blend(p, src, a)` along `span`, eight pixels at a time (T2537): the same
+/// operations in the same order in every lane, so the same bits.
+fn blendSpan(span: []u32, src: Rgbf, a: f32) void {
+    if (a <= 0) return;
+    if (a >= 1) return @memset(span, src.pack() | 0xFF00_0000);
+    const F = @Vector(LANES, f32);
+    const ff: Lanes = @splat(0xFF);
+    const av: F = @splat(a);
+    const keep: F = @splat(1 - a);
+    const zero: F = @splat(0);
+    const one: F = @splat(1);
+    const top: F = @splat(255);
+    const sr: F = @splat(src.r);
+    const sg: F = @splat(src.g);
+    const sb: F = @splat(src.b);
+    var i: usize = 0;
+    while (i + LANES <= span.len) : (i += LANES) {
+        const p: Lanes = span[i..][0..LANES].*;
+        const r: F = @floatFromInt(shr(p, 16) & ff);
+        const g: F = @floatFromInt(shr(p, 8) & ff);
+        const b: F = @floatFromInt(p & ff);
+        const c: F = @as(F, @floatFromInt(shr(p, 24))) / top;
+        const cov = av + c * keep;
+        const ro: Lanes = @intFromFloat(@max(zero, @min(@round(r + (sr - r) * av), top)));
+        const go: Lanes = @intFromFloat(@max(zero, @min(@round(g + (sg - g) * av), top)));
+        const bo: Lanes = @intFromFloat(@max(zero, @min(@round(b + (sb - b) * av), top)));
+        const ao: Lanes = @intFromFloat(@round(@max(zero, @min(cov, one)) * top));
+        span[i..][0..LANES].* = shl(ao, 24) | shl(ro, 16) | shl(go, 8) | bo;
+    }
+    while (i < span.len) : (i += 1) span[i] = blend(span[i], src, a);
+}
+
+/// `blend(p, src, as[i])` along `span` (T2537): `blendSpan` with an alpha a
+/// pixel, the two ends of `blend`'s range picked lane by lane.
+fn blendEach(span: []u32, src: Rgbf, as: []const f32) void {
+    std.debug.assert(as.len >= span.len);
+    const F = @Vector(LANES, f32);
+    const ff: Lanes = @splat(0xFF);
+    const zero: F = @splat(0);
+    const one: F = @splat(1);
+    const top: F = @splat(255);
+    const sr: F = @splat(src.r);
+    const sg: F = @splat(src.g);
+    const sb: F = @splat(src.b);
+    const solid: Lanes = @splat(src.pack() | 0xFF00_0000);
+    var i: usize = 0;
+    while (i + LANES <= span.len) : (i += LANES) {
+        const av: F = as[i..][0..LANES].*;
+        if (@reduce(.And, av <= zero)) continue;
+        const p: Lanes = span[i..][0..LANES].*;
+        const r: F = @floatFromInt(shr(p, 16) & ff);
+        const g: F = @floatFromInt(shr(p, 8) & ff);
+        const b: F = @floatFromInt(p & ff);
+        const c: F = @as(F, @floatFromInt(shr(p, 24))) / top;
+        const cov = av + c * (one - av);
+        const ro: Lanes = @intFromFloat(@max(zero, @min(@round(r + (sr - r) * av), top)));
+        const go: Lanes = @intFromFloat(@max(zero, @min(@round(g + (sg - g) * av), top)));
+        const bo: Lanes = @intFromFloat(@max(zero, @min(@round(b + (sb - b) * av), top)));
+        const ao: Lanes = @intFromFloat(@round(@max(zero, @min(cov, one)) * top));
+        const mixed = shl(ao, 24) | shl(ro, 16) | shl(go, 8) | bo;
+        span[i..][0..LANES].* = @select(u32, av <= zero, p, @select(u32, av >= one, solid, mixed));
+    }
+    while (i < span.len) : (i += 1) span[i] = blend(span[i], src, as[i]);
 }
 
 const black: Rgbf = .{ .r = 0, .g = 0, .b = 0 };
@@ -496,6 +579,80 @@ const GlassLut = struct {
     fn sheet(l: *const GlassLut, p: u32) u32 {
         return l.mix(p) | l.cover[p >> 24];
     }
+
+    /// `top.mix(base.mix(p))` as one table (T2537): both are per channel,
+    /// so their composition is too - four reads a pixel where it was eight.
+    /// Its coverage is `top`'s, read off `p` itself.
+    fn under(top: *const GlassLut, base: *const GlassLut) GlassLut {
+        var l: GlassLut = undefined;
+        for (0..256) |i| {
+            l.r[i] = top.r[(base.r[i] >> 16) & 0xFF];
+            l.g[i] = top.g[(base.g[i] >> 8) & 0xFF];
+            l.b[i] = top.b[base.b[i] & 0xFF];
+        }
+        l.cover = top.cover;
+        return l;
+    }
+
+    /// A glass card's antialiased edge over `span`, every pixel at one
+    /// coverage (T2537): the per-pixel paint of `paintCardsWith` with
+    /// `outer` and `inner` fixed, its float work eight lanes at a time and
+    /// its table reads one by one - the same operations, so the same bits.
+    fn edgeSpan(l: *const GlassLut, span: []u32, rim_rgb: Rgbf, rim_a: f32, outer: f32, inner: f32, cover_t: f32) void {
+        const F = @Vector(LANES, f32);
+        const ff: Lanes = @splat(0xFF);
+        const zero: F = @splat(0);
+        const one: F = @splat(1);
+        const top: F = @splat(255);
+        const ra: F = @splat(rim_a);
+        const rr: F = @splat(rim_rgb.r);
+        const rg: F = @splat(rim_rgb.g);
+        const rb: F = @splat(rim_rgb.b);
+        const t: F = @splat((outer - inner) / outer);
+        const ov: F = @splat(outer);
+        const ca = outer * cover_t;
+        const cav: F = @splat(ca);
+        const ckeep: F = @splat(1 - ca);
+        var i: usize = 0;
+        while (i + LANES <= span.len) : (i += LANES) {
+            const u: Lanes = span[i..][0..LANES].*;
+            var m: Lanes = undefined;
+            inline for (0..LANES) |k| m[k] = l.mix(u[k]);
+            const br: F = @floatFromInt(shr(m, 16) & ff);
+            const bg: F = @floatFromInt(shr(m, 8) & ff);
+            const bb: F = @floatFromInt(m & ff);
+            const pr = br + (rr - br) * ra;
+            const pg = bg + (rg - bg) * ra;
+            const pb = bb + (rb - bb) * ra;
+            var cr = br + (pr - br) * t;
+            var cg = bg + (pg - bg) * t;
+            var cb = bb + (pb - bb) * t;
+            if (outer < 1) {
+                const ur: F = @floatFromInt(shr(u, 16) & ff);
+                const ug: F = @floatFromInt(shr(u, 8) & ff);
+                const ub: F = @floatFromInt(u & ff);
+                cr = ur + (cr - ur) * ov;
+                cg = ug + (cg - ug) * ov;
+                cb = ub + (cb - ub) * ov;
+            }
+            const ro: Lanes = @intFromFloat(@max(zero, @min(@round(cr), top)));
+            const go: Lanes = @intFromFloat(@max(zero, @min(@round(cg), top)));
+            const bo: Lanes = @intFromFloat(@max(zero, @min(@round(cb), top)));
+            const c: F = @as(F, @floatFromInt(shr(u, 24))) / top;
+            const ao: Lanes = @intFromFloat(@round(@max(zero, @min(cav + c * ckeep, one)) * top));
+            span[i..][0..LANES].* = shl(ao, 24) | shl(ro, 16) | shl(go, 8) | bo;
+        }
+        while (i < span.len) : (i += 1) {
+            const under_px = span[i];
+            const base = unpack(l.mix(under_px));
+            const rim_px = Rgbf.lerp(base, rim_rgb, rim_a);
+            const col = Rgbf.lerp(base, rim_px, (outer - inner) / outer);
+            span[i] = desk_palette.withCoverage(
+                blend(under_px, col, outer),
+                desk_palette.coverOver(desk_palette.coverage(under_px), ca),
+            );
+        }
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -643,23 +800,39 @@ fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyl
             const row_a = glowAlpha(f.edge(qy), style.is_light, style.scale);
             // The card's interior is never lit; skip it on a straight row.
             const sides = y >= c.top + ri and y < c.bottom - ri;
-            var x = x0;
-            while (x < x1) : (x += 1) {
-                if (sides and x >= c.left + edge and x < c.right - edge) {
-                    x = c.right - edge - 1;
-                    continue;
+            // Above or below the sides, the run between the corners is all
+            // `row_a` (T2537): one blend across it, eight pixels at a time.
+            const flat: [2]i32 = if (!sides and qy > 0) f.flatSpan(x0, x1) else .{ x1, x1 };
+            if (flat[1] > flat[0]) blendSpan(
+                buf[@intCast(y * wi + flat[0])..@intCast(y * wi + flat[1])],
+                white,
+                row_a * std.math.clamp(g.level, 0, 1),
+            );
+            // What is left either side of the interior or that run: an
+            // alpha a pixel, then - with a table row to hold them - blended
+            // eight at a time.
+            const s0: i32 = if (sides) std.math.clamp(c.left + edge, x0, x1) else flat[0];
+            const s1: i32 = if (sides) std.math.clamp(c.right - edge, s0, x1) else flat[1];
+            for ([2][2]i32{ .{ x0, s0 }, .{ s1, x1 } }) |run| {
+                if (run[1] <= run[0]) continue;
+                const span = buf[@intCast(y * wi + run[0])..@intCast(y * wi + run[1])];
+                const as: ?[]f32 = if (t) |tab| tab.a[1][@intCast(run[0] - x0)..@intCast(run[1] - x0)] else null;
+                var x = run[0];
+                while (x < run[1]) : (x += 1) {
+                    const k: usize = @intCast(x - x0);
+                    const qx = if (t) |tab| tab.q[k] else f.qx(@as(f32, @floatFromInt(x)) + 0.5);
+                    const a = if (qx > 0 and qy > 0)
+                        glowAlpha(f.dist(qx, qy), style.is_light, style.scale)
+                    else if (qx >= qy)
+                        (if (t) |tab| tab.a[0][k] else glowAlpha(f.edge(qx), style.is_light, style.scale))
+                    else
+                        row_a;
+                    const j: usize = @intCast(x - run[0]);
+                    if (as) |v| {
+                        v[j] = if (a <= 0) 0 else a * std.math.clamp(g.level, 0, 1);
+                    } else if (a > 0) span[j] = blend(span[j], white, a * std.math.clamp(g.level, 0, 1));
                 }
-                const k: usize = @intCast(x - x0);
-                const qx = if (t) |tab| tab.q[k] else f.qx(@as(f32, @floatFromInt(x)) + 0.5);
-                const a = if (qx > 0 and qy > 0)
-                    glowAlpha(f.dist(qx, qy), style.is_light, style.scale)
-                else if (qx >= qy)
-                    (if (t) |tab| tab.a[0][k] else glowAlpha(f.edge(qx), style.is_light, style.scale))
-                else
-                    row_a;
-                if (a <= 0) continue;
-                const i: usize = @intCast(y * wi + x);
-                buf[i] = blend(buf[i], white, a * std.math.clamp(g.level, 0, 1));
+                if (as) |v| blendEach(span, white, v);
             }
         }
     }
@@ -1162,6 +1335,8 @@ pub fn paintCardsWith(buf: []u32, w: usize, h: usize, cards: []const Card, style
         else
             null;
         const head_base: ?*const GlassLut = if (head_base_lut) |*l| l else if (lut) |*l| l else null;
+        // The head's material over that sheet, as one table (T2537).
+        const head_glass_lut: ?GlassLut = if (head_lut) |*hl| GlassLut.under(hl, head_base.?) else null;
         var y = y0;
         while (y < y1) : (y += 1) {
             // This row's card colour (T1851): a header or nav band, a
@@ -1196,15 +1371,39 @@ pub fn paintCardsWith(buf: []u32, w: usize, h: usize, cards: []const Card, style
             if (in1 > in0) {
                 const span = buf[row + @as(usize, @intCast(in0)) .. row + @as(usize, @intCast(in1))];
                 if (glass_head) {
-                    for (span) |*p| p.* = head_lut.?.mix(head_base.?.mix(p.*)) | head_lut.?.cover[p.* >> 24];
+                    const l = &head_glass_lut.?;
+                    for (span) |*p| p.* = l.sheet(p.*);
                 } else if (glass) {
-                    for (span) |*p| p.* = lut.?.sheet(p.*);
+                    const l = &lut.?;
+                    for (span) |*p| p.* = l.sheet(p.*);
                 } else @memset(span, fill_px | 0xFF00_0000);
+            }
+            // A rounded row above or below the sides (T2537): between its
+            // corners every pixel is one distance from the edge, so the run
+            // is one coverage, laid eight pixels at a time - one colour on a
+            // solid card, the sheet over each pixel on glass.
+            const flat: [2]i32 = if (in1 <= in0 and qy > 0) f.flatSpan(x0, x1) else .{ x1, x1 };
+            if (flat[1] > flat[0]) {
+                const d = f.dist(f.qx(@as(f32, @floatFromInt(flat[0])) + 0.5), qy);
+                const outer = std.math.clamp(0.5 - d, 0, 1);
+                const inner = std.math.clamp(0.5 - (d + rim_w), 0, 1);
+                const span = buf[row + @as(usize, @intCast(flat[0])) .. row + @as(usize, @intCast(flat[1]))];
+                if (outer <= 0) {
+                    // Nothing of the card reaches this row's middle.
+                } else if (glass_head) {
+                    head_glass_lut.?.edgeSpan(span, rim_rgb, rim_a, outer, inner, cover_t);
+                } else if (glass) {
+                    lut.?.edgeSpan(span, rim_rgb, rim_a, outer, inner, cover_t);
+                } else blendSpan(span, Rgbf.lerp(fill, rim_c, (outer - inner) / outer), outer);
             }
             var x = x0;
             while (x < x1) : (x += 1) {
                 if (x == in0 and in1 > in0) {
                     x = in1 - 1;
+                    continue;
+                }
+                if (x == flat[0] and flat[1] > flat[0]) {
+                    x = flat[1] - 1;
                     continue;
                 }
                 const i: usize = row + @as(usize, @intCast(x));
@@ -1216,7 +1415,7 @@ pub fn paintCardsWith(buf: []u32, w: usize, h: usize, cards: []const Card, style
                 const ring = outer - inner;
                 // Glass: the sheet's own colour over THIS pixel of desk.
                 const base = if (glass_head)
-                    unpack(head_lut.?.mix(head_base.?.mix(buf[i])))
+                    unpack(head_glass_lut.?.mix(buf[i]))
                 else if (glass)
                     unpack(lut.?.mix(buf[i]))
                 else
@@ -2089,6 +2288,90 @@ test "T1856: the table-driven paint matches the direct rasteriser (to two levels
             }
         }
     }
+}
+
+test "T2537: blendSpan is blend(), lane for lane, at every alpha" {
+    var prng = std.Random.DefaultPrng.init(2537);
+    const rnd = prng.random();
+    var span: [77]u32 = undefined;
+    var want: [77]u32 = undefined;
+    for (0..400) |k| {
+        for (&span) |*p| p.* = rnd.int(u32);
+        const src: Rgbf = .{ .r = @floatFromInt(rnd.int(u8)), .g = @floatFromInt(rnd.int(u8)), .b = @floatFromInt(rnd.int(u8)) };
+        // The ends of the range, then anything between.
+        const a: f32 = switch (k) {
+            0 => 0,
+            1 => 1,
+            2 => -0.5,
+            3 => 1e-7,
+            else => rnd.float(f32),
+        };
+        for (span, &want) |p, *o| o.* = blend(p, src, a);
+        blendSpan(&span, src, a);
+        try testing.expectEqualSlices(u32, &want, &span);
+    }
+}
+
+test "T2537: flatSpan is exactly the pixels whose qx is not positive" {
+    for ([_]Card{
+        .{ .left = 15, .top = 15, .right = 121, .bottom = 175 },
+        .{ .left = -30, .top = 0, .right = 90, .bottom = 80 },
+        .{ .left = 15, .top = 105, .right = 33, .bottom = 120 },
+        .{ .left = 200, .top = 0, .right = 211, .bottom = 300 },
+    }) |c| for ([_]f32{ 11, 16.5, 22 }) |radius| {
+        const f = Frame.of(c, radius);
+        for ([_][2]i32{ .{ 0, 260 }, .{ 40, 60 }, .{ 0, 0 }, .{ 100, 260 } }) |r| {
+            const s = f.flatSpan(r[0], r[1]);
+            var x = r[0];
+            while (x < r[1]) : (x += 1) {
+                const flat = f.qx(@as(f32, @floatFromInt(x)) + 0.5) <= 0;
+                try testing.expectEqual(flat, x >= s[0] and x < s[1]);
+            }
+        }
+    };
+}
+
+test "T2537: without shadows the paint is the direct rasteriser to the bit" {
+    // The flat runs of a rounded row and of a glow's band are laid in one
+    // go now; nothing about them may round differently.
+    const w = 260;
+    const h = 190;
+    var desk: [w * h]u32 = undefined;
+    var prng = std.Random.DefaultPrng.init(25370);
+    const rnd = prng.random();
+    for (&desk) |*p| p.* = rnd.int(u32);
+    var fast: [w * h]u32 = undefined;
+    var slow: [w * h]u32 = undefined;
+    const layouts = [_][]const Card{
+        &.{
+            .{ .left = 15, .top = 15, .right = 121, .bottom = 175, .shadow = 0 },
+            .{ .left = 136, .top = 15, .right = 245, .bottom = 175, .shadow = 0, .fill = .{ .r = 250, .g = 0, .b = 250 }, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = 45, .head_glass = true },
+        },
+        &.{
+            .{ .left = -30, .top = -12, .right = 90, .bottom = 80, .shadow = 0, .head = .{ .r = 50, .g = 52, .b = 60 }, .head_bottom = 10 },
+            .{ .left = 105, .top = 15, .right = 280, .bottom = 90, .shadow = 0, .sheet = .{ .t = 0.15, .fade = 0.3 } },
+            .{ .left = 15, .top = 105, .right = 33, .bottom = 120, .shadow = 0 },
+            .{ .left = 48, .top = 105, .right = 245, .bottom = 200, .shadow = 0 },
+        },
+    };
+    const glows = [_]Glow{ .{ .card = 1, .level = 0.6 }, .{ .card = 0, .level = 1 } };
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| for ([_]bool{ false, true }) |glass| for ([_]bool{ false, true }) |is_light| for (layouts) |cards| {
+        const style: CardStyle = .{
+            .fill = if (is_light) .{ .r = 247, .g = 246, .b = 240 } else .{ .r = 29, .g = 31, .b = 33 },
+            .is_light = is_light,
+            .scale = scale,
+            .glass = glass,
+            .glows = &glows,
+        };
+        fast = desk;
+        slow = desk;
+        paintCards(&fast, w, h, cards, style);
+        refPaintCards(&slow, w, h, cards, style);
+        for (fast, slow, 0..) |a, b, i| if (a != b) {
+            std.debug.print("scale={d} glass={} light={} pixel ({d},{d}): {x} != {x}\n", .{ scale, glass, is_light, i % w, i / w, a, b });
+            return error.TestUnexpectedResult;
+        };
+    };
 }
 
 // T2450: the shadow pass's cost, at the window sizes the task measured.
