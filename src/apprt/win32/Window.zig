@@ -783,6 +783,12 @@ frame_wait_len: usize = 0,
 /// and an event handle alone cannot answer that — which is how the wait came
 /// to return satisfied on a frame the renderer had started BEFORE the resize.
 frame_wait_panes: [MAX_FRAME_WAITS]*Surface = undefined,
+/// The panes a live grid batch resized, whose resize work waits until every
+/// one of them has had its uncovered-strip fill (T2485 D18b,
+/// `endPaneBatchFilled`). `held_resizes_on` is true only inside that batch's
+/// `EndDeferWindowPos`.
+held_resizes: resize_paint.Pending(*Surface, MAX_FRAME_WAITS) = .{},
+held_resizes_on: bool = false,
 /// Panes whose wait ended with the renderer's last present still at the OLD
 /// size (T1476). This is the blink, counted: one displayed frame in which the
 /// pane holds content for a size it no longer is.
@@ -7739,7 +7745,7 @@ pub fn layoutSplits(self: *Window) void {
     var batch_t0: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&batch_t0);
     if (self.hwnd) |h| resizeTrace("batch-begin", h);
-    endPaneBatch(hdwp);
+    self.endPaneBatchFilled(hdwp);
     if (self.hwnd) |h| resizeTrace("batch-end", h);
     if (resizeTraceOn()) {
         const nc = ViewerNavBar.place_cost;
@@ -8704,6 +8710,36 @@ fn beginPaneBatch(n: usize) ?w32.HDWP {
 /// back to direct placement" case and has nothing to commit.
 fn endPaneBatch(hdwp: ?w32.HDWP) void {
     if (hdwp) |batch| _ = w32.EndDeferWindowPos(batch);
+}
+
+/// `endPaneBatch` for a live pass, in two phases (T2485 D18b). Inside
+/// `EndDeferWindowPos` every pane gets its `WM_SIZE` in turn, and before this
+/// each one did its whole resize there - grid reflow, renderer wake - so the
+/// last pane's uncovered-strip fill waited behind every earlier pane's work,
+/// and the compositor could show that pane's grown strip black in between.
+/// Now the batch's `WM_SIZE`s only fill (`Surface.handleResize`), and the work
+/// runs here for each pane once the batch has landed. Off a live pass, or with
+/// the batch already fallen back to direct placement, this is `endPaneBatch`.
+fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
+    if (!self.in_live_layout or self.held_resizes_on or hdwp == null) return endPaneBatch(hdwp);
+    self.held_resizes_on = true;
+    endPaneBatch(hdwp);
+    self.held_resizes_on = false;
+    var held = self.held_resizes.take();
+    if (stackTraceOn()) {
+        var qpc: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&qpc);
+        stackTrace("stack trace filled qpc={d} held={d}", .{ qpc, held.len });
+    }
+    for (held.entries[0..held.len]) |e| e.pane.applyResize(e.width, e.height);
+}
+
+/// Hold a pane's resize work for `endPaneBatchFilled`, which runs it after
+/// every pane of the batch has had its fill. False outside that batch, or
+/// when the list is full: the caller resizes at once, as it always did.
+pub fn holdResize(self: *Window, surface: *Surface, width: u32, height: u32) bool {
+    if (!self.held_resizes_on) return false;
+    return self.held_resizes.add(surface, width, height);
 }
 
 /// The active tab's grid as the stacked-panes layout lays it out (T2108,

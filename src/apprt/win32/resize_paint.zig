@@ -157,6 +157,44 @@ pub fn uncoveredStrips(presented: u64, width: u32, height: u32) Uncovered {
     return out;
 }
 
+/// The panes a live layout batch resized, held so their resize WORK waits
+/// until every one of them has had its uncovered-strip fill (T2485 D18b).
+/// `EndDeferWindowPos` moves every pane at once and then sends each its
+/// `WM_SIZE` in turn; a pane whose fill had to wait behind the earlier panes'
+/// grid reflow and renderer wake was composed black for a frame (6 of a
+/// near-full drag's ticks after D18). The batch fills them all first, then
+/// drains this list. One entry per pane: a second `WM_SIZE` for the same pane
+/// in one batch keeps its last size. `add` false = full, resize inline.
+pub fn Pending(comptime T: type, comptime cap: usize) type {
+    return struct {
+        const Self = @This();
+        pub const Entry = struct { pane: T, width: u32, height: u32 };
+
+        len: usize = 0,
+        entries: [cap]Entry = undefined,
+
+        pub fn add(self: *Self, pane: T, width: u32, height: u32) bool {
+            for (self.entries[0..self.len]) |*e| if (e.pane == pane) {
+                e.width = width;
+                e.height = height;
+                return true;
+            };
+            if (self.len >= cap) return false;
+            self.entries[self.len] = .{ .pane = pane, .width = width, .height = height };
+            self.len += 1;
+            return true;
+        }
+
+        /// The held entries, emptying the list, so a resize the drain sets
+        /// off can open a batch of its own without seeing these.
+        pub fn take(self: *Self) Self {
+            const out = self.*;
+            self.len = 0;
+            return out;
+        }
+    };
+}
+
 /// True when `handleResize` should block for a frame at the new size.
 pub fn shouldPresentSynchronously(p: Present) bool {
     // Nothing on screen to go stale: waiting here buys no pixels and costs the
@@ -293,6 +331,32 @@ test "a pane that shrank, held still, or never presented gets no fill" {
     const r = uncoveredStrips(packSize(900, 700), 870, 720);
     try std.testing.expectEqual(@as(u8, 1), r.len);
     try std.testing.expectEqual(Strip{ .left = 0, .top = 700, .right = 870, .bottom = 720 }, r.strips[0]);
+}
+
+test "a batch's held resizes keep one entry per pane, at its last size, in arrival order" {
+    var p: Pending(u8, 4) = .{};
+    try std.testing.expect(p.add(1, 961, 1976));
+    try std.testing.expect(p.add(2, 300, 1976));
+    try std.testing.expect(p.add(1, 1005, 1976));
+    try std.testing.expectEqual(@as(usize, 2), p.len);
+    try std.testing.expectEqual(@as(u8, 1), p.entries[0].pane);
+    try std.testing.expectEqual(@as(u32, 1005), p.entries[0].width);
+    try std.testing.expectEqual(@as(u8, 2), p.entries[1].pane);
+}
+
+test "a full batch says so, and taking it leaves it empty for the next" {
+    var p: Pending(u8, 2) = .{};
+    try std.testing.expect(p.add(1, 10, 10));
+    try std.testing.expect(p.add(2, 10, 10));
+    // A third pane resizes inline rather than being dropped.
+    try std.testing.expect(!p.add(3, 10, 10));
+    // A pane already held still updates in place when the list is full.
+    try std.testing.expect(p.add(2, 20, 10));
+    const held = p.take();
+    try std.testing.expectEqual(@as(usize, 2), held.len);
+    try std.testing.expectEqual(@as(u32, 20), held.entries[1].width);
+    try std.testing.expectEqual(@as(usize, 0), p.len);
+    try std.testing.expect(p.add(3, 10, 10));
 }
 
 /// T2418 experiment, off unless `GHOZTTY_PRESENT_RETIRE` is set: does the

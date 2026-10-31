@@ -4194,6 +4194,26 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     // Skip zero-size events (minimized windows).
     if (width == 0 or height == 0) return;
 
+    // T2485 D18: the strips of a grown pane its last frame does not cover are
+    // pure black on its own layer until the renderer presents at this size,
+    // and the compositor shows them for a frame on every drag tick. Fill just
+    // those, here, inside the batch's `EndDeferWindowPos`, so the frame that
+    // shows the new rect shows background there instead. A cache DC: the
+    // own DC belongs to the renderer thread's GL context.
+    if (self.own_layer and (self.in_live_resize or self.parent_window.in_live_layout)) {
+        self.fillUncoveredStrips(width, height);
+    }
+
+    // D18b: inside a live batch the rest - grid reflow, renderer wake - waits
+    // until every pane the batch moved has had that fill, so no pane's fill
+    // queues behind another pane's resize work.
+    if (self.parent_window.holdResize(self, width, height)) return;
+    self.applyResize(width, height);
+}
+
+/// The resize work `handleResize` does at once, or that a live layout batch
+/// runs for each pane once every pane has had its fill (D18b).
+pub fn applyResize(self: *Surface, width: u32, height: u32) void {
     // T1343: one line of the drag measurement — how many panes a layout pass
     // actually resized, so "no frame waits" can be told apart from "no work".
     self.parent_window.noteResize();
@@ -4211,16 +4231,6 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
         }
     }
     self.width = grid_width;
-
-    // T2485 D18: the strips of a grown pane its last frame does not cover are
-    // pure black on its own layer until the renderer presents at this size,
-    // and the compositor shows them for a frame on every drag tick. Fill just
-    // those, here, inside the batch's `EndDeferWindowPos`, so the frame that
-    // shows the new rect shows background there instead. A cache DC: the
-    // own DC belongs to the renderer thread's GL context.
-    if (self.own_layer and (self.in_live_resize or self.parent_window.in_live_layout)) {
-        self.fillUncoveredStrips(width, height);
-    }
 
     // Reposition popups with corrected width.
     if (self.search_active) self.positionSearchBar();
