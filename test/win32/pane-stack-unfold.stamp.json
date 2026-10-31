@@ -1,8 +1,8 @@
 {
     "guard":  "pane-stack-unfold",
     "script":  "test/win32/pane-stack-unfold.ps1",
-    "generated":  "2026-10-30T21:14:46-07:00",
-    "commit":  "8a9e77fd7",
+    "generated":  "2026-10-30T21:36:08-07:00",
+    "commit":  "98658a6d4",
     "uncommitted":  [
 
                     ],

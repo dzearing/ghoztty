@@ -4167,6 +4167,28 @@ pub fn setResizeHold(self: *Surface, on: bool) void {
     self.core_surface.holdResize(on);
 }
 
+/// Background over the parts of the client the last presented frame does not
+/// cover (`resize_paint.uncoveredStrips`). Clips the scrollbar child, which
+/// paints itself.
+fn fillUncoveredStrips(self: *Surface, width: u32, height: u32) void {
+    if (!self.has_presented_frame.load(.acquire)) return;
+    const r = resize_paint.uncoveredStrips(self.presented_size.load(.acquire), width, height);
+    if (r.len == 0) return;
+    const hwnd = self.hwnd orelse return;
+    const brush = self.app.bg_brush orelse return;
+    const dc = w32.GetDCEx(hwnd, null, w32.DCX_CACHE | w32.DCX_CLIPCHILDREN) orelse return;
+    defer _ = w32.ReleaseDC(hwnd, dc);
+    for (r.strips[0..r.len]) |s| {
+        const rect: w32.RECT = .{
+            .left = @intCast(s.left),
+            .top = @intCast(s.top),
+            .right = @intCast(s.right),
+            .bottom = @intCast(s.bottom),
+        };
+        _ = w32.FillRect(dc, &rect, brush);
+    }
+}
+
 /// Handle WM_SIZE.
 pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     // Skip zero-size events (minimized windows).
@@ -4189,6 +4211,16 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
         }
     }
     self.width = grid_width;
+
+    // T2485 D18: the strips of a grown pane its last frame does not cover are
+    // pure black on its own layer until the renderer presents at this size,
+    // and the compositor shows them for a frame on every drag tick. Fill just
+    // those, here, inside the batch's `EndDeferWindowPos`, so the frame that
+    // shows the new rect shows background there instead. A cache DC: the
+    // own DC belongs to the renderer thread's GL context.
+    if (self.own_layer and (self.in_live_resize or self.parent_window.in_live_layout)) {
+        self.fillUncoveredStrips(width, height);
+    }
 
     // Reposition popups with corrected width.
     if (self.search_active) self.positionSearchBar();

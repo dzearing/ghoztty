@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-drag",
     "script":  "test/win32/rearrange-drag.ps1",
-    "generated":  "2026-10-30T21:18:35-07:00",
-    "commit":  "8a9e77fd7",
+    "generated":  "2026-10-30T22:15:14-07:00",
+    "commit":  "98658a6d4",
     "uncommitted":  [
 
                     ],

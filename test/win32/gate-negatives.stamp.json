@@ -1,8 +1,8 @@
 {
     "guard":  "gate-negatives",
     "script":  "test/win32/gate-negatives.ps1",
-    "generated":  "2026-10-30T21:18:24-07:00",
-    "commit":  "8a9e77fd7",
+    "generated":  "2026-10-30T22:15:24-07:00",
+    "commit":  "98658a6d4",
     "uncommitted":  [
 
                     ],

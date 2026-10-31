@@ -122,6 +122,41 @@ pub fn frameOutlivedItsWindow(drawn: u64, client: u64) bool {
     return drawn != client;
 }
 
+/// A client-space rectangle, `right`/`bottom` exclusive like a `RECT`.
+pub const Strip = struct { left: u32, top: u32, right: u32, bottom: u32 };
+
+/// The parts of a grown pane's client that its last presented frame does not
+/// cover (T2485 D18). A pane with its own layer keeps the old frame's pixels
+/// anchored top-left when it grows, and the strip beyond them is pure black
+/// until the renderer presents at the new size. The compositor shows that
+/// state for one frame on every tick of a drag that grows the pane: a black
+/// column as wide as the tick's growth (40-47 px on a near-full-monitor
+/// window). These strips, and only these, get the background fill - the
+/// pixels the old frame did cover are never touched, which is the T1031 rule
+/// above. Under a drag the grid is held (T2459), so what the new frame puts in
+/// a grown strip is padding, which is the background anyway.
+///
+/// At most two strips: the column right of the old width (full new height)
+/// and the row below the old height (old width only, so they never overlap).
+/// Nothing presented (0) or nothing grown gives none.
+pub const Uncovered = struct { len: u8, strips: [2]Strip };
+
+pub fn uncoveredStrips(presented: u64, width: u32, height: u32) Uncovered {
+    var out: Uncovered = .{ .len = 0, .strips = undefined };
+    if (presented == 0) return out;
+    const old_w: u32 = @intCast(presented >> 32);
+    const old_h: u32 = @truncate(presented);
+    if (width > old_w) {
+        out.strips[out.len] = .{ .left = old_w, .top = 0, .right = width, .bottom = height };
+        out.len += 1;
+    }
+    if (height > old_h) {
+        out.strips[out.len] = .{ .left = 0, .top = old_h, .right = @min(old_w, width), .bottom = height };
+        out.len += 1;
+    }
+    return out;
+}
+
 /// True when `handleResize` should block for a frame at the new size.
 pub fn shouldPresentSynchronously(p: Present) bool {
     // Nothing on screen to go stale: waiting here buys no pixels and costs the
@@ -232,6 +267,32 @@ test "a frame is never dropped on an unknown size" {
     // read: swapping is the old behavior and the safe one.
     try std.testing.expect(!frameOutlivedItsWindow(0, packSize(900, 700)));
     try std.testing.expect(!frameOutlivedItsWindow(packSize(900, 700), 0));
+}
+
+test "a pane that grew wider gets exactly the column its last frame does not cover" {
+    // run48 f130: pane 1 grew 961 -> 1005 in one tick, black at x961-1004.
+    const r = uncoveredStrips(packSize(961, 1976), 1005, 1976);
+    try std.testing.expectEqual(@as(u8, 1), r.len);
+    try std.testing.expectEqual(Strip{ .left = 961, .top = 0, .right = 1005, .bottom = 1976 }, r.strips[0]);
+}
+
+test "a pane that grew both ways gets a column and a row that do not overlap" {
+    const r = uncoveredStrips(packSize(800, 600), 840, 650);
+    try std.testing.expectEqual(@as(u8, 2), r.len);
+    try std.testing.expectEqual(Strip{ .left = 800, .top = 0, .right = 840, .bottom = 650 }, r.strips[0]);
+    try std.testing.expectEqual(Strip{ .left = 0, .top = 600, .right = 800, .bottom = 650 }, r.strips[1]);
+}
+
+test "a pane that shrank, held still, or never presented gets no fill" {
+    // Shrinking leaves no uncovered pixel: every pixel of the new client was
+    // in the old frame. These are the pixels the T1031 rule protects.
+    try std.testing.expectEqual(@as(u8, 0), uncoveredStrips(packSize(900, 700), 870, 700).len);
+    try std.testing.expectEqual(@as(u8, 0), uncoveredStrips(packSize(900, 700), 900, 700).len);
+    try std.testing.expectEqual(@as(u8, 0), uncoveredStrips(0, 900, 700).len);
+    // Narrower but taller: only the row, and only as wide as the new client.
+    const r = uncoveredStrips(packSize(900, 700), 870, 720);
+    try std.testing.expectEqual(@as(u8, 1), r.len);
+    try std.testing.expectEqual(Strip{ .left = 0, .top = 700, .right = 870, .bottom = 720 }, r.strips[0]);
 }
 
 /// T2418 experiment, off unless `GHOZTTY_PRESENT_RETIRE` is set: does the
