@@ -1,11 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-31T03:51:02-07:00",
-    "commit":  "2263ae03f",
+    "generated":  "2026-10-31T05:40:15-07:00",
+    "commit":  "28d2c29f6",
     "uncommitted":  [
-                        "scripts/comp-chrome-onscreen.ps1",
-                        "scripts/guard-due.ps1"
+                        "scripts/comp-desk-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -17,6 +16,7 @@
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
                   "scripts/comp-chrome-onscreen.ps1":  "feb985408dd8ea6396dd0f234a79de4face1a32215ce763661ff66c081e4e58f",
+                  "scripts/comp-desk-onscreen.ps1":  "3f253ef23e9fca126fc1cc6bfdfc8806a8929e936006644a986c58fe083d6708",
                   "scripts/comp-present-onscreen.ps1":  "6072c86787b9488bea95f031e47c131b0bc800c1a7920fd8814bae92a486d4a5",
                   "scripts/comp-spike.ps1":  "0cb3e4fbe75df1ed7645ce6fd2a28ca71177ab94a87febee45e13a1201d10ab7",
                   "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",

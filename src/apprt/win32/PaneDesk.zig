@@ -242,6 +242,16 @@ pub const Names = struct {
     draw: *const fn (ctx: *anyopaque, hdc: w32.HDC) void,
 };
 
+/// The caller's hook for taking the composed desk somewhere other than the
+/// window's DC (T2509).
+pub const Sink = struct {
+    ctx: *anyopaque,
+    /// `px` is the whole composed buffer, `w` x `h`; `rects` the parts of it
+    /// that changed since the last upload, in its own pixels (null: all of
+    /// it). The sink takes the whole buffer when it holds no picture yet.
+    upload: *const fn (ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void,
+};
+
 /// A light's ring, cached for the geometry it was built for.
 const LightCache = struct {
     key: usize = 0,
@@ -325,6 +335,11 @@ last_blit: ?Memo.Rects = null,
 names: ?Names = null,
 /// Whether the last `paint` laid `names` (the caller then draws none).
 names_laid: bool = false,
+/// Where the composed pixels go instead of the window's DC (T2509): the
+/// window's chrome composition host, carrying the desk as its bottom visual.
+/// Set by the caller around one `paint` or `paintLightFrame`; opaque windows
+/// only. Nothing is blitted while it is set.
+sink: ?Sink = null,
 names_saved: std.ArrayListUnmanaged(u32) = .empty,
 /// The card style's shadow patch, built once for every compose of the style
 /// rather than once a rectangle (T2454).
@@ -736,6 +751,14 @@ pub fn paint(
         self.last_blit = null;
         const laid = self.layNames(comp, origin_x, origin_y, opacity);
         defer if (laid) self.liftNames(comp);
+        // A surface keeps its pixels, so only what moved goes up: the rings
+        // and the names (T2509).
+        if (self.sink) |s| {
+            var up: Memo.Rects = .{ .w = w, .h = h };
+            self.addLightStrips(&up, comp);
+            if (laid) for (self.names.?.rects) |r| up.add(r.left, r.top, r.right, r.bottom);
+            return self.toSink(s, comp, up.slice());
+        }
         return self.timedBlit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
     }
     self.memo_misses +|= 1;
@@ -756,7 +779,7 @@ pub fn paint(
     // What changed on the window, for a paint that blits only that: the
     // rectangles composed, and every light's ring before and after - one
     // going out was just lifted off `comp`, and every ring moves anyway.
-    var shown: ?Memo.Rects = if (done and self.blit_changed_only) partial.rects else null;
+    var shown: ?Memo.Rects = if (done and (self.blit_changed_only or self.sink != null)) partial.rects else null;
     if (shown) |*sh| self.addLightStrips(sh, comp);
     self.syncLights(comp, lights, style.scale);
     for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
@@ -767,6 +790,16 @@ pub fn paint(
     const laid = self.layNames(comp, origin_x, origin_y, opacity);
     defer if (laid) self.liftNames(comp);
     _ = w32.QueryPerformanceCounter(&tq_names);
+    // The composition surface (T2509) takes what changed; the window's
+    // invalid box is GDI's business and none of its.
+    if (self.sink) |s| {
+        if (shown) |*sh| {
+            self.addLightStrips(sh, comp);
+            if (laid) for (self.names.?.rects) |r| sh.add(r.left, r.top, r.right, r.bottom);
+            if (sh.area() * 4 <= @as(i64, w) * h * 3) return self.toSink(s, comp, sh.slice());
+        }
+        return self.toSink(s, comp, null);
+    }
     if (shown) |*sh| {
         self.addLightStrips(sh, comp);
         if (self.also_blit) |r| sh.add(r.left, r.top, r.right, r.bottom);
@@ -810,6 +843,15 @@ fn blitRect(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: D
     blitPixels(hdc, origin_x, origin_y, comp, r);
 }
 
+/// `comp`, or `rects` of it, to the sink, timed as the blit it replaces.
+fn toSink(self: *PaneDesk, s: Sink, comp: Dib, rects: ?[]const busy_light.Rect) void {
+    var timer = std.time.Timer.start() catch null;
+    // Whatever GDI drew into `comp` (the names) is in the pixels first.
+    _ = w32.GdiFlush();
+    s.upload(s.ctx, comp.pixels(), comp.w, comp.h, rects);
+    if (timer) |*t| self.blit_ns +|= t.read();
+}
+
 fn timedBlit(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, w: i32, h: i32, comp: Dib, desk: Desk, opacity: ?u8) void {
     var timer = std.time.Timer.start() catch null;
     self.blit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
@@ -849,6 +891,13 @@ fn liftNames(self: *PaneDesk, comp: Dib) void {
     _ = w32.GdiFlush();
     const n = self.names orelse return;
     restoreUnder(comp.pixels(), comp.w, comp.h, n.rects, self.names_saved.items);
+}
+
+/// Compose and put out the whole picture on the next paint (T2509): the
+/// desk is coming back from the compositor to a window DC whose pixels under
+/// it were never kept.
+pub fn forget(self: *PaneDesk) void {
+    self.memo.valid = false;
 }
 
 /// Lay the composed desk under the panes (T2485 A2): `rects` in the desk's
@@ -1262,11 +1311,18 @@ pub fn paintLightFrame(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i
         if (out.w != comp.w or out.h != comp.h or desk.w != comp.w or desk.h != comp.h) return;
         break :blk .{ .out = out, .desk = desk, .o = o };
     } else null;
+    // On the compositor (T2509) the strips go up together, after every ring.
+    var up: ?Memo.Rects = if (self.sink != null) .{ .w = comp.w, .h = comp.h } else null;
+    defer if (up) |*u| self.toSink(self.sink.?, comp, u.slice());
     for (self.lights[0..self.light_n]) |*c| {
         if (c.w != comp.w or c.h != comp.h) continue;
         busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
         for (busy_light.strips(c.card, c.shape, c.scale, comp.w, comp.h)) |r| {
             if (r.right <= r.left or r.bottom <= r.top) continue;
+            if (up) |*u| {
+                u.add(r.left, r.top, r.right, r.bottom);
+                continue;
+            }
             const src = if (tr) |t| src: {
                 const cw: usize = @intCast(comp.w);
                 var y = r.top;
@@ -1680,4 +1736,60 @@ test "T2454: bench - a divider-drag frame's compose, whole and partial" {
             n,
         });
     };
+}
+
+test "T2509: a sink takes the whole desk first, then only what a moved card reaches" {
+    const testing = std.testing;
+    const Rec = struct {
+        calls: u32 = 0,
+        whole: u32 = 0,
+        area: i64 = 0,
+        w: i32 = 0,
+        h: i32 = 0,
+        fn up(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void {
+            const r: *@This() = @ptrCast(@alignCast(ctx));
+            r.calls += 1;
+            r.w = w;
+            r.h = h;
+            std.debug.assert(px.len == @as(usize, @intCast(w * h)));
+            if (rects) |rs| {
+                for (rs) |x| r.area += @as(i64, x.right - x.left) * (x.bottom - x.top);
+            } else r.whole += 1;
+        }
+    };
+    const w = 800;
+    const h = 400;
+    var pd: PaneDesk = .{};
+    defer pd.deinit();
+    var rec: Rec = .{};
+    pd.sink = .{ .ctx = &rec, .upload = Rec.up };
+    // Nothing is blitted while a sink is set; the DC is never drawn on.
+    const dc = w32.CreateCompatibleDC(null) orelse return error.SkipZigTest;
+    defer _ = w32.DeleteDC(dc);
+    const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = 1 };
+    var cards = [_]pane_elevation.Card{
+        .{ .left = 20, .top = 20, .right = 390, .bottom = 380 },
+        .{ .left = 410, .top = 20, .right = 780, .bottom = 380 },
+    };
+    pd.paint(dc, 0, 0, w, h, &cards, &.{}, style, null, &.{}, 0, null, null);
+    try testing.expectEqual(@as(u32, 1), rec.calls);
+    try testing.expectEqual(@as(u32, 1), rec.whole);
+    try testing.expectEqual(@as(i32, w), rec.w);
+    // The same picture: nothing to send but the (absent) rings.
+    pd.paint(dc, 0, 0, w, h, &cards, &.{}, style, null, &.{}, 0, null, null);
+    try testing.expectEqual(@as(u32, 2), rec.calls);
+    try testing.expectEqual(@as(u32, 1), rec.whole);
+    try testing.expectEqual(@as(i64, 0), rec.area);
+    // A divider step: the two facing edges move, and only their reach goes up.
+    cards[0].right += 12;
+    cards[1].left += 12;
+    pd.paint(dc, 0, 0, w, h, &cards, &.{}, style, null, &.{}, 0, null, null);
+    try testing.expectEqual(@as(u32, 3), rec.calls);
+    try testing.expectEqual(@as(u32, 1), rec.whole);
+    try testing.expect(rec.area > 0);
+    try testing.expect(rec.area * 4 < @as(i64, w) * h);
+    // Back on the window (the sink gone), a forgotten memo composes whole.
+    pd.sink = null;
+    pd.forget();
+    try testing.expect(pd.memo.dirty(w, h, pd.desk_gen, &cards, &.{}, style, null) == .full);
 }

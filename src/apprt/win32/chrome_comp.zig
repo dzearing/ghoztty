@@ -3,12 +3,15 @@
 //! context over the same D3D11 device, ready for the chrome painters to move
 //! onto.
 //!
-//! Infrastructure only. No visual is attached in a normal run, and that is the
-//! point of this step rather than a gap in it: a DComp target's visual tree
-//! composes ABOVE the window's own redirected GDI pixels - `topmost=FALSE`
-//! only puts it BELOW the window's child windows (the panes) - so the first
-//! visual hung here hides every GDI chrome painter under it. T2509 attaches
-//! the desk as the bottom visual; T2510 moves the remaining painters over it.
+//! A DComp target's visual tree composes ABOVE the window's own redirected
+//! GDI pixels - `topmost=FALSE` only puts it BELOW the window's child windows
+//! (the panes) - so any visual hung here hides every GDI chrome painter under
+//! it. The desk is the one visual so far (T2509): `PaneDesk`'s composed
+//! buffer, uploaded rectangle by rectangle as it changes, clipped to the
+//! content area below the caption. The window carries it only while no GDI
+//! painter draws over the desk (an opaque window, no hero tab, no rearrange
+//! header); otherwise the desk stays a GDI blit. T2510 moves the remaining
+//! painters over it.
 //!
 //! Why DirectComposition and not Windows.UI.Composition, same call as the pane
 //! presenter (`renderer/gl_comp_present.zig`): a DComp device commits
@@ -122,7 +125,25 @@ const slot_dcomp_device_check_state = 26;
 const slot_dcomp_surface_begin_draw = 3;
 const slot_dcomp_surface_end_draw = 4;
 const slot_dcomp_target_set_root = 3;
+// IDCompositionVisual: each overloaded setter's object form comes first,
+// its value form second (SetTransform(transform) 7 / (matrix) 8, as
+// `renderer/comp_overlay.zig` uses).
+const slot_dcomp_visual_set_offset_x = 4;
+const slot_dcomp_visual_set_offset_y = 6;
+const slot_dcomp_visual_set_clip_rect = 14;
 const slot_dcomp_visual_set_content = 15;
+// ID3D11DeviceContext (ID3D11DeviceChild 3-6, CopyResource 47).
+const slot_d3d11_context_update_subresource = 48;
+
+const IID_ID3D11Texture2D = guid("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
+/// The desk is opaque: its buffer's alpha byte is coverage for a
+/// translucent window's blend (`PaneDesk`), not transparency.
+const DXGI_ALPHA_MODE_IGNORE: u32 = 3;
+
+const D3D11_BOX = extern struct { left: u32, top: u32, front: u32, right: u32, bottom: u32, back: u32 };
+
+/// A rectangle of the desk's buffer, in its own pixels.
+pub const Rect = struct { left: i32, top: i32, right: i32, bottom: i32 };
 
 fn slot(comptime F: type, obj: Obj, index: usize) F {
     const vtbl: *const [*]const *const anyopaque = @ptrCast(@alignCast(obj));
@@ -215,6 +236,25 @@ pub const Host = struct {
     /// The debug test fill (`GHOZTTY_COMP_CHROME_TEST_FILL`), or null.
     fill_visual: ?Obj = null,
     fill_surface: ?Obj = null,
+
+    /// The desk (T2509): `PaneDesk`'s composed buffer as the bottom visual,
+    /// placed at the content area and clipped to below the caption. Null
+    /// while the desk is on GDI.
+    desk_visual: ?Obj = null,
+    desk_surface: ?Obj = null,
+    desk_w: i32 = 0,
+    desk_h: i32 = 0,
+    desk_x: i32 = 0,
+    desk_y: i32 = 0,
+    desk_clip: Rect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+    /// Uploads since the window last read them: whole buffers, rectangles,
+    /// and the pixels the rectangles covered.
+    desk_full: u32 = 0,
+    desk_partial: u32 = 0,
+    desk_partial_px: u64 = 0,
+    /// A step of the desk visual failed on this host; its desk stays GDI
+    /// until the host is rebuilt.
+    desk_failed: bool = false,
 
     /// How many times this window's host was rebuilt after a device loss.
     rebuilds: u32 = 0,
@@ -387,6 +427,139 @@ pub const Host = struct {
         log.info("chrome composition test fill attached: {d}x{d} at +{d}+{d}", .{ w, h, offset.x, offset.y });
     }
 
+    /// Whether the desk can be carried here. Not under the debug test fill,
+    /// whose probe measures the fill over the desk's margins.
+    pub fn deskAvailable(self: *const Host) bool {
+        return self.fill_visual == null and !self.desk_failed;
+    }
+
+    pub fn deskLive(self: *const Host) bool {
+        return self.desk_visual != null;
+    }
+
+    /// Put the desk visual at `(x, y)` in the client area, showing only
+    /// `clip` (client pixels). Building it the first time; the next
+    /// `deskUpload` commits.
+    pub fn deskPlace(self: *Host, x: i32, y: i32, clip: Rect) Error!void {
+        if (self.desk_visual == null) {
+            stage = "desk-visual";
+            var visual: ?Obj = null;
+            try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_visual)(self.dcomp, &visual));
+            const vis = visual orelse return error.ComFailed;
+            errdefer release(vis);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, vis));
+            self.desk_visual = vis;
+            // Placed below whatever it was before.
+            self.desk_x = std.math.minInt(i32);
+            log.info("chrome desk visual attached", .{});
+        }
+        const vis = self.desk_visual.?;
+        if (x != self.desk_x or y != self.desk_y) {
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, @floatFromInt(x)));
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, @floatFromInt(y)));
+            self.desk_x = x;
+            self.desk_y = y;
+            self.desk_clip = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+        }
+        if (!std.meta.eql(clip, self.desk_clip)) {
+            // In the visual's own space, which starts at its offset.
+            const r: D2D1_RECT_F = .{
+                .left = @floatFromInt(clip.left - x),
+                .top = @floatFromInt(clip.top - y),
+                .right = @floatFromInt(clip.right - x),
+                .bottom = @floatFromInt(clip.bottom - y),
+            };
+            try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &r));
+            self.desk_clip = clip;
+        }
+    }
+
+    /// The desk's composed buffer, `w` x `h` BGRA rows, into the visual:
+    /// only `rects` of it when the surface already holds the rest (null:
+    /// all of it), then one commit. A new size, or a surface lost with the
+    /// device, takes the whole buffer whatever `rects` says.
+    pub fn deskUpload(self: *Host, px: []const u32, w: i32, h: i32, rects: ?[]const Rect) Error!void {
+        const vis = self.desk_visual orelse return error.Unavailable;
+        if (w <= 0 or h <= 0 or px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
+        var whole = rects == null;
+        if (self.desk_surface == null or w != self.desk_w or h != self.desk_h) {
+            stage = "desk-surface";
+            if (self.desk_surface) |old| release(old);
+            self.desk_surface = null;
+            var surface: ?Obj = null;
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE, &surface));
+            const surf = surface orelse return error.ComFailed;
+            errdefer release(surf);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
+            self.desk_surface = surf;
+            self.desk_w = w;
+            self.desk_h = h;
+            whole = true;
+        }
+        stage = "desk-upload";
+        if (whole) {
+            try self.deskDraw(px, w, .{ .left = 0, .top = 0, .right = w, .bottom = h });
+            self.desk_full +|= 1;
+        } else for (rects.?) |r| {
+            const c: Rect = .{
+                .left = std.math.clamp(r.left, 0, w),
+                .top = std.math.clamp(r.top, 0, h),
+                .right = std.math.clamp(r.right, 0, w),
+                .bottom = std.math.clamp(r.bottom, 0, h),
+            };
+            if (c.right <= c.left or c.bottom <= c.top) continue;
+            try self.deskDraw(px, w, c);
+            self.desk_partial +|= 1;
+            self.desk_partial_px +|= @intCast(@as(i64, c.right - c.left) * (c.bottom - c.top));
+        }
+        try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp));
+    }
+
+    /// One rectangle of the buffer into the surface. A surface may live in
+    /// an atlas, so the rows land at the offset `BeginDraw` hands back.
+    fn deskDraw(self: *Host, px: []const u32, w: i32, r: Rect) Error!void {
+        const surf = self.desk_surface.?;
+        const update: w32.RECT = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+        var tex: ?Obj = null;
+        var at: w32.POINT = .{ .x = 0, .y = 0 };
+        try check(slot(*const fn (Obj, ?*const w32.RECT, *const GUID, *?Obj, *w32.POINT) callconv(.winapi) HRESULT, surf, slot_dcomp_surface_begin_draw)(surf, &update, &IID_ID3D11Texture2D, &tex, &at));
+        const t = tex orelse {
+            _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, surf, slot_dcomp_surface_end_draw)(surf);
+            return error.ComFailed;
+        };
+        const box: D3D11_BOX = .{
+            .left = @intCast(@max(at.x, 0)),
+            .top = @intCast(@max(at.y, 0)),
+            .front = 0,
+            .right = @intCast(@max(at.x, 0) + (r.right - r.left)),
+            .bottom = @intCast(@max(at.y, 0) + (r.bottom - r.top)),
+            .back = 1,
+        };
+        const first = @as(usize, @intCast(r.top)) * @as(usize, @intCast(w)) + @as(usize, @intCast(r.left));
+        slot(*const fn (Obj, Obj, u32, *const D3D11_BOX, *const anyopaque, u32, u32) callconv(.winapi) void, self.context, slot_d3d11_context_update_subresource)(self.context, t, 0, &box, px[first..].ptr, @intCast(w * 4), 0);
+        release(t);
+        try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, surf, slot_dcomp_surface_end_draw)(surf));
+    }
+
+    /// Take the desk off the compositor: the window's own pixels show again
+    /// in the same commit.
+    pub fn deskHide(self: *Host) void {
+        if (self.desk_visual == null) return;
+        _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, null);
+        _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
+        self.releaseDesk();
+        log.info("chrome desk visual detached", .{});
+    }
+
+    fn releaseDesk(self: *Host) void {
+        if (self.desk_surface) |s| release(s);
+        if (self.desk_visual) |v| release(v);
+        self.desk_surface = null;
+        self.desk_visual = null;
+        self.desk_w = 0;
+        self.desk_h = 0;
+    }
+
     /// Whether the device under this host is gone, and why. Cheap: two
     /// vtable calls, so it runs on every paint.
     pub fn lostReason(self: *Host) ?Loss {
@@ -409,6 +582,7 @@ pub const Host = struct {
         _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
         if (self.fill_visual) |v| release(v);
         if (self.fill_surface) |s| release(s);
+        self.releaseDesk();
         release(self.target);
         release(self.dcomp);
         release(self.d2d);
@@ -465,6 +639,7 @@ test "D2D structs match the SDK layout" {
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(D2D1_BITMAP_PROPERTIES1));
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(D2D1_COLOR_F));
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(D2D1_RECT_F));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(D3D11_BOX));
 }
 
 test "loss labels name the cause" {

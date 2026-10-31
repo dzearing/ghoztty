@@ -1016,10 +1016,14 @@ ghost: bool = false,
 ghost_opaque: bool = false,
 
 /// The chrome's composition host (T2508, `GHOZTTY_COMP_CHROME=1`): a
-/// DirectComposition target under the panes with a Direct2D context, no
-/// visual attached yet. Null when the knob is off or the host could not be
-/// built, and the chrome is GDI either way.
+/// DirectComposition target under the panes with a Direct2D context, which
+/// carries the desk as its one visual while nothing GDI draws over it
+/// (T2509). Null when the knob is off or the host could not be built, and the
+/// chrome is GDI either way.
 chrome_host: ?chrome_comp.Host = null,
+/// Set around a `WM_PRINTCLIENT` paint: the desk blits into the caller's DC
+/// and leaves the chrome host's visual alone (T2509).
+desk_printing: bool = false,
 
 /// The NEXT split inserted into this window leaves keyboard focus where it is
 /// (T1797): the pane that had it - normally the one the `+split` was run from -
@@ -7415,7 +7419,8 @@ fn reportGlideCost(self: *Window, comptime what: []const u8) void {
     const fmt = what ++ " glide ticks={d} mean_us={d} max_us={d} mean_gap_us={d} " ++
         "max_gap_us={d} late={d} fps={d} viewer_ticks={d} viewer_us={d} period_us={d} " ++
         "deferred_moves={d} wm_paints={d} wm_paint_us={d} desk_composed={d} desk_reused={d} desk_partial={d} " ++
-        "desk_compose_us={d} desk_blit_us={d} desk_partial_permille={d} verdict={s}";
+        "desk_compose_us={d} desk_blit_us={d} desk_partial_permille={d} " ++
+        "desk_uploads_full={d} desk_uploads_rect={d} desk_upload_rect_px={d} verdict={s}";
     const args = .{
         g.ticks,
         g.meanUs(),
@@ -7436,6 +7441,10 @@ fn reportGlideCost(self: *Window, comptime what: []const u8) void {
         deskMeanUs(self.pane_desk.compose_ns, self.pane_desk.memo_misses),
         deskMeanUs(self.pane_desk.blit_ns, self.pane_desk.memo_misses +| self.pane_desk.memo_hits),
         if (self.pane_desk.memo_partial > 0) self.pane_desk.partial_permille / self.pane_desk.memo_partial else 0,
+        // On the compositor (T2509): the uploads that replaced the blits.
+        if (self.chrome_host) |*ch| ch.desk_full else 0,
+        if (self.chrome_host) |*ch| ch.desk_partial else 0,
+        if (self.chrome_host) |*ch| ch.desk_partial_px else 0,
         @tagName(g.verdict()),
     };
     switch (g.verdict()) {
@@ -8090,6 +8099,10 @@ fn busyLightTick(self: *Window) void {
 
 fn paintBusyLightFrame(self: *Window, hdc: w32.HDC) void {
     const area = self.deskRect();
+    // The rings go up to the desk's visual when it carries the desk (T2509).
+    const live = if (self.chrome_host) |*ch| ch.deskLive() else false;
+    self.pane_desk.sink = if (live) .{ .ctx = self, .upload = deskSinkUpload } else null;
+    defer self.pane_desk.sink = null;
     self.pane_desk.paintLightFrame(self.desk_hdc orelse hdc, area.left, area.top, self.busyHead(), self.deskOpacity());
 }
 
@@ -10501,6 +10514,9 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     // One slot past the panes' for the sidebar's card (T1894).
     var cards: [MAX_DRAG_NODES + 1]pane_elevation.Card = undefined;
     const pal = self.chromePalette();
+    // A header band is a GDI painter over the desk (T2509): its window keeps
+    // the desk on GDI too, until T2510 lifts the painters over it.
+    var headers = false;
     for (slots[0..n], 0..) |slot, i| {
         cards[i] = .{
             .left = slot.rect.left - area.left,
@@ -10514,6 +10530,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         // terminal-coloured rim round them.
         const inner = self.cardInner(slot.rect);
         if (self.rearrangeHeaderFor(slot.rect)) |l| {
+            headers = true;
             cards[i].head = self.rearrangeBandRgb(slot.view, pal);
             cards[i].head_bottom = l.band.bottom - area.top;
             cards[i].head_glass = self.rearrangeBandGlass(slot.view);
@@ -10675,6 +10692,11 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     }
     self.pane_desk.names = if (nn > 0) .{ .ctx = self, .rects = name_rects[0..nn], .draw = drawDeskStripNames } else null;
     defer self.pane_desk.names = null;
+    // The desk as the chrome host's bottom visual (T2509), when nothing GDI
+    // draws over it: the paint then uploads what changed instead of blitting.
+    const on_visual = self.deskOnVisual(area, hero_split == null and !headers);
+    self.pane_desk.sink = if (on_visual) .{ .ctx = self, .upload = deskSinkUpload } else null;
+    defer self.pane_desk.sink = null;
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
@@ -10682,9 +10704,68 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         .glass = glass,
         .glows = glows[0..ng],
     }, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
-    if (hero_split == null and self.deskOpacity() == null) self.paintDeskUnderPanes(slots[0..n], area, name_rects[0..nn]);
+    // On the compositor the visual already lies under every pane.
+    if (hero_split == null and self.deskOpacity() == null and !on_visual) self.paintDeskUnderPanes(slots[0..n], area, name_rects[0..nn]);
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
     if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
+}
+
+/// Whether this paint's desk goes to the chrome host's visual (T2509),
+/// placed at `area` and clipped below the caption the way the GDI blit is.
+/// `eligible` is the caller's half: no GDI painter over the desk this paint.
+/// A window that stops qualifying takes the desk back to GDI, whole.
+fn deskOnVisual(self: *Window, area: w32.RECT, eligible: bool) bool {
+    const host = if (self.chrome_host) |*h| h else return false;
+    if (self.desk_printing) {
+        // The visual will not hear about what this paint composes.
+        if (host.deskLive()) self.pane_desk.forget();
+        return false;
+    }
+    if (eligible and self.deskOpacity() == null and host.deskAvailable()) {
+        const clip: chrome_comp.Rect = .{
+            .left = area.left,
+            .top = @max(area.top, self.chromeHeight()),
+            .right = area.right,
+            .bottom = area.bottom,
+        };
+        if (host.deskPlace(area.left, area.top, clip)) |_| return true else |_| self.deskVisualFailed();
+    }
+    self.deskOffVisual();
+    return false;
+}
+
+/// The desk back on GDI: the visual goes, and the next paint composes and
+/// blits the whole picture into a window that never kept it.
+fn deskOffVisual(self: *Window) void {
+    const host = if (self.chrome_host) |*h| h else return;
+    if (!host.deskLive()) return;
+    host.deskHide();
+    self.pane_desk.forget();
+    const area = self.deskRect();
+    if (self.hwnd) |hw| _ = w32.InvalidateRect(hw, &area, 0);
+}
+
+/// A step of the desk visual failed: say which, and leave this host's desk
+/// on GDI rather than retrying on every paint.
+fn deskVisualFailed(self: *Window) void {
+    const host = if (self.chrome_host) |*h| h else return;
+    const f = chrome_comp.Host.lastFailure();
+    log.warn("chrome desk visual failed at {s}: hr=0x{x:0>8}; desk stays GDI", .{ f.stage, chrome_comp.hex(f.hr) });
+    host.desk_failed = true;
+    self.deskOffVisual();
+}
+
+/// The desk's `PaneDesk.Sink` hook: what changed, into the visual.
+fn deskSinkUpload(ctx: *anyopaque, px: []const u32, w: i32, h: i32, rects: ?[]const busy_light.Rect) void {
+    const self: *Window = @ptrCast(@alignCast(ctx));
+    const host = if (self.chrome_host) |*hh| hh else return;
+    var buf: [64]chrome_comp.Rect = undefined;
+    const rs: ?[]const chrome_comp.Rect = if (rects) |rr| blk: {
+        if (rr.len > buf.len) break :blk null;
+        for (rr, buf[0..rr.len]) |r, *o| o.* = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+        break :blk buf[0..rr.len];
+    } else null;
+    host.deskUpload(px, w, h, rs) catch self.deskVisualFailed();
 }
 
 /// Keep the desk in the window's own pixels under every layered pane (T2485
@@ -11760,6 +11841,11 @@ fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layo
     self.pane_desk.compose_ns = 0;
     self.pane_desk.blit_ns = 0;
     self.pane_desk.partial_permille = 0;
+    if (self.chrome_host) |*ch| {
+        ch.desk_full = 0;
+        ch.desk_partial = 0;
+        ch.desk_partial_px = 0;
+    }
     self.drag_split_handle = handle;
     self.drag_split_layout = layout;
     self.adoptDisplayedRatios();
@@ -17396,6 +17482,9 @@ pub fn windowWndProc(
         // a blank frame handed to an assertion.
         w32.WM_PRINTCLIENT => {
             if (wparam == 0) return 0;
+            // The caller's DC wants the desk's pixels, visual or not (T2509).
+            window.desk_printing = true;
+            defer window.desk_printing = false;
             window.paintChromeInto(@ptrFromInt(wparam));
             return 0;
         },

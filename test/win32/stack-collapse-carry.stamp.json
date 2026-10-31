@@ -1,7 +1,7 @@
 {
     "guard":  "stack-collapse-carry",
     "script":  "test/win32/stack-collapse-carry.ps1",
-    "generated":  "2026-10-31T05:06:10-07:00",
+    "generated":  "2026-10-31T05:34:28-07:00",
     "commit":  "28d2c29f6",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
@@ -9,7 +9,7 @@
     "files":  {
                   "src/apprt/win32/CloseUndo.zig":  "9d110908f306761accacd46446575115081f6bed97712510b5b567d56fd08b2d",
                   "src/apprt/win32/pane_stack_state.zig":  "c15d1ccdc76fbfe92e93fb3602b93ddb062b4320a7748105d9896d2ef4404454",
-                  "src/apprt/win32/Window.zig":  "62e48b2f869e335e58eb30917fd69ea7f4499d6b79be55a1654937056aa040df",
+                  "src/apprt/win32/Window.zig":  "570f49b63f997166c5602292cf87e8da42a595c087c88e30f289ad0d463be740",
                   "test/win32/stack-collapse-carry.ps1":  "2fb0e9c3403e77a583f2eee95338ea9b0cbd9005eff39ca7dd278e5e202b713c"
               }
 }
