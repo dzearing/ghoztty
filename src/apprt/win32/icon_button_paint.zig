@@ -166,6 +166,46 @@ fn resolveFace(hdc: w32.HDC) ?[:0]const u16 {
     return null;
 }
 
+/// The icon fonts already made, by em (T2521). A strip of icon buttons paints
+/// every glyph on every resize step, and a font created and deleted per glyph
+/// was a measurable share of the viewer nav bar's paint. The face never
+/// changes once `resolveFace` has answered and a window uses a handful of em
+/// sizes, so a few slots hold them all; a full cache recycles its oldest.
+/// UI thread only, like `detected`.
+const FontSlot = struct { em: i32, face: [*:0]const u16, font: *anyopaque };
+var font_slots: [8]?FontSlot = .{null} ** 8;
+var font_next: usize = 0;
+
+fn iconFont(face: [:0]const u16, em: i32) ?*anyopaque {
+    for (font_slots) |slot| {
+        const f = slot orelse continue;
+        if (f.em == em and f.face == face.ptr) return f.font;
+    }
+    // Negative height asks the mapper for a CHARACTER height, i.e. the em
+    // square — which is exactly the box these icon faces are designed to
+    // fill, so `em` IS the icon size on screen.
+    const font = w32.CreateFontW(
+        -em,
+        0,
+        0,
+        0,
+        w32.FW_NORMAL,
+        0,
+        0,
+        0,
+        w32.DEFAULT_CHARSET,
+        0,
+        0,
+        w32.ANTIALIASED_QUALITY,
+        0,
+        face.ptr,
+    ) orelse return null;
+    if (font_slots[font_next]) |old| _ = w32.DeleteObject(old.font);
+    font_slots[font_next] = .{ .em = em, .face = face.ptr, .font = font };
+    font_next = (font_next + 1) % font_slots.len;
+    return font;
+}
+
 /// Draw `which` from the icon font, centered in `target`. False = no icon
 /// font on this machine; the caller falls back to the drawn quads.
 fn fontGlyph(
@@ -199,26 +239,7 @@ pub fn fontCodepoint(
     const face = resolveFace(hdc) orelse return false;
 
     const em: i32 = @max(@as(i32, @intFromFloat(@round(dip * scale))), 1);
-    // Negative height asks the mapper for a CHARACTER height, i.e. the em
-    // square — which is exactly the box these icon faces are designed to
-    // fill, so `em` IS the icon size on screen.
-    const font = w32.CreateFontW(
-        -em,
-        0,
-        0,
-        0,
-        w32.FW_NORMAL,
-        0,
-        0,
-        0,
-        w32.DEFAULT_CHARSET,
-        0,
-        0,
-        w32.ANTIALIASED_QUALITY,
-        0,
-        face.ptr,
-    ) orelse return false;
-    defer _ = w32.DeleteObject(font);
+    const font = iconFont(face, em) orelse return false;
     const old_font = w32.SelectObject(hdc, font) orelse return false;
     defer _ = w32.SelectObject(hdc, old_font);
 

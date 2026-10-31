@@ -1205,6 +1205,28 @@ $r = Task-Run @('validate')
 Assert 'U5c and the result validates' ($r.Code -eq 0)
 Reset-Fixture
 
+# --- V. an edit to a task file is all-or-nothing (T2521) ---------------------
+""
+"V. an edit that dies part way leaves the task file whole (T2521)"
+
+# On 2026-10-30 a `guard-ack` killed mid-write (its caller's pipeline stopped
+# early) left T2380.md at 0 bytes: WriteAllText truncates before it writes.
+New-FixtureTask -Id 'T1'
+$before = [System.IO.File]::ReadAllText((Join-Path $fixture 'T1.md'))
+$r = Task-Run @('note', 'T1', '-Text', 'v1 entry')
+$after = [System.IO.File]::ReadAllText((Join-Path $fixture 'T1.md'))
+Assert 'V1 a note lands in the task file' ($r.Code -eq 0 -and $after.Contains('v1 entry') -and $after.StartsWith($before.Substring(0, 20)))
+Assert 'V2 and leaves no temp file beside it' (@(Get-ChildItem $fixture -Filter '*.tmp').Count -eq 0)
+
+$env:GHOZTTY_TASKS_FAULT = 'edit'
+$r = Task-Run @('note', 'T1', '-Text', 'v3 entry')
+Remove-Item Env:\GHOZTTY_TASKS_FAULT
+$faulted = [System.IO.File]::ReadAllText((Join-Path $fixture 'T1.md'))
+Assert 'V3 the injected fault really failed the edit (negative control)' ($r.Code -ne 0)
+Assert 'V4 a failed edit leaves the previous file byte for byte' ($faulted -ceq $after)
+Assert 'V5 and cleans up its temp file' (@(Get-ChildItem $fixture -Filter '*.tmp').Count -eq 0)
+Reset-Fixture
+
 # --- teardown ---------------------------------------------------------------
 if (Test-Path $fixture) { Remove-Item -Recurse -Force $fixture }
 

@@ -253,7 +253,115 @@ pub const Palette = struct {
             },
         }
     }
+
+    /// `at` along one row, packed (T2521): pixel `i` of `out` is
+    /// `at(clamp(x0 + i, 0, w), clamp(y, 0, h), w, h).pack()`, eight at a
+    /// time. A glass head band evaluates the desk under every pixel on every
+    /// resize step, and one pixel at a time it was most of the viewer nav
+    /// bar's paint. Every lane does the scalar's exact operations in the
+    /// scalar's order, so the answer is the same bits `at` gives - which is
+    /// what keeps a band painted this way seamless against a sheet painted
+    /// the other.
+    pub fn atRow(self: Palette, out: []u32, x0: f32, y: f32, w: f32, h: f32) void {
+        atRowLanes(self, out, x0, y, w, h);
+    }
 };
+
+/// Lanes per step of `atRow`.
+const row_lanes = 8;
+const RowV = @Vector(row_lanes, f32);
+
+/// `Palette.atRow`, `row_lanes` pixels per step.
+fn atRowLanes(self: Palette, out: []u32, x0: f32, y: f32, w: f32, h: f32) void {
+    const yc = std.math.clamp(y, 0, h);
+    var i: usize = 0;
+    var base: RowV = undefined;
+    inline for (0..row_lanes) |k| base[k] = @floatFromInt(k);
+    while (i + row_lanes <= out.len) : (i += row_lanes) {
+        const fi: f32 = @floatFromInt(i);
+        const x = @max(@as(RowV, @splat(0)), @min(@as(RowV, @splat(x0)) + (@as(RowV, @splat(fi)) + base), @as(RowV, @splat(w))));
+        const c = atLanes(self, x, @splat(yc), w, h);
+        out[i..][0..row_lanes].* = packLanes(c);
+    }
+    while (i < out.len) : (i += 1) {
+        const x = std.math.clamp(x0 + @as(f32, @floatFromInt(i)), 0, w);
+        out[i] = self.at(x, yc, w, h).pack();
+    }
+}
+
+const RgbV = struct { r: RowV, g: RowV, b: RowV };
+
+fn lerpLanes(a: RgbV, b: Rgbf, t: RowV) RgbV {
+    return .{
+        .r = a.r + (@as(RowV, @splat(b.r)) - a.r) * t,
+        .g = a.g + (@as(RowV, @splat(b.g)) - a.g) * t,
+        .b = a.b + (@as(RowV, @splat(b.b)) - a.b) * t,
+    };
+}
+
+fn splatRgb(c: Rgbf) RgbV {
+    return .{ .r = @splat(c.r), .g = @splat(c.g), .b = @splat(c.b) };
+}
+
+/// `Palette.at` for `row_lanes` points, operation for operation.
+fn atLanes(self: Palette, x: RowV, y: RowV, w: f32, h: f32) RgbV {
+    const reach = @max(w, h);
+    const one: RowV = @splat(1);
+    const wv: RowV = @splat(w);
+    const hv: RowV = @splat(h);
+    switch (self.look) {
+        .pools => |p| {
+            var c = lerpLanes(splatRgb(self.base_start), self.base_end, linearTLanes(x, y, 0.2 * w, 0, 0.8 * w, h));
+            const lead_r: RowV = @splat(@max(reach * p.lead_reach, 1));
+            c = lerpLanes(c, p.lead, one - @min(@sqrt(x * x + y * y) / lead_r, one));
+            const tx = wv - x;
+            const ty = hv - y;
+            const trail_r: RowV = @splat(@max(reach * p.trail_reach, 1));
+            return lerpLanes(c, p.trail, one - @min(@sqrt(tx * tx + ty * ty) / trail_r, one));
+        },
+        .spotlight => |s| {
+            var c = lerpLanes(splatRgb(self.base_start), self.base_end, linearTLanes(x, y, 0, 0, w, h));
+            const ex = (x - @as(RowV, @splat(0.5 * w))) / @as(RowV, @splat(@max(0.5 * w, 1)));
+            const ey = (y + @as(RowV, @splat(0.1 * h))) / @as(RowV, @splat(@max(0.5 * h, 1)));
+            c = lerpLanes(c, s.light, threeStopAlphaLanes(@sqrt(ex * ex + ey * ey) / @as(RowV, @splat(0.95)), 0.45));
+            const tx = wv - x;
+            const ty = hv - y;
+            const accent_r: RowV = @splat(@max(reach * 0.6, 1));
+            return lerpLanes(c, s.accent, threeStopAlphaLanes(@sqrt(tx * tx + ty * ty) / accent_r, 0.35));
+        },
+    }
+}
+
+fn linearTLanes(x: RowV, y: RowV, sx: f32, sy: f32, ex: f32, ey: f32) RowV {
+    const dx = ex - sx;
+    const dy = ey - sy;
+    const len2 = @max(dx * dx + dy * dy, 1);
+    const t = ((x - @as(RowV, @splat(sx))) * @as(RowV, @splat(dx)) + (y - @as(RowV, @splat(sy))) * @as(RowV, @splat(dy))) / @as(RowV, @splat(len2));
+    return @max(@as(RowV, @splat(0)), @min(t, @as(RowV, @splat(1))));
+}
+
+fn threeStopAlphaLanes(t: RowV, mid: f32) RowV {
+    const zero: RowV = @splat(0);
+    const one: RowV = @splat(1);
+    const half: RowV = @splat(0.5);
+    const m: RowV = @splat(mid);
+    const near = one - (one - m) * (t / half);
+    const far = m * (one - (t - half) / half);
+    const inner = @select(f32, t < half, near, far);
+    return @select(f32, t >= one, zero, @select(f32, t <= zero, one, inner));
+}
+
+fn packLanes(c: RgbV) @Vector(row_lanes, u32) {
+    const U = @Vector(row_lanes, u32);
+    const r: U = @intFromFloat(chanLanes(c.r));
+    const g: U = @intFromFloat(chanLanes(c.g));
+    const b: U = @intFromFloat(chanLanes(c.b));
+    return (r << @splat(16)) | (g << @splat(8)) | b;
+}
+
+fn chanLanes(v: RowV) RowV {
+    return @max(@as(RowV, @splat(0)), @min(@round(v), @as(RowV, @splat(255))));
+}
 
 /// Where (x, y) projects onto the gradient line from (sx, sy) to (ex, ey),
 /// clamped to 0...1.
@@ -836,4 +944,28 @@ test "T1907: a crop past the desk's edge reads the edge pixel" {
     // A 2x2 desk; a rect hanging off every side of it.
     cropDeskRegionRgba(&out, 2, 2, &desk, 2, 2, -10, -10, 40, 40);
     try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 255, 10, 11, 12, 255 }, &.{ out[0], out[1], out[2], out[3], out[12], out[13], out[14], out[15] });
+}
+
+test "T2521: atRow is the scalar gradient, bit for bit" {
+    var out: [203]u32 = undefined;
+    const sizes = [_][2]f32{ .{ 1400, 800 }, .{ 333, 97 }, .{ 900, 1600 } };
+    // Both looks: the ocean's pools (dark and light) and a variant's spotlight.
+    const looks = [_]Palette{ Palette.ocean(false), Palette.ocean(true), (Variant{ .seed = 0x2521 }).palette(false) };
+    try testing.expect(looks[0].look == .pools and looks[2].look == .spotlight);
+    for (looks) |pal| {
+        for (sizes) |sz| {
+            for ([_]f32{ -3.5, 0.5, 37.5, sz[1] * 0.5 + 0.5, sz[1] + 2.5 }) |y| {
+                // Starting left of the window and running past its right edge,
+                // so both clamps are exercised alongside the interior; 203 is
+                // not a multiple of the lane count, so the tail is too.
+                for ([_]f32{ -20.5, 0.5, sz[0] - 150.5 }) |x0| {
+                    pal.atRow(&out, x0, y, sz[0], sz[1]);
+                    for (out, 0..) |got, i| {
+                        const x = std.math.clamp(x0 + @as(f32, @floatFromInt(i)), 0, sz[0]);
+                        try testing.expectEqual(pal.at(x, std.math.clamp(y, 0, sz[1]), sz[0], sz[1]).pack(), got);
+                    }
+                }
+            }
+        }
+    }
 }

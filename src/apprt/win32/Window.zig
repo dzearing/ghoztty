@@ -28,6 +28,7 @@ const paint_probe = @import("paint_probe.zig");
 const PaneView = @import("PaneView.zig");
 const CloseUndo = @import("CloseUndo.zig");
 const ViewerPane = @import("ViewerPane.zig");
+const ViewerNavBar = @import("ViewerNavBar.zig");
 const viewer_accel = @import("viewer_accel.zig");
 const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
@@ -7445,6 +7446,7 @@ fn beginFrameWaitBatch(self: *Window) void {
         self.frame_cards_us = 0;
         // T2448: and the viewer panes' bound syncs the pass sets off.
         ViewerPane.sync_cost.reset();
+        ViewerNavBar.place_cost = .{};
         // T1345: and the chrome fan-out this pass will pay for — the window
         // moves, layered blits and z-order walks the per-pane popups cost.
         chrome_fanout.state.counts.reset();
@@ -7739,7 +7741,10 @@ pub fn layoutSplits(self: *Window) void {
     if (self.hwnd) |h| resizeTrace("batch-begin", h);
     endPaneBatch(hdwp);
     if (self.hwnd) |h| resizeTrace("batch-end", h);
-    if (resizeTraceOn()) log.info("resize trace viewer total_us={d} bounds_us={d} nav_us={d}", .{ ViewerPane.sync_cost.total_ns / 1000, ViewerPane.sync_cost.bounds_ns / 1000, ViewerPane.sync_cost.nav_ns / 1000 });
+    if (resizeTraceOn()) {
+        const nc = ViewerNavBar.place_cost;
+        log.info("resize trace viewer total_us={d} bounds_us={d} nav_us={d} nav_bar_us={d} nav_edit_us={d} nav_tip_us={d} nav_glass_us={d} nav_buttons_us={d} nav_paints={d}", .{ ViewerPane.sync_cost.total_ns / 1000, ViewerPane.sync_cost.bounds_ns / 1000, ViewerPane.sync_cost.nav_ns / 1000, nc.bar_ns / 1000, nc.edit_ns / 1000, nc.tip_ns / 1000, nc.glass_ns / 1000, nc.buttons_ns / 1000, nc.paints });
+    }
     if (stackTraceOn()) {
         var batch_t1: i64 = 0;
         _ = w32.QueryPerformanceCounter(&batch_t1);

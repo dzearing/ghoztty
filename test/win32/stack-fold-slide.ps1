@@ -1,3 +1,6 @@
+# @timing-sensitive - it films a slide frame by frame; beside other workers the
+# slide's frames thin out and it reads red (T2521 sweep, 2026-10-30: red at
+# width 4, green alone).
 # T2186 acceptance: folding panes by dragging a divider SLIDES, as on Mac,
 # instead of jumping in one step.
 #

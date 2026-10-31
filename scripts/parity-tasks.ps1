@@ -388,6 +388,31 @@ function ConvertFrom-Frontmatter {
 # Append one timestamped entry to the task's `## Progress log`, creating the
 # section (at the end of the file) if it does not exist yet. Entries go at the
 # END of the section so the log reads top-down chronologically.
+# Every task-file write goes through here (T2521). `WriteAllText` truncates the
+# file before it writes, so a writer killed in between leaves a 0-byte task
+# file - which is exactly what a `| Select-Object -First 1` on this script's
+# output did to T2380 on 2026-10-30 (the pipeline stop kills the child). The
+# text goes to a sibling temp file first and replaces the task file in one
+# rename, so a kill at any point leaves either the old file or the new one.
+function Write-TaskFileText {
+    param([string]$Path, [string]$Text)
+    $tmp = "$Path.$PID.tmp"
+    # [NullString]::Value, not $null: PS 5.1 passes $null to a .NET string
+    # parameter as "", which Replace rejects as an illegal backup path.
+    try {
+        [System.IO.File]::WriteAllText($tmp, $Text, (New-Object System.Text.UTF8Encoding $false))
+        # Fault injection for the acceptance harness: die with the new text
+        # written and the swap not yet made - the point a truncating write had
+        # already emptied the task file.
+        if ($env:GHOZTTY_TASKS_FAULT -eq 'edit') { throw 'injected edit failure (GHOZTTY_TASKS_FAULT=edit)' }
+        if (Test-Path -LiteralPath $Path) { [System.IO.File]::Replace($tmp, $Path, [NullString]::Value) }
+        else { [System.IO.File]::Move($tmp, $Path) }
+    }
+    finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Add-ProgressNote {
     param([string]$Path, [string]$NoteText, [string]$SessionId)
     $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm')
@@ -408,7 +433,7 @@ function Add-ProgressNote {
     else {
         $new = $text.TrimEnd() + "`n`n## Progress log`n`n$entry`n"
     }
-    [System.IO.File]::WriteAllText($Path, $new, (New-Object System.Text.UTF8Encoding $false))
+    Write-TaskFileText -Path $Path -Text $new
 }
 
 # Who is making this edit, when the caller did not say (T861). A bare
@@ -1159,7 +1184,7 @@ switch ($Command) {
                     if ($Claim) {
                         $pt = [System.IO.File]::ReadAllText($p.Path, [System.Text.Encoding]::UTF8)
                         $pt = [regex]::Replace($pt, '(?m)^status:\s*.*$', 'status: "todo"', 1)
-                        [System.IO.File]::WriteAllText($p.Path, $pt, (New-Object System.Text.UTF8Encoding $false))
+                        Write-TaskFileText -Path $p.Path -Text $pt
                         Add-ProgressNote -Path $p.Path -SessionId $Session -NoteText ("box idle at claim time ({0}): back to todo for the parked live run. Run it NOW - the window closes when the user returns." -f $presence.Reason)
                     }
                 }
@@ -1219,7 +1244,7 @@ switch ($Command) {
                 if ($Claim) {
                     $claimText = [System.IO.File]::ReadAllText($t.Path, [System.Text.Encoding]::UTF8)
                     $claimed = [regex]::Replace($claimText, '(?m)^status:\s*.*$', 'status: "in-progress"', 1)
-                    [System.IO.File]::WriteAllText($t.Path, $claimed, (New-Object System.Text.UTF8Encoding $false))
+                    Write-TaskFileText -Path $t.Path -Text $claimed
                     Write-Host ("      CLAIMED: {0} is now in-progress" -f $t.Id)
                     # The first progress-log entry. If this turn dies, the next
                     # one finds at least when the work started and by whom.
@@ -1316,7 +1341,7 @@ switch ($Command) {
             $listJson = '[' + (($all | ForEach-Object { ConvertTo-Json $_ -Compress }) -join ', ') + ']'
             $new = [regex]::Replace($new, '(?m)^commits:\s*.*$', "commits: $listJson", 1)
         }
-        [System.IO.File]::WriteAllText($path, $new, (New-Object System.Text.UTF8Encoding $false))
+        Write-TaskFileText -Path $path -Text $new
         Write-Host ("{0} -> {1}" -f $tid, $Status)
 
         # T1981: the ledger follows the status. in-progress is a claim; any
@@ -1433,7 +1458,7 @@ switch ($Command) {
         else {
             $new = [regex]::Replace($text, '(?m)^(title:\s*.*)$', "`$1`norder: $num", 1)
         }
-        [System.IO.File]::WriteAllText($path, $new, (New-Object System.Text.UTF8Encoding $false))
+        Write-TaskFileText -Path $path -Text $new
         Write-Host ("{0} -> order {1}" -f $tid, $num)
     }
 
@@ -1489,7 +1514,7 @@ switch ($Command) {
             Write-Host ("{0} -> tags {1} (unchanged)" -f $tid, ($final -join ','))
             break
         }
-        [System.IO.File]::WriteAllText($path, $new, (New-Object System.Text.UTF8Encoding $false))
+        Write-TaskFileText -Path $path -Text $new
         $wasText = if ($old.Count) { $old -join ',' } else { 'none' }
         Write-Host ("{0} -> tags {1} (was {2})" -f $tid, ($final -join ','), $wasText)
     }
@@ -1537,7 +1562,7 @@ switch ($Command) {
             }
             $flagged = $true
         }
-        [System.IO.File]::WriteAllText($path, $new, (New-Object System.Text.UTF8Encoding $false))
+        Write-TaskFileText -Path $path -Text $new
         if ($flagged) {
             Add-ProgressNote -Path $path -SessionId $Session -NoteText 'user-report: true (closing this task now asks for the release that carries the fix)'
             Write-Host ("      {0} is a user report: closing it will file a publish request" -f $tid)

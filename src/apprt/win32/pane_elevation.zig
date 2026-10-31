@@ -421,17 +421,13 @@ pub fn glassSheetRegion(
     const fw: f32 = @floatFromInt(@max(full_w, 1));
     const fh: f32 = @floatFromInt(@max(full_h, 1));
     const lut = GlassLut.initSheet(tint, sheet);
+    const x0 = @as(f32, @floatFromInt(rx)) + 0.5;
     for (0..h) |row| {
         const y = @as(f32, @floatFromInt(ry + @as(i32, @intCast(row)))) + 0.5;
-        for (0..w) |col| {
-            const x = @as(f32, @floatFromInt(rx + @as(i32, @intCast(col)))) + 0.5;
-            out[row * w + col] = lut.mix(pal.at(
-                std.math.clamp(x, 0, fw),
-                std.math.clamp(y, 0, fh),
-                fw,
-                fh,
-            ).pack());
-        }
+        // The desk under the row, eight pixels at a time (T2521), then the tint.
+        const line = out[row * w ..][0..w];
+        pal.atRow(line, x0, y, fw, fh);
+        for (line) |*p| p.* = lut.mix(p.*);
     }
 }
 

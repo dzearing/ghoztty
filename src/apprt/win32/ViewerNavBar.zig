@@ -34,7 +34,6 @@ const color_math = @import("color_math.zig");
 const chrome_theme = @import("chrome_theme.zig");
 const banner_card = @import("banner_card.zig");
 const pane_elevation = @import("pane_elevation.zig");
-const Dib32 = @import("dib32.zig");
 const type_ramp = @import("type_ramp.zig");
 const icon_button = @import("icon_button.zig");
 const icon_paint = @import("icon_button_paint.zig");
@@ -169,6 +168,11 @@ select_on_up: bool = false,
 /// pane's monitor changes.
 scale: f32 = 0,
 font: ?*anyopaque = null, // HFONT (CreateFontW's own return shape)
+/// The glass band's pixels (T2521), kept across paints and only ever grown.
+/// A divider or window-edge drag repaints the bar at a new width on every
+/// step, so the band is blitted from memory rather than from a DIB section
+/// made and destroyed per paint.
+glass_px: std.ArrayListUnmanaged(u32) = .empty,
 edit_brush: ?w32.HBRUSH = null,
 
 // Theme, derived from the pane's background in `applyTheme`.
@@ -303,6 +307,7 @@ pub fn destroy(self: *ViewerNavBar) void {
     _ = w32.DestroyWindow(self.hwnd); // destroys the EDIT with it
     if (self.font) |f| _ = w32.DeleteObject(@ptrCast(f));
     if (self.edit_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
+    self.glass_px.deinit(self.alloc);
     self.alloc.destroy(self);
 }
 
@@ -380,17 +385,46 @@ pub fn shown(self: *const ViewerNavBar) layout_mod.Shown {
     };
 }
 
+/// What `place` and the paint it forces cost (T2521), summed over a layout
+/// pass for `GHOZTTY_RESIZE_TRACE`'s `resize trace viewer` line: the window
+/// resets it when a pass opens, beside `ViewerPane.sync_cost`. The bar is
+/// moved and repainted on every step of a window-edge drag, so each part of
+/// that is a share of a frame. `bar_ns` and `edit_ns` include the paint each
+/// move forces; `glass_ns` and `buttons_ns` are the bar's paint, split.
+pub const PlaceCost = struct {
+    bar_ns: u64 = 0,
+    edit_ns: u64 = 0,
+    tip_ns: u64 = 0,
+    glass_ns: u64 = 0,
+    buttons_ns: u64 = 0,
+    paints: u32 = 0,
+};
+pub var place_cost: PlaceCost = .{};
+
+fn tnow() ?std.time.Instant {
+    return std.time.Instant.now() catch null;
+}
+
+fn tsince(from: ?std.time.Instant) u64 {
+    const s = from orelse return 0;
+    const now = std.time.Instant.now() catch return 0;
+    return now.since(s);
+}
+
 /// Position the bar across the top of the pane and its EDIT inside it.
 /// Idempotent and cheap; the pane calls it from every bounds sync while the
 /// bar is visible.
 pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
     const l = layout_mod.Layout.init(scale, width, self.shown());
+    var t = tnow();
     // Resize-aware reposition, not `MoveWindow(.., TRUE)` (T1392). A divider
     // drag re-runs this per mouse-move, and `MoveWindow`'s repaint is deferred
     // to the next idle — with the loop busy pumping sizing messages that lands
     // a frame late, over a stretched blit of the old layout. That is the
     // address bar visibly painting into the width the drag just revealed.
     _ = chrome_reposition.place(self.hwnd, 0, 0, width, l.bar_h, 0);
+    place_cost.bar_ns +|= tsince(t);
+    t = tnow();
     const field_w = @max(l.address.right - l.address.left, 0);
     // The field goes the same way: it is the widest thing in the band and it
     // stretches with it, so a bar that repaints in-frame around a field that
@@ -408,6 +442,7 @@ pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
     // the band's left edge. Hidden, it is out of the tab order and off the
     // screen, which is what "absent" has to mean for it to read as designed.
     _ = w32.ShowWindow(self.edit, if (field_w > 0) w32.SW_SHOWNA else w32.SW_HIDE);
+    place_cost.edit_ns +|= tsince(t);
     if (self.scale != scale) {
         self.scale = scale;
         if (self.font) |f| _ = w32.DeleteObject(@ptrCast(f));
@@ -430,7 +465,9 @@ pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
         );
         if (self.font) |f| _ = w32.SendMessageW(self.edit, w32.WM_SETFONT, @intFromPtr(f), 1);
     }
+    t = tnow();
     self.syncTip(l);
+    place_cost.tip_ns +|= tsince(t);
 }
 
 // -------------------------------------------------------------------------
@@ -936,7 +973,13 @@ fn openOverflowMenu(self: *ViewerNavBar) void {
 }
 
 fn paint(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) void {
-    if (!self.paintGlass(hdc, width, height)) {
+    place_cost.paints +|= 1;
+    var tp = tnow();
+    defer place_cost.buttons_ns +|= tsince(tp);
+    const glass = self.paintGlass(hdc, width, height);
+    place_cost.glass_ns +|= tsince(tp);
+    tp = tnow();
+    if (!glass) {
         const bar_ref = w32.RGB(self.bar_rgb.r, self.bar_rgb.g, self.bar_rgb.b);
         if (w32.CreateSolidBrush(bar_ref)) |brush| {
             defer _ = w32.DeleteObject(@ptrCast(brush));
@@ -991,13 +1034,21 @@ fn paint(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) void {
 /// (`place`), so its slice of the desk is the host's own. Website panes take
 /// it too - on Mac the chrome is glass whatever the page is. False off glass
 /// or when no buffer could be made: the caller fills `bar_rgb`.
-fn paintGlass(self: *const ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) bool {
+fn paintGlass(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) bool {
     const g = self.pane.glass orelse return false;
     if (width <= 0 or height <= 0) return true;
-    const dib = Dib32.create(hdc, width, height) orelse return false;
-    defer dib.destroy();
-    pane_elevation.glassHeadRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb, g.sheet);
-    _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
+    const n: usize = @intCast(width * height);
+    self.glass_px.ensureTotalCapacity(self.alloc, n) catch return false;
+    const px = self.glass_px.allocatedSlice()[0..n];
+    pane_elevation.glassHeadRegion(px, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb, g.sheet);
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = width,
+        .biHeight = -height,
+        .biPlanes = 1,
+        .biBitCount = 32,
+        .biCompression = w32.BI_RGB,
+    } };
+    _ = w32.StretchDIBits(hdc, 0, 0, width, height, 0, 0, width, height, px.ptr, &bmi, w32.DIB_RGB_COLORS, w32.SRCCOPY);
     return true;
 }
 
