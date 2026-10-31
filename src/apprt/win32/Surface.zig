@@ -870,7 +870,7 @@ fn initOnce(
     const alloc = app.core_app.alloc;
 
     // Create the themed scrollbar popup (owned by the surface HWND).
-    self.scrollbar = try Scrollbar.create(alloc, hwnd, self);
+    self.scrollbar = try Scrollbar.create(alloc, hwnd, self, &self.comp_overlay_slot);
     errdefer if (self.scrollbar) |sb| {
         sb.destroy();
         self.scrollbar = null;

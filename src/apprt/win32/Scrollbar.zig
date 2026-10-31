@@ -2,6 +2,16 @@
 //! Ghostty) and adapted for the Ghoztty fork (branding, fork apprt actions).
 //! Themed scrollbar for the Win32 apprt. See
 //! docs/superpowers/specs/2026-04-29-win32-themed-scrollbar-design.md
+//!
+//! When the pane presents through a composition swap chain (T2466) the strip
+//! is a child visual of the pane's visual instead of the layered popup
+//! (T2492, comp_overlay.zig): the same premultiplied pixels, at the pane's
+//! right edge, so a move, a fold or a divider drag is nothing to it and only a
+//! resize re-places it. The popup stays alive, hidden, as the fade/idle timer
+//! host and as the fallback. Its mouse input then arrives on the pane window,
+//! which offers it here first (`routeMouse`) and answers it the way the
+//! popup's own pixels answered Windows: the opaque track in always-visible
+//! mode, only the visible thumb in overlay mode (`stripHit`).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -11,6 +21,7 @@ const pane_clip = @import("pane_clip.zig");
 const terminal = @import("../../terminal/main.zig");
 const Surface = @import("Surface.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const testing = std.testing;
 
 const log = std.log.scoped(.win32_scrollbar);
@@ -100,6 +111,23 @@ pub fn dragOffset(
 pub fn effectiveAlpha(base_alpha: u8, fade: u8) u8 {
     const product: u16 = @as(u16, base_alpha) * @as(u16, fade) / 255;
     return @intCast(@min(product, 255));
+}
+
+/// Pane mouse input the strip is offered on the visual path (T2492).
+pub const MouseEvent = enum { move, down, up, leave };
+
+/// Whether a pane-client point is the strip's on the visual path (T2492):
+/// the answer the popup's own pixels gave Windows, where a fully transparent
+/// pixel lets the mouse through. Always-visible paints the whole track
+/// opaque; overlay mode paints only the thumb, and only while it is `lit`
+/// (not faded out, where the popup was also WS_EX_TRANSPARENT).
+pub fn stripHit(mode: Mode, lit: bool, strip: Placement, thumb: ThumbRect, x: i32, y: i32) bool {
+    if (x < strip.x or x >= strip.x + strip.w) return false;
+    if (y < strip.y or y >= strip.y + strip.h) return false;
+    return switch (mode) {
+        .always_visible => true,
+        .overlay => lit and y - strip.y >= thumb.y and y - strip.y < thumb.y + thumb.h,
+    };
 }
 
 pub const Mode = enum { overlay, always_visible };
@@ -215,10 +243,21 @@ pub const Scrollbar = struct {
     /// while `shown`.
     placed: Placement = .{},
 
+    /// The pane renderer's composition tree (T2492).
+    slot: ?*comp_overlay.Slot,
+    layer: comp_overlay.Layer = .{},
+    /// The strip is the pane's child visual rather than the popup.
+    on_visual: bool = false,
+    /// The strip's place in the pane's client area on the visual path.
+    local: Placement = .{},
+    /// The visual path's pixel rows, reused between uploads.
+    pixels: std.ArrayListUnmanaged(u32) = .empty,
+
     pub fn create(
         alloc: std.mem.Allocator,
         owner: w32.HWND,
         surface: *Surface,
+        slot: ?*comp_overlay.Slot,
     ) !*Scrollbar {
         try registerClassOnce(surface.app.hinstance);
 
@@ -230,6 +269,7 @@ pub const Scrollbar = struct {
             .surface = surface,
             .owner = owner,
             .hwnd = undefined,
+            .slot = slot,
         };
 
         // WS_EX_LAYERED — DWM-composited above OpenGL.
@@ -274,6 +314,8 @@ pub const Scrollbar = struct {
     }
 
     pub fn destroy(self: *Scrollbar) void {
+        self.layer.deinit();
+        self.pixels.deinit(self.alloc);
         _ = w32.DestroyWindow(self.hwnd);
         self.alloc.destroy(self);
     }
@@ -333,6 +375,16 @@ pub const Scrollbar = struct {
 
         const client_h = rect.bottom - rect.top;
         const width = self.currentWidth();
+
+        // The visual path (T2492): pane-local, so only the size matters.
+        if (self.syncPath()) {
+            self.local = .{ .x = rect.right - width, .y = rect.top, .w = width, .h = client_h };
+            self.repaint();
+            return switch (self.mode) {
+                .always_visible => width,
+                .overlay => 0,
+            };
+        }
 
         // Convert top-right corner of client area to screen coords.
         var top_right = w32.POINT{ .x = rect.right - width, .y = rect.top };
@@ -414,6 +466,16 @@ pub const Scrollbar = struct {
 
     /// Show or hide the popup when the owner surface is shown/hidden.
     pub fn setOwnerVisible(self: *Scrollbar, visible: bool) void {
+        if (self.on_visual) {
+            // Inside the pane, which clips and hides it with itself; this
+            // keeps the layer's on/off honest for a pane that leaves the
+            // layout (T2012) and comes back.
+            if (visible) self.repaint() else if (self.layer.attached) {
+                self.layer.setVisible(false);
+                log.info("scrollbar hidden visual=true", .{});
+            }
+            return;
+        }
         // Not over a pane that is partly outside its window (T2227): an
         // unfolding card is shown at its tucked place, past the edge. Its
         // clip, not its visibility - this runs on WM_SHOWWINDOW, before the
@@ -479,6 +541,7 @@ pub const Scrollbar = struct {
     }
 
     fn repaint(self: *Scrollbar) void {
+        if (self.on_visual) return self.repaintVisual();
         var client: w32.RECT = undefined;
         if (w32.GetClientRect(self.hwnd, &client) == 0) return;
         const w = client.right - client.left;
@@ -548,6 +611,119 @@ pub const Scrollbar = struct {
         self.painted = sig;
     }
 
+    /// The visual path's half of `repaint` (T2492): the same signature check
+    /// and the same pixels, handed to the pane's composition layer instead of
+    /// UpdateLayeredWindow. A rebuilt tree (`hasPixels` false) or a detached
+    /// layer always re-uploads.
+    fn repaintVisual(self: *Scrollbar) void {
+        const w = self.local.w;
+        const h = self.local.h;
+        if (w <= 0 or h <= 0) return;
+        const sig = self.signature(w, h);
+        const fresh = !self.layer.hasPixels() or !self.layer.attached;
+        if (!fresh and !chrome_fanout.blitNeeded(self.painted, sig)) {
+            chrome_fanout.noteBlitSkipped();
+            _ = self.layer.setOffset(self.local.x, self.local.y);
+            return;
+        }
+        const n: usize = @intCast(w * h);
+        self.pixels.resize(self.alloc, n) catch return;
+        self.drawBitmap(self.pixels.items.ptr, w, h);
+        chrome_fanout.noteBlit();
+        _ = self.layer.setOffset(self.local.x, self.local.y);
+        if (!self.layer.setPixels(self.pixels.items, @intCast(w), @intCast(h))) {
+            log.warn("scrollbar visual upload failed", .{});
+            return;
+        }
+        self.painted = sig;
+        if (!self.layer.attached) {
+            self.layer.setVisible(true);
+            log.info("scrollbar shown as visual w={d} h={d}", .{ w, h });
+        }
+    }
+
+    /// Bring the strip onto the pane's composition tree, or back to the
+    /// popup when there is none (T2492). True: the visual path.
+    fn syncPath(self: *Scrollbar) bool {
+        const want = if (self.slot) |s| self.layer.sync(s) else false;
+        if (want != self.on_visual) {
+            // Leaving either path ends a drag and a hover on it.
+            if (self.dragging) _ = w32.ReleaseCapture();
+            if (want) {
+                // Off the popup at once; it stays alive for its timers.
+                _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+                self.shown = false;
+            } else {
+                // A retracted tree already took the visual with it.
+                self.layer.setVisible(false);
+            }
+            self.dragging = false;
+            self.hover = false;
+            self.on_visual = want;
+            self.painted = null;
+            log.info("scrollbar path visual={}", .{want});
+        }
+        return want;
+    }
+
+    /// The pane's composition tree was published or retracted (T2492):
+    /// take the strip onto it, or back to the popup, and place it.
+    pub fn onTreeChanged(self: *Scrollbar) void {
+        _ = self.repositionAndResize();
+    }
+
+    /// The window the strip's mouse input arrives on: the popup's own, or
+    /// the pane's on the visual path.
+    fn inputHwnd(self: *const Scrollbar) w32.HWND {
+        return if (self.on_visual) self.owner else self.hwnd;
+    }
+
+    /// Whether a point in the pane's client area is the strip's on the
+    /// visual path (T2492).
+    pub fn hitVisual(self: *const Scrollbar, x: i32, y: i32) bool {
+        if (!self.on_visual or !self.layer.attached) return false;
+        const r = thumbRect(self.state.total, self.state.offset, self.state.len, self.local.h, self.dpiScaled(THUMB_MIN_HEIGHT_BASE));
+        const lit = self.visibility != .hidden and self.thumbAlpha() > 0;
+        return stripHit(self.mode, lit, self.local, r, x, y);
+    }
+
+    /// Mouse input on the pane window, offered to the strip first on the
+    /// visual path (T2492). `x`/`y` are pane client coordinates. True: it was
+    /// the strip's, and the terminal must not see it. A drag keeps every move
+    /// and the release wherever the cursor has gone, as its capture does.
+    pub fn routeMouse(self: *Scrollbar, ev: MouseEvent, x: i32, y: i32) bool {
+        if (!self.on_visual) return false;
+        const ly = y - self.local.y;
+        if (self.dragging) {
+            switch (ev) {
+                .move => self.onMouseMove(x, ly),
+                .up => self.onLeftUp(),
+                .down, .leave => {},
+            }
+            return ev != .leave;
+        }
+        switch (ev) {
+            .move => {
+                if (self.hitVisual(x, y)) {
+                    self.onMouseMove(x, ly);
+                    return true;
+                }
+                if (self.hover) self.onMouseLeave();
+                return false;
+            },
+            .down => {
+                if (!self.hitVisual(x, y)) return false;
+                self.onLeftDown(ly);
+                return true;
+            },
+            .up => return false,
+            .leave => {
+                if (self.hover) self.onMouseLeave();
+                return false;
+            },
+        }
+    }
+
     fn drawBitmap(self: *Scrollbar, pixels: [*]u32, w: i32, h: i32) void {
         // Premultiplied BGRA. Layout per pixel: 0xAARRGGBB.
         // Overlay mode: track is fully transparent; only the thumb is painted.
@@ -591,7 +767,7 @@ pub const Scrollbar = struct {
         var tme = w32.TRACKMOUSEEVENT{
             .cbSize = @sizeOf(w32.TRACKMOUSEEVENT),
             .dwFlags = w32.TME_LEAVE,
-            .hwndTrack = self.hwnd,
+            .hwndTrack = self.inputHwnd(),
             .dwHoverTime = 0,
         };
         _ = w32.TrackMouseEvent(&tme);
@@ -654,7 +830,8 @@ pub const Scrollbar = struct {
         const r = self.currentThumbRect();
         if (y >= r.y and y < r.y + r.h) {
             // Drag.
-            _ = w32.SetCapture(self.hwnd);
+            _ = w32.SetCapture(self.inputHwnd());
+            log.info("scrollbar drag start visual={}", .{self.on_visual});
             self.drag_anchor = y - r.y;
             self.dragging = true;
         } else {
@@ -677,6 +854,7 @@ pub const Scrollbar = struct {
         if (self.dragging) {
             _ = w32.ReleaseCapture();
             self.dragging = false;
+            log.info("scrollbar drag end visual={} offset={d}", .{ self.on_visual, self.state.offset });
             self.repaint();
         }
     }
@@ -981,4 +1159,27 @@ test "dragOffset: rounds half to nearest" {
 test "parseMode: non-{0,1} value treated as overlay" {
     try testing.expectEqual(Mode.overlay, parseMode(2));
     try testing.expectEqual(Mode.overlay, parseMode(99));
+}
+
+test "stripHit: outside the strip is never the scrollbar's" {
+    const strip: Placement = .{ .x = 492, .y = 0, .w = 8, .h = 300 };
+    const thumb: ThumbRect = .{ .y = 0, .h = 300 };
+    try testing.expect(!stripHit(.always_visible, true, strip, thumb, 491, 10));
+    try testing.expect(!stripHit(.always_visible, true, strip, thumb, 500, 10));
+    try testing.expect(!stripHit(.always_visible, true, strip, thumb, 495, 300));
+    try testing.expect(stripHit(.always_visible, true, strip, thumb, 492, 0));
+    try testing.expect(stripHit(.always_visible, true, strip, thumb, 499, 299));
+}
+
+test "stripHit: always-visible takes the whole track, overlay only the lit thumb" {
+    const strip: Placement = .{ .x = 100, .y = 0, .w = 14, .h = 200 };
+    const thumb: ThumbRect = .{ .y = 150, .h = 50 };
+    // The track above the thumb: opaque in always-visible, see-through in overlay.
+    try testing.expect(stripHit(.always_visible, false, strip, thumb, 105, 20));
+    try testing.expect(!stripHit(.overlay, true, strip, thumb, 105, 20));
+    // The thumb: the overlay's only opaque pixels, while lit.
+    try testing.expect(stripHit(.overlay, true, strip, thumb, 105, 150));
+    try testing.expect(stripHit(.overlay, true, strip, thumb, 105, 199));
+    // Faded out: transparent, so the terminal gets it.
+    try testing.expect(!stripHit(.overlay, false, strip, thumb, 105, 160));
 }

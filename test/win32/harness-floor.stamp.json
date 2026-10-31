@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-31T11:41:58-07:00",
+    "generated":  "2026-10-31T11:54:47-07:00",
     "commit":  "a5cd92702",
     "uncommitted":  [
-                        "test/win32/viewer-nav-pin.ps1",
-                        "test/win32/viewer-panes.ps1"
+                        "test/win32/comp-present.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -108,7 +107,7 @@
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
                   "test/win32/comp-chrome.ps1":  "8dd063fccb97d7cf90c35bf415f9fbfab707f7198d440fdc89cddcd0c7151163",
-                  "test/win32/comp-present.ps1":  "c4698c4d2ec4b07c63203a862a8ce9d589dbf9981856060cbbbd5ff6d4a12ff8",
+                  "test/win32/comp-present.ps1":  "b5b80db75dca3c65b821673fc18a5ade79a64207e4d0ea6288424c6f3eae4f5b",
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",
@@ -545,8 +544,8 @@
                   "test/win32/viewer-html.ps1":  "ca16fd4e3837cb63a78fa4763c7e78399ac3b97bcab9872a62741e414e147929",
                   "test/win32/viewer-image.ps1":  "438add5f5db9b264f824b63c3efbac0402db703f9b219a6f6e88738ceef42ecf",
                   "test/win32/viewer-narrow-pane.ps1":  "63d2d057cb2522b824efea6fb24aa7e9426d240921c1b51c74d3ec677e529737",
-                  "test/win32/viewer-nav-pin.ps1":  "aa1bb25207c4638148dab8b6b8f6f9a7de78ae7ab7065d50751a17825ec64261",
-                  "test/win32/viewer-panes.ps1":  "f483995862ca20b10fff8f76f8c5ff34661f5edbea82716fd12ad7c3aa5d8d95",
+                  "test/win32/viewer-nav-pin.ps1":  "0484ea216296c7270a8ea1d117f8c555b2d1861cf92ca9af290a751ca6476438",
+                  "test/win32/viewer-panes.ps1":  "d357fd8f59c863ec614b2f0e82a9951568da625b50cbe2e7591be2cc4d645372",
                   "test/win32/viewer-popup.ps1":  "026091bd991f9e035761626527cdc873d5af02d5376f941b003448bb6faa7f6d",
                   "test/win32/viewer-restore.ps1":  "25317e0bc91348dd4a2794f73083f1da5c08f46b1a3896cac22536a7faf7e28c",
                   "test/win32/viewer-toc-emphasis.ps1":  "337dbba50bb5b54ae0a3d67f9a4db9a43e483cda7068abfb5f3f130c09e6fb77",

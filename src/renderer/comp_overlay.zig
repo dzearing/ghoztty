@@ -136,7 +136,11 @@ const slot_dcomp_create_animation = 25;
 // AddCubic 5, AddSinusoidal 6, AddRepeat 7, End 8.
 const slot_anim_add_cubic = 5;
 const slot_anim_end = 8;
-// IDCompositionVisual. SetTransform(transform) 7, SetTransform(matrix) 8.
+// IDCompositionVisual. SetOffsetX(animation) 3, SetOffsetX(float) 4,
+// SetOffsetY(animation) 5, SetOffsetY(float) 6 - the same overload order as
+// SetTransform(transform) 7, SetTransform(matrix) 8.
+const slot_visual_set_offset_x_float = 4;
+const slot_visual_set_offset_y_float = 6;
 const slot_visual_set_transform_matrix = 8;
 const slot_visual_set_effect = 10;
 const slot_visual_set_bitmap_interpolation_mode = 11;
@@ -287,6 +291,9 @@ pub const Layer = struct {
     height: u32 = 0,
     attached: bool = false,
     opacity: u8 = 255,
+    /// The visual's offset in the pane (`setOffset`); a new visual is at 0,0.
+    offset_x: i32 = 0,
+    offset_y: i32 = 0,
 
     /// Bring the layer onto the slot's current tree. False: nothing is
     /// published (the pane presents with SwapBuffers), so the caller uses its
@@ -370,6 +377,20 @@ pub const Layer = struct {
         if (!ok(slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, vis, slot_visual_set_bitmap_interpolation_mode)(vis, DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR))) return false;
         const m = Matrix3x2.scale(cover_extent, cover_extent);
         if (!ok(slot(*const fn (Obj, *const Matrix3x2) callconv(.winapi) HRESULT, vis, slot_visual_set_transform_matrix)(vis, &m))) return false;
+        self.commit();
+        return true;
+    }
+
+    /// Where the layer's top-left sits in the pane, in pane pixels (T2492):
+    /// a layer that is not the whole pane, like the scrollbar strip on the
+    /// right edge. Only a pane resize moves it; a pane move never does.
+    pub fn setOffset(self: *Layer, x: i32, y: i32) bool {
+        const vis = self.visual orelse return false;
+        if (x == self.offset_x and y == self.offset_y) return true;
+        if (!ok(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_visual_set_offset_x_float)(vis, @floatFromInt(x)))) return false;
+        if (!ok(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_visual_set_offset_y_float)(vis, @floatFromInt(y)))) return false;
+        self.offset_x = x;
+        self.offset_y = y;
         self.commit();
         return true;
     }

@@ -28,6 +28,12 @@
 #      wash goes up as a visual with no GhozttyDimOverlay popup, a window move
 #      and resize re-show nothing, and a banner sends it back to the popup
 #      (it must cover the band above the pane window). Knob-off: split-dim.ps1.
+#   G. The scrollbar as a child visual (T2492): the strip goes up as a visual
+#      of the pane with no GhozttyScrollbar popup on screen, a window move
+#      re-shows nothing, and hit testing stays on the pane window - a press
+#      on the lit thumb starts a scrollbar drag that scrolls the viewport to
+#      the top, while a click in the grid is the terminal's. (D3 is its
+#      negative control: knob off, the strip is the popup.)
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -255,6 +261,9 @@ try {
     $text = Read-Text $d.Err
     Assert "D2 and no composition line was logged" `
         ($text -notmatch $onLine -and $text -notmatch $failLine -and $text -notmatch $unavailLine)
+    $dBars = @(Get-TestWindows -ProcessId $d.App.Pid -Class 'GhozttyScrollbar')
+    Assert "D3 the knob-off scrollbar is its popup ($($dBars.Count) visible, no visual line)" `
+        ($dBars.Count -ge 1 -and $text -notmatch 'scrollbar path visual=true')
 
     # ========================================================================
     "== E: the bell border is a child visual of the pane, not a popup (T2467)"
@@ -358,6 +367,73 @@ try {
     Assert "F5 the app is still running, nothing fell back" ((Test-Alive $f) -and (Count-Log $f.Err $failLine) -eq 0)
     Assert "F6 the dimmed panes still draw text" ((Test-DrawsText $f.Target) -and (Test-DrawsText 'compf2'))
 
+    # ========================================================================
+    "== G: the scrollbar is a child visual of the pane, not a popup (T2492)"
+    # ========================================================================
+    Set-Knobs '1' $null $null
+    $g = Start-Arm 'g' @('--command=powershell.exe -NoLogo')
+    Assert "G0 the arm's window came up" ($g.Top -ne [IntPtr]::Zero -and $null -ne $g.Win)
+    & $Exe +split "--target=$($g.Target)" '--direction=right' '--name=compg2' '--shell=powershell' 2>$null | Out-Null
+    # Three panes: the startup window's, the +new-window one and its split.
+    $three = $false
+    for ($t = 0; $t -lt 50 -and -not $three; $t++) {
+        $three = (Count-Log $g.Err 'scrollbar shown as visual') -ge 3
+        if (-not $three) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "G1 every pane's scrollbar went up as a visual ($(Count-Log $g.Err 'scrollbar shown as visual') lines)" $three
+    $gTop = [IntPtr]::Zero
+    foreach ($w in @(Get-TestWindows -ProcessId $g.App.Pid -Class 'GhozttyWindow')) {
+        $n = @(Get-TestChildWindows -Window ([IntPtr]$w.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible).Count
+        if ($n -ge 2) { $gTop = [IntPtr]$w.Hwnd }
+    }
+    Assert "G2a found the two-pane window" ($gTop -ne [IntPtr]::Zero)
+    $bars = @(Get-TestWindows -ProcessId $g.App.Pid -Class 'GhozttyScrollbar')
+    Assert "G2 no scrollbar popup is visible ($($bars.Count))" ($bars.Count -eq 0)
+    # Scrollback in the right pane: powershell prints the range, one per row.
+    & $Exe +send-keys '--target=compg2' '1..400' Enter 2>$null | Out-Null
+    Start-Sleep -Milliseconds 1500
+    $shownBefore = Count-Log $g.Err 'scrollbar shown as visual'
+    if ($gTop -ne [IntPtr]::Zero) {
+        $wr = Get-TestWindowRect -Window $gTop
+        [void](Set-TestWindowPos -Window $gTop -X ($wr.Left + 50) -Y ($wr.Top + 30))
+        Start-Sleep -Milliseconds 800
+    }
+    $bars = @(Get-TestWindows -ProcessId $g.App.Pid -Class 'GhozttyScrollbar')
+    $shownAfter = Count-Log $g.Err 'scrollbar shown as visual'
+    Assert "G3 a move shows no popup and re-shows nothing ($shownBefore -> $shownAfter, $($bars.Count) popups)" `
+        ($bars.Count -eq 0 -and $shownAfter -eq $shownBefore)
+    # The thumb sits at the bottom of the strip (the view follows the output)
+    # and is lit for a second after output, so each try prints, then presses
+    # it on the PANE window and drags it to the top.
+    $pane = $null
+    if ($gTop -ne [IntPtr]::Zero) {
+        $pane = @(Get-TestChildWindows -Window $gTop -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left, Top)[1]
+    }
+    $dragged = $false
+    for ($i = 0; $i -lt 4 -and $pane -and -not $dragged; $i++) {
+        & $Exe +send-keys '--target=compg2' '1..60' Enter 2>$null | Out-Null
+        Start-Sleep -Milliseconds 350
+        $x = $pane.Right - 3
+        [void](Send-TestMouse -Window $gTop -Target ([IntPtr]$pane.Hwnd) -X $x -Y ($pane.Bottom - 4) -Action down -Client)
+        [void](Send-TestMouse -Window $gTop -Target ([IntPtr]$pane.Hwnd) -X $x -Y ($pane.Top + ($pane.Height / 2)) -Action move -Client)
+        [void](Send-TestMouse -Window $gTop -Target ([IntPtr]$pane.Hwnd) -X $x -Y ($pane.Top - 200) -Action move -Client)
+        [void](Send-TestMouse -Window $gTop -Target ([IntPtr]$pane.Hwnd) -X $x -Y ($pane.Top - 200) -Action up -Client)
+        $dragged = Wait-Log $g.Err 'scrollbar drag end visual=true offset=0\b' 1500
+    }
+    Assert "G4 a press on the thumb, on the pane window, dragged the view to the top (log)" $dragged
+    if (-not $dragged) {
+        "    scrollbar lines:"
+        (Read-Text $g.Err) -split "`n" | Where-Object { $_ -match 'scrollbar|overlay tree' } | Select-Object -Last 12 | ForEach-Object { "      $_" }
+    }
+    $starts = Count-Log $g.Err 'scrollbar drag start'
+    if ($pane) {
+        [void](Send-TestMouse -Window $gTop -Target ([IntPtr]$pane.Hwnd) -X ($pane.Left + 40) -Y ($pane.Top + 40) -Client)
+        Start-Sleep -Milliseconds 400
+    }
+    Assert "G5 a click in the grid is the terminal's, not a scrollbar drag" ($pane -and (Count-Log $g.Err 'scrollbar drag start') -eq $starts)
+    Assert "G6 the app is still running, nothing fell back" ((Test-Alive $g) -and (Count-Log $g.Err $failLine) -eq 0)
+    Assert "G7 the scrolled pane still draws text" (Test-DrawsText 'compg2')
+
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
     # LAST statement of the top-level try (T1039).
@@ -381,4 +457,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 33
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 57

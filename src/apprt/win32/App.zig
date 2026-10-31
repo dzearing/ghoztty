@@ -47,6 +47,7 @@ const lab_plant = @import("lab_plant.zig");
 const PaneView = @import("PaneView.zig");
 const CloseUndo = @import("CloseUndo.zig");
 const Surface = @import("Surface.zig");
+const Scrollbar = @import("Scrollbar.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const ViewerNavBar = @import("ViewerNavBar.zig");
 const ViewerFindBar = @import("ViewerFindBar.zig");
@@ -12397,6 +12398,17 @@ pub fn registerSurfacePopupClass(hinstance: w32.HINSTANCE, name: [*:0]const u16)
     return w32.RegisterClassExW(&wc);
 }
 
+/// Offer a terminal pane's mouse message to its scrollbar first (T2492). On
+/// the composition path the strip is a visual inside the pane, not a window
+/// of its own, so its clicks, drags and hover arrive here. True: the
+/// scrollbar took it and the terminal must not see it.
+fn scrollbarTakes(surface: *Surface, ev: Scrollbar.MouseEvent, lparam: isize) bool {
+    const sb = surface.scrollbar orelse return false;
+    const x: i32 = @as(i16, @truncate(lparam & 0xFFFF));
+    const y: i32 = @as(i16, @truncate((lparam >> 16) & 0xFFFF));
+    return sb.routeMouse(ev, x, y);
+}
+
 /// Window procedure for terminal surface child HWNDs (GhosttyTerminal class)
 /// and for the two popups a surface owns (GhozttySurfacePopup class, T819).
 /// GWLP_USERDATA stores a *Surface pointer.
@@ -12792,6 +12804,9 @@ fn surfaceWndProc(
             // search bar must not be replayed into the grid (T742). The
             // palette's own hit-testing is the branch above.
             if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            // The scrollbar's thumb or track, ahead of the focus take: its
+            // popup never took focus either (WS_EX_NOACTIVATE).
+            if (scrollbarTakes(surface, .down, lparam)) return 0;
             // Take keyboard focus on click. WS_CHILD windows don't
             // auto-focus the way top-level windows do, so without this
             // an active sibling popup edit (tab rename, search, palette)
@@ -12802,6 +12817,7 @@ fn surfaceWndProc(
         },
         w32.WM_LBUTTONUP => {
             if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            if (scrollbarTakes(surface, .up, lparam)) return 0;
             surface.handleMouseButton(.left, .release, wparam, lparam);
             return 0;
         },
@@ -12880,8 +12896,16 @@ fn surfaceWndProc(
 
         w32.WM_MOUSEMOVE => {
             if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            if (scrollbarTakes(surface, .move, lparam)) return 0;
             surface.handleMouseMove(lparam);
             return 0;
+        },
+
+        // Only the scrollbar asks for this on a pane (T2492): its hover ends
+        // when the cursor leaves the pane, as it did leaving its popup.
+        w32.WM_MOUSELEAVE => {
+            if (drives_terminal) _ = scrollbarTakes(surface, .leave, 0);
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
         w32.WM_MOUSEWHEEL => {
@@ -12913,6 +12937,15 @@ fn surfaceWndProc(
             // to DefWindowProc.
             if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             const hit_test: u16 = @intCast(lparam & 0xFFFF);
+            // Over the scrollbar's visual (T2492): the arrow its popup's
+            // class cursor gave it, not the terminal's I-beam.
+            if (hit_test == w32.HTCLIENT) if (surface.scrollbar) |sb| {
+                var pt: w32.POINT = undefined;
+                if (w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0 and sb.hitVisual(pt.x, pt.y)) {
+                    _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_ARROW));
+                    return 1;
+                }
+            };
             if (hit_test == w32.HTCLIENT and surface.handleSetCursor()) {
                 return 1; // TRUE = we set the cursor
             }
@@ -12989,6 +13022,7 @@ fn surfaceWndProc(
         comp_overlay.WM_APP_COMP_OVERLAY => {
             surface.updateBellBorder();
             surface.parent_window.updateDimOverlays();
+            if (surface.scrollbar) |sb| sb.onTreeChanged();
             return 0;
         },
 
