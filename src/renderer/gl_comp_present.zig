@@ -96,6 +96,8 @@ const IID_IDXGIDevice = guid("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
 const IID_IDXGIFactory2 = guid("50c83a1c-e072-4c48-87b0-3630fa36a6d0");
 const IID_ID3D11Texture2D = guid("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
 const IID_IDCompositionDevice = guid("c37ea93a-e7aa-450d-b16f-9746cb0407f3");
+const IID_IDXGIFactoryMedia = guid("41e7d1f2-a591-4f7b-a2e5-fa9c843e1c12");
+const COMPOSITIONOBJECT_ALL_ACCESS: u32 = 0x0003;
 
 const DXGI_FORMAT_B8G8R8A8_UNORM: u32 = 87;
 const DXGI_USAGE_RENDER_TARGET_OUTPUT: u32 = 0x20;
@@ -145,6 +147,7 @@ const D3D11_TEXTURE2D_DESC = extern struct {
 const slot_dxgi_device_get_adapter = 7; // IDXGIObject 3-6, IDXGIDevice::GetAdapter
 const slot_dxgi_object_get_parent = 6;
 const slot_factory2_create_for_composition = 24;
+const slot_factory_media_create_for_handle = 3; // IDXGIFactoryMedia
 const slot_swapchain_present = 8;
 const slot_swapchain_get_buffer = 9;
 const slot_swapchain_resize_buffers = 13;
@@ -189,6 +192,17 @@ extern "kernel32" fn GetProcAddress(*anyopaque, [*:0]const u8) callconv(.winapi)
 
 const D3D11CreateDeviceFn = *const fn (?Obj, u32, ?*anyopaque, u32, ?*const u32, u32, u32, *?Obj, ?*u32, *?Obj) callconv(.winapi) HRESULT;
 const DCompCreateDeviceFn = *const fn (?Obj, *const GUID, *?Obj) callconv(.winapi) HRESULT;
+const DCompCreateSurfaceHandleFn = *const fn (u32, ?*anyopaque, *HANDLE) callconv(.winapi) HRESULT;
+extern "kernel32" fn CloseHandle(*anyopaque) callconv(.winapi) i32;
+
+/// Whether panes should present into their window's tree (T2553,
+/// `comp_tree.zig`) rather than a target on their own child window.
+pub fn treeEnabled() bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_COMP_PANE_TREE") catch return false;
+    defer std.heap.page_allocator.free(raw);
+    return knobOn(raw);
+}
 
 /// The WGL_NV_DX_interop2 entry points, resolved from the current context.
 const Interop = struct {
@@ -225,9 +239,15 @@ pub const Presenter = struct {
     device: Obj, // ID3D11Device
     context: Obj, // ID3D11DeviceContext
     swap: Obj, // IDXGISwapChain1
-    dcomp: Obj, // IDCompositionDevice
-    target: Obj, // IDCompositionTarget
-    visual: Obj, // IDCompositionVisual
+    /// The pane's own device, target and visual on its child window. All
+    /// null in tree mode, where the window thread hosts the visual instead.
+    dcomp: ?Obj, // IDCompositionDevice
+    target: ?Obj, // IDCompositionTarget
+    visual: ?Obj, // IDCompositionVisual
+    /// Tree mode (T2553): the composition surface handle the swap chain
+    /// presents into, adopted by the window's tree. Closed in `releaseCom`,
+    /// after the caller has retracted it from the slot.
+    surface_handle: HANDLE = null,
     interop: Interop,
     interop_device: HANDLE,
 
@@ -251,7 +271,9 @@ pub const Presenter = struct {
     fail_after: ?u64 = null,
 
     /// Build the whole chain for `hwnd`. Needs the pane's GL context current.
-    pub fn init(hwnd: HWND, width: u32, height: u32) Error!Presenter {
+    /// `tree`: present into a composition surface handle for the window's
+    /// tree to adopt (`surface_handle`) instead of a target on `hwnd`.
+    pub fn init(hwnd: HWND, width: u32, height: u32, tree: bool) Error!Presenter {
         if (comptime builtin.os.tag != .windows) return error.Unavailable;
 
         stage = "wgl-interop";
@@ -308,9 +330,55 @@ pub const Presenter = struct {
             .flags = 0,
         };
         var swap: ?Obj = null;
-        try check(slot(*const fn (Obj, Obj, *const DXGI_SWAP_CHAIN_DESC1, ?Obj, *?Obj) callconv(.winapi) HRESULT, fac, slot_factory2_create_for_composition)(fac, dev, &desc, null, &swap));
+        var surface_handle: HANDLE = null;
+        errdefer if (surface_handle) |h| {
+            _ = CloseHandle(h);
+        };
+        if (tree) {
+            stage = "surface-handle";
+            const create_handle: DCompCreateSurfaceHandleFn = @ptrCast(GetProcAddress(dcomp_lib, "DCompositionCreateSurfaceHandle") orelse
+                return error.Unavailable);
+            try check(create_handle(COMPOSITIONOBJECT_ALL_ACCESS, null, &surface_handle));
+            if (surface_handle == null) return error.ComFailed;
+            stage = "swap-chain-for-handle";
+            const media = try query(fac, &IID_IDXGIFactoryMedia);
+            defer release(media);
+            try check(slot(*const fn (Obj, Obj, HANDLE, *const DXGI_SWAP_CHAIN_DESC1, ?Obj, *?Obj) callconv(.winapi) HRESULT, media, slot_factory_media_create_for_handle)(media, dev, surface_handle, &desc, null, &swap));
+        } else {
+            try check(slot(*const fn (Obj, Obj, *const DXGI_SWAP_CHAIN_DESC1, ?Obj, *?Obj) callconv(.winapi) HRESULT, fac, slot_factory2_create_for_composition)(fac, dev, &desc, null, &swap));
+        }
         const sc = swap orelse return error.ComFailed;
         errdefer release(sc);
+
+        if (tree) {
+            stage = "wgl-open-device";
+            const tree_interop = interop.open(dev) orelse return error.InteropFailed;
+            var self: Presenter = .{
+                .device = dev,
+                .context = ctx,
+                .swap = sc,
+                .dcomp = null,
+                .target = null,
+                .visual = null,
+                .surface_handle = surface_handle,
+                .interop = interop,
+                .interop_device = tree_interop,
+                .width = desc.width,
+                .height = desc.height,
+                .warp = warp,
+                .fail_after = debugFailAfter(),
+            };
+            stage = "shared-texture";
+            // The errdefers above still own the COM objects and the handle,
+            // so a failure here frees only what `createShared` made.
+            self.createShared(desc.width, desc.height) catch |err| {
+                self.destroyShared();
+                _ = interop.close(tree_interop);
+                return err;
+            };
+            stage = "";
+            return self;
+        }
 
         stage = "dcomp-device";
         var dcomp: ?Obj = null;
@@ -477,13 +545,17 @@ pub const Presenter = struct {
     /// it while this thread copies frames, so an unprotected context is not
     /// shared and the overlays stay popups.
     pub fn overlayTree(self: *Presenter) ?comp_overlay.Shared {
+        // Tree mode has no pane-local visual to hang overlays from; they stay
+        // popups until they move onto the window's device too.
+        const root = self.visual orelse return null;
+        const dc = self.dcomp orelse return null;
         const mt = query(self.device, &comp_overlay.IID_ID3D10Multithread) catch {
             log.warn("ID3D10Multithread unavailable; overlays stay popups", .{});
             return null;
         };
         defer release(mt);
         _ = slot(*const fn (Obj, i32) callconv(.winapi) i32, mt, comp_overlay.slot_multithread_set_protected)(mt, 1);
-        return .{ .dcomp = self.dcomp, .context = self.context, .root = self.visual };
+        return .{ .dcomp = dc, .context = self.context, .root = root };
     }
 
     /// Tear everything down. Needs the GL context that `init` ran under to be
@@ -512,12 +584,16 @@ pub const Presenter = struct {
     fn releaseCom(self: *Presenter) void {
         // Detach the visual before the target goes, so the window falls back
         // to its own content in the same commit.
-        _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, null);
-        _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
-        release(self.visual);
-        release(self.target);
-        release(self.dcomp);
+        if (self.target) |tg| {
+            _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, tg, slot_dcomp_target_set_root)(tg, null);
+            if (self.dcomp) |dc| _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, dc, slot_dcomp_device_commit)(dc);
+        }
+        if (self.visual) |v| release(v);
+        if (self.target) |t| release(t);
+        if (self.dcomp) |d| release(d);
         release(self.swap);
+        if (self.surface_handle) |h| _ = CloseHandle(h);
+        self.surface_handle = null;
         release(self.context);
         release(self.device);
     }

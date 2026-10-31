@@ -7889,6 +7889,18 @@ fn placePaneOverlays(self: *Window) void {
 /// overlays (they are popups — hiding the pane HWND does not hide them).
 /// Idempotent and cheap; called from layoutSplits, focus changes, WM_MOVE,
 /// and config reload.
+/// Re-sync every terminal pane's visual in the window's tree (T2553), after
+/// the host under it was rebuilt.
+fn resyncPaneTree(self: *Window) void {
+    if (self.closing) return;
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            if (entry.view.surface()) |sf| sf.syncTreeVisual();
+        }
+    }
+}
+
 pub fn updateDimOverlays(self: *Window) void {
     // A window on its way out has no dim worth placing, and its panes are
     // being torn down under us — the same guard `healOverlayZOrders` has kept
@@ -14390,7 +14402,11 @@ fn paintWindow(self: *Window) void {
     // repainting itself. See `paint_probe.zig`.
     paint_probe.record(.window);
     // T2508: a lost device is noticed here and the host rebuilt.
+    const rebuilds_before: ?u32 = if (self.chrome_host) |h| h.rebuilds else null;
     chrome_comp.poll(&self.chrome_host);
+    // T2553: a rebuilt host lost every pane visual; re-adopt them.
+    const rebuilds_after: ?u32 = if (self.chrome_host) |h| h.rebuilds else null;
+    if (rebuilds_before != null and !std.meta.eql(rebuilds_before, rebuilds_after)) self.resyncPaneTree();
 
     var ps: w32.PAINTSTRUCT = undefined;
     const hdc_screen = w32.BeginPaint(hwnd, &ps) orelse return;

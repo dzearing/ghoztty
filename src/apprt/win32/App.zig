@@ -12505,6 +12505,9 @@ fn surfaceWndProc(
                 } else if (pos.flags & w32.SWP_SHOWWINDOW != 0) {
                     if (surface.scrollbar) |sb| sb.setOwnerVisible(true);
                 }
+                // A pane in the window's tree (T2553): its visual follows
+                // the child window - moved, resized, hidden or shown.
+                if (surface.tree_visual != null) surface.syncTreeVisual();
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
@@ -13020,6 +13023,9 @@ fn surfaceWndProc(
         // dim wash (T2491) re-runs through the window's pass, which owns the
         // focus/zoom/tab decision of whether it is up at all.
         comp_overlay.WM_APP_COMP_OVERLAY => {
+            // The same message carries the pane's swap chain into (or out
+            // of) the window's tree (T2553).
+            surface.syncTreeVisual();
             surface.updateBellBorder();
             surface.parent_window.updateDimOverlays();
             if (surface.scrollbar) |sb| sb.onTreeChanged();

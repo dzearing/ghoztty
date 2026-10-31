@@ -32,6 +32,7 @@ const RefCount = @import("pane_refcount.zig").RefCount;
 const RenameDialog = @import("RenameDialog.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
+const chrome_comp = @import("chrome_comp.zig");
 const w32 = @import("win32.zig");
 const drag_perf = @import("drag_perf.zig");
 const lab_plant = @import("lab_plant.zig");
@@ -44,6 +45,7 @@ const window_broadcast = @import("window_broadcast.zig");
 const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const BellBorder = @import("BellBorder.zig").BellBorder;
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
+const comp_tree = @import("../../renderer/comp_tree.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const ReadonlyBadge = @import("ReadonlyBadge.zig").ReadonlyBadge;
 const KeyStateIndicator = @import("KeyStateIndicator.zig").KeyStateIndicator;
@@ -265,6 +267,16 @@ bell_border: ?*BellBorder = null,
 /// when it presents through a swap chain (T2467), so overlays can be child
 /// visuals of the pane instead of popups. Empty on the SwapBuffers path.
 comp_overlay_slot: comp_overlay.Slot = .{},
+
+/// Where this pane's renderer hands its composition surface handle to the
+/// window thread when it presents into the WINDOW's tree (T2553,
+/// `comp_tree.zig`), and the visual the window wrapped it in. The visual is
+/// window-thread state: adopted on the generation in `tree_gen`, into the
+/// host built `tree_epoch` rebuilds in.
+comp_tree_slot: comp_tree.Slot = .{},
+tree_visual: ?*anyopaque = null,
+tree_gen: u64 = 0,
+tree_epoch: u32 = 0,
 
 /// Sticky pane banner (T35): overlay strip above the terminal content,
 /// plus the raw markdown source (owned) so the editor can prefill it and
@@ -802,6 +814,9 @@ fn initOnce(
         _ = w32.DestroyWindow(hwnd);
         self.hwnd = null;
     }
+    // T2553: the renderer may present into the window's tree only if the
+    // window has a host to carry the visual.
+    self.comp_tree_slot.host_ready.store(parent.chrome_host != null, .release);
     // A surface of its own, so the GPU memory its presents use goes when the
     // pane does rather than when the window does (T2499, `pane_layer.zig`).
     // Never in a translucent window, or the configured one may turn so: the
@@ -1169,6 +1184,9 @@ pub fn deinit(self: *Surface) void {
         self.app.core_app.deleteSurface(self);
         log.debug("surface deinit: deleteSurface done", .{});
     }
+    // The renderer thread is joined and has retracted its handle; the
+    // window's tree lets go of the visual here (T2553).
+    self.dropTreeVisual();
 
     // Snapshot buffer: freed only after core_surface.deinit so the
     // renderer thread (the only other toucher) is already joined.
@@ -1614,6 +1632,64 @@ const overlay_fields = .{
 /// took its space until the undo expired and `deinit` destroyed it. Hiding
 /// goes through each overlay's own `hide` so its shown-cache knows; coming
 /// back into a tree, the next layout pass re-shows whichever still apply.
+/// Window thread: bring this pane's visual in the window's tree in line
+/// with what the renderer published and where the child window sits
+/// (T2553). Runs on every move of the child window and on every publish or
+/// retract; cheap when nothing changed but the position.
+pub fn syncTreeVisual(self: *Surface) void {
+    const hwnd = self.hwnd orelse return;
+    const win = self.parent_window;
+    const top = win.hwnd orelse return;
+    const gen = self.comp_tree_slot.currentGeneration();
+    const host: ?*chrome_comp.Host = if (win.chrome_host) |*h| h else null;
+    if (self.tree_visual != null) {
+        const stale_host = host == null or host.?.rebuilds != self.tree_epoch;
+        if (stale_host or self.tree_gen != gen) self.dropTreeVisual();
+    }
+    const h = host orelse {
+        // A handle with no host to adopt it: the renderer falls back.
+        if (self.comp_tree_slot.published()) self.comp_tree_slot.refuse();
+        return;
+    };
+    if (self.tree_visual == null) {
+        const got = self.comp_tree_slot.adopt(h, chrome_comp.Host.paneAdopt) orelse return;
+        const vis = got.result catch |err| {
+            const f = chrome_comp.Host.lastFailure();
+            log.warn("pane visual adopt failed ({}) at {s}: hr=0x{x:0>8}; pane falls back to its own target", .{ err, f.stage, chrome_comp.hex(f.hr) });
+            self.comp_tree_slot.refuse();
+            return;
+        };
+        self.tree_visual = vis;
+        self.tree_gen = got.gen;
+        self.tree_epoch = h.rebuilds;
+    }
+    // The pane's own style bit, not `IsWindowVisible`: a window not yet
+    // shown would read every pane hidden (the dim pass's reason, T2185).
+    const shown = w32.GetWindowLongW(hwnd, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0;
+    var rc: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &rc) == 0) return;
+    var pts = [2]w32.POINT{ .{ .x = rc.left, .y = rc.top }, .{ .x = rc.right, .y = rc.bottom } };
+    _ = w32.MapWindowPoints(hwnd, top, &pts, 2);
+    const at = comp_tree.placement(pts[0].x, pts[0].y, pts[1].x - pts[0].x, pts[1].y - pts[0].y, shown);
+    h.panePlace(self.tree_visual.?, at.x, at.y, at.w, at.h) catch {
+        const f = chrome_comp.Host.lastFailure();
+        log.warn("pane visual place failed at {s}: hr=0x{x:0>8}", .{ f.stage, chrome_comp.hex(f.hr) });
+    };
+}
+
+/// Window thread: take this pane's visual out of the window's tree. A host
+/// rebuilt since the adopt no longer holds it, so only the reference goes.
+fn dropTreeVisual(self: *Surface) void {
+    const vis = self.tree_visual orelse return;
+    self.tree_visual = null;
+    if (self.parent_window.chrome_host) |*h| {
+        if (h.rebuilds == self.tree_epoch) return h.paneDrop(vis);
+    }
+    const F = *const fn (*anyopaque) callconv(.winapi) u32;
+    const vtbl: *const [*]const *const anyopaque = @ptrCast(@alignCast(vis));
+    _ = @as(F, @ptrCast(vtbl.*[2]))(vis);
+}
+
 pub fn hideOverlays(self: *Surface) void {
     inline for (overlay_fields) |name| {
         if (@field(self, name)) |o| o.hide();

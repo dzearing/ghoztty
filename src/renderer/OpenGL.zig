@@ -1032,6 +1032,12 @@ fn compBegin(self: *OpenGL, width: usize, height: usize) ?gl.Framebuffer {
         if (gl_comp_present.enabled()) self.compInit(width, height);
     }
     const p = self.comp orelse return null;
+    // The window could not carry the pane's visual (T2553): fall back to
+    // SwapBuffers, the same as any other composition failure.
+    if (p.surface_handle != null and self.rt_surface.comp_tree_slot.refused.load(.acquire)) {
+        self.compFail(error.TreeRefused);
+        return null;
+    }
     return p.begin(@intCast(width), @intCast(height)) catch |err| {
         self.compFail(err);
         return null;
@@ -1041,7 +1047,11 @@ fn compBegin(self: *OpenGL, width: usize, height: usize) ?gl.Framebuffer {
 fn compInit(self: *OpenGL, width: usize, height: usize) void {
     const hwnd = self.rt_surface.hwnd orelse return;
     const p = self.alloc.create(gl_comp_present.Presenter) catch return;
-    p.* = gl_comp_present.Presenter.init(hwnd, @intCast(width), @intCast(height)) catch |err| {
+    // T2553: into the window's tree only when the window says it can host
+    // the visual; a handle nobody adopts is a pane that never shows.
+    const in_tree = gl_comp_present.treeEnabled() and
+        self.rt_surface.comp_tree_slot.host_ready.load(.acquire);
+    p.* = gl_comp_present.Presenter.init(hwnd, @intCast(width), @intCast(height), in_tree) catch |err| {
         self.alloc.destroy(p);
         const f = gl_comp_present.Presenter.lastFailure();
         log.warn(
@@ -1051,7 +1061,12 @@ fn compInit(self: *OpenGL, width: usize, height: usize) void {
         return;
     };
     self.comp = p;
-    log.info("pane presents through a composition swap chain warp={}", .{p.warp});
+    log.info("pane presents through a composition swap chain warp={} tree={}", .{ p.warp, in_tree });
+    if (p.surface_handle) |h| {
+        self.rt_surface.comp_tree_slot.publish(h);
+        comp_overlay.notify(hwnd);
+        log.info("pane surface handle published to the window tree", .{});
+    }
     // Hand the tree to the window thread for its overlay visuals (T2467).
     if (p.overlayTree()) |tree| {
         self.rt_surface.comp_overlay_slot.publish(tree, comp_overlay.RefOps.com);
@@ -1063,7 +1078,11 @@ fn compInit(self: *OpenGL, width: usize, height: usize) void {
 /// Take the presenter's tree back from the window thread before it goes; the
 /// window thread re-syncs its overlays (to popups) on the posted message.
 fn compRetract(self: *const OpenGL) void {
-    if (!self.rt_surface.comp_overlay_slot.retract(comp_overlay.RefOps.com)) return;
+    // Both trees, and both before the presenter goes: once the tree slot's
+    // retract returns, no window-thread adopt is using the surface handle.
+    const tree = self.rt_surface.comp_tree_slot.retract();
+    const overlay = self.rt_surface.comp_overlay_slot.retract(comp_overlay.RefOps.com);
+    if (!tree and !overlay) return;
     if (self.rt_surface.hwnd) |hwnd| comp_overlay.notify(hwnd);
 }
 

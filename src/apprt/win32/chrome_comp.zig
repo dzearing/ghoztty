@@ -128,6 +128,7 @@ const slot_dcomp_device_commit = 3;
 const slot_dcomp_device_create_target = 6;
 const slot_dcomp_device_create_visual = 7;
 const slot_dcomp_device_create_surface = 8;
+const slot_dcomp_device_create_surface_from_handle = 10;
 const slot_dcomp_device_check_state = 26;
 const slot_dcomp_surface_begin_draw = 3;
 const slot_dcomp_surface_end_draw = 4;
@@ -358,6 +359,14 @@ pub const Host = struct {
     /// the desk and the caption band reach the screen in the same frame.
     defer_commit: bool = false,
     commit_pending: bool = false,
+
+    /// The pane layer (T2553): a second target, topmost=TRUE so it composes
+    /// over the pane child windows, whose root holds one visual per pane
+    /// presenting into a composition surface handle. Made on first adopt.
+    pane_target: ?Obj = null,
+    pane_root: ?Obj = null,
+    /// Pane visuals adopted since the host was built, for the log.
+    pane_adopts: u32 = 0,
 
     /// How many times this window's host was rebuilt after a device loss.
     rebuilds: u32 = 0,
@@ -752,6 +761,69 @@ pub const Host = struct {
         try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, surf, slot_dcomp_surface_end_draw)(surf));
     }
 
+    /// Wrap a pane renderer's composition surface handle in a visual of the
+    /// pane layer, on top of the panes adopted before it. The caller owns
+    /// the returned visual's reference and hands it back to `paneDrop`.
+    /// Nothing is on screen until `panePlace` commits.
+    pub fn paneAdopt(self: *Host, handle: *anyopaque) Error!Obj {
+        const root = try self.ensurePaneRoot();
+        stage = "pane-surface";
+        var surface: ?Obj = null;
+        try check(slot(*const fn (Obj, *anyopaque, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface_from_handle)(self.dcomp, handle, &surface));
+        const surf = surface orelse return error.ComFailed;
+        defer release(surf);
+        stage = "pane-visual";
+        const vis = try self.newVisual();
+        errdefer release(vis);
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
+        // Start clipped to nothing, so the visual cannot flash at the origin
+        // before its first placement.
+        const none: D2D1_RECT_F = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+        try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &none));
+        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, 1, null));
+        stage = "";
+        self.pane_adopts +|= 1;
+        log.info("pane visual adopted into the window tree (adopts={d})", .{self.pane_adopts});
+        return vis;
+    }
+
+    /// Put a pane's visual at `(x, y)` in the client area, clipped to
+    /// `w` x `h` of its own pixels (0 x 0 hides it), and commit.
+    pub fn panePlace(self: *Host, vis: Obj, x: i32, y: i32, w: i32, h: i32) Error!void {
+        stage = "pane-place";
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, @floatFromInt(x)));
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, @floatFromInt(y)));
+        const clip: D2D1_RECT_F = .{ .left = 0, .top = 0, .right = @floatFromInt(@max(w, 0)), .bottom = @floatFromInt(@max(h, 0)) };
+        try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &clip));
+        stage = "";
+        try self.commit();
+    }
+
+    /// Take a pane's visual out of the layer and drop the caller's reference.
+    pub fn paneDrop(self: *Host, vis: Obj) void {
+        if (self.pane_root) |root| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_remove_visual)(root, vis);
+        release(vis);
+        self.commit() catch {};
+    }
+
+    fn ensurePaneRoot(self: *Host) Error!Obj {
+        if (self.pane_root) |r| return r;
+        if (self.pane_target == null) {
+            stage = "pane-target";
+            var target: ?Obj = null;
+            // topmost=TRUE: over the pane child windows, whose own pixels
+            // are then never seen - they stay for input only.
+            try check(slot(*const fn (Obj, HWND, i32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_target)(self.dcomp, self.hwnd, 1, &target));
+            self.pane_target = target orelse return error.ComFailed;
+        }
+        stage = "pane-root";
+        const root = try self.newVisual();
+        errdefer release(root);
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.pane_target.?, slot_dcomp_target_set_root)(self.pane_target.?, root));
+        self.pane_root = root;
+        return root;
+    }
+
     /// Take the desk off the compositor: the window's own pixels show again
     /// in the same commit.
     /// The caption band goes with it: it lives only above the desk.
@@ -798,6 +870,12 @@ pub const Host = struct {
         // pixels in the same commit.
         _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, null);
         _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
+        if (self.pane_target) |pt| {
+            _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, pt, slot_dcomp_target_set_root)(pt, null);
+            _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
+        }
+        if (self.pane_root) |r| release(r);
+        if (self.pane_target) |t| release(t);
         if (self.fill_visual) |v| release(v);
         if (self.fill_surface) |s| release(s);
         self.releaseDesk();

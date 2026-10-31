@@ -610,6 +610,13 @@ pub extern "user32" fn GetClientRect(
     lpRect: *RECT,
 ) callconv(.winapi) i32;
 
+pub extern "user32" fn MapWindowPoints(
+    hWndFrom: ?HWND,
+    hWndTo: ?HWND,
+    lpPoints: [*]POINT,
+    cPoints: u32,
+) callconv(.winapi) i32;
+
 pub extern "user32" fn GetDC(
     hWnd: ?HWND,
 ) callconv(.winapi) ?HDC;

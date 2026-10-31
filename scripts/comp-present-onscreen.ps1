@@ -13,7 +13,11 @@
 # comp-spike.ps1 -Live does: it needs the input desktop, and the person at the
 # desk never sees or loses focus to anything it opens.
 #
-# Per arm (knob ON = GHOZTTY_COMP_PRESENT=1, knob OFF = WGL SwapBuffers):
+# Per arm (knob ON = GHOZTTY_COMP_PRESENT=1, knob OFF = WGL SwapBuffers,
+# TREE = ON plus GHOZTTY_COMP_CHROME=1 and GHOZTTY_COMP_PANE_TREE=1: the swap
+# chain presents into a visual of the WINDOW's composition tree and the
+# pane's child window paints nothing, so the visual is the only way the pane
+# can be on screen - T2553):
 #
 #   1. clear the pane and print a block of marker lines at the top
 #   2. grab the window with WGC; read the app's own picture of the pane
@@ -28,6 +32,11 @@
 #
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms on
+#   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms tree,off
+#
+# The tree arm also splits the window and scores BOTH the original pane (now
+# moved and resized) and the new one, so a visual that does not follow its
+# child window, or a second pane that is never adopted, is a failure.
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -NegativeControl   # must go red
 
 param(
@@ -65,7 +74,7 @@ if (-not (Test-Path $Spike)) { "SETUP FAIL: $Spike not found - zig build comp-sp
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-onscreen-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -141,6 +150,29 @@ public static class InkMath {
         }
         return either == 0 ? 0.0 : (double)both / either;
     }
+    // For LOCATING only (T2553): of A's sampled ink pixels, the fraction with
+    // ink in B within r pixels. A coarse grid can land off a thin glyph by a
+    // pixel or two, and the strict Match then scores the true spot below a
+    // wrong one; this is tolerant of that, and the refine stays strict.
+    public static double MatchNear(byte[] a, int aStride, int aw, int ah, byte[] b, int bStride, int bw, int bh, int dx, int dy, int step, int lum, int r) {
+        int ink = 0, near = 0;
+        for (int y = 0; y < ah; y += step) {
+            for (int x = 0; x < aw; x += step) {
+                if (!Ink(a, y * aStride + x * 4, lum)) continue;
+                ink++;
+                bool found = false;
+                for (int oy = -r; oy <= r && !found; oy++) {
+                    int by = y + dy + oy; if (by < 0 || by >= bh) continue;
+                    for (int ox = -r; ox <= r && !found; ox++) {
+                        int bx = x + dx + ox; if (bx < 0 || bx >= bw) continue;
+                        if (Ink(b, by * bStride + bx * 4, lum)) found = true;
+                    }
+                }
+                if (found) near++;
+            }
+        }
+        return ink == 0 ? 0.0 : (double)near / ink;
+    }
 }
 '@
 
@@ -159,6 +191,85 @@ function Wait-Log($path, $pattern, $timeoutMs) {
 }
 
 $onLine = 'pane presents through a composition swap chain'
+$treeLine = 'pane visual adopted into the window tree'
+
+# Clear a pane and print the marker block at its top.
+function Mark-Pane($target, $text = 'for /L %i in (1,1,6) do @echo ######## T2488-MARK-%i ########################################') {
+    & $Exe +send-keys "--target=$target" 'cls' Enter 2>$null | Out-Null
+    Start-Sleep -Milliseconds 800
+    # argv-audit: every caller passes a fixed cmd line with no double quote and no trailing backslash, which survives a native argv
+    & $Exe +send-keys "--target=$target" $text Enter 2>$null | Out-Null
+    Start-Sleep -Milliseconds 1500
+
+}
+
+# Grab the window with WGC and score `target`'s region of it against the
+# app's own picture of that pane. Returns the summary line, or null.
+function Score-Grab($arm, $label, $hw, $target, $dir) {
+    $fgPid = [uint32]0
+    [void][GhostWin]::GetWindowThreadProcessId([GhostWin]::GetForegroundWindow(), [ref]$fgPid)
+    Assert "$label.F the ghost never took the foreground (fg pid $fgPid)" ($fgPid -ne [uint32]$app.Pid)
+
+    $bmpPath = Join-Path $dir "grab-$($label -replace '[^\w-]','_').bmp"
+    $grabErr = Join-Path $dir "grab-$($label -replace '[^\w-]','_').txt"
+    $gp = Start-Process -FilePath $Spike -ArgumentList @("--grab-hwnd=$([int64]$hw)", "--out=`"$bmpPath`"") `
+        -NoNewWindow -PassThru -RedirectStandardError $grabErr
+    [void]$gp.WaitForExit(15000)
+    $grabOut = (Read-Text $grabErr).Trim()
+    "  $grabOut"
+    Assert "$label.4 WGC grabbed a frame of the ghost" ($grabOut -match '^GRAB ok' -and (Test-Path $bmpPath))
+    $shot = Get-TestPaneCapture -Target $target
+    Assert "$label.5 capture-pane answered$(if (-not $shot) { ': ' + (Get-LastPaneCaptureError) })" ($null -ne $shot)
+    if (-not (Test-Path $bmpPath) -or -not $shot) { Close-TestPaneCapture $shot; return $null }
+
+    $grabBmp = New-Object System.Drawing.Bitmap $bmpPath
+    if ($NegativeControl) { $grabBmp.RotateFlip([System.Drawing.RotateFlipType]::RotateNoneFlipY) }
+    $g = Get-Pixels $grabBmp
+    $grabBmp.Dispose()
+    $shot.Bitmap.Save((Join-Path $dir "ref-$($label -replace '[^\w-]','_').png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $p = Get-Pixels $shot.Bitmap
+    Close-TestPaneCapture $shot
+
+    $lum = 150
+    $paneRows = [InkMath]::RowInk($p.B, $p.Stride, 0, 0, $p.W, $p.H, $lum)
+
+    # Align the pane inside the grab: the offset whose sampled ink agrees
+    # best. Coarse search on a 4 px grid, then refine.
+    $best = @{ s = -1.0; dx = 0; dy = 0 }
+    $maxDx = [Math]::Max(0, $g.W - $p.W); $maxDy = [Math]::Max(0, $g.H - $p.H)
+    for ($dy = 0; $dy -le $maxDy; $dy += 4) {
+        for ($dx = 0; $dx -le $maxDx; $dx += 4) {
+            $s = [InkMath]::MatchNear($p.B, $p.Stride, $p.W, $p.H, $g.B, $g.Stride, $g.W, $g.H, $dx, $dy, 3, $lum, 2)
+            if ($s -gt $best.s) { $best = @{ s = $s; dx = $dx; dy = $dy } }
+        }
+    }
+    $cx = $best.dx; $cy = $best.dy
+    $best = @{ s = -1.0; dx = $cx; dy = $cy }
+    for ($dy = [Math]::Max(0, $cy - 4); $dy -le [Math]::Min($maxDy, $cy + 4); $dy++) {
+        for ($dx = [Math]::Max(0, $cx - 4); $dx -le [Math]::Min($maxDx, $cx + 4); $dx++) {
+            $s = [InkMath]::Match($p.B, $p.Stride, $p.W, $p.H, $g.B, $g.Stride, $g.W, $g.H, $dx, $dy, 1, $lum)
+            if ($s -gt $best.s) { $best = @{ s = $s; dx = $dx; dy = $dy } }
+        }
+    }
+
+    # Score the grab's PANE region on its own terms (no reference).
+    $x0 = $best.dx; $y0 = $best.dy
+    $x1 = [Math]::Min($g.W, $x0 + $p.W); $y1 = [Math]::Min($g.H, $y0 + $p.H)
+    $rows = [InkMath]::RowInk($g.B, $g.Stride, $x0, $y0, $x1, $y1, $lum)
+    $h = $rows.Length
+    $inkRows = @(0..($h - 1) | Where-Object { $rows[$_] -ge 3 })
+    $topInk = @($inkRows | Where-Object { $_ -lt ($h / 2) }).Count
+    $bottomInk = @($inkRows | Where-Object { $_ -ge ($h * 2 / 3) }).Count
+    $refInk = @(0..($paneRows.Length - 1) | Where-Object { $paneRows[$_] -ge 3 }).Count
+    $script:lastAt = $best.dx
+    $script:lastW = $p.W
+    $line = "  grab $($g.W)x$($g.H) pane $($p.W)x$($p.H) at +$($best.dx)+$($best.dy) match=$('{0:N3}' -f $best.s) ink_rows=$($inkRows.Count) (ref $refInk) top_half=$topInk bottom_third=$bottomInk"
+    $line
+    Assert "$label.6 the pane on screen is not blank" ($inkRows.Count -ge 20)
+    Assert "$label.7 right way up: the marker lines are at the top, the bottom third is background" ($topInk -ge 20 -and $bottomInk -le 2)
+    Assert "$label.8 the glyphs match capture-pane's (>= 0.80 ink overlap)" ($best.s -ge 0.80)
+    return
+}
 
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 [void](Set-GhozttyTestIsolation -Tag 'componscreen')
@@ -171,7 +282,7 @@ $td = New-TestDesktop -Interactive
 $results = @{}
 try {
     foreach ($arm in $Arms) {
-        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -eq 'on') { '1' } else { 'unset' }))"
+        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -ne 'off') { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -eq 'tree') { '1' } else { 'unset' }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
         New-Item -ItemType Directory -Force $dir | Out-Null
@@ -180,7 +291,10 @@ try {
         # A ghost sits under the user's windows, so the app would park its
         # renderer as occluded (T1951) after the first frame.
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
-        if ($arm -eq 'on') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        if ($arm -ne 'off') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        foreach ($k in 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
+            if ($arm -eq 'tree') { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+        }
         $err = Join-Path $dir 'stderr.txt'
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
             '--config-default-files=false', '--session-persistence=false',
@@ -208,75 +322,39 @@ try {
         if (-not $hw) { continue }
         if ($arm -eq 'on') {
             Assert "$arm.3 the panes present through the composition chain" (Wait-Log $err $onLine 15000)
+            Assert "$arm.3b no pane went into the window tree" ((Read-Text $err) -notmatch [regex]::Escape($treeLine))
+        } elseif ($arm -eq 'tree') {
+            Assert "$arm.3 the pane's surface handle went into the window tree" (Wait-Log $err $treeLine 15000)
+            Assert "$arm.3b the presenter made a handle swap chain (tree=true)" ((Read-Text $err) -match 'composition swap chain warp=\w+ tree=true')
         } else {
             Start-Sleep -Milliseconds 1500
             Assert "$arm.3 no pane touched the composition path" ((Read-Text $err) -notmatch [regex]::Escape($onLine))
         }
 
-        & $Exe +send-keys "--target=on$arm" 'cls' Enter 2>$null | Out-Null
-        Start-Sleep -Milliseconds 800
-        & $Exe +send-keys "--target=on$arm" 'for /L %i in (1,1,6) do @echo ######## T2488-MARK-%i ########################################' Enter 2>$null | Out-Null
-        Start-Sleep -Milliseconds 1500
-
-        $fgPid = [uint32]0
-        [void][GhostWin]::GetWindowThreadProcessId([GhostWin]::GetForegroundWindow(), [ref]$fgPid)
-        Assert "$arm.F the ghost never took the foreground (fg pid $fgPid)" ($fgPid -ne [uint32]$app.Pid)
-
-        $bmpPath = Join-Path $dir 'grab.bmp'
-        $grabErr = Join-Path $dir 'grab.txt'
-        $gp = Start-Process -FilePath $Spike -ArgumentList @("--grab-hwnd=$([int64]$hw)", "--out=`"$bmpPath`"") `
-            -NoNewWindow -PassThru -RedirectStandardError $grabErr
-        [void]$gp.WaitForExit(15000)
-        $grabOut = (Read-Text $grabErr).Trim()
-        "  $grabOut"
-        Assert "$arm.4 WGC grabbed a frame of the ghost" ($grabOut -match '^GRAB ok' -and (Test-Path $bmpPath))
-        $shot = Get-TestPaneCapture -Target "on$arm"
-        Assert "$arm.5 capture-pane answered$(if (-not $shot) { ': ' + (Get-LastPaneCaptureError) })" ($null -ne $shot)
-        if (-not (Test-Path $bmpPath) -or -not $shot) { Close-TestPaneCapture $shot; continue }
-
-        $grabBmp = New-Object System.Drawing.Bitmap $bmpPath
-        if ($NegativeControl) { $grabBmp.RotateFlip([System.Drawing.RotateFlipType]::RotateNoneFlipY) }
-        $g = Get-Pixels $grabBmp
-        $grabBmp.Dispose()
-        $p = Get-Pixels $shot.Bitmap
-        Close-TestPaneCapture $shot
-
-        $lum = 150
-        $paneRows = [InkMath]::RowInk($p.B, $p.Stride, 0, 0, $p.W, $p.H, $lum)
-
-        # Align the pane inside the grab: the offset whose sampled ink agrees
-        # best. Coarse search on a 4 px grid, then refine.
-        $best = @{ s = -1.0; dx = 0; dy = 0 }
-        $maxDx = [Math]::Max(0, $g.W - $p.W); $maxDy = [Math]::Max(0, $g.H - $p.H)
-        for ($dy = 0; $dy -le $maxDy; $dy += 4) {
-            for ($dx = 0; $dx -le $maxDx; $dx += 4) {
-                $s = [InkMath]::Match($p.B, $p.Stride, $p.W, $p.H, $g.B, $g.Stride, $g.W, $g.H, $dx, $dy, 3, $lum)
-                if ($s -gt $best.s) { $best = @{ s = $s; dx = $dx; dy = $dy } }
+        Mark-Pane "on$arm"
+        Score-Grab $arm "$arm" $hw "on$arm" $dir
+        if ($arm -eq 'tree') {
+            # Split + resize: the first pane is moved and shrunk by the layout,
+            # the second is a new presenter adopted into the same tree.
+            & $Exe +split "--target=on$arm" '--direction=right' "--name=on$arm-r" 2>$null | Out-Null
+            $adopted2 = $false
+            for ($t = 0; $t -lt 75 -and -not $adopted2; $t++) {
+                $adopted2 = (Read-Text $err) -match 'adopted into the window tree \(adopts=2\)'
+                if (-not $adopted2) { Start-Sleep -Milliseconds 200 }
             }
+            Assert "$arm.9 the split's new pane was adopted into the same tree (adopts=2)" $adopted2
+            # Different text in each half (short lines, so a half-width pane
+            # does not wrap them), or the right pane's picture would align
+            # onto the left pane and score as a match.
+            Mark-Pane "on$arm-r" 'for /L %i in (1,1,3) do @echo == RIGHT-%i ==== rrrr ===='
+            Mark-Pane "on$arm" 'for /L %i in (1,1,6) do @echo ## LEFT-%i ## llll ##'
+            $script:lastAt = $null
+            Score-Grab $arm "$arm.split-left" $hw "on$arm" $dir
+            $leftAt = $script:lastAt; $leftW = $script:lastW
+            Score-Grab $arm "$arm.split-right" $hw "on$arm-r" $dir
+            Assert "$arm.10 the right pane's picture sits right of the left pane's (left +$leftAt w$leftW, right +$($script:lastAt))" `
+                ($null -ne $leftAt -and $script:lastAt -ge ($leftAt + $leftW - 8))
         }
-        $cx = $best.dx; $cy = $best.dy
-        for ($dy = [Math]::Max(0, $cy - 4); $dy -le [Math]::Min($maxDy, $cy + 4); $dy++) {
-            for ($dx = [Math]::Max(0, $cx - 4); $dx -le [Math]::Min($maxDx, $cx + 4); $dx++) {
-                $s = [InkMath]::Match($p.B, $p.Stride, $p.W, $p.H, $g.B, $g.Stride, $g.W, $g.H, $dx, $dy, 1, $lum)
-                if ($s -gt $best.s) { $best = @{ s = $s; dx = $dx; dy = $dy } }
-            }
-        }
-
-        # Score the grab's PANE region on its own terms (no reference).
-        $x0 = $best.dx; $y0 = $best.dy
-        $x1 = [Math]::Min($g.W, $x0 + $p.W); $y1 = [Math]::Min($g.H, $y0 + $p.H)
-        $rows = [InkMath]::RowInk($g.B, $g.Stride, $x0, $y0, $x1, $y1, $lum)
-        $h = $rows.Length
-        $inkRows = @(0..($h - 1) | Where-Object { $rows[$_] -ge 3 })
-        $topInk = @($inkRows | Where-Object { $_ -lt ($h / 2) }).Count
-        $bottomInk = @($inkRows | Where-Object { $_ -ge ($h * 2 / 3) }).Count
-        $refInk = @(0..($paneRows.Length - 1) | Where-Object { $paneRows[$_] -ge 3 }).Count
-        $line = "  grab $($g.W)x$($g.H) pane $($p.W)x$($p.H) at +$($best.dx)+$($best.dy) match=$('{0:N3}' -f $best.s) ink_rows=$($inkRows.Count) (ref $refInk) top_half=$topInk bottom_third=$bottomInk"
-        $line
-        Assert "$arm.6 the pane on screen is not blank" ($inkRows.Count -ge 20)
-        Assert "$arm.7 right way up: the marker lines are at the top, the bottom third is background" ($topInk -ge 20 -and $bottomInk -le 2)
-        Assert "$arm.8 the glyphs match capture-pane's (>= 0.80 ink overlap)" ($best.s -ge 0.80)
-        $results[$arm] = $line
     }
 } finally {
     foreach ($k in $knobs) {
