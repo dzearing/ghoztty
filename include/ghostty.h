@@ -1059,6 +1059,7 @@ typedef enum {
   GHOSTTY_ACTION_ACTIVITY_STATE,
   GHOSTTY_ACTION_PANE_BANNER,
   GHOSTTY_ACTION_PROMPT_BANNER,
+  GHOSTTY_ACTION_SHOW_KEYBOARD_SHORTCUTS,
 } ghostty_action_tag_e;
 
 typedef union {
@@ -1267,6 +1268,11 @@ GHOSTTY_API ghostty_diagnostic_s ghostty_config_get_diagnostic(ghostty_config_t,
 GHOSTTY_API ghostty_string_s ghostty_config_open_path(void);
 GHOSTTY_API ghostty_string_s ghostty_config_schema_json(ghostty_config_t, bool);
 GHOSTTY_API ghostty_string_s ghostty_config_preferred_path(void);
+// Every effective keybinding as a JSON array of {trigger, action, action_key,
+// chain, table, global, all, consumed, performable}. Free with ghostty_string_free.
+GHOSTTY_API ghostty_string_s ghostty_config_keybinds_json(ghostty_config_t);
+// Every keybind action tag, newline-separated. Static; do not free.
+GHOSTTY_API const char* ghostty_input_action_keys(void);
 
 GHOSTTY_API ghostty_app_t ghostty_app_new(const ghostty_runtime_config_s*,
                                              ghostty_config_t);

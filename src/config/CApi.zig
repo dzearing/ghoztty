@@ -9,6 +9,7 @@ const c_get = @import("c_get.zig");
 const edit = @import("edit.zig");
 const schema_json = @import("schema_json.zig");
 const file_load = @import("file_load.zig");
+const keybind_list = @import("keybind_list.zig");
 const Key = @import("key.zig").Key;
 
 const log = std.log.scoped(.config);
@@ -166,6 +167,23 @@ export fn ghostty_config_open_path() String {
     };
 
     return .fromSlice(path);
+}
+
+/// Every effective keybinding in `self` as a JSON array of
+/// `keybind_list.Entry` objects ({trigger, action, action_key, chain, table,
+/// global, all, consumed, performable}). Empty on failure. Free with
+/// `ghostty_string_free`.
+export fn ghostty_config_keybinds_json(self: *Config) String {
+    const text = keybind_list.json(state.alloc, &self.keybind) catch |err| {
+        log.err("error listing keybinds err={}", .{err});
+        return .empty;
+    };
+    return .fromSlice(text);
+}
+
+/// Every action tag `keybind` accepts, newline-separated. Static; do not free.
+export fn ghostty_input_action_keys() [*:0]const u8 {
+    return keybind_list.action_keys.ptr;
 }
 
 /// Sync with ghostty_diagnostic_s

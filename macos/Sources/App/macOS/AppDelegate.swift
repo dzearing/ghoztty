@@ -21,6 +21,7 @@ class AppDelegate: NSObject,
     @IBOutlet private var menuAbout: NSMenuItem?
     @IBOutlet private var menuServices: NSMenu?
     @IBOutlet private var menuCheckForUpdates: NSMenuItem?
+    @IBOutlet private var menuKeyboardShortcuts: NSMenuItem?
     @IBOutlet private var menuOpenConfig: NSMenuItem?
     @IBOutlet private var menuReloadConfig: NSMenuItem?
     @IBOutlet private var menuSecureInput: NSMenuItem?
@@ -2019,6 +2020,13 @@ class AppDelegate: NSObject,
         AboutController.shared.show()
     }
 
+    /// Help → Keyboard Shortcuts, the `show_keyboard_shortcuts` keybind (⌘/ by
+    /// default) and the command palette all land here. Also the public entry
+    /// point for other UI (the Settings window's Keyboard page).
+    @IBAction func showKeyboardShortcuts(_ sender: Any?) {
+        ShortcutGuideController.shared.show(config: ghostty.config)
+    }
+
     @IBAction func showHelp(_ sender: Any) {
         guard let url = URL(string: "https://dzearing.github.io/ghoztty/") else { return }
         NSWorkspace.shared.open(url)
@@ -2151,6 +2159,7 @@ extension AppDelegate {
         // modify this stuff as code.
         self.menuAbout?.setImageIfDesired(systemSymbolName: "info.circle")
         self.menuCheckForUpdates?.setImageIfDesired(systemSymbolName: "square.and.arrow.down")
+        self.menuKeyboardShortcuts?.setImageIfDesired(systemSymbolName: "keyboard")
         self.menuOpenConfig?.setImageIfDesired(systemSymbolName: "gear")
         self.menuReloadConfig?.setImageIfDesired(systemSymbolName: "arrow.trianglehead.2.clockwise.rotate.90")
         self.menuSecureInput?.setImageIfDesired(systemSymbolName: "lock.display")
@@ -2197,6 +2206,7 @@ extension AppDelegate {
         menuShortcutManager.reset()
 
         syncMenuShortcut(config, action: "check_for_updates", menuItem: self.menuCheckForUpdates)
+        syncMenuShortcut(config, action: "show_keyboard_shortcuts", menuItem: self.menuKeyboardShortcuts)
         syncMenuShortcut(config, action: "open_config", menuItem: self.menuOpenConfig)
         syncMenuShortcut(config, action: "reload_config", menuItem: self.menuReloadConfig)
         syncMenuShortcut(config, action: "quit", menuItem: self.menuQuit)

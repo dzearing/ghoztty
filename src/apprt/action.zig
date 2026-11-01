@@ -372,6 +372,9 @@ pub const Action = union(Key) {
     /// Prompt the user for the surface's banner text via a pop-up.
     prompt_banner,
 
+    /// Show the keyboard shortcut guide window.
+    show_keyboard_shortcuts,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -448,6 +451,7 @@ pub const Action = union(Key) {
         activity_state,
         pane_banner,
         prompt_banner,
+        show_keyboard_shortcuts,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
