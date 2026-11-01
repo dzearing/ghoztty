@@ -600,3 +600,12 @@ as the digest that showed them.
 - Drag a pane's name to swap two panes (drop a title strip on another pane; they trade places, keeping sizes)
 - Smooth on a busy machine (under heavy system load, Ghoztty cuts its own animation work first so typing never waits)
 - The window resizes at the speed of your screen (new angle on smooth resizes: a 120 Hz promise, and About reports late frames in your last resize)
+
+## 2026-11-01
+
+- See which of your coding agents know Ghoztty (a palette page listing every agent, whether its Ghoztty skill is installed and current; one button installs or updates)
+- Make your own words clickable (user-defined patterns like T1234 or JIRA-88 become links to a tracker in every pane)
+- A comfortable reading width in a wide pane (text wraps at a chosen width and sits centred in a very wide pane)
+- Agent panes show how much room they have left (a context-fullness meter on an agent pane's strip, when the agent reports it)
+- Typing never waits for a resize (keystrokes and output keep full speed during a window-edge or divider drag)
+- "That felt slow" captures the last ten seconds (new angle on the slowness readout: a palette command saves the timing of what just happened into a feedback report)
