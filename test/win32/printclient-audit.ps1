@@ -57,7 +57,7 @@ function Get-PrintClientFindings {
     return , @()
 }
 
-# The one class that is exempt, and why. An exemption lives here rather than in
+# The classes that are exempt, and why. An exemption lives here rather than in
 # a comment in the source, so adding one is a visible edit to the audit.
 #
 # App.zig owns the TERMINAL SURFACE, whose pixels come from the renderer, not
@@ -65,8 +65,14 @@ function Get-PrintClientFindings {
 # (T214: PrintWindow returns a flat fill for it off the input desktop, so an
 # assertion over that capture passes against nothing). A WM_PRINTCLIENT handler
 # there would produce exactly the blank frame the refusal exists to prevent.
+#
+# WindowPresenter.zig (T2614) is the same case one level up: the window
+# presenter's pixels are the GL compose of every terminal pane, swapped by its
+# own thread. Its WM_PAINT only validates and asks for a compose; a GDI pose of
+# it would be the same blank frame.
 $exempt = @{
     'App.zig' = 'the terminal surface is renderer-drawn; Get-TestWindowPixels refuses to capture it (T214)'
+    'WindowPresenter.zig' = 'the window presenter is GL-composed by its own thread; WM_PAINT only validates (T2614)'
 }
 
 # ============================================================================

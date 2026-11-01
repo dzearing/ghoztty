@@ -251,6 +251,40 @@ pub fn planPane(pane: Rect, frame: ?struct { width: u32, height: u32 }, client_h
 }
 
 // -------------------------------------------------------------------------
+// Where the presenter sits among the window's children.
+// -------------------------------------------------------------------------
+
+/// One child of the top-level, as a walk from the TOP of the z-order meets
+/// it.
+pub const ZChild = enum { presenter, terminal, other };
+
+/// What to do with the presenter's z-order after a layout pass.
+pub const ZFix = union(enum) {
+    /// It is already directly above the topmost terminal pane (or there is
+    /// no terminal pane to cover).
+    keep,
+    /// Insert it directly after (below) the child at this index of the walk,
+    /// which is the child directly above the topmost terminal pane.
+    after: usize,
+    /// The topmost terminal pane is the topmost child: put the presenter on
+    /// top of everything (`HWND_TOP`).
+    top,
+};
+
+/// The rule (`docs/design/win32-window-presenter.md`): the presenter sits
+/// DIRECTLY above the topmost terminal pane, so every terminal pane is under
+/// it and every other child that was above that pane stays above the
+/// presenter too. A child created after the presenter lands at the top of the
+/// z-order, which is right for chrome and wrong for a terminal pane, so the
+/// layout pass asks this after every placement.
+pub fn presenterZFix(walk: []const ZChild) ZFix {
+    const t = std.mem.indexOfScalar(ZChild, walk, .terminal) orelse return .keep;
+    if (t == 0) return .top;
+    if (walk[t - 1] == .presenter) return .keep;
+    return .{ .after = t - 1 };
+}
+
+// -------------------------------------------------------------------------
 // Tests.
 // -------------------------------------------------------------------------
 
@@ -373,6 +407,26 @@ test "planPane: a frame larger than its pane is cropped from the bottom and righ
     // Keep the frame's TOP 100 rows: GL rows 60..160.
     try testing.expectEqual(GlRect{ 0, 60, 200, 160 }, p.blit.?.src);
     try testing.expectEqual(GlRect{ 0, 0, 200, 100 }, p.blit.?.dst);
+}
+
+test "presenterZFix: directly above the topmost terminal pane is kept" {
+    try testing.expectEqual(ZFix.keep, presenterZFix(&.{ .other, .presenter, .terminal, .terminal }));
+    try testing.expectEqual(ZFix.keep, presenterZFix(&.{ .presenter, .terminal }));
+    // No terminal pane at all: nothing to cover, nothing to move.
+    try testing.expectEqual(ZFix.keep, presenterZFix(&.{ .other, .presenter }));
+    try testing.expectEqual(ZFix.keep, presenterZFix(&.{}));
+}
+
+test "presenterZFix: a pane created after the presenter puts it back on top" {
+    // New children land at the top: the new pane is above the presenter.
+    try testing.expectEqual(ZFix.top, presenterZFix(&.{ .terminal, .presenter, .terminal }));
+}
+
+test "presenterZFix: chrome between the presenter and the panes ends up above it" {
+    // A viewer pane sits between them: insert below the viewer (index 1).
+    try testing.expectEqual(ZFix{ .after = 1 }, presenterZFix(&.{ .presenter, .other, .terminal }));
+    // The presenter below a pane, with chrome on top: below the chrome.
+    try testing.expectEqual(ZFix{ .after = 0 }, presenterZFix(&.{ .other, .terminal, .presenter }));
 }
 
 test "planPane: an empty pane plans nothing" {

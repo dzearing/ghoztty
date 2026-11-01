@@ -30,8 +30,8 @@ dividers the parent paints) must keep showing.
 Z-order inside the top-level, top to bottom:
 
 1. viewer panes, banners, sidebar, PaneDesk and the other chrome children
-2. **the presenter** (`GhozttyPresenter` class, `WS_CHILD | WS_CLIPSIBLINGS`,
-   `WS_EX_TRANSPARENT`)
+2. **the presenter** (`GhozttyPresenter` class, `WS_CHILD | WS_CLIPSIBLINGS`;
+   **not** `WS_EX_TRANSPARENT`, see below)
 3. terminal pane HWNDs (`GhozttyTerminal`, unchanged class, **no pixel format**)
 
 What each piece buys:
@@ -50,9 +50,16 @@ What each piece buys:
   panes. Only its GL context lives on the presenter thread. `WindowFromPoint`
   honors `HTTRANSPARENT` the same way (the static-control behavior), so OLE
   drag-drop targets, `WM_SETCURSOR` and mouse activation all reach the pane.
-  `WS_EX_TRANSPARENT` is there so `ChildWindowFromPointEx(CWP_SKIPTRANSPARENT)`
-  skips it too, which the test harness relies on (see "Harness" below). The
-  presenter never takes focus and has no `WS_TABSTOP`.
+  The presenter never takes focus and has no `WS_TABSTOP`.
+- **No `WS_EX_TRANSPARENT`** (changed in step 3b, T2614). The first draft
+  added it so `ChildWindowFromPointEx(CWP_SKIPTRANSPARENT)` would skip the
+  presenter. But that style also takes a window out of its lower siblings'
+  clipping: the panes beneath would keep a visible region and keep painting
+  into the presenter's pixels, which breaks the "fully covered, never paints"
+  property above. No harness hit-tests that way, so the style was dropped.
+  `test\win32\window-presenter.ps1` checks the property directly: the debug
+  build logs, for every pane, whether it is covered (`GetClipBox` on a cache
+  DC answers `NULLREGION`) and whether a hit at its center reaches it.
 - **Gaps belong to the parent.** The dividers, their hover and drag states,
   and the rearrange overlays are GDI paint by the parent, and the parent's
   `WS_CLIPCHILDREN` would clip them out of a presenter that covers the gaps.
@@ -151,10 +158,11 @@ new geometry, the way it waits on `frame_event` per pane today.
 
 - Scripts that count `GhozttyTerminal` children are unaffected, because the
   presenter is its own class.
-- A hit-test with `ChildWindowFromPoint(Ex)` without `CWP_SKIPTRANSPARENT`
-  would land on the presenter. No script in `test\win32\` uses one today
-  (checked 2026-11-01). App code that does gets moved to
-  `CWP_SKIPTRANSPARENT` or `WindowFromPoint` in step 3.
+- A hit-test with `ChildWindowFromPoint(Ex)` lands on the presenter (the
+  presenter is not `WS_EX_TRANSPARENT`, so `CWP_SKIPTRANSPARENT` does not skip
+  it either). No script in `test\win32\` uses one (checked 2026-11-01).
+  App code that does should use `WindowFromPoint` on the UI thread, which
+  honors `HTTRANSPARENT`.
 - Pixel probes of terminal glass already ask the app, not the desktop (T275).
   The background test desktop has no composite to read, so **what the screen
   shows can only be checked on the live desktop with the user present**.

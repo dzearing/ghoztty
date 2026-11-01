@@ -819,8 +819,13 @@ fn initOnce(
     // this top-level when there is one (T2597, `pane_pool.zig`), so its
     // presents land on an allocation the top-level already holds.
     const config_translucent = app.config.@"background-opacity" < 1.0;
-    const want_layer = pane_layer.wantOwnLayer(pane_layer.enabled(), parent.translucent or config_translucent);
-    const reused: ?w32.HWND = if (want_layer or !pane_pool.enabled()) null else takeParkedWindow(parent, sr);
+    // T2610: the window's presenter exists before this pane's context does,
+    // because from step 3c that context joins the presenter's share group.
+    // On that path pane windows stop presenting, so neither a layer of their
+    // own (T2499) nor a parked window (T2597) buys anything.
+    const presenter_on = parent.ensurePresenter();
+    const want_layer = !presenter_on and pane_layer.wantOwnLayer(pane_layer.enabled(), parent.translucent or config_translucent);
+    const reused: ?w32.HWND = if (presenter_on or want_layer or !pane_pool.enabled()) null else takeParkedWindow(parent, sr);
     const hwnd = reused orelse w32.CreateWindowExW(
         0,
         App.TERMINAL_CLASS_NAME,
@@ -1433,6 +1438,13 @@ fn takeParkedWindow(win: *Window, sr: w32.RECT) ?w32.HWND {
 
 /// Set up a pixel format suitable for OpenGL rendering.
 fn setupPixelFormat(self: *Surface) !void {
+    try setupGlPixelFormat(self.hdc.?);
+}
+
+/// The terminal pane's pixel format on any window's DC. The window presenter
+/// (T2610, `WindowPresenter.zig`) takes the same one, so a pane context and
+/// the presenter's can share a group.
+pub fn setupGlPixelFormat(hdc: w32.HDC) !void {
     const pfd = w32.PIXELFORMATDESCRIPTOR{
         .nSize = @sizeOf(w32.PIXELFORMATDESCRIPTOR),
         .nVersion = 1,
@@ -1466,10 +1478,10 @@ fn setupPixelFormat(self: *Surface) !void {
     // standalone fallback such as Mesa's `opengl32.dll` owns its own pixel
     // formats, and GDI knows nothing about them.
     const gl = gl_loader.active();
-    const format = gl.choosePixelFormat(@ptrCast(self.hdc.?), &pfd);
+    const format = gl.choosePixelFormat(@ptrCast(hdc), &pfd);
     if (format == 0) return error.Win32Error;
 
-    if (gl.setPixelFormat(@ptrCast(self.hdc.?), format, &pfd) == 0)
+    if (gl.setPixelFormat(@ptrCast(hdc), format, &pfd) == 0)
         return error.Win32Error;
 }
 

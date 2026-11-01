@@ -2397,6 +2397,18 @@ $GuardTable = @(
             'test\win32\comp-present.ps1'
         )
     },
+    # The window presenter child (T2614, T2610 step 3b): its z-order, window
+    # region and HTTRANSPARENT hit-through are only true of a live window.
+    [pscustomobject]@{
+        Name   = 'window-presenter'
+        Script = 'test\win32\window-presenter.ps1'
+        Stamp  = 'test\win32\window-presenter.stamp.json'
+        Covers = @(
+            'src\apprt\win32\WindowPresenter.zig',
+            'src\renderer\gl_window_presenter.zig',
+            'test\win32\window-presenter.ps1'
+        )
+    },
     # The window chrome's composition host (T2508): D3D11 + Direct2D +
     # DirectComposition vtable slots that only a live run checks, and a
     # rebuild-on-device-loss path that only fires when the harness forces it.

@@ -24,6 +24,9 @@ const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const resize_paint = @import("resize_paint.zig");
 const resize_prelayout = @import("resize_prelayout.zig");
 const Surface = @import("Surface.zig");
+const WindowPresenter = @import("WindowPresenter.zig");
+const gl_window_presenter = @import("../../renderer/gl_window_presenter.zig");
+const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 const window_chord = @import("window_chord.zig");
 const paint_probe = @import("paint_probe.zig");
 const PaneView = @import("PaneView.zig");
@@ -1058,6 +1061,13 @@ ghost_opaque: bool = false,
 /// painters over the desk drew (T2544). Null when the knob is off or the
 /// host could not be built, and the chrome is GDI either way.
 chrome_host: ?chrome_comp.Host = null,
+/// The one GL child every terminal pane of this window presents through
+/// (T2610, `GHOZTTY_WINDOW_PRESENTER`). Made by the first terminal pane that
+/// asks (`ensurePresenter`), re-placed after every layout pass
+/// (`syncPresenter`), and null when the knob is off or it could not be built.
+presenter: ?*WindowPresenter = null,
+/// The knob was read for this window: `ensurePresenter` decides once.
+presenter_decided: bool = false,
 /// This window was created with no redirection surface (T2548,
 /// `GHOZTTY_COMP_NOREDIR`): its client is exactly the chrome host's visual
 /// tree and the panes' own composition, so a resize paints the chrome inside
@@ -2284,6 +2294,10 @@ pub fn deinit(self: *Window) void {
 /// full-screen exit button - for the life of the app.
 fn releaseOwnedResources(self: *Window) void {
     self.endRowDrag();
+    // Before the children go: the presenter's thread has its context current
+    // on the presenter window's DC until it is stopped.
+    if (self.presenter) |p| p.destroy(self.app.core_app.alloc);
+    self.presenter = null;
     if (self.chrome_host) |*cc| cc.deinit();
     self.chrome_host = null;
     self.caption_mirror.deinit();
@@ -7449,6 +7463,34 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
     }
 }
 
+/// Make this window's presenter the first time a terminal pane asks, when
+/// the knob chooses the presenter path (T2610). True when the window has
+/// one, and its panes then present through it. UI thread only.
+pub fn ensurePresenter(self: *Window) bool {
+    if (self.presenter != null) return true;
+    if (self.presenter_decided) return false;
+    self.presenter_decided = true;
+    const choice = gl_window_presenter.choose(gl_window_presenter.enabled(), gl_comp_present.enabled());
+    if (choice.overridden_by_comp)
+        log.info("{s} ignored: GHOZTTY_COMP_PRESENT is on and wins", .{gl_window_presenter.env_knob});
+    if (choice.path != .window_presenter) return false;
+    const hwnd = self.hwnd orelse return false;
+    const bg = self.app.config.background;
+    const alpha: f32 = @floatCast(self.app.config.@"background-opacity");
+    self.presenter = WindowPresenter.create(self.app.core_app.alloc, self.app.hinstance, hwnd, .{
+        @as(f32, @floatFromInt(bg.r)) / 255.0,
+        @as(f32, @floatFromInt(bg.g)) / 255.0,
+        @as(f32, @floatFromInt(bg.b)) / 255.0,
+        @min(@max(alpha, 0.0), 1.0),
+    });
+    return self.presenter != null;
+}
+
+/// Put the presenter over the panes as they now stand (T2610).
+pub fn syncPresenter(self: *Window) void {
+    if (self.presenter) |p| p.sync();
+}
+
 /// `layoutSplits` for a relayout the user is watching in real time: each pane
 /// blocks briefly for a frame at its new size instead of showing background
 /// until the renderer thread catches up (T1031). Restores the previous state
@@ -7766,6 +7808,9 @@ fn endFrameWaitBatch(self: *Window) void {
 }
 
 pub fn layoutSplits(self: *Window) void {
+    // Last of all (defers run in reverse): the presenter follows the panes
+    // wherever this pass put them (T2610).
+    defer self.syncPresenter();
     self.prelayout_laid = null;
     if (self.tab_count == 0) return;
     // Under a drag the terminals keep their grid while their windows follow
