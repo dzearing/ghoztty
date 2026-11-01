@@ -1163,6 +1163,12 @@ fn initOnce(
     // Mark the surface as ready. Before this point, Win32 messages
     // (triggered by ShowWindow, wglCreateContext, etc.) must be ignored.
     self.core_surface_ready = true;
+
+    // T2604: an agent installed while the app runs is usually first run from
+    // a NEW pane (its installer edits PATH, which only a new shell sees), so
+    // a new pane is when to look for one that has never been offered setup.
+    // Spaced and off-thread; a no-op when every agent has an answer.
+    @import("AgentIntegration.zig").recheckSoon(app);
     self.core_surface_initialized = true;
 
     // The core and its renderer start out FOCUSED, and focus is otherwise

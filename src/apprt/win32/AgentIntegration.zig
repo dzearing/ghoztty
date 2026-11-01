@@ -30,15 +30,20 @@
 //! ONLY that home so the box's real installs cannot leak in),
 //! GHOZTTY_CLAUDE_EXE (claude path override for the migration's uninstall),
 //! GHOZTTY_CLAUDE_STATE_DIR (answer-file dir). The answers persist in
-//! <state dir>\claude_setup and <state dir>\claude_plugin_migration as
-//! "accepted"/"declined" — declining is remembered, and both are written
-//! BEFORE the work so a crash mid-dialog can never turn into a nag.
+//! <state dir>\agent_offer_<agent> (one per agent since T2604, so an agent
+//! installed later is still offered once - `agent_offer.zig` has the rule),
+//! the legacy <state dir>\claude_setup, and
+//! <state dir>\claude_plugin_migration as "accepted"/"declined" — declining
+//! is remembered, and all are written BEFORE the work so a crash mid-dialog
+//! can never turn into a nag. The offer is looked for at launch and again
+//! when a terminal pane opens (`recheckSoon`).
 const std = @import("std");
 const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const App = @import("App.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const setup = @import("claude_setup.zig");
+const agent_offer = @import("agent_offer.zig");
 const service = @import("agent_integration_service.zig");
 const runtime_probe = @import("runtime_probe.zig");
 const RuntimeIntegration = @import("RuntimeIntegration.zig");
@@ -119,8 +124,18 @@ pub const MigrationDone = struct {
     detail: []const u8,
 };
 
+/// The pre-T2604 single answer. Still written, so an older build run after
+/// this one finds the offer answered, but no longer read for any agent once
+/// the per-agent answers exist (`agent_offer`).
 const setup_state_name = "claude_setup";
 const migration_state_name = "claude_plugin_migration";
+/// Written by the first check that folds `claude_setup` into the per-agent
+/// answers, so the old answer is folded once and never again.
+const offer_migrated_name = "agent_offer_migrated";
+
+/// When the last check ran (ms since the epoch; 0 = never), for the
+/// new-pane re-check's spacing (`recheckSoon`).
+var last_check_ms: std.atomic.Value(i64) = .init(0);
 
 /// At most one install batch runs at a time; a second request while one is
 /// in flight is dropped (the flow is idempotent, re-running from the
@@ -133,37 +148,51 @@ var migration_running: std.atomic.Value(bool) = .init(false);
 /// on some earlier launch, so two modals can never stack — whether to show
 /// the one-time plugin-migration offer. Never blocks startup.
 pub fn checkOnLaunchAsync(app: *App) void {
-    const thread = std.Thread.spawn(.{}, launchCheck, .{app}) catch |err| {
+    last_check_ms.store(std.time.milliTimestamp(), .release);
+    const thread = std.Thread.spawn(.{}, launchCheck, .{ app, true }) catch |err| {
         log.warn("agent setup: check thread spawn failed: {}", .{err});
         return;
     };
     thread.detach();
 }
 
-fn launchCheck(app: *App) void {
+/// T2604: look again for an agent that has never been offered setup - one
+/// installed since launch. Called when a terminal pane is created; spaced by
+/// `agent_offer.recheck_interval_ms`, off-thread, and it never raises the
+/// plugin-migration offer (that stays a launch-time question). GUI thread.
+pub fn recheckSoon(app: *App) void {
+    const now = std.time.milliTimestamp();
+    const last = last_check_ms.load(.acquire);
+    if (!agent_offer.recheckDue(now, last)) return;
+    if (last_check_ms.cmpxchgStrong(last, now, .acq_rel, .acquire) != null) return;
+    const thread = std.Thread.spawn(.{}, launchCheck, .{ app, false }) catch |err| {
+        log.warn("agent setup: re-check thread spawn failed: {}", .{err});
+        return;
+    };
+    thread.detach();
+}
+
+fn launchCheck(app: *App, at_launch: bool) void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     if (!setupEnabled(arena)) return;
 
-    if (readState(arena, setup_state_name) == .unanswered) {
-        const detected = detectAgents(arena);
-        if (detected.count() == 0) {
-            // No agent CLI on this box: leave the prompt unburned so
-            // installing one later still gets the one-time offer.
-            log.debug("agent setup: no agent CLIs found; not prompting", .{});
-            return;
-        }
+    const offer = decideOffer(arena);
+    if (offer.count() != 0) {
         // Let the first window appear and settle before dialoging over it
         // (the Mac flow waits 2s after launch).
         std.Thread.sleep(1 * std.time.ns_per_s);
         const hwnd = app.msg_hwnd orelse return;
-        _ = w32.PostMessageW(hwnd, WM_APP_CLAUDE_PROMPT, bitsOf(detected), 0);
+        _ = w32.PostMessageW(hwnd, WM_APP_CLAUDE_PROMPT, bitsOf(offer), 0);
         return;
     }
+    if (!at_launch) return;
 
-    // First-run answered on an earlier launch: consider the migration.
+    // Nothing to offer, and the offer was answered on an earlier launch:
+    // consider the migration. Never before, so two modals cannot stack.
+    if (!anyAnswered(arena)) return;
     if (readState(arena, migration_state_name) != .unanswered) return;
     const home = openAgentHome(arena) orelse return;
     var home_dir = home.dir;
@@ -191,25 +220,26 @@ pub fn showFirstRunPrompt(app: *App, agent_bits: usize) void {
         return;
     }
 
-    // The palette flow may have answered while the check thread slept.
-    if (readState(arena, setup_state_name) != .unanswered) return;
-
-    // Mark answered BEFORE showing so a crash mid-dialog can never turn
-    // into a nag on every launch (Mac sets promptAnswered pre-runModal).
-    writeState(arena, setup_state_name, .declined);
-
-    const detected = setOf(agent_bits);
+    // Only agents still unanswered: another check, or this prompt raised
+    // earlier through a nested dialog pump, may have answered since.
     var checks_buf: [service.agent_count]ConfirmDialog.Check = undefined;
     var agents_buf: [service.agent_count]RuntimeAgent = undefined;
     var n: usize = 0;
+    const offered = setOf(agent_bits);
     inline for (std.meta.tags(RuntimeAgent)) |agent| {
-        if (detected.contains(agent)) {
+        if (offered.contains(agent) and readAgentAnswer(arena, agent) == .unanswered) {
             checks_buf[n] = .{ .label = checkLabelFor(agent), .checked = true };
             agents_buf[n] = agent;
             n += 1;
         }
     }
     if (n == 0) return;
+
+    // Mark answered BEFORE showing so a crash mid-dialog can never turn
+    // into a nag on every launch (Mac sets promptAnswered pre-runModal).
+    // Per agent (T2604): only the agents this prompt names are spent.
+    for (agents_buf[0..n]) |agent| writeAgentAnswer(arena, agent, .declined);
+    writeState(arena, setup_state_name, legacyOf(agent_offer.legacyAfter(answerOf(readState(arena, setup_state_name)), false)));
 
     const owner: ?*@import("Window.zig") = if (app.windows.items.len > 0)
         app.windows.items[0]
@@ -242,7 +272,10 @@ pub fn showFirstRunPrompt(app: *App, agent_bits: usize) void {
 
     var chosen = std.EnumSet(RuntimeAgent).initEmpty();
     for (checks_buf[0..n], 0..) |check, i| {
-        if (check.checked) chosen.insert(agents_buf[i]);
+        if (check.checked) {
+            chosen.insert(agents_buf[i]);
+            writeAgentAnswer(arena, agents_buf[i], .accepted);
+        }
     }
     if (chosen.count() == 0) return;
     installAsync(app, chosen);
@@ -707,6 +740,88 @@ fn readState(arena: std.mem.Allocator, name: []const u8) setup.State {
     var buf: [64]u8 = undefined;
     const n = f.readAll(&buf) catch 0;
     return setup.parseState(buf[0..n]);
+}
+
+fn answerOf(state: setup.State) agent_offer.Answer {
+    return switch (state) {
+        .unanswered => .unanswered,
+        .accepted => .accepted,
+        .declined => .declined,
+    };
+}
+
+fn legacyOf(answer: agent_offer.Answer) setup.State {
+    return switch (answer) {
+        .unanswered => .unanswered,
+        .accepted => .accepted,
+        .declined => .declined,
+    };
+}
+
+fn agentStateName(agent: RuntimeAgent) []const u8 {
+    return switch (agent) {
+        inline else => |a| comptime agent_offer.stateName(RuntimeAgent, a),
+    };
+}
+
+fn readAgentAnswer(arena: std.mem.Allocator, agent: RuntimeAgent) agent_offer.Answer {
+    return answerOf(readState(arena, agentStateName(agent)));
+}
+
+fn writeAgentAnswer(arena: std.mem.Allocator, agent: RuntimeAgent, answer: agent_offer.Answer) void {
+    writeState(arena, agentStateName(agent), legacyOf(answer));
+}
+
+fn anyAnswered(arena: std.mem.Allocator) bool {
+    if (readState(arena, setup_state_name) != .unanswered) return true;
+    inline for (std.meta.tags(RuntimeAgent)) |agent| {
+        if (readAgentAnswer(arena, agent) != .unanswered) return true;
+    }
+    return false;
+}
+
+/// T2604: the agents to name in the offer now, recording on the way the
+/// answers that need no question (already set up; the old Not Now folded in
+/// once). Background thread: the probe and the status read walk the disk.
+fn decideOffer(arena: std.mem.Allocator) std.EnumSet(RuntimeAgent) {
+    var answers: [service.agent_count]agent_offer.Answer = undefined;
+    var any_open = false;
+    inline for (std.meta.tags(RuntimeAgent), 0..) |agent, i| {
+        answers[i] = readAgentAnswer(arena, agent);
+        if (answers[i] == .unanswered) any_open = true;
+    }
+    if (!any_open) return .initEmpty();
+
+    const detected = detectAgents(arena);
+    var integrated = std.EnumSet(RuntimeAgent).initEmpty();
+    if (openAgentHome(arena)) |home| {
+        var home_dir = home.dir;
+        defer home_dir.close();
+        if (service.allAgentStatuses(arena, home_dir, home.path, probeFor(arena))) |statuses| {
+            for (statuses) |s| {
+                if (s.plugin_managed or s.state != .not_installed) integrated.insert(s.agent);
+            }
+        } else |_| {}
+    }
+
+    const legacy = answerOf(readState(arena, setup_state_name));
+    const migrated = readState(arena, offer_migrated_name) != .unanswered;
+    const d = agent_offer.decide(RuntimeAgent, detected, integrated, answers, legacy, migrated);
+
+    var it_a = d.record_accepted.iterator();
+    while (it_a.next()) |agent| writeAgentAnswer(arena, agent, .accepted);
+    var it_d = d.record_declined.iterator();
+    while (it_d.next()) |agent| writeAgentAnswer(arena, agent, .declined);
+    // Folded once, whether or not the old answer said anything: an answer
+    // this build writes later must never be read back as a pre-T2604 one.
+    if (!migrated) writeState(arena, offer_migrated_name, .accepted);
+
+    if (detected.count() == 0) {
+        // No agent CLI on this box: leave every offer unburned so
+        // installing one later still gets it.
+        log.debug("agent setup: no agent CLIs found; not prompting", .{});
+    }
+    return d.offer;
 }
 
 fn writeState(arena: std.mem.Allocator, name: []const u8, state: setup.State) void {

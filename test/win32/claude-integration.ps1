@@ -34,6 +34,15 @@
 #   7. No agent CLI in the sandbox home -> no first-run prompt, nothing
 #        burned; the management window shows both rows Not detected with
 #        no action buttons.
+#   8. T2604, the report: Copilot alone at first run, accepted; Claude Code
+#        installed afterwards -> the next launch offers Claude ONLY, its Not
+#        Now is kept per agent, and the launch after that is quiet.
+#   9. T2604, the upgrade: an old single "accepted" (claude_setup) does not
+#        spend the offer for a Claude that is not set up; an old "declined"
+#        still stands for the agents present, folded into agent_offer_claude.
+#  10. T2604, live: Claude installed while the app runs -> a new pane (60s
+#        after launch, the re-check's spacing) offers it; the palette finds
+#        Agent Integrations by "skill".
 #
 # Sandboxing: GHOZTTY_AGENT_HOME points the probe, the installers and the
 # migration at a temp home — when set, the probe consults ONLY that home,
@@ -232,7 +241,7 @@ function Invoke-AgentButton([IntPtr]$dlg, [string]$caption) {
 # lists matches alphabetically, and since T1804 a bare "agent" also finds
 # "Restart Ghoztty and Background Sessions" by its keywords, which sorts first,
 # so Enter asked to restart instead and no window ever opened.
-function Invoke-PaletteAgentSetup($g) {
+function Invoke-PaletteAgentSetup($g, [string]$query = 'set up agent') {
     $surface = Get-TestChildWindow -Window $g.Top -Class 'GhozttyTerminal'
     if ($surface -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: surface not found'; return $false }
     Focus-TestWindow -Window $g.Top -Child $surface | Out-Null
@@ -246,7 +255,7 @@ function Invoke-PaletteAgentSetup($g) {
     if ($popup -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: palette popup did not open'; return $false }
     $edit = Find-TestWindowEx -Parent $popup -Class 'EDIT'
     if ($edit -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: palette edit not found'; return $false }
-    if (-not (Send-TestControlText -Control $edit -Text 'set up agent')) { Write-Host 'SETUP FAIL: palette query not typed'; return $false }
+    if (-not (Send-TestControlText -Control $edit -Text $query)) { Write-Host 'SETUP FAIL: palette query not typed'; return $false }
     Start-Sleep -Milliseconds 200
     if (-not (Send-TestControlKey -Control $edit -Key Enter)) { Write-Host 'SETUP FAIL: palette Enter not posted'; return $false }
     Start-Sleep -Milliseconds 200
@@ -576,6 +585,141 @@ try {
         }
     }
     Assert (-not (Test-Path (Join-Path $state7 'claude_setup'))) 'opening the window burns no first-run state'
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # ------------------------------------------------------------ case 8:
+    # T2604, the user's report: only Copilot at first run -> accept; Claude
+    # Code installed afterwards -> the next launch offers Claude, once.
+    $home8 = Join-Path $base 'home-copilot'
+    New-Item -ItemType Directory -Force (Join-Path $home8 '.copilot\local') | Out-Null
+    Set-Content -Path (Join-Path $home8 '.copilot\local\copilot.exe') -Value '' -Encoding ascii -NoNewline
+    $state8 = Join-Path $base 'state8'
+    $g = Launch-Gui $state8 $home8 'ok'
+    $gpid = $g.Pid
+    $dlg = Wait-Class $gpid 'GhozttyConfirmDialog' $true 8000
+    Assert ($dlg -ne [IntPtr]::Zero) 'T2604: Copilot alone gets the first-run prompt'
+    if ($dlg -ne [IntPtr]::Zero) {
+        $btns = Get-ButtonTexts $dlg
+        Assert (($btns -contains 'Set up Copilot CLI integration') -and -not ($btns -contains 'Set up Claude Code integration')) "T2604: the prompt names Copilot only (got: $($btns -join ', '))"
+        Send-TestControlKey -Control $dlg -Key Enter | Out-Null
+        Wait-Class $gpid 'GhozttyConfirmDialog' $false | Out-Null
+    }
+    Start-Sleep -Milliseconds 500
+    $copState = Join-Path $state8 'agent_offer_copilot'
+    Assert ((Test-Path $copState) -and ((Get-Content $copState -Raw).Trim() -eq 'accepted')) 'T2604: Copilot answer is recorded per agent (accepted)'
+    Assert (-not (Test-Path (Join-Path $state8 'agent_offer_claude'))) 'T2604: Claude, not installed, is not spent by that answer'
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    New-Item -ItemType Directory -Force (Join-Path $home8 '.local\bin') | Out-Null
+    Copy-Item $stub (Join-Path $home8 '.local\bin\claude.cmd')
+    $g = Launch-Gui $state8 $home8 'ok'
+    $gpid = $g.Pid
+    $dlg = Wait-Class $gpid 'GhozttyConfirmDialog' $true 8000
+    if ($NegativeControl) {
+        Write-Host 'NEGATIVE CONTROL: asserting a later-installed Claude is NOT offered - this run MUST fail'
+        Assert ($dlg -eq [IntPtr]::Zero) 'Claude installed after the first answer is never offered (inverted)'
+    } else {
+        Assert ($dlg -ne [IntPtr]::Zero) 'T2604: Claude installed after the first answer is offered on the next launch'
+    }
+    if ($dlg -ne [IntPtr]::Zero) {
+        $btns = Get-ButtonTexts $dlg
+        Assert (($btns -contains 'Set up Claude Code integration') -and -not ($btns -contains 'Set up Copilot CLI integration')) "T2604: the late prompt names Claude only (got: $($btns -join ', '))"
+        Send-TestControlKey -Control $dlg -Key Escape | Out-Null
+        Wait-Class $gpid 'GhozttyConfirmDialog' $false | Out-Null
+    }
+    Start-Sleep -Milliseconds 500
+    $claState = Join-Path $state8 'agent_offer_claude'
+    Assert ((Test-Path $claState) -and ((Get-Content $claState -Raw).Trim() -eq 'declined')) 'T2604: Not Now on the late prompt is recorded for Claude'
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    $g = Launch-Gui $state8 $home8 'ok'
+    $gpid = $g.Pid
+    $dlg = Wait-Class $gpid 'GhozttyConfirmDialog' $true 4000
+    Assert ($dlg -eq [IntPtr]::Zero) 'T2604: once answered, Claude is not offered again'
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # ------------------------------------------------------------ case 9:
+    # T2604, the upgrade: a pre-T2604 build answered "accepted" for the box
+    # (Copilot then), Claude is installed and not set up -> offered once.
+    # And a pre-T2604 "declined" stands for the agents present now.
+    $home9 = Join-Path $base 'home-claude-only'
+    New-Item -ItemType Directory -Force (Join-Path $home9 '.local\bin') | Out-Null
+    Copy-Item $stub (Join-Path $home9 '.local\bin\claude.cmd')
+    $state9 = Join-Path $base 'state9'
+    New-Item -ItemType Directory -Force $state9 | Out-Null
+    Set-Content -Path (Join-Path $state9 'claude_setup') -Value 'accepted' -Encoding ascii -NoNewline
+    $g = Launch-Gui $state9 $home9 'ok'
+    $gpid = $g.Pid
+    $dlg = Wait-Class $gpid 'GhozttyConfirmDialog' $true 8000
+    Assert ($dlg -ne [IntPtr]::Zero) 'T2604: an old single "accepted" does not spend the offer for a Claude that is not set up'
+    if ($dlg -ne [IntPtr]::Zero) {
+        Send-TestControlKey -Control $dlg -Key Escape | Out-Null
+        Wait-Class $gpid 'GhozttyConfirmDialog' $false | Out-Null
+    }
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    $state9b = Join-Path $base 'state9b'
+    New-Item -ItemType Directory -Force $state9b | Out-Null
+    Set-Content -Path (Join-Path $state9b 'claude_setup') -Value 'declined' -Encoding ascii -NoNewline
+    $g = Launch-Gui $state9b $home9 'ok'
+    $gpid = $g.Pid
+    $dlg = Wait-Class $gpid 'GhozttyConfirmDialog' $true 4000
+    Assert ($dlg -eq [IntPtr]::Zero) 'T2604: an old single "declined" is still honoured for the agents present'
+    Start-Sleep -Milliseconds 500
+    $s9b = Join-Path $state9b 'agent_offer_claude'
+    Assert ((Test-Path $s9b) -and ((Get-Content $s9b -Raw).Trim() -eq 'declined')) 'T2604: the old Not Now is folded into the per-agent answer'
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # ------------------------------------------------------------ case 10:
+    # T2604: Claude installed WHILE the app runs -> a new pane offers it
+    # (the re-check is spaced 60s from launch), and the palette finds the
+    # setup by "skill".
+    $home10 = Join-Path $base 'home-live'
+    New-Item -ItemType Directory -Force (Join-Path $home10 '.copilot\local') | Out-Null
+    Set-Content -Path (Join-Path $home10 '.copilot\local\copilot.exe') -Value '' -Encoding ascii -NoNewline
+    $state10 = Join-Path $base 'state10'
+    New-Item -ItemType Directory -Force $state10 | Out-Null
+    Set-Content -Path (Join-Path $state10 'agent_offer_copilot') -Value 'declined' -Encoding ascii -NoNewline
+    Set-Content -Path (Join-Path $state10 'agent_offer_migrated') -Value 'accepted' -Encoding ascii -NoNewline
+    $launchedAt = Get-Date
+    $g = Launch-Gui $state10 $home10 'ok'
+    $gpid = $g.Pid
+    $dlg = Wait-Class $gpid 'GhozttyConfirmDialog' $true 4000
+    Assert ($dlg -eq [IntPtr]::Zero) 'T2604: every detected agent answered: no prompt at launch'
+    New-Item -ItemType Directory -Force (Join-Path $home10 '.local\bin') | Out-Null
+    Copy-Item $stub (Join-Path $home10 '.local\bin\claude.cmd')
+    $waitMs = 62000 - [int]((Get-Date) - $launchedAt).TotalMilliseconds
+    if ($waitMs -gt 0) { Start-Sleep -Milliseconds $waitMs }
+    # "new tab" names one row; "split right" also finds "Focus Split Right",
+    # which sorts first, so Enter would move focus and open no pane.
+    $paletteOk = Invoke-PaletteAgentSetup $g 'new tab'
+    Assert $paletteOk 'palette new-tab injectable (live re-check case)'
+    $tabWait = 0
+    while ($tabWait -lt 5000 -and @(Get-TestChildWindows -Window $g.Top -Class 'GhozttyTerminal').Count -lt 2) { Start-Sleep -Milliseconds 100; $tabWait += 100 }
+    Assert (@(Get-TestChildWindows -Window $g.Top -Class 'GhozttyTerminal').Count -ge 2) 'the palette opened a second terminal pane'
+    $dlg = Wait-Class $gpid 'GhozttyConfirmDialog' $true 8000
+    Assert ($dlg -ne [IntPtr]::Zero) 'T2604: a new pane after Claude was installed offers Claude'
+    if ($dlg -ne [IntPtr]::Zero) {
+        $btns = Get-ButtonTexts $dlg
+        Assert (($btns -contains 'Set up Claude Code integration') -and -not ($btns -contains 'Set up Copilot CLI integration')) "T2604: the live prompt names Claude only (got: $($btns -join ', '))"
+        Send-TestControlKey -Control $dlg -Key Escape | Out-Null
+        Wait-Class $gpid 'GhozttyConfirmDialog' $false | Out-Null
+    }
+    Start-Sleep -Milliseconds 300
+    $paletteOk = Invoke-PaletteAgentSetup $g 'skill'
+    Assert $paletteOk 'palette skill search injectable'
+    if ($paletteOk) {
+        $dlg = Wait-Class $gpid 'GhozttyAgentIntegrations' $true 10000
+        Assert ($dlg -ne [IntPtr]::Zero) 'T2604: searching the palette for "skill" opens Agent Integrations'
+        if ($dlg -ne [IntPtr]::Zero) {
+            Send-TestControlKey -Control $dlg -Key Escape | Out-Null
+            Wait-Class $gpid 'GhozttyAgentIntegrations' $false | Out-Null
+        }
+    }
 } catch {
     # T1511: the foreground-leak checks below are part of this run too, so this
     # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -

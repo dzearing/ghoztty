@@ -382,8 +382,10 @@ pub const registry = [_]Command{
     // About in Help. Name verbatim from Mac.
     .{ .id = .whats_new, .name = "What’s New in Ghoztty…", .action = .new_window, .kind = .whats_new },
     // Mac's palette title (TerminalCommandPalette.swift): opens the Agent
-    // Integrations management window, not a blind install (T871).
-    .{ .id = .claude_integration, .name = "Set Up Agent Integrations…", .action = .new_window, .kind = .claude },
+    // Integrations management window, not a blind install (T871). The
+    // keywords are the words people search for it by (T2604: "skill" found
+    // nothing, so a user with Claude Code installed later had no way in).
+    .{ .id = .claude_integration, .name = "Set Up Agent Integrations…", .action = .new_window, .kind = .claude, .keywords = "skill skills claude copilot plugin hooks banner install integration" },
     // T1804, the pair Mac carries too (T1805): the first relaunches the app
     // and keeps every background session; the second restarts the background
     // process as well and asks first, naming what ends (`app_restart.zig`).
@@ -699,6 +701,18 @@ test "agent finds the restart row by keyword only, and the setup row by title (T
     try std.testing.expect(keywordOnly(get(.restart_app), "relaunch"));
     try std.testing.expect(keywordOnly(get(.restart_app_and_agent), "relaunch"));
     try std.testing.expect(!keywordOnly(get(.restart_app), ""));
+}
+
+test "the agent setup row is found by the words people search for it by (T2604)" {
+    const c = get(.claude_integration);
+    for ([_][]const u8{ "skill", "Skills", "claude", "Copilot", "plugin", "hooks", "agent", "integration" }) |word| {
+        try std.testing.expect(matches(c, word));
+    }
+    // "skill" is the report's word: no row but this one may answer it.
+    for (registry) |other| {
+        if (other.id == .claude_integration) continue;
+        try std.testing.expect(!matches(other, "skill"));
+    }
 }
 
 test "keywords never make an ordinary command match a stray word" {
