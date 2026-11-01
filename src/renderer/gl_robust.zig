@@ -169,6 +169,43 @@ pub fn createContext(hdc: HDC) ?Created {
     return .{ .hglrc = plain, .robust = false };
 }
 
+/// The attribute list for a context that joins `share`'s group (T2610). The
+/// robustness attributes must MATCH the share context's: the
+/// `WGL_ARB_create_context_robustness` spec fails the creation when the two
+/// reset notification strategies differ. So a robust group gets
+/// `robust_attribs` and a plain one gets the empty list.
+pub fn shareAttribs(share_robust: bool) []const i32 {
+    return if (share_robust) &robust_attribs else &plain_attribs;
+}
+
+const plain_attribs = [_]i32{0};
+
+/// Create a context on `hdc` in the same share group as `share` (T2610: a pane
+/// renderer's context shares the window presenter's, so the presenter can
+/// sample the textures the renderer draws). Robust exactly when `share` is
+/// (`shareAttribs`). Leaves NO context current, like `createContext`.
+///
+/// Through `wglCreateContextAttribsARB` and nothing else: `wglShareLists` on
+/// a context that already exists is refused on this driver (T2599), so the
+/// group has to be chosen at creation. A driver without the entry point
+/// answers null, and the caller presents the old way.
+pub fn createSharedContext(hdc: HDC, share: Created) ?Created {
+    if (comptime builtin.os.tag != .windows) return null;
+
+    const api = gl_loader.active();
+    // The entry point is only reachable with SOME context current; a
+    // throwaway plain one on the same DC is enough.
+    const probe = api.createContext(hdc) orelse return null;
+    defer _ = api.deleteContext(probe);
+    if (api.makeCurrent(hdc, probe) == 0) return null;
+    defer _ = api.makeCurrent(null, null);
+
+    const create_proc = api.proc("wglCreateContextAttribsARB") orelse return null;
+    const create: CreateContextAttribsFn = @ptrCast(create_proc);
+    const ctx = create(hdc, share.hglrc, shareAttribs(share.robust).ptr) orelse return null;
+    return .{ .hglrc = ctx, .robust = share.robust };
+}
+
 // -------------------------------------------------------------------------
 // Tests. The syscall half is covered by `test\win32\gl-device-lost.ps1`,
 // which drives a real rebuild through the debug-only simulation hooks.
@@ -182,6 +219,14 @@ test "robust_attribs: flags and reset strategy, zero terminated, no version" {
     try testing.expectEqual(WGL_CONTEXT_ROBUST_ACCESS_BIT_ARB, robust_attribs[1]);
     try testing.expectEqual(WGL_CONTEXT_RESET_NOTIFICATION_STRATEGY_ARB, robust_attribs[2]);
     try testing.expectEqual(WGL_LOSE_CONTEXT_ON_RESET_ARB, robust_attribs[3]);
+}
+
+test "shareAttribs: a shared context asks for exactly the group's robustness" {
+    const testing = std.testing;
+    try testing.expectEqualSlices(i32, &robust_attribs, shareAttribs(true));
+    const plain = shareAttribs(false);
+    try testing.expectEqual(@as(usize, 1), plain.len);
+    try testing.expectEqual(@as(i32, 0), plain[0]);
 }
 
 test "hasExtension: whole tokens only" {

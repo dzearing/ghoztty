@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-01T11:34:51-08:00",
-    "commit":  "8b9eb8177",
+    "generated":  "2026-11-01T12:49:44-08:00",
+    "commit":  "f93674741",
     "uncommitted":  [
 
                     ],
@@ -811,7 +811,7 @@
                   "src/remote/ws_client.zig":  "e5ebe28e8a2e5442c596a12fcaa6468d9646d9aaeaa08c40e5f1dce1e71370c2",
                   "src/remote_backend_e2e_main.zig":  "29314a78b9ebea17d0e23e539fd689d74bb37b31128f31653a40c3fa05727699",
                   "src/remote_test_client_main.zig":  "61984e801459beaec019afd7d56f2c141b8c04165726ba7213e033544c740855",
-                  "src/renderer.zig":  "e30b2a87b5c524b88ab4990104f1e1a47e45b5b91e580cf837fc2bb1d91d0cd2",
+                  "src/renderer.zig":  "cf08464b392e3ebc0918f0d2924fd7049f50a139caa38bcffb0bfa77b6291d3d",
                   "src/renderer/backend.zig":  "6c17bdd1d4eeb9eda89fc7259147fd4e28b207a684dece941104c6e1e6cf5b79",
                   "src/renderer/cell.zig":  "e7b1395f5740944729142bdb88371003d61839c05f0baef19ccd64a6642663f5",
                   "src/renderer/comp_overlay.zig":  "3a88671a52f9b37ae877481302834ee50c142e9bec8b5bd593c04f364672ca43",
@@ -821,7 +821,8 @@
                   "src/renderer/gl_comp_present.zig":  "a9e7f2e35af6aa6d55ded2227fa66c87a372f9e376a0a28fce8d259ff15d1a14",
                   "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
-                  "src/renderer/gl_robust.zig":  "70d950fc2a359d24df6783cfbe2ffc3812daf307834f0afa65e61ae8e9c38614",
+                  "src/renderer/gl_robust.zig":  "56ae9ce9924d222d22ab1cb51cdbb4d6b4e3c47350d15d5d6bfad7aa45cc61d1",
+                  "src/renderer/gl_window_presenter.zig":  "d33d931a04eef1cfeb357ce7bf999d5bff2378884e965f99435ab850abcfccb8",
                   "src/renderer/image.zig":  "e3c29fda5d2da44e41bb4f92b1a939e6bf9bc2e61100071712e21e7d67199d5f",
                   "src/renderer/link.zig":  "4cd5fe0202a1eadc19920fa664e0a4a139365e263754608051944ff6fdaaed36",
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",

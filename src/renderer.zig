@@ -63,6 +63,7 @@ test {
     _ = @import("renderer/gl_loader.zig");
     _ = @import("renderer/gl_robust.zig");
     _ = @import("renderer/gl_comp_present.zig");
+    _ = @import("renderer/gl_window_presenter.zig");
     _ = @import("renderer/comp_overlay.zig");
     _ = @import("renderer/comp_tree.zig");
     _ = cursor;
