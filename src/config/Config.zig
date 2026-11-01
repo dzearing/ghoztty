@@ -4031,7 +4031,8 @@ pub fn deinit(self: *Config) void {
 ///
 ///   1. Defaults
 ///   2. XDG config dir
-///   3. "Application Support" directory (macOS only)
+///   3. "Application Support" directory (macOS only; a development build
+///      uses its own `<bundle id>.debug` folder, see `config_bundle_id`)
 ///   4. CLI flags
 ///   5. Recursively defined configuration files
 ///

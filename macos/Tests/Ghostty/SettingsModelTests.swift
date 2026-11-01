@@ -55,6 +55,16 @@ struct SettingsPagesTests {
         #expect(schema["window-new-tab-position"]?.summary.hasSuffix(":") == false)
     }
 
+    /// The debug build must never write the release app's config: libghostty
+    /// loads (and Settings writes) the `.debug` App Support file, the same
+    /// folder Settings lists as a default source.
+    @MainActor @Test func debugBuildWritesItsOwnConfig() throws {
+        let preferred = try #require(ConfigSchema.preferredPath())
+        #expect(preferred.contains("/com.dzearing.ghoztty.debug/"), "\(preferred)")
+        let dir = URL(fileURLWithPath: preferred).deletingLastPathComponent().standardizedFileURL
+        #expect(SettingsModel.defaultFileURLs().contains { $0.deletingLastPathComponent().standardizedFileURL == dir })
+    }
+
     @Test func validatorUsesGhosttysParser() {
         #expect(ConfigValidator.problems(in: ["font-size = 14"]).isEmpty)
         #expect(ConfigValidator.problems(in: ["font-size = abc"]) == ["invalid value \"abc\""])

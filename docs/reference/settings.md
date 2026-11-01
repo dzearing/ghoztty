@@ -39,8 +39,17 @@ approved mock: `temp/mocks/settings/` (not committed).
 file "Open Config" opens, without creating it): App Support
 (`~/Library/Application Support/<bundle id>/config.ghostty`, legacy `config`)
 if non-empty, else the XDG file (`~/.config/ghostty/config.ghostty`, legacy
-`config`) if non-empty, else App Support. The debug build's bundle id
-(`com.dzearing.ghoztty.debug`) gives it its own App Support file.
+`config`) if non-empty, else App Support.
+
+**The debug build has its own config.** libghostty's `bundle_id` is
+`com.dzearing.ghoztty` in every build, so the App Support folder for config
+comes from `build_config.config_bundle_id` instead: `com.dzearing.ghoztty.debug`
+for Debug/ReleaseSafe builds (`is_dev_build`, the same rule as the debug IPC
+socket), matching the debug app's `Bundle.main` id. A dev build loads and
+writes only that file (plus reading the shared XDG file); its preferred path
+is always the App Support one, never XDG. Without this, testing Settings in
+the debug app rewrote the release app's config, and a fork-new key written
+there made the installed release show "unknown field" errors.
 
 **Load order and overrides** (`SettingsModel.loadSources`): XDG legacy, XDG,
 App Support legacy, App Support, then `config-file` includes in the order

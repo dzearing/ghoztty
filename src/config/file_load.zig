@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const assert = @import("../quirks.zig").inlineAssert;
 const Allocator = std.mem.Allocator;
 const internal_os = @import("../os/main.zig");
+const build_config = @import("../build_config.zig");
 
 const log = std.log.scoped(.config);
 
@@ -52,13 +53,13 @@ pub fn preferredXdgPath(alloc: Allocator) ![]const u8 {
 /// Default path for the macOS Application Support configuration file.
 /// Returned value must be freed by the caller.
 pub fn defaultAppSupportPath(alloc: Allocator) ![]const u8 {
-    return try internal_os.macos.appSupportDir(alloc, "config.ghostty");
+    return try internal_os.macos.configDir(alloc, "config.ghostty");
 }
 
 /// Ghostty <1.3.0 default path for the macOS Application Support
 /// configuration file. Returned value must be freed by the caller.
 pub fn legacyDefaultAppSupportPath(alloc: Allocator) ![]const u8 {
-    return try internal_os.macos.appSupportDir(alloc, "config");
+    return try internal_os.macos.configDir(alloc, "config");
 }
 
 /// Preferred default path for the macOS Application Support configuration file.
@@ -96,6 +97,10 @@ pub fn preferredAppSupportPath(alloc: Allocator) ![]const u8 {
 pub fn preferredDefaultFilePath(alloc: Allocator) ![]const u8 {
     switch (builtin.os.tag) {
         .macos => {
+            // A development build writes only its own Application Support
+            // file, never the XDG file it shares with the release app.
+            if (comptime build_config.is_dev_build) return try preferredAppSupportPath(alloc);
+
             // macOS prefers the Application Support directory
             // if it exists.
             const app_support_path = try preferredAppSupportPath(alloc);
@@ -163,4 +168,20 @@ pub fn open(path: []const u8) OpenFileError!std.fs.File {
     if (stat.size == 0) return OpenFileError.FileIsEmpty;
 
     return file;
+}
+
+test "a development build keeps its config apart from the release app's" {
+    if (comptime builtin.os.tag != .macos) return error.SkipZigTest;
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // Tests build in Debug, so this is the dev-build path.
+    try testing.expect(build_config.is_dev_build);
+    const app_support = try defaultAppSupportPath(alloc);
+    defer alloc.free(app_support);
+    try testing.expect(std.mem.endsWith(u8, app_support, "/" ++ build_config.bundle_id ++ ".debug/config.ghostty"));
+
+    const preferred = try preferredDefaultFilePath(alloc);
+    defer alloc.free(preferred);
+    try testing.expect(std.mem.indexOf(u8, preferred, build_config.bundle_id ++ ".debug/") != null);
 }
