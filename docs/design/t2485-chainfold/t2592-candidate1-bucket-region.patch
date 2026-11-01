@@ -1,0 +1,455 @@
+diff --git a/docs/design/windows-parity-tasks/T2592.md b/docs/design/windows-parity-tasks/T2592.md
+index cc7219407..028fce147 100644
+--- a/docs/design/windows-parity-tasks/T2592.md
++++ b/docs/design/windows-parity-tasks/T2592.md
+@@ -3,7 +3,7 @@ id: T2592
+ title: "Blades D22b: at the near-full window a pane the fold grows shows its old picture plus a black strip for one or two frames although its new-size frame was already swapped - the compositor shows the resized window before that present; renderer-side fixes cannot reach it"
+ order: null
+ deps: []
+-status: "todo"
++status: "in-progress"
+ commits: []
+ seat: "win"
+ priority: "P0"
+@@ -68,3 +68,9 @@ Candidate fixes (to be measured, best first):
+ - [ ] the chosen fix: 0 black frames on two consecutive near-full runs and on two normal runs
+ - [ ] no new gaps (d) or flashes against the 20261101-004809 baseline
+ - [ ] unit tests for any new pure logic (bucket sizing, logical-size mapping) in the none lane
++
++## Progress log
++
++- 2026-11-01 01:35: claimed; work starting.
++- 2026-11-01 01:45: A1 (default SwapBuffers path, near-full 3000x1700, release @1dad9fbe6, run 20261101-014250): black f220/f221 band4 x2244-2254 + band7 x3432-3460, f223 band4 x2255-2281 + band7 x3488-3559 (3 black frames); 1 flash f240 band7; blind=34. Reproduces the task's shape.
++- 2026-11-01 01:48: B1 (GHOZTTY_COMP_PRESENT=1, same build/size, run 20261101-014550): black on 4 frames (f144 band2 x1365-1407, f167 band3, f194 band4, f208 band4/5) - wider 17-45 px strips at moving pane edges - plus a final jump f173. Candidate 3 ruled out: the comp present is not a fix and is worse (consistent with T2534). Going to candidate 1 (grow-only pane HWND).
+diff --git a/src/apprt/win32/BannerOverlay.zig b/src/apprt/win32/BannerOverlay.zig
+index 3958c894f..8d1d57e8c 100644
+--- a/src/apprt/win32/BannerOverlay.zig
++++ b/src/apprt/win32/BannerOverlay.zig
+@@ -625,7 +625,7 @@ pub const BannerOverlay = struct {
+             return;
+         }
+         var rect: w32.RECT = undefined;
+-        if (w32.GetWindowRect(self.owner, &rect) == 0) return;
++        if (!pane_clip.paneWindowRect(self.owner, &rect)) return;
+         // The owner spans the pane slot's full width (the layout only ever
+         // offsets its TOP by the band), so its rect is the pane width the
+         // banner content must size itself to (T123).
+@@ -2551,8 +2551,8 @@ pub const BannerOverlay = struct {
+         const band = s.gridBand();
+         var client: w32.RECT = undefined;
+         var screen: w32.RECT = undefined;
+-        if (w32.GetClientRect(self.owner, &client) == 0) return;
+-        if (w32.GetWindowRect(self.owner, &screen) == 0) return;
++        if (!pane_clip.paneClientRect(self.owner, &client)) return;
++        if (!pane_clip.paneWindowRect(self.owner, &screen)) return;
+         screen.top = banner_layout.gridTop(screen.top, screen.bottom, band);
+         client.top = banner_layout.gridTop(client.top, client.bottom, band);
+         const w = client.right - client.left;
+diff --git a/src/apprt/win32/DimOverlay.zig b/src/apprt/win32/DimOverlay.zig
+index 27809e816..cb170b64e 100644
+--- a/src/apprt/win32/DimOverlay.zig
++++ b/src/apprt/win32/DimOverlay.zig
+@@ -222,9 +222,10 @@ pub const DimOverlay = struct {
+         }
+ 
+         // GetWindowRect on the (child) surface HWND is already in screen
+-        // coordinates, which is what a popup's SetWindowPos takes.
++        // coordinates, which is what a popup's SetWindowPos takes. As far as
++        // the pane shows: a live drag holds its window wider (T2592).
+         var rect: w32.RECT = undefined;
+-        if (w32.GetWindowRect(self.owner, &rect) == 0) return false;
++        if (!pane_clip.paneWindowRect(self.owner, &rect)) return false;
+ 
+         // The window clips the pane and nothing clips this popup (T2227): a
+         // folding card slides out past the window's edge, and its wash -
+diff --git a/src/apprt/win32/Scrollbar.zig b/src/apprt/win32/Scrollbar.zig
+index f93cc2a4a..d8e5ef890 100644
+--- a/src/apprt/win32/Scrollbar.zig
++++ b/src/apprt/win32/Scrollbar.zig
+@@ -371,8 +371,10 @@ pub const Scrollbar = struct {
+     /// Reposition and resize the popup to stay glued to the surface.
+     /// Returns the new scrollbar width.
+     pub fn repositionAndResize(self: *Scrollbar) i32 {
++        // At the pane's visible right edge: a live drag holds its window
++        // wider (T2592).
+         var rect: w32.RECT = undefined;
+-        if (w32.GetClientRect(self.owner, &rect) == 0) return 0;
++        if (!pane_clip.paneClientRect(self.owner, &rect)) return 0;
+ 
+         // The strip runs down the grid, below the banner band a spanning
+         // window carries (T2568).
+diff --git a/src/apprt/win32/Surface.zig b/src/apprt/win32/Surface.zig
+index 8d247514e..e3bc6fc30 100644
+--- a/src/apprt/win32/Surface.zig
++++ b/src/apprt/win32/Surface.zig
+@@ -37,6 +37,7 @@ const w32 = @import("win32.zig");
+ const drag_perf = @import("drag_perf.zig");
+ const lab_plant = @import("lab_plant.zig");
+ const resize_paint = @import("resize_paint.zig");
++const pane_clip = @import("pane_clip.zig");
+ const pane_layer = @import("pane_layer.zig");
+ const clipboard_open = @import("clipboard_open.zig");
+ const utf16_text = @import("utf16_text.zig");
+@@ -4380,6 +4381,28 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
+     self.parent_window.noteResize();
+     self.resizes +%= 1;
+ 
++    const height = banner_layout.gridHeight(client_height, self.gridBand());
++    if (!self.sizeGrid(width, client_height)) return;
++    self.awaitResizedFrame(width, height);
++}
++
++/// A live layout pass changed only how much of this pane's window shows
++/// (T2592): its window is held wider, so no `WM_SIZE` comes, but the grid
++/// and the scrollbar follow the visible width. The renderer's surface is the
++/// window, unchanged, so nothing waits for a frame.
++pub fn applyLiveWidth(self: *Surface) void {
++    const hwnd = self.hwnd orelse return;
++    var rc: w32.RECT = undefined;
++    if (w32.GetClientRect(hwnd, &rc) == 0) return;
++    if (rc.right <= rc.left or rc.bottom <= rc.top) return;
++    if (!self.sizeGrid(@intCast(rc.right - rc.left), @intCast(rc.bottom - rc.top))) return;
++    self.core_surface.renderer_thread.wakeup.notify() catch {};
++}
++
++/// The grid's share of a resize: the scrollbar, the popups and the core's
++/// size, for a window `width` x `client_height`. False when the core is not
++/// up to take it.
++fn sizeGrid(self: *Surface, width: u32, client_height: u32) bool {
+     // On the composition path the window spans the banner band and the grid
+     // is what is left below it (T2566); everywhere else the band is 0.
+     const band = self.gridBand();
+@@ -4390,7 +4413,12 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
+ 
+     // Pre-flight the scrollbar so we know whether to subtract its width.
+     // This must happen before sizeCallback so the grid gets the right width.
+-    var grid_width = width;
++    // A live drag may hold the window wider than the pane shows (T2592): the
++    // grid is the part that shows.
++    var grid_width: u32 = if (self.hwnd) |h| blk: {
++        const live = pane_clip.liveWidth(h);
++        break :blk if (live > 0 and live < width) @intCast(live) else width;
++    } else width;
+     if (self.scrollbar) |sb| {
+         const sub = sb.repositionAndResize();
+         if (sub > 0 and grid_width > @as(u32, @intCast(sub))) {
+@@ -4403,7 +4431,7 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
+     if (self.search_active) self.positionSearchBar();
+     if (self.palette_active) self.positionCommandPalette();
+ 
+-    if (!self.core_surface_ready) return;
++    if (!self.core_surface_ready) return false;
+ 
+     // Notify the core surface so it recalculates the terminal grid,
+     // updates the renderer viewport, and sends SIGWINCH to the PTY.
+@@ -4416,13 +4444,20 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
+         null;
+     self.core_surface.sizeCallback(.{ .width = grid_width, .height = height }) catch |err| {
+         log.err("sizeCallback error: {}", .{err});
+-        return;
++        return false;
+     };
+     if (self.flush_next_resize) {
+         self.flush_next_resize = false;
+         self.core_surface.flushResize();
+     }
+     if (size_timer) |*t| self.parent_window.addResizeUs(t.read() / std.time.ns_per_us);
++    return true;
++}
++
++/// The renderer's share of a resize to a window `width` px wide over a grid
++/// `height` px tall: wake it, and while the user is watching, wait for its
++/// frame at the new size.
++fn awaitResizedFrame(self: *Surface, width: u32, height: u32) void {
+ 
+     // During a resize the user is watching, block until the renderer has
+     // presented one frame at the new size. This prevents the DWM from
+diff --git a/src/apprt/win32/Window.zig b/src/apprt/win32/Window.zig
+index def4cbe4a..8405dde2f 100644
+--- a/src/apprt/win32/Window.zig
++++ b/src/apprt/win32/Window.zig
+@@ -22,6 +22,9 @@ const RenameDialog = @import("RenameDialog.zig");
+ const BannerDialog = @import("BannerDialog.zig");
+ const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
+ const resize_paint = @import("resize_paint.zig");
++const pane_clip = @import("pane_clip.zig");
++const pane_clip_math = @import("pane_clip_math.zig");
++const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
+ const resize_prelayout = @import("resize_prelayout.zig");
+ const Surface = @import("Surface.zig");
+ const window_chord = @import("window_chord.zig");
+@@ -8761,7 +8764,72 @@ fn placeLeaf(self: *Window, hdwp: *?w32.HDWP, view: *PaneView, h: w32.HWND, slot
+     // held the divider paint back while a viewer's page already showed at
+     // its new place.
+     if (show) if (view.surface()) |s| if (s.banner_overlay) |b| b.prepareResize(s.scale, r.left, r.top, r.right - r.left);
+-    placePane(hdwp, h, r.left, r.top, @intCast(r.right - r.left), @intCast(r.bottom - r.top), show);
++    const cx = self.liveLeafWidth(view, h, r.right - r.left, show);
++    placePane(hdwp, h, r.left, r.top, cx, @intCast(r.bottom - r.top), show);
++}
++
++/// A `card_region_key` no plan produces (plan keys are 0 or odd): the region
++/// `liveLeafWidth` sets ahead of a batch, which the pass's cut always replaces.
++const live_cut_key: u64 = 2;
++
++/// The width `placeLeaf` gives a pane's window `w` px wide (T2592). While a
++/// drag holds a terminal's grid, its window is kept wider than the pane and
++/// cut to it (`pane_clip_math.liveWindowWidth`), so a pane that grows uncovers
++/// background its last frame already drew instead of a strip of black the
++/// compositor shows until its present at the new size lands. Everywhere else,
++/// and on the composition present, the window is exactly the pane.
++fn liveLeafWidth(self: *Window, view: *PaneView, h: w32.HWND, w: i32, show: bool) i32 {
++    const s = view.surface() orelse return w;
++    const live = show and self.in_live_layout and s.resize_held and !gl_comp_present.enabled();
++    if (!live) {
++        if (pane_clip.liveWidth(h) > 0) {
++            pane_clip.setLiveWidth(h, 0);
++            view.card_region_key = live_cut_key;
++        }
++        return w;
++    }
++    var wr: w32.RECT = undefined;
++    if (w32.GetWindowRect(h, &wr) == 0) return w;
++    const current = wr.right - wr.left;
++    const cx = pane_clip_math.liveWindowWidth(w, current);
++    const prev = pane_clip.liveWidth(h);
++    pane_clip.setLiveWidth(h, w);
++    if (cx > current) {
++        // The window grows: cut it to the pane before the batch moves it, so
++        // the strip it gains - black until its first frame at the new size
++        // is composed - never shows. The pass's own cut replaces this.
++        if (w32.CreateRectRgn(0, 0, w, 1 << 15)) |rgn| {
++            if (w32.SetWindowRgn(h, rgn, 0) == 0) _ = w32.DeleteObject(rgn) else view.card_region_key = live_cut_key;
++        }
++    } else if (prev != w) {
++        // Only what shows changes, and no WM_SIZE will say so.
++        s.applyLiveWidth();
++    }
++    return cx;
++}
++
++/// Size every window a live drag held wider back to its pane (T2592), once
++/// the drag no longer holds the grids: the pass that released them placed
++/// them at the held width.
++fn settleLiveWidths(self: *Window) void {
++    if (self.tab_count == 0) return;
++    const parent = self.hwnd orelse return;
++    var any = false;
++    for (0..self.tab_count) |tab| {
++        var it = self.tab_trees[tab].iterator();
++        while (it.next()) |entry| {
++            const h = entry.view.hwnd() orelse continue;
++            const live = pane_clip.liveWidth(h);
++            if (live <= 0) continue;
++            pane_clip.setLiveWidth(h, 0);
++            entry.view.card_region_key = live_cut_key;
++            any = true;
++            const at = childClientRect(parent, h) orelse continue;
++            if (at.width() == live) continue;
++            _ = w32.SetWindowPos(h, null, 0, 0, live, at.height(), w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
++        }
++    }
++    if (any) self.cutCardRegions();
+ }
+ 
+ /// Where `placeLeaf` puts `view`'s child window for card `slot`.
+@@ -8944,9 +9012,22 @@ fn cardRegionPlan(
+     if (!elevated and tab == self.active_tab) {
+         if (childClientRect(parent, h)) |at| {
+             plan.cut = self.slideClip(view, at);
++            // A live drag holding the window wider than the pane (T2592) is
++            // cut to the pane, sliding or not.
++            if (plan.cut == null and pane_clip.liveWidth(h) > 0)
++                plan.cut = .{ .left = 0, .top = 0, .right = at.width(), .bottom = at.height() };
+             if (plan.cut) |c| plan.key = cardRegionKey(true, c, false);
+         }
+     }
++    // Only what shows of a window a live drag holds wider (T2592).
++    const live = pane_clip.liveWidth(h);
++    if (live > 0 and plan.key != 0) {
++        plan.shown.right = @min(plan.shown.right, live);
++        if (plan.cut) |*c| {
++            c.right = @min(c.right, live);
++            plan.key = cardRegionKey(true, c.*, false);
++        } else plan.key = cardRegionKey(false, plan.shown, plan.square_top);
++    }
+     return plan;
+ }
+ 
+@@ -9899,6 +9980,8 @@ fn syncDragHolds(self: *Window, comptime acquire_only: bool) void {
+     }
+     // The acceptance oracle (stack-drag-hold.ps1).
+     if (held + released > 0) log.debug("drag hold held={d} released={d}", .{ held, released });
++    // The windows the drag held wider than their panes go back (T2592).
++    if (!want) self.settleLiveWidths();
+ }
+ 
+ /// A divider or grip drag moved (T2459): the terminals hold again, and the
+diff --git a/src/apprt/win32/pane_clip.zig b/src/apprt/win32/pane_clip.zig
+index a905e09ce..76cc7bbec 100644
+--- a/src/apprt/win32/pane_clip.zig
++++ b/src/apprt/win32/pane_clip.zig
+@@ -1,6 +1,7 @@
+ //! How much of a pane its window shows, for the pane's popups (T2227). The
+ //! rule and its geometry are `pane_clip_math.zig`; this is the window walk.
+ 
++const std = @import("std");
+ const w32 = @import("win32.zig");
+ const math = @import("pane_clip_math.zig");
+ 
+@@ -10,13 +11,49 @@ fn fromRect(r: w32.RECT) math.Rect {
+     return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+ }
+ 
++/// The window property a live layout pass keeps a pane's visible width in
++/// while its window is held wider (T2592, `math.liveWindowWidth`).
++const live_width_prop = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyLiveWidth");
++
++/// The visible width a live pass set on `hwnd`, or 0 for none: the window
++/// shows all of itself.
++pub fn liveWidth(hwnd: w32.HWND) i32 {
++    const v = w32.GetPropW(hwnd, live_width_prop) orelse return 0;
++    return @intCast(@intFromPtr(v));
++}
++
++/// Record `hwnd`'s visible width for this live pass, or clear it (`w` <= 0).
++pub fn setLiveWidth(hwnd: w32.HWND, w: i32) void {
++    if (w <= 0) {
++        _ = w32.RemovePropW(hwnd, live_width_prop);
++        return;
++    }
++    _ = w32.SetPropW(hwnd, live_width_prop, @ptrFromInt(@as(usize, @intCast(w))));
++}
++
++/// `hwnd`'s window rect, in screen coordinates, as far as its pane shows:
++/// what a popup glued to a pane is placed over (T2592). The plain window
++/// rect for any window a live pass is not holding wider.
++pub fn paneWindowRect(hwnd: w32.HWND, out: *w32.RECT) bool {
++    if (w32.GetWindowRect(hwnd, out) == 0) return false;
++    out.right = math.logicalRect(fromRect(out.*), liveWidth(hwnd)).right;
++    return true;
++}
++
++/// `hwnd`'s client rect as far as its pane shows (T2592).
++pub fn paneClientRect(hwnd: w32.HWND, out: *w32.RECT) bool {
++    if (w32.GetClientRect(hwnd, out) == 0) return false;
++    out.right = math.logicalRect(fromRect(out.*), liveWidth(hwnd)).right;
++    return true;
++}
++
+ /// The part of `hwnd` that is on show inside its ancestors, in screen
+ /// coordinates: its window rect intersected with the client area of every
+ /// window that clips it (each parent of a WS_CHILD, up to the top-level).
+ /// Null when none of it is.
+ pub fn visibleRect(hwnd: w32.HWND) ?math.Rect {
+     var wr: w32.RECT = undefined;
+-    if (w32.GetWindowRect(hwnd, &wr) == 0) return null;
++    if (!paneWindowRect(hwnd, &wr)) return null;
+     var vis = fromRect(wr);
+     var h = hwnd;
+     while (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_CHILD != 0) {
+@@ -36,7 +73,7 @@ pub fn visibleRect(hwnd: w32.HWND) ?math.Rect {
+ /// How much of `owner` (a pane) is in view.
+ pub fn ownerClip(owner: w32.HWND) Clip {
+     var wr: w32.RECT = undefined;
+-    if (w32.GetWindowRect(owner, &wr) == 0) return .none;
++    if (!paneWindowRect(owner, &wr)) return .none;
+     return math.clip(fromRect(wr), visibleRect(owner));
+ }
+ 
+diff --git a/src/apprt/win32/pane_clip_math.zig b/src/apprt/win32/pane_clip_math.zig
+index 793224e47..9c7e511ff 100644
+--- a/src/apprt/win32/pane_clip_math.zig
++++ b/src/apprt/win32/pane_clip_math.zig
+@@ -78,8 +78,76 @@ pub fn clip(pane: Rect, visible: ?Rect) Clip {
+     } };
+ }
+ 
++/// A live layout pass grows a terminal pane's window in steps of this many
++/// pixels, ahead of the pane (T2592).
++pub const live_bucket_px: i32 = 256;
++
++/// How far ahead of the pane's visible width its window is kept.
++pub const live_headroom_px: i32 = 128;
++
++/// The width a live layout pass gives the window of a terminal pane that
++/// shows `logical` px of it, when the window is `current` px wide now
++/// (T2592). A window whose size changes shows its old picture with black
++/// beyond it until its present at the new size is composed, and on a big
++/// window that is a frame or two after the swap. So while a drag runs the
++/// window is kept wider than what shows, cut to `logical` by its region,
++/// and only ever grows - while the pane is still `live_headroom_px` short
++/// of its edge, so what any grow uncovers is outside the cut. Inside the
++/// window the pane grows by its region alone: the pixels it uncovers are
++/// the background the last frame already drew there. Never shrinks: a pane
++/// that narrows keeps its window, and the settle pass sizes it exactly.
++pub fn liveWindowWidth(logical: i32, current: i32) i32 {
++    if (logical <= 0) return logical;
++    if (current >= logical + live_headroom_px) return current;
++    const need = logical + live_headroom_px;
++    return @divFloor(need + live_bucket_px - 1, live_bucket_px) * live_bucket_px;
++}
++
++/// `window` (a pane's window or client rect) as far as its pane shows:
++/// `logical` px wide from its left edge, when a live pass keeps the window
++/// wider (T2592). `logical` <= 0 is no such width.
++pub fn logicalRect(window: Rect, logical: i32) Rect {
++    if (logical <= 0 or window.left + logical >= window.right) return window;
++    return .{ .left = window.left, .top = window.top, .right = window.left + logical, .bottom = window.bottom };
++}
++
+ const testing = std.testing;
+ 
++test "liveWindowWidth: a pane at its exact size takes a bucket with headroom (T2592)" {
++    // 2155 + 128 = 2283 -> the 256 bucket above it, 2304.
++    try testing.expectEqual(@as(i32, 2304), liveWindowWidth(2155, 2155));
++    try testing.expectEqual(@as(i32, 512), liveWindowWidth(280, 280));
++}
++
++test "liveWindowWidth: growing inside the headroom keeps the window" {
++    // The near-full run's step 2155 -> 2162 is a region change, not a resize.
++    try testing.expectEqual(@as(i32, 2304), liveWindowWidth(2162, 2304));
++    try testing.expectEqual(@as(i32, 2304), liveWindowWidth(2176, 2304));
++    // 313 + 128 = 441 <= 512: still inside.
++    try testing.expectEqual(@as(i32, 512), liveWindowWidth(313, 512));
++}
++
++test "liveWindowWidth: nearing the edge grows the window while the cut is still inside it" {
++    // 2177 + 128 = 2305 > 2304: the next bucket, while 2177 still lies inside
++    // the 2304 the last frame covered.
++    const w = liveWindowWidth(2177, 2304);
++    try testing.expectEqual(@as(i32, 2560), w);
++    try testing.expect(2177 < 2304);
++}
++
++test "liveWindowWidth: a pane that narrows keeps its window" {
++    try testing.expectEqual(@as(i32, 2304), liveWindowWidth(900, 2304));
++    try testing.expectEqual(@as(i32, 0), liveWindowWidth(0, 2304));
++}
++
++test "logicalRect: cut to the logical width, or the rect as it is" {
++    try testing.expectEqual(rc(100, 40, 2262, 700), logicalRect(rc(100, 40, 2404, 700), 2162));
++    try testing.expectEqual(rc(100, 40, 400, 700), logicalRect(rc(100, 40, 400, 700), 0));
++    // A logical width the window does not exceed changes nothing.
++    try testing.expectEqual(rc(100, 40, 400, 700), logicalRect(rc(100, 40, 400, 700), 300));
++    try testing.expectEqual(rc(100, 40, 400, 700), logicalRect(rc(100, 40, 400, 700), 500));
++}
++
+ fn rc(l: i32, t: i32, rt: i32, b: i32) Rect {
+     return .{ .left = l, .top = t, .right = rt, .bottom = b };
+ }
+diff --git a/src/apprt/win32/win32.zig b/src/apprt/win32/win32.zig
+index 1e590bf93..f4814f550 100644
+--- a/src/apprt/win32/win32.zig
++++ b/src/apprt/win32/win32.zig
+@@ -786,6 +786,11 @@ pub extern "user32" fn RemovePropW(
+     lpString: [*:0]const u16,
+ ) callconv(.winapi) ?*anyopaque;
+ 
++pub extern "user32" fn GetPropW(
++    hWnd: HWND,
++    lpString: [*:0]const u16,
++) callconv(.winapi) ?*anyopaque;
++
+ pub extern "user32" fn GetKeyState(
+     nVirtKey: i32,
+ ) callconv(.winapi) i16;
