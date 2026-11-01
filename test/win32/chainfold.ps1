@@ -145,6 +145,38 @@ try {
         $nf = @($r.Rims | ForEach-Object { $_.Frame } | Select-Object -Unique)
         Assert 'B6 ...and does not hide a rim that appears beside it (f5-f12 still found)' (($nf -join ',') -eq ($rim -join ',')) (Format-Found $r)
 
+        # Fine text (1 px strokes) saturates the band mean, so uneven steps of
+        # a correct glide read as blinks unless the shift explains them (live
+        # 20261031-230739 f82/f94); a real blink must survive that.
+        # The text spans every band (a pane wider than the band, as live), so
+        # only the strokes move; a grey blank covers the middle of the frame.
+        # Monospace-like: 10 px cells, each with 1-3 strokes at seeded random
+        # places. A regular grid realigns every period and makes p and n
+        # truly agree; uniform noise never lets the raw rule fire at all.
+        $TextX = @(0, 3, 12, 15, 24, 27, 36, 39, 48, 51, 60, 63, 72, 75, 84, 87, 96, 96, 96, 96)
+        $rng = New-Object System.Random 2485
+        $Strokes = @(); for ($c = -15; $c -lt 40; $c++) { for ($r = 0; $r -lt 12; $r++) { for ($j = $rng.Next(1, 4); $j -gt 0; $j--) { $Strokes += , @(($c * 10 + $rng.Next(0, 9)), $r) } } }
+        function New-TextFrame([int]$x, [bool]$Gray = $false) {
+            $f = [CfFrame]::Solid($W, $H, $PaneBg)
+            foreach ($s in $Strokes) { $f.Fill($x + $s[0], 14 + $s[1] * 8, 1, 6, $Ink) }
+            if ($Gray) { $f.Fill(60, 10, 80, 100, 0x808080) }
+            return $f
+        }
+        function Invoke-TextScan([int[]]$Xs, [int]$GrayAt = -1) {
+            $s = New-ChainFoldScan -X0 0 -Y0 0 -X1 $W -Y1 $H -Bands 4
+            for ($k = 0; $k -lt $Xs.Count; $k++) { $s.Add($k, (New-TextFrame $Xs[$k] ($k -eq $GrayAt))) }
+            return [pscustomobject]@{ Flashes = @($s.Flashes()); Moved = @($s.Explained()) }
+        }
+        $r = Invoke-TextScan $TextX
+        Assert 'B7 fine text gliding in uneven steps (+3, +9, ...) is not a flash, and the raw rule did see candidates there (negative control)' (
+            $r.Flashes.Count -eq 0 -and $r.Moved.Count -gt 0) "flash=[$(@($r.Flashes) -join '; ')] moved=$($r.Moved.Count)"
+        $r = Invoke-TextScan $TextX -GrayAt 9
+        Assert 'B8 ...but the same glide with the pane blanked grey on f9 is still a flash on f9' (
+            @($r.Flashes | Where-Object { $_.Frame -eq 9 }).Count -ge 1 -and @($r.Flashes | Where-Object { $_.Frame -ne 9 }).Count -eq 0) "flash=[$(@($r.Flashes) -join '; ')]"
+        $r = Invoke-TextScan @(60, 60, 60, 60, 61, 60, 60, 60, 60)
+        Assert 'B9 ...and a still pane shaking by one pixel for one frame (D19, a->b->a) is a flash on that frame, not explained away as motion' (
+            @($r.Flashes | Where-Object { $_.Frame -eq 4 }).Count -ge 1 -and @($r.Flashes | Where-Object { $_.Frame -ne 4 }).Count -eq 0) "flash=[$(@($r.Flashes) -join '; ')] moved=$($r.Moved.Count)"
+
         # ---- C. the stall check -------------------------------------------
         ''
         'C. criterion d on a frame list (120 Hz, 10 MHz clock)'
@@ -223,6 +255,7 @@ try {
         } else {
             $o = Invoke-ChainFoldOracle -RunDir $out
             "  scored f$($o.FirstFrame)-f$($o.LastFrame) ($($o.Frames) frames, $($o.Dropped) dropped by the PNG queue) in $out"
+            @($o.Explained) | ForEach-Object { "  explained as motion (not a blink): $_" }
             Assert 'La no frame where a band blinks' (@($o.Flashes).Count -eq 0) (@($o.Flashes | Select-Object -First 6) -join '; ')
             Assert 'La no pure-black hole in any frame' (@($o.Black).Count -eq 0) (@($o.Black | Select-Object -First 6) -join '; ')
             Assert 'Lb no colour mid-drag that neither end state has' (@($o.Novel).Count -eq 0) (@($o.Novel | Select-Object -First 4) -join '; ')

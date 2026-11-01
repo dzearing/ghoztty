@@ -101,6 +101,20 @@ public sealed class ChainFoldScan {
     // frames by eye) the worst last-step/median was 1.30 over 8 runs. So a
     // last step counts as a jump past 1.5x the run's median.
     public double FinalRatio = 1.5;
+    // Moving text saturates the band mean: glyph strokes are 1-2 px wide, so
+    // a 3 px step scores as high as a 12 px one and a correct in-between
+    // frame can read as a flash (live 20261031-230739 f82: pane 2 placed
+    // 415 -> 418 -> 427, the text shifted +3/+9 with ~0 residual, raw score
+    // 3.7). Such a candidate is forgiven only when BOTH hold: its neighbours
+    // plainly disagree (p-n above AgreeFraction of the smaller step - a real
+    // blink, the D19 a->b->a shake included, has p-n near 0), and the best
+    // horizontal shift of each pair explains the middle frame (the
+    // compensated score is under FlashThreshold). Every catalogued defect on
+    // run1/51/57/61/65 and 20261031-003706 survives; the one a shift hides
+    // (run65 f248, a black strip on a moving pane) is the black check's.
+    public double AgreeFraction = 0.5;
+    public int MaxShift = 64;             // px a band may travel between p and n
+    readonly Dictionary<long, string> forgiven = new Dictionary<long, string>();
 
     readonly List<int> idx = new List<int>();
     readonly List<double[]> dPrev = new List<double[]>();  // d(i-1, i) per band
@@ -137,7 +151,10 @@ public sealed class ChainFoldScan {
         idx.Add(frameIndex);
         dPrev.Add(lumB == null ? new double[bands] : Diff(lumB, lum));
         dSkip.Add(null);
-        if (lumA != null) dSkip[count - 1] = Diff(lumA, lum);
+        if (lumA != null) {
+            dSkip[count - 1] = Diff(lumA, lum);
+            Compensate(count - 1, lumA, lumB, lum);
+        }
         lumA = lumB; lumB = lum;
         // the colour histogram (4 bits a channel) and the black columns
         var hh = new int[4096];
@@ -157,12 +174,47 @@ public sealed class ChainFoldScan {
         count++;
     }
 
+    // the least mean abs difference of band k between a and b over every
+    // horizontal shift of b up to MaxShift (rows every other one)
+    double BestShift(byte[] a, byte[] b, int k) {
+        int w = x1 - x0, h = y1 - y0;
+        int bx0 = k * w / bands, bx1 = (k + 1) * w / bands;
+        double best = double.MaxValue;
+        for (int s = -MaxShift; s <= MaxShift; s++) {
+            int lo = Math.Max(bx0, -s), hi = Math.Min(bx1, w - s);
+            if (hi - lo < (bx1 - bx0) / 2) continue;
+            long sum = 0;
+            for (int y = 0; y < h; y += 2) { int r = y * w; for (int x = lo; x < hi; x++) sum += Math.Abs(a[r + x] - b[r + x + s]); }
+            double d = (double)sum / (((h + 1) / 2) * (double)(hi - lo));
+            if (d < best) best = d;
+        }
+        return best;
+    }
+
+    void Compensate(int i, byte[] p, byte[] c, byte[] n) {
+        if (i < 1) return;
+        for (int k = 0; k < bands; k++) {
+            double pc = dPrev[i][k], cn = dPrev[i + 1][k], pn = dSkip[i][k];
+            if ((pc + cn) / 2 - pn <= FlashThreshold || pn <= AgreeFraction * Math.Min(pc, cn)) continue;
+            double pcC = BestShift(p, c, k), cnC = BestShift(c, n, k), pnC = BestShift(p, n, k);
+            double scC = (pcC + cnC) / 2 - pnC;
+            if (scC <= FlashThreshold) forgiven[(long)i * 1000 + k] = string.Format("shifted p-c {0:0.0} c-n {1:0.0} p-n {2:0.0}", pcC, cnC, pnC);
+        }
+    }
+
+    // raw candidates that motion explains (see AgreeFraction)
+    public List<CfFinding> Explained() {
+        var o = new List<CfFinding>();
+        foreach (var kv in forgiven) o.Add(new CfFinding { Kind = "moved", Frame = idx[(int)(kv.Key / 1000)], Band = (int)(kv.Key % 1000), Score = 0, Detail = kv.Value });
+        return o;
+    }
+
     public List<CfFinding> Flashes() {
         var o = new List<CfFinding>();
         for (int i = 1; i + 1 < count; i++) for (int k = 0; k < bands; k++) {
             double pc = dPrev[i][k], cn = dPrev[i + 1][k], pn = dSkip[i][k];
             double sc = (pc + cn) / 2 - pn;
-            if (sc > FlashThreshold) o.Add(new CfFinding { Kind = "flash", Frame = idx[i], Band = k, Score = sc, Detail = string.Format("p-c {0:0.0} c-n {1:0.0} p-n {2:0.0}", pc, cn, pn) });
+            if (sc > FlashThreshold && !forgiven.ContainsKey((long)i * 1000 + k)) o.Add(new CfFinding { Kind = "flash", Frame = idx[i], Band = k, Score = sc, Detail = string.Format("p-c {0:0.0} c-n {1:0.0} p-n {2:0.0}", pc, cn, pn) });
         }
         return o;
     }
@@ -399,6 +451,7 @@ function Invoke-ChainFoldOracle {
         LastFrame = [int]$frames[-1].i
         Dropped = [int]$tl.stats.QueueDropped
         Flashes = @($scan.Flashes())
+        Explained = @($scan.Explained())
         Black   = @($scan.Black)
         Novel   = @($scan.Novel())
         Rims    = $rims
