@@ -18098,6 +18098,7 @@ pub fn windowWndProc(
                 var it = window.tab_trees[window.active_tab].iterator();
                 while (it.next()) |entry| {
                     if (entry.view.surface()) |s| s.in_live_resize = true;
+                    if (entry.view.viewer()) |v| v.in_size_loop = true;
                 }
             }
             // The desk paints on a canvas that holds still under the drag (T2577).
@@ -18110,6 +18111,7 @@ pub fn windowWndProc(
                 var it = window.tab_trees[window.active_tab].iterator();
                 while (it.next()) |entry| {
                     if (entry.view.surface()) |s| s.in_live_resize = false;
+                    if (entry.view.viewer()) |v| v.settleMove();
                 }
             }
             // The drag's canvas goes, and the desk is laid out for the window

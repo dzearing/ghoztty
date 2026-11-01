@@ -69,6 +69,7 @@ const viewer_popup = @import("viewer_popup.zig");
 const inputpkg = @import("../../input.zig");
 const viewer_nav = @import("viewer_nav.zig");
 const nav_layout = @import("viewer_nav_layout.zig");
+const resize_paint = @import("resize_paint.zig");
 const toc_layout = @import("viewer_toc_layout.zig");
 const viewer_prefs = @import("viewer_prefs.zig");
 const gdiplus_decode = @import("gdiplus_decode.zig");
@@ -572,6 +573,13 @@ active_heading: ?[]u8 = null,
 /// Physical pixels per DIP for this pane's monitor. Re-read from the host
 /// window on every bounds sync.
 scale: f32 = 1.0,
+
+/// Inside the window's modal size loop (`WM_ENTERSIZEMOVE` ..
+/// `WM_EXITSIZEMOVE`), set by the window as it does the terminals'
+/// `in_live_resize`. A move in it owes WebView2 its parent-position refresh,
+/// paid once at the end (`settleMove`) rather than on every step (T2577).
+in_size_loop: bool = false,
+move_owed: bool = false,
 
 /// The pane background the host window paints before/instead of content.
 /// Copied from the window's config at construction.
@@ -5528,6 +5536,15 @@ pub fn syncBounds(self: *ViewerPane) void {
     }
 }
 
+/// Pay the parent-position refresh a move inside the size loop owed. The
+/// window calls this at `WM_EXITSIZEMOVE`.
+pub fn settleMove(self: *ViewerPane) void {
+    self.in_size_loop = false;
+    if (!self.move_owed) return;
+    self.move_owed = false;
+    if (self.controller) |c| c.notifyParentWindowPositionChanged();
+}
+
 // -------------------------------------------------------------------------
 // The creation chain
 // -------------------------------------------------------------------------
@@ -7196,6 +7213,13 @@ pub fn wndProc(
         // switch). WebView2 caches the screen position of its parent chain for
         // hit-testing and IME placement, and only this call refreshes it.
         w32.WM_MOVE => {
+            // Not on every step of a window-edge drag (T2577): ~0.4 ms of the
+            // layout batch each time, for hit-testing and IME placement that
+            // nothing uses while the size loop holds the mouse.
+            if (self.in_size_loop and !resize_paint.liveViewerMoves()) {
+                self.move_owed = true;
+                return 0;
+            }
             Window.traceRenderStage("viewer-move", self.hwnd);
             if (self.controller) |c| c.notifyParentWindowPositionChanged();
             Window.traceRenderStage("viewer-moved", self.hwnd);

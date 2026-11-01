@@ -402,3 +402,15 @@ pub fn liveSystemRedraw() bool {
     system_redraw_state = v;
     return v;
 }
+
+var viewer_moves_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_VIEWER_MOVES` (T2577): refresh WebView2's parent position on
+/// every viewer move inside a modal size loop, as before, rather than once at
+/// `WM_EXITSIZEMOVE`. UI thread only; read once per process.
+pub fn liveViewerMoves() bool {
+    if (viewer_moves_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_VIEWER_MOVES");
+    viewer_moves_state = v;
+    return v;
+}
