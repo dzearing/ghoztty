@@ -95,6 +95,16 @@ resize_prev_client: u64 = 0,
 /// `drawFrameEnd` (T2485 D22 `GHOZTTY_RESIZE_FIX=twice`).
 resize_first_frame: bool = false,
 
+/// A frame's swap was dropped because the back buffer had not taken the
+/// whole blit (T2485 D22 `verify`), so the next frame checks again even if
+/// its size did not change. Renderer thread only.
+resize_verify_pending: bool = false,
+
+/// The 2x1 plain-RGBA framebuffer the D22 corner check copies into
+/// (`probeFbo`). Owned by the GL context, like `snap_fbo`.
+probe_fbo: ?gl.Framebuffer = null,
+probe_rbo: ?gl.Renderbuffer = null,
+
 /// The frame lab's planted magenta frame (T2383, `apprt/win32/lab_plant.zig`):
 /// set by the renderer for one frame, consumed by the next `present`, which
 /// clears the window to magenta instead of blitting the target. Renderer
@@ -514,23 +524,119 @@ pub fn traceStage(self: *const OpenGL, comptime what: []const u8) void {
     self.rt_surface.traceStage(what);
 }
 
-const ResizeFix = enum { off, rebind, twice };
+const ResizeFix = enum { off, rebind, twice, verify };
 var resize_fix_state: ?ResizeFix = null;
 
 /// `GHOZTTY_RESIZE_FIX` (T2485 D22): `rebind` by default (run67: black
 /// frames 9 -> 0 against run65 off, no cost to the glide); `off` for an A/B,
 /// `twice` for the alternative that presents the frame again (black 0 too, but
-/// gaps 4 -> 20, run66). Read once.
+/// gaps 4 -> 20, run66). `verify` is a diagnostic: the rebind plus a read-back
+/// of the back buffer's far corner before each first swap at a new size,
+/// retried and then dropped when stale, with a `stack trace verify` line. It
+/// showed the near-full window's black strips are NOT a stale back buffer
+/// (20261101-004809: 153 of 153 first swaps landed whole). Read once.
 fn resizeFix() ResizeFix {
     if (resize_fix_state) |v| return v;
     const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_RESIZE_FIX") catch null;
     defer if (raw) |r| std.heap.page_allocator.free(r);
-    const v: ResizeFix = if (raw) |r|
-        (if (std.mem.eql(u8, r, "off")) .off else if (std.mem.eql(u8, r, "twice")) .twice else .rebind)
-    else
-        .rebind;
+    const v = parseResizeFix(raw);
     resize_fix_state = v;
     return v;
+}
+
+fn parseResizeFix(raw: ?[]const u8) ResizeFix {
+    const r = raw orelse return .rebind;
+    return std.meta.stringToEnum(ResizeFix, std.mem.trim(u8, r, " \t\r\n")) orelse .rebind;
+}
+
+/// How many times `landBackBuffer` re-makes the context current and blits
+/// again before it gives up on a frame.
+const verify_retries: u8 = 3;
+
+/// Has the back buffer taken the whole blit? Its colour against the target's
+/// at the same pixel; alpha is left out, since the window's default
+/// framebuffer may have none. A back buffer still at the old size reads
+/// nothing there (black, or whatever is outside the drawable).
+fn cornerLanded(target_px: [4]u8, back_px: [4]u8) bool {
+    return std.mem.eql(u8, target_px[0..3], back_px[0..3]);
+}
+
+/// Blit `target` until the back buffer's far corner holds it (T2485 D22),
+/// re-making the context current before each retry. Returns the attempt that
+/// landed (0 = the blit `present` already made), or `verify_retries + 1` when
+/// none did. Renderer thread, Win32 swap path only.
+fn landBackBuffer(self: *OpenGL, hdc: anytype, target: Target) u8 {
+    if (target.width == 0 or target.height == 0) return 0;
+    const x: gl.c.GLint = @intCast(target.width - 1);
+    const y: gl.c.GLint = @intCast(target.height - 1);
+    const probe = self.probeFbo() orelse return 0;
+    var attempt: u8 = 0;
+    while (true) : (attempt += 1) {
+        const px = probeCorner(probe, target.framebuffer.id, x, y);
+        if (cornerLanded(px[0], px[1])) return attempt;
+        if (attempt == verify_retries) return attempt + 1;
+        const api = gl_loader.active();
+        _ = api.makeCurrent(hdc, api.getCurrentContext());
+        self.present(target) catch return verify_retries + 1;
+    }
+}
+
+/// The 2x1 plain-RGBA framebuffer the corner check copies into, made on
+/// first use. Null when it cannot be made: the check then passes, as before
+/// it existed.
+fn probeFbo(self: *OpenGL) ?gl.Framebuffer {
+    if (self.probe_fbo) |f| return f;
+    const rbo = gl.Renderbuffer.create() catch return null;
+    const fbo = gl.Framebuffer.create() catch return null;
+    {
+        const rb = rbo.bind() catch return null;
+        defer rb.unbind();
+        rb.storage(.rgba, 2, 1) catch return null;
+    }
+    {
+        const fb = fbo.bind(.framebuffer) catch return null;
+        defer fb.unbind();
+        fb.renderbuffer(.color0, rbo) catch return null;
+    }
+    self.probe_rbo = rbo;
+    self.probe_fbo = fbo;
+    return fbo;
+}
+
+/// Pixel (x, y) of the target and of the window's back buffer, copied raw
+/// into the probe's two pixels and read from there. Both go through the same
+/// blit with sRGB conversion off, the way `present` copies, so an sRGB target
+/// and a linear back buffer read as equal when they hold the same bytes.
+fn probeCorner(probe: gl.Framebuffer, target_fbo: gl.c.GLuint, x: gl.c.GLint, y: gl.c.GLint) [2][4]u8 {
+    const ctx = &gl.glad.context;
+    var px: [2][4]u8 = .{ .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 } };
+    gl.disable(gl.c.GL_FRAMEBUFFER_SRGB) catch return px;
+    defer gl.enable(gl.c.GL_FRAMEBUFFER_SRGB) catch {};
+    ctx.BindFramebuffer.?(gl.c.GL_DRAW_FRAMEBUFFER, probe.id);
+    ctx.BindFramebuffer.?(gl.c.GL_READ_FRAMEBUFFER, target_fbo);
+    ctx.ReadBuffer.?(gl.c.GL_COLOR_ATTACHMENT0);
+    ctx.BlitFramebuffer.?(x, y, x + 1, y + 1, 0, 0, 1, 1, gl.c.GL_COLOR_BUFFER_BIT, gl.c.GL_NEAREST);
+    ctx.BindFramebuffer.?(gl.c.GL_READ_FRAMEBUFFER, 0);
+    ctx.ReadBuffer.?(gl.c.GL_BACK);
+    ctx.BlitFramebuffer.?(x, y, x + 1, y + 1, 1, 0, 2, 1, gl.c.GL_COLOR_BUFFER_BIT, gl.c.GL_NEAREST);
+    ctx.BindFramebuffer.?(gl.c.GL_READ_FRAMEBUFFER, probe.id);
+    ctx.ReadBuffer.?(gl.c.GL_COLOR_ATTACHMENT0);
+    ctx.PixelStorei.?(gl.c.GL_PACK_ALIGNMENT, 1);
+    ctx.ReadPixels.?(0, 0, 2, 1, gl.c.GL_RGBA, gl.c.GL_UNSIGNED_BYTE, &px);
+    ctx.BindFramebuffer.?(gl.c.GL_READ_FRAMEBUFFER, 0);
+    ctx.BindFramebuffer.?(gl.c.GL_DRAW_FRAMEBUFFER, 0);
+    return px;
+}
+
+test "the D22 verify reads a back buffer as landed only when its colour is the target's" {
+    try std.testing.expect(cornerLanded(.{ 30, 30, 36, 255 }, .{ 30, 30, 36, 0 }));
+    try std.testing.expect(!cornerLanded(.{ 30, 30, 36, 255 }, .{ 0, 0, 0, 255 }));
+    try std.testing.expect(!cornerLanded(.{ 30, 30, 36, 255 }, .{ 30, 30, 37, 255 }));
+    try std.testing.expectEqual(ResizeFix.rebind, parseResizeFix(null));
+    try std.testing.expectEqual(ResizeFix.rebind, parseResizeFix("bogus"));
+    try std.testing.expectEqual(ResizeFix.verify, parseResizeFix("verify"));
+    try std.testing.expectEqual(ResizeFix.off, parseResizeFix("off\r\n"));
+    try std.testing.expectEqual(ResizeFix.twice, parseResizeFix("twice"));
 }
 
 /// Actions taken after `drawFrame` is done.
@@ -573,6 +679,25 @@ pub fn drawFrameEnd(self: *OpenGL) void {
         // the leading suspect: the frame renders on one adapter and has to
         // reach a virtual display owned by another driver. `perf.now()` is a
         // no-op when telemetry is off, so this costs one branch per frame.
+        // T2485 D22 `verify` (opt-in diagnostic): did the back buffer take
+        // the whole blit of a first frame at a new size? Read the far corner
+        // back; still stale after the retries, the swap is dropped, so the
+        // strip keeps the background `fillUncoveredStrips` laid there, and the
+        // next frame checks again.
+        if (self.comp == null and resizeFix() == .verify and
+            (self.resize_first_frame or self.resize_verify_pending))
+        {
+            if (self.last_target) |t| {
+                const tries = self.landBackBuffer(hdc.?, t);
+                self.rt_surface.traceVerify(self.drawn_client, tries, tries <= verify_retries);
+                if (tries > verify_retries) {
+                    self.resize_verify_pending = true;
+                    self.rt_surface.tracePresent(self.drawn_client, false);
+                    return;
+                }
+            }
+            self.resize_verify_pending = false;
+        }
         const swap_start = perf.now();
         self.traceStage("swap-begin");
         if (self.comp) |p| {
@@ -700,6 +825,8 @@ fn markLost(self: *OpenGL, why: []const u8) void {
     self.last_target = null;
     self.snap_fbo = null;
     self.snap_rbo = null;
+    self.probe_fbo = null;
+    self.probe_rbo = null;
     self.snap_w = 0;
     self.snap_h = 0;
     if (self.comp) |p| {
@@ -952,7 +1079,9 @@ pub fn surfaceSize(self: *OpenGL) !struct { width: u32, height: u32 } {
                 // Not on the composition path, which never presents through
                 // that drawable, and where the rebind was a third of a resize
                 // step's first frame (T2577).
-                if (self.resize_first_frame and resizeFix() == .rebind and self.comp == null) {
+                if (self.resize_first_frame and self.comp == null and
+                    (resizeFix() == .rebind or resizeFix() == .verify))
+                {
                     const api = gl_loader.active();
                     _ = api.makeCurrent(hdc, api.getCurrentContext());
                 }

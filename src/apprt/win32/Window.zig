@@ -9383,6 +9383,25 @@ pub fn tracePresent(hwnd: ?w32.HWND, drawn: u64, swapped: bool) void {
     present_ring.add("stack trace present hwnd={x} qpc={d} size={d}x{d} swapped={}", .{ h, t, w, ht, swapped });
 }
 
+/// The back-buffer check of a first frame at a new size (T2485 D22 `verify`):
+/// `tries` 0 is the frame's own blit, more is a rebind-and-blit retry, and
+/// `landed=false` is a swap dropped. In the present ring, beside its present.
+pub fn traceVerify(hwnd: ?w32.HWND, drawn: u64, tries: u8, landed: bool) void {
+    if (!stackTraceOn()) return;
+    var t: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t);
+    const h: usize = if (hwnd) |p| @intFromPtr(p) else 0;
+    const w: u32 = @truncate(drawn >> 32);
+    const ht: u32 = @truncate(drawn);
+    if (stackTraceMode() == .log) {
+        log.info("stack trace verify hwnd={x} qpc={d} size={d}x{d} tries={d} landed={}", .{ h, t, w, ht, tries, landed });
+        return;
+    }
+    present_ring_lock.lock();
+    defer present_ring_lock.unlock();
+    present_ring.add("stack trace verify hwnd={x} qpc={d} size={d}x{d} tries={d} landed={}", .{ h, t, w, ht, tries, landed });
+}
+
 /// Write out what the ring holds, oldest first, and empty it.
 fn flushStackTrace() void {
     if (stackTraceMode() != .ring) return;

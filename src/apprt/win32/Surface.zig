@@ -6003,6 +6003,12 @@ pub fn tracePresent(self: *Surface, drawn: u64, swapped: bool) void {
     Window.tracePresent(self.hwnd, drawn, swapped);
 }
 
+/// Renderer thread: the stack trace's verify line (T2485 D22 `verify`), the
+/// attempt at which the back buffer took a first frame at a new size.
+pub fn traceVerify(self: *Surface, drawn: u64, tries: u8, landed: bool) void {
+    Window.traceVerify(self.hwnd, drawn, tries, landed);
+}
+
 /// A renderer-thread stage of a frame on the resize trace (T2577).
 pub fn traceStage(self: *Surface, comptime what: []const u8) void {
     Window.traceRenderStage(what, self.hwnd);
