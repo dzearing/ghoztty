@@ -38,9 +38,11 @@
 # bytes, handles, GDI/USER objects, threads and GPU memory, plus every
 # descendant process (pane shells, conhost, the WebView2 browser/renderers).
 #
-# KNOWN RED (2026-10-30): `split` and `rapid` A8 - a closed terminal pane
-# keeps a window-sized GPU buffer until its window is destroyed (T2499). The
-# guard is acked to T2499 until it closes.
+# A8 is the T2499 oracle: a closed terminal pane must not keep a window-sized
+# GPU buffer until its window is destroyed. Layered panes (the default) free
+# theirs with the pane; plain ones (`GHOZTTY_PANE_LAYER=0`, translucent
+# windows) hand their window to the next pane instead (T2597) - run with
+# `GHOZTTY_PANE_REUSE=0` as well to see the leak that reuse closes.
 #
 # -NegativeControl leaves every measured pane OPEN instead of closing it. The
 # budget asserts MUST go red: it is the proof that this meter can see a

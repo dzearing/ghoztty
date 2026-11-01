@@ -33,6 +33,7 @@ const ViewerNavBar = @import("ViewerNavBar.zig");
 const viewer_accel = @import("viewer_accel.zig");
 const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
+const pane_pool_rules = @import("pane_pool.zig");
 const pane_stash = @import("pane_stash.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
 const pane_sidebar_add = @import("pane_sidebar_add.zig");
@@ -362,6 +363,13 @@ hwnd: ?w32.HWND = null,
 /// Off for an opaque config and for a window toggled opaque with
 /// `toggle_background_opacity`. Only `setTranslucent` moves it.
 translucent: bool = false,
+
+/// Closed terminal pane windows kept hidden for the next pane in this window
+/// (T2597, `pane_pool.zig`): a plain child's presents leave a window-sized GPU
+/// allocation behind that only this window's destruction frees, so reusing
+/// the window bounds them by the most panes it ever held. Win32 destroys
+/// whatever is parked here along with this window. GUI thread only.
+pane_pool: pane_pool_rules.Pool(w32.HWND) = .{},
 
 /// The user toggled this window opaque with `toggle_background_opacity`
 /// (Mac's `isBackgroundOpaque`). Kept apart from `translucent` so a config

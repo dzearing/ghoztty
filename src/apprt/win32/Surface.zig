@@ -38,6 +38,7 @@ const drag_perf = @import("drag_perf.zig");
 const lab_plant = @import("lab_plant.zig");
 const resize_paint = @import("resize_paint.zig");
 const pane_layer = @import("pane_layer.zig");
+const pane_pool = @import("pane_pool.zig");
 const clipboard_open = @import("clipboard_open.zig");
 const utf16_text = @import("utf16_text.zig");
 const Scrollbar = @import("Scrollbar.zig").Scrollbar;
@@ -812,7 +813,14 @@ fn initOnce(
     // has already been moved can be painted over by a sibling that is still
     // at its old geometry for the rest of the pass. With the pair in place a
     // relayout is one frame instead of a flash per child.
-    const hwnd = w32.CreateWindowExW(
+    //
+    // A pane that will be a plain child takes a window a closed pane parked in
+    // this top-level when there is one (T2597, `pane_pool.zig`), so its
+    // presents land on an allocation the top-level already holds.
+    const config_translucent = app.config.@"background-opacity" < 1.0;
+    const want_layer = pane_layer.wantOwnLayer(pane_layer.enabled(), parent.translucent or config_translucent);
+    const reused: ?w32.HWND = if (want_layer or !pane_pool.enabled()) null else takeParkedWindow(parent, sr);
+    const hwnd = reused orelse w32.CreateWindowExW(
         0,
         App.TERMINAL_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
@@ -826,6 +834,7 @@ fn initOnce(
         app.hinstance,
         null,
     ) orelse return error.Win32Error;
+    if (reused != null) log.info("terminal pane reuses a parked window (GHOZTTY_PANE_REUSE)", .{});
     self.hwnd = hwnd;
     errdefer {
         _ = w32.DestroyWindow(hwnd);
@@ -843,8 +852,7 @@ fn initOnce(
     // Never in a translucent window, or the configured one may turn so: the
     // layer is composed opaque. `dropOwnLayer` undoes it if the window turns
     // translucent later.
-    const config_translucent = app.config.@"background-opacity" < 1.0;
-    if (pane_layer.wantOwnLayer(pane_layer.enabled(), parent.translucent or config_translucent)) {
+    if (want_layer) {
         Window.composeOpaqueLayer(hwnd, "terminal pane");
         self.own_layer = true;
         log.info("terminal pane has its own layer (GHOZTTY_PANE_LAYER)", .{});
@@ -867,8 +875,9 @@ fn initOnce(
         self.hdc = null;
     }
 
-    // Set up the pixel format for OpenGL
-    try self.setupPixelFormat();
+    // Set up the pixel format for OpenGL. A parked window already has it: a
+    // window takes one pixel format for life (T2597).
+    if (reused == null) try self.setupPixelFormat();
 
     // Create the WGL context — a robust one where the driver offers it, so a
     // graphics driver reset or swap is something the renderer can detect and
@@ -1343,12 +1352,59 @@ pub fn deinit(self: *Surface) void {
     // from touching this soon-to-be-freed Surface, and it is the second factor
     // `App.performSurfaceReap` checks so a handle Win32 recycled in the
     // meantime is never destroyed out from under its new owner.
+    //
+    // A plain child's window is parked for the next pane in the same
+    // top-level instead (T2597, `pane_pool.zig`): hidden, unowned, and
+    // destroyed with the top-level if nothing takes it.
     if (self.hwnd) |hwnd| {
         _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, 0);
-        self.app.reapSurfaceHwnd(hwnd);
+        if (!self.parkWindow(hwnd)) self.app.reapSurfaceHwnd(hwnd);
     }
     self.hwnd = null;
     log.debug("surface deinit: complete", .{});
+}
+
+/// Park this closing pane's window in its top-level's pool (T2597). False
+/// when it may not be parked, and the caller reaps it as before.
+fn parkWindow(self: *Surface, hwnd: w32.HWND) bool {
+    const win = self.parent_window;
+    const win_hwnd = win.hwnd orelse return false;
+    if (!pane_pool.mayPark(.{
+        .enabled = pane_pool.enabled(),
+        .own_layer = self.own_layer,
+        .window_closing = win.closing,
+        .parent_matches = w32.GetParent(hwnd) == win_hwnd,
+    })) return false;
+    _ = w32.ShowWindow(hwnd, w32.SW_HIDE);
+    if (!win.pane_pool.give(hwnd)) return false;
+    log.info("terminal pane window parked for reuse (GHOZTTY_PANE_REUSE)", .{});
+    return true;
+}
+
+/// Take a window a closed pane parked in `win` (T2597), placed at `sr` and
+/// still hidden, or null when there is none still ours.
+fn takeParkedWindow(win: *Window, sr: w32.RECT) ?w32.HWND {
+    const win_hwnd = win.hwnd orelse return null;
+    while (win.pane_pool.take()) |h| {
+        var cls: [40]u16 = undefined;
+        const n = w32.GetClassNameW(h, &cls, cls.len);
+        if (!pane_pool.reusable(.{
+            .class_matches = n > 0 and std.mem.eql(u16, cls[0..@intCast(n)], App.TERMINAL_CLASS_NAME),
+            .userdata = @bitCast(w32.GetWindowLongPtrW(h, w32.GWLP_USERDATA)),
+            .parent_matches = w32.GetParent(h) == win_hwnd,
+        })) continue;
+        _ = w32.SetWindowPos(
+            h,
+            null,
+            sr.left,
+            sr.top,
+            @max(sr.right - sr.left, 1),
+            @max(sr.bottom - sr.top, 1),
+            w32.SWP_NOZORDER | w32.SWP_NOACTIVATE,
+        );
+        return h;
+    }
+    return null;
 }
 
 /// Set up a pixel format suitable for OpenGL rendering.
