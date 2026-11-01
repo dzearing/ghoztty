@@ -40,6 +40,10 @@
 # keeps a window-sized GPU buffer, ~3 MB a window at the default size (T2499).
 # The guard is acked to T2498 until both close.
 #
+# Section C (T2607) closes a split four times inside one living window and
+# asserts the app still answers: the second close used to crash the debug
+# build on a freed pane the sidebar's desk card still named.
+#
 # -NegativeControl leaves every measured window OPEN instead of closing it.
 # The budget asserts MUST go red: it is the proof that this meter can see a
 # retained window at all.
@@ -249,6 +253,30 @@ try {
     } else {
         $script:skipped++
         Write-Host 'SKIP  A8 GPU memory: the GPU Process Memory counters are not readable on this box'
+    }
+
+    # ---- C: close a split again and again inside one living window (T2607) --
+    # The close's own layout pass painted the sidebar's desk card from a roster
+    # that still named the pane just freed; the second close in a window read
+    # it and the debug build died in PaneSidebar.rawLayout.
+    if (-not $NegativeControl) {
+        $r = Invoke-Verb @('+new-window', '--target=wcmsc', '--name=wcmsca')
+        $opened = Wait-TopCount $appPid 2 -TimeoutSec 20
+        Assert $opened "C1 the split-close window opened ($($r.Text))"
+        $answered = 0
+        if ($opened) {
+            for ($i = 1; $i -le 4; $i++) {
+                [void](Invoke-Verb @('+split', '--target=wcmsca', "--name=wcmscb$i", '--direction=right'))
+                Start-Sleep -Milliseconds 1500
+                [void](Invoke-Verb @('+close', "--target=wcmscb$i"))
+                Start-Sleep -Milliseconds 800
+                if ((Invoke-Verb @('+list')).Code -eq 0) { $answered++ } else { break }
+            }
+            [void](Invoke-Verb @('+close', '--target=wcmsc'))
+        }
+        Assert ($answered -eq 4) "C2 the app answered +list after each of 4 split closes in one window (answered $answered)"
+        $crashed = (Test-Path $errlog) -and (Select-String -Path $errlog -Pattern 'Segmentation fault|panic' -Quiet)
+        Assert (-not $crashed) 'C3 no segfault or panic in the app log'
     }
 
     $alive = Get-Process -Id $appPid -ErrorAction SilentlyContinue

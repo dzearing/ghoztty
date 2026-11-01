@@ -397,6 +397,11 @@ const Entry = struct {
     busy: bool,
     /// The bell rang and the pane has not been looked at since.
     bell: bool,
+    /// The pane is a viewer, read at refresh. The layout funnel reads this
+    /// rather than `pane` because the window paints its desk card from the
+    /// list BEFORE a close re-reads the roster (T2607): by then the closed
+    /// pane is freed, and asking it was a use-after-free.
+    viewer: bool = false,
     selected: bool,
 };
 
@@ -1704,6 +1709,7 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
             .hue = @intCast(@min(pane_hue.treeIndex(window.tab_trees[tab], v), std.math.maxInt(u16))),
             .busy = isWorking(v, now_ms),
             .bell = if (v.surface()) |s| s.bell else false,
+            .viewer = v.isViewer(),
             // Only THIS window has a selection (Mac 55352e377): another
             // window's focus is not focus here - unless its row was just
             // clicked here (T2336).
@@ -1772,7 +1778,7 @@ fn rawLayout(self: *PaneSidebar) pane_sidebar.Layout {
     var items: [pane_sidebar.max_items]pane_sidebar.Item = undefined;
     const n = @min(self.entries.items.len, items.len);
     for (self.entries.items[0..n], 0..) |e, i| {
-        items[i] = .{ .section = e.section, .two_line = e.subtitle.len > 0, .group = e.group, .own = e.own, .renamable = rename_rules.offersPencil(.pane, e.pane.isViewer()) };
+        items[i] = .{ .section = e.section, .two_line = e.subtitle.len > 0, .group = e.group, .own = e.own, .renamable = rename_rules.offersPencil(.pane, e.viewer) };
     }
     self.ensureFonts();
     const lines: ?[]const pane_sidebar.Line = if (self.all_windows) self.lines.items else null;
@@ -5314,7 +5320,7 @@ fn pasteSearch(self: *PaneSidebar) void {
 fn beginRenamePane(self: *PaneSidebar, i: usize) void {
     if (i >= self.entries.items.len) return;
     const e = self.entries.items[i];
-    if (!rename_rules.offersPencil(.pane, e.pane.isViewer())) return;
+    if (!rename_rules.offersPencil(.pane, e.viewer)) return;
     var b: [Rename.initial_cap]u8 = undefined;
     const n = std.unicode.utf16LeToUtf8(&b, e.title[0..@min(e.title.len, search_field.cap)]) catch 0;
     self.beginRename(.{ .pane = e.pane }, b[0..n]);
