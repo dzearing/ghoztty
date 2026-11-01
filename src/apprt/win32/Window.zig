@@ -22,6 +22,7 @@ const RenameDialog = @import("RenameDialog.zig");
 const BannerDialog = @import("BannerDialog.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const resize_paint = @import("resize_paint.zig");
+const resize_prelayout = @import("resize_prelayout.zig");
 const Surface = @import("Surface.zig");
 const window_chord = @import("window_chord.zig");
 const paint_probe = @import("paint_probe.zig");
@@ -701,6 +702,14 @@ dragging_split: bool = false,
 /// `Surface.handleResize` reads this alongside its own `in_live_resize`, which
 /// is what gives the three of them one path instead of three.
 in_live_layout: bool = false,
+/// Inside a modal size loop (`WM_ENTERSIZEMOVE` .. `WM_EXITSIZEMOVE`), for the
+/// window as a whole (T2578); the panes keep their own `in_live_resize`.
+in_size_loop: bool = false,
+/// The client rect the layout should use instead of the window's current one
+/// (T2578). Set only while `WM_WINDOWPOSCHANGING` lays the panes out at the
+/// size the frame is about to take, so they are presented before it changes;
+/// read through `layoutClientRect`.
+pending_client: ?w32.RECT = null,
 /// The flat-style gutters the last divider paint drew (T2418), in client
 /// pixels. A layout that moves a divider hands its old gutter to a pane, and
 /// `WS_CLIPCHILDREN` keeps every later paint off it, so the old line and bar
@@ -1365,7 +1374,7 @@ fn chromePalette(self: *const Window) chrome_theme.Palette {
 pub fn invalidateChrome(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     var r: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &r) == 0) return;
+    if (!self.layoutClientRect(hwnd, &r)) return;
     // The whole chrome row: the caption band plus the strip under it. Both
     // heights are 0 when the surface in question is not shown, so this is the
     // correct rect on a caption-less or strip-less window too.
@@ -2475,11 +2484,22 @@ pub fn stripRegions(self: *const Window) ?StripRegions {
     return out;
 }
 
+/// The client rect the layout works in (T2578): the one `WM_WINDOWPOSCHANGING`
+/// is laying out for when it is set, else the window's own. False when there
+/// is none to read. Any other HWND reads its own client rect.
+fn layoutClientRect(self: *const Window, hwnd: w32.HWND, out: *w32.RECT) bool {
+    if (self.pending_client) |pc| if (self.hwnd == hwnd) {
+        out.* = pc;
+        return true;
+    };
+    return w32.GetClientRect(hwnd, out) != 0;
+}
+
 /// This window's client width in physical pixels, or 0 with no HWND.
 fn clientWidth(self: *const Window) i32 {
     const hwnd = self.hwnd orelse return 0;
     var rc: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rc) == 0) return 0;
+    if (!self.layoutClientRect(hwnd, &rc)) return 0;
     return rc.right - rc.left;
 }
 
@@ -2670,7 +2690,7 @@ fn captionLayout(self: *const Window) ?caption_layout.Layout {
     if (!self.customCaption()) return null;
     const hwnd = self.hwnd orelse return null;
     var rect: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rect) == 0) return null;
+    if (!self.layoutClientRect(hwnd, &rect)) return null;
     return caption_layout.layout(
         self.captionMetrics(),
         rect.right - rect.left,
@@ -2684,7 +2704,7 @@ fn captionLayout(self: *const Window) ?caption_layout.Layout {
 pub fn surfaceRect(self: *const Window) w32.RECT {
     const hwnd = self.hwnd orelse return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     var rect: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rect) == 0) {
+    if (!self.layoutClientRect(hwnd, &rect)) {
         return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     }
     rect.top += self.chromeHeight();
@@ -2719,8 +2739,19 @@ fn invalidateContentArea(self: *Window) void {
 pub fn deskRect(self: *const Window) w32.RECT {
     const hwnd = self.hwnd orelse return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     var rect: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rect) == 0) {
+    if (!self.layoutClientRect(hwnd, &rect)) {
         return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    }
+    // T2578: while the panes are laid out ahead of a shrinking frame, the
+    // strip they leave is still on screen until the frame catches up; the desk
+    // covers it too, so a frame that misses the compose shows desk there
+    // rather than flat background.
+    if (self.pending_client != null) {
+        var now: w32.RECT = undefined;
+        if (w32.GetClientRect(hwnd, &now) != 0) {
+            rect.right = @max(rect.right, now.right);
+            rect.bottom = @max(rect.bottom, now.bottom);
+        }
     }
     rect.top += self.deskTop();
     return rect;
@@ -2864,7 +2895,7 @@ pub fn paneSidebarMode(self: *const Window) pane_sidebar.Mode {
     if (self.is_quick_terminal or self.tab_count == 0) return .hidden;
     const hwnd = self.hwnd orelse return .hidden;
     var rc: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rc) == 0) return .hidden;
+    if (!self.layoutClientRect(hwnd, &rc)) return .hidden;
     const w_dip = @as(f32, @floatFromInt(rc.right - rc.left)) / self.scale;
     return pane_sidebar.mode(self.pane_sidebar_expanded, self.pane_sidebar_hidden, w_dip);
 }
@@ -2930,7 +2961,7 @@ fn syncPaneSidebarScoped(self: *Window, scopes: ScopeRefresh) void {
     }
     const sb = self.sidebar orelse return;
     var rc: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rc) == 0) return;
+    if (!self.layoutClientRect(hwnd, &rc)) return;
     rc.top += self.paneSidebarTop();
     rc.right = rc.left + self.paneSidebarColumnPx();
     sb.refresh();
@@ -3001,7 +3032,7 @@ pub fn setPaneSidebarExpanded(self: *Window, expanded: bool, cause: []const u8) 
 pub fn paneSidebarCanExpand(self: *const Window) bool {
     const hwnd = self.hwnd orelse return false;
     var rc: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rc) == 0) return false;
+    if (!self.layoutClientRect(hwnd, &rc)) return false;
     return pane_sidebar.canExpand(@as(f32, @floatFromInt(rc.right - rc.left)) / self.scale);
 }
 
@@ -8420,7 +8451,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     if (!live and carried == null and !opening) return false;
     const inner = self.leafRect(view, winRect(face.card));
     var client: w32.RECT = undefined;
-    if (w32.GetClientRect(parent, &client) == 0) return false;
+    if (!self.layoutClientRect(parent, &client)) return false;
     const vis: pane_stack_grid.PxRect = .{
         .left = @max(@max(glide_at.left, inner.left), client.left),
         .top = @max(@max(glide_at.top, inner.top), client.top),
@@ -15746,6 +15777,48 @@ fn handleResize(self: *Window, cause: []const u8) void {
     self.showResizeOverlay();
 }
 
+var prelayout_off_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_NOPRELAYOUT` turns T2578's pre-layout off, so a film can
+/// score the drag both ways on one build. Read once.
+fn prelayoutOff() bool {
+    if (prelayout_off_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_NOPRELAYOUT");
+    prelayout_off_state = v;
+    return v;
+}
+
+/// `WM_WINDOWPOSCHANGING` under an edge drag (T2578): lay the panes out and
+/// present them at the client size the frame is about to take, so the frame
+/// change follows the last present inside one compose instead of the content
+/// landing a compose behind it (`resize_prelayout` has the rule and why only a
+/// right or bottom edge). `WM_SIZE` still runs its whole pass after the frame
+/// changes - the panes are already at their size by then, so it re-presents
+/// nothing and repaints the desk and chrome at the size that landed.
+fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
+    if (self.tab_count == 0 or prelayoutOff()) return;
+    const hwnd = self.hwnd orelse return;
+    var wr: w32.RECT = undefined;
+    var cr: w32.RECT = undefined;
+    if (w32.GetWindowRect(hwnd, &wr) == 0 or w32.GetClientRect(hwnd, &cr) == 0) return;
+    const pc = resize_prelayout.pendingClient(.{
+        .window = .{ .left = wr.left, .top = wr.top, .right = wr.right, .bottom = wr.bottom },
+        .client = .{ .left = cr.left, .top = cr.top, .right = cr.right, .bottom = cr.bottom },
+        .x = wp.x,
+        .y = wp.y,
+        .cx = wp.cx,
+        .cy = wp.cy,
+        .flags = wp.flags,
+        .in_size_loop = self.in_size_loop,
+        .iconic = w32.IsIconic(hwnd) != 0,
+    }) orelse return;
+    resizeTrace("prelayout-begin", hwnd);
+    defer resizeTrace("prelayout-end", hwnd);
+    self.pending_client = .{ .left = pc.left, .top = pc.top, .right = pc.right, .bottom = pc.bottom };
+    defer self.pending_client = null;
+    self.layoutSplitsLive();
+}
+
 /// Persist the window's outer size + maximized flag as the placement
 /// memory for future windows (T85). When maximized, the RESTORED size is
 /// stored (WINDOWPLACEMENT.rcNormalPosition, Windows convention) so a
@@ -17898,7 +17971,15 @@ pub fn windowWndProc(
             // No limits → fall through to DefWindowProc.
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
+        w32.WM_WINDOWPOSCHANGING => {
+            // DefWindowProc first: it clamps the new size to the min/max track
+            // size, and the panes must be laid out for the size that lands.
+            const r = w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            window.prelayoutForPos(@ptrFromInt(@as(usize, @bitCast(lparam))));
+            return r;
+        },
         w32.WM_ENTERSIZEMOVE => {
+            window.in_size_loop = true;
             if (window.tab_count > 0) {
                 var it = window.tab_trees[window.active_tab].iterator();
                 while (it.next()) |entry| {
@@ -17908,6 +17989,7 @@ pub fn windowWndProc(
             return 0;
         },
         w32.WM_EXITSIZEMOVE => {
+            window.in_size_loop = false;
             if (window.tab_count > 0) {
                 var it = window.tab_trees[window.active_tab].iterator();
                 while (it.next()) |entry| {

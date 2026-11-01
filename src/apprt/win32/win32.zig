@@ -3281,6 +3281,9 @@ pub const WM_SHOWWINDOW: u32 = 0x0018;
 /// `*const WINDOWPOS`. Unlike `WM_SHOWWINDOW` it also fires for a window
 /// shown or hidden by a position call's `SWP_SHOWWINDOW`/`SWP_HIDEWINDOW`.
 pub const WM_WINDOWPOSCHANGED: u32 = 0x0047;
+/// Sent BEFORE a size/position change takes effect; `lparam` is a mutable
+/// `*WINDOWPOS` (DefWindowProc clamps it to the min/max track size).
+pub const WM_WINDOWPOSCHANGING: u32 = 0x0046;
 pub const WINDOWPOS = extern struct {
     hwnd: ?HWND,
     hwndInsertAfter: ?HWND,

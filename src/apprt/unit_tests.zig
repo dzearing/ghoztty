@@ -136,6 +136,7 @@ test {
     // Pure win32 erase-vs-preserve rule for the resize paint path (T1031),
     // same no-OS-imports deal.
     _ = @import("win32/resize_paint.zig");
+    _ = @import("win32/resize_prelayout.zig");
 
     // Pure win32 background-tint color math (T67), same no-OS-imports deal.
     _ = @import("win32/color_math.zig");
