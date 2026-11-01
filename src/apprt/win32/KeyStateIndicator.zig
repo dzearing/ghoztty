@@ -51,6 +51,7 @@ const pill = @import("key_state_pill.zig");
 const key_state = @import("key_state.zig");
 const icon_paint = @import("icon_button_paint.zig");
 const color_math = @import("color_math.zig");
+const banner_layout = @import("banner_layout.zig");
 
 const log = std.log.scoped(.win32_key_state);
 
@@ -122,6 +123,9 @@ pub const KeyStateIndicator = struct {
     /// The surface HWND this pill sits on top of (popup owner).
     owner: w32.HWND,
     hwnd: w32.HWND,
+    /// The px the owner's grid sits below its window's top - the banner band
+    /// a spanning window carries (`Surface.grid_band`, T2568). Null: none.
+    grid_band: ?*const std.atomic.Value(u32) = null,
 
     /// Cached label font, rebuilt when the DPI scale changes.
     font: ?*anyopaque = null,
@@ -237,6 +241,9 @@ pub const KeyStateIndicator = struct {
 
         var owner_rect: w32.RECT = undefined;
         if (w32.GetWindowRect(self.owner, &owner_rect) == 0) return;
+        // The pill sits on the grid, below a spanning window's banner band
+        // (T2568).
+        if (self.grid_band) |b| owner_rect.top = banner_layout.gridTop(owner_rect.top, owner_rect.bottom, b.load(.acquire));
         const pane_w = owner_rect.right - owner_rect.left;
         const pane_h = owner_rect.bottom - owner_rect.top;
 

@@ -1502,6 +1502,8 @@ pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, batch: ?*?w32.HDWP)
     self.dim_overlay.?.setBand(if (self.banner_overlay) |b| .{
         .height = @max(b.inset, 0),
         .corner = b.card_corner,
+        // A spanning window already reaches over the band (T2568).
+        .in_owner = self.gridBand() > 0,
     } else .{});
     _ = self.dim_overlay.?.show(color, alpha, batch);
     // An elevated pane's wash takes its card's rounded shape (T1831).
@@ -1541,6 +1543,7 @@ pub fn updateBellBorder(self: *Surface) void {
             log.warn("bell border create failed err={}", .{err});
             return;
         };
+        self.bell_border.?.grid_band = &self.grid_band;
     }
     const b = self.bell_border.?;
     if (self.pane_view) |pv| b.matchOwnerRegion(pv.card_region_key);
@@ -1606,6 +1609,7 @@ pub fn updateKeyStateIndicator(self: *Surface) void {
             log.warn("key state indicator create failed err={}", .{err});
             return;
         };
+        self.key_state_indicator.?.grid_band = &self.grid_band;
     }
     const config = &self.app.config;
     const pane_bg: color_math.Rgb = self.background_tint orelse .{

@@ -1,8 +1,8 @@
 {
     "guard":  "gl-device-lost",
     "script":  "test/win32/gl-device-lost.ps1",
-    "generated":  "2026-10-31T21:31:48-07:00",
-    "commit":  "c71b37da8",
+    "generated":  "2026-10-31T21:36:47-07:00",
+    "commit":  "504d39d72",
     "uncommitted":  [
 
                     ],

@@ -2544,15 +2544,17 @@ pub const BannerOverlay = struct {
         if (!s.core_surface_ready) return;
         s.flush_next_resize = true;
         if (self.collapse_anim == null) return;
-        // The copy is measured off a window the band sits above; a window
-        // spanning the band (T2566) is T2568's to glide, and reflows in view
-        // until then.
-        if (s.gridBand() > 0) return;
 
+        // Measured off the GRID (T2568): a window spanning the band (T2566)
+        // carries it on its own top, and the grid below it is the same rect
+        // the knob-off window has. `band` is 0 knob off.
+        const band = s.gridBand();
         var client: w32.RECT = undefined;
         var screen: w32.RECT = undefined;
         if (w32.GetClientRect(self.owner, &client) == 0) return;
         if (w32.GetWindowRect(self.owner, &screen) == 0) return;
+        screen.top = banner_layout.gridTop(screen.top, screen.bottom, band);
+        client.top = banner_layout.gridTop(client.top, client.bottom, band);
         const w = client.right - client.left;
         const h = client.bottom - client.top;
         if (w <= 0 or h <= 0) return;
@@ -2633,11 +2635,12 @@ pub const BannerOverlay = struct {
             g.seq = seq;
             g.seq_at = now;
         }
+        // The renderer presents the grid, below any band the window spans.
         var client: w32.RECT = undefined;
         const landed = w32.GetClientRect(self.owner, &client) != 0 and
             s.presented_size.load(.acquire) == resize_paint.packSize(
                 @intCast(@max(client.right - client.left, 0)),
-                @intCast(@max(client.bottom - client.top, 0)),
+                banner_layout.gridHeight(@intCast(@max(client.bottom - client.top, 0)), s.gridBand()),
             );
         const elapsed = now.since(g.start) / std.time.ns_per_ms;
         if (banner_glide.shouldRelease(.{

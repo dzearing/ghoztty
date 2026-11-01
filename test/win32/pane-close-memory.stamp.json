@@ -1,15 +1,15 @@
 {
     "guard":  "pane-close-memory",
     "script":  "test/win32/pane-close-memory.ps1",
-    "generated":  "2026-10-31T21:49:27-07:00",
-    "commit":  "c71b37da8",
+    "generated":  "2026-10-31T21:57:58-07:00",
+    "commit":  "504d39d72",
     "uncommitted":  [
-
+                        "src/apprt/win32/Surface.zig"
                     ],
     "files":  {
                   "src/apprt/win32/CloseUndo.zig":  "9d110908f306761accacd46446575115081f6bed97712510b5b567d56fd08b2d",
                   "src/apprt/win32/PaneView.zig":  "566593dd318dbf777ab6058492d93c442e742042b4c514632d956b9e6b6a76b1",
-                  "src/apprt/win32/Surface.zig":  "7bf911f9319613436eaaa272febf3abc98780e49c9b6a283268b08a75bd60a22",
+                  "src/apprt/win32/Surface.zig":  "f5e781f5d9343ec58c567a4c93417759387fa5f0440d9984910ec100d791df0e",
                   "src/apprt/win32/ViewerPane.zig":  "759e8ca7dd672c7ec98fcc8c08107d4ed90e818c51dad37fd641d7c72e5c27ba",
                   "test/win32/lib/ProcessMemory.ps1":  "fc65192e6949da7e505d963e246a029ab56d25cf4099e2d4b0fc4aa7a12dfe6f",
                   "test/win32/pane-close-memory.ps1":  "c89137d1d2faa163c0d99e4676fad1d3c7b3a975e8fae3aa4aad64d834aa7e86"

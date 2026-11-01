@@ -1,8 +1,8 @@
 {
     "guard":  "rdp-perf-probe",
     "script":  "test/win32/rdp-perf-probe.ps1",
-    "generated":  "2026-10-31T21:32:44-07:00",
-    "commit":  "c71b37da8",
+    "generated":  "2026-10-31T21:37:43-07:00",
+    "commit":  "504d39d72",
     "uncommitted":  [
 
                     ],

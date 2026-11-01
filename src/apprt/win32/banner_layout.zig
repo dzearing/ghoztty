@@ -105,6 +105,17 @@ pub fn clientY(grid_y: i32, band: u32) i32 {
     return grid_y + @as(i32, @intCast(band));
 }
 
+/// The top of a pane window's grid, in whatever frame `top`/`bottom` (the
+/// window's own edges) are measured in (T2568): `band` px down, never past
+/// the one row `gridHeight` always leaves. Every overlay glued to the grid
+/// (scrollbar, bell frame, key pill, badge) is placed off this edge, so a
+/// window spanning the band puts them where the moved window had them.
+pub fn gridTop(top: i32, bottom: i32, band: u32) i32 {
+    const h: u32 = @intCast(@max(bottom - top, 0));
+    if (h == 0) return top;
+    return top + @as(i32, @intCast(h - gridHeight(h, band)));
+}
+
 /// Total height of the banner BAND for a card `card_h` px tall that floats
 /// `margin` px inside it (T131). The margin counts on the top AND the
 /// bottom, so the terminal content below the band always starts a breath
@@ -781,6 +792,23 @@ test "gridHeight: a spanning window's grid matches the moved window's (T2566)" {
     try std.testing.expectEqual(@as(u32, 1), gridHeight(30, 40));
     try std.testing.expectEqual(@as(u32, 1), gridHeight(40, 40));
     try std.testing.expectEqual(@as(u32, 500), gridHeight(500, 0));
+}
+
+test "gridTop: a spanning window's overlays sit where the moved window's did (T2568)" {
+    // Slot top 100 on screen, band 40, slot 400 tall: knob off the window
+    // starts at 140 with no band, knob on at 100 with 40. Same grid top.
+    const inset: i32 = 40;
+    const off_top = 100 + windowOffset(inset, false);
+    const on_top = 100 + windowOffset(inset, true);
+    try std.testing.expectEqual(
+        gridTop(off_top, 500, gridBand(inset, false)),
+        gridTop(on_top, 500, gridBand(inset, true)),
+    );
+    try std.testing.expectEqual(@as(i32, 140), gridTop(on_top, 500, 40));
+    // No band moves nothing; a window shorter than its band keeps one row.
+    try std.testing.expectEqual(@as(i32, 7), gridTop(7, 90, 0));
+    try std.testing.expectEqual(@as(i32, 29), gridTop(0, 30, 40));
+    try std.testing.expectEqual(@as(i32, 5), gridTop(5, 5, 40));
 }
 
 test "gridY/clientY: a spanning window's points land on the moved window's cells (T2567)" {

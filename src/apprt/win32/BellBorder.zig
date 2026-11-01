@@ -35,6 +35,7 @@ const pane_clip = @import("pane_clip.zig");
 const bell_math = @import("bell_math.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
+const banner_layout = @import("banner_layout.zig");
 
 const log = std.log.scoped(.win32_bell_border);
 
@@ -76,6 +77,12 @@ pub const BellBorder = struct {
     /// The owner's region the frame was last clipped to; see
     /// `DimOverlay.matchOwnerRegion` (T1831).
     region_key: u64 = 0,
+    /// The band that region was shifted up by (T2568).
+    region_band: u32 = 0,
+    /// The px the owner's grid sits below its window's top - the banner band
+    /// a spanning window carries (`Surface.grid_band`, T2568). The frame
+    /// rings the grid, not the band. Null (no band) until the pane sets it.
+    grid_band: ?*const std.atomic.Value(u32) = null,
     /// Render scratch, grown to the largest pane seen.
     px: []u32 = &.{},
 
@@ -162,6 +169,7 @@ pub const BellBorder = struct {
 
         var rect: w32.RECT = undefined;
         if (w32.GetWindowRect(self.owner, &rect) == 0) return;
+        rect.top = banner_layout.gridTop(rect.top, rect.bottom, self.gridBand());
         const w = rect.right - rect.left;
         const h = rect.bottom - rect.top;
         if (w <= 0 or h <= 0) {
@@ -211,6 +219,9 @@ pub const BellBorder = struct {
         }
         var rect: w32.RECT = undefined;
         if (w32.GetClientRect(self.owner, &rect) == 0) return;
+        // The pane's visual already sits below the band: only the height
+        // loses it.
+        rect.top = banner_layout.gridTop(rect.top, rect.bottom, self.gridBand());
         const w = rect.right - rect.left;
         const h = rect.bottom - rect.top;
         if (w <= 0 or h <= 0) {
@@ -239,7 +250,7 @@ pub const BellBorder = struct {
             self.layer.setOpacity(self.alpha);
             self.layer.setVisible(true);
             self.shown = true;
-            log.info("bell border shown as visual px={d} size={d}x{d}", .{ width_px, w, h });
+            log.info("bell border shown as visual px={d} size={d}x{d} top={d}", .{ width_px, w, h, rect.top });
             if (self.fading and self.fade_on_compositor) self.redeclareFade();
         }
         if (self.fade_to != 255) self.startFade(255);
@@ -258,17 +269,31 @@ pub const BellBorder = struct {
     /// Clip the frame to the owner's window region - an elevated pane is a
     /// rounded card (T1831). Same contract as `DimOverlay.matchOwnerRegion`.
     pub fn matchOwnerRegion(self: *BellBorder, key: u64) void {
-        if (key == self.region_key) return;
+        const band = self.gridBand();
+        if (key == self.region_key and band == self.region_band) return;
         self.region_key = key;
+        self.region_band = band;
         if (key == 0) {
             _ = w32.SetWindowRgn(self.hwnd, null, 1);
             return;
         }
         const rgn = w32.CreateRectRgn(0, 0, 0, 0) orelse return;
-        if (w32.GetWindowRgn(self.owner, rgn) == 0 or w32.SetWindowRgn(self.hwnd, rgn, 1) == 0) {
+        if (w32.GetWindowRgn(self.owner, rgn) == 0) {
+            _ = w32.DeleteObject(rgn);
+            self.region_key = 0;
+            return;
+        }
+        // The frame starts at the grid's top, `band` below the owner's.
+        if (band != 0) _ = w32.OffsetRgn(rgn, 0, -@as(i32, @intCast(band)));
+        if (w32.SetWindowRgn(self.hwnd, rgn, 1) == 0) {
             _ = w32.DeleteObject(rgn);
             self.region_key = 0;
         }
+    }
+
+    fn gridBand(self: *const BellBorder) u32 {
+        const b = self.grid_band orelse return 0;
+        return b.load(.acquire);
     }
 
     /// The uniform name `Surface.hideOverlays` calls on every pane popup

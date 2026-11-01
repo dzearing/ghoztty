@@ -47,6 +47,16 @@
 #      keyboard context menu sit exactly one band lower in the taller window
 #      (the same screen point), and the menu is on screen where the log says.
 #      I6 is the negative control: knob off, no input line carries a band.
+#   J. On that banded pane, every overlay glued to the grid sits below the band
+#      (T2568): the scrollbar, the bell border (both child visuals knob on, so
+#      read from their log lines), the key-state pill, the read-only badge and
+#      the unfocused dim (popups both ways) land on the same SCREEN rect as the
+#      knob-off build's, while the pane window itself starts a band higher (J0,
+#      so the comparison is not trivially equal). The search bar and command
+#      palette are placed off the top-level window, not the pane, so the band
+#      cannot reach them and they are not re-measured here. J7-J8: the banner
+#      collapse glide (T2252) runs knob on as well, measured off the grid, and
+#      lands the way the knob-off one does.
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -456,9 +466,9 @@ try {
     $bandLine = 'pane grid band=(\d+) client=(\d+)x(\d+) grid=(\d+)'
     # One arm per knob, same window size and banner; returns the pane rect,
     # the strip's rect and the arm's log.
-    function Measure-BannerArm($name, $comp) {
+    function Measure-BannerArm($name, $comp, [string[]]$Extra = @()) {
         Set-Knobs $comp $null $null
-        $arm = Start-Arm $name
+        $arm = Start-Arm $name $Extra
         # Every window of the arm at one size, so the two arms compare.
         foreach ($w in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyWindow')) {
             [void](Set-TestWindowSize -Window ([IntPtr]$w.Hwnd) -Width 900 -Height 620)
@@ -580,6 +590,135 @@ try {
     Assert "I6 negative control: knob off, every input line reports band=0" `
         ((Count-Log $i0.Arm.Err 'pane (mouse|ime|keyboard menu) [^\r\n]*band=[1-9]') -eq 0 -and (Count-Log $i0.Arm.Err 'pane mouse left press') -gt 0)
 
+    # ========================================================================
+    "== J: on a banded pane, the overlays sit below the band (T2568)"
+    # ========================================================================
+    $jExtra = @('--command=powershell.exe -NoLogo', '--bell-features=border,title', '--macos-pane-glass=false',
+        '--keybind=f7=activate_key_table:outer', '--keybind=outer/f8=deactivate_key_table',
+        '--keybind=ctrl+shift+o=toggle_readonly')
+    # The first visible popup of $class over the pane, as a screen rect.
+    function Find-Over($m, $class, $timeoutMs) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.ElapsedMilliseconds -lt $timeoutMs) {
+            foreach ($o in @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class $class)) {
+                if ($o.Left -ge $m.Pane.Left - 2 -and $o.Right -le $m.Pane.Right + 2 -and
+                    $o.Top -ge $m.Strip.Top - 2 -and $o.Bottom -le $m.Pane.Bottom + 2) { return $o }
+            }
+            Start-Sleep -Milliseconds 150
+        }
+        return $null
+    }
+    function Rect-Text($r) { if ($r) { "$($r.Left),$($r.Top) $($r.Width)x$($r.Height)" } else { 'none' } }
+    function Same-Rect($a, $b) {
+        return ($a -and $b -and [math]::Abs($a.Left - $b.Left) -le 1 -and [math]::Abs($a.Top - $b.Top) -le 1 -and
+            [math]::Abs($a.Width - $b.Width) -le 1 -and [math]::Abs($a.Height - $b.Height) -le 1)
+    }
+    # A screen rect measured from the slot's top-left (the banner strip's),
+    # which is where the two arms' windows can be compared: each arm's window
+    # opens wherever the desktop puts it.
+    function Rel($rect, $o) {
+        if (-not $rect -or -not $o) { return $null }
+        return [pscustomobject]@{ Left = $rect.Left - $o.Left; Top = $rect.Top - $o.Top; Width = $rect.Width; Height = $rect.Height }
+    }
+    # Every grid overlay of one arm, as slot-relative rects. $visual: the
+    # knob-on arm, whose scrollbar and bell border are child visuals of the
+    # pane and are read from their log lines (pane-local, so offset by the
+    # pane's rect).
+    function Probe-Overlays($m, $visual) {
+        $r = [ordered]@{ Scroll = $null; Bell = $null; Pill = $null; Badge = $null; Dim = $null; PaneTop = $null; Glide = $null; GlideEnd = $null }
+        if (-not $m.Pane -or -not $m.Strip -or $m.Top -eq [IntPtr]::Zero) { return [pscustomobject]$r }
+        $hw = [IntPtr]$m.Pane.Hwnd
+        $p = $m.Pane
+        $slot = $m.Strip
+        $r.PaneTop = $p.Top - $slot.Top
+        & $Exe +send-keys "--target=$($m.Arm.Target)" '1..80' Enter 2>$null | Out-Null
+        Start-Sleep -Milliseconds 900
+        # Scrollbar: the strip's top, height and right edge.
+        if ($visual) {
+            $s = Last-Match $m.Arm.Err 'scrollbar visual at=(-?\d+),(-?\d+) size=(\d+)x(\d+) band=(\d+)'
+            if ($s) {
+                $r.Scroll = [pscustomobject]@{ Left = $p.Left + [int]$s.Groups[1].Value
+                    Top = $p.Top + [int]$s.Groups[5].Value + [int]$s.Groups[2].Value
+                    Width = [int]$s.Groups[3].Value; Height = [int]$s.Groups[4].Value }
+            }
+        } else { $r.Scroll = Find-Over $m 'GhozttyScrollbar' 1500 }
+        # Bell border: a BEL in the pane.
+        & $Exe +send-keys "--target=$($m.Arm.Target)" '[char]7' Enter 2>$null | Out-Null
+        if ($visual) {
+            [void](Wait-Log $m.Arm.Err 'bell border shown as visual px=\d+ size=\d+x\d+ top=' 3000)
+            $b = Last-Match $m.Arm.Err 'bell border shown as visual px=\d+ size=(\d+)x(\d+) top=(-?\d+)'
+            if ($b) {
+                $r.Bell = [pscustomobject]@{ Left = $p.Left; Top = $p.Top + [int]$b.Groups[3].Value
+                    Width = [int]$b.Groups[1].Value; Height = [int]$b.Groups[2].Value }
+            }
+        } else { $r.Bell = Find-Over $m 'GhozttyBellBorder' 3000 }
+        # Key-state pill: into a key table and out again.
+        [void](Send-TestKeys -Window $m.Top -Target $hw -Key f7)
+        $r.Pill = Find-Over $m 'GhozttyKeyState' 3000
+        [void](Send-TestKeys -Window $m.Top -Target $hw -Key f8)
+        Start-Sleep -Milliseconds 300
+        # The collapse glide (T2252): a four-line card, a click on its first
+        # line, and the frozen copy's measurements off the oracle line.
+        & $Exe +set-banner "--target=$($m.Arm.Target)" 'glide1\nglide2\nglide3\nglide4' 2>$null | Out-Null
+        Start-Sleep -Milliseconds 900
+        $card = @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyBannerOverlay') |
+            Where-Object { [math]::Abs($_.Left - $slot.Left) -le 2 } | Select-Object -First 1
+        if ($card) {
+            [void](Send-TestMouse -Window $m.Top -Target ([IntPtr]$card.Hwnd) -X ($card.Left + [int]($card.Width / 2)) -Y ($card.Top + [int]($slot.Height / 2)))
+            [void](Wait-Log $m.Arm.Err 'banner glide end reason=' 3000)
+            $gb = Last-Match $m.Arm.Err 'banner glide begin delta=(-?\d+) shift=(-?\d+) inset=(-?\d+)->(-?\d+) w=(\d+) h=(\d+)->(\d+)'
+            $ge = Last-Match $m.Arm.Err 'banner glide end reason=([\w-]+)'
+            if ($gb) { $r.Glide = "delta=$($gb.Groups[1].Value) inset=$($gb.Groups[3].Value)->$($gb.Groups[4].Value) w=$($gb.Groups[5].Value) h=$($gb.Groups[6].Value)->$($gb.Groups[7].Value)" }
+            if ($ge) { $r.GlideEnd = $ge.Groups[1].Value }
+        }
+        # Read-only badge.
+        [void](Send-TestKeys -Window $m.Top -Target $hw -Modifiers ctrl, shift -Key O)
+        $r.Badge = Find-Over $m 'GhozttyReadonlyBadge' 3000
+        foreach ($k in 'Scroll', 'Bell', 'Pill', 'Badge') { $r[$k] = Rel $r[$k] $slot }
+        # Dim: split, and band the new pane too (section F's shape), so
+        # whichever is unfocused dims a banded pane; the wash is measured off
+        # its own pane's strip.
+        $two = "$($m.Arm.Target)2"
+        & $Exe +split "--target=$($m.Arm.Target)" '--direction=right' "--name=$two" 2>$null | Out-Null
+        Start-Sleep -Milliseconds 600
+        & $Exe +set-banner "--target=$two" 'band spans the window' 2>$null | Out-Null
+        $wash = $null
+        for ($t = 0; $t -lt 25 -and -not $wash; $t++) {
+            Start-Sleep -Milliseconds 200
+            $wash = @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyDimOverlay') | Select-Object -First 1
+        }
+        if ($wash) {
+            Start-Sleep -Milliseconds 400
+            $wash = @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyDimOverlay') | Select-Object -First 1
+            $own = @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyBannerOverlay') |
+                Where-Object { [math]::Abs($_.Left - $wash.Left) -le 2 } | Select-Object -First 1
+            $r.Dim = Rel $wash $own
+        }
+        return [pscustomobject]$r
+    }
+    $j1 = Measure-BannerArm 'j' '1' $jExtra
+    $jBandM = Last-Match $j1.Arm.Err $bandLine
+    $jBand = if ($jBandM) { [int]$jBandM.Groups[1].Value } else { -1 }
+    $jOn = Probe-Overlays $j1 $true
+    $jOnAlive = (Test-Alive $j1.Arm) -and (Count-Log $j1.Arm.Err $failLine) -eq 0
+    $j0 = Measure-BannerArm 'j0' $null $jExtra
+    $jOff = Probe-Overlays $j0 $false
+    Assert "J0 knob on the pane window starts one band higher in its slot (band=$jBand on=$($jOn.PaneTop) off=$($jOff.PaneTop))" `
+        ($null -ne $jOn.PaneTop -and $null -ne $jOff.PaneTop -and $jBand -gt 0 -and [math]::Abs($jOn.PaneTop) -le 2 -and [math]::Abs($jOff.PaneTop - $jBand) -le 2)
+    Assert "J1 the scrollbar runs down the grid, as knob off (on=$(Rect-Text $jOn.Scroll) off=$(Rect-Text $jOff.Scroll))" `
+        ($jOn.Scroll -and $jOff.Scroll -and [math]::Abs($jOn.Scroll.Top - $jOff.Scroll.Top) -le 1 -and
+            [math]::Abs($jOn.Scroll.Height - $jOff.Scroll.Height) -le 1 -and
+            [math]::Abs(($jOn.Scroll.Left + $jOn.Scroll.Width) - ($jOff.Scroll.Left + $jOff.Scroll.Width)) -le 1)
+    Assert "J2 the bell border rings the grid, as knob off (on=$(Rect-Text $jOn.Bell) off=$(Rect-Text $jOff.Bell))" (Same-Rect $jOn.Bell $jOff.Bell)
+    Assert "J3 the key-state pill sits where knob off has it (on=$(Rect-Text $jOn.Pill) off=$(Rect-Text $jOff.Pill))" (Same-Rect $jOn.Pill $jOff.Pill)
+    Assert "J4 the read-only badge sits where knob off has it (on=$(Rect-Text $jOn.Badge) off=$(Rect-Text $jOff.Badge))" (Same-Rect $jOn.Badge $jOff.Badge)
+    Assert "J5 the unfocused dim covers the pane and its band, as knob off (on=$(Rect-Text $jOn.Dim) off=$(Rect-Text $jOff.Dim))" (Same-Rect $jOn.Dim $jOff.Dim)
+    Assert "J6 the knob-on app was still running, nothing fell back" $jOnAlive
+    Assert "J7 a collapse glides the frozen copy knob on too, measured as knob off (on=$($jOn.Glide) off=$($jOff.Glide))" `
+        ($jOn.Glide -and $jOn.Glide -eq $jOff.Glide)
+    Assert "J8 ... and it comes down because the grid redrew at its new size (on=$($jOn.GlideEnd) off=$($jOff.GlideEnd))" `
+        ($jOn.GlideEnd -eq 'landed' -and $jOff.GlideEnd -eq 'landed')
+
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
     # LAST statement of the top-level try (T1039).
@@ -603,4 +742,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 73
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 82

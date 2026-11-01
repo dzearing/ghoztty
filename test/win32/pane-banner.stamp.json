@@ -1,20 +1,21 @@
 {
     "guard":  "pane-banner",
     "script":  "test/win32/pane-banner.ps1",
-    "generated":  "2026-10-31T20:09:36-07:00",
-    "commit":  "65bed9059",
+    "generated":  "2026-10-31T21:41:43-07:00",
+    "commit":  "504d39d72",
     "uncommitted":  [
-                        "src/apprt/win32/banner_layout.zig"
+                        "src/apprt/win32/banner_layout.zig",
+                        "src/apprt/win32/BannerOverlay.zig"
                     ],
     "files":  {
                   "src/apprt/win32/banner_card.zig":  "9697c5e10f7cbd77852c8d9318f8f1e65bffb6e934d6c8a673ccefc4ae5cb53f",
                   "src/apprt/win32/banner_glide.zig":  "3975542db037c63aff42938225a925ca60996608cef458571279dd1b28126497",
-                  "src/apprt/win32/banner_layout.zig":  "62731813e226fb60fd186c8ac8b215a73c0e33f4b9df996049744d230ab67ae6",
+                  "src/apprt/win32/banner_layout.zig":  "fd1b41243054ee0e7c91691e65c7bcf19b0d8c2ad45dbdfb891c2439db2318d1",
                   "src/apprt/win32/banner_link.zig":  "0ca33afdba886a50a930f6cdb93f79e2a066ad776ea1a68b1215239d4bf020a7",
                   "src/apprt/win32/banner_markdown.zig":  "cc606914608fa4bca12b7c2efbc493c60bd37805d3cc3593d4b548139e28015d",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
                   "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
-                  "src/apprt/win32/BannerOverlay.zig":  "795fd9057a4ada0b73cf6a0225fd586313a160437ee0dc3b021ee4c0b9d93302",
+                  "src/apprt/win32/BannerOverlay.zig":  "8d34050e86359abc9794cbe69b7a14dda4fd178545e5db853987190aa0b3857e",
                   "src/apprt/win32/ViewerPane.zig":  "759e8ca7dd672c7ec98fcc8c08107d4ed90e818c51dad37fd641d7c72e5c27ba",
                   "test/win32/pane-banner.ps1":  "8bd571ba481f09742b662914b19028afd106e921b63457b9389478e5841e5933"
               }

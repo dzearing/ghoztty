@@ -22,6 +22,7 @@ const terminal = @import("../../terminal/main.zig");
 const Surface = @import("Surface.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
+const banner_layout = @import("banner_layout.zig");
 const testing = std.testing;
 
 const log = std.log.scoped(.win32_scrollbar);
@@ -373,12 +374,21 @@ pub const Scrollbar = struct {
         var rect: w32.RECT = undefined;
         if (w32.GetClientRect(self.owner, &rect) == 0) return 0;
 
-        const client_h = rect.bottom - rect.top;
+        // The strip runs down the grid, below the banner band a spanning
+        // window carries (T2568).
+        const band = self.surface.gridBand();
+        const top = banner_layout.gridTop(rect.top, rect.bottom, band);
+        const client_h = rect.bottom - top;
         const width = self.currentWidth();
 
-        // The visual path (T2492): pane-local, so only the size matters.
+        // The visual path (T2492): pane-local, so only the size matters. The
+        // pane's visual already sits below the band, so it is in grid rows.
         if (self.syncPath()) {
-            self.local = .{ .x = rect.right - width, .y = rect.top, .w = width, .h = client_h };
+            const local: @TypeOf(self.local) = .{ .x = rect.right - width, .y = banner_layout.gridY(top, band), .w = width, .h = client_h };
+            // comp-present.ps1 section J's oracle: where the strip sits in
+            // the pane, against the knob-off popup.
+            if (!std.meta.eql(local, self.local)) log.debug("scrollbar visual at={d},{d} size={d}x{d} band={d}", .{ local.x, local.y, local.w, local.h, band });
+            self.local = local;
             self.repaint();
             return switch (self.mode) {
                 .always_visible => width,
@@ -387,7 +397,7 @@ pub const Scrollbar = struct {
         }
 
         // Convert top-right corner of client area to screen coords.
-        var top_right = w32.POINT{ .x = rect.right - width, .y = rect.top };
+        var top_right = w32.POINT{ .x = rect.right - width, .y = top };
         _ = w32.ClientToScreen(self.owner, &top_right);
 
         // T1345: a moved pane sends its surface BOTH `WM_MOVE` and `WM_SIZE`,
@@ -681,6 +691,11 @@ pub const Scrollbar = struct {
     /// Whether a point in the pane's client area is the strip's on the
     /// visual path (T2492).
     pub fn hitVisual(self: *const Scrollbar, x: i32, y: i32) bool {
+        return self.hitGrid(x, banner_layout.gridY(y, self.surface.gridBand()));
+    }
+
+    /// `hitVisual` for a point already in the visual's (grid) rows.
+    fn hitGrid(self: *const Scrollbar, x: i32, y: i32) bool {
         if (!self.on_visual or !self.layer.attached) return false;
         const r = thumbRect(self.state.total, self.state.offset, self.state.len, self.local.h, self.dpiScaled(THUMB_MIN_HEIGHT_BASE));
         const lit = self.visibility != .hidden and self.thumbAlpha() > 0;
@@ -693,7 +708,9 @@ pub const Scrollbar = struct {
     /// and the release wherever the cursor has gone, as its capture does.
     pub fn routeMouse(self: *Scrollbar, ev: MouseEvent, x: i32, y: i32) bool {
         if (!self.on_visual) return false;
-        const ly = y - self.local.y;
+        // Pane client rows to the visual's, which start below the band.
+        const gy = banner_layout.gridY(y, self.surface.gridBand());
+        const ly = gy - self.local.y;
         if (self.dragging) {
             switch (ev) {
                 .move => self.onMouseMove(x, ly),

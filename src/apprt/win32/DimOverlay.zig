@@ -98,6 +98,10 @@ pub const DimOverlay = struct {
         /// the band's top corners are the elevated card's, and the wash takes
         /// the same cut (T1851). 0 = square.
         corner: i32 = 0,
+        /// The owner's window already spans the band - the composition
+        /// path's pane carves it off its own top (T2568) - so the wash keeps
+        /// the owner's rect and only cuts the band's shape into it.
+        in_owner: bool = false,
     };
 
     /// What the window region is cut from: where this popup's top-left sits
@@ -236,8 +240,10 @@ pub const DimOverlay = struct {
             // whole one carries the band.
             .whole => if (!T2308_NEUTERED and self.band.height > 0) {
                 band = self.band;
-                oy = -band.height;
-                rect.top -= band.height;
+                if (!band.in_owner) {
+                    oy = -band.height;
+                    rect.top -= band.height;
+                }
             },
             .none => {
                 if (self.shown) self.hide();

@@ -34,6 +34,7 @@ const icon_paint = @import("icon_button_paint.zig");
 const icon_button = @import("icon_button.zig");
 const color_math = @import("color_math.zig");
 const Surface = @import("Surface.zig");
+const banner_layout = @import("banner_layout.zig");
 
 const log = std.log.scoped(.win32_readonly_badge);
 
@@ -140,6 +141,9 @@ pub const ReadonlyBadge = struct {
 
         var owner_rect: w32.RECT = undefined;
         if (w32.GetWindowRect(self.owner, &owner_rect) == 0) return;
+        // The badge sits on the grid, below a spanning window's banner band
+        // (T2568).
+        if (self.surface) |s| owner_rect.top = banner_layout.gridTop(owner_rect.top, owner_rect.bottom, s.gridBand());
         const pane_w = owner_rect.right - owner_rect.left;
         const pane_h = owner_rect.bottom - owner_rect.top;
 
