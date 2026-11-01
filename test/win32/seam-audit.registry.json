@@ -364,6 +364,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2383. frame-lab-card.ps1 arms the frame lab's planted one-frame defects (magenta erase, stale-size present, dim wash held a refresh) to prove they fire once; unset (nothing planted) is what the product and every other acceptance run use, and the same script's sections D4/D5 photograph the unplanted cards first."
         },
+        "GHOZTTY_STACK_TRACE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2485. chainfold.ps1 -Live keeps the app's ring trace (=ring) with every live chain-fold capture so ringmap.py can say what committed in a red frame; it only records, it changes no layout or present. Unset is what every other run, and the user's build, runs."
+        },
         "GHOZTTY_STACK_SLIDE_MS": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

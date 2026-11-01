@@ -247,7 +247,14 @@ try {
         $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
         $out = Join-Path $repo "temp\chainfold-live\$stamp"
         'L. live: the chain-fold drag on a release build, every frame'
-        $rec = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'docs\design\t2485-chainfold\tools\record-chainfold.ps1') -Exe $Exe -Out $out -WinW $WinW -WinH $WinH -QueueGB $(if ($WinW -gt 2000) { 16 } else { 3 }) 2>&1 | ForEach-Object { "$_" }
+        # Keep the app's ring trace with every live run: a red frame is only
+        # worth the idle slot it cost if ringmap.py can say what committed in it
+        # (2026-11-01: a near-full run went red with no app.log to map).
+        $priorTrace = $env:GHOZTTY_STACK_TRACE
+        $env:GHOZTTY_STACK_TRACE = 'ring'
+        try {
+            $rec = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'docs\design\t2485-chainfold\tools\record-chainfold.ps1') -Exe $Exe -Out $out -WinW $WinW -WinH $WinH -QueueGB $(if ($WinW -gt 2000) { 16 } else { 3 }) -StdErr (Join-Path $out 'app.log') 2>&1 | ForEach-Object { "$_" }
+        } finally { $env:GHOZTTY_STACK_TRACE = $priorTrace }
         $rec | ForEach-Object { "  $_" }
         if (@($rec | Where-Object { $_ -match '^SKIP' }).Count -gt 0) {
             "  SKIP L: the recorder did not record (above)"
