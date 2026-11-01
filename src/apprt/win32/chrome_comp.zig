@@ -84,6 +84,35 @@ pub fn enabled() bool {
     return envOn(env_knob);
 }
 
+/// The knob that creates the window WITHOUT a redirection surface (T2548,
+/// T2360 step 4e, `WS_EX_NOREDIRECTIONBITMAP`). With one, DWM resizes the
+/// window's GDI surface and shows the new frame at the first compose,
+/// whatever the visual tree holds, so the whole client trails the frame by
+/// a compose (T2546's film). Without one, the client is exactly the visual
+/// tree - and every pixel still drawn with GDI, a GDI child window's
+/// included, is not on screen at all. So it is opt-in on its own.
+pub const noredir_knob = "GHOZTTY_COMP_NOREDIR";
+
+/// Whether a window may drop its redirection surface: asked for, with the
+/// chrome on this host (else the caption and desk have nowhere to be) and the
+/// panes presenting through composition (`GHOZTTY_COMP_PRESENT`; an OpenGL
+/// child window draws into the surface this removes), on an opaque window
+/// (a translucent one blends against that surface).
+pub fn noredirWanted(asked: bool, chrome: bool, present: bool, opaque_window: bool) bool {
+    return asked and chrome and present and opaque_window;
+}
+
+pub fn noredirAsked() bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    return envOn(noredir_knob);
+}
+
+/// `GHOZTTY_COMP_PRESENT`, read by name: the renderer owns the knob.
+pub fn presentKnobOn() bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    return envOn("GHOZTTY_COMP_PRESENT");
+}
+
 fn seamBuild() bool {
     return builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 }
@@ -109,7 +138,13 @@ const D2D1_BITMAP_OPTIONS_TARGET: u32 = 0x1;
 const D2D1_BITMAP_OPTIONS_CANNOT_DRAW: u32 = 0x2;
 const D2D1_ANTIALIAS_MODE_ALIASED: u32 = 1;
 
+const DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR: u32 = 0;
+const DCOMPOSITION_BORDER_MODE_HARD: u32 = 1;
+/// How far the backstop's one pixel is stretched: past any client area.
+const backstop_scale: f32 = 32768;
+
 const D2D1_COLOR_F = extern struct { r: f32, g: f32, b: f32, a: f32 };
+const D2D_MATRIX_3X2_F = extern struct { m11: f32, m12: f32, m21: f32, m22: f32, dx: f32, dy: f32 };
 const D2D1_RECT_F = extern struct { left: f32, top: f32, right: f32, bottom: f32 };
 const D2D1_BITMAP_PROPERTIES1 = extern struct {
     format: u32,
@@ -145,6 +180,9 @@ const slot_dcomp_target_set_root = 3;
 // `renderer/comp_overlay.zig` uses).
 const slot_dcomp_visual_set_offset_x = 4;
 const slot_dcomp_visual_set_offset_y = 6;
+const slot_dcomp_visual_set_transform_matrix = 8;
+const slot_dcomp_visual_set_interpolation = 11;
+const slot_dcomp_visual_set_border_mode = 12;
 const slot_dcomp_visual_set_clip_rect = 14;
 const slot_dcomp_visual_set_content = 15;
 const slot_dcomp_visual_add_visual = 16;
@@ -196,13 +234,15 @@ pub const Mirror = struct {
         self.deinit();
         const dc = w32.CreateCompatibleDC(ref) orelse return null;
         var bits: ?*anyopaque = null;
-        const bmi = w32.BITMAPINFO{ .bmiHeader = .{
-            .biWidth = w,
-            .biHeight = -h, // top-down
-            .biPlanes = 1,
-            .biBitCount = 32,
-            .biCompression = w32.BI_RGB,
-        } };
+        const bmi = w32.BITMAPINFO{
+            .bmiHeader = .{
+                .biWidth = w,
+                .biHeight = -h, // top-down
+                .biPlanes = 1,
+                .biBitCount = 32,
+                .biCompression = w32.BI_RGB,
+            },
+        };
         const bmp = w32.CreateDIBSection(dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
             _ = w32.DeleteDC(dc);
             return null;
@@ -568,6 +608,17 @@ pub const Host = struct {
     fill_visual: ?Obj = null,
     fill_surface: ?Obj = null,
 
+    /// A window with no redirection surface (T2548): the target's root is
+    /// `base_visual`, whose bottom child is the backstop - one pixel of the
+    /// window's background stretched past any client size - so a strip no
+    /// visual has reached yet (a grow, the first paint) is the background
+    /// rather than whatever is behind the window. The chrome's root hangs
+    /// above it. `backstop_rgb` is 0xRRGGBB, kept for a rebuild.
+    backstop_rgb: ?u32 = null,
+    base_visual: ?Obj = null,
+    backstop_visual: ?Obj = null,
+    backstop_surface: ?Obj = null,
+
     /// The desk (T2509): `PaneDesk`'s composed buffer as the bottom visual,
     /// placed at the content area and clipped to below the caption. Null
     /// while the desk is on GDI.
@@ -755,6 +806,57 @@ pub const Host = struct {
         errdefer release(surf);
 
         stage = "fill-draw";
+        try self.clearSurface(surf, w, h, .{ .r = 1, .g = 0, .b = 1, .a = 1 });
+
+        stage = "fill-visual";
+        var visual: ?Obj = null;
+        try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_visual)(self.dcomp, &visual));
+        const vis = visual orelse return error.ComFailed;
+        errdefer release(vis);
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, vis));
+        try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp));
+        self.fill_surface = surf;
+        self.fill_visual = vis;
+        log.info("chrome composition test fill attached: {d}x{d}", .{ w, h });
+    }
+
+    /// The backstop (T2548): `base_visual` as the target's root, holding one
+    /// pixel of `rgb` (0xRRGGBB) scaled past any client area - hard edges and
+    /// nearest sampling, so the stretch is one flat colour to the corner.
+    fn attachBackstop(self: *Host, rgb: u32) Error!void {
+        stage = "backstop-surface";
+        var surface: ?Obj = null;
+        try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface));
+        const surf = surface orelse return error.ComFailed;
+        errdefer release(surf);
+        try self.clearSurface(surf, 1, 1, rgbColor(rgb));
+
+        stage = "backstop-visual";
+        const vis = try self.newVisual();
+        errdefer release(vis);
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
+        try check(slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_interpolation)(vis, DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR));
+        try check(slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_border_mode)(vis, DCOMPOSITION_BORDER_MODE_HARD));
+        const scale: D2D_MATRIX_3X2_F = .{ .m11 = backstop_scale, .m12 = 0, .m21 = 0, .m22 = backstop_scale, .dx = 0, .dy = 0 };
+        try check(slot(*const fn (Obj, *const D2D_MATRIX_3X2_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_transform_matrix)(vis, &scale));
+
+        stage = "backstop-base";
+        const base = try self.newVisual();
+        errdefer release(base);
+        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, base, slot_dcomp_visual_add_visual)(base, vis, 0, null));
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, base));
+        try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp));
+        self.backstop_surface = surf;
+        self.backstop_visual = vis;
+        self.base_visual = base;
+        self.backstop_rgb = rgb;
+        log.info("chrome backstop attached: rgb=0x{x:0>6} (no redirection surface)", .{rgb});
+    }
+
+    /// Clear `w` x `h` of a fresh composition surface to `color` with
+    /// Direct2D.
+    fn clearSurface(self: *Host, surf: Obj, w: u32, h: u32, color: D2D1_COLOR_F) Error!void {
         var dxgi_surface: ?Obj = null;
         var offset: w32.POINT = .{ .x = 0, .y = 0 };
         try check(slot(*const fn (Obj, ?*const w32.RECT, *const GUID, *?Obj, *w32.POINT) callconv(.winapi) HRESULT, surf, slot_dcomp_surface_begin_draw)(surf, null, &IID_IDXGISurface, &dxgi_surface, &offset));
@@ -788,8 +890,7 @@ pub const Host = struct {
                 .bottom = @floatFromInt(offset.y + @as(i32, @intCast(h))),
             };
             slot(*const fn (Obj, *const D2D1_RECT_F, u32) callconv(.winapi) void, self.d2d, slot_d2d_rt_push_clip)(self.d2d, &clip, D2D1_ANTIALIAS_MODE_ALIASED);
-            const magenta: D2D1_COLOR_F = .{ .r = 1, .g = 0, .b = 1, .a = 1 };
-            slot(*const fn (Obj, *const D2D1_COLOR_F) callconv(.winapi) void, self.d2d, slot_d2d_rt_clear)(self.d2d, &magenta);
+            slot(*const fn (Obj, *const D2D1_COLOR_F) callconv(.winapi) void, self.d2d, slot_d2d_rt_clear)(self.d2d, &color);
             slot(*const fn (Obj) callconv(.winapi) void, self.d2d, slot_d2d_rt_pop_clip)(self.d2d);
             const ehr = slot(*const fn (Obj, ?*u64, ?*u64) callconv(.winapi) HRESULT, self.d2d, slot_d2d_rt_end_draw)(self.d2d, null, null);
             slot(*const fn (Obj, ?Obj) callconv(.winapi) void, self.d2d, slot_d2d_dc_set_target)(self.d2d, null);
@@ -797,18 +898,6 @@ pub const Host = struct {
             try check(ehr);
             try check(shr);
         }
-
-        stage = "fill-visual";
-        var visual: ?Obj = null;
-        try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_visual)(self.dcomp, &visual));
-        const vis = visual orelse return error.ComFailed;
-        errdefer release(vis);
-        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
-        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, vis));
-        try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp));
-        self.fill_surface = surf;
-        self.fill_visual = vis;
-        log.info("chrome composition test fill attached: {d}x{d} at +{d}+{d}", .{ w, h, offset.x, offset.y });
     }
 
     /// Whether the desk can be carried here. Not under the debug test fill,
@@ -939,7 +1028,10 @@ pub const Host = struct {
         if (self.root_visual) |r| return r;
         const root = try self.newVisual();
         errdefer release(root);
-        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, root));
+        if (self.base_visual) |base| {
+            // Over the backstop, named explicitly (T2548).
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, base, slot_dcomp_visual_add_visual)(base, root, 1, self.backstop_visual));
+        } else try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, root));
         self.root_visual = root;
         return root;
     }
@@ -1164,7 +1256,11 @@ pub const Host = struct {
         if (self.desk_visual == null) return;
         const had_cap = self.cap_visual != null;
         const had_ovl = self.ovl_visual != null;
-        _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, null);
+        // Without a redirection surface the backstop stays: it is all the
+        // window has under the panes now (T2548).
+        if (self.base_visual) |base| {
+            if (self.root_visual) |root| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, base, slot_dcomp_visual_remove_visual)(base, root);
+        } else _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, self.target, slot_dcomp_target_set_root)(self.target, null);
         _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
         self.commit_pending = false;
         self.releaseDesk();
@@ -1215,6 +1311,9 @@ pub const Host = struct {
         if (self.fill_visual) |v| release(v);
         if (self.fill_surface) |s| release(s);
         self.releaseDesk();
+        if (self.backstop_visual) |v| release(v);
+        if (self.backstop_surface) |s| release(s);
+        if (self.base_visual) |v| release(v);
         release(self.target);
         release(self.dcomp);
         release(self.d2d);
@@ -1227,11 +1326,19 @@ pub const Host = struct {
 };
 
 /// Build a host for `hwnd` when the knob asks for one, logging the outcome
-/// either way. Null means the window's chrome stays GDI.
-pub fn create(hwnd: HWND, rebuilds: u32) ?Host {
+/// either way. Null means the window's chrome stays GDI. `backstop`
+/// (0xRRGGBB) is for a window with no redirection surface (T2548): a host
+/// that cannot put it up is no host, since that window would show whatever
+/// is behind it wherever no visual reaches.
+pub fn create(hwnd: HWND, rebuilds: u32, backstop: ?u32) ?Host {
     var host = Host.init(hwnd) catch {
         const f = Host.lastFailure();
         log.warn("chrome composition host unavailable at {s}: hr=0x{x:0>8}; chrome stays GDI", .{ f.stage, hex(f.hr) });
+        return null;
+    };
+    if (backstop) |rgb| host.attachBackstop(rgb) catch {
+        log.warn("chrome backstop failed at {s}: hr=0x{x:0>8}; no host", .{ stage, hex(last_hr) });
+        host.deinit();
         return null;
     };
     host.rebuilds = rebuilds;
@@ -1252,9 +1359,41 @@ pub fn poll(slot_host: *?Host) void {
     const reason = h.lostReason() orelse return;
     const hwnd = h.hwnd;
     const next = h.rebuilds + 1;
+    const backstop = h.backstop_rgb;
     log.warn("chrome composition device lost ({s}); rebuilding", .{reason.label()});
     h.deinit();
-    slot_host.* = create(hwnd, next);
+    slot_host.* = create(hwnd, next, backstop);
+}
+
+/// The backstop's colour: 0xRRGGBB, opaque.
+fn rgbColor(rgb: u32) D2D1_COLOR_F {
+    return .{
+        .r = @as(f32, @floatFromInt((rgb >> 16) & 0xff)) / 255.0,
+        .g = @as(f32, @floatFromInt((rgb >> 8) & 0xff)) / 255.0,
+        .b = @as(f32, @floatFromInt(rgb & 0xff)) / 255.0,
+        .a = 1,
+    };
+}
+
+test "T2548: the window drops its redirection surface only with every piece that replaces it" {
+    try std.testing.expect(noredirWanted(true, true, true, true));
+    // Not asked: the default stays the redirected window.
+    try std.testing.expect(!noredirWanted(false, true, true, true));
+    // No chrome host: the caption and desk would be GDI, drawn into nothing.
+    try std.testing.expect(!noredirWanted(true, false, true, true));
+    // Panes on OpenGL child windows draw into the surface this removes.
+    try std.testing.expect(!noredirWanted(true, true, false, true));
+    // A translucent window blends against it.
+    try std.testing.expect(!noredirWanted(true, true, true, false));
+}
+
+test "T2548: the backstop is the window background, opaque" {
+    const c = rgbColor(0xff8000);
+    try std.testing.expectEqual(@as(f32, 1), c.r);
+    try std.testing.expectApproxEqAbs(@as(f32, 128.0 / 255.0), c.g, 1e-6);
+    try std.testing.expectEqual(@as(f32, 0), c.b);
+    try std.testing.expectEqual(@as(f32, 1), c.a);
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(D2D_MATRIX_3X2_F));
 }
 
 test "knobOn accepts 1/true/on and nothing else" {

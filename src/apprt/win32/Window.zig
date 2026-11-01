@@ -1027,6 +1027,11 @@ ghost_opaque: bool = false,
 /// painters over the desk drew (T2544). Null when the knob is off or the
 /// host could not be built, and the chrome is GDI either way.
 chrome_host: ?chrome_comp.Host = null,
+/// This window was created with no redirection surface (T2548,
+/// `GHOZTTY_COMP_NOREDIR`): its client is exactly the chrome host's visual
+/// tree and the panes' own composition, so a resize paints the chrome inside
+/// the size message rather than at a later `WM_PAINT`.
+noredir: bool = false,
 /// Set around a `WM_PRINTCLIENT` paint: the desk blits into the caller's DC
 /// and leaves the chrome host's visual alone (T2509).
 desk_printing: bool = false,
@@ -1505,6 +1510,13 @@ pub fn syncTranslucency(self: *Window) void {
     }
 }
 
+/// Whether a GDI child of this window needs a surface of its own: in a
+/// translucent-capable window (T1787), and in one with no redirection surface
+/// for it to paint into (T2548) - there a plain GDI child composes black.
+fn gdiChildrenLayered(self: *const Window) bool {
+    return self.noredir or self.app.config.@"background-opacity" < 1.0;
+}
+
 /// Compose a GDI-painted CHILD window fully opaque inside a per-pixel-alpha
 /// top-level (T1787) - the viewer host, the inline tab-rename box.
 ///
@@ -1965,24 +1977,48 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         }
     }
 
+    // T2548: a window with no redirection surface, when asked for and the
+    // chrome and panes can both live without one. Not on a translucent ghost
+    // (alpha-layered windows blend against that surface).
+    var noredir = chrome_comp.noredirWanted(
+        chrome_comp.noredirAsked(),
+        chrome_comp.enabled(),
+        chrome_comp.presentKnobOn(),
+        app.config.@"background-opacity" >= 1.0 and !(self.ghost and !self.ghost_opaque),
+    );
+    const backstop: u32 = (@as(u32, app.config.background.r) << 16) |
+        (@as(u32, app.config.background.g) << 8) | app.config.background.b;
+
     // Create the top-level container window using the GhosttyWindow class.
-    const hwnd = w32.CreateWindowExW(
-        ex_style,
-        App.WINDOW_CLASS_NAME,
-        if (comptime builtin.mode == .Debug)
-            std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty [DEBUG]")
-        else
-            std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty"),
-        style,
-        cx,
-        cy,
-        width,
-        height,
-        null,
-        null,
-        app.hinstance,
-        null,
-    ) orelse return error.Win32Error;
+    // A no-redirection window whose host cannot be built would show nothing
+    // but what is behind it, so it is created again with the surface.
+    const hwnd = while (true) {
+        const h = w32.CreateWindowExW(
+            ex_style | (if (noredir) w32.WS_EX_NOREDIRECTIONBITMAP else 0),
+            App.WINDOW_CLASS_NAME,
+            if (comptime builtin.mode == .Debug)
+                std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty [DEBUG]")
+            else
+                std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty"),
+            style,
+            cx,
+            cy,
+            width,
+            height,
+            null,
+            null,
+            app.hinstance,
+            null,
+        ) orelse return error.Win32Error;
+        if (!noredir) break h;
+        self.chrome_host = chrome_comp.create(h, 0, backstop);
+        if (self.chrome_host != null) break h;
+        log.warn("no-redirection window refused: the chrome host could not be built; created with a redirection surface", .{});
+        _ = w32.DestroyWindow(h);
+        noredir = false;
+    };
+    self.noredir = noredir;
+    if (noredir) log.info("window created with no redirection surface (T2548)", .{});
 
     self.hwnd = hwnd;
     errdefer {
@@ -1990,7 +2026,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         self.hwnd = null;
     }
     if (self.ghost and !self.ghost_opaque) _ = w32.SetLayeredWindowAttributes(hwnd, 0, 1, w32.LWA_ALPHA);
-    if (chrome_comp.enabled()) self.chrome_host = chrome_comp.create(hwnd, 0);
+    if (self.chrome_host == null and chrome_comp.enabled()) self.chrome_host = chrome_comp.create(hwnd, 0, null);
 
     // Store the Window pointer in GWLP_USERDATA for the WndProc.
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
@@ -2889,6 +2925,8 @@ fn syncPaneSidebarScoped(self: *Window, scopes: ScopeRefresh) void {
     if (self.sidebar == null) {
         if (self.tab_count == 0) return;
         self.sidebar = PaneSidebar.create(self.app.core_app.alloc, self, hwnd);
+        // A GDI child with no redirection surface under it (T2548).
+        if (self.noredir) if (self.sidebar) |made| composeOpaqueLayer(made.hwnd, "pane sidebar");
     }
     const sb = self.sidebar orelse return;
     var rc: w32.RECT = undefined;
@@ -3275,14 +3313,16 @@ pub fn setRemoteMachine(self: *Window, machine: RemoteMachine) Allocator.Error!v
             // string that dies with the dial that produced it (T1276).
             const token = if (r.token) |t| try alloc.dupe(u8, t) else null;
             errdefer if (token) |t| alloc.free(t);
-            break :relay .{ .relay = .{
-                .base = base,
-                .device = device,
-                .token = token,
-                // A name the caller carried (T68's inheritance copies the
-                // parent window's) wins; otherwise ask what we already know.
-                .name = if (r.name) |n| try alloc.dupe(u8, n) else self.resolveRelayName(r.device),
-            } };
+            break :relay .{
+                .relay = .{
+                    .base = base,
+                    .device = device,
+                    .token = token,
+                    // A name the caller carried (T68's inheritance copies the
+                    // parent window's) wins; otherwise ask what we already know.
+                    .name = if (r.name) |n| try alloc.dupe(u8, n) else self.resolveRelayName(r.device),
+                },
+            };
         },
     };
     // The name IS the connected pill's label (T610), so the record arriving is
@@ -3588,7 +3628,7 @@ fn createViewerPane(self: *Window, open: ViewerPane.Open) !*ViewerPane {
     try viewer.createHostWindow(self.app.hinstance, hwnd, self.surfaceRect());
     // A translucent-capable window composes by per-pixel alpha, and the
     // viewer's chrome is GDI, which writes alpha 0 (T1787).
-    if (self.app.config.@"background-opacity" < 1.0) viewer.composeOpaque();
+    if (self.gdiChildrenLayered()) viewer.composeOpaque();
     // Before `start`, so the location is already recorded when the controller
     // arrives and `adoptController` replays it. A viewer that is told where to
     // go only after its browser process is up would race its own creation.
@@ -14395,13 +14435,15 @@ fn paintCaption(self: *Window, hdc_screen: w32.HDC) void {
     // A DIB section, so a glass band (T1886) can be written as pixels; GDI
     // draws the title and the buttons on top of the same memory.
     var bits: ?*anyopaque = null;
-    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
-        .biWidth = client_w,
-        .biHeight = -cap_h, // top-down
-        .biPlanes = 1,
-        .biBitCount = 32,
-        .biCompression = w32.BI_RGB,
-    } };
+    const bmi = w32.BITMAPINFO{
+        .bmiHeader = .{
+            .biWidth = client_w,
+            .biHeight = -cap_h, // top-down
+            .biPlanes = 1,
+            .biBitCount = 32,
+            .biCompression = w32.BI_RGB,
+        },
+    };
     const mem_bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return;
     const old_bmp = w32.SelectObject(mem_dc, mem_bmp);
     defer {
@@ -15689,6 +15731,13 @@ fn handleResize(self: *Window, cause: []const u8) void {
     // happens to dirty it.
     self.invalidateCaption();
     self.invalidateTabBar();
+    // T2548: with no redirection surface DWM shows the new frame with
+    // whatever tree is committed, and there is no stale surface to stand in
+    // for a late one. Paint the chrome now, inside the size message, so the
+    // desk and caption reach the compositor in the same breath as the size.
+    if (self.noredir) if (self.hwnd) |h| {
+        _ = w32.UpdateWindow(h);
+    };
     self.showResizeOverlay();
 }
 
@@ -17012,7 +17061,7 @@ pub fn startTabRename(self: *Window, tab_idx: usize) void {
     ) orelse return;
 
     // A GDI child of a per-pixel-alpha window (T1787).
-    if (self.app.config.@"background-opacity" < 1.0) composeOpaqueLayer(edit, "tab rename box");
+    if (self.gdiChildrenLayered()) composeOpaqueLayer(edit, "tab rename box");
 
     // Apply dark theme
     const dark_mode: u32 = 1;

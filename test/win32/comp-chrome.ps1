@@ -19,6 +19,14 @@
 #      test fill (GHOZTTY_COMP_CHROME_TEST_FILL=1) is drawn through it into a
 #      composition surface and attached without error.
 #   D. Negative control: knob off, nothing is created and nothing is logged.
+#   E. No redirection surface (T2548): with GHOZTTY_COMP_NOREDIR=1 beside the
+#      chrome and present knobs, every window is created WITHOUT one
+#      (WS_EX_NOREDIRECTIONBITMAP on the top-level), puts the backstop up, and
+#      keeps working - a split, a resize, a viewer pane (its GDI chrome is a
+#      layered child), no failure.
+#   F. The gate: NOREDIR without GHOZTTY_COMP_PRESENT (panes on OpenGL child
+#      windows, which draw into the surface it would remove) leaves the window
+#      redirected and says nothing about it.
 #
 # NOT asserted here: the on-screen ORDER (fill above the GDI chrome, below the
 # panes). This harness runs on a background desktop, which DWM never composes
@@ -53,12 +61,14 @@ if (-not (Test-Path $Exe)) { "SETUP FAIL: $Exe not found - build it first"; exit
 
 $root = Join-Path $env:TEMP "ghoztty-comp-chrome-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_CHROME_FORCE_LOSS', 'GHOZTTY_COMP_CHROME_TEST_FILL'
+$knobs = 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_CHROME_FORCE_LOSS', 'GHOZTTY_COMP_CHROME_TEST_FILL',
+    'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_NOREDIR'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
-function Set-Knobs($on, $loss, $fill) {
-    $vals = @{ GHOZTTY_COMP_CHROME = $on; GHOZTTY_COMP_CHROME_FORCE_LOSS = $loss; GHOZTTY_COMP_CHROME_TEST_FILL = $fill }
+function Set-Knobs($on, $loss, $fill, $present, $noredir) {
+    $vals = @{ GHOZTTY_COMP_CHROME = $on; GHOZTTY_COMP_CHROME_FORCE_LOSS = $loss; GHOZTTY_COMP_CHROME_TEST_FILL = $fill
+        GHOZTTY_COMP_PRESENT = $present; GHOZTTY_COMP_NOREDIR = $noredir }
     foreach ($k in $knobs) {
         if ($vals[$k]) { Set-Item "env:$k" $vals[$k] }
         else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
@@ -143,6 +153,18 @@ function Start-Arm($name) {
 
 function Test-Alive($arm) { return ($arm.App.Process -and -not $arm.App.Process.HasExited) }
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class CcStyle {
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
+    public static bool NoRedir(IntPtr h) { return (GetWindowLong(h, -20) & 0x00200000) != 0; }
+}
+'@
+
+$noredirLine = 'window created with no redirection surface'
+$backstopLine = 'chrome backstop attached: rgb=0x[0-9a-f]{6}'
+
 try {
     # ========================================================================
     "== A: knob on, every window builds its chrome host and keeps working"
@@ -210,6 +232,52 @@ try {
     Assert "D1 no chrome host line at all, even with both seams set" ((Count-Log $d.Err $anyHost) -eq 0)
     Assert "D2 the pane draws" (Test-DrawsText $d.Target)
 
+    # ========================================================================
+    "== E: no redirection surface - the window is the visual tree, and works"
+    # ========================================================================
+    Set-Knobs '1' $null $null '1' '1'
+    $e = Start-Arm 'e'
+    Assert "E0 the arm's windows came up" ($e.Top -ne [IntPtr]::Zero -and $null -ne $e.Win)
+    Assert "E1 both windows were created without one and said so ($(Count-Log $e.Err $noredirLine))" `
+        (Wait-Count $e.Err $noredirLine 2 15000)
+    Assert "E2 both put the backstop up before the host was ready ($(Count-Log $e.Err $backstopLine))" `
+        ((Count-Log $e.Err $backstopLine) -eq 2 -and (Count-Log $e.Err $readyLine) -eq 2)
+    Assert "E3 the top-level really carries WS_EX_NOREDIRECTIONBITMAP" `
+        ($e.Top -ne [IntPtr]::Zero -and [CcStyle]::NoRedir($e.Top))
+    & $Exe +split "--target=$($e.Target)" '--direction=right' '--name=chrome2' 2>$null | Out-Null
+    & $Exe +split "--target=chrome2" '--direction=down' "--view=$PSCommandPath" '--name=chromev' 2>$null | Out-Null
+    for ($i = 0; $i -lt 3; $i++) {
+        & $Exe +send-keys "--target=chrome2" "echo comp-noredir-t2548-$i" Enter 2>$null | Out-Null
+        Start-Sleep -Milliseconds 250
+    }
+    if ($e.Top -ne [IntPtr]::Zero) {
+        [void](Set-TestWindowSize -Window $e.Top -Width 1100 -Height 700)
+        Start-Sleep -Milliseconds 500
+        [void](Set-TestWindowSize -Window $e.Top -Width 800 -Height 520)
+        Start-Sleep -Milliseconds 800
+    }
+    Assert "E4 the app is still running" (Test-Alive $e)
+    Assert "E5 nothing failed, was refused or lost" `
+        ((Count-Log $e.Err $unavailLine) -eq 0 -and (Count-Log $e.Err 'backstop failed|no-redirection window refused|device lost') -eq 0)
+    $rd = ''
+    for ($t = 0; $t -lt 25 -and $rd -notmatch 'comp-noredir-t2548-2'; $t++) {
+        $rd = (& $Exe +read '--name=chrome2' 2>$null | Out-String)
+        if ($rd -notmatch 'comp-noredir-t2548-2') { Start-Sleep -Milliseconds 200 }
+    }
+    if ($rd -notmatch 'comp-noredir-t2548-2') { "  +read said: $(($rd.Trim() -split "`n" | Select-Object -Last 4) -join ' | ')" }
+    Assert "E6 the panes still answer +read" ($rd -match 'comp-noredir-t2548-2')
+
+    # ========================================================================
+    "== F: the gate - without composition present the window stays redirected"
+    # ========================================================================
+    Set-Knobs '1' $null $null $null '1'
+    $f = Start-Arm 'f'
+    Assert "F0 the arm's windows came up" ($f.Top -ne [IntPtr]::Zero -and $null -ne $f.Win)
+    Assert "F1 the chrome host is still built" (Wait-Count $f.Err $readyLine 2 15000)
+    Assert "F2 no window dropped its redirection surface" `
+        ((Count-Log $f.Err $noredirLine) -eq 0 -and (Count-Log $f.Err 'backstop') -eq 0 -and -not [CcStyle]::NoRedir($f.Top))
+    Assert "F3 the pane draws" (Test-DrawsText $f.Target)
+
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
     # LAST statement of the top-level try (T1039).
@@ -233,4 +301,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-chrome' -MinPass 19
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-chrome' -MinPass 30

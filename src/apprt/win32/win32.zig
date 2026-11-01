@@ -3019,6 +3019,7 @@ pub const AC_SRC_OVER: u8 = 0x00;
 pub const AC_SRC_ALPHA: u8 = 0x01;
 pub const WS_EX_TRANSPARENT: u32 = 0x00000020;
 pub const WS_EX_NOACTIVATE: u32 = 0x08000000;
+pub const WS_EX_NOREDIRECTIONBITMAP: u32 = 0x00200000;
 
 pub const BLENDFUNCTION = extern struct {
     BlendOp: u8 = AC_SRC_OVER,
