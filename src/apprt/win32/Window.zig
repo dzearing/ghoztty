@@ -8850,6 +8850,10 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
     const d = 2 * pane_elevation.childRadiusPx(self.scale);
     // Glass panes put their banner strips on the desk too (T1884).
     const banner_glass = if (elevated) self.bannerGlass() else null;
+    // A tree pane's region waits for the drag to end (T2593); the key stays
+    // stale, so `WM_EXITSIZEMOVE`'s cut finds it changed.
+    const defer_tree = !resize_paint.liveTreeRegions() and
+        resize_paint.deferRegionCut(self.noredir, self.in_size_loop, self.in_live_layout, true);
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
@@ -8861,6 +8865,11 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 s.setBannerCardCorner(plan.banner_corner);
                 s.setBannerGlass(banner_glass);
                 s.setBannerNested(elevated);
+                if (defer_tree and s.tree_visual != null) {
+                    if (resizeTraceOn() and entry.view.card_region_key != key)
+                        log.info("resize trace region-deferred hwnd={x}", .{@intFromPtr(h)});
+                    continue;
+                }
             }
             if (entry.view.card_region_key == key) continue;
             entry.view.card_region_key = key;
@@ -18113,6 +18122,8 @@ pub fn windowWndProc(
                     if (entry.view.surface()) |s| s.in_live_resize = false;
                     if (entry.view.viewer()) |v| v.settleMove();
                 }
+                // The tree panes' regions the drag left as they were (T2593).
+                if (window.noredir) window.cutCardRegions();
             }
             // The drag's canvas goes, and the desk is laid out for the window
             // again on the next paint (T2577). A move never left the window's

@@ -352,6 +352,17 @@ test "a batch's held resizes keep one entry per pane, at its last size, in arriv
     try std.testing.expectEqual(@as(u8, 2), p.entries[1].pane);
 }
 
+test "T2593: only a tree pane inside an edge drag's live pass keeps its old region" {
+    try std.testing.expect(deferRegionCut(true, true, true, true));
+    // A pane on its own child window's target is clipped by the region.
+    try std.testing.expect(!deferRegionCut(true, true, true, false));
+    // With a redirection surface, outside the size loop, or outside a live
+    // layout pass (a settle, a divider drag), the cut is made as before.
+    try std.testing.expect(!deferRegionCut(false, true, true, true));
+    try std.testing.expect(!deferRegionCut(true, false, true, true));
+    try std.testing.expect(!deferRegionCut(true, true, false, true));
+}
+
 test "a full batch says so, and taking it leaves it empty for the next" {
     var p: Pending(u8, 2) = .{};
     try std.testing.expect(p.add(1, 10, 10));
@@ -401,6 +412,28 @@ pub fn liveSystemRedraw() bool {
     const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_REDRAW");
     system_redraw_state = v;
     return v;
+}
+
+var tree_regions_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_TREE_REGIONS` (T2593): cut a tree pane's card region on
+/// every step of a window-edge drag, as before, rather than once at
+/// `WM_EXITSIZEMOVE`. UI thread only; read once per process.
+pub fn liveTreeRegions() bool {
+    if (tree_regions_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_TREE_REGIONS");
+    tree_regions_state = v;
+    return v;
+}
+
+/// Whether a live layout pass leaves a pane's card region as it was until the
+/// drag ends (T2593). Only for a pane whose picture is a visual in the
+/// window's composition tree: its child window is there for input alone, so
+/// the region decides nothing on screen, and a `SetWindowRgn` per pane per
+/// step is window-manager work the drag waits on. A pane presenting into its
+/// own child window is clipped by that region, so it is cut every step.
+pub fn deferRegionCut(noredir: bool, in_size_loop: bool, in_live_layout: bool, in_tree: bool) bool {
+    return noredir and in_size_loop and in_live_layout and in_tree;
 }
 
 var viewer_moves_state: ?bool = null;
