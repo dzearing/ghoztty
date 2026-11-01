@@ -1,10 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-01T06:33:52-08:00",
+    "generated":  "2026-11-01T07:12:52-08:00",
     "commit":  "26fcbecfa",
     "uncommitted":  [
-                        "src/apprt/win32/PaneSidebar.zig"
+                        "src/apprt/win32/Window.zig",
+                        "test/win32/seam-audit.registry.json"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -212,7 +213,7 @@
                   "src/apprt/win32/PaneDesk.zig":  "3fc1aa242dc485f654400eea951caee8bc1814031efb51b04ad78ee1d87509b4",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
-                  "src/apprt/win32/PaneSidebar.zig":  "bf62e6664f664e2c64f49d9c7f515aa4ca8161dffcfa4c04efbdcd44a065d265",
+                  "src/apprt/win32/PaneSidebar.zig":  "a844356ff8726bf0a2abc90ef6b3498620cac55cbb8b898edf2bbf8e991a7f5e",
                   "src/apprt/win32/PaneView.zig":  "566593dd318dbf777ab6058492d93c442e742042b4c514632d956b9e6b6a76b1",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/persistence_notice.zig":  "65baba4beff952a6d9d9f9753a3bf254bc8f050a6d7430978339ebf9ec848840",
@@ -341,7 +342,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "7fcf8d77463e4febc1569881c9566fee54d8d77860a8d75f63fac3e986f47d48",
-                  "src/apprt/win32/Window.zig":  "50425db8b7e1acf3af2464c959f9fa40f93f8ab53f214cbf1a8a139fa92deac9",
+                  "src/apprt/win32/Window.zig":  "21f3c8b2ce7b7998740907c821d6960a2a39787d569b6549317bb2a247d055a6",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -550,6 +551,6 @@
                   "src/termio/title_pace.zig":  "914afed249d211b9f119a1f551b1012008c75c2d4f9f1373639d40435eddf32d",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
-                  "test/win32/seam-audit.registry.json":  "9e4ccca00213412398345d38b03cb29d7cdadc7fa777c06330f51e7a5b34c6dd"
+                  "test/win32/seam-audit.registry.json":  "bff3214638340719d346879512b65bedb551e901414a5f353e2cd719ce6c671d"
               }
 }

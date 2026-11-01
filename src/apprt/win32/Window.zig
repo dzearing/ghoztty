@@ -789,6 +789,17 @@ drag_layout_pending: bool = false,
 drag_wm_paints: u32 = 0,
 drag_wm_paint_us: u64 = 0,
 drag_perf_on: bool = false,
+/// A window-edge drag step under `GHOZTTY_PERF` (T2603): started at the
+/// step's `WM_WINDOWPOSCHANGING`, read at the end of its `WM_SIZE`, so one
+/// tick is everything the UI thread spends between the size loop asking for
+/// a size and taking the next pointer move - T2578's pre-layout included.
+edge_step: ?std.time.Timer = null,
+edge_prelayout_us: u64 = 0,
+edge_stats: struct {
+    prelayouts: u32 = 0,
+    prelayout_us: u64 = 0,
+    size_us: u64 = 0,
+} = .{},
 
 /// Frame waits owed by the layout pass currently running (T1343).
 ///
@@ -15945,9 +15956,55 @@ fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
     }) orelse return;
     resizeTrace("prelayout-begin", hwnd);
     defer resizeTrace("prelayout-end", hwnd);
+    var pt = if (self.edge_step != null) std.time.Timer.start() catch null else null;
+    defer if (pt) |*t| {
+        self.edge_prelayout_us = t.read() / std.time.ns_per_us;
+    };
     self.pending_client = .{ .left = pc.left, .top = pc.top, .right = pc.right, .bottom = pc.bottom };
     defer self.pending_client = null;
     self.layoutSplitsLive();
+}
+
+/// `WM_WINDOWPOSCHANGING` inside a size loop (T2603): a step of an edge drag
+/// begins - its clock starts before T2578's pre-layout runs.
+fn edgeStepBegin(self: *Window, wp: *const w32.WINDOWPOS) void {
+    if (!self.drag_perf_on or !self.in_size_loop or self.edge_step != null) return;
+    if (wp.flags & resize_prelayout.swp_nosize != 0) return;
+    self.edge_prelayout_us = 0;
+    self.edge_step = std.time.Timer.start() catch null;
+}
+
+/// The end of a step's `WM_SIZE` (T2603): the step is one drag tick.
+fn edgeStepEnd(self: *Window, size_us: u64) void {
+    var t = self.edge_step orelse return;
+    self.edge_step = null;
+    const pre = self.edge_prelayout_us;
+    if (pre > 0) self.edge_stats.prelayouts +|= 1;
+    self.edge_stats.prelayout_us +|= pre;
+    self.edge_stats.size_us +|= size_us;
+    self.recordDragTick(t.read() / std.time.ns_per_us);
+}
+
+/// `WM_EXITSIZEMOVE` (T2603): what the edge drag cost, in the divider drag's
+/// line plus one of its own saying how a step split between T2578's
+/// pre-layout and the `WM_SIZE` pass.
+fn edgeDragEnded(self: *Window) void {
+    self.edge_step = null;
+    const e = self.edge_stats;
+    self.edge_stats = .{};
+    const ticks: u64 = self.drag_stats.ticks;
+    if (self.drag_perf_on and ticks > 0) log.info(
+        "window drag steps={d} prelayouts={d} mean_prelayout_us={d} mean_size_us={d} mean_us={d} fps={d}",
+        .{
+            ticks,
+            e.prelayouts,
+            e.prelayout_us / ticks,
+            e.size_us / ticks,
+            self.drag_stats.meanUs(),
+            self.drag_stats.fps(),
+        },
+    );
+    self.reportDragCost("window");
 }
 
 /// Persist the window's outer size + maximized flag as the placement
@@ -18061,11 +18118,13 @@ pub fn windowWndProc(
             // what it should be showing (T254).
             window.invalidateCaption();
             resizeTrace("size-begin", hwnd);
+            var st = if (window.edge_step != null) std.time.Timer.start() catch null else null;
             window.handleResize(switch (wparam) {
                 w32.SIZE_MAXIMIZED => "maximized",
                 w32.SIZE_RESTORED => "restored",
                 else => "other",
             });
+            if (st) |*t| window.edgeStepEnd(t.read() / std.time.ns_per_us);
             resizeTrace("size-end", hwnd);
             return 0;
         },
@@ -18105,8 +18164,10 @@ pub fn windowWndProc(
         w32.WM_WINDOWPOSCHANGING => {
             // DefWindowProc first: it clamps the new size to the min/max track
             // size, and the panes must be laid out for the size that lands.
+            const wp: *const w32.WINDOWPOS = @ptrFromInt(@as(usize, @bitCast(lparam)));
+            window.edgeStepBegin(wp);
             const r = w32.DefWindowProcW(hwnd, msg, wparam, lparam);
-            window.prelayoutForPos(@ptrFromInt(@as(usize, @bitCast(lparam))));
+            window.prelayoutForPos(wp);
             return r;
         },
         w32.WM_ENTERSIZEMOVE => {
@@ -18124,6 +18185,7 @@ pub fn windowWndProc(
         },
         w32.WM_EXITSIZEMOVE => {
             window.in_size_loop = false;
+            window.edgeDragEnded();
             if (window.tab_count > 0) {
                 var it = window.tab_trees[window.active_tab].iterator();
                 while (it.next()) |entry| {

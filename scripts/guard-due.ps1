@@ -6045,6 +6045,18 @@ $GuardTable = @(
             'test\win32\drag-perf.ps1'
         )
     },
+    # T2603: what a window-edge drag step costs, with and without T2578's
+    # pre-layout. The rule that decides which steps are laid out ahead is the
+    # pre-layout's budget, so an edit there is an edit to what is measured.
+    [pscustomobject]@{
+        Name   = 'edge-drag-rate'
+        Script = 'test\win32\edge-drag-rate.ps1'
+        Stamp  = 'test\win32\edge-drag-rate.stamp.json'
+        Covers = @(
+            'src\apprt\win32\resize_prelayout.zig',
+            'test\win32\edge-drag-rate.ps1'
+        )
+    },
     # T2365: the app's one frame clock. Every animation steps on it, so an edit
     # to the clock or its dispatch is an edit to what frame-clock.ps1 measures:
     # whether ticks land a display frame apart, against the old 16 ms WM_TIMER.

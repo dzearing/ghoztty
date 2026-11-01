@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-01T06:22:32-08:00",
+    "generated":  "2026-11-01T07:16:40-08:00",
     "commit":  "26fcbecfa",
     "uncommitted":  [
-                        "test/win32/window-close-memory.ps1"
+                        "test/win32/edge-drag-rate.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -137,6 +137,7 @@
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
                   "test/win32/drag-perf.ps1":  "b067f23ab5c86e878d16744287156776b82503cf0944f5e1faed207aca5d0c97",
                   "test/win32/echo-marker-audit.ps1":  "d896ea0055d1564eeba5ce6fc2bceda25aa0d32d3ccacd848d85c75d130d98f1",
+                  "test/win32/edge-drag-rate.ps1":  "2cc10f6f848d2509fb6e8bdf1fc27fc7b8e46792594947a63eecc9308863ac6a",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
                   "test/win32/fail-transcript.ps1":  "157fc0591c860c14fa34aea3ca3447fbb86528ff5690929a0a2bfd03a5177ffe",
@@ -560,7 +561,7 @@
                   "test/win32/wheel-scroll.ps1":  "5ddcfef5925d88800a7bfe738e3df7d75a0df62fe400243070fba6f78cc8a2a1",
                   "test/win32/window-active.ps1":  "9151aa942d89c9db56f8fe9531b66c67285d311d17d50d8c43b8bec7b1b778df",
                   "test/win32/window-active-audit.ps1":  "713214a5212d2f50713ae9eaff05d788293b6f8ada9b6daa78d1dcf081406879",
-                  "test/win32/window-close-memory.ps1":  "eb69f7fb13ddda90efa318751be5f713c67081bb441602674b68d3d56c008647",
+                  "test/win32/window-close-memory.ps1":  "dade4d2732ff38471af7899b604bdd503d982385825b1b9395fa3c7731d1232f",
                   "test/win32/window-color.ps1":  "ee0cd62d72645ee63415938b2ca77b3b29b5cd7deb1b4ff3ee0fd11053465f93",
                   "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",

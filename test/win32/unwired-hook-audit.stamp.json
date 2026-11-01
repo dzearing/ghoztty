@@ -1,7 +1,7 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-01T06:34:24-08:00",
+    "generated":  "2026-11-01T07:18:45-08:00",
     "commit":  "26fcbecfa",
     "uncommitted":  [
 
@@ -286,7 +286,7 @@
                   "src/apprt/win32/PaneDesk.zig":  "3fc1aa242dc485f654400eea951caee8bc1814031efb51b04ad78ee1d87509b4",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
-                  "src/apprt/win32/PaneSidebar.zig":  "bf62e6664f664e2c64f49d9c7f515aa4ca8161dffcfa4c04efbdcd44a065d265",
+                  "src/apprt/win32/PaneSidebar.zig":  "a844356ff8726bf0a2abc90ef6b3498620cac55cbb8b898edf2bbf8e991a7f5e",
                   "src/apprt/win32/PaneView.zig":  "566593dd318dbf777ab6058492d93c442e742042b4c514632d956b9e6b6a76b1",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/persistence_notice.zig":  "65baba4beff952a6d9d9f9753a3bf254bc8f050a6d7430978339ebf9ec848840",
@@ -415,7 +415,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "7fcf8d77463e4febc1569881c9566fee54d8d77860a8d75f63fac3e986f47d48",
-                  "src/apprt/win32/Window.zig":  "50425db8b7e1acf3af2464c959f9fa40f93f8ab53f214cbf1a8a139fa92deac9",
+                  "src/apprt/win32/Window.zig":  "21f3c8b2ce7b7998740907c821d6960a2a39787d569b6549317bb2a247d055a6",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -1139,6 +1139,7 @@
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
                   "test/win32/drag-perf.ps1":  "b067f23ab5c86e878d16744287156776b82503cf0944f5e1faed207aca5d0c97",
                   "test/win32/echo-marker-audit.ps1":  "d896ea0055d1564eeba5ce6fc2bceda25aa0d32d3ccacd848d85c75d130d98f1",
+                  "test/win32/edge-drag-rate.ps1":  "2cc10f6f848d2509fb6e8bdf1fc27fc7b8e46792594947a63eecc9308863ac6a",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
                   "test/win32/fail-transcript.ps1":  "157fc0591c860c14fa34aea3ca3447fbb86528ff5690929a0a2bfd03a5177ffe",
@@ -1475,7 +1476,7 @@
                   "test/win32/wheel-scroll.ps1":  "5ddcfef5925d88800a7bfe738e3df7d75a0df62fe400243070fba6f78cc8a2a1",
                   "test/win32/window-active.ps1":  "9151aa942d89c9db56f8fe9531b66c67285d311d17d50d8c43b8bec7b1b778df",
                   "test/win32/window-active-audit.ps1":  "713214a5212d2f50713ae9eaff05d788293b6f8ada9b6daa78d1dcf081406879",
-                  "test/win32/window-close-memory.ps1":  "eb69f7fb13ddda90efa318751be5f713c67081bb441602674b68d3d56c008647",
+                  "test/win32/window-close-memory.ps1":  "dade4d2732ff38471af7899b604bdd503d982385825b1b9395fa3c7731d1232f",
                   "test/win32/window-color.ps1":  "ee0cd62d72645ee63415938b2ca77b3b29b5cd7deb1b4ff3ee0fd11053465f93",
                   "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",

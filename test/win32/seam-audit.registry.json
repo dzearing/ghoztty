@@ -233,6 +233,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the shipped frame pacing during a drag."
         },
+        "GHOZTTY_RESIZE_NOPRELAYOUT": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = T2578's pre-layout runs on a growing edge drag, which is what ships; set only by edge-drag-rate.ps1's comparison arm (T2603), whose other arm runs it unset."
+        },
         "GHOZTTY_ENROLL_NO_OPEN": {
             "class": "non-default",
             "unset": "shipped-elsewhere",
