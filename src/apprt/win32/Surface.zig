@@ -18,6 +18,7 @@ const pane_elevation = @import("pane_elevation.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const internal_os = @import("../../os/main.zig");
 const remote_connection = @import("../../remote/connection.zig");
+const agent_setup = @import("../../cli/agent_setup.zig");
 const gl_loader = @import("../../renderer/gl_loader.zig");
 const gl_robust = @import("../../renderer/gl_robust.zig");
 
@@ -1078,6 +1079,23 @@ fn initOnce(
         );
         config.env.parseCLI(carena, kv) catch |err| {
             log.warn("ipc endpoint env bake failed err={}", .{err});
+        };
+    }
+
+    // T2605: tell an agent in the pane where the Ghoztty skill is.
+    // `$GHOZTTY_AGENT_SETUP` names the `+agent-setup` verb, so a session
+    // that inspects its environment finds the bundled skill instead of the
+    // archived plugin repo on the web. Same seam as the two above, so it
+    // reaches exec, agent-backed and relaunched panes alike.
+    {
+        const carena = config._arena.?.allocator();
+        const kv = try std.fmt.allocPrint(
+            carena,
+            "{s}={s}",
+            .{ agent_setup.pane_env, agent_setup.pane_env_value },
+        );
+        config.env.parseCLI(carena, kv) catch |err| {
+            log.warn("agent setup env bake failed err={}", .{err});
         };
     }
 

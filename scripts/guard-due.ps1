@@ -3926,6 +3926,20 @@ $GuardTable = @(
             'src\os\user_env.zig'
         )
     },
+    # The `+agent-setup` verb and the pane env var that points at it (T2605):
+    # the only end-to-end proof that an agent in a pane can find, print and
+    # install the bundled skill with no web, and that the hint reaches both
+    # an agent-backed and an exec pane.
+    [pscustomobject]@{
+        Name   = 'agent-setup'
+        Script = 'test\win32\agent-setup.ps1'
+        Stamp  = 'test\win32\agent-setup.stamp.json'
+        Covers = @(
+            'test\win32\agent-setup.ps1',
+            'src\cli\agent_setup.zig',
+            'src\apprt\win32\agent_home.zig'
+        )
+    },
     # Shell-integration detection + the agent argv delivery (T151, T513):
     # detectShell's Windows spellings (.exe suffix, full paths, mixed case)
     # are proven end-to-end only by this harness — the none-lane unit tests

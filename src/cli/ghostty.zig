@@ -30,6 +30,7 @@ const read = @import("read.zig");
 const send_keys = @import("send_keys.zig");
 const set_state = @import("set_state.zig");
 const json = @import("json.zig");
+const agent_setup = @import("agent_setup.zig");
 const set_banner = @import("set_banner.zig");
 const reload = @import("reload.zig");
 const stash = @import("stash.zig");
@@ -124,6 +125,11 @@ pub const Action = enum {
     // Local JSON helpers (get/merge/encode) for the bundled agent hook
     // scripts, so they need no external JSON tool (T866). No IPC.
     json,
+
+    // Tell an agent inside Ghoztty where the bundled Ghoztty skill is, and
+    // print or install it (T2605). No IPC.
+    @"agent-setup",
+
     // Use IPC to stash a pane into its window's pane sidebar.
     stash,
 
@@ -171,6 +177,7 @@ pub const Action = enum {
             .@"set-banner" => "Set or clear the sticky banner of a pane or window via IPC",
             .reload => "Reload a viewer pane's content in place via IPC",
             .json => "JSON helpers for the bundled agent hook scripts",
+            .@"agent-setup" => "Show, print, or install the Ghoztty skill for a coding agent",
             .stash => "Stash a pane into its window's pane sidebar via IPC",
             .restore => "Restore a stashed pane to its window's layout via IPC",
             .@"new-remote-window" => "Open a remote-machine terminal window via IPC",
@@ -268,6 +275,7 @@ pub const Action = enum {
             .@"set-banner" => try set_banner.run(alloc),
             .reload => try reload.run(alloc),
             .json => try json.run(alloc),
+            .@"agent-setup" => try agent_setup.run(alloc),
             .stash => try stash.run(alloc),
             .restore => try restore.run(alloc),
             .@"new-remote-window" => try new_remote_window.run(alloc),
@@ -323,6 +331,7 @@ pub const Action = enum {
                 .@"set-banner" => set_banner.Options,
                 .reload => reload.Options,
                 .json => json.Options,
+                .@"agent-setup" => agent_setup.Options,
                 .stash => stash.Options,
                 .restore => restore.Options,
                 .@"new-remote-window" => new_remote_window.Options,

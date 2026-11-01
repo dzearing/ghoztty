@@ -1,0 +1,16 @@
+{
+    "guard":  "agent-setup",
+    "script":  "test/win32/agent-setup.ps1",
+    "generated":  "2026-11-01T10:42:46-08:00",
+    "commit":  "1444999fd",
+    "uncommitted":  [
+                        "src/apprt/win32/agent_home.zig",
+                        "src/cli/agent_setup.zig",
+                        "test/win32/agent-setup.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/agent_home.zig":  "73dd6f3a64205d02fa4ab0d5bbd226c22fc29798a0d30f49c73bab06ac3ec96a",
+                  "src/cli/agent_setup.zig":  "92b5628b4538055bfd3ae1765632ccfda5a670a71bef1742597ac4b6b6ee9c1b",
+                  "test/win32/agent-setup.ps1":  "bf09830ce3bf86d493b74f95370921e2f82d1936b5af0846ebae25a13849c8dd"
+              }
+}

@@ -42,6 +42,7 @@ const setup = @import("claude_setup.zig");
 const service = @import("agent_integration_service.zig");
 const runtime_probe = @import("runtime_probe.zig");
 const RuntimeIntegration = @import("RuntimeIntegration.zig");
+const agent_home = @import("agent_home.zig");
 const migration = @import("claude_plugin_migration.zig");
 const path_env = @import("../../os/path_env.zig");
 const install_location = @import("install_location.zig");
@@ -555,40 +556,13 @@ fn setOf(bits: usize) std.EnumSet(RuntimeAgent) {
     return set;
 }
 
-/// The home the integrations install into: `GHOZTTY_AGENT_HOME` (sandbox
-/// override for tests), else the user's profile. `path` is arena-owned.
-/// Pub: the Agent Integrations dialog's workers (T871) resolve the same
-/// home and probe, so the sandbox override governs every entry point.
-pub const AgentHome = struct {
-    dir: std.fs.Dir,
-    path: []const u8,
-};
-
-fn agentHomePath(arena: std.mem.Allocator) ?[]const u8 {
-    if (std.process.getEnvVarOwned(arena, "GHOZTTY_AGENT_HOME") catch null) |override| {
-        if (override.len > 0) return override;
-    }
-    return std.process.getEnvVarOwned(arena, "USERPROFILE") catch null;
-}
-
-pub fn openAgentHome(arena: std.mem.Allocator) ?AgentHome {
-    const path = agentHomePath(arena) orelse return null;
-    const dir = std.fs.cwd().openDir(path, .{}) catch |err| {
-        log.warn("agent setup: home open failed ({s}): {}", .{ path, err });
-        return null;
-    };
-    return .{ .dir = dir, .path = path };
-}
-
-/// The runtime probe: the process environment normally; ONLY the sandbox
-/// home when `GHOZTTY_AGENT_HOME` is set, so a test's detection cannot be
-/// polluted by whatever the box really has installed.
-pub fn probeFor(arena: std.mem.Allocator) RuntimeProbe {
-    if (std.process.getEnvVarOwned(arena, "GHOZTTY_AGENT_HOME") catch null) |override| {
-        if (override.len > 0) return .{ .env = .{ .home = override } };
-    }
-    return .binary;
-}
+/// The home the integrations install into and the runtime probe
+/// (`agent_home.zig`). Pub: the Agent Integrations dialog's workers (T871)
+/// and the `+agent-setup` verb (T2605) resolve the same home and probe, so
+/// the sandbox override governs every entry point.
+pub const AgentHome = agent_home.AgentHome;
+pub const openAgentHome = agent_home.open;
+pub const probeFor = agent_home.probe;
 
 fn detectAgents(arena: std.mem.Allocator) std.EnumSet(RuntimeAgent) {
     return RuntimeIntegration.availableAgents(arena, probeFor(arena));

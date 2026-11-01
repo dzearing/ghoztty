@@ -700,6 +700,28 @@ order. Not yet on Windows: the sidebar to SEE the stash in (T1828) - use
 `+list` to find stashed panes. Acceptance: `test\win32\ipc-stash.ps1`,
 `test\win32\stash-restore.ps1`.
 
+### `ghoztty +agent-setup`
+
+How an agent inside Ghoztty finds the Ghoztty skill without the web (T2605).
+Every pane's environment carries `GHOZTTY_AGENT_SETUP=ghoztty +agent-setup`,
+and `ghoztty --help` lists the verb. No IPC: it works with no app running.
+
+```
+ghoztty +agent-setup                    # pointer README: what the skill is, how to read/install it
+ghoztty +agent-setup --skill            # print the bundled SKILL.md (this platform's wording)
+ghoztty +agent-setup --skill=layout.md  # print one reference file (the README lists them)
+ghoztty +agent-setup --install=claude   # install skill + hooks for Claude Code (or =copilot)
+```
+
+`--install` performs the same install as the app's "Set Up Agent
+Integrations..." command (`agent_integration_service.install`, home and probe
+from `agent_home.zig`, so `GHOZTTY_AGENT_HOME` sandboxes it). Exit 0 when the
+integration is in place afterwards (installed / upgraded / already up to
+date), 1 otherwise (agent not installed, an external plugin owns the hooks, a
+typed failure). The pointer warns off the archived
+`dzearing/ghoztty-claude-plugin` repository. The Mac half (pane env,
+`--install`) is T2612. Acceptance: `test\win32\agent-setup.ps1`.
+
 ### Naming
 
 - `+new-window --target=<name>` registers a **window**. Window names are

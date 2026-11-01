@@ -116,7 +116,7 @@ function Get-DesktopLaunchAuditQuietVerbs {
         '+crash-report', '+boo', '+split', '+close', '+rename', '+rearrange',
         '+list', '+sessions', '+read', '+send-keys', '+set-state',
         '+set-banner', '+reload', '+json', '+new-remote-window',
-        '+stash', '+restore'
+        '+stash', '+restore', '+agent-setup'
     )
 }
 
