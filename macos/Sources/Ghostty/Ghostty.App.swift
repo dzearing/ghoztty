@@ -673,6 +673,11 @@ extension Ghostty {
             case GHOSTTY_ACTION_CHECK_FOR_UPDATES:
                 checkForUpdates(app)
 
+            case GHOSTTY_ACTION_SHOW_KEYBOARD_SHORTCUTS:
+                if let appDelegate = NSApplication.shared.delegate as? AppDelegate {
+                    appDelegate.showKeyboardShortcuts(nil)
+                }
+
             case GHOSTTY_ACTION_OPEN_URL:
                 return openURL(action.action.open_url)
 

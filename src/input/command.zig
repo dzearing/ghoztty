@@ -732,6 +732,12 @@ fn actionCommands(action: Action.Key) []const Command {
             .description = "Check for updates to the application.",
         }},
 
+        .show_keyboard_shortcuts => comptime &.{.{
+            .action = .show_keyboard_shortcuts,
+            .title = "Show Keyboard Shortcuts",
+            .description = "Open the keyboard shortcut guide.",
+        }},
+
         .undo => comptime &.{.{
             .action = .undo,
             .title = "Undo",

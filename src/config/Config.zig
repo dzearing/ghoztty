@@ -7212,6 +7212,13 @@ pub const Keybinds = struct {
                 .{ .key = .{ .unicode = 'm' }, .mods = .{ .super = true, .shift = true } },
                 .{ .stash_pane = {} },
             );
+            // Keyboard shortcut guide (macOS only). Cmd+/ is free; Cmd+? (Cmd+
+            // Shift+/) is the system Help menu search, so it stays untouched.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = '/' }, .mods = .{ .super = true } },
+                .{ .show_keyboard_shortcuts = {} },
+            );
             try self.set.put(
                 alloc,
                 .{ .key = .{ .unicode = 'q' }, .mods = .{ .super = true } },

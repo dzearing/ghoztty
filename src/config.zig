@@ -8,6 +8,7 @@ pub const conditional = @import("config/conditional.zig");
 pub const io = @import("config/io.zig");
 pub const string = @import("config/string.zig");
 pub const edit = @import("config/edit.zig");
+pub const keybind_list = @import("config/keybind_list.zig");
 pub const url = @import("config/url.zig");
 
 pub const ConditionalState = conditional.State;

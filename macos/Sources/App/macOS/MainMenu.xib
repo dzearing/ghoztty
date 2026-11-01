@@ -20,6 +20,7 @@
                 <outlet property="menuChangeTitle" destination="24I-xg-qIq" id="kg6-kT-jNL"/>
                 <outlet property="menuChangeWindowTitle" destination="wCt-wn-T01" id="wCt-wn-O01"/>
                 <outlet property="menuCheckForUpdates" destination="GEA-5y-yzH" id="0nV-Tf-nJQ"/>
+                <outlet property="menuKeyboardShortcuts" destination="kbS-gd-001" id="kbS-gd-002"/>
                 <outlet property="menuClose" destination="DVo-aG-piG" id="R3t-0C-aSU"/>
                 <outlet property="menuCloseAllWindows" destination="yKr-Vi-Yqw" id="Zet-Ir-zbm"/>
                 <outlet property="menuCloseTab" destination="Obb-Mk-j8J" id="Gda-L0-gdz"/>
@@ -594,6 +595,12 @@
                             <menuItem title="Ghoztty Help" keyEquivalent="?" id="FKE-Sm-Kum">
                                 <connections>
                                     <action selector="showHelp:" target="bbz-4X-AYv" id="tiy-ow-xSw"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Keyboard Shortcuts" id="kbS-gd-001">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="showKeyboardShortcuts:" target="bbz-4X-AYv" id="kbS-gd-003"/>
                                 </connections>
                             </menuItem>
                         </items>

@@ -96,4 +96,5 @@ changed).
 | [pane-rearrange.md](docs/reference/pane-rearrange.md) | touching pane drag-and-drop, rearrange mode, or moving panes between windows/tabs |
 | [session-persistence.md](docs/reference/session-persistence.md) | touching the agent, restore/relaunch, scrollback replay, `claude-code-fullscreen`, or the app↔agent protocol |
 | [settings.md](docs/reference/settings.md) | touching the Settings window (⌘,): the surgical config writer (`ConfigFileText`/`ConfigFileStore`), validation, backups, include overrides, the schema JSON catalog, curated pages, themes |
+| [keyboard-shortcuts.md](docs/reference/keyboard-shortcuts.md) | touching the keyboard shortcut guide (`show_keyboard_shortcuts`, ⌘/), the shared `KeybindCatalog`/`ShortcutListView` (also used by Settings), curated action descriptions, or `ghostty_config_keybinds_json` |
 | [memory.md](docs/reference/memory.md) | touching pane/window teardown, closures stored on window-owned state, renderer swap-chain targets or occlusion; where memory goes and how to measure it |
