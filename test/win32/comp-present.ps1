@@ -34,6 +34,13 @@
 #      on the lit thumb starts a scrollbar drag that scrolls the viewport to
 #      the top, while a click in the grid is the terminal's. (D3 is its
 #      negative control: knob off, the strip is the popup.)
+#   H. A banner pane's window spans its banner band (T2566): with the knob on
+#      the pane window starts where the banner strip does (the strip is glued
+#      over the window's top, not above it), the grid is the window less the
+#      band, and that grid is exactly the window the knob-off layout gives the
+#      same pane at the same size - so the rows match. Clearing the banner
+#      gives the band back (H5). Negative control H6: knob off, the window
+#      starts below the strip.
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -434,6 +441,71 @@ try {
     Assert "G6 the app is still running, nothing fell back" ((Test-Alive $g) -and (Count-Log $g.Err $failLine) -eq 0)
     Assert "G7 the scrolled pane still draws text" (Test-DrawsText 'compg2')
 
+    # ========================================================================
+    "== H: a banner pane's window spans its band; the grid is the same (T2566)"
+    # ========================================================================
+    $bandLine = 'pane grid band=(\d+) client=(\d+)x(\d+) grid=(\d+)'
+    # One arm per knob, same window size and banner; returns the pane rect,
+    # the strip's rect and the arm's log.
+    function Measure-BannerArm($name, $comp) {
+        Set-Knobs $comp $null $null
+        $arm = Start-Arm $name
+        # Every window of the arm at one size, so the two arms compare.
+        foreach ($w in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyWindow')) {
+            [void](Set-TestWindowSize -Window ([IntPtr]$w.Hwnd) -Width 900 -Height 620)
+        }
+        Start-Sleep -Milliseconds 600
+        & $Exe +set-banner "--target=$($arm.Target)" 'band spans the window' 2>$null | Out-Null
+        $pane = $null; $strip = $null
+        for ($t = 0; $t -lt 30 -and -not $strip; $t++) {
+            Start-Sleep -Milliseconds 200
+            foreach ($tw in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyWindow')) {
+                foreach ($p in @(Get-TestChildWindows -Window ([IntPtr]$tw.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible)) {
+                    foreach ($o in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)) {
+                        if ([math]::Abs($o.Left - $p.Left) -le 2 -and ([math]::Abs($o.Top - $p.Top) -le 2 -or [math]::Abs($o.Bottom - $p.Top) -le 2)) {
+                            $pane = $p; $strip = $o
+                        }
+                    }
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 600
+        return [pscustomobject]@{ Arm = $arm; Pane = $pane; Strip = $strip }
+    }
+    $h = Measure-BannerArm 'h' '1'
+    Assert "H0 the knob-on arm has a banner pane" ($null -ne $h.Pane -and $null -ne $h.Strip)
+    Assert "H1 the strip is glued over the pane window's top, not above it" `
+        ($h.Pane -and [math]::Abs($h.Strip.Top - $h.Pane.Top) -le 2)
+    $last = [regex]::Matches((Read-Text $h.Arm.Err), $bandLine) | Select-Object -Last 1
+    $hBand = if ($last) { [int]$last.Groups[1].Value } else { -1 }
+    $hClient = if ($last) { [int]$last.Groups[3].Value } else { -1 }
+    $hGrid = if ($last) { [int]$last.Groups[4].Value } else { -1 }
+    Assert "H2 the grid is the window less the band (band=$hBand client=$hClient grid=$hGrid pane=$($h.Pane.Height))" `
+        ($last -and $hGrid -eq ($hClient - $hBand) -and $h.Pane -and $hClient -eq $h.Pane.Height)
+    Assert "H3 the band is the strip's height (band=$hBand strip=$($h.Strip.Height))" `
+        ($h.Strip -and [math]::Abs($hBand - $h.Strip.Height) -le 1)
+    Assert "H4 the app is still running, nothing fell back, the pane still draws" `
+        ((Test-Alive $h.Arm) -and (Count-Log $h.Arm.Err $failLine) -eq 0 -and (Test-DrawsText $h.Arm.Target))
+    & $Exe +set-banner "--target=$($h.Arm.Target)" --clear 2>$null | Out-Null
+    $back = (Wait-Log $h.Arm.Err 'pane grid band settled band=0\b' 5000)
+    $p5 = $null
+    if ($back) {
+        Start-Sleep -Milliseconds 400
+        foreach ($tw in @(Get-TestWindows -ProcessId $h.Arm.App.Pid -Class 'GhozttyWindow')) {
+            foreach ($p in @(Get-TestChildWindows -Window ([IntPtr]$tw.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible)) {
+                if ([math]::Abs($p.Left - $h.Pane.Left) -le 2 -and [math]::Abs($p.Top - $h.Pane.Top) -le 2) { $p5 = $p }
+            }
+        }
+    }
+    Assert "H5 clearing the banner gives the band back to the grid, the window unmoved (log + pane at the same rect)" `
+        ($back -and $p5 -and $p5.Height -eq $h.Pane.Height)
+    $h0 = Measure-BannerArm 'h0' $null
+    Assert "H6 negative control: knob off, the pane window starts below the strip" `
+        ($h0.Pane -and $h0.Strip -and [math]::Abs($h0.Strip.Bottom - $h0.Pane.Top) -le 2)
+    Assert "H7 the knob-off window is the knob-on grid: same rows (off=$($h0.Pane.Height) on=$hGrid)" `
+        ($h0.Pane -and $hGrid -gt 0 -and $h0.Pane.Height -eq $hGrid)
+    Assert "H8 knob off never carves a band" ((Count-Log $h0.Arm.Err 'pane grid band=') -eq 0)
+
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
     # LAST statement of the top-level try (T1039).
@@ -457,4 +529,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 57
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 66

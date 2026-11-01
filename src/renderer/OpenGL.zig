@@ -897,8 +897,17 @@ fn frameOutlivedItsWindow(self: *const OpenGL, hdc: anytype) bool {
     if (w <= 0 or h <= 0) return false;
     return resize_paint.frameOutlivedItsWindow(
         self.drawn_client,
-        resize_paint.packSize(@intCast(w), @intCast(h)),
+        resize_paint.packSize(@intCast(w), self.gridHeight(@intCast(h))),
     );
+}
+
+/// The part of a client area `client_h` px tall that the grid draws into:
+/// all of it, less the banner band a window on the composition path spans
+/// (T2566). The band is the window's top, so the GL viewport - whose origin
+/// is the bottom-left - lands the grid below it on either present path.
+fn gridHeight(self: *const OpenGL, client_h: u32) u32 {
+    if (comptime apprt.runtime != apprt.win32) return client_h;
+    return resize_paint.gridHeight(client_h, self.rt_surface.gridBand());
 }
 
 pub fn surfaceSize(self: *OpenGL) !struct { width: u32, height: u32 } {
@@ -917,7 +926,8 @@ pub fn surfaceSize(self: *OpenGL) !struct { width: u32, height: u32 } {
         var rect: wgl.RECT = undefined;
         if (wgl.GetClientRect(hwnd, &rect) != 0) {
             const w: u32 = @intCast(rect.right - rect.left);
-            const h: u32 = @intCast(rect.bottom - rect.top);
+            const client_h: u32 = @intCast(rect.bottom - rect.top);
+            const h = if (client_h > 0) self.gridHeight(client_h) else 0;
             if (w > 0 and h > 0) {
                 // Update glViewport to match
                 gl.glad.context.Viewport.?(0, 0, @intCast(w), @intCast(h));
@@ -1032,6 +1042,12 @@ fn compBegin(self: *OpenGL, width: usize, height: usize) ?gl.Framebuffer {
         if (gl_comp_present.enabled()) self.compInit(width, height);
     }
     const p = self.comp orelse return null;
+    // The swap chain holds the grid; its visual sits below the banner band
+    // the window spans (T2566).
+    p.setBand(self.rt_surface.gridBand()) catch |err| {
+        self.compFail(err);
+        return null;
+    };
     // The window could not carry the pane's visual (T2553): fall back to
     // SwapBuffers, the same as any other composition failure.
     if (p.surface_handle != null and self.rt_surface.comp_tree_slot.refused.load(.acquire)) {

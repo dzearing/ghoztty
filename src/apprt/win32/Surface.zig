@@ -46,6 +46,7 @@ const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const BellBorder = @import("BellBorder.zig").BellBorder;
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const comp_tree = @import("../../renderer/comp_tree.zig");
+const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const ReadonlyBadge = @import("ReadonlyBadge.zig").ReadonlyBadge;
 const KeyStateIndicator = @import("KeyStateIndicator.zig").KeyStateIndicator;
@@ -220,6 +221,22 @@ present_seq: std.atomic.Value(u32) = .init(0),
 /// a frozen copy, and waiting out the debounce only keeps the copy up longer.
 /// GUI thread only; consumed by `handleResize`.
 flush_next_resize: bool = false,
+
+/// Whether this pane's window spans its banner band and carves it off its
+/// own top (T2566): the composition path (`GHOZTTY_COMP_PRESENT`), read once
+/// at init, because the present path itself is only decided on the
+/// renderer's first frame, after the layout has placed the window.
+spans_banner_band: bool = false,
+
+/// The px the grid sits below the top of this pane's window (T2566): the
+/// banner band when `spans_banner_band`, else 0. Written by the layout
+/// (`bannerLayoutInset`, UI thread), read by the renderer for its size.
+grid_band: std.atomic.Value(u32) = .init(0),
+
+/// The band changed under a window the layout may leave the same size, so no
+/// `WM_SIZE` would re-run the grid (T2566). UI thread; consumed by
+/// `settleGridBand`.
+grid_band_dirty: bool = false,
 
 /// The size this surface is waiting to see presented — set by `handleResize`
 /// before it blocks, read by the layout pass when the wait comes back. Only
@@ -817,6 +834,10 @@ fn initOnce(
     // T2553: the renderer may present into the window's tree only if the
     // window has a host to carry the visual.
     self.comp_tree_slot.host_ready.store(parent.chrome_host != null, .release);
+    // T2566: on the composition path the window spans its banner band. The
+    // knob, not the present path: that is decided on the first frame, after
+    // the layout has already placed this window.
+    self.spans_banner_band = gl_comp_present.enabled();
     // A surface of its own, so the GPU memory its presents use goes when the
     // pane does rather than when the window does (T2499, `pane_layer.zig`).
     // Never in a translucent window, or the configured one may turn so: the
@@ -1388,7 +1409,7 @@ fn updateClientSize(self: *Surface) void {
         var rect: w32.RECT = undefined;
         if (w32.GetClientRect(hwnd, &rect) != 0) {
             self.width = @intCast(rect.right - rect.left);
-            self.height = @intCast(rect.bottom - rect.top);
+            self.height = banner_layout.gridHeight(@intCast(rect.bottom - rect.top), self.gridBand());
         }
     }
 }
@@ -1677,7 +1698,10 @@ pub fn syncTreeVisual(self: *Surface) void {
     if (w32.GetClientRect(hwnd, &rc) == 0) return;
     var pts = [2]w32.POINT{ .{ .x = rc.left, .y = rc.top }, .{ .x = rc.right, .y = rc.bottom } };
     _ = w32.MapWindowPoints(hwnd, top, &pts, 2);
-    const at = comp_tree.placement(pts[0].x, pts[0].y, pts[1].x - pts[0].x, pts[1].y - pts[0].y, shown);
+    // The swap chain holds the grid, which sits below the banner band the
+    // window spans (T2566).
+    const band: i32 = @intCast(self.gridBand());
+    const at = comp_tree.placement(pts[0].x, pts[0].y + band, pts[1].x - pts[0].x, @max(pts[1].y - pts[0].y - band, 1), shown);
     h.panePlace(self.tree_visual.?, at.x, at.y, at.w, at.h) catch {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane visual place failed at {s}: hr=0x{x:0>8}", .{ f.stage, chrome_comp.hex(f.hr) });
@@ -1799,10 +1823,46 @@ pub fn setPaneBanner(self: *Surface, text: ?[]const u8) void {
 /// `slot_w` is the pane slot's width, fed down so the banner's tables size
 /// their columns to the pane and re-measure on every resize (T123).
 pub fn bannerLayoutInset(self: *Surface, slot_w: i32, slot_h: i32) i32 {
-    const overlay = self.banner_overlay orelse return 0;
+    const overlay = self.banner_overlay orelse {
+        self.setGridBand(0);
+        return 0;
+    };
     const inset = banner_layout.clampInset(overlay.insetHeight(self.scale, slot_w), slot_h);
     overlay.inset = inset;
+    self.setGridBand(banner_layout.gridBand(inset, self.spans_banner_band));
     return inset;
+}
+
+/// How far the layout moves this pane's window down for a band `inset` px
+/// tall (T2566): all of it, or none when the window spans the band.
+pub fn bannerWindowOffset(self: *const Surface, inset: i32) i32 {
+    return banner_layout.windowOffset(inset, self.spans_banner_band);
+}
+
+/// The px the grid sits below this window's top (T2566). Any thread.
+pub fn gridBand(self: *const Surface) u32 {
+    return self.grid_band.load(.acquire);
+}
+
+fn setGridBand(self: *Surface, band: u32) void {
+    if (self.grid_band.swap(band, .acq_rel) != band) self.grid_band_dirty = true;
+}
+
+/// After a layout pass (T2566): a band that changed while the window kept its
+/// size got no `WM_SIZE`, so re-run the resize at the size the window has,
+/// and move the tree visual below the new band.
+pub fn settleGridBand(self: *Surface) void {
+    if (!self.grid_band_dirty) return;
+    self.grid_band_dirty = false;
+    // comp-present.ps1 section H's oracle: a band given back with no resize.
+    log.debug("pane grid band settled band={d}", .{self.gridBand()});
+    const hwnd = self.hwnd orelse return;
+    var rc: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &rc) == 0) return;
+    const w = rc.right - rc.left;
+    const h = rc.bottom - rc.top;
+    if (w > 0 and h > 0) self.handleResize(@intCast(w), @intCast(h));
+    if (self.tree_visual != null) self.syncTreeVisual();
 }
 
 /// Round the banner strip's top corners to the elevated card's curve, or
@@ -4260,7 +4320,9 @@ pub fn setResizeHold(self: *Surface, on: bool) void {
 /// paints itself.
 fn fillUncoveredStrips(self: *Surface, width: u32, height: u32) void {
     if (!self.has_presented_frame.load(.acquire)) return;
-    const r = resize_paint.uncoveredStrips(self.presented_size.load(.acquire), width, height);
+    // The frame covers the grid, which starts below the band (T2566).
+    const band = self.gridBand();
+    const r = resize_paint.uncoveredStrips(self.presented_size.load(.acquire), width, banner_layout.gridHeight(height, band));
     if (r.len == 0) return;
     const hwnd = self.hwnd orelse return;
     const brush = self.app.bg_brush orelse return;
@@ -4269,9 +4331,9 @@ fn fillUncoveredStrips(self: *Surface, width: u32, height: u32) void {
     for (r.strips[0..r.len]) |s| {
         const rect: w32.RECT = .{
             .left = @intCast(s.left),
-            .top = @intCast(s.top),
+            .top = @as(i32, @intCast(s.top)) + @as(i32, @intCast(band)),
             .right = @intCast(s.right),
-            .bottom = @intCast(s.bottom),
+            .bottom = @as(i32, @intCast(s.bottom)) + @as(i32, @intCast(band)),
         };
         _ = w32.FillRect(dc, &rect, brush);
     }
@@ -4301,13 +4363,19 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
 
 /// The resize work `handleResize` does at once, or that a live layout batch
 /// runs for each pane once every pane has had its fill (D18b).
-pub fn applyResize(self: *Surface, width: u32, height: u32) void {
+pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
     // T1343: one line of the drag measurement — how many panes a layout pass
     // actually resized, so "no frame waits" can be told apart from "no work".
     self.parent_window.noteResize();
     self.resizes +%= 1;
 
+    // On the composition path the window spans the banner band and the grid
+    // is what is left below it (T2566); everywhere else the band is 0.
+    const band = self.gridBand();
+    const height = banner_layout.gridHeight(client_height, band);
     self.height = height;
+    // comp-present.ps1 section H's oracle: the grid a spanning window keeps.
+    if (band > 0) log.debug("pane grid band={d} client={d}x{d} grid={d}", .{ band, width, client_height, height });
 
     // Pre-flight the scrollbar so we know whether to subtract its width.
     // This must happen before sizeCallback so the grid gets the right width.
@@ -4361,7 +4429,8 @@ pub fn applyResize(self: *Surface, width: u32, height: u32) void {
     if (!presented) self.parent_window.noteFreshPane();
     // T1476: the size this pane is now waiting to SEE. The renderer reads the
     // whole client rect (`OpenGL.surfaceSize`), not the grid width the
-    // scrollbar carved out of it, so this is the raw WM_SIZE pair.
+    // scrollbar carved out of it, so this is the raw WM_SIZE width over the
+    // grid's height: the renderer subtracts the band too (T2566).
     self.awaited_size = 0;
     if (resize_paint.shouldPresentSynchronously(.{
         .in_live_resize = self.in_live_resize,

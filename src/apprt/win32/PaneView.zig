@@ -301,6 +301,16 @@ pub fn bannerLayoutInset(self: *PaneView, slot_w: i32, slot_h: i32) i32 {
     };
 }
 
+/// How far the layout moves this pane's window down for a banner band
+/// `inset` px tall (T2566): all of it, except on the composition path, where
+/// a terminal's window spans the band and its grid starts below it.
+pub fn bannerWindowOffset(self: *PaneView, inset: i32) i32 {
+    return switch (self.kind) {
+        .terminal => |s| s.bannerWindowOffset(inset),
+        .viewer => inset,
+    };
+}
+
 /// Show the unfocused-split dim overlay (T74). Terminal panes only: viewer
 /// panes never dim (T1809, user directive 2026-10-10, reversing T380), the
 /// same as Mac. `dim_math.shouldDim` already says no for a viewer; this arm

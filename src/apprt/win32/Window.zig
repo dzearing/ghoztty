@@ -7356,8 +7356,8 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
             // placeholder size (main c6826b79a).
             entry.view.setVisible(false);
             if (entry.view.hwnd()) |h| {
-                const inset = entry.view.bannerLayoutInset(@intCast(hero_w), hero_h);
-                placePane(&hdwp, h, hero.left, hero.top + inset, @intCast(hero_w), @intCast(@max(hero_h - inset, 1)), false);
+                const off = entry.view.bannerWindowOffset(entry.view.bannerLayoutInset(@intCast(hero_w), hero_h));
+                placePane(&hdwp, h, hero.left, hero.top + off, @intCast(hero_w), @intCast(@max(hero_h - off, 1)), false);
             }
             continue;
         }
@@ -7368,14 +7368,14 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
             // Banner strip band above the hero-sized terminal (T101);
             // hidden leaves get the same inset so their thumbnail aspect
             // matches what selection will show.
-            const inset = entry.view.bannerLayoutInset(@intCast(hero_w), hero_h);
+            const off = entry.view.bannerWindowOffset(entry.view.bannerLayoutInset(@intCast(hero_w), hero_h));
             placePane(
                 &hdwp,
                 h,
                 hero.left,
-                hero.top + inset,
+                hero.top + off,
                 @intCast(hero_w),
-                @intCast(@max(hero_h - inset, 1)),
+                @intCast(@max(hero_h - off, 1)),
                 leaf_i == hero_index,
             );
         }
@@ -8613,6 +8613,9 @@ pub fn updatePaneBanners(self: *Window) void {
         while (it.next()) |entry| {
             // Banners are terminal-only (`+set-banner` rejects viewers).
             const surface = entry.view.surface() orelse continue;
+            // Before the overlay check: a banner just cleared leaves a band
+            // to give back (T2566).
+            surface.settleGridBand();
             const overlay = surface.banner_overlay orelse continue;
             surface.refreshBannerColors();
             overlay.updatePosition(surface.scale);
@@ -8689,10 +8692,12 @@ fn leafRect(self: *Window, view: *PaneView, slot: w32.RECT) w32.RECT {
     const header = self.rearrangeHeaderInset(slot);
     const top = inner.top + header;
     const avail = @max(inner.bottom - top, 1);
-    const inset = view.bannerLayoutInset(inner.right - inner.left, avail);
+    // On the composition path the window spans the band and its grid starts
+    // below it (T2566), so the window is only moved down where it does not.
+    const off = view.bannerWindowOffset(view.bannerLayoutInset(inner.right - inner.left, avail));
     const w = @max(inner.right - inner.left, 1);
-    const ht = @max(avail - inset, 1);
-    return .{ .left = inner.left, .top = top + inset, .right = inner.left + w, .bottom = top + inset + ht };
+    const ht = @max(avail - off, 1);
+    return .{ .left = inner.left, .top = top + off, .right = inner.left + w, .bottom = top + off + ht };
 }
 
 /// How much of a sliding pane's window shows (T2187), in the window's own

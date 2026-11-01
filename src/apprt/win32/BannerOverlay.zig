@@ -647,10 +647,10 @@ pub const BannerOverlay = struct {
         // covered outright.
         const height = if (self.collapse_anim == null) settled else blk: {
             const anim = banner_layout.bandHeight(self.paintedCardHeight(), self.px(MARGIN));
-            const slot = @max(self.inset, 0) + (rect.bottom - rect.top);
+            const slot = self.ownerLift() + (rect.bottom - rect.top);
             break :blk @max(settled, @min(anim, slot));
         };
-        const top = rect.top - @max(self.inset, 0);
+        const top = rect.top - self.ownerLift();
         const new_w = @max(rect.right - rect.left, 1);
         const new_h = @max(height, 1);
 
@@ -712,6 +712,14 @@ pub const BannerOverlay = struct {
         }
     }
 
+    /// How far above its owner's window the band starts (T2566): the whole
+    /// inset where the layout moved the window down by it, 0 where the window
+    /// spans the band and carves it off its own top (the composition path).
+    fn ownerLift(self: *const BannerOverlay) i32 {
+        if (self.surface) |s| if (s.gridBand() > 0) return 0;
+        return @max(self.inset, 0);
+    }
+
     /// Render, now, the frame the coming `updatePosition` will present at
     /// `pane_w` wide (T2400), for a layout pass that is about to move its
     /// panes: it calls this while building its batch, before any window has
@@ -740,7 +748,7 @@ pub const BannerOverlay = struct {
         };
         const old = w32.SelectObject(dc, bmp);
         self.present_size = .{ .left = 0, .top = 0, .right = w, .bottom = h };
-        self.present_at = .{ left, top - @max(self.inset, 0) };
+        self.present_at = .{ left, top - self.ownerLift() };
         self.paintFrame(dc);
         const key = self.prepKey(self.glassAt());
         self.present_size = null;
@@ -2536,6 +2544,10 @@ pub const BannerOverlay = struct {
         if (!s.core_surface_ready) return;
         s.flush_next_resize = true;
         if (self.collapse_anim == null) return;
+        // The copy is measured off a window the band sits above; a window
+        // spanning the band (T2566) is T2568's to glide, and reflows in view
+        // until then.
+        if (s.gridBand() > 0) return;
 
         var client: w32.RECT = undefined;
         var screen: w32.RECT = undefined;

@@ -141,6 +141,14 @@ pub const Strip = struct { left: u32, top: u32, right: u32, bottom: u32 };
 /// Nothing presented (0) or nothing grown gives none.
 pub const Uncovered = struct { len: u8, strips: [2]Strip };
 
+/// The grid's height in a client area `client_h` px tall with `band` px
+/// carved off its top (T2566): a window on the composition path spans its
+/// pane's banner band. Never 0: a resize can arrive with the old size before
+/// the layout's new band, and a zero-row grid is not a size.
+pub fn gridHeight(client_h: u32, band: u32) u32 {
+    return if (client_h > band) client_h - band else 1;
+}
+
 pub fn uncoveredStrips(presented: u64, width: u32, height: u32) Uncovered {
     var out: Uncovered = .{ .len = 0, .strips = undefined };
     if (presented == 0) return out;

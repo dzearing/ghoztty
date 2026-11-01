@@ -158,6 +158,9 @@ const slot_dcomp_device_create_target = 6;
 const slot_dcomp_device_create_visual = 7;
 const slot_dcomp_target_set_root = 3;
 const slot_dcomp_visual_set_content = 15;
+// IDCompositionVisual::SetOffsetY(float): the overloads sit in reverse
+// declaration order, animation 5 then float 6 (comp_overlay.zig, dcomp.h).
+const slot_dcomp_visual_set_offset_y_float = 6;
 
 fn slot(comptime F: type, obj: Obj, index: usize) F {
     const vtbl: *const [*]const *const anyopaque = @ptrCast(@alignCast(obj));
@@ -262,6 +265,10 @@ pub const Presenter = struct {
 
     locked: bool = false,
     warp: bool = false,
+    /// The px the visual sits below its window's top: the banner band the
+    /// window spans (T2566). Only the pane-local visual moves; in tree mode
+    /// the window thread places the pane's visual.
+    band: u32 = 0,
 
     /// Frames presented, for the debug-only failure seam below.
     presents: u64 = 0,
@@ -508,6 +515,21 @@ pub const Presenter = struct {
             self.locked = true;
         }
         return self.fbo.?;
+    }
+
+    /// Sit the pane's visual `band` px below its window's top (T2566), so the
+    /// grid-sized swap chain shows under the banner band. The overlays hang
+    /// under this visual and move with it (T2568 places them for it). A
+    /// no-op when unchanged, and in tree mode, which has no visual here.
+    pub fn setBand(self: *Presenter, band: u32) Error!void {
+        if (band == self.band) return;
+        const vis = self.visual orelse return;
+        const dc = self.dcomp orelse return;
+        stage = "band-offset";
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y_float)(vis, @floatFromInt(band)));
+        try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, dc, slot_dcomp_device_commit)(dc));
+        stage = "";
+        self.band = band;
     }
 
     /// Hand the frame GL wrote to D3D and present it. `present` false drops

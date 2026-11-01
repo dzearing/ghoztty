@@ -14,6 +14,7 @@
 const std = @import("std");
 const hero_math = @import("hero_math.zig");
 const type_ramp = @import("type_ramp.zig");
+const resize_paint = @import("resize_paint.zig");
 
 // ---------------------------------------------------------------------
 // Type (T583)
@@ -69,6 +70,25 @@ pub fn clampInset(strip_h: i32, slot_h: i32) i32 {
     if (strip_h <= 0 or slot_h <= 0) return 0;
     return @min(strip_h, @divTrunc(slot_h * 3, 4));
 }
+
+/// How far the layout moves a pane's window down for a banner band `inset`
+/// px tall (T2566). The whole band, except when the window spans its slot
+/// and carves the band off its own top - the composition path, where the
+/// banner is to live inside the pane's picture.
+pub fn windowOffset(inset: i32, spans_band: bool) i32 {
+    return if (spans_band) 0 else @max(inset, 0);
+}
+
+/// The band a pane's grid sits below INSIDE its own window (T2566): the
+/// inset when the window spans it, 0 when the layout moved the window down
+/// instead. `windowOffset` + `gridBand` is always the inset.
+pub fn gridBand(inset: i32, spans_band: bool) u32 {
+    return if (spans_band) @intCast(@max(inset, 0)) else 0;
+}
+
+/// The grid's height under a band: `resize_paint.gridHeight` (T2566), which
+/// the renderer shares.
+pub const gridHeight = resize_paint.gridHeight;
 
 /// Total height of the banner BAND for a card `card_h` px tall that floats
 /// `margin` px inside it (T131). The margin counts on the top AND the
@@ -714,6 +734,38 @@ test "clampInset: strip fits — full reservation" {
 test "clampInset: short pane — capped at 3/4 of the slot" {
     try std.testing.expectEqual(@as(i32, 75), clampInset(251, 100));
     try std.testing.expectEqual(@as(i32, 0), clampInset(251, 1));
+}
+
+test "windowOffset/gridBand: the band is carved off exactly once (T2566)" {
+    // The knob-off layout moves the window down by the whole band.
+    try std.testing.expectEqual(@as(i32, 40), windowOffset(40, false));
+    try std.testing.expectEqual(@as(u32, 0), gridBand(40, false));
+    // Spanning, the window stays at the slot top and the grid carves it.
+    try std.testing.expectEqual(@as(i32, 0), windowOffset(40, true));
+    try std.testing.expectEqual(@as(u32, 40), gridBand(40, true));
+    // No banner is no band either way.
+    try std.testing.expectEqual(@as(i32, 0), windowOffset(0, true));
+    try std.testing.expectEqual(@as(u32, 0), gridBand(0, true));
+    try std.testing.expectEqual(@as(u32, 0), gridBand(-3, true));
+    try std.testing.expectEqual(@as(i32, 0), windowOffset(-3, false));
+}
+
+test "gridHeight: a spanning window's grid matches the moved window's (T2566)" {
+    // Slot 400 tall, band 40: knob off the window is 360 and carries no
+    // band; knob on it is 400 and carries 40. Same grid both ways.
+    const slot: u32 = 400;
+    const inset: i32 = 40;
+    const off_h = slot - @as(u32, @intCast(windowOffset(inset, false)));
+    const on_h = slot - @as(u32, @intCast(windowOffset(inset, true)));
+    try std.testing.expectEqual(
+        gridHeight(off_h, gridBand(inset, false)),
+        gridHeight(on_h, gridBand(inset, true)),
+    );
+    try std.testing.expectEqual(@as(u32, 360), gridHeight(on_h, 40));
+    // A stale size under a new band never yields a zero-row grid.
+    try std.testing.expectEqual(@as(u32, 1), gridHeight(30, 40));
+    try std.testing.expectEqual(@as(u32, 1), gridHeight(40, 40));
+    try std.testing.expectEqual(@as(u32, 500), gridHeight(500, 0));
 }
 
 test "clampInset: degenerate inputs" {

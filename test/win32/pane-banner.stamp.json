@@ -1,21 +1,21 @@
 {
     "guard":  "pane-banner",
     "script":  "test/win32/pane-banner.ps1",
-    "generated":  "2026-10-30T17:09:34-07:00",
-    "commit":  "8201e11a5",
+    "generated":  "2026-10-31T16:47:42-07:00",
+    "commit":  "5b031ffc3",
     "uncommitted":  [
-                        "src/apprt/win32/BannerOverlay.zig",
-                        "src/apprt/win32/ViewerPane.zig"
+                        "src/apprt/win32/banner_layout.zig",
+                        "src/apprt/win32/BannerOverlay.zig"
                     ],
     "files":  {
                   "src/apprt/win32/banner_card.zig":  "9697c5e10f7cbd77852c8d9318f8f1e65bffb6e934d6c8a673ccefc4ae5cb53f",
                   "src/apprt/win32/banner_glide.zig":  "3975542db037c63aff42938225a925ca60996608cef458571279dd1b28126497",
-                  "src/apprt/win32/banner_layout.zig":  "e0712800980cfe1e5ee1d679a5fd6aa0e12371891daa77e0f936b872faa87b52",
+                  "src/apprt/win32/banner_layout.zig":  "910981eff09b77dbc466578edbad7ff3742f525fc94a8d7e78e08864c6966b2b",
                   "src/apprt/win32/banner_link.zig":  "0ca33afdba886a50a930f6cdb93f79e2a066ad776ea1a68b1215239d4bf020a7",
                   "src/apprt/win32/banner_markdown.zig":  "cc606914608fa4bca12b7c2efbc493c60bd37805d3cc3593d4b548139e28015d",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
                   "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
-                  "src/apprt/win32/BannerOverlay.zig":  "f53fa23850ccf10df6a741945e5efae5a0b09a4dacad0b954ae539dd132cfdbd",
+                  "src/apprt/win32/BannerOverlay.zig":  "795fd9057a4ada0b73cf6a0225fd586313a160437ee0dc3b021ee4c0b9d93302",
                   "src/apprt/win32/ViewerPane.zig":  "759e8ca7dd672c7ec98fcc8c08107d4ed90e818c51dad37fd641d7c72e5c27ba",
                   "test/win32/pane-banner.ps1":  "8bd571ba481f09742b662914b19028afd106e921b63457b9389478e5841e5933"
               }
