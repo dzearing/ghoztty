@@ -57,3 +57,43 @@ hide/show, with `GHOZTTY_PANE_LAYER=0`) gives:
 
 Either way, one of the two leaks is left. Only a single presenter per
 top-level (T2610) avoids both.
+
+## T2610 spike: renderer threads + one presenter (2026-11-01)
+
+This is the architecture T2610 builds, at full fidelity for memory. There is
+one GL **presenter** child per top-level. Each pane gets a **renderer thread**
+whose context is created with `wglCreateContextAttribsARB(dc, presenter_ctx)`,
+so it shares the presenter's object group. A renderer draws into its own
+texture through its own FBO, then hands it off with `glFinish`. The presenter
+blits every texture into its column through a read FBO it owns (FBOs are never
+shared, but textures are), and calls `SwapBuffers` once. Commands 20-23 are in
+`repro.zig`.
+
+| Scenario | What it is | Setup MB | per hide/show | per min/restore |
+|---|---|---|---|---|
+| `pres-helper` | presenter + 2 renderers, each context current on a hidden helper window | 34.00 | 0 | 0 |
+| `pres-pane` | presenter + 2 renderers, each context current on a **pane child** with a pixel format that never swaps | 38.13 | 0 | 0 |
+| `pres-pane3` | same with 3 renderers | 46.59 | 0 | 0 |
+| `pres-churn` | add and remove a renderer (thread, context, texture, pane) 3x | 27.67 | 0 | 0 |
+| `pres-churn-live` | remove and re-add a renderer inside every hide/show and min/restore rep | 38.13 | 0 | 0 |
+
+`two-live` reran in the same session at +3.0/+3.0, so the probe can still see
+the leak.
+
+What it shows:
+
+- **The presenter architecture is flat everywhere.** Nothing grows on show,
+  restore, or pane churn, and a removed renderer returns its memory exactly:
+  38.13, then 27.67, then 38.13, every cycle.
+- **A pane HWND can keep a pixel format** and host its renderer's context, as
+  long as it never swaps. This is `noswap2` again, now under load. So the
+  app's pane windows can stay where they are, still owning input and still
+  serving as the makeCurrent target. Only their present moves to the
+  presenter.
+- Each renderer costs about 8.5 MB, mostly the context itself (one
+  250x660 RGBA texture is 0.66 MB). That is the same cost a pane already pays
+  today, so nothing new is spent.
+
+Not covered here: what the screen shows. The pane children overlap the
+presenter, and this spike measures memory only. How a pane child stays out of
+the presenter's way on screen is T2610's step 2 (the design note).

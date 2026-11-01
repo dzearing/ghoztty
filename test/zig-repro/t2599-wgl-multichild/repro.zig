@@ -16,6 +16,16 @@
 //!  10 destroy the top-level (process exits)
 //!  11 hide the newest child (a parked pane)
 //!  12 show / 13 restore WITHOUT presenting   14 present child 0 only
+//!
+//! T2610 presenter spike: one GL presenter child per top-level, and renderer
+//! THREADS whose contexts share its group (wglCreateContextAttribsARB). Each
+//! renderer draws into its own texture; the presenter blits every texture into
+//! its column and swaps once.
+//!  20 add the presenter child
+//!  21 add a renderer thread (arg: 0 = its context is current on a hidden
+//!     helper window, 1 = on a pane child that has a pixel format, never swaps)
+//!  22 render every renderer and present through the presenter
+//!  23 remove the newest renderer (thread, context, texture, pane)
 const std = @import("std");
 const W = std.os.windows;
 
@@ -99,6 +109,12 @@ extern "opengl32" fn glScissor(i32, i32, i32, i32) callconv(.winapi) void;
 extern "opengl32" fn glEnable(u32) callconv(.winapi) void;
 extern "opengl32" fn glDisable(u32) callconv(.winapi) void;
 extern "opengl32" fn glFinish() callconv(.winapi) void;
+extern "opengl32" fn wglGetProcAddress([*:0]const u8) callconv(.winapi) ?*const anyopaque;
+extern "opengl32" fn glGenTextures(i32, *u32) callconv(.winapi) void;
+extern "opengl32" fn glDeleteTextures(i32, *const u32) callconv(.winapi) void;
+extern "opengl32" fn glBindTexture(u32, u32) callconv(.winapi) void;
+extern "opengl32" fn glTexImage2D(u32, i32, i32, i32, i32, i32, u32, u32, ?*const anyopaque) callconv(.winapi) void;
+extern "opengl32" fn glTexParameteri(u32, u32, i32) callconv(.winapi) void;
 extern "kernel32" fn GetModuleHandleW(?[*:0]const u16) callconv(.winapi) ?W.HINSTANCE;
 
 const WS_OVERLAPPEDWINDOW: u32 = 0x00CF0000;
@@ -204,6 +220,199 @@ fn destroyNewest() void {
 fn presentAll() void {
     var i: usize = 0;
     while (i < n_children) : (i += 1) presentChild(&children[i]);
+    if (presenter != null) presenterPresent();
+}
+
+// ---- T2610 presenter spike ----
+
+const GL_TEXTURE_2D: u32 = 0x0DE1;
+const GL_RGBA8: i32 = 0x8058;
+const GL_RGBA: u32 = 0x1908;
+const GL_UNSIGNED_BYTE: u32 = 0x1401;
+const GL_TEXTURE_MIN_FILTER: u32 = 0x2801;
+const GL_TEXTURE_MAG_FILTER: u32 = 0x2800;
+const GL_NEAREST: i32 = 0x2600;
+const GL_FRAMEBUFFER: u32 = 0x8D40;
+const GL_READ_FRAMEBUFFER: u32 = 0x8CA8;
+const GL_DRAW_FRAMEBUFFER: u32 = 0x8CA9;
+const GL_COLOR_ATTACHMENT0: u32 = 0x8CE0;
+
+const PFN_CreateContextAttribs = *const fn (HDC, ?HGLRC, ?[*]const i32) callconv(.winapi) ?HGLRC;
+const PFN_GenFramebuffers = *const fn (i32, *u32) callconv(.winapi) void;
+const PFN_DeleteFramebuffers = *const fn (i32, *const u32) callconv(.winapi) void;
+const PFN_BindFramebuffer = *const fn (u32, u32) callconv(.winapi) void;
+const PFN_FramebufferTexture2D = *const fn (u32, u32, u32, u32, i32) callconv(.winapi) void;
+const PFN_BlitFramebuffer = *const fn (i32, i32, i32, i32, i32, i32, i32, i32, u32, u32) callconv(.winapi) void;
+
+var createContextAttribs: PFN_CreateContextAttribs = undefined;
+var genFramebuffers: PFN_GenFramebuffers = undefined;
+var deleteFramebuffers: PFN_DeleteFramebuffers = undefined;
+var bindFramebuffer: PFN_BindFramebuffer = undefined;
+var framebufferTexture2D: PFN_FramebufferTexture2D = undefined;
+var blitFramebuffer: PFN_BlitFramebuffer = undefined;
+
+fn glProcAddr(comptime T: type, name: [*:0]const u8) T {
+    return @ptrCast(wglGetProcAddress(name).?);
+}
+
+const pane_w: i32 = 250;
+const pane_h: i32 = top_h - 40;
+
+const Renderer = struct {
+    thread: std.Thread = undefined,
+    hwnd: HWND = undefined, // the helper or pane window its context is current on
+    dc: HDC = undefined,
+    ctx: HGLRC = undefined,
+    tex: u32 = 0, // made by the renderer, read by the presenter (shared group)
+    fbo: u32 = 0, // the renderer's draw FBO (FBOs are never shared)
+    read_fbo: u32 = 0, // the presenter's read FBO onto `tex`
+    x: i32 = 0,
+    go: std.Thread.ResetEvent = .{},
+    done: std.Thread.ResetEvent = .{},
+    quit: bool = false,
+    frame: u32 = 0,
+};
+
+const Presenter = struct { hwnd: HWND, dc: HDC, ctx: HGLRC };
+
+var presenter: ?Presenter = null;
+var renderers: [8]*Renderer = undefined;
+var n_renderers: usize = 0;
+var pfd_gl = PIXELFORMATDESCRIPTOR{ .dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER };
+
+fn setGlPixelFormat(dc: HDC) void {
+    const pf = ChoosePixelFormat(dc, &pfd_gl);
+    _ = SetPixelFormat(dc, pf, &pfd_gl);
+}
+
+fn addPresenter() void {
+    if (presenter != null) return;
+    const h = CreateWindowExW(0, L("T2599ReproGL"), L(""), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, top_w, pane_h, top, null, hinst, null) orelse return;
+    const dc = GetDC(h).?;
+    setGlPixelFormat(dc);
+    const ctx = wglCreateContext(dc).?;
+    _ = wglMakeCurrent(dc, ctx);
+    createContextAttribs = glProcAddr(PFN_CreateContextAttribs, "wglCreateContextAttribsARB");
+    genFramebuffers = glProcAddr(PFN_GenFramebuffers, "glGenFramebuffers");
+    deleteFramebuffers = glProcAddr(PFN_DeleteFramebuffers, "glDeleteFramebuffers");
+    bindFramebuffer = glProcAddr(PFN_BindFramebuffer, "glBindFramebuffer");
+    framebufferTexture2D = glProcAddr(PFN_FramebufferTexture2D, "glFramebufferTexture2D");
+    blitFramebuffer = glProcAddr(PFN_BlitFramebuffer, "glBlitFramebuffer");
+    _ = wglMakeCurrent(null, null);
+    presenter = .{ .hwnd = h, .dc = dc, .ctx = ctx };
+    presenterPresent();
+}
+
+fn rendererMain(r: *Renderer) void {
+    _ = wglMakeCurrent(r.dc, r.ctx);
+    glGenTextures(1, &r.tex);
+    glBindTexture(GL_TEXTURE_2D, r.tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pane_w, pane_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, null);
+    genFramebuffers(1, &r.fbo);
+    bindFramebuffer(GL_FRAMEBUFFER, r.fbo);
+    framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r.tex, 0);
+    glFinish();
+    r.done.set();
+    while (true) {
+        r.go.wait();
+        r.go.reset();
+        if (r.quit) break;
+        r.frame +%= 1;
+        bindFramebuffer(GL_FRAMEBUFFER, r.fbo);
+        glViewport(0, 0, pane_w, pane_h);
+        glClearColor(0.2 + 0.1 * @as(f32, @floatFromInt(r.x)) / 250.0, @as(f32, @floatFromInt(r.frame % 8)) / 8.0, 0.4, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        // the app would fence here; glFinish is the simplest correct hand-off
+        glFinish();
+        r.done.set();
+    }
+    deleteFramebuffers(1, &r.fbo);
+    glDeleteTextures(1, &r.tex);
+    glFinish();
+    _ = wglMakeCurrent(null, null);
+    r.done.set();
+}
+
+fn addRenderer(on_pane: bool) void {
+    const p = presenter orelse return;
+    if (n_renderers >= renderers.len) return;
+    const r = std.heap.page_allocator.create(Renderer) catch return;
+    r.* = .{ .x = @as(i32, @intCast(n_renderers % 4)) * pane_w };
+    // a pane child: input/focus owner in the app, has a pixel format so the
+    // renderer can make its context current, and NEVER swaps
+    r.hwnd = if (on_pane)
+        CreateWindowExW(0, L("T2599ReproGL"), L(""), WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, r.x, 0, pane_w, pane_h, top, null, hinst, null).?
+    else
+        CreateWindowExW(0, L("T2599ReproGL"), L(""), 0x80000000, 0, 0, 1, 1, null, null, hinst, null).?; // WS_POPUP, never shown
+    r.dc = GetDC(r.hwnd).?;
+    setGlPixelFormat(r.dc);
+    r.ctx = createContextAttribs(r.dc, p.ctx, null).?;
+    r.thread = std.Thread.spawn(.{}, rendererMain, .{r}) catch return;
+    r.done.wait();
+    r.done.reset();
+    renderers[n_renderers] = r;
+    n_renderers += 1;
+    presenterPresent();
+}
+
+fn removeRenderer() void {
+    if (n_renderers == 0) return;
+    n_renderers -= 1;
+    const r = renderers[n_renderers];
+    if (presenter) |p| if (r.read_fbo != 0) {
+        _ = wglMakeCurrent(p.dc, p.ctx);
+        deleteFramebuffers(1, &r.read_fbo);
+        glFinish();
+        _ = wglMakeCurrent(null, null);
+    };
+    r.quit = true;
+    r.go.set();
+    r.thread.join();
+    _ = wglDeleteContext(r.ctx);
+    _ = DestroyWindow(r.hwnd);
+    std.heap.page_allocator.destroy(r);
+    presenterPresent();
+}
+
+fn presenterPresent() void {
+    const p = presenter orelse return;
+    var i: usize = 0;
+    while (i < n_renderers) : (i += 1) renderers[i].go.set();
+    i = 0;
+    while (i < n_renderers) : (i += 1) {
+        renderers[i].done.wait();
+        renderers[i].done.reset();
+    }
+    _ = wglMakeCurrent(p.dc, p.ctx);
+    bindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, top_w, pane_h);
+    glClearColor(0.05, 0.05, 0.05, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    i = 0;
+    while (i < n_renderers) : (i += 1) {
+        const r = renderers[i];
+        if (r.read_fbo == 0) {
+            genFramebuffers(1, &r.read_fbo);
+            bindFramebuffer(GL_READ_FRAMEBUFFER, r.read_fbo);
+            framebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r.tex, 0);
+        }
+        bindFramebuffer(GL_READ_FRAMEBUFFER, r.read_fbo);
+        bindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        blitFramebuffer(0, 0, pane_w, pane_h, r.x, 0, r.x + pane_w, pane_h, GL_COLOR_BUFFER_BIT, @intCast(GL_NEAREST));
+    }
+    bindFramebuffer(GL_FRAMEBUFFER, 0);
+    _ = SwapBuffers(p.dc);
+    _ = wglMakeCurrent(null, null);
+}
+
+fn removePresenter() void {
+    while (n_renderers > 0) removeRenderer();
+    const p = presenter orelse return;
+    _ = wglDeleteContext(p.ctx);
+    _ = DestroyWindow(p.hwnd);
+    presenter = null;
 }
 
 fn topProc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) callconv(.winapi) LRESULT {
@@ -231,7 +440,12 @@ fn topProc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) callconv(.winapi) LRESULT 
                 12 => _ = ShowWindow(top, 5),
                 13 => _ = ShowWindow(top, 9),
                 14 => if (n_children > 0) presentChild(&children[0]),
+                20 => addPresenter(),
+                21 => addRenderer(lp == 1),
+                22 => presenterPresent(),
+                23 => removeRenderer(),
                 10 => {
+                    removePresenter();
                     while (n_children > 0) destroyNewest();
                     _ = DestroyWindow(top);
                 },
