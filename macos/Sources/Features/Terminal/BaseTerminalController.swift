@@ -1928,7 +1928,9 @@ class BaseTerminalController: NSWindowController,
             guard leaves.count > 1 else { return }
 
             let focusedIndex = leaves.firstIndex(of: pane) ?? 0
-            heroModeState.activate(focusedIndex: focusedIndex, leafCount: leaves.count)
+            heroModeState.activate(
+                focusedIndex: focusedIndex, leafCount: leaves.count,
+                carouselRatio: ghostty.config.macosHeroCarouselRatio)
         }
 
         window?.makeKeyAndOrderFront(nil)
@@ -2072,9 +2074,12 @@ class BaseTerminalController: NSWindowController,
         let bounds = CGRect(origin: .zero, size: visible.viewBounds())
 
         // Perform the resize using the new SplitTree resize method
+        let minimum = ghostty.config.paneMinimumSize
         do {
             surfaceTree = try surfaceTree.applyingToVisible {
-                try $0.resizing(node: visibleNode, by: amount, in: spatialDirection, with: bounds)
+                try $0.resizing(
+                    node: visibleNode, by: amount, in: spatialDirection, with: bounds,
+                    minimum: minimum)
             }
         } catch {
             Ghostty.logger.warning("failed to resize split: \(error)")
@@ -2421,8 +2426,11 @@ class BaseTerminalController: NSWindowController,
             let origin = dividerDragOrigin ?? (tree: surfaceTree, node: resize.node)
             do {
                 let laidOut = paneStackState.laidOutPin
+                let minimum = ghostty.config.paneMinimumSize
                 surfaceTree = try origin.tree.applyingToVisible {
-                    try $0.movingDivider(of: origin.node, to: position, in: dimension, laidOut: laidOut)
+                    try $0.movingDivider(
+                        of: origin.node, to: position, in: dimension,
+                        minimum: minimum, laidOut: laidOut)
                 }
             } catch {
                 Ghostty.logger.warning("failed to move split divider: \(error)")

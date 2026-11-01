@@ -7,6 +7,8 @@ const String = @import("../main_c.zig").String;
 const Config = @import("Config.zig");
 const c_get = @import("c_get.zig");
 const edit = @import("edit.zig");
+const schema_json = @import("schema_json.zig");
+const file_load = @import("file_load.zig");
 const Key = @import("key.zig").Key;
 
 const log = std.log.scoped(.config);
@@ -130,6 +132,31 @@ export fn ghostty_config_get_diagnostic(self: *Config, idx: u32) Diagnostic {
     if (idx >= items.len) return .{};
     const message = self._diagnostics.precompute.messages.items[idx];
     return .{ .message = message.ptr };
+}
+
+/// The config as JSON: one entry per key with its formatted values, kind
+/// and (with `docs`) its documentation. See `schema_json.zig`. Used by the
+/// macOS Settings window for the catalog (on a default config) and for the
+/// effective values (on the loaded config). Free with ghostty_string_free.
+export fn ghostty_config_schema_json(self: *Config, docs: bool) String {
+    const json = schema_json.allocJson(state.alloc, self, docs) catch |err| {
+        log.err("error formatting config schema err={}", .{err});
+        return .empty;
+    };
+    return .fromSlice(json);
+}
+
+/// The config file the user edits (what "Open Config" opens), WITHOUT
+/// creating it: App Support if non-empty, else XDG if non-empty, else App
+/// Support. Free with ghostty_string_free.
+export fn ghostty_config_preferred_path() String {
+    const path = file_load.preferredDefaultFilePath(state.alloc) catch |err| {
+        log.err("error finding config path err={}", .{err});
+        return .empty;
+    };
+    defer state.alloc.free(path);
+    const z = state.alloc.dupeZ(u8, path) catch return .empty;
+    return .fromSlice(z);
 }
 
 export fn ghostty_config_open_path() String {

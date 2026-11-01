@@ -32,6 +32,19 @@ pub fn appSupportDir(
     );
 }
 
+/// Like `appSupportDir`, but in the folder the config lives in
+/// (`build_config.config_bundle_id`): a development build's own folder.
+pub fn configDir(
+    alloc: Allocator,
+    sub_path: []const u8,
+) AppSupportDirError![]const u8 {
+    return try commonDir(
+        alloc,
+        .NSApplicationSupportDirectory,
+        &.{ build_config.config_bundle_id, sub_path },
+    );
+}
+
 pub const CacheDirError = Allocator.Error || error{AppleAPIFailed};
 
 /// Return the path to the system cache directory with the given sub path joined.

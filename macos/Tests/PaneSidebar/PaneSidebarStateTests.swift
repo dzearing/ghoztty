@@ -196,6 +196,68 @@ struct PaneSidebarSharedStateTests {
         #expect(relaunched.unfoldedWindows.isEmpty && relaunched.filter.isEmpty, "folds and search do not persist")
     }
 
+    // MARK: macos-pane-sidebar
+
+    @Test func rememberStartsAsTheDefaultsLeftIt() {
+        let store = defaults()
+        store.set(true, forKey: PaneSidebarSharedState.expandedKey)
+        store.set(true, forKey: PaneSidebarSharedState.hiddenKey)
+        let shared = PaneSidebarSharedState(defaults: store)
+        shared.applyStart(.remember)
+        #expect(shared.isExpanded && shared.isHidden)
+    }
+
+    @Test(arguments: [
+        (Ghostty.Config.MacOSPaneSidebar.expanded, true, false),
+        (.collapsed, false, false),
+    ])
+    func aForcedStartWinsOverTheDefaultsAndIsNotRemembered(
+        start: Ghostty.Config.MacOSPaneSidebar, expanded: Bool, hidden: Bool
+    ) {
+        let store = defaults()
+        store.set(!expanded, forKey: PaneSidebarSharedState.expandedKey)
+        store.set(true, forKey: PaneSidebarSharedState.hiddenKey)
+        let shared = PaneSidebarSharedState(defaults: store)
+        shared.applyStart(start)
+        #expect(shared.isExpanded == expanded && shared.isHidden == hidden)
+        // `remember` keeps the user's own last choice.
+        #expect(store.bool(forKey: PaneSidebarSharedState.expandedKey) == !expanded)
+        #expect(store.bool(forKey: PaneSidebarSharedState.hiddenKey))
+    }
+
+    @Test func hiddenKeepsTheRememberedModeForWhenItIsShown() {
+        let store = defaults()
+        store.set(true, forKey: PaneSidebarSharedState.expandedKey)
+        let shared = PaneSidebarSharedState(defaults: store)
+        shared.applyStart(.hidden)
+        #expect(shared.isHidden && shared.isExpanded)
+        #expect(!store.bool(forKey: PaneSidebarSharedState.hiddenKey))
+    }
+
+    @Test func togglingAfterAForcedStartStillWorksAndIsRemembered() {
+        let store = defaults()
+        let shared = PaneSidebarSharedState(defaults: store)
+        shared.applyStart(.collapsed)
+        let window = PaneSidebarState(shared: shared)
+        window.isExpanded = true
+        window.isHidden = true
+        #expect(shared.isExpanded && shared.isHidden)
+        #expect(store.bool(forKey: PaneSidebarSharedState.expandedKey))
+        #expect(store.bool(forKey: PaneSidebarSharedState.hiddenKey))
+    }
+
+    @Test func aReloadReappliesOnlyWhenTheValueChanges() {
+        let shared = PaneSidebarSharedState(defaults: defaults())
+        shared.applyStart(.collapsed)
+        shared.isExpanded = true
+        shared.applyStart(.collapsed)
+        #expect(shared.isExpanded, "the same value again does not undo the toggle")
+        shared.applyStart(.hidden)
+        #expect(shared.isHidden)
+        shared.applyStart(.expanded)
+        #expect(shared.isExpanded && !shared.isHidden)
+    }
+
     @Test func theLegacyPinReadsAsExpanded() {
         let store = defaults()
         store.set(true, forKey: PaneSidebarSharedState.legacyPinnedKey)

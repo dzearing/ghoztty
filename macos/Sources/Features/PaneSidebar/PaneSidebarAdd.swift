@@ -24,7 +24,8 @@ extension BaseTerminalController {
         }
         TerminalController.newWindowInheritingRemote(
             ghostty,
-            withBaseConfig: PaneDeskVariant.forNewWindow(config, style: ghostty.config.macosPaneStyle),
+            withBaseConfig: PaneDeskVariant.forNewWindow(
+                config, style: ghostty.config.macosPaneStyle, gradient: ghostty.config.macosWindowGradient),
             from: parent?.window
         ) { controller in
             if let title { controller.setWindowTitle(title) }

@@ -57,6 +57,20 @@ pub const i18n: bool = config.i18n;
 /// avoid it in Zig coe as much as possible.
 pub const bundle_id = "com.dzearing.ghoztty";
 
+/// True for the development build (Debug, and ReleaseSafe which the IPC socket
+/// also treats as a debug build). It runs beside the installed release app, so
+/// it keeps its config apart: see `config_bundle_id`.
+pub const is_dev_build = switch (builtin.mode) {
+    .Debug, .ReleaseSafe => true,
+    .ReleaseSmall, .ReleaseFast => false,
+};
+
+/// The Application Support folder name (macOS) the config is loaded from and
+/// written to. A development build uses `<bundle_id>.debug`, the same folder
+/// the debug app keeps its window state in, so editing settings while testing
+/// never rewrites the release app's config (which may not know a new key yet).
+pub const config_bundle_id = if (is_dev_build) bundle_id ++ ".debug" else bundle_id;
+
 /// True if we should have "slow" runtime safety checks. The initial motivation
 /// for this was terminal page/pagelist integrity checks. These were VERY
 /// slow but very thorough. But they made it so slow that the terminal couldn't

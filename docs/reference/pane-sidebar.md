@@ -54,6 +54,20 @@ shows the same view of it (see *Shared across windows*). Read before touching
   under the pointer. The rail and the panel each keep their own (different
   layouts); "this window" lists are each window's own content and are not
   synced.
+- **How it starts: `macos-pane-sidebar`** (`remember` default | `expanded` |
+  `collapsed` | `hidden`; `Ghostty.Config.macosPaneSidebar`). The state is
+  shared, so this is how EVERY window's sidebar starts, not one window's:
+  `PaneSidebarSharedState.applyStart`, from `applicationWillFinishLaunching`
+  (before any window is restored) and from each config change — but only
+  when the value CHANGED, so a reload never undoes the user's toggles.
+  `remember` leaves the flags as the defaults have them (today's behavior).
+  A forced value is NOT written to the defaults (`isApplyingStart`), so
+  `remember` still has the user's own last choice; a toggle afterwards
+  works and is written as always. `hidden` keeps the remembered
+  expanded/rail choice for when the sidebar is shown. Restored windows have
+  no sidebar state of their own (below), so they start as configured too.
+  Tests: `PaneSidebarSharedStateTests` (`aForcedStartWins…`,
+  `aReloadReappliesOnlyWhenTheValueChanges`, …).
 - **Restoration** applies only the per-window part (`paneSidebarOrder`,
   `paneSidebarWindowID`). The flags come from the defaults (`PaneSidebarExpanded`
   — falling back to `PaneSidebarPinned` — `PaneSidebarHidden`,
