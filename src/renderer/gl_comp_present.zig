@@ -71,6 +71,16 @@ pub fn enabled() bool {
     return knobOn(raw);
 }
 
+/// `GHOZTTY_COMP_RESIZE_BUFFERS=1` (T2598 A/B): resize the swap chain to the
+/// frame's exact size on every size change, as before, instead of growing it
+/// in buckets and presenting a source rectangle. Read once per pane.
+fn exactBuffers() bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_COMP_RESIZE_BUFFERS") catch return false;
+    defer std.heap.page_allocator.free(raw);
+    return knobOn(raw);
+}
+
 fn debugFailAfter() ?u64 {
     if (comptime builtin.mode != .Debug) return null;
     const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_COMP_PRESENT_FAIL_AFTER") catch return null;
@@ -97,6 +107,7 @@ const IID_IDXGIFactory2 = guid("50c83a1c-e072-4c48-87b0-3630fa36a6d0");
 const IID_ID3D11Texture2D = guid("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
 const IID_IDCompositionDevice = guid("c37ea93a-e7aa-450d-b16f-9746cb0407f3");
 const IID_IDXGIFactoryMedia = guid("41e7d1f2-a591-4f7b-a2e5-fa9c843e1c12");
+const IID_IDXGISwapChain2 = guid("a8be2ac4-199f-4946-b331-79599fb98de7");
 const COMPOSITIONOBJECT_ALL_ACCESS: u32 = 0x0003;
 
 const DXGI_FORMAT_B8G8R8A8_UNORM: u32 = 87;
@@ -177,6 +188,7 @@ const slot_factory_media_create_for_handle = 3; // IDXGIFactoryMedia
 const slot_swapchain_present = 8;
 const slot_swapchain_get_buffer = 9;
 const slot_swapchain_resize_buffers = 13;
+const slot_swapchain2_set_source_size = 29; // IDXGISwapChain 8-17, IDXGISwapChain1 18-28 (dxgi1_3.h)
 const slot_d3d11_device_create_texture2d = 5;
 const slot_d3d11_context_copy_subresource_region = 46;
 const slot_d3d11_context_copy_resource = 47;
@@ -269,6 +281,15 @@ pub const Presenter = struct {
     device: Obj, // ID3D11Device
     context: Obj, // ID3D11DeviceContext
     swap: Obj, // IDXGISwapChain1
+    /// The same swap chain as IDXGISwapChain2 (T2598): its buffers grow in
+    /// `share_bucket` steps and each frame presents only its `width` x
+    /// `height` corner (`SetSourceSize`), so a window-edge drag pays for
+    /// `ResizeBuffers` once per bucket instead of on every step. Null when
+    /// unavailable or `GHOZTTY_COMP_RESIZE_BUFFERS=1`: exact resizes, as before.
+    swap2: ?Obj = null,
+    /// The swap chain's buffer size, at least `width` x `height`.
+    swap_w: u32 = 0,
+    swap_h: u32 = 0,
     /// The pane's own device, target and visual on its child window. All
     /// null in tree mode, where the window thread hosts the visual instead.
     dcomp: ?Obj, // IDCompositionDevice
@@ -414,6 +435,7 @@ pub const Presenter = struct {
                 _ = interop.close(tree_interop);
                 return err;
             };
+            self.adoptSwap2();
             stage = "";
             return self;
         }
@@ -461,8 +483,45 @@ pub const Presenter = struct {
 
         stage = "shared-texture";
         try self.createShared(desc.width, desc.height);
+        self.adoptSwap2();
         stage = "";
         return self;
+    }
+
+    /// Take the swap chain's IDXGISwapChain2 for source-size resizes (T2598).
+    /// Its buffers are `width` x `height` as created.
+    fn adoptSwap2(self: *Presenter) void {
+        self.swap_w = self.width;
+        self.swap_h = self.height;
+        if (exactBuffers()) return;
+        self.swap2 = query(self.swap, &IID_IDXGISwapChain2) catch null;
+    }
+
+    /// Resize the swap chain for a `w` x `h` frame. With `swap2` the buffers
+    /// only grow, by whole buckets, and the frame is presented as a source
+    /// rectangle; a source size the chain refuses drops to exact resizes for
+    /// the life of the presenter.
+    fn resizeSwap(self: *Presenter, w: u32, h: u32) Error!void {
+        const resize = slot(*const fn (Obj, u32, u32, u32, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_resize_buffers);
+        if (self.swap2) |s2| {
+            const cap = sharedCapacity(self.swap_w, self.swap_h, w, h);
+            if (cap[0] != self.swap_w or cap[1] != self.swap_h) {
+                stage = "resize-buffers";
+                try check(resize(self.swap, 0, cap[0], cap[1], 0, 0));
+                self.swap_w = cap[0];
+                self.swap_h = cap[1];
+            }
+            stage = "source-size";
+            const set_source = slot(*const fn (Obj, u32, u32) callconv(.winapi) HRESULT, s2, slot_swapchain2_set_source_size);
+            if (set_source(s2, w, h) >= 0) return;
+            log.warn("swap chain refused source size {}x{} of {}x{}; resizing it exactly from here on", .{ w, h, self.swap_w, self.swap_h });
+            release(s2);
+            self.swap2 = null;
+        }
+        stage = "resize-buffers";
+        try check(resize(self.swap, 0, w, h, 0, 0));
+        self.swap_w = w;
+        self.swap_h = h;
     }
 
     /// The failing step and HRESULT of the last `init`/frame error on this
@@ -536,8 +595,7 @@ pub const Presenter = struct {
     pub fn begin(self: *Presenter, w: u32, h: u32) Error!gl.Framebuffer {
         if (w == 0 or h == 0) return error.GLFailed;
         if (w != self.width or h != self.height or self.texture == null) {
-            stage = "resize-buffers";
-            try check(slot(*const fn (Obj, u32, u32, u32, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_resize_buffers)(self.swap, 0, w, h, 0, 0));
+            try self.resizeSwap(w, h);
             const cap = sharedCapacity(self.tex_w, self.tex_h, w, h);
             if (self.texture == null or cap[0] != self.tex_w or cap[1] != self.tex_h) {
                 self.destroyShared();
@@ -593,10 +651,13 @@ pub const Presenter = struct {
         try check(slot(*const fn (Obj, u32, *const GUID, *?Obj) callconv(.winapi) HRESULT, self.swap, slot_swapchain_get_buffer)(self.swap, 0, &IID_ID3D11Texture2D, &back));
         const bb = back orelse return error.ComFailed;
         defer release(bb);
-        if (self.tex_w == self.width and self.tex_h == self.height) {
+        if (self.tex_w == self.width and self.tex_h == self.height and
+            self.swap_w == self.width and self.swap_h == self.height)
+        {
             slot(*const fn (Obj, Obj, Obj) callconv(.winapi) void, self.context, slot_d3d11_context_copy_resource)(self.context, bb, self.texture.?);
         } else {
-            // The frame is the texture's top-left `width` x `height` (T2577).
+            // The frame is the texture's top-left `width` x `height` (T2577),
+            // and goes to the back buffer's, which is presented (T2598).
             const box: D3D11_BOX = .{ .left = 0, .top = 0, .front = 0, .right = self.width, .bottom = self.height, .back = 1 };
             slot(*const fn (Obj, Obj, u32, u32, u32, u32, Obj, u32, *const D3D11_BOX) callconv(.winapi) void, self.context, slot_d3d11_context_copy_subresource_region)(self.context, bb, 0, 0, 0, 0, self.texture.?, 0, &box);
         }
@@ -657,6 +718,8 @@ pub const Presenter = struct {
         }
         if (self.visual) |v| release(v);
         if (self.target) |t| release(t);
+        if (self.swap2) |s2| release(s2);
+        self.swap2 = null;
         if (self.dcomp) |d| release(d);
         release(self.swap);
         if (self.surface_handle) |h| _ = CloseHandle(h);
