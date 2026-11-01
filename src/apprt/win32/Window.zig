@@ -718,6 +718,9 @@ in_size_loop: bool = false,
 /// size the frame is about to take, so they are presented before it changes;
 /// read through `layoutClientRect`.
 pending_client: ?w32.RECT = null,
+/// The client rect the last pre-layout placed the panes at (T2603), until
+/// the `WM_SIZE` it was for, or any other layout pass, takes it.
+prelayout_laid: ?resize_prelayout.Rect = null,
 /// The flat-style gutters the last divider paint drew (T2418), in client
 /// pixels. A layout that moves a divider hands its old gutter to a pane, and
 /// `WS_CLIPCHILDREN` keeps every later paint off it, so the old line and bar
@@ -7763,6 +7766,7 @@ fn endFrameWaitBatch(self: *Window) void {
 }
 
 pub fn layoutSplits(self: *Window) void {
+    self.prelayout_laid = null;
     if (self.tab_count == 0) return;
     // Under a drag the terminals keep their grid while their windows follow
     // the hand (T2459); the pass that ends the motion releases them, once.
@@ -13942,7 +13946,7 @@ fn handleDpiChanged(self: *Window, hwnd: w32.HWND, dpi: u32, suggested: ?*const 
     }
     // Always relayout: the chrome's band height moved with the scale even when
     // the outer size did not, and an unchanged size raises no WM_SIZE.
-    self.handleResize("dpi");
+    self.handleResize("dpi", false);
     self.invalidateChrome();
     // The oracle for dpi-change.ps1: a DPI change cannot be photographed on a
     // box whose monitors share a scale, so the window states what it adopted
@@ -14225,7 +14229,7 @@ fn updateTabBarVisibility(self: *Window) void {
     });
     if (should_show != self.tab_bar_visible) {
         self.tab_bar_visible = should_show;
-        self.handleResize("tabbar");
+        self.handleResize("tabbar", false);
     }
 }
 
@@ -15874,7 +15878,7 @@ pub fn toggleWindowDecorations(self: *Window) void {
 /// Timer id used to auto-hide the resize overlay.
 const RESIZE_OVERLAY_TIMER_ID: usize = 0x5247; // 'RG'
 
-fn handleResize(self: *Window, cause: []const u8) void {
+fn handleResize(self: *Window, cause: []const u8, from_size: bool) void {
     // LIVE, not the plain pass (T1393). A whole-window WM_SIZE is by
     // definition a relayout the user is watching happen — a frame drag, a
     // maximize, a snap, a title-bar double-click — and only the first of those
@@ -15885,7 +15889,9 @@ fn handleResize(self: *Window, cause: []const u8) void {
     // gestures that have no loop to be inside of; `resize_paint` still
     // declines the wait for a pane with nothing presented yet, so the initial
     // layout does not pay a frame per pane for pixels that do not exist.
-    self.layoutSplitsLive();
+    // Unless a pre-layout already laid them out at this very size (T2603).
+    const prelaid = from_size and if (self.hwnd) |h| self.finishPrelaidSize(h) else false;
+    if (!prelaid) self.layoutSplitsLive();
     // T1393's oracle, and the only one there is for this half of the report.
     //
     // T1031 gave the ERASE decision a voice (`surface erase ... fill=`) and
@@ -15934,10 +15940,11 @@ fn prelayoutOff() bool {
 /// present them at the client size the frame is about to take, so the frame
 /// change follows the last present inside one compose instead of the content
 /// landing a compose behind it (`resize_prelayout` has the rule and why only a
-/// right or bottom edge). `WM_SIZE` still runs its whole pass after the frame
-/// changes - the panes are already at their size by then, so it re-presents
-/// nothing and repaints the desk and chrome at the size that landed.
+/// right or bottom edge). When the frame lands at exactly that size, the
+/// `WM_SIZE` after it only paints the desk (`finishPrelaidSize`, T2603).
 fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
+    // A change that never reached its `WM_SIZE` leaves no claim behind.
+    self.prelayout_laid = null;
     if (self.tab_count == 0 or prelayoutOff()) return;
     const hwnd = self.hwnd orelse return;
     var wr: w32.RECT = undefined;
@@ -15963,6 +15970,46 @@ fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
     self.pending_client = .{ .left = pc.left, .top = pc.top, .right = pc.right, .bottom = pc.bottom };
     defer self.pending_client = null;
     self.layoutSplitsLive();
+    // After the pass: `layoutSplits` clears it, so any other pass between
+    // here and the `WM_SIZE` makes that one lay out again (T2603). The grid
+    // only: the hero and zoom paths paint the desk on their own terms.
+    if (!self.tab_hero_active[self.active_tab] and self.tab_trees[self.active_tab].zoomed == null)
+        self.prelayout_laid = pc;
+}
+
+/// `WM_SIZE` after a pre-layout at exactly the client rect that landed
+/// (T2603): the panes, cuts and popups are already where this size puts them,
+/// and the origin did not move, so only the desk is left to paint - over the
+/// strip the old frame clipped when the pre-layout painted it. The whole
+/// second pass used to cost 2.5-3 ms of a ~16 ms growing step.
+fn finishPrelaidSize(self: *Window, hwnd: w32.HWND) bool {
+    const laid = self.prelayout_laid orelse return false;
+    self.prelayout_laid = null;
+    if (prelaidFullPass()) return false;
+    var cr: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &cr) == 0) return false;
+    if (resize_prelayout.sizePassNeeded(laid, .{ .left = cr.left, .top = cr.top, .right = cr.right, .bottom = cr.bottom })) return false;
+    resizeTrace("prelaid-paint", hwnd);
+    var paint_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+    if (w32.GetDC(hwnd)) |dc| {
+        self.paintAlphaCorrect(dc, paintMovedBands);
+        _ = w32.ReleaseDC(hwnd, dc);
+        if (self.movedBandsRect()) |done| _ = w32.ValidateRect(hwnd, &done);
+    }
+    if (paint_timer) |*t| self.frame_paint_us +|= t.read() / std.time.ns_per_us;
+    resizeTrace("prelaid-painted", hwnd);
+    return true;
+}
+
+var prelaid_full_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_PRELAID_FULL`: the `WM_SIZE` after a pre-layout runs its
+/// whole pass again, as before T2603 - the A/B control.
+fn prelaidFullPass() bool {
+    if (prelaid_full_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_PRELAID_FULL");
+    prelaid_full_state = v;
+    return v;
 }
 
 /// `WM_WINDOWPOSCHANGING` inside a size loop (T2603): a step of an edge drag
@@ -18123,7 +18170,7 @@ pub fn windowWndProc(
                 w32.SIZE_MAXIMIZED => "maximized",
                 w32.SIZE_RESTORED => "restored",
                 else => "other",
-            });
+            }, true);
             if (st) |*t| window.edgeStepEnd(t.read() / std.time.ns_per_us);
             resizeTrace("size-end", hwnd);
             return 0;

@@ -78,7 +78,32 @@ pub fn pendingClient(in: Input) ?Rect {
     return .{ .left = 0, .top = 0, .right = w, .bottom = h };
 }
 
+/// Whether the `WM_SIZE` that follows a pre-layout still has to lay the panes
+/// out (T2603). `laid` is the client rect the pre-layout placed them at (null
+/// when none ran, or another pass ran since); `landed` is the client rect the
+/// frame change actually produced. The same rect means the panes are already
+/// where this size puts them, and the window's origin did not move, so the
+/// pass only has the desk to paint over the strip the old frame clipped - a
+/// whole second layout pass was about a fifth of a growing step.
+pub fn sizePassNeeded(laid: ?Rect, landed: Rect) bool {
+    const l = laid orelse return true;
+    return l.width() != landed.width() or l.height() != landed.height() or
+        l.left != landed.left or l.top != landed.top;
+}
+
 const testing = std.testing;
+
+test "sizePassNeeded: only the rect the pre-layout laid out skips the pass" {
+    const r: Rect = .{ .left = 0, .top = 0, .right = 1396, .bottom = 792 };
+    try testing.expect(!sizePassNeeded(r, r));
+    try testing.expect(sizePassNeeded(null, r));
+    var other = r;
+    other.right = 1400;
+    try testing.expect(sizePassNeeded(r, other));
+    other = r;
+    other.bottom = 790;
+    try testing.expect(sizePassNeeded(r, other));
+}
 
 fn base() Input {
     return .{
