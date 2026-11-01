@@ -9283,13 +9283,30 @@ var present_ring: trace_ring.Ring(8192, 128) = .{};
 var present_ring_lock: std.Thread.Mutex = .{};
 
 /// Renderer thread, once per frame end, when the stack trace is on.
+/// `resize trace <what>` from a pane's renderer thread (T2577): where its
+/// frame starts and where the swap starts, on the same clock as the pass.
+pub fn traceRenderStage(comptime what: []const u8, hwnd: ?w32.HWND) void {
+    if (!resizeTraceOn()) return;
+    var t: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t);
+    const h: usize = if (hwnd) |p| @intFromPtr(p) else 0;
+    log.info("resize trace " ++ what ++ " hwnd={x} qpc={d}", .{ h, t });
+}
+
 pub fn tracePresent(hwnd: ?w32.HWND, drawn: u64, swapped: bool) void {
-    if (!stackTraceOn()) return;
+    const stack = stackTraceOn();
+    if (!stack and !resizeTraceOn()) return;
     var t: i64 = 0;
     _ = w32.QueryPerformanceCounter(&t);
     const h: usize = if (hwnd) |p| @intFromPtr(p) else 0;
     const w: u32 = @truncate(drawn >> 32);
     const ht: u32 = @truncate(drawn);
+    // Each pane's present on the resize trace's clock (T2577): the pass ends
+    // for the screen at the LAST of these, not at the frame wait.
+    if (!stack) {
+        log.info("resize trace present hwnd={x} qpc={d} size={d}x{d}", .{ h, t, w, ht });
+        return;
+    }
     if (stackTraceMode() == .log) {
         log.info("stack trace present hwnd={x} qpc={d} size={d}x{d} swapped={}", .{ h, t, w, ht, swapped });
         return;

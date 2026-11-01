@@ -129,6 +129,32 @@ const DXGI_SWAP_CHAIN_DESC1 = extern struct {
     flags: u32,
 };
 
+const D3D11_BOX = extern struct {
+    left: u32,
+    top: u32,
+    front: u32,
+    right: u32,
+    bottom: u32,
+    back: u32,
+};
+
+/// The shared texture's size for a `need` x `need_h` frame (T2577): grown in
+/// `share_bucket` steps and never shrunk, so a window-edge drag rebuilds it
+/// (a new D3D texture, interop registration and GL framebuffer - most of a
+/// resize step's first frame) once per bucket instead of on every step. The
+/// frame is written to its top-left corner and only that is copied out.
+pub const share_bucket: u32 = 256;
+pub fn sharedCapacity(have_w: u32, have_h: u32, need_w: u32, need_h: u32) [2]u32 {
+    if (have_w >= need_w and have_h >= need_h) return .{ have_w, have_h };
+    const up = struct {
+        fn f(have: u32, need: u32) u32 {
+            if (have >= need) return have;
+            return (std.math.divCeil(u32, need, share_bucket) catch unreachable) * share_bucket;
+        }
+    }.f;
+    return .{ up(have_w, need_w), up(have_h, need_h) };
+}
+
 const D3D11_TEXTURE2D_DESC = extern struct {
     width: u32,
     height: u32,
@@ -152,6 +178,7 @@ const slot_swapchain_present = 8;
 const slot_swapchain_get_buffer = 9;
 const slot_swapchain_resize_buffers = 13;
 const slot_d3d11_device_create_texture2d = 5;
+const slot_d3d11_context_copy_subresource_region = 46;
 const slot_d3d11_context_copy_resource = 47;
 const slot_dcomp_device_commit = 3;
 const slot_dcomp_device_create_target = 6;
@@ -262,6 +289,10 @@ pub const Presenter = struct {
     fbo: ?gl.Framebuffer = null,
     width: u32 = 0,
     height: u32 = 0,
+    /// The shared texture's own size, at least `width` x `height`
+    /// (`sharedCapacity`).
+    tex_w: u32 = 0,
+    tex_h: u32 = 0,
 
     locked: bool = false,
     warp: bool = false,
@@ -441,9 +472,10 @@ pub const Presenter = struct {
     }
 
     fn createShared(self: *Presenter, w: u32, h: u32) Error!void {
+        const cap = sharedCapacity(0, 0, w, h);
         const desc: D3D11_TEXTURE2D_DESC = .{
-            .width = w,
-            .height = h,
+            .width = cap[0],
+            .height = cap[1],
             .mip_levels = 1,
             .array_size = 1,
             .format = DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -479,6 +511,8 @@ pub const Presenter = struct {
         self.fbo = fbo;
         self.width = w;
         self.height = h;
+        self.tex_w = cap[0];
+        self.tex_h = cap[1];
     }
 
     fn destroyShared(self: *Presenter) void {
@@ -502,11 +536,16 @@ pub const Presenter = struct {
     pub fn begin(self: *Presenter, w: u32, h: u32) Error!gl.Framebuffer {
         if (w == 0 or h == 0) return error.GLFailed;
         if (w != self.width or h != self.height or self.texture == null) {
-            self.destroyShared();
             stage = "resize-buffers";
             try check(slot(*const fn (Obj, u32, u32, u32, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_resize_buffers)(self.swap, 0, w, h, 0, 0));
-            stage = "shared-texture";
-            try self.createShared(w, h);
+            const cap = sharedCapacity(self.tex_w, self.tex_h, w, h);
+            if (self.texture == null or cap[0] != self.tex_w or cap[1] != self.tex_h) {
+                self.destroyShared();
+                stage = "shared-texture";
+                try self.createShared(cap[0], cap[1]);
+            }
+            self.width = w;
+            self.height = h;
         }
         if (!self.locked) {
             stage = "lock";
@@ -554,7 +593,13 @@ pub const Presenter = struct {
         try check(slot(*const fn (Obj, u32, *const GUID, *?Obj) callconv(.winapi) HRESULT, self.swap, slot_swapchain_get_buffer)(self.swap, 0, &IID_ID3D11Texture2D, &back));
         const bb = back orelse return error.ComFailed;
         defer release(bb);
-        slot(*const fn (Obj, Obj, Obj) callconv(.winapi) void, self.context, slot_d3d11_context_copy_resource)(self.context, bb, self.texture.?);
+        if (self.tex_w == self.width and self.tex_h == self.height) {
+            slot(*const fn (Obj, Obj, Obj) callconv(.winapi) void, self.context, slot_d3d11_context_copy_resource)(self.context, bb, self.texture.?);
+        } else {
+            // The frame is the texture's top-left `width` x `height` (T2577).
+            const box: D3D11_BOX = .{ .left = 0, .top = 0, .front = 0, .right = self.width, .bottom = self.height, .back = 1 };
+            slot(*const fn (Obj, Obj, u32, u32, u32, u32, Obj, u32, *const D3D11_BOX) callconv(.winapi) void, self.context, slot_d3d11_context_copy_subresource_region)(self.context, bb, 0, 0, 0, 0, self.texture.?, 0, &box);
+        }
 
         stage = "present";
         // Sync interval 1: one frame per vblank, the same pacing SwapBuffers had.
@@ -637,6 +682,22 @@ test "flipBlit turns the GL target right way up in a D3D texture" {
     // Source row 0 (GL bottom) lands at destination y=480 side, i.e. the
     // D3D bottom; the destination rectangle runs top-down from h to 0.
     try std.testing.expectEqual([4]i32{ 0, 480, 640, 0 }, b.dst);
+}
+
+test "sharedCapacity grows by whole buckets and never shrinks" {
+    // First frame: rounded up to the bucket in each direction.
+    try std.testing.expectEqual([2]u32{ 512, 768 }, sharedCapacity(0, 0, 469, 723));
+    // A shrinking drag keeps the texture it has.
+    try std.testing.expectEqual([2]u32{ 512, 768 }, sharedCapacity(512, 768, 451, 723));
+    // Exactly a bucket fits without growing.
+    try std.testing.expectEqual([2]u32{ 512, 768 }, sharedCapacity(512, 768, 512, 768));
+    // Growing past one side grows only that side.
+    try std.testing.expectEqual([2]u32{ 768, 768 }, sharedCapacity(512, 768, 513, 700));
+    try std.testing.expectEqual([2]u32{ 512, 1024 }, sharedCapacity(512, 768, 500, 769));
+}
+
+test "copy box desc matches the SDK layout" {
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(D3D11_BOX));
 }
 
 test "swap chain desc matches the SDK layout" {

@@ -54,7 +54,9 @@ pub inline fn renderPass(
 /// NOTE: For OpenGL, `sync` is ignored and we always block.
 pub fn complete(self: *const Self, sync: bool) void {
     _ = sync;
+    self.renderer.api.traceStage("finish-begin");
     gl.finish();
+    self.renderer.api.traceStage("finish-end");
 
     // If there are any GL errors, consider the frame unhealthy.
     const health: Health = if (gl.errors.getError()) .healthy else |_| .unhealthy;

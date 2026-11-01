@@ -1907,10 +1907,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // If this frame's target isn't the correct size, or the target
             // config has changed (such as when the blending mode changes),
             // remove it and replace it with a new one with the right values.
+            const size_only = frame.target_config_modified == self.target_config_modified and
+                frame.custom_shader_state == null;
             if (frame.target.width != self.size.screen.width or
                 frame.target.height != self.size.screen.height or
                 frame.target_config_modified != self.target_config_modified)
-            {
+            resize: {
+                // A target that can take the new size as it stands (OpenGL on
+                // Win32, T2577) keeps its storage.
+                if (comptime @hasDecl(@TypeOf(frame.target), "resizeInPlace")) {
+                    if (size_only and frame.target.resizeInPlace(
+                        self.size.screen.width,
+                        self.size.screen.height,
+                    )) break :resize;
+                }
                 try frame.resize(
                     self.api,
                     self.size.screen.width,
@@ -1918,6 +1928,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 );
                 frame.target_config_modified = self.target_config_modified;
             }
+            if (comptime @hasDecl(GraphicsAPI, "traceStage")) self.api.traceStage("target-ready");
 
             // Upload images to the GPU as necessary.
             _ = self.images.upload(self.alloc, &self.api);
@@ -1964,6 +1975,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 if (lab_fire == .erase) self.api.lab_erase_next = true;
             }
 
+            if (comptime @hasDecl(GraphicsAPI, "traceStage")) self.api.traceStage("synced");
             // Get a frame context from the graphics API.
             var frame_ctx = try self.api.beginFrame(self, &frame.target);
             defer frame_ctx.complete(sync);

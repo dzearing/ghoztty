@@ -5976,6 +5976,11 @@ pub fn tracePresent(self: *Surface, drawn: u64, swapped: bool) void {
     Window.tracePresent(self.hwnd, drawn, swapped);
 }
 
+/// A renderer-thread stage of a frame on the resize trace (T2577).
+pub fn traceStage(self: *Surface, comptime what: []const u8) void {
+    Window.traceRenderStage(what, self.hwnd);
+}
+
 /// Called by the renderer thread after SwapBuffers to signal that a
 /// frame has been presented. Wakes the main thread if it's blocking
 /// in handleResize during live resize.

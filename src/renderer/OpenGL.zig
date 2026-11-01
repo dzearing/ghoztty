@@ -500,9 +500,18 @@ pub fn displayRealized(self: *const OpenGL) void {
 
 /// Actions taken before doing anything in `drawFrame`.
 ///
-/// Right now there's nothing we need to do for OpenGL.
+/// On Win32, stamps the frame's start on the resize trace (T2577).
 pub fn drawFrameStart(self: *OpenGL) void {
-    _ = self;
+    self.traceStage("draw-begin");
+}
+
+/// A stage of this frame on the Win32 resize trace (T2577); nothing elsewhere.
+pub fn traceStage(self: *const OpenGL, comptime what: []const u8) void {
+    if (comptime apprt.runtime != apprt.win32) {
+        _ = &self;
+        return;
+    }
+    self.rt_surface.traceStage(what);
 }
 
 const ResizeFix = enum { off, rebind, twice };
@@ -565,6 +574,7 @@ pub fn drawFrameEnd(self: *OpenGL) void {
         // reach a virtual display owned by another driver. `perf.now()` is a
         // no-op when telemetry is off, so this costs one branch per frame.
         const swap_start = perf.now();
+        self.traceStage("swap-begin");
         if (self.comp) |p| {
             p.end(true) catch |err| self.compFail(err);
         } else {
@@ -939,7 +949,10 @@ pub fn surfaceSize(self: *OpenGL) !struct { width: u32, height: u32 } {
                 // in a back buffer still at the old size - the old width's
                 // picture with black beyond it, for one frame. Re-making the
                 // context current asks the driver to revalidate the drawable.
-                if (self.resize_first_frame and resizeFix() == .rebind) {
+                // Not on the composition path, which never presents through
+                // that drawable, and where the rebind was a third of a resize
+                // step's first frame (T2577).
+                if (self.resize_first_frame and resizeFix() == .rebind and self.comp == null) {
                     const api = gl_loader.active();
                     _ = api.makeCurrent(hdc, api.getCurrentContext());
                 }
@@ -962,6 +975,8 @@ pub fn initTarget(self: *const OpenGL, width: usize, height: usize) !Target {
         .internal_format = if (self.blending.isLinear()) .srgba else .rgba,
         .width = width,
         .height = height,
+        // Win32 keeps the target across a window-edge drag's sizes (T2577).
+        .grow_only = apprt.runtime == apprt.win32,
     });
 }
 
@@ -985,10 +1000,12 @@ pub fn present(self: *OpenGL, target: Target) !void {
 
     // On the composition path (T2466) the frame goes into the swap chain's
     // shared texture instead of the window's default framebuffer.
+    self.traceStage("comp-begin");
     const comp_fbo: ?gl.Framebuffer = if (comptime apprt.runtime == apprt.win32)
         self.compBegin(target.width, target.height)
     else
         null;
+    self.traceStage("comp-begun");
     const comp_bind = if (comp_fbo) |f| try f.bind(.draw) else null;
     defer if (comp_bind) |b| b.unbind();
 

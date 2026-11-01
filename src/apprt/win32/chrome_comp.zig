@@ -957,7 +957,14 @@ pub const Host = struct {
         const vis = self.desk_visual orelse return error.Unavailable;
         if (w <= 0 or h <= 0 or px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
         var whole = rects == null;
+        var t0 = std.time.Timer.start() catch null;
+        var create_ns: u64 = 0;
+        defer if (whole and t0 != null and uploadTraceOn()) {
+            const total = t0.?.read();
+            log.info("desk upload trace create_us={d} rest_us={d} ({d}x{d})", .{ create_ns / 1000, (total - create_ns) / 1000, w, h });
+        };
         if (self.desk_surface == null or w != self.desk_w or h != self.desk_h) {
+            defer create_ns = if (t0) |*t| t.read() else 0;
             stage = "desk-surface";
             if (self.desk_surface) |old| release(old);
             self.desk_surface = null;
@@ -988,6 +995,16 @@ pub const Host = struct {
             self.desk_partial_px +|= @intCast(@as(i64, c.right - c.left) * (c.bottom - c.top));
         }
         try self.commit();
+    }
+
+    var upload_trace_state: ?bool = null;
+
+    /// `GHOZTTY_RESIZE_TRACE`: what a whole desk upload costs (T2577).
+    fn uploadTraceOn() bool {
+        if (upload_trace_state) |v| return v;
+        const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_TRACE");
+        upload_trace_state = v;
+        return v;
     }
 
     fn deskDraw(self: *Host, px: []const u32, w: i32, r: Rect) Error!void {
