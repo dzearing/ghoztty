@@ -283,6 +283,10 @@ desk_variant: ?desk_palette.Variant = null,
 /// Bumped whenever `desk` is re-rendered, so a cache built from it (the
 /// pane sidebar's, T1850) can tell it is stale without comparing pixels.
 desk_gen: u32 = 0,
+/// The canvas a window-edge drag paints on (T2577), zero outside one: the
+/// desk and `comp` stay this size while the window moves under it, so a step
+/// composes and uploads only the card edges that moved. See `liveResize`.
+live: ?[2]i32 = null,
 comp: ?Dib = null,
 /// `comp` as a translucent window shows it (T1852); only ever created there.
 out: ?Dib = null,
@@ -643,10 +647,52 @@ pub const Backdrop = struct {
 
 /// The desk for a `w` x `h` content area, rendering it if it is not cached.
 /// The same bitmap the window's paint uses, so the two cannot disagree.
-pub fn backdrop(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Backdrop {
-    if (w <= 0 or h <= 0) return null;
+pub fn backdrop(self: *PaneDesk, area_w: i32, area_h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Backdrop {
+    if (area_w <= 0 or area_h <= 0) return null;
+    const w, const h = self.canvas(area_w, area_h);
     const d = self.ensureDesk(w, h, is_light, variant) orelse return null;
     return .{ .pixels = d.pixels(), .w = d.w, .h = d.h, .gen = self.desk_gen };
+}
+
+/// A window-edge drag starts (`on`) or ends (T2577). In between, the desk is
+/// painted on a canvas that does not follow the window: it starts as the desk
+/// already cached, so the first step reuses it, and grows with headroom when
+/// the window outgrows it. A new size used to be a whole new desk on every
+/// step - the gradient rendered, every card composed, the whole bitmap
+/// uploaded - about 4 ms of a 120 Hz frame's 8, so the panes' content landed a
+/// compose after the frame. On the canvas a step is the memo's partial compose
+/// of the edges that moved, and the visual's clip (or the window's DC) keeps
+/// what lies past the window off screen. The gradient is laid out for the
+/// canvas, so the window's first paint after the drag lays it out for the
+/// window again: the caller invalidates the desk when it ends one.
+pub fn liveResize(self: *PaneDesk, on: bool) void {
+    self.live = if (!on or noCanvas()) null else if (self.desk) |d| .{ d.w, d.h } else .{ 0, 0 };
+}
+
+/// `GHOZTTY_DESK_NO_CANVAS`: every drag step lays the desk out for the
+/// window, as before T2577 - the A/B control for its film.
+fn noCanvas() bool {
+    if (no_canvas_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DESK_NO_CANVAS");
+    no_canvas_state = v;
+    return v;
+}
+var no_canvas_state: ?bool = null;
+
+/// The size the desk and `comp` take for a `w` x `h` content area: the area
+/// itself, or under a window-edge drag the canvas (`liveResize`).
+fn canvas(self: *PaneDesk, w: i32, h: i32) [2]i32 {
+    const c = if (self.live) |*c| c else return .{ w, h };
+    if (w > c[0]) c[0] = canvasGrow(w);
+    if (h > c[1]) c[1] = canvasGrow(h);
+    return c.*;
+}
+
+/// What a canvas grows to when the window outgrows it: past the window by an
+/// eighth, so a drag outwards renders the desk again every few dozen steps
+/// rather than on every one.
+fn canvasGrow(px: i32) i32 {
+    return px + @max(64, @divTrunc(px, 8));
 }
 
 pub fn deinit(self: *PaneDesk) void {
@@ -688,8 +734,8 @@ pub fn paint(
     hdc: w32.HDC,
     origin_x: i32,
     origin_y: i32,
-    w: i32,
-    h: i32,
+    area_w: i32,
+    area_h: i32,
     cards: []const pane_elevation.Card,
     /// The strips of the panes tucked into a stack (T2121), bottom first:
     /// laid on the desk with their leading corners rounded like a card's,
@@ -708,7 +754,8 @@ pub fn paint(
     opacity: ?u8,
 ) void {
     self.names_laid = false;
-    if (w <= 0 or h <= 0) return;
+    if (area_w <= 0 or area_h <= 0) return;
+    const w, const h = self.canvas(area_w, area_h);
     var tq0: i64 = 0;
     _ = w32.QueryPerformanceCounter(&tq0);
     const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
@@ -724,8 +771,9 @@ pub fn paint(
     var tq_lights: i64 = tq2;
     var tq_names: i64 = tq2;
     // A new size is a whole new desk (T2516): what each part of that costs, on
-    // every window-resize step, under `GHOZTTY_RESIZE_TRACE`.
-    defer if (fresh and resizeTraceOn()) {
+    // every window-resize step, under `GHOZTTY_RESIZE_TRACE`; and on the canvas
+    // of a live one (T2577), what a step costs that is not.
+    defer if ((fresh or self.live != null) and resizeTraceOn()) {
         var tq3: i64 = 0;
         _ = w32.QueryPerformanceCounter(&tq3);
         const f = qpcFreq();
@@ -1435,6 +1483,30 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
     self.desk_light = is_light;
     self.desk_variant = variant;
     return full;
+}
+
+test "T2577: a window-edge drag's canvas holds still, grows with headroom, and goes with the drag" {
+    const testing = std.testing;
+    var px = [_]u32{0};
+    var d: PaneDesk = .{};
+    try testing.expectEqual([2]i32{ 800, 600 }, d.canvas(800, 600));
+    // The drag starts on the desk already cached, so its first step reuses it.
+    d.desk = .{ .px = &px, .w = 800, .h = 600 };
+    d.liveResize(true);
+    try testing.expectEqual([2]i32{ 800, 600 }, d.canvas(800, 600));
+    try testing.expectEqual([2]i32{ 800, 600 }, d.canvas(700, 500));
+    // Outgrown: past the window by an eighth (64 px at least), one axis at a time.
+    try testing.expectEqual([2]i32{ 812 + 101, 600 }, d.canvas(812, 590));
+    try testing.expectEqual([2]i32{ 913, 600 }, d.canvas(900, 600));
+    try testing.expectEqual([2]i32{ 913, 601 + 75 }, d.canvas(400, 601));
+    try testing.expectEqual(@as(i32, 300 + 64), canvasGrow(300));
+    // The drag over, the desk is the window's size again.
+    d.liveResize(false);
+    try testing.expectEqual([2]i32{ 700, 500 }, d.canvas(700, 500));
+    // With nothing cached, the first step lays the canvas out from the window.
+    d.desk = null;
+    d.liveResize(true);
+    try testing.expectEqual([2]i32{ 900, 675 }, d.canvas(800, 600));
 }
 
 test "T2448: the desk memo matches the same inputs and nothing else" {

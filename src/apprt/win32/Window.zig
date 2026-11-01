@@ -17986,6 +17986,8 @@ pub fn windowWndProc(
                     if (entry.view.surface()) |s| s.in_live_resize = true;
                 }
             }
+            // The desk paints on a canvas that holds still under the drag (T2577).
+            window.pane_desk.liveResize(true);
             return 0;
         },
         w32.WM_EXITSIZEMOVE => {
@@ -17996,6 +17998,16 @@ pub fn windowWndProc(
                     if (entry.view.surface()) |s| s.in_live_resize = false;
                 }
             }
+            // The drag's canvas goes, and the desk is laid out for the window
+            // again on the next paint (T2577). A move never left the window's
+            // own size, and has nothing to lay out again.
+            const canvas = window.pane_desk.live;
+            window.pane_desk.liveResize(false);
+            if (canvas) |c| if (window.paneStyle() == .elevated) {
+                const area = window.deskRect();
+                if (c[0] != area.right - area.left or c[1] != area.bottom - area.top)
+                    _ = w32.InvalidateRect(hwnd, &area, 0);
+            };
             // T85: the user finished an interactive resize/move — remember
             // the outer size. Drag-to-top ("aero snap" maximize) can zoom
             // the window before this arrives, so read the live state and
