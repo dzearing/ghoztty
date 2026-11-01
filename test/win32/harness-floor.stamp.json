@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-01T12:05:43-08:00",
-    "commit":  "5786d8a34",
+    "generated":  "2026-11-01T13:55:32-08:00",
+    "commit":  "91e4615fe",
     "uncommitted":  [
-
+                        "test/win32/comp-present.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -108,7 +108,7 @@
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
                   "test/win32/comp-chrome.ps1":  "3f353c9ee1491baf31d97ca70e92f3ef3a7ac19b8ca93c78fdf37006a294aa5a",
-                  "test/win32/comp-present.ps1":  "5c886d850b8214b715ebd9af5ae1a5660e30525c4b0020b28d8f64888fcfa1d0",
+                  "test/win32/comp-present.ps1":  "824ca90d9c5e1cb1a075ee503df674ce57c31e50debf1a4f51d502ec21ab8928",
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",

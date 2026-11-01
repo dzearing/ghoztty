@@ -1789,7 +1789,7 @@ pub fn syncTreeVisual(self: *Surface) void {
     // window spans (T2566).
     const band: i32 = @intCast(self.gridBand());
     const at = comp_tree.placement(pts[0].x, pts[0].y + band, pts[1].x - pts[0].x, @max(pts[1].y - pts[0].y - band, 1), shown);
-    h.panePlace(self.tree_visual.?, at.x, at.y, at.w, at.h) catch {
+    h.panePlace(self.tree_visual.?, at.x, at.y, at.w, at.h, band) catch {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane visual place failed at {s}: hr=0x{x:0>8}", .{ f.stage, chrome_comp.hex(f.hr) });
     };

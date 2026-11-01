@@ -1231,11 +1231,15 @@ pub const Host = struct {
 
     /// Put a pane's visual at `(x, y)` in the client area, clipped to
     /// `w` x `h` of its own pixels (0 x 0 hides it), and commit.
-    pub fn panePlace(self: *Host, vis: Obj, x: i32, y: i32, w: i32, h: i32) Error!void {
+    /// `above` px over the visual's origin stay unclipped: the banner band a
+    /// spanning pane carries over its grid (T2559), where the banner's own
+    /// visual hangs at a negative offset.
+    pub fn panePlace(self: *Host, vis: Obj, x: i32, y: i32, w: i32, h: i32, above: i32) Error!void {
         stage = "pane-place";
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, @floatFromInt(x)));
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, @floatFromInt(y)));
-        const clip: D2D1_RECT_F = .{ .left = 0, .top = 0, .right = @floatFromInt(@max(w, 0)), .bottom = @floatFromInt(@max(h, 0)) };
+        const top: f32 = if (h > 0) -@as(f32, @floatFromInt(@max(above, 0))) else 0;
+        const clip: D2D1_RECT_F = .{ .left = 0, .top = top, .right = @floatFromInt(@max(w, 0)), .bottom = @floatFromInt(@max(h, 0)) };
         try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &clip));
         stage = "";
         try self.commit();

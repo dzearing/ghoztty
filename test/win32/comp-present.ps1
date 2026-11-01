@@ -56,7 +56,16 @@
 #      palette are placed off the top-level window, not the pane, so the band
 #      cannot reach them and they are not re-measured here. J7-J8: the banner
 #      collapse glide (T2252) runs knob on as well, measured off the grid, and
-#      lands the way the knob-off one does.
+#      lands the way the knob-off one does - knob off only since T2559: the
+#      copy is a popup that would cover the card's visual, so knob on the
+#      toggle reflows in view (J9) until T2617.
+#   K. The banner as a child visual of the pane (T2559): knob on, the card is
+#      shown as a visual and no GhozttyBannerOverlay popup is ever visible, a
+#      window move re-renders and re-shows nothing, and its input arrives on
+#      the pane window: hovering a link lights it, a click on a single-line
+#      card is the banner's (not a terminal press), a click on a multi-line
+#      card toggles it, and a press in the grid is still the terminal's. K8
+#      is the negative control: knob off, no card is ever a visual.
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -390,7 +399,13 @@ try {
     }
     Assert "F4 with a banner the wash is the popup again (log + one visible popup)" `
         ($popup -and (Count-Log $f.Err 'dim overlay path visual=false') -ge 1)
-    Assert "F5 the app is still running, nothing fell back" ((Test-Alive $f) -and (Count-Log $f.Err $failLine) -eq 0)
+    $fAlive = Test-Alive $f
+    $fFails = Count-Log $f.Err $failLine
+    Assert "F5 the app is still running, nothing fell back (alive=$fAlive fallbacks=$fFails)" ($fAlive -and $fFails -eq 0)
+    if (-not $fAlive -or $fFails -gt 0) {
+        "    fallback/panic lines:"
+        (Read-Text $f.Err) -split "`n" | Where-Object { $_ -match 'composition present|panic|error|banner path|banner shown' } | Select-Object -Last 12 | ForEach-Object { "      $_" }
+    }
     Assert "F6 the dimmed panes still draw text" ((Test-DrawsText $f.Target) -and (Test-DrawsText 'compf2'))
 
     # ========================================================================
@@ -464,6 +479,7 @@ try {
     "== H: a banner pane's window spans its band; the grid is the same (T2566)"
     # ========================================================================
     $bandLine = 'pane grid band=(\d+) client=(\d+)x(\d+) grid=(\d+)'
+    $visualLine = 'banner shown as visual w=(\d+) h=(\d+)'
     # One arm per knob, same window size and banner; returns the pane rect,
     # the strip's rect and the arm's log.
     function Measure-BannerArm($name, $comp, [string[]]$Extra = @()) {
@@ -478,8 +494,18 @@ try {
         $pane = $null; $strip = $null; $paneTop = [IntPtr]::Zero
         for ($t = 0; $t -lt 30 -and -not $strip; $t++) {
             Start-Sleep -Milliseconds 200
+            # Knob on, the card is a visual at the top of the pane (T2559):
+            # its rect is the pane's top-left at the size the visual logged.
+            $vis = if ($comp) { [regex]::Matches((Read-Text $arm.Err), $visualLine) | Select-Object -Last 1 } else { $null }
             foreach ($tw in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyWindow')) {
                 foreach ($p in @(Get-TestChildWindows -Window ([IntPtr]$tw.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible)) {
+                    if ($vis) {
+                        $vw = [int]$vis.Groups[1].Value; $vh = [int]$vis.Groups[2].Value
+                        $pane = $p; $paneTop = [IntPtr]$tw.Hwnd
+                        $strip = [pscustomobject]@{ Hwnd = $p.Hwnd; Left = $p.Left; Top = $p.Top; Width = $vw; Height = $vh
+                            Right = $p.Left + $vw; Bottom = $p.Top + $vh; Visual = $true }
+                        continue
+                    }
                     foreach ($o in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)) {
                         if ([math]::Abs($o.Left - $p.Left) -le 2 -and ([math]::Abs($o.Top - $p.Top) -le 2 -or [math]::Abs($o.Bottom - $p.Top) -le 2)) {
                             $pane = $p; $strip = $o; $paneTop = [IntPtr]$tw.Hwnd
@@ -625,7 +651,7 @@ try {
     # pane and are read from their log lines (pane-local, so offset by the
     # pane's rect).
     function Probe-Overlays($m, $visual) {
-        $r = [ordered]@{ Scroll = $null; Bell = $null; Pill = $null; Badge = $null; Dim = $null; PaneTop = $null; Glide = $null; GlideEnd = $null }
+        $r = [ordered]@{ Scroll = $null; Bell = $null; Pill = $null; Badge = $null; Dim = $null; PaneTop = $null; Glide = $null; GlideEnd = $null; Toggled = $false }
         if (-not $m.Pane -or -not $m.Strip -or $m.Top -eq [IntPtr]::Zero) { return [pscustomobject]$r }
         $hw = [IntPtr]$m.Pane.Hwnd
         $p = $m.Pane
@@ -661,10 +687,14 @@ try {
         # line, and the frozen copy's measurements off the oracle line.
         & $Exe +set-banner "--target=$($m.Arm.Target)" 'glide1\nglide2\nglide3\nglide4' 2>$null | Out-Null
         Start-Sleep -Milliseconds 900
-        $card = @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyBannerOverlay') |
-            Where-Object { [math]::Abs($_.Left - $slot.Left) -le 2 } | Select-Object -First 1
+        # Knob on, the card is a visual: the click goes to the pane window.
+        $card = if ($visual) { $slot } else {
+            @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyBannerOverlay') |
+                Where-Object { [math]::Abs($_.Left - $slot.Left) -le 2 } | Select-Object -First 1 }
         if ($card) {
-            [void](Send-TestMouse -Window $m.Top -Target ([IntPtr]$card.Hwnd) -X ($card.Left + [int]($card.Width / 2)) -Y ($card.Top + [int]($slot.Height / 2)))
+            [void](Send-TestMouse -Window $m.Top -Target ([IntPtr]$card.Hwnd) -X ($card.Left + [int]($card.Width / 2)) -Y ($card.Top + [int]($slot.Height / 2)) -Client:$visual)
+            [void](Wait-Log $m.Arm.Err 'banner collapse h=' 3000)
+            $r.Toggled = (Count-Log $m.Arm.Err 'banner collapse from=') -gt 0
             [void](Wait-Log $m.Arm.Err 'banner glide end reason=' 3000)
             $gb = Last-Match $m.Arm.Err 'banner glide begin delta=(-?\d+) shift=(-?\d+) inset=(-?\d+)->(-?\d+) w=(\d+) h=(\d+)->(\d+)'
             $ge = Last-Match $m.Arm.Err 'banner glide end reason=([\w-]+)'
@@ -690,8 +720,18 @@ try {
         if ($wash) {
             Start-Sleep -Milliseconds 400
             $wash = @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyDimOverlay') | Select-Object -First 1
-            $own = @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyBannerOverlay') |
-                Where-Object { [math]::Abs($_.Left - $wash.Left) -le 2 } | Select-Object -First 1
+            # The wash's own strip: the popup, or knob on (T2559) the top of
+            # the spanning pane window the card is drawn into.
+            $own = if ($visual) {
+                foreach ($tw in @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyWindow')) {
+                    @(Get-TestChildWindows -Window ([IntPtr]$tw.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible) |
+                        Where-Object { [math]::Abs($_.Left - $wash.Left) -le 2 }
+                }
+            } else {
+                @(Get-TestWindows -ProcessId $m.Arm.App.Pid -Class 'GhozttyBannerOverlay') |
+                    Where-Object { [math]::Abs($_.Left - $wash.Left) -le 2 }
+            }
+            $own = @($own) | Select-Object -First 1
             $r.Dim = Rel $wash $own
         }
         return [pscustomobject]$r
@@ -701,6 +741,10 @@ try {
     $jBand = if ($jBandM) { [int]$jBandM.Groups[1].Value } else { -1 }
     $jOn = Probe-Overlays $j1 $true
     $jOnAlive = (Test-Alive $j1.Arm) -and (Count-Log $j1.Arm.Err $failLine) -eq 0
+    $jOnTail = if (-not $jOnAlive) {
+        "alive=$(Test-Alive $j1.Arm) fallbacks=$(Count-Log $j1.Arm.Err $failLine)"
+        (Read-Text $j1.Arm.Err) -split "`n" | Where-Object { $_ -match 'composition present|panic|error|banner path|banner shown' } | Select-Object -Last 12
+    } else { @() }
     $j0 = Measure-BannerArm 'j0' $null $jExtra
     $jOff = Probe-Overlays $j0 $false
     Assert "J0 knob on the pane window starts one band higher in its slot (band=$jBand on=$($jOn.PaneTop) off=$($jOff.PaneTop))" `
@@ -714,10 +758,97 @@ try {
     Assert "J4 the read-only badge sits where knob off has it (on=$(Rect-Text $jOn.Badge) off=$(Rect-Text $jOff.Badge))" (Same-Rect $jOn.Badge $jOff.Badge)
     Assert "J5 the unfocused dim covers the pane and its band, as knob off (on=$(Rect-Text $jOn.Dim) off=$(Rect-Text $jOff.Dim))" (Same-Rect $jOn.Dim $jOff.Dim)
     Assert "J6 the knob-on app was still running, nothing fell back" $jOnAlive
-    Assert "J7 a collapse glides the frozen copy knob on too, measured as knob off (on=$($jOn.Glide) off=$($jOff.Glide))" `
-        ($jOn.Glide -and $jOn.Glide -eq $jOff.Glide)
-    Assert "J8 ... and it comes down because the grid redrew at its new size (on=$($jOn.GlideEnd) off=$($jOff.GlideEnd))" `
-        ($jOn.GlideEnd -eq 'landed' -and $jOff.GlideEnd -eq 'landed')
+    if (-not $jOnAlive) { "    fallback/panic lines:"; $jOnTail | ForEach-Object { "      $_" } }
+    # Knob on the card is a visual inside the pane (T2559) and the frozen
+    # copy is still a popup that would cover it, so there the toggle reflows
+    # in view until the copy is a visual too (T2617). J7-J8 hold the
+    # knob-off glide to its old shape; J9 holds the knob-on toggle to having
+    # happened, from a click on the pane window, with no copy over the card.
+    Assert "J7 knob off a collapse glides the frozen copy (off=$($jOff.Glide))" `
+        ($jOff.Glide -match '^delta=-?\d+ inset=\d+->\d+')
+    Assert "J8 ... and it comes down because the grid redrew at its new size (off=$($jOff.GlideEnd))" `
+        ($jOff.GlideEnd -eq 'landed')
+    Assert "J9 knob on a click on the card's visual toggles it, with no copy over the card (toggled=$($jOn.Toggled) glide=$($jOn.Glide))" `
+        ($jOn.Toggled -and -not $jOn.Glide)
+
+    # ========================================================================
+    "== K: the banner is a child visual of the pane, hit-tested by the pane (T2559)"
+    # ========================================================================
+    $k = Measure-BannerArm 'k' '1'
+    $kErr = $k.Arm.Err
+    Assert "K0 the knob-on arm has a banner pane" ($null -ne $k.Pane -and $null -ne $k.Strip)
+    Assert "K1 the card was shown as a visual (log)" ((Count-Log $kErr $visualLine) -ge 1)
+    $kPop = @(Get-TestWindows -ProcessId $k.Arm.App.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)
+    Assert "K2 no banner popup is visible ($($kPop.Count))" ($kPop.Count -eq 0)
+    $kShown = Count-Log $kErr $visualLine
+    $kPresents = Count-Log $kErr 'banner present w='
+    if ($k.Top -ne [IntPtr]::Zero) {
+        $wr = Get-TestWindowRect -Window $k.Top
+        [void](Set-TestWindowPos -Window $k.Top -X ($wr.Left + 60) -Y ($wr.Top + 30))
+        Start-Sleep -Milliseconds 800
+    }
+    $kPop = @(Get-TestWindows -ProcessId $k.Arm.App.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)
+    Assert "K3 after a window move still no popup, the card was not re-shown and no popup frame was presented" `
+        ($kPop.Count -eq 0 -and (Count-Log $kErr $visualLine) -eq $kShown -and (Count-Log $kErr 'banner present w=') -eq $kPresents)
+    # Re-measure the pane after the move: the card is its top band.
+    $kPane = $null
+    if ($k.Top -ne [IntPtr]::Zero) {
+        $kPane = @(Get-TestChildWindows -Window $k.Top -Class 'GhozttyTerminal' | Where-Object Visible) | Select-Object -First 1
+    }
+    $kh = if ($k.Strip) { $k.Strip.Height } else { 0 }
+    # A link on the card: sweep a row through its first line until the pane
+    # window reports the hover.
+    & $Exe +set-banner "--target=$($k.Arm.Target)" '[hover me](https://example.invalid/t2559) and some text' 2>$null | Out-Null
+    Start-Sleep -Milliseconds 700
+    $hovered = $false
+    if ($kPane -and $kh -gt 0) {
+        $hw = [IntPtr]$kPane.Hwnd
+        $y = $kPane.Top + [int]($kh / 2)
+        for ($x = $kPane.Left + 8; $x -lt $kPane.Left + 240 -and -not $hovered; $x += 8) {
+            [void](Send-TestMouse -Window $k.Top -Target $hw -X $x -Y $y -Action move -Client)
+            Start-Sleep -Milliseconds 60
+            $hovered = (Read-Text $kErr) -match 'banner link hover=true'
+        }
+        # Off the card again, into the grid.
+        [void](Send-TestMouse -Window $k.Top -Target $hw -X ($kPane.Left + 60) -Y ($kPane.Top + $kh + 60) -Action move -Client)
+    }
+    Assert "K4 a link on the card lights under the pointer, through the pane window (log)" $hovered
+    Assert "K4a ... and goes out when the pointer moves into the grid (log)" `
+        ($hovered -and (Wait-Log $kErr 'banner link hover=false' 2000))
+    # A single-line card: a click in its band (beside the link) is the
+    # banner's - it focuses the pane - and never a terminal press.
+    $presses = Count-Log $kErr 'pane mouse left press'
+    if ($kPane -and $kh -gt 0) {
+        [void](Send-TestMouse -Window $k.Top -Target ([IntPtr]$kPane.Hwnd) -X ($kPane.Right - 60) -Y ($kPane.Top + [int]($kh / 2)) -Client)
+    }
+    Assert "K5 a click on the card arrived on the pane window and was the banner's (log visual=true)" `
+        (Wait-Log $kErr 'banner click x=\d+ y=\d+ visual=true' 3000)
+    Assert "K5a ... and the terminal saw no press for it" ((Count-Log $kErr 'pane mouse left press') -eq $presses)
+    # A multi-line card: the click toggles it, and the toggle re-renders the
+    # visual every frame (no popup paints).
+    & $Exe +set-banner "--target=$($k.Arm.Target)" 'one\ntwo\nthree\nfour' 2>$null | Out-Null
+    Start-Sleep -Milliseconds 800
+    $paints = Count-Log $kErr 'banner paint h='
+    if ($kPane -and $kh -gt 0) {
+        [void](Send-TestMouse -Window $k.Top -Target ([IntPtr]$kPane.Hwnd) -X ($kPane.Left + [int]($kPane.Width / 2)) -Y ($kPane.Top + 20) -Client)
+    }
+    $toggled = Wait-Log $kErr 'banner collapse from=' 3000
+    Start-Sleep -Milliseconds 600
+    Assert "K6 a click on a multi-line card's visual toggles it (log)" $toggled
+    Assert "K6a ... and the card's frames were rendered for the visual ($((Count-Log $kErr 'banner paint h=') - $paints) paints), no popup shown" `
+        ($toggled -and (Count-Log $kErr 'banner paint h=') -gt ($paints + 2) -and
+            @(Get-TestWindows -ProcessId $k.Arm.App.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible).Count -eq 0)
+    # A press in the grid is still the terminal's.
+    $presses = Count-Log $kErr 'pane mouse left press'
+    if ($kPane) {
+        [void](Send-TestMouse -Window $k.Top -Target ([IntPtr]$kPane.Hwnd) -X ($kPane.Left + 80) -Y ($kPane.Bottom - 40) -Client)
+    }
+    Assert "K7 a click in the grid is the terminal's (log)" `
+        ((Wait-Log $kErr 'pane mouse left press' 2000) -and (Count-Log $kErr 'pane mouse left press') -gt $presses)
+    Assert "K7a the app is still running, nothing fell back" ((Test-Alive $k.Arm) -and (Count-Log $kErr $failLine) -eq 0)
+    $k0 = Measure-BannerArm 'k0' $null
+    Assert "K8 negative control: knob off, the card is a popup and never a visual" `
+        ($k0.Strip -and -not $k0.Strip.Visual -and (Count-Log $k0.Arm.Err $visualLine) -eq 0)
 
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 

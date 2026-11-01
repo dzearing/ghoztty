@@ -210,6 +210,23 @@ threadlocal var last_hr: HRESULT = 0;
 /// The step in progress on this thread, so a failure names it in the log.
 threadlocal var stage: []const u8 = "";
 
+/// DCOMPOSITION_ERROR_SURFACE_BEING_RENDERED: a commit while another thread
+/// holds a surface of the device between BeginDraw and EndDraw.
+const DCOMPOSITION_ERROR_SURFACE_BEING_RENDERED: HRESULT = @bitCast(@as(u32, 0x88980801));
+
+/// Whether a band commit that returned `hr` is retried on the next frame
+/// rather than failing the presenter (T2559).
+fn bandCommitRetries(hr: HRESULT) bool {
+    return hr == DCOMPOSITION_ERROR_SURFACE_BEING_RENDERED;
+}
+
+test "a band commit refused mid-upload retries; any other failure fails (T2559)" {
+    try std.testing.expect(bandCommitRetries(@bitCast(@as(u32, 0x88980801))));
+    try std.testing.expect(!bandCommitRetries(0));
+    try std.testing.expect(!bandCommitRetries(@bitCast(@as(u32, 0x80004005))));
+    try std.testing.expect(!bandCommitRetries(@bitCast(@as(u32, 0x88980800))));
+}
+
 fn check(hr: HRESULT) Error!void {
     if (hr < 0) {
         last_hr = hr;
@@ -624,8 +641,14 @@ pub const Presenter = struct {
         const dc = self.dcomp orelse return;
         stage = "band-offset";
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y_float)(vis, @floatFromInt(band)));
-        try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, dc, slot_dcomp_device_commit)(dc));
+        const hr = slot(*const fn (Obj) callconv(.winapi) HRESULT, dc, slot_dcomp_device_commit)(dc);
         stage = "";
+        // The window thread uploads overlay pixels on this device (T2559's
+        // banner, T2492's scrollbar), and a commit that lands between its
+        // BeginDraw and EndDraw is refused. Not a failure: the band stays
+        // unrecorded, so the next frame commits it again.
+        if (bandCommitRetries(hr)) return;
+        try check(hr);
         self.band = band;
     }
 

@@ -17,6 +17,13 @@
 //! which let the stale terminal pixels behind the band show through — that
 //! see-through is what read as "text scrolling behind the banner".
 //!
+//! On the composition path (T2559) a pane whose window spans its band
+//! (T2566) and publishes a composition tree takes the banner into that tree
+//! instead: the same frame is rendered into a DIB and uploaded to a
+//! `comp_overlay.Layer` at the top of the pane, the popup stays hidden, and
+//! the pane window offers its band-area mouse input to `routeMouse`. The
+//! popup comes back whenever the tree goes.
+//!
 //! Content comes from the pure banner_markdown block parser (unit tested
 //! in every lane): text lines, headings, thematic-break rules, lists with
 //! a shared marker gutter (bullets / ordered numbers / native checkbox
@@ -47,6 +54,7 @@ const Dib32 = @import("dib32.zig");
 const icon_button = @import("icon_button.zig");
 const icon_paint = @import("icon_button_paint.zig");
 const homedir = @import("../../os/homedir.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 
 const log = std.log.scoped(.win32_banner);
 
@@ -131,6 +139,16 @@ const COLLAPSE_TIMER_ID: usize = 1;
 /// Timer id for the frozen-frame glide (T2252): runs alongside the collapse
 /// heartbeat and on past it, until the terminal under the copy has settled.
 const GLIDE_TIMER_ID: usize = 2;
+
+/// Posted to the (hidden) popup by `invalidate` on the visual path (T2559),
+/// so a burst of changes in one pass - text, colours, width - renders the
+/// layer once. The popup's own class, so it shares no WM_APP registry.
+const WM_APP_BANNER_VISUAL: u32 = 0x8000 + 1;
+
+/// Negative control for `comp-present.ps1`'s T2559 section. Flipping it
+/// keeps the banner a popup on the composition path, as before T2559, so the
+/// section's "shown as visual" and band-click assertions go red.
+const T2559_NEUTERED = false;
 
 /// Negative control for `pane-banner.ps1`'s T149 section, the same seam
 /// `T377_NEUTERED` gives the wrap work above. Flipping it restores the
@@ -428,6 +446,21 @@ pub const BannerOverlay = struct {
     /// (bold | italic<<1 | ul<<2 | code<<3).
     fonts: [size_classes * 16]?*anyopaque = @splat(null),
 
+    /// The pane's composition tree, when it publishes one (T2559), and the
+    /// banner's layer on it. `on_visual`: the banner is drawn by the layer
+    /// and the popup is hidden.
+    slot: ?*comp_overlay.Slot = null,
+    layer: comp_overlay.Layer = .{},
+    on_visual: bool = false,
+    /// The layer's pixels are out of date; the next placement re-renders.
+    visual_dirty: bool = true,
+    /// A WM_APP_BANNER_VISUAL is in the popup's queue.
+    visual_posted: bool = false,
+    /// Which button went down on the visual, so its release is the
+    /// banner's wherever the pointer went and a drag that began in the grid
+    /// keeps its release.
+    visual_press: enum { none, left, right } = .none,
+
     /// Link hit rects, rebuilt on every paint (client coordinates).
     links: std.ArrayList(LinkRect) = .empty,
 
@@ -487,6 +520,7 @@ pub const BannerOverlay = struct {
             .arena = std.heap.ArenaAllocator.init(alloc),
             .freeze = BannerFreeze.init(alloc),
             .hinstance = hinstance,
+            .slot = if (surface) |s| &s.comp_overlay_slot else null,
         };
 
         // WS_EX_LAYERED — DWM-composited above OpenGL content.
@@ -519,6 +553,7 @@ pub const BannerOverlay = struct {
     pub fn destroy(self: *BannerOverlay) void {
         _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
         _ = w32.DestroyWindow(self.hwnd);
+        self.layer.deinit();
         self.dropPrepared();
         self.freeze.deinit();
         self.clearFonts();
@@ -556,7 +591,7 @@ pub const BannerOverlay = struct {
         self.collapsible = std.mem.indexOfScalar(u8, text, '\n') != null;
         if (!self.collapsible) self.collapsed = false;
         self.content_h = -1;
-        _ = w32.InvalidateRect(self.hwnd, null, 1);
+        self.invalidate();
     }
 
     /// The pane's working directory moved (T758). Re-parse the SAME source
@@ -607,7 +642,7 @@ pub const BannerOverlay = struct {
         self.divider = div_ref;
         if (self.bg_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
         self.bg_brush = w32.CreateSolidBrush(bg_ref);
-        _ = w32.InvalidateRect(self.hwnd, null, 1);
+        self.invalidate();
     }
 
     /// Glue the strip into the band the window layout reserved above the
@@ -620,6 +655,9 @@ pub const BannerOverlay = struct {
         // A frame rendered ahead (`prepareResize`) lives for this pass only,
         // so a later present can never hand over content it predates.
         defer self.dropPrepared();
+        // In the pane's own tree the window clips it and hides it with the
+        // pane, so a fold, a hidden split or another tab needs nothing here.
+        if (self.syncPath()) return self.placeVisual(scale);
         if (!pane_clip.ownerWhollyInView(self.owner)) {
             self.hide();
             return;
@@ -708,7 +746,7 @@ pub const BannerOverlay = struct {
         // slice, so repaint.
         if (self.glassAt()) |at| {
             if (self.card_glass != null and !std.meta.eql(at, self.card_glass_at))
-                _ = w32.InvalidateRect(self.hwnd, null, 0);
+                self.invalidate();
         }
     }
 
@@ -718,6 +756,282 @@ pub const BannerOverlay = struct {
     fn ownerLift(self: *const BannerOverlay) i32 {
         if (self.surface) |s| if (s.gridBand() > 0) return 0;
         return @max(self.inset, 0);
+    }
+
+    /// Take the banner onto the pane's composition tree, or back to the
+    /// popup (T2559). The visual path needs both a published tree and a
+    /// window that spans the band (T2566): the tree's root sits at the grid
+    /// top, and the band above it must be the pane's own pixels.
+    fn syncPath(self: *BannerOverlay) bool {
+        const tree = if (self.slot) |s| self.layer.sync(s) else false;
+        const band = if (self.surface) |s| s.gridBand() else 0;
+        const want = !T2559_NEUTERED and tree and band > 0;
+        if (want != self.on_visual) {
+            if (want) {
+                _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+                // The frozen copy is a popup over the pane, which would
+                // cover a card drawn inside it.
+                self.endGlide("visual");
+            } else {
+                // A retracted tree already took the visual with it.
+                self.layer.setVisible(false);
+            }
+            self.on_visual = want;
+            self.visual_dirty = true;
+            self.visual_press = .none;
+            self.clearHover();
+            log.info("banner path visual={}", .{want});
+        }
+        return want;
+    }
+
+    /// The visual path's `updatePosition` (T2559): the same size the popup
+    /// would take, at the top of the pane's tree. Re-rendered only when
+    /// something changed; a pane move is nothing to it.
+    fn placeVisual(self: *BannerOverlay, scale: f32) void {
+        var rect: w32.RECT = undefined;
+        if (w32.GetClientRect(self.owner, &rect) == 0) return;
+        const slot = rect.bottom - rect.top;
+        const strip = self.insetHeight(scale, rect.right - rect.left);
+        const settled = if (self.inset > 0) @min(self.inset, strip) else strip;
+        // A running collapse overhangs the grid, as the popup does.
+        const height = if (self.collapse_anim == null) settled else @max(
+            settled,
+            @min(banner_layout.bandHeight(self.paintedCardHeight(), self.px(MARGIN)), slot),
+        );
+        const w: u32 = @intCast(@max(rect.right - rect.left, 1));
+        const h: u32 = @intCast(@max(height, 1));
+        const band: i32 = @intCast(if (self.surface) |s| s.gridBand() else 0);
+        // The tree's root sits at the grid top; the card is the band above.
+        _ = self.layer.setOffset(0, -band);
+        const fresh = !self.layer.hasPixels() or !self.layer.attached or
+            w != self.layer.width or h != self.layer.height;
+        if (!fresh and !self.visual_dirty) {
+            // On glass a move is a new slice of the desk (T1884).
+            self.present_at = self.ownerOnDesk();
+            const at = self.glassAt();
+            self.present_at = null;
+            if (at) |a| if (self.card_glass != null and !std.meta.eql(a, self.card_glass_at)) self.renderVisual(w, h);
+            return;
+        }
+        self.renderVisual(w, h);
+    }
+
+    /// Render the frame into a DIB and hand it to the layer (T2559). The
+    /// frame is opaque (T131); GDI leaves the alpha byte clear, so it is set.
+    fn renderVisual(self: *BannerOverlay, w: u32, h: u32) void {
+        const screen = w32.GetDC(null) orelse return;
+        defer _ = w32.ReleaseDC(null, screen);
+        const dib = Dib32.create(screen, @intCast(w), @intCast(h)) orelse return;
+        defer dib.destroy();
+        self.present_size = .{ .left = 0, .top = 0, .right = @intCast(w), .bottom = @intCast(h) };
+        self.present_at = self.ownerOnDesk();
+        self.paintFrame(dib.dc);
+        self.present_size = null;
+        self.present_at = null;
+        _ = w32.GdiFlush();
+        for (dib.pixels) |*p| p.* |= 0xFF000000;
+        chrome_fanout.noteBlit();
+        if (!self.layer.setPixels(dib.pixels, w, h)) {
+            log.warn("banner visual upload failed", .{});
+            return;
+        }
+        self.visual_dirty = false;
+        if (!self.layer.attached) {
+            self.layer.setVisible(true);
+            // Debug-build oracle for comp-present.ps1's T2559 section.
+            log.info("banner shown as visual w={d} h={d}", .{ w, h });
+        }
+    }
+
+    /// The pane window's top-left on its glass desk's parent, in that
+    /// parent's client pixels: where a visual card reads its glass slice.
+    fn ownerOnDesk(self: *const BannerOverlay) ?[2]i32 {
+        const g = self.glass orelse return null;
+        var wr: w32.RECT = undefined;
+        if (w32.GetWindowRect(self.owner, &wr) == 0) return null;
+        var pt: w32.POINT = .{ .x = wr.left, .y = wr.top };
+        if (w32.ScreenToClient(g.parent, &pt) == 0) return null;
+        return .{ pt.x, pt.y };
+    }
+
+    /// The next frame differs from the one on screen: repaint the popup,
+    /// or on the visual path re-render the layer once the current pass is
+    /// done (T2559).
+    fn invalidate(self: *BannerOverlay) void {
+        if (!self.on_visual) {
+            _ = w32.InvalidateRect(self.hwnd, null, 1);
+            return;
+        }
+        self.visual_dirty = true;
+        if (!self.visual_posted)
+            self.visual_posted = w32.PostMessageW(self.hwnd, WM_APP_BANNER_VISUAL, 0, 0) != 0;
+    }
+
+    /// Bring the pixels - and the link hit rects a paint rebuilds - up to
+    /// date now, rather than on the next pumped paint.
+    fn flush(self: *BannerOverlay) void {
+        if (!self.on_visual) {
+            _ = w32.UpdateWindow(self.hwnd);
+            return;
+        }
+        if (self.visual_dirty) self.updatePosition(self.scale);
+    }
+
+    /// The pane's composition tree was published or retracted (T2559):
+    /// take the card onto it, or back to the popup.
+    pub fn onTreeChanged(self: *BannerOverlay) void {
+        self.updatePosition(self.scale);
+    }
+
+    /// The window the banner's mouse input arrives on, and whose client
+    /// coordinates its hit rects are in: the popup's, or the pane's on the
+    /// visual path, whose top is the band's top.
+    fn inputHwnd(self: *const BannerOverlay) w32.HWND {
+        return if (self.on_visual) self.owner else self.hwnd;
+    }
+
+    fn clientWidth(self: *const BannerOverlay) i32 {
+        if (self.on_visual) return @intCast(self.layer.width);
+        var client: w32.RECT = undefined;
+        if (w32.GetClientRect(self.hwnd, &client) == 0) return 0;
+        return client.right;
+    }
+
+    pub const MouseEvent = enum { left_down, left_up, right_down, right_up, move, leave };
+
+    /// Whether a pane client point is on the card's visual (T2559).
+    pub fn hitVisual(self: *const BannerOverlay, x: i32, y: i32) bool {
+        if (!self.on_visual or !self.layer.attached) return false;
+        return x >= 0 and y >= 0 and x < @as(i32, @intCast(self.layer.width)) and
+            y < @as(i32, @intCast(self.layer.height));
+    }
+
+    /// Mouse input on the pane window, offered to the banner first on the
+    /// visual path (T2559). `x`/`y` are pane client coordinates, which are
+    /// the card's. True: it was the banner's and the terminal must not see
+    /// it - what the popup's own window gave it before.
+    pub fn routeMouse(self: *BannerOverlay, ev: MouseEvent, x: i32, y: i32, wparam: usize) bool {
+        if (!self.on_visual) return false;
+        const on = self.hitVisual(x, y);
+        switch (ev) {
+            .move => {
+                if (on) {
+                    self.onMouseMove(x, y);
+                    return true;
+                }
+                self.clearHover();
+                return self.visual_press != .none;
+            },
+            .leave => {
+                self.onMouseLeave();
+                return false;
+            },
+            .left_down, .right_down => {
+                if (!on) return false;
+                self.visual_press = if (ev == .left_down) .left else .right;
+                return true;
+            },
+            .left_up => {
+                if (self.visual_press != .left) return false;
+                self.visual_press = .none;
+                if (on) self.onLeftUp(x, y, wparam);
+                return true;
+            },
+            .right_up => {
+                if (self.visual_press != .right) return false;
+                self.visual_press = .none;
+                if (on) _ = self.onRightUp(x, y);
+                return true;
+            },
+        }
+    }
+
+    /// The cursor over a point of the card: the hand on a link.
+    pub fn cursorAt(self: *const BannerOverlay, x: i32, y: i32) ?w32.HCURSOR {
+        return if (self.linkAt(x, y) != null)
+            w32.LoadCursorW(null, w32.IDC_HAND)
+        else
+            w32.LoadCursorW(null, w32.IDC_ARROW);
+    }
+
+    // T204: the chevron is an icon button, so it hot-tracks like one.
+    fn onMouseMove(self: *BannerOverlay, x: i32, y: i32) void {
+        if (!self.mouse_tracked) {
+            var tme = w32.TRACKMOUSEEVENT{
+                .cbSize = @sizeOf(w32.TRACKMOUSEEVENT),
+                .dwFlags = w32.TME_LEAVE,
+                .hwndTrack = self.inputHwnd(),
+                .dwHoverTime = 0,
+            };
+            if (w32.TrackMouseEvent(&tme) != 0) self.mouse_tracked = true;
+        }
+        var dirty = self.updateChevronHover(x, y);
+        // Not short-circuited: BOTH hovers must be updated on every move,
+        // or moving straight from the chevron onto a link leaves the
+        // first one latched lit.
+        if (self.updateLinkHover(x, y)) dirty = true;
+        if (dirty) self.invalidate();
+    }
+
+    fn onMouseLeave(self: *BannerOverlay) void {
+        self.mouse_tracked = false;
+        self.clearHover();
+    }
+
+    fn clearHover(self: *BannerOverlay) void {
+        if (self.hover_link != null) {
+            self.hover_link = null;
+            log.debug("banner link hover={}", .{false});
+            self.invalidate();
+        }
+        if (self.hover_chevron) {
+            self.hover_chevron = false;
+            // Logged here as well as in `updateChevronHover` (T209): the
+            // un-hover reaches the state through EITHER path, and on the
+            // background test desktop it is almost always this one. A
+            // clear that happens without being reported reads, from the
+            // outside, exactly like a hover that latched forever.
+            log.debug("banner chevron hover={}", .{false});
+            self.invalidate();
+        }
+    }
+
+    /// Right-click a link → the action menu (T165). False anywhere else:
+    /// the banner has no menu of its own.
+    fn onRightUp(self: *BannerOverlay, x: i32, y: i32) bool {
+        self.syncLinksToCwd();
+        const url = self.linkAt(x, y) orelse return false;
+        self.openLinkMenu(url, x, y);
+        return true;
+    }
+
+    fn onLeftUp(self: *BannerOverlay, x: i32, y: i32, wparam: usize) void {
+        self.syncLinksToCwd();
+        // Debug-build oracle for comp-present.ps1's T2559 section: which
+        // window the click arrived on.
+        log.debug("banner click x={} y={} visual={}", .{ x, y, self.on_visual });
+        if (self.linkAt(x, y)) |url| {
+            // MK_CONTROL / MK_SHIFT ride in wparam, which is the state at
+            // the time of the click — GetKeyState would answer for now
+            // instead, and a modifier released between the button-up and
+            // this handler would silently downgrade the action.
+            const ctrl = (wparam & w32.MK_CONTROL) != 0;
+            const shift = (wparam & w32.MK_SHIFT) != 0;
+            self.performLinkAction(
+                banner_link.clickAction(banner_link.kindOf(url), ctrl, shift),
+                url,
+            );
+        } else if (self.collapsible) {
+            // Mac parity: a tap anywhere on a multi-line banner
+            // toggles collapse.
+            self.toggleCollapsed();
+        } else {
+            // A click on a single-line strip focuses the pane under
+            // it, like a click on the pane itself (T48: never
+            // SetFocus in a WndProc).
+            App.deferSetFocus(self.owner);
+        }
     }
 
     /// Render, now, the frame the coming `updatePosition` will present at
@@ -733,6 +1047,9 @@ pub const BannerOverlay = struct {
     pub fn prepareResize(self: *BannerOverlay, scale: f32, left: i32, top: i32, pane_w: i32) void {
         if (self.alpha_set or T2400_NEUTERED or T1344_NEUTERED) return;
         if (self.collapse_anim != null) return;
+        // A card drawn in the pane's tree presents nothing (T2559); the
+        // hidden popup's size would ask for a frame on every pass.
+        if (self.on_visual) return;
         const strip = self.insetHeight(scale, pane_w);
         const w = @max(pane_w, 1);
         const h = @max(if (self.inset > 0) @min(self.inset, strip) else strip, 1);
@@ -806,13 +1123,13 @@ pub const BannerOverlay = struct {
             self.scale = scale;
             self.clearFonts();
             self.content_h = -1;
-            _ = w32.InvalidateRect(self.hwnd, null, 1);
+            self.invalidate();
         }
         const w = @max(pane_w, 0);
         if (w != self.pane_w) {
             self.pane_w = w;
             self.content_h = -1;
-            _ = w32.InvalidateRect(self.hwnd, null, 1);
+            self.invalidate();
         }
         return self.stripHeight();
     }
@@ -820,6 +1137,8 @@ pub const BannerOverlay = struct {
     pub fn hide(self: *BannerOverlay) void {
         self.endGlide("hidden");
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+        // Off the tree too; the next placement puts it back (T2559).
+        if (self.on_visual) self.layer.setVisible(false);
     }
 
     /// Round the strip's top corners with a `diameter` corner, or square
@@ -840,7 +1159,7 @@ pub const BannerOverlay = struct {
     pub fn setNested(self: *BannerOverlay, nested: bool) void {
         if (nested == self.nested) return;
         self.nested = nested;
-        _ = w32.InvalidateRect(self.hwnd, null, 0);
+        self.invalidate();
     }
 
     /// The card's corner radius, unscaled px: concentric with an elevated
@@ -855,7 +1174,7 @@ pub const BannerOverlay = struct {
         if (std.meta.eql(self.glass, desk)) return;
         self.glass = desk;
         if (desk == null) self.glass_strip = null;
-        _ = w32.InvalidateRect(self.hwnd, null, 0);
+        self.invalidate();
     }
 
     /// The strip's top-left on the desk, or null without glass (or a window
@@ -2013,7 +2332,7 @@ pub const BannerOverlay = struct {
         log.debug("banner present refused; painting through SLWA", .{});
         _ = w32.SetLayeredWindowAttributes(self.hwnd, 0, STRIP_ALPHA, w32.LWA_ALPHA);
         self.alpha_set = true;
-        _ = w32.InvalidateRect(self.hwnd, null, 0);
+        self.invalidate();
         return false;
     }
 
@@ -2479,9 +2798,7 @@ pub const BannerOverlay = struct {
     /// caller can repaint only then — a banner that invalidates on every
     /// WM_MOUSEMOVE would repaint its whole composited card continuously.
     fn updateChevronHover(self: *BannerOverlay, x: i32, y: i32) bool {
-        var client: w32.RECT = undefined;
-        if (w32.GetClientRect(self.hwnd, &client) == 0) return false;
-        const hot = self.collapsible and self.chevronBox(client.right).containsPoint(x, y);
+        const hot = self.collapsible and self.chevronBox(self.clientWidth()).containsPoint(x, y);
         if (hot == self.hover_chevron) return false;
         self.hover_chevron = hot;
         // Debug-build oracle for pane-banner.ps1's T209 chevron section. Same
@@ -2527,7 +2844,7 @@ pub const BannerOverlay = struct {
         App.relayoutOwnerWindow(self.owner);
         // A toggle that resized nothing must not flush some later resize.
         if (self.surface) |s| s.flush_next_resize = false;
-        _ = w32.InvalidateRect(self.hwnd, null, 1);
+        self.invalidate();
     }
 
     /// Freeze the terminal for a toggle whose card just started moving from
@@ -2540,6 +2857,10 @@ pub const BannerOverlay = struct {
     fn beginGlide(self: *BannerOverlay, from_h: i32, old_inset: i32) void {
         self.endGlide("retoggled");
         if (T2252_NEUTERED) return;
+        // The copy is a popup over the pane, which would cover a card drawn
+        // inside it (T2559): the terminal reflows in view under the card
+        // until the copy is a visual too (T2617).
+        if (self.on_visual) return;
         const s = self.surface orelse return;
         if (!s.core_surface_ready) return;
         s.flush_next_resize = true;
@@ -2702,14 +3023,14 @@ pub const BannerOverlay = struct {
         // clean.
         const dirty = !T833_NEUTERED and (self.paintedCardHeight() != self.painted_h or
             self.paintedBodyAlpha() != self.last_body_alpha);
-        if (dirty) _ = w32.InvalidateRect(self.hwnd, null, 1);
+        if (dirty) self.invalidate();
         // `updatePosition` invalidates and repaints synchronously whenever
         // the height actually changed, which is every frame of a COLLAPSE.
         self.updatePosition(self.scale);
         // ...and an expand frame is still dirty here, so finish it in the
         // same tick rather than leaving the card a pumped WM_PAINT behind
         // the geometry it is glued to (T456's reasoning, one direction over).
-        if (dirty) _ = w32.UpdateWindow(self.hwnd);
+        if (dirty) self.flush();
     }
 
     /// Bring the link targets up to date with the pane's CURRENT directory,
@@ -2728,7 +3049,7 @@ pub const BannerOverlay = struct {
         if (T758_NEUTERED or !self.cwd_dependent) return;
         const surface = self.surface orelse return;
         surface.syncPwdFromOs();
-        _ = w32.UpdateWindow(self.hwnd);
+        self.flush();
     }
 
     fn linkAt(self: *const BannerOverlay, x: i32, y: i32) ?[]const u8 {
@@ -2776,7 +3097,7 @@ pub const BannerOverlay = struct {
         };
 
         var pt = w32.POINT{ .x = x, .y = y };
-        _ = w32.ClientToScreen(self.hwnd, &pt);
+        _ = w32.ClientToScreen(self.inputHwnd(), &pt);
 
         // The overlay is WS_EX_NOACTIVATE and answers WM_MOUSEACTIVATE with
         // MA_NOACTIVATE, so the right-click that got us here did NOT bring
@@ -3029,48 +3350,17 @@ fn bannerWndProc(
             return 0;
         },
 
-        // T204: the chevron is an icon button, so it hot-tracks like one.
-        // The overlay had no WM_MOUSEMOVE handling at all before this — which
-        // is the mechanical reason the chevron could not have a hover, not a
-        // styling oversight.
+        // The shared handlers (T2559): on the visual path the same calls
+        // arrive from the pane window through `routeMouse`.
         w32.WM_MOUSEMOVE => {
             const x: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam))))));
             const y: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam)) >> 16))));
-            if (!self.mouse_tracked) {
-                var tme = w32.TRACKMOUSEEVENT{
-                    .cbSize = @sizeOf(w32.TRACKMOUSEEVENT),
-                    .dwFlags = w32.TME_LEAVE,
-                    .hwndTrack = hwnd,
-                    .dwHoverTime = 0,
-                };
-                if (w32.TrackMouseEvent(&tme) != 0) self.mouse_tracked = true;
-            }
-            var dirty = self.updateChevronHover(x, y);
-            // Not short-circuited: BOTH hovers must be updated on every move,
-            // or moving straight from the chevron onto a link leaves the
-            // first one latched lit.
-            if (self.updateLinkHover(x, y)) dirty = true;
-            if (dirty) _ = w32.InvalidateRect(hwnd, null, 0);
+            self.onMouseMove(x, y);
             return 0;
         },
 
         w32.WM_MOUSELEAVE => {
-            self.mouse_tracked = false;
-            if (self.hover_link != null) {
-                self.hover_link = null;
-                log.debug("banner link hover={}", .{false});
-                _ = w32.InvalidateRect(hwnd, null, 0);
-            }
-            if (self.hover_chevron) {
-                self.hover_chevron = false;
-                // Logged here as well as in `updateChevronHover` (T209): the
-                // un-hover reaches the state through EITHER path, and on the
-                // background test desktop it is almost always this one. A
-                // clear that happens without being reported reads, from the
-                // outside, exactly like a hover that latched forever.
-                log.debug("banner chevron hover={}", .{false});
-                _ = w32.InvalidateRect(hwnd, null, 0);
-            }
+            self.onMouseLeave();
             return 0;
         },
 
@@ -3078,55 +3368,33 @@ fn bannerWndProc(
             var pt: w32.POINT = undefined;
             if (w32.GetCursorPos_(&pt) != 0) {
                 _ = w32.ScreenToClient(hwnd, &pt);
-                const cursor = if (self.linkAt(pt.x, pt.y) != null)
-                    w32.LoadCursorW(null, w32.IDC_HAND)
-                else
-                    w32.LoadCursorW(null, w32.IDC_ARROW);
-                _ = w32.SetCursor(cursor);
+                _ = w32.SetCursor(self.cursorAt(pt.x, pt.y));
                 return 1;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
-        // Right-click a link → the action menu (T165). Anywhere else on the
-        // card is left to DefWindowProc: the banner has no menu of its own,
-        // and swallowing the click would only make the card feel dead.
+        // Anywhere but a link is left to DefWindowProc: swallowing the click
+        // would only make the card feel dead.
         w32.WM_RBUTTONUP => {
             const x: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam))))));
             const y: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam)) >> 16))));
-            self.syncLinksToCwd();
-            if (self.linkAt(x, y)) |url| {
-                self.openLinkMenu(url, x, y);
-                return 0;
-            }
+            if (self.onRightUp(x, y)) return 0;
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
         w32.WM_LBUTTONUP => {
             const x: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam))))));
             const y: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam)) >> 16))));
-            self.syncLinksToCwd();
-            if (self.linkAt(x, y)) |url| {
-                // MK_CONTROL / MK_SHIFT ride in wparam, which is the state at
-                // the time of the click — GetKeyState would answer for now
-                // instead, and a modifier released between the button-up and
-                // this handler would silently downgrade the action.
-                const ctrl = (wparam & w32.MK_CONTROL) != 0;
-                const shift = (wparam & w32.MK_SHIFT) != 0;
-                self.performLinkAction(
-                    banner_link.clickAction(banner_link.kindOf(url), ctrl, shift),
-                    url,
-                );
-            } else if (self.collapsible) {
-                // Mac parity: a tap anywhere on a multi-line banner
-                // toggles collapse.
-                self.toggleCollapsed();
-            } else {
-                // A click on a single-line strip focuses the pane under
-                // it, like a click on the pane itself (T48: never
-                // SetFocus in a WndProc).
-                App.deferSetFocus(self.owner);
-            }
+            self.onLeftUp(x, y, wparam);
+            return 0;
+        },
+
+        // `invalidate` on the visual path (T2559): render the layer once
+        // for whatever changed since it was posted.
+        WM_APP_BANNER_VISUAL => {
+            self.visual_posted = false;
+            if (self.on_visual and self.visual_dirty) self.updatePosition(self.scale);
             return 0;
         },
 
@@ -3162,6 +3430,7 @@ test "T283: the banner's negative controls are clear and non-empty" {
     try std.testing.expect(!T1344_NEUTERED);
     try std.testing.expect(!T2252_NEUTERED);
     try std.testing.expect(!T2400_NEUTERED);
+    try std.testing.expect(!T2559_NEUTERED);
     try std.testing.expect(!BannerFreeze.T2261_NEUTERED);
 
     const CellWrap = BannerOverlay.CellWrap;
