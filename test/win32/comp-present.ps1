@@ -41,6 +41,12 @@
 #      same pane at the same size - so the rows match. Clearing the banner
 #      gives the band back (H5). Negative control H6: knob off, the window
 #      starts below the strip.
+#   I. On that banded pane, input measures from below the band (T2567): a
+#      press and a drag-selection's end reach the core on the same cells as
+#      the knob-off layout at the same screen points, the IME window and the
+#      keyboard context menu sit exactly one band lower in the taller window
+#      (the same screen point), and the menu is on screen where the log says.
+#      I6 is the negative control: knob off, no input line carries a band.
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -188,6 +194,7 @@ try {
     Assert "A2 the split pane built its own chain ($(Count-Log $a.Err $onLine) lines)" $two
 
     for ($i = 0; $i -lt 3; $i++) {
+        # argv-audit: output to draw, plain ASCII words with no quotes or metacharacters
         & $Exe +send-keys "--target=$($a.Target)" "echo comp-present-t2466-$i" Enter 2>$null | Out-Null
         & $Exe +send-keys '--target=compa2' "dir" Enter 2>$null | Out-Null
         Start-Sleep -Milliseconds 300
@@ -218,6 +225,7 @@ try {
     Assert "B0 the arm's window came up" ($b.Top -ne [IntPtr]::Zero -and $null -ne $b.Win)
     Assert "B1 the pane built its chain" (Wait-Log $b.Err $onLine 15000)
     for ($i = 0; $i -lt 4; $i++) {
+        # argv-audit: output to draw, plain ASCII words with no quotes or metacharacters
         & $Exe +send-keys "--target=$($b.Target)" "echo fallback-$i" Enter 2>$null | Out-Null
         Start-Sleep -Milliseconds 250
     }
@@ -240,6 +248,7 @@ try {
     $c = Start-Arm 'c'
     Assert "C0 the arm's window came up" ($c.Top -ne [IntPtr]::Zero -and $null -ne $c.Win)
     for ($i = 0; $i -lt 8; $i++) {
+        # argv-audit: output to draw, plain ASCII words with no quotes or metacharacters
         & $Exe +send-keys "--target=$($c.Target)" "echo lost-$i" Enter 2>$null | Out-Null
         Start-Sleep -Milliseconds 200
     }
@@ -456,21 +465,21 @@ try {
         }
         Start-Sleep -Milliseconds 600
         & $Exe +set-banner "--target=$($arm.Target)" 'band spans the window' 2>$null | Out-Null
-        $pane = $null; $strip = $null
+        $pane = $null; $strip = $null; $paneTop = [IntPtr]::Zero
         for ($t = 0; $t -lt 30 -and -not $strip; $t++) {
             Start-Sleep -Milliseconds 200
             foreach ($tw in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyWindow')) {
                 foreach ($p in @(Get-TestChildWindows -Window ([IntPtr]$tw.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible)) {
                     foreach ($o in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)) {
                         if ([math]::Abs($o.Left - $p.Left) -le 2 -and ([math]::Abs($o.Top - $p.Top) -le 2 -or [math]::Abs($o.Bottom - $p.Top) -le 2)) {
-                            $pane = $p; $strip = $o
+                            $pane = $p; $strip = $o; $paneTop = [IntPtr]$tw.Hwnd
                         }
                     }
                 }
             }
         }
         Start-Sleep -Milliseconds 600
-        return [pscustomobject]@{ Arm = $arm; Pane = $pane; Strip = $strip }
+        return [pscustomobject]@{ Arm = $arm; Pane = $pane; Strip = $strip; Top = $paneTop }
     }
     $h = Measure-BannerArm 'h' '1'
     Assert "H0 the knob-on arm has a banner pane" ($null -ne $h.Pane -and $null -ne $h.Strip)
@@ -506,6 +515,71 @@ try {
         ($h0.Pane -and $hGrid -gt 0 -and $h0.Pane.Height -eq $hGrid)
     Assert "H8 knob off never carves a band" ((Count-Log $h0.Arm.Err 'pane grid band=') -eq 0)
 
+    # ========================================================================
+    "== I: on a banded pane, input measures from below the band (T2567)"
+    # ========================================================================
+    # Each arm takes the same input at the same SCREEN points, measured off
+    # the strip's bottom (the grid's top in both layouts), and the app logs
+    # the cell the core resolved. Knob on, the window starts a band higher,
+    # so only a band-aware decode lands on the knob-off cells.
+    function Last-Match($path, $pattern) {
+        return [regex]::Matches((Read-Text $path), $pattern) | Select-Object -Last 1
+    }
+    function Probe-Input($m) {
+        $r = [ordered]@{ Press = $null; Release = $null; Ime = $null; Menu = $null; MenuRect = $null }
+        if (-not $m.Pane -or -not $m.Strip -or $m.Top -eq [IntPtr]::Zero) { return [pscustomobject]$r }
+        $hw = [IntPtr]$m.Pane.Hwnd
+        $x1 = $m.Strip.Left + 60; $y1 = $m.Strip.Bottom + 25
+        $x2 = $m.Strip.Left + 300; $y2 = $m.Strip.Bottom + 110
+        # A press, a drag and a release: the selection's two ends.
+        [void](Send-TestMouse -Window $m.Top -Target $hw -X $x1 -Y $y1 -Action down -Client)
+        [void](Send-TestMouse -Window $m.Top -Target $hw -X $x2 -Y $y2 -Action move -Client)
+        [void](Send-TestMouse -Window $m.Top -Target $hw -X $x2 -Y $y2 -Action up -Client)
+        [void](Wait-Log $m.Arm.Err 'pane mouse left release cell=' 3000)
+        $p = Last-Match $m.Arm.Err 'pane mouse left press cell=(-?\d+),(-?\d+)'
+        $q = Last-Match $m.Arm.Err 'pane mouse left release cell=(-?\d+),(-?\d+)'
+        if ($p) { $r.Press = "$($p.Groups[1].Value),$($p.Groups[2].Value)" }
+        if ($q) { $r.Release = "$($q.Groups[1].Value),$($q.Groups[2].Value)" }
+        # The IME window: a composition start positions it at the cursor.
+        [void](Send-TestRawMessage -Window $hw -Message 0x010D)
+        [void](Wait-Log $m.Arm.Err 'pane ime point=' 3000)
+        [void](Send-TestRawMessage -Window $hw -Message 0x010E)
+        $i = Last-Match $m.Arm.Err 'pane ime point=(-?\d+),(-?\d+)'
+        if ($i) { $r.Ime = @([int]$i.Groups[1].Value, [int]$i.Groups[2].Value) }
+        # The keyboard context menu (VK_APPS shape), at the grid's centre.
+        [void](Send-TestRawMessage -Window $hw -Message 0x007B -WParam $hw -LParam ([IntPtr](-1)))
+        $menu = Wait-TestPopupMenu -ProcessId $m.Arm.App.Pid -TimeoutMs 3000
+        $k = Last-Match $m.Arm.Err 'pane keyboard menu client=(-?\d+),(-?\d+)'
+        if ($k) { $r.Menu = @([int]$k.Groups[1].Value, [int]$k.Groups[2].Value) }
+        if ($menu -ne [IntPtr]::Zero) {
+            $r.MenuRect = Get-TestWindowRect -Window $menu
+            [void](Invoke-TestMessage -Window $hw -Message 0x001F) # WM_CANCELMODE
+            Start-Sleep -Milliseconds 300
+        }
+        return [pscustomobject]$r
+    }
+    $i1 = Measure-BannerArm 'i' '1'
+    $iBandM = Last-Match $i1.Arm.Err $bandLine
+    $iBand = if ($iBandM) { [int]$iBandM.Groups[1].Value } else { -1 }
+    $on = Probe-Input $i1
+    $iPane = $i1.Pane
+    $i0 = Measure-BannerArm 'i0' $null
+    $off = Probe-Input $i0
+    Assert "I0 both arms are banded panes, knob on carries a band (band=$iBand)" `
+        ($i1.Pane -and $i0.Pane -and $iBand -gt 0)
+    Assert "I1 a press lands on the knob-off cell (on=$($on.Press) off=$($off.Press))" `
+        ($on.Press -and $on.Press -eq $off.Press)
+    Assert "I2 a drag-selection's end lands on the knob-off cell (on=$($on.Release) off=$($off.Release))" `
+        ($on.Release -and $on.Release -eq $off.Release -and $on.Release -ne $on.Press)
+    Assert "I3 the IME window sits at the cursor: the knob-off point, a band lower in the taller window (on=$($on.Ime -join ',') off=$($off.Ime -join ','))" `
+        ($on.Ime -and $off.Ime -and $on.Ime[0] -eq $off.Ime[0] -and $on.Ime[1] -eq ($off.Ime[1] + $iBand))
+    Assert "I4 the keyboard menu opens at the grid's centre, not the window's (on=$($on.Menu -join ',') off=$($off.Menu -join ','))" `
+        ($on.Menu -and $off.Menu -and $on.Menu[0] -eq $off.Menu[0] -and $on.Menu[1] -eq ($off.Menu[1] + $iBand))
+    Assert "I5 the knob-on menu is on screen where the log says (menu=$($on.MenuRect.Left),$($on.MenuRect.Top) pane=$($iPane.Left),$($iPane.Top))" `
+        ($on.MenuRect -and $on.Menu -and [math]::Abs($on.MenuRect.Left - ($iPane.Left + $on.Menu[0])) -le 2 -and [math]::Abs($on.MenuRect.Top - ($iPane.Top + $on.Menu[1])) -le 2)
+    Assert "I6 negative control: knob off, every input line reports band=0" `
+        ((Count-Log $i0.Arm.Err 'pane (mouse|ime|keyboard menu) [^\r\n]*band=[1-9]') -eq 0 -and (Count-Log $i0.Arm.Err 'pane mouse left press') -gt 0)
+
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
     # LAST statement of the top-level try (T1039).
@@ -529,4 +603,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 66
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 73

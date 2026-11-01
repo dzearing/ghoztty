@@ -1427,13 +1427,16 @@ pub fn getSize(self: *const Surface) !apprt.SurfaceSize {
 }
 
 pub fn getCursorPos(self: *const Surface) !apprt.CursorPos {
+    // The core measures from the grid's top, which sits below the banner
+    // band a spanning window carries (T2567); both answers move up by it.
+    const band = self.gridBand();
     if (self.hwnd) |hwnd| {
         var point: w32.POINT = undefined;
         if (w32.GetCursorPos_(&point) != 0) {
             _ = w32.ScreenToClient(hwnd, &point);
             return .{
                 .x = @floatFromInt(point.x),
-                .y = @floatFromInt(point.y),
+                .y = @floatFromInt(banner_layout.gridY(point.y, band)),
             };
         }
     }
@@ -1443,7 +1446,7 @@ pub fn getCursorPos(self: *const Surface) !apprt.CursorPos {
     // in fact the more accurate one, being synchronized with the event.
     if (self.last_cursor_client) |p| return .{
         .x = @floatFromInt(p.x),
-        .y = @floatFromInt(p.y),
+        .y = @floatFromInt(banner_layout.gridY(p.y, band)),
     };
     // Nothing to fall back on. Signal failure rather than returning a bogus
     // {0,0} origin, so the core skips the mouse computation instead of
@@ -2811,7 +2814,9 @@ pub fn setMouseOverLink(self: *Surface, url: []const u8) void {
         @as(i32, @intCast(len16)) * char_w + pad,
     );
     const ph: i32 = @intFromFloat(@round(22.0 * s));
-    var pt = w32.POINT{ .x = 0, .y = @as(i32, @intCast(self.height)) - ph };
+    // The bottom of the grid, which `self.height` measures from below the
+    // banner band a spanning window carries (T2567).
+    var pt = w32.POINT{ .x = 0, .y = banner_layout.clientY(@as(i32, @intCast(self.height)) - ph, self.gridBand()) };
     _ = w32.ClientToScreen(hwnd, &pt);
     _ = w32.SetWindowPos(preview, null, pt.x, pt.y, pw, ph, w32.SWP_NOACTIVATE | w32.SWP_NOZORDER);
     _ = w32.ShowWindow(preview, w32.SW_SHOWNOACTIVATE);
@@ -4920,7 +4925,8 @@ pub fn handleMouseButton(
 ) void {
     if (!self.core_surface_ready) return;
     const x: f32 = @floatFromInt(@as(i16, @truncate(@as(isize, lparam & 0xFFFF))));
-    const y: f32 = @floatFromInt(@as(i16, @truncate(@as(isize, (lparam >> 16) & 0xFFFF))));
+    // The grid's y, below the banner band a spanning window carries (T2567).
+    const y: f32 = @floatFromInt(banner_layout.gridY(cursorFromLparam(lparam).y, self.gridBand()));
     // Read before noteCursorFromLparam overwrites it: the point the core was
     // last told about is what decides whether this message carries news.
     const prev_cursor_client = self.last_cursor_client;
@@ -4994,6 +5000,12 @@ pub fn handleMouseButton(
         self.core_surface.cursorPosCallback(.{ .x = x, .y = y }, mods) catch |err| {
             log.err("cursor pos callback error: {}", .{err});
         };
+    }
+    // comp-present.ps1 section I's oracle (T2567): the cell a press or a
+    // release reaches, so a banded window can be held to the moved one's.
+    if (comptime std.log.logEnabled(.debug, .win32)) {
+        const cell = self.core_surface.posToViewport(x, y);
+        log.debug("pane mouse {s} {s} cell={d},{d} band={d}", .{ @tagName(button), @tagName(action), cell.x, cell.y, self.gridBand() });
     }
 
     const consumed = self.core_surface.mouseButtonCallback(action, button, mods) catch |err| blk: {
@@ -5175,10 +5187,15 @@ pub fn showContextMenuKeyboard(self: *Surface) void {
     const hwnd = self.hwnd orelse return;
     var rc: w32.RECT = undefined;
     if (w32.GetClientRect(hwnd, &rc) == 0) return;
-    self.openContextMenu(
-        @divTrunc(rc.right - rc.left, 2),
-        @divTrunc(rc.bottom - rc.top, 2),
-    );
+    // The centre of the grid, which starts below the banner band a spanning
+    // window carries (T2567).
+    const band = self.gridBand();
+    const grid_h = banner_layout.gridHeight(@intCast(@max(rc.bottom - rc.top, 0)), band);
+    const cx = @divTrunc(rc.right - rc.left, 2);
+    const cy = banner_layout.clientY(@intCast(grid_h / 2), band);
+    // comp-present.ps1 section I's oracle (T2567).
+    log.debug("pane keyboard menu client={d},{d} band={d}", .{ cx, cy, band });
+    self.openContextMenu(cx, cy);
 }
 
 /// Build + track the context menu at the given client point and dispatch
@@ -5459,7 +5476,8 @@ fn fromColorref(cr: u32) color_math.Rgb {
 pub fn handleMouseMove(self: *Surface, lparam: isize) void {
     if (!self.core_surface_ready) return;
     const x: f32 = @floatFromInt(@as(i16, @truncate(@as(isize, lparam & 0xFFFF))));
-    const y: f32 = @floatFromInt(@as(i16, @truncate(@as(isize, (lparam >> 16) & 0xFFFF))));
+    // The grid's y, below the banner band a spanning window carries (T2567).
+    const y: f32 = @floatFromInt(banner_layout.gridY(cursorFromLparam(lparam).y, self.gridBand()));
     self.noteCursorFromLparam(lparam);
 
     if (self.app.config.@"focus-follows-mouse") self.focusFollowsMouse(lparam);
@@ -5781,8 +5799,11 @@ fn positionImeWindow(self: *Surface) void {
     if (self.core_surface_ready) {
         const ime_pos = self.core_surface.imePoint();
         pos.x = @intFromFloat(ime_pos.x);
-        pos.y = @intFromFloat(ime_pos.y);
+        // imePoint is a grid point; the IME wants the window's (T2567).
+        pos.y = banner_layout.clientY(@intFromFloat(ime_pos.y), self.gridBand());
     }
+    // comp-present.ps1 section I's oracle (T2567).
+    log.debug("pane ime point={d},{d} band={d}", .{ pos.x, pos.y, self.gridBand() });
 
     const cf = w32.COMPOSITIONFORM{
         .dwStyle = w32.CFS_POINT,

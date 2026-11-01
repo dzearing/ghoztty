@@ -90,6 +90,21 @@ pub fn gridBand(inset: i32, spans_band: bool) u32 {
 /// the renderer shares.
 pub const gridHeight = resize_paint.gridHeight;
 
+/// A window-client y as the grid reads it (T2567): the grid starts `band` px
+/// below the window's top, so every point the core is told about moves up by
+/// the band. A point above the band comes out negative, which is what a drag
+/// held past the top of a knob-off window already reports.
+pub fn gridY(client_y: i32, band: u32) i32 {
+    return client_y - @as(i32, @intCast(band));
+}
+
+/// A grid y back in window-client space (T2567): the inverse of `gridY`, for
+/// anything the grid measures that is then placed on screen (IME window,
+/// keyboard context menu, link preview).
+pub fn clientY(grid_y: i32, band: u32) i32 {
+    return grid_y + @as(i32, @intCast(band));
+}
+
 /// Total height of the banner BAND for a card `card_h` px tall that floats
 /// `margin` px inside it (T131). The margin counts on the top AND the
 /// bottom, so the terminal content below the band always starts a breath
@@ -766,6 +781,23 @@ test "gridHeight: a spanning window's grid matches the moved window's (T2566)" {
     try std.testing.expectEqual(@as(u32, 1), gridHeight(30, 40));
     try std.testing.expectEqual(@as(u32, 1), gridHeight(40, 40));
     try std.testing.expectEqual(@as(u32, 500), gridHeight(500, 0));
+}
+
+test "gridY/clientY: a spanning window's points land on the moved window's cells (T2567)" {
+    // Knob off, the window sits 40 px down and carries no band; knob on it
+    // spans the slot and carries 40. The same slot point must reach the core
+    // as the same grid y both ways.
+    const inset: i32 = 40;
+    const slot_y: i32 = 100;
+    const off = gridY(slot_y - windowOffset(inset, false), gridBand(inset, false));
+    const on = gridY(slot_y - windowOffset(inset, true), gridBand(inset, true));
+    try std.testing.expectEqual(off, on);
+    try std.testing.expectEqual(@as(i32, 60), on);
+    // Inverse both ways, band or none.
+    try std.testing.expectEqual(slot_y, clientY(gridY(slot_y, 40), 40));
+    try std.testing.expectEqual(@as(i32, 7), gridY(7, 0));
+    // Above the band reads as above the grid, like a drag past the top.
+    try std.testing.expectEqual(@as(i32, -10), gridY(30, 40));
 }
 
 test "clampInset: degenerate inputs" {
