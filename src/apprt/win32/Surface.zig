@@ -4363,6 +4363,8 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
         self.fillUncoveredStrips(width, height);
     }
 
+    Window.traceRenderStage("pane-size", self.hwnd);
+
     // D18b: inside a live batch the rest - grid reflow, renderer wake - waits
     // until every pane the batch moved has had that fill, so no pane's fill
     // queues behind another pane's resize work.

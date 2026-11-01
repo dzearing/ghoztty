@@ -7861,6 +7861,15 @@ pub fn layoutSplits(self: *Window) void {
         resize_paint.present_gate.unlock();
     };
     var hdwp = beginPaneBatch(self.leafCount(self.active_tab));
+    // With no redirection surface nothing the system would redraw is its to
+    // draw (T2577): the desk is this pass's own paint, committed to the visual
+    // tree, and every pane presents itself. So a live pass moves the panes
+    // with `SWP_NOREDRAW`, and the batch no longer invalidates and erases
+    // what each move exposed - about a millisecond of `EndDeferWindowPos`
+    // ahead of the first pane's `WM_SIZE`, and a quarter of a drag's bad
+    // frames (1.60 -> 1.18 per step, alternating A/B).
+    place_extra_flags = if (self.noredir and self.in_live_layout and !resize_paint.liveSystemRedraw()) w32.SWP_NOREDRAW else 0;
+    defer place_extra_flags = 0;
     var plan_t0: i64 = 0;
     var plan_t1: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&plan_t0);
@@ -8712,6 +8721,10 @@ fn seatDimsOverBanners(self: *Window) void {
 /// ended, and every remaining pane still has to be placed or the layout is
 /// left half-applied. So a dead batch drops to `SetWindowPos`, which is
 /// exactly the pre-T1031 behavior.
+/// Flags a layout pass adds to every pane placement while it runs (T2577:
+/// `SWP_NOREDRAW` on a live pass with no redirection surface). UI thread only.
+var place_extra_flags: u32 = 0;
+
 fn placePane(
     hdwp: *?w32.HDWP,
     h: w32.HWND,
@@ -8721,7 +8734,10 @@ fn placePane(
     cy: i32,
     show: bool,
 ) void {
-    const flags: u32 = w32.SWP_NOZORDER | w32.SWP_NOACTIVATE |
+    // Only a pane that stays on show takes the pass's extra flags: one being
+    // shown or hidden keeps the system's redraw of what it covers or uncovers.
+    const extra: u32 = if (place_extra_flags != 0 and show and w32.IsWindowVisible(h) != 0) place_extra_flags else 0;
+    const flags: u32 = w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | extra |
         (if (show) w32.SWP_SHOWWINDOW else w32.SWP_HIDEWINDOW);
     if (hdwp.*) |batch| {
         if (w32.DeferWindowPos(batch, h, null, x, y, cx, cy, flags)) |next| {

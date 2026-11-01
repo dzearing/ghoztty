@@ -7186,7 +7186,9 @@ pub fn wndProc(
 
     switch (msg) {
         w32.WM_SIZE => {
+            Window.traceRenderStage("viewer-size", self.hwnd);
             self.syncBounds();
+            Window.traceRenderStage("viewer-synced", self.hwnd);
             return 0;
         },
 
@@ -7194,7 +7196,9 @@ pub fn wndProc(
         // switch). WebView2 caches the screen position of its parent chain for
         // hit-testing and IME placement, and only this call refreshes it.
         w32.WM_MOVE => {
+            Window.traceRenderStage("viewer-move", self.hwnd);
             if (self.controller) |c| c.notifyParentWindowPositionChanged();
+            Window.traceRenderStage("viewer-moved", self.hwnd);
             return 0;
         },
 

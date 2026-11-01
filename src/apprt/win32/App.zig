@@ -12492,6 +12492,7 @@ fn surfaceWndProc(
         },
 
         w32.WM_WINDOWPOSCHANGED => {
+            if (drives_terminal) Window.traceRenderStage("pane-poschanged", hwnd);
             // A pane hidden by a position call - a stash, a zoom, the hero
             // carousel, all `SWP_HIDEWINDOW` in a layout batch - gets no
             // WM_SHOWWINDOW, so the arm above never ran and its owned popups

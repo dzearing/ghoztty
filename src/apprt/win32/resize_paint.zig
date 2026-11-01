@@ -390,3 +390,15 @@ pub fn presentRetireOn() bool {
     present_retire_state.store(if (on) 2 else 1, .release);
     return on;
 }
+
+var system_redraw_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_REDRAW` (T2577): let the system invalidate and erase what
+/// a live layout pass's pane moves expose, with no redirection surface, as it
+/// did before. UI thread only; read once per process.
+pub fn liveSystemRedraw() bool {
+    if (system_redraw_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_REDRAW");
+    system_redraw_state = v;
+    return v;
+}
