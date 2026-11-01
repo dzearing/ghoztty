@@ -7879,6 +7879,7 @@ pub fn layoutSplits(self: *Window) void {
     var batch_t0: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&batch_t0);
     if (self.hwnd) |h| resizeTrace("batch-begin", h);
+    resizeTraceGrid();
     self.endPaneBatchFilled(hdwp);
     if (self.hwnd) |h| resizeTrace("batch-end", h);
     if (resizeTraceOn()) {
@@ -7893,6 +7894,7 @@ pub fn layoutSplits(self: *Window) void {
     // The strip faces next, before the cut and the desk fill (T2485 D15 i).
     defer self.strip_faces_placed = false;
     self.commitStripFacesEarly();
+    if (self.hwnd) |h| resizeTrace("faces-end", h);
     // The regions first, when the desk fills what the panes left (T2516):
     // that paint clips to the children as they now stand, so the corners a
     // new cut gives back to the window are its to paint (`desk_paints_next`).
@@ -7933,10 +7935,25 @@ pub fn layoutSplits(self: *Window) void {
     // case (colors changed, nothing moved); it went to `refreshAllDividerBands`.
     // The distinction is "did the region move" vs "did its color change", and
     // it is invisible at the call site, which is why it is written down here.
+    if (self.hwnd) |hwnd| if (self.vacated_desk_painted and self.vacatedPaintIsFinal()) {
+        // With no redirection surface the vacated-strip paint above already
+        // composed and committed this pass's desk, bands and headers to the
+        // visual tree, and nothing between there and here changes them
+        // (T2577): the band paint would compose the same desk again and the
+        // gutter clear fills a GDI surface that is not on screen. About 2 ms
+        // of a drag step's ~15. The validation still stands, for T2448's
+        // reason.
+        self.vacated_desk_painted = false;
+        if (self.movedBandsRect()) |done| _ = w32.ValidateRect(hwnd, &done);
+        resizeTrace("paint-end", hwnd);
+        resizeTraceGrid();
+        return;
+    };
     if (self.hwnd) |hwnd| {
         var paint_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
         // The old gutters first, so the new ones paint over whatever they share (T2418).
         self.clearVacatedGutters(hwnd);
+        resizeTrace("gutters-end", hwnd);
         const hdc = w32.GetDC(hwnd);
         if (hdc) |dc| {
             // The desk blits only what it composed again, and whatever the
@@ -7952,6 +7969,7 @@ pub fn layoutSplits(self: *Window) void {
             self.pane_desk.blit_changed_only = false;
             _ = w32.ReleaseDC(hwnd, dc);
             resizeTrace("paint-end", hwnd);
+            resizeTraceGrid();
             // What this pass just painted is current, so the paint its own pane
             // moves queued there (the parent pixels a moved child exposes) has
             // nothing left to draw (T2448). Under a glide that queued paint
@@ -7960,6 +7978,19 @@ pub fn layoutSplits(self: *Window) void {
         }
         if (paint_timer) |*t| self.frame_paint_us +|= t.read() / std.time.ns_per_us;
     }
+}
+
+var repaint_bands_state: ?bool = null;
+
+/// Whether a layout pass's vacated-strip desk paint is its last band paint
+/// (T2577): on a window with no redirection surface every band it paints is
+/// in the visual tree, committed, so the band paint after it repeats it.
+/// `GHOZTTY_RESIZE_REPAINT_BANDS=1` keeps the second paint, for an A/B film.
+fn vacatedPaintIsFinal(self: *const Window) bool {
+    if (!self.noredir) return false;
+    if (repaint_bands_state == null)
+        repaint_bands_state = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_REPAINT_BANDS");
+    return !repaint_bands_state.?;
 }
 
 /// The part of the client area `paintMovedBands` is known to repaint whole:
@@ -8975,6 +9006,7 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
     self.held_resizes_on = true;
     endPaneBatch(hdwp);
     self.held_resizes_on = false;
+    if (self.hwnd) |h| resizeTrace("defer-end", h);
     var held = self.held_resizes.take();
     if (stackTraceOn()) {
         var qpc: i64 = 0;
@@ -9026,6 +9058,14 @@ pub fn stackGridForTab(self: *Window, tab: usize) ?pane_stack_grid.Grid {
 }
 
 fn stackGridOfTab(self: *Window, tab: usize, comptime panes: pane_stack_grid.Panes) ?pane_stack_grid.Grid {
+    var cost_t0: i64 = 0;
+    if (resizeTraceOn()) _ = w32.QueryPerformanceCounter(&cost_t0);
+    defer if (resizeTraceOn()) {
+        var cost_t1: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&cost_t1);
+        grid_cost.calls += 1;
+        grid_cost.qpc += cost_t1 - cost_t0;
+    };
     self.noteStackRows();
     if (self.tab_hero_active[tab]) return null;
     const tree = self.tab_trees[tab];
@@ -9229,6 +9269,17 @@ fn resizeTraceOn() bool {
     const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_TRACE");
     resize_trace_state = v;
     return v;
+}
+
+/// What the layout grid cost since the last `resize trace grid` line (T2577):
+/// every geometry walk lays the whole grid out again, so a pass pays it once
+/// per walk.
+var grid_cost: struct { calls: u32 = 0, qpc: i64 = 0 } = .{};
+
+fn resizeTraceGrid() void {
+    if (!resizeTraceOn()) return;
+    log.info("resize trace grid calls={d} us={d}", .{ grid_cost.calls, @divTrunc(grid_cost.qpc, 10) });
+    grid_cost = .{};
 }
 
 fn resizeTraceMsg(hwnd: w32.HWND, msg: u32) void {
@@ -9978,10 +10029,15 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
     // paint's do.
     const host: ?*chrome_comp.Host = if (self.chrome_host) |*h| (if (h.defer_commit) null else h) else null;
     if (host) |h| h.beginBatch();
-    defer if (host) |h| h.flush() catch self.deskVisualFailed();
+    defer if (host) |h| {
+        if (self.hwnd) |w| resizeTrace("bands-flush", w);
+        h.flush() catch self.deskVisualFailed();
+        if (self.hwnd) |w| resizeTrace("bands-flushed", w);
+    };
     // The flat style's bands to its desk visual (T2545), strips included.
     const flat = self.flatPass(hdc, paintFlatBands, true);
     if (!flat) self.paintDividers(hdc);
+    if (self.hwnd) |w| resizeTrace("bands-desk", w);
     // Same moved-band argument, one level in: a pane that just slid
     // takes its header band with it (T1530). On the compositor they paint
     // the desk's overlay, and the rest of it stays (T2544).
@@ -10257,9 +10313,15 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
     if (self.applied_pane_style == .elevated and !self.tab_hero_active[self.active_tab]) {
         const gutters = self.painted_gutters;
         const gutters_len = self.painted_gutters_len;
+        resizeTrace("vacated-dc", hwnd);
         self.paintAlphaCorrect(dc, paintMovedBands);
-        self.painted_gutters = gutters;
-        self.painted_gutters_len = gutters_len;
+        resizeTrace("vacated-painted", hwnd);
+        // No band paint follows to clear from the old record (T2577): this
+        // paint's is the one the next pass has to clear.
+        if (!self.vacatedPaintIsFinal()) {
+            self.painted_gutters = gutters;
+            self.painted_gutters_len = gutters_len;
+        }
         self.vacated_desk_painted = true;
         return;
     }

@@ -1,13 +1,13 @@
 {
     "guard":  "prompt-reflow",
     "script":  "test/win32/prompt-reflow.ps1",
-    "generated":  "2026-10-29T17:32:07-07:00",
-    "commit":  "ff6133a71",
+    "generated":  "2026-10-31T21:50:56-07:00",
+    "commit":  "c71b37da8",
     "uncommitted":  [
 
                     ],
     "files":  {
-                  "src/renderer/generic.zig":  "1c1132fd8bef69cd4ac157c59c9fb2d010f41a0b568e4ffe567d8e075c055d8e",
+                  "src/renderer/generic.zig":  "e99b9b4f4beb63e351d7c38b1539822de4bc35acf0a71c94d03fa1a332c5a9bd",
                   "src/renderer/Thread.zig":  "487c020f83c7d6be84b2ff81755426f86e70e87f1ea9f5c22b27f193f63df42f",
                   "src/shell-integration/powershell/ghostty.ps1":  "0e2c1488bf860cd453bb87a7f0e6464c526fb3a8e23d1f5dd0f30a7e5b80a726",
                   "src/termio/shell_integration.zig":  "9516f3dc973e902e406f09418bce7454e2f09400de0f70462fdf0fd5c9492c58",
