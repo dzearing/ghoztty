@@ -46,6 +46,16 @@
 # moved and resized) and the new one, so a visual that does not follow its
 # child window, or a second pane that is never adopted, is a failure.
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -NegativeControl   # must go red
+#
+# FOLD is FLAT plus a stack fold (T2570): P | s1 | s2, the root divider
+# dragged past the fold point and held with the slide stretched
+# (GHOZTTY_STACK_SLIDE_MS), the stack-fold-slide.ps1 shape. s2 is filled with
+# ink and s1 is cleared; mid-fold the window is grabbed, and s1's spot on the
+# grab must carry none of s2's ink - a folding pane whose visual is not cut to
+# its card draws at full size over the pane next to it. The drag is posted
+# mouse input the app captures, so run this arm only on an idle box.
+#   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms fold
+#   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms fold -NegativeControl   # must go red
 
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
@@ -61,12 +71,16 @@ param(
 
 $ErrorActionPreference = 'Continue'
 Set-StrictMode -Off
+# The fold arm's slide, stretched so the grab (a process start plus one WGC
+# frame) lands well inside it.
+$foldSlideMs = 4000
 
 $testLib = Join-Path $PSScriptRoot '..\test\win32\lib'
 . (Join-Path $testLib 'CleanSlate.ps1')
 . (Join-Path $testLib 'Isolation.ps1')
 . (Join-Path $testLib 'TestDesktop.ps1')
 . (Join-Path $testLib 'PaneCapture.ps1')
+. (Join-Path $testLib 'ChromeGeometry.ps1')
 Add-Type -AssemblyName System.Drawing
 
 $script:passes = 0
@@ -82,7 +96,7 @@ if (-not (Test-Path $Spike)) { "SETUP FAIL: $Spike not found - zig build comp-sp
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-onscreen-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -311,10 +325,11 @@ try {
         # renderer as occluded (T1951) after the first frame.
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
         if ($arm -ne 'off') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
-        $inTree = $arm -in 'tree', 'flat'
+        $inTree = $arm -in 'tree', 'flat', 'fold'
         foreach ($k in 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
             if ($inTree) { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
         }
+        if ($arm -eq 'fold') { $env:GHOZTTY_STACK_SLIDE_MS = "$foldSlideMs" } else { Remove-Item env:GHOZTTY_STACK_SLIDE_MS -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         $appArgs = @(
             '--config-default-files=false', '--session-persistence=false',
@@ -326,7 +341,7 @@ try {
         if ($arm -eq 'tree') { $appArgs += '--unfocused-split-opacity=0.7', '--unfocused-split-fill=#ffffff', '--macos-pane-glass=false' }
         # The flat arm (T2570): the tree arm is the default elevated style,
         # whose rounded card the visual must take; flat, it stays square.
-        if ($arm -eq 'flat') { $appArgs += '--macos-pane-style=flat', '--macos-pane-glass=false' }
+        if ($arm -in 'flat', 'fold') { $appArgs += '--macos-pane-style=flat', '--macos-pane-glass=false' }
         $app = Start-OnTestDesktop -Exe $Exe -Arguments $appArgs -StdErr $err
         $top = $null
         for ($t = 0; $t -lt 100 -and -not $top; $t++) {
@@ -432,6 +447,100 @@ try {
             "  background lum: left=$('{0:N1}' -f $lumL) right=$('{0:N1}' -f $lumR)"
             $hi = [Math]::Max($lumL, $lumR); $lo = [Math]::Min($lumL, $lumR)
             Assert "$arm.14 exactly one pane is washed on the grab, at its own spot (washed >= 60, other <= 35)" ($hi -ge 60 -and $lo -le 35)
+        }
+        if ($arm -eq 'fold') {
+            # P | s1 | s2 across 1125 DIP: five pane minimums of 225, so the
+            # drag below folds s2 (stack-fold-slide.ps1's layout, T2295).
+            $minDip = 225
+            $dpi = [int](Get-TestWindowDpi -Window $hw)
+            if ($dpi -le 0) { $dpi = 96 }
+            $scale = $dpi / 96.0
+            [void](Set-TestWindowPos -Window $hw -X 0 -Y 0 -Width (Get-TestChromeDip -Dip (5 * $minDip) -Scale $scale) -Height (Get-TestChromeDip -Dip 700 -Scale $scale))
+            Start-Sleep -Seconds 2
+            & $Exe +split "--target=on$arm" '--direction=right' "--name=on$arm-s1" 2>$null | Out-Null
+            Start-Sleep -Milliseconds 800
+            & $Exe +split "--target=on$arm-s1" '--direction=right' "--name=on$arm-s2" 2>$null | Out-Null
+            $c3 = @()
+            for ($t = 0; $t -lt 60 -and $c3.Count -ne 3; $t++) {
+                Start-Sleep -Milliseconds 300
+                $c3 = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+            }
+            Assert "$arm.20 three panes on show: $(($c3 | ForEach-Object { "$($_.Left)-$($_.Right)" }) -join ' | ')" ($c3.Count -eq 3)
+            if ($c3.Count -ne 3) { continue }
+            # s2 carries a block of ink in its top half; s1 and P are cleared,
+            # so ink on s1's spot mid-fold can only be s2 drawn over it.
+            & $Exe +send-keys "--target=on$arm-s1" 'cls' Enter 2>$null | Out-Null
+            & $Exe +send-keys "--target=on$arm" 'cls' Enter 2>$null | Out-Null
+            Mark-Pane "on$arm-s2" 'for /L %i in (1,1,12) do @echo ##########################'
+            # At rest: s2's ink is on the grab where s2 is, which both proves
+            # the grab can see it and maps screen to grab coordinates.
+            $script:lastRegion = $null
+            Score-Grab $arm "$arm.rest-s2" $hw "on$arm-s2" $dir
+            $restRegion = $script:lastRegion
+            $c3 = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+            if (-not $restRegion) { Assert "$arm.21 the at-rest grab located s2" $false; continue }
+            $offX = $restRegion[0] - $c3[2].Left
+            $offY = $restRegion[1] - $c3[2].Top
+            # The fold: down on the P | s1 divider, up to just short of the
+            # fold point, then over it in one move, and hold.
+            $gutter = $c3[1].Left - $c3[0].Right
+            $foldAt = $c3[2].Right - 2 * (Get-TestChromeDip -Dip $minDip -Scale $scale) - $gutter
+            $x0 = [int](($c3[0].Right + $c3[1].Left) / 2)
+            $y = [int](($c3[0].Top + $c3[0].Bottom) / 2)
+            $xNear = [int]($foldAt - (Get-TestChromeDip -Dip 40 -Scale $scale))
+            $xFold = [int]($foldAt + (Get-TestChromeDip -Dip 100 -Scale $scale))
+            "  fold point ~$foldAt px; drag $x0 -> $xNear -> $xFold, slide $foldSlideMs ms"
+            [void](Send-TestMouse -Window $hw -Target $hw -X $x0 -Y $y -Action down -HoldMs 0)
+            Start-Sleep -Milliseconds 150
+            for ($i = 1; $i -le 6; $i++) {
+                [void](Send-TestMouse -Window $hw -Target $hw -X ([int]($x0 + ($xNear - $x0) * $i / 6)) -Y $y -Action move -HoldMs 0)
+                Start-Sleep -Milliseconds 30
+            }
+            Start-Sleep -Milliseconds 400
+            $near = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            [void](Send-TestMouse -Window $hw -Target $hw -X $xFold -Y $y -Action move -HoldMs 0)
+            Start-Sleep -Milliseconds 600
+            $before = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Sort-Object Left)
+            $bmpPath = Join-Path $dir 'grab-fold-mid.bmp'
+            $gp = Start-Process -FilePath $Spike -ArgumentList @("--grab-hwnd=$([int64]$hw)", "--out=`"$bmpPath`"") `
+                -NoNewWindow -PassThru -RedirectStandardError (Join-Path $dir 'grab-fold-mid.txt')
+            [void]$gp.WaitForExit(15000)
+            $grabMs = $sw.ElapsedMilliseconds
+            $after = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Sort-Object Left)
+            Start-Sleep -Milliseconds ($foldSlideMs + 800)
+            [void](Send-TestMouse -Window $hw -Target $hw -X $xFold -Y $y -Action up -HoldMs 0)
+            $rest = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Where-Object Visible)
+            "  short of the fold: $(($near | ForEach-Object { "$($_.Left)-$($_.Right)" }) -join ' | '); grab done at +$grabMs ms; at rest $($rest.Count) on show"
+            Assert "$arm.21 the approach did not fold (3 on show short of the fold point)" ($near.Count -eq 3)
+            Assert "$arm.22 the grab finished mid-slide (+$grabMs ms of $foldSlideMs)" ($grabMs -lt ($foldSlideMs - 300))
+            Assert "$arm.23 the drag folded s2 (2 on show at rest)" ($rest.Count -eq 2)
+            Assert "$arm.24 WGC grabbed the mid-fold frame" (Test-Path $bmpPath)
+            if (-not (Test-Path $bmpPath)) { continue }
+            # s1's spot at the grab: what its window covered both before and
+            # after, inset from its edges, top half below the prompt row (s2's
+            # ink is in its own top half, at the same height).
+            $s1b = $before | Where-Object { $_.Hwnd -eq $c3[1].Hwnd }
+            $s1a = $after | Where-Object { $_.Hwnd -eq $c3[1].Hwnd }
+            $l = [Math]::Max($s1b.Left, $s1a.Left) + 8; $r = [Math]::Min($s1b.Right, $s1a.Right) - 8
+            $tp = [Math]::Max($s1b.Top, $s1a.Top) + 40; $bt = $tp + [int](($s1b.Bottom - $s1b.Top) / 2) - 40
+            $grabBmp = New-Object System.Drawing.Bitmap $bmpPath
+            $g = Get-Pixels $grabBmp
+            $grabBmp.Dispose()
+            # -NegativeControl scores s2's own spot at rest instead: it is
+            # inked, so the check must go red.
+            $region = if ($NegativeControl) { @(($restRegion[0] + 8), ($restRegion[1] + 40), ($restRegion[2] - 8), ($restRegion[1] + 240)) }
+                      else { @(($l + $offX), ($tp + $offY), ($r + $offX), ($bt + $offY)) }
+            $region = @([Math]::Max(0, $region[0]), [Math]::Max(0, $region[1]), [Math]::Min($g.W, $region[2]), [Math]::Min($g.H, $region[3]))
+            $inked = 0
+            if ($region[2] -gt $region[0] -and $region[3] -gt $region[1]) {
+                $src = if ($NegativeControl) { $script:lastGrab } else { $g }
+                $rows = [InkMath]::RowInk($src.B, $src.Stride, $region[0], $region[1], $region[2], $region[3], 150)
+                $inked = @($rows | Where-Object { $_ -ge 3 }).Count
+            }
+            "  $(if ($NegativeControl) { 'NEGATIVE CONTROL: s2 at rest' } else { 's1' }) spot on the grab $($region -join ','): $inked ink rows"
+            Assert "$arm.25 s1's spot is a real area of the grab ($($region[2] - $region[0])x$($region[3] - $region[1]))" (($region[2] - $region[0]) -ge 40 -and ($region[3] - $region[1]) -ge 80)
+            Assert "$arm.26 mid-fold, none of s2's ink is drawn over s1 ($inked ink rows, want <= 2)" ($inked -le 2)
         }
     }
 } finally {
