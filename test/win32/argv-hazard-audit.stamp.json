@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-02T04:02:05-08:00",
-    "commit":  "a22f3f258",
+    "generated":  "2026-11-02T06:33:02-08:00",
+    "commit":  "367101943",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -49,6 +49,7 @@
                   "scripts/go-loop-watchdog.ps1":  "728118752caed320d12350ef03f062b1e08f21d48a0cdc417802d03b30331062",
                   "scripts/guard-due.ps1":  "5e03a42d820db7ed54c6d91e66d07882370528320ed1fdd16fb60d1b4df9bfc6",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
+                  "scripts/hero-glide-onscreen.ps1":  "12f1d4134f8be7889793935bb38a032e28ca4daf8b361b57eded48ec2efb2e0c",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "f055b029eedf4387b748f3e8e0e2b545e90023a017eddf18e5662024a1244ac8",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",

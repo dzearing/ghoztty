@@ -1,11 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-02T06:17:50-08:00",
-    "commit":  "226154291",
+    "generated":  "2026-11-02T06:32:42-08:00",
+    "commit":  "367101943",
     "uncommitted":  [
-                        "src/CommandCore.zig",
-                        "src/termio/Exec.zig"
+
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -118,7 +117,7 @@
                   "src/apprt/win32/banner_markdown.zig":  "cc606914608fa4bca12b7c2efbc493c60bd37805d3cc3593d4b548139e28015d",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
                   "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
-                  "src/apprt/win32/BannerOverlay.zig":  "326176bb40d2f6d39fe23273be012e601dc4ad034af8441502566e8504f078af",
+                  "src/apprt/win32/BannerOverlay.zig":  "4277c846471fdebdce83b51e1b9e37f894748d64ce138740ec514fa7b5ac555c",
                   "src/apprt/win32/BannerScriptInstaller.zig":  "e349d9a86275fb68b44211120d5859a92e14dc2ce797f9060a8b5cd701cb923d",
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
                   "src/apprt/win32/bell_math.zig":  "035c306b1101152db30370b806871a5f9b7fa88ccfced31ae900c03192f9de0b",
@@ -418,7 +417,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "7fcf8d77463e4febc1569881c9566fee54d8d77860a8d75f63fac3e986f47d48",
-                  "src/apprt/win32/Window.zig":  "1bb5d31c237521fbfd1bf0cde72c4b9451d2e99a9b269f72e0b03f8b8e6755b6",
+                  "src/apprt/win32/Window.zig":  "682df574cd68385bc30ef3aeabd74ffc6a57467c8718bf43cb535a157fb18f95",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -543,7 +542,7 @@
                   "src/cli/version.zig":  "6b2bc632a3f4096373189da3b0ca71103dac63ceaeb15d24cb3b9eafe2693303",
                   "src/cli/view_arg.zig":  "e743f118fc97e7c676b7fc40e2448b0285439e956a8131bdb03bc5faa0697cbf",
                   "src/Command.zig":  "8778edb17bc58923a1ab18e285628550a5cf1420f5633154396861b8c290646f",
-                  "src/CommandCore.zig":  "61295086bf7728c47980421f44eb2e00a4a2ffc85c3c0c277a94e35b793ee50a",
+                  "src/CommandCore.zig":  "2dc6c3ec31f9cf1c316ed7721fd51b31a2ca4d5b3d522b66caaf1fcebe726244",
                   "src/comp_spike_main.zig":  "d60ae905e6ae15a97673599e75a225b094594cc50582f66c7a19768cbc1d13cd",
                   "src/config.zig":  "04bd8f6a2f2db2c17ebed4e0a60c0391473e83161b8f0d9bd0a2bacb8b05f74d",
                   "src/config/c_get.zig":  "abffc60fc3226ae8bfb52b9a8a94ed7fcef37069806fe5bbae84288508654985",
@@ -995,7 +994,7 @@
                   "src/termio/attach_failed_notice.zig":  "4e2bd13143f7b65eb9ed2d5ea66cb028c4c32cd4704fb26af284fbe51e8fe4c2",
                   "src/termio/backend.zig":  "96c7db442eb93e1a2c8156f73b5a91a447a72f66a75cea3d0b030e448a9f0a6d",
                   "src/termio/conpty_sync_hold.zig":  "3674f41c08c9257d82578e47c2761d03dcd72a59613d137bf61484fc1b35a0f1",
-                  "src/termio/Exec.zig":  "2336a594bde392d418d326cc281d25970b5a1b495a5b1caa35f98fd971e1e1cc",
+                  "src/termio/Exec.zig":  "9a7474e31ed51ef9384056af9089c0dcc38dcd63374f5cc89701d674474bd6cd",
                   "src/termio/history_guard.zig":  "f06519c1f847bf49afb69a8252e45c15f1aa482d2203c6b7d29bd6f0c30e40d0",
                   "src/termio/mailbox.zig":  "a5748995fd75541b2af396b5f7af0ddc8c009eea03c4a4c08bd55e85574521a4",
                   "src/termio/message.zig":  "1032a3be79b1c61cc689636d41afd64a43f889773a5e2e596c528a38d528bfb6",
