@@ -236,7 +236,7 @@ function Mark-Pane($target, $text = 'for /L %i in (1,1,6) do @echo ######## T248
 
 # Grab the window with WGC and score `target`'s region of it against the
 # app's own picture of that pane. Returns the summary line, or null.
-function Score-Grab($arm, $label, $hw, $target, $dir) {
+function Score-Grab($arm, $label, $hw, $target, $dir, [double]$minMatch = 0.80, [switch]$NoFlip) {
     $fgPid = [uint32]0
     [void][GhostWin]::GetWindowThreadProcessId([GhostWin]::GetForegroundWindow(), [ref]$fgPid)
     Assert "$label.F the ghost never took the foreground (fg pid $fgPid)" ($fgPid -ne [uint32]$app.Pid)
@@ -254,7 +254,7 @@ function Score-Grab($arm, $label, $hw, $target, $dir) {
     if (-not (Test-Path $bmpPath) -or -not $shot) { Close-TestPaneCapture $shot; return $null }
 
     $grabBmp = New-Object System.Drawing.Bitmap $bmpPath
-    if ($NegativeControl) { $grabBmp.RotateFlip([System.Drawing.RotateFlipType]::RotateNoneFlipY) }
+    if ($NegativeControl -and -not $NoFlip) { $grabBmp.RotateFlip([System.Drawing.RotateFlipType]::RotateNoneFlipY) }
     $g = Get-Pixels $grabBmp
     $grabBmp.Dispose()
     $shot.Bitmap.Save((Join-Path $dir "ref-$($label -replace '[^\w-]','_').png"), [System.Drawing.Imaging.ImageFormat]::Png)
@@ -300,7 +300,7 @@ function Score-Grab($arm, $label, $hw, $target, $dir) {
     $line
     Assert "$label.6 the pane on screen is not blank" ($inkRows.Count -ge 20)
     Assert "$label.7 right way up: the marker lines are at the top, the bottom third is background" ($topInk -ge 20 -and $bottomInk -le 2)
-    Assert "$label.8 the glyphs match capture-pane's (>= 0.80 ink overlap)" ($best.s -ge 0.80)
+    Assert "$label.8 the glyphs match capture-pane's (>= $('{0:N2}' -f $minMatch) ink overlap)" ($best.s -ge $minMatch)
     return
 }
 
@@ -315,7 +315,7 @@ $td = New-TestDesktop -Interactive
 $results = @{}
 try {
     foreach ($arm in $Arms) {
-        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -ne 'off') { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -in 'tree', 'flat') { '1' } else { 'unset' }))"
+        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -ne 'off') { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -in 'tree', 'flat', 'fold') { '1' } else { 'unset' }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
         New-Item -ItemType Directory -Force $dir | Out-Null
@@ -459,7 +459,10 @@ try {
             Start-Sleep -Seconds 2
             & $Exe +split "--target=on$arm" '--direction=right' "--name=on$arm-s1" 2>$null | Out-Null
             Start-Sleep -Milliseconds 800
-            & $Exe +split "--target=on$arm-s1" '--direction=right' "--name=on$arm-s2" 2>$null | Out-Null
+            # --pane, not --target: a --target names a window and splits its
+            # focused pane (P), which left P | s2 | s1 and fed the checks
+            # below the wrong panes.
+            & $Exe +split "--target=on$arm" "--pane=on$arm-s1" '--direction=right' "--name=on$arm-s2" 2>$null | Out-Null
             $c3 = @()
             for ($t = 0; $t -lt 60 -and $c3.Count -ne 3; $t++) {
                 Start-Sleep -Milliseconds 300
@@ -473,9 +476,14 @@ try {
             & $Exe +send-keys "--target=on$arm" 'cls' Enter 2>$null | Out-Null
             Mark-Pane "on$arm-s2" 'for /L %i in (1,1,12) do @echo ##########################'
             # At rest: s2's ink is on the grab where s2 is, which both proves
-            # the grab can see it and maps screen to grab coordinates.
+            # the grab can see it and maps screen to grab coordinates. A
+            # locate, not a fidelity check (fold.8 and the tree arm are): an
+            # 319 px s2 draws greyer glyphs than capture-pane's and scores
+            # ~0.72 (2026-11-01), and anything above 0.6 is unambiguously s2.
+            # Never flipped: -NegativeControl scores s2's inked spot on this
+            # grab below, so it has to be where s2 really is.
             $script:lastRegion = $null
-            Score-Grab $arm "$arm.rest-s2" $hw "on$arm-s2" $dir
+            Score-Grab $arm "$arm.rest-s2" $hw "on$arm-s2" $dir 0.60 -NoFlip
             $restRegion = $script:lastRegion
             $c3 = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
             if (-not $restRegion) { Assert "$arm.21 the at-rest grab located s2" $false; continue }
@@ -519,11 +527,14 @@ try {
             if (-not (Test-Path $bmpPath)) { continue }
             # s1's spot at the grab: what its window covered both before and
             # after, inset from its edges, top half below the prompt row (s2's
-            # ink is in its own top half, at the same height).
+            # ink is in its own top half, at the same height). s1's own prompt
+            # sits ~44 DIP down (padding + one row): start below it, or the
+            # check reads s1's prompt as s2's ink.
             $s1b = $before | Where-Object { $_.Hwnd -eq $c3[1].Hwnd }
             $s1a = $after | Where-Object { $_.Hwnd -eq $c3[1].Hwnd }
             $l = [Math]::Max($s1b.Left, $s1a.Left) + 8; $r = [Math]::Min($s1b.Right, $s1a.Right) - 8
-            $tp = [Math]::Max($s1b.Top, $s1a.Top) + 40; $bt = $tp + [int](($s1b.Bottom - $s1b.Top) / 2) - 40
+            $tp = [Math]::Max($s1b.Top, $s1a.Top) + (Get-TestChromeDip -Dip 64 -Scale $scale)
+            $bt = [Math]::Max($s1b.Top, $s1a.Top) + [int](($s1b.Bottom - $s1b.Top) / 2)
             $grabBmp = New-Object System.Drawing.Bitmap $bmpPath
             $g = Get-Pixels $grabBmp
             $grabBmp.Dispose()
