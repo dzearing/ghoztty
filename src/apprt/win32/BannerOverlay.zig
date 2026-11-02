@@ -218,12 +218,15 @@ const PrepKey = struct {
     fg: color_math.Rgb,
 };
 
-/// Negative control for T2400's divider-drag capture. Flipping it puts the
-/// banner back in SLWA mode, where a resize is a `SetWindowPos` followed by
-/// a synchronous paint, and DWM can compose the grown strip between the two:
-/// the capture must count single black strip frames again. (The T1344
-/// control implies it - a direct paint needs the window's own DC.)
-const T2400_NEUTERED = false; // neuter-audit: measured by the WGC divider-drag probe, which needs the interactive desktop and is not committed yet; T2400's harness goal commits it and claims this flag
+/// Negative control for `divider-flicker.ps1`'s T2400 dark-frame count.
+/// Flipping it puts the banner back in SLWA mode, where a resize is a
+/// `SetWindowPos` followed by a synchronous paint, and DWM can compose the
+/// grown strip between the two: the `-Live -Control banner` capture must
+/// count single black strip frames again. (The T1344 control implies it - a
+/// direct paint needs the window's own DC.) Measured 2026-11-02: it no
+/// longer does - 0 dark frames over 7 cells, the SLWA path confirmed in the
+/// app log - so the dark reading is undefended live until T2643.
+const T2400_NEUTERED = false;
 
 /// Negative control for `pane-banner.ps1`'s T758 assertions. Flipping it
 /// restores the pre-T758 world — a banner's dot-relative links keep the

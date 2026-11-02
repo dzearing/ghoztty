@@ -4374,6 +4374,36 @@ $GuardTable = @(
             'test\win32\chainfold.ps1'
         )
     },
+    # The divider-drag flicker scorer (T2476): dark strips, a bar gone from
+    # the mid line, a banner biting the bar, the nav-vs-page edge. Proven on
+    # synthetic frames, so it runs anywhere and stamps from a plain run.
+    [pscustomobject]@{
+        Name   = 'divider-flicker'
+        Script = 'test\win32\divider-flicker.ps1'
+        Stamp  = 'test\win32\divider-flicker.stamp.json'
+        Covers = @(
+            'test\win32\lib\DividerFlickerScore.ps1',
+            'test\win32\divider-flicker.ps1'
+        )
+    },
+    # The same harness's -Live matrix (T2476, the T2400/T2414 regression
+    # guard): a WGC capture of a posted drag at 1/4/9 panes, both divider
+    # orientations, banner + HTML viewer. It needs the input desktop and
+    # nobody at the box, so it stamps only from a green full-matrix live run;
+    # ADVISORY, because a gate the user's presence decides must not wedge
+    # `validate` while they are using their machine (fullscreen-guard's shape).
+    [pscustomobject]@{
+        Name     = 'divider-flicker-live'
+        Script   = 'test\win32\divider-flicker.ps1'
+        Stamp    = 'test\win32\divider-flicker-live.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'src\apprt\win32\BannerOverlay.zig',
+            'src\apprt\win32\Window.zig',
+            'test\win32\lib\DividerFlickerScore.ps1',
+            'test\win32\divider-flicker.ps1'
+        )
+    },
     # The lab's deterministic scene and its planted positive controls (T2383).
     # A card that draws one cell wrong makes every lab frame a false B2/B6, and
     # a plant that stops firing makes the lab's 100%-caught control vacuous - so

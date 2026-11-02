@@ -269,6 +269,7 @@
 # @input-desktop-exception: translucent-window.ps1 -- (T1787) the subject IS the DWM composite of a per-pixel-alpha window over a backdrop; DWM composes only the input desktop, and a PrintWindow capture never sees what shows through.
 # @input-desktop-exception: background-blur.ps1 -- (T1788) the subject IS DWM blurring what shows through a translucent window; DWM composes only the input desktop, so a capture anywhere else sees neither the backdrop nor the blur.
 # @input-desktop-exception: frame-lab.ps1 -- (T2392) the subject IS the real pointer decoder and the real DWM composition: GetCursorPos must read back every point SendInput was given, and WGC must drop presents the accounting names; neither exists off the input desktop.
+# @input-desktop-exception: divider-flicker.ps1 -- (T2476) -Live only: the subject IS the DWM composition of a divider drag - which surface lands in which composed frame - and WGC photographs only the input desktop. Gated on Assert-UserAbsent; the default run is synthetic and touches no desktop.
 # @input-desktop-exception: fullscreen-guard.ps1 -- (T1814) the subject IS who holds the input desktop's foreground under a fullscreen window; a background desktop has no foreground to steal.
 # @input-desktop-exception: rdp-session.ps1 -- (T1253/T1316) its subject is the desktop being shipped over the wire, and arm G reads the COMPOSITE of a viewer surface with the dim overlay blended onto it; DWM composes only the input desktop.
 #
@@ -302,6 +303,7 @@
 # @user-desktop-launch: profile-latency.ps1 -- (T53b) already interactive-by-design above: injection timing is the measurement, and it can only be taken where input is injected.
 # @user-desktop-launch: translucent-window.ps1 -- (T1787) already interactive-by-design above: its oracle is DWM's composite of the app over a backdrop, so the app has to be on the input desktop too.
 # @user-desktop-launch: background-blur.ps1 -- (T1788) already interactive-by-design above: its oracle is DWM's blurred composite of the app over a checker, so the app has to be on the input desktop too.
+# @user-desktop-launch: divider-flicker.ps1 -- (T2476) already interactive-by-design above, -Live only: WGC photographs only the input desktop, so the app whose drag it photographs has to be there too.
 # @user-desktop-launch: go-loop-guard.ps1 -- (T1193) the ONE bare launch is the fallback taken when New-TestDesktop throws - a desktop we cannot create must not cost the whole suite, and the fallback says so loudly before it runs.
 # @user-desktop-launch: go-loop-resume.ps1 -- (T1478) the same fallback, for the same reason: its GUI arms stage a parked loop pane, and a desktop that cannot be created must degrade to the interactive one with a NOTE rather than skip the whole recovery proof.
 #

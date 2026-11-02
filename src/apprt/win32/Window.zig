@@ -758,6 +758,13 @@ vacated_desk_painted: bool = false,
 /// pixels of a viewer pane standing over one. The negative control for the
 /// divider drag's flat-colour flash.
 clear_whole_gutters: bool = false,
+/// `GHOZTTY_OVERLAYS_AFTER_BANDS`: the grid pass places the per-pane popups
+/// after it paints the divider bands, the pre-T2414 order, so a banner still
+/// at its old rect bites a block out of the accent bar. The negative control
+/// for divider-flicker.ps1's bite count - which, measured 2026-11-02, the
+/// shipped order bites too (T2642), so it shows teeth again only once that
+/// regression is fixed.
+overlays_after_bands: bool = false,
 drag_split_handle: SplitTree(PaneView).Node.Handle = .root,
 drag_split_layout: SplitTree(PaneView).Split.Layout = .horizontal,
 drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
@@ -1890,6 +1897,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     self.frame_wait_any = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_WAIT_ANY");
     self.keep_vacated_gutters = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_KEEP_VACATED_GUTTERS");
     self.clear_whole_gutters = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_CLEAR_WHOLE_GUTTERS");
+    self.overlays_after_bands = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_OVERLAYS_AFTER_BANDS");
     // T2442's slow frames, for stack-fold-slide.ps1 -SlowFrames.
     if (std.process.parseEnvVarInt("GHOZTTY_STACK_SLIDE_DT_MS", u32, 10)) |ms| {
         self.stack_slide_dt_ms = @floatFromInt(ms);
@@ -8149,10 +8157,12 @@ pub fn layoutSplits(self: *Window) void {
     if (self.hwnd) |h| resizeTrace("regions-end", h);
     // Before the bands are painted, never after (T2414, above). A strip face
     // this pass drops is hidden after the paint below, not here.
-    self.face_hides_deferred = true;
-    self.placePaneOverlays();
-    self.face_hides_deferred = false;
-    overlays_placed = true;
+    if (!self.overlays_after_bands) {
+        self.face_hides_deferred = true;
+        self.placePaneOverlays();
+        self.face_hides_deferred = false;
+        overlays_placed = true;
+    }
     if (self.hwnd) |h| resizeTrace("overlays-end", h);
     defer self.retireStripFaces();
 
