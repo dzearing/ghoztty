@@ -1,15 +1,15 @@
 {
     "guard":  "side-pane-featured",
     "script":  "test/win32/side-pane-featured.ps1",
-    "generated":  "2026-11-01T13:47:02-08:00",
-    "commit":  "4352e205b",
+    "generated":  "2026-11-01T15:39:42-08:00",
+    "commit":  "8ea39971f",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_layout.zig":  "ec79e4c0a9ee7720d59936c2d9ed06cc1604c70ca222ec8de351ca7dd3ce5fda",
                   "src/apprt/win32/pane_stack_state.zig":  "c15d1ccdc76fbfe92e93fb3602b93ddb062b4320a7748105d9896d2ef4404454",
-                  "src/apprt/win32/Window.zig":  "f3df95aebfe393924482537f90926c7d765053776e9db59b8a3d03b625a2831e",
+                  "src/apprt/win32/Window.zig":  "78b6c422d2aa38ced3024cb057ca29d2fe4e2267e0f91b380b5e9c37dc1cb8bd",
                   "test/win32/side-pane-featured.ps1":  "5184c74dd94e1001b5f3e6b3636ca64f72f374ee1c932ceb981352ba3e9ffcfa"
               }
 }

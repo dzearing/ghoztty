@@ -238,6 +238,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = T2578's pre-layout runs on a growing edge drag, which is what ships; set only by edge-drag-rate.ps1's comparison arm (T2603), whose other arm runs it unset."
         },
+        "GHOZTTY_RESIZE_NO_CONTENT": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2609. unset = every edge-drag step resizes the terminals, which is what ships; set (`1` held, `empty` floor) only by edge-drag-rate.ps1 -ContentArms, whose `content` arm runs it unset."
+        },
         "GHOZTTY_ENROLL_NO_OPEN": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

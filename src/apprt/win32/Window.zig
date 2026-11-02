@@ -7556,10 +7556,9 @@ fn reportDragCost(self: *Window, comptime what: []const u8) void {
         if (chrome_fanout.state.legacy) "legacy" else "batched",
         @tagName(st.verdict()),
     };
-    switch (st.verdict()) {
-        .steppy => log.info(fmt, args),
-        else => log.debug(fmt, args),
-    }
+    // Info either way (T2609): only `GHOZTTY_PERF` gets here, and a release
+    // build, which is what a drag's cost has to be read off, drops debug.
+    log.info(fmt, args);
     // T2448: the viewer panes' share of the same ticks, on a line of its own
     // (the line above is at the formatter's argument limit).
     if (st.viewer_syncs_max > 0) log.info(
@@ -18281,7 +18280,7 @@ pub fn windowWndProc(
             if (window.tab_count > 0) {
                 var it = window.tab_trees[window.active_tab].iterator();
                 while (it.next()) |entry| {
-                    if (entry.view.surface()) |s| s.in_live_resize = false;
+                    if (entry.view.surface()) |s| s.endLiveResize();
                     if (entry.view.viewer()) |v| v.settleMove();
                 }
                 // The tree panes' regions the drag left as they were (T2593).

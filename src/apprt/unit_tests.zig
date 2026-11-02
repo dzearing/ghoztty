@@ -137,6 +137,7 @@ test {
     // same no-OS-imports deal.
     _ = @import("win32/resize_paint.zig");
     _ = @import("win32/resize_prelayout.zig");
+    _ = @import("win32/resize_content.zig");
 
     // Pure win32 background-tint color math (T67), same no-OS-imports deal.
     _ = @import("win32/color_math.zig");

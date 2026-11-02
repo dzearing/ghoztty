@@ -1,15 +1,15 @@
 {
     "guard":  "pane-stack-slide",
     "script":  "test/win32/pane-stack-slide.ps1",
-    "generated":  "2026-11-01T13:47:12-08:00",
-    "commit":  "4352e205b",
+    "generated":  "2026-11-01T15:39:51-08:00",
+    "commit":  "8ea39971f",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_grid.zig":  "3fa401d7f0450ed1b4f99e0262ac1c9a3ae3150258aa6e7d4b7f00c5617f9777",
                   "src/apprt/win32/pane_stack_slide.zig":  "7b9a687b2cc61bd39f68af3e7f9b41eb425f6e12ff8c585f057ef2f70aae6eee",
-                  "src/apprt/win32/Window.zig":  "f3df95aebfe393924482537f90926c7d765053776e9db59b8a3d03b625a2831e",
+                  "src/apprt/win32/Window.zig":  "78b6c422d2aa38ced3024cb057ca29d2fe4e2267e0f91b380b5e9c37dc1cb8bd",
                   "test/win32/pane-stack-slide.ps1":  "351858c008d828e2881ab7ddc1b02d519366d32bdf9ad20fa0ea0189c9d072c9"
               }
 }

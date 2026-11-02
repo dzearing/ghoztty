@@ -40,6 +40,20 @@
 # -NegativeControl sets the budget to 50 percent, which the shipped pre-layout
 # cannot meet: C must go red.
 #
+# -ContentArms (T2609 step 1) measures instead WHERE a step's time goes: the
+# shipped path in three arms of GHOZTTY_RESIZE_NO_CONTENT (src/apprt/win32/
+# resize_content.zig) - `content` (unset: every step resizes the terminals),
+# `held` (the terminals keep their pre-drag size, strips filled) and `empty`
+# (a pane's resize does nothing; the floor) - and prints each drag's stage
+# breakdown from the `window drag ticks=` line. Only A is asserted, plus D:
+# the content-free arms really skipped the content (no frame waits). It never
+# stamps the guard.
+#
+# -ReleaseSandbox runs a release build (-ExePath, e.g. a ReleaseFast
+# `--prefix zig-out-perf`) under all three isolating knobs (lib\Isolation.ps1),
+# because a Debug build's own pixel loops inflate the very stages being
+# compared. It never stamps the guard either.
+#
 # Runs on the BACKGROUND test desktop (lib\TestDesktop.ps1) - no foreground
 # stolen. Only touches ghoztty processes running from this repo's zig-out*.
 #   powershell -NoProfile -File test\win32\edge-drag-rate.ps1
@@ -51,6 +65,8 @@ param(
     [int]$GrowBudgetPct = 125,
     [int]$MinFps = 30,
     [switch]$NegativeControl,
+    [switch]$ContentArms,
+    [switch]$ReleaseSandbox,
     [switch]$Interactive
 )
 
@@ -61,12 +77,17 @@ $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
 if ($ExePath) { $exe = $ExePath }
 if ($NegativeControl) { $GrowBudgetPct = 50 }
 
-$env:GHOZTTY_PIPE_SUFFIX = "-edgerate$PID"
+if ($ReleaseSandbox) {
+    . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+    [void](Set-GhozttyTestIsolation -Tag 'edgerate' -ReleaseSandbox)
+} else {
+    $env:GHOZTTY_PIPE_SUFFIX = "-edgerate$PID"
+}
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
-Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
+Assert-GhozttyIsolatedBuild -Exe $exe -Allow:$ReleaseSandbox | Out-Null
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $outDir = Join-Path $env:TEMP "ghoztty-edge-drag-rate\$stamp"
@@ -152,6 +173,23 @@ function Get-RateSamples([string]$log) {
     return @($out)
 }
 
+# The `window drag ticks=` stage breakdown, one per drag (T2609).
+function Get-CostSamples([string]$log) {
+    if (-not (Test-Path $log)) { return @() }
+    $out = @()
+    foreach ($l in @(Get-Content $log -ErrorAction SilentlyContinue)) {
+        if ($l -match 'window drag ticks=(\d+) mean_us=(\d+) max_us=(\d+) mean_wait_us=(\d+) .*waits_total=(\d+) .*mean_layout_us=(\d+) mean_place_us=(\d+) mean_paint_us=(\d+) mean_overlay_us=(\d+) mean_resize_us=(\d+)') {
+            $out += [pscustomobject]@{
+                Ticks = [int]$Matches[1]; MeanUs = [int]$Matches[2]; MaxUs = [int]$Matches[3]
+                WaitUs = [int]$Matches[4]; Waits = [int]$Matches[5]; LayoutUs = [int]$Matches[6]
+                PlaceUs = [int]$Matches[7]; PaintUs = [int]$Matches[8]; OverlayUs = [int]$Matches[9]
+                ResizeUs = [int]$Matches[10]
+            }
+        }
+    }
+    return @($out)
+}
+
 # One drag; the summary it printed, with the wall clock the drag took.
 function Invoke-EdgeDrag([IntPtr]$top, [string]$log, [int]$dw) {
     $before = @(Get-RateSamples $log).Count
@@ -162,6 +200,9 @@ function Invoke-EdgeDrag([IntPtr]$top, [string]$log, [int]$dw) {
         if ($all.Count -gt $before) {
             $s = $all[$all.Count - 1]
             Add-Member -InputObject $s -NotePropertyName WallMs -NotePropertyValue $wall -Force
+            $c = @(Get-CostSamples $log)
+            $cost = if ($c.Count -gt 0) { $c[$c.Count - 1] } else { $null }
+            Add-Member -InputObject $s -NotePropertyName Cost -NotePropertyValue $cost -Force
             return $s
         }
     }
@@ -183,8 +224,13 @@ function Measure-Scene([string]$scene, [string]$mode) {
     $env:GHOZTTY_PERF = '1'
     if ($mode -eq 'noprelayout') { $env:GHOZTTY_RESIZE_NOPRELAYOUT = '1' }
     else { Remove-Item env:GHOZTTY_RESIZE_NOPRELAYOUT -ErrorAction SilentlyContinue }
+    switch ($mode) {
+        'held' { $env:GHOZTTY_RESIZE_NO_CONTENT = '1' }
+        'empty' { $env:GHOZTTY_RESIZE_NO_CONTENT = 'empty' }
+        default { Remove-Item env:GHOZTTY_RESIZE_NO_CONTENT -ErrorAction SilentlyContinue }
+    }
     $res = @{}
-    $app = Start-OnTestDesktop -Exe $exe -StdErr $log -Arguments @(
+    $app = Start-OnTestDesktop -Exe $exe -StdErr $log -AllowReleaseBuild:$ReleaseSandbox -Arguments @(
         '--config-default-files=false', '--background=#101014', '--session-persistence=false')
     try {
         $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 20000
@@ -210,6 +256,7 @@ function Measure-Scene([string]$scene, [string]$mode) {
     } finally {
         Kill-RepoInstances
         Remove-Item env:GHOZTTY_RESIZE_NOPRELAYOUT -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_RESIZE_NO_CONTENT -ErrorAction SilentlyContinue
     }
     return $res
 }
@@ -222,8 +269,9 @@ try {
     Rep "  exe:   $exe"
     Rep "  $Steps steps of $StepPx px, posted $StepMs ms apart; budget: grow <= $GrowBudgetPct% of no-prelayout, >= $MinFps fps"
     Rep ''
+    $modes = if ($ContentArms) { @('content', 'held', 'empty') } else { @('prelayout', 'noprelayout') }
     foreach ($scene in 'row3', 'viewer') {
-        foreach ($mode in 'prelayout', 'noprelayout') {
+        foreach ($mode in $modes) {
             $r = Measure-Scene $scene $mode
             $all["$scene/$mode"] = $r
             foreach ($dir in 'grow', 'shrink') {
@@ -231,16 +279,31 @@ try {
                 if ($null -eq $s) { Rep ("  {0,-7} {1,-12} {2,-6} NO SAMPLE" -f $scene, $mode, $dir); continue }
                 Rep ("  {0,-7} {1,-12} {2,-6} steps={3,-3} mean={4,6}us prelayout={5,6}us ({6} ran) size={7,6}us ~{8,4} fps  wall={9} ms" -f
                     $scene, $mode, $dir, $s.Steps, $s.MeanUs, $s.PrelayoutUs, $s.Prelayouts, $s.SizeUs, $s.Fps, $s.WallMs)
+                if ($ContentArms -and $null -ne $s.Cost) {
+                    $c = $s.Cost
+                    Rep ("  {0,-7} {1,-12} {2,-6}   stages: wait={3}us ({4} waits) layout={5}us place={6}us paint={7}us overlay={8}us resize={9}us max={10}us" -f
+                        $scene, $mode, $dir, $c.WaitUs, $c.Waits, $c.LayoutUs, $c.PlaceUs, $c.PaintUs, $c.OverlayUs, $c.ResizeUs, $c.MaxUs)
+                }
             }
         }
     }
     Rep ''
     $samples = @($all.Values | ForEach-Object { $_.grow; $_.shrink })
     $live = @($samples | Where-Object { $null -ne $_ })
-    Assert ($live.Count -eq 8) "A. every drag printed a window drag summary ($($live.Count)/8)"
+    $want = 4 * $modes.Count
+    Assert ($live.Count -eq $want) "A. every drag printed a window drag summary ($($live.Count)/$want)"
     $short = @($live | Where-Object { $_.Steps -lt [int]($Steps / 2) })
     Assert ($live.Count -gt 0 -and $short.Count -eq 0) "A. every drag reached WM_SIZE for most of its $Steps steps (fewest: $(($live | Measure-Object Steps -Minimum).Minimum))"
-    foreach ($scene in 'row3', 'viewer') {
+    if ($ContentArms) {
+        foreach ($scene in 'row3', 'viewer') {
+            foreach ($mode in 'held', 'empty') {
+                $g = $all["$scene/$mode"].grow
+                $ok = $null -ne $g -and $null -ne $g.Cost -and $g.Cost.Waits -eq 0 -and $g.Cost.ResizeUs -eq 0
+                Assert $ok "D. $scene/$mode kept the terminals out of the drag (waits=$($g.Cost.Waits) resize=$($g.Cost.ResizeUs)us)"
+            }
+        }
+    }
+    foreach ($scene in @(if (-not $ContentArms) { 'row3', 'viewer' })) {
         $on = $all["$scene/prelayout"]; $off = $all["$scene/noprelayout"]
         if ($null -eq $on.grow -or $null -eq $off.grow) { Assert $false "B/C. $scene has both grow samples"; continue }
         Assert ($on.grow.Prelayouts -gt 0 -and $off.grow.Prelayouts -eq 0) `
@@ -249,7 +312,8 @@ try {
         Assert ($on.grow.MeanUs -le $limit) `
             "C. $scene a growing step costs $($on.grow.MeanUs)us with the pre-layout, budget ${limit}us ($GrowBudgetPct% of $($off.grow.MeanUs)us without)"
     }
-    $slow = @($all.GetEnumerator() | Where-Object { $_.Key -like '*/prelayout' } | ForEach-Object { $_.Value.grow; $_.Value.shrink } | Where-Object { $null -ne $_ -and $_.Fps -lt $MinFps })
+    $shipped = if ($ContentArms) { '*/content' } else { '*/prelayout' }
+    $slow = @($all.GetEnumerator() | Where-Object { $_.Key -like $shipped } | ForEach-Object { $_.Value.grow; $_.Value.shrink } | Where-Object { $null -ne $_ -and $_.Fps -lt $MinFps })
     Assert ($slow.Count -eq 0) "C. every shipped-path drag holds $MinFps fps or better ($($slow.Count) below)"
     Rep ''
     Rep "report: $report"
@@ -261,7 +325,7 @@ finally {
     Remove-Item env:GHOZTTY_PERF -ErrorAction SilentlyContinue
 }
 
-if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl -and (Test-TestBodyComplete)) {
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl -and -not $ContentArms -and -not $ReleaseSandbox -and (Test-TestBodyComplete)) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard edge-drag-rate -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }

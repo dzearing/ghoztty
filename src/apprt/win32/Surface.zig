@@ -39,6 +39,7 @@ const w32 = @import("win32.zig");
 const drag_perf = @import("drag_perf.zig");
 const lab_plant = @import("lab_plant.zig");
 const resize_paint = @import("resize_paint.zig");
+const resize_content = @import("resize_content.zig");
 const pane_layer = @import("pane_layer.zig");
 const pane_pool = @import("pane_pool.zig");
 const clipboard_open = @import("clipboard_open.zig");
@@ -189,6 +190,10 @@ key_event_produced_text: bool = false,
 /// used to put them on the synchronous-present path and every relayout tick
 /// showed background before it showed text.
 in_live_resize: bool = false,
+/// The size a drag step left this pane at while `GHOZTTY_RESIZE_NO_CONTENT`
+/// kept the content at its old one (T2609, `resize_content.zig`); applied
+/// when the size loop ends.
+content_pending: ?[2]u32 = null,
 
 /// The renderer thread has presented at least one frame into this window.
 ///
@@ -4526,6 +4531,15 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     // Skip zero-size events (minimized windows).
     if (width == 0 or height == 0) return;
 
+    // T2609 step 1: the A/B arm that keeps the content at its pre-drag size
+    // under an edge drag, or skips the pane's resize altogether (the floor).
+    const content_action = resize_content.action(contentMode(), self.in_live_resize);
+    if (content_action != .apply) {
+        self.content_pending = .{ width, height };
+        if (content_action == .hold and self.own_layer) self.fillUncoveredStrips(width, height);
+        return;
+    }
+
     // T2485 D18: the strips of a grown pane its last frame does not cover are
     // pure black on its own layer until the renderer presents at this size,
     // and the compositor shows them for a frame on every drag tick. Fill just
@@ -4543,6 +4557,26 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     // queues behind another pane's resize work.
     if (self.parent_window.holdResize(self, width, height)) return;
     self.applyResize(width, height);
+}
+
+var content_mode_state: ?resize_content.Mode = null;
+
+/// `GHOZTTY_RESIZE_NO_CONTENT` (T2609, `resize_content.zig`), read once.
+fn contentMode() resize_content.Mode {
+    if (content_mode_state) |m| return m;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, resize_content.env_name) catch null;
+    defer if (raw) |r| std.heap.page_allocator.free(r);
+    const m = resize_content.parse(raw);
+    content_mode_state = m;
+    return m;
+}
+
+/// The size loop ended (T2609): a size the content was kept from lands now.
+pub fn endLiveResize(self: *Surface) void {
+    self.in_live_resize = false;
+    const p = self.content_pending orelse return;
+    self.content_pending = null;
+    self.handleResize(p[0], p[1]);
 }
 
 /// The resize work `handleResize` does at once, or that a live layout batch
