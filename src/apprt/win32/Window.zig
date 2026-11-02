@@ -8146,6 +8146,10 @@ pub fn layoutSplits(self: *Window) void {
         stackTrace("stack trace cut qpc={d}", .{cut_t1});
     }
     if (self.hwnd) |h| resizeTrace("cut-end", h);
+    // The desk fill below paints the bands too, so it is the first band paint
+    // of this pass and the popups go ahead of it (T2642): placed after it, a
+    // banner still at its wider old rect covered the bar it had just drawn.
+    if (desk_fill) self.placeOverlaysBeforeBands(&overlays_placed);
     if (self.hwnd) |hwnd| self.clearVacatedPaneStrips(hwnd, old_panes[0..old_len]);
     if (stackTraceOn()) {
         var clear_t1: i64 = 0;
@@ -8155,14 +8159,8 @@ pub fn layoutSplits(self: *Window) void {
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
     if (!desk_fill) self.cutCardRegions();
     if (self.hwnd) |h| resizeTrace("regions-end", h);
-    // Before the bands are painted, never after (T2414, above). A strip face
-    // this pass drops is hidden after the paint below, not here.
-    if (!self.overlays_after_bands) {
-        self.face_hides_deferred = true;
-        self.placePaneOverlays();
-        self.face_hides_deferred = false;
-        overlays_placed = true;
-    }
+    // Before the bands are painted, never after (T2414, above).
+    self.placeOverlaysBeforeBands(&overlays_placed);
     if (self.hwnd) |h| resizeTrace("overlays-end", h);
     defer self.retireStripFaces();
 
@@ -8243,6 +8241,18 @@ fn movedBandsRect(self: *const Window) ?w32.RECT {
     var r = self.deskRect();
     r.top = @max(r.top, self.chromeHeight());
     return r;
+}
+
+/// The grid pass's popups, placed once and ahead of its first band paint
+/// (T2414, T2642). A strip face the pass drops is hidden after the band paint,
+/// not here. Under `GHOZTTY_OVERLAYS_AFTER_BANDS` it leaves them to the pass's
+/// trailing call, after every paint.
+fn placeOverlaysBeforeBands(self: *Window, placed: *bool) void {
+    if (placed.* or self.overlays_after_bands) return;
+    self.face_hides_deferred = true;
+    self.placePaneOverlays();
+    self.face_hides_deferred = false;
+    placed.* = true;
 }
 
 /// `updateDimOverlays` for a layout pass, clocked as the pass's overlay cost
