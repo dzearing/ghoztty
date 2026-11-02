@@ -307,6 +307,13 @@ tree_epoch: u32 = 0,
 /// that goes with the visual once a shape has corners.
 tree_shape: comp_tree.Shape = .{},
 tree_clip: ?*anyopaque = null,
+/// Where a stack glide has this pane right now, in the top-level window's
+/// client pixels (T2571), while its child window stays put: the visual is
+/// drawn here instead of over the window. Null off a glide.
+tree_glide_at: ?w32.RECT = null,
+/// `Window.placeLeaf` took it off a glide's placement: the visual follows
+/// the window once the pass has moved it.
+tree_glide_landing: bool = false,
 
 /// Sticky pane banner (T35): overlay strip above the terminal content,
 /// plus the raw markdown source (owned) so the editor can prefill it and
@@ -1892,10 +1899,15 @@ pub fn syncTreeVisual(self: *Surface) void {
     // The pane's own style bit, not `IsWindowVisible`: a window not yet
     // shown would read every pane hidden (the dim pass's reason, T2185).
     const shown = w32.GetWindowLongW(hwnd, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0;
-    var rc: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rc) == 0) return;
-    var pts = [2]w32.POINT{ .{ .x = rc.left, .y = rc.top }, .{ .x = rc.right, .y = rc.bottom } };
-    _ = w32.MapWindowPoints(hwnd, top, &pts, 2);
+    var pts: [2]w32.POINT = undefined;
+    if (self.tree_glide_at) |g| {
+        pts = .{ .{ .x = g.left, .y = g.top }, .{ .x = g.right, .y = g.bottom } };
+    } else {
+        var rc: w32.RECT = undefined;
+        if (w32.GetClientRect(hwnd, &rc) == 0) return;
+        pts = .{ .{ .x = rc.left, .y = rc.top }, .{ .x = rc.right, .y = rc.bottom } };
+        _ = w32.MapWindowPoints(hwnd, top, &pts, 2);
+    }
     // The swap chain holds the grid, which sits below the banner band the
     // window spans (T2566).
     const band: i32 = @intCast(self.gridBand());
@@ -1904,6 +1916,15 @@ pub fn syncTreeVisual(self: *Surface) void {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane visual place failed at {s}: hr=0x{x:0>8}", .{ f.stage, chrome_comp.hex(f.hr) });
     };
+}
+
+/// Window thread: draw this pane's visual at `at` (top-level client pixels)
+/// while its child window stays where it is, or (null) over the window again
+/// (T2571).
+pub fn setTreeGlideAt(self: *Surface, at: ?w32.RECT) void {
+    if (std.meta.eql(self.tree_glide_at, at)) return;
+    self.tree_glide_at = at;
+    if (self.tree_visual != null) self.syncTreeVisual();
 }
 
 /// Window thread: the card shape the window path just gave this pane's

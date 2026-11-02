@@ -960,6 +960,12 @@ stack_slide_last: ?std.time.Instant = null,
 /// (T2401): that one counts at most one display period, so the layout that
 /// started it is not spent as motion nobody saw.
 stack_slide_fresh: bool = false,
+/// What the glide under way moved, for `reportGlideMoves` (T2571): child
+/// windows placed, and pane visuals moved in the composition tree instead.
+/// `glide_moves_report` is the ended glide whose landing pass reports them.
+glide_child_moves: u32 = 0,
+glide_tree_moves: u32 = 0,
+glide_moves_report: bool = false,
 /// A test's slow frames (T2442; `GHOZTTY_STACK_SLIDE_DT_MS`, read once): every
 /// tick steps the glide as if this long had passed. Null in use.
 stack_slide_dt_ms: ?f64 = null,
@@ -7840,6 +7846,8 @@ pub fn layoutSplits(self: *Window) void {
     // Last of all (defers run in reverse): the presenter follows the panes
     // wherever this pass put them (T2610).
     defer self.syncPresenter();
+    defer self.syncLandedTreePanes();
+    defer self.reportGlideMoves();
     self.prelayout_laid = null;
     if (self.tab_count == 0) return;
     // Under a drag the terminals keep their grid while their windows follow
@@ -8727,7 +8735,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     if (!live and view.glide_snap != .ready and !opening) return false;
     // What of the card is drawn (Mac `paneRect.intersection(clip)`): the pane
     // window cut to its card, inside the client area.
-    const at = childClientRect(parent, h) orelse return false;
+    const at = paneClientRect(parent, view, h) orelse return false;
     if (opening) askOpeningFrame(view, at);
     // Where the glide has the pane: a fold's window pulled back inside its
     // card for the move (T2485 D14) is still drawn - and its frame carried -
@@ -9035,7 +9043,41 @@ fn placeLeaf(self: *Window, hdwp: *?w32.HDWP, view: *PaneView, h: w32.HWND, slot
     // held the divider paint back while a viewer's page already showed at
     // its new place.
     if (show) if (view.surface()) |s| if (s.banner_overlay) |b| b.prepareResize(s.scale, r.left, r.top, r.right - r.left);
+    // A pane a glide drew in the tree away from its window (T2571) is drawn
+    // over its window again - once the batch has moved it there, by
+    // `syncLandedTreePanes`, so no frame shows it back at the old place.
+    if (view.surface()) |s| if (s.tree_glide_at != null) {
+        s.tree_glide_at = null;
+        s.tree_glide_landing = true;
+    };
     placePane(hdwp, h, r.left, r.top, @intCast(r.right - r.left), @intCast(r.bottom - r.top), show);
+}
+
+/// After a layout pass (T2571): every pane `placeLeaf` took off a glide's
+/// tree placement follows its window, now that the window is there. One
+/// whose window moved has already followed on `WM_WINDOWPOSCHANGED`; one
+/// whose window was already in place has not, and is synced here.
+fn syncLandedTreePanes(self: *Window) void {
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            const s = entry.view.surface() orelse continue;
+            if (!s.tree_glide_landing) continue;
+            s.tree_glide_landing = false;
+            if (s.tree_visual != null) s.syncTreeVisual();
+        }
+    }
+}
+
+/// Whether any pane of the active tab is drawn by a glide away from its
+/// window (T2571).
+fn treeGlideUnlanded(self: *Window) bool {
+    if (self.tab_count == 0) return false;
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| {
+        if (entry.view.surface()) |s| if (s.tree_glide_at != null) return true;
+    }
+    return false;
 }
 
 /// Where `placeLeaf` puts `view`'s child window for card `slot`.
@@ -9063,6 +9105,14 @@ fn slideClip(self: *Window, view: *PaneView, window: pane_stack_grid.PxRect) ?pa
     const card = self.stackSlideCardRect(pane_stack_grid.viewId(view)) orelse return null;
     const r = self.leafRect(view, winRect(card));
     return pane_stack_slide.clip(window, .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom });
+}
+
+/// Where `view`'s pane is drawn, in `parent`'s client pixels: its child
+/// window, or - mid-glide in the composition tree (T2571) - where its visual
+/// is while the window stays put.
+fn paneClientRect(parent: w32.HWND, view: *PaneView, h: w32.HWND) ?pane_stack_grid.PxRect {
+    if (view.surface()) |sf| if (sf.tree_glide_at) |g| return .{ .left = g.left, .top = g.top, .right = g.right, .bottom = g.bottom };
+    return childClientRect(parent, h);
 }
 
 /// A pane child's window rect in `parent`'s client pixels.
@@ -9148,6 +9198,10 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                     continue;
                 }
             }
+            if (entry.view.surface()) |s| if (s.tree_glide_at) |g| {
+                self.cutGlideTreeRegion(parent, entry.view, h, plan, g, d);
+                continue;
+            };
             if (entry.view.card_region_key == key) continue;
             entry.view.card_region_key = key;
             const prev_cut = entry.view.card_region_cut;
@@ -9229,7 +9283,7 @@ fn cardRegionPlan(
     for (slots) |slot| {
         if (slot.view != view) continue;
         if (self.rearrangeHeaderInset(slot.rect) == 0) plan.banner_corner = d;
-        const at = childClientRect(parent, h) orelse break;
+        const at = paneClientRect(parent, view, h) orelse break;
         plan.shown = .{ .left = 0, .top = 0, .right = at.width(), .bottom = at.height() };
         if (tab == self.active_tab) if (self.slideClip(view, at)) |c| {
             plan.shown = c;
@@ -9241,7 +9295,7 @@ fn cardRegionPlan(
         break;
     }
     if (!elevated and tab == self.active_tab) {
-        if (childClientRect(parent, h)) |at| {
+        if (paneClientRect(parent, view, h)) |at| {
             plan.cut = self.slideClip(view, at);
             if (plan.cut) |c| plan.key = cardRegionKey(true, c, false);
         }
@@ -9259,6 +9313,40 @@ fn createCardRegion(plan: CardRegionPlan, d: i32) ?*anyopaque {
     // its top corners fall outside it.
     const top: i32 = if (plan.square_top) shown.top - d else shown.top;
     return w32.CreateRoundRectRgn(shown.left, top, shown.right + 1, shown.bottom + 1, d, d);
+}
+
+/// The region of a pane whose visual the glide moves while its window stays
+/// put (T2571): the card shape where the VISUAL is, moved into the window's
+/// own coordinates. The window paints nothing itself; what its region decides
+/// is what the desk paint under it is clipped out of, so the desk fills
+/// exactly what the visual has left and nothing the visual still covers.
+fn cutGlideTreeRegion(
+    self: *Window,
+    parent: w32.HWND,
+    view: *PaneView,
+    h: w32.HWND,
+    plan: CardRegionPlan,
+    at: w32.RECT,
+    d: i32,
+) void {
+    _ = self;
+    const real = childClientRect(parent, h) orelse return;
+    const dx = at.left - real.left;
+    const dy = at.top - real.top;
+    var hasher = std.hash.Wyhash.init(2);
+    std.hash.autoHash(&hasher, .{ plan.key, dx, dy, at.right - at.left, at.bottom - at.top });
+    const key = hasher.final() | 1;
+    // The plan is in the visual's coordinates, as the visual's own clip is.
+    view.card_region_cut = plan.cut;
+    view.card_region_shown = if (plan.key == 0) null else plan.cut orelse plan.shown;
+    if (view.card_region_key == key) return;
+    view.card_region_key = key;
+    const rgn = (if (plan.key != 0)
+        createCardRegion(plan, d)
+    else
+        w32.CreateRectRgn(0, 0, at.right - at.left, at.bottom - at.top)) orelse return;
+    _ = w32.OffsetRgn(rgn, dx, dy);
+    if (w32.SetWindowRgn(h, rgn, 0) == 0) _ = w32.DeleteObject(rgn);
 }
 
 /// The region the next `cutCardRegions` gives `view`'s window, for a strip
@@ -9813,8 +9901,49 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
             @tagName(view.glide_snap),
             if (view.strip_face) |f| f.shown else false,
         });
-        if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, winRect(rect), shown);
+        const h = view.hwnd() orelse continue;
+        // Hidden or not: a fold's face reads where the glide has its pane
+        // from the same place the visual is drawn (`paneClientRect`).
+        if (sliding != null and self.glideTreePane(view, h, winRect(rect), shown)) continue;
+        if (sliding != null or self.glide_moves_report) self.glide_child_moves += 1;
+        self.placeLeaf(hdwp, view, h, winRect(rect), shown);
     }
+}
+
+var glide_tree_state: ?bool = null;
+
+/// Whether a glide moves tree panes' visuals instead of their windows
+/// (T2571). `GHOZTTY_GLIDE_TREE=0` puts them back on the window path: the A/B
+/// and the negative control of comp-glide-hold-onscreen.ps1's tree.9.
+fn glideTreeOn() bool {
+    if (glide_tree_state) |v| return v;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const raw = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_GLIDE_TREE") catch null;
+    const v = if (raw) |r| !std.mem.eql(u8, r, "0") else true;
+    glide_tree_state = v;
+    return v;
+}
+
+/// A glide frame for a pane in the window's composition tree (T2571): its
+/// visual goes where the glide has it, and its child window stays where it
+/// is - no `SetWindowPos`, no `WM_SIZE`, one commit for the whole tick. Only
+/// a move qualifies: a pane the glide resizes (a glide under a drag) is
+/// placed through its window, as any pane off the tree is, and so is one
+/// being shown or hidden on this frame (the window's show state rides on its
+/// move). False when `view` takes the window path.
+fn glideTreePane(self: *Window, view: *PaneView, h: w32.HWND, slot: w32.RECT, show: bool) bool {
+    const sf = view.surface() orelse return false;
+    if (sf.tree_visual == null) return false;
+    if (!glideTreeOn()) return false;
+    if ((w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0) != show) return false;
+    const parent = self.hwnd orelse return false;
+    const r = self.leafRect(view, slot);
+    const real = childClientRect(parent, h) orelse return false;
+    if (real.width() != r.right - r.left or real.height() != r.bottom - r.top) return false;
+    sf.setTreeGlideAt(r);
+    self.glide_tree_moves += 1;
+    return true;
 }
 
 /// Compare this layout with the last one and start, carry on, or drop the
@@ -10138,8 +10267,38 @@ fn restStackSlide(self: *Window) void {
     if (self.hwnd) |h| FrameClock.disarm(h, STACK_SLIDE_TIMER_ID);
 }
 
+/// The window's composition host, batching from here to its `flush`, when a
+/// pane of the active tab is in its tree (T2571); null when no pane is, or a
+/// batch is already open.
+fn treeGlideBatch(self: *Window) ?*chrome_comp.Host {
+    const h = if (self.chrome_host) |*host| host else return null;
+    if (h.defer_commit or self.tab_count == 0) return null;
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| {
+        const s = entry.view.surface() orelse continue;
+        if (s.tree_visual == null) continue;
+        h.beginBatch();
+        return h;
+    }
+    return null;
+}
+
+/// The acceptance oracle for T2571, once per glide, from the pass that lands
+/// it: how many times a pane's child window was moved for it (every moving
+/// pane on every tick on the window path; once a pane, at the landing, in the
+/// composition tree) and how many visual-only moves stood in for the rest.
+fn reportGlideMoves(self: *Window) void {
+    if (!self.glide_moves_report or self.stack_slide != null) return;
+    log.debug("stack glide child moves={d} visual_moves={d} panes={d}", .{ self.glide_child_moves, self.glide_tree_moves, self.leafCount(self.active_tab) });
+    self.glide_moves_report = false;
+    self.glide_child_moves = 0;
+    self.glide_tree_moves = 0;
+}
+
 fn endStackSlide(self: *Window) void {
     self.restStackSlide();
+    // The pass that lands it reports what the glide moved (T2571).
+    if (self.stack_slide != null) self.glide_moves_report = true;
     self.stack_slide = null;
     // The ring's lines go out once nothing is moving any more (T2485 D17).
     if (!self.dragging_split) flushStackTrace();
@@ -10241,7 +10400,11 @@ fn dragQuietTick(self: *Window) void {
 /// over, and one still catching up runs on and ends when it does.
 fn stackDragEnded(self: *Window) void {
     const s = &(self.stack_slide orelse return);
-    if (s.settled()) self.endStackSlide() else self.runStackSlide();
+    if (!s.settled()) return self.runStackSlide();
+    self.endStackSlide();
+    // A tree pane the glide moved without its window (T2571) has its window
+    // placed now, whether or not the drag's end lays out.
+    if (self.treeGlideUnlanded()) self.layoutSplitsLive();
 }
 
 /// One frame of the glide: every card eased toward its slot by the time since
@@ -10301,7 +10464,11 @@ fn stackSlideTick(self: *Window) void {
     // to its slot, and a glide under a drag resizes on every tick - each pane
     // waits for its frame at the new size. A tick that only moves cards
     // resizes nothing and waits for nothing.
+    // In the composition tree the tick's pane moves, their card shapes and
+    // the desk paint go up in one commit (T2571).
+    const batch = self.treeGlideBatch();
     self.layoutSplitsLive();
+    if (batch) |h| h.flush() catch self.deskVisualFailed();
     // T2485: where a glide frame's time goes, tick by tick, to set against
     // the captured frames (`stack trace batch` carries the same clock).
     if (stackTraceOn()) {

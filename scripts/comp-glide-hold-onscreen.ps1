@@ -46,17 +46,31 @@
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms on
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -NegativeControl   # must go red
 #
+# TREE (T2571) is ON plus GHOZTTY_COMP_CHROME=1 and GHOZTTY_COMP_PANE_TREE=1:
+# each pane's swap chain is a visual of the window's own tree, and the glide
+# moves that visual on every frame while the pane's child window stays put
+# until the glide lands. The same film scores it - a visual that did not
+# travel, or travelled without its picture, fails .5-.8 exactly as a window
+# would - and .9 reads the app's own count: child-window moves for the glide
+# at most two a pane (the landing, plus a show or hide), against every pane
+# on every frame on the ON arm, where .9 is the control (no visual moves).
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms tree
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms tree -NoGlideTree   # tree.9 must go red
+# -NoGlideTree sets GHOZTTY_GLIDE_TREE=0: the tree's panes glide by moving
+# their windows again, as before T2571.
+#
 # -NegativeControl sets the slide to 0 ms (the instant re-layout from before
 # T2102): .5 must FAIL on every arm.
 
 param(
     [string]$Exe = (Join-Path $PSScriptRoot '..\zig-out\bin\ghoztty.exe'),
     [string]$Spike = (Join-Path $PSScriptRoot '..\zig-out\bin\ghoztty-comp-spike.exe'),
-    [string[]]$Arms = @('on', 'off'),
+    [string[]]$Arms = @('on', 'off', 'tree'),
     [int]$SlideMs = 1500,
     [string]$OutDir,
     [switch]$KeepFrames,
-    [switch]$NegativeControl
+    [switch]$NegativeControl,
+    [switch]$NoGlideTree
 )
 
 $ErrorActionPreference = 'Continue'
@@ -84,7 +98,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -322,7 +336,8 @@ $td = New-TestDesktop -Interactive
 
 try {
     foreach ($arm in $Arms) {
-        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -eq 'on') { '1' } else { 'unset' }), slide $SlideMs ms)"
+        $comp = $arm -in 'on', 'tree'
+        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($comp) { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -eq 'tree') { '1' } else { 'unset' }), slide $SlideMs ms)"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
         if (Test-Path $dir) { Get-ChildItem $dir -File -Recurse | ForEach-Object { Remove-Item $_.FullName } }
@@ -333,7 +348,11 @@ try {
         # renderer as occluded (T1951) after the first frame.
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
         $env:GHOZTTY_STACK_SLIDE_MS = "$SlideMs"
-        if ($arm -eq 'on') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        if ($comp) { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        foreach ($k in 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
+            if ($arm -eq 'tree') { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+        }
+        if ($NoGlideTree) { $env:GHOZTTY_GLIDE_TREE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_TREE -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
             '--config-default-files=false', '--session-persistence=false',
@@ -373,8 +392,9 @@ try {
         for ($k = 1; $k -lt 4; $k++) { Paint "$name-$k" 'target' $k }
         Start-Sleep -Milliseconds 2000
         Assert "$arm.2 four panes on show at 1500 DIP ($($four.Count))" ($four.Count -eq 4)
-        if ($arm -eq 'on') {
+        if ($comp) {
             Assert "$arm.3 the panes present through the composition chain" (Wait-Log $err $onLine 15000)
+            if ($arm -eq 'tree') { Assert "$arm.3t every pane went into the window tree (adopts=4)" (Wait-Log $err 'adopted into the window tree \(adopts=4\)' 15000) }
         } else {
             Assert "$arm.3 no pane touched the composition path" ((Read-Text $err) -notmatch [regex]::Escape($onLine))
         }
@@ -407,6 +427,24 @@ try {
         Assert "$arm.3c the clicked pane came on show" ($me.Count -eq 1 -and $me[0].Visible)
 
         Score-Film $arm $fdir
+
+        # T2571: what the glide moved, from the pass that landed it.
+        $moves = $null
+        for ($t = 0; $t -lt 25 -and -not $moves; $t++) {
+            $m = [regex]::Matches((Read-Text $err), 'stack glide child moves=(\d+) visual_moves=(\d+) panes=(\d+)')
+            if ($m.Count -gt 0) { $moves = $m[$m.Count - 1] } else { Start-Sleep -Milliseconds 200 }
+        }
+        if (-not $moves) {
+            Assert "$arm.9 the glide reported what it moved" $false
+        } else {
+            $cm = [int]$moves.Groups[1].Value; $vm = [int]$moves.Groups[2].Value; $np = [int]$moves.Groups[3].Value
+            "  glide moved: child windows $cm, visuals $vm, panes $np"
+            if ($arm -eq 'tree') {
+                Assert "$arm.9 the glide moved visuals, not windows: $cm child moves for $np panes (at most $(2 * $np)), $vm visual moves" ($cm -le 2 * $np -and $vm -gt $np)
+            } else {
+                Assert "$arm.9 control: the window path moves child windows and no visual ($cm child, $vm visual)" ($cm -gt 2 * $np -and $vm -eq 0)
+            }
+        }
 
         $fgPid = [uint32]0
         [void][GhWin]::GetWindowThreadProcessId([GhWin]::GetForegroundWindow(), [ref]$fgPid)
