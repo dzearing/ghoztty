@@ -21,6 +21,99 @@ public static class WcmDrv {
 '@
 }
 
+# T2500: which KINDS of kernel handle a process holds, so a handle-count leak
+# names its type (Event, Thread, Section, File, ...) instead of a bare number.
+# One SystemExtendedHandleInformation snapshot, filtered by pid; type names
+# from ObjectTypesInformation. Nothing is opened or duplicated.
+if (-not ('WcmHandles' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class WcmHandles {
+    [DllImport("ntdll.dll")] static extern int NtQuerySystemInformation(int cls, IntPtr buf, int len, out int ret);
+    [DllImport("ntdll.dll")] static extern int NtQueryObject(IntPtr h, int cls, IntPtr buf, int len, out int ret);
+    static Dictionary<int, string> names;
+    static IntPtr Query(Func<IntPtr, int, int> call) {
+        int len = 1 << 20;
+        for (int tries = 0; tries < 8; tries++) {
+            IntPtr buf = Marshal.AllocHGlobal(len);
+            int st = call(buf, len);
+            if (st == 0) return buf;
+            Marshal.FreeHGlobal(buf);
+            if ((uint)st != 0xC0000004u) return IntPtr.Zero; // not LENGTH_MISMATCH
+            len *= 2;
+        }
+        return IntPtr.Zero;
+    }
+    static Dictionary<int, string> TypeNames() {
+        if (names != null) return names;
+        var d = new Dictionary<int, string>();
+        int ret = 0;
+        IntPtr buf = Query((b, l) => NtQueryObject(IntPtr.Zero, 3, b, l, out ret));
+        if (buf == IntPtr.Zero) return d;
+        try {
+            int n = Marshal.ReadInt32(buf);
+            long p = buf.ToInt64() + IntPtr.Size;
+            for (int i = 0; i < n; i++) {
+                ushort slen = (ushort)Marshal.ReadInt16(new IntPtr(p));
+                ushort smax = (ushort)Marshal.ReadInt16(new IntPtr(p + 2));
+                IntPtr sbuf = Marshal.ReadIntPtr(new IntPtr(p + 8));
+                int idx = Marshal.ReadByte(new IntPtr(p + 0x5a));
+                d[idx] = Marshal.PtrToStringUni(sbuf, slen / 2);
+                p += 0x68 + smax;
+                p = (p + IntPtr.Size - 1) & ~((long)IntPtr.Size - 1);
+            }
+        } finally { Marshal.FreeHGlobal(buf); }
+        names = d;
+        return d;
+    }
+    public static Dictionary<string, int> Census(int pid) {
+        var counts = new Dictionary<string, int>();
+        var tn = TypeNames();
+        int ret = 0;
+        IntPtr buf = Query((b, l) => NtQuerySystemInformation(64, b, l, out ret));
+        if (buf == IntPtr.Zero) return counts;
+        try {
+            long n = Marshal.ReadIntPtr(buf).ToInt64();
+            long p = buf.ToInt64() + 2 * IntPtr.Size;
+            int stride = 3 * IntPtr.Size + 16;
+            for (long i = 0; i < n; i++, p += stride) {
+                long owner = Marshal.ReadIntPtr(new IntPtr(p + IntPtr.Size)).ToInt64();
+                if (owner != pid) continue;
+                int ti = (ushort)Marshal.ReadInt16(new IntPtr(p + 3 * IntPtr.Size + 6));
+                string name;
+                if (!tn.TryGetValue(ti, out name)) name = "type" + ti;
+                int c;
+                counts.TryGetValue(name, out c);
+                counts[name] = c + 1;
+            }
+        } finally { Marshal.FreeHGlobal(buf); }
+        return counts;
+    }
+}
+'@
+}
+
+# Handle counts by type for one process, as a hashtable name -> count.
+function Get-HandleTypes([int]$ProcessId) {
+    $h = @{}
+    foreach ($kv in [WcmHandles]::Census($ProcessId).GetEnumerator()) { $h[$kv.Key] = $kv.Value }
+    return $h
+}
+
+# "Event +12, Thread -1" - only the types whose count moved, biggest first.
+function Format-HandleDelta([hashtable]$Before, [hashtable]$After) {
+    $keys = @($Before.Keys) + @($After.Keys) | Sort-Object -Unique
+    $rows = foreach ($k in $keys) {
+        $d = [int]$After[$k] - [int]$Before[$k]
+        if ($d -ne 0) { [pscustomobject]@{ Name = $k; Delta = $d } }
+    }
+    $parts = @($rows | Sort-Object { -[math]::Abs($_.Delta) } | ForEach-Object { '{0} {1:+0;-0}' -f $_.Name, $_.Delta })
+    if ($parts.Count -eq 0) { return '(no change)' }
+    return $parts -join ', '
+}
+
 # Every process whose parent chain reaches $RootPid (the root itself excluded).
 function Get-Descendants([int]$RootPid) {
     $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, PrivatePageCount)

@@ -390,6 +390,10 @@ fn startWindows(comptime T: type, self: *T, arena: Allocator) !void {
         &process_information,
     ) == 0) return windows.unexpectedError(windows.kernel32.GetLastError());
 
+    // Nothing here ever uses the primary thread's handle, and a handle left
+    // open pins the thread object for the life of the app: one leaked per
+    // spawned shell (T2500).
+    windows.CloseHandle(process_information.hThread);
     self.pid = process_information.hProcess;
 }
 

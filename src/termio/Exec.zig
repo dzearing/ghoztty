@@ -1219,7 +1219,25 @@ const Subprocess = struct {
     /// Called to notify that we exited externally so we can unset our
     /// running state.
     pub fn externalExit(self: *Subprocess) void {
+        self.releaseProcessHandle();
         self.process = null;
+    }
+
+    /// On Windows `Command.pid` is the process HANDLE CreateProcessW
+    /// returned, and nothing else closes it: xev's exit watcher works on a
+    /// duplicate it closes itself. Close ours whenever the process is let go
+    /// of, or every pane leaks a Process handle (T2500). Runs on the IO thread
+    /// in threadExit, while the surface that might ask `shellPid` is blocked
+    /// joining it.
+    fn releaseProcessHandle(self: *Subprocess) void {
+        if (comptime builtin.os.tag != .windows) return;
+        if (self.process) |*process| switch (process.*) {
+            .fork_exec => |*cmd| if (cmd.pid) |handle| {
+                cmd.pid = null;
+                windows.CloseHandle(handle);
+            },
+            else => {},
+        };
     }
 
     /// Stop the subprocess. This is safe to call anytime. This will wait
@@ -1245,6 +1263,7 @@ const Subprocess = struct {
             },
         }
 
+        self.releaseProcessHandle();
         self.process = null;
     }
 

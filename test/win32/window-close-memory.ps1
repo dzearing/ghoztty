@@ -40,6 +40,10 @@
 # keeps a window-sized GPU buffer, ~3 MB a window at the default size (T2499).
 # The guard is acked to T2498 until both close.
 #
+# The run also prints the app's kernel handles BY TYPE, baseline -> end
+# (T2500): that census named `Thread +2, Process +2` a window - every terminal
+# pane's CreateProcessW pair left open - where the bare count said only "4".
+#
 # Section C (T2607) closes a split four times inside one living window and
 # asserts the app still answers: the second close used to crash the debug
 # build on a freed pane the sidebar's desk card still named.
@@ -194,6 +198,7 @@ try {
     }
     $base = Wait-Settled $appPid 'baseline'
     [void]$samples.Add($base)
+    $baseTypes = Get-HandleTypes $appPid
 
     # ---- measured cycles ---------------------------------------------------
     $peak = $null
@@ -207,11 +212,14 @@ try {
     }
     $end = Wait-Settled $appPid 'end'
     [void]$samples.Add($end)
+    $endTypes = Get-HandleTypes $appPid
 
     Write-Host ''
     $samples | Format-Table Label, PrivMB, Handles, Gdi, User, Threads, GpuDedMB, GpuShMB, Procs, ProcMB -AutoSize | Out-String -Width 200 | Write-Host
     Write-Host "baseline descendants: $($base.ProcNames)"
     Write-Host "end      descendants: $($end.ProcNames)"
+    # T2500: a handle-count drift names its kind, not just its size.
+    Write-Host "handle types baseline -> end: $(Format-HandleDelta $baseTypes $endTypes)"
     Write-Host ''
 
     # ---- what one open window costs (context for the budgets) ------------
