@@ -56,6 +56,18 @@
 # mouse input the app captures, so run this arm only on an idle box.
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms fold
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms fold -NegativeControl   # must go red
+#
+# Mid-fold the folding card is not the pane's visual at all: the pane is
+# hidden and its card is a STRIP FACE, an owned popup carrying the pane's last
+# frame (T2457). Window capture leaves owned popups out unless asked, so the
+# mid-fold grab asks (the spike's --popups) and fold.27 says it took. Asked,
+# it also takes the process's other windows where they overlap, so the arm
+# first minimizes the window it started with (without activating it).
+# fold.28 then requires s2's ink inside the face's own rect - the card IS on
+# the grab - and fold.26 scores s1's spot outside that rect only, since the
+# card is meant to lie over s1 there. -NoPopups grabs the mid-fold frame the
+# old way, without the face, and fold.27/28 must go red.
+#   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms fold -NoPopups   # fold.27/28 must go red
 
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
@@ -66,7 +78,9 @@ param(
     [string]$OutDir,
     # Flip each grab upside down before scoring: the right-way-up and match
     # checks must then FAIL, or they cannot tell a flipped present apart.
-    [switch]$NegativeControl
+    [switch]$NegativeControl,
+    # Grab the mid-fold frame without the window's owned popups (fold arm).
+    [switch]$NoPopups
 )
 
 $ErrorActionPreference = 'Continue'
@@ -112,6 +126,8 @@ public static class GhostWin {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
+    [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     public static IntPtr[] TopLevel(uint pid, string cls) {
         var list = new List<IntPtr>();
         EnumWindows((h, l) => {
@@ -449,6 +465,12 @@ try {
             Assert "$arm.14 exactly one pane is washed on the grab, at its own spot (washed >= 60, other <= 35)" ($hi -ge 60 -and $lo -le 35)
         }
         if ($arm -eq 'fold') {
+            # The window the app started with sits over this one, and the
+            # mid-fold grab takes the process's other windows with its
+            # popups: minimize it, without activating it (SW_SHOWMINNOACTIVE).
+            [void][GhostWin]::ShowWindowAsync($top, 7)
+            for ($t = 0; $t -lt 20 -and -not [GhostWin]::IsIconic($top); $t++) { Start-Sleep -Milliseconds 100 }
+            Assert "$arm.19 the first window is out of the way (minimized)" ([GhostWin]::IsIconic($top))
             # P | s1 | s2 across 1125 DIP: five pane minimums of 225, so the
             # drag below folds s2 (stack-fold-slide.ps1's layout, T2295).
             $minDip = 225
@@ -510,12 +532,19 @@ try {
             [void](Send-TestMouse -Window $hw -Target $hw -X $xFold -Y $y -Action move -HoldMs 0)
             Start-Sleep -Milliseconds 600
             $before = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Sort-Object Left)
+            $faces = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace')
             $bmpPath = Join-Path $dir 'grab-fold-mid.bmp'
-            $gp = Start-Process -FilePath $Spike -ArgumentList @("--grab-hwnd=$([int64]$hw)", "--out=`"$bmpPath`"") `
+            $grabArgs = @("--grab-hwnd=$([int64]$hw)", "--out=`"$bmpPath`"")
+            if (-not $NoPopups) { $grabArgs += '--popups' }
+            $gp = Start-Process -FilePath $Spike -ArgumentList $grabArgs `
                 -NoNewWindow -PassThru -RedirectStandardError (Join-Path $dir 'grab-fold-mid.txt')
             [void]$gp.WaitForExit(15000)
             $grabMs = $sw.ElapsedMilliseconds
             $after = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Sort-Object Left)
+            $faces += @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace')
+            $grabOut = (Read-Text (Join-Path $dir 'grab-fold-mid.txt')).Trim()
+            "  $grabOut"
+            "  strip faces on show around the grab: $(($faces | ForEach-Object { "$($_.Hwnd):$($_.Left)-$($_.Right)" }) -join ' ')"
             Start-Sleep -Milliseconds ($foldSlideMs + 800)
             [void](Send-TestMouse -Window $hw -Target $hw -X $xFold -Y $y -Action up -HoldMs 0)
             $rest = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Where-Object Visible)
@@ -533,6 +562,15 @@ try {
             $s1b = $before | Where-Object { $_.Hwnd -eq $c3[1].Hwnd }
             $s1a = $after | Where-Object { $_.Hwnd -eq $c3[1].Hwnd }
             $l = [Math]::Max($s1b.Left, $s1a.Left) + 8; $r = [Math]::Min($s1b.Right, $s1a.Right) - 8
+            # The card lies over s1 by design: s1 is scored left of it.
+            # Before and after the grab, so the whole span the card swept
+            # while the grab ran is left out.
+            $faceL = $null; $faceR = $null
+            if ($faces.Count -gt 0) {
+                $faceL = ($faces | Measure-Object -Property Left -Minimum).Minimum
+                $faceR = ($faces | Measure-Object -Property Right -Maximum).Maximum
+                $r = [Math]::Min($r, $faceL - 8)
+            }
             $tp = [Math]::Max($s1b.Top, $s1a.Top) + (Get-TestChromeDip -Dip 64 -Scale $scale)
             $bt = [Math]::Max($s1b.Top, $s1a.Top) + [int](($s1b.Bottom - $s1b.Top) / 2)
             $grabBmp = New-Object System.Drawing.Bitmap $bmpPath
@@ -552,6 +590,21 @@ try {
             "  $(if ($NegativeControl) { 'NEGATIVE CONTROL: s2 at rest' } else { 's1' }) spot on the grab $($region -join ','): $inked ink rows"
             Assert "$arm.25 s1's spot is a real area of the grab ($($region[2] - $region[0])x$($region[3] - $region[1]))" (($region[2] - $region[0]) -ge 40 -and ($region[3] - $region[1]) -ge 80)
             Assert "$arm.26 mid-fold, none of s2's ink is drawn over s1 ($inked ink rows, want <= 2)" ($inked -le 2)
+            Assert "$arm.27 the grab took the window's owned popups ($grabOut)" ($grabOut -match 'popups=true')
+            # The card: s2's ink inside the face's rect, top half below the
+            # prompt row - where s2's marker lines are, carried at what is
+            # left of the content's strength.
+            $cardInk = 0
+            if ($faces.Count -gt 0) {
+                $cr = @(($faceL + 8 + $offX), ($tp + $offY), ($faceR - 8 + $offX), ($bt + $offY))
+                $cr = @([Math]::Max(0, $cr[0]), [Math]::Max(0, $cr[1]), [Math]::Min($g.W, $cr[2]), [Math]::Min($g.H, $cr[3]))
+                if ($cr[2] -gt $cr[0] -and $cr[3] -gt $cr[1]) {
+                    $rows = [InkMath]::RowInk($g.B, $g.Stride, $cr[0], $cr[1], $cr[2], $cr[3], 150)
+                    $cardInk = @($rows | Where-Object { $_ -ge 3 }).Count
+                }
+                "  s2's card on the grab $($cr -join ','): $cardInk ink rows"
+            }
+            Assert "$arm.28 mid-fold, s2's card is on the grab with its ink ($($faces.Count) face sightings, $cardInk ink rows, want >= 6)" ($faces.Count -gt 0 -and $cardInk -ge 6)
         }
     }
 } finally {

@@ -73,6 +73,11 @@ const Opts = struct {
     /// The frame pool's size: the LARGEST the window gets while filmed.
     pool_w: i32 = 0,
     pool_h: i32 = 0,
+    /// `--popups` (T2634): grabs and films include the window's secondary
+    /// windows - its owned popups, and the same process's other windows over
+    /// it. A fold's mid-glide card is an owned popup, so a grab without them
+    /// shows the fold with no card at all.
+    popups: bool = false,
 };
 
 const HWND_BOTTOM: ?w32.HWND = @ptrFromInt(1);
@@ -688,6 +693,8 @@ fn parseArgs(alloc: std.mem.Allocator) !void {
             opts.pool_w = try std.fmt.parseInt(i32, a[9..], 10);
         } else if (std.mem.startsWith(u8, a, "--pool-h=")) {
             opts.pool_h = try std.fmt.parseInt(i32, a[9..], 10);
+        } else if (std.mem.eql(u8, a, "--popups")) {
+            opts.popups = true;
         } else if (std.mem.startsWith(u8, a, "--out=")) {
             opts.out = a[6..];
         } else return error.UnknownArg;
@@ -805,7 +812,7 @@ pub fn main() !u8 {
 /// back can be the picture from before the session started.
 fn grabMain(alloc: std.mem.Allocator) u8 {
     const hwnd: w32.HWND = @ptrFromInt(opts.grab_hwnd);
-    var cap = wgc.Capture.init(alloc, hwnd) catch |e| {
+    var cap = wgc.Capture.initWith(alloc, hwnd, .{ .secondary_windows = opts.popups }) catch |e| {
         std.debug.print("GRAB init=FAILED stage={s} error={s} hr=0x{x}\n", .{ wgc.stage, @errorName(e), @as(u32, @bitCast(wgc.lastHr())) });
         return 3;
     };
@@ -834,7 +841,7 @@ fn grabMain(alloc: std.mem.Allocator) u8 {
         std.debug.print("GRAB write=FAILED error={s}\n", .{@errorName(e)});
         return 3;
     };
-    std.debug.print("GRAB ok width={d} height={d} frames={d} warp={} out={s}\n", .{ img.width, img.height, seen, cap.warp, opts.out });
+    std.debug.print("GRAB ok width={d} height={d} frames={d} warp={} popups={} out={s}\n", .{ img.width, img.height, seen, cap.warp, cap.secondary, opts.out });
     return 0;
 }
 
@@ -844,7 +851,7 @@ fn grabMain(alloc: std.mem.Allocator) u8 {
 fn filmMain(alloc: std.mem.Allocator) u8 {
     const hwnd: w32.HWND = @ptrFromInt(opts.film_hwnd);
     const pool: ?wgc.SizeInt32 = if (opts.pool_w > 0 and opts.pool_h > 0) .{ .w = opts.pool_w, .h = opts.pool_h } else null;
-    var cap = wgc.Capture.initSized(alloc, hwnd, pool) catch |e| {
+    var cap = wgc.Capture.initWith(alloc, hwnd, .{ .pool_size = pool, .secondary_windows = opts.popups }) catch |e| {
         std.debug.print("FILM init=FAILED stage={s} error={s} hr=0x{x}\n", .{ wgc.stage, @errorName(e), @as(u32, @bitCast(wgc.lastHr())) });
         return 3;
     };
@@ -909,7 +916,7 @@ fn filmMain(alloc: std.mem.Allocator) u8 {
         list.print(alloc, "{d} {d} {d} {d}\n", .{ i, img.time_100ns, img.content.w, img.content.h }) catch return 3;
     }
     dir.writeFile(.{ .sub_path = "frames.txt", .data = list.items }) catch return 3;
-    std.debug.print("FILM ok frames={d} warp={} dir={s}\n", .{ frames.items.len, cap.warp, opts.film_dir });
+    std.debug.print("FILM ok frames={d} warp={} popups={} dir={s}\n", .{ frames.items.len, cap.warp, cap.secondary, opts.film_dir });
     return 0;
 }
 

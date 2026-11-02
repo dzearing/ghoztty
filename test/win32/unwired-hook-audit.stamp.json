@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-01T21:17:48-08:00",
-    "commit":  "fbf8454bb",
+    "generated":  "2026-11-01T23:21:07-08:00",
+    "commit":  "8094d3230",
     "uncommitted":  [
 
                     ],
@@ -411,7 +411,7 @@
                   "src/apprt/win32/webview2_frame_iface.zig":  "6c509ae0191fc30c7b0d4ec0128fecaabe4485ded37a023b072e636355590670",
                   "src/apprt/win32/webview2_iface.zig":  "cd1f2d94d8842c36fd526e84e7f2558d0f725a2fc86ba7ddb06cf80ad2efe2b8",
                   "src/apprt/win32/webview2_paths.zig":  "125e4d497fe25e488b9f5a8aee4f0ffe34b7c6f377b0741a89c6781552bc9cf6",
-                  "src/apprt/win32/wgc_capture.zig":  "8e84aa92889c884af124e91ff7f71bc7d3bb321d46c38fe5ebc9fe67f6905c42",
+                  "src/apprt/win32/wgc_capture.zig":  "4f5d6c665bd39b7f8cfb652183a2c7ee635c49fa8bd03397b224e1f64ad53c54",
                   "src/apprt/win32/whats_new_layout.zig":  "b6b8eb2feb08dabd5e2e5649f5d0212e83e36afd3f12fe0b7bb764aa7cd97c8e",
                   "src/apprt/win32/whats_new_notes.zig":  "0931a2eb029ba1718c5b0b9e8cd1ae31e06c6da967e6491676da77051c707577",
                   "src/apprt/win32/whats_new_seen.zig":  "48ce76465a617e7c7266a927be9af6554e2a94f2c41059077637bc1b3426a2fb",
@@ -544,7 +544,7 @@
                   "src/cli/view_arg.zig":  "e743f118fc97e7c676b7fc40e2448b0285439e956a8131bdb03bc5faa0697cbf",
                   "src/Command.zig":  "8778edb17bc58923a1ab18e285628550a5cf1420f5633154396861b8c290646f",
                   "src/CommandCore.zig":  "2dc6c3ec31f9cf1c316ed7721fd51b31a2ca4d5b3d522b66caaf1fcebe726244",
-                  "src/comp_spike_main.zig":  "f391f2ba0f98517bd7d2c3e36ae792005f10ee6b553fec26af9a70222efb29ed",
+                  "src/comp_spike_main.zig":  "d60ae905e6ae15a97673599e75a225b094594cc50582f66c7a19768cbc1d13cd",
                   "src/config.zig":  "6638ab87c4c317f72888ea4b53671bd512234d36b471c4df64cc5e599f79e7b5",
                   "src/config/c_get.zig":  "abffc60fc3226ae8bfb52b9a8a94ed7fcef37069806fe5bbae84288508654985",
                   "src/config/CApi.zig":  "73f763b22d15ca5e9342b3b39bb2360fd254aa3b43e4ecc3a7efd45144937ee9",

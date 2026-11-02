@@ -38,6 +38,8 @@ const IID_IGraphicsCaptureSession2 = guid("2c39ae40-7d2e-5044-804e-8b6799d4cf9e"
 const IID_IGraphicsCaptureSession3 = guid("f2cdd966-22ae-5ea1-9596-3a289344c3be");
 /// 10.0.26100.0 SDK (UniversalApiContract 19): MinUpdateInterval.
 const IID_IGraphicsCaptureSession5 = guid("67c0ea62-1f85-5061-925a-239be0ac09cb");
+/// 10.0.26100.0 SDK (UniversalApiContract 19): IncludeSecondaryWindows.
+const IID_IGraphicsCaptureSession6 = guid("d7419236-be20-5e9f-bcd6-c4e98fd6afdc");
 const IID_IClosable = guid("30d5a829-7fa4-4026-83bb-d75bae4ea99e");
 const IID_IDirect3DDxgiInterfaceAccess = guid("a9b3d012-3df2-4ee3-b8d1-8695f457d3c1");
 const IID_IDXGIDevice = guid("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
@@ -190,9 +192,24 @@ pub const Capture = struct {
     /// MinUpdateInterval before we lowered it (100 ns ticks); null when the
     /// OS predates IGraphicsCaptureSession5.
     default_min_interval: ?i64 = null,
+    /// `true` when the capture includes the window's owned popups
+    /// (`Options.secondary_windows` asked for it and the OS took it).
+    secondary: bool = false,
+
+    pub const Options = struct {
+        /// See `initSized`.
+        pool_size: ?SizeInt32 = null,
+        /// Capture the window's secondary windows too (T2634): its owned
+        /// popups, and - measured 2026-11-01 - the same process's other
+        /// top-level windows where they overlap it. Window capture leaves
+        /// them out by default, and a pane's strip face - the card a fold
+        /// draws mid-glide - is one, so a grab without them shows the fold
+        /// with no card at all.
+        secondary_windows: bool = false,
+    };
 
     pub fn init(alloc: std.mem.Allocator, hwnd: HWND) Error!Capture {
-        return initSized(alloc, hwnd, null);
+        return initWith(alloc, hwnd, .{});
     }
 
     /// `init` with the frame pool sized to `pool_size` rather than to the window
@@ -201,6 +218,11 @@ pub const Capture = struct {
     /// the buffer's top-left and clips what does not fit, so a pool sized to
     /// the starting width would cut off a growing window's right edge.
     pub fn initSized(alloc: std.mem.Allocator, hwnd: HWND, pool_size: ?SizeInt32) Error!Capture {
+        return initWith(alloc, hwnd, .{ .pool_size = pool_size });
+    }
+
+    pub fn initWith(alloc: std.mem.Allocator, hwnd: HWND, options: Options) Error!Capture {
+        const pool_size = options.pool_size;
         const e = try loadEntry();
         stage = "ro-initialize";
         const hr = e.ro_initialize(1); // RO_INIT_MULTITHREADED
@@ -295,6 +317,15 @@ pub const Capture = struct {
             if (!rt.failed(slot(GetSpan, s5, 6)(s5, &d))) min_interval = d;
             _ = slot(PutSpan, s5, 7)(s5, 1);
         } else |_| {}
+        // IGraphicsCaptureSession6 slot 7: put_IncludeSecondaryWindows.
+        var secondary = false;
+        if (options.secondary_windows) {
+            if (query(session, &IID_IGraphicsCaptureSession6)) |s6| {
+                defer release(s6);
+                const PutBool = *const fn (Obj, u8) callconv(.winapi) HRESULT;
+                secondary = !rt.failed(slot(PutBool, s6, 7)(s6, 1));
+            } else |_| {}
+        }
 
         stage = "start-capture";
         // IGraphicsCaptureSession slot 6: StartCapture.
@@ -313,6 +344,7 @@ pub const Capture = struct {
             .borderless = borderless,
             .warp = warp,
             .default_min_interval = min_interval,
+            .secondary = secondary,
         };
     }
 
