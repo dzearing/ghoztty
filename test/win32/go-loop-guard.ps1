@@ -1692,6 +1692,25 @@ $r = CG @('commit', '-Paths', 'crlf.txt', '-Message', 'a file that makes git war
 Assert 'W17 a git warning on stderr is not a failure' ($r.Code -eq 0 -and $r.Out -match 'COMMITTED')
 git -C $wRepo config --unset core.autocrlf 2>$null
 
+# A git that died mid-write leaves an empty index.lock that wedges every commit
+# after it (lane b 2026-11-01 15:09, lane a 2026-11-02 01:51). An old empty lock
+# with no git from its time still running is debris and is cleared; a lock
+# written seconds ago may belong to a git that is running right now and is left.
+$wIndexLock = Join-Path $wRepo '.git\index.lock'
+[System.IO.File]::WriteAllBytes($wIndexLock, [byte[]]@())
+(Get-Item -LiteralPath $wIndexLock).LastWriteTime = (Get-Date).AddMinutes(-5)
+Set-Content -Path (Join-Path $wRepo 'after-dead-git.txt') -Value 'x'
+$r = CG @('commit', '-Paths', 'after-dead-git.txt', '-Message', 'after a git died holding the index')
+Assert 'W17b an old empty index.lock with no git alive is cleared and the commit lands' `
+    ($r.Code -eq 0 -and $r.Out -match 'cleared a stale index\.lock' -and $r.Out -match 'COMMITTED' -and -not (Test-Path -LiteralPath $wIndexLock))
+[System.IO.File]::WriteAllBytes($wIndexLock, [byte[]]@())
+Set-Content -Path (Join-Path $wRepo 'fresh-lock.txt') -Value 'x'
+$headBefore = WHead
+$r = CG @('commit', '-Paths', 'fresh-lock.txt', '-Message', 'beside a lock written just now')
+Assert 'W17c a freshly written index.lock is left alone (the commit fails, HEAD stays)' `
+    ($r.Code -ne 0 -and (Test-Path -LiteralPath $wIndexLock) -and (WHead) -eq $headBefore)
+Remove-Item -LiteralPath $wIndexLock -Force -ErrorAction SilentlyContinue
+
 # -Push is the shape go.md step 6 uses, and it was unexercised until it failed
 # on a real turn: `$push = ...` inside the script assigned a hashtable to the
 # [switch]$Push PARAMETER (PowerShell variable names are case-insensitive) and

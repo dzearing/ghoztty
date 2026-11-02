@@ -136,6 +136,31 @@ function Get-GitDir {
     return ($d | Select-Object -First 1).Trim()
 }
 
+# A git that dies mid-write leaves an empty index.lock, and every git after it
+# refuses with "File exists" until somebody removes it - which wedged lane b
+# (2026-11-01 15:09) and lane a (2026-11-02 01:51) for hours each, both times at
+# the guard's own commit, both times with no git left running. A lock is only
+# live while the git that wrote it is: one that started no later than the lock
+# was written. With none of those alive, an empty lock at least 10s old is
+# debris, and the guard clears it rather than stopping the loop to ask.
+function Clear-StaleIndexLock {
+    $gd = Get-GitDir
+    if (-not $gd) { return }
+    $il = Join-Path $gd 'index.lock'
+    $item = Get-Item -LiteralPath $il -ErrorAction SilentlyContinue
+    if (-not $item) { return }
+    if ($item.Length -ne 0) { return }
+    $written = $item.LastWriteTime
+    if (((Get-Date) - $written).TotalSeconds -lt 10) { return }
+    $owners = @(Get-CimInstance Win32_Process -Filter "Name='git.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CreationDate -and $_.CreationDate -le $written.AddSeconds(1) })
+    if ($owners.Count -gt 0) { return }
+    Remove-Item -LiteralPath $il -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $il)) {
+        "note: cleared a stale index.lock (empty, written $($written.ToString('yyyy-MM-dd HH:mm:ss')), no git from then still running)"
+    }
+}
+
 function Get-LockPath {
     if ($LockPath) { return $LockPath }
     $g = Get-GitDir
@@ -750,6 +775,8 @@ switch ($Action) {
         $prev = & git -C $Repo rev-parse HEAD 2>$null
         $env:GHOZTTY_COMMIT_LOCK_KEY = $k
         try {
+            Clear-StaleIndexLock
+
             # Stage first so a NEW file is known to the index - a pathspec
             # commit only matches paths git already knows.
             $add = Git-Run (@('add', '--') + $want)
