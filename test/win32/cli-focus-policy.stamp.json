@@ -1,8 +1,8 @@
 {
     "guard":  "cli-focus-policy",
     "script":  "test/win32/cli-focus-policy.ps1",
-    "generated":  "2026-11-01T20:46:54-08:00",
-    "commit":  "2666d2c6a",
+    "generated":  "2026-11-01T21:15:35-08:00",
+    "commit":  "fbf8454bb",
     "uncommitted":  [
 
                     ],

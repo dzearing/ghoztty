@@ -1,8 +1,8 @@
 {
     "guard":  "activity-monitor-remote",
     "script":  "test/win32/activity-monitor-remote.ps1",
-    "generated":  "2026-11-01T20:46:19-08:00",
-    "commit":  "2666d2c6a",
+    "generated":  "2026-11-01T21:14:45-08:00",
+    "commit":  "fbf8454bb",
     "uncommitted":  [
 
                     ],

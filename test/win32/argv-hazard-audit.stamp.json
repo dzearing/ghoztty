@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-01T19:40:32-08:00",
-    "commit":  "85016855a",
+    "generated":  "2026-11-01T21:17:35-08:00",
+    "commit":  "fbf8454bb",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/divider-drag-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -33,6 +33,7 @@
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",
                   "scripts/delivery-version.ps1":  "0e13b53aff9be9cf6c7c4c35cbe4fc3293dccf5fef434bef769806b966eb62ce",
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",
+                  "scripts/divider-drag-onscreen.ps1":  "02072527eae6c051e8e525a354096a5d0b425ec73498292fcef6c9ffb3c7d828",
                   "scripts/fetch-symbols.ps1":  "ef40b9f0b393b5662331bb7fdca267fe87d2dcf64f6ce9b83e99a3d7cc39c35a",
                   "scripts/floor-lane.ps1":  "ef15ae0ab6494dce31fc765870eff93c9619525eb43a5af5134cfb6eb3f32ff3",
                   "scripts/focus-pull-scan.ps1":  "ce1ebfa8aac19eed0eb7cc7578fb0a1df8b39974204777a9991ac2fea1eec8e8",
