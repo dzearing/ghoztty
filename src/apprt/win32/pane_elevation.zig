@@ -717,6 +717,12 @@ pub fn fadeLevel(elapsed_ms: i64) f32 {
     return cubicBezierY(0, 0.58, x);
 }
 
+/// `fadeLevel`'s curve over a 0..1 time fraction, for handing the fade to
+/// the compositor (T2574, `comp_overlay.fitCurve`).
+pub fn fadeCurve(x: f64) f64 {
+    return cubicBezierY(0, 0.58, @floatCast(std.math.clamp(x, 0, 1)));
+}
+
 /// y at x on a CSS timing curve with control points (x1, 0), (x2, 1): solve
 /// x(t) by bisection (monotonic for x1, x2 in [0, 1]), then evaluate y(t).
 fn cubicBezierY(x1: f32, x2: f32, x: f32) f32 {

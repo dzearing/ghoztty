@@ -177,6 +177,7 @@ const StripFace = @import("StripFace.zig").StripFace;
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
 const PaneDesk = @import("PaneDesk.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const desk_palette = @import("desk_palette.zig");
 const chrome_glass = @import("chrome_glass.zig");
 const rearrange_header = @import("rearrange_header.zig");
@@ -693,6 +694,12 @@ applied_pane_style: pane_elevation.Style = .elevated,
 glow_to: ?*PaneView = null,
 glow_from: ?*PaneView = null,
 glow_t0_ms: i64 = 0,
+/// The glow on the compositor (T2574): what each of the chrome host's two
+/// glow layers is lit for, whether the current move's fade has been handed
+/// to DWM yet, and the desk uploads counted when it was.
+glow_layers: [2]GlowLayerState = .{ .{}, .{} },
+glow_fade_declared: bool = false,
+glow_fade_mark: u32 = 0,
 /// The busy light (T1899): the interval its timer runs at (0 = stopped),
 /// the signature of what the last sync saw lit - which panes, which shape,
 /// which state - so a report that changes nothing visible costs no repaint,
@@ -8249,16 +8256,193 @@ fn syncFocusGlow(self: *Window) void {
     self.glow_from = self.glow_to;
     self.glow_to = target;
     self.glow_t0_ms = std.time.milliTimestamp();
+    self.glow_fade_declared = false;
+    log.debug("focus glow moves from={} to={}", .{ self.glow_from != null, target != null });
+    // A compositor fade's end tick is a plain timer under the same id.
+    FrameClock.disarm(hwnd, FOCUS_GLOW_TIMER_ID);
     _ = FrameClock.arm(hwnd, FOCUS_GLOW_TIMER_ID, FOCUS_GLOW_TICK_MS);
 }
 
 fn focusGlowTick(self: *Window) void {
     const hwnd = self.hwnd orelse return;
-    if (std.time.milliTimestamp() - self.glow_t0_ms >= pane_elevation.GLOW_FADE_MS) {
+    const elapsed = std.time.milliTimestamp() - self.glow_t0_ms;
+    // On the compositor (T2574) the fade is declared once, from this first
+    // tick - still one paint per burst of focus changes (T2232) - and DWM
+    // runs it; the clock then sleeps until the fade is over.
+    if (self.glowOnCompositor()) {
+        if (!self.glow_fade_declared) {
+            self.repaintPaneDesk();
+            if (self.glow_fade_declared) {
+                FrameClock.disarm(hwnd, FOCUS_GLOW_TIMER_ID);
+                const left = @max(pane_elevation.GLOW_FADE_MS - elapsed, 1);
+                _ = w32.SetTimer(hwnd, FOCUS_GLOW_TIMER_ID, @intCast(left), null);
+                return;
+            }
+            // The paint took the window's own arm: step it as before.
+        } else if (elapsed < pane_elevation.GLOW_FADE_MS) {
+            // A layout pass declared it before this tick: the frame clock
+            // goes too, so only the end tick is left.
+            FrameClock.disarm(hwnd, FOCUS_GLOW_TIMER_ID);
+            _ = w32.SetTimer(hwnd, FOCUS_GLOW_TIMER_ID, @intCast(pane_elevation.GLOW_FADE_MS - elapsed), null);
+            return;
+        } else {
+            FrameClock.disarm(hwnd, FOCUS_GLOW_TIMER_ID);
+            const host = &self.chrome_host.?;
+            log.info("focus glow fade on the compositor done desk_uploads={d}", .{(host.desk_full +% host.desk_partial) -% self.glow_fade_mark});
+            self.glow_from = null;
+            // Takes the faded-out layer down; the desk itself is unchanged.
+            self.repaintPaneDesk();
+            return;
+        }
+    }
+    if (elapsed >= pane_elevation.GLOW_FADE_MS) {
         FrameClock.disarm(hwnd, FOCUS_GLOW_TIMER_ID);
         self.glow_from = null;
     }
     self.repaintPaneDesk();
+}
+
+/// One of the focus glow's compositor layers (T2574): the pane it is lit
+/// for, what it was built from, and its opacity's last declared course.
+const GlowLayerState = struct {
+    view: ?*PaneView = null,
+    card: pane_elevation.Card = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+    gen: u32 = 0,
+    desk_w: i32 = 0,
+    desk_h: i32 = 0,
+    t0_ms: i64 = 0,
+    from: f32 = 0,
+    to: f32 = 0,
+
+    /// Where its opacity is at `now_ms`.
+    fn level(self: GlowLayerState, now_ms: i64) f32 {
+        const x = @as(f64, @floatFromInt(now_ms - self.t0_ms)) / @as(f64, @floatFromInt(pane_elevation.GLOW_FADE_MS));
+        return self.from + (self.to - self.from) * @as(f32, @floatCast(pane_elevation.fadeCurve(x)));
+    }
+};
+
+/// Whether the focus glow is carried as its own compositor layers (T2574):
+/// the desk is on the chrome host's visual and the host can take them.
+/// `GHOZTTY_DEBUG_GLOW_STEPPED=1` (debug builds): keep it in the desk and
+/// step its fade on this thread, the on-screen oracle's A/B arm.
+fn glowOnCompositor(self: *Window) bool {
+    const host = if (self.chrome_host) |*h| h else return false;
+    if (!host.glowAvailable()) return false;
+    if (comptime builtin.mode == .Debug) {
+        if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_GLOW_STEPPED")) return false;
+    }
+    return true;
+}
+
+/// Match the chrome host's glow layers to the lit panes (T2574), after a
+/// paint that put the desk - composed without any glow - on the compositor:
+/// a layer for the pane the glow is moving to and, mid-move, the one it is
+/// leaving, each rebuilt when the picture under it was recomposed, and the
+/// move's fade declared to DWM the first time it is seen here.
+fn syncGlowLayers(
+    self: *Window,
+    slots: []const PaneSlot,
+    cards: []const pane_elevation.Card,
+    strips: []const pane_stack_strip.Band,
+    style: pane_elevation.CardStyle,
+    bar: ?PaneDesk.Bar,
+) void {
+    const host = &self.chrome_host.?;
+    const now = std.time.milliTimestamp();
+    const moving = now - self.glow_t0_ms < pane_elevation.GLOW_FADE_MS;
+    const Want = struct { view: *PaneView, card: usize, target: f32 };
+    var want: [2]Want = undefined;
+    var nw: usize = 0;
+    for (slots, 0..) |slot, i| {
+        if (self.glow_to != null and slot.view == self.glow_to.?) {
+            want[nw] = .{ .view = slot.view, .card = i, .target = 1 };
+            nw += 1;
+        } else if (moving and self.glow_from != null and slot.view == self.glow_from.?) {
+            want[nw] = .{ .view = slot.view, .card = i, .target = 0 };
+            nw += 1;
+        }
+        if (nw == want.len) break;
+    }
+    // A layer whose pane is no longer lit comes down.
+    for (&self.glow_layers, 0..) |*g, i| {
+        const v = g.view orelse continue;
+        const kept = for (want[0..nw]) |wv| {
+            if (wv.view == v) break true;
+        } else false;
+        if (!kept) {
+            host.glowHide(i);
+            g.* = .{};
+        }
+    }
+    const declare = !self.glow_fade_declared and moving;
+    if (declare) self.glow_fade_mark = host.desk_full +% host.desk_partial;
+    var segs: [comp_overlay.ease_segments]comp_overlay.Cubic = undefined;
+    const dur_s = @as(f64, @floatFromInt(pane_elevation.GLOW_FADE_MS)) / 1000.0;
+    comp_overlay.fitCurve(pane_elevation.fadeCurve, dur_s, &segs);
+    const desk = self.pane_desk.desk orelse return;
+    for (want[0..nw]) |wv| {
+        const i = for (self.glow_layers, 0..) |g, j| {
+            if (g.view == wv.view) break j;
+        } else for (self.glow_layers, 0..) |g, j| {
+            if (g.view == null) break j;
+        } else continue;
+        const g = &self.glow_layers[i];
+        const fresh = g.view != wv.view;
+        if (fresh or g.gen != self.pane_desk.compose_gen or !std.meta.eql(g.card, cards[wv.card]) or g.desk_w != desk.w or g.desk_h != desk.h) {
+            const layer = self.pane_desk.glowLayer(cards, wv.card, strips, style, bar) orelse return self.glowLayersFailed("build");
+            host.glowUpload(i, layer.px, layer.rect.left, layer.rect.top, layer.rect.right - layer.rect.left, layer.rect.bottom - layer.rect.top) catch return self.glowLayersFailed("upload");
+            g.view = wv.view;
+            g.card = cards[wv.card];
+            g.gen = self.pane_desk.compose_gen;
+            g.desk_w = desk.w;
+            g.desk_h = desk.h;
+        }
+        // A new layer starts where the window's own arm would show it now;
+        // a move's fade runs from wherever the layer is.
+        const at: f32 = if (fresh) (if (moving) (if (wv.target == 1) pane_elevation.fadeLevel(now - self.glow_t0_ms) else 1 - pane_elevation.fadeLevel(now - self.glow_t0_ms)) else wv.target) else g.level(now);
+        if (declare or (fresh and moving)) {
+            host.glowFade(i, at, wv.target, &segs, dur_s) catch return self.glowLayersFailed("fade");
+            g.* = .{ .view = g.view, .card = g.card, .gen = g.gen, .desk_w = g.desk_w, .desk_h = g.desk_h, .t0_ms = now, .from = at, .to = wv.target };
+        } else if (fresh) {
+            host.glowFade(i, at, at, null, 0) catch return self.glowLayersFailed("opacity");
+            g.from = at;
+            g.to = at;
+            g.t0_ms = now;
+        }
+    }
+    if (declare) {
+        self.glow_fade_declared = true;
+        log.info("focus glow fade on the compositor layers={d} uploads={d}", .{ nw, host.glow_uploads });
+    }
+}
+
+/// Take every glow layer down: the desk is off the compositor, or about to
+/// carry the glow itself. A move still under way goes back on the window's
+/// own clock.
+fn dropGlowLayers(self: *Window) void {
+    for (&self.glow_layers, 0..) |*g, i| {
+        if (g.view == null) continue;
+        if (self.chrome_host) |*h| h.glowHide(i);
+        g.* = .{};
+    }
+    if (self.glow_fade_declared and std.time.milliTimestamp() - self.glow_t0_ms < pane_elevation.GLOW_FADE_MS) {
+        self.glow_fade_declared = false;
+        if (self.hwnd) |hwnd| {
+            FrameClock.disarm(hwnd, FOCUS_GLOW_TIMER_ID);
+            _ = FrameClock.arm(hwnd, FOCUS_GLOW_TIMER_ID, FOCUS_GLOW_TICK_MS);
+        }
+    }
+}
+
+/// A glow layer step failed: the glow goes back into the desk on this host
+/// for good, and the next paint composes it there.
+fn glowLayersFailed(self: *Window, step: []const u8) void {
+    const f = chrome_comp.Host.lastFailure();
+    log.warn("focus glow layer {s} failed at {s}: hr=0x{x:0>8}; the glow stays in the desk", .{ step, f.stage, chrome_comp.hex(f.hr) });
+    if (self.chrome_host) |*h| h.glow_failed = true;
+    self.dropGlowLayers();
+    self.pane_desk.forget();
+    if (self.hwnd) |hwnd| _ = w32.InvalidateRect(hwnd, null, 0);
 }
 
 /// A pane's progress report as its light should show it now (T1899): null
@@ -11083,13 +11267,18 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     if (on_visual) self.overlayPrepare(desk_dc, area, hero_split, over);
     self.pane_desk.sink = if (on_visual) .{ .ctx = self, .upload = deskSinkUpload } else null;
     defer self.pane_desk.sink = null;
-    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], .{
+    // On the compositor the glow is its own layers over a desk composed
+    // without it (T2574), so a focus move fades there and repaints nothing.
+    const glow_layers = on_visual and self.glowOnCompositor();
+    const style: pane_elevation.CardStyle = .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
         .glass = glass,
-        .glows = glows[0..ng],
-    }, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
+        .glows = if (glow_layers) glows[0..0] else glows[0..ng],
+    };
+    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], style, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
+    if (glow_layers) self.syncGlowLayers(slots[0..n], cards[0..nc], bands[0..nt], style, bar) else self.dropGlowLayers();
     // On the compositor the visual already lies under every pane.
     if (hero_split == null and self.deskOpacity() == null and !on_visual) self.paintDeskUnderPanes(slots[0..n], area, name_rects[0..nn]);
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));

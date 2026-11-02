@@ -2423,6 +2423,19 @@ $GuardTable = @(
             'test\win32\comp-chrome.ps1'
         )
     },
+    # The focus glow fading on the compositor (T2574): the glow layers' effect
+    # group and opacity animation are vtable slots only a live run reaches,
+    # and the declare-once / end-tick clock lives in the window.
+    [pscustomobject]@{
+        Name   = 'focus-glow-comp'
+        Script = 'test\win32\focus-glow-comp.ps1'
+        Stamp  = 'test\win32\focus-glow-comp.stamp.json'
+        Covers = @(
+            'src\apprt\win32\chrome_comp.zig',
+            'src\apprt\win32\PaneDesk.zig',
+            'test\win32\focus-glow-comp.ps1'
+        )
+    },
     # The in-app update (T1178). This is the one code path that REPLACES the
     # app on disk and quits the terminal to do it, and every failure mode is
     # invisible to a compiler: an asset matcher that picks the wrong release,

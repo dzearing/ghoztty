@@ -345,6 +345,11 @@ names_laid: bool = false,
 /// only. Nothing is blitted while it is set.
 sink: ?Sink = null,
 names_saved: std.ArrayListUnmanaged(u32) = .empty,
+/// `glowLayer`'s two pictures, lit and unlit; the first becomes the layer.
+glow_px: std.ArrayListUnmanaged(u32) = .empty,
+/// Bumped by every paint that composed anything (a memo miss), so a layer
+/// built from the picture (`glowLayer`) can tell it may be stale.
+compose_gen: u32 = 0,
 /// The card style's shadow patch, built once for every compose of the style
 /// rather than once a rectangle (T2454).
 prepared: ?pane_elevation.Prepared = null,
@@ -701,6 +706,7 @@ pub fn deinit(self: *PaneDesk) void {
     self.scratch_desk.deinit(light_alloc);
     self.scratch_grad.deinit(light_alloc);
     self.names_saved.deinit(light_alloc);
+    self.glow_px.deinit(light_alloc);
     if (self.prepared) |*p| p.deinit();
     self.desk_buf.deinit(light_alloc);
     if (self.comp) |c| c.destroy();
@@ -709,7 +715,7 @@ pub fn deinit(self: *PaneDesk) void {
     self.out_backing.deinit();
     // Keep counting across a reset, so no later desk reuses a generation a
     // sidebar cache may still hold.
-    self.* = .{ .desk_gen = self.desk_gen +% 1 };
+    self.* = .{ .desk_gen = self.desk_gen +% 1, .compose_gen = self.compose_gen +% 1 };
 }
 
 /// Paint the desk and `cards` (in content-area pixels, i.e. relative to
@@ -810,6 +816,7 @@ pub fn paint(
         return self.timedBlit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
     }
     self.memo_misses +|= 1;
+    self.compose_gen +%= 1;
     var timer = std.time.Timer.start() catch null;
     // Only the cards, strips or bar that moved (T2454): what lies outside
     // their reach is the picture `comp` already holds, so the desk is copied
@@ -1206,8 +1213,28 @@ fn composeRect(
     const rh: usize = @intCast(r.bottom - r.top);
     if (rw == 0 or rh == 0) return;
     const sbuf = scratch_buf[0 .. rw * rh];
-    const sd: ?[]u32 = if (sd_buf) |d| d[0 .. rw * rh] else null;
+    composeIn(sbuf, if (sd_buf) |d| d[0 .. rw * rh] else null, desk, stride, r, cards, strips, style, bar, prep);
+    const x0: usize = @intCast(r.left);
+    const y0: usize = @intCast(r.top);
+    for (0..rh) |y| @memcpy(comp[(y0 + y) * stride + x0 ..][0..rw], sbuf[y * rw ..][0..rw]);
+}
 
+/// The picture a compose lays over `r` of the desk, into `sbuf` (`r`'s size,
+/// rows of its width), with every card, strip and the bar moved into it.
+fn composeIn(
+    sbuf: []u32,
+    sd: ?[]u32,
+    desk: []const u32,
+    stride: usize,
+    r: busy_light.Rect,
+    cards: []const pane_elevation.Card,
+    strips: []const pane_stack_strip.Band,
+    style: pane_elevation.CardStyle,
+    bar: ?Bar,
+    prep: ?*const pane_elevation.Prepared,
+) void {
+    const rw: usize = @intCast(r.right - r.left);
+    const rh: usize = @intCast(r.bottom - r.top);
     const x0: usize = @intCast(r.left);
     const y0: usize = @intCast(r.top);
     // The desk under `r`, as the scratch's own (only the glass bands read it
@@ -1238,7 +1265,85 @@ fn composeRect(
         break :blk m;
     } else null;
     composeOver(sbuf, sub_desk, rw, rh, tc[0..cards.len], ts[0..strips.len], style, tb, prep);
-    for (0..rh) |y| @memcpy(comp[(y0 + y) * stride + x0 ..][0..rw], sbuf[y * rw ..][0..rw]);
+}
+
+/// A focus glow as a layer of its own (T2574), for the compositor to fade
+/// over a desk composed without it: the rectangle round `card` the glow can
+/// reach, and its premultiplied BGRA pixels, rows of the rectangle's width.
+pub const GlowLayer = struct {
+    rect: busy_light.Rect,
+    px: []const u32,
+};
+
+/// The rectangle a glow layer for `card` covers, clipped to a `w` x `h`
+/// buffer; null when none of it is on it.
+pub fn glowRect(card: pane_elevation.Card, scale: f32, w: i32, h: i32) ?busy_light.Rect {
+    const reach = pane_elevation.glowReachPx(scale) + 2;
+    return clipTo(.{ .left = card.left - reach, .top = card.top - reach, .right = card.right + reach, .bottom = card.bottom + reach }, w, h);
+}
+
+/// Build the glow layer of `cards[card]` from the picture `paint` last
+/// composed - `style` with no glows - into `self.glow_px` (T2574). Each pixel
+/// is what the card lit at full strength (A) takes off the unlit picture (B):
+/// the least alpha `a` for which A = P + (1 - a) B with the colour P / a in
+/// range. Faded to opacity L by the compositor that shows (1 - L) B + L A,
+/// which is the picture the window composes at glow level L - the glow, its
+/// rim and anything laid over them are all linear in it. Null when the
+/// buffers cannot be had.
+pub fn glowLayer(
+    self: *PaneDesk,
+    cards: []const pane_elevation.Card,
+    card: usize,
+    strips: []const pane_stack_strip.Band,
+    style: pane_elevation.CardStyle,
+    bar: ?Bar,
+) ?GlowLayer {
+    const desk = self.desk orelse return null;
+    if (card >= cards.len or cards.len > Memo.MAX_CARDS or strips.len > Memo.MAX_STRIPS) return null;
+    const r = glowRect(cards[card], style.scale, desk.w, desk.h) orelse return null;
+    const n: usize = @intCast((r.right - r.left) * (r.bottom - r.top));
+    self.glow_px.resize(light_alloc, 2 * n) catch return null;
+    const glass_band = for (strips) |s| {
+        if (s.band and s.glass != null) break true;
+    } else false;
+    if (glass_band) self.scratch_desk.resize(light_alloc, n) catch return null;
+    const sd: ?[]u32 = if (glass_band) self.scratch_desk.items[0..n] else null;
+    const lit = self.glow_px.items[0..n];
+    const unlit = self.glow_px.items[n..][0..n];
+    const prep = self.preparedFor(style);
+    var dark = style;
+    dark.glows = &.{};
+    composeIn(unlit, sd, desk.pixels(), @intCast(desk.w), r, cards, strips, dark, bar, prep);
+    var on = style;
+    const one = [_]pane_elevation.Glow{.{ .card = card, .level = 1 }};
+    on.glows = &one;
+    composeIn(lit, sd, desk.pixels(), @intCast(desk.w), r, cards, strips, on, bar, prep);
+    for (lit, unlit) |*a, b| a.* = unblend(a.*, b);
+    return .{ .rect = r, .px = lit };
+}
+
+/// The premultiplied BGRA pixel P, alpha `a`, with P + (1 - a) B = A for the
+/// opaque pixels `a_px` (over) and `b_px` (under): the least `a` that keeps
+/// every channel of P / a within 0..255.
+fn unblend(a_px: u32, b_px: u32) u32 {
+    var need: u32 = 0;
+    inline for (.{ 0, 8, 16 }) |sh| {
+        const a: u32 = (a_px >> sh) & 0xFF;
+        const b: u32 = (b_px >> sh) & 0xFF;
+        // Brighter than under: the colour can be at most white. Darker: at
+        // least black.
+        const k: u32 = if (a > b) ((a - b) * 255 + (255 - b) - 1) / (255 - b) else if (a < b) ((b - a) * 255 + b - 1) / b else 0;
+        need = @max(need, k);
+    }
+    if (need == 0) return 0;
+    var out: u32 = need << 24;
+    inline for (.{ 0, 8, 16 }) |sh| {
+        const a: i32 = @intCast((a_px >> sh) & 0xFF);
+        const b: i32 = @intCast((b_px >> sh) & 0xFF);
+        const p = a - @divTrunc(b * (255 - @as(i32, @intCast(need))) + 127, 255);
+        out |= @as(u32, @intCast(std.math.clamp(p, 0, @as(i32, @intCast(need))))) << sh;
+    }
+    return out;
 }
 
 /// `comp` onto the window - through `out` on a translucent one (T1852).
@@ -1864,4 +1969,91 @@ test "T2509: a sink takes the whole desk first, then only what a moved card reac
     pd.sink = null;
     pd.forget();
     try testing.expect(pd.memo.dirty(w, h, pd.desk_gen, &cards, &.{}, style, null) == .full);
+}
+
+test "T2574: unblend gives the least alpha that rebuilds the lit pixel over the unlit one" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(u32, 0), unblend(0x00336699, 0x00336699));
+    // Pure white over black is opaque white; a quarter-strength grey over
+    // black is a quarter alpha.
+    try testing.expectEqual(@as(u32, 0xFFFFFFFF), unblend(0x00FFFFFF, 0x00000000));
+    try testing.expectEqual(@as(u32, 0x40404040), unblend(0x00404040, 0x00000000));
+    var seed: u32 = 2574;
+    for (0..20000) |_| {
+        seed = seed *% 1103515245 +% 12345;
+        const a = seed & 0xFFFFFF;
+        seed = seed *% 1103515245 +% 12345;
+        const b = seed & 0xFFFFFF;
+        const p = unblend(a, b);
+        const al: i32 = @intCast(p >> 24);
+        inline for (.{ 0, 8, 16 }) |sh| {
+            const pc: i32 = @intCast((p >> sh) & 0xFF);
+            const bc: i32 = @intCast((b >> sh) & 0xFF);
+            const ac: i32 = @intCast((a >> sh) & 0xFF);
+            try testing.expect(pc <= al);
+            const back = pc + @divTrunc(bc * (255 - al) + 127, 255);
+            try testing.expect(@abs(back - ac) <= 1);
+        }
+    }
+}
+
+test "T2574: the glow layer faded to L over the unlit desk is the desk composed at glow level L" {
+    const testing = std.testing;
+    const w = 420;
+    const h = 260;
+    const dc = w32.CreateCompatibleDC(null) orelse return error.SkipZigTest;
+    defer _ = w32.DeleteDC(dc);
+    const head: color_math.Rgb = .{ .r = 50, .g = 54, .b = 60 };
+    const cards = [_]pane_elevation.Card{
+        .{ .left = 12, .top = 12, .right = 200, .bottom = 248, .head = head, .head_bottom = 40, .head_glass = true },
+        .{ .left = 214, .top = 12, .right = 408, .bottom = 124 },
+        .{ .left = 214, .top = 138, .right = 408, .bottom = 248, .fill = .{ .r = 240, .g = 240, .b = 236 } },
+    };
+    const strips = [_]pane_stack_strip.Band{
+        .{ .tab = .{ .left = 214, .top = 128, .right = 408, .bottom = 136 }, .axis = .vertical, .rgb = .{ .r = 60, .g = 60, .b = 70 }, .leads = false },
+    };
+    const bar: Bar = .{ .core = .{ .left = 203, .top = 100, .right = 211, .bottom = 160 }, .color = .{ .r = 90, .g = 140, .b = 250 }, .strength = .hover };
+    for ([_]bool{ false, true }) |is_light| for ([_]bool{ false, true }) |glass| for ([_]f32{ 1, 1.5 }) |scale| for ([_]usize{ 0, 2 }) |card| {
+        var pd: PaneDesk = .{};
+        defer pd.deinit();
+        const fill: color_math.Rgb = if (is_light) .{ .r = 250, .g = 250, .b = 250 } else .{ .r = 24, .g = 26, .b = 30 };
+        const style: pane_elevation.CardStyle = .{ .fill = fill, .is_light = is_light, .scale = scale, .glass = glass };
+        // The unlit picture, as the compositor's desk carries it.
+        pd.paint(dc, 0, 0, w, h, &cards, &strips, style, null, &.{}, 0, bar, null);
+        const unlit = try testing.allocator.dupe(u32, pd.comp.?.pixels()[0 .. w * h]);
+        defer testing.allocator.free(unlit);
+        const layer = pd.glowLayer(&cards, card, &strips, style, bar) orelse return error.TestUnexpectedResult;
+        const lw: usize = @intCast(layer.rect.right - layer.rect.left);
+        // The layer reaches as far as the glow does: outside it, lit and
+        // unlit are the same picture.
+        try testing.expect(layer.rect.left <= cards[card].left - pane_elevation.glowReachPx(scale));
+        var lit_somewhere = false;
+        for ([_]f32{ 0.25, 0.5, 1 }) |level| {
+            const glows = [_]pane_elevation.Glow{.{ .card = card, .level = level }};
+            var at = style;
+            at.glows = &glows;
+            pd.paint(dc, 0, 0, w, h, &cards, &strips, at, null, &.{}, 0, bar, null);
+            const want = pd.comp.?.pixels();
+            const lv: i32 = @intFromFloat(@round(level * 255));
+            for (0..h) |y| for (0..w) |x| {
+                const i = y * w + x;
+                const inside = x >= layer.rect.left and x < layer.rect.right and y >= layer.rect.top and y < layer.rect.bottom;
+                const p: u32 = if (inside) layer.px[(y - @as(usize, @intCast(layer.rect.top))) * lw + (x - @as(usize, @intCast(layer.rect.left)))] else 0;
+                const pa: i32 = @intCast(p >> 24);
+                if (pa != 0) lit_somewhere = true;
+                inline for (.{ 0, 8, 16 }) |sh| {
+                    const pc: i32 = @intCast((p >> sh) & 0xFF);
+                    const bc: i32 = @intCast((unlit[i] >> sh) & 0xFF);
+                    const wc: i32 = @intCast((want[i] >> sh) & 0xFF);
+                    // What DirectComposition shows: P L + (1 - a L) B.
+                    const got = @divTrunc(pc * lv + 127, 255) + @divTrunc(bc * (255 * 255 - pa * lv) + 255 * 127, 255 * 255);
+                    if (@abs(got - wc) > 3) {
+                        std.debug.print("light={} glass={} scale={d} card={d} level={d}: ({d},{d}) ch{d} got {d} want {d}\n", .{ is_light, glass, scale, card, level, x, y, sh, got, wc });
+                        return error.TestExpectedEqual;
+                    }
+                }
+            };
+        }
+        try testing.expect(lit_somewhere);
+    };
 }

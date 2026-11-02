@@ -53,6 +53,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const comp_tree = @import("../../renderer/comp_tree.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 
 const log = std.log.scoped(.comp_chrome);
 
@@ -198,6 +199,17 @@ const slot_dcomp_rect_clip_set_top = 6;
 const slot_dcomp_rect_clip_set_right = 8;
 const slot_dcomp_rect_clip_set_bottom = 10;
 const slot_dcomp_rect_clip_first_radius = 12;
+// The focus glow's fade (T2574), the same slots `renderer/comp_overlay.zig`
+// fades its layers with: IDCompositionDevice CreateEffectGroup 23,
+// CreateAnimation 25; IDCompositionVisual SetEffect 10; IDCompositionEffectGroup
+// SetOpacity(animation) 3 / (float) 4; IDCompositionAnimation AddCubic 5, End 8.
+const slot_dcomp_device_create_effect_group = 23;
+const slot_dcomp_device_create_animation = 25;
+const slot_dcomp_visual_set_effect = 10;
+const slot_dcomp_effect_set_opacity_anim = 3;
+const slot_dcomp_effect_set_opacity_float = 4;
+const slot_dcomp_anim_add_cubic = 5;
+const slot_dcomp_anim_end = 8;
 // ID3D11DeviceContext (ID3D11DeviceChild 3-6, CopyResource 47).
 const slot_d3d11_context_update_subresource = 48;
 
@@ -599,6 +611,22 @@ pub const Loss = enum {
     }
 };
 
+/// One of the focus glow's layers (T2574): a child of the desk visual, its
+/// own premultiplied surface, and the effect group its opacity fades on.
+pub const GlowVis = struct {
+    visual: ?Obj = null,
+    effect: ?Obj = null,
+    surface: ?Obj = null,
+    w: i32 = 0,
+    h: i32 = 0,
+    x: i32 = 0,
+    y: i32 = 0,
+};
+
+/// One `IDCompositionAnimation::AddCubic` segment, in 0..1 opacity units:
+/// from `begin_s` on, c0 + c1 s + c2 s^2 + c3 s^3 with `s` the seconds since.
+pub const Cubic = comp_overlay.Cubic;
+
 /// One top-level window's chrome host. Created, used and destroyed on the
 /// window's own thread.
 pub const Host = struct {
@@ -677,6 +705,16 @@ pub const Host = struct {
     /// Overlay uploads since the window last read them: whole, rectangles.
     ovl_full: u32 = 0,
     ovl_partial: u32 = 0,
+
+    /// The focus glow's layers (T2574): the lit card's and, mid-move, the
+    /// one it is leaving, each a premultiplied picture under the overlay that
+    /// the compositor fades by its own opacity. Live only with the desk.
+    glows: [2]GlowVis = .{ .{}, .{} },
+    /// Glow uploads since the window last read them.
+    glow_uploads: u32 = 0,
+    /// A step of a glow layer failed on this host; the glow stays in the
+    /// desk until the host is rebuilt.
+    glow_failed: bool = false,
     /// A step of the overlay failed on this host; a window that needs one
     /// keeps its desk on GDI until the host is rebuilt.
     ovl_failed: bool = false,
@@ -1189,6 +1227,106 @@ pub const Host = struct {
         self.ovl_h = 0;
     }
 
+    /// Whether the focus glow can go up as its own layers (T2574): the desk
+    /// is on the compositor and no glow step has failed here.
+    pub fn glowAvailable(self: *const Host) bool {
+        return self.desk_visual != null and !self.glow_failed;
+    }
+
+    /// Glow layer `i`'s `w` x `h` premultiplied pixels, at `(x, y)` in the
+    /// desk's own pixels, under the overlay. Built the first time, at
+    /// opacity 0; `glowFade` shows it. Commits.
+    pub fn glowUpload(self: *Host, i: usize, px: []const u32, x: i32, y: i32, w: i32, h: i32) Error!void {
+        const desk = self.desk_visual orelse return error.Unavailable;
+        if (w <= 0 or h <= 0 or px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
+        const g = &self.glows[i];
+        if (g.visual == null) {
+            stage = "glow-visual";
+            const vis = try self.newVisual();
+            errdefer release(vis);
+            var e: ?Obj = null;
+            try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_effect_group)(self.dcomp, &e));
+            const effect = e orelse return error.ComFailed;
+            errdefer release(effect);
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, effect, slot_dcomp_effect_set_opacity_float)(effect, 0));
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_effect)(vis, effect));
+            // Over the desk's content, under what the painters over it drew:
+            // below the overlay when it is up, else on top (an overlay that
+            // comes later goes on top of it).
+            if (self.ovl_visual) |ovl| {
+                try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, ovl));
+            } else try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 1, null));
+            g.visual = vis;
+            g.effect = effect;
+            g.x = std.math.minInt(i32);
+        }
+        const vis = g.visual.?;
+        if (g.surface == null or w != g.w or h != g.h) {
+            stage = "glow-surface";
+            if (g.surface) |old| release(old);
+            g.surface = null;
+            var surface: ?Obj = null;
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface));
+            const surf = surface orelse return error.ComFailed;
+            errdefer release(surf);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
+            g.surface = surf;
+            g.w = w;
+            g.h = h;
+        }
+        if (x != g.x or y != g.y) {
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, @floatFromInt(x)));
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, @floatFromInt(y)));
+            g.x = x;
+            g.y = y;
+        }
+        stage = "glow-upload";
+        try self.drawRect(g.surface.?, px, w, .{ .left = 0, .top = 0, .right = w, .bottom = h });
+        self.glow_uploads +|= 1;
+        stage = "";
+        try self.commit();
+    }
+
+    /// Fade glow layer `i` from `from` to `to` (0..1) along `curve` over
+    /// `duration_s`, declared in one commit and run by DWM; no step of it
+    /// waits on this thread. A null curve sets `to` at once.
+    pub fn glowFade(self: *Host, i: usize, from: f32, to: f32, curve: ?[]const Cubic, duration_s: f64) Error!void {
+        const e = self.glows[i].effect orelse return error.Unavailable;
+        stage = "glow-fade";
+        defer stage = "";
+        const segs = curve orelse {
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, e, slot_dcomp_effect_set_opacity_float)(e, to));
+            return self.commit();
+        };
+        var made: ?Obj = null;
+        try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_animation)(self.dcomp, &made));
+        const anim = made orelse return error.ComFailed;
+        // The effect keeps its own snapshot of the function once it is set.
+        defer release(anim);
+        const add = slot(*const fn (Obj, f64, f32, f32, f32, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_add_cubic);
+        const span: f64 = to - from;
+        for (segs) |c| try check(add(anim, c.begin_s, @floatCast(from + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)));
+        try check(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_end)(anim, duration_s, to));
+        try check(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, e, slot_dcomp_effect_set_opacity_anim)(e, anim));
+        try self.commit();
+    }
+
+    /// Take glow layer `i` off the compositor.
+    pub fn glowHide(self: *Host, i: usize) void {
+        const g = &self.glows[i];
+        const vis = g.visual orelse return;
+        if (self.desk_visual) |desk| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_remove_visual)(desk, vis);
+        self.commit() catch {};
+        releaseGlow(g);
+    }
+
+    fn releaseGlow(g: *GlowVis) void {
+        if (g.surface) |s| release(s);
+        if (g.effect) |e| release(e);
+        if (g.visual) |v| release(v);
+        g.* = .{};
+    }
+
     /// One rectangle of a `w`-wide buffer into `surf`. A surface may live in
     /// an atlas, so the rows land at the offset `BeginDraw` hands back.
     fn drawRect(self: *Host, surf: Obj, px: []const u32, w: i32, r: Rect) Error!void {
@@ -1328,6 +1466,7 @@ pub const Host = struct {
     fn releaseDesk(self: *Host) void {
         self.releaseCap();
         self.releaseOvl();
+        for (&self.glows) |*g| releaseGlow(g);
         if (self.root_visual) |r| release(r);
         self.root_visual = null;
         if (self.desk_surface) |s| release(s);
