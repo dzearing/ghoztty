@@ -1556,75 +1556,13 @@ struct MachineChooserView: View {
     /// actions and stay relay-only (WP-C2).
     @ViewBuilder
     private func managementActions(for machine: Machine) -> some View {
-        Button("Host Settings…") { promptHostSettings(machine) }
+        Button("Host Settings…") { MachineHostSettings.prompt(machine) }
         if machine.isRelay {
             Divider()
             Button("Rename…") { promptRename(machine) }
             Divider()
             Button("Remove from Account…", role: .destructive) { confirmRemove(machine) }
         }
-    }
-
-    /// Shell presets offered in the host-settings combo box: the Windows
-    /// shells the agent has per-shell argv conventions for (cmd `/c`,
-    /// powershell/pwsh `-Command`, wsl `--` — see pty_child.zig), plus common
-    /// POSIX shells. The combo box is editable, so any other path can be
-    /// typed as free text.
-    private static let shellPresets: [String] = [
-        "cmd.exe",
-        "powershell.exe",
-        "pwsh.exe",
-        "wsl.exe",
-        "/bin/bash",
-        "/bin/zsh",
-    ]
-
-    /// Edit the per-host defaults (working directory + shell) for new remote
-    /// sessions on `machine`. NSAlert-based like `promptRename` (the chooser
-    /// panel runs an AppKit modal session). Empty fields mean "use the
-    /// remote's own default" — saving them clears the stored setting.
-    private func promptHostSettings(_ machine: Machine) {
-        let current = machine.settings
-
-        let alert = NSAlert()
-        alert.messageText = "Host Settings for “\(machine.name)”"
-        alert.informativeText = "Defaults for new terminals on this machine. Both are values on the remote machine (e.g. wsl.exe or C:\\dev on a Windows host). Leave a field empty to use the remote's own default."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-
-        let labelWidth: CGFloat = 120
-        let fieldWidth: CGFloat = 240
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: labelWidth + 8 + fieldWidth, height: 62))
-
-        let wdLabel = NSTextField(labelWithString: "Working directory:")
-        wdLabel.alignment = .right
-        wdLabel.frame = NSRect(x: 0, y: 38, width: labelWidth, height: 18)
-        let wdField = NSTextField(frame: NSRect(x: labelWidth + 8, y: 34, width: fieldWidth, height: 24))
-        wdField.placeholderString = "Remote default"
-        wdField.stringValue = current.workingDirectory ?? ""
-
-        let shellLabel = NSTextField(labelWithString: "Shell:")
-        shellLabel.alignment = .right
-        shellLabel.frame = NSRect(x: 0, y: 6, width: labelWidth, height: 18)
-        let shellCombo = NSComboBox(frame: NSRect(x: labelWidth + 8, y: 0, width: fieldWidth, height: 26))
-        shellCombo.addItems(withObjectValues: Self.shellPresets)
-        shellCombo.placeholderString = "Remote default"
-        shellCombo.stringValue = current.shell ?? ""
-        shellCombo.completes = true
-
-        container.addSubview(wdLabel)
-        container.addSubview(wdField)
-        container.addSubview(shellLabel)
-        container.addSubview(shellCombo)
-        alert.accessoryView = container
-        alert.window.initialFirstResponder = wdField
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        MachineSettingsStore.set(
-            MachineSettings(
-                workingDirectory: wdField.stringValue,
-                shell: shellCombo.stringValue),
-            for: machine.settingsKey)
     }
 
     /// Ask for confirmation, then delete the device from the relay account
@@ -2091,5 +2029,72 @@ enum MachineChooser {
         // Falls back to polling by itself against an older agent, so there is no
         // branch here.
         browser.subscribeLocalPush()
+    }
+}
+
+/// The per-host defaults prompt, shared by the machine chooser's row menu and
+/// Settings → Remote Machines.
+enum MachineHostSettings {
+    /// Shell presets offered in the host-settings combo box: the Windows
+    /// shells the agent has per-shell argv conventions for (cmd `/c`,
+    /// powershell/pwsh `-Command`, wsl `--` — see pty_child.zig), plus common
+    /// POSIX shells. The combo box is editable, so any other path can be
+    /// typed as free text.
+    static let shellPresets: [String] = [
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "wsl.exe",
+        "/bin/bash",
+        "/bin/zsh",
+    ]
+
+    /// Edit the per-host defaults (working directory + shell) for new remote
+    /// sessions on `machine`. NSAlert-based so it works from the chooser panel's AppKit modal session
+    /// and from the Settings window alike. Empty fields mean "use the
+    /// remote's own default" — saving them clears the stored setting.
+    @MainActor
+    static func prompt(_ machine: Machine) {
+        let current = machine.settings
+
+        let alert = NSAlert()
+        alert.messageText = "Host Settings for “\(machine.name)”"
+        alert.informativeText = "Defaults for new terminals on this machine. Both are values on the remote machine (e.g. wsl.exe or C:\\dev on a Windows host). Leave a field empty to use the remote's own default."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let labelWidth: CGFloat = 120
+        let fieldWidth: CGFloat = 240
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: labelWidth + 8 + fieldWidth, height: 62))
+
+        let wdLabel = NSTextField(labelWithString: "Working directory:")
+        wdLabel.alignment = .right
+        wdLabel.frame = NSRect(x: 0, y: 38, width: labelWidth, height: 18)
+        let wdField = NSTextField(frame: NSRect(x: labelWidth + 8, y: 34, width: fieldWidth, height: 24))
+        wdField.placeholderString = "Remote default"
+        wdField.stringValue = current.workingDirectory ?? ""
+
+        let shellLabel = NSTextField(labelWithString: "Shell:")
+        shellLabel.alignment = .right
+        shellLabel.frame = NSRect(x: 0, y: 6, width: labelWidth, height: 18)
+        let shellCombo = NSComboBox(frame: NSRect(x: labelWidth + 8, y: 0, width: fieldWidth, height: 26))
+        shellCombo.addItems(withObjectValues: shellPresets)
+        shellCombo.placeholderString = "Remote default"
+        shellCombo.stringValue = current.shell ?? ""
+        shellCombo.completes = true
+
+        container.addSubview(wdLabel)
+        container.addSubview(wdField)
+        container.addSubview(shellLabel)
+        container.addSubview(shellCombo)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = wdField
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        MachineSettingsStore.set(
+            MachineSettings(
+                workingDirectory: wdField.stringValue,
+                shell: shellCombo.stringValue),
+            for: machine.settingsKey)
     }
 }

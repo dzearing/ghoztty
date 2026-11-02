@@ -57,6 +57,12 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
         return nil
     }
 
+    /// This pane's latest close, while its release is pending
+    /// (`ClosedPaneRelease`): an undone close that is closed again starts
+    /// a new undo window, which a release scheduled by the first must not cut
+    /// short.
+    var pendingRelease: UUID?
+
     /// The NSView that is actually mounted in the window for this pane.
     var contentView: NSView {
         switch content {

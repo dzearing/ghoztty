@@ -64,8 +64,7 @@ struct HeroModeView: View {
                         // there, so the divider tracks the pointer rather than
                         // integrating per-tick deltas. Dragging right shrinks the
                         // carousel, which sits on the right.
-                        state.carouselRatio = startRatio - delta / geo.size.width
-                        state.clampCarouselRatio()
+                        state.resizeCarousel(to: startRatio - delta / geo.size.width)
                         state.scrollOffset = 0
                     },
                     onDragEnded: { isDividerDragging = false },

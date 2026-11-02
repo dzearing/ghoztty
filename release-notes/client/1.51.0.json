@@ -1,0 +1,14 @@
+{
+  "version": "1.51.0",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "Make groups from the sidebar", "text": "Right-click a window in the all-windows list and choose Create Group… to name a group right there. Move to Group and Remove from Group move windows between groups without retyping their titles." },
+        { "title": "Renames keep the group", "text": "Renaming a grouped window edits just its own name, so you can't ungroup it by accident. Type a group: prefix to move it to another group on purpose." },
+        { "title": "An Ungrouped section", "text": "Once you have a group, windows without one gather under an Ungrouped header at the top. Use its + for a new window, × to close them, or Rename to turn them all into a group." },
+        { "title": "Steadier group drags", "text": "A window dragged past the end of a group stays in that group; it only leaves when you drag it up among the ungrouped windows. The group you're dropping into glows softly, and only in the window you're dragging in." }
+      ]
+    }
+  ]
+}

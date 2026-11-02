@@ -1,0 +1,26 @@
+{
+  "version": "1.52.0",
+  "sections": [
+    {
+      "title": "Settings",
+      "items": [
+        { "title": "A real Settings window", "text": "⌘, (Preferences…) now opens a Settings window laid out like System Settings: Appearance with a live preview and a light/dark theme picker, Panes & Windows, Terminal, Keyboard, Sessions & Agent, Remote Machines, Updates, and every other option under Advanced. Search finds any setting. Each row explains itself, marks what you've changed, and can reset to the default." },
+        { "title": "Your config file stays yours", "text": "Each change edits just that one line of your config file, keeping your comments and layout. Ghoztty checks the value before writing it, applies it right away, and backs the file up first. Open Config File… is still one click away." },
+        { "title": "New options", "text": "Choose the window gradient, how the pane sidebar starts (remember, expanded, collapsed or hidden), the smallest a pane can get before panes stack, and how much room hero mode's carousel takes." }
+      ]
+    },
+    {
+      "title": "Keyboard shortcuts",
+      "items": [
+        { "title": "Shortcut guide", "text": "Press ⌘/ (or Help → Keyboard Shortcuts, or the command palette) to see every shortcut you have, including the ones you changed, grouped and named in plain language. Search by name or by keys, click a shortcut to run it, or print a cheat sheet." }
+      ]
+    },
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "All windows by default", "text": "The sidebar opens showing all windows, and remembers if you switch to just this window." },
+        { "title": "Steadier edge drags", "text": "Dragging the sidebar's edge no longer makes the card or a tucking strip flicker." }
+      ]
+    }
+  ]
+}

@@ -9200,6 +9200,14 @@ pub fn performAction(
             },
         },
 
+        // The keyboard shortcut guide (main 1b7ebbcc8). The window is T2591;
+        // until it lands the binding falls through rather than claiming it
+        // did something (GTK does the same).
+        .show_keyboard_shortcuts => {
+            log.info("show_keyboard_shortcuts is not implemented yet (T2591)", .{});
+            return false;
+        },
+
         // Acknowledge actions that don't need Win32-specific handling.
         // The core handles the logic; we just confirm receipt.
         .cell_size,

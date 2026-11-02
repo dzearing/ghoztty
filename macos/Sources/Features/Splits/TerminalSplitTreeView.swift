@@ -184,6 +184,9 @@ private struct PaneGrid: View {
     let action: (TerminalSplitOperation) -> Void
 
     private var paneGap: CGFloat? { PaneElevation.paneGap(for: ghostty.config.macosPaneStyle) }
+    /// `macos-pane-min-width` / `-height`: read per layout pass, so a config
+    /// reload restacks on the next one.
+    private var paneMinimum: CGSize { ghostty.config.paneMinimumSize }
     private var isElevated: Bool { ghostty.config.macosPaneStyle == .elevated }
 
     var body: some View {
@@ -191,7 +194,7 @@ private struct PaneGrid: View {
             let layout = PaneLayout.compute(
                 node,
                 in: CGRect(origin: .zero, size: geo.size),
-                metrics: .forStyle(paneGap: paneGap),
+                metrics: .forStyle(paneGap: paneGap, minimumPaneSize: paneMinimum),
                 rank: { ranks[$0.id] },
                 pin: { pins[$0] },
                 shares: { shares[$0] },
@@ -208,11 +211,11 @@ private struct PaneGrid: View {
             // WEAKLY here: captured strongly, the state retained itself, and
             // through `node` every pane of the tree — a closed window's
             // panes, terminals and render targets were never freed.
-            let _ = slots == nil ? stackState.noteGrid { [node, size = geo.size, paneGap, ranks, weak stackState] in
+            let _ = slots == nil ? stackState.noteGrid { [node, size = geo.size, paneGap, paneMinimum, ranks, weak stackState] in
                 PaneLayout.compute(
                     node,
                     in: CGRect(origin: .zero, size: size),
-                    metrics: .forStyle(paneGap: paneGap),
+                    metrics: .forStyle(paneGap: paneGap, minimumPaneSize: paneMinimum),
                     rank: { ranks[$0.id] },
                     pin: { stackState?.pins[$0] },
                     shares: { stackState?.shares[$0] },

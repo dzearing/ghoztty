@@ -913,6 +913,13 @@ pub const Action = union(enum) {
     /// Only implemented on macOS.
     check_for_updates,
 
+    /// Open the keyboard shortcut guide: a searchable window listing every
+    /// effective keybinding (defaults merged with your config), grouped by
+    /// category, with customized bindings marked.
+    ///
+    /// Only implemented on macOS.
+    show_keyboard_shortcuts,
+
     /// Undo the last undoable action for the focused surface or terminal,
     /// if possible. This can undo actions such as closing tabs or
     /// windows.
@@ -1383,6 +1390,7 @@ pub const Action = union(enum) {
             .toggle_quick_terminal,
             .toggle_visibility,
             .check_for_updates,
+            .show_keyboard_shortcuts,
             .show_gtk_inspector,
             => .app,
 
@@ -1522,6 +1530,7 @@ pub const Action = union(enum) {
             .toggle_quick_terminal,
             .toggle_visibility,
             .check_for_updates,
+            .show_keyboard_shortcuts,
             .show_gtk_inspector,
             .new_window,
             .undo,

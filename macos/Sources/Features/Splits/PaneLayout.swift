@@ -44,10 +44,12 @@ enum PaneLayout {
         /// The smallest a pane may be before its row starts stacking.
         var minimumPaneSize: CGSize
 
-        /// The size floor: 225pt is about 26 columns of a typical font and
-        /// 125pt about seven rows — narrow, but still a terminal you can read
-        /// a prompt and its output in. (It was 300×200, which stacked a row
-        /// sooner than people wanted.)
+        /// The default size floor (`macos-pane-min-width` /
+        /// `macos-pane-min-height`, read as `Ghostty.Config.paneMinimumSize`):
+        /// 225pt is about 26 columns of a typical font and 125pt about seven
+        /// rows — narrow, but still a terminal you can read a prompt and its
+        /// output in. (It was 300×200, which stacked a row sooner than people
+        /// wanted.)
         static let minimumPaneSize = CGSize(width: 225, height: 125)
 
         /// A tucked card shows this much of itself: room for the vertical title
@@ -87,7 +89,10 @@ enum PaneLayout {
         /// the panes either side, and an edge click there would resize.
         static let flatGap: CGFloat = 6
 
-        static func forStyle(paneGap: CGFloat?) -> Metrics {
+        /// The metrics for a pane style (`paneGap` nil = flat) and the
+        /// configured minimum. The grid and the stashed-pane slots both build
+        /// theirs here from the same config, so they always agree.
+        static func forStyle(paneGap: CGFloat?, minimumPaneSize: CGSize = Metrics.minimumPaneSize) -> Metrics {
             Metrics(gap: paneGap ?? flatGap, peek: peek, minimumPaneSize: minimumPaneSize)
         }
     }

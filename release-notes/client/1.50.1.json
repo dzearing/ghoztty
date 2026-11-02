@@ -1,0 +1,14 @@
+{
+  "version": "1.50.1",
+  "sections": [
+    {
+      "title": "Memory and processes",
+      "items": [
+        { "title": "Closed windows give their memory back", "text": "Closing a window frees everything in it again — about 100 MB per window, which since v1.44.0 stayed in use until you quit." },
+        { "title": "Closing a pane ends what it was running", "text": "A closed split's shell or session now exits once the close can no longer be undone (5 seconds by default, set by undo-timeout), instead of lingering until the window's layout changed again." },
+        { "title": "Hidden windows use less memory", "text": "A window that's covered, minimized, or on another Space drops its spare rendering buffers and picks up where it left off when you come back." },
+        { "title": "Fewer things left running", "text": "Pane animations and failed viewer opens no longer keep running after the pane is gone." }
+      ]
+    }
+  ]
+}

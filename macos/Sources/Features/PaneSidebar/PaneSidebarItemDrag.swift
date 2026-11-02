@@ -107,22 +107,22 @@ enum PaneSidebarCrossDrop {
     }
 
     /// Where it lands at slot `slot` of `rows` — the list without it, closed
-    /// up where it left — with its top at `top`. Right under a header, or
-    /// between two of a group's windows, it joins that group. Just after a
-    /// group's last window (or a folded group's header) it could be either:
-    /// held in the upper half of that slot it joins the group's end, in the
-    /// lower half it lands after the group, at the top level.
-    static func destination(rows: [Row], slot: Int, top: CGFloat) -> Destination {
+    /// up where it left. Right under a header, between two of a group's
+    /// windows, or past a group's end (its last window, or a folded group's
+    /// header) it is in that group: the ungrouped windows lead the list
+    /// (`PaneSidebarWindowGrouping.lonesFirst`), so a top-level slot after a
+    /// group could only land up among them — a jump nobody dragged to. (It
+    /// was split at the slot's middle, lower half out of the group: a
+    /// group's last window grabbed starts in that lower half, and wanted
+    /// out at once.) Out of a group is up among the ungrouped windows, or
+    /// above the first group when there are none.
+    static func destination(rows: [Row], slot: Int) -> Destination {
         let slot = Swift.min(Swift.max(slot, 0), rows.count)
         let before = rows[..<slot]
-        let topLevel = Destination.topLevel(index: before.filter { $0.isHeader || $0.project == nil }.count)
-        guard let prev = before.last, let project = prev.project else { return topLevel }
-        let join = Destination.group(project, index: before.filter { !$0.isHeader && $0.project == project }.count)
-        let next = slot < rows.count ? rows[slot] : nil
-        if let next, !next.isHeader, next.project == project { return join }
-        // The slot runs from that last row's top to its bottom (and the
-        // list's end clamps it there): split at its middle.
-        return top < prev.frame.midY ? join : topLevel
+        guard let prev = before.last, let project = prev.project else {
+            return .topLevel(index: before.filter { $0.isHeader || $0.project == nil }.count)
+        }
+        return .group(project, index: before.filter { !$0.isHeader && $0.project == project }.count)
     }
 
     /// `destination` at `slot`, kept out of the groups' band: a window let
@@ -434,7 +434,7 @@ final class PaneSidebarItemDrag: ObservableObject {
         let middle = top + frame.height / 2
         let pointed = others.filter { $0.frame.midY < middle }.count
         let (destination, slot) = PaneSidebarCrossDrop.banded(
-            PaneSidebarCrossDrop.destination(rows: others, slot: pointed, top: top), slot: pointed, rows: others)
+            PaneSidebarCrossDrop.destination(rows: others, slot: pointed), slot: pointed, rows: others)
         if slot != target { target = slot }
         if destination != self.destination { self.destination = destination }
         // Joining a group it is not in already: its header says so.
@@ -636,8 +636,14 @@ final class PaneSidebarItemDragView: HoverTrackingView {
     var onBegin: ((CGFloat) -> Void)?
     var onMove: ((CGFloat) -> Void)?
     var onEnd: ((Bool) -> Void)?
+    /// Its right-click menu, built as it opens; nil for none.
+    var menuProvider: (() -> NSMenu?)?
 
     private var downLocation: NSPoint?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        menuProvider?() ?? super.menu(for: event)
+    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -706,6 +712,7 @@ struct PaneSidebarItemDragSource: NSViewRepresentable {
     let siblings: [String]
     let controller: BaseTerminalController
     let help: String
+    var menu: (() -> NSMenu?)?
     let onClick: () -> Void
 
     func makeNSView(context: Context) -> PaneSidebarItemDragView {
@@ -722,6 +729,7 @@ struct PaneSidebarItemDragSource: NSViewRepresentable {
         let (key, siblings, controller) = (key, siblings, controller)
         view.toolTip = help
         view.onClick = onClick
+        view.menuProvider = menu
         view.onBegin = { y in
             PaneSidebarItemDrag.shared.begin(key, siblings: siblings, in: controller, screenY: y)
         }
@@ -733,7 +741,7 @@ struct PaneSidebarItemDragSource: NSViewRepresentable {
 extension View {
     /// Makes a window row or project header clickable and draggable
     /// everywhere but its leading `leading` and trailing `trailing` points,
-    /// where its own controls are.
+    /// where its own controls are. `menu` builds its right-click menu.
     func paneSidebarItemDrag(
         key: String,
         siblings: [String],
@@ -741,11 +749,12 @@ extension View {
         leading: CGFloat,
         trailing: CGFloat,
         help: String,
+        menu: (() -> NSMenu?)? = nil,
         onClick: @escaping () -> Void
     ) -> some View {
         modifier(PaneSidebarItemDragOverlay(
             key: key, siblings: siblings, controller: controller,
-            leading: leading, trailing: trailing, help: help, onClick: onClick))
+            leading: leading, trailing: trailing, help: help, menu: menu, onClick: onClick))
     }
 }
 
@@ -756,6 +765,7 @@ private struct PaneSidebarItemDragOverlay: ViewModifier {
     let leading: CGFloat
     let trailing: CGFloat
     let help: String
+    let menu: (() -> NSMenu?)?
     let onClick: () -> Void
 
     @Environment(\.paneSidebarInteractive) private var isInteractive
@@ -763,12 +773,14 @@ private struct PaneSidebarItemDragOverlay: ViewModifier {
 
     func body(content: Content) -> some View {
         content.overlay {
-            // Renamed in place: the field takes the clicks.
-            if isInteractive && rename.editing != key {
+            // Renamed in place (or named into a new group): the field takes
+            // the clicks.
+            if isInteractive && !rename.isEditing(key) {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: leading).allowsHitTesting(false)
                     PaneSidebarItemDragSource(
-                        key: key, siblings: siblings, controller: controller, help: help, onClick: onClick)
+                        key: key, siblings: siblings, controller: controller, help: help, menu: menu,
+                        onClick: onClick)
                     Color.clear.frame(width: trailing).allowsHitTesting(false)
                 }
             }
@@ -843,18 +855,23 @@ struct PaneSidebarLiftBacking: View {
     }
 }
 
-/// A project header while a window is dragged into its group: outlined in
-/// the accent color, so a drop just past its last window reads as joining
-/// it rather than landing after it (`PaneSidebarCrossDrop.destination`).
+/// A project header while a window is dragged into its group: lit with a
+/// soft accent wash and glow (no outline), so a drop just past its last
+/// window reads as joining it rather than landing after it
+/// (`PaneSidebarCrossDrop.destination`). Only in the window dragged in:
+/// the drag is shared, but other windows' lists sit still.
 struct PaneSidebarJoinHighlight: ViewModifier {
     let project: String
     @ObservedObject var motion: PaneSidebarItemDragMotion
+    let isActive: Bool
 
     func body(content: Content) -> some View {
-        let joins = motion.joining == project
-        content.overlay {
+        let joins = isActive && motion.joining == project
+        let accent = Color(nsColor: .controlAccentColor)
+        content.background {
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
-                .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: 2)
+                .fill(accent.opacity(0.22))
+                .shadow(color: accent.opacity(0.45), radius: 6)
                 .padding(.horizontal, SidePanelRow.fillInset)
                 .opacity(joins ? 1 : 0)
                 .animation(.easeOut(duration: 0.12), value: joins)

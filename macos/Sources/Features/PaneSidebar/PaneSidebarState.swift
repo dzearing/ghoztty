@@ -12,9 +12,10 @@ import SwiftUI
 ///   sidebar column, so they persist (UserDefaults). Each window still applies
 ///   its own presentation rule on top: a window under 720pt shows the rail
 ///   whatever `isExpanded` says (`PaneSidebarState.mode`).
-/// - **The all-windows list** — the scope, the search, the folds, the custom
-///   order of windows and project groups (`windowOrder`, persisted), and the
-///   scroll position (`PaneSidebarScrollSync`).
+/// - **The all-windows list** — the scope (persisted, on by default), the
+///   search, the folds, the custom order of windows and project groups
+///   (`windowOrder`, persisted), and the scroll position
+///   (`PaneSidebarScrollSync`).
 @MainActor
 final class PaneSidebarSharedState: ObservableObject {
     /// A test host keeps its own throwaway store: window tests hide and
@@ -27,12 +28,47 @@ final class PaneSidebarSharedState: ObservableObject {
 
     /// The full list (true) or the icon-only rail (false).
     @Published var isExpanded: Bool {
-        didSet { if isExpanded != oldValue { defaults.set(isExpanded, forKey: Self.expandedKey) } }
+        didSet {
+            if isExpanded != oldValue && !isApplyingStart { defaults.set(isExpanded, forKey: Self.expandedKey) }
+        }
     }
 
     /// Hidden outright (Ctrl+Cmd+S).
     @Published var isHidden: Bool {
-        didSet { if isHidden != oldValue { defaults.set(isHidden, forKey: Self.hiddenKey) } }
+        didSet { if isHidden != oldValue && !isApplyingStart { defaults.set(isHidden, forKey: Self.hiddenKey) } }
+    }
+
+    /// `applyStart` is setting the flags: what the config forces is not
+    /// what the user last left, so it is not remembered.
+    private var isApplyingStart = false
+
+    /// The `macos-pane-sidebar` value last applied (`applyStart`).
+    private(set) var appliedStart: Ghostty.Config.MacOSPaneSidebar?
+
+    /// Start the sidebar as `macos-pane-sidebar` says: at launch, and again
+    /// when a config reload CHANGES the value (a reload that leaves it alone
+    /// must not undo the user's toggles since). `remember` leaves the flags
+    /// as the defaults had them. A forced state is not written to the
+    /// defaults, so `remember` still has the user's own last choice; a
+    /// toggle afterwards is written as always. `hidden` keeps the
+    /// remembered expanded/rail choice for when the sidebar is shown again.
+    func applyStart(_ start: Ghostty.Config.MacOSPaneSidebar) {
+        guard start != appliedStart else { return }
+        appliedStart = start
+        isApplyingStart = true
+        defer { isApplyingStart = false }
+        switch start {
+        case .remember:
+            break
+        case .expanded:
+            isHidden = false
+            isExpanded = true
+        case .collapsed:
+            isHidden = false
+            isExpanded = false
+        case .hidden:
+            isHidden = true
+        }
     }
 
     /// The expanded panel's width. Written to the defaults once an edge drag
@@ -49,9 +85,13 @@ final class PaneSidebarSharedState: ObservableObject {
     }
     private var widthWrite: DispatchWorkItem?
 
-    /// List panes from every window, grouped by window. Off at launch.
-    @Published var showsAllWindows: Bool = false {
+    /// List panes from every window, grouped by window. On at launch unless
+    /// the user last left it off: the scope persists (`allWindowsKey`), its
+    /// search and folds do not — a launch starts every window folded, as
+    /// turning it on does (`setShowsAllWindows`).
+    @Published var showsAllWindows: Bool {
         didSet {
+            if showsAllWindows != oldValue { defaults.set(showsAllWindows, forKey: Self.allWindowsKey) }
             // A filter belongs to one look at every window, not to the next
             // one — and so do the window folds: each look starts from the
             // default.
@@ -79,6 +119,10 @@ final class PaneSidebarSharedState: ObservableObject {
 
     /// Folded project groups in the all-windows list, by project name.
     @Published var foldedProjects: Set<String> = []
+
+    /// The Ungrouped header (`PaneSidebarWindowGrouping.headsUngrouped`) is
+    /// folded: apart from `foldedProjects`, whose names are anyone's.
+    @Published var isUngroupedFolded = false
 
     /// Another window's row (`windowID`) or pane row (pane id) just clicked
     /// in the all-windows list: drawn selected at once, in the window it was
@@ -109,6 +153,7 @@ final class PaneSidebarSharedState: ObservableObject {
         let stored = defaults.double(forKey: Self.widthKey)
         width = stored > 0 ? PaneSidebarState.clampWidth(CGFloat(stored)) : PaneSidebarState.defaultWidth
         windowOrder = defaults.stringArray(forKey: Self.windowOrderKey) ?? []
+        showsAllWindows = defaults.object(forKey: Self.allWindowsKey) as? Bool ?? true
     }
 
     /// The all-windows toggle. Turning it on folds every window to its row —
@@ -128,6 +173,7 @@ final class PaneSidebarSharedState: ObservableObject {
     static let hiddenKey = "PaneSidebarHidden"
     static let widthKey = "PaneSidebarWidth"
     static let windowOrderKey = "PaneSidebarWindowOrder"
+    static let allWindowsKey = "PaneSidebarShowsAllWindows"
 
     nonisolated static func storedExpanded(_ defaults: UserDefaults) -> Bool {
         defaults.object(forKey: expandedKey) as? Bool
@@ -211,6 +257,12 @@ final class PaneSidebarState: ObservableObject {
     var foldedProjects: Set<String> {
         get { shared.foldedProjects }
         set { change { shared.foldedProjects = newValue } }
+    }
+
+    /// The Ungrouped header folded. Shared.
+    var isUngroupedFolded: Bool {
+        get { shared.isUngroupedFolded }
+        set { change { shared.isUngroupedFolded = newValue } }
     }
 
     /// This window in the all-windows list: what its fold and its place in
@@ -765,6 +817,65 @@ enum PaneSidebarWindowGrouping {
             order[index] = key(project: name)
         }
         return order
+    }
+
+    /// The order to keep while the ungrouped windows are made group `name`
+    /// (each retitled `<name>: <title>`, the Ungrouped header renamed): the
+    /// list as shown, the new group where they were — first among the
+    /// groups — and its windows in their order. Named as an existing group,
+    /// they join it, ahead of its windows.
+    static func renaming<ID: Hashable>(ungroupedTo name: String, in sections: [Section<ID>]) -> [String] {
+        var order = pinned(sections)
+        guard !name.isEmpty, !order.contains(key(project: name)),
+              let first = sections.first(where: { $0.project == nil })?.windows.first,
+              let index = order.firstIndex(of: first.key)
+        else { return order }
+        order.insert(key(project: name), at: index)
+        return order
+    }
+
+    /// The ungrouped windows get a header of their own (`Ungrouped`) only
+    /// beside a group: with no group the list is all lone windows, and a
+    /// header over all of it would say nothing.
+    static func headsUngrouped<ID: Hashable>(_ sections: [Section<ID>]) -> Bool {
+        sections.contains { $0.project != nil } && sections.contains { $0.project == nil }
+    }
+
+    /// A window's own name: the part after its `<project>: `, else its
+    /// whole title.
+    static func name(of title: String) -> String {
+        split(title)?.worktree ?? title
+    }
+
+    /// `title` moved into group `project` — or, nil, out of any — its own
+    /// name (`name(of:)`) kept. Nil when `project` can't head a group (empty,
+    /// too long, a `: ` of its own): the title would not read back into it.
+    static func title(_ title: String, inGroup project: String?) -> String? {
+        let name = name(of: title)
+        guard let project = project?.trimmingCharacters(in: .whitespaces) else { return name }
+        let titled = "\(project): \(name)"
+        return split(titled)?.project == project ? titled : nil
+    }
+
+    /// The groups window `title` can be moved to (Move to Group): every
+    /// group in the list but its own, as listed.
+    static func groups<ID: Hashable>(movingTo title: String, in sections: [Section<ID>]) -> [String] {
+        let own = split(title)?.project
+        return sections.compactMap(\.project).filter { $0 != own }
+    }
+
+    /// What a window's rename field commits, or nil for nothing to change.
+    /// A grouped window's field holds its name alone, so its `<project>: `
+    /// is kept, and an empty name changes nothing — leaving a group is its
+    /// own action, never a slip of the field. A `<project>: ` typed in names
+    /// the group outright, moving the window there. An ungrouped window's
+    /// holds its whole title, and empty ("") goes back to following the
+    /// window's own title.
+    static func renamed(_ title: String, name: String) -> String? {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard let project = split(title)?.project else { return name == title ? nil : name }
+        let renamed = split(name) == nil ? "\(project): \(name)" : name
+        return name.isEmpty || renamed == title ? nil : renamed
     }
 
     /// Finder's order: case-insensitive, numbers by value ("wt-2" before

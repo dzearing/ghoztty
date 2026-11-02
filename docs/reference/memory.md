@@ -39,14 +39,28 @@ the audit worktree; methodology there).
 - Run-loop timers and app-wide event monitors outlive their owner unless
   stopped: a repeating timer's block must invalidate itself once its weak owner
   is gone (`PaneStageView.startGlideTimer`, `PaneSidebarCardGlide.start`).
-- Test: `PaneTeardownTests` (window close, failed viewer insert, freed glide).
+- **A closed terminal frees its core when its close can no longer be undone**
+  (`undo-timeout` past), not when its view deinits: `ClosedPaneRelease`,
+  scheduled from `surfaceTreeDidChange` for every leaf the close plan closes,
+  calls `SurfaceView.releaseClosedSurface()` — the child process exits (or
+  the agent session closes, per the close intent), and the IO/renderer
+  threads and render targets go. A pane back in any window's tree by then
+  (undone, moved) is left alone; a pane closed again restarts the clock
+  (`PaneView.pendingRelease`).
+- Test: `PaneTeardownTests` (window close, closed split while its view is
+  held, undone close, failed viewer insert, freed glide).
 
 ### Known, not fixed
 
-- **Closing a split keeps up to ~2 of that window's closed panes alive until
-  the window closes.** Bounded (does not grow with churn), present at least
-  since v1.30.0, and the owner is invisible to `leaks` (SwiftUI-held). Not the
-  undo stack (`undo-timeout=0` keeps it), not the pane sidebar.
+- **Closing a split leaves up to ~2 of that window's closed pane views
+  alive until the window's tree next changes shape** (or the window closes).
+  Present at least since v1.30.0. The chain runs pane ← its leaf node ← an
+  old split node ← memory `leaks` cannot attribute (SwiftUI's attribute
+  graph, by its pages). Not the undo stack, not the pane sidebar, not
+  `layoutGrid`, not the view hierarchy. Since the core is released on the
+  close's clock (above), what stays is an inert view of a few KB — no
+  process, threads or render targets. Viewer panes are NOT covered by that
+  release: a held closed viewer keeps its WebContent process.
 
 ## Hidden windows drop their render targets
 

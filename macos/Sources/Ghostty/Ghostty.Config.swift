@@ -415,6 +415,65 @@ extension Ghostty {
         /// same rule (it stops drawing the terminal's background).
         var paneGlass: Bool { macosPaneStyle == .elevated && macosPaneGlass }
 
+        /// `macos-window-gradient`: the gradient a window opened by hand gets
+        /// in the elevated style (`PaneDeskVariant.forNewWindow`).
+        var macosWindowGradient: MacOSWindowGradient {
+            let defaultValue = MacOSWindowGradient.default
+            guard let config = self.config else { return defaultValue }
+            var v: UnsafePointer<Int8>?
+            let key = "macos-window-gradient"
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return defaultValue }
+            guard let ptr = v else { return defaultValue }
+            return MacOSWindowGradient(rawValue: String(cString: ptr)) ?? defaultValue
+        }
+
+        /// `macos-pane-sidebar`: how the shared pane sidebar starts
+        /// (`PaneSidebarSharedState.applyStart`).
+        var macosPaneSidebar: MacOSPaneSidebar {
+            let defaultValue = MacOSPaneSidebar.default
+            guard let config = self.config else { return defaultValue }
+            var v: UnsafePointer<Int8>?
+            let key = "macos-pane-sidebar"
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return defaultValue }
+            guard let ptr = v else { return defaultValue }
+            return MacOSPaneSidebar(rawValue: String(cString: ptr)) ?? defaultValue
+        }
+
+        /// `macos-pane-min-width` × `macos-pane-min-height`: the smallest a
+        /// pane may be before its row stacks (`PaneLayout.Metrics`). The core
+        /// clamps both on load; clamped again here so a value from any
+        /// source stays in range.
+        var paneMinimumSize: CGSize {
+            let fallback = PaneLayout.Metrics.minimumPaneSize
+            guard let config = self.config else { return fallback }
+            var width = CUnsignedInt(fallback.width)
+            var height = CUnsignedInt(fallback.height)
+            let widthKey = "macos-pane-min-width"
+            let heightKey = "macos-pane-min-height"
+            _ = ghostty_config_get(config, &width, widthKey, UInt(widthKey.lengthOfBytes(using: .utf8)))
+            _ = ghostty_config_get(config, &height, heightKey, UInt(heightKey.lengthOfBytes(using: .utf8)))
+            return CGSize(
+                width: Swift.min(Swift.max(CGFloat(width), Self.paneMinimumWidthRange.lowerBound),
+                                 Self.paneMinimumWidthRange.upperBound),
+                height: Swift.min(Swift.max(CGFloat(height), Self.paneMinimumHeightRange.lowerBound),
+                                  Self.paneMinimumHeightRange.upperBound))
+        }
+
+        /// The ranges `macos-pane-min-width` / `-height` are clamped to.
+        static let paneMinimumWidthRange: ClosedRange<CGFloat> = 120...800
+        static let paneMinimumHeightRange: ClosedRange<CGFloat> = 80...600
+
+        /// `macos-hero-carousel-ratio`: the carousel's share of the window
+        /// when hero mode turns on, clamped to `HeroModeState`'s range.
+        var macosHeroCarouselRatio: CGFloat {
+            let fallback = HeroModeState.defaultCarouselRatio
+            guard let config = self.config else { return fallback }
+            var v = Double(fallback)
+            let key = "macos-hero-carousel-ratio"
+            _ = ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return HeroModeState.clampedCarouselRatio(CGFloat(v))
+        }
+
         var macosWindowShadow: Bool {
             guard let config = self.config else { return false }
             var v = false
@@ -981,5 +1040,17 @@ extension Ghostty.Config {
     enum MacOSPaneStyle: String {
         static let `default` = MacOSPaneStyle.elevated
         case elevated, flat
+    }
+
+    /// See `macos-window-gradient`.
+    enum MacOSWindowGradient: String {
+        static let `default` = MacOSWindowGradient.random
+        case random, ocean
+    }
+
+    /// See `macos-pane-sidebar`.
+    enum MacOSPaneSidebar: String {
+        static let `default` = MacOSPaneSidebar.remember
+        case remember, expanded, collapsed, hidden
     }
 }

@@ -21,6 +21,7 @@ class AppDelegate: NSObject,
     @IBOutlet private var menuAbout: NSMenuItem?
     @IBOutlet private var menuServices: NSMenu?
     @IBOutlet private var menuCheckForUpdates: NSMenuItem?
+    @IBOutlet private var menuKeyboardShortcuts: NSMenuItem?
     @IBOutlet private var menuOpenConfig: NSMenuItem?
     @IBOutlet private var menuReloadConfig: NSMenuItem?
     @IBOutlet private var menuSecureInput: NSMenuItem?
@@ -250,6 +251,10 @@ class AppDelegate: NSObject,
         // Before any window reads it: older builds' rearrange mode left
         // AppKit's "always show the tab bar" preference on.
         TabBarVisibilityPreference.clearLeakedPreferenceOnce()
+
+        // Before any window is restored: every window's sidebar starts as
+        // `macos-pane-sidebar` says.
+        PaneSidebarSharedState.shared.applyStart(ghostty.config.macosPaneSidebar)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -999,10 +1004,12 @@ class AppDelegate: NSObject,
         // preferred/key window otherwise.
         let parent = (notification.object as? Ghostty.SurfaceView)?.window
             ?? TerminalController.preferredParent?.window
-        // A window opened by hand (Cmd-N) gets its own random gradient.
+        // A window opened by hand (Cmd-N) gets its own random gradient
+        // (`macos-window-gradient`).
         TerminalController.newWindowInheritingRemote(
             ghostty,
-            withBaseConfig: PaneDeskVariant.forNewWindow(config, style: ghostty.config.macosPaneStyle),
+            withBaseConfig: PaneDeskVariant.forNewWindow(
+                config, style: ghostty.config.macosPaneStyle, gradient: ghostty.config.macosWindowGradient),
             from: parent)
     }
 
@@ -1033,6 +1040,13 @@ class AppDelegate: NSObject,
     private func ghosttyConfigDidChange(config: Ghostty.Config) {
         // Update the config we need to store
         self.derivedConfig = DerivedConfig(config)
+
+        // `macos-pane-sidebar`: how the shared pane sidebar starts. Also
+        // applied in `applicationWillFinishLaunching`, before any window is
+        // restored; applied again only when a reload changes it. Config
+        // changes are posted on the main thread.
+        let sidebarStart = config.macosPaneSidebar
+        MainActor.assumeIsolated { PaneSidebarSharedState.shared.applyStart(sidebarStart) }
 
         // Session persistence: warm the local-agent connection in the
         // background so the first persistent window doesn't block the main
@@ -1263,10 +1277,11 @@ class AppDelegate: NSObject,
 
     @IBAction func newWindow(_ sender: Any?) {
         // A window opened by hand (Cmd-N with no terminal focused, the dock
-        // menu) gets its own random gradient.
+        // menu) gets its own random gradient (`macos-window-gradient`).
         _ = TerminalController.newWindow(
             ghostty,
-            withBaseConfig: PaneDeskVariant.forNewWindow(nil, style: ghostty.config.macosPaneStyle))
+            withBaseConfig: PaneDeskVariant.forNewWindow(
+                nil, style: ghostty.config.macosPaneStyle, gradient: ghostty.config.macosWindowGradient))
     }
 
     /// New Window with target picker (Cmd-Shift-N): ALWAYS shows a chooser
@@ -2005,6 +2020,13 @@ class AppDelegate: NSObject,
         AboutController.shared.show()
     }
 
+    /// Help → Keyboard Shortcuts, the `show_keyboard_shortcuts` keybind (⌘/ by
+    /// default) and the command palette all land here. Also the public entry
+    /// point for other UI (the Settings window's Keyboard page).
+    @IBAction func showKeyboardShortcuts(_ sender: Any?) {
+        ShortcutGuideController.shared.show(config: ghostty.config)
+    }
+
     @IBAction func showHelp(_ sender: Any) {
         guard let url = URL(string: "https://dzearing.github.io/ghoztty/") else { return }
         NSWorkspace.shared.open(url)
@@ -2137,6 +2159,7 @@ extension AppDelegate {
         // modify this stuff as code.
         self.menuAbout?.setImageIfDesired(systemSymbolName: "info.circle")
         self.menuCheckForUpdates?.setImageIfDesired(systemSymbolName: "square.and.arrow.down")
+        self.menuKeyboardShortcuts?.setImageIfDesired(systemSymbolName: "keyboard")
         self.menuOpenConfig?.setImageIfDesired(systemSymbolName: "gear")
         self.menuReloadConfig?.setImageIfDesired(systemSymbolName: "arrow.trianglehead.2.clockwise.rotate.90")
         self.menuSecureInput?.setImageIfDesired(systemSymbolName: "lock.display")
@@ -2183,6 +2206,7 @@ extension AppDelegate {
         menuShortcutManager.reset()
 
         syncMenuShortcut(config, action: "check_for_updates", menuItem: self.menuCheckForUpdates)
+        syncMenuShortcut(config, action: "show_keyboard_shortcuts", menuItem: self.menuKeyboardShortcuts)
         syncMenuShortcut(config, action: "open_config", menuItem: self.menuOpenConfig)
         syncMenuShortcut(config, action: "reload_config", menuItem: self.menuReloadConfig)
         syncMenuShortcut(config, action: "quit", menuItem: self.menuQuit)

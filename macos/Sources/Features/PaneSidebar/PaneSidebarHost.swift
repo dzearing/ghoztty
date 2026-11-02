@@ -410,6 +410,15 @@ final class PaneSidebarCardGlide: ObservableObject {
     private var began: CFTimeInterval = 0
     private var last: CFTimeInterval = 0
     private var followed = false
+    /// A new width that came while following the grid, not yet taken: the
+    /// grid's lag (`leadingLag`) is measured against where the stage IS, and
+    /// the stage moves for the new width a beat later — its new size comes
+    /// first, its frame after (`PaneStageView.apply`). Taken at once, a grid
+    /// step in between put the card the width's change past the grid for a
+    /// frame and back: on every step of an edge drag, the card's edge
+    /// flickered over the gutter. So it waits for the stage to move — or
+    /// `followWait`, if it never does.
+    private var pending: (target: CGFloat, stageX: CGFloat, since: CFTimeInterval)?
     private var timer: Timer?
     private var observer: NSObjectProtocol?
 
@@ -433,9 +442,14 @@ final class PaneSidebarCardGlide: ObservableObject {
             began = CACurrentMediaTime()
             last = began
             followed = false
+            pending = nil
             start(following: stage())
         } else if width != nil {
-            target = to
+            if followed, let stage = stage() {
+                pending = (to, pending?.stageX ?? stage.originInWindow.x, pending?.since ?? CACurrentMediaTime())
+            } else {
+                target = to
+            }
         }
     }
 
@@ -467,6 +481,12 @@ final class PaneSidebarCardGlide: ObservableObject {
             return
         }
         followed = true
+        if let pending, let stage,
+           abs(stage.originInWindow.x - pending.stageX) >= 0.5
+            || CACurrentMediaTime() - pending.since >= Self.followWait {
+            target = pending.target
+            self.pending = nil
+        }
         set(target + lag)
     }
 
@@ -491,6 +511,7 @@ final class PaneSidebarCardGlide: ObservableObject {
     }
 
     private func finish() {
+        pending = nil
         timer?.invalidate()
         timer = nil
         if let observer { NotificationCenter.default.removeObserver(observer) }
