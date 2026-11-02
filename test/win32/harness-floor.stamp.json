@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-02T12:56:30-08:00",
-    "commit":  "1c01ddfd5",
+    "generated":  "2026-11-02T13:35:21-08:00",
+    "commit":  "76ae1ef88",
     "uncommitted":  [
-
+                        "test/win32/pane-sidebar-window-order.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -324,7 +324,7 @@
                   "test/win32/lib/TreeSwapAudit.ps1":  "d0189d964f705a3c1447497e0119773fb925b85dc6e561110d127c067f4a9d6e",
                   "test/win32/lib/UnrollCountAudit.ps1":  "6f237d65de90843000c81d510845ac188396d6f22dcd4c8889756cd9edbdab77",
                   "test/win32/lib/UnwiredHookAudit.ps1":  "4a0600ed0088b093dddebaab1adfbbf2fffe4c572a49948a89cd58ec94acc28c",
-                  "test/win32/lib/UserPresence.ps1":  "27d0d87f1688ed7ea25369f59e0a90a1a4c18d7c70c3a275d86cb2c8a60fd942",
+                  "test/win32/lib/UserPresence.ps1":  "0615f22b133737fc30fb437b12b5640d1c906b4370bc1bdacef32a15afd4e9a1",
                   "test/win32/lib/VerdictExitAudit.ps1":  "87d8cad08aa867a0cc2de896872e47d4abcd469850f4f5a897deb778a7aaf16f",
                   "test/win32/lib/VtText.ps1":  "e9a099093c681d1bbef2c78055e1ed4b29daf9b0d020a3e4c454509c9ee28f9a",
                   "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
@@ -383,7 +383,7 @@
                   "test/win32/pane-sidebar-scroll.ps1":  "3de92ddbc84f348cc0b541d1e842094e0adb541ffee0531c80b1f75c3daeb970",
                   "test/win32/pane-sidebar-shared.ps1":  "c47f3a133689e53b0c8c87eee3c4acf783bcc644dac6ae6534f56897e8c4abd9",
                   "test/win32/pane-sidebar-this-window.ps1":  "b02abf87ab126db1d3f7f915684ba3bf00c35aeb15331cc067b1f6142336551e",
-                  "test/win32/pane-sidebar-window-order.ps1":  "719b76dc725e7d243ebc5ef6cf44806e15c9a0d25a28a08da481906f43a62d2f",
+                  "test/win32/pane-sidebar-window-order.ps1":  "b07d781326b2216c12f746f740ca2f714969ab120aea51e67b5456683c964281",
                   "test/win32/pane-stack-focus.ps1":  "186fe0cb2691714d5b2d23ec1ef558249464e24e6109a3ce54964892b7bcfa6b",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",
                   "test/win32/pane-stack-slide.ps1":  "351858c008d828e2881ab7ddc1b02d519366d32bdf9ad20fa0ea0189c9d072c9",
@@ -392,7 +392,7 @@
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "576b87de1a7a6f1982cc28067614390510ebc9de6304a154587680ec6025b6a6",
-                  "test/win32/parity-tasks-seat.ps1":  "dd4441cec3ecfc22057885e86ff911859c056091ccf93a042664c45ddac204fc",
+                  "test/win32/parity-tasks-seat.ps1":  "f2516f336a82bc72265b269bb7c9344dcee4134b9c20792e22623409e4ed3a9b",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "3c6615c60f662198ec6e2a7666299ae57c3eb0d7a3eeda78f71dc9f874ffaa52",
                   "test/win32/persistence-flag.ps1":  "c8d93f1a71d3d4f19304d948c1e00bedfd6a1cd6abda7382c62c81504b224920",

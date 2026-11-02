@@ -347,7 +347,7 @@ const ItemDrag = struct {
     }
 };
 
-/// The join outline's fade (Mac `PaneSidebarJoinHighlight`: 0.12s ease-out).
+/// The join highlight's fade (Mac `PaneSidebarJoinHighlight`: 0.12s ease-out).
 const join_fade_ms: u64 = 120;
 
 /// The empty tray lighting up (Mac `PaneSidebarEmptyStashSlot`: 0.15s
@@ -552,7 +552,7 @@ reorder_armed: bool = false,
 /// (T2337), and what a paint leaves out of the list for it: the dragged
 /// item's header and rows, drawn lifted instead.
 item_drag: ?ItemDrag = null,
-/// The join outline has been logged once for this drag (T2338's oracle).
+/// The join glow has been logged once for this drag (T2338's oracle).
 join_logged: bool = false,
 lifted_heads: std.StaticBitSet(pane_sidebar.max_heads) = .initEmpty(),
 lifted_items: std.StaticBitSet(pane_sidebar.max_items) = .initEmpty(),
@@ -2963,7 +2963,7 @@ fn sameName(a: ?[]const u8, b: ?[]const u8) bool {
     return std.mem.eql(u8, x, y);
 }
 
-/// The join outline's strength on project header row `row` at `now`: 0 when
+/// The join glow's strength on project header row `row` at `now`: 0 when
 /// it is not outlined.
 fn joinAlpha(d: *const ItemDrag, row: usize, now: u64) f64 {
     if (d.settle != null) return 0;
@@ -4214,27 +4214,55 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
         // The pinned header is painted over the rows, by `paintSticky`; a
         // held one over everything, by `paintHeldItem` (T2337).
         if (l.sticky == k or self.lifted_heads.isSet(k)) continue;
+        // Under the header's own paint: the wash is its background.
+        self.paintJoinGlow(hdc, hd, t);
         self.paintHead(hdc, hd, k, self.groups.items[hd.index], t);
-        self.paintJoinOutline(hdc, hd, t);
     }
 }
 
 /// A project header while a window is dragged into its group (T2338, Mac
-/// `PaneSidebarJoinHighlight`): outlined in the accent color, so a drop just
-/// past its last window reads as joining it rather than landing after it.
-fn paintJoinOutline(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, t: Theme) void {
+/// `PaneSidebarJoinHighlight`): lit with a soft accent wash and a glow beyond
+/// its edge, no outline (T2526, Mac cb9e28ff2), so a drop just past its last
+/// window reads as joining it rather than landing after it. Only in the
+/// window dragged in: a drag here is this sidebar's own, so other windows'
+/// lists never light.
+fn paintJoinGlow(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, t: Theme) void {
     if (hd.kind != .project) return;
     const d = if (self.item_drag) |*x| x else return;
     if (!d.cross) return;
     const row = itemSibling(d, &self.groups.items[hd.index], .project) orelse return;
-    const a = joinAlpha(d, row, self.paint_ms);
-    if (a <= 0) return;
-    const width = @max(1, pane_sidebar.px(2, self.scale));
+    const strength = joinAlpha(d, row, self.paint_ms);
+    if (strength <= 0) return;
+    const r = hd.rect;
     const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
-    strokeRound(hdc, hd.rect, radius, rgb(color_math.mix(t.surface, t.accent, a)), width);
+    const glow = pane_sidebar.px(reorder.join_glow_dip, self.scale);
+    const box: pane_sidebar.Rect = .{ .left = r.left - glow, .top = r.top - glow, .right = r.right + glow, .bottom = r.bottom + glow };
+    const w = box.width();
+    const h = box.height();
+    if (w <= 0 or h <= 0) return;
+    const dib = Dib32.create(hdc, w, h) orelse return;
+    defer dib.destroy();
+    const uw: usize = @intCast(w);
+    for (0..@intCast(h)) |y| {
+        for (dib.pixels[y * uw ..][0..uw], 0..) |*p, x| {
+            const dist = roundRectDistance(@as(i32, @intCast(x)) - glow, @as(i32, @intCast(y)) - glow, r.width(), r.height(), radius);
+            const a = std.math.clamp(reorder.joinAlpha(dist, @floatFromInt(glow)) * strength, 0, 1);
+            // The accent, premultiplied.
+            const ch = struct {
+                fn f(c: u8, alpha: f64) u32 {
+                    return @intFromFloat(@round(@as(f64, @floatFromInt(c)) * alpha));
+                }
+            }.f;
+            p.* = (@as(u32, @intFromFloat(@round(a * 255))) << 24) | (ch(t.accent.r, a) << 16) | (ch(t.accent.g, a) << 8) | ch(t.accent.b, a);
+        }
+    }
+    _ = w32.AlphaBlend(hdc, box.left, box.top, w, h, dib.dc, 0, 0, w, h, .{
+        .SourceConstantAlpha = 255,
+        .AlphaFormat = w32.AC_SRC_ALPHA,
+    });
     if (!self.join_logged) {
         self.join_logged = true;
-        log.info("pane sidebar join outline drawn project={s}", .{d.rowProject(row) orelse ""});
+        log.info("pane sidebar join glow drawn project={s}", .{d.rowProject(row) orelse ""});
     }
 }
 

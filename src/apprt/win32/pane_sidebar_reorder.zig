@@ -182,6 +182,23 @@ pub fn liftInset(w: i32, h: i32) struct { x: i32, y: i32 } {
     };
 }
 
+/// A group header being joined (T2526, Mac cb9e28ff2 `PaneSidebarJoinHighlight`):
+/// an accent wash at `join_wash` over the header's pill, and a glow of
+/// `join_glow_peak` (Mac's accent shadow at 0.45, cast by that 0.22 wash)
+/// fading out over `join_glow_dip` beyond its edge - no outline.
+pub const join_wash: f64 = 0.22;
+pub const join_glow_peak: f64 = 0.45 * join_wash;
+pub const join_glow_dip: f32 = 6;
+
+/// The join highlight's accent strength at distance `d` (pixels, 0 inside)
+/// from the header's rounded edge, for a glow `radius` pixels wide.
+pub fn joinAlpha(d: f64, radius: f64) f64 {
+    if (d <= 0) return join_wash;
+    if (radius <= 0 or d >= radius) return 0;
+    const u = 1 - d / radius;
+    return join_glow_peak * u * u;
+}
+
 /// The held row's shadow at distance `d` (pixels, 0 inside) from its rounded
 /// edge, for a blur `radius` pixels wide: `shadow_peak` at the edge, fading
 /// smoothly to nothing at `radius`. Under the glass itself there is none
@@ -198,6 +215,17 @@ pub fn shadowAlpha(d: f64, radius: f64, inside: bool) f64 {
 // Tests
 
 const testing = std.testing;
+
+test "T2526: a joined group's header is washed and glows, with no outline" {
+    // Inside the pill: the wash, flat - nothing brighter at the edge.
+    try testing.expectEqual(join_wash, joinAlpha(0, 12));
+    try testing.expectEqual(join_wash, joinAlpha(-5, 12));
+    // Beyond it the glow, fainter than the wash, fading to nothing.
+    try testing.expect(joinAlpha(0.5, 12) < join_wash);
+    try testing.expect(joinAlpha(3, 12) > joinAlpha(6, 12));
+    try testing.expectEqual(@as(f64, 0), joinAlpha(12, 12));
+    try testing.expectEqual(@as(f64, 0), joinAlpha(1, 0));
+}
 
 test "pane_sidebar_reorder: no slide unless the drag would land in this sidebar" {
     try testing.expect(slide(3, 0, null, null, null) == null);

@@ -21,10 +21,10 @@
 #      lone windows, so its index never reaches 0 and the drop moves nothing.
 #   2. wt-2 dragged above wt-1, right under the proj header (every window
 #      folds for it; the drag reads the whole list as rows): it stays in
-#      proj, no join outline. solo | zz/one | proj/wt-2 | proj/wt-1.
-#   3. (T2421) solo, a lone window, dragged past the last group's end: the
-#      groups' band, so it lands at the end of the lone windows - where it
-#      already is. Nothing moves, nothing is retitled.
+#      proj, no join glow. solo | zz/one | proj/wt-2 | proj/wt-1.
+#   3. (T2526, Mac 0100ae3db) solo, a lone window, dragged past the last
+#      group's end: past a group's end is that group, so it would join proj
+#      at its end and proj's header glows - then Escape, and nothing moves.
 #   4. Escape cancels: wt-1 dragged up to the top, Escape, and the order
 #      holds.
 #   5. Shared: B, activated, lists the same order.
@@ -33,12 +33,14 @@
 #      and the list keeps the dragged order (zz before proj, wt-2 before wt-1
 #      - not the name order).
 #   8. solo dragged into proj, between wt-2 and wt-1 (T2338): proj's header
-#      is outlined while it would join, and on the drop solo is retitled
+#      glows while it would join, and on the drop solo is retitled
 #      "proj: solo" (+list) and lands there: zz/one | proj/wt-2 | proj/solo |
 #      proj/wt-1.
-#   9. wt-1, proj's last window, dragged out past the end: retitled "wt-1"
-#      (+list) and, below a group, it lands at the end of the lone windows -
-#      the top of the list (T2421): wt-1 | zz/one | proj/wt-2 | proj/solo.
+#   9. wt-1, proj's last window, dragged past the end stays in proj (T2526,
+#      Mac 0100ae3db: grabbed, it used to want out at once); dragged up above
+#      the first group - there are no lone windows - it leaves: retitled
+#      "wt-1" (+list), the top of the list: wt-1 | zz/one | proj/wt-2 |
+#      proj/solo.
 #  10. With twelve windows (T2423, Mac 6bd2962eb), a drag start redraws the
 #      window in use alone: the `item drag lifted` line counts no other
 #      sidebar redrawn and all eleven left to catch up, inside 80 ms. Another
@@ -308,19 +310,21 @@ try {
         Assert "and solo is open again once it settled" ($null -ne (Wait-Log 'pane sidebar all-windows groups=4 .* folded=3 ' $mark))
     }
 
-    "== 3: solo dragged past the last group's end stays with the lone windows (T2421)"
+    "== 3: solo dragged past the last group's end would join that group (T2526)"
     $heads = Get-Heads 0
     if ($heads.Count -ge 6) {
         $mark = Get-LogCount
-        [void](Invoke-HeadDrag $topA $sb $heads[0] ($heads[5].Y + (Px 80)))
+        [void](Invoke-HeadDrag $topA $sb $heads[0] ($heads[5].Y + (Px 80)) -Cancel)
         Assert "a window drag over the six rows, from the first" ($null -ne (Wait-Log 'pane sidebar item drag start kind=window key=window:\S+ rows=6 source=0' $mark))
         Assert "it settled" ($null -ne (Wait-Log 'pane sidebar item drag settled' $mark))
         $dests = @(Get-LogLines $mark 'pane sidebar item drag dest=')
         $last = if ($dests.Count) { $dests[$dests.Count - 1] } else { '' }
-        Assert "below the groups it lands at the end of the lone windows: top@0 ($last)" ($last -match 'dest=top@0$')
-        Assert "where it already was: nothing moved" ($null -ne (Wait-Log 'pane sidebar item drag end commit=true from=0 to=0' $mark))
+        Assert "past proj's end it is in proj, at its end: group:proj@2 ($last)" ($last -match 'dest=group:proj@2$')
+        Assert "proj's header says it would join" ($null -ne (Wait-Log 'pane sidebar item drag join=proj' $mark))
+        Assert "the join glow was drawn" ($null -ne (Wait-Log 'pane sidebar join glow drawn project=(proj|zz)$' $mark))
+        Assert "Escape ended it without a move" ($null -ne (Wait-Log 'pane sidebar item drag end commit=false from=0 ' $mark))
         Assert "nothing was saved" (@(Get-LogLines $mark 'pane sidebar window order saved').Count -eq 0)
-        Assert "no retitle: it was lone and stays lone" (@(Get-LogLines $mark 'pane sidebar window regrouped').Count -eq 0)
+        Assert "no retitle: cancelled, it stays lone" (@(Get-LogLines $mark 'pane sidebar window regrouped').Count -eq 0)
         Assert "the order held" ((Get-Order $mark) -eq 'solo|zz/one|proj/wt-2|proj/wt-1')
     }
 
@@ -388,7 +392,7 @@ try {
             Assert "proj's header says it would join" ($null -ne (Wait-Log 'pane sidebar item drag join=proj' $mark))
             # The outline is logged once a drag, and on its way down from the
             # top solo passes over zz first, so the line may name zz.
-            Assert "the join outline was drawn" ($null -ne (Wait-Log 'pane sidebar join outline drawn project=(proj|zz)$' $mark))
+            Assert "the join glow was drawn" ($null -ne (Wait-Log 'pane sidebar join glow drawn project=(proj|zz)$' $mark))
             Assert "retitled proj: solo" ($null -ne (Wait-Log 'pane sidebar window regrouped from= to=proj title=proj: solo$' $mark))
             $o = Wait-Order 'zz/one|proj/wt-2|proj/solo|proj/wt-1' $mark
             Assert "order: zz/one | proj/wt-2 | proj/solo | proj/wt-1 ($o)" ($o -eq 'zz/one|proj/wt-2|proj/solo|proj/wt-1')
@@ -398,7 +402,7 @@ try {
             Assert "+list no longer has a bare solo" (-not ($titles -contains 'solo'))
         }
 
-        "== 9: wt-1 dragged out of proj, past the end, lands on top (T2421)"
+        "== 9a: wt-1, proj's last window, dragged past the end stays in proj (T2526)"
         $heads = Get-Heads 0
         if ($heads.Count -ge 6) {
             $mark = Get-LogCount
@@ -406,8 +410,25 @@ try {
             Assert "a window drag from the last of six rows" ($null -ne (Wait-Log 'pane sidebar item drag start kind=window key=window:\S+ rows=6 source=5' $mark))
             Assert "it settled" ($null -ne (Wait-Log 'pane sidebar item drag settled' $mark))
             $dests = @(Get-LogLines $mark 'pane sidebar item drag dest=')
+            Assert "it never wanted out of proj ($($dests -join ' / '))" (@($dests | Where-Object { $_ -match 'dest=top@' }).Count -eq 0)
             $last = if ($dests.Count) { $dests[$dests.Count - 1] } else { '' }
-            Assert "the lower half past the group: the top level, at the end of the (no) lone windows ($last)" ($last -match 'dest=top@0$')
+            Assert "past the end: proj's end, group:proj@2 ($last)" ($last -match 'dest=group:proj@2$')
+            Assert "its own group: no join" (@(Get-LogLines $mark 'pane sidebar item drag join=proj').Count -eq 0)
+            Assert "where it already was" ($null -ne (Wait-Log 'pane sidebar item drag end commit=true from=5 to=5' $mark))
+            Assert "no retitle" (@(Get-LogLines $mark 'pane sidebar window regrouped').Count -eq 0)
+            Assert "the order held" ((Get-Order $mark) -eq 'zz/one|proj/wt-2|proj/solo|proj/wt-1')
+        }
+
+        "== 9b: wt-1 dragged up above the first group leaves proj, on top (T2526)"
+        $heads = Get-Heads 0
+        if ($heads.Count -ge 6) {
+            $mark = Get-LogCount
+            [void](Invoke-HeadDrag $top $sb2 $heads[5] ([math]::Max(0, $heads[0].Y - (Px 40))))
+            Assert "a window drag from the last of six rows" ($null -ne (Wait-Log 'pane sidebar item drag start kind=window key=window:\S+ rows=6 source=5' $mark))
+            Assert "it settled" ($null -ne (Wait-Log 'pane sidebar item drag settled' $mark))
+            $dests = @(Get-LogLines $mark 'pane sidebar item drag dest=')
+            $last = if ($dests.Count) { $dests[$dests.Count - 1] } else { '' }
+            Assert "above the first group: the top level's front ($last)" ($last -match 'dest=top@0$')
             Assert "it lands in the first slot" ($null -ne (Wait-Log 'pane sidebar item drag end commit=true from=5 to=0' $mark))
             Assert "retitled wt-1" ($null -ne (Wait-Log 'pane sidebar window regrouped from=proj to= title=wt-1$' $mark))
             $o = Wait-Order 'wt-1|zz/one|proj/wt-2|proj/solo' $mark
