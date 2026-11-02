@@ -1,8 +1,8 @@
 {
     "guard":  "clipboard-paste",
     "script":  "test/win32/clipboard-paste.ps1",
-    "generated":  "2026-11-01T20:19:58-08:00",
-    "commit":  "0a4f79a3a",
+    "generated":  "2026-11-01T20:51:46-08:00",
+    "commit":  "2666d2c6a",
     "uncommitted":  [
 
                     ],
