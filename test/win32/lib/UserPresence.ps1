@@ -101,6 +101,37 @@ public class GhozttyUserPresence {
         return r.Left <= mi.rcMonitor.Left && r.Top <= mi.rcMonitor.Top &&
                r.Right >= mi.rcMonitor.Right && r.Bottom >= mi.rcMonitor.Bottom;
     }
+
+    // GUID_CONSOLE_DISPLAY_STATE (T2645): 0 off, 1 on, 2 dimmed, -1 unknown.
+    // Subscribing delivers the current value at once on a pool thread, so no
+    // window or message loop is needed.
+    [StructLayout(LayoutKind.Sequential)]
+    struct SubscribeParams { public PowerCallback Fn; public IntPtr Context; }
+    public delegate uint PowerCallback(IntPtr context, uint type, IntPtr setting);
+    [DllImport("powrprof.dll")] static extern uint PowerSettingRegisterNotification(ref Guid g, uint flags, ref SubscribeParams p, out IntPtr h);
+    [DllImport("powrprof.dll")] static extern uint PowerSettingUnregisterNotification(IntPtr h);
+
+    public static int DisplayState(int timeoutMs) {
+        int state = -1;
+        System.Threading.ManualResetEvent got = new System.Threading.ManualResetEvent(false);
+        PowerCallback fn = delegate(IntPtr ctx, uint type, IntPtr setting) {
+            // PBT_POWERSETTINGCHANGE; POWERBROADCAST_SETTING = GUID(16), DataLength(4), Data
+            if (type == 0x8013 && setting != IntPtr.Zero) {
+                state = Marshal.ReadInt32(setting, 20);
+                got.Set();
+            }
+            return 0;
+        };
+        Guid g = new Guid("6fe69556-704a-47a0-8f24-c28d936fda47");
+        SubscribeParams p = new SubscribeParams();
+        p.Fn = fn; p.Context = IntPtr.Zero;
+        IntPtr h;
+        if (PowerSettingRegisterNotification(ref g, 2 /* DEVICE_NOTIFY_CALLBACK */, ref p, out h) != 0) return -1;
+        got.WaitOne(timeoutMs);
+        PowerSettingUnregisterNotification(h);
+        GC.KeepAlive(fn);
+        return state;
+    }
 }
 '@
 }
@@ -211,6 +242,22 @@ function Get-UserPresence {
     $r = Resolve-UserPresence -IdleSeconds $idle -IdleThreshold (Get-UserPresenceIdleThreshold) `
         -NotificationState $quns -ForegroundFullscreen $full -ForegroundOurs $ours -ForegroundDescription $desc
     return [pscustomobject]@{ Present = $r.Present; Reason = $r.Reason; Forced = $false }
+}
+
+<#
+Is the display lit? (T2645) 'on', 'off', 'dimmed' or 'unknown'. Separate from
+presence on purpose: a display asleep after hours idle still means nobody is
+here, but nothing on it presents (DWM reports every present OCCLUDED), so a
+live capture run on it photographs black and proves nothing. A task parked
+for "the display lit" waits on this as well as on Get-UserPresence.
+Honours GHOZTTY_TEST_FORCE_DISPLAY_STATE=on|off|dimmed.
+#>
+function Get-DisplayState {
+    $forced = $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE
+    if ($forced -in @('on', 'off', 'dimmed')) { return $forced }
+    $s = -1
+    try { $s = [GhozttyUserPresence]::DisplayState(1000) } catch { }
+    switch ($s) { 0 { 'off' } 1 { 'on' } 2 { 'dimmed' } default { 'unknown' } }
 }
 
 <#

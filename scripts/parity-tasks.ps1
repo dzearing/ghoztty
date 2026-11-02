@@ -1177,7 +1177,24 @@ switch ($Command) {
                 $presence = Get-UserPresence
             }
             catch { Write-Host ("      WARNING: presence not checked: {0}" -f $_.Exception.Message) }
+            # A park that names the display (a live capture run) also needs it
+            # LIT (T2645): after hours idle the monitor sleeps, every present
+            # is OCCLUDED, and the run photographs black - on 2026-11-02 that
+            # re-queue cost a turn a build and a six-minute run that skipped
+            # every cell. 'unknown' re-queues, as before this check existed.
             if ($presence -and -not $presence.Present) {
+                $displayRx = '\bdisplay\b'
+                if (@($idleParked | Where-Object { $_.Status -match $displayRx }).Count -gt 0) {
+                    $display = 'unknown'
+                    try { $display = Get-DisplayState } catch { }
+                    if ($display -in @('off', 'dimmed')) {
+                        $dark = @($idleParked | Where-Object { $_.Status -match $displayRx })
+                        Write-Host ("      parked for a lit display: {0} (box idle, but the display is {1})" -f (($dark | ForEach-Object { $_.Id }) -join ', '), $display)
+                        $idleParked = @($idleParked | Where-Object { $_.Status -notmatch $displayRx })
+                    }
+                }
+            }
+            if ($presence -and -not $presence.Present -and $idleParked.Count -gt 0) {
                 Write-Host ("BOX IDLE ({0}): {1} parked for an idle box - back in the queue now" -f $presence.Reason, (($idleParked | ForEach-Object { $_.Id }) -join ', '))
                 foreach ($p in $idleParked) {
                     $p.Status = 'todo'
@@ -1189,7 +1206,7 @@ switch ($Command) {
                     }
                 }
             }
-            elseif ($presence) {
+            elseif ($presence -and $presence.Present) {
                 Write-Host ("      parked for an idle box: {0} (user present: {1})" -f (($idleParked | ForEach-Object { $_.Id }) -join ', '), $presence.Reason)
             }
         }

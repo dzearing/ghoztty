@@ -798,6 +798,37 @@ try {
     $script:failures++
 } finally { $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $prevPresence }
 
+""
+"P0f. a park that names the display waits for it to be LIT, not just idle (T2645)"
+# 2026-11-02: the box was idle 5.5 h with the monitor asleep; the re-queue
+# handed out a live capture run that skipped every cell as occluded.
+Reset-Fixture
+New-FixtureTask -Id 'T1' -Status 'blocked(needs a live run on an idle box with the display lit)' -PriorityLine 'priority: "P0"'
+New-FixtureTask -Id 'T3' -Status 'blocked(needs the box idle - no input for 5 min)' -PriorityLine 'priority: "P0"'
+New-FixtureTask -Id 'T2' -Status 'todo' -PriorityLine 'priority: "P1"'
+$prevPresence = $env:GHOZTTY_TEST_FORCE_USER_PRESENCE
+$prevDisplay = $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE
+try {
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent'
+    $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE = 'off'
+    $r = Task-Run @('next')
+    Assert 'P0f1 display off: the display park is held and named' ($r.Out -match 'parked for a lit display: T1 \(box idle, but the display is off\)')
+    Assert 'P0f2 display off: a plain idle park still re-queues' ($r.Out -match 'BOX IDLE[^\r\n]*: T3 parked' -and $r.Out -match 'NEXT: T3')
+    Assert 'P0f3 display off: no false "user present" line' ($r.Out -notmatch 'user present:')
+    $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE = 'on'
+    $r = Task-Run @('next')
+    Assert 'P0f4 display lit: both parks re-queue, the lower id first' ($r.Out -match 'BOX IDLE[^\r\n]*: T1, T3 parked' -and $r.Out -match 'NEXT: T1')
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'present'
+    $r = Task-Run @('next')
+    Assert 'P0f5 user present: neither re-queues' ($r.Out -match 'parked for an idle box: T1, T3' -and $r.Out -match 'NEXT: T2')
+} catch {
+    "  FAIL P0f the lit-display section threw: $_"
+    $script:failures++
+} finally {
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $prevPresence
+    $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE = $prevDisplay
+}
+
 "P. set-status gates the way OUT of blocked(...)"
 Reset-Fixture
 $unblockText = 'powercfg PROCTHROTTLEMAX must read 99 (boost off) before this comes back.'
