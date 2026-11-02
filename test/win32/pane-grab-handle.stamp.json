@@ -1,8 +1,8 @@
 {
     "guard":  "pane-grab-handle",
     "script":  "test/win32/pane-grab-handle.ps1",
-    "generated":  "2026-11-02T06:56:30-08:00",
-    "commit":  "367101943",
+    "generated":  "2026-11-02T07:07:00-08:00",
+    "commit":  "39ddff25c",
     "uncommitted":  [
 
                     ],

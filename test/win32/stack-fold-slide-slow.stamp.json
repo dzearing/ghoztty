@@ -1,8 +1,8 @@
 {
     "guard":  "stack-fold-slide-slow",
     "script":  "test/win32/stack-fold-slide.ps1",
-    "generated":  "2026-11-02T07:01:57-08:00",
-    "commit":  "367101943",
+    "generated":  "2026-11-02T07:16:00-08:00",
+    "commit":  "39ddff25c",
     "uncommitted":  [
 
                     ],

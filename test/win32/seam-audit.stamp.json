@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-02T06:32:46-08:00",
-    "commit":  "367101943",
+    "generated":  "2026-11-02T07:11:49-08:00",
+    "commit":  "39ddff25c",
     "uncommitted":  [
 
                     ],
@@ -538,7 +538,7 @@
                   "src/termio/attach_failed_notice.zig":  "4e2bd13143f7b65eb9ed2d5ea66cb028c4c32cd4704fb26af284fbe51e8fe4c2",
                   "src/termio/backend.zig":  "96c7db442eb93e1a2c8156f73b5a91a447a72f66a75cea3d0b030e448a9f0a6d",
                   "src/termio/conpty_sync_hold.zig":  "3674f41c08c9257d82578e47c2761d03dcd72a59613d137bf61484fc1b35a0f1",
-                  "src/termio/Exec.zig":  "9a7474e31ed51ef9384056af9089c0dcc38dcd63374f5cc89701d674474bd6cd",
+                  "src/termio/Exec.zig":  "2336a594bde392d418d326cc281d25970b5a1b495a5b1caa35f98fd971e1e1cc",
                   "src/termio/history_guard.zig":  "f06519c1f847bf49afb69a8252e45c15f1aa482d2203c6b7d29bd6f0c30e40d0",
                   "src/termio/mailbox.zig":  "a5748995fd75541b2af396b5f7af0ddc8c009eea03c4a4c08bd55e85574521a4",
                   "src/termio/message.zig":  "1032a3be79b1c61cc689636d41afd64a43f889773a5e2e596c528a38d528bfb6",

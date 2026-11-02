@@ -1,8 +1,8 @@
 {
     "guard":  "remote-disconnect",
     "script":  "test/win32/remote-disconnect.ps1",
-    "generated":  "2026-11-02T06:58:31-08:00",
-    "commit":  "367101943",
+    "generated":  "2026-11-02T07:09:01-08:00",
+    "commit":  "39ddff25c",
     "uncommitted":  [
 
                     ],

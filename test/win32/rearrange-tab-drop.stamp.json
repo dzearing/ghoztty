@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-tab-drop",
     "script":  "test/win32/rearrange-tab-drop.ps1",
-    "generated":  "2026-11-02T06:59:08-08:00",
-    "commit":  "367101943",
+    "generated":  "2026-11-02T07:09:36-08:00",
+    "commit":  "39ddff25c",
     "uncommitted":  [
 
                     ],
