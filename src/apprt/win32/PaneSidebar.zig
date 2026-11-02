@@ -5379,8 +5379,9 @@ fn beginRenamePane(self: *PaneSidebar, i: usize) void {
     self.beginRename(.{ .pane = e.pane }, b[0..n]);
 }
 
-/// A header's pencil: a window's field opens on its whole title,
-/// `<project>: ` included; a project's on the project as its titles spell it.
+/// A header's pencil: a window's field opens on its own name - a grouped
+/// one's without its `<project>: ` (T2525) - and a project's on the project
+/// as its titles spell it.
 fn beginRenameHead(self: *PaneSidebar, k: usize) void {
     const l = self.currentLayout();
     if (k >= l.head_count) return;
@@ -5390,7 +5391,7 @@ fn beginRenameHead(self: *PaneSidebar, k: usize) void {
     if (!self.window.app.hasWindow(g.window) or g.tab >= g.window.tab_count) return;
     var b: [name_cap]u8 = undefined;
     switch (hd.kind) {
-        .window => self.beginRename(.{ .window = g.key }, groupName(g.window, g.tab, &b)),
+        .window => self.beginRename(.{ .window = g.key }, rename_rules.windowName(groupName(g.window, g.tab, &b))),
         .project => {
             // The Ungrouped header's opens empty: it names a new group.
             if (self.isUngroupedHead(hd)) return self.beginRename(.ungrouped, "");
@@ -5433,7 +5434,17 @@ fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
     self.repaint();
     var tb: [search_field.cap * 3]u8 = undefined;
     const typed = r.field.utf8(&tb);
-    const outcome: rename_rules.Outcome = if (commit) rename_rules.decide(typed, r.initialText()) else .keep;
+    // A window's commit is measured against its whole title as it is now, so
+    // a grouped one keeps its `<project>: ` (T2525).
+    var wb: [name_cap]u8 = undefined;
+    var gb: [name_cap + 64]u8 = undefined;
+    const outcome: rename_rules.Outcome = if (!commit) .keep else switch (r.target) {
+        .window => |key| if (windowTitle(self.window.app, key, &wb)) |title|
+            rename_rules.decideWindow(&gb, title, typed)
+        else
+            .keep,
+        else => rename_rules.decide(typed, r.initialText()),
+    };
     log.info("pane sidebar rename end why={s} kind={s} outcome={s} text={s}", .{ why, @tagName(r.target), @tagName(outcome), typed });
     const name: ?[]const u8 = switch (outcome) {
         .keep => return,
@@ -5503,6 +5514,14 @@ fn pinWindowName(w: *Window, t: usize, name: ?[]const u8) void {
     // script's `+rename` (T2404).
     if (w.title_override) |o| if (o.len > 0) return w.setTitleOverrideBy(name, .user);
     w.setTabTitlePin(t, name);
+}
+
+/// The title window group `key` shows, if it is still there.
+fn windowTitle(app: *App, key: u64, buf: *[name_cap]u8) ?[]const u8 {
+    for (app.windows.items) |w| for (0..w.tab_count) |t| {
+        if (tabKey(w, t) == key) return groupName(w, t, buf);
+    };
+    return null;
 }
 
 /// The window group renamed, if it is still there.

@@ -7,9 +7,14 @@
 //! what was typed, Escape cancels, and an unchanged name pins nothing - a
 //! title that was following the shell keeps following it.
 //!
-//! - **Window**: the field holds the whole title, `<project>: ` included, so
-//!   typing `a: foo` moves the window to group `a` as `foo`. Empty goes back
-//!   to following the window's own title. A Mac window is a Windows tab, so
+//! - **Window** (T2525, Mac 7bee055c9/a0f6090a3 `renamed`): a grouped
+//!   window's field holds its own name alone - not its `<project>: ` - and
+//!   keeps the prefix on commit, so retyping or clearing it cannot ungroup
+//!   the window by accident: empty changes nothing. Typing a `<project>: `
+//!   names the group outright (`a: foo` moves it to group `a` as `foo`);
+//!   leaving a group is Remove from Group or a drag out. An ungrouped
+//!   window's field holds its whole title, and empty goes back to following
+//!   the window's own title (`windowName`, `decideWindow`). A Mac window is a Windows tab, so
 //!   the name pinned is the tab's (Change Tab Title) - unless the window
 //!   carries a window-wide pin (Change Window Title, `+rename`), which is what
 //!   the row shows and so what the field edits.
@@ -72,6 +77,26 @@ pub fn decide(typed: []const u8, current: []const u8) Outcome {
     if (std.mem.eql(u8, name, std.mem.trim(u8, current, " \t"))) return .keep;
     if (name.len == 0) return .clear;
     return .{ .set = name };
+}
+
+/// What a window's field opens on (Mac `PaneSidebarWindowGrouping.name(of:)`):
+/// the part after its `<project>: `, else its whole title.
+pub fn windowName(title: []const u8) []const u8 {
+    return if (outline.splitWindowTitle(title)) |s| s.worktree else title;
+}
+
+/// A window's field committed with `typed`, the window titled `title` now
+/// (Mac `PaneSidebarWindowGrouping.renamed`). Grouped, the group is kept -
+/// `<project>: <typed>`, written into `buf` - unless what was typed names a
+/// group of its own, and empty changes nothing. Ungrouped, it is `decide`
+/// against the whole title: empty goes back to the window's own title.
+pub fn decideWindow(buf: []u8, title: []const u8, typed: []const u8) Outcome {
+    const sp = outline.splitWindowTitle(title) orelse return decide(typed, title);
+    const name = std.mem.trim(u8, typed, " \t");
+    if (name.len == 0) return .keep;
+    const renamed = if (outline.splitWindowTitle(name) == null) groupTitle(buf, sp.project, name) else name;
+    if (std.mem.eql(u8, renamed, std.mem.trim(u8, title, " \t"))) return .keep;
+    return .{ .set = renamed };
 }
 
 /// A project group renamed to `project`: the title one of its windows,
@@ -160,4 +185,34 @@ test "T2524: a name heads a group only when the title reads back into it" {
     try testing.expect(!namesGroup("x" ** 41)); // a sentence, not a group
     try testing.expect(namesGroup("x" ** 40));
     try testing.expect(!namesGroup(" web")); // untrimmed reads back as `web`
+}
+
+test "T2525: a grouped window's field opens on its own name; an ungrouped one's on its whole title" {
+    try testing.expectEqualStrings("feature-2", windowName("ghoztty: feature-2"));
+    try testing.expectEqualStrings("zsh", windowName("zsh"));
+    // A colon that does not head a group is part of the name.
+    try testing.expectEqualStrings("http://x", windowName("http://x"));
+}
+
+test "T2525: renaming a grouped window keeps its group, and empty changes nothing" {
+    var buf: [64]u8 = undefined;
+    // Mac PaneSidebarStateTests.renamingAGroupedWindowKeepsItsGroup.
+    try testing.expectEqualStrings("ghoztty: wt-3", decideWindow(&buf, "ghoztty: wt-2", "wt-3").set);
+    try testing.expectEqualStrings("ghoztty: wt-3", decideWindow(&buf, "ghoztty: wt-2", "  wt-3 ").set);
+    try testing.expectEqual(Outcome.keep, decideWindow(&buf, "ghoztty: wt-2", ""));
+    try testing.expectEqual(Outcome.keep, decideWindow(&buf, "ghoztty: wt-2", "   "));
+    try testing.expectEqual(Outcome.keep, decideWindow(&buf, "ghoztty: wt-2", "wt-2"));
+    // Typing a <project>: names the group outright (Mac a0f6090a3).
+    try testing.expectEqualStrings("dzearing: foo", decideWindow(&buf, "ghoztty: wt-2", "dzearing: foo").set);
+    try testing.expectEqual(Outcome.keep, decideWindow(&buf, "ghoztty: wt-2", "ghoztty: wt-2"));
+    // A colon that names no group stays inside the group.
+    try testing.expectEqualStrings("ghoztty: see http://x", decideWindow(&buf, "ghoztty: wt-2", "see http://x").set);
+}
+
+test "T2525: an ungrouped window's rename is its whole title, and empty follows the window again" {
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("build", decideWindow(&buf, "zsh", "build").set);
+    try testing.expectEqualStrings("a: foo", decideWindow(&buf, "zsh", "a: foo").set);
+    try testing.expectEqual(Outcome.clear, decideWindow(&buf, "zsh", ""));
+    try testing.expectEqual(Outcome.keep, decideWindow(&buf, "zsh", " zsh "));
 }

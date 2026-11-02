@@ -11,6 +11,10 @@
 #      group proj; Return on an unchanged name keeps everything; Escape after
 #      typing changes nothing; clicking away keeps what was typed; emptied, A
 #      follows its own title again, and a rename after that still pins.
+#   WG. A grouped window's field (T2525, Mac 7bee055c9/a0f6090a3): it opens on
+#      the window's own name, without `proj: `; emptied it changes nothing;
+#      a new name keeps the group; typing `other: two` moves it to group
+#      other, and `proj: two` typed there brings it back.
 #   G. Project groups: renaming proj to web retitles every window in it;
 #      emptied, each window goes back to its own name, ungrouped.
 #   U. The Ungrouped header (T2524, Mac 7bee055c9): beside a group, the lone
@@ -325,7 +329,7 @@ try {
     # U, zeta, proj, one, two.
     Assert "the outline logs a pencil for every head, Ungrouped's first ($($o.Line))" ($null -ne $o -and $o.Heads.Count -eq 5 -and $o.Hr.Count -eq 5 -and (Find-UngroupedHead $o) -eq 0 -and $o.UCount -eq 1)
 
-    "== W1: a window's field holds its whole title - typing a project moves it into that group"
+    "== W1: an ungrouped window's field holds its whole title - typing a project moves it into that group"
     $k = Find-WindowHead $o $order 'zeta'
     Assert "zeta has a window head" ($k -ge 0)
     $mark = Get-LogCount
@@ -345,20 +349,51 @@ try {
     Assert "A moved into proj as three, at the edge nearest where it was (above it, T2421) - nothing re-sorts by name (T2405): proj/three | proj/one | proj/two" (Wait-Order 'proj/three|proj/one|proj/two' $mark)
 
     "== W2: Return on an unchanged name pins nothing"
-    Assert "the field opens on proj: three" (Open-WindowField $top $sb 'proj/three' 'proj: three')
+    Assert "a grouped window's field opens on its own name, three (T2525)" (Open-WindowField $top $sb 'proj/three' 'three')
     $mark = Get-LogCount
     Key-Field $sb 'Enter'
     Assert "unchanged: kept as it was (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=window outcome=keep ' $mark 3000))
     Assert "the order did not move" (((Get-Order 0) -join '|') -eq 'proj/three|proj/one|proj/two')
 
     "== W3: Escape after typing changes nothing"
-    Assert "the field opens on proj: one" (Open-WindowField $top $sb 'proj/one' 'proj: one')
+    Assert "the field opens on one" (Open-WindowField $top $sb 'proj/one' 'one')
     Type-Field $sb 'zzz'
     $mark = Get-LogCount
     Key-Field $sb 'Escape'
     Assert "Escape cancels (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=escape kind=window outcome=keep text=zzz$' $mark 3000))
     Start-Sleep -Milliseconds 400
     Assert "nothing was renamed" (-not (Test-LogSince 'order=.*zzz' $mark) -and ((Get-Order 0) -join '|') -eq 'proj/three|proj/one|proj/two')
+
+    "== WG1: a grouped window's field emptied changes nothing - it stays in its group (T2525)"
+    Assert "proj/two's field opens on two, not proj: two" (Open-WindowField $top $sb 'proj/two' 'two')
+    Key-Field $sb 'Backspace'
+    $mark = Get-LogCount
+    Key-Field $sb 'Enter'
+    Assert "empty is kept as it was, not cleared (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=window outcome=keep text=$' $mark 3000))
+    Start-Sleep -Milliseconds 400
+    Assert "still grouped, nothing moved: proj/three | proj/one | proj/two" (((Get-Order 0) -join '|') -eq 'proj/three|proj/one|proj/two')
+
+    "== WG2: a new name keeps the group"
+    Assert "the field opens on two" (Open-WindowField $top $sb 'proj/two' 'two')
+    Type-Field $sb 'deux'
+    $mark = Get-LogCount
+    Key-Field $sb 'Enter'
+    Assert "Return pins it (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=window outcome=set text=deux$' $mark 3000))
+    Assert "renamed within proj, in its place: proj/three | proj/one | proj/deux" (Wait-Order 'proj/three|proj/one|proj/deux' $mark)
+
+    "== WG3: typing <group>: names the group outright (Mac a0f6090a3)"
+    Assert "the field opens on deux" (Open-WindowField $top $sb 'proj/deux' 'deux')
+    Type-Field $sb 'other: two'
+    $mark = Get-LogCount
+    Key-Field $sb 'Enter'
+    Assert "Return pins it (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=window outcome=set text=other: two$' $mark 3000))
+    Assert "moved out of proj into a new group other, where it was: proj/three | proj/one | other/two" (Wait-Order 'proj/three|proj/one|other/two' $mark)
+    Assert "other/two's field opens on two" (Open-WindowField $top $sb 'other/two' 'two')
+    Type-Field $sb 'proj: two'
+    $mark = Get-LogCount
+    Key-Field $sb 'Enter'
+    Assert "Return pins it (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=window outcome=set text=proj: two$' $mark 3000))
+    Assert "back in proj at the edge nearest it: proj/three | proj/one | proj/two" (Wait-Order 'proj/three|proj/one|proj/two' $mark)
 
     "== G1: a group's field holds the project; each of its windows takes the new name"
     $o = Get-Outline 0
