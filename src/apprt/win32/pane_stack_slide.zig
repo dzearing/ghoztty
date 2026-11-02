@@ -450,6 +450,27 @@ pub const Slide = struct {
         return !s.into;
     }
 
+    /// Where card `id`'s pane and card are drawn once it has caught up with
+    /// where the layout puts it now (T2572): the end of the path the glide
+    /// declares to the compositor. The pane keeps the size it is drawn at on
+    /// the way (`rectOf`) - a strip card's still pinned to its anchor - so
+    /// this is not the slot a landing resizes it to. Null when this glide
+    /// does not carry it.
+    pub fn landing(self: *const Slide, id: Id) ?struct { pane: PxRect, card: PxRect } {
+        const c = self.find(id) orelse return null;
+        const now = rectOf(c, self.resize);
+        const w = now.width();
+        const h = now.height();
+        const t = c.to;
+        const anchor: Anchor = if (c.strip) |s| s.anchor else .top_left;
+        const pane: PxRect = switch (anchor) {
+            .top_left => .{ .left = t.left, .top = t.top, .right = t.left + w, .bottom = t.top + h },
+            .top_right => .{ .left = t.right - w, .top = t.top, .right = t.right, .bottom = t.top + h },
+            .bottom_left => .{ .left = t.left, .top = t.bottom - h, .right = t.left + w, .bottom = t.bottom },
+        };
+        return .{ .pane = pane, .card = t };
+    }
+
     /// Where card `id`'s pane is drawn, caught up or not; null when this glide
     /// does not carry it.
     pub fn placed(self: *const Slide, id: Id) ?PxRect {
@@ -917,6 +938,39 @@ test "plan: a strip click slides the cards on show to their new slots" {
     // up is no longer sliding: it sits at its slot.
     try testing.expectEqual(@as(?PxRect, null), s.rect(1));
     try testing.expectEqual(@as(?PxRect, null), s.rect(4));
+}
+
+test "landing: where the glide's path ends, at the size the pane is drawn on the way (T2572)" {
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(400, 0, 400, 600), .tucked = false },
+        .{ .id = 3, .rect = r(780, 0, 400, 600), .tucked = true },
+        .{ .id = 4, .rect = r(790, 0, 400, 600), .tucked = true },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = true },
+        .{ .id = 2, .rect = r(20, 0, 400, 600), .tucked = true, .strip = r(20, 0, 10, 600) },
+        .{ .id = 3, .rect = r(30, 0, 400, 600), .tucked = false },
+        .{ .id = 4, .rect = r(430, 0, 400, 600), .tucked = false },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    _ = s.step(30);
+    // A card on show lands at its slot, and is exactly where the stepped
+    // glide ends.
+    const l4 = s.landing(4).?;
+    try testing.expectEqual(r(430, 0, 400, 600), l4.pane);
+    try testing.expectEqual(r(430, 0, 400, 600), l4.card);
+    // A card going into its strip ends at the strip, its pane still at the
+    // size it had on show, pinned to the strip's edge on its anchor's side.
+    const l2 = s.landing(2).?;
+    const c2 = s.find(2).?;
+    try testing.expectEqual(c2.to, l2.card);
+    try testing.expectEqual(@as(i32, 400), l2.pane.width());
+    try testing.expect(l2.pane.left == l2.card.left or l2.pane.right == l2.card.right);
+    // Not in the glide: nothing to land.
+    try testing.expectEqual(@as(@TypeOf(s.landing(1)), null), s.landing(1));
+    _ = runOut(&s);
+    try testing.expectEqual(l4.pane, s.placed(4).?);
 }
 
 test "step: 90% of the way in 0.1 s, settled within about a third of a second" {

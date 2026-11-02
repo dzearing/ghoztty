@@ -285,6 +285,57 @@ pub fn fitCurve(curve: *const fn (f64) f64, duration_s: f64, out: []Cubic) void 
     }
 }
 
+/// How many cubics a follower is cut into (`fitFollower`): over the longest
+/// glide on a screen (about 8 time constants) each piece spans half of one,
+/// close enough that the fitted path is within half a pixel of the exact one.
+pub const follower_segments = 16;
+
+/// Fit the stack glide's follower (T2572; Mac a81db68f9, `pane_stack_slide`)
+/// for a value `dist_px` away from its target: every moment it closes
+/// `1 - exp(-dt / tau_s)` of what is left, and snaps once it is within
+/// `snap_px`. Its whole path is known up front, so it is handed to the
+/// compositor as `out.len` C1 Hermite cubics in 0..1 units of the way, the
+/// last one landing exactly on 1 at the snap. Returns the snap time in
+/// seconds; 0 (and `out` untouched) for a distance already within the snap.
+pub fn fitFollower(dist_px: f64, tau_s: f64, snap_px: f64, out: []Cubic) f64 {
+    const d = @abs(dist_px);
+    if (d <= snap_px or tau_s <= 0) return 0;
+    const span = tau_s * @log(d / snap_px);
+    // Scaled so the snap's last half pixel is spread over the way instead
+    // of jumping at the end.
+    const scale = 1 / (1 - snap_px / d);
+    const n: f64 = @floatFromInt(out.len);
+    const h = span / n;
+    for (out, 0..) |*c, i| {
+        const t0 = h * @as(f64, @floatFromInt(i));
+        const t1 = h * @as(f64, @floatFromInt(i + 1));
+        const p0 = scale * (1 - @exp(-t0 / tau_s));
+        const p1 = if (i + 1 == out.len) 1 else scale * (1 - @exp(-t1 / tau_s));
+        const m0 = scale * @exp(-t0 / tau_s) / tau_s;
+        const m1 = scale * @exp(-t1 / tau_s) / tau_s;
+        c.* = .{
+            .begin_s = t0,
+            .c0 = p0,
+            .c1 = m0,
+            .c2 = (3 * (p1 - p0) / h - 2 * m0 - m1) / h,
+            .c3 = (2 * (p0 - p1) / h + m0 + m1) / (h * h),
+        };
+    }
+    return span;
+}
+
+/// Where a follower `fitFollower` declared is, `t_s` after it began, in 0..1
+/// units of the way: the exact curve the cubics stand in for, for a glide
+/// re-declared mid-way from the value it has reached (T2572).
+pub fn followerAt(dist_px: f64, tau_s: f64, snap_px: f64, t_s: f64) f64 {
+    const d = @abs(dist_px);
+    if (d <= snap_px or tau_s <= 0) return 1;
+    const span = tau_s * @log(d / snap_px);
+    if (t_s >= span) return 1;
+    if (t_s <= 0) return 0;
+    return (1 - @exp(-t_s / tau_s)) / (1 - snap_px / d);
+}
+
 /// A curve's slope at `t`, one-sided at the ends so it never samples
 /// outside 0..1 (where an ease is clamped flat).
 fn slope(curve: *const fn (f64) f64, t: f64) f64 {
@@ -614,6 +665,31 @@ test "fitCurve: segments tile the duration, are C0 at every joint and land on th
         const i = @min(@as(usize, @intFromFloat(t_s / 0.3 * ease_segments)), ease_segments - 1);
         try std.testing.expectApproxEqAbs(smoothstep(t_s / 0.3), segs[i].at(t_s), 1e-6);
     }
+}
+
+test "fitFollower: the cubics track the exact follower within half a pixel and land at the snap (T2572)" {
+    var segs: [follower_segments]Cubic = undefined;
+    const tau = 0.045;
+    // The widest glide a screen holds, and an ordinary one.
+    for ([_]f64{ 2400, -900, 40 }) |dist| {
+        const span = fitFollower(dist, tau, 0.5, &segs);
+        try std.testing.expectApproxEqAbs(tau * @log(@abs(dist) / 0.5), span, 1e-12);
+        try std.testing.expectApproxEqAbs(@as(f64, 0), segs[0].c0, 1e-12);
+        try std.testing.expectApproxEqAbs(@as(f64, 1), segs[follower_segments - 1].at(span), 1e-9);
+        for (segs[1..], 1..) |s, i| try std.testing.expectApproxEqAbs(segs[i - 1].at(s.begin_s), s.c0, 1e-9);
+        for (0..1001) |k| {
+            const t_s = span * @as(f64, @floatFromInt(k)) / 1000.0;
+            const i = @min(@as(usize, @intFromFloat(t_s / span * follower_segments)), follower_segments - 1);
+            const exact = followerAt(dist, tau, 0.5, t_s);
+            try std.testing.expect(@abs(segs[i].at(t_s) - exact) * @abs(dist) < 0.5);
+            // And the exact path is the stepped follower's, within the snap.
+            const stepped = 1 - @exp(-t_s / tau);
+            try std.testing.expect(@abs(exact - stepped) * @abs(dist) <= 0.5 + 1e-9);
+        }
+    }
+    // Within the snap there is nothing to declare.
+    try std.testing.expectEqual(@as(f64, 0), fitFollower(0.4, tau, 0.5, &segs));
+    try std.testing.expectEqual(@as(f64, 1), followerAt(0.4, tau, 0.5, 0));
 }
 
 test "Matrix3x2 is D2D_MATRIX_3X2_F: six floats, scale on the diagonal" {

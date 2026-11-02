@@ -59,6 +59,18 @@
 # -NoGlideTree sets GHOZTTY_GLIDE_TREE=0: the tree's panes glide by moving
 # their windows again, as before T2571.
 #
+# STALL (T2572) is the TREE arm with the window's thread blocked for -StallMs
+# right after the glide's first frame (GHOZTTY_DEBUG_GLIDE_STALL_MS, debug
+# builds). The glide is declared to the compositor - each pane visual's whole
+# follower path at once - so the cards keep travelling through the stall;
+# stepped from the window's thread they freeze for all of it. .10 reads the
+# film: the longest stretch of the glide in which the card that travels
+# furthest did not move, which must stay under a quarter of the stall.
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms stall
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms stall -NoDeclare   # stall.10 must go red
+# -NoDeclare sets GHOZTTY_GLIDE_DECLARE=0: the visuals are placed on every
+# frame from the window's thread again, as T2571 left them.
+#
 # -NegativeControl sets the slide to 0 ms (the instant re-layout from before
 # T2102): .5 must FAIL on every arm.
 
@@ -70,7 +82,9 @@ param(
     [string]$OutDir,
     [switch]$KeepFrames,
     [switch]$NegativeControl,
-    [switch]$NoGlideTree
+    [switch]$NoGlideTree,
+    [int]$StallMs = 500,
+    [switch]$NoDeclare
 )
 
 $ErrorActionPreference = 'Continue'
@@ -98,7 +112,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -322,6 +336,44 @@ function Score-Film($arm, $fdir) {
     Assert "$arm.6 whole: every card on show at both ends is on screen in every frame$(if ($wholeBad) { ': ' + ($wholeBad -join '; ') })" ($wholeBad.Count -eq 0)
     Assert "$arm.7 held: no card's picture is ever larger than its rest size (clipped, never stretched)$(if ($heldBad) { ': ' + (($heldBad | Select-Object -First 4) -join '; ') + " ($($heldBad.Count))" })" ($heldBad.Count -eq 0)
     Assert "$arm.8 untorn: every card's rows share one left and one right edge in every frame$(if ($tornBad) { ': ' + (($tornBad | Select-Object -First 4) -join '; ') + " ($($tornBad.Count))" })" ($tornBad.Count -eq 0)
+    if ($arm -eq 'stall') { Score-Stall $arm $rows }
+}
+
+# T2572: the card that travels furthest, frame by frame - the longest gap in
+# the film's own clock between two frames that show it somewhere new, from
+# its first move to where it settles. WGC delivers a frame only when the
+# window's picture changes, so a frozen glide is a gap, not a run of
+# identical frames.
+function Score-Stall($arm, $rows) {
+    # The LEFT edge: the right one also takes the card's new width when the
+    # glide lands (a pane held at its old size, resized once at the end).
+    $best = -1; $bestK = -1
+    for ($k = 0; $k -lt 4; $k++) {
+        $a = $rows[0].B[$k]; $z = $rows[$rows.Count - 1].B[$k]
+        if ($a.Rows -eq 0 -or $z.Rows -eq 0) { continue }
+        $d = [Math]::Abs($z.LeftMin - $a.LeftMin)
+        if ($d -gt $best) { $best = $d; $bestK = $k }
+    }
+    if ($bestK -lt 0 -or $best -le 40) { Assert "$arm.10 a card travels far enough to time ($best px)" $false; return }
+    # Timed while 5% of the way is still to go: the follower's last pixels
+    # come a few apart in time by design (each frame closes a share of what
+    # is left), which is a slow glide, not a stalled one.
+    $endLeft = $rows[$rows.Count - 1].B[$bestK].LeftMin
+    $near = [Math]::Max(2, [int](0.05 * $best))
+    $prev = $rows[0].B[$bestK].LeftMin
+    $lastMoveT = $null; $gap = 0.0; $gapAt = ''; $moves = 0
+    foreach ($f in $rows) {
+        $r = $f.B[$bestK].LeftMin
+        if ($f.B[$bestK].Rows -eq 0 -or $r -eq $prev) { continue }
+        if ($null -ne $lastMoveT -and ($f.T - $lastMoveT) -gt $gap) { $gap = $f.T - $lastMoveT; $gapAt = "f$($f.I)" }
+        $lastMoveT = $f.T; $prev = $r; $moves++
+        if ([Math]::Abs($r - $endLeft) -le $near) { break }
+    }
+    $limit = $StallMs / 4.0
+    $t0 = $rows[0].T
+    "    trace ($($colourNames[$bestK]) ms:left-right): " + (($rows | ForEach-Object { $b = $_.B[$bestK]; "$([Math]::Round($_.T - $t0)):$($b.LeftMin)-$($b.RightMax)" }) -join ' ')
+    "    stall:$($colourNames[$bestK]) travels $best px in $moves moves; longest still stretch $([Math]::Round($gap)) ms (ending $gapAt), stall $StallMs ms"
+    Assert "$arm.10 through a $StallMs ms stall the glide keeps moving: longest still stretch $([Math]::Round($gap)) ms (need < $limit)" ($moves -ge 2 -and $gap -lt $limit)
 }
 
 $onLine = 'pane presents through a composition swap chain'
@@ -336,8 +388,9 @@ $td = New-TestDesktop -Interactive
 
 try {
     foreach ($arm in $Arms) {
-        $comp = $arm -in 'on', 'tree'
-        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($comp) { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -eq 'tree') { '1' } else { 'unset' }), slide $SlideMs ms)"
+        $comp = $arm -in 'on', 'tree', 'stall'
+        $isTree = $arm -in 'tree', 'stall'
+        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($comp) { '1' } else { 'unset' }) PANE_TREE=$(if ($isTree) { '1' } else { 'unset' }), slide $SlideMs ms$(if ($arm -eq 'stall') { ", stall $StallMs ms, declare $(if ($NoDeclare) { 'off' } else { 'on' })" }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
         if (Test-Path $dir) { Get-ChildItem $dir -File -Recurse | ForEach-Object { Remove-Item $_.FullName } }
@@ -350,9 +403,11 @@ try {
         $env:GHOZTTY_STACK_SLIDE_MS = "$SlideMs"
         if ($comp) { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
         foreach ($k in 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
-            if ($arm -eq 'tree') { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+            if ($isTree) { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
         }
         if ($NoGlideTree) { $env:GHOZTTY_GLIDE_TREE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_TREE -ErrorAction SilentlyContinue }
+        if ($arm -eq 'stall') { $env:GHOZTTY_DEBUG_GLIDE_STALL_MS = "$StallMs" } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_MS -ErrorAction SilentlyContinue }
+        if ($NoDeclare) { $env:GHOZTTY_GLIDE_DECLARE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_DECLARE -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
             '--config-default-files=false', '--session-persistence=false',
@@ -394,7 +449,7 @@ try {
         Assert "$arm.2 four panes on show at 1500 DIP ($($four.Count))" ($four.Count -eq 4)
         if ($comp) {
             Assert "$arm.3 the panes present through the composition chain" (Wait-Log $err $onLine 15000)
-            if ($arm -eq 'tree') { Assert "$arm.3t every pane went into the window tree (adopts=4)" (Wait-Log $err 'adopted into the window tree \(adopts=4\)' 15000) }
+            if ($isTree) { Assert "$arm.3t every pane went into the window tree (adopts=4)" (Wait-Log $err 'adopted into the window tree \(adopts=4\)' 15000) }
         } else {
             Assert "$arm.3 no pane touched the composition path" ((Read-Text $err) -notmatch [regex]::Escape($onLine))
         }
@@ -439,11 +494,17 @@ try {
         } else {
             $cm = [int]$moves.Groups[1].Value; $vm = [int]$moves.Groups[2].Value; $np = [int]$moves.Groups[3].Value
             "  glide moved: child windows $cm, visuals $vm, panes $np"
-            if ($arm -eq 'tree') {
+            if ($isTree) {
                 Assert "$arm.9 the glide moved visuals, not windows: $cm child moves for $np panes (at most $(2 * $np)), $vm visual moves" ($cm -le 2 * $np -and $vm -gt $np)
             } else {
                 Assert "$arm.9 control: the window path moves child windows and no visual ($cm child, $vm visual)" ($cm -gt 2 * $np -and $vm -eq 0)
             }
+        }
+
+        # T2572: the panes' paths went to the compositor (none under -NoDeclare).
+        if ($arm -eq 'stall') {
+            $dec = [regex]::Matches((Read-Text $err), 'pane visual glide declared').Count
+            Assert "$arm.11 the glide was handed to the compositor ($dec pane path(s) declared)" ($dec -ge 1)
         }
 
         $fgPid = [uint32]0

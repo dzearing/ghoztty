@@ -150,6 +150,59 @@ pub const Clip = struct {
     }
 };
 
+/// Where a pane visual is and what of it shows (T2572): its offset in the
+/// window and its clip, in fractional pixels - the two ends of a glide the
+/// compositor runs.
+pub const Pose = struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    clip: Clip = .{},
+
+    pub fn of(at: Placement, c: Clip) Pose {
+        return .{ .x = @floatFromInt(at.x), .y = @floatFromInt(at.y), .clip = c };
+    }
+
+    /// `f` of the way from `a` to `b`, every value on its own.
+    pub fn lerp(a: Pose, b: Pose, f: f32) Pose {
+        const L = struct {
+            fn v(p: f32, q: f32, t: f32) f32 {
+                return p + (q - p) * t;
+            }
+        };
+        return .{
+            .x = L.v(a.x, b.x, f),
+            .y = L.v(a.y, b.y, f),
+            .clip = .{
+                .left = L.v(a.clip.left, b.clip.left, f),
+                .top = L.v(a.clip.top, b.clip.top, f),
+                .right = L.v(a.clip.right, b.clip.right, f),
+                .bottom = L.v(a.clip.bottom, b.clip.bottom, f),
+                .top_radius = b.clip.top_radius,
+                .bottom_radius = b.clip.bottom_radius,
+            },
+        };
+    }
+
+    /// The farthest any one value has to go from `a` to `b`, in px.
+    pub fn distance(a: Pose, b: Pose) f32 {
+        var d = @max(@abs(b.x - a.x), @abs(b.y - a.y));
+        inline for (.{ "left", "top", "right", "bottom" }) |f| d = @max(d, @abs(@field(b.clip, f) - @field(a.clip, f)));
+        return d;
+    }
+};
+
+test "Pose: lerp moves every value on its own; distance is the farthest one (T2572)" {
+    const a: Pose = .{ .x = 100, .y = 0, .clip = .{ .left = 0, .top = -20, .right = 400, .bottom = 600 } };
+    const b: Pose = .{ .x = 20, .y = 0, .clip = .{ .left = 0, .top = -20, .right = 10, .bottom = 600, .top_radius = 6 } };
+    try std.testing.expectEqual(@as(f32, 390), Pose.distance(a, b));
+    const mid = Pose.lerp(a, b, 0.5);
+    try std.testing.expectEqual(@as(f32, 60), mid.x);
+    try std.testing.expectEqual(@as(f32, 205), mid.clip.right);
+    try std.testing.expectEqual(@as(f32, -20), mid.clip.top);
+    try std.testing.expectEqual(b, Pose.lerp(a, b, 1));
+    try std.testing.expectEqual(@as(f32, 0), Pose.distance(b, b));
+}
+
 /// The clip for a placed visual whose origin sits `above` px below the pane
 /// window's top (the banner band), unclipped over that band, cut to `shape`.
 /// An empty placement or an empty cut clips to nothing.

@@ -966,6 +966,9 @@ stack_slide_fresh: bool = false,
 glide_child_moves: u32 = 0,
 glide_tree_moves: u32 = 0,
 glide_moves_report: bool = false,
+/// The first tick of a glide has yet to run: `GHOZTTY_DEBUG_GLIDE_STALL_MS`
+/// blocks the thread right after it (T2572).
+glide_stall_due: bool = false,
 /// A test's slow frames (T2442; `GHOZTTY_STACK_SLIDE_DT_MS`, read once): every
 /// tick steps the glide as if this long had passed. Null in use.
 stack_slide_dt_ms: ?f64 = null,
@@ -9941,9 +9944,61 @@ fn glideTreePane(self: *Window, view: *PaneView, h: w32.HWND, slot: w32.RECT, sh
     const r = self.leafRect(view, slot);
     const real = childClientRect(parent, h) orelse return false;
     if (real.width() != r.right - r.left or real.height() != r.bottom - r.top) return false;
-    sf.setTreeGlideAt(r);
+    if (!self.declareGlideTreePane(view, sf, r)) sf.setTreeGlideAt(r);
     self.glide_tree_moves += 1;
     return true;
+}
+
+var glide_declare_state: ?bool = null;
+
+/// Whether a tree pane's glide is handed to the compositor whole (T2572)
+/// rather than placed on every frame. `GHOZTTY_GLIDE_DECLARE=0` steps it from
+/// the window's thread again: the A/B and the negative control of the
+/// on-screen stall oracle (comp-glide-hold-onscreen.ps1 `-Arms stall`).
+fn glideDeclareOn() bool {
+    if (glide_declare_state) |v| return v;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const raw = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_GLIDE_DECLARE") catch null;
+    const v = if (raw) |s| !std.mem.eql(u8, s, "0") else true;
+    glide_declare_state = v;
+    return v;
+}
+
+/// A tree pane's glide frame, declared (T2572): `now` is where this frame
+/// has the pane's window (`glideTreePane`'s rect); the whole path from there
+/// to its landing goes to the compositor once, and again only on a retarget.
+/// A card going into or out of its strip stays on frames: its fade is
+/// limited per frame (T2442) and its face is drawn from the window's thread,
+/// so a compositor path would part from both. False: the caller places it.
+fn declareGlideTreePane(self: *Window, view: *PaneView, sf: *Surface, now: w32.RECT) bool {
+    if (!glideDeclareOn() or self.stack_slide_dt_ms != null) return false;
+    const slide = if (self.stack_slide) |*s| s else return false;
+    const id = pane_stack_grid.viewId(view);
+    if (slide.stripFace(id) != null) return false;
+    const now_card = slide.cardRect(id) orelse return false;
+    const land = slide.landing(id) orelse return false;
+    const land_win = self.leafRect(view, winRect(land.pane));
+    sf.glideTreeTo(
+        now,
+        self.glideTreeShape(view, sf, now, now_card),
+        land_win,
+        self.glideTreeShape(view, sf, land_win, land.card),
+        slide.tau_ms,
+    );
+    return true;
+}
+
+/// The shape a tree pane's visual has with its window at `win` (top-level
+/// client pixels) and its card at `card` (the glide's): cut to the card as
+/// `slideClip` cuts it, or - inside its card - the shape it already has.
+fn glideTreeShape(self: *Window, view: *PaneView, sf: *Surface, win: w32.RECT, card: pane_stack_grid.PxRect) comp_tree.Shape {
+    const c = self.leafRect(view, winRect(card));
+    const cut = pane_stack_slide.clip(
+        .{ .left = win.left, .top = win.top, .right = win.right, .bottom = win.bottom },
+        .{ .left = c.left, .top = c.top, .right = c.right, .bottom = c.bottom },
+    ) orelse return sf.tree_shape;
+    return .{ .rect = .{ .left = cut.left, .top = cut.top, .right = cut.right, .bottom = cut.bottom } };
 }
 
 /// Compare this layout with the last one and start, carry on, or drop the
@@ -10255,7 +10310,23 @@ fn runStackSlide(self: *Window) void {
         return;
     };
     self.stack_slide_fresh = true;
+    self.glide_stall_due = true;
     if (self.hwnd) |h| _ = FrameClock.arm(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS);
+}
+
+/// `GHOZTTY_DEBUG_GLIDE_STALL_MS=<n>` (debug builds, T2572): block the
+/// window's thread for n ms once a glide's first frame is up - the on-screen
+/// oracle's stand-in for a busy UI thread (the
+/// `GHOZTTY_DEBUG_BELL_FADE_STALL_MS` shape). A glide the compositor runs
+/// moves on through it; one stepped from here freezes.
+fn glideDebugStall() void {
+    if (comptime builtin.mode != .Debug) return;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_GLIDE_STALL_MS") catch return;
+    defer std.heap.page_allocator.free(raw);
+    const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
+    if (ms == 0) return;
+    log.info("stack glide debug stall ms={d}", .{ms});
+    std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
 }
 
 /// Stop the clock of a glide that has caught up under a drag (Mac: "caught up:
@@ -10469,6 +10540,10 @@ fn stackSlideTick(self: *Window) void {
     const batch = self.treeGlideBatch();
     self.layoutSplitsLive();
     if (batch) |h| h.flush() catch self.deskVisualFailed();
+    if (self.glide_stall_due) {
+        self.glide_stall_due = false;
+        glideDebugStall();
+    }
     // T2485: where a glide frame's time goes, tick by tick, to set against
     // the captured frames (`stack trace batch` carries the same clock).
     if (stackTraceOn()) {

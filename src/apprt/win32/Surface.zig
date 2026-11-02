@@ -50,6 +50,7 @@ const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const BellBorder = @import("BellBorder.zig").BellBorder;
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const comp_tree = @import("../../renderer/comp_tree.zig");
+const pane_stack_slide = @import("pane_stack_slide.zig");
 const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const ReadonlyBadge = @import("ReadonlyBadge.zig").ReadonlyBadge;
@@ -314,6 +315,10 @@ tree_glide_at: ?w32.RECT = null,
 /// `Window.placeLeaf` took it off a glide's placement: the visual follows
 /// the window once the pass has moved it.
 tree_glide_landing: bool = false,
+/// The glide the compositor runs for this pane's visual (T2572): declared
+/// once, and again only when the landing moves; while it runs, the visual is
+/// not placed from the window's thread. Null off a declared glide.
+tree_glide_decl: ?TreeGlide = null,
 
 /// Sticky pane banner (T35): overlay strip above the terminal content,
 /// plus the raw markdown source (owned) so the editor can prefill it and
@@ -1908,14 +1913,90 @@ pub fn syncTreeVisual(self: *Surface) void {
         pts = .{ .{ .x = rc.left, .y = rc.top }, .{ .x = rc.right, .y = rc.bottom } };
         _ = w32.MapWindowPoints(hwnd, top, &pts, 2);
     }
-    // The swap chain holds the grid, which sits below the banner band the
-    // window spans (T2566).
-    const band: i32 = @intCast(self.gridBand());
-    const at = comp_tree.placement(pts[0].x, pts[0].y + band, pts[1].x - pts[0].x, @max(pts[1].y - pts[0].y - band, 1), shown);
-    h.panePlace(self.tree_visual.?, at.x, at.y, comp_tree.clip(at, band, self.tree_shape), &self.tree_clip) catch {
+    // A glide the compositor runs carries the visual until it lands (T2572).
+    if (self.tree_glide_at == null) self.tree_glide_decl = null;
+    if (self.tree_glide_decl != null) return;
+    const at = self.treePlacement(.{ .left = pts[0].x, .top = pts[0].y, .right = pts[1].x, .bottom = pts[1].y }, shown);
+    h.panePlace(self.tree_visual.?, at.x, at.y, comp_tree.clip(at, @intCast(self.gridBand()), self.tree_shape), &self.tree_clip) catch {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane visual place failed at {s}: hr=0x{x:0>8}", .{ f.stage, chrome_comp.hex(f.hr) });
     };
+}
+
+/// Where the visual of a pane window at `win` (top-level client pixels)
+/// goes: the swap chain holds the grid, which sits below the banner band the
+/// window spans (T2566).
+fn treePlacement(self: *Surface, win: w32.RECT, shown: bool) comp_tree.Placement {
+    const band: i32 = @intCast(self.gridBand());
+    return comp_tree.placement(win.left, win.top + band, win.right - win.left, @max(win.bottom - win.top - band, 1), shown);
+}
+
+/// A glide declared to the compositor (`tree_glide_decl`, T2572).
+const TreeGlide = struct {
+    t0: std.time.Instant,
+    from: comp_tree.Pose,
+    to: comp_tree.Pose,
+    dist: f32,
+    tau_s: f64,
+
+    /// Where the compositor has the visual now: the exact path its cubics
+    /// stand in for.
+    fn reached(self: TreeGlide, now: std.time.Instant) comp_tree.Pose {
+        const t_s = @as(f64, @floatFromInt(now.since(self.t0))) / std.time.ns_per_s;
+        const f = comp_overlay.followerAt(self.dist, self.tau_s, pane_stack_slide.snap_px, t_s);
+        return comp_tree.Pose.lerp(self.from, self.to, @floatCast(f));
+    }
+};
+
+/// The visual's offset and clip for a pane window at `win` cut to `shape`.
+fn treePose(self: *Surface, win: w32.RECT, shape: comp_tree.Shape) comp_tree.Pose {
+    const at = self.treePlacement(win, true);
+    return comp_tree.Pose.of(at, comp_tree.clip(at, @intCast(self.gridBand()), shape));
+}
+
+/// Window thread: one stack-glide frame for this pane's visual (T2572). The
+/// glide has the pane at `now` cut to `now_shape`, on its way to `land` cut
+/// to `land_shape` (top-level client pixels, shapes in the window's own) on
+/// the follower of time constant `tau_ms`. The first frame hands that whole
+/// path to the compositor, and a later one only when the landing has moved
+/// (a drag reshaping the row), from wherever the running glide has got to -
+/// so the visual moves on through a busy window thread. Where the compositor
+/// cannot take it, the visual is placed at `now`, as T2571's frames do.
+pub fn glideTreeTo(self: *Surface, now: w32.RECT, now_shape: comp_tree.Shape, land: w32.RECT, land_shape: comp_tree.Shape, tau_ms: f64) void {
+    self.tree_glide_at = now;
+    if (self.declareTreeGlide(now, now_shape, land, land_shape, tau_ms)) return;
+    self.tree_glide_decl = null;
+    if (self.tree_visual != null) self.syncTreeVisual();
+}
+
+fn declareTreeGlide(self: *Surface, now: w32.RECT, now_shape: comp_tree.Shape, land: w32.RECT, land_shape: comp_tree.Shape, tau_ms: f64) bool {
+    const vis = self.tree_visual orelse return false;
+    // A hidden pane's visual shows nothing, and its frames keep it so.
+    const hwnd = self.hwnd orelse return false;
+    if (w32.GetWindowLongW(hwnd, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) return false;
+    const h = if (self.parent_window.chrome_host) |*host| host else return false;
+    if (h.rebuilds != self.tree_epoch or self.tree_gen != self.comp_tree_slot.currentGeneration()) return false;
+    const to = self.treePose(land, land_shape);
+    const t = std.time.Instant.now() catch return false;
+    const retarget = self.tree_glide_decl != null;
+    if (self.tree_glide_decl) |d| if (std.meta.eql(d.to, to)) return true;
+    // A retarget starts from where the compositor has the visual; a new
+    // glide from where this frame has it.
+    const from = if (self.tree_glide_decl) |d| d.reached(t) else self.treePose(now, now_shape);
+    const dist = comp_tree.Pose.distance(from, to);
+    const tau_s = tau_ms / 1000.0;
+    var segs: [comp_overlay.follower_segments]comp_overlay.Cubic = undefined;
+    const span_s = comp_overlay.fitFollower(dist, tau_s, pane_stack_slide.snap_px, &segs);
+    if (span_s <= 0) return false;
+    h.paneGlide(vis, from, to, &segs, span_s, &self.tree_clip) catch {
+        const f = chrome_comp.Host.lastFailure();
+        log.warn("pane visual glide failed at {s}: hr=0x{x:0>8}; frames place it", .{ f.stage, chrome_comp.hex(f.hr) });
+        return false;
+    };
+    self.tree_glide_decl = .{ .t0 = t, .from = from, .to = to, .dist = dist, .tau_s = tau_s };
+    // The on-screen oracle reads this (comp-glide-hold-onscreen.ps1).
+    log.debug("pane visual glide declared from={d:.1},{d:.1} to={d:.1},{d:.1} clip_right={d:.1}->{d:.1} span_ms={d:.0} retarget={}", .{ from.x, from.y, to.x, to.y, from.clip.right, to.clip.right, span_s * 1000, retarget });
+    return true;
 }
 
 /// Window thread: draw this pane's visual at `at` (top-level client pixels)
@@ -1945,6 +2026,7 @@ pub fn setTreeShape(self: *Surface, shape: comp_tree.Shape) void {
 fn dropTreeVisual(self: *Surface) void {
     const vis = self.tree_visual orelse return;
     self.tree_visual = null;
+    self.tree_glide_decl = null;
     // The visual holds its own reference to a clip it was given.
     if (self.tree_clip) |c| chrome_comp.Host.releaseRef(c);
     self.tree_clip = null;

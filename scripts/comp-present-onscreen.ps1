@@ -70,8 +70,8 @@
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms fold -NoPopups   # fold.27/28 must go red
 
 param(
-    [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
-    [string]$Spike = 'D:\git\ghoztty\zig-out\bin\ghoztty-comp-spike.exe',
+    [string]$Exe = (Join-Path $PSScriptRoot '..\zig-out\bin\ghoztty.exe'),
+    [string]$Spike = (Join-Path $PSScriptRoot '..\zig-out\bin\ghoztty-comp-spike.exe'),
     [string[]]$Arms = @('on', 'off'),
     # 1 = layered alpha 1/255 (invisible); bottom = opaque, bottom of z-order.
     [string]$Ghost = 'bottom',
@@ -82,6 +82,11 @@ param(
     # Grab the mid-fold frame without the window's owned popups (fold arm).
     [switch]$NoPopups
 )
+
+# This tree's build, whichever loop lane's tree it is (T2572: a default of
+# lane A's tree made lane B's run refuse).
+$Exe = [System.IO.Path]::GetFullPath($Exe)
+$Spike = [System.IO.Path]::GetFullPath($Spike)
 
 $ErrorActionPreference = 'Continue'
 Set-StrictMode -Off

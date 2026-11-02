@@ -1389,28 +1389,98 @@ pub const Host = struct {
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, @floatFromInt(x)));
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, @floatFromInt(y)));
         if (c.rounded()) {
-            stage = "pane-clip";
-            if (rounded.* == null) {
-                var made: ?Obj = null;
-                try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_rectangle_clip)(self.dcomp, &made));
-                rounded.* = made orelse return error.ComFailed;
-            }
-            const rc = rounded.*.?;
+            const rc = try self.paneClipObject(vis, c, rounded);
             const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
             try check(slot(Set, rc, slot_dcomp_rect_clip_set_left)(rc, c.left));
             try check(slot(Set, rc, slot_dcomp_rect_clip_set_top)(rc, c.top));
             try check(slot(Set, rc, slot_dcomp_rect_clip_set_right)(rc, c.right));
             try check(slot(Set, rc, slot_dcomp_rect_clip_set_bottom)(rc, c.bottom));
-            // TL x/y, TR x/y, BL x/y, BR x/y.
-            const radii = [8]f32{ c.top_radius, c.top_radius, c.top_radius, c.top_radius, c.bottom_radius, c.bottom_radius, c.bottom_radius, c.bottom_radius };
-            for (radii, 0..) |r, i| try check(slot(Set, rc, slot_dcomp_rect_clip_first_radius + 2 * i)(rc, r));
-            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip)(vis, rc));
         } else {
             const r: D2D1_RECT_F = .{ .left = c.left, .top = c.top, .right = c.right, .bottom = c.bottom };
             try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &r));
         }
         stage = "";
         try self.commit();
+    }
+
+    /// The pane's rectangle clip object (made once, kept in `rounded`), with
+    /// `c`'s corner radii, set as `vis`'s clip. Its edges are the caller's.
+    fn paneClipObject(self: *Host, vis: Obj, c: comp_tree.Clip, rounded: *?Obj) Error!Obj {
+        stage = "pane-clip";
+        if (rounded.* == null) {
+            var made: ?Obj = null;
+            try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_rectangle_clip)(self.dcomp, &made));
+            rounded.* = made orelse return error.ComFailed;
+        }
+        const rc = rounded.*.?;
+        const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+        // TL x/y, TR x/y, BL x/y, BR x/y.
+        const radii = [8]f32{ c.top_radius, c.top_radius, c.top_radius, c.top_radius, c.bottom_radius, c.bottom_radius, c.bottom_radius, c.bottom_radius };
+        for (radii, 0..) |r, i| try check(slot(Set, rc, slot_dcomp_rect_clip_first_radius + 2 * i)(rc, r));
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip)(vis, rc));
+        return rc;
+    }
+
+    /// A pane visual's whole stack glide, declared (T2572): its offset and
+    /// clip go from `from` to `to` along `curve` (0..1 of the way, `span_s`
+    /// long), on the compositor's clock, so the glide keeps moving while the
+    /// window's thread is busy. A later `panePlace` or `paneGlide` replaces it.
+    /// A clip that does not change is set, not animated.
+    pub fn paneGlide(self: *Host, vis: Obj, from: comp_tree.Pose, to: comp_tree.Pose, curve: []const Cubic, span_s: f64, rounded: *?Obj) Error!void {
+        stage = "pane-glide";
+        defer stage = "";
+        const SetAnim = *const fn (Obj, Obj) callconv(.winapi) HRESULT;
+        const offsets = [2]struct { usize, f32, f32 }{
+            .{ slot_dcomp_visual_set_offset_x - 1, from.x, to.x },
+            .{ slot_dcomp_visual_set_offset_y - 1, from.y, to.y },
+        };
+        for (offsets) |o| {
+            const anim = try self.followAnimation(o[1], o[2], curve, span_s);
+            defer release(anim);
+            try check(slot(SetAnim, vis, o[0])(vis, anim));
+        }
+        if (std.meta.eql(from.clip, to.clip)) {
+            // Its edges as `panePlace` sets them, without moving the offset.
+            const c = to.clip;
+            if (c.rounded()) {
+                const rc = try self.paneClipObject(vis, c, rounded);
+                const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+                inline for (.{ slot_dcomp_rect_clip_set_left, slot_dcomp_rect_clip_set_top, slot_dcomp_rect_clip_set_right, slot_dcomp_rect_clip_set_bottom }, .{ "left", "top", "right", "bottom" }) |s, f| {
+                    try check(slot(Set, rc, s)(rc, @field(c, f)));
+                }
+            } else {
+                const r: D2D1_RECT_F = .{ .left = c.left, .top = c.top, .right = c.right, .bottom = c.bottom };
+                try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &r));
+            }
+        } else {
+            // A moving clip needs the clip object, whose edges take animations.
+            const rc = try self.paneClipObject(vis, to.clip, rounded);
+            inline for (.{ slot_dcomp_rect_clip_set_left, slot_dcomp_rect_clip_set_top, slot_dcomp_rect_clip_set_right, slot_dcomp_rect_clip_set_bottom }, .{ "left", "top", "right", "bottom" }) |s, f| {
+                const anim = try self.followAnimation(@field(from.clip, f), @field(to.clip, f), curve, span_s);
+                defer release(anim);
+                try check(slot(SetAnim, rc, s - 1)(rc, anim));
+            }
+        }
+        try self.commit();
+    }
+
+    /// An `IDCompositionAnimation` from `from` to `to` along `curve` (0..1
+    /// of the way), holding `to` from `span_s` on. The caller releases it
+    /// once it is set: the property keeps its own snapshot.
+    fn followAnimation(self: *Host, from: f32, to: f32, curve: []const Cubic, span_s: f64) Error!Obj {
+        var made: ?Obj = null;
+        try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_animation)(self.dcomp, &made));
+        const anim = made orelse return error.ComFailed;
+        errdefer release(anim);
+        const add = slot(*const fn (Obj, f64, f32, f32, f32, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_add_cubic);
+        const span: f64 = to - from;
+        // A value that does not move still takes the same span, as one flat
+        // piece.
+        if (span == 0) try check(add(anim, 0, to, 0, 0, 0)) else for (curve) |c| {
+            try check(add(anim, c.begin_s, @floatCast(from + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)));
+        }
+        try check(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_end)(anim, span_s, to));
+        return anim;
     }
 
     /// Drop a reference `panePlace` handed out (its rounded clip).
