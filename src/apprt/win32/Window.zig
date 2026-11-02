@@ -765,6 +765,17 @@ clear_whole_gutters: bool = false,
 /// shipped order bites too (T2642), so it shows teeth again only once that
 /// regression is fixed.
 overlays_after_bands: bool = false,
+/// While a grid pass places its popups ahead of the band paint (T2642): a
+/// banner strip that would GAIN a column is held back for
+/// `placeHeldBanners`, after the paint. Placed first, a grown strip covered
+/// the bar where it still stood for a composed frame - T2414's order is right
+/// for a strip that shrinks and wrong for one that grows.
+hold_gaining_banners: bool = false,
+/// A banner the hold above skipped, still to be placed this pass.
+banners_held: bool = false,
+/// A banner that hold placed narrower, so the pass waits for the compositor
+/// to show it before painting the bands (T2642).
+banners_narrowed: bool = false,
 drag_split_handle: SplitTree(PaneView).Node.Handle = .root,
 drag_split_layout: SplitTree(PaneView).Split.Layout = .horizontal,
 drag_start_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
@@ -8150,6 +8161,9 @@ pub fn layoutSplits(self: *Window) void {
     // of this pass and the popups go ahead of it (T2642): placed after it, a
     // banner still at its wider old rect covered the bar it had just drawn.
     if (desk_fill) self.placeOverlaysBeforeBands(&overlays_placed);
+    // ...and a strip it held back because it grows goes after every band
+    // paint, on either way out below.
+    defer self.placeHeldBanners();
     if (self.hwnd) |hwnd| self.clearVacatedPaneStrips(hwnd, old_panes[0..old_len]);
     if (stackTraceOn()) {
         var clear_t1: i64 = 0;
@@ -8250,9 +8264,48 @@ fn movedBandsRect(self: *const Window) ?w32.RECT {
 fn placeOverlaysBeforeBands(self: *Window, placed: *bool) void {
     if (placed.* or self.overlays_after_bands) return;
     self.face_hides_deferred = true;
+    self.hold_gaining_banners = true;
     self.placePaneOverlays();
+    self.hold_gaining_banners = false;
     self.face_hides_deferred = false;
     placed.* = true;
+    // A narrowed strip's `UpdateLayeredWindow` and the band paint after it
+    // are not composed in order: measured, the bar moved under the strip's
+    // old rect reached the screen first on ~1 drag step in 6 (T2642). One
+    // composition out here puts the strip ahead, and only a pass that
+    // narrowed a banner pays it.
+    if (self.banners_narrowed) {
+        self.banners_narrowed = false;
+        if (!narrowFlushOff()) _ = w32.DwmFlush();
+    }
+}
+
+var narrow_flush_off_state: ?bool = null;
+
+/// `GHOZTTY_NARROW_NO_FLUSH=1`: a pass that narrowed a banner paints its
+/// bands without waiting for the compositor, the A/B that films the shrink
+/// half's bite back (T2642).
+fn narrowFlushOff() bool {
+    if (narrow_flush_off_state == null)
+        narrow_flush_off_state = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_NARROW_NO_FLUSH");
+    return narrow_flush_off_state.?;
+}
+
+/// The banner strips `placeOverlaysBeforeBands` held back because they grow
+/// (T2642), placed now that the bands are painted, and their dims seated
+/// over them again.
+fn placeHeldBanners(self: *Window) void {
+    if (!self.banners_held) return;
+    self.banners_held = false;
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            const surface = entry.view.surface() orelse continue;
+            const overlay = surface.banner_overlay orelse continue;
+            if (overlay.placeChange() == .gains) overlay.updatePosition(surface.scale);
+        }
+    }
+    self.seatDimsOverBanners();
 }
 
 /// `updateDimOverlays` for a layout pass, clocked as the pass's overlay cost
@@ -9109,6 +9162,14 @@ pub fn updatePaneBanners(self: *Window) void {
             surface.settleGridBand();
             const overlay = surface.banner_overlay orelse continue;
             surface.refreshBannerColors();
+            if (self.hold_gaining_banners) switch (overlay.placeChange()) {
+                .gains => {
+                    self.banners_held = true;
+                    continue;
+                },
+                .loses => self.banners_narrowed = true,
+                .same => {},
+            };
             overlay.updatePosition(surface.scale);
         }
     }

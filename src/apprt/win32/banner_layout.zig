@@ -79,6 +79,22 @@ pub fn windowOffset(inset: i32, spans_band: bool) i32 {
     return if (spans_band) 0 else @max(inset, 0);
 }
 
+/// How a banner strip's columns change when it moves from
+/// `[cur_left, cur_right)` to `[new_left, new_right)` (screen x; T2642).
+pub const StripChange = enum { same, gains, loses };
+
+/// The layout pass orders its popups and its GDI divider bands by this
+/// (T2642): the compositor can show a popup's new rect a frame away from a
+/// band painted in the same pass, either side. A strip that GAINS a column is
+/// placed after the bands, or it covers the bar where it still stands; one
+/// that only LOSES columns is placed before them and composed before they are
+/// painted, or the bar just moved under its old rect is covered (T2414).
+pub fn stripChange(cur_left: i32, cur_right: i32, new_left: i32, new_right: i32) StripChange {
+    if (new_left < cur_left or new_right > cur_right) return .gains;
+    if (new_left > cur_left or new_right < cur_right) return .loses;
+    return .same;
+}
+
 /// The band a pane's grid sits below INSIDE its own window (T2566): the
 /// inset when the window spans it, 0 when the layout moved the window down
 /// instead. `windowOffset` + `gridBand` is always the inset.
@@ -934,4 +950,21 @@ test "collapseBodyAlpha: a toggle with nowhere to go leaves the body alone" {
     try std.testing.expectEqual(@as(u8, 255), collapseBodyAlpha(54, 54, 0.0));
     try std.testing.expectEqual(@as(u8, 255), collapseBodyAlpha(54, 54, 0.5));
     try std.testing.expectEqual(@as(u8, 255), collapseBodyAlpha(54, 54, 1.0));
+}
+
+test "stripChange: unchanged is same, a narrowing on either side loses" {
+    try std.testing.expectEqual(StripChange.same, stripChange(100, 500, 100, 500));
+    try std.testing.expectEqual(StripChange.loses, stripChange(100, 500, 108, 500));
+    try std.testing.expectEqual(StripChange.loses, stripChange(100, 500, 100, 492));
+    try std.testing.expectEqual(StripChange.loses, stripChange(100, 500, 108, 492));
+}
+
+test "stripChange: a strip that gains a column on either side gains" {
+    // Grown at its right edge (the bar to its right moved right, T2642's
+    // frame 53) or its left edge; and a move, which gains on the side it
+    // moves to even as it loses the other.
+    try std.testing.expectEqual(StripChange.gains, stripChange(100, 500, 100, 508));
+    try std.testing.expectEqual(StripChange.gains, stripChange(100, 500, 92, 500));
+    try std.testing.expectEqual(StripChange.gains, stripChange(100, 500, 108, 508));
+    try std.testing.expectEqual(StripChange.gains, stripChange(100, 500, 92, 492));
 }

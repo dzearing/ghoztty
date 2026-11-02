@@ -648,6 +648,20 @@ pub const BannerOverlay = struct {
         self.invalidate();
     }
 
+    /// How the next `updatePosition` changes the shown popup's columns
+    /// (T2642): `gains` when its owner pane grew or moved, `loses` when it
+    /// only narrowed. The layout pass orders the popup against its divider
+    /// paint by it (`banner_layout.stripChange`). `same` on the visual path,
+    /// which the pane's window clips, and for a hidden popup.
+    pub fn placeChange(self: *const BannerOverlay) banner_layout.StripChange {
+        if (self.on_visual or w32.IsWindowVisible_(self.hwnd) == 0) return .same;
+        var cur: w32.RECT = undefined;
+        var owner: w32.RECT = undefined;
+        if (w32.GetWindowRect(self.hwnd, &cur) == 0) return .same;
+        if (w32.GetWindowRect(self.owner, &owner) == 0) return .same;
+        return banner_layout.stripChange(cur.left, cur.right, owner.left, owner.right);
+    }
+
     /// Glue the strip into the band the window layout reserved above the
     /// owner pane (T101; screen coordinates). Hides when the owner is not
     /// visible (hidden split, other tab, hero carousel), or when part of it
