@@ -992,6 +992,22 @@ $GuardTable = @(
             'src\apprt\win32\Surface.zig'
         )
     },
+    # T2474: a hidden WINDOW (minimized, covered) gives back its panes' render
+    # targets and every pane redraws in full when it is shown. Covers the
+    # shared release hook and the OpenGL half of it, and the visibility poll
+    # that reads a covered window as hidden.
+    [pscustomobject]@{
+        Name   = 'hidden-window-memory'
+        Script = 'test\win32\hidden-window-memory.ps1'
+        Stamp  = 'test\win32\hidden-window-memory.stamp.json'
+        Covers = @(
+            'test\win32\hidden-window-memory.ps1',
+            'test\win32\lib\ProcessMemory.ps1',
+            'src\renderer\generic.zig',
+            'src\renderer\OpenGL.zig',
+            'src\apprt\win32\occlusion.zig'
+        )
+    },
     # T827: `+rearrange` over a window that holds a VIEWER pane. Main fixed a
     # Mac defect where a layout naming a preview pane failed with 'pane is no
     # longer alive' - win32 resolves names to *PaneView and cannot have it by

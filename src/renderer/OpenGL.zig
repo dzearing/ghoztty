@@ -1368,6 +1368,28 @@ fn compFail(self: *OpenGL, err: anyerror) void {
     self.comp = null;
 }
 
+/// May the renderer free this pane's targets now that it is hidden (T2474)?
+/// Only on Win32, and only when the WINDOW is hidden (minimized, cloaked,
+/// covered, parked by a close-undo): a pane that is merely behind another tab
+/// keeps its target, because hero mode's carousel reads it. Never while the
+/// device is lost - the targets are dead with it and the rebuild owns them.
+pub fn releaseHiddenTargetsNow(self: *const OpenGL) bool {
+    if (comptime apprt.runtime != apprt.win32) return false;
+    if (self.device.lost) return false;
+    return self.rt_surface.windowHidden();
+}
+
+/// The renderer freed the targets (`releaseHiddenTargets`): the one recorded
+/// here is gone, so nothing may present or capture it again. The next frame
+/// draws in full and records a new one.
+pub fn hiddenTargetsReleased(self: *OpenGL) void {
+    self.last_target = null;
+    // The deletes sit in the command stream until something submits it, and
+    // a hidden pane draws nothing that would: without this the driver keeps
+    // the storage until the window is shown again.
+    gl.finish();
+}
+
 /// Present the last presented target again.
 pub fn presentLastTarget(self: *OpenGL) !void {
     // The window presenter keeps holding the last frame it took, so a repeat

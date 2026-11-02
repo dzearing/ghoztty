@@ -4407,10 +4407,17 @@ fn closeSplitPaneOpts(self: *Window, pane: *PaneView, opts: CloseSplitOpts) void
 /// Set the visibility (occlusion) of every surface in the active tab. Used on
 /// window minimize/restore so the renderer stops rebuilding frames while the
 /// window is minimized.
+///
+/// Every caller hides or shows the WINDOW (minimize, the visibility poll, a
+/// close-undo park), so the panes are told that first: a pane hidden this way
+/// gives back its render targets (T2474), one behind another tab does not.
 pub fn setActiveTabVisible(self: *Window, visible: bool) void {
     if (self.active_tab >= self.tab_count) return;
     var it = self.tab_trees[self.active_tab].iterator();
-    while (it.next()) |entry| entry.view.setVisible(visible);
+    while (it.next()) |entry| {
+        entry.view.setWindowHidden(!visible);
+        entry.view.setVisible(visible);
+    }
 }
 
 /// The app's visibility poll says whether anybody can see this window

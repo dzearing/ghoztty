@@ -127,6 +127,14 @@ core_surface_ready: bool = false,
 /// the first one. The renderer starts out visible.
 reported_visible: ?bool = null,
 
+/// The pane's WINDOW is hidden - minimized, cloaked, covered, or parked by a
+/// close-undo - as opposed to the pane alone being out of view (another tab,
+/// a stashed pane). Set by `Window.setActiveTabVisible` before the visibility
+/// it forwards, read on the renderer thread when that visibility arrives: only
+/// a window-hidden pane gives back its render targets (T2474), since hero
+/// mode reads a background tab's.
+window_hidden: std.atomic.Value(bool) = .init(false),
+
 /// The user answered **Disconnect** for this pane (T1390): the window closes
 /// but its agent session must stay alive and resumable, so every later
 /// CLOSE-on-free marking is refused. See `session_disconnect.DetachPin` for the
@@ -1672,6 +1680,10 @@ pub fn setVisible(self: *Surface, visible: bool) void {
     // preview doesn't float over the newly-active tab.
     if (!visible) {
         if (self.link_preview_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+    } else {
+        // Shown by any route - a tab switch while the window was hidden
+        // included - so a later tab-hide is not taken for a window-hide.
+        self.window_hidden.store(false, .release);
     }
     if (!self.core_surface_ready) return;
     // Forward changes only (T1951): the visibility poll re-asserts a hidden
@@ -2284,6 +2296,11 @@ pub fn heroSnapTick(
 }
 
 /// Renderer thread: is a snapshot wanted? One atomic load when idle.
+/// See `window_hidden`. Renderer thread.
+pub fn windowHidden(self: *const Surface) bool {
+    return self.window_hidden.load(.acquire);
+}
+
 pub fn heroSnapWanted(self: *Surface) ?SnapReq {
     if (!self.snap_requested.load(.acquire)) return null;
     self.snap_mutex.lock();

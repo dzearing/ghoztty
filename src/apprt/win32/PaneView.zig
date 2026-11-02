@@ -291,6 +291,15 @@ pub fn setVisible(self: *PaneView, visible: bool) void {
     }
 }
 
+/// The pane's window was hidden or shown (T2474, `Surface.window_hidden`).
+/// Call before `setVisible`. Viewers keep nothing window-sized to give back.
+pub fn setWindowHidden(self: *PaneView, hidden: bool) void {
+    switch (self.kind) {
+        .terminal => |s| s.window_hidden.store(hidden, .release),
+        .viewer => {},
+    }
+}
+
 /// Height reserved above the pane content for a sticky banner (T101).
 /// Banners are terminal-only (`+set-banner` rejects viewers), so a viewer
 /// reserves nothing.

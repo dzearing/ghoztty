@@ -181,6 +181,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// cells for the draw call.
         cells_rebuilt: bool = false,
 
+        /// `releaseHiddenTargets` freed the targets of an API whose last
+        /// target is what a no-op frame re-presents (OpenGL on Win32, T2474),
+        /// so the first frame back must draw in full.
+        redraw_after_release: bool = false,
+
         /// The current GPU uniform values.
         uniforms: shaderpkg.Uniforms,
 
@@ -1217,11 +1222,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// frame's target the wrong size and re-creates it, as it does after
         /// any resize.
         ///
-        /// Only for APIs that keep the presented image independent of the
-        /// frame (Metal). OpenGL re-presents its last target on a no-op draw,
-        /// so freeing it there would show garbage.
+        /// For APIs that keep the presented image independent of the frame
+        /// (Metal). OpenGL re-presents its last target on a no-op draw, so it
+        /// opts in another way (T2474): `releaseHiddenTargetsNow` says when a
+        /// release is safe (Win32: the WINDOW is hidden, not just the pane -
+        /// hero mode reads background tabs' targets), the API forgets its
+        /// last target, and the first frame back draws in full instead of
+        /// re-presenting one that is gone.
         fn releaseHiddenTargets(self: *Self) void {
-            if (comptime !@hasDecl(GraphicsAPI, "presented_target_outlives_frame")) return;
+            const outlives = comptime @hasDecl(GraphicsAPI, "presented_target_outlives_frame");
+            const redraws = comptime @hasDecl(GraphicsAPI, "releaseHiddenTargetsNow");
+            if (comptime !outlives and !redraws) return;
+            if (comptime redraws) {
+                if (!self.api.releaseHiddenTargetsNow()) return;
+            }
 
             self.draw_mutex.lock();
             defer self.draw_mutex.unlock();
@@ -1238,6 +1252,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 frame.resize(self.api, 1, 1) catch |err| {
                     log.warn("could not release hidden render target err={}", .{err});
                 };
+            }
+            if (comptime redraws) {
+                self.api.hiddenTargetsReleased();
+                self.redraw_after_release = true;
+                log.info("released hidden render targets ({}x{})", .{
+                    self.size.screen.width,
+                    self.size.screen.height,
+                });
             }
         }
 
@@ -1848,7 +1870,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 size_changed or
                 self.cells_rebuilt or
                 self.hasAnimations() or
+                self.redraw_after_release or
                 sync;
+
+            if (self.redraw_after_release) {
+                self.redraw_after_release = false;
+                log.info("redrawing after a hidden release", .{});
+            }
 
             if (!needs_redraw) {
                 // We still need to present the last target again, because the
