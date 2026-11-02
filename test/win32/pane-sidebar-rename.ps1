@@ -13,6 +13,12 @@
 #      follows its own title again, and a rename after that still pins.
 #   G. Project groups: renaming proj to web retitles every window in it;
 #      emptied, each window goes back to its own name, ungrouped.
+#   U. The Ungrouped header (T2524, Mac 7bee055c9): beside a group, the lone
+#      windows sit under it, first, with their count; a click folds and
+#      unfolds them; its + opens an untitled window among them; its pencil
+#      opens empty, Escape keeps everything, and a new name makes them that
+#      group where they were (first among the groups) - named as a group the
+#      list has, they join it ahead of its windows; its x closes them.
 #
 # Geometry comes from the sidebar's own log lines: `pane sidebar rows` (this
 # window's list: `items=` with each row's pane id) and `pane sidebar outline`
@@ -128,7 +134,7 @@ function Read-Heads([string]$Line) {
     if ($Line -notmatch 'heads=(\S*) items=') { return @() }
     $heads = @()
     foreach ($h in ($Matches[1] -split ';' | Where-Object { $_ })) {
-        if ($h -match '^([PW])(\d+)@(-?\d+),(-?\d+)$') { $heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
+        if ($h -match '^([PWU])(\d+)@(-?\d+),(-?\d+)$') { $heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
     }
     return $heads
 }
@@ -136,7 +142,9 @@ function Read-Heads([string]$Line) {
 function Get-Outline([int]$Skip) {
     $line = Wait-Log 'pane sidebar outline mode=expanded' $Skip
     if (-not $line) { return $null }
-    return @{ Heads = @(Read-Heads $line); Hr = @(Read-Points $line 'hr'); Line = $line }
+    $uc = $null
+    if ($line -match ' ucount=(\d+)') { $uc = [int]$Matches[1] }
+    return @{ Heads = @(Read-Heads $line); Hr = @(Read-Points $line 'hr'); Ha = @(Read-Points $line 'ha'); Hx = @(Read-Points $line 'hx'); UCount = $uc; Line = $line }
 }
 # This window's list: each shown row's pane id and center, and its pencil.
 function Get-Rows([int]$Skip) {
@@ -170,6 +178,25 @@ function Find-ProjectHead($o) {
     if ($null -eq $o) { return -1 }
     for ($j = 0; $j -lt $o.Heads.Count; $j++) { if ($o.Heads[$j].Kind -eq 'P') { return $j } }
     return -1
+}
+# The Ungrouped header's index among the heads (T2524), or -1.
+function Find-UngroupedHead($o) {
+    if ($null -eq $o) { return -1 }
+    for ($j = 0; $j -lt $o.Heads.Count; $j++) { if ($o.Heads[$j].Kind -eq 'U') { return $j } }
+    return -1
+}
+# The newest outline once it shows the Ungrouped header with $Count windows
+# (-1: no Ungrouped header at all).
+function Wait-UCount([int]$Count, [int]$Skip, [int]$Ms = 6000) {
+    $script:uo = $null
+    $ok = Wait-Until {
+        $script:uo = Get-Outline $Skip
+        if ($null -eq $script:uo) { return $false }
+        if ($Count -lt 0) { return (Find-UngroupedHead $script:uo) -lt 0 }
+        return $script:uo.UCount -eq $Count -and (Find-UngroupedHead $script:uo) -eq 0
+    } $Ms
+    if ($ok) { return $script:uo }
+    return $null
 }
 function ClickAt($top, $sb, $pt) {
     return Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + $pt.X) -Y ($sb.Top + $pt.Y) -Action click
@@ -294,7 +321,9 @@ try {
     $order = Get-Order $mark
     Assert "three windows in name order, the lone window first (T2421): zeta | proj/one | proj/two ($($order -join '|'))" (($order -join '|') -eq 'zeta|proj/one|proj/two')
     $o = Get-Outline $mark
-    Assert "the outline logs a pencil for every head ($($o.Line))" ($null -ne $o -and $o.Heads.Count -eq 4 -and $o.Hr.Count -eq 4)
+    # Beside group proj, lone zeta sits under the Ungrouped header (T2524):
+    # U, zeta, proj, one, two.
+    Assert "the outline logs a pencil for every head, Ungrouped's first ($($o.Line))" ($null -ne $o -and $o.Heads.Count -eq 5 -and $o.Hr.Count -eq 5 -and (Find-UngroupedHead $o) -eq 0 -and $o.UCount -eq 1)
 
     "== W1: a window's field holds its whole title - typing a project moves it into that group"
     $k = Find-WindowHead $o $order 'zeta'
@@ -419,6 +448,101 @@ try {
         # By name zzz would follow two: alpha | solo | two | zzz.
         Assert "wD is zzz, in its place (T2405): solo | alpha | zzz | two" (Wait-Order 'solo|alpha|zzz|two' $mark)
     }
+
+    "== U1: beside a group the lone windows sit under an Ungrouped header, first, counted (T2524)"
+    $mark = Get-LogCount
+    Assert "setup: wE opened as grp: x ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wE --name=e1 --title=`"grp: x`"") -eq 0)
+    [void](Set-TestActiveWindow -Window $top)
+    $o = Wait-UCount 4 $mark
+    Assert "the Ungrouped header heads the list over its 4 windows ($($script:uo.Line))" ($null -ne $o)
+    $u = Find-UngroupedHead $o
+    if ($u -lt 0) { return }
+    Assert "...and the group's header follows them (P after every W of a lone window)" ($o.Heads[$o.Heads.Count - 2].Kind -eq 'P')
+    $order = Get-Order 0
+    Assert "the lone windows lead, then the group: solo | alpha | zzz | two | grp/x ($($order -join '|'))" (($order -join '|') -eq 'solo|alpha|zzz|two|grp/x')
+
+    "== U2: a click folds the Ungrouped windows away, and another brings them back"
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb @{ X = $o.Heads[$u].X; Y = $o.Heads[$u].Y })
+    Assert "the click folds (log)" ($null -ne (Wait-Log 'pane sidebar fold$' $mark 3000))
+    $ok = Wait-Until { $script:fo = Get-Outline $mark; $null -ne $script:fo -and $script:fo.Heads.Count -eq 3 } 4000
+    Assert "folded: Ungrouped, grp and x are the only heads ($($script:fo.Line))" ($ok -and (Find-UngroupedHead $script:fo) -eq 0)
+    Assert "...and nothing was dragged (log)" (-not (Test-LogSince 'pane sidebar item drag start' $mark))
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb @{ X = $script:fo.Heads[0].X; Y = $script:fo.Heads[0].Y })
+    Assert "a second click unfolds (log)" ($null -ne (Wait-Log 'pane sidebar unfold$' $mark 3000))
+    $o = Wait-UCount 4 $mark
+    Assert "unfolded: the 4 windows are back under it" ($null -ne $o -and $o.Heads.Count -eq 7)
+    if ($null -eq $o) { return }
+
+    "== U3: its + opens an untitled window among the ungrouped ones"
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb $o.Ha[0])
+    Assert "the + opens an ungrouped window (log)" ($null -ne (Wait-Log 'pane sidebar add ungrouped window' $mark 3000))
+    [void](Set-TestActiveWindow -Window $top)
+    $o = Wait-UCount 5 $mark 8000
+    Assert "the Ungrouped header counts 5 now ($($script:uo.Line))" ($null -ne $o)
+    if ($null -eq $o) { return }
+
+    "== U4: its pencil opens empty; Escape changes nothing"
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb $o.Hr[0])
+    Assert "the pencil opens an empty field (log)" ($null -ne (Wait-Log 'pane sidebar rename begin kind=ungrouped text=$' $mark 3000))
+    Type-Field $sb 'nope'
+    $mark = Get-LogCount
+    Key-Field $sb 'Escape'
+    Assert "Escape cancels (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=escape kind=ungrouped outcome=keep text=nope$' $mark 3000))
+    Start-Sleep -Milliseconds 400
+    Assert "nothing was grouped" (-not (Test-LogSince 'pane sidebar ungrouped grouped' $mark) -and @(Get-Order 0 | Where-Object { $_ -like 'nope/*' }).Count -eq 0)
+
+    "== U5: a new name makes them that group, where they were - first among the groups"
+    $o = Get-Outline 0
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb $o.Hr[0])
+    Assert "the pencil opens again (log)" ($null -ne (Wait-Log 'pane sidebar rename begin kind=ungrouped text=$' $mark 3000))
+    Type-Field $sb 'fresh'
+    $mark = Get-LogCount
+    Key-Field $sb 'Enter'
+    Assert "Return names them (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=ungrouped outcome=set text=fresh$' $mark 3000))
+    Assert "all 5 were retitled into it (log)" ($null -ne (Wait-Log 'pane sidebar ungrouped grouped windows=5$' $mark 3000))
+    $ok = Wait-Until {
+        $script:ord = @(Get-Order 0)
+        $script:ord.Count -eq 6 -and @($script:ord[0..4] | Where-Object { $_ -like 'fresh/*' }).Count -eq 5 -and $script:ord[5] -eq 'grp/x'
+    } 5000
+    # The +'s window took its place among them by name; the rest keep theirs.
+    $known = @($script:ord | Where-Object { @('fresh/solo', 'fresh/alpha', 'fresh/zzz', 'fresh/two') -contains $_ })
+    Assert "fresh stands where they were, ahead of grp, in their order: fresh/solo | fresh/alpha | fresh/zzz | fresh/two (+ the new one) | grp/x ($($script:ord -join '|'))" ($ok -and ($known -join '|') -eq 'fresh/solo|fresh/alpha|fresh/zzz|fresh/two')
+    Assert "...and with no lone window left, no Ungrouped header" ($null -ne (Wait-UCount -1 $mark))
+
+    "== U6: named as a group the list has, they join it, ahead of its windows"
+    $mark = Get-LogCount
+    Assert "setup: wF opened as loner ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wF --name=f1 --title=loner") -eq 0)
+    [void](Set-TestActiveWindow -Window $top)
+    $o = Wait-UCount 1 $mark
+    Assert "loner sits under the Ungrouped header ($($script:uo.Line))" ($null -ne $o)
+    if ($null -eq $o) { return }
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb $o.Hr[0])
+    Assert "the pencil opens (log)" ($null -ne (Wait-Log 'pane sidebar rename begin kind=ungrouped text=$' $mark 3000))
+    Type-Field $sb 'grp'
+    $mark = Get-LogCount
+    Key-Field $sb 'Enter'
+    Assert "Return names it into grp (log)" ($null -ne (Wait-Log 'pane sidebar ungrouped grouped windows=1$' $mark 3000))
+    $ok = Wait-Until { $script:ord = @(Get-Order 0); ($script:ord[-2..-1] -join '|') -eq 'grp/loner|grp/x' } 5000
+    Assert "loner joined grp ahead of x ($($script:ord -join '|'))" $ok
+
+    "== U7: its x closes the ungrouped windows"
+    $mark = Get-LogCount
+    Assert "setup: wG opened as gone ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wG --name=g1 --title=gone") -eq 0)
+    [void](Set-TestActiveWindow -Window $top)
+    $o = Wait-UCount 1 $mark
+    Assert "gone sits under the Ungrouped header" ($null -ne $o)
+    if ($null -eq $o) { return }
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb $o.Hx[0])
+    Assert "the x closes its 1 window (log)" ($null -ne (Wait-Log 'pane sidebar close project windows=1$' $mark 3000))
+    $ok = Wait-Until { @(Get-Order 0) -notcontains 'gone' -and $null -ne (Get-Outline 0) -and (Find-UngroupedHead (Get-Outline 0)) -lt 0 } 6000
+    Assert "gone is closed, and the Ungrouped header went with it" $ok
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

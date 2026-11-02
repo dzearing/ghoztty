@@ -412,6 +412,8 @@ const RenameTarget = union(enum) {
     pane: *PaneView,
     window: u64,
     project: u64,
+    /// The Ungrouped header's pencil (T2524): names its windows as a group.
+    ungrouped,
 };
 
 /// A name being edited in place (T2339, Mac `PaneSidebarRenameField`).
@@ -1041,7 +1043,8 @@ fn logOutline(self: *PaneSidebar) void {
     const w = fbs.writer();
     w.print("mode={s} heads=", .{@tagName(l.mode)}) catch {};
     for (l.heads[0..l.head_count]) |hd| {
-        const k: u8 = if (hd.kind == .project) 'P' else 'W';
+        // The Ungrouped header (T2524) as `U`.
+        const k: u8 = if (self.isUngroupedHead(hd)) 'U' else if (hd.kind == .project) 'P' else 'W';
         w.print("{c}{d}@{d},{d};", .{ k, hd.index, hd.rect.centerX(), hd.rect.centerY() }) catch break;
     }
     w.writeAll(" items=") catch {};
@@ -1101,6 +1104,11 @@ fn logOutline(self: *PaneSidebar) void {
     } else w.writeAll(" radd=-") catch {};
     self.logPencils(w, &l);
     self.logHeadLook(w, &l);
+    // The Ungrouped header's window count (T2524), or `-` with none up.
+    w.writeAll(" ucount=") catch {};
+    for (l.heads[0..l.head_count]) |hd| {
+        if (self.isUngroupedHead(hd)) break w.print("{d}", .{self.groups.items[hd.index].project_size}) catch {};
+    } else w.writeAll("-") catch {};
     // The drag-only well (T2313): its center, or `-` at rest.
     if (l.drop_slot) |sl| {
         w.print(" tray={d},{d}", .{ sl.centerX(), sl.centerY() }) catch {};
@@ -1192,7 +1200,8 @@ fn logRows(self: *PaneSidebar) void {
     w.print("mode={s} heads=", .{@tagName(l.mode)}) catch {};
     // A grouped window's group header (T2350) logs as the outline's `P`.
     for (l.heads[0..l.head_count]) |hd| {
-        const k: u8 = if (hd.kind == .project) 'P' else 'W';
+        // The Ungrouped header (T2524) as `U`.
+        const k: u8 = if (self.isUngroupedHead(hd)) 'U' else if (hd.kind == .project) 'P' else 'W';
         w.print("{c}{d}@{d},{d};", .{ k, hd.index, hd.rect.centerX(), hd.rect.centerY() }) catch break;
     }
     w.writeAll(" items=") catch {};
@@ -1463,13 +1472,26 @@ fn refreshAll(self: *PaneSidebar) void {
     self.signature = sig;
 
     self.clearAll();
+    // Beside a group, the lone windows go under an Ungrouped header (T2524,
+    // Mac 7bee055c9): its count is theirs - the ones listed, a search's
+    // matches - carried on the first of them, which it names.
+    var lones: usize = 0;
+    var grouped = false;
+    for (placed[0..np]) |p| {
+        if (p.project == null) lones += 1 else grouped = true;
+    }
+    const heads_ungrouped = grouped and lones > 0;
+    const ungrouped_folded = query == null and self.folded_projects.contains(ungrouped_key);
+    var first_lone = true;
     var specs: [max_heads]outline.GroupSpec = undefined;
     for (placed[0..np], 0..) |p, gi| {
         const r = refs[p.index];
         const own = self.isOwn(r);
         const sp = spans[gi];
         const key = tabKey(r.window, r.tab);
-        const project_key: u64 = if (p.project) |pr| projectKey(pr) else 0;
+        const project_key: u64 = if (p.project) |pr| projectKey(pr) else ungrouped_key;
+        const heads = heads_ungrouped and p.project == null and first_lone;
+        if (heads) first_lone = false;
         self.appendGroup(.{
             .window = r.window,
             .tab = r.tab,
@@ -1479,7 +1501,7 @@ fn refreshAll(self: *PaneSidebar) void {
             .label = &.{},
             .project = &.{},
             .project_key = project_key,
-            .project_size = if (outline.opensProject(placed[0..np], gi)) outline.projectSize(placed[0..np], gi) else 0,
+            .project_size = if (heads) lones else if (outline.opensProject(placed[0..np], gi)) outline.projectSize(placed[0..np], gi) else 0,
             .panes = sp.grid + sp.stashed,
             .own = own,
             .tabbed = r.window.tab_count > 1,
@@ -1491,7 +1513,10 @@ fn refreshAll(self: *PaneSidebar) void {
             .grid = sp.grid,
             .stashed = sp.stashed,
             .folded = self.groupFolded(key, query != null),
-            .project_folded = query == null and p.project != null and self.folded_projects.contains(project_key),
+            .project_folded = if (p.project != null)
+                query == null and self.folded_projects.contains(project_key)
+            else
+                heads_ungrouped and ungrouped_folded,
         };
     }
     var lines: [pane_sidebar.max_heads * 5 + pane_sidebar.max_items]pane_sidebar.Line = undefined;
@@ -1619,6 +1644,19 @@ fn tabKey(w: *const Window, t: usize) u64 {
 
 fn projectKey(name: []const u8) u64 {
     return std.hash.Wyhash.hash(0x70726f6a, name);
+}
+
+/// The Ungrouped header's fold, in the project fold set (T2524): a lone
+/// window's `project_key`, which no project's hash is taken to be. Shared by
+/// every window's list and never persisted, as the project folds are (Mac
+/// `isUngroupedFolded`); a group drag folds the projects it names, so it
+/// leaves this one as it is.
+const ungrouped_key: u64 = 0;
+
+/// Whether `hd` is the Ungrouped header (T2524): a project head over a
+/// window with no project.
+fn isUngroupedHead(self: *const PaneSidebar, hd: pane_sidebar.Head) bool {
+    return hd.kind == .project and hd.index < self.groups.items.len and self.groups.items[hd.index].project.len == 0;
 }
 
 fn appendGroup(self: *PaneSidebar, g_in: Group, label8: []const u8, project8: ?[]const u8) void {
@@ -2733,6 +2771,9 @@ fn maybeStartItemDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     if (!l.outline or k >= l.head_count) return false;
     const hd = l.heads[k];
     if (hd.index >= self.groups.items.len) return false;
+    // The Ungrouped header stays on top: a click folds it, nothing drags it
+    // (T2524).
+    if (self.isUngroupedHead(hd)) return false;
     const g = self.groups.items[hd.index];
     var d: ItemDrag = .{
         .key = if (hd.kind == .project) g.pkey else g.wkey,
@@ -2749,6 +2790,8 @@ fn maybeStartItemDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
         d.cross = true;
         for (l.heads[0..l.head_count]) |o| {
             if (o.index >= self.groups.items.len or d.count == d.siblings.len) continue;
+            // Not a group a window can be let go into (T2524).
+            if (self.isUngroupedHead(o)) continue;
             const og = &self.groups.items[o.index];
             d.siblings[d.count] = if (o.kind == .project) og.pkey else og.wkey;
             d.row_pkey[d.count] = og.pkey;
@@ -4278,7 +4321,10 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     }
     if (project) {
         if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-        drawText(hdc, g.project, .{ .left = hd.label_x, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+        // The Ungrouped header (T2524) is captioned: a blank band read as a
+        // group with no name, Mac found.
+        const caption = if (g.project.len == 0) ungrouped_caption else g.project;
+        drawText(hdc, caption, .{ .left = hd.label_x, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
         return;
     }
     // The PARENT row: the window's name at a group's weight, then - on
@@ -4877,6 +4923,11 @@ const tip_scope_off = W("Show only this window\u{2019}s panes");
 const tip_head_this = W("This window \u{2014} click to hide or show its panes");
 const tip_head_other = W("Raise this window");
 const tip_head_project = W("Hide or show this project\u{2019}s windows");
+// The Ungrouped header (T2524): it folds and never drags.
+const tip_head_ungrouped = W("Hide or show the ungrouped windows");
+const tip_rename_ungrouped = W("Name these windows as a group");
+const ungrouped_caption = W("UNGROUPED");
+const placeholder_group_name = W("Group name");
 // In the all-windows list a header also drags (T2337, Mac's help text).
 const tip_head_this_drag = W("This window \u{2014} drag to reorder");
 const tip_head_other_drag = W("Raise this window \u{2014} drag to reorder");
@@ -4988,7 +5039,9 @@ fn syncTips(self: *PaneSidebar) void {
         for (l.heads[0..nh], 0..) |hd, k| {
             const own = hd.index < self.groups.items.len and self.groups.items[hd.index].own;
             const drags = self.all_windows and rows;
-            const text = if (hd.kind == .project)
+            const text = if (self.isUngroupedHead(hd))
+                tip_head_ungrouped
+            else if (hd.kind == .project)
                 (if (drags) tip_head_project_drag else tip_head_project)
             else if (own)
                 (if (drags) tip_head_this_drag else tip_head_this)
@@ -5006,7 +5059,7 @@ fn syncTips(self: *PaneSidebar) void {
             } else delTool(tip, hwnd, toolHeadAdd(k));
             const pr = if (rows) scroll_mod.visible(&l, l.headRename(k, self.scale)) else pane_sidebar.Rect{};
             if (pr.height() > 0) {
-                addTool(tip, hwnd, toolHeadRename(k), pr, if (hd.kind == .project) tip_rename_group else tip_rename_window);
+                addTool(tip, hwnd, toolHeadRename(k), pr, if (self.isUngroupedHead(hd)) tip_rename_ungrouped else if (hd.kind == .project) tip_rename_group else tip_rename_window);
             } else delTool(tip, hwnd, toolHeadRename(k));
         }
         for (self.entries.items[0..n], 0..) |e, i| {
@@ -5339,6 +5392,8 @@ fn beginRenameHead(self: *PaneSidebar, k: usize) void {
     switch (hd.kind) {
         .window => self.beginRename(.{ .window = g.key }, groupName(g.window, g.tab, &b)),
         .project => {
+            // The Ungrouped header's opens empty: it names a new group.
+            if (self.isUngroupedHead(hd)) return self.beginRename(.ungrouped, "");
             const project = self.headProject(hd, &b) orelse return;
             self.beginRename(.{ .project = g.project_key }, project);
         },
@@ -5408,6 +5463,8 @@ fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
             keepProjectPlace(self.alloc, &shown, r.initialText(), name orelse "");
             renameProject(app, r.initialText(), name orelse "");
         },
+        // Empty never gets here: nothing typed is `.keep`.
+        .ungrouped => if (name) |nm| self.groupUngrouped(&shown, nm),
     }
     // Any window rename redraws every sidebar (Mac `PaneRoster.changed`).
     refreshScopes(app.windows.items, null);
@@ -5472,6 +5529,46 @@ fn renameProject(app: *App, old: []const u8, project: []const u8) void {
     };
 }
 
+/// The Ungrouped header's pencil committed `name` (T2524, Mac
+/// `groupUngroupedFromSidebar`): each window it lists - the matching ones
+/// while searching - is retitled `<name>: <its title>`, pinned as the user's.
+/// A new group stands where they were, first among the groups; named as a
+/// group the list has, they join it ahead of its windows
+/// (`window_order.renamingWindow` from the first of them, which inserts the
+/// group's key there or leaves the order as it is). A name that could not
+/// read back as a group (too long, a `: ` of its own) changes nothing.
+fn groupUngrouped(self: *PaneSidebar, before: *const ShownOrder, name: []const u8) void {
+    var tb: [name_cap + 64]u8 = undefined;
+    if (!rename_rules.namesGroup(name)) return log.info("pane sidebar ungrouped not grouped: not a group name", .{});
+    const app = self.window.app;
+    // The targets first: each pin rebuilds the rosters.
+    var targets: [pane_sidebar.max_heads]Group = undefined;
+    var n: usize = 0;
+    for (self.groups.items) |g| {
+        if (g.project.len != 0 or n == targets.len) continue;
+        targets[n] = g;
+        n += 1;
+    }
+    if (n == 0) return;
+    const first = targets[0];
+    if (app.hasWindow(first.window) and first.tab < first.window.tab_count) {
+        var kb: window_order.Key = .{};
+        var out: [window_order.max_keys][]const u8 = undefined;
+        const k = window_order.windowKey(&first.window.tab_uuid[first.tab]);
+        const m = window_order.renamingWindow(before.slice(), k.slice(), name, &kb, &out);
+        storeWindowOrder(self.alloc, out[0..m], "a sidebar ungrouped naming");
+    }
+    var grouped: usize = 0;
+    for (targets[0..n]) |g| {
+        if (!app.hasWindow(g.window) or g.tab >= g.window.tab_count) continue;
+        var nb: [name_cap]u8 = undefined;
+        const own = groupName(g.window, g.tab, &nb);
+        pinWindowName(g.window, g.tab, rename_rules.groupTitle(&tb, name, own));
+        grouped += 1;
+    }
+    log.info("pane sidebar ungrouped grouped windows={d}", .{grouped});
+}
+
 /// Whether what the field edits is still listed here.
 fn renameTargetLive(self: *const PaneSidebar) bool {
     const r = if (self.rename) |*x| x else return false;
@@ -5484,6 +5581,15 @@ fn renameTargetLive(self: *const PaneSidebar) bool {
         },
         .project => |key| for (self.groups.items) |g| {
             if (g.project.len > 0 and g.project_key == key) return true;
+        },
+        // Its header is up while the list holds a lone window beside a group.
+        .ungrouped => if (self.all_windows) {
+            var lone = false;
+            var grouped = false;
+            for (self.groups.items) |g| {
+                if (g.project.len == 0) lone = true else grouped = true;
+            }
+            return lone and grouped;
         },
     }
     return false;
@@ -5501,7 +5607,8 @@ fn renamingHead(self: *const PaneSidebar, hd: pane_sidebar.Head, g: Group) bool 
     const r = if (self.rename) |*x| x else return false;
     return switch (r.target) {
         .window => |key| hd.kind == .window and g.key == key,
-        .project => |key| hd.kind == .project and g.project_key == key,
+        .project => |key| hd.kind == .project and g.project.len > 0 and g.project_key == key,
+        .ungrouped => hd.kind == .project and g.project.len == 0,
         .pane => false,
     };
 }
@@ -5550,6 +5657,11 @@ fn paintRenameField(self: *PaneSidebar, hdc: w32.HDC, box: pane_sidebar.Rect, fo
     if (r.field.all) {
         const sel_w = textWidth(hdc, text);
         fillRect(hdc, .{ .left = box.left - off, .top = box.top, .right = box.left - off + sel_w, .bottom = box.bottom }, rgb(color_math.mix(well, t.accent, 0.45)));
+    }
+    // The Ungrouped header's field starts empty and says what it is for
+    // (T2524, Mac's placeholder).
+    if (text.len == 0 and r.target == .ungrouped) {
+        drawText(hdc, placeholder_group_name, .{ .left = box.left, .top = box.top, .right = box.right, .bottom = box.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
     }
     drawText(hdc, text, .{ .left = box.left - off, .top = box.top, .right = box.left - off + 100000, .bottom = box.bottom }, t.text, w32.DT_VCENTER);
     _ = w32.RestoreDC(hdc, saved);
@@ -5820,6 +5932,12 @@ fn addFromHead(self: *PaneSidebar, k: usize) void {
     const g = self.groups.items[hd.index];
     if (!self.window.app.hasWindow(g.window)) return;
     if (hd.kind == .window) return self.addPaneIn(g);
+    // The Ungrouped header's: an untitled window, so it lands among them
+    // (T2524).
+    if (self.isUngroupedHead(hd)) {
+        log.info("pane sidebar add ungrouped window", .{});
+        return self.window.app.newWindowFromSidebar(g.window, null);
+    }
     var pb: [name_cap]u8 = undefined;
     const project = self.headProject(hd, &pb) orelse return;
     var names: [pane_sidebar.max_heads][name_cap]u8 = undefined;

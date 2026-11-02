@@ -116,7 +116,7 @@ function Read-Outline([string]$Line) {
     if (-not $Line -or $Line -notmatch 'mode=(\w+) heads=(\S*) items=') { return $null }
     $o = @{ Mode = $Matches[1]; Heads = @() }
     foreach ($h in ($Matches[2] -split ';' | Where-Object { $_ })) {
-        if ($h -match '^([PW])(\d+)@(-?\d+),(-?\d+)$') { $o.Heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
+        if ($h -match '^([PWU])(\d+)@(-?\d+),(-?\d+)$') { $o.Heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
     }
     $o.Ha = Read-Points $Line 'ha'
     $o.Add = @(Read-Points $Line 'add') | Select-Object -First 1
@@ -204,7 +204,8 @@ try {
     $order = Get-Order $mark
     Assert "three windows in name order, the lone window first (T2421): zeta | proj/one | proj/two ($($order -join '|'))" (($order -join '|') -eq 'zeta|proj/one|proj/two')
     $o = Get-Outline $mark
-    Assert "the outline logs a + for every head, and the header's +" ($null -ne $o -and $o.Heads.Count -eq 4 -and $o.Ha.Count -eq 4 -and $null -ne $o.Add)
+    # Beside group proj, zeta sits under the Ungrouped header (T2524).
+    Assert "the outline logs a + for every head, Ungrouped's included, and the header's +" ($null -ne $o -and $o.Heads.Count -eq 5 -and $o.Ha.Count -eq 5 -and $null -ne $o.Add -and $o.Heads[0].Kind -eq 'U')
     if ($null -eq $o -or $o.Ha.Count -ne $o.Heads.Count -or $null -eq $o.Add) { return }
     $scope = $o.Scope
     Assert "the header's + sits left of the all-windows toggle, on its row ($($o.Add.X),$($o.Add.Y) vs $($scope.X),$($scope.Y))" ($o.Add.X -lt $scope.X -and [math]::Abs($o.Add.Y - $scope.Y) -le 1)

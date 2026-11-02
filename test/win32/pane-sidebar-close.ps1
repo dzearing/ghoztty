@@ -125,7 +125,7 @@ function Read-Outline([string]$Line) {
     $o = @{ Mode = $Matches[1]; Heads = @(); Items = @() }
     $headsRaw = $Matches[2]; $itemsRaw = $Matches[3]
     foreach ($h in ($headsRaw -split ';' | Where-Object { $_ })) {
-        if ($h -match '^([PW])(\d+)@(-?\d+),(-?\d+)$') { $o.Heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
+        if ($h -match '^([PWU])(\d+)@(-?\d+),(-?\d+)$') { $o.Heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
     }
     foreach ($i in ($itemsRaw -split ';' | Where-Object { $_ })) {
         if ($i -match '^g(\d+)([gs])@(-?\d+),(-?\d+)$') { $o.Items += , @{ Group = [int]$Matches[1]; Sec = $Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
@@ -209,7 +209,8 @@ try {
     "  $g"
     Assert "four windows in name order, the lone windows first (T2421): lone | zeta | proj/one | proj/two" ($g -match 'groups=4 .*order=lone\|zeta\|proj/one\|proj/two$')
     $o = Get-Outline $mark
-    Assert "the outline logs a chevron and an x for every head" ($null -ne $o -and $o.Heads.Count -eq 5 -and $o.Chev.Count -eq 5 -and $o.Hx.Count -eq 5)
+    # Beside group proj, lone and zeta sit under the Ungrouped header (T2524).
+    Assert "the outline logs a chevron and an x for every head, Ungrouped's included" ($null -ne $o -and $o.Heads.Count -eq 6 -and $o.Chev.Count -eq 6 -and $o.Hx.Count -eq 6 -and $o.Heads[0].Kind -eq 'U')
     if ($null -eq $o -or $o.Hx.Count -ne $o.Heads.Count) { return }
     # Every head's x is in one column, level with its chevron (Mac 7e4646bb5).
     $col = @($o.Hx | ForEach-Object { $_.X } | Select-Object -Unique)

@@ -185,22 +185,44 @@ pub const GroupSpec = struct {
     stashed: usize = 0,
     /// The window's own panes are folded away under its header.
     folded: bool = false,
-    /// Its project group is folded: the window header is gone too.
+    /// Its project group is folded: the window header is gone too. For a
+    /// lone window under the Ungrouped header (`headsUngrouped`), that
+    /// header is folded.
     project_folded: bool = false,
 };
+
+/// Whether the lone windows get a header of their own, "Ungrouped" (T2524,
+/// Mac 7bee055c9 `PaneSidebarWindowGrouping.headsUngrouped`): only beside a
+/// group. With no group the list is all lone windows, and a header over all
+/// of it would say nothing; with no lone window there is nothing under it.
+pub fn headsUngrouped(groups: []const GroupSpec) bool {
+    var grouped = false;
+    var lone = false;
+    for (groups) |g| {
+        if (g.project != null) grouped = true else lone = true;
+    }
+    return grouped and lone;
+}
 
 /// The panel's lines for the outline (Mac's `allWindows` view). Items are
 /// numbered in group order - every group's grid panes, then its stashed ones,
 /// including the panes of folded groups (the rail still shows those) - and a
 /// pane line's `index` is that number. A head's `index` is its group's (a
 /// project head names its first window's). Folded groups emit no pane lines.
+/// Beside a group, the lone windows sit under an Ungrouped header (T2524): a
+/// project line naming the first lone window, whose group has no project -
+/// that is how the sidebar tells it from a group's - with every lone window a
+/// level in under it.
 /// Returns how many lines were written; stops early when `out` is full.
 pub fn buildLines(groups: []const GroupSpec, out: []Line) usize {
     var n: usize = 0;
     var item: usize = 0;
+    const ungrouped = headsUngrouped(groups);
+    var ungrouped_open = false;
     for (groups, 0..) |g, gi| {
         const opens = if (g.project) |p| (gi == 0 or groups[gi - 1].project == null or
-            !std.mem.eql(u8, p, groups[gi - 1].project.?)) else false;
+            !std.mem.eql(u8, p, groups[gi - 1].project.?)) else ungrouped and !ungrouped_open;
+        if (g.project == null and opens) ungrouped_open = true;
         // No hairline between top-level windows (T2340, Mac c4dbe30be):
         // their headers set them apart, as grouped windows' do.
         if (opens) {
@@ -210,7 +232,7 @@ pub fn buildLines(groups: []const GroupSpec, out: []Line) usize {
         // section holds it (the sticky header reads that) - but it is not
         // laid out indented (T2340): `pane_sidebar.layoutLines` lines every
         // window's chevron up.
-        const depth: u8 = if (g.project != null) 1 else 0;
+        const depth: u8 = if (g.project != null or ungrouped) 1 else 0;
         const panes = g.grid + g.stashed;
         defer item += panes;
         if (g.project_folded) continue;
@@ -466,12 +488,40 @@ test "lines: a project header, its windows one level in" {
         .{ .grid = 1 },
     }, &lines);
     var kb: [32]u8 = undefined;
-    try testing.expectEqualStrings("WpPWpWppPWpWp", kinds(lines[0..n], &kb));
+    // Beside the groups, the lone windows head with an Ungrouped header
+    // (T2524) - once, however they are placed.
+    try testing.expectEqualStrings("PWpPWpWppPWpWp", kinds(lines[0..n], &kb));
     // A grouped window is a level down in the outline (its section), though
     // the layout does not indent it (T2340).
-    try testing.expectEqual(@as(u8, 1), lines[3].depth); // window in a project
-    try testing.expectEqual(@as(u8, 2), lines[4].depth); // its pane
-    try testing.expectEqual(@as(usize, 1), lines[2].index); // the project names its first window
+    try testing.expectEqual(@as(u8, 1), lines[4].depth); // window in a project
+    try testing.expectEqual(@as(u8, 2), lines[5].depth); // its pane
+    try testing.expectEqual(@as(usize, 1), lines[3].index); // the project names its first window
+    try testing.expectEqual(@as(usize, 0), lines[0].index); // Ungrouped names the first lone window
+    try testing.expectEqual(@as(u8, 1), lines[12].depth); // a lone window, under Ungrouped
+}
+
+test "lines: the Ungrouped header only beside a group, and it folds its windows (T2524)" {
+    var lines: [32]Line = undefined;
+    var kb: [32]u8 = undefined;
+    // No group: flat, as before.
+    var n = buildLines(&.{ .{ .grid = 1 }, .{ .grid = 1 } }, &lines);
+    try testing.expectEqualStrings("WpWp", kinds(lines[0..n], &kb));
+    try testing.expectEqual(@as(u8, 0), lines[0].depth);
+    // No lone window: no header over nothing.
+    n = buildLines(&.{ .{ .project = "a", .grid = 1 }, .{ .project = "b", .grid = 1 } }, &lines);
+    try testing.expectEqualStrings("PWpPWp", kinds(lines[0..n], &kb));
+    try testing.expect(!headsUngrouped(&.{ .{ .project = "a", .grid = 1 } }));
+    try testing.expect(!headsUngrouped(&.{ .{ .grid = 1 } }));
+    // Both: the header stays while its windows fold away under it.
+    n = buildLines(&.{
+        .{ .grid = 1, .project_folded = true },
+        .{ .grid = 2, .project_folded = true },
+        .{ .project = "a", .grid = 1 },
+    }, &lines);
+    try testing.expectEqualStrings("PPWp", kinds(lines[0..n], &kb));
+    try testing.expectEqual(@as(usize, 0), lines[0].index);
+    // Items still count the folded lone windows' panes.
+    try testing.expectEqual(@as(usize, 3), lines[3].index);
 }
 
 test "lines: folding drops the panes, and a folded project drops its windows" {
@@ -483,9 +533,9 @@ test "lines: folding drops the panes, and a folded project drops its windows" {
         .{ .grid = 1 },
     }, &lines);
     var kb: [32]u8 = undefined;
-    try testing.expectEqualStrings("WPWp", kinds(lines[0..n], &kb));
+    try testing.expectEqualStrings("PWPWp", kinds(lines[0..n], &kb));
     // Items still count the folded panes: the last window's pane is item 4.
-    try testing.expectEqual(@as(usize, 4), lines[3].index);
+    try testing.expectEqual(@as(usize, 4), lines[4].index);
 }
 
 test "lines: a full buffer stops cleanly" {

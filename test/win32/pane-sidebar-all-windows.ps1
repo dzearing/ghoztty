@@ -153,7 +153,7 @@ function Read-Outline([string]$Line) {
     $o = @{ Raw = $Line; Mode = $Matches[1]; Rules = [int]$Matches[4]; Scope = @{ X = [int]$Matches[5]; Y = [int]$Matches[6] }; Heads = @(); Items = @() }
     $headsRaw = $Matches[2]; $itemsRaw = $Matches[3]
     foreach ($h in ($headsRaw -split ';' | Where-Object { $_ })) {
-        if ($h -match '^([PW])(\d+)@(-?\d+),(-?\d+)$') { $o.Heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
+        if ($h -match '^([PWU])(\d+)@(-?\d+),(-?\d+)$') { $o.Heads += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
     }
     foreach ($i in ($itemsRaw -split ';' | Where-Object { $_ })) {
         if ($i -match '^g(\d+)([gs])@(-?\d+),(-?\d+)$') { $o.Items += , @{ Group = [int]$Matches[1]; Sec = $Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
@@ -397,6 +397,11 @@ try {
     Assert "A's list followed: B's stash is gone, both its panes are grid rows" ($null -ne $o -and @($o.Items | Where-Object { $_.Group -eq 3 -and $_.Sec -eq 'g' }).Count -eq 2)
 
     "== 3: another window's header raises that window"
+    # A's own outline - zeta's head (third, after the Ungrouped header and
+    # Build logs', T2524) selected - not B's, whose list lays out alike but
+    # whose coordinates mean nothing in A.
+    $aOutline = 'pane sidebar outline mode=expanded .* hsel=\d\d[12]'
+    $o = Read-Outline (Wait-Log $aOutline 0 1000)
     $mark = Get-LogCount
     $h = Head $o 'W' 0
     if ($h) { [void](ClickAt $top $sb $h) }
@@ -404,8 +409,7 @@ try {
     # T2446 (Mac 9e2e2902a `clickedWindow`): the clicked header is accent in
     # A's list at once, while its window comes forward; zeta stays selected.
     # Every window's sidebar logs to the one stderr, and Build logs' own lists
-    # the same heads: A's line is the one whose zeta head (second) is selected.
-    $aOutline = 'pane sidebar outline mode=expanded .* hsel=\d[12]'
+    # the same heads: A's line is the one whose zeta head (third) is selected.
     $oc = Read-Outline (Wait-Log $aOutline $mark)
     Assert "the clicked header is drawn in the accent while its window comes forward (hsel=$($oc.HSel), T2446)" ((HeadSel $oc 'W' 0) -eq '1')
     Assert "...and zeta's header keeps the unaccented pill (hsel=$($oc.HSel))" ((HeadSel $oc 'W' 1) -eq '2')
@@ -416,10 +420,10 @@ try {
 
     "== 4: this window's header folds its panes, and unfolds them"
     $mark = Get-LogCount
-    $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' 0 1000)
+    $o = Read-Outline (Wait-Log $aOutline 0 1000)
     $h = Head $o 'W' 1
     if ($h) { [void](ClickAt $top $sb $h) }
-    $o2 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $o2 = Read-Outline (Wait-Log $aOutline $mark)
     Assert "folded: zeta's rows are gone, its header stays" ($null -ne $o2 -and @($o2.Items | Where-Object Group -eq 1).Count -eq 0 -and $null -ne (Head $o2 'W' 1))
     Assert "folded: zeta's header takes the accent, its pane being inside the fold (hsel=$($o2.HSel), T2446)" ((HeadSel $o2 'W' 1) -eq '1')
     # T1880: the fold covers the rows top-down (Mac 0.22 s) - measured against
@@ -429,20 +433,20 @@ try {
     $mark = Get-LogCount
     $h = Head $o2 'W' 1
     if ($h) { [void](ClickAt $top $sb $h) }
-    $o3 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $o3 = Read-Outline (Wait-Log $aOutline $mark)
     Assert "unfolded: zeta's two rows are back" ($null -ne $o3 -and @($o3.Items | Where-Object Group -eq 1).Count -eq 2)
     Assert "...revealed top-down: the unfold animated and finished in place" (($null -ne (Wait-Log 'pane sidebar transition fold surface=rail' $mark 2000)) -and ($null -ne (Wait-Log 'pane sidebar transition done surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
 
     "== 4c: folded, a window's row sheens while any of its panes works (T2447, Mac 9e2e2902a)"
     $mark = Get-LogCount
     Assert "+set-state busy on s1 ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=s1 --state=busy") -eq 0)
-    $ob = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $ob = Read-Outline (Wait-Log $aOutline $mark)
     Assert "open, zeta's header does not sheen - s1's own row shows the work (hbusy=$($ob.HBusy))" ((HeadBusy $ob 'W' 1) -eq '0')
     Assert "...and no head sheens at all (hbusy=$($ob.HBusy))" ($null -ne $ob -and $ob.HBusy.Length -eq $ob.Heads.Count -and ($ob.HBusy -replace '0', '').Length -eq 0)
     $mark = Get-LogCount
     $h = Head $ob 'W' 1
     if ($h) { [void](ClickAt $top $sb $h) }
-    $of = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $of = Read-Outline (Wait-Log $aOutline $mark)
     Assert "folded, zeta's rows are gone" ($null -ne $of -and @($of.Items | Where-Object Group -eq 1).Count -eq 0)
     Assert "...and its header sheens with s1's busy rolled up (hbusy=$($of.HBusy))" ((HeadBusy $of 'W' 1) -eq '1')
     Assert "...the only head that does (hbusy=$($of.HBusy))" ($null -ne $of -and ($of.HBusy -replace '0', '').Length -eq 1)
@@ -453,7 +457,7 @@ try {
     Assert "the folded header moves on screen ($n distinct of 10, want >= 3)" ($n -ge 3)
     $mark = Get-LogCount
     Assert "+set-state idle on s1 ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=s1 --state=idle") -eq 0)
-    $oi = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $oi = Read-Outline (Wait-Log $aOutline $mark)
     Assert "idle, the folded header stops sheening (hbusy=$($oi.HBusy))" ((HeadBusy $oi 'W' 1) -eq '0')
     Assert "...the motion clock stops itself once it has faded (log)" ($null -ne (Wait-Log 'pane sidebar motion off surface=rail' $mark 4000))
     $n = Get-DistinctFrames $sb 4 200
@@ -461,7 +465,7 @@ try {
     $mark = Get-LogCount
     $h = Head $oi 'W' 1
     if ($h) { [void](ClickAt $top $sb $h) }
-    $ou = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $ou = Read-Outline (Wait-Log $aOutline $mark)
     Assert "setup: unfolded again, zeta's two rows are back" ($null -ne $ou -and @($ou.Items | Where-Object Group -eq 1).Count -eq 2)
     Start-Sleep -Milliseconds 400
 
@@ -469,14 +473,14 @@ try {
     $mark = Get-LogCount
     $h = Head $o3 'P' 2
     if ($h) { [void](ClickAt $top $sb $h) }
-    $o4 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $o4 = Read-Outline (Wait-Log $aOutline $mark)
     Assert "folded: the project's window heads and rows are gone" ($null -ne $o4 -and $null -eq (Head $o4 'W' 2) -and $null -eq (Head $o4 'W' 3) -and @($o4.Items | Where-Object { $_.Group -in 2, 3 }).Count -eq 0)
     Assert "folded: the project head itself stays" ($null -ne $o4 -and $null -ne (Head $o4 'P' 2))
     Assert "...and the project's fold animated in place too (log)" (($null -ne (Wait-Log 'pane sidebar transition fold surface=rail' $mark 2000)) -and ($null -eq (Wait-Log 'transition fold lands' $mark 200)))
     $mark = Get-LogCount
     $h = Head $o4 'P' 2
     if ($h) { [void](ClickAt $top $sb $h) }
-    $o5 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $o5 = Read-Outline (Wait-Log $aOutline $mark)
     Assert "unfolded: both windows are back" ($null -ne $o5 -and $null -ne (Head $o5 'W' 2) -and $null -ne (Head $o5 'W' 3))
 
     "== 6: the list follows other windows: a rename re-sorts, a close drops"

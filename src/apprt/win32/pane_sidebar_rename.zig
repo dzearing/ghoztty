@@ -20,6 +20,10 @@
 //!   window's or a group's - or Change Window Title - pins the all-windows
 //!   list as it was shown, so only what the new name asks for moves
 //!   (`pane_sidebar_window_order.renamingWindow` / `renamingProject`).
+//! - **Ungrouped header** (T2524, Mac 7bee055c9): the field opens empty
+//!   (placeholder "Group name") and names the lone windows as a group: each
+//!   is retitled `<name>: <title>`. Nothing typed changes nothing, and so
+//!   does a name that could not head a group (`namesGroup`).
 //! - **Terminal pane**: the field sets its title as Change Pane Title does
 //!   (`Surface.setUserTitle`), and that name outranks a banner title
 //!   (`pane_sidebar.paneLabel`). A viewer is named by its page: no pencil.
@@ -28,6 +32,7 @@
 //! half is `PaneSidebar.zig`.
 
 const std = @import("std");
+const outline = @import("pane_sidebar_outline.zig");
 
 /// What is being renamed.
 pub const Kind = enum { window, project, pane };
@@ -86,6 +91,17 @@ pub fn groupTitle(buf: []u8, project: []const u8, label: []const u8) []const u8 
     return buf[0..n];
 }
 
+/// Whether `name` can head a group (Mac `PaneSidebarWindowGrouping.title(_:inGroup:)`):
+/// a `<name>: <title>` reads back as that group - not empty, not over
+/// `max_project_chars`, no `: ` or line break of its own.
+pub fn namesGroup(name: []const u8) bool {
+    var buf: [outline.max_project_chars * 4 + 8]u8 = undefined;
+    if (name.len + 3 > buf.len) return false;
+    const titled = groupTitle(&buf, name, "x");
+    const sp = outline.splitWindowTitle(titled) orelse return false;
+    return std.mem.eql(u8, sp.project, name);
+}
+
 /// How many leading bytes of `s` fit in `room` without cutting a character.
 fn fitUtf8(s: []const u8, room: usize) usize {
     if (s.len <= room) return s.len;
@@ -134,4 +150,14 @@ test "T2339: a group rename retitles each window <new>: <name>, and empty ungrou
     var small: [7]u8 = undefined;
     try testing.expectEqualStrings("ab: \u{00E9}", groupTitle(&small, "ab", "\u{00E9}\u{00E9}\u{00E9}"));
     try testing.expectEqualStrings("abcdefg", groupTitle(&small, "abcdefghij", "x"));
+}
+
+test "T2524: a name heads a group only when the title reads back into it" {
+    try testing.expect(namesGroup("web"));
+    try testing.expect(namesGroup("gh\u{00F6}st"));
+    try testing.expect(!namesGroup(""));
+    try testing.expect(!namesGroup("a: b")); // its own `: `
+    try testing.expect(!namesGroup("x" ** 41)); // a sentence, not a group
+    try testing.expect(namesGroup("x" ** 40));
+    try testing.expect(!namesGroup(" web")); // untrimmed reads back as `web`
 }

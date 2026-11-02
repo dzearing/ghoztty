@@ -117,7 +117,9 @@ function Get-ScopeCenter($sb) {
     return @{ X = $sb.Width - (Px 4) - [int]((Px 28) / 2); Y = (Get-ToggleCenter $sb).Y }
 }
 # The heads of the newest outline line since $Skip, in list order:
-# @{ Kind = 'P'|'W'; X; Y } (client coordinates of the sidebar).
+# @{ Kind = 'P'|'W'; X; Y } (client coordinates of the sidebar). The
+# Ungrouped header (`U`, T2524) is left out: it is pinned on top, never
+# dragged and never a drop row, so every index below counts past it.
 function Get-Heads([int]$Skip) {
     $line = Wait-Log 'pane sidebar outline mode=expanded' $Skip 3000
     $heads = @()
@@ -252,6 +254,7 @@ try {
     $rectsBefore = Get-TopRects $script:app.Pid
 
     "== 1: the proj header dragged below zz"
+    Assert "the lone window sits under the Ungrouped header, on top (T2524)" ($null -ne (Wait-Log 'pane sidebar outline mode=expanded heads=U0@' $mark 3000))
     $heads = Get-Heads $mark
     Assert "outline: W solo, P proj, W wt-1, W wt-2, P zz, W one ($(($heads | ForEach-Object { $_.Kind }) -join ''))" ((($heads | ForEach-Object { $_.Kind }) -join '') -eq 'WPWWPW')
     if ($heads.Count -ge 6) {
@@ -260,7 +263,7 @@ try {
         Assert "drag delivered" $ok
         Assert "a group drag started among the top level's three items" ($null -ne (Wait-Log 'pane sidebar item drag start kind=project key=project:proj siblings=3 source=1' $mark))
         $during = Get-LogLines $mark 'pane sidebar outline mode=expanded' | Select-Object -First 1
-        Assert "every group folded for the drag: three heads left ($during)" ($during -match ' heads=W\d+@[-\d,]+;P\d+@[-\d,]+;P\d+@[-\d,]+; ')
+        Assert "every group folded for the drag: three heads left, under the Ungrouped header a group drag leaves as it is (T2524) ($during)" ($during -match ' heads=U\d+@[-\d,]+;W\d+@[-\d,]+;P\d+@[-\d,]+;P\d+@[-\d,]+; ')
         Assert "the held header followed the pointer" (@(Get-LogLines $mark 'pane sidebar item held top=').Count -ge 2)
         Assert "its index moved past zz" ($null -ne (Wait-Log 'pane sidebar item drag target=2' $mark))
         Assert "the drop landed it at 2" ($null -ne (Wait-Log 'pane sidebar item drag end commit=true from=1 to=2' $mark))
